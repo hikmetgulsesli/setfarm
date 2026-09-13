@@ -2723,7 +2723,7 @@ async function observeDirectSpawnerControllerSettlementHistoryV1() {
     if (!terminal.bytes.equals(Buffer.from(`${canonical(expected)}\n`)) || canonical(JSON.parse(terminal.bytes.toString("utf8"))) !== canonical(expected)) fail("direct terminal settlement differs from its original history");
     const finalPreMutation = await receipt.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(operation); assertStable();
     if (canonical(finalPreMutation) !== canonical(preMutation)) fail("direct terminal original P3 changed across resolution");
-    return freezeColdDataV1({ settlement: expected, settlementIdentity: coldFileIdentityTupleV1(terminal.stats), claim,
+    return freezeColdDataV1({ settlement: expected, settlementIdentity: coldFileIdentityTupleV1(terminal.stats), claim, intent, preMutation,
       preSchemaHelperJournalHash: intent.intentHash, preSchemaHelperSettlementRef: expected.helperSettlementRef, preSchemaHelperSettlementHash: expected.helperSettlementHash });
   } finally {
     let cleanupError: unknown = null;
@@ -5451,15 +5451,35 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
     restartAuthority: Readonly<{ restartAuthorityRef: string; restartAuthorityHash: string }>;
   }>,
 ): Promise<InternalProductionPreSchemaSpawnerRebindHelperSettlementPairV1> {
-  heldLease(lease);
-  assertEpochOneActive();
+  const originalHeld = heldLease(lease), originalIdentity = fstatSync(originalHeld.descriptor, { bigint: true }), originalEpoch = assertEpochOneActive();
   const exactInput = exactOwnRecord(input, ["currentEntryOperation", "restartAuthority"], "helper invoke input");
   const currentEntryOperation = pair(exactInput.currentEntryOperation, "operationRef", "operationHash");
   const restartAuthority = pair(exactInput.restartAuthority, "restartAuthorityRef", "restartAuthorityHash");
-  const receipt = await import("./baseline-post-handoff-receipt-v1.js");
+  const paths = rootPaths(), originalDirect = retainedDirectSpawnerRebindIntentV1;
+  const rootGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), paths.root);
+  const assertOwner = () => {
+    rootGuard.assertStable();
+    if (heldLease(lease) !== originalHeld || parseLockRecord(originalHeld.lockBytes).pid !== process.pid
+      || !sameColdFileMetadataV1(originalIdentity, fstatSync(originalHeld.descriptor, { bigint: true }))
+      || !readColdGenesisCandidateV1(paths.lock, originalIdentity).equals(originalHeld.lockBytes)
+      || canonical(assertEpochOneActive()) !== canonical(originalEpoch)) fail("helper invocation original physical owner changed");
+    rootGuard.assertStable();
+  };
+  try {
+  assertOwner();
   const startup = await import("./baseline-spawner-startup-admission-v1.js");
-  const resolvedOperation = await receipt.resolveInternalProductionCurrentEntryOperationV1(currentEntryOperation as { operationRef: string; operationHash: string }) as Readonly<Record<string, unknown>>;
+  assertOwner();
   const resolvedRestart = await startup.resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(restartAuthority as { restartAuthorityRef: string; restartAuthorityHash: string }) as Readonly<Record<string, unknown>>;
+  assertOwner();
+  if (retainedDirectSpawnerRebindIntentV1 !== originalDirect) fail("helper invocation direct owner changed during resolution");
+  if (resolvedRestart.schema === "setfarm.internal-production-pre-schema-spawner-restart-authority.v2") {
+    const result = await invokeDirectSpawnerRebindPublicRouteV1(lease, { currentEntryOperation, restartAuthority } as Parameters<typeof prepareDirectSpawnerRebindIntentV1>[1], resolvedRestart, assertOwner);
+    assertOwner();
+    result.assertStable();
+    return result.pair;
+  }
+  const receipt = await import("./baseline-post-handoff-receipt-v1.js");
+  const resolvedOperation = await receipt.resolveInternalProductionCurrentEntryOperationV1(currentEntryOperation as { operationRef: string; operationHash: string }) as Readonly<Record<string, unknown>>;
   const uid = process.getuid?.();
   if (
     resolvedOperation.operationRef !== currentEntryOperation.operationRef
@@ -5481,7 +5501,6 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
   const held = heldLease(lease);
   const currentLockIdentity = descriptorIdentity(held.descriptor);
   const currentTransitionLock = parseLockRecord(held.lockBytes);
-  const paths = rootPaths();
   const settlementsGuard = ensurePrivateAuthorityDirectoryV1(paths.settlements);
   try {
   settlementsGuard.assertStable();
@@ -5597,6 +5616,76 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
   } finally {
     try { settlementsGuard.assertStable(); } finally { settlementsGuard.close(); }
   }
+  } finally { finishRetainedColdCleanupV1(() => { rootGuard.assertStable(); rootGuard.close(); }); }
+}
+
+async function invokeDirectSpawnerRebindPublicRouteV1(
+  lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
+  input: Parameters<typeof prepareDirectSpawnerRebindIntentV1>[1], restart: Readonly<Record<string, unknown>>, assertOwner: () => void,
+): Promise<Readonly<{ pair: InternalProductionPreSchemaSpawnerRebindHelperSettlementPairV1; assertStable: () => void }>> {
+  const original = retainedDirectSpawnerRebindIntentV1, paths = rootPaths();
+  const assertSelection = () => {
+    assertOwner();
+    if (retainedDirectSpawnerRebindIntentV1 !== original
+      || directControllerHelperInvocationActiveV1 || directControllerClaimObservationActiveV1 || directControllerSettlementActiveV1
+      || directControllerReleaseActiveV1 || directSpawnerTerminationActiveV1 || directSpawnerRebindPreparationActiveV1
+      || original && (original.lease !== lease || original.phase === "releasing" || canonical(input) !== canonical({ currentEntryOperation: original.intent.currentEntryOperation, restartAuthority: original.intent.restartAuthority }))) fail("direct public invocation owner is active or crossed");
+  };
+  assertSelection();
+  if (restart.restartAuthorityRef !== input.restartAuthority.restartAuthorityRef || restart.restartAuthorityHash !== input.restartAuthority.restartAuthorityHash
+    || restart.currentEntryOperationRef !== input.currentEntryOperation.operationRef || restart.currentEntryOperationHash !== input.currentEntryOperation.operationHash
+    || restart.uid !== process.getuid?.() || restart.actionId !== "task6a-pre-schema-setfarm-spawner-rebind-v1" || restart.service !== "setfarm-spawner"
+    || restart.transport !== "direct-detached-node-v1" || restart.terminationSignal !== "SIGTERM" || restart.maximumTerminationDispatchCount !== 1 || restart.maximumSpawnDispatchCount !== 1) fail("direct public invocation restart authority is crossed");
+  const hasPrefix = () => readColdDirectoryMembersV1(paths.root, 4096).some(name => name === path.basename(paths.journal)
+    || name.startsWith(`.${path.basename(paths.journal)}.`) || name === "direct-spawner-rebind-v1");
+  if (original?.phase === "settled" || !original && hasPrefix()) {
+    try {
+      const history = await observeDirectSpawnerControllerSettlementHistoryV1();
+      assertSelection();
+      const intent = history.intent as Record<string, any>, profile = intent.launchProfile, predecessor = history.preMutation.spawner as Record<string, unknown>;
+      if (canonical(history.settlement.currentEntryOperation) !== canonical(input.currentEntryOperation)
+        || canonical(history.settlement.restartAuthority) !== canonical(input.restartAuthority)
+        || restart.launchProfileHash !== profile.profileHash || restart.uid !== profile.uid
+        || restart.targetSpawnerSourceSha !== profile.source.sha || restart.targetSpawnerTreeHash !== profile.source.treeHash || restart.targetSpawnerBuildHash !== profile.source.buildHash
+        || restart.predecessorSpawnerServiceIdentityHash !== predecessor.serviceIdentityHash || restart.predecessorSpawnerGenerationHash !== predecessor.generationHash
+        || ["Ref", "Hash"].some(suffix => restart[`startupToken${suffix}`] !== intent.startupToken[`startupToken${suffix}`]
+          || restart[`predecessorSpawnerProcessIdentity${suffix}`] !== intent.predecessorSpawnerProcessIdentity[`predecessorSpawnerProcessIdentity${suffix}`]
+          || restart[`preMutationLoadedRuntimeServiceAuthority${suffix}`] !== intent.preMutationLoadedRuntimeServiceAuthority[`preMutationLoadedRuntimeServiceAuthority${suffix}`])) fail("direct public terminal input binding is crossed");
+      const assertStable = () => {
+        const assertRetainedTerminal = () => {
+          if (!original) return;
+          const terminal = original.settlement, reader = terminal?.reader;
+          if (original.phase !== "settled" || !terminal?.committed || !terminal.readerAccepted || !reader || reader.descriptor === null || reader.identity === null || reader.closeEntered
+            || !sameColdFileMetadataV1(reader.identity, fstatSync(reader.descriptor, { bigint: true }))
+            || canonical(coldFileIdentityTupleV1(reader.identity)) !== canonical(history.settlementIdentity)
+            || canonical(terminal.record) !== canonical(history.settlement)
+            || !terminal.bytes.equals(readColdGenesisCandidateV1(terminal.target, reader.identity))) fail("direct public retained terminal reader is crossed");
+        };
+        try { assertSelection(); assertRetainedTerminal(); assertDirectSpawnerControllerSettlementHistoryStableV1(history); assertRetainedTerminal(); assertSelection(); }
+        catch { fail("HELPER_DISPATCH_SETTLEMENT_UNKNOWN"); }
+      };
+      assertStable();
+      return Object.freeze({ pair: Object.freeze({ helperSettlementRef: history.preSchemaHelperSettlementRef, helperSettlementHash: history.preSchemaHelperSettlementHash }), assertStable });
+    } catch { fail("HELPER_DISPATCH_SETTLEMENT_UNKNOWN"); }
+  }
+  if (!original) {
+    observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+    if (startupPrefixAlreadyPassedHelperV1(input.currentEntryOperation.operationHash)) fail("HELPER_DISPATCH_SETTLEMENT_UNKNOWN");
+    assertSelection();
+    if (hasPrefix()) fail("HELPER_DISPATCH_SETTLEMENT_UNKNOWN");
+  }
+  try { await settleDirectSpawnerRebindControllerV1(lease, input); }
+  catch (error) {
+    if (retainedDirectSpawnerRebindIntentV1?.lease === lease) fail("HELPER_DISPATCH_SETTLEMENT_UNKNOWN");
+    throw error;
+  }
+  assertOwner();
+  const current = retainedDirectSpawnerRebindIntentV1;
+  if (!current || current.lease !== lease || current.phase !== "settled" || original && current !== original
+    || canonical(current.intent.currentEntryOperation) !== canonical(input.currentEntryOperation) || canonical(current.intent.restartAuthority) !== canonical(input.restartAuthority)) fail("direct public invocation completed owner is crossed");
+  // The now-settled branch creates the same historical witness used on replay.
+  // Its assertion is carried through the public caller's final await.
+  return invokeDirectSpawnerRebindPublicRouteV1(lease, input, restart, assertOwner);
 }
 
 const BASELINE_SERVICE_ACTIONS_V1 = Object.freeze({

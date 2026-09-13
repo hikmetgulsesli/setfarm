@@ -709,7 +709,7 @@ async function exerciseDirectRebindFixtureV1(mode: "response-loss" | "profile-dr
   const actualDirectController = spawnFault?.startsWith("child-main-controller") ?? false;
   const directControllerFault = actualDirectController ? spawnFault!.slice("child-main-controller".length).replace(/^-/, "") : "";
   const actualDirectHelper = actualDirectController || (spawnFault?.startsWith("child-main-helper") ?? false);
-  const directHelperFault = actualDirectController ? directControllerFault === "helper-failure" ? "no-eof" : "" : actualDirectHelper ? spawnFault!.slice("child-main-helper".length).replace(/^-/, "") : "";
+  const directHelperFault = actualDirectController ? directControllerFault === "helper-failure" ? "no-eof" : directControllerFault === "settle-public-helper-failure" ? "spawn-error" : "" : actualDirectHelper ? spawnFault!.slice("child-main-helper".length).replace(/^-/, "") : "";
   const directHelperAccepted = ["", "fragmented", "second"].includes(directHelperFault);
   const directHelperSelectorRefused = ["mixed", "invalid-selector", "missing-selector"].includes(directHelperFault);
   const directSpawnTracePath = path.join(fixture, "direct-spawn-trace");
@@ -954,24 +954,27 @@ const read=(key)=>{const state=globalThis.__directRebindInputFixtureV1;state.cal
     const runtime = await import(pathToFileURL(runtimePath).href);
     let lease: any;
     try {
-      if (directControllerFault === "settle-dead-owner") {
+      if (directControllerFault === "settle-dead-owner" || directControllerFault.startsWith("settle-public")) {
+        const publicRouting = directControllerFault.startsWith("settle-public");
         const { recordPath } = installDirectHelperCompiledFixtureV1();
         writeFileSync(recordPath, JSON.stringify(records), { mode: 0o600 });
         const compiledModule = path.join(repository, "dist/internal-production/baseline-restart-authority-retirement-v1.js");
         const root = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1"), journalRoot = path.join(root, "direct-spawner-rebind-v1");
         const controllerPath = path.join(fixture, "direct-controller-owner.mjs");
         writeFileSync(controllerPath, `
-import assert from 'node:assert/strict';import {spawnSync} from 'node:child_process';import {createHash} from 'node:crypto';import {readFileSync,writeFileSync} from 'node:fs';
+import assert from 'node:assert/strict';import {spawnSync} from 'node:child_process';import {createHash} from 'node:crypto';import {existsSync,mkdirSync,readFileSync,renameSync,rmdirSync,unlinkSync,writeFileSync} from 'node:fs';
 ${canonical.toString()}
 ${sha256.toString()}
 ${parseColdFixtureExitRowV1.toString()}
 ${observeColdFixtureExitV1.toString()}
+${assertColdFixtureExitObservationV1.toString()}
 const recordPath=${JSON.stringify(recordPath)},records=JSON.parse(readFileSync(recordPath,'utf8'));
 globalThis.__directRebindInputFixtureV1={records,calls:[]};
 const runtime=await import(${JSON.stringify(pathToFileURL(compiledModule).href)});
 const lease=await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
 const input={currentEntryOperation:{operationRef:records.operation.operationRef,operationHash:records.operation.operationHash},restartAuthority:{restartAuthorityRef:records.restart.restartAuthorityRef,restartAuthorityHash:records.restart.restartAuthorityHash}};
-await runtime.invokeDirectControllerOwnerFixtureV1(lease,input);
+function refreshCensus(){
+if(!existsSync(${JSON.stringify(path.join(journalRoot, "claim.json"))}))return;
 const claim=JSON.parse(readFileSync(${JSON.stringify(path.join(journalRoot, "claim.json"))},'utf8')),child=observeColdFixtureExitV1(claim.child.pid);
 assert.ok(child);assert.equal(child.command,claim.child.command);assert.equal(Date.parse(child.lstart),claim.child.processStartTimeEpochMs);
 const label='com.setrox.setfarm-spawner',source=records.profile.source;
@@ -981,20 +984,73 @@ body.spawner={pid:claim.child.pid,processStartTimeEpochMs:Date.parse(child.lstar
 generationHash:sha256(canonical({schema:'setfarm.internal-production-loaded-service-generation.v1',label,serviceIdentityHash,source:{sha:source.sha,treeHash:source.treeHash,buildHash:source.buildHash}})),
 loadedSourceSha:source.sha,loadedTreeHash:source.treeHash,loadedBuildHash:source.buildHash,processOwnerCount:1,listener:null};
 records.census={...body,censusHash:sha256(canonical(body))};writeFileSync(recordPath,JSON.stringify(records),{mode:0o600});
-const terminal=await runtime.settleDirectControllerOwnerFixtureV1(lease,input),history=await runtime.readDirectControllerHistoryFixtureV1();
+}
+let terminal;
+if(${JSON.stringify(publicRouting)}){
+ const originalLock=readFileSync(${JSON.stringify(path.join(root, "physical-service-restart-authority.transition.lock"))});
+ for(const kind of ['directory','temporary']){
+  const target=kind==='directory'?${JSON.stringify(journalRoot)}:${JSON.stringify(path.join(root, ".pre-schema-helper-journal.json.fixture.tmp"))};
+  if(kind==='directory')mkdirSync(target,{mode:0o700});else writeFileSync(target,'pending',{mode:0o600,flag:'wx'});
+  try{
+   await assert.rejects(runtime.invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(lease,input),/HELPER_DISPATCH_SETTLEMENT_UNKNOWN/);
+   assert.deepEqual(readFileSync(${JSON.stringify(path.join(root, "physical-service-restart-authority.transition.lock"))}),originalLock);
+   assert.equal(readFileSync(${JSON.stringify(signals)},'utf8'),'');assert.equal(readFileSync(${JSON.stringify(directSpawnTracePath)},'utf8'),'');
+   assert.equal(existsSync(${JSON.stringify(path.join(root, "pre-schema-helper-journal.json"))}),false);
+  }finally{if(kind==='directory')rmdirSync(target);else unlinkSync(target)}
+ }
+ globalThis.__directRebindInputFixtureV1.hook=key=>{if(key==='census')refreshCensus()};
+ if(${JSON.stringify(directControllerFault === "settle-public-helper-failure")}){
+  await assert.rejects(runtime.invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(lease,input),/HELPER_DISPATCH_SETTLEMENT_UNKNOWN/);
+  const originalSpawns=readFileSync(${JSON.stringify(directSpawnTracePath)}),originalSignals=readFileSync(${JSON.stringify(signals)});
+  await assert.rejects(runtime.invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(lease,input),/HELPER_DISPATCH_SETTLEMENT_UNKNOWN/);
+  assert.deepEqual(readFileSync(${JSON.stringify(directSpawnTracePath)}),originalSpawns);assert.deepEqual(readFileSync(${JSON.stringify(signals)}),originalSignals);
+  await new Promise(resolve=>process.stdout.write(JSON.stringify({pid:process.pid,failedHelper:true}),resolve));process.exit(0);
+ }
+ terminal=await runtime.invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(lease,input);
+ assert.deepEqual(Object.keys(terminal),['helperSettlementRef','helperSettlementHash']);assert.equal(Object.isFrozen(terminal),true);
+}else{await runtime.invokeDirectControllerOwnerFixtureV1(lease,input);refreshCensus();terminal=await runtime.settleDirectControllerOwnerFixtureV1(lease,input)}
+if(${JSON.stringify(directControllerFault === "settle-public-child-departed")}){
+ const child=parseColdFixtureExitRowV1(readFileSync(${JSON.stringify(directChildCleanupPath)},'utf8')),pid=Number(child.pid);
+ assert.equal(assertColdFixtureExitObservationV1(observeColdFixtureExitV1(pid),child),'running');process.kill(pid,'SIGTERM');
+ const deadline=Date.now()+5000;
+ for(let current=observeColdFixtureExitV1(pid);current&&Date.now()<deadline;current=observeColdFixtureExitV1(pid)){assertColdFixtureExitObservationV1(current,child);await new Promise(resolve=>setTimeout(resolve,20))}
+ assert.equal(observeColdFixtureExitV1(pid),null);
+}
+if(${JSON.stringify(publicRouting)}){
+ globalThis.__directRebindInputFixtureV1.hook=key=>assert.ok(['restart','preMutation'].includes(key),'retained public replay must not require selected/live '+key);
+ assert.deepEqual(await runtime.invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(lease,input),terminal);
+}
+const history=await runtime.readDirectControllerHistoryFixtureV1();
 assert.equal(history.preSchemaHelperSettlementHash,terminal.helperSettlementHash);
-process.stdout.write(JSON.stringify({pid:process.pid,terminalHash:terminal.helperSettlementHash}));
+let refusedRetained=false;
+if(${JSON.stringify(directControllerFault === "settle-public-retained-terminal")}){
+ const target=${JSON.stringify(path.join(root, "pre-schema-helper-settlements/sha256"))}+'/'+terminal.helperSettlementHash.slice(0,2)+'/'+terminal.helperSettlementHash+'.json',bytes=readFileSync(target);
+ renameSync(target,${JSON.stringify(path.join(fixture, "public-original-terminal"))});writeFileSync(target,bytes,{mode:0o600,flag:'wx'});
+ await assert.rejects(runtime.invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(lease,input),/HELPER_DISPATCH_SETTLEMENT_UNKNOWN/);refusedRetained=true;
+}
+process.stdout.write(JSON.stringify({pid:process.pid,terminalHash:terminal.helperSettlementHash,refusedRetained}));
 // Deliberately leave the original physical lease retained until process exit.
 `, { mode: 0o600, flag: "wx" });
         const controller = spawnSync(process.execPath, [controllerPath], { cwd: repository, encoding: "utf8", timeout: 30_000, maxBuffer: 65_536,
           env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
         assert.equal(controller.error, undefined); assert.equal(controller.signal, null); assert.equal(controller.status, 0, controller.stderr); assert.equal(controller.stderr, "");
         const completed = JSON.parse(controller.stdout), lock = path.join(root, "physical-service-restart-authority.transition.lock");
+        if (directControllerFault !== "settle-public-helper-failure") assert.equal(completed.refusedRetained, directControllerFault === "settle-public-retained-terminal");
         const originalLock = JSON.parse(readFileSync(lock, "utf8"));
         assert.equal(originalLock.pid, completed.pid); assert.notEqual(originalLock.pid, process.pid);
         assert.equal(observeColdFixtureExitV1(originalLock.pid), null, "original durable controller PID is actually absent, not a fixture process double");
         Reflect.set(globalThis, "__directRebindInputFixtureV1", { records: JSON.parse(readFileSync(recordPath, "utf8")), calls: [] });
         const fresh = await import(`${pathToFileURL(compiledModule).href}?dead-owner-parent=${Date.now()}`);
+        if (directControllerFault === "settle-public-helper-failure") {
+          assert.equal(completed.failedHelper, true);
+          const before = coldGenesisTreeSnapshotV1(root), effects = { signals: readFileSync(signals), spawns: readFileSync(directSpawnTracePath) };
+          assert.equal(effects.signals.toString(), "SIGTERM\n");
+          assert.equal(effects.spawns.toString().trim().split("\n").length, 2);
+          await assert.rejects(fresh.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(), /HELPER_DISPATCH_SETTLEMENT_UNKNOWN/);
+          assert.deepEqual(coldGenesisTreeSnapshotV1(root), before);
+          assert.deepEqual({ signals: readFileSync(signals), spawns: readFileSync(directSpawnTracePath) }, effects);
+          return;
+        }
         const history = await fresh.readDirectControllerHistoryFixtureV1();
         assert.equal(history.preSchemaHelperSettlementHash, completed.terminalHash);
         const historyPaths = [path.join(root, "pre-schema-helper-journal.json"), journalRoot, path.join(root, "pre-schema-helper-settlements/sha256", completed.terminalHash.slice(0, 2), `${completed.terminalHash}.json`)];
@@ -1005,22 +1061,68 @@ process.stdout.write(JSON.stringify({pid:process.pid,terminalHash:terminal.helpe
         assert.equal(dispatches.length, 2, "one actual controller-helper dispatch and one helper-child dispatch");
         assert.deepEqual(dispatches.map(value => value.arguments), [[path.join(repository, "dist/internal-production/baseline-service-restart-helper-v1.js")], [entry]]);
         const originalFd = openSync(lock, constants.O_RDONLY | constants.O_NOFOLLOW);
-        let recovered: any;
+        let recovered: any, refusedHistory = false;
         try {
           const identity = fstatSync(originalFd, { bigint: true });
           recovered = await fresh.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
           assert.equal(fstatSync(originalFd, { bigint: true }).nlink, 0n, "only the proven dead original lock was unlinked");
           assert.notEqual(lstatSync(lock, { bigint: true }).ino, identity.ino);
           assert.equal(JSON.parse(readFileSync(lock, "utf8")).pid, process.pid);
+          if (publicRouting) {
+            const input = { currentEntryOperation: pair("operation", "current-entry-operation"), restartAuthority: pair("restartAuthority", "pre-schema-spawner-restart-authority") };
+            const expected = { helperSettlementRef: history.preSchemaHelperSettlementRef, helperSettlementHash: history.preSchemaHelperSettlementHash };
+            const replayInputs = Reflect.get(globalThis, "__directRebindInputFixtureV1");
+            replayInputs.hook = (key: string) => { assert.ok(["restart", "preMutation"].includes(key), `historical public replay must not require selected/live ${key}`); };
+            if (directControllerFault === "settle-public") {
+              const pending = path.join(root, ".pre-schema-helper-journal.json.fixture.tmp");
+              writeFileSync(pending, "pending", { mode: 0o600, flag: "wx" });
+              try { await assert.rejects(fresh.invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(recovered, input), /HELPER_DISPATCH_SETTLEMENT_UNKNOWN/); }
+              finally { unlinkSync(pending); }
+              const restart = replayInputs.records.restart;
+              for (const key of ["launchProfileHash", "startupTokenHash", "predecessorSpawnerProcessIdentityHash", "preMutationLoadedRuntimeServiceAuthorityHash", "predecessorSpawnerServiceIdentityHash", "targetSpawnerSourceSha"]) {
+                const original = restart[key]; restart[key] = "f".repeat(key === "targetSpawnerSourceSha" ? 40 : 64);
+                try { await assert.rejects(fresh.invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(recovered, input), /HELPER_DISPATCH_SETTLEMENT_UNKNOWN/); }
+                finally { restart[key] = original; }
+              }
+              const crossedHash = "f".repeat(64);
+              await assert.rejects(fresh.invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(recovered, { ...input, currentEntryOperation: { operationRef: `setfarm://internal-production/current-entry-operation/sha256/${crossedHash}`, operationHash: crossedHash } }), /crossed/);
+            }
+            if (directControllerFault === "settle-public-child-departed") {
+              const child = parseColdFixtureExitRowV1(readFileSync(directChildCleanupPath, "utf8")), pid = Number(child.pid);
+              assert.equal(observeColdFixtureExitV1(pid), null);
+            }
+            if (directControllerFault === "settle-public-outer-history") {
+              const fence = coldGenesisTreeSnapshotV1(lock);
+              let fired = false;
+              Reflect.set(globalThis, "__directPublicReturnedV1", () => {
+                if (fired) return; fired = true;
+                const target = path.join(journalRoot, "claim.json"), bytes = readFileSync(target);
+                renameSync(target, path.join(fixture, "public-original-claim")); writeFileSync(target, bytes, { mode: 0o600, flag: "wx" });
+              });
+              refusedHistory = true;
+              await assert.rejects(fresh.invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(recovered, input), /HELPER_DISPATCH_SETTLEMENT_UNKNOWN/);
+              assert.equal(fired, true); assert.deepEqual(coldGenesisTreeSnapshotV1(lock), fence);
+              assert.deepEqual({ signals: readFileSync(signals), spawns: readFileSync(directSpawnTracePath) }, effects);
+              return;
+            }
+            for (let replay = 0; replay < 2; replay++) {
+              assert.deepEqual(await fresh.invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(recovered, input), expected);
+            }
+          }
         } finally {
-          try { if (recovered) await fresh.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(recovered); }
+          try {
+            if (recovered) {
+              if (refusedHistory) await assert.rejects(fresh.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(recovered), /HELPER_DISPATCH_SETTLEMENT_UNKNOWN/);
+              else await fresh.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(recovered);
+            }
+          }
           finally { closeSync(originalFd); }
         }
         assert.equal(existsSync(lock), false);
         assert.deepEqual(historyPaths.map(target => coldGenesisTreeSnapshotV1(target)), before);
         assert.deepEqual({ signals: readFileSync(signals), spawns: readFileSync(directSpawnTracePath) }, effects, "recovery performs no new termination/helper/child effect");
         const originalChild = parseColdFixtureExitRowV1(readFileSync(directChildCleanupPath, "utf8"));
-        assert.equal(assertColdFixtureExitObservationV1(observeColdFixtureExitV1(Number(originalChild.pid)), originalChild), "running");
+        assert.equal(assertColdFixtureExitObservationV1(observeColdFixtureExitV1(Number(originalChild.pid)), originalChild), directControllerFault === "settle-public-child-departed" ? "absent" : "running");
         return;
       }
       lease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
@@ -1189,9 +1291,12 @@ process.stdout.write(JSON.stringify({pid:process.pid,terminalHash:terminal.helpe
         const parentUidReturn = "  return { uid, ppid, pgid };";
         assert.equal(source.split(parentUidReturn).length - 1, 1);
         let helperSource = source.replace(parentUidReturn, "  return { uid:globalThis.__directHelperParentUidFault?uid+1:uid, ppid, pgid };");
+        const publicReturned = "    const result = await invokeDirectSpawnerRebindPublicRouteV1(lease, { currentEntryOperation, restartAuthority } as Parameters<typeof prepareDirectSpawnerRebindIntentV1>[1], resolvedRestart, assertOwner);";
+        assert.equal(helperSource.split(publicReturned).length - 1, 1);
+        helperSource = helperSource.replace(publicReturned, publicReturned + "globalThis.__directPublicReturnedV1?.();");
         if (actualDirectHelper) {
           helperSource = helperSource.replace('import { spawn, spawnSync, type ChildProcess } from "node:child_process";', 'import { spawn as actualDirectSpawnEffectV1, spawnSync, type ChildProcess } from "node:child_process";');
-          helperSource += `\nfunction spawn(...args){const target=${JSON.stringify(directSpawnTracePath)};writeFileSync(target,readFileSync(target,'utf8')+JSON.stringify({executable:args[0],arguments:args[1],options:args[2]})+'\\n');if(${JSON.stringify(directHelperFault)}==='spawn-error')throw Error('DIRECT_FIXTURE_SPAWN_ERROR');return actualDirectSpawnEffectV1(...args)}\n`;
+          helperSource += `\nfunction spawn(...args){const target=${JSON.stringify(directSpawnTracePath)};writeFileSync(target,readFileSync(target,'utf8')+JSON.stringify({executable:args[0],arguments:args[1],options:args[2]})+'\\n');if(${JSON.stringify(directHelperFault)}==='spawn-error'&&args[1]?.[0]===${JSON.stringify(entry)})throw Error('DIRECT_FIXTURE_SPAWN_ERROR');return actualDirectSpawnEffectV1(...args)}\n`;
           for (const [marker, replacement] of [
             ["    completion = authentication.observeChildClaim(child, envelope);", "    await globalThis.__directHelperBeforeClaimV1?.(child,envelope);completion = authentication.observeChildClaim(child, envelope);"],
             ["      childClaim = { record, rootIdentity: rootStats, reader, assertLive: () => { assertChild(); assertStartup(); } };", "      childClaim = { record, rootIdentity: rootStats, reader, assertLive: () => { assertChild(); assertStartup(); } };globalThis.__directHelperClaimOwnedV1=true;"],
@@ -2120,6 +2225,7 @@ process.stdout.write(JSON.stringify({keys:Object.keys(frame).sort(),dispatch:fra
       Reflect.deleteProperty(globalThis, "__directControllerHistoryGateV1");
       Reflect.deleteProperty(globalThis, "__directCleanupReturnedV1");
       Reflect.deleteProperty(globalThis, "__directCleanupOuterReturnedV1");
+      Reflect.deleteProperty(globalThis, "__directPublicReturnedV1");
       const settlementProbe = Reflect.get(globalThis, "__directSettlementPublicationV1");
       if (settlementProbe?.foreign !== undefined) {
         try { const current = fstatSync(settlementProbe.foreign, { bigint: true }); if (current.dev === settlementProbe.foreignIdentity.dev && current.ino === settlementProbe.foreignIdentity.ino) closeSync(settlementProbe.foreign); }
@@ -2282,6 +2388,11 @@ test("actual direct controller independently binds the original detached child c
 test("actual direct controller durably settles the original claim and two service observations", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle"));
 test("complete direct terminal history permits original and later ordinary lock cleanup without effects", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-cleanup"));
 test("fresh direct history reclaims an actually exited original controller without redispatch", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-dead-owner"));
+test("public V2 rebind dispatches once and replays after the original controller exits", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-public"));
+test("public V2 rebind refuses history replaced after its final await", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-public-outer-history"));
+test("public V2 retained replay refuses replacement of its original terminal reader", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-public-retained-terminal"));
+test("public V2 historical replay does not require the replacement child to remain alive", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-public-child-departed"));
+test("public V2 uncertain helper outcome retains its fence and classifies retries without redispatch", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-public-helper-failure"));
 test("ordinary lock release refuses direct history replaced after the outer helper await", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-cleanup-outer-claim"));
 for (const member of ["intent", "termination-dispatch", "termination-receipt", "spawn-dispatch", "claim", "settlement", "directory", "intent-temp", "settlement-temp"]) {
   test(`direct cleanup refuses post-await ${member} history replacement`, () => exerciseDirectRebindFixtureV1("direct-helper", `child-main-controller-settle-cleanup-${member}`));

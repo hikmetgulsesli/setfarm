@@ -821,7 +821,7 @@ retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
   original lease close. Preserve history. Complete authenticated historical
   terminals may authorize dead-owner cleanup without claiming child liveness;
   partial/ambiguous history must preserve the fence and cannot redispatch.
-- [ ] Route strict V2 through the existing public invocation. Fresh-process
+- [x] Route strict V2 through the existing public invocation. Fresh-process
   partial direct history returns HELPER_DISPATCH_SETTLEMENT_UNKNOWN. Complete
   terminal history returns the same pair without process effects. Keep V1
   byte/behavior identity and cover both with existing adoption/reclaim tests.
@@ -1086,6 +1086,61 @@ instrumentation-window/FD-finally/bigint improvements were incorporated, then
 dead-owner plus retained-release regression passed2/2 (12.697s).
 The composite terminal-release/dead-owner checkbox is now proven; public V2
 routing, startup/census, full gates and live goal acceptance remain open.
+
+Public V2 routing execution refinement (same retirement/test/plan File Map):
+resolve the strict restart CAS discriminator before selected-operation lookup.
+V1 retains its exact journal/settlement/action path and resolves each port once.
+V2 retains original physical lease/root/epoch witnesses across awaits. Matching
+unfinished retained state enters the existing settlement kernel; a settled or
+fresh complete historical prefix returns only its original settlement pair.
+Releasing/foreign/active ownership and partial/crossed prefixes refuse; positive
+absence plus the existing startup-prefix guard alone permits fresh preparation.
+Historical replay uses immutable original P3/intent fields, not a selected live
+operation, launch profile or service census. Extend only the private history
+result with those already-authenticated records for static binding. Recheck the
+synchronous history witness and original current lease before return; never
+require the later lease to equal the historical controller's old lock.
+The real separate-process public-call RED currently rejects valid V2 at the
+hard-coded V1 action discriminator (2.175s). It will require fresh one-shot
+dispatch, original controller exit and repeat public adoption under a later lease.
+
+The first public lifecycle GREEN passed (6.064s); fixture census refresh was
+corrected to preserve the real predecessor observation before a child claim
+exists. A final-await same-byte claim replacement then produced an explicit
+missing-rejection RED (5.936s). Return a private pair-plus-synchronous-witness
+from routing and revalidate in the public continuation. New settlement obtains
+that same historical witness before returning. Retained settled replay has a
+stricter ownership relation than fresh history: a separate terminal replacement
+RED (5.502s) proved the need to bind its original committed record and accepted
+reader full tuple/bytes before and after graph validation. Public tests passed
+3/3 (17.690s); no public shape/export changes were introduced.
+
+Expanded public tests cover empty direct directory and pending intent before
+initial effects, a pending intent after acquiring a later lock, six crossed
+original restart fields, cross-operation replay, original controller departure,
+and both retained/fresh replay after real child departure. Replay observation
+sentinels permit only the restart CAS and immutable historical P3, forbidding
+selected-operation, profile/environment and live service census ports.
+Public/V1/physical lease regression passed17/17 (35.812s), source manifest17/17
+(6.052s), TypeScript and whitespace passed. Independent routing re-review clear.
+
+Downstream startup's existing helper-blocked publisher recognizes only
+HELPER_DISPATCH_SETTLEMENT_UNKNOWN. A real helper child-launch failure exposed
+raw completion errors escaping the new public route (RED3.278s). Normalize only
+errors for this lease's retained direct state to the existing unknown code;
+pre-retention validation errors remain intact. The test invokes twice without
+additional effects, lets the actual original controller exit, and proves fresh
+acquisition refuses its unchanged partial authority tree (GREEN1/1,3.884s).
+The test-owned spawn fault targets the child entry only, so the actual helper
+runs and fails; it does not fake controller/helper execution. Narrow independent
+review found no remaining issue. Fresh startup V2 emission remains disabled.
+Final public/helper/V1/physical-lease regression passed19/19 (40.198s), shared
+historical-reader/retained-release/ordinary-cleanup positives passed3/3
+(25.294s), source manifest17/17 (6.110s), final TypeScript no-emit and whitespace
+passed. Independent routing and error-contract reviews are clear. The public
+route checkbox is now proven; no source exporter, arity, returned settlement
+pair, V1 journal bytes or logical action changed. Live Mission Control and
+dashboard health remain HTTP200. No live DB/service/process mutation occurred.
 
 Private direct terminal-history RED first failed at the missing reader (8.159s).
 The new resolver retains original file descriptors/metadata/bytes across both
