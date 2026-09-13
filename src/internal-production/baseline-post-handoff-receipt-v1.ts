@@ -12208,7 +12208,8 @@ function requireExactPoisonPostVisibleProgressNestedAuthorityBodyV1(
     if (!isPlainRecord(value.migrationImplementation) || !hasExactKeys(value.migrationImplementation, ["locator", "gitMode", "gitBlobHash"]) || value.migrationImplementation.locator !== "src/db/bootstrap-main-claim-handoff-v1-migration.ts" || value.migrationImplementation.gitMode !== "100644") currentEntryFail("nested pending migration implementation is invalid");
     requireGitHash(value.migrationImplementation.gitBlobHash, "nested pending migration implementation blob");
   }
-  else if (value.schema !== schemas[descriptor.name]) currentEntryFail(`nested authority schema is invalid: ${descriptor.name}`);
+  else if (value.schema !== schemas[descriptor.name]
+    && !(descriptor.name === "restartAuthority" && value.schema === "setfarm.internal-production-pre-schema-spawner-restart-authority.v2")) currentEntryFail(`nested authority schema is invalid: ${descriptor.name}`);
   if (descriptor.name === "preMutationLoadedRuntimeServiceAuthority" && (value.currentEntryOperationRef === undefined || value.currentEntryOperationHash === undefined || typeof value.serviceProjectionSetHash !== "string")) currentEntryFail("nested pre-mutation runtime authority binding is invalid");
   for (const key of descriptor.pairKeys) if (value[key] !== pair[key]) currentEntryFail(`nested authority pair is crossed: ${descriptor.name}`);
   const hashKey = descriptor.pairKeys.find((key) => key.endsWith("Hash"));
@@ -13067,6 +13068,49 @@ function requireExactPoisonPostVisibleProgressPreSchemaOperationInventoryV1(
   return Object.freeze({ ordinal, requiredMaterialIndex, immediateTarget, nextStatusTarget, dynamicTargets: Object.freeze(dynamicTargets) });
 }
 
+async function authenticatePreSchemaRestartTransportAtReceiptV1(
+  restart: Readonly<Record<string, unknown>>,
+  startup: Readonly<Record<string, unknown>>,
+  operation: Readonly<Record<string, unknown>>,
+  assertStable: () => void,
+): Promise<void> {
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || (uid as number) < 0 || restart.uid !== uid) currentEntryFail("pre-schema restart authority current uid is crossed");
+  if (restart.schema === "setfarm.internal-production-pre-schema-spawner-restart-authority.v1") {
+    if (restart.executable !== "/bin/launchctl" || canonicalComparable(restart.argv) !== canonicalComparable(["kickstart", "-k", `gui/${uid}/com.setrox.setfarm-spawner`])) currentEntryFail("pre-schema restart authority launchctl transport is crossed");
+    return;
+  }
+  assertStable();
+  if (restart.schema !== "setfarm.internal-production-pre-schema-spawner-restart-authority.v2"
+    || restart.actionId !== "task6a-pre-schema-setfarm-spawner-rebind-v1" || restart.service !== "setfarm-spawner"
+    || restart.transport !== "direct-detached-node-v1" || restart.terminationSignal !== "SIGTERM"
+    || restart.maximumTerminationDispatchCount !== 1 || restart.maximumSpawnDispatchCount !== 1) currentEntryFail("pre-schema direct restart transport is crossed");
+  const pair = requirePair({ operationRef: operation.operationRef, operationHash: operation.operationHash }, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/") as InternalProductionCurrentEntryOperationPairV1;
+  const preMutation = await resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(pair);
+  assertStable();
+  if (preMutation.currentEntryOperationRef !== operation.operationRef || preMutation.currentEntryOperationHash !== operation.operationHash
+    || restart.preMutationLoadedRuntimeServiceAuthorityRef !== preMutation.preMutationLoadedRuntimeServiceAuthorityRef
+    || restart.preMutationLoadedRuntimeServiceAuthorityHash !== preMutation.preMutationLoadedRuntimeServiceAuthorityHash) currentEntryFail("pre-schema direct restart original P3 pair is crossed");
+  const spawner = preMutation.spawner;
+  if (!isPlainRecord(spawner) || spawner.processOwnerCount !== 1 || spawner.listener !== null) currentEntryFail("pre-schema direct restart original spawner is crossed");
+  const predecessorHash = hashCanonicalJson({ schema: "setfarm.internal-production-spawner-process-identity.v1", pid: spawner.pid, processStartTimeEpochMs: spawner.processStartTimeEpochMs, processIdentityHash: spawner.processIdentityHash });
+  for (const value of [restart, startup]) {
+    if (value.predecessorSpawnerProcessIdentityRef !== `setfarm://internal-production/spawner-process-identity/sha256/${predecessorHash}`
+      || value.predecessorSpawnerProcessIdentityHash !== predecessorHash || value.predecessorSpawnerServiceIdentityHash !== spawner.serviceIdentityHash
+      || value.predecessorSpawnerGenerationHash !== spawner.generationHash) currentEntryFail("pre-schema direct restart original predecessor is crossed");
+  }
+  const source = requireSource(operation.controllerSource);
+  if (spawner.loadedSourceSha !== source.sha || spawner.loadedTreeHash !== source.treeHash || spawner.loadedBuildHash !== source.buildHash) currentEntryFail("pre-schema direct restart original source is crossed");
+  const { profile } = await observeInternalProductionSpawnerLaunchProfileCandidateV1();
+  assertStable();
+  const { profileHash, ...profileBody } = profile;
+  if (profile.uid !== uid || profileHash !== restart.launchProfileHash || hashCanonicalJson(profileBody) !== profileHash
+    || canonicalComparable(profile.source) !== canonicalComparable(source)) currentEntryFail("pre-schema direct restart launch profile is crossed");
+  const finalPreMutation = await resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(pair);
+  assertStable();
+  if (canonicalComparable(finalPreMutation) !== canonicalComparable(preMutation)) currentEntryFail("pre-schema direct restart original P3 changed during profile observation");
+}
+
 async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
   authority: ExactPoisonPostVisibleProgressObservationAuthorityV1,
   operation: InternalProductionCurrentEntryOperationV1
@@ -13319,9 +13363,8 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
     }
     if (inventory.requiredMaterialIndex >= 3) {
       const restartAuthority = bodies[3]!;
-      const currentUid = process.getuid?.() ?? -1;
-      const expectedArgv = Object.freeze(["kickstart", "-k", `gui/${currentUid}/com.setrox.setfarm-spawner`]);
-      if (restartAuthority.currentEntryOperationRef !== operation.operationRef || restartAuthority.currentEntryOperationHash !== operation.operationHash || restartAuthority.preSchemaSpawnerRebindAuthorizationRef !== pairs[1]!.authorizationRef || restartAuthority.preSchemaSpawnerRebindAuthorizationHash !== pairs[1]!.authorizationHash || restartAuthority.startupTokenRef !== pairs[2]!.startupTokenRef || restartAuthority.startupTokenHash !== pairs[2]!.startupTokenHash || restartAuthority.predecessorSpawnerProcessIdentityRef !== bodies[2]!.predecessorSpawnerProcessIdentityRef || restartAuthority.predecessorSpawnerProcessIdentityHash !== bodies[2]!.predecessorSpawnerProcessIdentityHash || restartAuthority.predecessorSpawnerServiceIdentityHash !== bodies[2]!.predecessorSpawnerServiceIdentityHash || restartAuthority.predecessorSpawnerGenerationHash !== bodies[2]!.predecessorSpawnerGenerationHash || restartAuthority.targetSpawnerSourceSha !== source.sha || restartAuthority.targetSpawnerTreeHash !== source.treeHash || restartAuthority.targetSpawnerBuildHash !== source.buildHash || restartAuthority.uid !== currentUid || restartAuthority.executable !== "/bin/launchctl" || canonicalComparable(restartAuthority.argv) !== canonicalComparable(expectedArgv)) currentEntryFail("pre-schema restartAuthority controllerSource/host launch authority is crossed");
+      if (restartAuthority.currentEntryOperationRef !== operation.operationRef || restartAuthority.currentEntryOperationHash !== operation.operationHash || restartAuthority.preSchemaSpawnerRebindAuthorizationRef !== pairs[1]!.authorizationRef || restartAuthority.preSchemaSpawnerRebindAuthorizationHash !== pairs[1]!.authorizationHash || restartAuthority.startupTokenRef !== pairs[2]!.startupTokenRef || restartAuthority.startupTokenHash !== pairs[2]!.startupTokenHash || restartAuthority.predecessorSpawnerProcessIdentityRef !== bodies[2]!.predecessorSpawnerProcessIdentityRef || restartAuthority.predecessorSpawnerProcessIdentityHash !== bodies[2]!.predecessorSpawnerProcessIdentityHash || restartAuthority.predecessorSpawnerServiceIdentityHash !== bodies[2]!.predecessorSpawnerServiceIdentityHash || restartAuthority.predecessorSpawnerGenerationHash !== bodies[2]!.predecessorSpawnerGenerationHash || restartAuthority.targetSpawnerSourceSha !== source.sha || restartAuthority.targetSpawnerTreeHash !== source.treeHash || restartAuthority.targetSpawnerBuildHash !== source.buildHash) currentEntryFail("pre-schema restartAuthority controllerSource/host launch authority is crossed");
+      await authenticatePreSchemaRestartTransportAtReceiptV1(restartAuthority, bodies[2]!, operation, assertStable);
     }
     if (inventory.requiredMaterialIndex >= 4) {
       const predecessorTerminationObservation = bodies[4]!;
@@ -13382,9 +13425,8 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
         return;
       }
       if (index === 3) {
-        const currentUid = process.getuid?.() ?? -1;
-        const expectedArgv = Object.freeze(["kickstart", "-k", `gui/${currentUid}/com.setrox.setfarm-spawner`]);
-        if (value.currentEntryOperationRef !== operation.operationRef || value.currentEntryOperationHash !== operation.operationHash || value.preSchemaSpawnerRebindAuthorizationRef !== pairs[1]!.authorizationRef || value.preSchemaSpawnerRebindAuthorizationHash !== pairs[1]!.authorizationHash || value.startupTokenRef !== pairs[2]!.startupTokenRef || value.startupTokenHash !== pairs[2]!.startupTokenHash || value.predecessorSpawnerProcessIdentityRef !== bodies[2]!.predecessorSpawnerProcessIdentityRef || value.predecessorSpawnerProcessIdentityHash !== bodies[2]!.predecessorSpawnerProcessIdentityHash || value.predecessorSpawnerServiceIdentityHash !== bodies[2]!.predecessorSpawnerServiceIdentityHash || value.predecessorSpawnerGenerationHash !== bodies[2]!.predecessorSpawnerGenerationHash || value.targetSpawnerSourceSha !== source.sha || value.targetSpawnerTreeHash !== source.treeHash || value.targetSpawnerBuildHash !== source.buildHash || value.uid !== currentUid || value.executable !== "/bin/launchctl" || canonicalComparable(value.argv) !== canonicalComparable(expectedArgv)) currentEntryFail("pre-schema dynamic publication restart authority is crossed");
+        if (value.currentEntryOperationRef !== operation.operationRef || value.currentEntryOperationHash !== operation.operationHash || value.preSchemaSpawnerRebindAuthorizationRef !== pairs[1]!.authorizationRef || value.preSchemaSpawnerRebindAuthorizationHash !== pairs[1]!.authorizationHash || value.startupTokenRef !== pairs[2]!.startupTokenRef || value.startupTokenHash !== pairs[2]!.startupTokenHash || value.predecessorSpawnerProcessIdentityRef !== bodies[2]!.predecessorSpawnerProcessIdentityRef || value.predecessorSpawnerProcessIdentityHash !== bodies[2]!.predecessorSpawnerProcessIdentityHash || value.predecessorSpawnerServiceIdentityHash !== bodies[2]!.predecessorSpawnerServiceIdentityHash || value.predecessorSpawnerGenerationHash !== bodies[2]!.predecessorSpawnerGenerationHash || value.targetSpawnerSourceSha !== source.sha || value.targetSpawnerTreeHash !== source.treeHash || value.targetSpawnerBuildHash !== source.buildHash) currentEntryFail("pre-schema dynamic publication restart authority is crossed");
+        await authenticatePreSchemaRestartTransportAtReceiptV1(value, bodies[2]!, operation, assertStable);
         return;
       }
       if (index === 4) {

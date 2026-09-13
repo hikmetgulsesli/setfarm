@@ -12419,16 +12419,43 @@ function phase5cSAuthenticPreSchemaCurrentEntryOperationFixtureV1(): Readonly<Re
   return Object.freeze({ ...body, operationRef: `setfarm://internal-production/current-entry-operation/sha256/${operationHash}`, operationHash });
 }
 
+type DirectRestartEvidenceFixtureV2 = Readonly<{
+  preMutationLoadedRuntimeServiceAuthorityRef: string;
+  preMutationLoadedRuntimeServiceAuthorityHash: string;
+  launchProfileHash: string;
+}>;
+
+function installDirectReceiptEvidenceProbeFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  for (const [name, marker, inserted] of [
+    ["resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1", "): Promise<Readonly<Record<string, unknown>>> {", `
+  const probe = Reflect.get(globalThis, "__directReceiptEvidenceV1");
+  if (probe) { const value = probe.p3s[Math.min(probe.p3Calls++, probe.p3s.length - 1)]; if (pair.operationRef !== value.currentEntryOperationRef || pair.operationHash !== value.currentEntryOperationHash) throw Error("direct fixture original operation crossed"); await probe.onP3?.(probe.p3Calls); return structuredClone(value); }
+`],
+    ["observeInternalProductionSpawnerLaunchProfileCandidateV1", "observeInternalProductionSpawnerLaunchProfileCandidateV1() {", `
+  const probe = Reflect.get(globalThis, "__directReceiptEvidenceV1");
+  if (probe) { probe.profileCalls++; await probe.onProfile?.(); const value = { profile: probe.profile }; Object.defineProperty(value, "environment", { value: Object.freeze({}), enumerable: false }); return value as never; }
+`],
+  ] as const) {
+    const region = topLevelFunctionRegionV1(source, name);
+    assert.equal(region.split(marker).length, 2, `${name}: instrument exactly its function entry`);
+    source = source.replace(region, region.replace(marker, marker + inserted));
+  }
+  writeFileSync(modulePath, source);
+}
+
 function phase5cSExternalRawCausalChainFixtureV1(
   arrow: typeof PHASE5C_S_EXTERNAL_RAW_ARROWS_V1[number],
   recoveryVariant: "A" | "B" = "A",
   selectedOperation?: Readonly<Record<string, unknown>>,
   selectedSpawnerGeneration?: Readonly<{ serviceIdentityHash: string; generationHash: string }>,
+  directRestart?: DirectRestartEvidenceFixtureV2,
 ): Phase5cSExternalRawCausalChainFixtureV1 {
-  const key = `${arrow.family}:${arrow.ordinal}:${arrow.prior}:${arrow.next}:${recoveryVariant}:${String(selectedOperation?.operationHash ?? "default")}:${selectedSpawnerGeneration?.serviceIdentityHash ?? "default"}:${selectedSpawnerGeneration?.generationHash ?? "default"}`;
+  const key = `${arrow.family}:${arrow.ordinal}:${arrow.prior}:${arrow.next}:${recoveryVariant}:${String(selectedOperation?.operationHash ?? "default")}:${selectedSpawnerGeneration?.serviceIdentityHash ?? "default"}:${selectedSpawnerGeneration?.generationHash ?? "default"}:${directRestart ? canonicalHash(directRestart) : "v1"}`;
   const cached = PHASE5C_S_EXTERNAL_RAW_CAUSAL_CHAIN_CACHE_V1.get(key);
   if (cached !== undefined) return cached;
-  const value = phase5cSBuildExternalRawCausalChainFixtureV1(arrow, recoveryVariant, selectedOperation, selectedSpawnerGeneration);
+  const value = phase5cSBuildExternalRawCausalChainFixtureV1(arrow, recoveryVariant, selectedOperation, selectedSpawnerGeneration, directRestart);
   PHASE5C_S_EXTERNAL_RAW_CAUSAL_CHAIN_CACHE_V1.set(key, value);
   return value;
 }
@@ -12438,6 +12465,7 @@ function phase5cSBuildExternalRawCausalChainFixtureV1(
   recoveryVariant: "A" | "B" = "A",
   selectedOperation?: Readonly<Record<string, unknown>>,
   selectedSpawnerGeneration?: Readonly<{ serviceIdentityHash: string; generationHash: string }>,
+  directRestart?: DirectRestartEvidenceFixtureV2,
 ): Phase5cSExternalRawCausalChainFixtureV1 {
   const authenticSelectedOperation = (arrow.family === "pre-schema" && recoveryVariant === "B") || arrow.family === "migration-32" || arrow.family === "current-audit"
     ? (selectedOperation ?? phase5cSAuthenticPreSchemaCurrentEntryOperationFixtureV1())
@@ -12472,7 +12500,11 @@ function phase5cSBuildExternalRawCausalChainFixtureV1(
     const startupToken = pairFrom(startupValue, "startupTokenRef", "startupTokenHash");
     const restartUid = process.getuid?.() ?? 501;
     const restartBody = Object.freeze({ schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v1", actionId: "task6a-pre-schema-setfarm-spawner-rebind-v1", service: "setfarm-spawner", currentEntryOperationRef: operationRef, currentEntryOperationHash: operationHash, preSchemaSpawnerRebindAuthorizationRef: authorization.authorizationRef, preSchemaSpawnerRebindAuthorizationHash: authorization.authorizationHash, startupTokenRef: startupToken.startupTokenRef, startupTokenHash: startupToken.startupTokenHash, predecessorSpawnerProcessIdentityRef: startupValue.predecessorSpawnerProcessIdentityRef, predecessorSpawnerProcessIdentityHash: startupValue.predecessorSpawnerProcessIdentityHash, predecessorSpawnerServiceIdentityHash: startupValue.predecessorSpawnerServiceIdentityHash, predecessorSpawnerGenerationHash: startupValue.predecessorSpawnerGenerationHash, targetSpawnerSourceSha: controllerSource.sha, targetSpawnerTreeHash: controllerSource.treeHash, targetSpawnerBuildHash: controllerSource.buildHash, uid: restartUid, launchdLabel: "com.setrox.setfarm-spawner", executable: "/bin/launchctl", argv: Object.freeze(["kickstart", "-k", `gui/${restartUid}/com.setrox.setfarm-spawner`]) });
-    const restartValue = withPair(restartBody, "restartAuthorityRef", "restartAuthorityHash", "setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/");
+    const { launchdLabel, executable, argv, ...restartCommon } = restartBody;
+    const selectedRestartBody = directRestart ? { ...restartCommon,
+      schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v2", ...directRestart,
+      transport: "direct-detached-node-v1", terminationSignal: "SIGTERM", maximumTerminationDispatchCount: 1, maximumSpawnDispatchCount: 1 } : restartBody;
+    const restartValue = withPair(selectedRestartBody, "restartAuthorityRef", "restartAuthorityHash", "setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/");
     const restartAuthority = pairFrom(restartValue, "restartAuthorityRef", "restartAuthorityHash");
     const predecessorBody = Object.freeze({ schema: "setfarm.internal-production-pre-schema-spawner-predecessor-termination-observation.v1", currentEntryOperationRef: operationRef, currentEntryOperationHash: operationHash, preSchemaSpawnerRebindAuthorizationRef: authorization.authorizationRef, preSchemaSpawnerRebindAuthorizationHash: authorization.authorizationHash, startupTokenRef: startupToken.startupTokenRef, startupTokenHash: startupToken.startupTokenHash, restartAuthorityRef: restartAuthority.restartAuthorityRef, restartAuthorityHash: restartAuthority.restartAuthorityHash, predecessorSpawnerProcessIdentityRef: startupValue.predecessorSpawnerProcessIdentityRef, predecessorSpawnerProcessIdentityHash: startupValue.predecessorSpawnerProcessIdentityHash, predecessorSpawnerServiceIdentityHash: startupValue.predecessorSpawnerServiceIdentityHash, predecessorSpawnerGenerationHash: startupValue.predecessorSpawnerGenerationHash, observedProcessState: "terminal-and-not-running", observedListenerState: "absent" });
     const predecessorValue = withPair(predecessorBody, "predecessorTerminationObservationRef", "predecessorTerminationObservationHash", "setfarm://internal-production/pre-schema-spawner-predecessor-termination-observation/sha256/");
@@ -12769,6 +12801,7 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
   blocked = false,
   selectedOperation?: Readonly<Record<string, unknown>>,
   selectedSpawnerGeneration?: Readonly<{ serviceIdentityHash: string; generationHash: string }>,
+  directRestart?: DirectRestartEvidenceFixtureV2,
 ): Readonly<{
   operation: Readonly<{ operationRef: string; operationHash: string }>;
   current: Readonly<Record<string, unknown>>;
@@ -12799,7 +12832,7 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
     assert.ok(arrow, `pre-schema physical ordinal ${ordinal} exists`);
     return arrow;
   });
-  const chains = arrows.map((arrow) => phase5cSExternalRawCausalChainFixtureV1(arrow, "B", operation, selectedSpawnerGeneration));
+  const chains = arrows.map((arrow) => phase5cSExternalRawCausalChainFixtureV1(arrow, "B", operation, selectedSpawnerGeneration, directRestart));
   const materials = chains[0]!.materials;
   let current = chains.at(-1)!.next;
   assert.deepEqual(current.currentEntryOperation, Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash }), "physical pre-schema status binds the authentic self-hashed operation pair");
@@ -12837,7 +12870,7 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
   if (blocked) {
     assert.equal(terminalOrdinal, 2, "blocked physical history branches only from the restart-authority prefix");
     const blockedArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.next === "blocked")!;
-    const blockedStatus = phase5cSExternalRawCausalChainFixtureV1(blockedArrow, "B", operation).next;
+    const blockedStatus = phase5cSExternalRawCausalChainFixtureV1(blockedArrow, "B", operation, selectedSpawnerGeneration, directRestart).next;
     const blockedTarget = path.join(operationDirectory, "status-blocked-helper-dispatch-settlement-unknown.pair.json");
     writeCanonical(blockedTarget, pair(blockedStatus, "statusRef", "statusHash"));
     record("status", blockedStatus, "statusHash");
@@ -24976,6 +25009,37 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
     } finally { removeFixture(root); }
   });
 
+  it("direct V2 restart authority crosses the actual nested receipt reader without changing its pair domain", async () => {
+    const root = createFixture();
+    try {
+      instrumentPhase5cProgressFixtureV1(root);
+      const descriptor = PHASE5C_S_NESTED_AUTHORITIES_V1.find((candidate) => candidate.name === "restartAuthority")!;
+      const original = phase5cSNestedSemanticBodyFixtureV1(descriptor);
+      const { restartAuthorityRef, restartAuthorityHash, launchdLabel, executable, argv, ...common } = original;
+      const fixtureWorkspaceRoot = path.dirname(realpathSync(root));
+      const successorRoot = path.join(fixtureWorkspaceRoot, "data/internal-production-baseline/p5c-s-nested-store");
+      for (const version of [2, 3]) {
+        const body = { ...common, schema: `setfarm.internal-production-pre-schema-spawner-restart-authority.v${version}`,
+          preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${"d".repeat(64)}`,
+          preMutationLoadedRuntimeServiceAuthorityHash: "d".repeat(64), launchProfileHash: "e".repeat(64),
+          transport: "direct-detached-node-v1", terminationSignal: "SIGTERM", maximumTerminationDispatchCount: 1, maximumSpawnDispatchCount: 1 };
+        const hash = canonicalHash(body);
+        const pair = { restartAuthorityRef: `${descriptor.prefix}${hash}`, restartAuthorityHash: hash };
+        const target = path.join(fixtureWorkspaceRoot, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/restart-authority/sha256", hash.slice(0, 2), `${hash}.json`);
+        phase5cEnsurePublicationParentV1(target);
+        const bytes = canonicalFixtureRecordV1({ ...body, ...pair });
+        writeFileSync(target, bytes, { flag: "wx", mode: 0o600 });
+        const input = { name: descriptor.name, status: phase5cSStatusWithNestedPairFixtureV1(descriptor, pair), successorRoot, expectedTarget: target, mutation: "none" };
+        const result = await runFixtureExpressionAsync(root, `(async()=>{try{await m.p5cSOpenProgressNestedAuthorityFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({outcome:'returned'}))}catch(error){process.stdout.write(JSON.stringify({outcome:'threw',message:String(error)}))}})()`);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.outcome, version === 2 ? "returned" : "threw", String(observed.message));
+        if (version === 3) assert.match(observed.message, /nested authority schema is invalid/);
+        assert.deepEqual(readFileSync(target), bytes);
+      }
+    } finally { removeFixture(root); }
+  });
+
   it("P5c-S opens every file-backed nested root route and retains its member and parent generation", async () => {
     const root = createFixture();
     try {
@@ -31867,6 +31931,104 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
     }
   });
 
+  for (const responseLoss of [false, true]) it(`direct V2 restart is authenticated by the physical receipt reader against original P3 and profile (${responseLoss ? "response-loss" : "fixed"})`, async () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      installDirectReceiptEvidenceProbeFixtureV1(root);
+      const operation = phase5cSAuthenticPreSchemaCurrentEntryOperationFixtureV1();
+      const source = operation.controllerSource as Record<string, unknown>;
+      const service = structuredClone(exactZeroEffectServiceCensusV1()) as Record<string, any>;
+      const spawner = { ...service.spawner, pid: 101, processStartTimeEpochMs: 1_700_000_000_101, processIdentityHash: "6".repeat(64),
+        loadedSourceSha: source.sha, loadedTreeHash: source.treeHash, loadedBuildHash: source.buildHash, processOwnerCount: 1, listener: null };
+      spawner.generationHash = canonicalHash({ schema: "setfarm.internal-production-loaded-service-generation.v1", label: "com.setrox.setfarm-spawner", serviceIdentityHash: spawner.serviceIdentityHash, source: { sha: source.sha, treeHash: source.treeHash, buildHash: source.buildHash } });
+      service.spawner = spawner;
+      delete service.censusHash;
+      const projection = { schema: "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1", currentEntryOperationRef: operation.operationRef, currentEntryOperationHash: operation.operationHash,
+        observedServiceCensusHash: canonicalHash(service), spawner, dashboard: service.dashboard, missionControl: service.missionControl, openClaw: service.openClaw };
+      const p3Body = { ...projection, serviceProjectionSetHash: canonicalHash(projection) };
+      const p3Hash = canonicalHash(p3Body);
+      const p3Pair = { preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${p3Hash}`, preMutationLoadedRuntimeServiceAuthorityHash: p3Hash };
+      const preMutation = { ...p3Body, ...p3Pair };
+      const profileBody = { schema: "setfarm.internal-production-spawner-launch-profile.v1", source, uid: process.getuid!() };
+      const profile = { ...profileBody, profileHash: canonicalHash(profileBody) };
+      const seedForProfile = (launchProfileHash: string) => {
+        const priorTemporary = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", String(operation.operationHash), ".03-restart-authority.pair.json.00000010-0000-4000-8000-000000000010.tmp");
+        if (responseLoss && existsSync(priorTemporary)) unlinkSync(priorTemporary);
+        const directEvidence = { ...p3Pair, launchProfileHash };
+        const seeded = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, responseLoss ? 1 : 2, !responseLoss, operation, spawner, directEvidence);
+        if (responseLoss) {
+          const arrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === 2 && candidate.next !== "blocked")!;
+          const restart = phase5cSExternalRawCausalChainFixtureV1(arrow, "B", operation, spawner, directEvidence).materials["restart-authority"]!;
+          const hash = String(restart.restartAuthorityHash);
+          const record = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/restart-authority/sha256", hash.slice(0, 2), `${hash}.json`);
+          phase5cEnsurePublicationParentV1(record);
+          writeFileSync(record, canonicalFixtureRecordV1(restart), { mode: 0o600 });
+          writeFileSync(path.join(seeded.operationDirectory, ".03-restart-authority.pair.json.00000010-0000-4000-8000-000000000010.tmp"), canonicalFixtureRecordV1({ restartAuthorityRef: restart.restartAuthorityRef, restartAuthorityHash: hash }), { mode: 0o600 });
+        }
+        return seeded;
+      };
+      const cases: Array<{ label: string; p3s: unknown[]; profile: Record<string, unknown>; valid: boolean }> = [
+        { label: "stable", p3s: [preMutation], profile, valid: true },
+        { label: "crossed P3 pair", p3s: [{ ...preMutation, preMutationLoadedRuntimeServiceAuthorityHash: "f".repeat(64) }], profile, valid: false },
+        { label: "crossed predecessor", p3s: [{ ...preMutation, spawner: { ...spawner, pid: 102 } }], profile, valid: false },
+        { label: "P3 drift during profile", p3s: [preMutation, { ...preMutation, spawner: { ...spawner, pid: 102 } }], profile, valid: false },
+        { label: "profile hash", p3s: [preMutation], profile: { ...profile, profileHash: "f".repeat(64) }, valid: false },
+        { label: "profile body hash", p3s: [preMutation], profile: { ...profile, schema: "crossed-profile-body" }, valid: false },
+        { label: "profile uid", p3s: [preMutation], profile: { ...profile, uid: profile.uid + 1, profileHash: canonicalHash({ ...profileBody, uid: profile.uid + 1 }) }, valid: false },
+        { label: "profile source", p3s: [preMutation], profile: { ...profile, source: { ...source, buildHash: "f".repeat(64) }, profileHash: canonicalHash({ ...profileBody, source: { ...source, buildHash: "f".repeat(64) } }) }, valid: false },
+      ];
+      for (const entry of cases) {
+        const seeded = seedForProfile(["profile uid", "profile source"].includes(entry.label) ? String(entry.profile.profileHash) : profile.profileHash);
+        const input = { operation: seeded.operation, successorRoot: seeded.successorRoot, mutation: "none", mutationTarget: seeded.operationDirectory };
+        const beforeTree = filesystemTreeSnapshot(path.dirname(root));
+        const result = await runFixtureExpressionAsync(root, `(async()=>{globalThis.__directReceiptEvidenceV1={p3s:${JSON.stringify(entry.p3s)},p3Calls:0,profile:${JSON.stringify(entry.profile)},profileCalls:0};await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.js")).href)});m.p5cSPrewarmFixedRepositoryRootFixtureV1();const value=await m.p5cSObservePreSchemaAtRootFixtureV1(${JSON.stringify(input)});const probe=globalThis.__directReceiptEvidenceV1;process.stdout.write(JSON.stringify({value,p3Calls:probe.p3Calls,profileCalls:probe.profileCalls}))})()`);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.value.outcome, entry.valid ? "returned" : "threw", `${entry.label}: ${String(observed.value.message)}`);
+        if (entry.valid) {
+          assert.deepEqual(observed.value.value, seeded.current);
+          assert.equal(observed.p3Calls, 2);
+          assert.equal(observed.profileCalls, 1);
+        } else assert.match(String(observed.value.message), /pre-schema direct restart/);
+        assert.equal(observed.value.descriptorDelta, 0, `${entry.label}: no descriptor leak`);
+        assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), beforeTree, `${entry.label}: no writes`);
+      }
+      for (const boundary of ["p3-first", "profile", "p3-final"] as const) for (const kind of ["member", "parent"] as const) {
+        const seeded = seedForProfile(profile.profileHash);
+        const input = { operation: seeded.operation, successorRoot: seeded.successorRoot, mutation: "none", mutationTarget: seeded.operationDirectory };
+        const target = seeded.authorizationContentTarget;
+        const beforeTree = filesystemTreeSnapshot(path.dirname(root));
+        const result = await runFixtureExpressionAsync(root, `(async()=>{
+          const fs=await import('node:fs'),path=await import('node:path');
+          const target=${JSON.stringify(target)},kind=${JSON.stringify(kind)},boundary=${JSON.stringify(boundary)};
+          const parent=path.dirname(target),backup=(kind==='parent'?parent:target)+'.direct-await-original';
+          let mutated=false,bytesEqual=false,generationChanged=false;
+          const mutate=()=>{if(mutated)throw Error('duplicate fixture mutation');const bytes=fs.readFileSync(target);const before=fs.lstatSync(kind==='parent'?parent:target,{bigint:true});
+            if(kind==='member'){fs.renameSync(target,backup);fs.writeFileSync(target,bytes,{flag:'wx',mode:0o600});}
+            else{fs.renameSync(parent,backup);fs.mkdirSync(parent,{mode:0o700});for(const name of fs.readdirSync(backup))fs.writeFileSync(path.join(parent,name),fs.readFileSync(path.join(backup,name)),{flag:'wx',mode:0o600});}
+            mutated=true;bytesEqual=fs.readFileSync(target).equals(bytes);generationChanged=fs.lstatSync(kind==='parent'?parent:target,{bigint:true}).ino!==before.ino;};
+          const probe={p3s:[${JSON.stringify(preMutation)}],p3Calls:0,profile:${JSON.stringify(profile)},profileCalls:0,
+            onP3:async(count)=>{if(boundary===(count===1?'p3-first':'p3-final'))mutate()},onProfile:async()=>{if(boundary==='profile')mutate()}};
+          globalThis.__directReceiptEvidenceV1=probe;
+          await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.js")).href)});
+          m.p5cSPrewarmFixedRepositoryRootFixtureV1();
+          try{const value=await m.p5cSObservePreSchemaAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({value,mutated,bytesEqual,generationChanged,p3Calls:probe.p3Calls,profileCalls:probe.profileCalls}));}
+          finally{if(mutated){if(kind==='member'){fs.unlinkSync(target);fs.renameSync(backup,target);}else{for(const name of fs.readdirSync(parent))fs.unlinkSync(path.join(parent,name));fs.rmdirSync(parent);fs.renameSync(backup,parent);}}}
+        })()`);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.mutated && observed.bytesEqual && observed.generationChanged, true, `${boundary}/${kind}: real same-byte generation replacement`);
+        assert.equal(observed.value.outcome, "threw", `${boundary}/${kind}: original physical owner must refuse`);
+        assert.equal(observed.p3Calls, boundary === "p3-final" ? 2 : 1, `${boundary}/${kind}: no later P3 call`);
+        assert.equal(observed.profileCalls, boundary === "p3-first" ? 0 : 1, `${boundary}/${kind}: no later profile call`);
+        assert.equal(observed.value.descriptorDelta, 0, `${boundary}/${kind}: original descriptors all closed`);
+        assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), beforeTree, `${boundary}/${kind}: fixture restores original evidence and reader writes nothing`);
+      }
+    } finally { removeFixture(root); }
+  });
+
   it("P5c-S retains every present idle pre-schema frontier through ordinal four", async () => {
     const cases = Object.freeze([
       Object.freeze({ label: "present-empty", seedOrdinal: -1 as const, arrowOrdinal: 0 }),
@@ -34910,23 +35072,30 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       "a dynamic startup material is cross-bound to the already pinned authorization pair, not only its operation and self-hash");
     assert.match(preSchemaAtRoot, /dynamic status[\s\S]*(?:startupToken|restartAuthority|dispatchPrefix)[\s\S]*(?:pairs|bodies)[\s\S]*(?:currentEntryFail|fail)/,
       "a dynamic successor status is cross-bound to the complete fixed prior material/status prefix");
-    const preSchemaUidBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*process\.getuid\?\.\(\)(?:\s*\?\?\s*-1)?\s*;/.exec(preSchemaAtRoot);
+    const preSchemaTransport = topLevelFunctionRegionV1(source, "authenticatePreSchemaRestartTransportAtReceiptV1");
+    const preSchemaUidBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*process\.getuid\?\.\(\)(?:\s*\?\?\s*-1)?\s*;/.exec(preSchemaTransport);
     assert.ok(preSchemaUidBinding, "the reader captures the live host uid once for restart validation");
     const preSchemaUid = preSchemaUidBinding[1]!;
     const preSchemaRestartBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*bodies\[3\]!\s*;/.exec(preSchemaAtRoot);
     assert.ok(preSchemaRestartBinding, "restart authority is captured from the same pinned material prefix");
     const preSchemaRestart = preSchemaRestartBinding[1]!;
-    assert.match(preSchemaAtRoot, new RegExp(`${preSchemaRestart}\\.uid\\s*!==\\s*${preSchemaUid}`),
+    assert.match(preSchemaAtRoot, new RegExp(`await authenticatePreSchemaRestartTransportAtReceiptV1\\(${preSchemaRestart}, bodies\\[2\\]!, operation, assertStable\\)`));
+    assert.match(preSchemaAtRoot, /await authenticatePreSchemaRestartTransportAtReceiptV1\(value, bodies\[2\]!, operation, assertStable\)/);
+    assert.match(preSchemaTransport, new RegExp(`restart\\.uid\\s*!==\\s*${preSchemaUid}`),
       "restart authority uid is bound to the captured live host uid");
     const tick = "`";
     const exactRestartArgvVector = `\\[\\s*["']kickstart["']\\s*,\\s*["']-k["']\\s*,\\s*${tick}gui/\\$\\{${preSchemaUid}\\}/com\\.setrox\\.setfarm-spawner${tick}\\s*\\]`;
     const exactRestartArgvExpression = `(?:Object\\.freeze\\(\\s*${exactRestartArgvVector}\\s*\\)|${exactRestartArgvVector}(?:\\s+as\\s+const)?)`;
-    const preSchemaExpectedArgvBinding = new RegExp(`const\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*${exactRestartArgvExpression}\\s*;`).exec(preSchemaAtRoot);
+    const preSchemaExpectedArgvBinding = new RegExp(`const\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*${exactRestartArgvExpression}\\s*;`).exec(preSchemaTransport);
     const exactRestartArgvAuthority = preSchemaExpectedArgvBinding === null
       ? exactRestartArgvExpression
       : `(?:${preSchemaExpectedArgvBinding[1]}|${exactRestartArgvExpression})`;
-    assert.match(preSchemaAtRoot, new RegExp(`canonicalComparable\\(\\s*${preSchemaRestart}\\.argv\\s*\\)\\s*!==\\s*canonicalComparable\\(\\s*${exactRestartArgvAuthority}\\s*\\)`),
+    assert.match(preSchemaTransport, new RegExp(`canonicalComparable\\(\\s*restart\\.argv\\s*\\)\\s*!==\\s*canonicalComparable\\(\\s*${exactRestartArgvAuthority}\\s*\\)`),
       "restart argv is canonically equal to the exact host-bound launchctl vector; dead token mentions cannot satisfy the contract");
+    assert.match(preSchemaTransport, /restart\.schema === "setfarm\.internal-production-pre-schema-spawner-restart-authority\.v1"[\s\S]*return;[\s\S]*await resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1/,
+      "persisted V1 returns before either direct evidence port");
+    assert.match(preSchemaTransport, /await resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1\(pair\);\s*assertStable\(\);[\s\S]*await observeInternalProductionSpawnerLaunchProfileCandidateV1\(\);\s*assertStable\(\);[\s\S]*await resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1\(pair\);\s*assertStable\(\);/,
+      "V2 brackets both P3 reads and profile with the original physical owner");
     const preSchemaStartupBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*bodies\[2\]!\s*;/.exec(preSchemaAtRoot);
     const preSchemaPredecessorBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*bodies\[4\]!\s*;/.exec(preSchemaAtRoot);
     assert.ok(preSchemaStartupBinding && preSchemaPredecessorBinding,

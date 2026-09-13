@@ -849,6 +849,28 @@ retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
   and zero calls to either new port. TypeScript no-emit passed(session37537).
   Independent localized re-review found no remaining substantive issue.
   Source manifests passed17/17(session71010,5.860s); whitespace passed.
+  Receipt nested/physical follow-on: the typed nested reader admits exactly
+  restart V1 or V2 in the same pair domain; retained and response-loss physical
+  readers share one private transport validator. V2 joins original P3, derived
+  predecessor/source and profile, with original physical-owner fences around
+  P3/profile/P3 awaits. V1 returns before all new direct ports and fences.
+  Actual nested-reader RED11149 became GREEN42931. Actual physical-reader
+  RED87423 became GREEN90129. Independent review required non-confounded
+  profile UID/source/hash tests and actual member/parent generation replacement
+  at every new await; final owning cases passed2/2(session41738,18.670s), each
+  exercising8 semantic cases and6 same-byte physical replacement cases, exact
+  subsequent-call cutoffs, zero descriptor delta and no reader writes.
+  The wider V1 matrix first exposed an added fence changing its original final
+  refusal boundary(session80146); keep that extra entry fence V2-only rather
+  than changing the fixture's expected count. Full scoped rerun passed5/5
+  (session25676,259.775s), including the entire unchanged V1 physical matrix,
+  nested V2/V3 discriminator, both tightened V2 physical matrices and structural
+  contract. No test was stopped early and no V1 expected count was relaxed.
+  Final no-emit passed(session7515), manifests17/17(session21912,7.527s),
+  whitespace passed; localized independent re-review found no new issue.
+  Final startup compatibility rerun passed12/12(session29777,5.399s).
+  The final33-pair V2 consumer remains unimplemented, so none of these scoped
+  checks constitutes complete receipt/P3, clean-main or live acceptance.
 - [ ] Bracket phase-zero with stable helper census: absent or fully authenticated
   terminal only; partial, appearance/disappearance and ABA refuse. Require
   terminal explicitly at all cutover/zero-owner guard consumers. Preserve the
@@ -1259,34 +1281,38 @@ integrity authority.
 **Produces:** A truthful versioned transport chain shared by cold bootstrap and
 pre-schema rebind, with no caller-controlled PID/executable/argv.
 
-Cold chain implementation is complete at its scoped checkpoints. Direct intent,
-termination, helper authentication, spawn dispatch and actual child startup/claim
-are implemented and scoped verification is recorded above. Fixed-helper launch,
-controller settlement, downstream evidence and terminal release remain required.
-Broad boxes below intentionally stay open
-until both lifecycle variants satisfy the complete requirement.
+Cold and direct kernel implementation is complete at its recorded scoped
+checkpoints, including fixed-helper launch, controller settlement and terminal
+release/dead-owner reclamation. The historical kernel boxes below are reconciled
+with those later checkpoints; downstream final graph/helper census, coupled
+receipt/P3 gates, clean-main and live acceptance remain explicitly open above.
+Evidence includes113964d5(watcher reproduction),8bfd2490/c39abadc/2f1ca08c/
+107066f8/3597c936/4fd7bba8(strict direct chain),42291d46/81be2fc5/9649b289
+(fixed helper),fcab5354/ff0e80b2/a65a488e/a0653ac4(terminal release/reclamation),
+their owning tests and independent reviews recorded in the checkpoint ledger.
+This reconciliation does not claim a new whole-kernel run or live acceptance.
 
-- [ ] In a disposable real-child fixture reproduce that a watcher restart leaves
+- [x] In a disposable real-child fixture reproduce that a watcher restart leaves
   the detached predecessor alive. Assert a replacement requires the old identity
   to be terminal and the new identity to be different; the old helper must fail
   this behavior test.
-- [ ] Define strict cold/rebind intent, termination-dispatch, spawn-dispatch,
+- [x] Define strict cold/rebind intent, termination-dispatch, spawn-dispatch,
   child-claim and settlement records with separate hash domains. Each record
   binds the same source, host, lease and exact prior pair. Keep historical V1
   launchctl authority read-only; it cannot authorize direct effects.
-- [ ] Implement the fixed helper's direct spawn and one-shot inherited descriptor
+- [x] Implement the fixed helper's direct spawn and one-shot inherited descriptor
   handshake. Preserve runtime integrity independently of the ordinary CLI.
   Derive rebind target from authenticated stored process identity, never caller
   scalars. No SIGKILL fallback; nontermination prevents launch.
-- [ ] Test wrong branch/fields, descriptor swaps, reused identities, source drift,
+- [x] Test wrong branch/fields, descriptor swaps, reused identities, source drift,
   duplicate intent/claim, process appearance, ignoring termination, and every
   pre/post-effect response-loss boundary. Lost spawn acknowledgement adopts only
   a real matching claim, otherwise retains a blocked fence without redispatch.
 - [x] Extend physical-lease release/dead-owner reclamation to the separate cold
   journal. Prove incomplete dispatch cannot become an unfenced zero-owner state.
-- [ ] Complete the distinct direct-rebind terminal release/dead-owner relation;
+- [x] Complete the distinct direct-rebind terminal release/dead-owner relation;
   a partial direct dispatch must retain its original fence without redispatch.
-- [ ] Independently review the kernel before integrating live authority producers.
+- [x] Independently review the kernel before integrating live authority producers.
 
 ## Task 3: Integrate real cold spawner and controlled rebind
 
@@ -1296,6 +1322,9 @@ sealed cold process, followed by genuine ordinary operation-bound rebind.
 
 - [ ] Add a fixture with no spawner and prove old preparation fails at the
   four-service census. Keep the public four-service observer unchanged.
+  The ordinary-without-spawner collector refusal is already covered by0763fc92;
+  the exact old preparation entrypoint behavior test is still pending, not
+  silently counted as complete by the ledger reconciliation.
 - [x] Add private three-service absence/physical/phase/read-only DB observation,
   including all-root daemon-family and launcher/singleton checks. Repeat
   decisive observations under the shared physical lease before dispatch.
