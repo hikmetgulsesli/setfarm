@@ -816,6 +816,7 @@ export function parseDirectTerminationFixtureV1(dispatch,receipt){const state=re
 export function openDirectHelperFrameFixtureV1(clone=false){const state=retainedDirectSpawnerRebindIntentV1;return openDirectSpawnerHelperFrameV1(clone?{...state}:state)}
 export function directBorrowedLeaseDescriptorFixtureV1(){return heldLease(retainedDirectSpawnerRebindIntentV1.lease).descriptor}
 export function parseDirectClaimFixtureV1(bytes,intent,dispatch){return parseDirectSpawnerClaimV1(bytes,intent,dispatch)}
+export function parseDirectSpawnDispatchFixtureV1(bytes,intent,terminationDispatch,terminationReceipt){return parseDirectSpawnerSpawnDispatchV1(bytes,intent,terminationDispatch,terminationReceipt)}
 export function drainDirectFrameCleanupFixtureV1(){for(const close of pendingColdHelperAuthenticationCleanupV1)close();return pendingColdHelperAuthenticationCleanupV1.size}
 function directSignalFixtureV1(pid,signal){const probe=globalThis.__directSignalFixtureV1;if(signal==='SIGTERM'&&probe){probe.calls.push({pid,signal});if(probe.before){probe.before=false;throw Error('DIRECT_SIGNAL_BEFORE')}const result=process.kill(pid,signal);if(probe.responseLoss){probe.responseLoss=false;throw Error('DIRECT_SIGNAL_RESPONSE_LOST')}return result}return process.kill(pid,signal)}
 export async function releaseDirectPreparationFixtureV1(lease){const state=retainedDirectSpawnerRebindIntentV1;if(state){if(state.lease!==lease)throw Error('foreign fixture cleanup');state.intentPin?.close();state.epochPin?.close();if(state.publication.descriptor!==null)closeSync(state.publication.descriptor);if(existsSync(state.publication.temporary))unlinkSync(state.publication.temporary);if(state.termination){for(const publication of [state.termination.dispatch,state.termination.receipt])if(publication?.descriptor!==null&&publication?.descriptor!==undefined)closeSync(publication.descriptor);state.termination.rootGuard.close()}state.rootGuard.close();retainedDirectSpawnerRebindIntentV1=null;}if(existsSync(rootPaths().journal))unlinkSync(rootPaths().journal);await releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease)}
@@ -1298,6 +1299,38 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
               assert.equal(Buffer.byteLength(child.stdout) <= 4096, true);
               const intent = JSON.parse(readFileSync(path.join(path.dirname(privateRoot), "pre-schema-helper-journal.json"), "utf8"));
               const dispatch = JSON.parse(readFileSync(path.join(privateRoot, "spawn-dispatch.json"), "utf8"));
+              const dispatchBytes = readFileSync(path.join(privateRoot, "spawn-dispatch.json"));
+              const terminationDispatchBytes = readFileSync(path.join(privateRoot, "termination-dispatch.json")), terminationReceiptBytes = readFileSync(path.join(privateRoot, "termination-receipt.json"));
+              const parseDispatch = (bytes: Buffer) => runtime.parseDirectSpawnDispatchFixtureV1(bytes, intent, terminationDispatchBytes, terminationReceiptBytes);
+              assert.deepEqual(parseDispatch(dispatchBytes), dispatch, "historical parser accepts the real helper's original dispatch");
+              const resignDispatch = (value: any) => { delete value.dispatchRef; delete value.dispatchHash; const dispatchHash = sha256(canonical(value)); return Buffer.from(`${canonical({ ...value, dispatchRef: `setfarm://internal-production/pre-schema-spawner-direct-spawn-dispatch/sha256/${dispatchHash}`, dispatchHash })}\n`); };
+              for (const key of Object.keys(dispatch).filter(key => !["dispatchRef", "dispatchHash"].includes(key))) {
+                const value = structuredClone(dispatch); value[key] = null;
+                assert.throws(() => parseDispatch(resignDispatch(value)), undefined, `direct dispatch ${key}`);
+              }
+              for (const member of ["controller", "helper", "lockIdentity", "action"]) for (const key of Object.keys(dispatch[member])) {
+                const value = structuredClone(dispatch); value[member][key] = null;
+                assert.throws(() => parseDispatch(resignDispatch(value)), undefined, `direct dispatch ${member}.${key}`);
+              }
+              for (const key of ["intentIdentity", "terminationDispatchIdentity", "terminationReceiptIdentity"]) {
+                for (let index = 0; index < 10; index++) {
+                  const value = structuredClone(dispatch); value[key][index] = null;
+                  assert.throws(() => parseDispatch(resignDispatch(value)), undefined, `direct dispatch ${key}[${index}] must be a canonical decimal`);
+                }
+                for (const index of [0, 1, 2, 4, 5, 6]) {
+                  const value = structuredClone(dispatch); value[key][index] = index === 0 ? "-1" : index === 1 || index === 5 ? "0" : "99999999";
+                  assert.throws(() => parseDispatch(resignDispatch(value)), undefined, `direct dispatch ${key}[${index}]`);
+                }
+              }
+              for (const [target, original] of [["terminationDispatchIdentity", "intentIdentity"], ["terminationReceiptIdentity", "intentIdentity"], ["terminationReceiptIdentity", "terminationDispatchIdentity"]]) {
+                const value = structuredClone(dispatch); value[target!][1] = value[original!][1];
+                assert.throws(() => parseDispatch(resignDispatch(value)), undefined, "simultaneous original publications cannot share an inode");
+              }
+              for (const key of ["dispatchRef", "dispatchHash"]) {
+                const value = structuredClone(dispatch); value[key] = "crossed";
+                assert.throws(() => parseDispatch(Buffer.from(`${canonical(value)}\n`)));
+              }
+              for (const bytes of [Buffer.alloc(0), Buffer.alloc(65_537), Buffer.from(dispatchBytes.toString().trim()), Buffer.concat([dispatchBytes, Buffer.from(" ")]), Buffer.from(dispatchBytes.toString().replace('"maximumSpawnDispatchCount":1', '"maximumSpawnDispatchCount":1,"maximumSpawnDispatchCount":1'))]) assert.throws(() => parseDispatch(bytes));
               const claimBytes = readFileSync(path.join(privateRoot, "claim.json"));
               assert.deepEqual(runtime.parseDirectClaimFixtureV1(claimBytes, intent, dispatch), claim);
               const resign = (value: any) => { delete value.claimRef; delete value.claimHash; const claimHash = sha256(canonical(value)); return Buffer.from(`${canonical({ ...value, claimRef: `setfarm://internal-production/pre-schema-spawner-direct-claim/sha256/${claimHash}`, claimHash })}\n`); };

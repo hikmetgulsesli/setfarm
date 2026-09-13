@@ -3546,6 +3546,42 @@ export function resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1() {
   return Object.freeze(snapshot) as typeof snapshot & Readonly<{ environment: Readonly<Record<string, string>>; close: () => void }>;
 }
 
+// Immutable history only. Physical readers must still retain and compare every
+// original file descriptor/identity; the helper row is not live process authority.
+function parseDirectSpawnerSpawnDispatchV1(
+  bytes: Buffer, intent: Readonly<Record<string, unknown>>, terminationDispatchBytes: Buffer, terminationReceiptBytes: Buffer,
+) {
+  if (bytes.length < 1 || bytes.length > 65_536) fail("direct spawn dispatch size is invalid");
+  const history = parseDirectSpawnerTerminationRecordsV1(terminationDispatchBytes, terminationReceiptBytes, intent);
+  const dispatch = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "purpose", "intentRef", "intentHash", "intentIdentity", "terminationReceiptRef", "terminationReceiptHash", "terminationReceiptIdentity", "terminationDispatchIdentity", "controller", "helper", "lockIdentity", "action", "maximumSpawnDispatchCount", "dispatchRef", "dispatchHash"], "direct spawn dispatch");
+  if (!bytes.equals(Buffer.from(`${canonical(dispatch)}\n`)) || dispatch.schema !== "setfarm.internal-production-pre-schema-spawner-direct-spawn-dispatch.v1"
+    || dispatch.purpose !== "operation-bound-pre-schema-spawner-rebind-v1" || dispatch.maximumSpawnDispatchCount !== 1
+    || dispatch.dispatchRef !== `setfarm://internal-production/pre-schema-spawner-direct-spawn-dispatch/sha256/${coldHashV1(dispatch.dispatchHash, "direct spawn dispatch")}`) fail("direct spawn dispatch binding is crossed");
+  coldSelfHashV1(dispatch, "dispatchHash", ["dispatchRef"]);
+  const profile = intent.launchProfile as Record<string, any>, lock = intent.transitionLock as Record<string, unknown>;
+  if (dispatch.intentRef !== intent.intentRef || dispatch.intentHash !== intent.intentHash
+    || canonical(dispatch.intentIdentity) !== canonical(history.dispatch.intentIdentity)
+    || dispatch.terminationReceiptRef !== history.receipt.terminationReceiptRef || dispatch.terminationReceiptHash !== history.receipt.terminationReceiptHash
+    || canonical(dispatch.controller) !== canonical(history.dispatch.controller) || canonical(dispatch.lockIdentity) !== canonical(intent.lockIdentity)
+    || canonical(dispatch.action) !== canonical({ transport: "direct-detached-node-v1", executable: profile.executable.path, arguments: [path.join(profile.repository, "dist/spawner.js")], cwd: profile.cwd, detached: true })) fail("direct spawn dispatch original history is crossed");
+  const intentIdentity = history.dispatch.intentIdentity as string[];
+  for (const [key, originalBytes] of [["terminationDispatchIdentity", terminationDispatchBytes], ["terminationReceiptIdentity", terminationReceiptBytes]] as const) {
+    const identity = dispatch[key];
+    if (!Array.isArray(identity) || identity.length !== 10 || identity.some(value => typeof value !== "string" || !/^(?:0|[1-9][0-9]{0,29})$/.test(value))
+      || identity[0] !== intentIdentity[0] || BigInt(identity[1]) < 1n || identity[2] !== String(profile.uid)
+      || identity[4] !== String(constants.S_IFREG | 0o600) || identity[5] !== "1" || identity[6] !== String(originalBytes.length)) fail("direct spawn dispatch termination identity is crossed");
+  }
+  const publications = [intentIdentity, dispatch.terminationDispatchIdentity as string[], dispatch.terminationReceiptIdentity as string[]];
+  if (new Set(publications.map(identity => `${identity[0]}:${identity[1]}`)).size !== 3) fail("direct spawn dispatch publication identities overlap");
+  const helper = coldRecordV1(dispatch.helper, ["pid", "processStartTimeEpochMs", "lstart", "command", "processIdentityHash", "uid", "ppid"], "direct spawn helper");
+  if (!Number.isSafeInteger(helper.pid) || (helper.pid as number) < 1 || (helper.pid as number) > 2_147_483_647 || helper.pid === lock.pid
+    || helper.uid !== profile.uid || helper.ppid !== lock.pid || typeof helper.lstart !== "string" || helper.lstart.length !== 24
+    || !Number.isSafeInteger(helper.processStartTimeEpochMs) || (helper.processStartTimeEpochMs as number) < 1 || Date.parse(helper.lstart) !== helper.processStartTimeEpochMs
+    || helper.command !== `${profile.executable.path} ${path.join(profile.repository, "dist/internal-production/baseline-service-restart-helper-v1.js")}`
+    || helper.processIdentityHash !== sha256(canonical({ schema: "setfarm.internal-production-transition-lock-owner-process-identity.v1", pid: helper.pid, processStartTimeEpochMs: helper.processStartTimeEpochMs, lstart: helper.lstart, command: helper.command }))) fail("direct spawn helper identity is crossed");
+  return freezeColdDataV1(dispatch);
+}
+
 function parseDirectSpawnerClaimV1(bytes: Buffer, intent: Readonly<Record<string, unknown>>, dispatch: Readonly<Record<string, unknown>>) {
   if (bytes.length < 1 || bytes.length > 65_536) fail("direct claim size is invalid");
   const claim = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "purpose", "intentRef", "intentHash", "dispatchRef", "dispatchHash", "currentEntryOperation", "startupToken", "epoch", "source", "profileHash", "lockIdentity", "child", "startupFiles", "maximumClaimCount", "claimRef", "claimHash"], "direct claim");
@@ -4064,23 +4100,16 @@ function authenticateDirectSpawnerChildCapabilityV1() {
     const terminationDispatchBytes = readPinned(path.join(root, "termination-dispatch.json"), dispatch.terminationDispatchIdentity, 65_536);
     const terminationReceiptBytes = readPinned(path.join(root, "termination-receipt.json"), dispatch.terminationReceiptIdentity, 65_536);
     const history = parseDirectSpawnerTerminationRecordsV1(terminationDispatchBytes, terminationReceiptBytes, intent);
+    parseDirectSpawnerSpawnDispatchV1(dispatchFile.bytes, intent, terminationDispatchBytes, terminationReceiptBytes);
     const epochBytes = readPinned(paths.epoch, undefined, 65_536), epoch = assertEpochOneActive();
     const profile = intent.launchProfile as Record<string, any>;
     if (!epochBytes.equals(Buffer.from(`${canonical(epoch)}\n`)) || (intent.epoch as Record<string, unknown>).epochRef !== epoch.epochRef
       || (intent.epoch as Record<string, unknown>).epochHash !== epoch.epochHash || canonical(lock) !== canonical(intent.transitionLock)
       || canonical(intent.lockIdentity) !== canonical(descriptorIdentity(4)) || canonical(frame.lockIdentity) !== canonical(intent.lockIdentity)
       || canonical(dispatch.lockIdentity) !== canonical(intent.lockIdentity) || sha256(frame.nonce as string) !== intent.nonceHash
-      || dispatch.intentRef !== intent.intentRef || dispatch.intentHash !== intent.intentHash
-      || canonical(history.dispatch.intentIdentity) !== canonical(dispatch.intentIdentity) || canonical(dispatch.controller) !== canonical(history.dispatch.controller)
-      || dispatch.terminationReceiptRef !== history.receipt.terminationReceiptRef || dispatch.terminationReceiptHash !== history.receipt.terminationReceiptHash
-      || profile.repository !== repository || profile.cwd !== process.cwd() || profile.executable.path !== process.execPath
-      || canonical(dispatch.action) !== canonical({ transport: "direct-detached-node-v1", executable: process.execPath, arguments: [entry], cwd: repository, detached: true })) fail("direct child original authority chain is crossed");
-    const helper = coldRecordV1(dispatch.helper, ["pid", "processStartTimeEpochMs", "lstart", "command", "processIdentityHash", "uid", "ppid"], "direct child helper");
-    if (!Number.isSafeInteger(helper.pid) || (helper.pid as number) < 1 || helper.pid === lock.pid || helper.pid === process.pid
-      || helper.uid !== profile.uid || helper.ppid !== lock.pid || typeof helper.lstart !== "string" || helper.lstart.length !== 24
-      || !Number.isSafeInteger(helper.processStartTimeEpochMs) || (helper.processStartTimeEpochMs as number) < 1 || Date.parse(helper.lstart) !== helper.processStartTimeEpochMs
-      || helper.command !== `${process.execPath} ${path.join(repository, "dist/internal-production/baseline-service-restart-helper-v1.js")}`
-      || helper.processIdentityHash !== sha256(canonical({ schema: "setfarm.internal-production-transition-lock-owner-process-identity.v1", pid: helper.pid, processStartTimeEpochMs: helper.processStartTimeEpochMs, lstart: helper.lstart, command: helper.command }))) fail("direct child helper identity is crossed");
+      || profile.repository !== repository || profile.cwd !== process.cwd() || profile.executable.path !== process.execPath) fail("direct child original authority chain is crossed");
+    const helper = dispatch.helper as Record<string, unknown>;
+    if (helper.pid === process.pid) fail("direct child helper identity is crossed");
     const environment = frame.environment as Record<string, unknown>;
     if (!environment || typeof environment !== "object" || Array.isArray(environment) || Object.keys(environment).length > 1024
       || Buffer.byteLength(canonical(environment)) > 524_288) fail("direct child environment shape is invalid");

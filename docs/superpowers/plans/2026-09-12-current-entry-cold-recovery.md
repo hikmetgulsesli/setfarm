@@ -800,6 +800,13 @@ retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
   Retry awaits that same ChildProcess/completion; no replacement invocation.
 - [ ] Independently authenticate the exact four-member direct journal and
   original top-level intent, termination records, spawn dispatch and claim.
+  First extract a private strict spawn-dispatch history parser from the existing
+  child checks: consume original intent and termination record bytes, require
+  canonical bounded dispatch, original content pairs/identity tuples, fixed
+  action and helper process identity. Test actual helper-produced bytes plus
+  self-rehashed top-level/nested/identity mutations. Use it in the actual child
+  without removing inherited-FD, frame, runtime or independent P3 checks; it
+  confers neither filesystem ownership nor current process liveness.
   Bind completion inode tuples and the retained helper PID; require helper
   clean exit/absence and the exact claimed child at PPID1. Recheck original
   startup files, directories, P3, profile/output and physical lease around reads.
@@ -844,6 +851,22 @@ checks passed. Final independent scoped review has no remaining finding.
 The final capture/actual-helper/exact-export coupled gate passed21/21 (10.014s).
 Invocation/claim/settlement/release are still unchecked above; this private
 decoder adds no export and cannot authorize any process or physical lease effect.
+
+Strict direct spawn-history extraction: the actual helper fixture first failed
+on the missing parser (6.882s). The pure parser now authenticates original intent
+and termination bytes, exact bounded/canonical dispatch and hash/reference,
+fixed action, controller/helper relations and ten-slot publication identities.
+Review found overlapping publication inodes were not explicitly refused; a
+self-rehashed actual-record mutation reproduced that acceptance (6.972s).
+Require three distinct device/inode pairs. Final real child/main/helper and
+exact-export gate passed4/4 (20.107s); prior negative selector/P3/admission gates
+passed5/5 (34.007s). All tuple slots, constrained metadata, overlap pairs, direct
+hash/reference corruption and wire defects are covered. TypeScript no-emit and
+whitespace checks passed; final independent extraction review has no finding.
+Child original FD/frame/epoch/profile/live-parent/P3 checks remain in place.
+The parser may read terminated historical helper identities; only the future
+controller's retained ChildProcess and original physical pins confer authority.
+Live API/dashboard health rechecked HTTP200/200; no live mutation.
 
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
