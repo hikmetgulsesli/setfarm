@@ -637,6 +637,12 @@ function writeRawCurrentEntryOperationFixtureV1(root: string, bytes: Buffer): st
   return store;
 }
 
+function coldPreselectionRetirementFixtureSourceV1(): string {
+  return `export function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){return globalThis.__coldPreselectionPorts?.history() ?? globalThis.__nestedColdHistoryV1?.() ?? Object.freeze({schema:'setfarm.internal-production-cold-spawner-bootstrap-journal-census.v1',state:'absent',incompleteOwnerCount:0,absenceIdentityHash:'a'.repeat(64),censusHash:'b'.repeat(64)})}
+export async function ensureInternalProductionColdSpawnerBootstrapSettledV1(){if(!globalThis.__coldPreselectionPorts)throw Error('UNEXPECTED_COLD_PRESELECTION_FACADE');return globalThis.__coldPreselectionPorts.facade()}
+`;
+}
+
 function instrumentExactPoisonPreselectionFixtureV1(root: string): void {
   const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
   const source = readFileSync(modulePath, "utf8");
@@ -648,7 +654,7 @@ function instrumentExactPoisonPreselectionFixtureV1(root: string): void {
   const prehook = source.slice(prehookStart, prehookEnd);
   const publisherCall = "await resumeExactPoisonQuarantinePublisherCoreV1();";
   assert.equal(prehook.split(publisherCall).length - 1, 1, "the private prehook must have one exact zero-input poison-quarantine publisher-core call");
-  const probeCall = '{ const value=Reflect.get(globalThis,"__p4ExactPoisonPreselectionProbeV1"); if(!value||typeof value!=="object")throw new Error("P4_EXACT_POISON_PROBE_MISSING"); const probe=value as {calls:number;throwOnCall:boolean}; probe.calls+=1; if(probe.throwOnCall)throw new Error("P4_EXACT_POISON_PUBLISHER_CORE_CALLED"); }';
+  const probeCall = '{ const value=Reflect.get(globalThis,"__p4ExactPoisonPreselectionProbeV1"); if(!value||typeof value!=="object")throw new Error("P4_EXACT_POISON_PROBE_MISSING"); const probe=value as {calls:number;throwOnCall:boolean;events?:string[]}; probe.calls+=1; probe.events?.push("publisher"); if(probe.throwOnCall)throw new Error("P4_EXACT_POISON_PUBLISHER_CORE_CALLED"); }';
   let instrumented = source.slice(0, prehookStart)
     + prehook.replace(prehookMarker, `export ${prehookMarker}`).replace(publisherCall, probeCall)
     + source.slice(prehookEnd);
@@ -5912,7 +5918,7 @@ function ensurePhase5cStartupFixtureV1(root: string): void {
   const startupPath = path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.ts");
   if (!existsSync(startupPath)) {
     fixtureFile(root, "src/internal-production/baseline-spawner-startup-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/baseline-spawner-startup-admission-v1.ts")));
-    fixtureFile(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts", "export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){return Object.freeze({})}\nexport async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){}\nexport async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(){}\nexport function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){return globalThis.__nestedColdHistoryV1?.() ?? Object.freeze({schema:'setfarm.internal-production-cold-spawner-bootstrap-journal-census.v1',state:'absent',incompleteOwnerCount:0,absenceIdentityHash:'a'.repeat(64),censusHash:'b'.repeat(64)})}\n");
+    fixtureFile(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts", "export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){return Object.freeze({})}\nexport async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){}\nexport async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(){}\n" + coldPreselectionRetirementFixtureSourceV1());
     git(root, ["add", "src/internal-production/baseline-spawner-startup-admission-v1.ts", "src/internal-production/baseline-restart-authority-retirement-v1.ts", "src/internal-production/baseline-spawner-launch-environment-v1.ts"]);
     git(root, ["commit", "-qm", "fixture startup import support"]);
     git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
@@ -15365,7 +15371,13 @@ ${mutationMarker}`);
       'const directory = directorySnapshot(path.join(store.directory, entry), `prepared current-entry ${entry}`, store.device + 1n);',
     );
   }
-  fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", fixtureObserver);
+  // Generic copied receipts represent the ordinary spawner path explicitly.
+  // Cold routing tests override this physical-observation port; none may probe
+  // the live host or invoke a real controller through a copied fixture.
+  const processRows = topLevelFunctionRegionV1(fixtureObserver, "observeColdSpawnerGlobalProcessRowsV1");
+  fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", fixtureObserver.replace(processRows,
+    'function observeColdSpawnerGlobalProcessRowsV1(){return globalThis.__coldPreselectionPorts?.rows() ?? [{command:"/fixture/node /fixture/spawner.js"}]}'));
+  fixtureFile(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts", coldPreselectionRetirementFixtureSourceV1());
   fixtureFile(root, "src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
   const bootstrapMigrationSource = readFileSync(path.join(sourceRoot, "src/db/bootstrap-main-claim-handoff-v1-migration.ts"), "utf8");
   const bootstrapSchemaProjector = topLevelFunctionRegionV1(bootstrapMigrationSource, "projectBootstrapMainClaimHandoffV1Schema");
@@ -15537,6 +15549,8 @@ function materializeOutputs(root: string): void {
     "dist/installer/run.js": "// compiled recovery installer fixture\n",
     "dist/installer/steps/nested/step.md": "step\n",
     "dist/internal-production/baseline-post-handoff-receipt-v1.js": "// compiled observer fixture\n",
+    "dist/internal-production/baseline-restart-authority-retirement-v1.js": "// compiled cold routing fixture\n",
+    "dist/internal-production/baseline-spawner-launch-environment-v1.js": "// compiled launch environment fixture\n",
     "dist/internal-production/baseline-workspace-authority-path-v1.js": "// compiled workspace locator fixture\n",
     "dist/internal-production/owner-admission-v1.js": "// compiled owner admission fixture\n",
     "dist/internal-production/product-build-authority-v2-delivery-evidence-v1.js": "// compiled PBA fixture\n",
@@ -18073,7 +18087,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.ok(prepareStart >= 0 && prepareEnd > prepareStart, "prepare must retain one exact source boundary");
     const prepareBody = source.slice(prepareStart + prepareMarker.length, prepareEnd);
     assert.match(prepareBody, /^\n  await resumeExactPoisonQuarantineBeforeSelectionV1\(\);/, "the prehook must be prepare's first executable statement");
-    assert.equal([...source.matchAll(/\bresumeExactPoisonQuarantineBeforeSelectionV1\(\)/g)].length, 2, "one private definition and one prepare call are exact");
+    assert.equal([...source.matchAll(/\bresumeExactPoisonQuarantineBeforeSelectionV1\(\)/g)].length, 3, "one private definition and both prepare/resume calls are exact");
+    const resume = topLevelFunctionRegionV1(source, "resumeInternalProductionCurrentEntryAuthorityV1");
+    assert.match(resume, /Promise<InternalProductionCurrentEntryAuthorityStatusV1> \{\n  await resumeExactPoisonQuarantineBeforeSelectionV1\(\);\n  const context = await selectCurrentEntryStoreContextV1\(\);/);
     assert.doesNotMatch(source, /export\s+async\s+function\s+resumeExactPoisonQuarantineBeforeSelectionV1/);
     const runtimeExports = [...source.matchAll(/export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z0-9_]+)/g)].map((match) => match[1]);
     assertColdRecoveryRuntimeExportContractV1(runtimeExports);
@@ -18088,6 +18104,37 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "only the declaration and byte-unchanged historical P0 retain the legacy directory token",
     );
     assert.equal(PHASE5B_SELECTED_CONTEXT_CONSUMERS_V1.length, 11, "the final active-store contract is the explicit exact-eleven semantic consumer table");
+  });
+
+  it("cold preselection connects both public entries before publisher and selection", () => {
+    for (const entry of ["prepareInternalProductionCurrentEntryOperationV1", "resumeInternalProductionCurrentEntryAuthorityV1"]) {
+      for (const state of ["cold", "ordinary", "ordinary-locked", "ordinary-unsafe-lock", "absent", "nonpoison", "complete"]) {
+        const root = finalizedFixture().root;
+        try {
+          if (state === "complete") seedExactPoisonStrictChainFixtureV1(root, buildExactPoisonStrictChainFixtureV1(root), "C");
+          else if (state !== "absent") writeRawCurrentEntryOperationFixtureV1(root, state === "nonpoison" ? strictNonpoisonOperationFixtureBytesV1() : exactPoisonOperationFixtureBytesV1());
+          if (state.startsWith("ordinary-")) {
+            const lock = path.join(path.dirname(root), "data/internal-production-baseline/restart-authority-retirement-v1/physical-service-restart-authority.transition.lock");
+            phase5cEnsurePublicationParentV1(lock);
+            writeFileSync(lock, "retained pre-intent lease\n", { flag: "wx", mode: state === "ordinary-unsafe-lock" ? 0o644 : 0o600 });
+          }
+          instrumentExactPoisonPreselectionFixtureV1(root);
+          const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+          let source = readFileSync(modulePath, "utf8");
+          source = source.replace(topLevelFunctionRegionV1(source, "selectCurrentEntryStoreContextV1"), 'async function selectCurrentEntryStoreContextV1(){globalThis.__coldPreselectionPorts.events.push("selection");throw Error("SELECTION_REACHED")}');
+          source = source.replace(topLevelFunctionRegionV1(source, "observeInternalProductionServiceCensusV1"), 'export async function observeInternalProductionServiceCensusV1(){globalThis.__coldPreselectionPorts.events.push("ordinary");return globalThis.__coldPreselectionPorts.ordinary}');
+          writeFileSync(modulePath, source);
+          const before = filesystemTreeSnapshot(path.dirname(root));
+          const result = runFixtureExpression(root, `(async()=>{const events=[],ordinary=${JSON.stringify(exactZeroEffectServiceCensusV1())},settled={state:'settled',settlement:{serviceCensus:ordinary},settlementIdentity:['1','2']};let facadeDone=false;globalThis.__coldPreselectionPorts={events,ordinary,rows(){events.push('ps');return ${JSON.stringify(state)}==='cold'?[]:[{command:'/fixture/node /fixture/spawner.js'}]},history(){events.push('history');return facadeDone?settled:{state:'absent'}},async facade(){events.push('facade');if(${JSON.stringify(state)}.startsWith('ordinary-'))throw Error('STRICT_RETAINED_OWNER_REFUSAL');facadeDone=true;return settled}};const probe={calls:0,afterPrehook:0,throwOnCall:false,events};globalThis.__p4ExactPoisonPreselectionProbeV1=probe;let message=null;try{await m.${entry}()}catch(error){message=String(error)}process.stdout.write(JSON.stringify({events,message,calls:probe.calls}))})()`);
+          assert.equal(result.status, 0, `${entry}/${state}: ${result.stderr}`);
+          const observed = JSON.parse(result.stdout);
+          const expected = state === "cold" ? ["history", "ps", "facade", "ordinary", "history", "publisher", "selection"] : state === "ordinary" ? ["history", "ps", "history", "publisher", "selection"] : state.startsWith("ordinary-") ? ["history", "ps", "facade"] : ["selection"];
+          assert.deepEqual(observed.events, expected, `${entry}/${state}: ${observed.message}`);
+          assert.match(observed.message, state.startsWith("ordinary-") ? /STRICT_RETAINED_OWNER_REFUSAL/ : /SELECTION_REACHED/);
+          assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), before, "copied routing ports must not mutate the disposable store");
+        } finally { removeFixture(root); }
+      }
+    }
   });
 
   it("P4 dispatches only exact-poison incomplete preselection before routing", () => {
@@ -21612,6 +21659,76 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     } finally {
       removeFixture(root);
     }
+  });
+
+  it("cold preselection router requires positive absence and fresh settled ordinary identity", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "setfarm-cold-preselection-"));
+    try {
+      const source = readFileSync(observerSource, "utf8");
+      const names = ["ensureExactPoisonSpawnerBeforeQuarantineV1", "observeColdSpawnerGlobalProcessRowsV1", "isColdSpawnerFamilyProcessV1", "parsePhysicalProcessesV1", "canonicalComparable", "strictUtf8", "currentEntryFail", "fail"];
+      const body = names.map(name => topLevelFunctionRegionV1(source, name)).join("\n");
+      writeFileSync(path.join(root, "package.json"), '{"type":"module"}\n');
+      writeFileSync(path.join(root, "baseline-restart-authority-retirement-v1.js"), `export function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){return globalThis.__coldRouterPorts.history()}
+export async function ensureInternalProductionColdSpawnerBootstrapSettledV1(){return globalThis.__coldRouterPorts.facade()}
+`);
+      const sticky = source.match(/^let exactPoisonColdPreselectionMayOwnResourcesV1 = false;$/m)?.[0];
+      assert.ok(sticky, "copied router must retain the actual private ownership flag");
+      const harness = `${sticky}\nconst UTF8=new TextDecoder('utf-8',{fatal:true}),PHYSICAL_PROCESS_CAP_V1=100000;
+let ports;
+function runPhysicalCommandV1(command,args){ports.events.push('ps');if(ports.psError)throw Error('ps failed');if(command!=='/bin/ps'||JSON.stringify(args)!==JSON.stringify(['-ww','-axo','uid=,pid=,ppid=,pgid=,stat=,lstart=,command=']))throw Error('unexpected physical command');return {stdout:Buffer.from(ports.rows)}}
+function resolveInternalProductionBaselineAuthorityPathV1(value){if(value!=='data/internal-production-baseline/restart-authority-retirement-v1/physical-service-restart-authority.transition.lock')throw Error('wrong lock locator');return value}
+function readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(){ports.events.push('lock');if(ports.lockError)throw Error('unsafe lock');return (ports.lockSequence?ports.lockSequence.shift():ports.lockPresent)?{}:null}
+async function observeInternalProductionServiceCensusV1(){ports.events.push('ordinary');if(ports.ordinaryError)throw Error('ordinary dead');return ports.ordinary}
+${body}
+export async function run(value){ports=value;if(!value.continueOwner)exactPoisonColdPreselectionMayOwnResourcesV1=false;globalThis.__coldRouterPorts={history(){ports.events.push('history');const value=ports.histories.shift();if(value==='partial')throw Error('partial prefix');return value},async facade(){ports.events.push('facade');if(ports.facadeError)throw Error('strict facade refusal');return ports.settled}};try{await ensureExactPoisonSpawnerBeforeQuarantineV1();return {outcome:'returned',events:ports.events}}catch(error){return {outcome:'threw',message:String(error),events:ports.events}}finally{delete globalThis.__coldRouterPorts}}
+`;
+      writeFileSync(path.join(root, "harness.js"), transformSync(harness, { loader: "ts", format: "esm", target: "node22" }).code);
+      const module = await import(pathToFileURL(path.join(root, "harness.js")).href);
+      const ordinary = exactZeroEffectServiceCensusV1();
+      const settled = { state: "settled", settlement: { settlementRef: "fixed-ref", settlementHash: "a".repeat(64), serviceCensus: ordinary }, settlementIdentity: ["1", "2"], censusHash: "b".repeat(64) };
+      const absent = { state: "absent", absenceIdentityHash: "c".repeat(64) };
+      const row = (pid: number, uid = process.getuid!(), stat = "S", command = "/fixture/node /fixture/controller.js") => `${uid} ${pid} 1 ${pid} ${stat} Sun Sep 13 00:00:00 2026 ${command}\n`;
+      const observer = row(process.pid);
+      const cases = [
+        { name: "cold", histories: [absent, settled], events: ["history", "ps", "facade", "ordinary", "history"] },
+        { name: "settled", histories: [settled, settled], events: ["history", "facade", "ordinary", "history"] },
+        { name: "retained partial", histories: ["partial", settled], events: ["history", "facade", "ordinary", "history"] },
+        { name: "unretained partial", histories: ["partial"], facadeError: true, events: ["history", "facade"], error: /strict facade refusal/ },
+        { name: "cold refused", histories: [absent], facadeError: true, events: ["history", "ps", "facade"], error: /strict facade refusal/ },
+        { name: "ordinary", rows: observer + row(2147483601, process.getuid!(), "S", "/fixture/node /fixture/spawner.js"), histories: [absent, absent], events: ["history", "ps", "lock", "history", "lock"] },
+        { name: "foreign family", rows: observer + row(2147483601, 0, "S", "/fixture/setfarm spawner"), histories: [absent, absent], events: ["history", "ps", "lock", "history", "lock"] },
+        { name: "zombie family", rows: observer + row(2147483601, process.getuid!(), "Z", "/fixture/node /fixture/spawner.ts"), histories: [absent, absent], events: ["history", "ps", "lock", "history", "lock"] },
+        { name: "journal appeared during ps", rows: observer + row(2147483601, process.getuid!(), "S", "/fixture/node /fixture/spawner.js"), histories: [absent, "partial"], facadeError: true, events: ["history", "ps", "lock", "history", "facade"], error: /strict facade refusal/ },
+        { name: "lock appeared on final read", rows: observer + row(2147483601, process.getuid!(), "S", "/fixture/node /fixture/spawner.js"), histories: [absent, absent], lockSequence: [false, true], facadeError: true, events: ["history", "ps", "lock", "history", "lock", "facade"], error: /strict facade refusal/ },
+        { name: "pre-intent lease", rows: observer + row(2147483601, process.getuid!(), "S", "/fixture/node /fixture/spawner.js"), histories: [absent], lockPresent: true, facadeError: true, events: ["history", "ps", "lock", "facade"], error: /strict facade refusal/ },
+        { name: "unsafe lease", rows: observer + row(2147483601, process.getuid!(), "S", "/fixture/node /fixture/spawner.js"), histories: [absent], lockError: true, facadeError: true, events: ["history", "ps", "lock", "facade"], error: /strict facade refusal/ },
+        { name: "ps command failure", histories: [absent], psError: true, events: ["history", "ps"], error: /ps failed/ },
+        { name: "malformed ps", rows: "unparseable\n", histories: [absent], events: ["history", "ps"], error: /process row is malformed/ },
+        { name: "missing observer", rows: row(2147483601), histories: [absent], events: ["history", "ps"], error: /observer is missing or crossed/ },
+        { name: "zombie observer", rows: row(process.pid, process.getuid!(), "Z"), histories: [absent], events: ["history", "ps"], error: /observer is missing or crossed/ },
+        { name: "dead settled child", histories: [settled], ordinaryError: true, events: ["history", "facade", "ordinary"], error: /ordinary dead/ },
+        { name: "crossed ordinary", histories: [settled], ordinary: { ...ordinary, censusHash: "d".repeat(64) }, events: ["history", "facade", "ordinary"], error: /ordinary census/ },
+        { name: "initial terminal replaced", histories: [{ ...settled, settlementIdentity: ["1", "3"] }], events: ["history", "facade"], error: /history changed/ },
+        { name: "late terminal replaced", histories: [settled, { ...settled, settlementIdentity: ["1", "3"] }], events: ["history", "facade", "ordinary", "history"], error: /history changed/ },
+        { name: "late terminal absent", histories: [settled, absent], events: ["history", "facade", "ordinary", "history"], error: /history changed/ },
+        { name: "late terminal unsafe", histories: [settled, "partial"], events: ["history", "facade", "ordinary", "history"], error: /partial prefix/ },
+      ];
+      for (const testCase of cases) {
+        const result = await module.run({ rows: observer, ordinary, settled, ...testCase, histories: [...testCase.histories], events: [] });
+        assert.equal(result.outcome, testCase.error ? "threw" : "returned", `${testCase.name}: ${result.message}`);
+        if (testCase.error) assert.match(result.message, testCase.error, testCase.name);
+        assert.deepEqual(result.events, testCase.events, testCase.name);
+      }
+      const held = await module.run({ rows: observer, ordinary, settled, histories: [absent], facadeError: true, events: [] });
+      assert.equal(held.outcome, "threw");
+      const retained = await module.run({ rows: observer + row(2147483601, process.getuid!(), "S", "/fixture/node /fixture/spawner.js"), ordinary, settled, histories: [absent], facadeError: true, continueOwner: true, events: [] });
+      assert.equal(retained.outcome, "threw");
+      assert.deepEqual(retained.events, ["history", "facade"], "failed retained cleanup must not take ordinary shortcut even after lock unlink");
+      const released = await module.run({ rows: observer, ordinary, settled, histories: [absent, settled], continueOwner: true, events: [] });
+      assert.equal(released.outcome, "returned");
+      const next = await module.run({ rows: observer + row(2147483601, process.getuid!(), "S", "/fixture/node /fixture/spawner.js"), ordinary, settled, histories: [absent, absent], continueOwner: true, events: [] });
+      assert.deepEqual(next.events, ["history", "ps", "lock", "history", "lock"], "successful strict bracket clears only the router's retained suspicion");
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   it("cold predecessor preparation binds fixed settlement history without changing V1 publication bytes", async () => {

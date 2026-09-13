@@ -6869,6 +6869,39 @@ async function publishExactPoisonRecoveryCandidateV1(
   }
 }
 
+let exactPoisonColdPreselectionMayOwnResourcesV1 = false;
+
+async function ensureExactPoisonSpawnerBeforeQuarantineV1(): Promise<void> {
+  const retirement = await import("./baseline-restart-authority-retirement-v1.js");
+  let before: ReturnType<typeof retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1> | null = null;
+  try { before = retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(); }
+  catch {
+    // A partial/uncertain census grants nothing. Only the strict facade can
+    // authenticate retained ownership; unretained partial journals refuse.
+  }
+  if (before?.state === "absent" && !exactPoisonColdPreselectionMayOwnResourcesV1
+    && observeColdSpawnerGlobalProcessRowsV1().some(isColdSpawnerFamilyProcessV1)) {
+    const lock = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/restart-authority-retirement-v1/physical-service-restart-authority.transition.lock");
+    try {
+      if (readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(lock, "preselection physical transition lock") === null
+        && canonicalComparable(retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()) === canonicalComparable(before)
+        && readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(lock, "preselection physical transition lock recheck") === null) return;
+    } catch {
+      // Durable pre-intent ownership or uncertain lock ancestry also selects
+      // only the strict facade, including after a controller process restart.
+    }
+  }
+  // Path absence alone cannot retire our own unlinked descriptor cleanup.
+  // Keep routing to its sole owner after rejection until the whole bracket ends.
+  exactPoisonColdPreselectionMayOwnResourcesV1 = true;
+  const settled = await retirement.ensureInternalProductionColdSpawnerBootstrapSettledV1();
+  if (before?.state === "settled" && canonicalComparable(before) !== canonicalComparable(settled)) currentEntryFail("preselection cold history changed across facade");
+  const ordinary = await observeInternalProductionServiceCensusV1();
+  if (canonicalComparable(ordinary) !== canonicalComparable(settled.settlement.serviceCensus)) currentEntryFail("preselection ordinary census is not its cold settlement");
+  if (canonicalComparable(retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()) !== canonicalComparable(settled)) currentEntryFail("preselection cold history changed across ordinary observation");
+  exactPoisonColdPreselectionMayOwnResourcesV1 = false;
+}
+
 async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
   const operation = requireExactPoisonRecoverySnapshotV1(
     fixedLegacyCurrentEntryOperationPathV1(),
@@ -6937,6 +6970,7 @@ async function resumeExactPoisonQuarantineBeforeSelectionV1(): Promise<void> {
   ) currentEntryFail("fixed legacy exact-poison operation bytes are crossed");
   const chain = await inspectExactPoisonRecoveryChainBeforeSelectionV1(operation);
   if (chain.state === "dispatch") {
+    await ensureExactPoisonSpawnerBeforeQuarantineV1();
     await resumeExactPoisonQuarantinePublisherCoreV1();
   } else {
     chain.context.close();
@@ -8381,6 +8415,22 @@ function observeDetachedSetfarmServiceV1(
   return recursivelyFreeze({ ...common, listenerOwnerCount: 1 as const, listener: { host: "127.0.0.1" as const, port, listenerIdentityHash: sha256(listenersBefore.bytes) } });
 }
 
+function observeColdSpawnerGlobalProcessRowsV1(): readonly PhysicalProcessV1[] {
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || (uid ?? -1) < 0) currentEntryFail("cold spawner UID is invalid");
+  const rows = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-ww", "-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
+  const observer = rows.filter((row) => row.pid === process.pid);
+  if (observer.length !== 1 || observer[0]!.uid !== uid || observer[0]!.stat.includes("Z")) currentEntryFail("cold spawner global process observer is missing or crossed");
+  return rows;
+}
+
+function isColdSpawnerFamilyProcessV1(row: PhysicalProcessV1): boolean {
+  const tokens = row.command.split(/\s+/).map((token) => token.replace(/^["']|["']$/g, ""));
+  const daemon = tokens.some((token) => /(?:^|\/)spawner\.(?:js|ts|mjs|cjs)$/.test(token));
+  const launcher = tokens.includes("spawner") && tokens.some((token) => /(?:^|\/)(?:setfarm(?:\.(?:js|mjs|cjs))?|cli\.(?:js|ts|mjs|cjs))$/.test(token));
+  return daemon || launcher;
+}
+
 // Read-only absence leaf, not launch authority. The cold controller must bind
 // this evidence to the incident/source/zero-owner bracket under its lease.
 function observeColdSpawnerAbsenceV1(source: Readonly<{ sha: string; treeHash: string; buildHash: string }>) {
@@ -8420,15 +8470,8 @@ function observeColdSpawnerAbsenceV1(source: Readonly<{ sha: string; treeHash: s
     const launchBefore = observeDetachedLaunchProjectionV1(profile, uid!);
     for (const [key, value] of Object.entries(plistBefore.environment)) if (launchBefore.environment[key] !== value) currentEntryFail("cold spawner launch environment is crossed");
     const observeAbsentProcesses = () => {
-      const rows = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-ww", "-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
-      const observer = rows.filter((row) => row.pid === process.pid);
-      if (observer.length !== 1 || observer[0]!.uid !== uid || observer[0]!.stat.includes("Z")) currentEntryFail("cold spawner global process observer is missing or crossed");
-      for (const row of rows) {
-        const tokens = row.command.split(/\s+/).map((token) => token.replace(/^["']|["']$/g, ""));
-        const daemon = tokens.some((token) => /(?:^|\/)spawner\.(?:js|ts|mjs|cjs)$/.test(token));
-        const launcher = tokens.includes("spawner") && tokens.some((token) => /(?:^|\/)(?:setfarm(?:\.(?:js|mjs|cjs))?|cli\.(?:js|ts|mjs|cjs))$/.test(token));
-        if (daemon || launcher) currentEntryFail("cold spawner global process family is present");
-      }
+      const rows = observeColdSpawnerGlobalProcessRowsV1();
+      if (rows.some(isColdSpawnerFamilyProcessV1)) currentEntryFail("cold spawner global process family is present");
       return rows;
     };
     const readPidResidue = (rows: readonly PhysicalProcessV1[]) => {
@@ -22294,6 +22337,7 @@ export async function resumeActiveInternalProductionRecoverySourceBootstrapRunV1
 
 export async function resumeInternalProductionCurrentEntryAuthorityV1(
 ): Promise<InternalProductionCurrentEntryAuthorityStatusV1> {
+  await resumeExactPoisonQuarantineBeforeSelectionV1();
   const context = await selectCurrentEntryStoreContextV1();
   const operation = await observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context);
   if (!operation) currentEntryFail("CURRENT_ENTRY_UNAVAILABLE");

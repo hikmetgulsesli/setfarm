@@ -1069,6 +1069,52 @@ authenticated branch rather than interpreting settlement as a launch token.
 
 Next coupled integration (not implemented by the historical/release slice):
 
+Preselection routing refinement (same receipt source/test File Map entries;
+root remains sole writer): only the incomplete exact-poison dispatch branch
+enters the private cold router, before the existing publisher. Authenticated
+complete chains remain probe-free. Prepare and public resume call this prehook
+before selection. An absent fixed cold census plus a positively observed global
+zero spawner-family census selects the existing strict zero-argument facade;
+all family rows, including foreign UID and zombies, retain the ordinary path.
+A fixed census error selects only the facade's retained-owner authentication,
+never grants fresh launch authority. Keep that catch scoped to the census read.
+Settled history selects the facade but must retain its original identity, then
+match a fresh actual ordinary census and a final exact fixed history census.
+Factor the existing global process observer/predicate without relaxing it.
+Copied-module fixtures explicitly project their process port; isolated actual
+router tests cover cold/ordinary/error ordering and late identity/liveness
+refusals. No new export, live mutation, or direct-detached transport is implied.
+
+Independent review exposed a causally required refinement: cold journal absence
+does not count a retained pre-intent physical transition lease, and quarantine
+acquires its writer before later admission. Therefore the ordinary shortcut also
+requires authenticated absence of the fixed physical transition lock, then a
+stable cold census and a second authenticated lock absence check. Presence or
+uncertainty selects only the strict facade, including after process restart.
+A private router ownership-suspicion bit is set before invoking the facade and
+survives rejection; only its complete ordinary/history bracket clears it. This
+covers router-owned cleanup after its own lock unlink, when a descriptor can
+still be retained. Do not broaden the retirement census or invent a self-owner
+exemption. The actual router and both copied public-entry tests cover these
+cases before quarantine writer acquisition. Same existing File Map entries.
+
+Preselection checkpoint evidence (2026-09-13, no live dispatch): initial actual
+router test failed because the helper was absent; actual public-entry test then
+failed with publisher/selection occurring without the required cold bracket.
+The lock refinement likewise failed its ordinary ordering assertion before the
+new lock checks. Final actual-router coverage has 22 cases plus a four-attempt
+retained cleanup/release sequence. Both actual prepare/resume entries cover
+seven states each, including physical retained/unsafe lock fixtures and a fully
+authenticated complete chain whose cold ports remain untouched. The 6-test
+routing/absence/API group passed (59.837s); 7 source/publisher/complete-chain
+checks passed (16.772s); exact145/64 manifests and pure activation checks passed
+35/35 (6.861s; not a claim of a new real-DB run); shared builder/progress and
+actual final V1/V2 verification/replay passed 6/6 (22.389s). TypeScript no-emit
+and whitespace checks passed. Independent final review found no remaining
+must-fix in this scoped slice. At 04:26 TRT both live HTTP checks were 200,
+canonical/deployed/MC trees clean, live spawner PID/lock absent. Direct-detached
+rebind, full receipt/P3, clean-main rollout and live Task 6A remain unproven.
+
 1. Keep `preMutationLoadedRuntimeServiceAuthority` in its existing pair prefix,
    record kind and final 33-pair position. Preserve exact V1 history; new V2
    adds required `coldSpawnerPredecessor` containing settlement ref/hash and
