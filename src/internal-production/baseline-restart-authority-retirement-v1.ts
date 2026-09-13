@@ -2547,20 +2547,108 @@ async function observeDirectSpawnerRebindControllerClaimV1(
   } finally { directControllerClaimObservationActiveV1 = false; }
 }
 
-function assertDirectControllerServiceCensusV1(state: DirectSpawnerRebindIntentStateV1, claim: Readonly<Record<string, unknown>>, value: unknown): void {
-  const census = coldRecordV1(value, ["schema", "spawner", "dashboard", "missionControl", "openClaw", "censusHash"], "direct settlement service census");
-  if (census.schema !== "setfarm.internal-production-service-census.v1") fail("direct settlement census schema is crossed");
-  coldSelfHashV1(census, "censusHash");
+function directControllerExpectedServiceCensusV1(preMutation: Readonly<Record<string, unknown>>, claim: Readonly<Record<string, unknown>>) {
   const child = claim.child as Record<string, any>, source = claim.source as Record<string, any>;
   const label = "com.setrox.setfarm-spawner", serviceIdentityHash = sha256(canonical({ schema: "setfarm.internal-production-service-identity.v1", label, command: child.command }));
   const loaded = { sha: source.sha, treeHash: source.treeHash, buildHash: source.buildHash };
   const expected = { pid: child.pid, processStartTimeEpochMs: child.processStartTimeEpochMs, processIdentityHash: sha256(`${child.pid}\n${child.lstart}\n`), serviceIdentityHash,
     generationHash: sha256(canonical({ schema: "setfarm.internal-production-loaded-service-generation.v1", label, serviceIdentityHash, source: loaded })),
     loadedSourceSha: loaded.sha, loadedTreeHash: loaded.treeHash, loadedBuildHash: loaded.buildHash, processOwnerCount: 1, listener: null };
-  if (canonical(census.spawner) !== canonical(expected)) fail("direct settlement ordinary spawner is not the retained child");
-  const original = state.inputs.preMutation as Record<string, any>;
+  const original = preMutation as Record<string, any>;
   for (const key of ["dashboard", "missionControl", "openClaw"]) {
-    if (!original[key] || canonical(census[key]) !== canonical(original[key]) || original[key].pid === child.pid) fail("direct settlement original service changed");
+    if (!original[key] || original[key].pid === child.pid) fail("direct settlement original service changed");
+  }
+  const body = { schema: "setfarm.internal-production-service-census.v1", spawner: expected, dashboard: original.dashboard, missionControl: original.missionControl, openClaw: original.openClaw };
+  return freezeColdDataV1({ ...body, censusHash: sha256(canonical(body)) });
+}
+
+function assertDirectControllerServiceCensusV1(state: DirectSpawnerRebindIntentStateV1, claim: Readonly<Record<string, unknown>>, value: unknown): void {
+  const census = coldRecordV1(value, ["schema", "spawner", "dashboard", "missionControl", "openClaw", "censusHash"], "direct settlement service census");
+  if (canonical(census) !== canonical(directControllerExpectedServiceCensusV1(state.inputs.preMutation, claim))) fail("direct settlement ordinary service census is crossed");
+}
+
+function directControllerSettlementRecordV1(
+  intent: Readonly<Record<string, unknown>>, completion: Readonly<Record<string, unknown>>,
+  dispatch: Readonly<Record<string, unknown>>, dispatchIdentity: readonly string[],
+  receipt: Readonly<Record<string, unknown>>, receiptIdentity: readonly string[], serviceCensus: Readonly<Record<string, unknown>>,
+) {
+  const body = { schema: "setfarm.internal-production-direct-spawner-controller-settlement.v1", action: "task6a-pre-schema-setfarm-spawner-rebind-v1",
+    currentEntryOperation: intent.currentEntryOperation, restartAuthority: intent.restartAuthority, completion,
+    terminationDispatch: { dispatchRef: dispatch.dispatchRef, dispatchHash: dispatch.dispatchHash, identity: dispatchIdentity },
+    terminationReceipt: { receiptRef: receipt.terminationReceiptRef, receiptHash: receipt.terminationReceiptHash, identity: receiptIdentity },
+    transitionLock: intent.transitionLock, lockIdentity: intent.lockIdentity, terminationDispatchCount: 1, spawnDispatchCount: 1, serviceObservationCount: 2, serviceCensus, disposition: "completed" };
+  const helperSettlementHash = sha256(canonical(body));
+  return freezeColdDataV1({ ...body, helperSettlementRef: `${HELPER_PREFIX}${helperSettlementHash}`, helperSettlementHash });
+}
+
+// Historical transport closure only. No held lease, mutable epoch, live census,
+// helper/process observation, publication repair or effect is acquired here.
+async function observeDirectSpawnerControllerSettlementHistoryV1() {
+  for (const close of pendingColdHelperAuthenticationCleanupV1) close();
+  const paths = rootPaths(), root = path.join(paths.root, "direct-spawner-rebind-v1");
+  const guards: PrivateDirectoryGuardV1[] = [], pins: Array<PrivateFrameDescriptorV1 & { target: string; bytes: Buffer | null }> = [];
+  let journalIdentity: BigIntStats | null = null, settlementTarget: string | null = null;
+  const assertStable = () => {
+    for (const guard of guards) guard.assertStable();
+    if (journalIdentity && (!sameColdFileMetadataV1(journalIdentity, lstatSync(root, { bigint: true }))
+      || canonical(readColdDirectoryMembersV1(root, 4).sort()) !== canonical(["claim.json", "spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json"]))) fail("direct terminal history journal changed");
+    if (readColdDirectoryMembersV1(paths.root, 4096).some(name => name.startsWith(`.${path.basename(paths.journal)}.`))) fail("direct terminal history has an unfinished intent publication");
+    const terminalPath = settlementTarget;
+    if (terminalPath && readColdDirectoryMembersV1(path.dirname(terminalPath), 4096).some(name => name.startsWith(`.${path.basename(terminalPath)}.`))) fail("direct terminal history has an unfinished settlement publication");
+    for (const pin of pins) {
+      if (pin.descriptor === null || pin.identity === null || pin.bytes === null || pin.closeEntered
+        || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))
+        || !pin.bytes.equals(readColdGenesisCandidateV1(pin.target, pin.identity))
+        || !sameColdFileMetadataV1(pin.identity, fstatSync(pin.descriptor, { bigint: true }))) fail("direct terminal history original reader changed");
+    }
+    for (const guard of guards) guard.assertStable();
+  };
+  const read = (target: string, maximum = 65_536) => {
+    assertStable();
+    const before = lstatSync(target, { bigint: true });
+    if (before.size > BigInt(maximum)) fail("direct terminal history record exceeds its cap");
+    const pin = { target, descriptor: openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK), identity: null as BigIntStats | null, bytes: null as Buffer | null, closeEntered: false };
+    pins.push(pin); pin.identity = fstatSync(pin.descriptor, { bigint: true });
+    if (!sameColdFileMetadataV1(before, pin.identity)) fail("direct terminal history opened reader is crossed");
+    pin.bytes = readColdGenesisCandidateV1(target, pin.identity);
+    assertStable();
+    return { stats: pin.identity, bytes: pin.bytes };
+  };
+  try {
+    guards.push(authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), root));
+    journalIdentity = lstatSync(root, { bigint: true }); assertStable();
+    const originalIntent = read(paths.journal), intent = parseDirectSpawnerRebindIntentV1(originalIntent.bytes);
+    const receipt = await import("./baseline-post-handoff-receipt-v1.js"); assertStable();
+    const operation = intent.currentEntryOperation as { operationRef: string; operationHash: string };
+    const preMutation = await receipt.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(operation); assertStable();
+    if (preMutation.currentEntryOperationRef !== operation.operationRef || preMutation.currentEntryOperationHash !== operation.operationHash) fail("direct terminal original P3 operation is crossed");
+    const terminationDispatch = read(path.join(root, "termination-dispatch.json")), terminationReceipt = read(path.join(root, "termination-receipt.json"));
+    const termination = parseDirectSpawnerTerminationChainV1(terminationDispatch.bytes, terminationReceipt.bytes, intent, preMutation);
+    const spawnFile = read(path.join(root, "spawn-dispatch.json")), dispatch = parseDirectSpawnerSpawnDispatchV1(spawnFile.bytes, intent, terminationDispatch.bytes, terminationReceipt.bytes);
+    if (canonical(dispatch.intentIdentity) !== canonical(coldFileIdentityTupleV1(originalIntent.stats))
+      || canonical(dispatch.terminationDispatchIdentity) !== canonical(coldFileIdentityTupleV1(terminationDispatch.stats))
+      || canonical(dispatch.terminationReceiptIdentity) !== canonical(coldFileIdentityTupleV1(terminationReceipt.stats))) fail("direct terminal original publication identity is crossed");
+    const claimFile = read(path.join(root, "claim.json")), claim = parseDirectSpawnerClaimV1(claimFile.bytes, intent, dispatch);
+    const completion = freezeColdDataV1({ schema: "setfarm.internal-production-direct-spawner-helper-completion.v1",
+      intentRef: intent.intentRef, intentHash: intent.intentHash, intentIdentity: coldFileIdentityTupleV1(originalIntent.stats),
+      dispatchRef: dispatch.dispatchRef, dispatchHash: dispatch.dispatchHash, dispatchIdentity: coldFileIdentityTupleV1(spawnFile.stats),
+      claimRef: claim.claimRef, claimHash: claim.claimHash, claimIdentity: coldFileIdentityTupleV1(claimFile.stats), journalIdentity: coldFileIdentityTupleV1(journalIdentity) });
+    if (Buffer.byteLength(`${canonical(completion)}\n`) > 4096) fail("direct terminal completion exceeds its cap");
+    const census = directControllerExpectedServiceCensusV1(preMutation, claim);
+    const expected = directControllerSettlementRecordV1(intent, completion, termination.dispatch, coldFileIdentityTupleV1(terminationDispatch.stats), termination.receipt, coldFileIdentityTupleV1(terminationReceipt.stats), census);
+    settlementTarget = path.join(paths.settlements, expected.helperSettlementHash.slice(0, 2), `${expected.helperSettlementHash}.json`);
+    guards.push(authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), path.dirname(settlementTarget)));
+    const terminal = read(settlementTarget);
+    if (!terminal.bytes.equals(Buffer.from(`${canonical(expected)}\n`)) || canonical(JSON.parse(terminal.bytes.toString("utf8"))) !== canonical(expected)) fail("direct terminal settlement differs from its original history");
+    const finalPreMutation = await receipt.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(operation); assertStable();
+    if (canonical(finalPreMutation) !== canonical(preMutation)) fail("direct terminal original P3 changed across resolution");
+    return freezeColdDataV1({ settlement: expected, settlementIdentity: coldFileIdentityTupleV1(terminal.stats), claim,
+      preSchemaHelperJournalHash: intent.intentHash, preSchemaHelperSettlementRef: expected.helperSettlementRef, preSchemaHelperSettlementHash: expected.helperSettlementHash });
+  } finally {
+    let cleanupError: unknown = null;
+    for (const pin of pins.reverse()) try { finishRetainedColdCleanupV1(() => closePrivateFrameDescriptorV1(pin)); } catch (error) { cleanupError ??= error; }
+    for (const guard of guards.reverse()) try { finishRetainedColdCleanupV1(() => guard.close()); } catch (error) { cleanupError ??= error; }
+    if (cleanupError !== null) throw cleanupError;
   }
 }
 
@@ -2679,12 +2767,8 @@ async function settleDirectSpawnerRebindControllerV1(
     await assertDirectControllerLaunchProfileV1(state); independentlyObserveDirectControllerClaimV1(state, completion);
     if (!state.settlement) {
       const termination = state.termination!;
-      const body = { schema: "setfarm.internal-production-direct-spawner-controller-settlement.v1", action: "task6a-pre-schema-setfarm-spawner-rebind-v1",
-        currentEntryOperation: state.intent.currentEntryOperation, restartAuthority: state.intent.restartAuthority, completion,
-        terminationDispatch: { dispatchRef: termination.dispatch!.record.dispatchRef, dispatchHash: termination.dispatch!.record.dispatchHash, identity: coldFileIdentityTupleV1(termination.dispatch!.identity!) },
-        terminationReceipt: { receiptRef: termination.receipt!.record.terminationReceiptRef, receiptHash: termination.receipt!.record.terminationReceiptHash, identity: coldFileIdentityTupleV1(termination.receipt!.identity!) },
-        transitionLock: state.intent.transitionLock, lockIdentity: state.intent.lockIdentity, terminationDispatchCount: 1, spawnDispatchCount: 1, serviceObservationCount: 2, serviceCensus: first, disposition: "completed" };
-      const helperSettlementHash = sha256(canonical(body)), record = freezeColdDataV1({ ...body, helperSettlementRef: `${HELPER_PREFIX}${helperSettlementHash}`, helperSettlementHash });
+      const record = directControllerSettlementRecordV1(state.intent, completion, termination.dispatch!.record, coldFileIdentityTupleV1(termination.dispatch!.identity!), termination.receipt!.record, coldFileIdentityTupleV1(termination.receipt!.identity!), first);
+      const helperSettlementHash = record.helperSettlementHash;
       const bytes = Buffer.from(`${canonical(record)}\n`);
       if (bytes.length > 65_536) fail("direct settlement exceeds its cap");
       const target = path.join(rootPaths().settlements, helperSettlementHash.slice(0, 2), `${helperSettlementHash}.json`);

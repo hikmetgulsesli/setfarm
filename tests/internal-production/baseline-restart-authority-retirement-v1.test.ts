@@ -807,7 +807,7 @@ export {validateHistoricalSpawnerLaunchProfileV1,validateColdHistoricalLaunchPro
     const runtimePath = installRetirementFixture(fixture, runtimeSource.replace('fail("authority directory identity is invalid")', 'fail("authority directory identity is invalid: "+JSON.stringify({current,before:[before.dev,before.ino,before.mode,before.nlink].map(String),observed:[observed.dev,observed.ino,observed.mode,observed.nlink].map(String)}))').replaceAll("process.kill(", "directSignalFixtureV1(") + `
 export {resolveDirectSpawnerRebindInputsUnderLeaseV1,prepareDirectSpawnerRebindIntentV1};
 import {existsSync} from 'node:fs';
-function openSync(...args){const fd=actualDirect_openSync(...args),probe=globalThis.__directFrameProbeV1;if(probe){probe.owned.add(fd);if(String(args[0]).includes('.direct-helper-capability.')){if((args[1]&constants.O_CREAT)!==0)probe.writer=fd;else probe.reader=fd;}if(args[0]===rootPaths().journal&&probe.intent===undefined&&probe.writes===0)probe.intent=fd;}return fd;}
+function openSync(...args){const fd=actualDirect_openSync(...args),probe=globalThis.__directFrameProbeV1;if(probe){probe.owned.add(fd);if(String(args[0]).includes('.direct-helper-capability.')){if((args[1]&constants.O_CREAT)!==0)probe.writer=fd;else probe.reader=fd;}if(args[0]===rootPaths().journal&&probe.intent===undefined&&probe.writes===0)probe.intent=fd;}const history=globalThis.__directHistoryCleanupV1;if(history){history.opens++;if(args[0]===rootPaths().journal&&history.targetFd===undefined){history.targetFd=fd;history.identity=fstatSync(fd,{bigint:true});}}return fd;}
 function closeSync(fd){const probe=globalThis.__directFrameProbeV1;if(probe&&fd===probe.intent&&probe.mode==='intent-same-inode-reuse'&&probe.writes>0&&!probe.fired){probe.fired=true;actualDirect_closeSync(fd);probe.owned.delete(fd);probe.foreign=actualDirect_openSync(rootPaths().journal,constants.O_RDONLY);if(probe.foreign!==fd)throw Error('fixture same-inode FD was not reused');throw Error('DIRECT_FRAME_CLOSE_FAULT')}if(probe&&fd===probe.writer&&!probe.fired&&['late-mutation','close-response','close-reuse'].includes(probe.mode)){probe.fired=true;if(probe.mode==='late-mutation')actualDirect_writeFileSync(fd,'crossed-after-last-reader-check');else{actualDirect_closeSync(fd);probe.owned.delete(fd);if(probe.mode==='close-reuse'){probe.foreign=actualDirect_openSync('/dev/null',constants.O_RDONLY);if(probe.foreign!==fd)throw Error('fixture did not reuse original FD')}throw Error('DIRECT_FRAME_CLOSE_FAULT')}}if(probe&&fd===probe.writer&&(probe.mode==='persistent-close'||probe.mode==='writer-close'&&!probe.fired)){probe.fired=true;throw Error('DIRECT_FRAME_CLOSE_FAULT')}actualDirect_closeSync(fd);probe?.owned.delete(fd);}
 function publishDirectSpawnerRebindIntentV1(state){const probe=globalThis.__directIntentPublicationFixtureV1;if(!probe)return actualDirectIntentPublisherFixtureV1(state);probe.attempts++;probe.intent=state.intent;if(probe.fault==='before'){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_BEFORE')}const result=actualDirectIntentPublisherFixtureV1(state);if(probe.fault==='after'){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_AFTER')}return result}
 function fsyncParent(file:string){const probe=globalThis.__directIntentPublicationFixtureV1;if(path.basename(file)!=='pre-schema-helper-journal.json'||!probe)return actualDirectFsyncParentFixtureV1(file);if(probe.fault==='parent'&&!existsSync(retainedDirectSpawnerRebindIntentV1.publication.temporary)){probe.fault=null;throw Error('DIRECT_INTENT_PUBLICATION_PARENT')}actualDirectFsyncParentFixtureV1(file);probe.parentSyncs++}
@@ -829,6 +829,7 @@ function spawn(executable,args,options){const probe=globalThis.__directControlle
 export async function invokeDirectControllerFixtureV1(lease,input,loseResponse=false){const completion=await invokeDirectSpawnerRebindHelperV1(lease,input);if(loseResponse)throw Error('DIRECT_CONTROLLER_RESPONSE_LOST');return completion}
 export async function observeDirectControllerFixtureV1(lease,input){return observeDirectSpawnerRebindControllerClaimV1(lease,input)}
 export async function settleDirectControllerFixtureV1(lease,input){return settleDirectSpawnerRebindControllerV1(lease,input)}
+export async function readDirectSettlementHistoryFixtureV1(){return observeDirectSpawnerControllerSettlementHistoryV1()}
 export function validateDirectSettlementCensusFixtureV1(claim,census){return assertDirectControllerServiceCensusV1(retainedDirectSpawnerRebindIntentV1,claim,census)}
 export function inspectDirectControllerFixtureV1(){const state=retainedDirectSpawnerRebindIntentV1,child=state.helperInvocation?.child;return {phase:state.phase,pid:child?.pid,exitCode:child?.exitCode,signalCode:child?.signalCode}}
 export function drainDirectFrameCleanupFixtureV1(){for(const close of pendingColdHelperAuthenticationCleanupV1)close();return pendingColdHelperAuthenticationCleanupV1.size}
@@ -861,7 +862,7 @@ function settlementSyscallFixtureV1(kind,args,invoke){
 }
 function fsyncSync(fd){return settlementSyscallFixtureV1('sync',[fd],()=>priorDirectSettlementSyncFixtureV1(fd))}
 function fsyncParent(file){return settlementSyscallFixtureV1('parent',[file],()=>priorDirectSettlementParentFixtureV1(file))}
-function closeSync(fd){return settlementSyscallFixtureV1('close',[fd],()=>priorDirectSettlementCloseFixtureV1(fd))}
+function closeSync(fd){const history=globalThis.__directHistoryCleanupV1;if(history?.fault&&history.targetFd===fd)throw Error('DIRECT_HISTORY_CLOSE_FAULT');return settlementSyscallFixtureV1('close',[fd],()=>priorDirectSettlementCloseFixtureV1(fd))}
 function linkSync(from,to){return settlementSyscallFixtureV1('link',[from,to],()=>priorDirectSettlementLinkFixtureV1(from,to))}
 function unlinkSync(file){return settlementSyscallFixtureV1('unlink',[file],()=>priorDirectSettlementUnlinkFixtureV1(file))}
 function writeFileSync(file,bytes,...args){return settlementSyscallFixtureV1('write',[file,bytes,...args],()=>priorDirectSettlementWriteFixtureV1(file,bytes,...args))}
@@ -1383,7 +1384,8 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
             let censusCalls = 0;
             inputs.hook = (key: string) => { if (key === "census") censusCalls++; };
             const before = coldGenesisTreeSnapshotV1(privateRoot);
-            const fault = directControllerFault.slice("settle".length).replace(/^-/, "");
+            const historyRequested = directControllerFault.startsWith("settle-history");
+            const fault = historyRequested ? "" : directControllerFault.slice("settle".length).replace(/^-/, "");
             const probe = { fault, fired: false, calls: [] as string[], foreign: undefined as number | undefined, foreignIdentity: undefined as ReturnType<typeof fstatSync> | undefined };
             Reflect.set(globalThis, "__directSettlementPublicationV1", probe);
             const originalCensus = structuredClone(inputs.records.census);
@@ -1463,6 +1465,88 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
               for (const crossed of [{ ...originalCensus, extra: 1 }, { ...originalCensus, censusHash: "f".repeat(64) }]) assert.throws(() => runtime.validateDirectSettlementCensusFixtureV1(claim, crossed));
             }
             assert.equal(spawnProbe.calls.length, 1); assert.equal(signalProbe.calls.length, 1);
+            if (historyRequested) {
+              const owned = observeColdFixtureExitV1(claim.child.pid)!;
+              assert.equal(owned.command, claim.child.command);
+              process.kill(claim.child.pid, "SIGTERM");
+              const deadline = Date.now() + 5000;
+              for (let current = observeColdFixtureExitV1(claim.child.pid); current && Date.now() < deadline; current = observeColdFixtureExitV1(claim.child.pid)) {
+                assertColdFixtureExitObservationV1(current, owned); await new Promise(resolve => setTimeout(resolve, 20));
+              }
+              assert.equal(observeColdFixtureExitV1(claim.child.pid), null);
+              const fresh = await import(`${pathToFileURL(runtimePath).href}?direct-history=${Date.now()}`);
+              const stored = coldGenesisTreeSnapshotV1(path.dirname(privateRoot));
+              const historyFault = directControllerFault.slice("settle-history".length).replace(/^-/, "");
+              if (historyFault === "close") {
+                const cleanup: { fault: boolean; opens: number; targetFd?: number; identity?: ReturnType<typeof fstatSync> } = { fault: true, opens: 0 };
+                Reflect.set(globalThis, "__directHistoryCleanupV1", cleanup);
+                try {
+                  await assert.rejects(fresh.readDirectSettlementHistoryFixtureV1(), /DIRECT_HISTORY_CLOSE_FAULT/);
+                  assert.ok(Number.isSafeInteger(cleanup.targetFd));
+                  const opened = cleanup.opens;
+                  await assert.rejects(fresh.readDirectSettlementHistoryFixtureV1(), /close outcome is ambiguous/);
+                  assert.equal(cleanup.opens, opened, "pending original cleanup must fence all new history acquisitions");
+                  closeSync(cleanup.targetFd!); cleanup.fault = false; // Fixture owns the injected pre-close failure.
+                  assert.deepEqual((await fresh.readDirectSettlementHistoryFixtureV1()).settlement, settled);
+                  assert.deepEqual(coldGenesisTreeSnapshotV1(path.dirname(privateRoot)), stored);
+                } finally {
+                  cleanup.fault = false;
+                  if (cleanup.targetFd !== undefined) try {
+                    const current = fstatSync(cleanup.targetFd, { bigint: true });
+                    if (String(current.dev) === String(cleanup.identity!.dev) && String(current.ino) === String(cleanup.identity!.ino)) closeSync(cleanup.targetFd);
+                  } catch (error) { if (!(error instanceof Error && "code" in error && error.code === "EBADF")) throw error; }
+                  Reflect.deleteProperty(globalThis, "__directHistoryCleanupV1"); fresh.drainDirectFrameCleanupFixtureV1();
+                }
+                assert.equal(spawnProbe.calls.length, 1); assert.equal(signalProbe.calls.length, 1);
+                return;
+              }
+              if (historyFault) {
+                let fired = false;
+                if (["intent", "termination-dispatch", "termination-receipt", "spawn-dispatch", "claim"].includes(historyFault)) {
+                  const replaced = historyFault === "intent" ? path.join(path.dirname(privateRoot), "pre-schema-helper-journal.json") : path.join(privateRoot, `${historyFault}.json`);
+                  const bytes = readFileSync(replaced); renameSync(replaced, path.join(fixture, "history-original")); writeFileSync(replaced, bytes, { mode: 0o600, flag: "wx" }); fired = true;
+                }
+                if (historyFault === "p3") { inputs.records.preMutation.spawner.pid++; fired = true; }
+                if (historyFault === "await-aba") inputs.hook = (key: string) => {
+                  if (key === "preMutation" && !fired) { fired = true; const foreign = path.join(privateRoot, "history-foreign.tmp"); writeFileSync(foreign, "foreign", { mode: 0o600 }); unlinkSync(foreign); }
+                };
+                const beforeRefusal = coldGenesisTreeSnapshotV1(path.dirname(privateRoot));
+                await assert.rejects(fresh.readDirectSettlementHistoryFixtureV1());
+                assert.equal(fired, true);
+                await assert.rejects(fresh.readDirectSettlementHistoryFixtureV1());
+                if (historyFault !== "await-aba") assert.deepEqual(coldGenesisTreeSnapshotV1(path.dirname(privateRoot)), beforeRefusal);
+                assert.equal(spawnProbe.calls.length, 1); assert.equal(signalProbe.calls.length, 1);
+                return;
+              }
+              const historical = await fresh.readDirectSettlementHistoryFixtureV1();
+              assert.deepEqual(historical.settlement, settled);
+              assert.deepEqual(historical.claim, claim);
+              assert.equal(historical.preSchemaHelperJournalHash, completion.intentHash);
+              assert.equal(historical.preSchemaHelperSettlementRef, settled.helperSettlementRef);
+              assert.equal(historical.preSchemaHelperSettlementHash, settled.helperSettlementHash);
+              assert.deepEqual(await fresh.readDirectSettlementHistoryFixtureV1(), historical);
+              assert.deepEqual(coldGenesisTreeSnapshotV1(path.dirname(privateRoot)), stored, "fresh historical resolution cannot mutate or repair authority");
+              assert.equal(spawnProbe.calls.length, 1); assert.equal(signalProbe.calls.length, 1);
+              const bytes = readFileSync(target);
+              for (const key of Object.keys(settled)) {
+                const crossed = structuredClone(settled); crossed[key] = null;
+                if (!key.startsWith("helperSettlement")) {
+                  delete crossed.helperSettlementHash; delete crossed.helperSettlementRef;
+                  crossed.helperSettlementHash = sha256(canonical(crossed)); crossed.helperSettlementRef = `setfarm://internal-production/pre-schema-spawner-rebind-helper-settlement/sha256/${crossed.helperSettlementHash}`;
+                }
+                writeFileSync(target, `${canonical(crossed)}\n`, { mode: 0o600 });
+                await assert.rejects(fresh.readDirectSettlementHistoryFixtureV1(), undefined, `historical terminal refuses ${key}`);
+              }
+              for (const malformed of [Buffer.from("{}\n"), Buffer.from(`${JSON.stringify(settled)}\n`), Buffer.concat([bytes, bytes]), Buffer.alloc(65_537, 32)]) {
+                writeFileSync(target, malformed); await assert.rejects(fresh.readDirectSettlementHistoryFixtureV1());
+              }
+              writeFileSync(target, bytes);
+              assert.deepEqual((await fresh.readDirectSettlementHistoryFixtureV1()).settlement, settled);
+              renameSync(target, path.join(fixture, "history-original-terminal")); writeFileSync(target, bytes, { mode: 0o600, flag: "wx" });
+              const replacedTerminal = await fresh.readDirectSettlementHistoryFixtureV1();
+              assert.deepEqual(replacedTerminal.settlement, settled);
+              assert.notDeepEqual(replacedTerminal.settlementIdentity, historical.settlementIdentity, "terminal inode replacement must change the future census witness");
+            }
           }
           if (directControllerFault.startsWith("observe")) {
             const fault = directControllerFault.slice("observe".length).replace(/^-/, "");
@@ -1912,6 +1996,11 @@ test("actual fixed direct helper authenticates one real sealed child claim and e
 test("actual direct controller retains one fixed helper through concurrent calls and response loss", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller"));
 test("actual direct controller independently binds the original detached child claim", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-observe"));
 test("actual direct controller durably settles the original claim and two service observations", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle"));
+test("fresh direct terminal history authenticates after the original child departs without effects", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-history"));
+test("fresh direct terminal history refuses replaced original records P3 and awaited journal churn", async (context) => {
+  for (const fault of ["intent", "termination-dispatch", "termination-receipt", "spawn-dispatch", "claim", "p3", "await-aba"]) await context.test(fault, () => exerciseDirectRebindFixtureV1("direct-helper", `child-main-controller-settle-history-${fault}`));
+});
+test("fresh direct terminal history drains interrupted original readers before another acquisition", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-controller-settle-history-close"));
 test("direct controller settlement refuses original writer replacement and late sibling appearance", async (context) => {
   for (const fault of ["writer-replace", "reader-replace", "late-sibling"]) await context.test(fault, () => exerciseDirectRebindFixtureV1("direct-helper", `child-main-controller-settle-${fault}`));
 });

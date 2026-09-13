@@ -825,6 +825,10 @@ retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
   partial direct history returns HELPER_DISPATCH_SETTLEMENT_UNKNOWN. Complete
   terminal history returns the same pair without process effects. Keep V1
   byte/behavior identity and cover both with existing adoption/reclaim tests.
+- [x] Add the private read-only direct terminal history resolver before routing:
+  exact original intent/four-member journal, historical operation P3, derived
+  completion/census/CAS record and stable physical witness; no live child or
+  current lease/epoch required. Public adoption stays unchecked above.
 - [ ] Emit fresh startup V2 from original operation P3 and authenticated launch
   profile; persisted V1 calls no new direct port. Persisted V2 reauthenticates
   exact original pairs, constants/source/startup/predecessor without downgrade.
@@ -984,6 +988,29 @@ replace retained lease ownership. The async historical-P3 port requires awaited
 propagation through helper cleanup, dead-lock reclaim and raw-lock release before
 those consumers can accept direct terminal history. Preserve V1 behavior and
 test every existing raw/genesis/ordinary caller; do not fire-and-forget cleanup.
+
+Private direct terminal-history RED first failed at the missing reader (8.159s).
+The new resolver retains original file descriptors/metadata/bytes across both
+historical-P3 reads, requires the original P3-bound termination chain, and derives
+the exact completion/census/settlement hash and path before opening its terminal.
+Shared private pure projections preserve existing settlement bytes; they never
+grant process or filesystem ownership. Fresh-module resolution after actual
+child departure passed1/1 (9.245s). Expanded history tests passed9/9 (59.851s),
+covering every self-rehashed terminal field, canonical/size defects, replaced
+intent/termination/spawn/claim records, original P3 drift and awaited journal
+ABA. Replacing only an equal valid terminal produces a different physical
+witness for future census bracketing, not an invented historical inode identity.
+
+Review reproduced a pending-reader cleanup gap: a second call returned valid
+history while the first original close remained ambiguous (RED8.204s). Drain the
+existing retained cleanup set before any new acquisition. The actual reader
+fault test now requires zero new opens on retry and recovery only after the
+fixture closes its injected pre-close failure. Final cleanup/positive/ABI gate
+passed3/3 (17.988s); prior shared settlement/history/ABI gate31/31 (190.580s),
+manifest17/17 (6.161s), TypeScript no-emit and whitespace passed. Final independent
+scoped review found no remaining material issue. API/dashboard remain200/200,
+canonical Setfarm and Mission Control worktrees unchanged. This checkpoint does
+not wire public V2, helper census, dead-owner reclaim, or retained physical release.
 
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
