@@ -4554,7 +4554,7 @@ test("cold genesis retries release failures without losing a live fence or retai
   for (const fault of ["before-unlink", "after-unlink", "after-close"] as const) {
     const original = readFileSync(sourcePath, "utf8");
     const publication = '    writeNoReplace(rootPaths().epoch, head);';
-    const preRelease = 'function releaseRawPhysicalTransitionLockV1(raw: RawPhysicalTransitionLockV1): void {';
+    const preRelease = 'async function releaseRawPhysicalTransitionLockV1(raw: RawPhysicalTransitionLockV1): Promise<void> {';
     const unlink = '    unlinkSync(lock);\n    onOwnedUnlink?.();\n    fsyncParent(lock);';
     const closed = '  rawPhysicalTransitionLocksV1.delete(raw);\n}\n\nfunction abandonRawPhysicalTransitionLockV1';
     for (const needle of [publication, preRelease, unlink, closed]) assert.ok(original.includes(needle), `fault port exists: ${needle}`);
@@ -4747,6 +4747,111 @@ export async function observeInternalProductionColdBootstrapObservationV1(){
     Reflect.deleteProperty(globalThis, "__coldGenesisObservation");
     Reflect.deleteProperty(globalThis, "__coldGenesisObservedLocks");
     rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+for (const scenario of ["ordinary", "dead", "raw", "genesis", "ordinary-reused", "raw-reused", "dead-reappeared", "ordinary-parent", "raw-parent", "dead-parent", "ordinary-guard"] as const) test(`physical ${scenario} cleanup awaits historical helper validation before changing ownership`, async () => {
+  const mode = scenario.split("-")[0];
+  const original = readFileSync(sourcePath, "utf8"), marker = "function assertHelperJournalAllowsLockCleanup(";
+  assert.equal(original.split(marker).length - 1, 1);
+  const guardReturn = "    assertStable();\n    return Object.freeze({\n      assertStable,\n      close,\n    });";
+  assert.equal(original.split(guardReturn).length - 1, 1);
+  const source = original.replace(marker, "function actualAwaitedHelperCleanupFixtureV1(")
+    .replace(guardReturn, "    globalThis.__helperCleanupGuardCaptureV1?.({descriptors,held,close});\n" + guardReturn)
+    .replace("function boundedPsProcessIdentity(pid: number)", "function actualAwaitedOwnerObservationFixtureV1(pid: number)")
+    .replace("    writeNoReplace(rootPaths().epoch, head);", "    if(globalThis.__helperCleanupPublicationFaultV1)throw Error('FIXTURE_GENESIS_PUBLICATION');\n    writeNoReplace(rootPaths().epoch, head);") + `
+function assertHelperJournalAllowsLockCleanup(...args){const pending=(async()=>{await globalThis.__helperCleanupAwaitGateV1?.();return actualAwaitedHelperCleanupFixtureV1(...args)})();void pending.catch(()=>{});return pending;}
+function boundedPsProcessIdentity(pid){if(pid===99999&&globalThis.__helperCleanupOwnerReappearedV1)return {pid,processStartTimeEpochMs:2,processIdentityHash:'f'.repeat(64)};return actualAwaitedOwnerObservationFixtureV1(pid)}
+export const awaitedRawCleanupFixtureV1={acquire:acquireRawPhysicalTransitionLockV1,release:releaseRawPhysicalTransitionLockV1,promote:raw=>promoteRawPhysicalTransitionLockV1(raw,assertEpochOneActive),descriptor:value=>rawPhysicalTransitionLocksV1.get(value)?.descriptor??leases.get(value)?.descriptor,dispose:raw=>{const state=rawPhysicalTransitionLocksV1.get(raw);if(state){state.rootGuard.close();rawPhysicalTransitionLocksV1.delete(raw)}}};
+export function drainAwaitedCleanupFixtureV1(){for(const close of pendingColdHelperAuthenticationCleanupV1)close()}
+export function discardDrainedGuardFixtureV1(){pendingColdHelperAuthenticationCleanupV1.clear()}
+`;
+  const fixture = await createColdEpochGenesisFixtureV1(source);
+  let resume!: () => void, operation: Promise<{ value?: any; error?: unknown }> | undefined;
+  let resource: any, ownedFd: number | undefined, ownedIdentity: ReturnType<typeof fstatSync> | undefined;
+  let foreignFd: number | undefined, foreignIdentity: ReturnType<typeof fstatSync> | undefined;
+  const descriptorReservations: number[] = [];
+  let movedRoot: string | undefined;
+  let guardProbe: { descriptors: number[]; held: unknown[]; close: () => void } | undefined;
+  try {
+    const warmup = await fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+    await fixture.isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(warmup);
+    if (mode === "ordinary") resource = await fixture.isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+    if (mode === "raw") resource = await fixture.isolated.awaitedRawCleanupFixtureV1.acquire();
+    if (resource) { ownedFd = fixture.isolated.awaitedRawCleanupFixtureV1.descriptor(resource); ownedIdentity = fstatSync(ownedFd!); }
+    if (mode === "dead") writeFileSync(fixture.lock, `${canonical({ schema: "setfarm.internal-production-physical-service-restart-authority-transition-lock.v1", pid: 99_999, processStartTimeEpochMs: 1, processIdentityHash: "0".repeat(64), leaseNonce: "1".repeat(64) })}\n`, { mode: 0o600, flag: "wx" });
+    if (mode === "genesis") Reflect.set(globalThis, "__helperCleanupPublicationFaultV1", true);
+    let entered!: () => void, completed = false;
+    const reached = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { resume = resolve; });
+    Reflect.set(globalThis, "__helperCleanupAwaitGateV1", () => { entered(); return gate; });
+    if (scenario === "ordinary-guard") Reflect.set(globalThis, "__helperCleanupGuardCaptureV1", (guard: typeof guardProbe) => { guardProbe ??= guard; });
+    const invoke = () => mode === "ordinary" ? fixture.isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(resource)
+      : mode === "raw" ? fixture.isolated.awaitedRawCleanupFixtureV1.release(resource)
+      : mode === "genesis" ? fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1()
+      : fixture.isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+    operation = Promise.resolve(invoke()).then(value => ({ value }), error => ({ error })).finally(() => { completed = true; });
+    await reached; await new Promise<void>(resolve => setImmediate(resolve));
+    Reflect.deleteProperty(globalThis, "__helperCleanupGuardCaptureV1");
+    assert.equal(completed, false, "caller must await historical helper validation, including its cleanup path");
+    assert.equal(existsSync(fixture.lock), true, "the original physical fence remains while history is pending");
+    const fencedIdentity = lstatSync(fixture.lock), fencedBytes = readFileSync(fixture.lock);
+    if (mode === "raw") {
+      await assert.rejects(fixture.isolated.awaitedRawCleanupFixtureV1.release(resource), /already active/);
+      assert.throws(() => fixture.isolated.awaitedRawCleanupFixtureV1.promote(resource), /already active/);
+    }
+    let replacementBytes: Buffer | undefined;
+    if (scenario.endsWith("-reused")) {
+      replacementBytes = readFileSync(fixture.lock); renameSync(fixture.lock, path.join(fixture.fixture, "original-awaited-lock"));
+      for (let count = 0; count < 256; count++) { const fd = openSync("/dev/null", constants.O_RDONLY); descriptorReservations.push(fd); if (fd > ownedFd!) break; }
+      closeSync(ownedFd!); writeFileSync(fixture.lock, replacementBytes, { mode: 0o600, flag: "wx" });
+      foreignFd = openSync(fixture.lock, constants.O_RDONLY | constants.O_NOFOLLOW); assert.equal(foreignFd, ownedFd); foreignIdentity = fstatSync(foreignFd);
+    }
+    if (scenario === "dead-reappeared") Reflect.set(globalThis, "__helperCleanupOwnerReappearedV1", true);
+    if (scenario === "ordinary-guard") {
+      const fd = guardProbe!.descriptors.at(-1)!;
+      for (let count = 0; count < 256; count++) { const reserved = openSync("/dev/null", constants.O_RDONLY); descriptorReservations.push(reserved); if (reserved > fd) break; }
+      closeSync(fd); foreignFd = openSync("/dev/null", constants.O_RDONLY); assert.equal(foreignFd, fd); foreignIdentity = fstatSync(foreignFd);
+      replacementBytes = fencedBytes;
+    }
+    if (scenario.endsWith("-parent")) {
+      movedRoot = path.join(fixture.fixture, "original-awaited-parent"); renameSync(fixture.root, movedRoot); mkdirSync(fixture.root, { mode: 0o700 });
+      for (const member of readdirSync(movedRoot)) renameSync(path.join(movedRoot, member), path.join(fixture.root, member));
+    }
+    resume(); const result = await operation;
+    if (scenario.includes("-")) {
+      assert.ok(result.error, "crossed ownership after the await must refuse cleanup");
+      assert.equal(existsSync(fixture.lock), true);
+      if (foreignFd === undefined) { assert.equal(lstatSync(fixture.lock).ino, fencedIdentity.ino); assert.deepEqual(readFileSync(fixture.lock), fencedBytes); }
+      if (foreignFd !== undefined) {
+        assert.equal(fstatSync(foreignFd).ino, foreignIdentity!.ino, "refused cleanup must not close a foreign reused FD");
+        assert.deepEqual(readFileSync(fixture.lock), replacementBytes);
+      }
+    } else if (mode === "genesis") assert.match(String(result.error), /FIXTURE_GENESIS_PUBLICATION/);
+    else assert.equal(result.error, undefined);
+  } finally {
+    resume?.(); Reflect.deleteProperty(globalThis, "__helperCleanupPublicationFaultV1");
+    const result = await operation;
+    if (result?.value) await fixture.isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(result.value);
+    if (movedRoot) {
+      for (const member of readdirSync(fixture.root)) renameSync(path.join(fixture.root, member), path.join(movedRoot, member));
+      renameSync(fixture.root, path.join(fixture.fixture, "foreign-awaited-parent")); renameSync(movedRoot, fixture.root);
+    }
+    if (scenario === "ordinary-guard" && guardProbe && foreignFd !== undefined) {
+      // Test owns the lost original slot; disown the foreign FD before draining
+      // only the guard's remaining original descriptors, never restore authority.
+      const index = guardProbe.descriptors.indexOf(foreignFd);
+      assert.ok(index >= 0); guardProbe.descriptors.splice(index, 1); guardProbe.held.splice(index, 1);
+      guardProbe.close(); fixture.isolated.discardDrainedGuardFixtureV1();
+    } else fixture.isolated.drainAwaitedCleanupFixtureV1();
+    if (mode === "raw" && resource) fixture.isolated.awaitedRawCleanupFixtureV1.dispose(resource);
+    for (const [fd, identity] of [[foreignFd, foreignIdentity], [ownedFd, ownedIdentity]] as const) {
+      if (fd !== undefined && identity) try { const current = fstatSync(fd); if (current.dev === identity.dev && current.ino === identity.ino) closeSync(fd); }
+      catch (error) { if (!(error instanceof Error && "code" in error && error.code === "EBADF")) throw error; }
+    }
+    for (const fd of descriptorReservations) closeSync(fd);
+    Reflect.deleteProperty(globalThis, "__helperCleanupOwnerReappearedV1");
+    Reflect.deleteProperty(globalThis, "__helperCleanupGuardCaptureV1");
+    Reflect.deleteProperty(globalThis, "__helperCleanupAwaitGateV1"); fixture.cleanup();
   }
 });
 

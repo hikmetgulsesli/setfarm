@@ -238,7 +238,7 @@ type RawPhysicalTransitionLockStateV1 = Readonly<{
   descriptor: number;
   lockBytes: Buffer;
   rootGuard: PrivateDirectoryGuardV1;
-  cleanup: { phase: "held" | "owned-unlink-completed"; identity: BigIntStats | null; unlinkSynced: boolean; rootGuardClosing: boolean; rootGuardClosed: boolean; descriptorClosed: boolean };
+  cleanup: { active: boolean; phase: "held" | "owned-unlink-completed"; identity: BigIntStats | null; unlinkSynced: boolean; rootGuardClosing: boolean; rootGuardClosed: boolean; descriptorClosed: boolean };
 }>;
 const rawPhysicalTransitionLocksV1 = new WeakMap<object, RawPhysicalTransitionLockStateV1>();
 let retainedColdGenesisRawV1: RawPhysicalTransitionLockV1 | null = null;
@@ -1519,10 +1519,10 @@ function openDirectSpawnerHelperFrameV1(state: DirectSpawnerRebindIntentStateV1)
   }
 }
 
-function assertHelperJournalAllowsLockCleanup(
+async function assertHelperJournalAllowsLockCleanup(
   transitionLock: Readonly<Record<string, unknown>>,
   currentLockIdentity: Readonly<{ devDecimal: string; inoDecimal: string }>,
-): void {
+): Promise<void> {
   observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
   const paths = rootPaths();
   let bytes: Buffer;
@@ -1589,10 +1589,12 @@ function assertHelperJournalAllowsLockCleanup(
   closeNormalHelperJournalsBeforeLockCleanupV1(transitionLock, currentLockIdentity);
 }
 
-function reclaimDeadLockOnce(lock: string): void {
+async function reclaimDeadLockOnce(lock: string, assertParent: () => void): Promise<void> {
   const descriptor = openSync(lock, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const pin: PrivateFrameDescriptorV1 = { descriptor, identity: null, closeEntered: false };
   try {
     const first = fstatSync(descriptor, { bigint: true });
+    pin.identity = first;
     if (!first.isFile() || first.isSymbolicLink() || first.nlink !== 1n || (first.mode & 0o7777n) !== 0o600n) fail("existing transition lock identity is invalid");
     const bytes = readFileSync(descriptor);
     if (bytes.length < 1 || bytes.length > 65_536) fail("transition lock record size is invalid");
@@ -1602,7 +1604,10 @@ function reclaimDeadLockOnce(lock: string): void {
       if (observed.processStartTimeEpochMs !== record.processStartTimeEpochMs || observed.processIdentityHash !== record.processIdentityHash) fail("transition lock PID was reused or replaced");
       fail("restart transition lease is unavailable");
     }
-    assertHelperJournalAllowsLockCleanup(record, descriptorIdentity(descriptor));
+    await assertHelperJournalAllowsLockCleanup(record, descriptorIdentity(descriptor));
+    assertParent();
+    if (boundedPsProcessIdentity(record.pid as number)) fail("transition lock owner reappeared before dead-owner cleanup");
+    if (!sameColdFileMetadataV1(first, fstatSync(descriptor, { bigint: true }))) fail("transition lock original descriptor changed during history validation");
     const pathStats = lstatSync(lock, { bigint: true });
     const secondDescriptor = openSync(lock, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
@@ -1614,7 +1619,10 @@ function reclaimDeadLockOnce(lock: string): void {
       unlinkSync(lock);
       fsyncParent(lock);
     } finally { closeSync(secondDescriptor); }
-  } finally { closeSync(descriptor); }
+  } finally {
+    if (pin.identity === null) closeSync(descriptor);
+    else finishRetainedColdCleanupV1(() => closePrivateFrameDescriptorV1(pin));
+  }
 }
 
 function writeNoReplace(file: string, value: unknown): boolean {
@@ -2067,7 +2075,7 @@ async function acquireColdGenesisTransitionLeaseOwnedV1(): Promise<InternalProdu
     // Finish this invocation's authenticated unlink; never mistake it for a
     // still-held fence, and never reclaim an externally removed held lock.
     const pending = retainedColdGenesisRawV1;
-    try { releaseRawPhysicalTransitionLockV1(pending); }
+    try { await releaseRawPhysicalTransitionLockV1(pending); }
     finally { if (!rawPhysicalTransitionLocksV1.has(pending)) retainedColdGenesisRawV1 = null; }
   }
   const raw = retainedColdGenesisRawV1 ?? await acquireRawPhysicalTransitionLockV1();
@@ -2107,7 +2115,7 @@ async function acquireColdGenesisTransitionLeaseOwnedV1(): Promise<InternalProdu
     // Genesis publishes no dispatch journal. Retain every receipt/head prefix;
     // release only this exact physical owner, never erase partial authority.
     try {
-      releaseRawPhysicalTransitionLockV1(raw);
+      await releaseRawPhysicalTransitionLockV1(raw);
       if (retainedColdGenesisRawV1 === raw) retainedColdGenesisRawV1 = null;
     } catch {
       // Never fall back to acquisition-only cleanup after publication. A
@@ -3124,7 +3132,7 @@ export async function ensureInternalProductionColdSpawnerBootstrapSettledV1(): P
       if (retainedColdBootstrapIntentV1 !== null || retainedColdBootstrapPreparationV1 !== null) fail("cold controller has crossed retained owners");
       const raw = retainedColdGenesisRawV1;
       if (heldRawPhysicalTransitionLockV1(raw).cleanup.phase === "owned-unlink-completed") {
-        try { releaseRawPhysicalTransitionLockV1(raw); }
+        try { await releaseRawPhysicalTransitionLockV1(raw); }
         finally { if (!rawPhysicalTransitionLocksV1.has(raw)) retainedColdGenesisRawV1 = null; }
       }
     }
@@ -4950,12 +4958,13 @@ async function acquireRawPhysicalTransitionLockV1(): Promise<RawPhysicalTransiti
       opened = openNewLock(paths.lock);
     } catch (error) {
       if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
-      reclaimDeadLockOnce(paths.lock);
+      await reclaimDeadLockOnce(paths.lock, () => rootGuard.assertStable());
+      rootGuard.assertStable();
       opened = openNewLock(paths.lock);
     }
     const raw = Object.freeze({ schema: "setfarm.internal-production-raw-physical-transition-lock.v1" as const });
     rootGuard.assertStable();
-    rawPhysicalTransitionLocksV1.set(raw, { ...opened, rootGuard, cleanup: { phase: "held", identity: null, unlinkSynced: false, rootGuardClosing: false, rootGuardClosed: false, descriptorClosed: false } });
+    rawPhysicalTransitionLocksV1.set(raw, { ...opened, rootGuard, cleanup: { active: false, phase: "held", identity: null, unlinkSynced: false, rootGuardClosing: false, rootGuardClosed: false, descriptorClosed: false } });
     rootGuardTransferred = true;
     opened = null;
     return raw;
@@ -4973,7 +4982,7 @@ async function acquireRawPhysicalTransitionLockV1(): Promise<RawPhysicalTransiti
     }
     throw error;
   } finally {
-    if (!rootGuardTransferred) rootGuard.close();
+    if (!rootGuardTransferred) finishRetainedColdCleanupV1(() => { rootGuard.assertStable(); rootGuard.close(); });
   }
 }
 
@@ -5002,6 +5011,7 @@ function promoteRawPhysicalTransitionLockV1(
   assertEpoch: () => Readonly<Record<string, unknown>>,
 ): InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1 {
   const state = heldRawPhysicalTransitionLockV1(raw);
+  if (state.cleanup.active) fail("raw lock cleanup is already active");
   assertRawPhysicalTransitionLockStableV1(state);
   assertEpoch();
   const lease = Object.freeze({ schema: "setfarm.internal-production-physical-service-restart-authority-transition-lease.v1" as const });
@@ -5012,15 +5022,25 @@ function promoteRawPhysicalTransitionLockV1(
   return lease;
 }
 
-function releaseRawPhysicalTransitionLockV1(raw: RawPhysicalTransitionLockV1): void {
+async function releaseRawPhysicalTransitionLockV1(raw: RawPhysicalTransitionLockV1): Promise<void> {
   const state = heldRawPhysicalTransitionLockV1(raw);
+  if (state.cleanup.active) fail("raw lock cleanup is already active");
+  state.cleanup.active = true;
+  try { await releaseRawPhysicalTransitionLockOwnedV1(raw, state); }
+  finally { state.cleanup.active = false; }
+}
+
+async function releaseRawPhysicalTransitionLockOwnedV1(raw: RawPhysicalTransitionLockV1, state: RawPhysicalTransitionLockStateV1): Promise<void> {
   const cleanup = state.cleanup;
   for (const close of pendingColdHelperAuthenticationCleanupV1) close();
   if (state.cleanup.phase === "held") {
     assertRawPhysicalTransitionLockStableV1(state);
     cleanup.identity ??= fstatSync(state.descriptor, { bigint: true });
     if (!sameColdFileMetadataV1(cleanup.identity, fstatSync(state.descriptor, { bigint: true }))) fail("raw held lock changed during cleanup");
-    assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));
+    await assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));
+    if (heldRawPhysicalTransitionLockV1(raw) !== state || !cleanup.active) fail("raw physical cleanup owner changed");
+    assertRawPhysicalTransitionLockStableV1(state);
+    if (!sameColdFileMetadataV1(cleanup.identity, fstatSync(state.descriptor, { bigint: true }))) fail("raw original lock changed during history validation");
     cleanupExactOwnedLock(rootPaths().lock, state.descriptor, state.lockBytes, () => { state.cleanup.phase = "owned-unlink-completed"; });
   }
   // Only a recorded owned unlink permits this metadata transition. A new
@@ -5054,6 +5074,7 @@ function releaseRawPhysicalTransitionLockV1(raw: RawPhysicalTransitionLockV1): v
 
 function abandonRawPhysicalTransitionLockV1(raw: RawPhysicalTransitionLockV1): void {
   const state = heldRawPhysicalTransitionLockV1(raw);
+  if (state.cleanup.active) fail("raw lock cleanup is already active");
   try {
     try {
       state.rootGuard.assertStable();
@@ -5085,18 +5106,21 @@ export async function releaseInternalProductionPhysicalServiceRestartAuthorityTr
   const state = heldLease(lease);
   const paths = rootPaths();
   const rootGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), paths.root);
+  const pin: PrivateFrameDescriptorV1 = { descriptor: state.descriptor, identity: null, closeEntered: false };
   state.phase = "released";
   try {
     rootGuard.assertStable();
-    assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));
+    pin.identity = fstatSync(state.descriptor, { bigint: true });
+    await assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));
+    rootGuard.assertStable();
+    if (leases.get(lease) !== state || state.phase !== "released" || !sameColdFileMetadataV1(pin.identity, fstatSync(state.descriptor, { bigint: true }))) fail("ordinary release original lock changed during history validation");
     cleanupExactOwnedLock(paths.lock, state.descriptor, state.lockBytes);
     rootGuard.assertStable();
   } finally {
-    try { rootGuard.assertStable(); }
+    try { finishRetainedColdCleanupV1(() => { rootGuard.assertStable(); rootGuard.close(); }); }
     finally {
-      rootGuard.close();
-      closeSync(state.descriptor);
-      leases.delete(lease);
+      try { finishRetainedColdCleanupV1(() => closePrivateFrameDescriptorV1(pin)); }
+      finally { leases.delete(lease); }
     }
   }
 }

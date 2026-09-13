@@ -1004,6 +1004,28 @@ across the await; reject concurrent cleanup or promotion. Behavioral gates must
 cover each awaited caller, original/new lock relations, awaited path replacement,
 normal-journal refusal, and unchanged V1/genesis cleanup response-loss behavior.
 
+Async prerequisite checkpoint: gated actual ordinary/dead/raw/genesis cleanup
+first failed4/4 (2.091s): callers returned and advanced ownership while helper
+history remained pending. All private callers now await validation/cleanup;
+raw release retains an active progression owner and blocks promotion/abandon.
+REDs then exposed same-byte foreign lock FD reuse, late owner reappearance and
+parent-topology replacement (including dead reclaim replacing the original lock
+before eventually rejecting). Recheck original parent, saved full lock identity,
+raw map/phase and dead process absence after the await, before any mutation.
+Ordinary/dead cleanup retains exact close ownership; a failed original guard
+assertion is retained with assert-before-close rather than closing foreign FDs.
+Unknown guard ownership is a conservative fence, not automatic recovery.
+
+Focused await/FD/PID/parent/guard-reuse cases passed11/11 (4.785s). Combined existing
+V1/genesis/dead-lock/lease ABI regression passed26/26 (25.530s), TypeScript
+no-emit/whitespace passed, and independent review found no remaining material
+issue in this async-only slice. The direct intent branch still rejects: complete
+terminal adoption is deliberately not enabled until its separate behavioral
+tests and global-fence binding are implemented. This advances the coupled File
+Map prerequisite, not full P3 or live acceptance.
+Final direct release/history positive regression passed2/2 (15.037s), source
+manifest17/17 (5.747s). No public export or arity changed, no live mutation.
+
 Private direct terminal-history RED first failed at the missing reader (8.159s).
 The new resolver retains original file descriptors/metadata/bytes across both
 historical-P3 reads, requires the original P3-bound termination chain, and derives
