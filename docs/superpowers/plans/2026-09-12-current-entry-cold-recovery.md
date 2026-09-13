@@ -1102,6 +1102,92 @@ Next coupled integration (not implemented by the historical/release slice):
    only for the actual zero-argument facade. Direct-detached rebind remains a
    separate required coupled transport slice before full P3/live delivery.
 
+Controller-facade integration in progress (existing retirement module and owning
+test; no new File Map path):
+
+- Added one zero-argument `ensureInternalProductionColdSpawnerBootstrapSettledV1`
+  export. Serialize entry, resume only retained ownership, require authenticated
+  historical settlement after exact release, and preserve its original final
+  identity across release. Unretained partial journals refuse before any new
+  preparation; settled/releasing states do not require the departed child or
+  advanced mutable epoch. The actual eight-mode helper/controller fixture
+  passed (23.223s), including concurrency, response loss, historical replay,
+  post-release same-byte final replacement and cleanup-only retry.
+- Retained intent-only prefixes must re-enter their strict existing publisher
+  before helper invocation. The real root-sync and linked-temporary fixtures
+  prove same descriptor/nonce/intent and repaired one-link final before entering
+  settlement; fresh absence reaches the strict preparation path, not caller
+  authority. Three boundary modes passed (0.875s).
+- Read-only review found a causally required pre-intent ownership gap: the
+  promoted lease was local while awaited profile/cold observations ran, and
+  failing cleanup could lose it. The new refusal test reproduced dropped
+  ownership. Retain preparation before guard acquisition/awaits, bracket exact
+  FD/path metadata and epoch, and transfer synchronously to intent. Refusal now
+  keeps the original fence for strict retry rather than ordinary lease release.
+  Seven modes passed (2.374s): profile/cold failure, persistent close fault,
+  guard acquisition failure, and lock/root/epoch drift. Existing crossed-genesis
+  refusal still preserves history and now explicitly asserts retained ownership.
+- Facade review also exposed raw-lock release deleting its owner on a real
+  pre-close fault. The new physical-close test reproduced a live FD with no
+  retained raw owner. Raw cleanup now retains per-resource unlink/sync/guard/FD
+  progress, and recorded own unlink drains only the old unlinked capability,
+  without inspecting a new pathname owner. Shared exact-lock reader cleanup
+  retains its failed close as well. Focused raw fault and broad owning checks
+  are pending; this is not yet a delivered facade milestone.
+- Predecessor integration audit found a required creation/replay split. Both
+  selected and pinned progress origins rebuild prepared candidates while the
+  outer status can still be `operation_prepared` after predecessor termination
+  or replacement. Fresh builder equality with cold settlement is required for
+  creation, but replay must reconstruct the authenticated original status/P2
+  bytes without requiring that departed child to remain live. Preserve existing
+  rebind-effect guards separately. V2 history must also be rechecked after
+  downstream pair/complete-zero/live-observation awaits before final returns;
+  a single early terminal read is insufficient. Add status-lag replay and late
+  terminal-replacement tests to the coupled predecessor work before delivery.
+- The first complete facade owning run finished 65/66 (441.642s). All runtime,
+  ownership, publication and historical cases passed; its sole failure was the
+  exact export inventory still expecting the old 25-name surface. The reviewed
+  zero-argument facade is now explicitly the 26th name, with no optional or
+  wildcard exception; focused export test passed (0.344s). A final complete
+  rerun is in progress. The expanded actual facade fixture also now starts from
+  genuine absence (no pre-created epoch, intent, lock or transport copies): all
+  nine modes passed (24.035s). Helper19/19 (29.932s), manifests17/17 (6.824s),
+  phase-zero2/2 (1.941s), TypeScript and whitespace checks passed.
+- The next complete run finished 65/66 (416.940s), with export/runtime/raw
+  lifecycle cases passing. Its PID-residue completion fixture rejected an
+  unexpected command row; the original row was not captured, so its exact
+  cause is not asserted. An independent bounded Darwin child experiment and
+  new deterministic test reproduced the same assertion when the same original
+  PID/UID/PGID/start time became `Z` with command `<defunct>` (RED 0.070s).
+  The helper fixture now records the child's initial live identity immediately
+  after its actual spawn. Each completion probe checks that identity once;
+  only the same bound zombie may remain waiting, never count as complete.
+  Explicit status1/empty-output absence remains mandatory. Crossed identities
+  and a non-zombie `<defunct>` row still refuse. Original retirement-owned zero
+  count and residue preservation assertions remain. No production timeout,
+  process observation or runtime guard changed. Final owning rerun follows.
+- That rerun captured the previously missing row: the bound child had `?Es`
+  and command `(node)`; a focused teardown captured `Rs` with the same fallback.
+  Therefore zombie-only handling was incomplete. Local Darwin `ps(1)` documents
+  unreliable argument-memory reporting and stable `ucomm` accounting names.
+  The fixture now includes `ucomm` in its one-row original/current identity.
+  Exact accounting-name fallback is waiting only (including a pre-exit status
+  snapshot), never permission to signal or report absence. Teardown also keeps
+  the original UID/PGID/start/name binding instead of a path-only signal check.
+  Unknown commands/identities still fail, and explicit absence remains required.
+  The original production process-ownership ambiguity remains a separate
+  unexplained observation; this test-only diagnosis does not claim to fix it.
+- The Z-only complete rerun finished 66/67 (414.800s); its captured accounting
+  fallback identified the missing test-only case. The final ucomm-bound waiter
+  passed the 21-mode actual helper plus unreaped-child focused pair (37.783s).
+  Final complete retirement file: **67/67, 446.913s**, no skips or failures.
+  This includes actual nine-mode facade, seven-mode preparation retention,
+  four-mode raw cleanup, historical settlement and all ordinary retirement
+  cases. TypeScript and whitespace passed. A fresh independent review of the
+  two-file diff against `115df146` found no Critical/Important issue. Commit
+  only this facade/ownership milestone and its plan; the receipt predecessor
+  integration remains separate unfinished work. No live acceptance is claimed.
+
 The next read-only slice is private `authenticateColdSpawnerHelperIntentV1`
 in the existing retirement File Map member. The future helper can independently
 authenticate its real inherited FD3/4/5 without duplicating weaker genesis or

@@ -147,7 +147,7 @@ type RawPhysicalTransitionLockStateV1 = Readonly<{
   descriptor: number;
   lockBytes: Buffer;
   rootGuard: PrivateDirectoryGuardV1;
-  cleanup: { phase: "held" | "owned-unlink-completed" };
+  cleanup: { phase: "held" | "owned-unlink-completed"; identity: BigIntStats | null; unlinkSynced: boolean; rootGuardClosing: boolean; rootGuardClosed: boolean; descriptorClosed: boolean };
 }>;
 const rawPhysicalTransitionLocksV1 = new WeakMap<object, RawPhysicalTransitionLockStateV1>();
 let retainedColdGenesisRawV1: RawPhysicalTransitionLockV1 | null = null;
@@ -184,10 +184,17 @@ type ColdControllerHelperInvocationV1 = {
   pins: Array<Readonly<{ path: string; stats: BigIntStats; bytes: Buffer; descriptor: number }>>;
 };
 let retainedColdBootstrapIntentV1: ColdBootstrapIntentStateV1 | null = null;
+let retainedColdBootstrapPreparationV1: {
+  lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1;
+  rootGuard: PrivateDirectoryGuardV1 | null;
+  lockIdentity: BigIntStats | null;
+  epoch: Readonly<Record<string, unknown>> | null;
+} | null = null;
 let coldBootstrapIntentInvocationActiveV1 = false;
 let coldControllerHelperInvocationActiveV1 = false;
 let coldControllerSettlementActiveV1 = false;
 let coldControllerReleaseActiveV1 = false;
+let coldControllerFacadeActiveV1 = false;
 const pendingColdHelperAuthenticationCleanupV1 = new Set<() => void>();
 type ColdHelperContextStateV1 = {
   authentication: Awaited<ReturnType<typeof authenticateColdSpawnerHelperIntentV1>>;
@@ -528,7 +535,7 @@ function cleanupExactOwnedLock(lock: string, descriptor: number, expectedBytes: 
     unlinkSync(lock);
     onOwnedUnlink?.();
     fsyncParent(lock);
-  } finally { closeSync(reopened); }
+  } finally { finishRetainedColdCleanupV1(() => closeSync(reopened)); }
 }
 
 function repairCompletedNoReplacePublication(file: string): void {
@@ -1416,22 +1423,40 @@ function assertColdIntentOnlyPrefixV1(state: ColdBootstrapIntentStateV1, require
   } finally { finishRetainedColdCleanupV1(() => guard.close()); }
 }
 
-// Private preparation for the fixed controller. No helper dispatch, process
-// effect or public live entry point is enabled by this publication stage.
+function assertColdPreparationLeaseV1(state: NonNullable<typeof retainedColdBootstrapPreparationV1>): void {
+  if (state !== retainedColdBootstrapPreparationV1 || !state.rootGuard || !state.lockIdentity || !state.epoch) fail("cold preparation owner is unavailable");
+  state.rootGuard.assertStable();
+  const held = heldLease(state.lease), atPath = lstatSync(rootPaths().lock, { bigint: true });
+  if (parseLockRecord(held.lockBytes).pid !== process.pid || !sameColdFileMetadataV1(state.lockIdentity, fstatSync(held.descriptor, { bigint: true }))
+    || !sameColdFileMetadataV1(state.lockIdentity, atPath) || !readColdGenesisCandidateV1(rootPaths().lock, atPath).equals(held.lockBytes)
+    || canonical(assertEpochOneActive()) !== canonical(state.epoch)) fail("cold preparation physical authority is crossed");
+  state.rootGuard.assertStable();
+}
+
+// Preparation retains its promoted lease before the first fallible observation.
+// A refusal cannot drop that owner or acquire a replacement on the next call.
 async function prepareColdSpawnerBootstrapIntentV1() {
   if (coldBootstrapIntentInvocationActiveV1) fail("cold intent invocation is already active");
   coldBootstrapIntentInvocationActiveV1 = true;
   try {
     if (retainedColdBootstrapIntentV1 === null) {
       const observer = await import("./baseline-post-handoff-receipt-v1.js");
-      const lease = await acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
-      let rootGuard: PrivateDirectoryGuardV1 | null = null;
-      try {
-        rootGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), rootPaths().root);
-        rootGuard.assertStable();
+      if (retainedColdBootstrapPreparationV1 === null) {
+        const lease = await acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
+        retainedColdBootstrapPreparationV1 = { lease, rootGuard: null, lockIdentity: null, epoch: null };
+      }
+      const preparation = retainedColdBootstrapPreparationV1, lease = preparation.lease;
+        for (const close of pendingColdHelperAuthenticationCleanupV1) close();
+        preparation.rootGuard ??= authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), rootPaths().root);
+        const rootGuard = preparation.rootGuard;
         const held = heldLease(lease);
+        preparation.lockIdentity ??= fstatSync(held.descriptor, { bigint: true });
+        preparation.epoch ??= assertEpochOneActive();
+        assertColdPreparationLeaseV1(preparation);
         const profile = await observer.observeInternalProductionSpawnerLaunchProfileCandidateV1();
+        assertColdPreparationLeaseV1(preparation);
         const cold = validateColdBootstrapObservationV1(await observer.observeInternalProductionColdBootstrapObservationV1());
+        assertColdPreparationLeaseV1(preparation);
         const epoch = assertEpochOneActive();
         if (epoch.schema !== "setfarm.internal-production-physical-service-restart-authority-epoch.v2"
           || canonical(profile.profile.source) !== canonical(cold.source)) fail("cold intent launch source is crossed");
@@ -1450,12 +1475,7 @@ async function prepareColdSpawnerBootstrapIntentV1() {
         // Retain the only usable lease and nonce before the first journal-root
         // mutation. Unsettled errors must never call ordinary lease release.
         retainedColdBootstrapIntentV1 = { lease, phase: "intent-only", intent, environment: profile.environment, nonce, rootIdentity: null, rootGuard };
-        rootGuard = null;
-      } catch (error) {
-        try { rootGuard?.close(); }
-        finally { await releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease); }
-        throw error;
-      }
+        retainedColdBootstrapPreparationV1 = null;
     }
     const state = retainedColdBootstrapIntentV1;
     if (state.phase !== "intent-only") fail("cold intent is past the preparation-only boundary");
@@ -1862,6 +1882,43 @@ async function settleColdSpawnerBootstrapV1(): Promise<Readonly<Record<string, u
     }
     throw error;
   } finally { coldControllerSettlementActiveV1 = false; }
+}
+
+// Fixed controller only: no caller-selected paths, process identities or proof.
+// Historical settlement removes transport ownership, not startup admission.
+export async function ensureInternalProductionColdSpawnerBootstrapSettledV1(): Promise<Extract<ReturnType<typeof observeInternalProductionColdSpawnerBootstrapJournalCensusV1>, { state: "settled" }>> {
+  if (coldControllerFacadeActiveV1 || coldGenesisInvocationActiveV1 || coldBootstrapIntentInvocationActiveV1
+    || coldControllerHelperInvocationActiveV1 || coldControllerSettlementActiveV1 || coldControllerReleaseActiveV1) fail("cold controller facade is already active");
+  coldControllerFacadeActiveV1 = true;
+  try {
+    for (const close of pendingColdHelperAuthenticationCleanupV1) close();
+    if (retainedColdGenesisRawV1 !== null) {
+      if (retainedColdBootstrapIntentV1 !== null || retainedColdBootstrapPreparationV1 !== null) fail("cold controller has crossed retained owners");
+      const raw = retainedColdGenesisRawV1;
+      if (heldRawPhysicalTransitionLockV1(raw).cleanup.phase === "owned-unlink-completed") {
+        try { releaseRawPhysicalTransitionLockV1(raw); }
+        finally { if (!rawPhysicalTransitionLocksV1.has(raw)) retainedColdGenesisRawV1 = null; }
+      }
+    }
+    if (retainedColdBootstrapIntentV1 !== null && retainedColdBootstrapPreparationV1 !== null) fail("cold controller has crossed retained preparation");
+    if (retainedColdBootstrapIntentV1 === null && retainedColdBootstrapPreparationV1 === null) {
+      const history = observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+      if (history.state === "settled") {
+        if (retainedColdGenesisRawV1 !== null) fail("cold controller still owns an unsettled raw lock");
+        return history;
+      }
+    }
+    if (retainedColdBootstrapPreparationV1 !== null || retainedColdBootstrapIntentV1?.phase === "intent-only") await prepareColdSpawnerBootstrapIntentV1();
+    if (!["settled", "releasing"].includes(retainedColdBootstrapIntentV1?.phase ?? "")) await settleColdSpawnerBootstrapV1();
+    const state = retainedColdBootstrapIntentV1;
+    if (!state?.settlement?.committed || !state.settlement.identity) fail("cold controller has no retained terminal");
+    const record = state.settlement.record, identity = coldFileIdentityTupleV1(state.settlement.identity);
+    await releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(state.lease);
+    const history = observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+    if (history.state !== "settled" || canonical(history.settlement) !== canonical(record)
+      || canonical(history.settlementIdentity) !== canonical(identity)) fail("cold controller terminal changed across release");
+    return history;
+  } finally { coldControllerFacadeActiveV1 = false; }
 }
 
 function parseColdSpawnerBootstrapIntentV1(bytes: Buffer): Readonly<Record<string, unknown>> {
@@ -2827,7 +2884,7 @@ async function acquireRawPhysicalTransitionLockV1(): Promise<RawPhysicalTransiti
     }
     const raw = Object.freeze({ schema: "setfarm.internal-production-raw-physical-transition-lock.v1" as const });
     rootGuard.assertStable();
-    rawPhysicalTransitionLocksV1.set(raw, { ...opened, rootGuard, cleanup: { phase: "held" } });
+    rawPhysicalTransitionLocksV1.set(raw, { ...opened, rootGuard, cleanup: { phase: "held", identity: null, unlinkSynced: false, rootGuardClosing: false, rootGuardClosed: false, descriptorClosed: false } });
     rootGuardTransferred = true;
     opened = null;
     return raw;
@@ -2886,23 +2943,42 @@ function promoteRawPhysicalTransitionLockV1(
 
 function releaseRawPhysicalTransitionLockV1(raw: RawPhysicalTransitionLockV1): void {
   const state = heldRawPhysicalTransitionLockV1(raw);
+  const cleanup = state.cleanup;
+  for (const close of pendingColdHelperAuthenticationCleanupV1) close();
   if (state.cleanup.phase === "held") {
     assertRawPhysicalTransitionLockStableV1(state);
+    cleanup.identity ??= fstatSync(state.descriptor, { bigint: true });
+    if (!sameColdFileMetadataV1(cleanup.identity, fstatSync(state.descriptor, { bigint: true }))) fail("raw held lock changed during cleanup");
     assertHelperJournalAllowsLockCleanup(parseLockRecord(state.lockBytes), descriptorIdentity(state.descriptor));
     cleanupExactOwnedLock(rootPaths().lock, state.descriptor, state.lockBytes, () => { state.cleanup.phase = "owned-unlink-completed"; });
-  } else {
+  }
+  // Only a recorded owned unlink permits this metadata transition. A new
+  // pathname owner is unrelated to draining the original unlinked capability.
+  if (cleanup.identity?.nlink === 1n) {
+    const unlinked = fstatSync(state.descriptor, { bigint: true });
+    if (unlinked.nlink !== 0n || ["dev", "ino", "uid", "gid", "mode", "size", "birthtimeNs", "mtimeNs"].some(key => cleanup.identity![key as keyof BigIntStats] !== unlinked[key as keyof BigIntStats])) fail("raw owned unlink identity is crossed");
+    cleanup.identity = unlinked;
+  }
+  if (!cleanup.identity || cleanup.identity.nlink !== 0n) fail("raw cleanup has no owned unlink identity");
+  if (!cleanup.unlinkSynced) {
     state.rootGuard.assertStable();
-    if (fstatSync(state.descriptor, { bigint: true }).nlink !== 0n) fail("raw completed unlink descriptor is crossed");
-    try { lstatSync(rootPaths().lock); fail("raw completed unlink path is occupied"); }
-    catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error; }
+    if (!sameColdFileMetadataV1(cleanup.identity, fstatSync(state.descriptor, { bigint: true }))) fail("raw completed unlink descriptor is crossed");
     fsyncParent(rootPaths().lock);
     state.rootGuard.assertStable();
+    cleanup.unlinkSynced = true;
   }
-  try { state.rootGuard.assertStable(); }
-  finally {
-    try { state.rootGuard.close(); }
-    finally { try { closeSync(state.descriptor); } finally { rawPhysicalTransitionLocksV1.delete(raw); } }
+  if (!cleanup.rootGuardClosed) {
+    if (!cleanup.rootGuardClosing) state.rootGuard.assertStable();
+    cleanup.rootGuardClosing = true;
+    state.rootGuard.close();
+    cleanup.rootGuardClosed = true;
   }
+  if (!cleanup.descriptorClosed) {
+    if (!sameColdFileMetadataV1(cleanup.identity, fstatSync(state.descriptor, { bigint: true }))) fail("raw cleanup descriptor is crossed before close");
+    closeSync(state.descriptor);
+    cleanup.descriptorClosed = true;
+  }
+  rawPhysicalTransitionLocksV1.delete(raw);
 }
 
 function abandonRawPhysicalTransitionLockV1(raw: RawPhysicalTransitionLockV1): void {
