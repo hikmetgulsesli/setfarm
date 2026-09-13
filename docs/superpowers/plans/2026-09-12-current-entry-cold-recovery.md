@@ -636,6 +636,78 @@ work complete: Task1 (`cf34ae9a`), prerequisite reviews, startup ownership
 V1/V2 predecessor binding (`49eaaccb`). Split mixed cold/direct requirements so
 the unfinished direct lifecycle and every Task4 live/combined gate remain open.
 
+Next coupled actual-main/claim slice (existing retirement, spawner and owning
+retirement-test File Map): expose only the zero-argument asynchronous
+`acquireInternalProductionDirectSpawnerChildStartupContextV1()`, returning the
+admitted context's `publishClaim()` and `close()`. The private configuration
+reader still cannot grant startup. Add the zero-argument main-owned
+`observeInternalProductionDirectSpawnerStartupOwnershipV1()`; runtime namespaces
+become retirement28/spawner18, with no new manifest path or historical ABI hash.
+
+- [x] Extend the genuine direct fixture with copied actual main/owned-file
+  functions and original FD3/4/5 plus readiness FD6. First reproduce absence of
+  the direct startup branch; observe no ordinary admission/provider/DB effects.
+- [x] Register direct stop handlers before awaiting admission. Create absent-only
+  owned singleton/PID files after admission, never use cold residue or generic
+  stale-file reclamation. Preserve original file ownership through cleanup.
+- [x] Publish one exclusive canonical direct claim binding original intent,
+  dispatch, operation/startup token, source/epoch, live child and startup-file
+  ownership. Record attempt before publication, preserve uncertain history,
+  retain original readers and recheck the full post-create directory tuple.
+- [x] Permit helper-to-pid1 parent transition only after the owned claim and
+  fresh original-helper absence. Send bounded canonical readiness only after
+  claim and registered stop/owned-file checks; remain pre-database sealed.
+- [x] Prove P3 refusal before files, stop during admission/claim, foreign startup
+  residue, duplicate/uncertain claim, original-file replacement and helper
+  departure. Update both actual-main extraction fixtures and exact exports;
+  verify focused tests, type/source contracts and independent review.
+
+Production helper spawning/claim observation and controller/downstream terminal
+settlement are the following coupled work; this slice must not enable V2
+authority emission or a live launch by itself.
+
+Actual-main implementation evidence: the first real-main fixture refused at the
+old cold-only branch. Three boundary regressions then reproduced retained
+configuration after invalid readiness, root churn accepted before claim create,
+and3321 claim bytes written through a reused foreign descriptor. The fixes admit
+the cleanup-owning context before inspecting readiness, recheck the original
+full directory immediately before exclusive create, and recheck the original
+empty writer immediately before writing. Actual main plus the three regressions
+passed4/4 (21.733s). P3 drift, stop during admission/claim, foreign PID residue,
+and concurrent claims passed5/5 (26.080s); the residue fixture was then tightened
+to the actual dead predecessor PID with0644 mode, preserving its inode and bytes.
+
+Claim ownership is established only after durable reopen/close and the final
+original-pin, output and startup-file checks. Helper departure before that point
+fails closed; the helper must wait for authenticated readiness. Only the owned
+claim allows fresh original-helper absence plus actual child PPID1. Independent
+review accepted this conservative boundary. A later test review found two
+fixture gaps: early parent assertions could orphan the real child, and generic
+negative rejection could conceal forbidden ordinary calls. The helper now
+records its actual child's process identity before readiness for outermost exact
+cleanup, and admission/provider/database counters must remain zero in all modes.
+The full retirement run started before those two test-only amendments and passed
+93/93 (678.938s). The final amended actual-main groups then passed9/9 (46.189s).
+Manifest17 plus gateway109 passed126/126 (7.202s); ordinary/refused configuration,
+inert imports and both prior sealed-startup gates passed5/5 (47.675s). TypeScript
+no-emit and whitespace checks passed. Independent final scoped review has no
+remaining must-fix. This is a verified startup/claim checkpoint, not helper
+transport completion, full receipt/P3 acceptance, a build or live Task6A proof.
+Live Mission Control API and dashboard both returned HTTP200; no live mutation.
+
+Following coupled helper slice (same retirement/helper/tests File Map): add a
+strict private direct-claim parser, then let only the original one-shot helper's
+retained ChildProcess and authenticated readiness adopt the fourth journal
+member. Do not relax the ordinary three-member gate. Retain original frame,
+intent, termination, dispatch, epoch, host/Node/output and controller pins;
+authenticate the exact child, both owned startup files, claim bytes/inode and
+the readiness-bound full journal identity before completion. A zero-argument
+fixed direct-helper runner owns spawn/readiness/cleanup and permanent attempt
+state. Route the compiled helper before historical V1 without changing V1
+semantics. Unknown/mixed selectors, response loss, replaced records and a second
+attempt refuse without redispatch. Controller settlement and downstream V2
+emission remain disabled until their own original-history integration passes.
+
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
 facts in the original owner, marking entry before `kill` or `spawn`. An existing
@@ -674,10 +746,10 @@ integrity authority.
 pre-schema rebind, with no caller-controlled PID/executable/argv.
 
 Cold chain implementation is complete at its scoped checkpoints. Direct intent,
-termination, helper authentication and spawn dispatch are implemented; the direct
-child configuration/admission checkpoint is under verification. Actual direct
-startup/claim, fixed-helper launch, controller settlement, downstream evidence
-and terminal release remain required. Broad boxes below intentionally stay open
+termination, helper authentication, spawn dispatch and actual child startup/claim
+are implemented and scoped verification is recorded above. Fixed-helper launch,
+controller settlement, downstream evidence and terminal release remain required.
+Broad boxes below intentionally stay open
 until both lifecycle variants satisfy the complete requirement.
 
 - [ ] In a disposable real-child fixture reproduce that a watcher restart leaves

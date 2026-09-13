@@ -4,7 +4,7 @@
  * and immediately spawns agent sessions via openclaw CLI.
  */
 import { runtimeConfig } from "./runtime-config.js";
-import { consumeInternalProductionColdSpawnerPidResidueV1, observeInternalProductionColdSpawnerBootstrapJournalCensusV1, publishInternalProductionColdSpawnerBootstrapClaimV1, resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
+import { acquireInternalProductionDirectSpawnerChildStartupContextV1, consumeInternalProductionColdSpawnerPidResidueV1, observeInternalProductionColdSpawnerBootstrapJournalCensusV1, publishInternalProductionColdSpawnerBootstrapClaimV1, resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1, resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
 import postgres from "postgres";
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
@@ -407,6 +407,9 @@ const spawnerStartupFilesV1: OwnedSpawnerStartupFileV1[] = [];
 let spawnerColdStartupPhaseV1: "idle" | "singleton-held" | "claim-ready" | "sealed" | "stopping" | "closed" = "idle";
 let spawnerColdStartupStopV1: (() => void) | null = null;
 const spawnerColdStartupReadinessCleanupV1 = new Set<() => void>();
+let spawnerDirectStartupPhaseV1: "idle" | "admitting" | "claim-ready" | "sealed" | "stopping" | "closed" = "idle";
+let spawnerDirectStartupStopV1: (() => void) | null = null;
+const spawnerDirectStartupReadinessCleanupV1 = new Set<() => void>();
 
 // Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
 // setfarm-repo. Previously execFile inherited the spawner's cwd (the systemd
@@ -638,6 +641,76 @@ async function runInternalProductionColdSpawnerStartupV1(): Promise<boolean> {
         catch (error) { try { closeReadiness?.(); } catch { /* Exact unfinished endpoint stays retained. */ } throw error; }
       }
     }
+  }
+}
+
+export function observeInternalProductionDirectSpawnerStartupOwnershipV1() {
+  if (!["claim-ready", "sealed"].includes(spawnerDirectStartupPhaseV1) || !spawnerDirectStartupStopV1
+    || !process.listeners("SIGTERM").includes(spawnerDirectStartupStopV1) || !process.listeners("SIGINT").includes(spawnerDirectStartupStopV1)
+    || spawnerStartupFilesV1.length !== 2 || spawnerLockFd === null) throw Error("SPAWNER_DIRECT_STARTUP_OWNERSHIP_UNAVAILABLE");
+  return Object.freeze({ schema: "setfarm.internal-production-direct-spawner-startup-ownership.v1", pid: process.pid, uid: process.getuid!(),
+    singleton: observeOwnedSpawnerStartupFileV1(LOCK_FILE, Buffer.from(`${process.pid}\n`), true), pidFile: observeOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid)), false) });
+}
+
+async function runInternalProductionDirectSpawnerStartupV1(): Promise<boolean> {
+  const runtime = resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1();
+  if (runtime?.role !== "direct-child") return false;
+  if (spawnerDirectStartupPhaseV1 !== "idle" || spawnerStartupFilesV1.length !== 0) throw Error("SPAWNER_DIRECT_STARTUP_ALREADY_ENTERED");
+  let context: Awaited<ReturnType<typeof acquireInternalProductionDirectSpawnerChildStartupContextV1>> | null = null;
+  let keepAlive: ReturnType<typeof setInterval> | undefined;
+  let closeReadiness: (() => void) | undefined;
+  try {
+    const stopped = new Promise<void>(resolve => {
+      spawnerDirectStartupStopV1 = () => { spawnerDirectStartupPhaseV1 = "stopping"; resolve(); };
+      process.once("SIGTERM", spawnerDirectStartupStopV1); process.once("SIGINT", spawnerDirectStartupStopV1);
+    });
+    keepAlive = setInterval(() => {}, 60_000);
+    spawnerDirectStartupPhaseV1 = "admitting";
+    context = await acquireInternalProductionDirectSpawnerChildStartupContextV1();
+    if (!["admitting"].includes(spawnerDirectStartupPhaseV1)) throw Error("SPAWNER_DIRECT_STOPPED_BEFORE_STARTUP");
+    for (const close of spawnerDirectStartupReadinessCleanupV1) close();
+    const readiness = fs.fstatSync(6, { bigint: true });
+    if ((!readiness.isSocket() && !readiness.isFIFO()) || readiness.uid !== BigInt(process.getuid!())) throw Error("SPAWNER_DIRECT_READINESS_ENDPOINT_INVALID");
+    let readinessClosed = false, closeEntered = false;
+    const assertReadiness = () => {
+      const current = fs.fstatSync(6, { bigint: true });
+      if (readinessClosed || closeEntered || (!current.isSocket() && !current.isFIFO())
+        || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof fs.BigIntStats] !== readiness[key as keyof fs.BigIntStats])) throw Error("SPAWNER_DIRECT_READINESS_ENDPOINT_CHANGED");
+    };
+    closeReadiness = () => {
+      if (readinessClosed) return;
+      let current: fs.BigIntStats;
+      try { current = fs.fstatSync(6, { bigint: true }); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "EBADF") throw error; readinessClosed = true; spawnerDirectStartupReadinessCleanupV1.delete(closeReadiness!); return; }
+      if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof fs.BigIntStats] !== readiness[key as keyof fs.BigIntStats])) {
+        readinessClosed = true; spawnerDirectStartupReadinessCleanupV1.delete(closeReadiness!); throw Error("SPAWNER_DIRECT_READINESS_DESCRIPTOR_REUSED");
+      }
+      assertReadiness(); closeEntered = true; fs.closeSync(6); readinessClosed = true;
+      spawnerDirectStartupReadinessCleanupV1.delete(closeReadiness!);
+    };
+    spawnerDirectStartupReadinessCleanupV1.add(closeReadiness);
+    // Direct termination history grants no cold residue or stale-file removal.
+    spawnerLockFd = createOwnedSpawnerStartupFileV1(LOCK_FILE, Buffer.from(`${process.pid}\n`)).descriptor;
+    createOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid)));
+    spawnerDirectStartupPhaseV1 = "claim-ready";
+    const claim = await context.publishClaim();
+    if (!["claim-ready"].includes(spawnerDirectStartupPhaseV1)) throw Error("SPAWNER_DIRECT_STOPPED_BEFORE_READINESS");
+    spawnerDirectStartupPhaseV1 = "sealed";
+    observeInternalProductionDirectSpawnerStartupOwnershipV1();
+    resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1();
+    const ready = Buffer.from(`${JSON.stringify({ claimHash: claim.claimHash, claimIdentity: claim.claimIdentity, claimRef: claim.claimRef, journalIdentity: claim.journalIdentity, schema: "setfarm.internal-production-direct-spawner-readiness.v1" })}\n`);
+    if (ready.length > 4096) throw Error("SPAWNER_DIRECT_READINESS_EXCEEDS_CAP");
+    assertReadiness();
+    if (fs.writeSync(6, ready) !== ready.length) throw Error("SPAWNER_DIRECT_READINESS_WRITE_INCOMPLETE");
+    closeReadiness();
+    await stopped;
+    return true;
+  } finally {
+    spawnerDirectStartupPhaseV1 = "closed";
+    if (keepAlive) clearInterval(keepAlive);
+    if (spawnerDirectStartupStopV1) { process.removeListener("SIGTERM", spawnerDirectStartupStopV1); process.removeListener("SIGINT", spawnerDirectStartupStopV1); }
+    spawnerDirectStartupStopV1 = null;
+    try { context?.close(); } finally { try { releaseSpawnerSingletonLock(); } finally { closeReadiness?.(); } }
   }
 }
 
@@ -10901,6 +10974,7 @@ async function main() {
   });
 
   // Refusal-only preflight preserves any already-visible unsettled evidence.
+  if (await runInternalProductionDirectSpawnerStartupV1()) return;
   if (await runInternalProductionColdSpawnerStartupV1()) return;
   if (observeInternalProductionColdSpawnerBootstrapJournalCensusV1().state !== "absent") throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
   acquireSpawnerSingletonLock();

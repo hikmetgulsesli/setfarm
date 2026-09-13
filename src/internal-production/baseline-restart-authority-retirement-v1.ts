@@ -3789,11 +3789,12 @@ function authenticateDirectSpawnerChildCapabilityV1() {
   const guards: PrivateDirectoryGuardV1[] = [];
   type Pin = PrivateFrameDescriptorV1 & { target: string; bytes: Buffer | null };
   const pins: Pin[] = [];
+  const claimPins: Pin[] = [];
   let closing = false;
   const close = () => {
     closing = true;
     let failure: unknown = null;
-    for (const pin of pins) try { closePrivateFrameDescriptorV1(pin); } catch (error) { failure ??= error; }
+    for (const pin of [...claimPins, ...pins]) try { closePrivateFrameDescriptorV1(pin); } catch (error) { failure ??= error; }
     for (let index = guards.length - 1; index >= 0; index--) {
       try { guards[index]!.close(); guards.splice(index, 1); } catch (error) { failure ??= error; }
     }
@@ -3890,12 +3891,13 @@ function authenticateDirectSpawnerChildCapabilityV1() {
     if (hash.digest("hex") !== bytesHash || readSync(nodePin.descriptor!, buffer, 0, 1, offset) !== 0) fail("direct child Node bytes are crossed");
     const ownIdentity = boundedPsProcessIdentity(process.pid);
     if (!ownIdentity) fail("direct child own process identity is absent");
+    let claimStarted = false;
+    let claim: { record: Readonly<Record<string, any>>; reader: Pin; rootIdentity: BigIntStats; observeOwnership: () => unknown } | null = null;
     const assertOriginalStable = () => {
       if (closing) fail("direct child authentication is closed");
       for (const guard of guards) guard.assertStable();
       if (process.execArgv.length !== 0 || process.argv.length !== 2 || process.argv[1] !== entry || process.cwd() !== repository
-        || !sameColdFileMetadataV1(rootIdentity, lstatSync(root, { bigint: true }))
-        || canonical(readColdDirectoryMembersV1(root, 3).sort()) !== canonical(["spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json"])) fail("direct child entry or journal changed");
+        || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => rootIdentity[key as keyof BigIntStats] !== lstatSync(root, { bigint: true })[key as keyof BigIntStats])) fail("direct child entry or journal changed");
       for (const [descriptor, target, original] of [[4, paths.lock, lockFile], [5, path.join(root, "spawn-dispatch.json"), dispatchFile]] as const) {
         const current = inherited(descriptor, target, 65_536);
         if (!sameColdFileMetadataV1(original.identity, current.identity) || !original.bytes.equals(current.bytes)) fail("direct child inherited authority changed");
@@ -3907,26 +3909,100 @@ function authenticateDirectSpawnerChildCapabilityV1() {
         const current = lstatSync(target, { bigint: true });
         if (!current.isDirectory() || current.isSymbolicLink() || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof BigIntStats] !== original[key as keyof BigIntStats])) fail("direct child physical host identity changed");
       }
-      const controller = boundedPsProcessIdentity(lock.pid as number), parent = boundedPsProcessIdentity(helper.pid as number);
-      const controllerOwner = observeColdProcessParentGroupV1(lock.pid as number), parentOwner = observeColdProcessParentGroupV1(helper.pid as number), ownOwner = observeColdProcessParentGroupV1(process.pid);
+      const controller = boundedPsProcessIdentity(lock.pid as number), controllerOwner = observeColdProcessParentGroupV1(lock.pid as number);
+      let originalParent = false;
+      try {
+        const parent = boundedPsProcessIdentity(helper.pid as number), owner = parent === null ? null : observeColdProcessParentGroupV1(helper.pid as number);
+        originalParent = parent !== null && owner !== null && canonical({ ...parent, uid: owner.uid, ppid: owner.ppid }) === canonical(helper);
+      } catch (error) { if (claim === null || boundedPsProcessIdentity(helper.pid as number) !== null) throw error; }
+      const ownOwner = observeColdProcessParentGroupV1(process.pid), parentPid = process.ppid;
+      const settledOwner = claim !== null && ownOwner.ppid === helper.pid && parentPid === 1 ? observeColdProcessParentGroupV1(process.pid) : ownOwner;
+      originalParent = originalParent && parentPid === helper.pid && settledOwner.ppid === helper.pid;
+      const departedParent = claim !== null && parentPid === 1 && settledOwner.ppid === 1 && boundedPsProcessIdentity(helper.pid as number) === null;
       if (!controller || controller.processStartTimeEpochMs !== lock.processStartTimeEpochMs || controller.processIdentityHash !== lock.processIdentityHash
-        || controllerOwner.uid !== profile.uid || !parent || canonical({ ...parent, uid: parentOwner.uid, ppid: parentOwner.ppid }) !== canonical(helper)
-        || parentOwner.uid !== profile.uid || parentOwner.ppid !== lock.pid || process.ppid !== helper.pid || ownOwner.ppid !== helper.pid
-        || ownOwner.uid !== profile.uid || ownOwner.pgid !== process.pid || canonical(boundedPsProcessIdentity(process.pid)) !== canonical(ownIdentity)) fail("direct child live parent chain is crossed");
+        || controllerOwner.uid !== profile.uid || (!originalParent && !departedParent)
+        || ownOwner.uid !== profile.uid || ownOwner.pgid !== process.pid || settledOwner.uid !== profile.uid || settledOwner.pgid !== process.pid
+        || canonical(boundedPsProcessIdentity(process.pid)) !== canonical(ownIdentity)) fail("direct child live parent chain is crossed");
       for (const guard of guards) guard.assertStable();
-      if (!sameColdFileMetadataV1(rootIdentity, lstatSync(root, { bigint: true }))) fail("direct child journal changed across validation");
+    };
+    const assertOutput = () => verifyInternalProductionSpawnerLaunchOutputCandidateV1({ rootIdentity: { devDecimal: profile.rootIdentity.devDecimal, inoDecimal: profile.rootIdentity.inoDecimal, uid: profile.uid },
+      sourceSha: profile.source.sha, sourceTreeHash: profile.source.treeHash, buildInfoBytesHash: profile.buildInfoBytesHash,
+      outputTreeBytesHash: profile.outputTreeBytesHash, releaseManifestBytesHash: profile.releaseManifestBytesHash });
+    const assertPrefix = () => {
+      if (claimStarted && claim === null) fail("direct child claim publication is uncertain");
+      const expected = claim?.rootIdentity ?? rootIdentity;
+      if (!sameColdFileMetadataV1(expected, lstatSync(root, { bigint: true }))
+        || canonical(readColdDirectoryMembersV1(root, claim ? 4 : 3).sort()) !== canonical([...(claim ? ["claim.json"] : []), "spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json"])) fail("direct child journal prefix changed");
+      if (claim && (claim.reader.descriptor === null || !sameColdFileMetadataV1(claim.reader.identity!, fstatSync(claim.reader.descriptor, { bigint: true }))
+        || !claim.reader.bytes!.equals(readColdGenesisCandidateV1(claim.reader.target, claim.reader.identity!))
+        || canonical(claim.observeOwnership()) !== canonical(claim.record.startupFiles))) fail("direct child original claim changed");
     };
     const assertStable = () => {
-      assertOriginalStable();
-      verifyInternalProductionSpawnerLaunchOutputCandidateV1({ rootIdentity: { devDecimal: profile.rootIdentity.devDecimal, inoDecimal: profile.rootIdentity.inoDecimal, uid: profile.uid },
-        sourceSha: profile.source.sha, sourceTreeHash: profile.source.treeHash, buildInfoBytesHash: profile.buildInfoBytesHash,
-        outputTreeBytesHash: profile.outputTreeBytesHash, releaseManifestBytesHash: profile.releaseManifestBytesHash });
-      assertOriginalStable();
+      assertOriginalStable(); assertPrefix(); assertOutput(); assertOriginalStable(); assertPrefix();
     };
     assertStable();
     if (observeDirectSpawnerTerminationTargetV1((history.dispatch.target as Record<string, any>).pid) !== null) fail("direct child predecessor is present");
     assertStable();
-    return Object.freeze({ intent, epoch, terminationDispatchBytes, terminationReceiptBytes, environment: freezeColdDataV1(environment) as Readonly<Record<string, string>>, assertStable, close });
+    const publishClaim = async () => {
+      assertStable();
+      if (claimStarted) fail("direct child claim was already attempted");
+      claimStarted = true;
+      const main = await import("../spawner.js");
+      assertOriginalStable(); assertOutput(); assertOriginalStable();
+      const ownership = main.observeInternalProductionDirectSpawnerStartupOwnershipV1();
+      const runtime = path.join(profile.home, ".openclaw/setfarm");
+      if (ownership.schema !== "setfarm.internal-production-direct-spawner-startup-ownership.v1" || ownership.pid !== process.pid || ownership.uid !== profile.uid
+        || ownership.singleton.path !== path.join(runtime, "spawner.lock") || ownership.pidFile.path !== path.join(runtime, "spawner.pid")
+        || ownership.singleton.uid !== profile.uid || ownership.pidFile.uid !== profile.uid || ownership.singleton.mode !== 0o600 || ownership.pidFile.mode !== 0o600
+        || ownership.singleton.bytesHash !== sha256(`${process.pid}\n`) || ownership.pidFile.bytesHash !== sha256(String(process.pid))) fail("direct child startup ownership is crossed");
+      const assertOwner = () => {
+        assertOriginalStable();
+        if (canonical(main.observeInternalProductionDirectSpawnerStartupOwnershipV1()) !== canonical(ownership)) fail("direct child startup ownership changed");
+      };
+      assertOwner();
+      if (!sameColdFileMetadataV1(rootIdentity, lstatSync(root, { bigint: true }))
+        || canonical(readColdDirectoryMembersV1(root, 3).sort()) !== canonical(["spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json"])) fail("direct child pre-claim journal changed");
+      if (observeDirectSpawnerTerminationTargetV1((history.dispatch.target as Record<string, any>).pid) !== null) fail("direct child predecessor returned before claim");
+      const own = boundedPsProcessIdentity(process.pid), owner = observeColdProcessParentGroupV1(process.pid);
+      if (!own || canonical(own) !== canonical(ownIdentity) || owner.ppid !== helper.pid || owner.pgid !== process.pid || owner.uid !== profile.uid) fail("direct child claim process changed");
+      const body = { schema: "setfarm.internal-production-pre-schema-spawner-direct-claim.v1", purpose: "operation-bound-pre-schema-spawner-rebind-v1",
+        intentRef: intent.intentRef, intentHash: intent.intentHash, dispatchRef: dispatch.dispatchRef, dispatchHash: dispatch.dispatchHash,
+        currentEntryOperation: intent.currentEntryOperation, startupToken: intent.startupToken, epoch: intent.epoch, source: profile.source,
+        profileHash: profile.profileHash, lockIdentity: intent.lockIdentity, child: { ...own, ...owner }, startupFiles: ownership, maximumClaimCount: 1 };
+      const claimHash = sha256(canonical(body)), record = freezeColdDataV1({ ...body, claimRef: `setfarm://internal-production/pre-schema-spawner-direct-claim/sha256/${claimHash}`, claimHash });
+      const bytes = Buffer.from(`${canonical(record)}\n`);
+      if (bytes.length > 65_536) fail("direct child claim exceeds its cap");
+      const target = path.join(root, "claim.json");
+      const openOwned = (flags: number) => {
+        const pin: Pin = { descriptor: openSync(target, flags, 0o600), identity: null, target, bytes: null, closeEntered: false };
+        claimPins.push(pin); pin.identity = fstatSync(pin.descriptor!, { bigint: true }); return pin;
+      };
+      assertOwner();
+      if (!sameColdFileMetadataV1(rootIdentity, lstatSync(root, { bigint: true }))
+        || canonical(readColdDirectoryMembersV1(root, 3).sort()) !== canonical(["spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json"])) fail("direct child journal changed before claim creation");
+      const writer = openOwned(constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW), created = writer.identity!;
+      if (!created.isFile() || created.nlink !== 1n || created.uid !== rootIdentity.uid || created.dev !== rootIdentity.dev || created.size !== 0n || (created.mode & 0o7777n) !== 0o600n
+        || !sameColdFileMetadataV1(created, lstatSync(target, { bigint: true }))) fail("direct child claim creation changed");
+      const finalRootIdentity = lstatSync(root, { bigint: true });
+      const assertPublishing = () => {
+        assertOwner();
+        if (!sameColdFileMetadataV1(finalRootIdentity, lstatSync(root, { bigint: true }))
+          || canonical(readColdDirectoryMembersV1(root, 4).sort()) !== canonical(["claim.json", "spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json"])) fail("direct child claim publishing prefix changed");
+      };
+      assertPublishing();
+      if (!sameColdFileMetadataV1(created, fstatSync(writer.descriptor!, { bigint: true })) || !sameColdFileMetadataV1(created, lstatSync(target, { bigint: true }))) fail("direct child original empty claim changed before write");
+      writeFileSync(writer.descriptor!, bytes); fsyncSync(writer.descriptor!); fsyncParent(target);
+      const written = fstatSync(writer.descriptor!, { bigint: true });
+      if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => created[key as keyof BigIntStats] !== written[key as keyof BigIntStats])
+        || written.size !== BigInt(bytes.length) || !bytes.equals(readColdGenesisCandidateV1(target, written))) fail("direct child claim publication changed");
+      const reader = openOwned(constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); reader.bytes = bytes;
+      if (!sameColdFileMetadataV1(written, reader.identity!)) fail("direct child original claim reopen changed");
+      closePrivateFrameDescriptorV1(writer); assertPublishing(); assertOutput(); assertPublishing();
+      claim = { record, reader, rootIdentity: finalRootIdentity, observeOwnership: main.observeInternalProductionDirectSpawnerStartupOwnershipV1 };
+      assertStable();
+      return Object.freeze({ claimRef: record.claimRef, claimHash, claimIdentity: coldFileIdentityTupleV1(written), journalIdentity: coldFileIdentityTupleV1(finalRootIdentity) });
+    };
+    return Object.freeze({ intent, epoch, terminationDispatchBytes, terminationReceiptBytes, environment: freezeColdDataV1(environment) as Readonly<Record<string, string>>, assertStable, publishClaim, close });
   } catch {
     try { close(); } catch { pendingColdHelperAuthenticationCleanupV1.add(close); }
     return fail("direct child authentication failed");
@@ -3967,8 +4043,16 @@ async function acquireDirectSpawnerChildStartupContextV1() {
       || canonical(intent.startupToken) !== canonical({ startupTokenRef: evidence.startup.startupTokenRef, startupTokenHash: evidence.startup.startupTokenHash })) fail("direct child original startup evidence is crossed");
     if (observeDirectSpawnerTerminationTargetV1((evidence.preMutation.spawner as Record<string, any>).pid) !== null) fail("direct child original predecessor returned");
     assertStable();
-    return Object.freeze({ schema: "setfarm.internal-production-direct-child-startup-context.v1", close: revokeDirectSpawnerChildRuntimeV1 });
+    const publishClaim = async () => {
+      try { assertStable(); const result = await authentication.publishClaim(); assertStable(); return result; }
+      catch { revokeDirectSpawnerChildRuntimeV1(); return fail("direct child claim publication is uncertain"); }
+    };
+    return Object.freeze({ schema: "setfarm.internal-production-direct-child-startup-context.v1", publishClaim, close: revokeDirectSpawnerChildRuntimeV1 });
   } catch { revokeDirectSpawnerChildRuntimeV1(); return fail("direct child startup admission failed"); }
+}
+
+export async function acquireInternalProductionDirectSpawnerChildStartupContextV1() {
+  return acquireDirectSpawnerChildStartupContextV1();
 }
 
 type SpawnerInheritedRuntimeRoleV1 = "cold-helper" | "cold-child" | "direct-helper" | "direct-child";

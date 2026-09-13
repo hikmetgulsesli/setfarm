@@ -705,6 +705,7 @@ test("cold helper frame retains failed-acquisition cleanup before any new frame"
 
 async function exerciseDirectRebindFixtureV1(mode: "response-loss" | "profile-drift" | "ignored" | "dispatch-write" | "receipt-write" | "signal-before" | "frame-intent-replace" | "frame-dispatch-replace" | "frame-receipt-replace" | "direct-helper", spawnFault?: string) {
   const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-rebind-profile-")));
+  const directChildCleanupPath = path.join(fixture, "direct-child-cleanup-row");
   let targetPid: number | undefined, targetIdentity: ReturnType<typeof parseColdFixtureExitRowV1> | undefined;
   try {
     const source = readFileSync(sourcePath, "utf8"), typescript = await import("typescript");
@@ -827,7 +828,7 @@ export async function releaseDirectPreparationFixtureV1(lease){const state=retai
     writeFileSync(signals, "", { mode: 0o600, flag: "wx" });
     writeFileSync(path.join(fixture, "direct-owned-stop"), "", { mode: 0o600, flag: "wx" });
     mkdirSync(path.dirname(entry), { recursive: true, mode: 0o700 });
-    writeFileSync(entry, `if(${JSON.stringify(spawnFault?.startsWith("child-") ?? false)}&&process.env.SETFARM_INTERNAL_PRODUCTION_DIRECT_CHILD){await import('./direct-child-probe.js')}else{const{writeFileSync,appendFileSync,renameSync,readFileSync}=await import('node:fs');process.on('SIGTERM',()=>{appendFileSync(${JSON.stringify(signals)},'SIGTERM\\n',{mode:0o600});if(${JSON.stringify(mode)}!=='ignored')process.exit(0)});const ready=${JSON.stringify(ready)};writeFileSync(ready+'.pending',String(process.pid),{mode:0o600,flag:'wx'});renameSync(ready+'.pending',ready);setInterval(()=>{if(readFileSync(${JSON.stringify(path.join(fixture, "direct-owned-stop"))},'utf8').length>0)process.exit(0)},50);}\n`, { mode: 0o600 });
+    writeFileSync(entry, `let directMainFixture;export function observeInternalProductionDirectSpawnerStartupOwnershipV1(){return directMainFixture.observeInternalProductionDirectSpawnerStartupOwnershipV1()}if(${JSON.stringify(spawnFault?.startsWith("child-") ?? false)}&&process.env.SETFARM_INTERNAL_PRODUCTION_DIRECT_CHILD){directMainFixture=await import('./direct-child-probe.js');directMainFixture.runDirectMainFixtureV1?.().catch(error=>{process.stderr.write(error.message);process.exitCode=1})}else{const{writeFileSync,appendFileSync,renameSync,readFileSync}=await import('node:fs');process.on('SIGTERM',()=>{appendFileSync(${JSON.stringify(signals)},'SIGTERM\\n',{mode:0o600});if(${JSON.stringify(mode)}!=='ignored')process.exit(0)});const ready=${JSON.stringify(ready)};writeFileSync(ready+'.pending',String(process.pid),{mode:0o600,flag:'wx'});renameSync(ready+'.pending',ready);setInterval(()=>{if(readFileSync(${JSON.stringify(path.join(fixture, "direct-owned-stop"))},'utf8').length>0)process.exit(0)},50);}\n`, { mode: 0o600 });
     directProfile.outputTreeBytesHash = sha256(readFileSync(entry, "utf8")); rehash(directProfile);
     const launcher = spawnSync(process.execPath, ["--input-type=module", "-e", `import{spawn}from'node:child_process';const child=spawn(process.execPath,[${JSON.stringify(entry)}],{cwd:${JSON.stringify(repository)},detached:true,stdio:'ignore'});child.unref();process.stdout.write(String(child.pid));`], { encoding: "utf8", timeout: 3000 });
     assert.equal(launcher.status, 0, launcher.stderr); assert.match(launcher.stdout, /^[1-9][0-9]*$/);
@@ -1042,6 +1043,14 @@ function writeFileSync(fd,bytes,...rest){const p=globalThis.__directSpawnProbeV1
 function fsyncSync(fd){const p=globalThis.__directSpawnProbeV1;if(p&&!p.fired&&(fd===p.writer&&p.fault==='file-sync'||p.writer!==undefined&&fstatSync(fd).isDirectory()&&p.fault==='parent-sync')){p.fired=true;throw Error('DIRECT_SPAWN_SYNC_FAULT')}return actualSpawn_fsyncSync(fd);}
 `;
         }
+        if (spawnFault?.startsWith("child-main")) {
+          for (const [marker, hook] of [
+            ["      const own = boundedPsProcessIdentity(process.pid), owner = observeColdProcessParentGroupV1(process.pid);", "globalThis.__directClaimFaultV1?.('precreate');"],
+            ["      const assertPublishing = () => {\n        assertOwner();", "globalThis.__directClaimFaultV1?.('publishing',writer.descriptor);"],
+            ["    const publishClaim = async () => {\n      assertStable();\n      if (claimStarted) fail(\"direct child claim was already attempted\");\n      claimStarted = true;", "await globalThis.__directClaimPauseV1?.();"],
+          ]) { assert.equal(helperSource.split(marker!).length - 1, 1); helperSource = helperSource.replace(marker!, marker! + hook); }
+          writeFileSync(path.join(fixture, "foreign-direct-claim"), "", { mode: 0o600 });
+        }
         compile("internal-production/baseline-restart-authority-retirement-v1.ts", helperSource + "\nexport async function acquireDirectHelperFixtureV1(){return await acquireDirectSpawnerHelperContextV1()}\nexport function publishDirectSpawnFixtureV1(){return publishDirectSpawnerHelperSpawnDispatchV1()}\nexport function takeDirectChildFixtureV1(){return takeDirectSpawnerChildLaunchDescriptorsV1()}\nexport async function admitDirectChildFixtureV1(){return await acquireDirectSpawnerChildStartupContextV1()}\nexport function drainDirectSpawnFixtureV1(){for(const close of pendingColdHelperAuthenticationCleanupV1)close();return pendingColdHelperAuthenticationCleanupV1.size}\n");
         for (const relative of ["internal-production/baseline-spawner-launch-environment-v1.ts", "findings/legacy-finding-publication-inventory-v1.ts", "runtime-config.ts"]) compileStatic(relative);
         for (const relative of ["baseline-post-handoff-receipt-v1.ts", "baseline-spawner-startup-admission-v1.ts"]) {
@@ -1075,8 +1084,43 @@ else{await assert.rejects(admitDirectChildFixtureV1());if(['child-late-intent','
 }
 assert.equal(fstatSync(4).nlink,1);assert.equal(fstatSync(5).nlink,1);assert.equal(existsSync(${JSON.stringify(path.join(fixture, ".openclaw/setfarm/spawner.lock"))}),false);assert.equal(existsSync(${JSON.stringify(path.join(fixture, ".openclaw/setfarm/spawner.pid"))}),false);assert.equal(existsSync(${JSON.stringify(path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/direct-spawner-rebind-v1/claim.json"))}),false);
 `, { mode: 0o600 });
+        if (spawnFault?.startsWith("child-main")) {
+          const spawnerSource = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+          const tree = typescript.createSourceFile("spawner.ts", spawnerSource, typescript.ScriptTarget.Latest, true);
+          const names = new Set(["observeSpawnerStartupFileParentsV1", "assertSpawnerStartupFileParentsV1", "createOwnedSpawnerStartupFileV1", "closeOwnedSpawnerStartupFileV1", "publishSpawnerPidFileV1", "reclaimDeadSpawnerStartupFileV1", "acquireSpawnerSingletonLock", "releaseSpawnerSingletonLock", "observeOwnedSpawnerStartupFileV1", "observeInternalProductionColdSpawnerSingletonOwnershipV1", "observeInternalProductionColdSpawnerStartupOwnershipV1", "runInternalProductionColdSpawnerStartupV1", "observeInternalProductionDirectSpawnerStartupOwnershipV1", "runInternalProductionDirectSpawnerStartupV1", "main"]);
+          const declarations = tree.statements.filter(statement => typescript.isFunctionDeclaration(statement) && statement.name && names.has(statement.name.text));
+          const variables = tree.statements.filter(statement => typescript.isVariableStatement(statement) && statement.declarationList.declarations.some(declaration => typescript.isIdentifier(declaration.name) && /^spawner(?:LockFd|StartupFilesV1|ColdStartup|DirectStartup)/.test(declaration.name.text)));
+          const retirementImport = tree.statements.find(statement => typescript.isImportDeclaration(statement) && typescript.isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text === "./internal-production/baseline-restart-authority-retirement-v1.js");
+          assert.ok(retirementImport);
+          const runtime = path.join(home, ".openclaw/setfarm"); mkdirSync(runtime, { recursive: true, mode: 0o700 });
+          let mainSource = `
+import fs from'node:fs';import path from'node:path';import crypto from'node:crypto';import assert from'node:assert/strict';
+${retirementImport.getText(tree)}
+globalThis.__directRebindInputFixtureV1={records:JSON.parse(fs.readFileSync(${JSON.stringify(recordPath)},'utf8')),calls:[]};
+assert.equal(process.env.PRIVATE_VALUE,undefined);const{runtimeConfig}=await import('./runtime-config.js');assert.equal(runtimeConfig.setfarmPgUrl,'postgresql://fixture@127.0.0.1:1/disposable');
+const PID_FILE=${JSON.stringify(path.join(runtime, "spawner.pid"))},LOCK_FILE=${JSON.stringify(path.join(runtime, "spawner.lock"))};
+const fault=${JSON.stringify(spawnFault)},probe={fired:false,foreign:null};
+globalThis.__directClaimFaultV1=(stage,fd)=>{if(probe.fired)return;if(fault==='child-main-root'&&stage==='precreate'){probe.fired=true;const target=${JSON.stringify(path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/direct-spawner-rebind-v1/foreign.tmp"))};fs.writeFileSync(target,'foreign',{mode:0o600,flag:'wx'});fs.unlinkSync(target);}if(fault==='child-main-writer'&&stage==='publishing'){probe.fired=true;fs.closeSync(fd);probe.foreign=fs.openSync(${JSON.stringify(path.join(fixture, "foreign-direct-claim"))},'r+');assert.equal(probe.foreign,fd)}};
+if(fault==='child-main-readiness'){fs.closeSync(6);assert.equal(fs.openSync('/dev/null','r'),6);}
+if(fault==='child-main-p3'){globalThis.__directRebindInputFixtureV1.records.preMutation.spawner.processOwnerCount=2;probe.fired=true;}
+if(fault==='child-main-stop-admission')globalThis.__directHelperPendingEvidenceHook=async()=>{probe.fired=true;process.kill(process.pid,'SIGTERM');await new Promise(resolve=>setImmediate(resolve))};
+if(fault==='child-main-stop-claim')globalThis.__directClaimPauseV1=async()=>{probe.fired=true;process.kill(process.pid,'SIGTERM');await new Promise(resolve=>setImmediate(resolve))};
+if(fault==='child-main-foreign-pid'){probe.foreignPidBytes=String(globalThis.__directRebindInputFixtureV1.records.preMutation.spawner.pid);fs.writeFileSync(PID_FILE,probe.foreignPidBytes,{mode:0o644,flag:'wx'});probe.fired=true;probe.foreignPid=String(fs.lstatSync(PID_FILE,{bigint:true}).ino);}
+const forbiddenCalls={admission:0,provider:0,database:0};
+async function resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1(){forbiddenCalls.admission++;throw Error('direct child reached ordinary admission')}
+function initializeAgentRuntimeV1(){forbiddenCalls.provider++;throw Error('direct child reached provider discovery')}
+async function pgMigrate(){forbiddenCalls.database++;throw Error('direct child reached database initialization')}
+${[...variables,...declarations].map(statement=>statement.getText(tree)).join("\n")}
+export async function runDirectMainFixtureV1(){try{if(fault==='child-main')await main();else{await assert.rejects(main());assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1(),undefined,'failed main must revoke original configuration');if(fault==='child-main-foreign-pid'){assert.equal(fs.readFileSync(PID_FILE,'utf8'),probe.foreignPidBytes);assert.equal(String(fs.lstatSync(PID_FILE,{bigint:true}).ino),probe.foreignPid);}else assert.equal(fs.existsSync(PID_FILE),false);assert.equal(fs.existsSync(LOCK_FILE),false);if(fault==='child-main-readiness')assert.equal(fs.fstatSync(6).isCharacterDevice(),true);else assert.equal(probe.fired,true);if(probe.foreign!==null){assert.equal(fs.readFileSync(${JSON.stringify(path.join(fixture, "foreign-direct-claim"))}).length,0,'claim bytes must not reach a foreign descriptor');assert.equal(fs.fstatSync(probe.foreign).nlink,1);fs.closeSync(probe.foreign);}}}finally{assert.deepEqual(forbiddenCalls,{admission:0,provider:0,database:0},'direct main must never enter ordinary effects');assert.equal(fs.fstatSync(4).nlink,1);assert.equal(fs.fstatSync(5).nlink,1)}}
+`;
+          if (spawnFault === "child-main-concurrent") {
+            const marker = "    const claim = await context.publishClaim();"; assert.equal(mainSource.split(marker).length - 1, 1);
+            mainSource = mainSource.replace(marker, "    const claim = await (async()=>{probe.fired=true;const attempts=await Promise.allSettled([context.publishClaim(),context.publishClaim()]);assert.ok(attempts.every(value=>value.status==='rejected'));throw Error('concurrent direct claims refused')})();");
+          }
+          writeFileSync(path.join(repository, "dist/direct-child-probe.js"), typescript.transpileModule(mainSource, { compilerOptions: { target: typescript.ScriptTarget.ES2022, module: typescript.ModuleKind.ES2022 } }).outputText, { mode: 0o600 });
+        }
         const runner = path.join(repository, "dist/internal-production/baseline-service-restart-helper-v1.js");
-        writeFileSync(runner, `import assert from'node:assert/strict';import{spawnSync}from'node:child_process';import{readFileSync,writeFileSync,renameSync,chmodSync,lstatSync,fstatSync,openSync,closeSync,unlinkSync}from'node:fs';
+        writeFileSync(runner, `import assert from'node:assert/strict';import{spawnSync,spawn}from'node:child_process';import{readFileSync,writeFileSync,renameSync,chmodSync,lstatSync,fstatSync,openSync,closeSync,unlinkSync}from'node:fs';
 import{acquireDirectHelperFixtureV1,publishDirectSpawnFixtureV1,takeDirectChildFixtureV1,drainDirectSpawnFixtureV1,resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1,resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1}from'./baseline-restart-authority-retirement-v1.js';
 const fault=process.env.FIXTURE_DIRECT_HELPER_FAULT??'none';let context;
 globalThis.__directRebindInputFixtureV1={records:JSON.parse(readFileSync(${JSON.stringify(recordPath)},'utf8')),calls:[]};
@@ -1103,7 +1147,12 @@ if(${JSON.stringify(spawnFault !== undefined)}){
   if(sf==='writer-close'){assert.equal(probe.owned.size,1);assert.throws(()=>drainDirectSpawnFixtureV1(),/ambiguous/);closeSync(probe.writer);probe.owned.delete(probe.writer);}assert.equal(drainDirectSpawnFixtureV1(),0);assert.equal(probe.owned.size,0,'owned publication and guard handles must be closed');context.close();assert.equal(fstatSync(4).nlink,1);assert.equal(fstatSync(5).nlink,1);process.stdout.write('dispatch-refused');
  }else{
  const record=publishDirectSpawnFixtureV1();assert.equal(record.schema,'setfarm.internal-production-pre-schema-spawner-direct-spawn-dispatch.v1');assert.equal(record.maximumSpawnDispatchCount,1);assert.equal(record.helper.pid,process.pid);assert.equal(record.helper.ppid,process.ppid);assert.equal(record.controller.pid,process.ppid);assert.deepEqual(record.action,{transport:'direct-detached-node-v1',executable:process.execPath,arguments:[${JSON.stringify(entry)}],cwd:process.cwd(),detached:true});
- if(sf.startsWith('child-')){
+ if(sf.startsWith('child-main')){
+  const handles=takeDirectChildFixtureV1(),child=spawn(process.execPath,[${JSON.stringify(entry)}],{cwd:process.cwd(),detached:true,env:{PATH:'/usr/bin:/bin',HOME:${JSON.stringify(home)},LANG:'C',LC_ALL:'C',SETFARM_INTERNAL_PRODUCTION_DIRECT_CHILD:'1'},stdio:['ignore','ignore','pipe',handles.frameDescriptor,4,handles.dispatchDescriptor,'pipe']});let errors='';child.stderr.on('data',chunk=>{errors+=chunk.toString();assert.ok(errors.length<65536)});child.stderr.pipe(process.stderr,{end:false});
+  if(sf==='child-main'){try{await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject)});const observed=spawnSync('/bin/ps',['-p',String(child.pid),'-o','pid=,uid=,pgid=,lstart=,stat=,ucomm=,command='],{encoding:'utf8',timeout:2000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}});assert.equal(observed.status,0);assert.equal(observed.stderr,'');writeFileSync(${JSON.stringify(directChildCleanupPath)},observed.stdout,{mode:0o600,flag:'wx'});}catch(error){child.kill('SIGTERM');throw error}}
+  if(sf!=='child-main'){let unexpectedReady=false;child.stdio[6].on('data',()=>{unexpectedReady=true;child.kill('SIGTERM')});const status=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{child.kill('SIGTERM');reject(Error('negative direct main timeout: '+errors))},12000);child.once('error',error=>{clearTimeout(timer);reject(error)});child.once('close',(code,signal)=>{clearTimeout(timer);resolve({code,signal})})});assert.deepEqual(status,{code:0,signal:null},errors);assert.equal(unexpectedReady,false,'refused direct main must not signal readiness');context.close();process.stdout.write('dispatch-owned');}else
+  try{const ready=await new Promise((resolve,reject)=>{let bytes='';const timer=setTimeout(()=>reject(Error('direct main readiness timeout: '+errors)),12000);child.once('error',error=>{clearTimeout(timer);reject(error)});child.once('exit',()=>{clearTimeout(timer);reject(Error('direct main exited before readiness: '+errors))});child.stdio[6].on('data',chunk=>{bytes+=chunk.toString();if(bytes.length>4096){clearTimeout(timer);reject(Error('readiness exceeds cap'))}});child.stdio[6].once('end',()=>{clearTimeout(timer);try{assert.ok(bytes.endsWith('\\n'));const ready=JSON.parse(bytes);assert.equal(ready.schema,'setfarm.internal-production-direct-spawner-readiness.v1');resolve(ready)}catch(error){reject(error)}})});const claim=JSON.parse(readFileSync(root+'/claim.json','utf8'));assert.equal(claim.claimRef,ready.claimRef);assert.equal(claim.claimHash,ready.claimHash);assert.equal(claim.child.pid,child.pid);assert.equal(claim.maximumClaimCount,1);assert.equal(claim.startupFiles.pid,child.pid);assert.equal(claim.startupFiles.schema,'setfarm.internal-production-direct-spawner-startup-ownership.v1');assert.equal(errors,'');child.stderr.destroy();child.stdio[6].destroy();child.unref();context.close();process.stdout.write('dispatch-owned');}catch(error){child.kill('SIGTERM');throw error}
+ }else if(sf.startsWith('child-')){
   const handles=takeDirectChildFixtureV1(),child=spawnSync(process.execPath,[${JSON.stringify(entry)}],{cwd:process.cwd(),detached:true,env:{PATH:'/usr/bin:/bin',HOME:${JSON.stringify(home)},LANG:'C',LC_ALL:'C',SETFARM_INTERNAL_PRODUCTION_DIRECT_CHILD:'1'},stdio:['ignore','pipe','pipe',handles.frameDescriptor,4,handles.dispatchDescriptor],encoding:'utf8',timeout:12000,maxBuffer:65536});assert.equal(child.status,0,child.stderr);assert.equal(child.stderr,'');assert.equal(child.stdout,sf==='child-none'?'child-admitted':'child-refused');context.close();process.stdout.write('dispatch-owned');
  }else if(sf!=='none'){
   if(sf==='second-publish')assert.throws(()=>publishDirectSpawnFixtureV1());
@@ -1173,8 +1222,28 @@ context.close();assert.throws(()=>resolveInternalProductionSpawnerInheritedRunti
               assert.notEqual(replacement.ino, original.ino); assert.equal(replacement.bytesHash, original.bytesHash);
               assert.deepEqual(readdirSync(privateRoot).sort(), ["termination-dispatch.json", "termination-receipt.json"]);
             } else if (spawnFault !== undefined) {
-              assert.deepEqual(readdirSync(privateRoot).sort(), ["spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json", ...(spawnFault === "foreign-scratch" ? ["foreign.tmp"] : [])].sort());
-              assert.deepEqual(after.filter(entry => entry.relative !== "" && entry.relative !== "spawn-dispatch.json" && entry.relative !== "foreign.tmp" && !(spawnFault === "termination-swap" && entry.relative === "termination-receipt.json")), before.filter(entry => entry.relative !== "" && !(spawnFault === "termination-swap" && entry.relative === "termination-receipt.json")));
+              assert.deepEqual(readdirSync(privateRoot).sort(), ["spawn-dispatch.json", "termination-dispatch.json", "termination-receipt.json", ...(spawnFault === "foreign-scratch" ? ["foreign.tmp"] : []), ...(["child-main", "child-main-writer"].includes(spawnFault) ? ["claim.json"] : [])].sort());
+              assert.deepEqual(after.filter(entry => entry.relative !== "" && entry.relative !== "spawn-dispatch.json" && entry.relative !== "foreign.tmp" && entry.relative !== "claim.json" && !(spawnFault === "termination-swap" && entry.relative === "termination-receipt.json")), before.filter(entry => entry.relative !== "" && !(spawnFault === "termination-swap" && entry.relative === "termination-receipt.json")));
+              if (spawnFault === "child-main") {
+                const claim = JSON.parse(readFileSync(path.join(privateRoot, "claim.json"), "utf8")), childPid = claim.child.pid;
+                const original = observeColdFixtureExitV1(childPid); assert.ok(original); assert.equal(original.pgid, String(childPid));
+                const parent = () => {
+                  const result = spawnSync("/bin/ps", ["-p", String(childPid), "-o", "ppid="], { encoding: "utf8", timeout: 2000, maxBuffer: 1024, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+                  assert.equal(result.status, 0); assert.equal(result.stderr, ""); assert.match(result.stdout, /^\s*[0-9]+\n$/); return result.stdout.trim();
+                };
+                try {
+                  const deadline = Date.now() + 5000;
+                  while (parent() !== "1" && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+                  assert.equal(parent(), "1", "claimed direct main survives original helper departure");
+                  assert.equal(readFileSync(path.join(home, ".openclaw/setfarm/spawner.pid"), "utf8"), String(childPid));
+                } finally {
+                  const current = observeColdFixtureExitV1(childPid); if (current && assertColdFixtureExitObservationV1(current, original) === "running") process.kill(childPid, "SIGTERM");
+                  const deadline = Date.now() + 5000;
+                  while (observeColdFixtureExitV1(childPid) !== null && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+                }
+                assert.equal(observeColdFixtureExitV1(childPid), null);
+                assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.pid")), false); assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.lock")), false);
+              }
               if (spawnFault === "collision") assert.equal(readFileSync(path.join(privateRoot, "spawn-dispatch.json"), "utf8"), "foreign");
               if (spawnFault === "foreign-scratch") assert.equal(readFileSync(path.join(privateRoot, "foreign.tmp"), "utf8"), "foreign");
               if (spawnFault === "none") {
@@ -1310,6 +1379,19 @@ process.stdout.write(JSON.stringify({keys:Object.keys(frame).sort(),dispatch:fra
       await runtime.releaseDirectPreparationFixtureV1(lease);
     }
   } finally {
+    // The helper records its actual spawned identity before readiness and any
+    // parent assertions. Cleanup remains owned even when those assertions fail.
+    if (existsSync(directChildCleanupPath)) {
+      const original = parseColdFixtureExitRowV1(readFileSync(directChildCleanupPath, "utf8")), pid = Number(original.pid);
+      const current = observeColdFixtureExitV1(pid);
+      if (current && assertColdFixtureExitObservationV1(current, original) === "running") process.kill(pid, "SIGTERM");
+      const deadline = Date.now() + 5000;
+      for (let next = observeColdFixtureExitV1(pid); next && Date.now() < deadline; next = observeColdFixtureExitV1(pid)) {
+        assertColdFixtureExitObservationV1(next, original);
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      assert.equal(observeColdFixtureExitV1(pid), null);
+    }
     if (targetPid !== undefined) {
       const observed = observeColdFixtureExitV1(targetPid);
       if (observed) {
@@ -1338,6 +1420,15 @@ test("direct helper frame refuses same-byte replacement of every original author
 test("real direct helper authenticates original termination before configuration without cold permission", () => exerciseDirectRebindFixtureV1("direct-helper"));
 test("real direct helper publishes one original spawn dispatch and consumes one child handoff", () => exerciseDirectRebindFixtureV1("direct-helper", "none"));
 test("real direct child separates inherited configuration from original startup admission", () => exerciseDirectRebindFixtureV1("direct-helper", "child-none"));
+test("real direct main publishes one owned claim and remains sealed after helper departure", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main"));
+test("direct main refuses invalid readiness without retaining configuration authority", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-readiness"));
+test("direct claim refuses root churn before publication", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-root"));
+test("direct claim refuses writer reuse before publication", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-writer"));
+test("direct main refuses independent P3 drift before startup files", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-p3"));
+test("direct main stops during admission without startup files", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-stop-admission"));
+test("direct main stops during claim admission without publication", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-stop-claim"));
+test("direct main preserves foreign PID residue without cold permission", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-foreign-pid"));
+test("direct main concurrent claims cannot publish or revive admission", () => exerciseDirectRebindFixtureV1("direct-helper", "child-main-concurrent"));
 test("refused direct child admission never falls back to ordinary configuration", () => exerciseDirectRebindFixtureV1("direct-helper", "child-early-ordinary"));
 test("direct child original startup admission refuses crossed evidence and in-flight revocation", async () => {
   for (const fault of ["child-p3", "child-token", "child-late-intent", "child-concurrent", "child-revoked-await"]) await exerciseDirectRebindFixtureV1("direct-helper", fault);
@@ -1951,9 +2042,9 @@ process.stdout.write(JSON.stringify({accepted:true,childPid:process.pid,helperPi
     if (fault.startsWith("claim")) {
       const spawnerSource = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
       const tree = typescript.createSourceFile("spawner.ts", spawnerSource, typescript.ScriptTarget.Latest, true);
-      const names = new Set(["observeSpawnerStartupFileParentsV1", "assertSpawnerStartupFileParentsV1", "createOwnedSpawnerStartupFileV1", "closeOwnedSpawnerStartupFileV1", "publishSpawnerPidFileV1", "reclaimDeadSpawnerStartupFileV1", "acquireSpawnerSingletonLock", "releaseSpawnerSingletonLock", "observeOwnedSpawnerStartupFileV1", "observeInternalProductionColdSpawnerSingletonOwnershipV1", "observeInternalProductionColdSpawnerStartupOwnershipV1", "runInternalProductionColdSpawnerStartupV1", "main"]);
+      const names = new Set(["observeSpawnerStartupFileParentsV1", "assertSpawnerStartupFileParentsV1", "createOwnedSpawnerStartupFileV1", "closeOwnedSpawnerStartupFileV1", "publishSpawnerPidFileV1", "reclaimDeadSpawnerStartupFileV1", "acquireSpawnerSingletonLock", "releaseSpawnerSingletonLock", "observeOwnedSpawnerStartupFileV1", "observeInternalProductionColdSpawnerSingletonOwnershipV1", "observeInternalProductionColdSpawnerStartupOwnershipV1", "runInternalProductionColdSpawnerStartupV1", "observeInternalProductionDirectSpawnerStartupOwnershipV1", "runInternalProductionDirectSpawnerStartupV1", "main"]);
       const declarations = tree.statements.filter((statement) => typescript.isFunctionDeclaration(statement) && statement.name && names.has(statement.name.text));
-      const variables = tree.statements.filter((statement) => typescript.isVariableStatement(statement) && statement.declarationList.declarations.some((declaration) => typescript.isIdentifier(declaration.name) && /^spawner(?:LockFd|StartupFilesV1|ColdStartup)/.test(declaration.name.text)));
+      const variables = tree.statements.filter((statement) => typescript.isVariableStatement(statement) && statement.declarationList.declarations.some((declaration) => typescript.isIdentifier(declaration.name) && /^spawner(?:LockFd|StartupFilesV1|ColdStartup|DirectStartup)/.test(declaration.name.text)));
       const retirementImport = tree.statements.find((statement) => typescript.isImportDeclaration(statement) && typescript.isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text === "./internal-production/baseline-restart-authority-retirement-v1.js");
       assert.ok(retirementImport);
       const runtime = path.join(root, ".openclaw/setfarm");
@@ -3941,6 +4032,7 @@ test("P4 restart transition lease authenticates epoch one", async () => {
   assert.deepEqual(Object.keys(module), [
     "MAX_INTERNAL_PRODUCTION_BASELINE_SERVICE_RESTART_HELPER_REGISTRY_HEAD_ENTRIES_V1",
     "acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1",
+    "acquireInternalProductionDirectSpawnerChildStartupContextV1",
     "acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1",
     "consumeInternalProductionColdSpawnerPidResidueV1",
     "ensureInternalProductionColdSpawnerBootstrapSettledV1",
@@ -3969,6 +4061,7 @@ test("P4 restart transition lease authenticates epoch one", async () => {
   ]);
   assert.equal(module.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1.length, 0);
   assert.equal(module.ensureInternalProductionColdSpawnerBootstrapSettledV1.length, 0);
+  assert.equal(module.acquireInternalProductionDirectSpawnerChildStartupContextV1.length, 0);
   assert.equal(module.resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1.length, 0);
   assert.equal(module.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1.length, 1);
   assert.equal(module.invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1.length, 2);
