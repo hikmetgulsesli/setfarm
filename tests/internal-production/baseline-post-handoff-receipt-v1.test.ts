@@ -16468,29 +16468,27 @@ function legacyDatabaseCensusRow(overrides: Readonly<Record<string, unknown>> = 
   };
 }
 
-function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown>[]): string {
-  const root = mkdtempSync(path.join(tmpdir(), "setfarm-p4-legacy-census-"));
-  let source = readFileSync(observerSource, "utf8");
-  // Execute the actual pure publication validator from its dependency-complete
-  // source tree; only the PostgreSQL transport below is a bounded test double.
-  source = source.replace('await import("../findings/finding-publication-v1.js")',
-    `await import(${JSON.stringify(pathToFileURL(path.join(sourceRoot, "src/findings/finding-publication-v1.ts")).href)})`);
-  source = source.replace(
-    "async function observeLegacyDatabaseCensusV1(coldBootstrap = false)",
-    "export async function observeLegacyDatabaseCensusV1(coldBootstrap = false)",
-  );
-  source = source.replace(
-    'const postgresModule = await import("postgres");',
-    `const fixtureRows=JSON.parse(process.env.P4_LEGACY_CENSUS_ROWS ?? "[]");
+function legacyDatabaseCensusSqlTransportFixtureV1(
+  rowsExpression = 'JSON.parse(process.env.P4_LEGACY_CENSUS_ROWS ?? "[]")',
+  coldCatalogRows: readonly Record<string, unknown>[] = [{ laterJournalCount: "0", relationCount: "0", functionCount: "0", typeCount: "0", triggerCount: "0" }],
+): string {
+  return `const fixtureRows=${rowsExpression};
+    const coldQueryOffset=coldBootstrap ? 1 : 0;
     let queryCalls=0;
     const fixtureSql=Object.assign(async (strings: readonly string[]) => {
       queryCalls+=1;
       const query=Array.from(strings).join("?");
+      if(coldBootstrap && queryCalls===3){
+        for(const token of ["public.setfarm_schema_migrations", "pg_catalog.pg_class", "pg_catalog.pg_proc", "pg_catalog.pg_type", "pg_catalog.pg_trigger", "version >= 32"]){
+          if(!query.includes(token))throw new Error("MISSING_COLD_CATALOG_CONTRACT_"+token);
+        }
+        return ${JSON.stringify(coldCatalogRows)};
+      }
       if(queryCalls===1){
         if(!query.includes("SET LOCAL statement_timeout = '5s'")) throw new Error("MISSING_STATEMENT_TIMEOUT");
       }else if(queryCalls===2){
         if(!query.includes("SET LOCAL lock_timeout = '1s'")) throw new Error("MISSING_LOCK_TIMEOUT");
-      }else if(queryCalls===3){
+      }else if(queryCalls===3+coldQueryOffset){
         for(const literal of ["pg_catalog.pg_attribute","runtime_completion_effects","artifact_publication_batch_items","recovery_dispatch_deliveries"]){
           if(!query.includes(literal)) throw new Error("MISSING_CATALOG_CONTRACT_"+literal);
         }
@@ -16510,13 +16508,13 @@ function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown
           "state IN ('authorized','leased','attempt_reserved','running')",
           "state IN ('pending','leased')",
         ]) if(!query.includes(literal)) throw new Error("MISSING_AGGREGATE_PREDICATE_"+literal);
-      }else if(queryCalls===4){
+      }else if(queryCalls===4+coldQueryOffset){
         if(!query.includes("FROM public.finding_sets") || !query.includes("LIMIT 4097")) throw new Error("WRONG_FINDING_PARENT_QUERY");
         return [];
-      }else if(queryCalls===5){
+      }else if(queryCalls===5+coldQueryOffset){
         if(!query.includes("FROM public.findings") || !query.includes("LIMIT 65537")) throw new Error("WRONG_FINDING_CHILD_QUERY");
         return [];
-      }else if(queryCalls===6){
+      }else if(queryCalls===6+coldQueryOffset){
         if(!query.includes("FROM public.runs") || !query.includes("LIMIT 4097")) throw new Error("WRONG_FINDING_RUN_QUERY");
         return [];
       }else throw new Error("EXTRA_DATABASE_QUERY");
@@ -16526,9 +16524,25 @@ function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown
         if(mode!=="isolation level repeatable read read only") throw new Error("WRONG_DATABASE_SNAPSHOT_MODE");
         return callback(fixtureSql);
       },
-      end: async () => {if(queryCalls!==3 && queryCalls!==6) throw new Error("WRONG_DATABASE_QUERY_COUNT");},
+      end: async () => {if(queryCalls!==3 && queryCalls!==3+coldQueryOffset && queryCalls!==6+coldQueryOffset) throw new Error("WRONG_DATABASE_QUERY_COUNT");},
     });
-    const postgresModule={default:()=>fixtureSql};`,
+    const postgresModule={default:()=>fixtureSql};`;
+}
+
+function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown>[], coldCatalogRows?: readonly Record<string, unknown>[]): string {
+  const root = mkdtempSync(path.join(tmpdir(), "setfarm-p4-legacy-census-"));
+  let source = readFileSync(observerSource, "utf8");
+  // Execute the actual pure publication validator from its dependency-complete
+  // source tree; only the PostgreSQL transport below is a bounded test double.
+  source = source.replace('await import("../findings/finding-publication-v1.js")',
+    `await import(${JSON.stringify(pathToFileURL(path.join(sourceRoot, "src/findings/finding-publication-v1.ts")).href)})`);
+  source = source.replace(
+    "async function observeLegacyDatabaseCensusV1(coldBootstrap = false)",
+    "export async function observeLegacyDatabaseCensusV1(coldBootstrap = false)",
+  );
+  source = source.replace(
+    'const postgresModule = await import("postgres");',
+    legacyDatabaseCensusSqlTransportFixtureV1(undefined, coldCatalogRows),
   );
   fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
   fixtureFile(
@@ -17212,6 +17226,88 @@ export async function observeInternalProductionPhysicalServiceRestartAuthorityCu
       assert.equal(result.status, 0, result.stderr);
       assert.deepEqual(JSON.parse(result.stdout), [[true, true], [true, true], [false, false], [false, false], [false, false], [false, false], [true, true], [true, true], [true, true], [false, false], [true, true], [true, true], [true, true], [true, true]]);
     } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("cold legacy census authenticates pre-32 absence before the ordinary read-only aggregate", () => {
+    const rows = [legacyDatabaseCensusRow()];
+    const previousRows = process.env.P4_LEGACY_CENSUS_ROWS;
+    const root = createLegacyDatabaseCensusFixture(rows);
+    try {
+      const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+      const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e",
+        "const m=await import(" + JSON.stringify(moduleUrl) + ");const values=[];for(const cold of [true,true,false])values.push(await m.observeLegacyDatabaseCensusV1(cold));process.stdout.write(JSON.stringify(values));",
+      ], { cwd: root, encoding: "utf8", env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin", SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm",
+        P4_LEGACY_CENSUS_ROWS: JSON.stringify(rows),
+      } });
+      assert.equal(result.status, 0, result.stderr);
+      const values = JSON.parse(result.stdout);
+      assert.equal(values.length, 3);
+      assert.deepEqual(values[1], values[0], "a second cold observation owns a fresh connection and complete query sequence");
+      assert.deepEqual(values[2], values[0], "ordinary and cold observations agree only after their respective complete checks");
+      const { legacyFindingPublicationInventory, ...counts } = values[0];
+      assert.deepEqual(counts, {
+        activeRunCount: 0, openClaimCount: 0, executionAttemptCount: 0, activeRuntimeSessionCount: 0,
+        activeCompletionOwnerCount: 0, unsettledMandatoryEffectCount: 0, artifactReservationCount: 0,
+        publicationBatchCount: 0, artifactPublicationCount: 0, terminationOwnerCount: 0,
+        findingOwnerCount: 0, recoveryOwnerCount: 0, operationalDeliveryCount: 0,
+      });
+      assert.ok(legacyFindingPublicationInventory);
+    } finally {
+      if (previousRows === undefined) delete process.env.P4_LEGACY_CENSUS_ROWS;
+      else process.env.P4_LEGACY_CENSUS_ROWS = previousRows;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("cold legacy census preserves aggregate refusal through connection cleanup", () => {
+    const previousRows = process.env.P4_LEGACY_CENSUS_ROWS;
+    const root = createLegacyDatabaseCensusFixture([]);
+    try {
+      const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+      for (const rows of [[], [legacyDatabaseCensusRow({ catalogViolationCount: "invalid" })]]) {
+        const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e",
+          "const m=await import(" + JSON.stringify(moduleUrl) + ");await m.observeLegacyDatabaseCensusV1(true);",
+        ], { cwd: root, encoding: "utf8", env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin", SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm",
+          P4_LEGACY_CENSUS_ROWS: JSON.stringify(rows),
+        } });
+        assert.notEqual(result.status, 0);
+        assert.doesNotMatch(result.stderr, /WRONG_DATABASE_QUERY_COUNT/);
+        assert.match(result.stderr, rows.length === 0 ? /legacy zero-owner database aggregate must return exactly one row/ : /catalogViolationCount is not a canonical nonnegative integer/);
+        assert.equal(result.stdout, "");
+      }
+    } finally {
+      if (previousRows === undefined) delete process.env.P4_LEGACY_CENSUS_ROWS;
+      else process.env.P4_LEGACY_CENSUS_ROWS = previousRows;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("cold legacy census refuses every later catalog owner before reading the ordinary aggregate", () => {
+    const absent = { laterJournalCount: "0", relationCount: "0", functionCount: "0", typeCount: "0", triggerCount: "0" };
+    const previousRows = process.env.P4_LEGACY_CENSUS_ROWS;
+    try {
+      for (const key of Object.keys(absent)) {
+        // Empty ordinary rows would fail independently if the cold guard were skipped.
+        const root = createLegacyDatabaseCensusFixture([], [{ ...absent, [key]: "1" }]);
+        try {
+          const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+          const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e",
+            "const m=await import(" + JSON.stringify(moduleUrl) + ");await m.observeLegacyDatabaseCensusV1(true);",
+          ], { cwd: root, encoding: "utf8", env: {
+            PATH: process.env.PATH ?? "/usr/bin:/bin", SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm",
+            P4_LEGACY_CENSUS_ROWS: "[]",
+          } });
+          assert.notEqual(result.status, 0, key);
+          assert.match(result.stderr, /cold bootstrap migration32\/33 catalog or journal is not absent/, key);
+          assert.equal(result.stdout, "");
+        } finally { rmSync(root, { recursive: true, force: true }); }
+      }
+    } finally {
+      if (previousRows === undefined) delete process.env.P4_LEGACY_CENSUS_ROWS;
+      else process.env.P4_LEGACY_CENSUS_ROWS = previousRows;
+    }
   });
 
   it("P4 legacy census rejects a nonzero open claim instead of synthesizing zero", () => {

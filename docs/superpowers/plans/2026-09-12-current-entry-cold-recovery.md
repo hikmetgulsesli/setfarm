@@ -1606,6 +1606,57 @@ This reconciliation does not claim a new whole-kernel run or live acceptance.
 **Produces:** A zero-input recovery path from absent spawner to authenticated
 sealed cold process, followed by genuine ordinary operation-bound rebind.
 
+Joined-proof implementation refinement (2026-09-13): keep the receipt fixture's
+disposable Git/build and imported v31/pending/PBA boundaries, but restore the
+production receipt, startup, retirement, helper and spawner startup graph.
+Existing turnkey helpers replace one another's receipt/startup modules and
+therefore cannot prove this joined path by simple composition. Use a fixed
+per-module transform map before committing fixture sources, compile those
+copied sources after build preparation, and finalize output hashes last. No
+source/output rewrite is allowed between cold launch, prepare and direct rebind.
+Do not copy future producer modules merely to satisfy an eager import closure.
+
+File Map remains this plan and the existing receipt test; private test helpers
+may be factored there. Preserve the actual cold/ordinary/phase/physical/legacy
+observers, their parsers and shared retirement module. Only raw OS, HTTP and
+SQL transports and fixed disposable home/workspace anchors are simulated.
+Real child identity, termination, launch, singleton/descriptor ownership and
+cleanup are never simulated. A copied actual runtime-config must handle the
+inherited startup snapshot; a phase-only runtime stub is not sufficient for
+the joined child.
+
+The first shared fixture dependency is the legacy SQL transport. Its ordinary
+six-query sequence did not handle the cold pre-32 catalog query: focused RED
+failed at MISSING_CATALOG_CONTRACT_pg_catalog.pg_attribute (2.077s). Extract
+only that SQL transport into a reusable test-source helper, preserving the
+production DB observer and pure finding-publication validator. Cold mode must
+execute statement timeout, lock timeout, catalog absence, aggregate and three
+finding queries in order (seven); ordinary mode retains six. Each observation
+owns a new counter/connection, with repeatable-read/read-only begin and awaited
+end. Do not substitute the high-level census or manufacture a production zero.
+The initial cold/ordinary regression group passed 3/3 (20.429s); expanded
+repeat-observation and all-five-catalog-owner refusal checks passed 4/4
+(24.452s). Independent review found that fixture connection cleanup masked
+the original cold aggregate refusal at query four. A new empty/malformed
+aggregate regression reproduced WRONG_DATABASE_QUERY_COUNT (RED, 1.982s).
+The transport now accepts the catalog-refusal, aggregate-refusal and complete
+query frontiers without changing any production observer. Expanded checks
+passed 5/5 (29.739s); tightening the malformed case to catalogViolationCount
+also exercises query four, and the final rerun passed 5/5 (27.832s).
+TypeScript noEmit and diff checks passed, and read-only
+re-review found no remaining actionable defect. Live Mission Control and
+dashboard HTTP checks returned 200/200. These are focused prerequisite checks,
+not a joined lifecycle proof or a full P3 passing receipt.
+
+Checkpoint 27f68a8e's CLI file also passed through the authenticated isolated
+P3 runner: 12/12 (58.020s), with both runner-owned databases dropped. Node 26
+emitted a module.register deprecation warning from the test loader; there was
+no test failure. This is only the CLI file, not the full P3 gate. The earlier
+81bf9794 diagnostic output is retained outside the repo at
+logs/2026-09-13-receipt-81bf9794-console-capture.log in the canonical workspace;
+its header explicitly notes the missing early all-passing chunk and preserves
+the failing final result.
+
 - [ ] Add a fixture with no spawner and prove old preparation fails at the
   four-service census. Keep the public four-service observer unchanged.
   The ordinary-without-spawner collector refusal is already covered by0763fc92;
