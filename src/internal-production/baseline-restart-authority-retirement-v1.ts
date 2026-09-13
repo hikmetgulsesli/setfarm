@@ -877,6 +877,54 @@ function parseDirectSpawnerRebindIntentV1(bytes: Buffer): Readonly<Record<string
 
 // Resolves evidence only. The caller still needs a retained, one-shot dispatch
 // owner; neither this data nor an existing durable intent permits an effect.
+function parseDirectSpawnerTerminationChainV1(
+  dispatchBytes: Buffer, receiptBytes: Buffer, originalIntent: Readonly<Record<string, unknown>>, preMutation: Readonly<Record<string, unknown>>,
+) {
+  const intent = parseDirectSpawnerRebindIntentV1(Buffer.from(`${canonical(originalIntent)}\n`));
+  const parse = (bytes: Buffer, keys: readonly string[], stem: string, domain: string) => {
+    if (bytes.length < 1 || bytes.length > 65_536) fail("direct termination history size is invalid");
+    const record = coldRecordV1(JSON.parse(bytes.toString("utf8")), keys, "direct termination history");
+    if (!bytes.equals(Buffer.from(`${canonical(record)}\n`)) || record.schema !== `setfarm.internal-production-${domain}.v1`
+      || record.purpose !== "operation-bound-pre-schema-spawner-rebind-v1"
+      || record[`${stem}Ref`] !== `setfarm://internal-production/${domain}/sha256/${coldHashV1(record[`${stem}Hash`], "direct termination history")}`
+      || record.intentRef !== intent.intentRef || record.intentHash !== intent.intentHash || record.terminationSignal !== "SIGTERM") fail("direct termination history binding is crossed");
+    coldSelfHashV1(record, `${stem}Hash`, [`${stem}Ref`]);
+    return record;
+  };
+  const dispatch = parse(dispatchBytes, ["schema", "purpose", "intentRef", "intentHash", "intentIdentity", "controller", "target", "serviceCensusHash", "terminationSignal", "maximumTerminationDispatchCount", "dispatchRef", "dispatchHash"], "dispatch", "pre-schema-spawner-direct-termination-dispatch");
+  const receipt = parse(receiptBytes, ["schema", "purpose", "intentRef", "intentHash", "dispatchRef", "dispatchHash", "controller", "predecessorSpawnerProcessIdentity", "terminationSignal", "signalDispatchCount", "signalCallOutcome", "observedProcessState", "observedListenerState", "terminationReceiptRef", "terminationReceiptHash"], "terminationReceipt", "pre-schema-spawner-direct-termination-receipt");
+  const profile = intent.launchProfile as Record<string, any>, transition = intent.transitionLock as Record<string, unknown>;
+  const controller = coldRecordV1(dispatch.controller, ["pid", "processStartTimeEpochMs", "processIdentityHash", "uid"], "direct termination controller");
+  if (canonical(controller) !== canonical({ pid: transition.pid, processStartTimeEpochMs: transition.processStartTimeEpochMs, processIdentityHash: transition.processIdentityHash, uid: profile.uid })
+    || canonical(receipt.controller) !== canonical(controller)) fail("direct termination controller is crossed");
+  const identity = dispatch.intentIdentity;
+  if (!Array.isArray(identity) || identity.length !== 10 || identity.some(value => typeof value !== "string" || !/^(?:0|[1-9][0-9]{0,29})$/.test(value))
+    || BigInt(identity[1]) < 1n || identity[2] !== String(profile.uid) || identity[4] !== String(constants.S_IFREG | 0o600)
+    || identity[5] !== "1" || identity[6] !== String(Buffer.byteLength(`${canonical(intent)}\n`))) fail("direct termination intent identity is invalid");
+  coldHashV1(dispatch.serviceCensusHash, "direct termination service census");
+  const target = coldRecordV1(dispatch.target, ["uid", "pid", "ppid", "pgid", "stat", "lstart", "command", "processStartTimeEpochMs", "processIdentityHash"], "direct termination target");
+  const predecessor = preMutation.spawner as Record<string, unknown>;
+  if (!predecessor || typeof predecessor !== "object" || Array.isArray(predecessor)
+    || ["Ref", "Hash"].some(suffix => preMutation[`preMutationLoadedRuntimeServiceAuthority${suffix}`] !== (intent.preMutationLoadedRuntimeServiceAuthority as Record<string, unknown>)[`preMutationLoadedRuntimeServiceAuthority${suffix}`])) fail("direct termination original P3 is crossed");
+  if (!Number.isSafeInteger(target.pid) || (target.pid as number) < 1 || target.pid === controller.pid || target.uid !== profile.uid
+    || target.ppid !== 1 || target.pgid !== target.pid || typeof target.lstart !== "string" || target.lstart.length !== 24
+    || !Number.isSafeInteger(target.processStartTimeEpochMs) || (target.processStartTimeEpochMs as number) < 1 || Date.parse(target.lstart) !== target.processStartTimeEpochMs
+    || target.processIdentityHash !== sha256(`${target.pid}\n${target.lstart}\n`) || typeof target.stat !== "string" || !/^[A-Za-z+<>]{1,16}$/.test(target.stat) || /[ZE]/.test(target.stat)
+    || target.command !== `${profile.executable.path} ${profile.arguments[0]}`
+    || ["pid", "processStartTimeEpochMs", "processIdentityHash"].some(key => target[key] !== predecessor[key])
+    || predecessor.processOwnerCount !== 1 || predecessor.listener !== null) fail("direct termination historical target is crossed");
+  const predecessorHash = sha256(canonical({ schema: "setfarm.internal-production-spawner-process-identity.v1", pid: target.pid, processStartTimeEpochMs: target.processStartTimeEpochMs, processIdentityHash: target.processIdentityHash }));
+  if (canonical(intent.predecessorSpawnerProcessIdentity) !== canonical({ predecessorSpawnerProcessIdentityRef: `setfarm://internal-production/spawner-process-identity/sha256/${predecessorHash}`, predecessorSpawnerProcessIdentityHash: predecessorHash })
+    || canonical(receipt.predecessorSpawnerProcessIdentity) !== canonical(intent.predecessorSpawnerProcessIdentity)
+    || dispatch.maximumTerminationDispatchCount !== 1 || receipt.signalDispatchCount !== 1
+    || !["returned", "response-unknown"].includes(receipt.signalCallOutcome as string)
+    || receipt.observedProcessState !== "terminal-and-not-running" || receipt.observedListenerState !== "absent"
+    || receipt.dispatchRef !== dispatch.dispatchRef || receipt.dispatchHash !== dispatch.dispatchHash) fail("direct termination receipt relation is crossed");
+  // Bytes prove historical relations only. Consumers must pin original files,
+  // authenticate their issuer and freshly observe absence before any new grant.
+  return freezeColdDataV1({ dispatch, receipt });
+}
+
 async function resolveDirectSpawnerRebindInputsUnderLeaseV1(
   lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
   input: Readonly<{ currentEntryOperation: Readonly<{ operationRef: string; operationHash: string }>; restartAuthority: Readonly<{ restartAuthorityRef: string; restartAuthorityHash: string }> }>,
@@ -1260,6 +1308,125 @@ async function terminateDirectSpawnerRebindPredecessorV1(
     }
     return fail("DIRECT_TERMINATION_PENDING: original predecessor remains present");
   } finally { directSpawnerTerminationActiveV1 = false; }
+}
+
+// Transport preparation only. The controller must retain the returned handles
+// in its one-shot helper invocation; this function never creates a helper grant.
+function openDirectSpawnerHelperFrameV1(state: DirectSpawnerRebindIntentStateV1): Readonly<{ frameDescriptor: number; intentDescriptor: number }> {
+  for (const pending of pendingColdHelperAuthenticationCleanupV1) pending();
+  if (!state || state !== retainedDirectSpawnerRebindIntentV1 || !state.publication.committed || state.termination?.receipt === null
+    || !state.termination?.signalEntered) fail("direct helper frame owner is invalid");
+  const termination = state.termination!, dispatch = termination.dispatch!, receipt = termination.receipt!;
+  const paths = rootPaths(), root = path.join(paths.root, "direct-spawner-rebind-v1"), held = heldLease(state.lease);
+  const assertAuthority = () => {
+    if (state !== retainedDirectSpawnerRebindIntentV1 || heldLease(state.lease) !== held) fail("direct helper frame owner changed");
+    state.rootGuard.assertStable(); termination.rootGuard.assertStable(); state.epochPin!.assertStable(); state.intentPin!.assertStable();
+    publishDirectSpawnerRebindIntentV1(state);
+    if (!sameColdFileMetadataV1(state.lockIdentity, fstatSync(held.descriptor, { bigint: true }))
+      || !readColdGenesisCandidateV1(paths.lock, state.lockIdentity).equals(held.lockBytes)
+      || canonical(assertEpochOneActive()) !== canonical(state.inputs.epoch)) fail("direct helper frame original lease changed");
+    assertDirectTerminationPublicationV1(dispatch); assertDirectTerminationPublicationV1(receipt);
+    const history = parseDirectSpawnerTerminationChainV1(Buffer.from(`${canonical(dispatch.record)}\n`), Buffer.from(`${canonical(receipt.record)}\n`), state.intent, state.inputs.preMutation);
+    if (canonical(history.dispatch.intentIdentity) !== canonical(coldFileIdentityTupleV1(state.publication.identity!))) fail("direct helper frame original intent identity changed");
+    state.rootGuard.assertStable(); termination.rootGuard.assertStable();
+  };
+  const assertInventory = () => {
+    if (canonical(readColdDirectoryMembersV1(root, 2).sort()) !== canonical(["termination-dispatch.json", "termination-receipt.json"])) fail("direct helper frame journal inventory is crossed");
+  };
+  assertAuthority(); assertInventory();
+  if (observeDirectSpawnerTerminationTargetV1((state.inputs.preMutation.spawner as Record<string, any>).pid) !== null) fail("direct helper predecessor is present");
+  assertAuthority(); assertInventory();
+  const scratch = path.join(root, `.direct-helper-capability.${randomBytes(16).toString("hex")}.tmp`);
+  let writer: number | undefined, reader: number | undefined, intentDescriptor: number | undefined, linkedIdentity: BigIntStats | undefined;
+  let unlinked = false;
+  const uncertainCloses = new Set<number>();
+  const closeOriginal = (fd: number, expected: BigIntStats | undefined, completed: () => void) => {
+    let current: BigIntStats;
+    const done = () => { uncertainCloses.delete(fd); completed(); };
+    try { current = fstatSync(fd, { bigint: true }); }
+    catch (error) { if (error instanceof Error && "code" in error && error.code === "EBADF") { done(); return; } throw error; }
+    if (!expected) fail("direct helper cleanup original identity is unavailable");
+    // Own unlink/write operations may change size/timestamps. Inode equality
+    // does NOT prove open-file-description equality after an uncertain close:
+    // a foreign reopen of this same inode must not become ours to close again.
+    if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof BigIntStats] !== expected[key as keyof BigIntStats])) {
+      done(); fail("direct helper cleanup descriptor was reused");
+    }
+    if (uncertainCloses.has(fd)) fail("direct helper close outcome is ambiguous");
+    uncertainCloses.add(fd);
+    closeSync(fd); done();
+  };
+  try {
+    intentDescriptor = openSync(paths.journal, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    if (!sameColdFileMetadataV1(state.publication.identity!, fstatSync(intentDescriptor, { bigint: true }))) fail("direct helper frame inherited intent is crossed");
+    const frame = { schema: "setfarm.internal-production-pre-schema-spawner-direct-rebind-helper-capability.v1",
+      intentRef: state.intent.intentRef, intentHash: state.intent.intentHash, intentIdentity: coldFileIdentityTupleV1(state.publication.identity!),
+      terminationDispatchRef: dispatch.record.dispatchRef, terminationDispatchHash: dispatch.record.dispatchHash, terminationDispatchIdentity: coldFileIdentityTupleV1(dispatch.identity!),
+      terminationReceiptRef: receipt.record.terminationReceiptRef, terminationReceiptHash: receipt.record.terminationReceiptHash, terminationReceiptIdentity: coldFileIdentityTupleV1(receipt.identity!),
+      lockIdentity: state.intent.lockIdentity, environment: state.inputs.environment, nonce: state.nonce };
+    const bytes = Buffer.from(`${canonical(frame)}\n`);
+    if (bytes.length < 1 || bytes.length > 1_048_576) fail("direct helper frame exceeds its cap");
+    assertAuthority(); assertInventory();
+    writer = openSync(scratch, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    linkedIdentity = fstatSync(writer, { bigint: true });
+    if (!linkedIdentity.isFile() || linkedIdentity.uid !== BigInt(process.getuid!()) || linkedIdentity.dev !== dispatch.identity!.dev
+      || (linkedIdentity.mode & 0o7777n) !== 0o600n || linkedIdentity.nlink !== 1n || linkedIdentity.size !== 0n) fail("direct helper empty frame identity is invalid");
+    reader = openSync(scratch, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    assertAuthority();
+    if (canonical(readColdDirectoryMembersV1(root, 3).sort()) !== canonical([path.basename(scratch), "termination-dispatch.json", "termination-receipt.json"].sort())
+      || !sameColdFileMetadataV1(linkedIdentity, fstatSync(writer, { bigint: true }))
+      || !sameColdFileMetadataV1(linkedIdentity, fstatSync(reader, { bigint: true }))
+      || !sameColdFileMetadataV1(linkedIdentity, lstatSync(scratch, { bigint: true }))) fail("direct helper empty frame changed before unlink");
+    unlinkSync(scratch); unlinked = true;
+    if (fstatSync(writer, { bigint: true }).nlink !== 0n || fstatSync(reader, { bigint: true }).nlink !== 0n) fail("direct helper frame is still linked");
+    fsyncParent(scratch);
+    assertAuthority(); assertInventory();
+    // No nonce or environment value is written while a pathname names the file.
+    writeFileSync(writer, bytes); fsyncSync(writer);
+    const written = fstatSync(reader, { bigint: true });
+    if (written.nlink !== 0n || written.size !== BigInt(bytes.length) || written.dev !== linkedIdentity.dev || written.ino !== linkedIdentity.ino
+      || written.uid !== linkedIdentity.uid || written.gid !== linkedIdentity.gid || written.mode !== linkedIdentity.mode || written.birthtimeNs !== linkedIdentity.birthtimeNs
+      || !sameColdFileMetadataV1(written, fstatSync(writer, { bigint: true }))) fail("direct helper frame write identity is crossed");
+    const verified = Buffer.alloc(bytes.length);
+    for (let offset = 0; offset < verified.length;) {
+      const count = readSync(reader, verified, offset, Math.min(65_536, verified.length - offset), offset);
+      if (count < 1) fail("direct helper frame read is partial");
+      offset += count;
+    }
+    if (!verified.equals(bytes) || readSync(reader, Buffer.alloc(1), 0, 1, verified.length) !== 0
+      || !sameColdFileMetadataV1(written, fstatSync(reader, { bigint: true }))) fail("direct helper frame read changed");
+    closeOriginal(writer, linkedIdentity, () => { writer = undefined; });
+    assertAuthority(); assertInventory();
+    if (!sameColdFileMetadataV1(state.publication.identity!, fstatSync(intentDescriptor, { bigint: true }))) fail("direct helper inherited intent changed");
+    if (!sameColdFileMetadataV1(written, fstatSync(reader, { bigint: true }))) fail("direct helper frame changed before handoff");
+    for (let offset = 0; offset < verified.length;) {
+      const count = readSync(reader, verified, offset, Math.min(65_536, verified.length - offset), offset);
+      if (count < 1) fail("direct helper final frame read is partial");
+      offset += count;
+    }
+    if (!verified.equals(bytes) || readSync(reader, Buffer.alloc(1), 0, 1, verified.length) !== 0
+      || !sameColdFileMetadataV1(written, fstatSync(reader, { bigint: true }))) fail("direct helper final frame changed");
+    const handles = Object.freeze({ frameDescriptor: reader, intentDescriptor });
+    reader = undefined; intentDescriptor = undefined;
+    return handles;
+  } catch {
+    if (!unlinked && linkedIdentity !== undefined) {
+      try {
+        state.rootGuard.assertStable(); termination.rootGuard.assertStable();
+        const current = lstatSync(scratch, { bigint: true });
+        if (sameColdFileMetadataV1(linkedIdentity, current) && current.nlink === 1n && current.size === 0n) { unlinkSync(scratch); fsyncParent(scratch); }
+      } catch { /* Preserve foreign or ambiguous empty evidence and the lease. */ }
+    }
+    return fail("direct helper frame preparation failed");
+  } finally {
+    finishRetainedColdCleanupV1(() => {
+      let failure: unknown = null;
+      try { if (writer !== undefined) closeOriginal(writer, linkedIdentity, () => { writer = undefined; }); } catch (error) { failure ??= error; }
+      try { if (reader !== undefined) closeOriginal(reader, linkedIdentity, () => { reader = undefined; }); } catch (error) { failure ??= error; }
+      try { if (intentDescriptor !== undefined) closeOriginal(intentDescriptor, state.publication.identity ?? undefined, () => { intentDescriptor = undefined; }); } catch (error) { failure ??= error; }
+      if (failure !== null) throw failure;
+    });
+  }
 }
 
 function assertHelperJournalAllowsLockCleanup(

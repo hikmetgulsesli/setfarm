@@ -400,6 +400,53 @@ not a whole-branch/P3 pass or permission to emit the unfinished direct V2 path.
 The genuine fixed cold helper → sealed main integration also passed1/1
 (35.993s); no live service or database was involved.
 
+Next private direct-helper input slice (same retirement source/test File Map,
+no export/145/64 amendment): first strictly parse the actual retained termination
+dispatch and receipt against the original direct intent and authenticated P3
+predecessor. Then issue an unlinked FD3 frame carrying the original intent,
+dispatch and receipt pairs plus full physical identity tuples, original lock
+identity, nonce and environment. FD4 remains the borrowed physical lease;
+FD5 is the read-only original intent. Frame preparation alone does not dispatch
+or create a helper grant. The later exact-entry direct authenticator must
+independently re-read history/profile, controller parent and all original pins
+before the existing shared configuration port can expose a direct snapshot.
+Keep direct roles refused until that authenticator is connected. Both dispatch
+and receipt identities are necessary: the receipt hashes the dispatch pair,
+not the dispatch inode. No cold context or launchctl permission is reused.
+
+Private transport implemented: strict65KiB canonical dispatch/receipt parsing
+binds actual controller, P3 target, intent, SIGTERM counts and truthful outcome.
+Original intent/dispatch/receipt physical pins and the lease/epoch are checked
+before producing the13-key frame. An actual inherited child proves FD3/FD5 are
+read-only, FD3 is unlinked, and nonce/environment and both termination pairs
+arrive intact. Original authority file bytes/metadata remain unchanged; only
+the parent timestamps reflect the owned empty scratch create/unlink. Same-byte
+replacement of each of the three authority files refuses before frame creation.
+
+Review reproduced two transport holes: mutation at writer close escaped the
+earlier final reader check, and lost-close response could cause numeric FD reuse
+to be closed. Recheck frame metadata/bytes/EOF after writer close and authority
+checks. Mark every close attempt before its syscall. EBADF proves the number
+absent; a different inode is disowned without closing. Same-inode equality after
+an uncertain close is NOT open-file-description identity: never close it again.
+This deliberately retains a fence until absence/different-identity observation
+or process exit. A test knows its injected pre-effect failure occurred before
+close; production does not. Therefore the fixture owner explicitly closes that
+known original handle before demonstrating cleanup completion. A separate real
+same-inode reopen proves the foreign handle survives until its fixture owner
+closes it. No retry guard or safety assertion was weakened. Unknown initial
+descriptor identity likewise remains fenced, not guessed.
+
+Both parser and issuer first failed for missing implementation. The expanded
+actual termination/transport fixture covers self-rehashed relation crosses,
+late mutation, before-write/short-write, before-close/persistent-close, lost-close
+response, different-file reuse and same-inode reopen. Configuration still
+refuses direct helper/child roles; no direct authenticator or grant is claimed.
+Final scoped kernel/transport/lease/role checks7/7 passed (32.614s), exact manifest
+17/17 (6.038s), actual startup-family inert import1/1 (1.215s), fresh no-emit and
+whitespace checks passed. Independent final review reports no remaining must-fix
+in this issuer, including the explicit ambiguous-close availability tradeoff.
+
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
 facts in the original owner, marking entry before `kill` or `spawn`. An existing
