@@ -1041,8 +1041,10 @@ async function resolveDirectSpawnerRebindEvidenceV1(
     assertStable();
     const receipt = await import("./baseline-post-handoff-receipt-v1.js"); assertStable();
     const startupModule = await import("./baseline-spawner-startup-admission-v1.js"); assertStable();
-    const operation = await receipt.resolveInternalProductionCurrentEntryOperationV1(operationPair as { operationRef: string; operationHash: string }); assertStable();
-    const restart = await startupModule.resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(restartPair as { restartAuthorityRef: string; restartAuthorityHash: string }); assertStable();
+    // Canonical stored objects are hash-first. Remint the public pair's exact
+    // ref/hash order at the resolver boundary without changing stored evidence.
+    const operation = await receipt.resolveInternalProductionCurrentEntryOperationV1({ operationRef: operationPair.operationRef as string, operationHash: operationPair.operationHash as string }); assertStable();
+    const restart = await startupModule.resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1({ restartAuthorityRef: restartPair.restartAuthorityRef as string, restartAuthorityHash: restartPair.restartAuthorityHash as string }); assertStable();
     if (operation.schema !== "setfarm.internal-production-current-entry-operation.v1" || operation.purpose !== "task6a-internal-production-current-entry-v1"
       || operation.operationRef !== operationPair.operationRef || operation.operationHash !== operationPair.operationHash
       || restart.schema !== "setfarm.internal-production-pre-schema-spawner-restart-authority.v2" || restart.restartAuthorityRef !== restartPair.restartAuthorityRef || restart.restartAuthorityHash !== restartPair.restartAuthorityHash

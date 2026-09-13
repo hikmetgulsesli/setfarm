@@ -1648,6 +1648,160 @@ re-review found no remaining actionable defect. Live Mission Control and
 dashboard HTTP checks returned 200/200. These are focused prerequisite checks,
 not a joined lifecycle proof or a full P3 passing receipt.
 
+Joined controller fixture implementation now lives in the same receipt test
+File Map entry. It restores production receipt, retirement, startup, helper,
+launch-environment and runtime-config modules; copies their static closure and
+explicit dynamic finding-publication dependency; commits those fixture inputs
+before prepare; emits real compiled outputs after ancillary output setup and
+before finalize. One extracted production spawner entry retains both cold and
+direct startup branches, plus an explicit runtime-config side-effect import.
+Without that import, TypeScript erased the unused named binding and the new
+unauthenticated-child test reached the ordinary-admission refusal instead of
+the configuration guard. The fixture now preserves the production loading
+effect. No production source was changed.
+
+The private fixture home is created under the actual owner's home so launch
+ancestor checks remain real. Only raw launchctl, HTTP, process/listener outputs
+for three stable external services, and the legacy SQL transport are simulated.
+Real observer/controller/helper and spawner process identities are read from
+the OS; no spawner PID or termination is synthesized. The full cold observation
+passed without publishing or creating startup files (1/1, 11.317s). Source/build
+verification and unauthenticated cold/direct-child refusal passed together
+(2/2, 9.214s); launch-profile pinning passed (1/1, 6.006s).
+
+The new joined test invokes actual prepare, requires settled cold history and
+the operation_prepared status, authorizes and executes actual direct rebind,
+requires pre_manifest_bootstrap_sealed and a different genuine PID, compares
+the other three service generations and historical settlement, then replays
+without changing the replacement census. Its first full execution and
+independent review are in progress. Cleanup reobserves exact UID/PID/PPID/PGID,
+start time and command before signaling only fixture-owned children, and
+requires their disappearance before removing the private fixture home.
+Review found that helpers inherit the controller's process group instead of
+being detached: cleanup now requires PID=PGID only for spawners, and binds
+helpers to the captured controller group and current/orphaned controller
+parent. The running first joined fixture has produced a real child claim and
+controller settlement; later prepare/rebind/replay outcomes remain pending.
+
+First joined execution reached the test-only 300s limit; the owned controller,
+spawner and private home were removed. With a measured 900s test bound, the
+second run reached recovery-chain parsing and refused in 327.988s because the
+generic PBA fixture contained only a marker, not currentSource. This is a
+fixture defect, not authority to relax requireSource. The joined installer now
+copies the real PBA observation module and parser, replacing only its execFile
+transport for fixed launchctl/plutil/source-CLI responses. Its real filesystem
+locator observations stay intact. The response preserves the complete frozen
+PBA contract with a fresh MC source triple and rehashed vendor/evidence records.
+A focused regression reproduced the missing source (RED, 5.293s), then passed
+through the real compiled locator/observer/parser (GREEN, 5.294s). The fixture
+also validates the PBA response before constructing a costly joined run.
+An actual inherited-group helper plus detached spawner cleanup test passed
+(1/1, 1.383s). Full joined acceptance, including the new explicit one-effect,
+old-PID-absence, descriptor and immutable replay checks, remains pending.
+The combined six prerequisite tests passed 6/6 (29.829s), followed by clean
+TypeScript noEmit and diff checks. Attempt three runs the full joined test with
+the strict PBA transport and strengthened acceptance assertions. No full P3
+receipt, PR delivery, rollout or live acceptance is claimed by these results.
+
+Attempt three failed after 378.989s: the actual post-visible progress database
+transaction still imported the network SQL driver and reached fixture.invalid.
+The ordinary legacy census transport did not cover that separate observation.
+Its SQL import now receives fixed migration31-current/32-and-33-absent rows;
+the actual phase, journal and catalog validators remain intact. Independent
+review identified a second fixture-only gap before the next full result: the
+generic V31 catalog export was still throw-only. The joined closure now retains
+the actual V31 catalog verifier and migration predicate dependencies. Its two
+raw catalog responses were captured with that real verifier in a read-only,
+repeatable-read PostgreSQL 17 transaction; frozen test literals require no live
+database access. Each snapshot checks six queries, exact catalog SQL/arguments,
+read-only transaction mode, connection options and one close. The actual
+compiled V31 verifier accepted the fixed rows and refused expression drift
+(1/1, 4.552s). Attempt four uses the earlier immutable four-query projection;
+it is still pending, not evidence for this subsequent six-query correction.
+Attempt four finished after 385.745s with exactly the predicted V31 throw-only
+export failure, confirming the newly isolated DB path was reached. Its owned
+home and both controller/spawner processes were removed. Attempt five now
+runs the corrected real V31/six-query projection end to end.
+The combined prerequisite run then exposed replacement-string expansion of
+SQL `$` tokens in the copied-source transform (three import-time failures).
+Both nested replacements now use callbacks, preserving catalog bytes exactly.
+The same seven prerequisites passed 7/7 (32.305s). The expanded compiled V31
+negative additionally rejects a disabled immutability seal (1/1, 5.329s).
+Latest TypeScript noEmit and diff checks passed. No production source or
+runtime guard was changed by these fixture corrections.
+The current exact source manifest passed 17/17 (5.961s): Task0 remains exact145,
+P3 exact64. English (1469 files), path (848 files), and migration-digest checks
+also passed. These are scoped prerequisites; joined acceptance and full P3
+remain outstanding.
+Attempt five reached real prepare, repeated prepare, authorization and direct
+rebind, then failed after 430.643s with HELPER_DISPATCH_SETTLEMENT_UNKNOWN.
+This supersedes the fixture DB failures but does not prove a completed rebind.
+Its owned processes/home were cleaned. Attempt six adds fixture-only stderr
+diagnostics at the masking direct-route/setup catches and forwards helper/child
+stderr; original exceptions, decisions and capability FDs are unchanged. The
+compiled fixture remains immutable throughout each attempt. Root is locating
+the underlying refusal before deciding whether a fixture or production fix is
+needed; no guard relaxation or successful joined/P3 claim is justified yet.
+
+### Joined direct resolver boundary correction (2026-09-14)
+
+Attempt six failed after 439.561s. Read-only prefix monitoring proved the
+original predecessor terminated (termination dispatch and receipt present),
+with no spawn dispatch or replacement claim. Diagnostic stderr identified
+`restartAuthorityRef pair shape is invalid` during the post-termination launch
+profile revalidation, not a helper deadline. Canonical stored intent JSON orders
+nested pairs hash/ref; the direct evidence reader forwarded that order to the
+real startup resolver, whose public contract is exact ref/hash. Earlier direct
+fixtures ignored resolver arguments and therefore missed this composition bug.
+
+Causal File Map addition to this in-goal root fix: existing
+`src/internal-production/baseline-restart-authority-retirement-v1.ts` and
+`tests/internal-production/baseline-restart-authority-retirement-v1.test.ts`,
+alongside the joined receipt test and this ledger. All are already in the
+owning File Maps; no new runtime path, export or guard exception is introduced.
+Preserve canonical intent bytes and strict resolver semantics. Remint only the
+already-validated operation and restart pairs in their public field order at
+the direct evidence call boundary. Tighten the direct fixture's restart resolver
+to enforce the real pair shape and values. Its previously passing public V2
+single-dispatch/replay test now reproduces the failure (RED, 1.931s).
+With the source remint it passed (GREEN, 5.813s). Expanded real direct
+controller/public replay/terminal-history checks passed 13/13 (90.115s),
+including replaced original records/P3, awaited journal churn and interrupted
+reader cleanup. TypeScript noEmit and diff checks passed; independent source
+and regression review found no actionable issue. Attempt seven now runs the
+complete joined fixture with this source fix. No full joined/P3 or live
+acceptance is inferred from the fast results.
+Attempt seven reached actual predecessor termination, replacement dispatch and
+claim, durable controller settlement, sealed status, zero descriptor delta and
+released lease. It then failed in the test's own historical termination resolver
+call: a status-derived canonical pair was passed without reminting public key
+order. The test now explicitly remints that termination pair and startup-token
+pair. Separately, diagnostic stderr inheritance into the long-lived child kept
+spawnSync's pipe open after its controller exited. Root verified controller
+absence and the child's exact UID/PID/PPID/PGID/start/command twice, signalled
+only that fixture child, and the test's normal cleanup removed its home. The
+observed 666.749s includes this diagnostic drain, not solely controller runtime.
+Long-lived child stderr remains ignored again; only short-lived helper stderr
+is forwarded. Attempt eight reruns the full acceptance with those test-only
+corrections; replay/final joined success is still pending.
+Final-delta prerequisite rerun passed 7/7 (32.302s); English/path/migration
+contracts and noEmit/diff checks remained clean. Independent review found no
+remaining assertion or stderr-lifecycle issue. Live HTTP smoke remained
+200/200; this is observation only, not rollout acceptance.
+Attempt eight passed the complete joined test (1/1, 479.745s; total 480.934s).
+It proves real prepare and repeated prepare, authorization, one actual
+predecessor termination, one replacement dispatch/claim, two service
+observations, durable settlement, sealed status, zero descriptor delta,
+released lease, unchanged other services/cold history, and immutable direct
+history on replay with no second process. Normal owned-child/home cleanup
+completed. This closes the joined positive proof, not the full P3/live goal.
+
+- [x] Reproduce the composed failure and identify the exact retained boundary.
+- [x] Add strict resolver-argument behavior to the owning fast regression.
+- [x] Remint validated pairs at the two resolver calls; preserve stored bytes.
+- [x] Verify fast direct behavior, independent review and the complete joined
+  lifecycle before checkpoint/full P3.
+
 Checkpoint 27f68a8e's CLI file also passed through the authenticated isolated
 P3 runner: 12/12 (58.020s), with both runner-owned databases dropped. Node 26
 emitted a module.register deprecation warning from the test loader; there was
@@ -1674,7 +1828,7 @@ the failing final result.
   cold work and authenticate settled work as the actual persistent spawner.
 - [x] Route exact-poison prepare/resume preselection through authenticated cold
   recovery before ordinary preparation (`6c37dc4a`).
-- [ ] Connect the complete direct-detached rebind for the genuine prepared
+- [x] Connect the complete direct-detached rebind for the genuine prepared
   predecessor after recovery. A cold token
   cannot authorize ordinary replacement or a second process.
 - [x] Update Task 6A order to prepare/recover before public current-prerequisite

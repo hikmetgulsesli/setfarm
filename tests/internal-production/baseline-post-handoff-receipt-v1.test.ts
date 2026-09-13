@@ -15668,6 +15668,621 @@ function finalizedFixture(options: FixtureOptions = {}): Readonly<{ root: string
   return Object.freeze({ root, buildInputSetHash: receipt.buildInputSetHash });
 }
 
+function coldRecoveryPbaResponseFixtureV1(): Readonly<Record<string, unknown>> {
+  const original = JSON.parse(exactPoisonOperationFixtureBytesV1().toString("utf8")).productBuildAuthorityV2Observation.response;
+  const source = { branch: "main", clean: true, sha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64), originMainSha: "1".repeat(40) };
+  const vendor = structuredClone(original.evidence.vendorLock);
+  delete vendor.vendorLockProjectionHash;
+  vendor.producerCommit = source.sha;
+  const evidence = rehashFixtureRecordV1(original.evidence, "deliveryEvidenceRef", "deliveryEvidenceHash",
+    "mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/", core => {
+      core.currentSource = source;
+      core.vendorLock = { ...vendor, vendorLockProjectionHash: canonicalHash(vendor) };
+    });
+  return Object.freeze({ ...original, deliveryEvidenceRef: evidence.ref, deliveryEvidenceHash: evidence.hash, evidence: evidence.value });
+}
+
+function coldRecoveryRawServicesFixtureV1(root: string, home: string, launches: Record<string, string>): string {
+  const uid = process.getuid!(), node = realpathSync(process.execPath), mcRoot = path.join(home, "ai/setrox/mission-control");
+  for (const directory of [mcRoot, path.join(home, "projects"), path.join(home, ".openclaw/workspaces/workflows"),
+    path.join(home, ".openclaw/workspace/agent-scratch/story-worktrees"), path.join(path.dirname(root), ".worktrees"),
+    path.join(root, ".worktrees"), path.join(mcRoot, ".worktrees")]) mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const mcPid = 74152, dashPid = 74151, ocPid = 74153, lstart = "Sun Aug 16 15:42:28 2026";
+  const mcEntry = path.join(mcRoot, "dist-server/index.js"), mcToken = "m".repeat(64);
+  const mcCli = path.join(mcRoot, "dist-server/services/product-build-authority-v2-delivery-evidence-v1.js");
+  fixtureFile(mcRoot, "dist-server/index.js", "throw Error('synthetic Mission Control service must not execute');\n");
+  fixtureFile(mcRoot, "dist-server/services/product-build-authority-v2-delivery-evidence-v1.js", "throw Error('synthetic Mission Control CLI transport must not execute');\n");
+  const mcEnvironment = {
+    CLI_PATH: path.join(home, ".local/bin"), MC_HOST: "0.0.0.0", MC_INTERNAL_URL: "http://127.0.0.1:3080", MC_PORT: "3080",
+    PATH: "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", PROJECTS_DIR: path.join(home, "projects"),
+    PROJECTS_JSON: path.join(home, "projects/mission-control/projects.json"), SETFARM_DIR: path.join(home, ".openclaw/setfarm"),
+    SETFARM_OPERATIONAL_WRITE_TOKEN: mcToken, SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm",
+    SETFARM_REPO_DIR: root, SETFARM_URL: "http://127.0.0.1:3333",
+  };
+  const mcPlist = { EnvironmentVariables: mcEnvironment, KeepAlive: true, Label: "com.setrox.mission-control",
+    ProgramArguments: [node, mcEntry], RunAtLoad: true, StandardErrorPath: path.join(home, ".openclaw/logs/mission-control.err.log"),
+    StandardOutPath: path.join(home, ".openclaw/logs/mission-control.out.log"), WorkingDirectory: mcRoot };
+  fixtureFile(home, "Library/LaunchAgents/com.setrox.mission-control.plist", JSON.stringify(mcPlist), 0o600);
+  const mcDomain = `gui/${uid}/com.setrox.mission-control`;
+  launches[mcDomain] = `${mcDomain} = {\n\tpath = ${path.join(home, "Library/LaunchAgents/com.setrox.mission-control.plist")}\n\tstate = running\n\tprogram = ${node}\n\tworking directory = ${mcRoot}\n\tstdout path = ${mcPlist.StandardOutPath}\n\tstderr path = ${mcPlist.StandardErrorPath}\n\targuments = {\n\t\t${node}\n\t\t${mcEntry}\n\t}\n\tenvironment = {\n${Object.entries({ ...mcEnvironment, OSLogRateLimit: "64", XPC_SERVICE_NAME: "com.setrox.mission-control" }).map(([key, value]) => `\t\t${key} => ${value}\n`).join("")}\t}\n\tpid = ${mcPid}\n\ttype = LaunchAgent\n\tactive count = 1\n\tlast exit code = 0\n}\n`;
+  launches[`gui/${uid}/ai.openclaw.gateway`] = `gateway = {\n\tpid = ${ocPid}\n}\n`;
+  const identity = { schema: "mission-control.internal-production-build-identity.v1", sourceSha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64) };
+  const loaded = { schema: "mission-control.product-build-authority-v2-loaded-build.v1",
+    entryModulePath: "dist-server/services/product-build-authority-v2-delivery-evidence-v1.js", entryModuleHash: "4".repeat(64),
+    buildIdentity: identity, buildIdentityHash: createHash("sha256").update(JSON.stringify(identity) + "\n").digest("hex") };
+  const loadedHash = canonicalHash(loaded);
+  const response = { schema: "mission-control.product-build-authority-v2-loaded-build-response.v1",
+    loadedBuildRef: `mission-control://internal-production/product-build-authority-v2-loaded-build/sha256/${loadedHash}`,
+    loadedBuildHash: loadedHash, startupInstance: { schema: "mission-control.product-build-authority-v2-startup-instance.v1", pid: mcPid,
+      instanceId: "123e4567-e89b-42d3-a456-426614174000" }, loadedBuild: loaded };
+  const services = [
+    { pid: dashPid, command: `${node} ${path.join(root, "dist/server/daemon.js")} 3333`, cwd: root, port: 3333, fd: 13, address: "127.0.0.1:3333" },
+    { pid: mcPid, command: `${node} ${mcEntry}`, cwd: mcRoot, port: 3080, fd: 14, address: "*:3080" },
+    { pid: ocPid, command: `${node} ${path.join(home, "openclaw-gateway.js")}`, cwd: home, port: 18789, fd: 18, address: "127.0.0.1:18789" },
+  ];
+  return `
+import {spawnSync as hostSpawnSync} from 'node:child_process';import {readFileSync} from 'node:fs';import {EventEmitter} from 'node:events';import assert from 'node:assert/strict';
+const launches=${JSON.stringify(launches)},services=${JSON.stringify(services)},root=${JSON.stringify(root)},home=${JSON.stringify(home)},node=${JSON.stringify(node)},lstart=${JSON.stringify(lstart)},uid=${uid};
+const columns='uid=,pid=,ppid=,pgid=,stat=,lstart=,command=';
+const result=(stdout,status=0)=>({status,signal:null,error:undefined,stdout:Buffer.from(stdout),stderr:Buffer.alloc(0)});
+const row=s=>uid+' '+s.pid+' 1 '+s.pid+' Ss '+lstart+' '+s.command+'\\n';
+function realRows(){
+ const p=hostSpawnSync('/bin/ps',['-ww','-axo',columns],{encoding:'utf8',timeout:2000,maxBuffer:1048576});
+ if(p.error||p.status!==0||p.stderr!=='')throw Error('JOINED_REAL_PROCESS_SCAN_FAILED');
+ return p.stdout.split('\\n').filter(line=>{const words=line.trim().split(/\\s+/),pid=Number(words[1]),command=words.slice(10).join(' ');
+  return pid===process.pid||command===node+' '+root+'/dist/spawner.js'||command===node+' '+root+'/dist/internal-production/baseline-service-restart-helper-v1.js';});
+}
+export function spawnSync(executable,args,options){
+ if(executable==='/bin/launchctl'){
+  if(args.length!==2||args[0]!=='print'||!Object.hasOwn(launches,args[1]))throw Error('UNEXPECTED_JOINED_LAUNCHCTL');return result(launches[args[1]]);
+ }
+ if(executable==='/bin/ps'){
+  if(args.includes('-axo')){const rows=[...services.map(row).map(s=>s.trimEnd()),...realRows()];
+   if(args.at(-1)===columns)return result(rows.join('\\n')+'\\n');
+   if(args.at(-1)==='command=')return result(rows.map(line=>line.trim().split(/\\s+/).slice(10).join(' ')).join('\\n')+'\\n');
+   throw Error('UNEXPECTED_JOINED_PS_GLOBAL');
+  }
+  const pid=Number(args[args.indexOf('-p')+1]),service=services.find(s=>s.pid===pid);
+  if(service){const field=args.at(-1);if(field===columns)return result(row(service));if(field==='lstart=')return result(lstart+'\\n');if(field==='command=')return result(service.command+'\\n');if(field==='comm=')return result(node+'\\n');throw Error('UNEXPECTED_JOINED_PS_FIELD');}
+  return hostSpawnSync(executable,args,options);
+ }
+ if(executable==='/usr/sbin/lsof'){
+  if(args.includes('+D')){const target=args[args.indexOf('+D')+1];if(!target.startsWith(home+'/'))throw Error('UNEXPECTED_JOINED_REFERENCE_ROOT');return result('',1);}
+  const pid=Number(args[args.indexOf('-p')+1]),service=services.find(s=>s.pid===pid);
+  if(service){if(args.includes('cwd'))return result('p'+pid+'\\0cnode\\0R1\\0\\nfcwd\\0n'+service.cwd+'\\0\\n');
+   if(!args.includes('-sTCP:LISTEN'))throw Error('UNEXPECTED_JOINED_LSOF');
+   return result('p'+pid+'\\0cnode\\0\\nf'+service.fd+'\\0n'+service.address+'\\0\\n');}
+  return hostSpawnSync(executable,args,options);
+ }
+ if(!['git','/usr/bin/git','/usr/bin/plutil'].includes(executable))throw Error('UNEXPECTED_JOINED_COMMAND');
+ return hostSpawnSync(executable,args,options);
+}
+export function httpRequest(options,callback){
+ assert.deepEqual(options,{protocol:'http:',hostname:'127.0.0.1',port:3080,method:'GET',path:'/api/internal-production/product-build-authority-v2-loaded-build',agent:false,headers:{accept:'application/json',connection:'close','x-setfarm-operational-token':${JSON.stringify(mcToken)}}});
+ const request=new EventEmitter();request.setTimeout=(ms)=>{assert.equal(ms,10000);return request};request.destroy=error=>queueMicrotask(()=>request.emit('error',error));
+ request.end=(...args)=>{assert.equal(args.length,0);queueMicrotask(()=>{const response=new EventEmitter();response.statusCode=200;response.headers={'cache-control':'no-store, max-age=0, must-revalidate',pragma:'no-cache',expires:'0','content-type':'application/json; charset=utf-8'};callback(response);queueMicrotask(()=>{response.emit('data',Buffer.from(${JSON.stringify(JSON.stringify(response))}));response.emit('end')});});};return request;
+}
+export function execFile(executable,args,options,callback){
+ try {
+  let stdout;
+  if(executable==='/bin/launchctl')stdout=spawnSync(executable,args,options).stdout.toString('utf8');
+  else if(executable==='/usr/bin/plutil'){
+   assert.equal(args.length,6);assert.equal(args[0],'-extract');assert.equal(args[3],'-o');assert.equal(args[4],'-');
+   assert.equal(args[5],${JSON.stringify(path.join(home, "Library/LaunchAgents/com.setrox.mission-control.plist"))});
+   const plist=JSON.parse(readFileSync(args[5],'utf8'));
+   if(args[1]==='ProgramArguments'){assert.equal(args[2],'json');stdout=JSON.stringify(plist.ProgramArguments)}
+   else{assert.ok(['Label','WorkingDirectory'].includes(args[1]));assert.equal(args[2],'raw');stdout=plist[args[1]]+'\\n'}
+  }else{
+   assert.equal(executable,node);assert.deepEqual(args,[${JSON.stringify(mcCli)},'--json']);assert.equal(options.cwd,${JSON.stringify(mcRoot)});
+   stdout=${JSON.stringify(JSON.stringify(coldRecoveryPbaResponseFixtureV1()) + "\n")};
+  }
+  queueMicrotask(()=>callback(null,stdout,''));
+ }catch(error){queueMicrotask(()=>callback(error,'',''))}
+}
+`;
+}
+
+// Frozen read-only PostgreSQL 17 catalog responses, authenticated by the real
+// V31 verifier on capture. The joined fixture never reads the live database.
+function coldRecoveryV31CatalogQueriesFixtureV1() {
+  return [{"query":"SELECT convalidated AS validated,\n            pg_get_expr(conbin, conrelid, true) AS expression\n       FROM pg_constraint\n      WHERE conrelid = to_regclass('public.run_termination_requests')\n        AND conname = $1","args":["run_termination_requests_operational_failure_cause_check"],"rows":[{"validated":true,"expression":"\nCASE\n    WHEN NOT evidence ? 'operationalFailureCause'::text THEN true\n    WHEN target_status <> 'failed'::text THEN false\n    WHEN jsonb_typeof(evidence -> 'operationalFailureCause'::text) IS DISTINCT FROM 'object'::text THEN false\n    ELSE ((evidence -> 'operationalFailureCause'::text) - 'schema'::text - 'workflowStepId'::text - 'boundary'::text - 'failureClass'::text - 'failureCode'::text) = '{}'::jsonb AND (evidence -> 'operationalFailureCause'::text) ?& ARRAY['schema'::text, 'workflowStepId'::text, 'boundary'::text, 'failureClass'::text, 'failureCode'::text] AND jsonb_typeof((evidence -> 'operationalFailureCause'::text) -> 'schema'::text) = 'string'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'schema'::text) = 'setfarm.operational-failure-cause.v1'::text AND jsonb_typeof((evidence -> 'operationalFailureCause'::text) -> 'workflowStepId'::text) = 'string'::text AND length((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) >= 1 AND length((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) <= 100 AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$'::text AND jsonb_typeof((evidence -> 'operationalFailureCause'::text) -> 'boundary'::text) = 'string'::text AND length((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) >= 1 AND length((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) <= 160 AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) ~ '^[a-z][a-z0-9]*([._-][a-z0-9]+)*$'::text AND jsonb_typeof((evidence -> 'operationalFailureCause'::text) -> 'failureClass'::text) = 'string'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = ANY (ARRAY['contract_invalid'::text, 'generated_artifact_invalid'::text, 'retry_delta_missing'::text, 'platform_authority_invalid'::text, 'infrastructure_failure'::text, 'platform_invariant_failed'::text, 'recovery_exhausted'::text])) AND jsonb_typeof((evidence -> 'operationalFailureCause'::text) -> 'failureCode'::text) = 'string'::text AND length((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) >= 3 AND length((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) <= 160 AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) ~ '^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$'::text AND (requested_by = 'setfarm.product-compiler.plan-refusal'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'plan'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.plan_refusal'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_PLAN_CLARIFICATION_REQUIRED'::text OR requested_by = 'setfarm.product-compiler.deploy-refusal'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'deploy'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.deploy_authority'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_DEPLOY_ACCEPTED_CANDIDATE_MISSING'::text, 'V3_DEPLOY_ACCEPTED_CANDIDATE_INVALID'::text, 'V3_DEPLOY_ACCEPTED_CANDIDATE_POINTER_MISMATCH'::text, 'V3_DEPLOY_SOURCE_REVISION_MISMATCH'::text, 'V3_DEPLOY_PACKET_INVALID'::text, 'V3_DEPLOY_RUNTIME_ENV_MISSING'::text])) OR requested_by = 'setfarm.product-compiler.deploy-refusal'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'deploy'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.deploy_authority'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'infrastructure_failure'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_DEPLOY_SOURCE_UNAVAILABLE'::text, 'V3_DEPLOY_PLATFORM_FAILED'::text, 'V3_DEPLOY_HEALTH_FAILED'::text])) OR requested_by = 'setfarm.product-compiler.deploy-refusal'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'deploy'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.deploy_authority'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_DEPLOY_RUN_NOT_FOUND'::text, 'V3_DEPLOY_TARGET_UNSUPPORTED'::text])) OR requested_by = 'setfarm.product-compiler.deploy-refusal'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'deploy'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.deploy_authority'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_invariant_failed'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DEPLOY_ROLLBACK_FAILED'::text OR requested_by = 'setfarm.step-fail.single'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'setup-build'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.setup_build_packet'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['SETUP_PACKET_ACTIVATION_REJECTED'::text, 'SETUP_PACKET_DESIGN_GRAPH_REJECTED'::text, 'SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED'::text, 'SETUP_PACKET_DELIVERY_PROFILE_REJECTED'::text, 'SETUP_PACKET_ENTRYPOINT_AMBIGUOUS'::text, 'SETUP_PACKET_ENTRYPOINT_MISSING'::text, 'SETUP_PACKET_FILE_INVALID'::text, 'SETUP_PACKET_GENERATED_SOURCE_AMBIGUOUS'::text, 'SETUP_PACKET_GENERATED_SOURCE_MISSING'::text, 'SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING'::text, 'SETUP_PACKET_JSON_INVALID'::text, 'SETUP_PACKET_PLAN_REJECTED'::text, 'SETUP_PACKET_PROTOCOL_MISMATCH'::text, 'SETUP_PACKET_REPO_DIRTY'::text, 'SETUP_PACKET_REPO_IDENTITY_INVALID'::text, 'SETUP_PACKET_RUNTIME_EVIDENCE_REJECTED'::text, 'SETUP_PACKET_RUN_ID_MISMATCH'::text, 'SETUP_PACKET_SOURCE_NON_CANONICAL'::text, 'SETUP_PACKET_STORY_PLAN_REJECTED'::text, 'SETUP_PACKET_TOPOLOGY_OWNER_AMBIGUOUS'::text, 'SETUP_PACKET_TOPOLOGY_REJECTED'::text])) OR requested_by = 'setfarm.step-fail.single'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'setup-build'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'stitch.converter.input_contract'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['STITCH_DESIGN_MANIFEST_JSON_INVALID'::text, 'V3_PROJECTION_CONTRACT_PARTIAL'::text, 'V3_PROJECTION_CONTRACT_JSON_INVALID'::text, 'V3_PROJECTION_TARGETS_INVALID'::text, 'V3_PROJECTION_BINDINGS_INVALID'::text, 'V3_PROJECTION_TARGET_ID_INVALID'::text, 'V3_PROJECTION_RESPONSE_BINDING_INVALID'::text, 'V3_PROJECTION_SCREEN_UNBOUND'::text])) OR requested_by = 'setfarm.step-fail.single'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'setup-build'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'stitch.converter.generated_tsx'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'generated_artifact_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_OBSERVABLE_REF_INVALID'::text, 'V3_OBSERVABLE_SELECTOR_INVALID'::text, 'V3_OBSERVABLE_SELECTOR_MISSING'::text, 'V3_OBSERVABLE_SELECTOR_AMBIGUOUS'::text])) OR requested_by = 'setfarm.step-fail.single'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'setup-build'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'stitch.converter.result_contract'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_invariant_failed'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['STITCH_CONVERTER_RESULT_MISSING'::text, 'STITCH_CONVERTER_RESULT_INVALID'::text])) OR requested_by = 'setfarm.step-fail.single'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'setup-build'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'stitch.design_import_validator'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'generated_artifact_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'STITCH_DESIGN_IMPORT_INVALID'::text OR requested_by = 'setfarm-v3-downstream-compiler'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = ANY (ARRAY['qa-test'::text, 'final-test'::text])) AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.downstream_recovery'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_PACKET_AMENDMENT_REQUIRED'::text OR requested_by = 'setfarm-v3-downstream-compiler'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = ANY (ARRAY['qa-test'::text, 'final-test'::text])) AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.downstream_recovery'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_DOWNSTREAM_SPECIFICATION_INCOMPLETE'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_03'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_05'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_07'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_09'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0B'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0D'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0F'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_11'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_12'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_13'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_14'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_15'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_16'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_17'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_18'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_19'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1A'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1B'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1C'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1D'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1E'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1F'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_21'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_23'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_25'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_27'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_29'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2B'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2D'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2F'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_30'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_31'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_32'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_33'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_34'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_35'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_36'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_37'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_38'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_39'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3A'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3B'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3C'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3D'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3E'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3F'::text, 'V3_DOWNSTREAM_UPSTREAM_RECOMPILE_REQUIRED'::text])) OR requested_by = 'setfarm-v3-downstream-compiler'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = ANY (ARRAY['qa-test'::text, 'final-test'::text])) AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.downstream_recovery'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_DOWNSTREAM_EVIDENCE_INCONCLUSIVE'::text, 'V3_DOWNSTREAM_OPERATOR_REQUIRED'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_22'::text])) OR requested_by = 'setfarm-v3-downstream-compiler'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = ANY (ARRAY['qa-test'::text, 'final-test'::text])) AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.downstream_recovery'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'recovery_exhausted'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_DOWNSTREAM_RECOVERY_BUDGET_EXHAUSTED'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_06'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_24'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_26'::text])) OR requested_by = 'setfarm-v3-downstream-compiler'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = ANY (ARRAY['qa-test'::text, 'final-test'::text])) AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.downstream_recovery'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_DOWNSTREAM_SOURCE_SUPERSEDED'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0A'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0C'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0E'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_28'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2A'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2C'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2E'::text])) OR requested_by = 'setfarm.step-ops.stories-completeness'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'stories'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'story_plan.completeness'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'STORIES_REQUIRED_OUTPUT_MISSING'::text OR requested_by = 'setfarm.v3-stage-input-authority'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = ANY (ARRAY['plan'::text, 'design'::text, 'stories'::text, 'setup-repo'::text, 'setup-build'::text, 'implement'::text, 'verify'::text, 'security-gate'::text, 'qa-test'::text, 'final-test'::text, 'deploy'::text, 'supervise'::text])) AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'stage_context_assembly'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_STAGE_INPUT_UNRESOLVED'::text OR requested_by = 'setfarm.v3-stage-retry-authority'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = ANY (ARRAY['plan'::text, 'design'::text, 'stories'::text, 'setup-repo'::text, 'setup-build'::text, 'implement'::text, 'verify'::text, 'security-gate'::text, 'qa-test'::text, 'final-test'::text, 'deploy'::text, 'supervise'::text])) AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'stage_retry_authority'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_STAGE_RETRY_DUPLICATE_UNCHANGED_TUPLE'::text OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_PREPARATION_AUTHORITY_UNAVAILABLE'::text OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.eligibility'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['RUNTIME_PACKET_NOT_ACTIVE'::text, 'V3_PREPARATION_WORKTREE_UNAVAILABLE'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_MISSING'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISSING'::text, 'V3_SLICE_SOURCE_CHANGED_DURING_CAPTURE'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.eligibility'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_EVIDENCE_PLAN_COMPILATION_REJECTED'::text, 'V3_IMPLEMENTATION_CONTEXT_CAPACITY_EXCEEDED'::text, 'V3_RUNTIME_EVIDENCE_CONTRACT_REJECTED'::text, 'V3_RUNTIME_EVIDENCE_STACK_UNSUPPORTED'::text, 'V3_SLICE_COMPILATION_REJECTED'::text, 'V3_SLICE_DEPENDENCY_PATH_INVALID'::text, 'V3_SLICE_DEPENDENCY_PATH_REF_CONFLICT'::text, 'V3_SLICE_DEPENDENCY_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_PATH_BINDING_MISSING'::text, 'V3_SLICE_SHARED_GRANT_MISSING'::text, 'V3_SLICE_SOURCE_PATH_ESCAPE'::text, 'V3_SLICE_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_STORY_NOT_IN_PACKET'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.eligibility'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'infrastructure_failure'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['EAI_AGAIN'::text, 'ERRNO_ECONNRESET'::text, 'ERRNO_EMFILE'::text, 'ERRNO_ENFILE'::text, 'ERRNO_ENOSPC'::text, 'ERRNO_ETIMEDOUT'::text, 'SQLSTATE_40001'::text, 'SQLSTATE_40P01'::text, 'SQLSTATE_55P03'::text, 'SQLSTATE_57014'::text, 'SQLSTATE_EBUSY'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.eligibility'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_invariant_failed'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_ATTEMPT_ACTIVE_CONFLICT'::text, 'V3_ATTEMPT_CLAIM_ID_REQUIRED'::text, 'V3_ATTEMPT_CONTEXT_ARTIFACT_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EVIDENCE_PLAN_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_IDENTITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_INDEX_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_PACKET_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_RECOVERY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_SLICE_MISMATCH'::text, 'V3_ATTEMPT_DUPLICATE_UNCHANGED_SOURCE'::text, 'V3_ATTEMPT_RESERVATION_BINDING_MISMATCH'::text, 'V3_DOWNSTREAM_EVIDENCE_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_ONLY_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_PLAN_PUBLICATION_HASH_MISMATCH'::text, 'V3_EVIDENCE_PUBLICATION_AUTHORITY_CONFLICT'::text, 'V3_IMPLEMENTATION_CRITICAL_CONTEXT_EMPTY'::text, 'V3_IMPLEMENTATION_INPUT_UNRESOLVED'::text, 'V3_OPERATIONAL_RETRY_AUTHORITY_CONFLICT'::text, 'V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_NOT_TERMINAL'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_UNAVAILABLE'::text, 'V3_OPERATIONAL_RETRY_PUBLICATION_HASH_MISMATCH'::text, 'V3_PREPARATION_PUBLICATION_RESULT_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_NOT_FOUND'::text, 'V3_RECOVERY_AUTHORIZATION_UNAVAILABLE'::text, 'V3_RECOVERY_CONTRACT_SLICE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_CONTRACT_SLICE_INVALID'::text, 'V3_RECOVERY_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_RECOVERY_FINDING_SET_NOT_FOUND'::text, 'V3_RECOVERY_FINDING_SET_OVERRIDE_REJECTED'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_ARTIFACT_INVALID'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_REF_INVALID'::text, 'V3_RECOVERY_SOURCE_REVISION_MISMATCH'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISMATCH'::text, 'V3_SLICE_PUBLICATION_HASH_MISMATCH'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.packet'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['RUNTIME_PACKET_NOT_ACTIVE'::text, 'V3_PREPARATION_WORKTREE_UNAVAILABLE'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_MISSING'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISSING'::text, 'V3_SLICE_SOURCE_CHANGED_DURING_CAPTURE'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.packet'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_EVIDENCE_PLAN_COMPILATION_REJECTED'::text, 'V3_IMPLEMENTATION_CONTEXT_CAPACITY_EXCEEDED'::text, 'V3_RUNTIME_EVIDENCE_CONTRACT_REJECTED'::text, 'V3_RUNTIME_EVIDENCE_STACK_UNSUPPORTED'::text, 'V3_SLICE_COMPILATION_REJECTED'::text, 'V3_SLICE_DEPENDENCY_PATH_INVALID'::text, 'V3_SLICE_DEPENDENCY_PATH_REF_CONFLICT'::text, 'V3_SLICE_DEPENDENCY_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_PATH_BINDING_MISSING'::text, 'V3_SLICE_SHARED_GRANT_MISSING'::text, 'V3_SLICE_SOURCE_PATH_ESCAPE'::text, 'V3_SLICE_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_STORY_NOT_IN_PACKET'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.packet'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'infrastructure_failure'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['EAI_AGAIN'::text, 'ERRNO_ECONNRESET'::text, 'ERRNO_EMFILE'::text, 'ERRNO_ENFILE'::text, 'ERRNO_ENOSPC'::text, 'ERRNO_ETIMEDOUT'::text, 'SQLSTATE_40001'::text, 'SQLSTATE_40P01'::text, 'SQLSTATE_55P03'::text, 'SQLSTATE_57014'::text, 'SQLSTATE_EBUSY'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.packet'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_invariant_failed'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_ATTEMPT_ACTIVE_CONFLICT'::text, 'V3_ATTEMPT_CLAIM_ID_REQUIRED'::text, 'V3_ATTEMPT_CONTEXT_ARTIFACT_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EVIDENCE_PLAN_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_IDENTITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_INDEX_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_PACKET_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_RECOVERY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_SLICE_MISMATCH'::text, 'V3_ATTEMPT_DUPLICATE_UNCHANGED_SOURCE'::text, 'V3_ATTEMPT_RESERVATION_BINDING_MISMATCH'::text, 'V3_DOWNSTREAM_EVIDENCE_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_ONLY_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_PLAN_PUBLICATION_HASH_MISMATCH'::text, 'V3_EVIDENCE_PUBLICATION_AUTHORITY_CONFLICT'::text, 'V3_IMPLEMENTATION_CRITICAL_CONTEXT_EMPTY'::text, 'V3_IMPLEMENTATION_INPUT_UNRESOLVED'::text, 'V3_OPERATIONAL_RETRY_AUTHORITY_CONFLICT'::text, 'V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_NOT_TERMINAL'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_UNAVAILABLE'::text, 'V3_OPERATIONAL_RETRY_PUBLICATION_HASH_MISMATCH'::text, 'V3_PREPARATION_PUBLICATION_RESULT_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_NOT_FOUND'::text, 'V3_RECOVERY_AUTHORIZATION_UNAVAILABLE'::text, 'V3_RECOVERY_CONTRACT_SLICE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_CONTRACT_SLICE_INVALID'::text, 'V3_RECOVERY_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_RECOVERY_FINDING_SET_NOT_FOUND'::text, 'V3_RECOVERY_FINDING_SET_OVERRIDE_REJECTED'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_ARTIFACT_INVALID'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_REF_INVALID'::text, 'V3_RECOVERY_SOURCE_REVISION_MISMATCH'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISMATCH'::text, 'V3_SLICE_PUBLICATION_HASH_MISMATCH'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.source'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['RUNTIME_PACKET_NOT_ACTIVE'::text, 'V3_PREPARATION_WORKTREE_UNAVAILABLE'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_MISSING'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISSING'::text, 'V3_SLICE_SOURCE_CHANGED_DURING_CAPTURE'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.source'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_EVIDENCE_PLAN_COMPILATION_REJECTED'::text, 'V3_IMPLEMENTATION_CONTEXT_CAPACITY_EXCEEDED'::text, 'V3_RUNTIME_EVIDENCE_CONTRACT_REJECTED'::text, 'V3_RUNTIME_EVIDENCE_STACK_UNSUPPORTED'::text, 'V3_SLICE_COMPILATION_REJECTED'::text, 'V3_SLICE_DEPENDENCY_PATH_INVALID'::text, 'V3_SLICE_DEPENDENCY_PATH_REF_CONFLICT'::text, 'V3_SLICE_DEPENDENCY_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_PATH_BINDING_MISSING'::text, 'V3_SLICE_SHARED_GRANT_MISSING'::text, 'V3_SLICE_SOURCE_PATH_ESCAPE'::text, 'V3_SLICE_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_STORY_NOT_IN_PACKET'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.source'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'infrastructure_failure'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['EAI_AGAIN'::text, 'ERRNO_ECONNRESET'::text, 'ERRNO_EMFILE'::text, 'ERRNO_ENFILE'::text, 'ERRNO_ENOSPC'::text, 'ERRNO_ETIMEDOUT'::text, 'SQLSTATE_40001'::text, 'SQLSTATE_40P01'::text, 'SQLSTATE_55P03'::text, 'SQLSTATE_57014'::text, 'SQLSTATE_EBUSY'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.source'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_invariant_failed'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_ATTEMPT_ACTIVE_CONFLICT'::text, 'V3_ATTEMPT_CLAIM_ID_REQUIRED'::text, 'V3_ATTEMPT_CONTEXT_ARTIFACT_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EVIDENCE_PLAN_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_IDENTITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_INDEX_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_PACKET_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_RECOVERY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_SLICE_MISMATCH'::text, 'V3_ATTEMPT_DUPLICATE_UNCHANGED_SOURCE'::text, 'V3_ATTEMPT_RESERVATION_BINDING_MISMATCH'::text, 'V3_DOWNSTREAM_EVIDENCE_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_ONLY_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_PLAN_PUBLICATION_HASH_MISMATCH'::text, 'V3_EVIDENCE_PUBLICATION_AUTHORITY_CONFLICT'::text, 'V3_IMPLEMENTATION_CRITICAL_CONTEXT_EMPTY'::text, 'V3_IMPLEMENTATION_INPUT_UNRESOLVED'::text, 'V3_OPERATIONAL_RETRY_AUTHORITY_CONFLICT'::text, 'V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_NOT_TERMINAL'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_UNAVAILABLE'::text, 'V3_OPERATIONAL_RETRY_PUBLICATION_HASH_MISMATCH'::text, 'V3_PREPARATION_PUBLICATION_RESULT_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_NOT_FOUND'::text, 'V3_RECOVERY_AUTHORIZATION_UNAVAILABLE'::text, 'V3_RECOVERY_CONTRACT_SLICE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_CONTRACT_SLICE_INVALID'::text, 'V3_RECOVERY_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_RECOVERY_FINDING_SET_NOT_FOUND'::text, 'V3_RECOVERY_FINDING_SET_OVERRIDE_REJECTED'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_ARTIFACT_INVALID'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_REF_INVALID'::text, 'V3_RECOVERY_SOURCE_REVISION_MISMATCH'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISMATCH'::text, 'V3_SLICE_PUBLICATION_HASH_MISMATCH'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.reservation'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['RUNTIME_PACKET_NOT_ACTIVE'::text, 'V3_PREPARATION_WORKTREE_UNAVAILABLE'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_MISSING'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISSING'::text, 'V3_SLICE_SOURCE_CHANGED_DURING_CAPTURE'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.reservation'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_EVIDENCE_PLAN_COMPILATION_REJECTED'::text, 'V3_IMPLEMENTATION_CONTEXT_CAPACITY_EXCEEDED'::text, 'V3_RUNTIME_EVIDENCE_CONTRACT_REJECTED'::text, 'V3_RUNTIME_EVIDENCE_STACK_UNSUPPORTED'::text, 'V3_SLICE_COMPILATION_REJECTED'::text, 'V3_SLICE_DEPENDENCY_PATH_INVALID'::text, 'V3_SLICE_DEPENDENCY_PATH_REF_CONFLICT'::text, 'V3_SLICE_DEPENDENCY_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_PATH_BINDING_MISSING'::text, 'V3_SLICE_SHARED_GRANT_MISSING'::text, 'V3_SLICE_SOURCE_PATH_ESCAPE'::text, 'V3_SLICE_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_STORY_NOT_IN_PACKET'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.reservation'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'infrastructure_failure'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['EAI_AGAIN'::text, 'ERRNO_ECONNRESET'::text, 'ERRNO_EMFILE'::text, 'ERRNO_ENFILE'::text, 'ERRNO_ENOSPC'::text, 'ERRNO_ETIMEDOUT'::text, 'SQLSTATE_40001'::text, 'SQLSTATE_40P01'::text, 'SQLSTATE_55P03'::text, 'SQLSTATE_57014'::text, 'SQLSTATE_EBUSY'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.reservation'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_invariant_failed'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_ATTEMPT_ACTIVE_CONFLICT'::text, 'V3_ATTEMPT_CLAIM_ID_REQUIRED'::text, 'V3_ATTEMPT_CONTEXT_ARTIFACT_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EVIDENCE_PLAN_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_IDENTITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_INDEX_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_PACKET_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_RECOVERY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_SLICE_MISMATCH'::text, 'V3_ATTEMPT_DUPLICATE_UNCHANGED_SOURCE'::text, 'V3_ATTEMPT_RESERVATION_BINDING_MISMATCH'::text, 'V3_DOWNSTREAM_EVIDENCE_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_ONLY_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_PLAN_PUBLICATION_HASH_MISMATCH'::text, 'V3_EVIDENCE_PUBLICATION_AUTHORITY_CONFLICT'::text, 'V3_IMPLEMENTATION_CRITICAL_CONTEXT_EMPTY'::text, 'V3_IMPLEMENTATION_INPUT_UNRESOLVED'::text, 'V3_OPERATIONAL_RETRY_AUTHORITY_CONFLICT'::text, 'V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_NOT_TERMINAL'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_UNAVAILABLE'::text, 'V3_OPERATIONAL_RETRY_PUBLICATION_HASH_MISMATCH'::text, 'V3_PREPARATION_PUBLICATION_RESULT_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_NOT_FOUND'::text, 'V3_RECOVERY_AUTHORIZATION_UNAVAILABLE'::text, 'V3_RECOVERY_CONTRACT_SLICE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_CONTRACT_SLICE_INVALID'::text, 'V3_RECOVERY_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_RECOVERY_FINDING_SET_NOT_FOUND'::text, 'V3_RECOVERY_FINDING_SET_OVERRIDE_REJECTED'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_ARTIFACT_INVALID'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_REF_INVALID'::text, 'V3_RECOVERY_SOURCE_REVISION_MISMATCH'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISMATCH'::text, 'V3_SLICE_PUBLICATION_HASH_MISMATCH'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.publication'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['RUNTIME_PACKET_NOT_ACTIVE'::text, 'V3_PREPARATION_WORKTREE_UNAVAILABLE'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_MISSING'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISSING'::text, 'V3_SLICE_SOURCE_CHANGED_DURING_CAPTURE'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.publication'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_EVIDENCE_PLAN_COMPILATION_REJECTED'::text, 'V3_IMPLEMENTATION_CONTEXT_CAPACITY_EXCEEDED'::text, 'V3_RUNTIME_EVIDENCE_CONTRACT_REJECTED'::text, 'V3_RUNTIME_EVIDENCE_STACK_UNSUPPORTED'::text, 'V3_SLICE_COMPILATION_REJECTED'::text, 'V3_SLICE_DEPENDENCY_PATH_INVALID'::text, 'V3_SLICE_DEPENDENCY_PATH_REF_CONFLICT'::text, 'V3_SLICE_DEPENDENCY_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_PATH_BINDING_MISSING'::text, 'V3_SLICE_SHARED_GRANT_MISSING'::text, 'V3_SLICE_SOURCE_PATH_ESCAPE'::text, 'V3_SLICE_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_STORY_NOT_IN_PACKET'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.publication'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'infrastructure_failure'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['EAI_AGAIN'::text, 'ERRNO_ECONNRESET'::text, 'ERRNO_EMFILE'::text, 'ERRNO_ENFILE'::text, 'ERRNO_ENOSPC'::text, 'ERRNO_ETIMEDOUT'::text, 'SQLSTATE_40001'::text, 'SQLSTATE_40P01'::text, 'SQLSTATE_55P03'::text, 'SQLSTATE_57014'::text, 'SQLSTATE_EBUSY'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.publication'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_invariant_failed'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_ATTEMPT_ACTIVE_CONFLICT'::text, 'V3_ATTEMPT_CLAIM_ID_REQUIRED'::text, 'V3_ATTEMPT_CONTEXT_ARTIFACT_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EVIDENCE_PLAN_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_IDENTITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_INDEX_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_PACKET_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_RECOVERY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_SLICE_MISMATCH'::text, 'V3_ATTEMPT_DUPLICATE_UNCHANGED_SOURCE'::text, 'V3_ATTEMPT_RESERVATION_BINDING_MISMATCH'::text, 'V3_DOWNSTREAM_EVIDENCE_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_ONLY_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_PLAN_PUBLICATION_HASH_MISMATCH'::text, 'V3_EVIDENCE_PUBLICATION_AUTHORITY_CONFLICT'::text, 'V3_IMPLEMENTATION_CRITICAL_CONTEXT_EMPTY'::text, 'V3_IMPLEMENTATION_INPUT_UNRESOLVED'::text, 'V3_OPERATIONAL_RETRY_AUTHORITY_CONFLICT'::text, 'V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_NOT_TERMINAL'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_UNAVAILABLE'::text, 'V3_OPERATIONAL_RETRY_PUBLICATION_HASH_MISMATCH'::text, 'V3_PREPARATION_PUBLICATION_RESULT_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_NOT_FOUND'::text, 'V3_RECOVERY_AUTHORIZATION_UNAVAILABLE'::text, 'V3_RECOVERY_CONTRACT_SLICE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_CONTRACT_SLICE_INVALID'::text, 'V3_RECOVERY_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_RECOVERY_FINDING_SET_NOT_FOUND'::text, 'V3_RECOVERY_FINDING_SET_OVERRIDE_REJECTED'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_ARTIFACT_INVALID'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_REF_INVALID'::text, 'V3_RECOVERY_SOURCE_REVISION_MISMATCH'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISMATCH'::text, 'V3_SLICE_PUBLICATION_HASH_MISMATCH'::text])) OR requested_by = 'setfarm.step-fail.single'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'design'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.design_source.semantic_closure'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'DESIGN_SOURCE_SEMANTIC_CLOSURE_REJECTED'::text OR requested_by = 'setfarm.step-fail.single'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'setup-build'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.setup_build_packet'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['SETUP_PACKET_DESIGN_SOURCE_ATTEMPT_REJECTED'::text, 'SETUP_PACKET_DESIGN_SOURCE_CLOSURE_REJECTED'::text, 'SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED'::text]))) AND ((requested_by <> 'setfarm.product-compiler.deploy-refusal'::text OR (evidence ->> 'schema'::text) = 'setfarm.v3-deploy-authority-termination.v1'::text AND (evidence ->> 'authorityCode'::text) = ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text)) AND (requested_by <> 'setfarm.v3-pre-dispatch'::text OR jsonb_typeof(evidence -> 'errorCode'::text) = 'string'::text AND\n    CASE\n        WHEN (evidence ->> 'errorCode'::text) ~ '^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$'::text THEN evidence ->> 'errorCode'::text\n        WHEN (evidence ->> 'errorCode'::text) ~ '^[0-9A-Z]{5}$'::text THEN 'SQLSTATE_'::text || (evidence ->> 'errorCode'::text)\n        WHEN (evidence ->> 'errorCode'::text) ~ '^E[A-Z0-9_]{2,120}$'::text THEN 'ERRNO_'::text || (evidence ->> 'errorCode'::text)\n        ELSE NULL::text\n    END = ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text)) AND (requested_by <> 'setfarm-v3-downstream-compiler'::text OR (evidence ->> 'schema'::text) = 'setfarm.v3-downstream-termination-evidence.v1'::text AND ((evidence ->> 'outcome'::text) = 'packet_amendment_required'::text AND NOT evidence ? 'terminalReasonCodes'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_PACKET_AMENDMENT_REQUIRED'::text OR (evidence ->> 'outcome'::text) = 'bounded_recovery_blocked'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_SPECIFICATION_INCOMPLETE'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_EVIDENCE_INCONCLUSIVE'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_03'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'recovery_exhausted'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_RECOVERY_BUDGET_EXHAUSTED'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_05'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'recovery_exhausted'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_06'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_07'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_SOURCE_SUPERSEDED'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_09'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0A'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0B'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0C'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\", \"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0D'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\", \"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0E'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0F'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_UPSTREAM_RECOMPILE_REQUIRED'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_11'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_12'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_13'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_14'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_15'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_16'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_17'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_18'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_19'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1A'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1B'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1C'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1D'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1E'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1F'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_OPERATOR_REQUIRED'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_21'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_22'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_23'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'recovery_exhausted'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_24'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_25'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'recovery_exhausted'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_26'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_27'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_28'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_29'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2A'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2B'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2C'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\", \"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2D'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\", \"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2E'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2F'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_30'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_31'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_32'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_33'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_34'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_35'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_36'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_37'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_38'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_39'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3A'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3B'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3C'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3D'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3E'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3F'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb)))) IS TRUE\nEND"}]},{"query":"SELECT trigger_row.tgname AS \"triggerName\",\n            pg_get_triggerdef(trigger_row.oid, true) AS \"triggerDefinition\",\n            trigger_row.tgenabled AS enabled,\n            trigger_row.tgtype::integer AS \"typeBits\",\n            relation_namespace.nspname AS \"relationSchema\",\n            relation.relname AS \"relationName\",\n            ARRAY(\n              SELECT attribute.attname\n                FROM unnest(trigger_row.tgattr::smallint[]) WITH ORDINALITY\n                     AS columns(attnum, ordinality)\n                JOIN pg_attribute attribute\n                  ON attribute.attrelid=trigger_row.tgrelid\n                 AND attribute.attnum=columns.attnum\n               ORDER BY columns.ordinality\n            ) AS \"updateColumns\",\n            function_namespace.nspname AS \"functionSchema\",\n            routine.proname AS \"functionName\",\n            language.lanname AS language,\n            routine.prorettype::regtype::text AS \"returnType\",\n            routine.provolatile AS volatility,\n            routine.prosecdef AS \"securityDefiner\",\n            routine.proleakproof AS leakproof,\n            routine.proisstrict AS strict,\n            routine.pronargs::integer AS \"argumentCount\",\n            COALESCE(routine.proconfig, ARRAY[]::text[]) AS configuration,\n            routine.prosrc AS \"functionSource\"\n       FROM pg_trigger trigger_row\n       JOIN pg_class relation ON relation.oid=trigger_row.tgrelid\n       JOIN pg_namespace relation_namespace ON relation_namespace.oid=relation.relnamespace\n       JOIN pg_proc routine ON routine.oid=trigger_row.tgfoid\n       JOIN pg_namespace function_namespace ON function_namespace.oid=routine.pronamespace\n       JOIN pg_language language ON language.oid=routine.prolang\n      WHERE NOT trigger_row.tgisinternal\n        AND relation_namespace.nspname=$1\n        AND relation.relname=$2\n      ORDER BY trigger_row.tgname","args":["public","run_termination_requests"],"rows":[{"triggerName":"trg_run_termination_requests_operational_failure_cause_immutabl","triggerDefinition":"CREATE TRIGGER trg_run_termination_requests_operational_failure_cause_immutabl BEFORE UPDATE OF evidence, target_status, requested_by ON run_termination_requests FOR EACH ROW EXECUTE FUNCTION setfarm_enforce_operational_failure_cause_immutable()","enabled":"O","typeBits":19,"relationSchema":"public","relationName":"run_termination_requests","updateColumns":["evidence","target_status","requested_by"],"functionSchema":"public","functionName":"setfarm_enforce_operational_failure_cause_immutable","language":"plpgsql","returnType":"trigger","volatility":"v","securityDefiner":false,"leakproof":false,"strict":false,"argumentCount":0,"configuration":[],"functionSource":"\n   BEGIN\n     IF OLD.target_status IS DISTINCT FROM NEW.target_status THEN\n       RAISE EXCEPTION 'SETFARM_RUN_TERMINATION_TARGET_STATUS_IMMUTABLE'\n         USING ERRCODE = '55000';\n     END IF;\n     IF OLD.requested_by IS DISTINCT FROM NEW.requested_by THEN\n       RAISE EXCEPTION 'SETFARM_RUN_TERMINATION_REQUESTED_BY_IMMUTABLE'\n         USING ERRCODE = '55000';\n     END IF;\n     IF OLD.evidence->'operationalFailureCause'\n          IS DISTINCT FROM NEW.evidence->'operationalFailureCause' THEN\n       RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_CAUSE_IMMUTABLE'\n         USING ERRCODE = '55000';\n     END IF;\n     IF OLD.requested_by = 'setfarm.product-compiler.deploy-refusal'\n          AND OLD.evidence ? 'operationalFailureCause'\n          AND (\n            OLD.evidence->'schema' IS DISTINCT FROM NEW.evidence->'schema'\n            OR OLD.evidence->'authorityCode'\n                 IS DISTINCT FROM NEW.evidence->'authorityCode'\n          ) THEN\n       RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_EVIDENCE_BINDING_IMMUTABLE'\n         USING ERRCODE = '55000';\n     END IF;\n     IF OLD.requested_by = 'setfarm.v3-pre-dispatch'\n          AND OLD.evidence ? 'operationalFailureCause'\n          AND OLD.evidence->'errorCode' IS DISTINCT FROM NEW.evidence->'errorCode' THEN\n       RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_EVIDENCE_BINDING_IMMUTABLE'\n         USING ERRCODE = '55000';\n     END IF;\n     IF OLD.requested_by = 'setfarm-v3-downstream-compiler'\n          AND OLD.evidence ? 'operationalFailureCause'\n          AND (\n            OLD.evidence->'schema' IS DISTINCT FROM NEW.evidence->'schema'\n            OR OLD.evidence->'outcome' IS DISTINCT FROM NEW.evidence->'outcome'\n            OR OLD.evidence->'terminalReasonCodes'\n                 IS DISTINCT FROM NEW.evidence->'terminalReasonCodes'\n          ) THEN\n       RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_EVIDENCE_BINDING_IMMUTABLE'\n         USING ERRCODE = '55000';\n     END IF;\n     RETURN NEW;\n   END;\n   "}]}];
+}
+
+async function finalizedColdRecoveryControllerFixtureV1(): Promise<Readonly<{ root: string; home: string; buildInputSetHash: string }>> {
+  const typescript = await import("typescript");
+  const pba = await import("../../src/internal-production/product-build-authority-v2-delivery-evidence-v1.js");
+  pba.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(coldRecoveryPbaResponseFixtureV1());
+  let root = createFixture();
+  const home = realpathSync(mkdtempSync(path.join(userInfo().homedir, ".setfarm-cold-controller-")));
+  try {
+    mkdirSync(path.join(home, "ai"), { mode: 0o700 });
+    const workspace = path.join(home, "ai/setrox");
+    renameSync(path.dirname(root), workspace);
+    root = path.join(workspace, "setfarm");
+    const launcher = path.join(home, ".local/bin/setfarm");
+    mkdirSync(path.dirname(launcher), { recursive: true, mode: 0o700 });
+    symlinkSync(path.join(root, "dist/cli/cli.js"), launcher);
+    const launchOutputs: Record<string, string> = {};
+    for (const service of ["spawner", "dashboard"]) {
+      const label = `com.setrox.setfarm-${service}`;
+      const plist = path.join(home, "Library/LaunchAgents", `${label}.plist`);
+      const args = [launcher, service, "start", ...(service === "dashboard" ? ["--port", "3333"] : [])];
+      const environment = { PATH: "/usr/bin:/bin", SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm",
+        ...(service === "dashboard" ? { SETFARM_OPERATIONAL_WRITE_TOKEN: "joined-fixture-token" } : {}) };
+      mkdirSync(path.dirname(plist), { recursive: true, mode: 0o700 });
+      writeFileSync(plist, JSON.stringify({ Label: label, RunAtLoad: true, StartInterval: 60,
+        ProgramArguments: args, EnvironmentVariables: environment,
+        StandardOutPath: path.join(home, `.openclaw/logs/setfarm-${service}.watch.log`),
+        StandardErrorPath: path.join(home, `.openclaw/logs/setfarm-${service}.watch.err.log`),
+      }), { mode: 0o600, flag: "wx" });
+      const domain = `gui/${process.getuid!()}/${label}`;
+      launchOutputs[domain] = `${domain} = {\n\tactive count = 0\n\tpath = ${plist}\n\ttype = LaunchAgent\n\tstate = not running\n\tprogram = ${launcher}\n\targuments = {\n${args.map(argument => `\t\t${argument}\n`).join("")}\t}\n\tinherited environment = {\n\t\tSETFARM_ENV_DIR => ${path.join(root, "scripts")}\n\t\tSSH_AUTH_SOCK => /var/run/com.apple.launchd.Fixture123/Listeners\n\t}\n\tdefault environment = {\n\t\tPATH => /usr/bin:/bin:/usr/sbin:/sbin\n\t}\n\tenvironment = {\n\t\tOSLogRateLimit => 64\n${Object.entries(environment).map(([key, value]) => `\t\t${key} => ${value}\n`).join("")}\t\tXPC_SERVICE_NAME => ${label}\n\t}\n\trun interval = 60 seconds\n\tproperties = runatload | inferred program\n}\n`;
+    }
+    fixtureFile(root, "src/internal-production/cold-recovery-fixture-transport.ts", coldRecoveryRawServicesFixtureV1(root, home, launchOutputs));
+    const mcRoot = path.join(home, "ai/setrox/mission-control");
+    git(mcRoot, ["init", "-q", "-b", "main"]);
+    git(mcRoot, ["config", "user.name", "Setfarm Test"]);
+    git(mcRoot, ["config", "user.email", "setfarm-test@example.invalid"]);
+    git(mcRoot, ["config", "commit.gpgsign", "false"]);
+    git(mcRoot, ["commit", "--allow-empty", "-qm", "fixture Mission Control root"]);
+    const originalPoison = seedExactOriginalPoisonStoreV1(root);
+    // Preserve only the existing workspace anchor and out-of-scope external
+    // ports. Controller, retirement, startup and configuration stay real.
+    const existingPorts = new Set([
+      "internal-production/baseline-workspace-authority-path-v1.ts",
+      "db-pg.ts", "db/bootstrap-main-claim-handoff-v1-migration.ts",
+      "db/contract-spine-migrations.ts",
+      "db/contract-spine-migration-digests.generated.ts", "db/contract-spine-migration-source-integrity.ts",
+      "execution/v3-git-revision.ts",
+      "internal-production/cold-recovery-fixture-transport.ts",
+    ]);
+    const compiled = new Map<string, string>();
+    const copyClosure = (relative: string): void => {
+      if (compiled.has(relative)) return;
+      assert.ok(compiled.size < 128, "cold controller fixture static closure is bounded");
+      assert.ok(!path.isAbsolute(relative) && !relative.startsWith(".."), "cold controller source stays within src");
+      let source = readFileSync(path.join(existingPorts.has(relative) ? root : sourceRoot, "src", relative), "utf8");
+      if (relative === "internal-production/baseline-restart-authority-retirement-v1.ts") {
+        // Preserve every refusal and transport descriptor. Surface swallowed
+        // causes only on this disposable fixture's diagnostic stderr.
+        const route = topLevelFunctionRegionV1(source, "invokeDirectSpawnerRebindPublicRouteV1");
+        const catchAnchor = "catch (error) {\n    if (retainedDirectSpawnerRebindIntentV1?.lease === lease)";
+        assert.equal(route.split(catchAnchor).length, 2);
+        source = source.replace(route, () => route.replace(catchAnchor,
+          'catch (error) {\n    process.stderr.write("joined direct cause: " + String(error instanceof Error ? error.stack : error) + "\\n");\n    if (retainedDirectSpawnerRebindIntentV1?.lease === lease)'));
+        source = source.replaceAll('} catch { invocation.failed = true; }',
+          '} catch (error) { process.stderr.write("joined helper setup: " + String(error instanceof Error ? error.stack : error) + "\\n"); invocation.failed = true; }');
+        source = source.replaceAll('stdio: ["ignore", "pipe", "ignore", handles.frameDescriptor',
+          'stdio: ["ignore", "pipe", "inherit", handles.frameDescriptor');
+      }
+      if (relative === "internal-production/product-build-authority-v2-delivery-evidence-v1.ts") {
+        const anchor = 'import { execFile } from "node:child_process";';
+        assert.equal(source.split(anchor).length, 2);
+        source = source.replace(anchor, 'import { execFile } from "./cold-recovery-fixture-transport.js";');
+      }
+      if (relative === "internal-production/baseline-post-handoff-receipt-v1.ts") {
+        const anchor = 'import { userInfo } from "node:os";';
+        assert.equal(source.split(anchor).length, 2);
+        source = source.replace(anchor, 'import { userInfo as hostUserInfo } from "node:os";\nconst userInfo = () => ({ ...hostUserInfo(), homedir: ' + JSON.stringify(home) + ' });');
+        const spawnAnchor = 'import { spawnSync } from "node:child_process";';
+        assert.equal(source.split(spawnAnchor).length, 2);
+        source = source.replace(spawnAnchor, 'import { spawnSync } from "./cold-recovery-fixture-transport.js";');
+        const httpAnchor = 'import { request as httpRequest } from "node:http";';
+        assert.equal(source.split(httpAnchor).length, 2);
+        source = source.replace(httpAnchor, 'import { httpRequest } from "./cold-recovery-fixture-transport.js";');
+        const sqlAnchor = 'const postgresModule = await import("postgres");';
+        const census = topLevelFunctionRegionV1(source, "observeLegacyDatabaseCensusV1");
+        assert.equal(census.split(sqlAnchor).length, 2);
+        source = source.replace(census, census.replace(sqlAnchor, legacyDatabaseCensusSqlTransportFixtureV1(JSON.stringify([legacyDatabaseCensusRow()]))));
+        const database = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleProgressDatabaseTransactionNoWriteV1");
+        assert.equal(database.split(sqlAnchor).length, 2);
+        const queryRows = phase5cSRowTailPhysicalQueryRowsFixtureV1("database", PHASE5C_S_NONBLOCKED_ROWS_V1[0]!);
+        source = source.replace(database, () => database.replace(sqlAnchor, () => `
+          const rows = ${JSON.stringify(queryRows)};
+          const catalogQueries = ${JSON.stringify(coldRecoveryV31CatalogQueriesFixtureV1())};
+          let ended = false;
+          const fixtureSql = {
+            async begin(mode, body) {
+              if (ended || mode !== "isolation level repeatable read read only") throw new Error("COLD_PROGRESS_SQL_TRANSACTION_INVALID");
+              let count = 0;
+              const connection = async (strings, ...values) => {
+                if (ended || values.length !== 0) throw new Error("COLD_PROGRESS_SQL_QUERY_INVALID");
+                const query = strings.join("?");
+                count += 1;
+                if (count === 1 && query.trim() === "SET LOCAL statement_timeout = '5s'") return [];
+                if (count === 2 && query.trim() === "SET LOCAL lock_timeout = '1s'") return [];
+                if (count === 3 && query.includes("public.setfarm_schema_migrations") && query.includes("ORDER BY expected.version")) return rows["migration-journal"];
+                if (count === 4 && query.includes("pg_catalog.pg_class") && query.includes("ORDER BY versions.version")) return rows["migration-catalog"];
+                throw new Error("COLD_PROGRESS_SQL_QUERY_UNMAPPED:" + count);
+              };
+              connection.unsafe = async (query, parameters) => {
+                const expected = catalogQueries[count - 4];
+                if (ended || !expected || query !== expected.query || JSON.stringify(parameters) !== JSON.stringify(expected.args)) throw new Error("COLD_PROGRESS_SQL_CATALOG_QUERY_INVALID");
+                count += 1;
+                return expected.rows;
+              };
+              const result = await body(connection);
+              if (count !== 6) throw new Error("COLD_PROGRESS_SQL_QUERY_COUNT");
+              return result;
+            },
+            async end() { if (ended) throw new Error("COLD_PROGRESS_SQL_DOUBLE_CLOSE"); ended = true; },
+          };
+          const postgresModule = { default(url, options) {
+            if (url !== "postgresql://fixture.invalid/setfarm" || JSON.stringify(options) !== JSON.stringify({max:1,idle_timeout:1,connect_timeout:5})) throw new Error("COLD_PROGRESS_SQL_OPTIONS_INVALID");
+            return fixtureSql;
+          } };
+        `));
+      }
+      fixtureFile(root, path.join("src", relative), source);
+      if (relative === "internal-production/baseline-post-handoff-receipt-v1.ts") {
+        rewriteExactPoisonPhysicalInventoryFixtureV1(root, originalPoison);
+        source = readFileSync(path.join(root, "src", relative), "utf8");
+      }
+      const output = typescript.transpileModule(source, { compilerOptions: {
+        module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022,
+      } }).outputText;
+      compiled.set(relative, output);
+      const tree = typescript.createSourceFile(relative.replace(/\.ts$/, ".js"), output, typescript.ScriptTarget.Latest, true, typescript.ScriptKind.JS);
+      for (const statement of tree.statements) {
+        if (!typescript.isImportDeclaration(statement) && !typescript.isExportDeclaration(statement)) continue;
+        const specifier = statement.moduleSpecifier;
+        if (!specifier || !typescript.isStringLiteral(specifier) || !specifier.text.startsWith(".")) continue;
+        assert.match(specifier.text, /\.js$/, "cold controller closure uses explicit JavaScript runtime imports");
+        copyClosure(path.normalize(path.join(path.dirname(relative), specifier.text.replace(/\.js$/, ".ts"))));
+      }
+    };
+    for (const relative of [
+      "internal-production/baseline-post-handoff-receipt-v1.ts",
+      "internal-production/baseline-restart-authority-retirement-v1.ts",
+      "internal-production/baseline-spawner-startup-admission-v1.ts",
+      "internal-production/baseline-service-restart-helper-v1.ts",
+      "runtime-config.ts", "findings/finding-publication-v1.ts", "db-pg.ts",
+    ]) copyClosure(relative);
+    const spawnerSource = readFileSync(path.join(sourceRoot, "src/spawner.ts"), "utf8");
+    const spawnerTree = typescript.createSourceFile("spawner.ts", spawnerSource, typescript.ScriptTarget.Latest, true);
+    const startupNames = new Set([
+      "observeSpawnerStartupFileParentsV1", "assertSpawnerStartupFileParentsV1", "createOwnedSpawnerStartupFileV1",
+      "closeOwnedSpawnerStartupFileV1", "publishSpawnerPidFileV1", "reclaimDeadSpawnerStartupFileV1",
+      "acquireSpawnerSingletonLock", "releaseSpawnerSingletonLock", "observeOwnedSpawnerStartupFileV1",
+      "observeInternalProductionColdSpawnerSingletonOwnershipV1", "observeInternalProductionColdSpawnerStartupOwnershipV1",
+      "runInternalProductionColdSpawnerStartupV1", "observeInternalProductionDirectSpawnerStartupOwnershipV1",
+      "runInternalProductionDirectSpawnerStartupV1", "main",
+    ]);
+    const startupFunctions = spawnerTree.statements.filter(statement => typescript.isFunctionDeclaration(statement)
+      && statement.name && startupNames.has(statement.name.text));
+    assert.equal(startupFunctions.length, startupNames.size);
+    const startupVariables = spawnerTree.statements.filter(statement => typescript.isVariableStatement(statement)
+      && statement.declarationList.declarations.some(declaration => typescript.isIdentifier(declaration.name)
+        && /^spawner(?:LockFd|StartupFilesV1|ColdStartup|DirectStartup)/.test(declaration.name.text)));
+    const retirementImport = spawnerTree.statements.find(statement => typescript.isImportDeclaration(statement)
+      && typescript.isStringLiteral(statement.moduleSpecifier)
+      && statement.moduleSpecifier.text === "./internal-production/baseline-restart-authority-retirement-v1.js");
+    assert.ok(retirementImport);
+    const entryAnchor = 'if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {';
+    assert.equal(spawnerSource.split(entryAnchor).length, 2);
+    const runtime = path.join(home, ".openclaw/setfarm");
+    mkdirSync(runtime, { recursive: true, mode: 0o700 });
+    const startupSource = `
+import './runtime-config.js';
+import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';import {pathToFileURL} from 'node:url';
+${retirementImport.getText(spawnerTree)}
+const PID_FILE=${JSON.stringify(path.join(runtime, "spawner.pid"))},LOCK_FILE=${JSON.stringify(path.join(runtime, "spawner.lock"))};
+async function resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1(){throw Error('joined child reached ordinary admission')}
+function initializeAgentRuntimeV1(){throw Error('joined child reached provider discovery')}
+async function pgMigrate(){throw Error('joined child reached database initialization')}
+${[...startupVariables, ...startupFunctions].map(statement => statement.getText(spawnerTree)).join("\n")}
+${spawnerSource.slice(spawnerSource.indexOf(entryAnchor))}
+`;
+    fixtureFile(root, "src/spawner.ts", startupSource);
+    compiled.set("spawner.ts", typescript.transpileModule(startupSource, { compilerOptions: {
+      module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022,
+    } }).outputText);
+    const dashboardSource = "throw Error('synthetic dashboard must not execute');\n";
+    fixtureFile(root, "src/server/daemon.ts", dashboardSource);
+    compiled.set("server/daemon.ts", dashboardSource);
+    const packagePath = path.join(root, "package.json");
+    fixtureFile(root, "package.json", JSON.stringify({ ...JSON.parse(readFileSync(packagePath, "utf8")), type: "module" }) + "\n");
+    fixtureFile(root, ".gitignore", readFileSync(path.join(root, ".gitignore"), "utf8") + "node_modules\n");
+    symlinkSync(path.join(sourceRoot, "node_modules"), path.join(root, "node_modules"));
+    git(root, ["add", "src", "package.json", ".gitignore"]);
+    git(root, ["commit", "-qm", "fixture real cold controller closure"]);
+    git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    const prepared = runProducer(root, "--prepare");
+    assert.equal(prepared.status, 0, prepared.stderr);
+    const prepare = JSON.parse(readFileSync(path.join(root, "dist/PLATFORM_BUILD_PREPARE.json"), "utf8"));
+    materializeOutputs(root);
+    for (const [relative, output] of compiled) fixtureFile(root, path.join("dist", relative.replace(/\.ts$/, ".js")), output, 0o600);
+    const finalized = runProducer(root, "--finalize");
+    assert.equal(finalized.status, 0, finalized.stderr);
+    return Object.freeze({ root, home, buildInputSetHash: prepare.buildInputSetHash });
+  } catch (error) { removeFixture(root); rmSync(home, { recursive: true, force: true }); throw error; }
+}
+
+it("cold recovery compiled fixture authenticates its retained source and rejects output drift", async () => {
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1();
+  try {
+    const moduleUrl = pathToFileURL(path.join(root, "dist/internal-production/baseline-post-handoff-receipt-v1.js")).href;
+    const observe = () => spawnSync(process.execPath, ["--input-type=module", "-e",
+      "const m=await import(" + JSON.stringify(moduleUrl) + ");process.stdout.write(JSON.stringify(m.observeCurrentInternalProductionCleanSetfarmSourceBuildV1()));",
+    ], { cwd: path.dirname(root), encoding: "utf8", timeout: 30_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, SETFARM_ENV_DIR: path.join(root, "scripts") } });
+    const first = observe();
+    assert.equal(first.status, 0, first.stderr);
+    const source = JSON.parse(first.stdout);
+    assert.equal(source.sha, git(root, ["rev-parse", "HEAD"]).trim());
+    assert.equal(source.treeHash, git(root, ["rev-parse", "HEAD^{tree}"]).trim());
+    assert.equal(source.clean, true);
+    const output = path.join(root, "dist/internal-production/baseline-spawner-launch-environment-v1.js");
+    chmodSync(output, 0o600);
+    writeFileSync(output, "export const crossed = true;\n");
+    const crossed = observe();
+    assert.notEqual(crossed.status, 0);
+    assert.equal(crossed.stdout, "");
+    assert.match(crossed.stderr, /output|build/i);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+async function stopColdRecoveryFixtureChildrenV1(root: string, controllerPid: number | undefined, controllerPgid: number): Promise<void> {
+  const node = realpathSync(process.execPath), columns = "uid=,pid=,ppid=,pgid=,stat=,lstart=,command=";
+  const commands = [node + " " + path.join(root, "dist/spawner.js"), node + " " + path.join(root, "dist/internal-production/baseline-service-restart-helper-v1.js")];
+  const observe = (pid?: number) => {
+    const result = spawnSync("/bin/ps", pid === undefined ? ["-ww", "-axo", columns] : ["-ww", "-p", String(pid), "-o", columns],
+      { encoding: "utf8", timeout: 5000, maxBuffer: 1048576, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+    assert.equal(result.error, undefined);
+    assert.ok(result.status === 0 || (pid !== undefined && result.status === 1 && result.stdout === ""));
+    return result.stdout.split("\n").filter(Boolean).map(line => {
+      const words = line.trim().split(/\s+/);
+      return { uid: Number(words[0]), pid: Number(words[1]), ppid: Number(words[2]), pgid: Number(words[3]), stat: words[4]!,
+        lstart: words.slice(5, 10).join(" "), command: words.slice(10).join(" ") };
+    });
+  };
+  for (const target of observe().filter(row => commands.includes(row.command))) {
+    assert.equal(target.uid, process.getuid!());
+    if (target.command === commands[0]) assert.equal(target.pgid, target.pid, "fixture spawner must retain its detached group");
+    else {
+      assert.equal(target.pgid, controllerPgid, "fixture helper must retain the invoking controller's group");
+      assert.ok(target.ppid === controllerPid || target.ppid === 1, "fixture helper must belong to the invoking or departed controller");
+    }
+    const current = observe(target.pid)[0];
+    if (!current) continue;
+    const identity = ({ stat: _stat, ...value }: typeof target) => value;
+    assert.deepEqual(identity(current), identity(target), "fixture cleanup must retain exact process identity");
+    if (!/[ZE]/.test(current.stat)) process.kill(target.pid, "SIGTERM");
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && observe(target.pid).length !== 0) await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(observe(target.pid).length, 0, "fixture child must exit before its private home is removed");
+  }
+  assert.equal(observe().filter(row => commands.includes(row.command)).length, 0);
+}
+
+it("cold recovery cleanup stops an inherited-group helper and a detached spawner", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-cold-cleanup-")));
+  const children: ReturnType<typeof spawn>[] = [];
+  try {
+    const source = "process.stdout.write('ready\\n');setInterval(()=>{},1000);\n";
+    for (const entry of ["internal-production/baseline-service-restart-helper-v1.js", "spawner.js"]) {
+      fixtureFile(root, path.join("dist", entry), source);
+      const child = spawn(realpathSync(process.execPath), [path.join(root, "dist", entry)], {
+        cwd: root, stdio: ["ignore", "pipe", "pipe"], detached: entry === "spawner.js",
+        env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+      });
+      children.push(child);
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(Error("cleanup fixture child did not become ready")), 5000);
+        child.once("error", error => { clearTimeout(timer); reject(error); });
+        child.stdout!.once("data", chunk => { clearTimeout(timer); try { assert.equal(chunk.toString(), "ready\n"); resolve(); } catch (error) { reject(error); } });
+      });
+    }
+    const group = spawnSync("/bin/ps", ["-p", String(process.pid), "-o", "pgid="], { encoding: "utf8", timeout: 5000 });
+    assert.equal(group.status, 0, group.stderr);
+    const controllerPgid = Number(group.stdout.trim());
+    assert.notEqual(children[0]!.pid, controllerPgid, "helper is not a detached group leader");
+    await stopColdRecoveryFixtureChildrenV1(root, process.pid, controllerPgid);
+    for (const child of children) {
+      const observed = spawnSync("/bin/ps", ["-p", String(child.pid), "-o", "pid="], { encoding: "utf8", timeout: 5000 });
+      assert.equal(observed.status, 1);
+      assert.equal(observed.stdout, "");
+    }
+  } finally {
+    for (const child of children) {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+        await new Promise<void>(resolve => child.once("close", () => resolve()));
+      }
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("cold recovery joins real prepare to sealed direct rebind without relaunching on replay", async () => {
+  const group = spawnSync("/bin/ps", ["-p", String(process.pid), "-o", "pgid="], { encoding: "utf8", timeout: 5000 });
+  assert.equal(group.status, 0, group.stderr);
+  const controllerPgid = Number(group.stdout.trim());
+  assert.ok(Number.isSafeInteger(controllerPgid) && controllerPgid > 0);
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1();
+  let controllerPid: number | undefined;
+  try {
+    const receipt = pathToFileURL(path.join(root, "dist/internal-production/baseline-post-handoff-receipt-v1.js")).href;
+    const retirement = pathToFileURL(path.join(root, "dist/internal-production/baseline-restart-authority-retirement-v1.js")).href;
+    const startup = pathToFileURL(path.join(root, "dist/internal-production/baseline-spawner-startup-admission-v1.js")).href;
+    const script = `import assert from 'node:assert/strict';import {spawnSync as hostSpawnSync} from 'node:child_process';
+import {existsSync,fstatSync,lstatSync,readFileSync,readdirSync} from 'node:fs';import {join} from 'node:path';
+const m=await import(${JSON.stringify(receipt)}),r=await import(${JSON.stringify(retirement)}),s=await import(${JSON.stringify(startup)});
+const authority=${JSON.stringify(path.join(path.dirname(root), "data/internal-production-baseline/restart-authority-retirement-v1"))};
+const fdCount=()=>readdirSync('/dev/fd').filter(name=>{if(!/^\\d+$/.test(name))return false;try{fstatSync(Number(name));return true}catch{return false}}).length;
+const read=target=>JSON.parse(readFileSync(target,'utf8'));
+const snapshot=targets=>targets.map(target=>{const stat=lstatSync(target,{bigint:true});return {target,identity:['dev','ino','uid','gid','mode','nlink','size','birthtimeNs','mtimeNs','ctimeNs'].map(key=>String(stat[key])),bytes:stat.isFile()?readFileSync(target).toString('base64'):null}});
+process.stderr.write('joined: prepare\\n');
+const operation=await m.prepareInternalProductionCurrentEntryOperationV1();
+const prepared=await m.observeInternalProductionCurrentEntryAuthorityStatusV1();assert.equal(prepared.state,'operation_prepared');
+assert.equal(prepared.operationHash,operation.operationHash);
+const history=r.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();assert.equal(history.state,'settled');
+const before=await m.observeInternalProductionServiceCensusV1();assert.equal(history.settlement.serviceCensus.spawner.pid,before.spawner.pid);
+assert.deepEqual(await m.prepareInternalProductionCurrentEntryOperationV1(),operation);
+process.stderr.write('joined: authorize\\n');
+const authorization=await s.prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1();
+const baselineFds=fdCount();
+process.stderr.write('joined: rebind\\n');
+const restart=await s.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization);
+assert.equal(fdCount(),baselineFds,'direct execution releases owned descriptors');
+assert.equal(existsSync(join(authority,'physical-service-restart-authority.transition.lock')),false);
+const sealed=await s.observeInternalProductionPreSchemaSpawnerRebindStatusV1();assert.equal(sealed.state,'pre_manifest_bootstrap_sealed');
+const after=await m.observeInternalProductionServiceCensusV1();assert.notEqual(after.spawner.pid,before.spawner.pid);
+assert.equal(after.spawner.processOwnerCount,1);
+assert.equal(sealed.dispatchPrefix.phase,'replacement_observed');
+const terminationPair=sealed.dispatchPrefix.predecessorTerminationObservation;
+const terminated=await s.resolveInternalProductionPreSchemaSpawnerPredecessorTerminationObservationV1({predecessorTerminationObservationRef:terminationPair.predecessorTerminationObservationRef,predecessorTerminationObservationHash:terminationPair.predecessorTerminationObservationHash});
+assert.equal(terminated.observedProcessState,'terminal-and-not-running');assert.equal(terminated.observedListenerState,'absent');
+assert.equal(terminated.predecessorSpawnerProcessIdentityHash,(await s.resolveInternalProductionPreSchemaSpawnerStartupTokenV1({startupTokenRef:sealed.startupToken.startupTokenRef,startupTokenHash:sealed.startupToken.startupTokenHash})).predecessorSpawnerProcessIdentityHash);
+const oldPs=hostSpawnSync('/bin/ps',['-p',String(before.spawner.pid),'-o','pid='],{encoding:'utf8',timeout:5000,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}});
+assert.equal(oldPs.status,1,oldPs.stderr);assert.equal(oldPs.stdout,'');
+const directRoot=join(authority,'direct-spawner-rebind-v1'),names=['claim.json','spawn-dispatch.json','termination-dispatch.json','termination-receipt.json'];
+assert.deepEqual(readdirSync(directRoot).sort(),names);
+const claim=read(join(directRoot,'claim.json')),spawnDispatch=read(join(directRoot,'spawn-dispatch.json')),termDispatch=read(join(directRoot,'termination-dispatch.json')),termReceipt=read(join(directRoot,'termination-receipt.json'));
+assert.equal(termDispatch.target.pid,before.spawner.pid);assert.equal(termDispatch.maximumTerminationDispatchCount,1);
+assert.equal(termReceipt.signalDispatchCount,1);assert.equal(termReceipt.signalCallOutcome,'returned');
+assert.equal(termReceipt.observedProcessState,'terminal-and-not-running');assert.equal(termReceipt.observedListenerState,'absent');
+assert.equal(spawnDispatch.maximumSpawnDispatchCount,1);assert.equal(claim.maximumClaimCount,1);
+assert.equal(claim.child.pid,after.spawner.pid);assert.equal(claim.startupFiles.pid,after.spawner.pid);
+const settlements=join(authority,'pre-schema-helper-settlements/sha256'),shards=readdirSync(settlements);assert.equal(shards.length,1);
+const members=readdirSync(join(settlements,shards[0]));assert.equal(members.length,1);
+const settlementPath=join(settlements,shards[0],members[0]),settlement=read(settlementPath);
+assert.equal(members[0],settlement.helperSettlementHash+'.json');assert.equal(shards[0],settlement.helperSettlementHash.slice(0,2));
+assert.equal(settlement.terminationDispatchCount,1);assert.equal(settlement.spawnDispatchCount,1);assert.equal(settlement.serviceObservationCount,2);
+assert.deepEqual(settlement.currentEntryOperation,{operationRef:operation.operationRef,operationHash:operation.operationHash});
+assert.deepEqual(settlement.restartAuthority,restart);assert.deepEqual(settlement.serviceCensus,after);
+assert.equal(settlement.completion.claimHash,claim.claimHash);assert.equal(settlement.completion.dispatchHash,spawnDispatch.dispatchHash);
+for(const service of ['dashboard','missionControl','openClaw'])assert.deepEqual(after[service],before[service]);
+assert.deepEqual(r.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(),history);
+const directTargets=[join(authority,'pre-schema-helper-journal.json'),directRoot,...names.map(name=>join(directRoot,name)),settlementPath],directBefore=snapshot(directTargets);
+process.stderr.write('joined: replay\\n');
+assert.deepEqual(await s.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization),restart);
+assert.equal(fdCount(),baselineFds,'direct replay releases owned descriptors');
+assert.equal(existsSync(join(authority,'physical-service-restart-authority.transition.lock')),false);
+assert.deepEqual(snapshot(directTargets),directBefore);
+assert.deepEqual(r.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(),history);
+assert.deepEqual(await m.observeInternalProductionServiceCensusV1(),after);
+process.stdout.write(JSON.stringify({state:sealed.state,oldPid:before.spawner.pid,newPid:after.spawner.pid,operationHash:operation.operationHash}));
+`;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: path.dirname(root), encoding: "utf8", timeout: 900_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, SETFARM_ENV_DIR: path.join(root, "scripts"), SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm" } });
+    controllerPid = result.pid;
+    assert.equal(result.error, undefined, result.stderr);
+    assert.equal(result.status, 0, result.stderr);
+    const resultBody = JSON.parse(result.stdout);
+    assert.equal(resultBody.state, "pre_manifest_bootstrap_sealed");
+    assert.notEqual(resultBody.oldPid, resultBody.newPid);
+    assert.notEqual(resultBody.operationHash, EXACT_POISON_OPERATION_HASH_V1);
+  } finally {
+    await stopColdRecoveryFixtureChildrenV1(root, controllerPid, controllerPgid);
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+it("cold recovery compiled controller completes the real cold observation without publishing", async () => {
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1();
+  try {
+    const moduleUrl = pathToFileURL(path.join(root, "dist/internal-production/baseline-post-handoff-receipt-v1.js")).href;
+    const before = filesystemTreeSnapshot(path.join(home, "ai/setrox/data"));
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e",
+      "const m=await import(" + JSON.stringify(moduleUrl) + ");process.stdout.write(JSON.stringify(await m.observeInternalProductionColdBootstrapObservationV1()));",
+    ], { cwd: path.dirname(root), encoding: "utf8", timeout: 60_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, SETFARM_ENV_DIR: path.join(root, "scripts"), SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm" } });
+    assert.equal(result.status, 0, result.stderr);
+    const observation = JSON.parse(result.stdout);
+    assert.equal(observation.schema, "setfarm.internal-production-cold-bootstrap-observation.v1");
+    assert.equal(observation.source.sha, git(root, ["rev-parse", "HEAD"]).trim());
+    assert.equal(observation.remainingServices.dashboard.pid, 74151);
+    assert.equal(observation.remainingServices.missionControl.pid, 74152);
+    assert.equal(observation.remainingServices.openClaw.pid, 74153);
+    assert.ok(Object.values(observation.census).every(value => value === 0));
+    assert.deepEqual(filesystemTreeSnapshot(path.join(home, "ai/setrox/data")), before);
+    assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.pid")), false);
+    assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.lock")), false);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+it("cold recovery compiled V31 verifier authenticates raw catalog rows and refuses constraint or seal drift", async () => {
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1();
+  try {
+    const moduleUrl = pathToFileURL(path.join(root, "dist/db/operational-failure-cause-authority-v3-catalog.js")).href;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      import assert from 'node:assert/strict';
+      const m=await import(${JSON.stringify(moduleUrl)});
+      const samples=${JSON.stringify(coldRecoveryV31CatalogQueriesFixtureV1())};
+      for(const drift of ['none','constraint','seal']){
+        let index=0;
+        const transaction={async unsafe(query,args){
+          const sample=samples[index++];assert.ok(sample);assert.equal(query,sample.query);assert.deepEqual(args,sample.args);
+          if(drift==='constraint' && index===1)return [{...sample.rows[0],expression:'true'}];
+          if(drift==='seal' && index===2)return [{...sample.rows[0],enabled:'D'}];
+          return sample.rows;
+        }};
+        if(drift!=='none')await assert.rejects(m.verifyOperationalFailureCauseAuthorityV3CatalogV1(transaction),drift==='constraint'?/catalog identity is invalid/:/immutability seal identity is invalid/);
+        else {await m.verifyOperationalFailureCauseAuthorityV3CatalogV1(transaction);assert.equal(index,2);}
+      }
+    `], { cwd: path.dirname(root), encoding: "utf8", timeout: 30_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home } });
+    assert.equal(result.status, 0, result.stderr);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+it("cold recovery compiled PBA transport returns strict current source evidence", async () => {
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1();
+  try {
+    const moduleUrl = pathToFileURL(path.join(root, "dist/internal-production/product-build-authority-v2-delivery-evidence-v1.js")).href;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e",
+      "const m=await import(" + JSON.stringify(moduleUrl) + ");const observation=await m.observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1();process.stdout.write(JSON.stringify(m.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(observation.response)));",
+    ], { cwd: path.dirname(root), encoding: "utf8", timeout: 30_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, SETFARM_ENV_DIR: path.join(root, "scripts") } });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout);
+    assert.deepEqual(response.evidence.currentSource, { branch: "main", clean: true, sha: "1".repeat(40),
+      treeHash: "2".repeat(40), buildHash: "3".repeat(64), originMainSha: "1".repeat(40) });
+    assert.equal(response.evidence.schema, "mission-control.product-build-authority-v2-delivery-evidence.v1");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+it("cold recovery compiled controller pins its real launch inputs before any child exists", async () => {
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1();
+  try {
+    const moduleUrl = pathToFileURL(path.join(root, "dist/internal-production/baseline-post-handoff-receipt-v1.js")).href;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e",
+      "const m=await import(" + JSON.stringify(moduleUrl) + ");const candidate=await m.observeInternalProductionSpawnerLaunchProfileCandidateV1();process.stdout.write(JSON.stringify(candidate));",
+    ], { cwd: path.dirname(root), encoding: "utf8", timeout: 30_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, SETFARM_ENV_DIR: path.join(root, "scripts") } });
+    assert.equal(result.status, 0, result.stderr);
+    const candidate = JSON.parse(result.stdout);
+    assert.deepEqual(Object.keys(candidate), ["profile"], "launch environment must not serialize");
+    assert.equal(candidate.profile.home, home);
+    assert.equal(candidate.profile.repository, root);
+    assert.deepEqual(candidate.profile.arguments, [path.join(root, "dist/spawner.js")]);
+    assert.equal(candidate.profile.source.sha, git(root, ["rev-parse", "HEAD"]).trim());
+    assert.equal(candidate.profile.executable.path, realpathSync(process.execPath));
+    assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.pid")), false);
+    assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.lock")), false);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+it("cold recovery compiled children refuse unauthenticated inherited roles before startup", async () => {
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1();
+  try {
+    for (const role of ["COLD_CHILD", "DIRECT_CHILD"]) {
+      const result = spawnSync(process.execPath, [path.join(root, "dist/spawner.js")], {
+        cwd: path.dirname(root), encoding: "utf8", timeout: 10_000,
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, SETFARM_ENV_DIR: path.join(root, "scripts"),
+          ["SETFARM_INTERNAL_PRODUCTION_" + role]: "1" },
+      });
+      assert.equal(result.error, undefined, role);
+      assert.notEqual(result.status, 0, role);
+      assert.match(result.stderr, /INTERNAL_PRODUCTION_INHERITED_RUNTIME_CONFIGURATION_INVALID/, role);
+      assert.equal(result.stdout, "", role);
+      assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.pid")), false, role);
+      assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.lock")), false, role);
+    }
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
 function finalizedCurrentEntryContentFaultFixture(): Readonly<{ root: string; buildInputSetHash: string }> {
   const root = createFixture();
   installCurrentEntryContentPublisherFaultHooks(root);
