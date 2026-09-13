@@ -600,6 +600,77 @@ test("cold helper frame retains failed-acquisition cleanup before any new frame"
   }
 });
 
+test("shared historical launch profile and direct intent do not import cold permission", async () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-rebind-profile-")));
+  try {
+    const source = readFileSync(sourcePath, "utf8"), typescript = await import("typescript");
+    const tree = typescript.createSourceFile(sourcePath, source, typescript.ScriptTarget.Latest, true);
+    const names = ["validateHistoricalSpawnerLaunchProfileV1", "validateColdHistoricalLaunchProfileV1", "parseDirectSpawnerRebindIntentV1", "parseLockRecord", "exactCanonicalRecord", "coldPairV1", "freezeColdDataV1", "coldRecordV1", "coldHashV1", "coldSelfHashV1", "canonical", "sha256", "fail"];
+    const declarations = tree.statements.filter(statement => typescript.isFunctionDeclaration(statement) && statement.name && names.includes(statement.name.text));
+    assert.equal(declarations.length, names.length, "extract actual shared and cold-specific validators exactly once");
+    const harness = `import path from 'node:path';import{createHash}from'node:crypto';const SHA256=/^[a-f0-9]{64}$/;
+function resolveInternalProductionBaselineWorkspaceRootV1(){return ${JSON.stringify(fixture)}}
+${declarations.map(statement => statement.getText(tree)).join("\n")}
+export {validateHistoricalSpawnerLaunchProfileV1,validateColdHistoricalLaunchProfileV1,parseDirectSpawnerRebindIntentV1};`;
+    writeFileSync(path.join(fixture, "harness.mjs"), typescript.transpileModule(harness, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText);
+    const module = await import(pathToFileURL(path.join(fixture, "harness.mjs")).href);
+    const uid = process.getuid!(), repository = path.join(fixture, "repo"), home = path.join(fixture, "home"), environmentDirectory = path.join(fixture, "environment"), executablePath = "/opt/profile/bin/node";
+    const metadata = { devDecimal: "1", inoDecimal: "2", uid, gid: process.getgid!(), mode: 0o700 };
+    const directories = new Set<string>();
+    for (const initial of [home, fixture, repository, environmentDirectory, path.join(repository, "dist"), path.join(home, "Library/LaunchAgents"), path.dirname(executablePath)]) {
+      for (let target = initial; ; target = path.dirname(target)) { directories.add(target); if (path.dirname(target) === target) break; }
+    }
+    const hash = "a".repeat(64);
+    const body = { schema: "setfarm.internal-production-spawner-launch-profile.v1", source: { branch: "main", clean: true, sha: "b".repeat(40), treeHash: "c".repeat(40), buildHash: hash, originMainSha: "b".repeat(40) }, uid, home, workspace: fixture, repository, rootIdentity: metadata, hostDirectories: [...directories].map(target => ({ path: target, ...metadata })), executable: { path: executablePath, ...metadata, mode: 0o555, bytesHash: hash }, arguments: [path.join(repository, "dist/spawner.js")], cwd: repository, environmentDirectory, buildInfoBytesHash: hash, outputTreeBytesHash: hash, releaseManifestBytesHash: hash, plistBytesHash: hash, loadedLaunchProjectionHash: hash, environmentHash: hash, environmentFiles: [".env", ".env.local"].map(name => ({ path: path.join(environmentDirectory, name), state: "absent" })) };
+    const rehash = (value: any) => { delete value.profileHash; value.profileHash = sha256(canonical(value)); return value; };
+    const profile = rehash(structuredClone(body));
+    const before = canonical(profile);
+    assert.doesNotThrow(() => module.validateHistoricalSpawnerLaunchProfileV1(profile));
+    assert.equal(canonical(profile), before);
+    assert.doesNotThrow(() => module.validateColdHistoricalLaunchProfileV1({ launchProfile: profile, coldObservation: { source: body.source, spawnerAbsence: { entrypoint: body.arguments[0] } } }));
+    assert.throws(() => module.validateColdHistoricalLaunchProfileV1({ launchProfile: profile, coldObservation: { source: body.source, spawnerAbsence: { entrypoint: "/crossed/spawner.js" } } }), /entry is crossed/);
+    const crossedSource = structuredClone(profile); crossedSource.source.sha = "e".repeat(40); crossedSource.source.originMainSha = crossedSource.source.sha; rehash(crossedSource);
+    assert.doesNotThrow(() => module.validateHistoricalSpawnerLaunchProfileV1(crossedSource));
+    assert.throws(() => module.validateColdHistoricalLaunchProfileV1({ launchProfile: crossedSource, coldObservation: { source: body.source, spawnerAbsence: { entrypoint: body.arguments[0] } } }), /entry is crossed/, "valid structural source cannot substitute for cold incident authority");
+    const mutations: Array<(value: any) => void> = [
+      value => { value.schema = "cold-capability"; }, value => { value.workspace += "/crossed"; }, value => { value.cwd += "/crossed"; }, value => { value.arguments.push("--caller-choice"); },
+      value => { value.uid += 1; }, value => { value.executable.path = "relative/node"; }, value => { value.executable.mode = 0o777; }, value => { value.executable.mode = 0o600; }, value => { value.executable.uid += 1; },
+      value => { value.hostDirectories.pop(); }, value => { value.hostDirectories.push(value.hostDirectories[0]); }, value => { value.hostDirectories.find((entry: any) => entry.path === repository).mode = 0o777; },
+      value => { value.rootIdentity.inoDecimal = "9"; }, value => { value.rootIdentity.inoDecimal = "02"; }, value => { value.environmentFiles[0].path += ".crossed"; }, value => { value.environmentFiles.pop(); },
+      value => { value.environmentFiles[0].state = "unknown"; }, value => { value.environmentFiles[0] = { ...value.environmentFiles[0], state: "present", ...metadata, mode: 0o666, bytesHash: hash }; },
+      value => { value.environmentHash = "A".repeat(64); }, value => { value.executable.bytesHash = "bad"; }, value => { value.capability = "cold"; },
+      value => { value.source.branch = "feature"; }, value => { value.source.clean = false; }, value => { value.source.originMainSha = "e".repeat(40); },
+      value => { value.source.treeHash = "bad"; }, value => { value.source.sha = "B".repeat(40); value.source.originMainSha = value.source.sha; }, value => { value.source.buildHash = "bad"; }, value => { value.source.extra = true; },
+    ];
+    for (const mutate of mutations) { const value = structuredClone(profile); mutate(value); assert.throws(() => module.validateHistoricalSpawnerLaunchProfileV1(rehash(value)), /profile|historical|environment|host|executable|repository/); }
+    const crossedHash = { ...profile, profileHash: "f".repeat(64) };
+    assert.throws(() => module.validateHistoricalSpawnerLaunchProfileV1(crossedHash), /profileHash/);
+    const pair = (stem: string, domain: string) => ({ [`${stem}Ref`]: `setfarm://internal-production/${domain}/sha256/${hash}`, [`${stem}Hash`]: hash });
+    const intentBody = { schema: "setfarm.internal-production-pre-schema-spawner-direct-rebind-intent.v1", purpose: "operation-bound-pre-schema-spawner-rebind-v1", transport: "direct-detached-node-v1", terminationSignal: "SIGTERM", maximumTerminationDispatchCount: 1, maximumSpawnDispatchCount: 1,
+      currentEntryOperation: pair("operation", "current-entry-operation"), restartAuthority: pair("restartAuthority", "pre-schema-spawner-restart-authority"), startupToken: pair("startupToken", "pre-schema-spawner-startup-token"), predecessorSpawnerProcessIdentity: pair("predecessorSpawnerProcessIdentity", "spawner-process-identity"),
+      launchProfile: profile, epoch: pair("epoch", "physical-service-restart-authority-epoch"), transitionLock: { schema: "setfarm.internal-production-physical-service-restart-authority-transition-lock.v1", pid: process.pid, processStartTimeEpochMs: 1, processIdentityHash: hash, leaseNonce: hash }, lockIdentity: { devDecimal: "1", inoDecimal: "2" }, nonceHash: hash };
+    const sealIntent = (value: any): Buffer => { delete value.intentRef; delete value.intentHash; const intentHash = sha256(canonical(value)); return Buffer.from(`${canonical({ ...value, intentRef: `setfarm://internal-production/pre-schema-spawner-direct-rebind-intent/sha256/${intentHash}`, intentHash })}\n`); };
+    const intentBytes = sealIntent(structuredClone(intentBody));
+    const intent = module.parseDirectSpawnerRebindIntentV1(intentBytes);
+    assert.deepEqual(intent, JSON.parse(intentBytes.toString()));
+    assert.equal(Object.isFrozen(intent.launchProfile.source), true);
+    assert.equal(Object.isFrozen(intent.currentEntryOperation), true);
+    for (const key of Object.keys(intentBody)) { const value = structuredClone(intentBody) as Record<string, unknown>; delete value[key]; assert.throws(() => module.parseDirectSpawnerRebindIntentV1(sealIntent(value))); }
+    const intentFaults: Array<(value: any) => void> = [
+      value => { value.schema = "setfarm.internal-production-cold-spawner-bootstrap-intent.v1"; }, value => { value.purpose = "exact-poison-sealed-cold-spawner-v1"; },
+      value => { value.transport = "launchctl"; }, value => { value.terminationSignal = "SIGKILL"; }, value => { value.maximumTerminationDispatchCount = 2; }, value => { value.maximumSpawnDispatchCount = 0; },
+      value => { value.coldObservation = {}; }, value => { value.lockIdentity.inoDecimal = "02"; }, value => { value.lockIdentity.devDecimal = "-1"; },
+      value => { value.nonceHash = "bad"; }, value => { value.transitionLock.pid = 0; }, value => { value.launchProfile = crossedHash; },
+    ];
+    for (const [key, stem] of [["currentEntryOperation", "operation"], ["restartAuthority", "restartAuthority"], ["startupToken", "startupToken"], ["predecessorSpawnerProcessIdentity", "predecessorSpawnerProcessIdentity"], ["epoch", "epoch"]]) {
+      intentFaults.push(value => { value[key!][`${stem}Ref`] = `setfarm://internal-production/cold-spawner-bootstrap-intent/sha256/${hash}`; });
+      intentFaults.push(value => { value[key!][`${stem}Hash`] = "f".repeat(64); });
+    }
+    for (const mutate of intentFaults) { const value = structuredClone(intentBody); mutate(value); assert.throws(() => module.parseDirectSpawnerRebindIntentV1(sealIntent(value))); }
+    for (const bytes of [Buffer.alloc(0), Buffer.from(intentBytes.toString().trim()), Buffer.from(` ${intentBytes.toString()}`), Buffer.alloc(8_388_609, 0x20), Buffer.from(intentBytes.toString().replace(/"intentHash":"[a-f0-9]+"/, `"intentHash":"${"f".repeat(64)}"`))]) assert.throws(() => module.parseDirectSpawnerRebindIntentV1(bytes));
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
 async function createColdHelperAuthenticationFixtureV1(helperSourceTransform?: (source: string) => string, runnerSetup = "", configureProfile?: (profile: any, root: string) => void,
   configureCompiled?: (root: string, profile: any, compileRepositoryModule: (relative: string, transform?: (source: string) => string) => void) => void, deferControllerPreparation = false) {
   assert.ok(readFileSync(sourcePath, "utf8").includes("async function authenticateColdSpawnerHelperIntentV1()"), "independent cold helper authentication is not implemented");

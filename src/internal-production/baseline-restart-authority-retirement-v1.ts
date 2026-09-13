@@ -746,7 +746,23 @@ function observeColdControllerSettlementHistoryV1() {
 }
 
 function validateColdHistoricalLaunchProfileV1(intent: Readonly<Record<string, unknown>>): void {
-  const profile = coldRecordV1(intent.launchProfile, ["schema", "source", "uid", "home", "workspace", "repository", "rootIdentity", "hostDirectories", "executable", "arguments", "cwd", "environmentDirectory", "buildInfoBytesHash", "outputTreeBytesHash", "releaseManifestBytesHash", "plistBytesHash", "loadedLaunchProjectionHash", "environmentHash", "environmentFiles", "profileHash"], "historical launch profile");
+  const profile = validateHistoricalSpawnerLaunchProfileV1(intent.launchProfile);
+  const cold = intent.coldObservation as Record<string, any>;
+  if (canonical(profile.source) !== canonical(cold.source)
+    || cold.spawnerAbsence.entrypoint !== path.join(profile.repository as string, "dist/spawner.js")) fail("cold historical profile entry is crossed");
+}
+
+// Structural historical evidence only. Cold and operation-bound rebind callers
+// must independently authenticate their own source, predecessor and lease chain.
+function validateHistoricalSpawnerLaunchProfileV1(value: unknown): Readonly<Record<string, unknown>> {
+  const profile = coldRecordV1(value, ["schema", "source", "uid", "home", "workspace", "repository", "rootIdentity", "hostDirectories", "executable", "arguments", "cwd", "environmentDirectory", "buildInfoBytesHash", "outputTreeBytesHash", "releaseManifestBytesHash", "plistBytesHash", "loadedLaunchProjectionHash", "environmentHash", "environmentFiles", "profileHash"], "historical launch profile");
+  if (profile.schema !== "setfarm.internal-production-spawner-launch-profile.v1") fail("historical launch profile schema is invalid");
+  coldSelfHashV1(profile, "profileHash");
+  const source = coldRecordV1(profile.source, ["branch", "clean", "sha", "treeHash", "buildHash", "originMainSha"], "historical profile source");
+  if (source.branch !== "main" || source.clean !== true || source.originMainSha !== source.sha
+    || typeof source.sha !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(source.sha)
+    || typeof source.treeHash !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(source.treeHash)) fail("historical profile source is not exact clean main");
+  coldHashV1(source.buildHash, "historical profile source build");
   const absolute = (value: unknown): string => {
     if (typeof value !== "string" || value.includes("\0") || !path.isAbsolute(value) || path.normalize(value) !== value) fail("cold historical profile path is invalid");
     return value;
@@ -760,9 +776,8 @@ function validateColdHistoricalLaunchProfileV1(intent: Readonly<Record<string, u
   };
   const repository = absolute(profile.repository), environmentDirectory = absolute(profile.environmentDirectory);
   for (const key of ["home", "workspace", "cwd"]) absolute(profile[key]);
-  const absence = (intent.coldObservation as Record<string, any>).spawnerAbsence;
   if (profile.uid !== process.getuid!() || profile.workspace !== resolveInternalProductionBaselineWorkspaceRootV1() || profile.cwd !== repository
-    || canonical(profile.arguments) !== canonical([path.join(repository, "dist/spawner.js")]) || absence.entrypoint !== path.join(repository, "dist/spawner.js")) fail("cold historical profile entry is crossed");
+    || canonical(profile.arguments) !== canonical([path.join(repository, "dist/spawner.js")])) fail("cold historical profile entry is crossed");
   for (const key of ["buildInfoBytesHash", "outputTreeBytesHash", "releaseManifestBytesHash", "plistBytesHash", "loadedLaunchProjectionHash", "environmentHash"]) coldHashV1(profile[key], key);
   const executable = coldRecordV1(profile.executable, ["path", ...identityKeys, "bytesHash"], "historical executable");
   absolute(executable.path); identity(executable); coldHashV1(executable.bytesHash, "historical executable bytes");
@@ -794,6 +809,31 @@ function validateColdHistoricalLaunchProfileV1(intent: Readonly<Record<string, u
     if (file.path !== path.join(environmentDirectory, [".env", ".env.local"][index]!) || (!present && file.state !== "absent")) fail("cold historical environment file is crossed");
     if (present) { identity(file); coldHashV1(file.bytesHash, "historical environment bytes"); if (file.uid !== profile.uid || ((file.mode as number) & 0o022) !== 0) fail("cold historical environment ownership is invalid"); }
   }
+  return profile;
+}
+
+function parseDirectSpawnerRebindIntentV1(bytes: Buffer): Readonly<Record<string, unknown>> {
+  if (bytes.length < 1 || bytes.length > 8_388_608) fail("direct rebind intent size is invalid");
+  const intent = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "purpose", "transport", "terminationSignal", "maximumTerminationDispatchCount", "maximumSpawnDispatchCount", "currentEntryOperation", "restartAuthority", "startupToken", "predecessorSpawnerProcessIdentity", "launchProfile", "epoch", "transitionLock", "lockIdentity", "nonceHash", "intentRef", "intentHash"], "direct rebind intent");
+  if (!bytes.equals(Buffer.from(`${canonical(intent)}\n`)) || intent.schema !== "setfarm.internal-production-pre-schema-spawner-direct-rebind-intent.v1"
+    || intent.purpose !== "operation-bound-pre-schema-spawner-rebind-v1" || intent.transport !== "direct-detached-node-v1"
+    || intent.terminationSignal !== "SIGTERM" || intent.maximumTerminationDispatchCount !== 1 || intent.maximumSpawnDispatchCount !== 1
+    || intent.intentRef !== `setfarm://internal-production/pre-schema-spawner-direct-rebind-intent/sha256/${coldHashV1(intent.intentHash, "direct intent")}`) fail("direct rebind intent binding is invalid");
+  coldSelfHashV1(intent, "intentHash", ["intentRef"]);
+  for (const [key, stem, domain] of [
+    ["currentEntryOperation", "operation", "current-entry-operation"],
+    ["restartAuthority", "restartAuthority", "pre-schema-spawner-restart-authority"],
+    ["startupToken", "startupToken", "pre-schema-spawner-startup-token"],
+    ["predecessorSpawnerProcessIdentity", "predecessorSpawnerProcessIdentity", "spawner-process-identity"],
+    ["epoch", "epoch", "physical-service-restart-authority-epoch"],
+  ] as const) coldPairV1(intent[key], stem, `setfarm://internal-production/${domain}/sha256/`);
+  validateHistoricalSpawnerLaunchProfileV1(intent.launchProfile);
+  parseLockRecord(Buffer.from(`${canonical(intent.transitionLock)}\n`));
+  const identity = coldRecordV1(intent.lockIdentity, ["devDecimal", "inoDecimal"], "direct intent lock identity");
+  if (typeof identity.devDecimal !== "string" || !/^(?:0|[1-9][0-9]{0,19})$/.test(identity.devDecimal)
+    || typeof identity.inoDecimal !== "string" || !/^[1-9][0-9]{0,19}$/.test(identity.inoDecimal)) fail("direct rebind lock identity is invalid");
+  coldHashV1(intent.nonceHash, "direct intent nonce");
+  return freezeColdDataV1(intent);
 }
 
 function assertHelperJournalAllowsLockCleanup(

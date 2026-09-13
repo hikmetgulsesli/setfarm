@@ -210,6 +210,48 @@ review confirmed V1 equivalence and that the unchanged helper rejects V2 before
 journal creation. This is only schema foundation: producer remains V1 and no
 direct effect is enabled until the coupled authenticated kernel is connected.
 
+Transport-kernel inputs in progress: extract a shared *structural* historical
+launch-profile validator owning exact keys/schema/hash, exact clean-main source
+shape and all prior host/executable/environment ancestry rules. The cold wrapper
+still binds its own observed source and absence entrypoint. A separate private
+direct intent schema binds fixed operation/restart/startup/predecessor/epoch
+pair domains, public launch profile, physical lock record/identity, nonce and
+the exact direct/SIGTERM/one-termination/one-spawn constraints. Pure parsing is
+not an owned capability and does not publish, signal, spawn or grant reuse of
+cold authority. The later lease-owning controller must independently resolve
+all those immutable relations and retain identities across every effect.
+
+Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
+effect happened. Retain separate monotonic publication/effect-entered/result
+facts in the original owner, marking entry before `kill` or `spawn`. An existing
+termination dispatch permits only observation of the stored original identity,
+never a second signal; an existing spawn dispatch permits only authentication
+of its original child claim, never another launch. Intent-only repair requires
+the original retained owner. Helper/controller loss after dispatch without
+authenticated completion keeps the lease/journal fenced. Final settlement is
+history/cleanup authority, not child liveness or redispatch permission.
+
+The operation-bound inherited frame also requires coordinated runtime routing:
+current cold snapshot readers treat a regular FD3 as a cold capability. New
+direct helper/child contexts must be distinct, authenticate before runtime
+environment use, and reject unknown/mixed selectors without ordinary fallback.
+`src/runtime-config.ts` and its owning tests are therefore causally required
+existing File Map consumers, alongside the spawner/helper/retirement changes.
+Do not weaken the cold reader simply to make a new frame pass. Preserve the
+ordinary operation-bound sealed startup gate and all pre-database boundaries.
+
+Kernel-input checkpoint evidence: both the shared-profile and direct-intent
+tests first failed at missing actual production declarations. The final pure
+test covers 28 self-rehashed profile mutations, stale profile hash, valid but
+cold-crossed source, 15 missing intent fields, 22 intent mutations and five
+malformed/oversized byte cases. Independent review found no remaining must-fix.
+The unchanged production tree then passed the complete retirement suite 68/68
+(424.897s), including all genuine helper/child, historical corruption, response
+loss and retained cleanup cases. Exact145/64 manifests passed 17/17 (6.054s),
+receipt routing/nested original-history lifetime/final V2 replay passed 3/3
+(13.300s), and no-emit/whitespace checks passed. No direct transport effects or
+live recovery were enabled; private record parsing is not an owned capability.
+
 **Consumes:** Spec's cold-absence versus real-predecessor discriminants, existing
 physical transition lease, strict private record patterns, and current source
 integrity authority.
