@@ -3175,69 +3175,105 @@ test("P4 sealed spawner gate authenticates replacement and exits before normal s
   const productionSpawnerSource = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
   assert.doesNotMatch(productionSpawnerSource, /^export async function enforceInternalProductionPreSchemaSpawnerStartupGateV1/m);
   const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-private-spawner-gate-"));
-  cpSync(path.resolve(import.meta.dirname, "../../src"), path.join(fixture, "src"), { recursive: true });
-  projectCopiedWorkspaceLocatorV1(fixture, fixture);
-  symlinkSync(path.resolve(import.meta.dirname, "../../node_modules"), path.join(fixture, "node_modules"), "dir");
-  const fixtureSpawner = path.join(fixture, "src/spawner.ts");
-  writeFileSync(fixtureSpawner, productionSpawnerSource.replace("async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(", "export async function enforceInternalProductionPreSchemaSpawnerStartupGateV1("));
-  const spawner = await import(`${pathToFileURL(fixtureSpawner).href}?p4-sealed-gate=${Date.now()}`);
-  const source = { sha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64) };
-  const operationHash = "4".repeat(64);
-  const startupTokenHash = "5".repeat(64);
-  const replacementHash = "6".repeat(64);
-  const processIdentityHash = "7".repeat(64);
-  const generationHash = "8".repeat(64);
-  const calls: string[] = [];
-  const status = Object.freeze({
-    state: "pre_manifest_bootstrap_sealed",
-    currentEntryOperation: Object.freeze({ operationRef: `setfarm://internal-production/current-entry-operation/sha256/${operationHash}`, operationHash }),
-    startupToken: Object.freeze({ startupTokenHash, startupTokenRef: `setfarm://internal-production/pre-schema-spawner-startup-token/sha256/${startupTokenHash}` }),
-    dispatchPrefix: Object.freeze({ replacementProcessObservation: Object.freeze({ replacementProcessObservationHash: replacementHash, replacementProcessObservationRef: `setfarm://internal-production/pre-schema-spawner-replacement-process-observation/sha256/${replacementHash}` }) }),
-  });
-  const dependencies = {
-    startupAdmission: {
-      observeInternalProductionPreSchemaSpawnerRebindStatusV1: async () => { calls.push("observe-status"); return status; },
-      resolveInternalProductionPreSchemaSpawnerStartupTokenV1: async (pair: unknown) => {
-        assert.deepEqual(Reflect.ownKeys(pair as object), ["startupTokenRef", "startupTokenHash"]);
-        calls.push("resolve-token");
-        return Object.freeze({ startupMode: "pre-manifest-bootstrap-sealed", currentEntryOperationRef: status.currentEntryOperation.operationRef, currentEntryOperationHash: operationHash, task0SpawnerSourceSha: source.sha, task0SpawnerTreeHash: source.treeHash, task0SpawnerBuildHash: source.buildHash });
+  try {
+    cpSync(path.resolve(import.meta.dirname, "../../src"), path.join(fixture, "src"), { recursive: true });
+    projectCopiedWorkspaceLocatorV1(fixture, fixture);
+    symlinkSync(path.resolve(import.meta.dirname, "../../node_modules"), path.join(fixture, "node_modules"), "dir");
+    const fixtureSpawner = path.join(fixture, "src/spawner.ts");
+    writeFileSync(fixtureSpawner, productionSpawnerSource.replace("async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(", "export async function enforceInternalProductionPreSchemaSpawnerStartupGateV1("));
+    const spawner = await import(`${pathToFileURL(fixtureSpawner).href}?p4-sealed-gate=${Date.now()}`);
+    const source = { sha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64) };
+    const operationHash = "4".repeat(64);
+    const startupTokenHash = "5".repeat(64);
+    const replacementHash = "6".repeat(64);
+    const processIdentityHash = "7".repeat(64);
+    const generationHash = "8".repeat(64);
+    const calls: string[] = [];
+    const status = Object.freeze({
+      state: "pre_manifest_bootstrap_sealed",
+      currentEntryOperation: Object.freeze({ operationRef: `setfarm://internal-production/current-entry-operation/sha256/${operationHash}`, operationHash }),
+      startupToken: Object.freeze({ startupTokenHash, startupTokenRef: `setfarm://internal-production/pre-schema-spawner-startup-token/sha256/${startupTokenHash}` }),
+      dispatchPrefix: Object.freeze({ replacementProcessObservation: Object.freeze({ replacementProcessObservationHash: replacementHash, replacementProcessObservationRef: `setfarm://internal-production/pre-schema-spawner-replacement-process-observation/sha256/${replacementHash}` }) }),
+    });
+    const dependencies = {
+      startupAdmission: {
+        observeInternalProductionPreSchemaSpawnerRebindStatusV1: async () => { calls.push("observe-status"); return status; },
+        resolveInternalProductionPreSchemaSpawnerStartupTokenV1: async (pair: unknown) => {
+          assert.deepEqual(Reflect.ownKeys(pair as object), ["startupTokenRef", "startupTokenHash"]);
+          calls.push("resolve-token");
+          return Object.freeze({ startupMode: "pre-manifest-bootstrap-sealed", currentEntryOperationRef: status.currentEntryOperation.operationRef, currentEntryOperationHash: operationHash, task0SpawnerSourceSha: source.sha, task0SpawnerTreeHash: source.treeHash, task0SpawnerBuildHash: source.buildHash });
+        },
+        resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1: async (pair: unknown) => {
+          assert.deepEqual(Reflect.ownKeys(pair as object), ["replacementProcessObservationRef", "replacementProcessObservationHash"]);
+          calls.push("resolve-replacement");
+          return Object.freeze({ replacementSpawnerProcessIdentityHash: processIdentityHash, actualSpawnerGenerationHash: generationHash, actualSpawnerSourceSha: source.sha, actualSpawnerTreeHash: source.treeHash, actualSpawnerBuildHash: source.buildHash });
+        },
       },
-      resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1: async (pair: unknown) => {
-        assert.deepEqual(Reflect.ownKeys(pair as object), ["replacementProcessObservationRef", "replacementProcessObservationHash"]);
-        calls.push("resolve-replacement");
-        return Object.freeze({ replacementSpawnerProcessIdentityHash: processIdentityHash, actualSpawnerGenerationHash: generationHash, actualSpawnerSourceSha: source.sha, actualSpawnerTreeHash: source.treeHash, actualSpawnerBuildHash: source.buildHash });
+      loadReceiptAuthority: async () => {
+        calls.push("load-receipt");
+        return {
+          observeCurrentInternalProductionCleanSetfarmSourceBuildV1: () => { calls.push("observe-source"); return source; },
+          observeInternalProductionServiceCensusV1: async () => { calls.push("observe-census"); return { spawner: { processIdentityHash, generationHash } }; },
+        };
       },
-    },
-    loadReceiptAuthority: async () => {
-      calls.push("load-receipt");
-      return {
-        observeCurrentInternalProductionCleanSetfarmSourceBuildV1: () => { calls.push("observe-source"); return source; },
-        observeInternalProductionServiceCensusV1: async () => { calls.push("observe-census"); return { spawner: { processIdentityHash, generationHash } }; },
-      };
-    },
-    waitForStop: async () => { calls.push("wait-stop"); },
-    cleanupSealedProcess: () => { calls.push("cleanup-lock-pid"); },
-  };
-  assert.equal(await spawner.enforceInternalProductionPreSchemaSpawnerStartupGateV1(dependencies), "sealed");
-  assert.deepEqual(calls, ["observe-status", "resolve-token", "load-receipt", "observe-source", "resolve-replacement", "observe-census", "wait-stop", "cleanup-lock-pid"]);
+      waitForStop: async () => { calls.push("wait-stop"); },
+      cleanupSealedProcess: () => { calls.push("cleanup-lock-pid"); },
+    };
+    assert.equal(await spawner.enforceInternalProductionPreSchemaSpawnerStartupGateV1(dependencies), "sealed");
+    assert.deepEqual(calls, ["observe-status", "resolve-token", "load-receipt", "observe-source", "resolve-replacement", "observe-census", "wait-stop", "cleanup-lock-pid"]);
 
-  calls.length = 0;
-  dependencies.startupAdmission.resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1 = async () => ({
-    replacementSpawnerProcessIdentityHash: "9".repeat(64), actualSpawnerGenerationHash: generationHash,
-    actualSpawnerSourceSha: source.sha, actualSpawnerTreeHash: source.treeHash, actualSpawnerBuildHash: source.buildHash,
-  });
-  await assert.rejects(spawner.enforceInternalProductionPreSchemaSpawnerStartupGateV1(dependencies), /REPLACEMENT_IDENTITY_INVALID/);
-  assert.equal(calls.includes("wait-stop"), false);
-  assert.equal(calls.includes("cleanup-lock-pid"), false);
+    calls.length = 0;
+    dependencies.startupAdmission.resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1 = async () => ({
+      replacementSpawnerProcessIdentityHash: "9".repeat(64), actualSpawnerGenerationHash: generationHash,
+      actualSpawnerSourceSha: source.sha, actualSpawnerTreeHash: source.treeHash, actualSpawnerBuildHash: source.buildHash,
+    });
+    await assert.rejects(spawner.enforceInternalProductionPreSchemaSpawnerStartupGateV1(dependencies), /REPLACEMENT_IDENTITY_INVALID/);
+    assert.equal(calls.includes("wait-stop"), false);
+    assert.equal(calls.includes("cleanup-lock-pid"), false);
 
-  const spawnerSource = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
-  const main = spawnerSource.slice(spawnerSource.indexOf("async function main()"));
-  const gateIndex = main.indexOf("await enforceInternalProductionPreSchemaSpawnerStartupGateV1");
-  assert.ok(gateIndex >= 0);
-  for (const normalBoundary of ["assertAgentRuntimeAvailable()", "await pgMigrate()", "postgres(pgUrl"]) {
-    assert.ok(main.indexOf(normalBoundary) > gateIndex, `${normalBoundary} must remain after the sealed gate`);
+    const spawnerSource = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+    const main = spawnerSource.slice(spawnerSource.indexOf("async function main()"));
+    const gateIndex = main.indexOf("await enforceInternalProductionPreSchemaSpawnerStartupGateV1");
+    assert.ok(gateIndex >= 0);
+    for (const normalBoundary of ["assertAgentRuntimeAvailable()", "await pgMigrate()", "postgres(pgUrl"]) {
+      assert.ok(main.indexOf(normalBoundary) > gateIndex, `${normalBoundary} must remain after the sealed gate`);
+    }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
   }
-  rmSync(fixture, { recursive: true, force: true });
+});
+
+test("database producer admission accepts canonical stored readiness through the strict startup parser", async () => {
+  const typescript = await import("typescript");
+  const dbSource = readFileSync(path.resolve(import.meta.dirname, "../../src/db-pg.ts"), "utf8");
+  const tree = typescript.createSourceFile("db-pg.ts", dbSource, typescript.ScriptTarget.Latest, true);
+  const names = ["requireWorkflowRunAdmissionReadyV1", "validateInternalProductionRunPersistenceReadinessModuleNamespaceV1", "isRecursivelyFrozenV1", "sameJsonValueV1"];
+  const functions = names.map(name => {
+    const declaration = tree.statements.find(statement => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
+    assert.ok(declaration); return declaration.getText(tree).replace("await import(RUN_PERSISTENCE_READINESS_MODULE_SPECIFIER_V1)", "ports");
+  }).join("\n");
+  const constants = tree.statements.filter(statement => typescript.isVariableStatement(statement) && statement.declarationList.declarations.some(declaration => typescript.isIdentifier(declaration.name) && /^(RUN_PERSISTENCE_READINESS_|WORKFLOW_RUN_MANIFEST_A_HASH_V1$)/.test(declaration.name.text))).map(statement => statement.getText(tree)).join("\n");
+  const startupSource = readFileSync(path.resolve(import.meta.dirname, "../../src/internal-production/baseline-spawner-startup-admission-v1.ts"), "utf8");
+  const startupTree = typescript.createSourceFile("startup.ts", startupSource, typescript.ScriptTarget.Latest, true);
+  const parser = startupTree.statements.find(statement => typescript.isFunctionDeclaration(statement) && statement.name?.text === "exactPair"); assert.ok(parser);
+  const program = `
+import assert from 'node:assert/strict';
+const SHA256=/^[a-f0-9]{64}$/,fail=message=>{throw Error(message)},canonicalJsonStringify=JSON.stringify;
+${parser.getText(startupTree)}
+${constants}
+${functions}
+const freeze=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))freeze(child);Object.freeze(value)}return value};
+const INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1={manifestHash:WORKFLOW_RUN_MANIFEST_A_HASH_V1};
+const current={nodes:[{receipt:{phase:'A',orderedPlans:['A'],orderedManifestHashes:[WORKFLOW_RUN_MANIFEST_A_HASH_V1],activationRef:'activation',activationHash:'b'.repeat(64)},head:{headRef:'head',headHash:'c'.repeat(64)}}]};
+const hash='a'.repeat(64),prefix='setfarm://internal-production/task0-spawner-admission-ready/sha256/';
+let mode='ready';
+const ports={observeInternalProductionPreSchemaSpawnerRebindStatusV1:async()=>freeze({state:mode==='unready'?'pre_manifest_bootstrap_sealed':'normal_task0_admission_ready',admissionReady:{admissionReadyHash:hash,admissionReadyRef:prefix+hash}}),resolveInternalProductionTask0SpawnerAdmissionReadyV1:async pair=>{exactPair(pair,'admissionReadyRef','admissionReadyHash',prefix);return freeze({state:'normal-task0-admission-ready',admissionReadyRef:pair.admissionReadyRef,admissionReadyHash:pair.admissionReadyHash,manifestActivationRef:'activation',manifestActivationHash:mode==='crossed'?'d'.repeat(64):'b'.repeat(64),manifestHeadRef:'head',manifestHeadHash:'c'.repeat(64)})}};
+await requireWorkflowRunAdmissionReadyV1(current);
+mode='unready';await assert.rejects(requireWorkflowRunAdmissionReadyV1(current),/RUN_PERSISTENCE_ADMISSION_READY_UNAVAILABLE/);
+mode='crossed';await assert.rejects(requireWorkflowRunAdmissionReadyV1(current),/RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID/);
+`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", typescript.transpileModule(program, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText], { encoding: "utf8", timeout: 10000, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+  assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
 });
 
 test("Task0 normal admission transition remints canonical stored resolver pairs", async (context) => {
@@ -5246,15 +5282,17 @@ const READY = deepFreeze(${JSON.stringify({
 const STATUS = deepFreeze({
   state: "normal_task0_admission_ready",
   admissionReady: {
-    admissionReadyRef: READY.admissionReadyRef,
     admissionReadyHash: READY.admissionReadyHash,
+    admissionReadyRef: READY.admissionReadyRef,
   },
 });
 export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1() {
   return STATUS;
 }
 export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair) {
-  if (pair.admissionReadyRef !== READY.admissionReadyRef
+  if (!pair || Object.getPrototypeOf(pair) !== Object.prototype
+    || JSON.stringify(Reflect.ownKeys(pair)) !== JSON.stringify(["admissionReadyRef", "admissionReadyHash"])
+    || pair.admissionReadyRef !== READY.admissionReadyRef
     || pair.admissionReadyHash !== READY.admissionReadyHash) throw new Error("PAIR_INVALID");
   return READY;
 }
@@ -5327,15 +5365,17 @@ const READY = deepFreeze(${JSON.stringify({
 const STATUS = deepFreeze({
   state: "normal_task0_admission_ready",
   admissionReady: {
-    admissionReadyRef: READY.admissionReadyRef,
     admissionReadyHash: READY.admissionReadyHash,
+    admissionReadyRef: READY.admissionReadyRef,
   },
 });
 export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1() {
   return STATUS;
 }
 export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair) {
-  if (pair.admissionReadyRef !== READY.admissionReadyRef
+  if (!pair || Object.getPrototypeOf(pair) !== Object.prototype
+    || JSON.stringify(Reflect.ownKeys(pair)) !== JSON.stringify(["admissionReadyRef", "admissionReadyHash"])
+    || pair.admissionReadyRef !== READY.admissionReadyRef
     || pair.admissionReadyHash !== READY.admissionReadyHash) throw new Error("PAIR_INVALID");
   return READY;
 }

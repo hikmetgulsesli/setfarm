@@ -1874,6 +1874,68 @@ through actual main before implementing the guarded exception.
   closure, compiled cold/cleanup/old-prepare tests passed8/8 again (38.034s).
   Final transition source/fixture review found no actionable issue. Full P3 is
   not yet started; the next clean reviewed checkpoint is its immutable input.
+
+### Remaining stored startup-pair consumer closure (2026-09-14)
+
+Checkpoint9ae6c299 began the exact full P3 matrix. Files1/2/3 completed99/99,
+10/10 and24/24, respectively; every runner-owned primary/template/clone was
+cleaned. A parallel whole-branch review then found the same canonical stored
+pair ordering defect in downstream consumers. The owner stopped only the gate
+shell between files, allowed file3 to finish and clean up, and ended the shell
+without interrupting a test. This is incomplete P3 evidence, not a passing
+full gate. Complete output is retained outside the repo in
+`logs/2026-09-13T22-40-06.148Z-p3-9ae6c299.log`.
+
+The bounded consumer audit found exactly four remaining production sites:
+receipt's retained rebind executor wrapper, migration32 preparation, migration32
+postcommit sealed receipt resolution, and db-pg's plan-A producer readiness
+gate. Other receipt stored-pair aliases/final graph already remint through
+`requirePair`; runtime-completion does not call startup's strict module.
+Fix these together, preserving strict public pair validation, stored bytes,
+all relation checks, transaction boundaries and the ordinary33 graph.
+
+File Map: existing receipt/db-pg source and receipt/owner-admission tests,
+`tests/execution-attempts/test-database.ts` and this plan. The shared P3 readiness
+shadow currently returns ref-first status and compares values only, masking
+the real consumer failure. Make its status canonical/hash-first and its
+resolver order-strict; remint its own setup verification call so the regression
+exercises the production consumer rather than failing in fixture setup.
+
+- [x] Reproduce all three receipt edges with actual private control-flow bodies
+  and actual startup `exactPair`, using explicit no-DB transaction/publication
+  ports. All3 subtests failed at the intended pair shape boundary, including
+  the postcommit path; this is a focused boundary proof, not live migration.
+- [x] Reproduce DB plan-A readiness against canonical stored status and the
+  actual strict pair parser; preserve unavailable/crossed identity negatives.
+  The actual DB gate failed with RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID
+  (0.683s); after reminting, positive and both negatives passed1/1 (0.957s total).
+- [x] Remint the four validated pairs and tighten shared P3 fixtures.
+  All three actual receipt boundaries passed4/4 including the parent (0.603s).
+  Independent review found no actionable issue in the four-site fix or shared
+  canonical-status/order-strict fixtures. Postcommit coverage deliberately uses
+  transaction ports and does not claim an actual migration32 application.
+- [ ] Verify focused tests, genuine prepared/sealed integration as applicable,
+  isolated production-admission behavior, independent review and contracts.
+  Commit one reviewed successor and restart the full immutable P3 matrix.
+  The genuine compiled cold/prepare/rebind/replay extension reached migration
+  authorization, then exposed a test-only full-operation versus pair comparison
+  (515.877s). Correcting that assertion to the operation ref/hash pair produced
+  a complete pass1/1 (518.089s, total519.321s), including prepared authorization,
+  unchanged direct/cold history, descriptor baseline and no second dispatch.
+  The disposable fixture cleaned normally; no live migration occurred.
+  Fresh no-emit, English1469, paths848, semantic migration digests and Mission
+  Control contracts12 passed. Final whole-matrix isolated coverage remains due.
+  A read-only cleanup review found that the existing P4 sealed-gate test removed
+  its copied fixture only on success. Executing its actual callback with a
+  controlled setup exception reproduced the leak (0.282s); wrap its unchanged
+  test body in try/finally so failure preserves assertions but removes only its
+  own generated temporary directory. This is an existing test File Map change,
+  not a production cleanup or runtime-guard change.
+  The same controlled setup-exception probe now passes. Final sealed/startup/DB
+  checks passed5/5 (5.027s), receipt boundaries4/4 (0.599s), and frozen145/P3exact64
+  source manifest17/17 (5.689s). The old owner-created failed-test fixture
+  `setfarm-p4-private-spawner-gate-WBJ0Ah` was identity/inventory checked and
+  moved intact to the owner's Trash; its node_modules symlink was not followed.
 - [x] Add private three-service absence/physical/phase/read-only DB observation,
   including all-root daemon-family and launcher/singleton checks. Repeat
   decisive observations under the shared physical lease before dispatch.

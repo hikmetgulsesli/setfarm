@@ -379,7 +379,7 @@ async function verifyP3ActivatedCloneV1(
   assertRecursivelyFrozenV1(status);
   assert.equal(status.state, "normal_task0_admission_ready");
   const ready = await readiness.resolveInternalProductionTask0SpawnerAdmissionReadyV1(
-    status.admissionReady,
+    { admissionReadyRef: status.admissionReady.admissionReadyRef, admissionReadyHash: status.admissionReady.admissionReadyHash },
   );
   assertRecursivelyFrozenV1(ready);
   assert.deepEqual({
@@ -1140,8 +1140,8 @@ const READY = deepFreeze(${JSON.stringify({
 const STATUS = deepFreeze({
   state: "normal_task0_admission_ready",
   admissionReady: {
-    admissionReadyRef: READY.admissionReadyRef,
     admissionReadyHash: READY.admissionReadyHash,
+    admissionReadyRef: READY.admissionReadyRef,
   },
 });
 async function verifySelectedDatabase() {
@@ -1170,7 +1170,9 @@ export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1() 
 }
 export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair) {
   await verifySelectedDatabase();
-  if (pair?.admissionReadyRef !== READY.admissionReadyRef
+  if (!pair || Object.getPrototypeOf(pair) !== Object.prototype
+    || JSON.stringify(Reflect.ownKeys(pair)) !== JSON.stringify(["admissionReadyRef", "admissionReadyHash"])
+    || pair.admissionReadyRef !== READY.admissionReadyRef
     || pair?.admissionReadyHash !== READY.admissionReadyHash) throw new Error("PAIR_INVALID");
   return READY;
 }

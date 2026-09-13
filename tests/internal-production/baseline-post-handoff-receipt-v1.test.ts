@@ -16135,6 +16135,67 @@ it("old exact-poison preparation refuses absent spawner at the unchanged four-se
   }
 });
 
+it("stored startup pairs cross receipt recovery and both migration boundaries", async (context) => {
+  const source = readFileSync(observerSource, "utf8");
+  const startupSource = readFileSync(path.join(path.dirname(observerSource), "baseline-spawner-startup-admission-v1.ts"), "utf8");
+  const functions = ["executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1", "prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1", "applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1"].map(name => topLevelFunctionRegionV1(source, name)
+    .replaceAll('await import("./baseline-spawner-startup-admission-v1.js")', "ports")
+    .replaceAll('await import("../db/bootstrap-main-claim-handoff-v1-migration.js")', "ports")
+    .replaceAll('await import("../db-pg.js")', "ports")).join("\n");
+  const exactPair = topLevelFunctionRegionV1(startupSource, "exactPair");
+  for (const mode of ["recovery", "prepare", "postcommit"]) await context.test(mode, () => {
+    // Real receipt control flow and real strict startup pair parser. Transaction
+    // ports record the commit/publication boundary; this is not a live DB test.
+    const program = `
+import assert from 'node:assert/strict';import {createHash} from 'node:crypto';
+${canonical.toString()}
+const canonicalComparable=canonical,hashCanonicalJson=value=>createHash('sha256').update(canonical(value)).digest('hex');
+const fail=message=>{throw Error(message)},currentEntryFail=fail,SHA256=/^[a-f0-9]{64}$/;
+const isPlainRecord=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+const hasExactKeys=(value,keys)=>JSON.stringify(Object.keys(value).sort())===JSON.stringify([...keys].sort());
+const requireSha256=(value)=>{assert.match(value,SHA256);return value};
+${topLevelFunctionRegionV1(source, "requirePair")}
+${exactPair}
+const mode=${JSON.stringify(mode)},effects=[],hash='a'.repeat(64),sealedPrefix='setfarm://internal-production/pre-schema-spawner-sealed-admission/sha256/',authorizationPrefix='setfarm://internal-production/pre-schema-spawner-rebind-authorization/sha256/';
+const operation={operationRef:'operation',operationHash:hash,authorityV3Migration31Audit:{},pendingBootstrapHandoffMigration:{},controllerSource:{sha:'b'.repeat(40),treeHash:'c'.repeat(40),buildHash:'d'.repeat(64)}};
+const sealedPair=JSON.parse(canonical({sealedAdmissionRef:sealedPrefix+hash,sealedAdmissionHash:hash}));
+const recoveryPair=JSON.parse(canonical({authorizationRef:authorizationPrefix+hash,authorizationHash:hash}));
+const fresh={observationRef:'zero',observationHash:hash,census:{},observedSpawnerGenerationHash:'generation'};
+const sealed={postPredecessorTerminationLegacyZeroOwnerObservationRef:fresh.observationRef,postPredecessorTerminationLegacyZeroOwnerObservationHash:fresh.observationHash};
+const input={authorizationRef:'migration-authorization',authorizationHash:hash};
+const authorization={currentEntryOperationRef:operation.operationRef,currentEntryOperationHash:hash,freshLegacyZeroOwnerObservationRef:fresh.observationRef,freshLegacyZeroOwnerObservationHash:fresh.observationHash,postPredecessorTerminationLegacyZeroOwnerObservationRef:fresh.observationRef,postPredecessorTerminationLegacyZeroOwnerObservationHash:fresh.observationHash};
+const status={state:'pre_manifest_bootstrap_sealed',currentEntryOperation:operation,sealedAdmission:sealedPair,authorization:{},startupToken:{},restartAuthority:{},dispatchPrefix:{predecessorTerminationObservation:{},replacementProcessObservation:{}}};
+const ports={
+ observeInternalProductionPreSchemaSpawnerRebindStatusV1:async()=>status,
+ executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1:async pair=>{exactPair(pair,'authorizationRef','authorizationHash',authorizationPrefix);effects.push('recovery');return {state:'sealed'}},
+ resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1:async pair=>{exactPair(pair,'sealedAdmissionRef','sealedAdmissionHash',sealedPrefix);effects.push('sealed-resolved');return sealed},
+ openInternalProductionCurrentEntryMigration32TransactionV1:async()=>{effects.push('open');return {}},
+ mintBootstrapMainClaimHandoffGuardedMigration32EvidenceForControllerV1:value=>value,
+ stageInternalProductionCurrentEntryMigration32InTransactionV1:async()=>{effects.push('stage')},
+ commitInternalProductionCurrentEntryMigration32TransactionV1:async()=>{effects.push('commit');return {schemaProjection:{}}},
+ abortInternalProductionCurrentEntryMigration32TransactionV1:async()=>{effects.push('abort')},
+};
+const resolveInternalProductionPreManifestMigration32AuthorizationV1=async()=>authorization;
+const observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1=async()=>({state:'consumed',authorization:input,consumption:{consumptionRef:'consumption',consumptionHash:hash}});
+const resolveInternalProductionPreManifestMigration32AuthorizationConsumptionV1=async()=>input;
+const resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1=async()=>fresh;
+const observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1=async()=>fresh;
+const requireLegacyZeroVersionedFieldsV1=value=>value,requireLegacyFindingPublicationInventoryContinuityV1=()=>{};
+const resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1=async()=>({migrationImplementation:{},pendingSuccessor:{}});
+const TASK12_MIGRATION_PREFIXES_V1={authorization:'authorization',receipt:'receipt'};
+const publishTask12HashedRecordV1=async(kind,body,refKey,hashKey)=>{effects.push('publish-'+kind);assert.equal(kind==='receipts'?effects.includes('commit'):effects.includes('sealed-resolved'),true);return {...body,[refKey]:kind,[hashKey]:hash}};
+const operationPair=value=>value,publishTask12MigrationStatusV1=async()=>{effects.push('status')};
+const resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1=async()=>{effects.push('receipt-verified')};
+${functions}
+if(mode==='recovery'){await executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(recoveryPair,operation);assert.deepEqual(effects,['recovery']);}
+if(mode==='prepare'){const result=await prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1({},operation);assert.deepEqual(result,{authorizationRef:'authorizations',authorizationHash:hash});assert.deepEqual(effects,['sealed-resolved','publish-authorizations','status']);}
+if(mode==='postcommit'){const result=await applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1({},operation,input);assert.deepEqual(result,{migrationReceiptRef:'receipts',migrationReceiptHash:hash});assert.deepEqual(effects,['open','stage','commit','sealed-resolved','publish-receipts','status','receipt-verified']);}
+`;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", transformSync(program, { loader: "ts", format: "esm", target: "es2022" }).code], { encoding: "utf8", timeout: 10000, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+    assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+  });
+});
+
 it("cold recovery joins real prepare to sealed direct rebind without relaunching on replay", async () => {
   const group = spawnSync("/bin/ps", ["-p", String(process.pid), "-o", "pgid="], { encoding: "utf8", timeout: 5000 });
   assert.equal(group.status, 0, group.stderr);
@@ -16203,6 +16264,15 @@ assert.equal(existsSync(join(authority,'physical-service-restart-authority.trans
 assert.deepEqual(snapshot(directTargets),directBefore);
 assert.deepEqual(r.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(),history);
 assert.deepEqual(await m.observeInternalProductionServiceCensusV1(),after);
+process.stderr.write('joined: migration authorization\\n');
+const migrationAuthorization=await m.prepareInternalProductionPreManifestMigration32AuthorizationV1();
+const migrationStatus=await m.observeInternalProductionPreManifestMigration32AuthorizationStatusV1();
+assert.equal(migrationStatus.state,'prepared');
+assert.deepEqual(migrationStatus.currentEntryOperation,{operationRef:operation.operationRef,operationHash:operation.operationHash});
+assert.deepEqual(migrationStatus.authorization,migrationAuthorization);
+assert.equal(fdCount(),baselineFds,'migration authorization releases its readers');
+assert.deepEqual(snapshot(directTargets),directBefore);
+assert.deepEqual(r.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(),history);
 process.stdout.write(JSON.stringify({state:sealed.state,oldPid:before.spawner.pid,newPid:after.spawner.pid,operationHash:operation.operationHash}));
 `;
     const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: path.dirname(root), encoding: "utf8", timeout: 900_000,

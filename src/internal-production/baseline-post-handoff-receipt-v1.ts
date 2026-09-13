@@ -18734,7 +18734,8 @@ async function executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(
   const startup = await import("./baseline-spawner-startup-admission-v1.js") as unknown as Readonly<Record<string, unknown>>;
   const port = startup.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1;
   if (typeof port !== "function" || port.length !== 1) currentEntryFail("pre-schema execute/recover controller is unavailable");
-  return (port as (value: unknown) => Promise<Readonly<Record<string, unknown>>>)(authorization);
+  const pair = requirePair(authorization, "authorizationRef", "authorizationHash", "setfarm://internal-production/pre-schema-spawner-rebind-authorization/sha256/");
+  return (port as (value: unknown) => Promise<Readonly<Record<string, unknown>>>)(pair);
 }
 
 async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(): Promise<Readonly<Record<string, unknown>>> {
@@ -21587,7 +21588,7 @@ async function prepareInternalProductionPreManifestMigration32AuthorizationForOp
   const status = await (observeStatus as () => Promise<Record<string, unknown>>)();
   if (status.state !== "pre_manifest_bootstrap_sealed" || !isPlainRecord(status.currentEntryOperation) || !isPlainRecord(status.sealedAdmission)) currentEntryFail("sealed spawner admission is unavailable");
   if (status.currentEntryOperation.operationRef !== operation.operationRef || status.currentEntryOperation.operationHash !== operation.operationHash) currentEntryFail("sealed spawner operation is crossed");
-  const sealed = await (resolveSealed as (input: unknown) => Promise<Record<string, unknown>>)(status.sealedAdmission);
+  const sealed = await (resolveSealed as (input: unknown) => Promise<Record<string, unknown>>)({ sealedAdmissionRef: status.sealedAdmission.sealedAdmissionRef, sealedAdmissionHash: status.sealedAdmission.sealedAdmissionHash });
   const postZeroPair = {
     observationRef: String(sealed.postPredecessorTerminationLegacyZeroOwnerObservationRef),
     observationHash: String(sealed.postPredecessorTerminationLegacyZeroOwnerObservationHash),
@@ -21719,7 +21720,7 @@ async function applyInternalProductionBaselineBootstrapHandoffMigrationForOperat
   if (typeof observeStartup !== "function" || typeof resolveSealed !== "function") currentEntryFail("migration receipt sealed ports are unavailable");
   const startupStatus = await (observeStartup as () => Promise<Record<string, unknown>>)();
   if (!isPlainRecord(startupStatus.authorization) || !isPlainRecord(startupStatus.startupToken) || !isPlainRecord(startupStatus.restartAuthority) || !isPlainRecord(startupStatus.dispatchPrefix) || !isPlainRecord(startupStatus.sealedAdmission)) currentEntryFail("migration receipt startup prefix is incomplete");
-  const sealed = await (resolveSealed as (value: unknown) => Promise<Record<string, unknown>>)(startupStatus.sealedAdmission);
+  const sealed = await (resolveSealed as (value: unknown) => Promise<Record<string, unknown>>)({ sealedAdmissionRef: startupStatus.sealedAdmission.sealedAdmissionRef, sealedAdmissionHash: startupStatus.sealedAdmission.sealedAdmissionHash });
   const pendingSuccessor = pending.pendingSuccessor as Record<string, unknown>;
   const schemaProjection = result.schemaProjection as Record<string, unknown>;
   const receiptBody = {

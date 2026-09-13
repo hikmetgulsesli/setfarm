@@ -1586,7 +1586,7 @@ async function requireWorkflowRunAdmissionReadyV1(
   }
   try {
     const admissionReady = status.admissionReady as Record<string, unknown>;
-    const ready = await module.resolveInternalProductionTask0SpawnerAdmissionReadyV1(status.admissionReady);
+    const ready = await module.resolveInternalProductionTask0SpawnerAdmissionReadyV1({ admissionReadyRef: admissionReady.admissionReadyRef, admissionReadyHash: admissionReady.admissionReadyHash });
     if (
       !isRecursivelyFrozenV1(ready)
       || ready === null
