@@ -10155,7 +10155,7 @@ async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(
       throw new Error("INTERNAL_PRODUCTION_PRE_SCHEMA_SPAWNER_STARTUP_TOKEN_REQUIRED");
     }
     const startupToken = await dependencies.startupAdmission.resolveInternalProductionPreSchemaSpawnerStartupTokenV1(
-      preSchemaStatus.startupToken,
+      { startupTokenRef: preSchemaStatus.startupToken.startupTokenRef, startupTokenHash: preSchemaStatus.startupToken.startupTokenHash },
     );
     const receiptAuthority = await dependencies.loadReceiptAuthority();
     const executingSource = receiptAuthority.observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
@@ -10170,7 +10170,8 @@ async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(
     ) throw new Error("INTERNAL_PRODUCTION_PRE_SCHEMA_SPAWNER_STARTUP_TOKEN_INVALID");
     const dispatchPrefix = preSchemaStatus.dispatchPrefix;
     if (dispatchPrefix?.replacementProcessObservation !== null && dispatchPrefix?.replacementProcessObservation !== undefined) {
-      const replacement = await dependencies.startupAdmission.resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1(dispatchPrefix.replacementProcessObservation);
+      const pair = dispatchPrefix.replacementProcessObservation;
+      const replacement = await dependencies.startupAdmission.resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1({ replacementProcessObservationRef: pair.replacementProcessObservationRef, replacementProcessObservationHash: pair.replacementProcessObservationHash });
       const census = await receiptAuthority.observeInternalProductionServiceCensusV1();
       if (replacement.replacementSpawnerProcessIdentityHash !== census.spawner.processIdentityHash || replacement.actualSpawnerGenerationHash !== census.spawner.generationHash || replacement.actualSpawnerSourceSha !== executingSource.sha || replacement.actualSpawnerTreeHash !== executingSource.treeHash || replacement.actualSpawnerBuildHash !== executingSource.buildHash) throw new Error("INTERNAL_PRODUCTION_PRE_SCHEMA_SPAWNER_REPLACEMENT_IDENTITY_INVALID");
     }
@@ -10183,7 +10184,8 @@ async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(
   if (preSchemaStatus.state === "normal_task0_admission_ready") {
     const readyPair = (preSchemaStatus as Readonly<Record<string, unknown>>).admissionReady;
     if (!readyPair || typeof readyPair !== "object" || Array.isArray(readyPair)) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_ADMISSION_READY_REQUIRED");
-    const ready = await dependencies.startupAdmission.resolveInternalProductionTask0SpawnerAdmissionReadyV1(readyPair as Readonly<{ admissionReadyRef: string; admissionReadyHash: string }>);
+    const pair = readyPair as Readonly<{ admissionReadyRef: string; admissionReadyHash: string }>;
+    const ready = await dependencies.startupAdmission.resolveInternalProductionTask0SpawnerAdmissionReadyV1({ admissionReadyRef: pair.admissionReadyRef, admissionReadyHash: pair.admissionReadyHash });
     const receiptAuthority = await dependencies.loadReceiptAuthority();
     const census = await receiptAuthority.observeInternalProductionServiceCensusV1();
     if (ready.state !== "normal-task0-admission-ready" || ready.unchangedSpawnerGenerationHash !== census.spawner.generationHash) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_ADMISSION_READY_INVALID");
@@ -10921,8 +10923,9 @@ export async function transitionInternalProductionTask0SpawnerToNormalAdmissionR
   const startup = await import("./internal-production/baseline-spawner-startup-admission-v1.js");
   const status = await startup.observeInternalProductionPreSchemaSpawnerRebindStatusV1();
   if (status.state === "normal_task0_admission_ready" && status.admissionReady) {
-    await startup.resolveInternalProductionTask0SpawnerAdmissionReadyV1(status.admissionReady);
-    return status.admissionReady;
+    const pair = Object.freeze({ admissionReadyRef: status.admissionReady.admissionReadyRef, admissionReadyHash: status.admissionReady.admissionReadyHash });
+    await startup.resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair);
+    return pair;
   }
   if (status.state !== "pre_manifest_bootstrap_sealed" || !status.currentEntryOperation || !status.authorization || !status.startupToken || !status.restartAuthority || !status.dispatchPrefix || !status.sealedAdmission) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_NOT_SEALED");
   const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
@@ -10932,7 +10935,7 @@ export async function transitionInternalProductionTask0SpawnerToNormalAdmissionR
   const verification = await db.verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1();
   const initialization = await db.initializeInternalProductionCurrentEntryDatabaseV1();
   const census = await receipt.observeInternalProductionServiceCensusV1();
-  const sealed = await startup.resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1(status.sealedAdmission);
+  const sealed = await startup.resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1({ sealedAdmissionRef: status.sealedAdmission.sealedAdmissionRef, sealedAdmissionHash: status.sealedAdmission.sealedAdmissionHash });
   if (census.spawner.generationHash !== sealed.currentSpawnerGenerationHash) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_GENERATION_CHANGED");
   const migration = currentEntry.migrationApplyingPhase as Record<string, unknown>;
   const manifest = currentEntry.manifestActivation as Record<string, unknown>;
@@ -10968,6 +10971,38 @@ export async function transitionInternalProductionTask0SpawnerToNormalAdmissionR
   return startup.resolveInternalProductionTask0SpawnerAdmissionReadyV1({ admissionReadyRef, admissionReadyHash });
 }
 
+async function observeOrdinarySpawnerColdRecoveryAdmissionV1() {
+  const cold = observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+  if (cold.state === "absent") return null;
+  if (cold.state !== "settled" || cold.incompleteOwnerCount !== 0) throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  const startup = await import("./internal-production/baseline-spawner-startup-admission-v1.js");
+  const status = await startup.observeInternalProductionPreSchemaSpawnerRebindStatusV1();
+  if (status.state !== "normal_task0_admission_ready" || !status.currentEntryOperation || !status.restartAuthority || !status.admissionReady) throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  const currentEntryOperation = { operationRef: status.currentEntryOperation.operationRef, operationHash: status.currentEntryOperation.operationHash };
+  const restartAuthority = { restartAuthorityRef: status.restartAuthority.restartAuthorityRef, restartAuthorityHash: status.restartAuthority.restartAuthorityHash };
+  const admissionReady = { admissionReadyRef: status.admissionReady.admissionReadyRef, admissionReadyHash: status.admissionReady.admissionReadyHash };
+  const restart = await startup.resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(restartAuthority);
+  if (restart.schema !== "setfarm.internal-production-pre-schema-spawner-restart-authority.v2") throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  const ready = await startup.resolveInternalProductionTask0SpawnerAdmissionReadyV1(admissionReady);
+  if (ready.state !== "normal-task0-admission-ready"
+    || ready.currentEntryOperationRef !== currentEntryOperation.operationRef || ready.currentEntryOperationHash !== currentEntryOperation.operationHash
+    || ready.restartAuthorityRef !== restartAuthority.restartAuthorityRef || ready.restartAuthorityHash !== restartAuthority.restartAuthorityHash) throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  const retirement = await import("./internal-production/baseline-restart-authority-retirement-v1.js");
+  const terminal = await retirement.observeInternalProductionDirectSpawnerRebindTerminalHistoryV1({ currentEntryOperation, restartAuthority });
+  if (task12CanonicalV1(observeInternalProductionColdSpawnerBootstrapJournalCensusV1()) !== task12CanonicalV1(cold)) throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  return Object.freeze({ witnessHash: task12HashV1({ cold, currentEntryOperation, restartAuthority, admissionReady, terminal, generationHash: ready.unchangedSpawnerGenerationHash }), generationHash: ready.unchangedSpawnerGenerationHash });
+}
+
+async function assertOrdinarySpawnerColdRecoveryAdmissionV1(before: Awaited<ReturnType<typeof observeOrdinarySpawnerColdRecoveryAdmissionV1>>) {
+  const after = await observeOrdinarySpawnerColdRecoveryAdmissionV1();
+  if (task12CanonicalV1(before) !== task12CanonicalV1(after)) throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  if (after === null) return;
+  const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
+  const census = await receipt.observeInternalProductionServiceCensusV1();
+  if (census.spawner.pid !== process.pid || census.spawner.generationHash !== after.generationHash) throw Error("COLD_BOOTSTRAP_NORMAL_READY_PROCESS_CROSSED");
+  if (task12CanonicalV1(await observeOrdinarySpawnerColdRecoveryAdmissionV1()) !== task12CanonicalV1(after)) throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+}
+
 async function main() {
   process.on("unhandledRejection", (err) => {
     console.warn(`[spawner] unhandled rejection: ${String(err).slice(0, 500)}`);
@@ -10976,11 +11011,11 @@ async function main() {
   // Refusal-only preflight preserves any already-visible unsettled evidence.
   if (await runInternalProductionDirectSpawnerStartupV1()) return;
   if (await runInternalProductionColdSpawnerStartupV1()) return;
-  if (observeInternalProductionColdSpawnerBootstrapJournalCensusV1().state !== "absent") throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  const coldRecoveryAdmission = await observeOrdinarySpawnerColdRecoveryAdmissionV1();
   acquireSpawnerSingletonLock();
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
   publishSpawnerPidFileV1();
-  if (observeInternalProductionColdSpawnerBootstrapJournalCensusV1().state !== "absent") throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  await assertOrdinarySpawnerColdRecoveryAdmissionV1(coldRecoveryAdmission);
   const activeStartupAdmission = await resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1();
   if (activeStartupAdmission) {
     const startupClaim = await claimInternalProductionBaselineSpawnerStartupAdmissionV1({ admission: activeStartupAdmission });

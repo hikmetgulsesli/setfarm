@@ -2666,6 +2666,32 @@ function directControllerSettlementRecordV1(
 
 // Historical transport closure only. No held lease, mutable epoch, live census,
 // helper/process observation, publication repair or effect is acquired here.
+// Historical proof only: no lease acquisition, process liveness or dispatch.
+export async function observeInternalProductionDirectSpawnerRebindTerminalHistoryV1(input: Readonly<{
+  currentEntryOperation: Readonly<{ operationRef: string; operationHash: string }>;
+  restartAuthority: Readonly<{ restartAuthorityRef: string; restartAuthorityHash: string }>;
+}>) {
+  const value = coldRecordV1(input, ["currentEntryOperation", "restartAuthority"], "direct terminal input");
+  const operation = coldPairV1(value.currentEntryOperation, "operation", "setfarm://internal-production/current-entry-operation/sha256/");
+  const restart = coldPairV1(value.restartAuthority, "restartAuthority", "setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/");
+  // Snapshot caller values before the first asynchronous read.
+  const currentEntryOperation = Object.freeze({ operationRef: String(operation.operationRef), operationHash: String(operation.operationHash) });
+  const restartAuthority = Object.freeze({ restartAuthorityRef: String(restart.restartAuthorityRef), restartAuthorityHash: String(restart.restartAuthorityHash) });
+  const history = await observeDirectSpawnerControllerSettlementHistoryV1();
+  assertDirectSpawnerControllerSettlementHistoryStableV1(history);
+  for (const record of [history.intent, history.settlement]) {
+    if (canonical(record.currentEntryOperation) !== canonical(currentEntryOperation)
+      || canonical(record.restartAuthority) !== canonical(restartAuthority)) fail("direct terminal input pair is crossed");
+  }
+  const proof = freezeColdDataV1({ currentEntryOperation, restartAuthority,
+    preSchemaHelperJournalHash: history.preSchemaHelperJournalHash,
+    preSchemaHelperSettlementRef: history.preSchemaHelperSettlementRef,
+    preSchemaHelperSettlementHash: history.preSchemaHelperSettlementHash,
+    settlementIdentity: history.settlementIdentity });
+  assertDirectSpawnerControllerSettlementHistoryStableV1(history);
+  return proof;
+}
+
 async function observeDirectSpawnerControllerSettlementHistoryV1() {
   for (const close of pendingColdHelperAuthenticationCleanupV1) close();
   const paths = rootPaths(), root = path.join(paths.root, "direct-spawner-rebind-v1");

@@ -1056,6 +1056,21 @@ process.stdout.write(JSON.stringify({pid:process.pid,terminalHash:terminal.helpe
         const historyPaths = [path.join(root, "pre-schema-helper-journal.json"), journalRoot, path.join(root, "pre-schema-helper-settlements/sha256", completed.terminalHash.slice(0, 2), `${completed.terminalHash}.json`)];
         const before = historyPaths.map(target => coldGenesisTreeSnapshotV1(target));
         const effects = { signals: readFileSync(signals), spawns: readFileSync(directSpawnTracePath) };
+        const terminalInput = { currentEntryOperation: pair("operation", "current-entry-operation"), restartAuthority: pair("restartAuthority", "pre-schema-spawner-restart-authority") };
+        assert.equal(typeof fresh.observeInternalProductionDirectSpawnerRebindTerminalHistoryV1, "function", "normal startup needs a read-only input-bound terminal history authority");
+        const terminalProof = await fresh.observeInternalProductionDirectSpawnerRebindTerminalHistoryV1(terminalInput);
+        assert.equal(terminalProof.preSchemaHelperSettlementHash, completed.terminalHash);
+        assert.deepEqual(terminalProof.currentEntryOperation, terminalInput.currentEntryOperation);
+        assert.deepEqual(terminalProof.restartAuthority, terminalInput.restartAuthority);
+        assert.equal(Object.isFrozen(terminalProof), true);
+        for (const stem of ["currentEntryOperation", "restartAuthority"] as const) {
+          const prefix = stem === "currentEntryOperation" ? "operation" : "restartAuthority";
+          await assert.rejects(fresh.observeInternalProductionDirectSpawnerRebindTerminalHistoryV1({ ...terminalInput, [stem]: { ...terminalInput[stem], [`${prefix}Hash`]: "f".repeat(64) } }), /crossed|pair/);
+          const locator = stem === "currentEntryOperation" ? "current-entry-operation" : "pre-schema-spawner-restart-authority";
+          await assert.rejects(fresh.observeInternalProductionDirectSpawnerRebindTerminalHistoryV1({ ...terminalInput, [stem]: { [`${prefix}Ref`]: `setfarm://internal-production/${locator}/sha256/${"f".repeat(64)}`, [`${prefix}Hash`]: "f".repeat(64) } }), /direct terminal input pair is crossed/, "a valid pair for another operation cannot borrow this terminal history");
+        }
+        assert.deepEqual(historyPaths.map(target => coldGenesisTreeSnapshotV1(target)), before, "read-only terminal admission never repairs or republishes history");
+        assert.deepEqual({ signals: readFileSync(signals), spawns: readFileSync(directSpawnTracePath) }, effects);
         assert.equal(effects.signals.toString(), "SIGTERM\n");
         const dispatches = effects.spawns.toString().trim().split("\n").map(line => JSON.parse(line));
         assert.equal(dispatches.length, 2, "one actual controller-helper dispatch and one helper-child dispatch");
@@ -5238,6 +5253,7 @@ test("P4 restart transition lease authenticates epoch one", async () => {
     "observeInternalProductionBaselineServiceRestartHelperJournalCensusV1",
     "observeInternalProductionColdSpawnerBootstrapJournalCensusV1",
     "observeInternalProductionColdSpawnerHelperIntentPhaseV1",
+    "observeInternalProductionDirectSpawnerRebindTerminalHistoryV1",
     "observeInternalProductionPhysicalServiceRestartAuthorityCutoverStatusV1",
     "prepareInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1",
     "publishInternalProductionColdSpawnerBootstrapClaimV1",
@@ -5260,6 +5276,7 @@ test("P4 restart transition lease authenticates epoch one", async () => {
   assert.equal(module.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1.length, 0);
   assert.equal(module.ensureInternalProductionColdSpawnerBootstrapSettledV1.length, 0);
   assert.equal(module.acquireInternalProductionDirectSpawnerChildStartupContextV1.length, 0);
+  assert.equal(module.observeInternalProductionDirectSpawnerRebindTerminalHistoryV1.length, 1);
   assert.equal(module.runInternalProductionDirectSpawnerHelperV1.length, 0);
   assert.equal(module.resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1.length, 0);
   assert.equal(module.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1.length, 1);

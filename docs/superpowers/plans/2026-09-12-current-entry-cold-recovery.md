@@ -1009,7 +1009,7 @@ only fresh startup emits V2 after all direct lifecycle consumers pass.
 
 File Map for this next slice is exactly the existing retirement, startup
 admission and receipt modules, their three owning tests, and this plan. Keep
-retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
+retirement30/startup11/receipt58 runtime exports, exact145/64 manifests and the
 33-pair final graph. Helper/spawner/runtime-config need no planned new edit.
 
 - [x] Add private direct controller completion capture. Test a disposable real
@@ -1811,11 +1811,69 @@ logs/2026-09-13-receipt-81bf9794-console-capture.log in the canonical workspace;
 its header explicitly notes the missing early all-passing chunk and preserves
 the failing final result.
 
-- [ ] Add a fixture with no spawner and prove old preparation fails at the
+- [x] Add a fixture with no spawner and prove old preparation fails at the
   four-service census. Keep the public four-service observer unchanged.
-  The ordinary-without-spawner collector refusal is already covered by0763fc92;
-  the exact old preparation entrypoint behavior test is still pending, not
-  silently counted as complete by the ledger reconciliation.
+  The compiled old-control-edge fixture removes only the preselection cold
+  recovery invocation before source commit/materialization/finalization. The
+  actual public prepare fails at the unchanged four-service daemon-family
+  census, creates no cold journal, settlement, PID or lock, and preserves all
+  source/output bytes. Focused regression passed 1/1 (7.464s, total8.569s).
+
+### Post-recovery ordinary startup refinement (2026-09-14)
+
+Independent delivery review found that main's unconditional cold-journal
+absence guards permanently reject ordinary startup even after genuine cold
+settlement and normal Task0 readiness. Historical settlement must be preserved,
+so deletion or unconditional acceptance of settled history is not a fix.
+This is causally required for the approved recovery-to-normal-operation goal.
+File Map: existing `src/spawner.ts`, its owning
+`tests/internal-production/owner-admission-v1.test.ts`, existing retirement
+module/owning test, and this ledger; no new file, runtime flag or frozen
+pair-graph change. Retirement runtime exports intentionally rise29 to30 for
+one input-bound, read-only terminal-history observer. The aggregate existing
+helper census cannot bind terminal operation/restart pairs and therefore is
+insufficient here; reusing a mutating helper invocation would be unsafe.
+
+Before startup-file publication, require the actual deep pre-schema observer's
+normal-ready V2 chain, resolved readiness, authenticated terminal direct
+transport history, and unchanged cold settlement. After owned PID publication,
+revalidate those witnesses around the real four-service census, bind its PID
+to this process and generation to readiness, then retain existing ordinary
+admission and producer gates. The two stale-file reclamation absence checks
+remain unchanged: settled history never authorizes deleting stale evidence.
+Canonical stored pairs must be reminted ref-first at strict resolver calls;
+public pair validation remains strict. First reproduce the normal-ready denial
+through actual main before implementing the guarded exception.
+
+- [x] Reproduce ready-history ordinary startup refusal in actual main.
+  Actual main failed with COLD_BOOTSTRAP_NOT_ABSENT (3.237s). The sealed
+  canonical-pair regression also failed on Hash/Ref versus Ref/Hash (3.602s),
+  and the historical-child-departed test failed on the missing read-only
+  terminal observer (5.314s). After the initial fix, the latter passed1/1
+  (5.777s) and sealed-gate/actual-main passed2/2 (total41.146s).
+- [x] Implement authenticated pre/post publication fences and ordered pairs.
+  The read-only terminal wrapper snapshots exact validated pairs before awaits,
+  authenticates historical termination/spawn/claim/settlement, binds both intent
+  and settlement, and reopens the physical witness. Main brackets that proof,
+  cold settlement and normal-ready V2 authority before/after owned PID
+  publication and around current-PID/current-generation census. Stale reclaim
+  remains absent-only. The final gate and ready/sealed transition calls remint
+  stored pairs without weakening the strict public parsers.
+- [x] Verify positive, crossed/incomplete/history-change negatives, cleanup,
+  independent review and source contracts before the complete P3 checkpoint.
+  Focused startup/transition/publication/cleanup passed7/7 (1.538s); the exact
+  retirement export/epoch contract passed1/1 (0.900s). Expanded direct terminal,
+  public replay, departed-child and lock cleanup passed8/8 (47.422s). The
+  admission matrix additionally exercises valid alternate operation/restart
+  pairs, incomplete cold state and settled/nonzero-owner refusal. Final
+  transition/admission retest passed4/4 (1.468s). Independent production review
+  found no new actionable issue. Test review caught and corrected the missing
+  alternate-pair cases and copied-main closure dependencies. Exact File Map
+  tests passed17/17 (6.899s); no-emit, English1469, paths848, semantic migration
+  digests and diff whitespace checks passed. After completing the copied-main
+  closure, compiled cold/cleanup/old-prepare tests passed8/8 again (38.034s).
+  Final transition source/fixture review found no actionable issue. Full P3 is
+  not yet started; the next clean reviewed checkpoint is its immutable input.
 - [x] Add private three-service absence/physical/phase/read-only DB observation,
   including all-root daemon-family and launcher/singleton checks. Repeat
   decisive observations under the shared physical lease before dispatch.

@@ -3191,17 +3191,19 @@ test("P4 sealed spawner gate authenticates replacement and exits before normal s
   const status = Object.freeze({
     state: "pre_manifest_bootstrap_sealed",
     currentEntryOperation: Object.freeze({ operationRef: `setfarm://internal-production/current-entry-operation/sha256/${operationHash}`, operationHash }),
-    startupToken: Object.freeze({ startupTokenRef: `setfarm://internal-production/pre-schema-spawner-startup-token/sha256/${startupTokenHash}`, startupTokenHash }),
-    dispatchPrefix: Object.freeze({ replacementProcessObservation: Object.freeze({ replacementProcessObservationRef: `setfarm://internal-production/pre-schema-spawner-replacement-process-observation/sha256/${replacementHash}`, replacementProcessObservationHash: replacementHash }) }),
+    startupToken: Object.freeze({ startupTokenHash, startupTokenRef: `setfarm://internal-production/pre-schema-spawner-startup-token/sha256/${startupTokenHash}` }),
+    dispatchPrefix: Object.freeze({ replacementProcessObservation: Object.freeze({ replacementProcessObservationHash: replacementHash, replacementProcessObservationRef: `setfarm://internal-production/pre-schema-spawner-replacement-process-observation/sha256/${replacementHash}` }) }),
   });
   const dependencies = {
     startupAdmission: {
       observeInternalProductionPreSchemaSpawnerRebindStatusV1: async () => { calls.push("observe-status"); return status; },
-      resolveInternalProductionPreSchemaSpawnerStartupTokenV1: async () => {
+      resolveInternalProductionPreSchemaSpawnerStartupTokenV1: async (pair: unknown) => {
+        assert.deepEqual(Reflect.ownKeys(pair as object), ["startupTokenRef", "startupTokenHash"]);
         calls.push("resolve-token");
         return Object.freeze({ startupMode: "pre-manifest-bootstrap-sealed", currentEntryOperationRef: status.currentEntryOperation.operationRef, currentEntryOperationHash: operationHash, task0SpawnerSourceSha: source.sha, task0SpawnerTreeHash: source.treeHash, task0SpawnerBuildHash: source.buildHash });
       },
-      resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1: async () => {
+      resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1: async (pair: unknown) => {
+        assert.deepEqual(Reflect.ownKeys(pair as object), ["replacementProcessObservationRef", "replacementProcessObservationHash"]);
         calls.push("resolve-replacement");
         return Object.freeze({ replacementSpawnerProcessIdentityHash: processIdentityHash, actualSpawnerGenerationHash: generationHash, actualSpawnerSourceSha: source.sha, actualSpawnerTreeHash: source.treeHash, actualSpawnerBuildHash: source.buildHash });
       },
@@ -3236,6 +3238,77 @@ test("P4 sealed spawner gate authenticates replacement and exits before normal s
     assert.ok(main.indexOf(normalBoundary) > gateIndex, `${normalBoundary} must remain after the sealed gate`);
   }
   rmSync(fixture, { recursive: true, force: true });
+});
+
+test("Task0 normal admission transition remints canonical stored resolver pairs", async (context) => {
+  const typescript = await import("typescript");
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  const tree = typescript.createSourceFile("spawner.ts", source, typescript.ScriptTarget.Latest, true);
+  const declaration = tree.statements.find(statement => typescript.isFunctionDeclaration(statement) && statement.name?.text === "transitionInternalProductionTask0SpawnerToNormalAdmissionReadyV1");
+  assert.ok(declaration);
+  for (const mode of ["ready-replay", "sealed-transition"]) await context.test(mode, () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-ready-pair-transition-"));
+    try {
+      const internal = path.join(fixture, "internal-production"); mkdirSync(internal);
+      writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}');
+      writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.js"), `
+import assert from 'node:assert/strict';
+export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){return ${JSON.stringify(mode)}==='ready-replay'?{state:'normal_task0_admission_ready',admissionReady:{admissionReadyHash:'a'.repeat(64),admissionReadyRef:'ready'}}:{state:'pre_manifest_bootstrap_sealed',currentEntryOperation:{},authorization:{},startupToken:{},restartAuthority:{},dispatchPrefix:{},sealedAdmission:{sealedAdmissionHash:'b'.repeat(64),sealedAdmissionRef:'sealed'}};}
+export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair){assert.deepEqual(Object.keys(pair),['admissionReadyRef','admissionReadyHash']);assert.equal(pair.admissionReadyRef,'ready');return pair;}
+export async function resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1(pair){assert.deepEqual(Object.keys(pair),['sealedAdmissionRef','sealedAdmissionHash']);assert.equal(pair.sealedAdmissionRef,'sealed');throw Error('FIXTURE_SEALED_PAIR_VALIDATED');}
+`);
+      writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.js"), `export async function observeInternalProductionCurrentEntryAuthorityStatusV1(){return {state:'spawner_admission_transitioning',migrationApplyingPhase:{},manifestActivation:{}};}export async function observeInternalProductionServiceCensusV1(){return {spawner:{generationHash:'generation'}};}`);
+      writeFileSync(path.join(fixture, "db-pg.js"), `export async function verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1(){return {};}export async function initializeInternalProductionCurrentEntryDatabaseV1(){return {};}`);
+      const runner = path.join(fixture, "runner.mjs");
+      writeFileSync(runner, typescript.transpileModule(`import assert from 'node:assert/strict';\n${declaration.getText(tree)}\n${mode === "ready-replay" ? "assert.deepEqual(await transitionInternalProductionTask0SpawnerToNormalAdmissionReadyV1(),{admissionReadyRef:'ready',admissionReadyHash:'a'.repeat(64)});assert.deepEqual(Object.keys(await transitionInternalProductionTask0SpawnerToNormalAdmissionReadyV1()),['admissionReadyRef','admissionReadyHash']);" : "await assert.rejects(transitionInternalProductionTask0SpawnerToNormalAdmissionReadyV1(),/FIXTURE_SEALED_PAIR_VALIDATED/);"}`, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText);
+      const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 10000, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+      assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+    } finally { rmSync(fixture, { recursive: true, force: true }); }
+  });
+});
+
+test("ordinary cold recovery admission refuses crossed or changing readiness before producers", async () => {
+  const typescript = await import("typescript");
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  const tree = typescript.createSourceFile("spawner.ts", source, typescript.ScriptTarget.Latest, true);
+  const functions = ["observeOrdinarySpawnerColdRecoveryAdmissionV1", "assertOrdinarySpawnerColdRecoveryAdmissionV1", "task12CanonicalV1", "task12HashV1"].map(name => {
+    const declaration = tree.statements.find(statement => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
+    assert.ok(declaration); return declaration.getText(tree);
+  }).join("\n");
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-normal-cold-admission-"));
+  try {
+    const internal = path.join(fixture, "internal-production"); mkdirSync(internal);
+    writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}');
+    writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.js"), `
+import assert from 'node:assert/strict';
+const f=()=>globalThis.fixture;
+export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){const x=f();if(x.mode==='status-corrupt')throw Error('CORRUPT_STATUS');return {state:x.mode==='sealed'?'pre_manifest_bootstrap_sealed':x.mode==='unrelated'?'absent':'normal_task0_admission_ready',currentEntryOperation:{operationHash:'a'.repeat(64),operationRef:'operation'},restartAuthority:{restartAuthorityHash:'b'.repeat(64),restartAuthorityRef:'restart'},admissionReady:{admissionReadyHash:'c'.repeat(64),admissionReadyRef:'ready'}};}
+export async function resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(pair){assert.deepEqual(Object.keys(pair),['restartAuthorityRef','restartAuthorityHash']);return {schema:'setfarm.internal-production-pre-schema-spawner-restart-authority.'+(f().mode==='v1'?'v1':'v2')};}
+export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair){assert.deepEqual(Object.keys(pair),['admissionReadyRef','admissionReadyHash']);return {state:'normal-task0-admission-ready',currentEntryOperationRef:f().mode==='crossed-operation'?'other':'operation',currentEntryOperationHash:'a'.repeat(64),restartAuthorityRef:f().mode==='crossed-restart'?'other':'restart',restartAuthorityHash:'b'.repeat(64),unchangedSpawnerGenerationHash:'d'.repeat(64)};}
+`);
+    writeFileSync(path.join(internal, "baseline-restart-authority-retirement-v1.js"), `
+import assert from 'node:assert/strict';
+export async function observeInternalProductionDirectSpawnerRebindTerminalHistoryV1(input){const x=globalThis.fixture;assert.equal(input.currentEntryOperation.operationRef,'operation');assert.equal(input.restartAuthority.restartAuthorityRef,'restart');x.terminals++;if(x.mode==='terminal-missing')throw Error('MISSING_TERMINAL');return {settlementHash:x.mode==='terminal-changed'&&x.published?'changed':'original'};}
+`);
+    writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.js"), `
+import assert from 'node:assert/strict';
+export async function observeInternalProductionServiceCensusV1(){const x=globalThis.fixture;assert.equal(x.published,true,'live census cannot run before PID publication');x.censuses++;if(x.mode==='cold-after-census')x.changed=true;return {spawner:{pid:x.mode==='wrong-pid'?process.pid+1:process.pid,generationHash:x.mode==='wrong-generation'?'crossed':'d'.repeat(64)}};}
+`);
+    const runner = path.join(fixture, "runner.mjs");
+    writeFileSync(runner, typescript.transpileModule(`
+import assert from 'node:assert/strict';import crypto from 'node:crypto';
+function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){const x=globalThis.fixture;x.colds++;if(x.mode==='incomplete')throw Error('COLD_BOOTSTRAP_UNSETTLED');if(x.mode==='absent')return {state:'absent'};if(x.mode==='cold-disappeared'&&x.published)return {state:'absent'};return {state:'settled',incompleteOwnerCount:x.mode==='settled-owner'?1:0,censusHash:x.changed||x.mode==='cold-during-preflight'&&x.colds===2?'changed':'original'};}
+${functions}
+for(const mode of ['absent','ready','incomplete','settled-owner','v1','sealed','unrelated','status-corrupt','crossed-operation','crossed-restart','terminal-missing','cold-during-preflight','cold-disappeared','terminal-changed','wrong-pid','wrong-generation','cold-after-census']){
+ const x=globalThis.fixture={mode,published:false,colds:0,censuses:0,terminals:0,changed:false};
+ const run=async()=>{const before=await observeOrdinarySpawnerColdRecoveryAdmissionV1();x.published=true;await assertOrdinarySpawnerColdRecoveryAdmissionV1(before);};
+ if(['absent','ready'].includes(mode)){await run();assert.equal(x.censuses,mode==='ready'?1:0);}
+ else {await assert.rejects(run,undefined,mode+' must not admit producers');if(['incomplete','settled-owner','v1','sealed','unrelated','status-corrupt','crossed-operation','crossed-restart','terminal-missing','cold-during-preflight'].includes(mode)){assert.equal(x.published,false);assert.equal(x.censuses,0);}}
+}
+`, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText);
+    const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 10000, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+    assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
 });
 
 test("ordinary stale startup reclamation requires exact bytes, definite death and an absent cold journal", async () => {
@@ -3341,7 +3414,7 @@ for(fault of ['none','partial','replacement']){
 });
 
 test("P4 real spawner main remains sealed until signal and cleans its lock and pid", async () => {
-  for (const mode of ["settled-history", "settled-appears", "sealed", "existing-cold", "cold-appears", "foreign-pid", "foreign-lock", "stale-pid", "parent-symlink"]) {
+  for (const mode of ["settled-ready", "settled-history", "settled-appears", "sealed", "existing-cold", "cold-appears", "foreign-pid", "foreign-lock", "stale-pid", "parent-symlink"]) {
   const repository = path.resolve(import.meta.dirname, "../..");
   const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-real-sealed-spawner-"));
   const fixtureSource = path.join(fixture, "src");
@@ -3369,7 +3442,7 @@ test("P4 real spawner main remains sealed until signal and cleans its lock and p
     const retirementPath = path.join(fixtureSource, "internal-production/baseline-restart-authority-retirement-v1.ts"), retirement = readFileSync(retirementPath, "utf8");
     const start = retirement.indexOf("export function observeInternalProductionColdSpawnerBootstrapJournalCensusV1("), body = retirement.indexOf("  const workspace =", start);
     assert.ok(start >= 0 && body > start);
-    writeFileSync(retirementPath, retirement.slice(0, body) + `  globalThis.__fixtureColdCensusCalls=(globalThis.__fixtureColdCensusCalls??0)+1;return {state:${mode === "settled-history" ? "'settled'" : "globalThis.__fixtureColdCensusCalls>=2?'settled':'absent'"}};\n` + retirement.slice(body));
+    writeFileSync(retirementPath, retirement.slice(0, body) + `  globalThis.__fixtureColdCensusCalls=(globalThis.__fixtureColdCensusCalls??0)+1;return {state:${mode !== "settled-appears" ? "'settled'" : "globalThis.__fixtureColdCensusCalls>=2?'settled':'absent'"},incompleteOwnerCount:0,censusHash:'7'.repeat(64),settlement:{settlementRef:'fixture-cold-settlement',settlementHash:'8'.repeat(64)},settlementIdentity:['1','2','3']};\n` + retirement.slice(body));
   }
   symlinkSync(path.join(repository, "node_modules"), path.join(fixture, "node_modules"), "dir");
   const operationHash = "a".repeat(64);
@@ -3390,6 +3463,29 @@ export async function resolveInternalProductionPreSchemaSpawnerReplacementProces
 export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){return ${JSON.stringify(source)}}
 export async function observeInternalProductionServiceCensusV1(){return {spawner:{processIdentityHash:${JSON.stringify(processIdentityHash)},generationHash:${JSON.stringify(generationHash)}}}}
 `, "utf8");
+  if (mode === "settled-ready") {
+    // Only external authority ports are replaced: actual main must admit ready
+    // history, publish its owned files, and check the new PID before producers.
+    const retirementPath = path.join(fixtureSource, "internal-production/baseline-restart-authority-retirement-v1.ts");
+    const retirementSource = readFileSync(retirementPath, "utf8");
+    const terminalStart = retirementSource.indexOf("export async function observeInternalProductionDirectSpawnerRebindTerminalHistoryV1(");
+    const terminalBody = retirementSource.indexOf("  const value =", terminalStart);
+    assert.ok(terminalStart >= 0 && terminalBody > terminalStart);
+    writeFileSync(retirementPath, retirementSource.slice(0, terminalBody) + `  if(input.currentEntryOperation.operationRef!=='fixture-operation'||input.restartAuthority.restartAuthorityRef!=='fixture-restart')throw Error('FIXTURE_TERMINAL_INPUT_CROSSED');return {currentEntryOperation:input.currentEntryOperation,restartAuthority:input.restartAuthority,preSchemaHelperJournalHash:'d'.repeat(64),preSchemaHelperSettlementRef:'fixture-terminal',preSchemaHelperSettlementHash:'e'.repeat(64),settlementIdentity:['1','2','3']};\n` + retirementSource.slice(terminalBody));
+    writeFileSync(path.join(fixtureSource, "internal-production/baseline-spawner-startup-admission-v1.ts"), `
+import assert from 'node:assert/strict';
+const operation={operationHash:'a'.repeat(64),operationRef:'fixture-operation'};
+const restartAuthority={restartAuthorityHash:'b'.repeat(64),restartAuthorityRef:'fixture-restart'};
+const admissionReady={admissionReadyHash:'c'.repeat(64),admissionReadyRef:'fixture-ready'};
+export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){return {state:'normal_task0_admission_ready',currentEntryOperation:operation,restartAuthority,admissionReady};}
+export async function resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(pair){assert.deepEqual(Object.keys(pair),['restartAuthorityRef','restartAuthorityHash']);assert.equal(pair.restartAuthorityHash,restartAuthority.restartAuthorityHash);return {schema:'setfarm.internal-production-pre-schema-spawner-restart-authority.v2',...restartAuthority,currentEntryOperationRef:operation.operationRef,currentEntryOperationHash:operation.operationHash};}
+export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair){assert.deepEqual(Object.keys(pair),['admissionReadyRef','admissionReadyHash']);assert.equal(pair.admissionReadyHash,admissionReady.admissionReadyHash);return {state:'normal-task0-admission-ready',...admissionReady,...restartAuthority,currentEntryOperationRef:operation.operationRef,currentEntryOperationHash:operation.operationHash,unchangedSpawnerGenerationHash:${JSON.stringify(generationHash)}};}
+`);
+    writeFileSync(path.join(fixtureSource, "internal-production/baseline-post-handoff-receipt-v1.ts"), `
+import assert from 'node:assert/strict';import fs from 'node:fs';
+export async function observeInternalProductionServiceCensusV1(){assert.equal(fs.readFileSync(${JSON.stringify(pidFile)},'utf8'),String(process.pid));assert.equal(fs.readFileSync(${JSON.stringify(lockFile)},'utf8'),process.pid+'\\n');return {spawner:{pid:process.pid,processIdentityHash:${JSON.stringify(processIdentityHash)},generationHash:${JSON.stringify(generationHash)}}};}
+`);
+  }
   const spawnerPath = path.join(fixtureSource, "spawner.ts");
   let spawnerBytes = readFileSync(spawnerPath, "utf8")
     .replace('const PID_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");', `const PID_FILE = ${JSON.stringify(pidFile)};`)
@@ -3403,6 +3499,9 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
       '    console.log("[spawner] Pre-manifest bootstrap sealed; owner producers and listeners are blocked");\n    if (process.env.SETFARM_TEST_SEALED_SIGNAL_WINDOW === "1") Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000);',
     )
     .replace("if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {", "if (true) {");
+  if (mode === "settled-ready") {
+    spawnerBytes = spawnerBytes.replace("  initializeAgentRuntimeV1();", `  fs.writeFileSync(${JSON.stringify(normalMarker)},'ready-before-producers');throw Error('FIXTURE_NORMAL_BOUNDARY_REACHED');`);
+  }
   if (mode === "cold-appears") {
     const publication = spawnerBytes.includes("  publishSpawnerPidFileV1();") ? "  publishSpawnerPidFileV1();" : "  fs.writeFileSync(PID_FILE, String(process.pid));";
     assert.equal(spawnerBytes.split(publication).length, 2);
@@ -3434,6 +3533,16 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
   child.stderr.on("data", (chunk: string) => { stderr += chunk; });
   const closed = new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
   try {
+    if (mode === "settled-ready") {
+      const timeout = setTimeout(() => child.kill("SIGTERM"), 10_000);
+      const exit = await closed; clearTimeout(timeout);
+      assert.deepEqual(exit, { code: 1, signal: null }, stderr);
+      assert.match(stderr, /FIXTURE_NORMAL_BOUNDARY_REACHED/, "authenticated completed cold recovery must not permanently block ordinary startup");
+      assert.equal(readFileSync(normalMarker, "utf8"), "ready-before-producers");
+      assert.equal(existsSync(admissionMarker), true);
+      for (const untouched of [pidFile, lockFile, providerMarker, ...ordinaryDirectories]) assert.equal(existsSync(untouched), false);
+      continue;
+    }
     if (mode === "existing-cold" || mode === "cold-appears" || mode.startsWith("settled-")) {
       const timeout = setTimeout(() => child.kill("SIGTERM"), 10_000);
       const exit = await closed; clearTimeout(timeout);
