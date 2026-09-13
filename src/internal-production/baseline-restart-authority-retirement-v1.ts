@@ -814,7 +814,7 @@ function validateHistoricalSpawnerLaunchProfileV1(value: unknown): Readonly<Reco
 
 function parseDirectSpawnerRebindIntentV1(bytes: Buffer): Readonly<Record<string, unknown>> {
   if (bytes.length < 1 || bytes.length > 8_388_608) fail("direct rebind intent size is invalid");
-  const intent = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "purpose", "transport", "terminationSignal", "maximumTerminationDispatchCount", "maximumSpawnDispatchCount", "currentEntryOperation", "restartAuthority", "startupToken", "predecessorSpawnerProcessIdentity", "launchProfile", "epoch", "transitionLock", "lockIdentity", "nonceHash", "intentRef", "intentHash"], "direct rebind intent");
+  const intent = coldRecordV1(JSON.parse(bytes.toString("utf8")), ["schema", "purpose", "transport", "terminationSignal", "maximumTerminationDispatchCount", "maximumSpawnDispatchCount", "currentEntryOperation", "restartAuthority", "startupToken", "predecessorSpawnerProcessIdentity", "preMutationLoadedRuntimeServiceAuthority", "launchProfile", "epoch", "transitionLock", "lockIdentity", "nonceHash", "intentRef", "intentHash"], "direct rebind intent");
   if (!bytes.equals(Buffer.from(`${canonical(intent)}\n`)) || intent.schema !== "setfarm.internal-production-pre-schema-spawner-direct-rebind-intent.v1"
     || intent.purpose !== "operation-bound-pre-schema-spawner-rebind-v1" || intent.transport !== "direct-detached-node-v1"
     || intent.terminationSignal !== "SIGTERM" || intent.maximumTerminationDispatchCount !== 1 || intent.maximumSpawnDispatchCount !== 1
@@ -825,6 +825,7 @@ function parseDirectSpawnerRebindIntentV1(bytes: Buffer): Readonly<Record<string
     ["restartAuthority", "restartAuthority", "pre-schema-spawner-restart-authority"],
     ["startupToken", "startupToken", "pre-schema-spawner-startup-token"],
     ["predecessorSpawnerProcessIdentity", "predecessorSpawnerProcessIdentity", "spawner-process-identity"],
+    ["preMutationLoadedRuntimeServiceAuthority", "preMutationLoadedRuntimeServiceAuthority", "pre-mutation-loaded-runtime-service-authority"],
     ["epoch", "epoch", "physical-service-restart-authority-epoch"],
   ] as const) coldPairV1(intent[key], stem, `setfarm://internal-production/${domain}/sha256/`);
   validateHistoricalSpawnerLaunchProfileV1(intent.launchProfile);
@@ -834,6 +835,99 @@ function parseDirectSpawnerRebindIntentV1(bytes: Buffer): Readonly<Record<string
     || typeof identity.inoDecimal !== "string" || !/^[1-9][0-9]{0,19}$/.test(identity.inoDecimal)) fail("direct rebind lock identity is invalid");
   coldHashV1(intent.nonceHash, "direct intent nonce");
   return freezeColdDataV1(intent);
+}
+
+// Resolves evidence only. The caller still needs a retained, one-shot dispatch
+// owner; neither this data nor an existing durable intent permits an effect.
+async function resolveDirectSpawnerRebindInputsUnderLeaseV1(
+  lease: InternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1,
+  input: Readonly<{ currentEntryOperation: Readonly<{ operationRef: string; operationHash: string }>; restartAuthority: Readonly<{ restartAuthorityRef: string; restartAuthorityHash: string }> }>,
+) {
+  const held = heldLease(lease), lockIdentity = fstatSync(held.descriptor, { bigint: true }), epoch = assertEpochOneActive();
+  const exact = coldRecordV1(input, ["currentEntryOperation", "restartAuthority"], "direct rebind input");
+  const operationPair = coldPairV1(exact.currentEntryOperation, "operation", "setfarm://internal-production/current-entry-operation/sha256/");
+  const restartPair = coldPairV1(exact.restartAuthority, "restartAuthority", "setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/");
+  const rootGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), rootPaths().root);
+  let epochPin: ReturnType<typeof pinStableCasPredecessorV1> | null = null;
+  let processGuard: PrivateDirectoryGuardV1 | null = null;
+  let processPin: ReturnType<typeof pinStableCasPredecessorV1> | null = null;
+  const assertStable = (): void => {
+    rootGuard.assertStable();
+    if (heldLease(lease) !== held || parseLockRecord(held.lockBytes).pid !== process.pid
+      || !sameColdFileMetadataV1(lockIdentity, fstatSync(held.descriptor, { bigint: true }))
+      || !sameColdFileMetadataV1(lockIdentity, lstatSync(rootPaths().lock, { bigint: true }))
+      || !readColdGenesisCandidateV1(rootPaths().lock, lockIdentity).equals(held.lockBytes)
+      || canonical(assertEpochOneActive()) !== canonical(epoch)) fail("direct rebind physical authority changed");
+    epochPin?.assertStable(); processGuard?.assertStable(); processPin?.assertStable(); rootGuard.assertStable();
+  };
+  try {
+    epochPin = pinStableCasPredecessorV1(rootPaths().epoch, "direct rebind epoch");
+    if (!epochPin.bytes.equals(Buffer.from(`${canonical(epoch)}\n`))) fail("direct rebind original epoch is crossed");
+    assertStable();
+    const receipt = await import("./baseline-post-handoff-receipt-v1.js"); assertStable();
+    const startupModule = await import("./baseline-spawner-startup-admission-v1.js"); assertStable();
+    const operation = await receipt.resolveInternalProductionCurrentEntryOperationV1(operationPair as { operationRef: string; operationHash: string }); assertStable();
+    const restart = await startupModule.resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(restartPair as { restartAuthorityRef: string; restartAuthorityHash: string }); assertStable();
+    if (operation.schema !== "setfarm.internal-production-current-entry-operation.v1" || operation.purpose !== "task6a-internal-production-current-entry-v1"
+      || operation.operationRef !== operationPair.operationRef || operation.operationHash !== operationPair.operationHash
+      || restart.schema !== "setfarm.internal-production-pre-schema-spawner-restart-authority.v2" || restart.restartAuthorityRef !== restartPair.restartAuthorityRef || restart.restartAuthorityHash !== restartPair.restartAuthorityHash
+      || restart.actionId !== "task6a-pre-schema-setfarm-spawner-rebind-v1" || restart.service !== "setfarm-spawner" || restart.uid !== process.getuid?.()
+      || restart.transport !== "direct-detached-node-v1" || restart.terminationSignal !== "SIGTERM" || restart.maximumTerminationDispatchCount !== 1 || restart.maximumSpawnDispatchCount !== 1) fail("direct rebind operation or transport is crossed");
+    const startup = await startupModule.resolveInternalProductionPreSchemaSpawnerStartupTokenV1({ startupTokenRef: restart.startupTokenRef, startupTokenHash: restart.startupTokenHash }); assertStable();
+    const authorization = await startupModule.resolveInternalProductionPreSchemaSpawnerRebindAuthorizationV1({ authorizationRef: restart.preSchemaSpawnerRebindAuthorizationRef, authorizationHash: restart.preSchemaSpawnerRebindAuthorizationHash }); assertStable();
+    const legacy = await receipt.resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1({ observationRef: authorization.legacyZeroOwnerObservationRef, observationHash: authorization.legacyZeroOwnerObservationHash }); assertStable();
+    const preMutation = await receipt.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1({ operationRef: operation.operationRef, operationHash: operation.operationHash }); assertStable();
+    for (const value of [restart, startup, authorization, preMutation]) if (value.currentEntryOperationRef !== operation.operationRef || value.currentEntryOperationHash !== operation.operationHash) fail("direct rebind historical operation relation is crossed");
+    if (startup.schema !== "setfarm.internal-production-pre-schema-spawner-startup-token.v1" || startup.startupMode !== "pre-manifest-bootstrap-sealed"
+      || startup.startupTokenRef !== restart.startupTokenRef || startup.startupTokenHash !== restart.startupTokenHash
+      || startup.preSchemaSpawnerRebindAuthorizationRef !== restart.preSchemaSpawnerRebindAuthorizationRef || startup.preSchemaSpawnerRebindAuthorizationHash !== restart.preSchemaSpawnerRebindAuthorizationHash
+      || authorization.schema !== "setfarm.internal-production-pre-schema-spawner-rebind-authorization.v1" || authorization.purpose !== "task6a-pre-schema-setfarm-spawner-rebind-v1" || authorization.service !== "setfarm-spawner"
+      || authorization.authorizationRef !== restart.preSchemaSpawnerRebindAuthorizationRef || authorization.authorizationHash !== restart.preSchemaSpawnerRebindAuthorizationHash
+      || preMutation.preMutationLoadedRuntimeServiceAuthorityRef !== restart.preMutationLoadedRuntimeServiceAuthorityRef || preMutation.preMutationLoadedRuntimeServiceAuthorityHash !== restart.preMutationLoadedRuntimeServiceAuthorityHash) fail("direct rebind startup or original predecessor pair is crossed");
+    if (authorization.authorityV3Migration31AuditRef !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditRef || authorization.authorityV3Migration31AuditHash !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash
+      || legacy.authorityV3Migration31AuditRef !== authorization.authorityV3Migration31AuditRef || legacy.authorityV3Migration31AuditHash !== authorization.authorityV3Migration31AuditHash
+      || legacy.observationRef !== authorization.legacyZeroOwnerObservationRef || legacy.observationHash !== authorization.legacyZeroOwnerObservationHash
+      || legacy.cleanSetfarmSourceSha !== operation.controllerSource.sha || legacy.cleanSetfarmTreeHash !== operation.controllerSource.treeHash || legacy.cleanSetfarmBuildHash !== operation.controllerSource.buildHash
+      || legacy.observedSpawnerGenerationHash !== authorization.predecessorSpawnerGenerationHash) fail("direct rebind audit or legacy-zero relation is crossed");
+    const spawner = preMutation.spawner as Readonly<Record<string, unknown>>;
+    const predecessor = { schema: "setfarm.internal-production-spawner-process-identity.v1", pid: spawner.pid, processStartTimeEpochMs: spawner.processStartTimeEpochMs, processIdentityHash: spawner.processIdentityHash };
+    const predecessorHash = sha256(canonical(predecessor));
+    for (const value of [restart, startup]) if (value.predecessorSpawnerProcessIdentityHash !== predecessorHash || value.predecessorSpawnerProcessIdentityRef !== `setfarm://internal-production/spawner-process-identity/sha256/${predecessorHash}`) fail("direct rebind predecessor process pair is crossed");
+    for (const value of [restart, startup, authorization]) if (value.predecessorSpawnerServiceIdentityHash !== spawner.serviceIdentityHash || value.predecessorSpawnerGenerationHash !== spawner.generationHash) fail("direct rebind predecessor service relation is crossed");
+    if (!Number.isSafeInteger(spawner.pid) || (spawner.pid as number) < 1 || !Number.isSafeInteger(spawner.processStartTimeEpochMs) || (spawner.processStartTimeEpochMs as number) < 1
+      || typeof spawner.processIdentityHash !== "string" || !SHA256.test(spawner.processIdentityHash) || spawner.processOwnerCount !== 1 || spawner.listener !== null) fail("direct rebind predecessor projection is invalid");
+    const processPath = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", predecessorHash.slice(0, 2), `${predecessorHash}.json`);
+    processGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), path.dirname(processPath));
+    processPin = pinStableCasPredecessorV1(processPath, "direct rebind predecessor");
+    if (!processPin.bytes.equals(Buffer.from(`${canonical(predecessor)}\n`)) || lstatSync(processPath).uid !== restart.uid) fail("direct rebind stored predecessor is crossed");
+    assertStable();
+    const candidate = await receipt.observeInternalProductionSpawnerLaunchProfileCandidateV1(); assertStable();
+    const profile = validateHistoricalSpawnerLaunchProfileV1(candidate.profile);
+    if (profile.profileHash !== restart.launchProfileHash || canonical(profile.source) !== canonical(operation.controllerSource)) fail("direct rebind launch profile is crossed");
+    const source = operation.controllerSource;
+    if (restart.targetSpawnerSourceSha !== source.sha || restart.targetSpawnerTreeHash !== source.treeHash || restart.targetSpawnerBuildHash !== source.buildHash
+      || startup.task0SpawnerSourceSha !== source.sha || startup.task0SpawnerTreeHash !== source.treeHash || startup.task0SpawnerBuildHash !== source.buildHash
+      || authorization.cleanSetfarmSourceSha !== source.sha || authorization.cleanSetfarmTreeHash !== source.treeHash || authorization.cleanSetfarmBuildHash !== source.buildHash) fail("direct rebind source relation is crossed");
+    const environment = candidate.environment;
+    if (!environment || typeof environment !== "object" || Array.isArray(environment) || Object.getPrototypeOf(environment) !== Object.prototype
+      || Reflect.ownKeys(environment).some(key => typeof key !== "string") || Object.values(environment).some(value => typeof value !== "string")
+      || profile.environmentHash !== sha256(`setfarm.internal-production-spawner-launch-environment-candidate.v1\n${canonical(environment)}`)) fail("direct rebind environment is crossed");
+    const finalPreMutation = await receipt.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1({ operationRef: operation.operationRef, operationHash: operation.operationHash }); assertStable();
+    if (canonical(finalPreMutation) !== canonical(preMutation)) fail("direct rebind original predecessor changed");
+    const result = { operation, restart, startup, authorization, legacy, preMutation, profile, epoch } as Readonly<{
+      operation: typeof operation; restart: typeof restart; startup: typeof startup; authorization: typeof authorization;
+      legacy: typeof legacy; preMutation: typeof preMutation; profile: typeof profile; epoch: typeof epoch; environment: typeof environment;
+    }>;
+    Object.defineProperty(result, "environment", { value: freezeColdDataV1({ ...environment }), enumerable: false, writable: false, configurable: false });
+    assertStable();
+    return freezeColdDataV1(result);
+  } finally {
+    let cleanupError: unknown = null;
+    for (const owner of [processPin, processGuard, epochPin, rootGuard]) {
+      try { owner?.close(); } catch (error) { cleanupError ??= error; }
+    }
+    if (cleanupError !== null) throw cleanupError;
+  }
 }
 
 function assertHelperJournalAllowsLockCleanup(

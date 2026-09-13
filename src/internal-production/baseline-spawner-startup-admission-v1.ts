@@ -97,6 +97,8 @@ export type InternalProductionPreSchemaSpawnerRestartAuthorityV1 = PreSchemaSpaw
   launchdLabel: "com.setrox.setfarm-spawner"; executable: "/bin/launchctl"; argv: readonly ["kickstart", "-k", string];
 } | {
   schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v2";
+  preMutationLoadedRuntimeServiceAuthorityRef: CanonicalRef;
+  preMutationLoadedRuntimeServiceAuthorityHash: Sha256V1;
   transport: "direct-detached-node-v1";
   launchProfileHash: Sha256V1;
   terminationSignal: "SIGTERM";
@@ -529,9 +531,11 @@ function validatePreSchemaSpawnerRestartTransportV1(body: Record<string, unknown
     return;
   }
   if (body.schema === "setfarm.internal-production-pre-schema-spawner-restart-authority.v2") {
-    exactKeys(body, [...common, "transport", "launchProfileHash", "terminationSignal", "maximumTerminationDispatchCount", "maximumSpawnDispatchCount"], "restart-authority");
+    exactKeys(body, [...common, "transport", "launchProfileHash", "terminationSignal", "maximumTerminationDispatchCount", "maximumSpawnDispatchCount", "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash"], "restart-authority");
     if (body.transport !== "direct-detached-node-v1" || typeof body.launchProfileHash !== "string" || !SHA256.test(body.launchProfileHash)
-      || body.terminationSignal !== "SIGTERM" || body.maximumTerminationDispatchCount !== 1 || body.maximumSpawnDispatchCount !== 1) fail("restart authority direct transport is invalid");
+      || body.terminationSignal !== "SIGTERM" || body.maximumTerminationDispatchCount !== 1 || body.maximumSpawnDispatchCount !== 1
+      || typeof body.preMutationLoadedRuntimeServiceAuthorityHash !== "string" || !SHA256.test(body.preMutationLoadedRuntimeServiceAuthorityHash)
+      || body.preMutationLoadedRuntimeServiceAuthorityRef !== `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${body.preMutationLoadedRuntimeServiceAuthorityHash}`) fail("restart authority direct transport is invalid");
     return;
   }
   fail("restart authority transport schema is invalid");

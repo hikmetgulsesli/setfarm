@@ -648,6 +648,7 @@ export {validateHistoricalSpawnerLaunchProfileV1,validateColdHistoricalLaunchPro
     const pair = (stem: string, domain: string) => ({ [`${stem}Ref`]: `setfarm://internal-production/${domain}/sha256/${hash}`, [`${stem}Hash`]: hash });
     const intentBody = { schema: "setfarm.internal-production-pre-schema-spawner-direct-rebind-intent.v1", purpose: "operation-bound-pre-schema-spawner-rebind-v1", transport: "direct-detached-node-v1", terminationSignal: "SIGTERM", maximumTerminationDispatchCount: 1, maximumSpawnDispatchCount: 1,
       currentEntryOperation: pair("operation", "current-entry-operation"), restartAuthority: pair("restartAuthority", "pre-schema-spawner-restart-authority"), startupToken: pair("startupToken", "pre-schema-spawner-startup-token"), predecessorSpawnerProcessIdentity: pair("predecessorSpawnerProcessIdentity", "spawner-process-identity"),
+      preMutationLoadedRuntimeServiceAuthority: pair("preMutationLoadedRuntimeServiceAuthority", "pre-mutation-loaded-runtime-service-authority"),
       launchProfile: profile, epoch: pair("epoch", "physical-service-restart-authority-epoch"), transitionLock: { schema: "setfarm.internal-production-physical-service-restart-authority-transition-lock.v1", pid: process.pid, processStartTimeEpochMs: 1, processIdentityHash: hash, leaseNonce: hash }, lockIdentity: { devDecimal: "1", inoDecimal: "2" }, nonceHash: hash };
     const sealIntent = (value: any): Buffer => { delete value.intentRef; delete value.intentHash; const intentHash = sha256(canonical(value)); return Buffer.from(`${canonical({ ...value, intentRef: `setfarm://internal-production/pre-schema-spawner-direct-rebind-intent/sha256/${intentHash}`, intentHash })}\n`); };
     const intentBytes = sealIntent(structuredClone(intentBody));
@@ -662,12 +663,73 @@ export {validateHistoricalSpawnerLaunchProfileV1,validateColdHistoricalLaunchPro
       value => { value.coldObservation = {}; }, value => { value.lockIdentity.inoDecimal = "02"; }, value => { value.lockIdentity.devDecimal = "-1"; },
       value => { value.nonceHash = "bad"; }, value => { value.transitionLock.pid = 0; }, value => { value.launchProfile = crossedHash; },
     ];
-    for (const [key, stem] of [["currentEntryOperation", "operation"], ["restartAuthority", "restartAuthority"], ["startupToken", "startupToken"], ["predecessorSpawnerProcessIdentity", "predecessorSpawnerProcessIdentity"], ["epoch", "epoch"]]) {
+    for (const [key, stem] of [["currentEntryOperation", "operation"], ["restartAuthority", "restartAuthority"], ["startupToken", "startupToken"], ["predecessorSpawnerProcessIdentity", "predecessorSpawnerProcessIdentity"], ["preMutationLoadedRuntimeServiceAuthority", "preMutationLoadedRuntimeServiceAuthority"], ["epoch", "epoch"]]) {
       intentFaults.push(value => { value[key!][`${stem}Ref`] = `setfarm://internal-production/cold-spawner-bootstrap-intent/sha256/${hash}`; });
       intentFaults.push(value => { value[key!][`${stem}Hash`] = "f".repeat(64); });
     }
     for (const mutate of intentFaults) { const value = structuredClone(intentBody); mutate(value); assert.throws(() => module.parseDirectSpawnerRebindIntentV1(sealIntent(value))); }
     for (const bytes of [Buffer.alloc(0), Buffer.from(intentBytes.toString().trim()), Buffer.from(` ${intentBytes.toString()}`), Buffer.alloc(8_388_609, 0x20), Buffer.from(intentBytes.toString().replace(/"intentHash":"[a-f0-9]+"/, `"intentHash":"${"f".repeat(64)}"`))]) assert.throws(() => module.parseDirectSpawnerRebindIntentV1(bytes));
+    assert.ok(source.includes("async function resolveDirectSpawnerRebindInputsUnderLeaseV1("), "direct rebind must resolve original authority under the actual physical lease");
+    const runtimePath = installRetirementFixture(fixture, source + "\nexport {resolveDirectSpawnerRebindInputsUnderLeaseV1};\n");
+    const internal = path.dirname(runtimePath);
+    const environment = { PATH: "/usr/bin:/bin", PRIVATE_VALUE: "direct-fixture-secret" };
+    const directProfile = rehash({ ...structuredClone(profile), environmentHash: sha256(`setfarm.internal-production-spawner-launch-environment-candidate.v1\n${canonical(environment)}`) });
+    const operation = { ...pair("operation", "current-entry-operation"), schema: "setfarm.internal-production-current-entry-operation.v1", purpose: "task6a-internal-production-current-entry-v1", controllerSource: directProfile.source, authorityV3Migration31Audit: pair("authorityV3Migration31Audit", "authority-v3-migration31-audit") };
+    const predecessor = { schema: "setfarm.internal-production-spawner-process-identity.v1", pid: 12345, processStartTimeEpochMs: 123456, processIdentityHash: "e".repeat(64) };
+    const predecessorHash = sha256(canonical(predecessor));
+    const predecessorFields = { predecessorSpawnerProcessIdentityRef: `setfarm://internal-production/spawner-process-identity/sha256/${predecessorHash}`, predecessorSpawnerProcessIdentityHash: predecessorHash, predecessorSpawnerServiceIdentityHash: hash, predecessorSpawnerGenerationHash: hash };
+    const sourceFields = { targetSpawnerSourceSha: directProfile.source.sha, targetSpawnerTreeHash: directProfile.source.treeHash, targetSpawnerBuildHash: directProfile.source.buildHash };
+    const preMutationPair = pair("preMutationLoadedRuntimeServiceAuthority", "pre-mutation-loaded-runtime-service-authority");
+    const preMutation = { schema: "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1", ...preMutationPair, currentEntryOperationRef: operation.operationRef, currentEntryOperationHash: operation.operationHash, spawner: { pid: predecessor.pid, processStartTimeEpochMs: predecessor.processStartTimeEpochMs, processIdentityHash: predecessor.processIdentityHash, serviceIdentityHash: hash, generationHash: hash, processOwnerCount: 1, listener: null } };
+    const authorization = { schema: "setfarm.internal-production-pre-schema-spawner-rebind-authorization.v1", purpose: "task6a-pre-schema-setfarm-spawner-rebind-v1", service: "setfarm-spawner", ...pair("authorization", "pre-schema-spawner-rebind-authorization"), currentEntryOperationRef: operation.operationRef, currentEntryOperationHash: operation.operationHash, cleanSetfarmSourceSha: directProfile.source.sha, cleanSetfarmTreeHash: directProfile.source.treeHash, cleanSetfarmBuildHash: directProfile.source.buildHash, predecessorSpawnerServiceIdentityHash: hash, predecessorSpawnerGenerationHash: hash };
+    const startup = { schema: "setfarm.internal-production-pre-schema-spawner-startup-token.v1", startupMode: "pre-manifest-bootstrap-sealed", ...pair("startupToken", "pre-schema-spawner-startup-token"), currentEntryOperationRef: operation.operationRef, currentEntryOperationHash: operation.operationHash, preSchemaSpawnerRebindAuthorizationRef: authorization.authorizationRef, preSchemaSpawnerRebindAuthorizationHash: authorization.authorizationHash, task0SpawnerSourceSha: directProfile.source.sha, task0SpawnerTreeHash: directProfile.source.treeHash, task0SpawnerBuildHash: directProfile.source.buildHash, ...predecessorFields };
+    const restart = { schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v2", ...pair("restartAuthority", "pre-schema-spawner-restart-authority"), currentEntryOperationRef: operation.operationRef, currentEntryOperationHash: operation.operationHash, preSchemaSpawnerRebindAuthorizationRef: authorization.authorizationRef, preSchemaSpawnerRebindAuthorizationHash: authorization.authorizationHash, startupTokenRef: startup.startupTokenRef, startupTokenHash: startup.startupTokenHash, ...predecessorFields, ...sourceFields, ...preMutationPair, uid, actionId: "task6a-pre-schema-setfarm-spawner-rebind-v1", service: "setfarm-spawner", transport: "direct-detached-node-v1", launchProfileHash: directProfile.profileHash, terminationSignal: "SIGTERM", maximumTerminationDispatchCount: 1, maximumSpawnDispatchCount: 1 };
+    const legacy = { ...pair("observation", "legacy-pre-manifest-zero-owner-observation"), schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1", observationKind: "legacy-pre-manifest-existing-live-truth", ...operation.authorityV3Migration31Audit, cleanSetfarmSourceSha: directProfile.source.sha, cleanSetfarmTreeHash: directProfile.source.treeHash, cleanSetfarmBuildHash: directProfile.source.buildHash, observedSpawnerGenerationHash: hash };
+    Object.assign(authorization, operation.authorityV3Migration31Audit, { legacyZeroOwnerObservationRef: legacy.observationRef, legacyZeroOwnerObservationHash: legacy.observationHash });
+    const records = { operation, restart, startup, authorization, legacy, preMutation, profile: directProfile, environment };
+    const readPort = `const read=(key)=>{const state=globalThis.__directRebindInputFixtureV1;state.calls.push(key);state.hook?.(key);return structuredClone(state.records[key])};\n`;
+    writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), readPort + `export async function resolveInternalProductionCurrentEntryOperationV1(){return read('operation')}\nexport async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(){return read('legacy')}\nexport async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(){return read('preMutation')}\nexport async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){const result={profile:read('profile')};Object.defineProperty(result,'environment',{value:read('environment'),enumerable:false});return Object.freeze(result)}\n`);
+    writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), readPort + `export async function resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(){return read('restart')}\nexport async function resolveInternalProductionPreSchemaSpawnerStartupTokenV1(){return read('startup')}\nexport async function resolveInternalProductionPreSchemaSpawnerRebindAuthorizationV1(){return read('authorization')}\n`);
+    const processRecord = path.join(fixture, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", predecessorHash.slice(0, 2), predecessorHash + ".json");
+    mkdirSync(path.dirname(processRecord), { recursive: true, mode: 0o700 });
+    writeFileSync(processRecord, canonical(predecessor) + "\n", { mode: 0o600 });
+    const runtime = await import(pathToFileURL(runtimePath).href);
+    const lease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
+    try {
+      const input = { currentEntryOperation: pair("operation", "current-entry-operation"), restartAuthority: pair("restartAuthority", "pre-schema-spawner-restart-authority") };
+      const run = async (mutate?: (value: any) => void, hook?: (key: string) => void) => {
+        const observed = structuredClone(records); mutate?.(observed);
+        Reflect.set(globalThis, "__directRebindInputFixtureV1", { records: observed, calls: [], hook });
+        return runtime.resolveDirectSpawnerRebindInputsUnderLeaseV1(lease, input);
+      };
+      const resolved = await run();
+      assert.deepEqual(resolved.preMutation, preMutation);
+      assert.deepEqual(resolved.environment, environment);
+      assert.equal(JSON.stringify(resolved).includes("direct-fixture-secret"), false, "plaintext environment is not persisted by spreading or serializing the resolved authority");
+      assert.equal(Object.isFrozen(resolved.preMutation.spawner), true);
+      const faults: Array<(value: any) => void> = [
+        value => { value.operation.purpose = "cold-bootstrap"; }, value => { value.operation.operationHash = "b".repeat(64); },
+        value => { value.restart.schema = "setfarm.internal-production-pre-schema-spawner-restart-authority.v1"; }, value => { value.restart.currentEntryOperationHash = "b".repeat(64); }, value => { value.restart.launchProfileHash = "b".repeat(64); }, value => { value.restart.preMutationLoadedRuntimeServiceAuthorityHash = "b".repeat(64); },
+        value => { value.startup.startupMode = "ordinary"; }, value => { value.startup.predecessorSpawnerProcessIdentityHash = "b".repeat(64); }, value => { value.startup.preSchemaSpawnerRebindAuthorizationHash = "b".repeat(64); }, value => { value.startup.task0SpawnerBuildHash = "b".repeat(64); },
+        value => { value.authorization.currentEntryOperationHash = "b".repeat(64); }, value => { value.authorization.predecessorSpawnerGenerationHash = "b".repeat(64); }, value => { value.authorization.cleanSetfarmTreeHash = "b".repeat(40); },
+        value => { value.preMutation.currentEntryOperationHash = "b".repeat(64); }, value => { value.preMutation.spawner.pid++; }, value => { value.preMutation.spawner.processStartTimeEpochMs++; }, value => { value.preMutation.spawner.processIdentityHash = "b".repeat(64); }, value => { value.preMutation.spawner.serviceIdentityHash = "b".repeat(64); },
+        value => { value.environment.PRIVATE_VALUE = "crossed"; },
+        value => { value.authorization.authorityV3Migration31AuditHash = "b".repeat(64); },
+        value => { value.authorization.legacyZeroOwnerObservationHash = "b".repeat(64); },
+        value => { value.legacy.authorityV3Migration31AuditHash = "b".repeat(64); },
+        value => { value.legacy.cleanSetfarmBuildHash = "b".repeat(64); },
+        value => { value.legacy.observedSpawnerGenerationHash = "b".repeat(64); },
+      ];
+      for (const mutate of faults) await assert.rejects(run(mutate), /direct rebind|profile/);
+      await assert.rejects(runtime.resolveDirectSpawnerRebindInputsUnderLeaseV1({ ...lease }, input), /lease/);
+      await assert.rejects(run(undefined, key => { if (key === "profile") { const bytes = readFileSync(processRecord); renameSync(processRecord, processRecord + ".old"); writeFileSync(processRecord, bytes, { mode: 0o600 }); } }), /changed/, "the same bytes on a replacement process-authority inode cannot cross an await");
+      const epochPath = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/epoch-head.json");
+      await assert.rejects(run(undefined, key => { if (key === "profile") { const bytes = readFileSync(epochPath); renameSync(epochPath, epochPath + ".old"); writeFileSync(epochPath, bytes, { mode: 0o600 }); } }), /changed/, "the original epoch inode remains bound across awaits");
+      assert.equal(existsSync(path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-journal.json")), false, "input authentication cannot publish dispatch permission");
+    } finally {
+      Reflect.deleteProperty(globalThis, "__directRebindInputFixtureV1");
+      await runtime.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(lease);
+    }
   } finally { rmSync(fixture, { recursive: true, force: true }); }
 });
 

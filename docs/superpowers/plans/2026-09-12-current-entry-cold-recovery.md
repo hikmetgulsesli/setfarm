@@ -247,6 +247,30 @@ Expanded historical routing/export/eleven-consumer checks passed23/23 (93.085s),
 exact145/64 manifests17/17 (6.766s), TypeScript no-emit and whitespace checks
 passed. Independent review found no remaining must-fix in this read-only slice.
 
+Direct input-binding refinement (same startup/retirement source and owning test
+File Map entries): V2 restart and private intent require the original P3 pair;
+V1 fields remain unchanged. A private read-only resolver authenticates operation,
+restart, startup, authorization, original legacy-zero and P3 under the actual
+held physical lease, binds audit/source/service/process identities, pins the
+stored process-authority and original epoch file across awaits, and checks the
+public launch profile plus its hidden environment. Returned data grants no
+dispatch authority; no journal, signal, spawn or lease release is reachable.
+The future retained kernel must revalidate these original relations before
+effects. Input errors keep the caller's lease held and environment plaintext
+must remain non-enumerable through serialization.
+
+Input-binding checkpoint evidence: required P3 fields first failed both actual
+parsers; the missing under-lease resolver then failed its fixture. Review found
+crossed audit/legacy-zero relations and same-byte epoch inode replacement;
+both missing rejections were reproduced before fixing them. The actual physical
+lease fixture now covers 24 crossed input relations, a cloned lease, process and
+epoch inode replacement across awaits, hidden environment and no journal write.
+Focused input/lease/V1 refusal checks passed5/5 (2.286s); historical helper and
+database-free inert imports2/2 (7.298s); complete startup12/12 (6.176s), exact145/64
+manifest17/17 (5.382s), and fresh TypeScript no-emit passed. Independent review
+found no remaining must-fix. Direct producer/effects remain unwired until the
+retained one-shot transport and runtime routing are connected.
+
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
 facts in the original owner, marking entry before `kill` or `spawn`. An existing

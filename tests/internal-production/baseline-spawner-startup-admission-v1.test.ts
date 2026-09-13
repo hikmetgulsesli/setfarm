@@ -434,7 +434,7 @@ test("direct rebind restart schema is distinct from immutable launchctl history"
     const hash = "a".repeat(64), uid = process.getuid!();
     const common = { actionId: "task6a-pre-schema-setfarm-spawner-rebind-v1", service: "setfarm-spawner", currentEntryOperationRef: `setfarm://internal-production/current-entry-operation/sha256/${hash}`, currentEntryOperationHash: hash, preSchemaSpawnerRebindAuthorizationRef: `setfarm://internal-production/pre-schema-spawner-rebind-authorization/sha256/${hash}`, preSchemaSpawnerRebindAuthorizationHash: hash, startupTokenRef: `setfarm://internal-production/pre-schema-spawner-startup-token/sha256/${hash}`, startupTokenHash: hash, predecessorSpawnerProcessIdentityRef: `setfarm://internal-production/spawner-process-identity/sha256/${hash}`, predecessorSpawnerProcessIdentityHash: hash, predecessorSpawnerServiceIdentityHash: hash, predecessorSpawnerGenerationHash: hash, targetSpawnerSourceSha: "b".repeat(40), targetSpawnerTreeHash: "c".repeat(40), targetSpawnerBuildHash: hash, uid, restartAuthorityRef: `setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/${hash}`, restartAuthorityHash: hash };
     const v1 = { ...common, schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v1", launchdLabel: "com.setrox.setfarm-spawner", executable: "/bin/launchctl", argv: ["kickstart", "-k", `gui/${uid}/com.setrox.setfarm-spawner`] };
-    const v2 = { ...common, schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v2", transport: "direct-detached-node-v1", launchProfileHash: "d".repeat(64), terminationSignal: "SIGTERM", maximumTerminationDispatchCount: 1, maximumSpawnDispatchCount: 1 };
+    const v2 = { ...common, schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v2", transport: "direct-detached-node-v1", launchProfileHash: "d".repeat(64), terminationSignal: "SIGTERM", maximumTerminationDispatchCount: 1, maximumSpawnDispatchCount: 1, preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${hash}`, preMutationLoadedRuntimeServiceAuthorityHash: hash };
     const ordered = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value).sort(([left], [right]) => Buffer.compare(Buffer.from(left), Buffer.from(right))));
     for (const value of [v1, v2]) {
       const body = Object.freeze(ordered(value)), before = JSON.stringify(body);
@@ -442,7 +442,7 @@ test("direct rebind restart schema is distinct from immutable launchctl history"
       assert.equal(JSON.stringify(body), before, "parsing cannot rewrite historical or direct authority bytes");
     }
     const invalid: Array<Record<string, unknown>> = [];
-    for (const field of ["transport", "launchProfileHash", "terminationSignal", "maximumTerminationDispatchCount", "maximumSpawnDispatchCount"]) {
+    for (const field of ["transport", "launchProfileHash", "terminationSignal", "maximumTerminationDispatchCount", "maximumSpawnDispatchCount", "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash"]) {
       const missing: Record<string, unknown> = { ...v2 }; delete missing[field]; invalid.push(missing);
       invalid.push({ ...v1, [field]: v2[field as keyof typeof v2] });
     }
@@ -453,6 +453,8 @@ test("direct rebind restart schema is distinct from immutable launchctl history"
       invalid.push({ ...v2, maximumTerminationDispatchCount: count }, { ...v2, maximumSpawnDispatchCount: count });
     }
     for (const launchProfileHash of ["", "D".repeat(64), "d".repeat(63), null]) invalid.push({ ...v2, launchProfileHash });
+    for (const preMutationLoadedRuntimeServiceAuthorityRef of [common.currentEntryOperationRef, v2.preMutationLoadedRuntimeServiceAuthorityRef + "extra", null]) invalid.push({ ...v2, preMutationLoadedRuntimeServiceAuthorityRef });
+    for (const preMutationLoadedRuntimeServiceAuthorityHash of ["b".repeat(64), "A".repeat(64), null]) invalid.push({ ...v2, preMutationLoadedRuntimeServiceAuthorityHash });
     for (const base of [v1, v2]) invalid.push({ ...base, uid: -1 }, { ...base, uid: "501" }, { ...base, actionId: "cold-bootstrap" }, { ...base, service: "setfarm-dashboard" });
     invalid.push({ ...v2, schema: v1.schema }, { ...v1, schema: v2.schema }, { ...v1, argv: ["kickstart", `gui/${uid}/com.setrox.setfarm-spawner`] });
     for (const value of invalid) assert.throws(() => module.validate(ordered(value)), /fields|fixed action|transport/);
