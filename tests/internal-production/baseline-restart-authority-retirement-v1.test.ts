@@ -362,6 +362,41 @@ async function compilePlainRetirementFixtureV1(fixture: string, modulePath: stri
   return pathToFileURL(modulePath.replace(/\.ts$/, ".js")).href;
 }
 
+test("inherited frame selection refuses unauthenticated direct families without cold fallback", async () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-inherited-frame-selection-")));
+  try {
+    const modulePath = installRetirementFixture(fixture, readFileSync(sourcePath, "utf8") + "\nexport function inspectSelectionFixture(){return {childFailed:coldChildAuthenticationFailedV1,childHeld:coldChildAuthenticationV1!==null,helperHeld:coldHelperRuntimeContextV1!==null}}\n");
+    const moduleUrl = await compilePlainRetirementFixtureV1(fixture, modulePath);
+    const authorityRoot = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1");
+    const before = coldGenesisTreeSnapshotV1(authorityRoot);
+    for (const [schema, entry, expected] of [
+      ["setfarm.internal-production-pre-schema-spawner-direct-rebind-helper-capability.v1", "internal-production/baseline-service-restart-helper-v1.js", "direct inherited runtime capability is not authenticated"],
+      ["setfarm.internal-production-pre-schema-spawner-direct-rebind-child-capability.v1", "spawner.js", "direct inherited runtime capability is not authenticated"],
+      ["setfarm.internal-production-pre-schema-spawner-direct-rebind-helper-capability.v1", "spawner.js", "frame family or entry is crossed"],
+      ["unknown", "spawner.js", "frame family or entry is crossed"],
+    ]) {
+      const framePath = path.join(fixture, "frame"), writer = openSync(framePath, "wx+", 0o600);
+      let reader: number | undefined;
+      try {
+        reader = openSync(framePath, "r"); unlinkSync(framePath);
+        writeFileSync(writer, `${canonical({ schema })}\n`);
+        const script = `import assert from 'node:assert/strict';import {closeSync} from 'node:fs';
+const port=await import(${JSON.stringify(moduleUrl)});process.argv[1]=${JSON.stringify(path.join(fixture, "dist", entry!))};
+assert.throws(()=>port.resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1(),error=>error.message.includes(${JSON.stringify(expected)}));
+assert.deepEqual(port.inspectSelectionFixture(),{childFailed:false,childHeld:false,helperHeld:false});
+closeSync(3);process.argv[1]='ordinary-after-refusal.js';
+assert.throws(()=>port.resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1(),/authentication is revoked/);
+process.stdout.write('refused');`;
+        const child = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: fixture, env: { PATH: "/usr/bin:/bin" }, stdio: ["ignore", "pipe", "pipe", reader], encoding: "utf8", timeout: 10000, maxBuffer: 65536 });
+        assert.equal(child.status, 0, `${schema}: ${child.stderr}`);
+        assert.equal(child.stdout, "refused");
+        assert.equal(child.stderr, "");
+        assert.deepEqual(coldGenesisTreeSnapshotV1(authorityRoot), before);
+      } finally { if (reader !== undefined) closeSync(reader); closeSync(writer); }
+    }
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
 async function createColdEpochGenesisFixtureV1(source = readFileSync(sourcePath, "utf8")) {
   const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-cold-genesis-case-")));
   const modulePath = installRetirementFixture(fixture, source);
@@ -1004,11 +1039,11 @@ export {observePhaseClosedZeroV1};
   };
   const handles = deferControllerPreparation ? null : fixture.isolated.openColdFrameFixtureV1();
   const state = deferControllerPreparation ? null : fixture.isolated.inspectColdIntentFixtureV1();
-  const run = (overrides: { frame?: number; lock?: number; intent?: number; entry?: string; coldMode?: string; realCold?: boolean; expectedRefusal?: boolean; label?: string } = {}) => {
+  const run = (overrides: { frame?: number; lock?: number; intent?: number; entry?: string; coldMode?: string; extraEnvironment?: Record<string, string>; realCold?: boolean; expectedRefusal?: boolean; label?: string } = {}) => {
     assert.ok(handles && state, "direct helper fixture requires prepared controller handles");
     const child = spawnSync(process.execPath, [overrides.entry ?? runner], { cwd: fixture.fixture, encoding: "utf8", timeout: 15000, maxBuffer: 65536,
       stdio: ["ignore", "pipe", "pipe", overrides.frame ?? handles.frameDescriptor, overrides.lock ?? state.descriptor, overrides.intent ?? handles.intentDescriptor],
-      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", ...(overrides.coldMode === undefined ? {} : { SETFARM_INTERNAL_PRODUCTION_COLD_HELPER: overrides.coldMode }) } });
+      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", ...(overrides.coldMode === undefined ? {} : { SETFARM_INTERNAL_PRODUCTION_COLD_HELPER: overrides.coldMode }), ...overrides.extraEnvironment } });
     if (overrides.expectedRefusal) {
       assert.equal(child.status, 1, `${overrides.label}: the actual helper must refuse a crossed transport`);
       assert.equal(child.signal, null); assert.equal(child.error, undefined);
@@ -1094,7 +1129,7 @@ export async function observeInternalProductionColdSpawnerHelperBootstrapObserva
     fixture.installRealPhaseReader();
     writeFileSync(fixture.runner, `
 import assert from 'node:assert/strict';import {fstatSync} from 'node:fs';
-import {acquireColdSpawnerHelperContextV1,observeInternalProductionColdSpawnerHelperIntentPhaseV1,observeInternalProductionColdSpawnerBootstrapJournalCensusV1} from './baseline-restart-authority-retirement-v1.js';
+import {acquireColdSpawnerHelperContextV1,observeInternalProductionColdSpawnerHelperIntentPhaseV1,observeInternalProductionColdSpawnerBootstrapJournalCensusV1,resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1,resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1} from './baseline-restart-authority-retirement-v1.js';
 let context;
 try{
   context=await acquireColdSpawnerHelperContextV1();
@@ -1102,6 +1137,16 @@ try{
   assert.throws(()=>observeInternalProductionColdSpawnerHelperIntentPhaseV1({...context}));
   assert.throws(()=>observeInternalProductionColdSpawnerBootstrapJournalCensusV1(),/COLD_BOOTSTRAP_UNSETTLED/);
   const {loadRuntimeEnv}=await import('../runtime-config.js');
+  const shared=resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1();
+  assert.equal(shared.role,'cold-helper');assert.deepEqual(Object.keys(shared),['schema','role']);
+  assert.equal(shared.environment.FIXTURE_SECRET,'never-persist-cold-snapshot');assert.equal(JSON.stringify(shared).includes('never-persist'),false);
+  if(globalThis.__selectorEntryFault){
+    const entry=process.argv[1];process.argv[1]=entry+'.foreign';
+    assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1(),/entry changed/);process.argv[1]=entry;
+    assert.throws(()=>resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1(),/snapshot is unavailable/);
+    assert.throws(()=>observeInternalProductionColdSpawnerHelperIntentPhaseV1(context),/foreign, cloned or closed/);
+    process.stdout.write(JSON.stringify({accepted:true,selectorRevoked:true}));context.close();process.exit(0);
+  }
   loadRuntimeEnv();process.env.UNEXPECTED='drift';assert.throws(()=>loadRuntimeEnv());delete process.env.UNEXPECTED;
   const probe=globalThis.__coldConfigurationProbe;
   assert.ok(probe.urlMatches&&probe.dirMatches&&probe.secretMatches&&probe.newKeyAbsent);
@@ -1121,6 +1166,16 @@ try{
     assert.equal(result.accepted, true, JSON.stringify(result));
     assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), before);
     const validRunner = readFileSync(fixture.runner);
+    writeFileSync(fixture.runner, `globalThis.__selectorEntryFault=true;\n${validRunner.toString("utf8")}`);
+    const selectorRefused = fixture.run({ coldMode: "1" });
+    assert.equal(selectorRefused.selectorRevoked, true, JSON.stringify(selectorRefused));
+    assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), before);
+    writeFileSync(fixture.runner, validRunner);
+    for (const marker of ["SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER", "SETFARM_INTERNAL_PRODUCTION_DIRECT_CHILD", "SETFARM_INTERNAL_PRODUCTION_COLD_CHILD", "SETFARM_INTERNAL_PRODUCTION_UNKNOWN"]) {
+      const mixed = fixture.run({ coldMode: "1", extraEnvironment: { [marker]: "1" } });
+      assert.equal(mixed.accepted, false, `authenticated cold helper must refuse mixed role ${marker}`);
+      assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), before);
+    }
     for (const fault of ["cloned-context", "public-phase", "closed-refresh", "bracket-refusal", "post-profile"]) {
       writeFileSync(fixture.runner, `globalThis.__contextFault=${JSON.stringify(fault)};\n${validRunner.toString("utf8")}`);
       const refused = fixture.run({ coldMode: "1" });
@@ -1152,7 +1207,7 @@ try{
     for (const coldMode of ["1", undefined]) {
       const unauthenticated = fixture.run({ coldMode });
       assert.equal(unauthenticated.accepted, false);
-      assert.equal(unauthenticated.message, "INTERNAL_PRODUCTION_COLD_HELPER_CONFIGURATION_INVALID", "the exact helper entry refuses before dotenv or defaults even without a selector");
+      assert.equal(unauthenticated.message, "INTERNAL_PRODUCTION_INHERITED_RUNTIME_CONFIGURATION_INVALID", "the exact helper entry refuses before dotenv or defaults even without a selector");
     }
     writeFileSync(fixture.runner, validRunner);
   } finally { fixture.close(); }
@@ -1442,30 +1497,45 @@ try{
   }
   const child=spawnSync(process.execPath,[${JSON.stringify(path.join(root, "dist"))}+(fault==='wrong-parent'?'/child-parent.js':'/spawner.js'),...(fault==='extra-argv'?['--foreign']:[])],{cwd:fault==='wrong-cwd'?${JSON.stringify(path.join(root, "dist"))}:${JSON.stringify(root)},detached:fault!=='not-detached',encoding:'utf8',timeout:10000,maxBuffer:65536,
     env:environment,stdio:['ignore','pipe','pipe',fault==='missing-frame'?'ignore':fault==='helper-frame'?3:alteredFrame??handles.frameDescriptor,fault==='crossed-lock'?handles.dispatchDescriptor:4,fault==='crossed-dispatch'?5:handles.dispatchDescriptor]});
-  if(fault==='none'||fault==='late-output'){assert.equal(child.status,0,child.stderr);assert.equal(child.stderr,'');process.stdout.write(child.stdout);}
-  else{assert.notEqual(child.status,0,'crossed child was accepted');if(['node-close','authority-close','directory-close','output-file-close','output-directory-close'].includes(fault)){const diagnostic=JSON.parse(child.stdout);assert.equal(diagnostic.interrupted,true);assert.equal(diagnostic.owned,0,'child close failure leaked its descriptor');}else assert.equal(child.stdout,'');assert.match(child.stderr,/INTERNAL_PRODUCTION_COLD_CHILD_CONFIGURATION_INVALID/);assert.ok(!child.stderr.includes('child reached dotenv'));process.stdout.write(JSON.stringify({accepted:false,childRefused:true}));}
+  if(fault==='none'||fault==='late-output'||fault==='selector-entry'||fault==='selector-descriptor'){assert.equal(child.status,0,child.stderr);assert.equal(child.stderr,'');process.stdout.write(child.stdout);}
+  else{assert.notEqual(child.status,0,'crossed child was accepted');if(['node-close','authority-close','directory-close','output-file-close','output-directory-close'].includes(fault)){const diagnostic=JSON.parse(child.stdout);assert.equal(diagnostic.interrupted,true);assert.equal(diagnostic.owned,0,'child close failure leaked its descriptor');}else assert.equal(child.stdout,'');assert.match(child.stderr,/INTERNAL_PRODUCTION_INHERITED_RUNTIME_CONFIGURATION_INVALID/);assert.ok(!child.stderr.includes('child reached dotenv'));process.stdout.write(JSON.stringify({accepted:false,childRefused:true}));}
 }catch(error){process.stdout.write(JSON.stringify({accepted:false,message:error.message}));}finally{if(alteredFrame!==undefined)closeSync(alteredFrame);context?.close()}
 `);
     writeFileSync(path.join(root, "dist/fixture-dependency.js"), "export const fixtureValue=1;\n");
     writeFileSync(path.join(root, "dist/child-parent.js"), `import {spawnSync} from 'node:child_process';const child=spawnSync(process.execPath,[${JSON.stringify(path.join(root, "dist/spawner.js"))}],{cwd:${JSON.stringify(root)},env:process.env,stdio:['ignore','inherit','inherit',3,4,5],detached:true,timeout:8000});process.exitCode=child.status??1;\n`);
     writeFileSync(path.join(root, "dist/spawner.js"), `
 import assert from 'node:assert/strict';import {runtimeConfig,loadRuntimeEnv} from './runtime-config.js';
-import {readFileSync,writeFileSync} from 'node:fs';
+import {readFileSync,writeFileSync,openSync,closeSync} from 'node:fs';
 import './fixture-dependency.js';
-import {resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1} from './internal-production/baseline-restart-authority-retirement-v1.js';
+import {resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1,resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1} from './internal-production/baseline-restart-authority-retirement-v1.js';
 const snapshot=resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1();
 assert.ok(snapshot);assert.equal(JSON.stringify(snapshot).includes('never-persist-cold-snapshot'),false);
 assert.equal(runtimeConfig.setfarmPgUrl,'postgresql://fixture@127.0.0.1:1/disposable');
 assert.equal(process.env.FIXTURE_SECRET,'never-persist-cold-snapshot');loadRuntimeEnv();
-process.env.UNBOUND_CHILD_KEY='drift';assert.throws(()=>loadRuntimeEnv());delete process.env.UNBOUND_CHILD_KEY;
 assert.equal(process.env.NODE_OPTIONS,undefined);assert.equal(process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER,undefined);
 if(${JSON.stringify(fault)}==='late-output'){
   const target=${JSON.stringify(path.join(root, "dist/fixture-dependency.js"))},original=readFileSync(target);
   writeFileSync(target,'export const fixtureValue=9;\\n');
-  assert.throws(()=>loadRuntimeEnv(),/COLD_CHILD_CONFIGURATION_INVALID/,'a same-inode dependency edit must revoke configuration');
+  assert.throws(()=>loadRuntimeEnv(),/INTERNAL_PRODUCTION_INHERITED_RUNTIME_CONFIGURATION_INVALID/,'a same-inode dependency edit must revoke configuration');
   writeFileSync(target,original);
   assert.throws(()=>resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1(),/cold child authentication is revoked/,'restoring bytes cannot revive failed authentication');
 }
+if(${JSON.stringify(fault)}==='selector-entry'){
+  const original=process.argv[1];process.argv[1]=original+'.foreign';
+  assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1(),/entry changed/);
+  process.argv[1]=original;
+  assert.throws(()=>resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1(),/cold child authentication is revoked/,'restored entry cannot revive authority after shared selection refusal');
+  assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1(),/authentication is revoked/);
+}
+if(${JSON.stringify(fault)}==='selector-descriptor'){
+  const original=openSync('/dev/fd/3','r');closeSync(3);assert.equal(openSync('/dev/null','r'),3);
+  assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1());
+  closeSync(3);assert.equal(openSync('/dev/fd/'+original,'r'),3);closeSync(original);
+  assert.throws(()=>resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1(),/cold child authentication is revoked/,'restoring original FD3 cannot revive authority');
+  assert.throws(()=>resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1(),/authentication is revoked/);
+}
+process.env.UNBOUND_CHILD_KEY='drift';assert.throws(()=>loadRuntimeEnv());delete process.env.UNBOUND_CHILD_KEY;
+assert.throws(()=>loadRuntimeEnv(),/INTERNAL_PRODUCTION_INHERITED_RUNTIME_CONFIGURATION_INVALID/,'restoring the environment cannot revive configuration');
 process.stdout.write(JSON.stringify({accepted:true,childPid:process.pid,helperPid:process.ppid}));
 `);
     if (fault.startsWith("claim")) {
@@ -1694,6 +1764,16 @@ finally{if(child&&!accepted){child.kill('SIGTERM');await new Promise(resolve=>{i
     Reflect.set(globalThis, "__coldGenesisObservation", recursivelyFreeze(cold));
   }, fault === "claim-real-helper-controller-settlement-fresh");
 }
+
+test("shared runtime refusal permanently revokes the original cold child authority", async () => {
+  for (const fault of ["selector-entry", "selector-descriptor"]) {
+  const fixture = await createAuthenticatedColdChildFixtureV1(fault);
+  try {
+    const result = fixture.run();
+    assert.equal(result.accepted, true, result.message);
+  } finally { fixture.close(); }
+  }
+});
 
 test("real cold child authenticates its distinct descriptor chain before runtime configuration", async () => {
   assert.ok(readFileSync(sourcePath, "utf8").includes("function resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1("), "synchronous cold child authentication is not implemented");
@@ -3473,11 +3553,13 @@ test("P4 restart transition lease authenticates epoch one", async () => {
     "resolveInternalProductionServiceRestartAuthorityActivationV1",
     "resolveInternalProductionServiceRestartAuthorityCutoverV1",
     "resolveInternalProductionServiceRestartStartupHooksReadyV1",
+    "resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1",
     "resumeActiveInternalProductionPhysicalServiceRestartAuthorityCutoverToRecoveryDV1",
     "runInternalProductionColdSpawnerHelperV1",
   ]);
   assert.equal(module.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1.length, 0);
   assert.equal(module.ensureInternalProductionColdSpawnerBootstrapSettledV1.length, 0);
+  assert.equal(module.resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1.length, 0);
   assert.equal(module.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1.length, 1);
   assert.equal(module.invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1.length, 2);
   const source = readFileSync(sourcePath, "utf8");

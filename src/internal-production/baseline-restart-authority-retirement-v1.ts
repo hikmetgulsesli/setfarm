@@ -240,7 +240,7 @@ type ColdHelperContextStateV1 = {
   observationHash: string | null;
 };
 const coldHelperContextsV1 = new WeakMap<object, ColdHelperContextStateV1>();
-let coldHelperRuntimeContextV1: object | null = null;
+let coldHelperRuntimeContextV1: Readonly<{ close: () => void }> | null = null;
 let coldHelperContextInvocationActiveV1 = false;
 let coldHelperTransportAttemptedV1 = false;
 let coldChildAuthenticationV1: ReturnType<typeof authenticateColdSpawnerChildCapabilityV1> | null = null;
@@ -3251,6 +3251,73 @@ export function resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1() {
   Object.defineProperty(snapshot, "environment", { value: coldChildAuthenticationV1.environment, enumerable: false });
   Object.defineProperty(snapshot, "close", { value: revokeColdSpawnerChildRuntimeV1, enumerable: false });
   return Object.freeze(snapshot) as typeof snapshot & Readonly<{ environment: Readonly<Record<string, string>>; close: () => void }>;
+}
+
+type SpawnerInheritedRuntimeRoleV1 = "cold-helper" | "cold-child" | "direct-helper" | "direct-child";
+let spawnerInheritedRuntimeSelectionV1: { role: SpawnerInheritedRuntimeRoleV1; entry: string; identity: BigIntStats; bytes: Buffer } | null = null;
+let spawnerInheritedRuntimeRefusedV1 = false;
+
+// Configuration authority only. A frame discriminator chooses the mandatory
+// authenticator, never a grant, fallback mode, process effect or caller root.
+export function resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1(): Readonly<{
+  schema: "setfarm.internal-production-spawner-inherited-runtime-snapshot.v1";
+  role: SpawnerInheritedRuntimeRoleV1;
+  environment: Readonly<Record<string, string>>;
+}> | null {
+  if (spawnerInheritedRuntimeRefusedV1) {
+    for (const pending of pendingColdHelperAuthenticationCleanupV1) pending();
+    fail("inherited spawner runtime authentication is revoked");
+  }
+  try {
+    const entry = process.argv[1], helper = path.join(repositoryRoot(), "dist/internal-production/baseline-service-restart-helper-v1.js"), child = path.join(repositoryRoot(), "dist/spawner.js");
+    if (entry !== helper && entry !== child) {
+      if (spawnerInheritedRuntimeSelectionV1 !== null || coldHelperRuntimeContextV1 !== null || coldChildAuthenticationV1 !== null || coldChildAuthenticationFailedV1) fail("inherited spawner runtime entry changed");
+      return null;
+    }
+    let identity: BigIntStats;
+    try { identity = fstatSync(3, { bigint: true }); }
+    catch (error) {
+      if (entry === child && spawnerInheritedRuntimeSelectionV1 === null && !coldChildAuthenticationFailedV1 && coldChildAuthenticationV1 === null
+        && error instanceof Error && "code" in error && error.code === "EBADF") return null;
+      throw error;
+    }
+    if (!identity.isFile() && entry === child && spawnerInheritedRuntimeSelectionV1 === null && !coldChildAuthenticationFailedV1 && coldChildAuthenticationV1 === null) return null;
+    const bytes = readInternalProductionSpawnerUntrustedInheritedFrameV1();
+    if (!sameColdFileMetadataV1(identity, fstatSync(3, { bigint: true }))) fail("inherited spawner frame changed while selected");
+    const frame = JSON.parse(bytes.toString("utf8"));
+    if (!frame || typeof frame !== "object" || Array.isArray(frame) || !bytes.equals(Buffer.from(`${canonical(frame)}\n`))) fail("inherited spawner frame is noncanonical");
+    const roles: Record<string, SpawnerInheritedRuntimeRoleV1> = {
+      "setfarm.internal-production-cold-spawner-bootstrap-helper-capability.v1": "cold-helper",
+      "setfarm.internal-production-cold-spawner-bootstrap-child-capability.v1": "cold-child",
+      "setfarm.internal-production-pre-schema-spawner-direct-rebind-helper-capability.v1": "direct-helper",
+      "setfarm.internal-production-pre-schema-spawner-direct-rebind-child-capability.v1": "direct-child",
+    };
+    const role = Object.hasOwn(roles, frame.schema) ? roles[frame.schema] : undefined;
+    if (!role || (role.endsWith("helper") ? entry !== helper : entry !== child)) fail("inherited spawner frame family or entry is crossed");
+    const retained = spawnerInheritedRuntimeSelectionV1;
+    if (retained !== null && (retained.role !== role || retained.entry !== entry || !sameColdFileMetadataV1(retained.identity, identity) || !retained.bytes.equals(bytes))) fail("inherited spawner original frame changed");
+    spawnerInheritedRuntimeSelectionV1 ??= { role, entry, identity, bytes };
+    // Direct roles must not borrow a cold authenticator. Their own issuer is
+    // connected with the direct helper/child lifecycle before V2 emission.
+    const authenticated = role === "cold-helper" ? resolveInternalProductionColdSpawnerHelperRuntimeSnapshotV1()
+      : role === "cold-child" ? resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1()
+      : fail("direct inherited runtime capability is not authenticated");
+    if (authenticated === null || process.argv[1] !== entry || !sameColdFileMetadataV1(identity, fstatSync(3, { bigint: true }))
+      || !readInternalProductionSpawnerUntrustedInheritedFrameV1().equals(bytes)) fail("inherited spawner configuration authentication changed");
+    const snapshot = { schema: "setfarm.internal-production-spawner-inherited-runtime-snapshot.v1" as const, role };
+    Object.defineProperty(snapshot, "environment", { value: authenticated.environment, enumerable: false });
+    return Object.freeze(snapshot) as typeof snapshot & Readonly<{ environment: Readonly<Record<string, string>> }>;
+  } catch (error) {
+    spawnerInheritedRuntimeRefusedV1 = true;
+    if (coldChildAuthenticationV1 !== null || spawnerInheritedRuntimeSelectionV1?.role === "cold-child") revokeColdSpawnerChildRuntimeV1();
+    const helperContext = coldHelperRuntimeContextV1;
+    if (helperContext !== null) {
+      const close = () => { helperContext.close(); pendingColdHelperAuthenticationCleanupV1.delete(close); };
+      try { close(); }
+      catch { pendingColdHelperAuthenticationCleanupV1.add(close); }
+    }
+    throw error;
+  }
 }
 
 function assertEpochOneActive(): Readonly<Record<string, unknown>> {

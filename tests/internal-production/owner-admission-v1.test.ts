@@ -179,6 +179,25 @@ test("ordinary runtime env retains process priority and repeated local-file over
   } finally { rmSync(fixture, { recursive: true, force: true }); }
 });
 
+test("runtime configuration never treats unauthenticated inherited selectors as ordinary dotenv mode", () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-inherited-mode-refusal-")));
+  try {
+    const runtime = path.resolve(import.meta.dirname, "../../src/runtime-config.ts");
+    const script = `try{await import(${JSON.stringify(pathToFileURL(runtime).href)});process.stdout.write('accepted')}catch(error){process.stdout.write(error.message);process.exitCode=7}`;
+    for (const marker of ["SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER", "SETFARM_INTERNAL_PRODUCTION_DIRECT_CHILD", "SETFARM_INTERNAL_PRODUCTION_UNKNOWN"]) {
+      for (const origin of ["process", "dotenv"]) {
+        writeFileSync(path.join(fixture, ".env"), origin === "dotenv" ? `${marker}=1\n` : "", { mode: 0o600 });
+        const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "-e", script], {
+          cwd: fixture, env: { PATH: "/usr/bin:/bin", SETFARM_ENV_DIR: fixture, ...(origin === "process" ? { [marker]: "1" } : {}) }, encoding: "utf8", timeout: 10000,
+        });
+        assert.equal(child.status, 7, `${origin}/${marker}: marker is not authenticated configuration authority`);
+        assert.match(child.stdout, /CONFIGURATION_INVALID/);
+        assert.equal(child.stderr, "");
+      }
+    }
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
 test("runtime PATH projection shares the ordinary deterministic normalization without effects", async () => {
   const leaf = await import("../../src/internal-production/baseline-spawner-launch-environment-v1.js") as Record<string, any>;
   assert.equal(typeof leaf.normalizeRuntimePathV1, "function", "shared effective PATH projection is not implemented");

@@ -358,6 +358,48 @@ Final focused kernel4/4 passed (24.127s), prior lease/V1/cold-boundary checks6/6
 Independent scoped review found no remaining must-fix. Whole-branch/P3 gates
 remain deferred until the direct helper/child/settlement chain is connected.
 
+Configuration routing amendment (existing retirement/runtime-config and owning
+retirement/owner-admission tests; paths remain145/64): add exactly one zeroarg
+`resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1` configuration port,
+retirement exports26→27. It selects mandatory authentication from the exact
+entrypoint and original bounded FD3 frame; preserve original bytes/descriptor
+identity and fail permanently after unknown, crossed or revoked selection.
+Cold helper/child APIs stay cold-only. Direct frame families remain refused
+until their own authenticator is connected, never delegated to a cold grant.
+
+Runtime configuration consumes that single role-discriminated snapshot and
+requires exactly one matching code-owned marker: COLD_HELPER, COLD_CHILD,
+DIRECT_HELPER or DIRECT_CHILD under the SETFARM_INTERNAL_PRODUCTION_ prefix.
+Markers alone, mixed markers, unknown markers and markers introduced by ordinary
+dotenv cannot choose authority. Authenticated modes retain the exact normalized
+environment without dotenv reads; ordinary mode retains its existing precedence.
+Use one private inherited-runtime configuration error family in place of the
+two cold-only errors. Future direct helper runner/child lifecycle exports require
+their own explicit contract amendment; they are not implicit in this27-name port.
+
+Configuration checkpoint evidence: process/dotenv direct or unknown markers and
+mixed markers alongside an authenticated cold helper reproduced acceptance
+before the shared selector. Independent review then found selection refusal
+could leave the underlying child grant live; a genuine child entry-restore test
+reproduced that hole. Shared refusal now revokes the retained child authority
+and closes any retained helper context, retaining failed cleanup for retry.
+Real entry and original-FD3 restoration cannot revive the old cold ports;
+helper entry restoration likewise leaves its original context closed. The
+configuration-only snapshot hides environment from enumeration/serialization.
+The late-output regression runs before independent environment-drift refusal,
+so its dependency mutation actually exercises authentication rather than an
+already-refused configuration cache. No production instrumentation was added.
+
+Focused direct-frame refusal plus exact27-export/lease checks2/2 (1.870s), real
+cold helper/child configuration3/3 (28.390s), then expanded helper and FD3/entry
+restoration2/2 (8.839s), ordinary/output/frame/inert-negative checks19/19
+(18.080s), manifest17/17 (5.712s), actual inert import1/1 (0.979s), gateway PATH
+source check1/1 (1.851s), fresh no-emit and whitespace checks passed. Independent
+re-review reports no remaining must-fix. This is scoped configuration evidence,
+not a whole-branch/P3 pass or permission to emit the unfinished direct V2 path.
+The genuine fixed cold helper → sealed main integration also passed1/1
+(35.993s); no live service or database was involved.
+
 Crash-prefix audit for the direct kernel: durable dispatch is not proof that an
 effect happened. Retain separate monotonic publication/effect-entered/result
 facts in the original owner, marking entry before `kill` or `spawn`. An existing
