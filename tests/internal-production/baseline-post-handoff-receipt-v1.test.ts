@@ -31974,12 +31974,17 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
         { label: "crossed P3 pair", p3s: [{ ...preMutation, preMutationLoadedRuntimeServiceAuthorityHash: "f".repeat(64) }], profile, valid: false },
         { label: "crossed predecessor", p3s: [{ ...preMutation, spawner: { ...spawner, pid: 102 } }], profile, valid: false },
         { label: "P3 drift during profile", p3s: [preMutation, { ...preMutation, spawner: { ...spawner, pid: 102 } }], profile, valid: false },
-        { label: "profile hash", p3s: [preMutation], profile: { ...profile, profileHash: "f".repeat(64) }, valid: false },
+        { label: "profile hash", p3s: [preMutation], profile: { ...profile, outputTreeBytesHash: "f".repeat(64), profileHash: canonicalHash({ ...profileBody, outputTreeBytesHash: "f".repeat(64) }) }, valid: false },
         { label: "profile body hash", p3s: [preMutation], profile: { ...profile, schema: "crossed-profile-body" }, valid: false },
         { label: "profile uid", p3s: [preMutation], profile: { ...profile, uid: profile.uid + 1, profileHash: canonicalHash({ ...profileBody, uid: profile.uid + 1 }) }, valid: false },
         { label: "profile source", p3s: [preMutation], profile: { ...profile, source: { ...source, buildHash: "f".repeat(64) }, profileHash: canonicalHash({ ...profileBody, source: { ...source, buildHash: "f".repeat(64) } }) }, valid: false },
       ];
       for (const entry of cases) {
+        if (entry.label === "profile hash") {
+          const { profileHash, ...body } = entry.profile;
+          assert.equal(canonicalHash(body), profileHash, "binding negative has an internally valid profile hash");
+          assert.notEqual(profileHash, profile.profileHash, "only the restart/profile pair binding is crossed");
+        }
         const seeded = seedForProfile(["profile uid", "profile source"].includes(entry.label) ? String(entry.profile.profileHash) : profile.profileHash);
         const input = { operation: seeded.operation, successorRoot: seeded.successorRoot, mutation: "none", mutationTarget: seeded.operationDirectory };
         const beforeTree = filesystemTreeSnapshot(path.dirname(root));
@@ -41099,6 +41104,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
 `;
     source = source.slice(0, publisherStart) + publisherHelper + publisherReplacement + source.slice(publisherEnd);
     writeFileSync(modulePath, source);
+    installDirectReceiptEvidenceProbeFixtureV1(root);
     git(root, ["add", "src/db-pg.ts", "src/internal-production/baseline-post-handoff-receipt-v1.ts", "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts"]);
     git(root, ["commit", "-qm", "fixture current-entry verifier acceptance seams"]);
     git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
@@ -41135,7 +41141,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     writeFileSync(target, canonicalFixtureRecordV1(value), { mode: 0o600 });
   }
 
-  function currentEntryVerifierReadyFixtureV1(coldV2 = false, coldPredecessorCross: "pid" | "processStartTimeEpochMs" | "processIdentityHash" | "serviceIdentityHash" | "generationHash" | null = null): Readonly<{
+  function currentEntryVerifierReadyFixtureV1(coldV2 = false, coldPredecessorCross: "pid" | "processStartTimeEpochMs" | "processIdentityHash" | "serviceIdentityHash" | "generationHash" | null = null, directRestartV2 = false): Readonly<{
     root: string;
     store: string;
     authority: Readonly<Record<string, unknown>>;
@@ -41149,6 +41155,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     reservations: readonly Readonly<Record<string, unknown>>[];
     release: Readonly<Record<string, unknown>>;
     coldHistory: Readonly<{ terminal: string; settlement: Readonly<Record<string, unknown>> }> | null;
+    launchProfile: Readonly<Record<string, unknown>> | null;
   }> {
     const root = createFixture({ stubServiceCensus: true });
     const pba = installCurrentEntryVerifierAcceptanceFixtureV1(root);
@@ -41191,7 +41198,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     });
     const retained = phase5cSSeedRetainedReaderFixturesV1(root, operation);
     const observedSpawner = serviceBody.spawner as Readonly<Record<string, unknown>>;
-    const preSchema = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 6, false, operation, Object.freeze({
+    let preSchema = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 6, false, operation, Object.freeze({
       serviceIdentityHash: String(observedSpawner.serviceIdentityHash),
       generationHash: String(observedSpawner.generationHash),
     }));
@@ -41234,7 +41241,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         loadedBuildHash: loadedService.loadedBuildHash,
       });
     }
-    if (coldV2) {
+    if (coldV2 || directRestartV2) {
       const startup = (preSchema.current as Readonly<Record<string, unknown>>).startupToken as Readonly<Record<string, unknown>>;
       const startupHash = String(startup.startupTokenHash);
       const startupBody = JSON.parse(readFileSync(path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/startup-token/sha256", startupHash.slice(0, 2), `${startupHash}.json`), "utf8"));
@@ -41293,6 +41300,16 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     const preMutationTarget = path.join(store, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", preMutationHash.slice(0, 2), `${preMutationHash}.json`);
     phase5cEnsurePublicationParentV1(preMutationTarget);
     writeFileSync(preMutationTarget, canonicalFixtureRecordV1(preMutation), { mode: 0o600 });
+    let launchProfile: Readonly<Record<string, unknown>> | null = null;
+    if (directRestartV2) {
+      const profileBody = { schema: "setfarm.internal-production-spawner-launch-profile.v1", source: operation.controllerSource, uid: process.getuid!() };
+      launchProfile = Object.freeze({ ...profileBody, profileHash: canonicalHash(profileBody) });
+      // Rebuild the disposable causal chain through its existing builder before
+      // any verifier runs; all downstream records bind the V2 restart pair.
+      preSchema = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 6, false, operation, Object.freeze({
+        serviceIdentityHash: String(observedSpawner.serviceIdentityHash), generationHash: String(observedSpawner.generationHash),
+      }), { ...preMutationPair, launchProfileHash: String(launchProfile.profileHash) });
+    }
     const seededRecovery = phase5cSSeedRecoveryAtRootFixtureV1(store, "A");
     const terminal = seededRecovery.value;
     assert.notEqual(seededRecovery.release, null);
@@ -41536,7 +41553,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     writeFileSync(path.join(operationDirectory, "01-current-status.pair.json"), canonicalFixtureRecordV1(statusPair), { mode: 0o600 });
     const physical = phase5cSRawPortValueFixtureV1("observePhysicalInventoryV1", 0, PHASE5C_S_NONBLOCKED_ROWS_V1[0]!);
     return Object.freeze({
-      root, store, authority, authorityPair, status, statusPair, service, physical, coldHistory,
+      root, store, authority, authorityPair, status, statusPair, service, physical, coldHistory, launchProfile,
       databaseAudit,
       manifest,
       reservations: Object.freeze([
@@ -41676,6 +41693,9 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       resolveFreshPair?: Readonly<{ freshRuntimeAndOwnerObservationRef: string; freshRuntimeAndOwnerObservationHash: string }>;
       resolvePair?: Readonly<{ currentEntryVerificationRef: string; currentEntryVerificationHash: string }>;
       coldFault?: string;
+      directP3s?: readonly Readonly<Record<string, unknown>>[];
+      directProfile?: Readonly<Record<string, unknown>>;
+      directColdAwaitFault?: "p3-first" | "profile" | "p3-final";
     }> = Object.freeze({}),
   ): Readonly<Record<string, unknown>> {
     const service = structuredClone(options.serviceOverride ?? fixture.service) as Record<string, unknown>;
@@ -41723,7 +41743,9 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
           ? "m.verifyCurrentInternalProductionCurrentEntryV1()"
           : `m.resolveInternalProductionCurrentEntryVerificationV1(${JSON.stringify(options.resolvePair)})`;
     const coldSetup = `if(probe.coldHistory){const fs=await import('node:fs');globalThis.__nestedColdHistoryV1=()=>{if(!fs.existsSync(probe.coldHistory.terminal))return {state:'absent'};const s=fs.lstatSync(probe.coldHistory.terminal,{bigint:true});return {schema:'setfarm.internal-production-cold-spawner-bootstrap-journal-census.v1',state:'settled',incompleteOwnerCount:0,settlement:probe.coldHistory.settlement,settlementIdentity:[s.dev,s.ino,s.uid,s.gid,s.mode,s.nlink,s.size,s.birthtimeNs,s.mtimeNs,s.ctimeNs].map(String)}}}`;
-    const expression = `(async()=>{const probe=${JSON.stringify(probe)};${coldSetup}Reflect.set(globalThis,"__currentEntryVerifierAcceptanceProbeV1",probe);const RealDate=Date;globalThis.Date=class extends RealDate{constructor(...args){super(args.length===0?"2040-01-02T03:04:05.006Z":args[0])}static now(){return Date.parse("2040-01-02T03:04:05.006Z")}};const protectedBefore=JSON.stringify(probe.protectedState);let outcome="returned",message=null,value=null;try{value=await ${invocation}}catch(error){outcome="threw";message=String(error)}const protectedAfter=JSON.stringify(probe.protectedState);process.stdout.write(JSON.stringify({outcome,message,value,coldFaultApplied:probe.coldFaultApplied,publicationEvents:probe.publicationEvents,serviceCalls:probe.serviceCalls,physicalCalls:probe.physicalCalls,databaseCalls:probe.databaseCalls,operationalMutationCalls:probe.operationalMutationCalls,operationalMutationNames:probe.operationalMutationNames,protectedBefore,protectedAfter}))})()`;
+    const directProbe = { p3s: options.directP3s ?? [fixture.status.preMutationLoadedRuntimeServiceAuthority], profile: options.directProfile ?? fixture.launchProfile, p3Calls: 0, profileCalls: 0 };
+    const directFaultSetup = options.directColdAwaitFault === undefined ? "" : `const fs=await import('node:fs');const fault=${JSON.stringify(options.directColdAwaitFault)};const mutate=()=>{if(probe.coldFaultApplied)throw Error('duplicate direct fixture mutation');const target=probe.coldHistory.terminal,bytes=fs.readFileSync(target),before=fs.lstatSync(target,{bigint:true});fs.renameSync(target,target+'.direct-await-original');fs.writeFileSync(target,bytes,{flag:'wx',mode:0o600});if(!fs.readFileSync(target).equals(bytes)||fs.lstatSync(target,{bigint:true}).ino===before.ino)throw Error('fixture replacement not physical');probe.coldFaultApplied=true;};globalThis.__directReceiptEvidenceV1.onP3=async(count)=>{if(fault===(count===1?'p3-first':'p3-final'))mutate()};globalThis.__directReceiptEvidenceV1.onProfile=async()=>{if(fault==='profile')mutate()};`;
+    const expression = `(async()=>{const probe=${JSON.stringify(probe)};globalThis.__directReceiptEvidenceV1=${JSON.stringify(directProbe)};${coldSetup}${directFaultSetup}Reflect.set(globalThis,"__currentEntryVerifierAcceptanceProbeV1",probe);const RealDate=Date;globalThis.Date=class extends RealDate{constructor(...args){super(args.length===0?"2040-01-02T03:04:05.006Z":args[0])}static now(){return Date.parse("2040-01-02T03:04:05.006Z")}};const protectedBefore=JSON.stringify(probe.protectedState);let outcome="returned",message=null,value=null;try{value=await ${invocation}}catch(error){outcome="threw";message=String(error)}const protectedAfter=JSON.stringify(probe.protectedState);process.stdout.write(JSON.stringify({outcome,message,value,directP3Calls:globalThis.__directReceiptEvidenceV1.p3Calls,directProfileCalls:globalThis.__directReceiptEvidenceV1.profileCalls,coldFaultApplied:probe.coldFaultApplied,publicationEvents:probe.publicationEvents,serviceCalls:probe.serviceCalls,physicalCalls:probe.physicalCalls,databaseCalls:probe.databaseCalls,operationalMutationCalls:probe.operationalMutationCalls,operationalMutationNames:probe.operationalMutationNames,protectedBefore,protectedAfter}))})()`;
     const result = runFixtureExpression(fixture.root, expression);
     assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
@@ -41899,12 +41921,85 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     });
   }
 
+  for (const coldV2 of [false, true]) it(`direct V2 restart survives the actual final 33-pair graph (${coldV2 ? "cold" : "ordinary"} P3)`, () => {
+    const fixture = currentEntryVerifierReadyFixtureV1(coldV2, null, true);
+    try {
+      const before = currentEntryVerifierCurrentLocatorSnapshotV1(fixture);
+      const p3 = fixture.status.preMutationLoadedRuntimeServiceAuthority as Readonly<Record<string, unknown>>;
+      const crossedP3 = { ...p3, serviceProjectionSetHash: "f".repeat(64) };
+      const profile = fixture.launchProfile!;
+      const { profileHash: originalProfileHash, ...profileBody } = profile;
+      const alternateProfileBody = { ...profileBody, outputTreeBytesHash: "f".repeat(64) };
+      assert.notEqual(canonicalHash(alternateProfileBody), originalProfileHash, "internally valid alternate profile crosses only the bound restart hash");
+      const negativeCases = [
+        ["selected P3 body", { directP3s: [crossedP3] }, 1, 0],
+        ["P3 across profile", { directP3s: [p3, crossedP3] }, 2, 1],
+        ["restart/profile hash", { directProfile: { ...alternateProfileBody, profileHash: canonicalHash(alternateProfileBody) } }, 1, 1],
+        ["profile canonical hash", { directProfile: { ...profile, schema: "crossed-profile-body" } }, 1, 1],
+      ] as const;
+      for (const [label, options, p3Calls, profileCalls] of negativeCases) {
+        const rejected = currentEntryVerifierRunV1(fixture, options);
+        assert.equal(rejected.outcome, "threw", `${label}: ${String(rejected.message)}`);
+        assert.match(String(rejected.message), /pre-schema direct restart/);
+        assert.equal(rejected.directP3Calls, p3Calls, label);
+        assert.equal(rejected.directProfileCalls, profileCalls, label);
+        assert.equal(rejected.operationalMutationCalls, 0);
+        assert.equal(rejected.protectedAfter, rejected.protectedBefore);
+        assert.equal(currentEntryVerifierRecordsV1(fixture.root, "verification").length, 0, `${label}: no verification authority is published`);
+        assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), before);
+      }
+      const observed = currentEntryVerifierRunV1(fixture);
+      assert.equal(observed.outcome, "returned", String(observed.message));
+      assert.equal(observed.operationalMutationCalls, 0);
+      assert.equal(observed.protectedAfter, observed.protectedBefore);
+      assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), before);
+      assert.equal(observed.directP3Calls, 2);
+      assert.equal(observed.directProfileCalls, 1);
+      const value = observed.value as Record<string, unknown>;
+      const replay = currentEntryVerifierRunV1(fixture, { resolvePair: { currentEntryVerificationRef: String(value.currentEntryVerificationRef), currentEntryVerificationHash: String(value.currentEntryVerificationHash) } });
+      assert.equal(replay.outcome, "returned", String(replay.message));
+      assert.deepEqual(replay.value, value);
+      assert.equal(replay.directP3Calls, 2);
+      assert.equal(replay.directProfileCalls, 1);
+      const verificationRecords = currentEntryVerifierRecordsV1(fixture.root, "verification");
+      for (const [label, options, p3Calls, profileCalls] of negativeCases) {
+        const rejected = currentEntryVerifierRunV1(fixture, { ...options, resolvePair: { currentEntryVerificationRef: String(value.currentEntryVerificationRef), currentEntryVerificationHash: String(value.currentEntryVerificationHash) } });
+        assert.equal(rejected.outcome, "threw", `${label}: published verification cannot bypass fresh direct evidence`);
+        assert.match(String(rejected.message), /pre-schema direct restart/);
+        assert.equal(rejected.directP3Calls, p3Calls);
+        assert.equal(rejected.directProfileCalls, profileCalls);
+        assert.equal(rejected.operationalMutationCalls, 0);
+        assert.deepEqual(currentEntryVerifierRecordsV1(fixture.root, "verification"), verificationRecords);
+        assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), before);
+      }
+    } finally { removeFixture(fixture.root); }
+  });
+
+  for (const boundary of ["p3-first", "profile", "p3-final"] as const) it(`direct V2 final graph retains cold predecessor identity across ${boundary}`, () => {
+    const fixture = currentEntryVerifierReadyFixtureV1(true, null, true);
+    try {
+      const before = currentEntryVerifierCurrentLocatorSnapshotV1(fixture);
+      const rejected = currentEntryVerifierRunV1(fixture, { directColdAwaitFault: boundary });
+      assert.equal(rejected.coldFaultApplied, true, "the actual cold terminal is replaced with equal bytes and a different inode");
+      assert.equal(rejected.outcome, "threw", String(rejected.message));
+      assert.match(String(rejected.message), /cold predecessor history is crossed/);
+      assert.equal(rejected.directP3Calls, boundary === "p3-final" ? 2 : 1);
+      assert.equal(rejected.directProfileCalls, boundary === "p3-first" ? 0 : 1);
+      assert.equal(rejected.operationalMutationCalls, 0);
+      assert.equal(rejected.protectedAfter, rejected.protectedBefore);
+      assert.equal(currentEntryVerifierRecordsV1(fixture.root, "verification").length, 0, "crossed original cold history cannot publish verification authority");
+      assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), before);
+    } finally { removeFixture(fixture.root); }
+  });
+
   for (const coldV2 of [false, true]) it(coldV2 ? "cold predecessor V2 survives the actual final graph without reviving its departed process" : "ordinary predecessor V1 retains final verification and replay compatibility", () => {
     const fixture = currentEntryVerifierReadyFixtureV1(coldV2);
     try {
       const before = currentEntryVerifierCurrentLocatorSnapshotV1(fixture);
       const observed = currentEntryVerifierRunV1(fixture);
       assert.equal(observed.outcome, "returned", String(observed.message));
+      assert.equal(observed.directP3Calls, 0, "V1 graph does not acquire direct history");
+      assert.equal(observed.directProfileCalls, 0, "V1 graph does not acquire a current launch profile");
       assert.equal(observed.operationalMutationCalls, 0);
       assert.equal(observed.protectedAfter, observed.protectedBefore);
       assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), before);
@@ -41914,6 +42009,8 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       const replay = currentEntryVerifierRunV1(fixture, { resolvePair: { currentEntryVerificationRef: String(result.currentEntryVerificationRef), currentEntryVerificationHash: String(result.currentEntryVerificationHash) } });
       assert.equal(replay.outcome, "returned", String(replay.message));
       assert.deepEqual(replay.value, result);
+      assert.equal(replay.directP3Calls, 0);
+      assert.equal(replay.directProfileCalls, 0);
       if (coldV2) {
         const terminal = fixture.coldHistory!.terminal, bytes = readFileSync(terminal);
         renameSync(terminal, terminal + ".old");

@@ -829,15 +829,15 @@ retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
   exact original intent/four-member journal, historical operation P3, derived
   completion/census/CAS record and stable physical witness; no live child or
   current lease/epoch required. Public adoption stays unchecked above.
-- [ ] Emit fresh startup V2 from original operation P3 and authenticated launch
+- [x] Emit fresh startup V2 from original operation P3 and authenticated launch
   profile; persisted V1 calls no new direct port. Persisted V2 reauthenticates
   exact original pairs, constants/source/startup/predecessor without downgrade.
   Startup-owning slice implemented: fresh V2 binds historical operation P3 and
   the authenticated profile hash; recovery preflight, held-lease replay and
   observed-material replay discriminate transport. V1 loads neither direct
   port and retains its exact record/pair bytes. The receipt-side physical,
-  nested and final-graph consumers remain coupled pending work, so this box
-  is deliberately not complete and live rollout remains prohibited.
+  nested and final-graph consumers are now covered below. Helper census and
+  whole-gate integration remain pending; live rollout remains prohibited.
   TDD first exposed V1 emission (session6077). Independent review then found
   two causally required prepublication fixes in the same File Map: reauthenticate
   P3 after the profile await (RED61114), and compare the restart/startup
@@ -869,8 +869,21 @@ retirement29/startup11/receipt58 runtime exports, exact145/64 manifests and the
   Final no-emit passed(session7515), manifests17/17(session21912,7.527s),
   whitespace passed; localized independent re-review found no new issue.
   Final startup compatibility rerun passed12/12(session29777,5.399s).
-  The final33-pair V2 consumer remains unimplemented, so none of these scoped
-  checks constitutes complete receipt/P3, clean-main or live acceptance.
+  Final33-pair V2 integration first failed at the actual old transport relation
+  (session31528,2/2 RED). It now authenticates the selected graph P3 against
+  historical P3, profile and final P3 reread, retaining cold-history physical
+  fences across every new await. Both ordinary and cold predecessors verify
+  and replay the same pair. Four non-confounded evidence negatives refuse
+  before publication and on published replay without writes; three actual
+  same-byte cold-terminal inode replacements refuse at their await boundary.
+  V1 ordinary/cold verification and replay call neither new evidence port.
+  Independent review tightened profile-hash negatives to valid alternate
+  self-hashed profiles, separately from invalid canonical-hash cases.
+  Final combined physical/final-graph regression passed10/10
+  (session16382,99.243s), final no-emit passed(session66618), manifests17/17
+  (session72657,7.032s), and localized independent re-review found no issue.
+  No public keys, runtime exports or graph pairs were added. These scoped
+  checks do not constitute complete receipt/P3, clean-main or live acceptance.
 - [ ] Bracket phase-zero with stable helper census: absent or fully authenticated
   terminal only; partial, appearance/disappearance and ABA refuse. Require
   terminal explicitly at all cutover/zero-owner guard consumers. Preserve the
