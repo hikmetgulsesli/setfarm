@@ -8242,9 +8242,9 @@ Expected: the merge and build gates are the first production call site allowed t
 
 - Round 4 crash fixtures additionally stop before/after pre-mutation runtime-authority publication, guarded-32 migration authorization prepare, consumption, receipt publication, current-audit publication, ordinary-33 transaction start, commit acknowledgement/current verification, A activation, admission-ready publication, mixed-runtime observation, canary start, terminal-settlement publication, compound target close, fence release, and entry publication. The migration-33 boundaries reuse the exact `current_audited` prefix until A and therefore add no top state, nested field, or pair; every other boundary maps to one exact top-state/nested-phase combination above. Tests enumerate every strict branch, pairwise null relation, fixed predecessor pair, and finite blocked reason, and reject a skipped nested member, stale pre-mutation census, caller runtime body, crossed operation, or status repair.
 
-- [ ] **Step 1: Verify read-only prerequisites and prepare before mutation**
+- [ ] **Step 1: Prepare current entry before observing public prerequisites**
 
-The operator shell receives `SETFARM_ROOT` and `SETFARM_ROOT_EXPECTED_SHA` from the freshly resolved clean-main controller authority and runs the validator before every command. It records only read-only PBA/v31/pending/service prerequisites, then calls zero-input `prepare-current-entry` before any live mutation. Step 1 contains no resume, restart, migration-apply, activation, guard, service, label, command, path, or authority-body argv. Dashboard and Mission Control remain on their delivered generations.
+The operator shell receives SETFARM_ROOT and SETFARM_ROOT_EXPECTED_SHA from freshly resolved clean-main controller authority. After isolated prerequisite gates, call zero-input prepare-current-entry first: recovery may establish the code-owned sealed cold predecessor and adopt its successor store. Only then may public v31/pending observers publish or adopt current records. Reopened status, public prerequisites and service census must agree; repeated preparation must reuse the same operation and status. Validate the clean-main root before every controller command. Dashboard and Mission Control remain on their delivered generations. This step invokes no resume, ordinary restart, migration apply, activation or caller-provided authority-body argv.
 
 ```bash
 set -euo pipefail
@@ -8295,6 +8295,25 @@ for A_TASK6A_STEP1_P3_FILE in "${A_TASK6A_STEP1_P3_FILES[@]}"; do
           "$A_TASK6A_STEP1_P3_FILE"
   )
 done
+require_authenticated_clean_main_setfarm_root_v1
+A_CURRENT_ENTRY_PREPARE_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- prepare-current-entry --json)"
+A_CURRENT_ENTRY_OPERATION_REF="$(printf '%s\n' "$A_CURRENT_ENTRY_PREPARE_JSON" | jq -er '.operationRef')"
+A_CURRENT_ENTRY_OPERATION_HASH="$(printf '%s\n' "$A_CURRENT_ENTRY_PREPARE_JSON" | jq -er '.operationHash')"
+printf '%s\n' "$A_CURRENT_ENTRY_PREPARE_JSON" | jq -e '
+  (keys == ["operationHash","operationRef"]) and
+  (.operationRef == ("setfarm://internal-production/current-entry-operation/sha256/" + .operationHash)) and
+  (.operationHash | test("^[0-9a-f]{64}$"))
+' >/dev/null
+require_authenticated_clean_main_setfarm_root_v1
+A_CURRENT_ENTRY_INITIAL_STATUS="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- current-entry-status --json)"
+printf '%s\n' "$A_CURRENT_ENTRY_INITIAL_STATUS" | jq -e \
+  --arg operationRef "$A_CURRENT_ENTRY_OPERATION_REF" --arg operationHash "$A_CURRENT_ENTRY_OPERATION_HASH" \
+  --arg controllerSha "$SETFARM_ROOT_EXPECTED_SHA" '
+  .schema == "setfarm.internal-production-current-entry-authority-status.v1" and
+  .state == "operation_prepared" and
+  .operationRef == $operationRef and .operationHash == $operationHash and
+  .controllerSourceAuthority.controllerSourceSha == $controllerSha
+' >/dev/null
 require_authenticated_clean_main_setfarm_root_v1
 A_PBA_DELIVERY_EVIDENCE_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- observe-product-build-authority-v2-delivery-evidence --json)"
 A_PBA_DELIVERY_EVIDENCE_REF="$(printf '%s\n' "$A_PBA_DELIVERY_EVIDENCE_JSON" | jq -er '.deliveryEvidenceRef')"
@@ -8368,21 +8387,6 @@ printf '%s\n' "$A_PENDING_SUCCESSOR_JSON" | jq -e '
   (.pendingBootstrapHandoffMigrationHash | test("^[0-9a-f]{64}$"))
 ' --arg controllerSha "$SETFARM_ROOT_EXPECTED_SHA" >/dev/null
 require_authenticated_clean_main_setfarm_root_v1
-A_CURRENT_ENTRY_PREREQUISITE_ROOT="/Users/setrox/ai/setrox/data/internal-production-baseline/current-entry-v1/records"
-A_CURRENT_ENTRY_V31_RECORD="$A_CURRENT_ENTRY_PREREQUISITE_ROOT/authority-v3-migration31-audits/sha256/${A_AUTHORITY_V3_V31_HASH:0:2}/${A_AUTHORITY_V3_V31_HASH}.json"
-A_CURRENT_ENTRY_PENDING_RECORD="$A_CURRENT_ENTRY_PREREQUISITE_ROOT/pending-bootstrap-handoff-migrations/sha256/${A_PENDING_SUCCESSOR_HASH:0:2}/${A_PENDING_SUCCESSOR_HASH}.json"
-snapshot_current_entry_prerequisite_v1() {
-  local A_CURRENT_ENTRY_PREREQUISITE_RECORD="$1"
-  test -f "$A_CURRENT_ENTRY_PREREQUISITE_RECORD"
-  test ! -L "$A_CURRENT_ENTRY_PREREQUISITE_RECORD"
-  test "$(stat -f '%l' "$A_CURRENT_ENTRY_PREREQUISITE_RECORD")" = "1"
-  printf '%s:%s:%s\n' \
-    "$(stat -f '%d' "$A_CURRENT_ENTRY_PREREQUISITE_RECORD")" \
-    "$(stat -f '%i' "$A_CURRENT_ENTRY_PREREQUISITE_RECORD")" \
-    "$(shasum -a 256 "$A_CURRENT_ENTRY_PREREQUISITE_RECORD" | awk '{print $1}')"
-}
-A_CURRENT_ENTRY_V31_BEFORE_PREPARE="$(snapshot_current_entry_prerequisite_v1 "$A_CURRENT_ENTRY_V31_RECORD")"
-A_CURRENT_ENTRY_PENDING_BEFORE_PREPARE="$(snapshot_current_entry_prerequisite_v1 "$A_CURRENT_ENTRY_PENDING_RECORD")"
 A_PRE_ENTRY_SERVICE_CENSUS_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- service-census --json)"
 printf '%s\n' "$A_PRE_ENTRY_SERVICE_CENSUS_JSON" | jq -e '
   keys == ["censusHash","dashboard","missionControl","openClaw","schema","spawner"] and
@@ -8401,17 +8405,6 @@ printf '%s\n' "$A_PRE_ENTRY_SERVICE_CENSUS_JSON" | jq -e '
 A_PRE_ENTRY_DASHBOARD_PID="$(printf '%s\n' "$A_PRE_ENTRY_SERVICE_CENSUS_JSON" | jq -er '.dashboard.pid')"
 A_PRE_ENTRY_MC_PID="$(printf '%s\n' "$A_PRE_ENTRY_SERVICE_CENSUS_JSON" | jq -er '.missionControl.pid')"
 require_authenticated_clean_main_setfarm_root_v1
-A_CURRENT_ENTRY_PREPARE_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- prepare-current-entry --json)"
-A_CURRENT_ENTRY_OPERATION_REF="$(printf '%s\n' "$A_CURRENT_ENTRY_PREPARE_JSON" | jq -er '.operationRef')"
-A_CURRENT_ENTRY_OPERATION_HASH="$(printf '%s\n' "$A_CURRENT_ENTRY_PREPARE_JSON" | jq -er '.operationHash')"
-printf '%s\n' "$A_CURRENT_ENTRY_PREPARE_JSON" | jq -e '
-  (keys == ["operationHash","operationRef"]) and
-  (.operationRef | startswith("setfarm://internal-production/")) and
-  (.operationHash | test("^[0-9a-f]{64}$"))
-' >/dev/null
-require_authenticated_clean_main_setfarm_root_v1
-test "$(snapshot_current_entry_prerequisite_v1 "$A_CURRENT_ENTRY_V31_RECORD")" = "$A_CURRENT_ENTRY_V31_BEFORE_PREPARE"
-test "$(snapshot_current_entry_prerequisite_v1 "$A_CURRENT_ENTRY_PENDING_RECORD")" = "$A_CURRENT_ENTRY_PENDING_BEFORE_PREPARE"
 A_CURRENT_ENTRY_OPERATION_STATUS="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- current-entry-status --json)"
 printf '%s\n' "$A_CURRENT_ENTRY_OPERATION_STATUS" | jq -e \
   --arg operationRef "$A_CURRENT_ENTRY_OPERATION_REF" --arg operationHash "$A_CURRENT_ENTRY_OPERATION_HASH" \
@@ -8419,6 +8412,7 @@ printf '%s\n' "$A_CURRENT_ENTRY_OPERATION_STATUS" | jq -e \
   --arg v31Ref "$A_AUTHORITY_V3_V31_REF" --arg v31Hash "$A_AUTHORITY_V3_V31_HASH" \
   --arg pendingRef "$A_PENDING_SUCCESSOR_REF" --arg pendingHash "$A_PENDING_SUCCESSOR_HASH" \
   --arg controllerSha "$SETFARM_ROOT_EXPECTED_SHA" \
+  --arg currentUid "$(id -u)" \
   --argjson preEntryCensus "$A_PRE_ENTRY_SERVICE_CENSUS_JSON" '
   def sameProcess($authority; $census):
     $authority.pid == $census.pid and
@@ -8459,8 +8453,23 @@ printf '%s\n' "$A_CURRENT_ENTRY_OPERATION_STATUS" | jq -e \
   .pendingBootstrapHandoffMigration.pendingBootstrapHandoffMigrationHash == $pendingHash and
   (.preMutationLoadedRuntimeServiceAuthorityRef | startswith("setfarm://internal-production/")) and
   (.preMutationLoadedRuntimeServiceAuthorityHash | test("^[0-9a-f]{64}$")) and
-  .preMutationLoadedRuntimeServiceAuthority.schema ==
-    "setfarm.internal-production-pre-mutation-loaded-runtime-service-authority.v1" and
+  (.preMutationLoadedRuntimeServiceAuthority |
+    ["schema","currentEntryOperationRef","currentEntryOperationHash","observedServiceCensusHash",
+      "spawner","dashboard","missionControl","openClaw","serviceProjectionSetHash",
+      "preMutationLoadedRuntimeServiceAuthorityRef","preMutationLoadedRuntimeServiceAuthorityHash"] as $baseKeys |
+    if .schema == "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1" then
+      keys == ($baseKeys | sort)
+    elif .schema == "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2" then
+      keys == (($baseKeys + ["coldSpawnerPredecessor"]) | sort) and
+      (.coldSpawnerPredecessor |
+        keys == ["settlementHash","settlementIdentity","settlementRef"] and
+        (.settlementHash | test("^[0-9a-f]{64}$")) and
+        .settlementRef == ("setfarm://internal-production/cold-spawner-controller-settlement/sha256/" + .settlementHash) and
+        (.settlementIdentity | type == "array" and length == 10 and
+          all(.[]; type == "string" and test("^(0|[1-9][0-9]*)$")) and
+          (.[1] | tonumber) >= 1 and .[2] == $currentUid and .[4] == "33152" and .[5] == "1" and
+          (.[6] | tonumber) >= 1 and (.[6] | tonumber) <= 65536))
+    else false end) and
   .preMutationLoadedRuntimeServiceAuthority.currentEntryOperationRef == $operationRef and
   .preMutationLoadedRuntimeServiceAuthority.currentEntryOperationHash == $operationHash and
   .preMutationLoadedRuntimeServiceAuthority.observedServiceCensusHash ==
@@ -8491,9 +8500,16 @@ printf '%s\n' "$A_CURRENT_ENTRY_OPERATION_STATUS" | jq -e \
   (.statusRef | startswith("setfarm://internal-production/")) and
   (.statusHash | test("^[0-9a-f]{64}$"))
 ' >/dev/null
+test "$(printf '%s\n' "$A_CURRENT_ENTRY_INITIAL_STATUS" | jq -Sc .)" = "$(printf '%s\n' "$A_CURRENT_ENTRY_OPERATION_STATUS" | jq -Sc .)"
+require_authenticated_clean_main_setfarm_root_v1
+A_CURRENT_ENTRY_REPREPARE_JSON="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- prepare-current-entry --json)"
+test "$(printf '%s\n' "$A_CURRENT_ENTRY_REPREPARE_JSON" | jq -Sc .)" = "$(printf '%s\n' "$A_CURRENT_ENTRY_PREPARE_JSON" | jq -Sc .)"
+require_authenticated_clean_main_setfarm_root_v1
+A_CURRENT_ENTRY_REPREPARE_STATUS="$(npm --prefix "$SETFARM_ROOT" run --silent acceptance:baseline-post-handoff -- current-entry-status --json)"
+test "$(printf '%s\n' "$A_CURRENT_ENTRY_REPREPARE_STATUS" | jq -Sc .)" = "$(printf '%s\n' "$A_CURRENT_ENTRY_OPERATION_STATUS" | jq -Sc .)"
 ```
 
-Expected: read-only PBA/v31/pending/source prerequisites and the adjacent exact named-field four-service census are captured before `prepare-current-entry`. The v31-audit and pending-successor current records are each no-follow, one-link records whose device/inode and complete byte SHA-256 are captured after the read-only observers have settled them; both snapshots must be byte/identity-identical after prepare. Prepare publishes the operation, then the operation-bound pre-mutation loaded-runtime authority and `operation_prepared` status before the first live mutation. The returned operation pair must equal the status operation pair, and the status's nested v31/pending pairs must equal the current pairs captured before preparation. The one strict status body contains those four nested prerequisite authorities, direct pre-mutation pair plus resolved body, and no flattened mirrors. Its four named projections equal the census's shared named identity/count fields, `observedServiceCensusHash` equals `censusHash`, and every later phase is null. A failed prerequisite snapshot, pair equality, prepare, or post-prepare stability check stops before resume, service mutation, or migration mutation; this step invokes no resume, restart, migration, activation, guard, run, or other live mutation.
+Expected: prepare/recovery selects the authenticated store and establishes an ordinary or sealed cold predecessor before public prerequisite publication. Its pair equals the immediately reopened prepared status. Subsequent PBA/v31/pending observations and the four-service census equal the status authorities. The strict outer status remains V1; its nested pre-mutation projection is strict V1 or history-bearing V2. V2 additionally carries its authenticated cold settlement pair and physical identity. Filesystem paths, no-follow checks, bytes and retained inode authentication belong to code-owned resolvers, not guessed legacy paths in this shell. Both status observations and repeated prepare/status remain logically identical. Dashboard and Mission Control keep their delivered generations; later phases stay null. Any failed check stops before Step 2. Preparation may perform authorized cold recovery and is not globally mutation-free; this shell invokes no resume, ordinary restart, migration apply or activation.
 
 - [ ] **Step 2: Resume the one operation to ready, then verify it read-only**
 

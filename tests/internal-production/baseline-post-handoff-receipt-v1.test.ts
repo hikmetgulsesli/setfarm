@@ -43014,10 +43014,28 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
           status.pendingBootstrapHandoffMigration = driftReadyStatusPairV1(status.pendingBootstrapHandoffMigration, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "d");
         }, false],
         ["pre-mutation loaded runtime", (status: Record<string, unknown>) => {
-          const pair = driftReadyStatusPairV1({ preMutationLoadedRuntimeServiceAuthorityRef: status.preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash: status.preMutationLoadedRuntimeServiceAuthorityHash }, "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash", "e");
+          const projection = structuredClone(status.preMutationLoadedRuntimeServiceAuthority) as Record<string, unknown>;
+          delete projection.preMutationLoadedRuntimeServiceAuthorityRef;
+          delete projection.preMutationLoadedRuntimeServiceAuthorityHash;
+          delete projection.serviceProjectionSetHash;
+          const spawner = projection.spawner as Record<string, unknown>;
+          const alternateProcessHash = spawner.processIdentityHash === "e".repeat(64) ? "d".repeat(64) : "e".repeat(64);
+          spawner.processIdentityHash = alternateProcessHash;
+          projection.observedServiceCensusHash = canonicalHash({
+            schema: "setfarm.internal-production-service-census.v1",
+            spawner, dashboard: projection.dashboard, missionControl: projection.missionControl, openClaw: projection.openClaw,
+          });
+          const body = { ...projection, serviceProjectionSetHash: canonicalHash(projection) };
+          const hash = canonicalHash(body);
+          const pair = Object.freeze({
+            preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${hash}`,
+            preMutationLoadedRuntimeServiceAuthorityHash: hash,
+          });
+          assert.notEqual(pair.preMutationLoadedRuntimeServiceAuthorityHash, status.preMutationLoadedRuntimeServiceAuthorityHash,
+            "valid alternate embedded authority must cross only the entry-authority overlap");
           status.preMutationLoadedRuntimeServiceAuthorityRef = pair.preMutationLoadedRuntimeServiceAuthorityRef;
           status.preMutationLoadedRuntimeServiceAuthorityHash = pair.preMutationLoadedRuntimeServiceAuthorityHash;
-          status.preMutationLoadedRuntimeServiceAuthority = Object.freeze({ ...(status.preMutationLoadedRuntimeServiceAuthority as Readonly<Record<string, unknown>>), ...pair });
+          status.preMutationLoadedRuntimeServiceAuthority = Object.freeze({ ...body, ...pair });
         }, false],
         ["pre-schema rebind authorization", (status: Record<string, unknown>) => {
           const rebind = status.preSchemaSpawnerRebindStatusBody as Record<string, unknown>;
@@ -43212,6 +43230,9 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         currentEntryOperationRef: edgeOperationBPair.operationRef,
         currentEntryOperationHash: edgeOperationBPair.operationHash,
       });
+      const crossedPreMutationProjection = { ...crossedPreMutationBody };
+      delete crossedPreMutationProjection.serviceProjectionSetHash;
+      crossedPreMutationBody.serviceProjectionSetHash = canonicalHash(crossedPreMutationProjection);
       const crossedPreMutationHash = canonicalHash(crossedPreMutationBody);
       const crossedPreMutationPair = Object.freeze({
         preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${crossedPreMutationHash}`,
@@ -43237,9 +43258,13 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       Object.assign(edgeCrossedStatusBody, {
         preMutationLoadedRuntimeServiceAuthorityRef: crossedPreMutationPair.preMutationLoadedRuntimeServiceAuthorityRef,
         preMutationLoadedRuntimeServiceAuthorityHash: crossedPreMutationPair.preMutationLoadedRuntimeServiceAuthorityHash,
-        preMutationLoadedRuntimeServiceAuthority: Object.freeze({ ...(edgeCrossedStatusBody.preMutationLoadedRuntimeServiceAuthority as Readonly<Record<string, unknown>>), ...crossedPreMutationPair }),
+        preMutationLoadedRuntimeServiceAuthority: Object.freeze({ ...crossedPreMutationBody, ...crossedPreMutationPair }),
         entryAuthority: edgeCrossedAuthorityPair,
       });
+      assert.notEqual(crossedPreMutationBody.currentEntryOperationHash, edgeCrossedStatusBody.operationHash,
+        "self-consistent embedded pre-mutation authority belongs to operation B, not status operation A");
+      assert.deepEqual(edgeCrossedStatusBody.preMutationLoadedRuntimeServiceAuthority, JSON.parse(readFileSync(crossedPreMutationTarget, "utf8")),
+        "embedded pre-mutation body and pair exactly match the separately stored alternate authority");
       const edgeCrossedStatusHash = canonicalHash(edgeCrossedStatusBody);
       const edgeCrossedStatusPair = Object.freeze({ statusRef: `${PHASE5C_Q_STATUS_PREFIX_V1}${edgeCrossedStatusHash}`, statusHash: edgeCrossedStatusHash });
       const edgeCrossedStatusTarget = path.join(fixture.store, "records", "statuses", "sha256", edgeCrossedStatusHash.slice(0, 2), `${edgeCrossedStatusHash}.json`);
@@ -43595,7 +43620,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
 
       const hashValidDualEdgeCases = Object.freeze([
         alternateUidGraph,
-        Object.freeze({ label: "pre-mutation operation", freshPair: edgeCrossedFreshPair, verificationPair: edgeCrossedVerificationPair, pattern: /pre-mutation loaded runtime service authority operation is crossed/, releaseOverride: undefined }),
+        Object.freeze({ label: "pre-mutation operation", freshPair: edgeCrossedFreshPair, verificationPair: edgeCrossedVerificationPair, pattern: /current-entry pre-mutation runtime authority is crossed/, releaseOverride: undefined }),
         buildHashValidDualEdgeGraphV1("pre-schema authorization operation", Object.freeze({ preSchemaSpawnerRebindAuthorization: crossedRebindAuthorizationPair, preSchemaSpawnerRebindStatus: crossedRebindPair }), (status, pairs) => { status.preSchemaSpawnerRebindStatus = pairs.preSchemaSpawnerRebindStatus; status.preSchemaSpawnerRebindStatusBody = Object.freeze({ ...rebindBody, ...crossedRebindPair }); }, /pre-schema authorization operation is crossed/),
         buildHashValidDualEdgeGraphV1("migration consumption authorization", Object.freeze({ preManifestMigration32AuthorizationConsumption: crossedConsumptionPair }), (status, pairs) => { (status.migrationApplyingPhase as Record<string, unknown>).consumption = pairs.preManifestMigration32AuthorizationConsumption; }, /migration-32 consumption authorization is crossed/),
         buildHashValidDualEdgeGraphV1("target close terminal run", Object.freeze({ targetClose: crossedTargetClosePair }), (status, pairs) => { const pair = pairs.targetClose!; const settled = status.settledPhase as Record<string, unknown>; settled.targetCloseRef = pair.targetReservationPairCloseRef; settled.targetCloseHash = pair.targetReservationPairCloseHash; }, /target close terminal authority is crossed/),

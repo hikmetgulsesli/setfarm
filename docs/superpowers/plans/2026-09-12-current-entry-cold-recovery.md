@@ -88,7 +88,7 @@ P3 runner authority or production source changes so far.
   including their independent expected locators and crossed-release bait.
   The operation-directory leaf fixture is also relocated; its full workspace
   snapshot now covers both repository and authority siblings. That larger
-  leaf test's rerun is pending.
+  leaf test passed 1/1 (43.555s) on checkpoint `6dc57bc7`.
 - H3/H4 had independently seeded terminal artifact parents at default modes;
   prepare only the actually-present artifact parents using the existing private
   publication helper. Missing-artifact cases stay missing. After this repair
@@ -152,10 +152,10 @@ would conceal the stale-observation bug and is explicitly rejected.
 - [x] Add the private retained-predecessor fence and same-controller fresh-pass
   handoff; require `fresh.pass.raw.nextPairBytes.equals(candidate.pairBytes)`
   and exact old/fresh predecessor equality before the existing CAS path.
-- [ ] Prove positive adjacent advancement plus changed/missing completed
+- [x] Prove positive adjacent advancement plus changed/missing completed
   history, equal-byte predecessor replacement, and fresh-owner cleanup failure
   refusals without extra dispatch or current-status advancement.
-- [ ] Run focused effect, retained catch-up, response-loss and zero-FD tests,
+- [x] Run focused effect, retained catch-up, response-loss and zero-FD tests,
   TypeScript, manifests and contracts; obtain independent scoped review.
 - [ ] Checkpoint and rerun the authenticated full receipt before P3 delivery.
 
@@ -199,6 +199,78 @@ Task 3 completion, PR delivery, clean-main rollout or live acceptance. The
 immutable `81bf9794` run continues to collect all failures before its own
 runner-owned cleanup; the relocated row-tail leaf and full Q groups still need
 their focused reruns, and every later full gate must name its new exact SHA.
+
+Follow-up evidence on `6dc57bc7`: the complete Q-A/Q-B group passed 103/103
+(177.494s); the physical row-tail SQL/operation-directory leaf passed 1/1
+(43.555s). The manifest group passed 17/17 (6.089s). These close the focused
+reruns above, not the authenticated full-suite requirement.
+
+The immutable `81bf9794` receipt run finished with exit 1: 904 tests, 772
+passed, 132 failed, zero cancelled/skipped/todo, 5356.605s. Both uniquely owned
+test databases were dropped by the runner; its processes exited. The failures
+consist of the 100 shared Q cases, 31 previously investigated integration
+cases, and one final-verifier fixture failure discovered at the end. That last
+case changes an embedded pre-mutation authority pair without recomputing its
+body hashes, so it fails the strict inner parser before the intended
+ready-status/entry-authority overlap edge. The current checkout reproduced
+that RED (58.237s). A fixture-only repair changes one valid service hash and
+recomputes census/projection/body hashes, keeping the exact overlap refusal.
+The subsequent RED (76.314s) exposed the same stale projection hash plus an
+old embedded body in the later operation-B negative. Rehash that projection
+and embed the exact stored alternate body. The current status parser now
+rejects this same operation-A/status versus operation-B/P3 relation before
+the older final-graph check, so this case expects that precise earlier
+operation-binding refusal, not the unrelated inner-hash error. No production
+parser or guard changed. The complete final-verifier test then passed 1/1
+(77.408s), retaining all zero-mutation/publication/current-locator assertions.
+
+Latest read-only service checks returned HTTP 200 for Mission Control 3080
+and dashboard 3333. No live service, database, schema or runtime-data mutation
+was performed by this integration repair.
+
+### Task 6A operator sequence repair
+
+File Map: the existing main baseline handoff plan, the existing
+`tests/internal-production/baseline-post-handoff-cli.test.ts`, and this ledger.
+Execute the actual documented Step 1 shell in a disposable unrelated working
+directory with strict Git/npm/isolated-runner adapters and real jq. Reject public
+prerequisite publication before prepare. No live command or DB is invoked by
+this regression. The existing production tests retain physical authentication;
+the operator regression proves ordering and cross-command equality only.
+
+- [x] Reproduce the old publish-before-prepare sequence with the executable
+  shell test; expect an explicit adapter refusal before public publication.
+- [x] Move prepare plus immediate operation/status equality ahead of public
+  PBA/v31/pending/census observations. Remove guessed legacy content paths and
+  manual inode snapshots; resolvers own authenticated physical paths.
+- [x] Validate actual V1/V2 pre-mutation projection schema, then require the
+  complete status/prerequisite/census equality and exact prepare/status replay.
+  Keep all clean-main and isolated prerequisite gates unchanged.
+- [x] Prove ordinary/cold prepared branches and refusal of source, prerequisite,
+  census and replay drift; run CLI tests, contracts and TypeScript, then review.
+
+Preparation may recover and launch a sealed cold predecessor under its existing
+code-owned protocol; it is not a globally read-only operation. Public v31 and
+pending observers may publish/adopt records after prepare. Step 1 must not call
+resume, ordinary restart, migration apply or activation, and must leave the
+dashboard and Mission Control generations unchanged. Do not describe this
+sequence as mutation-free or promise cross-command inode equality.
+
+The executable shell RED reached the explicit
+PREPARE_REQUIRED_BEFORE_PUBLIC_OBSERVATION refusal (3.616s), after all five
+isolated gate adapters. After the ordering/schema repair, seven scenarios
+passed (40.255s). The complete CLI file then passed 12/12 (57.390s), adding
+initial operation/phase refusal, malformed cold fields and unknown projection
+schema, and retaining the existing exact zero-input CLI test. This is execution
+of the actual documented shell with external command boundaries simulated; it
+does not claim real cold launch or physical-record authentication.
+
+The final-verifier fixture diff and Task 6A shell/test changes received
+independent read-only review with no actionable findings. English (1469 files),
+path (848 files), migration digests, Mission Control contracts (12 artifacts),
+TypeScript and manifest tests (17/17, 5.702s) passed. No source manifest member
+or public API was added. Exact full receipt/P3, joined real-process proof,
+clean-main build/rollout and live Task 6A acceptance remain open.
 
 ## Task 1: Preserve exact authenticated historical prerequisites
 
@@ -1554,7 +1626,7 @@ sealed cold process, followed by genuine ordinary operation-bound rebind.
 - [ ] Connect the complete direct-detached rebind for the genuine prepared
   predecessor after recovery. A cold token
   cannot authorize ordinary replacement or a second process.
-- [ ] Update Task 6A order to prepare/recover before public current-prerequisite
+- [x] Update Task 6A order to prepare/recover before public current-prerequisite
   publication. Update owning File Maps and all impacted source projections.
 - [ ] Run complete disposable cold → history recovery → prepared → sealed
   rebind tests and fault injections. Keep final 33-pair verifier graph exact and
