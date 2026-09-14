@@ -44,6 +44,35 @@ their owning tests. Root updates the literal main-plan/closure-design File Maps
 and projection/source-boundary contracts for every new runtime file. No source
 outside that causally necessary boundary is included.
 
+### P3 run persistence ABI assertion repair (2026-09-14, in progress)
+
+The clean `28b5a068` remainder preflight passed files 19–29, including migration
+54/54, then completed run-protocol file 30 with 22 passes and one failure. Both
+P3 databases were dropped and source remained unchanged. This is preflight
+evidence only, not a full matrix pass. Log:
+`logs/2026-09-14T17-16-12.029Z-p3-remainder-preflight-28b5a068.log`.
+
+File Map refinement: `tests/execution-attempts/run-protocol.test.ts` and this
+plan. The old source regex demanded forwarding the complete stored admission
+body, which `fe1a7c29` deliberately fixed by reminting the strict two-field pair.
+Independent investigation confirmed this is canonical source, not a projection
+rewrite, and all frozen/state/activation/head checks remain. Replace that regex
+with execution of the AST-selected production resolver call: observe exactly one
+argument with the correct ref/hash values and canonical key order, strip stored
+body extras, and preserve the resolved result. Existing full-function behavior
+through the real strict startup parser remains in the owner-admission test.
+No production source, projection authority or runtime guard changes are needed.
+
+Verification: focused ABI 1/1 (10.022s), full standalone run-protocol 23/23
+(29.217s), and the existing full-function strict-parser test 1/1 (1.133s) passed.
+An in-memory mutation check executed the new assertion against current source
+and the former whole-body call: current passed; old forwarding failed the exact
+argument assertion. No source mutation was needed for that check. TypeScript,
+English/path contracts, migration digests and whitespace passed. Independent
+read-only review found no actionable issue. The next clean checkpoint must run
+authenticated file 30 and the remaining preflight, then repeat the full matrix;
+earlier checkpoints' passes are not merged into final delivery evidence.
+
 ### Full P3 migration fixture integration repair (2026-09-14, in progress)
 
 The clean `f2d37162` full Step 3 run passed files 1–18, including all 924
