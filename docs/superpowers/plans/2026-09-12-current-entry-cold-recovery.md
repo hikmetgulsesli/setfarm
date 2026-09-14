@@ -46,6 +46,48 @@ outside that causally necessary boundary is included.
 
 ### Adjacent retirement fixture and resource repair (2026-09-14, in progress)
 
+Latest clean `f28cf447` adjacent preflight finished with source unchanged,
+332 tests / 330 passes / 2 failure records. One cold-history test failed in
+pre-tamper setup because its child PID was absent at the actual process-parent
+observation; the second failure is the completion-inventory hook correctly
+rejecting that same failed registration. No OOM or omitted registration was
+reported. Log: `logs/2026-09-14T19-40-08.835Z-p3-adjacent-preflight-f28cf447.log`.
+Later pure-selector/contracts commands did not run because the shell stopped
+after the failing 13-file command. This is not a full adjacent or P3 pass.
+
+### Post-ready ordinary stale-file recovery (2026-09-14, in progress)
+
+Spec and File Map:
+`docs/superpowers/specs/2026-09-14-post-recovery-stale-startup-design.md`.
+Whole-branch review found a reachable unattended-restart gap: a later ordinary
+spawner crash leaves a lock that the default absent-only reclaimer rejects
+forever after cold recovery. This refines the historical post-recovery startup
+section below: its default guards stay strict, but authenticated nonhistorical
+ordinary residue needs a separate private cleanup owner.
+
+- [ ] RED: extend actual-main fixture with `settled-ready-crash-restart`.
+  At its existing pre-producer boundary, the first actual main writes a private
+  crash marker and exits without cleanup. Assert both startup files contain
+  that dead child PID; launch the identical copied main again and require the
+  normal boundary marker. Current expected failure: `COLD_BOOTSTRAP_NOT_ABSENT`.
+- [ ] Add actual terminal exclusion/fence tests. Historical PID/inode evidence
+  must be immutable and never become caller-supplied deletion permission;
+  replacing any original terminal input makes its synchronous fence reject.
+- [ ] Implement private post-ready cleanup before singleton acquisition, with
+  retained candidate/readiness pins, final full admission reobservation and a
+  no-await synchronous source/history/readiness/death/identity tail. Preserve
+  default absent-only reclamation and all existing cold/direct restrictions.
+- [ ] Add adversarial actual cleanup cases: original historical PID/inode,
+  live/ambiguous PID, source/readiness/history drift, same-byte replacement,
+  parent replacement and interrupted close. Assert unchanged foreign evidence
+  and drained owned descriptors, not just thrown exceptions.
+- [ ] Run focused actual-main/terminal/cleanup tests, no-emit/contracts/digests,
+  independent review, and record a clean checkpoint before complete adjacent
+  and exact full P3 verification. Resolve the separate cold-history fixture
+  setup failure before another full matrix run.
+
+### Retirement fixture repair evidence
+
 The clean `5ab68065` P3 remainder preflight passed every file 30–45. The adjacent
 13-file preflight then reported 338 passes and one failure, but its retirement
 worker also exhausted the approximately 4 GiB V8 heap. Its aggregate count is
