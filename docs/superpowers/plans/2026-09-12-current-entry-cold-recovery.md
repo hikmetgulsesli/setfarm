@@ -44,6 +44,38 @@ their owning tests. Root updates the literal main-plan/closure-design File Maps
 and projection/source-boundary contracts for every new runtime file. No source
 outside that causally necessary boundary is included.
 
+### Exact P3 no-environment selector repair (2026-09-15)
+
+The clean `dd7aef88` adjacent command exited zero with source unchanged:
+331/331 tests in the thirteen-file group, including all 169 unique retirement
+completion receipts and 246 child tests. Activation and owner filtered checks
+passed three named tests each; no-emit, twelve Mission Control artifacts,
+English/path contracts, migration digests and diff checks also passed. Log:
+`logs/2026-09-14T20-43-18.352Z-p3-adjacent-preflight-dd7aef88.log`.
+
+Output accounting exposed a separate false-positive gate: Step 3's receipt
+filter selected four nonexistent names and reported only a file-wrapper pass.
+This predates this branch; commit `544b6853` corrected the earlier duplicate
+command but not Step 3. Therefore the zero exit is not complete no-environment
+coverage. Replace only that stale selector with the existing four-name selector
+already present in the same baseline plan. File Map: that plan and this ledger;
+no production, test implementation, schema, or source-tuple change.
+
+The full `dd7aef88` loop was deliberately terminated at its owning shell during
+file 2, leaving the isolated runner untouched. Its active test completed and
+the runner dropped its databases before the wrapper closed with `SIGTERM`,
+source unchanged, and no log failure. This is an interrupted run, not a P3 pass.
+Log: `logs/2026-09-14T21-12-09.452Z-p3-dd7aef88.log`.
+
+The corrected no-environment command passed four named tests, zero failures,
+cancellations, skips or todos (2.807s): crash-prefix status, absent prepared
+operation without mutation, database composition source boundary, and
+no-environment lifecycle import safety. Require those named results in the
+successor exact full P3, not merely Node's zero exit or file-wrapper count.
+Independent selector review found no corresponding mismatch in activation or
+owner filters. Record a reviewed clean documentation checkpoint, then run the
+complete exact matrix at that SHA; all delivery gates remain open.
+
 ### Adjacent retirement fixture and resource repair (2026-09-14, in progress)
 
 Latest clean `f28cf447` adjacent preflight finished with source unchanged,
