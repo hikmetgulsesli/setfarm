@@ -4189,36 +4189,25 @@ test("P3 runner cleans setup primary crash and signal failures without crossing 
       const helperPath = path.join(moduleLoss.root, "tests/execution-attempts/test-database.ts");
       const helperSource = readFileSync(helperPath, "utf8");
       const holdAnchor = "      database,\n    );\n  } catch (error) {";
-      assert.equal(helperSource.includes(holdAnchor), true);
+      assert.equal(helperSource.split(holdAnchor).length, 2);
       writeFileSync(helperPath, helperSource.replace(
         holdAnchor,
-        "      database,\n    );\n    await new Promise((resolve) => setTimeout(resolve, 30_000));\n  } catch (error) {",
+        `      database,
+    );
+    const published = lstatSync(path.join(capability.marker.projectionRoot, "src/internal-production/baseline-spawner-startup-admission-v1.js"));
+    assert.ok(published.isFile() && !published.isSymbolicLink() && published.size > 0);
+    writeFileSync(2, "P3_TEST_READINESS_PUBLISHED_BEFORE_SETUP_CRASH\\n");
+    process.kill(process.pid, "SIGKILL");
+  } catch (error) {`,
       ));
       p3TestGit(moduleLoss.root, ["add", helperPath]);
-      p3TestGit(moduleLoss.root, ["commit", "-qm", "hold after readiness publication"]);
+      p3TestGit(moduleLoss.root, ["commit", "-qm", "crash after readiness publication"]);
       const running = spawnP3NestedRunner(moduleLoss.root);
-      const setupPid = await waitForP3ConditionV1(() => {
-        const rows = execFileSync("/bin/ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" });
-        for (const row of rows.split("\n")) {
-          const match = /^\s*([0-9]+)\s+([0-9]+)\s+(.+)$/.exec(row);
-          if (match && Number(match[2]) === running.pid && match[3]!.includes("test-database.ts")) {
-            return Number(match[1]);
-          }
-        }
-        return null;
-      }, "module-loss setup child");
-      const readinessPath = await waitForP3ConditionV1(() => {
-        const lsof = execFileSync("/usr/sbin/lsof", ["-a", "-p", String(setupPid), "-d", "cwd", "-Fn"], { encoding: "utf8" });
-        const cwd = lsof.split("\n").find((line) => line.startsWith("n"))?.slice(1);
-        if (!cwd) return null;
-        const candidate = path.join(cwd, "src/internal-production/baseline-spawner-startup-admission-v1.js");
-        return statSync(candidate, { throwIfNoEntry: false })?.isFile() ? candidate : null;
-      }, "readiness module publication");
-      assert.match(readinessPath, /baseline-spawner-startup-admission-v1\.js$/);
-      process.kill(setupPid, "SIGKILL");
       const result = await running.completed;
       assert.notEqual(result.status, 0);
-      assert.match(result.output, /ISOLATED_TEST_COMMAND_SIGNAL:SIGKILL|P3_TEMPLATE_SETUP_FAILED/);
+      assert.match(result.output, /^P3_TEST_READINESS_PUBLISHED_BEFORE_SETUP_CRASH$/m);
+      assert.match(result.output, /ISOLATED_TEST_COMMAND_SIGNAL:SIGKILL/);
+      assert.deepEqual(result.temporaryEntries, []);
       assert.deepEqual(await p3DatabaseInventoryV1(admin), baseline);
     } finally {
       moduleLoss.cleanup();

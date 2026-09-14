@@ -1985,6 +1985,36 @@ exercises the production consumer rather than failing in fixture setup.
   review found no issue and confirmed the explicit post-start parent-symlink
   negative remains meaningful. A clean successor full P3 remains required.
 
+### P3 post-readiness crash synchronization (2026-09-14)
+
+File Map: the same owner-admission test and this ledger only. No production
+helper, runner, process guard, database authority or timeout changes.
+
+- [x] Observe RED on clean `619eb20c769d2327f4ad6e33d550fc24061e643d`:
+  isolated owner-admission completed103 tests,102 passed,1 failed (1358.452s).
+  All three physical fixture corrections passed. The cleanup fault test failed
+  after100.697s with `P3_TEST_WAIT_TIMEOUT:readiness module publication`.
+  Its45s observer starts at setup-process creation, before real migrations,
+  activation and readiness publication; repeated synchronous lsof adds load.
+  The prior fe1 gate passed this same test, demonstrating timing dependence.
+- [x] Replace only the copied module-loss helper's post-successful-activation
+  30s hold with `lstatSync` validation of its actual readiness module (regular,
+  non-symlink, nonempty), synchronous `writeFileSync(2, marker)` and
+  `process.kill(process.pid, "SIGKILL")`. Require exactly one injection anchor.
+  Await the real nested runner's completion and require the exact marker line,
+  nonzero signal failure, empty temporary entries and original DB inventory.
+  Retain the separate externally killed pre-publication setup test unchanged.
+  This targets the same real process-death boundary without a45s rendezvous.
+- [ ] Run TypeScript no-emit and whitespace checks; independently review the
+  precise diff and real signal/cleanup assertions; checkpoint the scoped fix.
+  TypeScript and whitespace passed; independent review found no introduced
+  issue. Existing nested-runner output capture uses exit rather than close;
+  this preexisting transport limitation is not evidence of the observed45s
+  readiness deadline failure and is not changed in this synchronization fix.
+- [ ] Run the complete owner-admission file through the unchanged isolated
+  runner on that clean checkpoint. Then preflight receipt acceptance and repeat
+  the full exact P3 matrix before delivery. No partial result grants delivery.
+
 ## Task 4: Verify, review, deliver, then resume A–E
 
 - [ ] Root checkpoints scoped changes on the feature branch for clean-worktree
