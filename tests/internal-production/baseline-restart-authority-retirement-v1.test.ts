@@ -4,10 +4,199 @@ import { createHash } from "node:crypto";
 import { chmodSync, closeSync, constants, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { test } from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { after, test as nodeTest, type TestFn } from "node:test";
 
 const sourcePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-restart-authority-retirement-v1.ts");
+
+function completedChildTests(output: string, name: string): number {
+  const lines = output.trimEnd().split(/\r?\n/);
+  assert.deepEqual(lines.filter(line => /^(?:not )?ok \d+ - /.test(line)), [`ok 1 - ${name}`], "exact requested child must pass");
+  assert.deepEqual(lines.filter(line => /^\d+\.\.\d+/.test(line)), ["1..1"], "child must finish its complete top-level plan");
+  const count = (label: string): number => {
+    const matches = lines.filter(line => line.startsWith(`# ${label} `));
+    assert.equal(matches.length, 1, `one terminal ${label} counter is required`);
+    const value = matches[0]!.slice(label.length + 3);
+    assert.match(value, /^\d+$/);
+    return Number(value);
+  };
+  const tests = count("tests");
+  assert.ok(tests >= 1);
+  assert.equal(count("pass"), tests);
+  for (const label of ["fail", "cancelled", "skipped", "todo"]) assert.equal(count(label), 0, label);
+  return tests;
+}
+
+async function runChild(file: string, name: string): Promise<number> {
+  const environment = { ...process.env };
+  // Node otherwise treats the new runner as an already executing test worker.
+  delete environment.NODE_TEST_CONTEXT;
+  const pattern = `^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
+  const child = spawn(process.execPath, [
+    "--import", "tsx", "--test", "--test-concurrency=1", "--test-reporter=tap",
+    `--test-name-pattern=${pattern}`, file,
+  ], { cwd: process.cwd(), env: environment, stdio: ["ignore", "pipe", "pipe"] });
+  let output = "", errors = "", size = 0, overflow = false, spawnError: Error | undefined;
+  for (const [stream, stderr] of [[child.stdout, false], [child.stderr, true]] as const) {
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk: string) => {
+      size += Buffer.byteLength(chunk);
+      if (size > 8 * 1024 * 1024) { overflow = true; return; }
+      if (stderr) errors += chunk; else output += chunk;
+    });
+  }
+  const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve => {
+    child.once("error", error => { spawnError = error; });
+    child.once("close", (code, signal) => resolve({ code, signal }));
+  });
+  assert.equal(spawnError, undefined, String(spawnError));
+  assert.equal(overflow, false, "isolated child output exceeded its bounded capture");
+  assert.equal(result.signal, null, errors);
+  assert.equal(result.code, 0, output + errors);
+  return completedChildTests(output, name);
+}
+
+/** Preserve the existing file command while bounding each body's ESM lifetime. */
+function createProcessIsolatedTestV1(
+  fileUrl: string,
+  expectedRegistrations: number,
+): (name: string, body: TestFn) => Promise<void> {
+  assert.ok(Number.isSafeInteger(expectedRegistrations) && expectedRegistrations > 0);
+  const file = fileURLToPath(fileUrl);
+  if (process.execArgv.some(argument => argument === "--test-name-pattern" || argument.startsWith("--test-name-pattern="))) {
+    return (name, body) => nodeTest(name, body);
+  }
+  const registered: string[] = [], completed: string[] = [];
+  let queue: Promise<void> = Promise.resolve();
+  after(() => {
+    assert.equal(registered.length, expectedRegistrations, "complete registration inventory is required");
+    assert.deepEqual(completed, registered, "every registered test must complete in order");
+  });
+  return (name, _body) => {
+    assert.ok(typeof name === "string" && name.length > 0 && !/[\r\n#]/.test(name), "one unambiguous test name is required");
+    assert.ok(!registered.includes(name), `duplicate isolated test name: ${name}`);
+    registered.push(name);
+    return nodeTest(name, async context => {
+      const pending = queue.then(async () => {
+        const childTests = await runChild(file, name);
+        completed.push(name);
+        context.diagnostic(JSON.stringify({ isolatedTest: name, childTests, passed: childTests }));
+      });
+      queue = pending.catch(() => {});
+      await pending;
+    });
+  };
+}
+
+const test = createProcessIsolatedTestV1(import.meta.url, 169);
+
+const repoRoot = path.resolve(import.meta.dirname, "../..");
+
+async function fixture(body: string, expected: number, pattern?: string) {
+  const root = mkdtempSync(path.join(tmpdir(), "setfarm-process-isolation-"));
+  const file = path.join(root, "fixture.test.mjs");
+  try {
+  const typescript = await import("typescript");
+  const tree = typescript.createSourceFile("retirement.test.ts", readFileSync(fileURLToPath(import.meta.url), "utf8"), typescript.ScriptTarget.Latest, true);
+  const adapterFunctions = ["completedChildTests", "runChild", "createProcessIsolatedTestV1"].map(name => {
+    const declaration = tree.statements.find(statement => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
+    assert.ok(declaration, `actual isolation function ${name} exists`);
+    return declaration.getText(tree);
+  }).join("\n");
+  const adapterUrl = pathToFileURL(path.join(root, "adapter.mjs")).href;
+    writeFileSync(fileURLToPath(adapterUrl), typescript.transpileModule(`import assert from 'node:assert/strict'; import {spawn} from 'node:child_process'; import {fileURLToPath} from 'node:url'; import {after,test as nodeTest} from 'node:test';
+${adapterFunctions}
+export {createProcessIsolatedTestV1};`, { compilerOptions: {target:typescript.ScriptTarget.ES2022,module:typescript.ModuleKind.ESNext} }).outputText);
+    writeFileSync(file, `
+import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
+import { createProcessIsolatedTestV1 } from ${JSON.stringify(adapterUrl)};
+const test = createProcessIsolatedTestV1(import.meta.url, ${expected});
+const root = ${JSON.stringify(root)};
+${body}
+`);
+    const environment = { ...process.env };
+    delete environment.NODE_TEST_CONTEXT; // Start an actual child runner, not an inherited test worker.
+    const result = spawnSync(process.execPath, [
+      "--import", "tsx", "--test", "--test-concurrency=1", "--test-reporter=tap",
+      ...(pattern === undefined ? [] : [`--test-name-pattern=${pattern}`]), file,
+    ], { cwd: repoRoot, env: environment, encoding: "utf8", timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
+    assert.equal(result.error, undefined, String(result.error));
+    assert.equal(result.signal, null);
+    return { ...result, read: (name: string) => readFileSync(path.join(root, name), "utf8"), cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  } catch (error) {
+    await rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+test("isolated test registration gives each existing body fresh module state and a distinct process", async () => {
+  const result = await fixture(`
+let count = 0;
+for (const name of ['alpha', 'beta']) test(name, () => {
+  assert.equal(++count, 1);
+  writeFileSync(root + '/' + name, String(process.pid));
+});`, 2);
+  try {
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.notEqual(await result.read("alpha"), await result.read("beta"));
+  } finally { await result.cleanup(); }
+});
+
+test("isolated test registration rejects an exit without a completed test report", async () => {
+  const result = await fixture("test('abrupt', () => process.exit(0));", 1);
+  try { assert.notEqual(result.status, 0, result.stdout); }
+  finally { await result.cleanup(); }
+});
+
+test("isolated test registration rejects missing or duplicate registered names", async () => {
+  for (const [body, expected] of [
+    ["test('only', () => {});", 2],
+    ["test('same', () => {}); test('same', () => {});", 2],
+  ] as const) {
+    const result = await fixture(body, expected);
+    try { assert.notEqual(result.status, 0, result.stdout); }
+    finally { await result.cleanup(); }
+  }
+});
+
+test("isolated test registration preserves explicit exact-name selection", async () => {
+  const result = await fixture("test('alpha', () => assert.fail('not selected')); test('beta', () => {});", 2, "^beta$");
+  try { assert.equal(result.status, 0, result.stdout + result.stderr); }
+  finally { await result.cleanup(); }
+});
+
+test("isolated test registration retains nested results and propagates real assertion failure", async () => {
+  for (const failing of [false, true]) {
+    const result = await fixture(`test('parent', async t => {
+      await t.test('child', () => { writeFileSync(root + '/nested', 'executed'); assert.equal(${failing}, false); });
+    });`, 1);
+    try {
+      if (failing) assert.notEqual(result.status, 0, result.stdout);
+      else {
+        assert.equal(result.status, 0, result.stdout + result.stderr);
+        assert.equal(await result.read("nested"), "executed");
+        assert.ok(result.stdout.includes('"childTests":2,"passed":2'), result.stdout);
+      }
+    } finally { await result.cleanup(); }
+  }
+});
+
+test("isolated test registration escapes literal names and refuses skipped or oversized child reports", async () => {
+  const literal = await fixture("test('literal.+ [group] (a)?', () => {}); test('other', () => {});", 2);
+  try { assert.equal(literal.status, 0, literal.stdout + literal.stderr); }
+  finally { await literal.cleanup(); }
+  for (const body of [
+    "test('skipped', t => t.skip('not coverage'));",
+    "test('todo', t => t.todo('not coverage'));",
+    "test('oversized', () => process.stdout.write('x'.repeat(9 * 1024 * 1024)));",
+  ]) {
+    const result = await fixture(body, 1);
+    try { assert.notEqual(result.status, 0, result.stdout); }
+    finally { await result.cleanup(); }
+  }
+});
+
 
 function installWorkspaceLocatorFixtureV1(internal: string, workspace: string): void {
   const locatorPath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-workspace-authority-path-v1.ts");
@@ -460,6 +649,10 @@ export function closeColdIntentFixtureV1(){if(typeof retainedColdBootstrapPrepar
 async function createColdFrameFixtureV1() {
   assert.ok(readFileSync(sourcePath, "utf8").includes("function openColdSpawnerHelperFrameV1("), "cold helper frame sender is not implemented");
   return createColdIntentFixtureV1((source) => {
+    const coldWait = 'timer = setTimeout(() => reject(Error("cold controller helper outcome is uncertain")), 35_000);';
+    assert.equal(source.split(coldWait).length, 2, "inject only at the cold controller's own completion wait");
+    const coldSpawn = '        assertColdControllerAuthorityPinsV1(state, invocation);\n        invocation.child = spawn(profile.executable.path,';
+    assert.equal(source.split(coldSpawn).length, 2, "inject only at the cold controller's pinned spawn boundary");
     const start = source.indexOf("function openColdSpawnerHelperFrameV1(");
     const end = source.indexOf("\nfunction assertEpochOneActive", start);
     assert.ok(start >= 0 && end > start);
@@ -468,10 +661,10 @@ async function createColdFrameFixtureV1() {
       "  const observedFrameGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), root);\n  globalThis.__coldFrameGuardReadyHook?.();\n  const guard={assertStable(){observedFrameGuard.assertStable();globalThis.__coldFrameGuardCheckHook?.();},close(){globalThis.__coldFrameGuardCloseHook?.();observedFrameGuard.close();}};",
     );
     return (source.slice(0, start) + frame + source.slice(end))
-    .replace('invocation.child = spawn(profile.executable.path,', 'invocation.child = spawn(globalThis.__coldControllerSpawnPath??profile.executable.path,')
+    .replace(coldSpawn, coldSpawn.replace('spawn(profile.executable.path,', 'spawn(globalThis.__coldControllerSpawnPath??profile.executable.path,'))
     .replace('        invocation.completion = captureColdControllerHelperCompletionV1(invocation.child);', '        globalThis.__coldControllerSpawnedHook?.(invocation.child);\n        invocation.completion = captureColdControllerHelperCompletionV1(invocation.child);')
     .replace('    const claim = independentlyObserveColdControllerClaimV1(state, completion);', '    globalThis.__coldControllerBeforeClaimHook?.();\n    const claim = independentlyObserveColdControllerClaimV1(state, completion);')
-    .replace('35_000', '(globalThis.__coldControllerWaitMs??35_000)')
+    .replace(coldWait, coldWait.replace('35_000', '(globalThis.__coldControllerWaitMs??35_000)'))
     .replace('fail("cold process ownership is ambiguous")', 'fail("cold process ownership is ambiguous: "+JSON.stringify({pid,status:result.status,signal:result.signal,error:result.error?.message,stdout:result.stdout,stderr:result.stderr}))')
     .replace('      release.lockUnlinked = true;', '      release.lockUnlinked = true;\n      globalThis.__coldReleaseAfterUnlinkHook?.();')
     .replace('    retainedColdBootstrapIntentV1 = null;', '    retainedColdBootstrapIntentV1 = null;\n    globalThis.__coldControllerReleasedHook?.();')

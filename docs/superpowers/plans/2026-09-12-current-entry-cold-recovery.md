@@ -44,6 +44,84 @@ their owning tests. Root updates the literal main-plan/closure-design File Maps
 and projection/source-boundary contracts for every new runtime file. No source
 outside that causally necessary boundary is included.
 
+### Adjacent retirement fixture and resource repair (2026-09-14, in progress)
+
+The clean `5ab68065` P3 remainder preflight passed every file 30–45. The adjacent
+13-file preflight then reported 338 passes and one failure, but its retirement
+worker also exhausted the approximately 4 GiB V8 heap. Its aggregate count is
+not complete coverage evidence: remaining retirement tests must be accounted
+for independently. Source was unchanged. Log:
+`logs/2026-09-14T18-30-14.181Z-p3-adjacent-preflight-5ab68065.log`.
+
+The exact assertion failure at retirement test line 3982 is a missing expected
+timeout rejection. The fixture replaced the first `35_000` in the whole copied
+source, which now belongs to the direct helper rather than the cold controller.
+File Map for this first repair: the existing retirement test and this plan.
+Bind injection to the unique cold-controller completion wait statement; preserve
+the direct timeout and every production timeout/guard. Run the entire owning
+sixteen-mode behavior test, retaining single invocation, no respawn and held
+lease assertions. The separate process-memory/coverage issue requires its own
+bounded test-only isolation design before another complete adjacent run.
+
+The focused timeout repair exposed the equivalent spawn-hook collision: the
+first generic spawn expression was also the direct helper's. Bind it to the
+unique preceding cold authority-pin assertion. The full sixteen-mode test then
+passed 1/1 (32.567s), preserving failure rejection and exactly one invocation.
+No other direct/cold collision was found in the fixture hook audit.
+
+#### Retirement isolation implementation steps
+
+Spec: `docs/superpowers/specs/2026-09-14-retirement-test-process-isolation-design.md`.
+File Map: the existing retirement test owns the private adapter and its six
+regressions, alongside the two fixture repairs; this plan and the above design
+own the rationale and evidence. Keep all implementation inside the already
+mapped test path, without changing the frozen source tuple or adjacent commands.
+Production files remain outside scope.
+
+- [x] Establish a native-registration baseline for
+  `createProcessIsolatedTestV1(fileUrl: string, expectedRegistrations: number)`.
+  Its return interface accepts `(name: string, body: TestFn): Promise<void>`.
+  Add real temporary child-file tests: two callbacks each require a fresh
+  module-local counter and distinct PID; an exiting callback must not certify
+  success; count mismatch and duplicate names must fail. Confirm the baseline
+  fails the independent isolation expectations before implementing workers.
+- [x] Implement serial workers with an exact escaped CLI test-name selector,
+  native registration for explicitly selected invocations, bounded output, and
+  strict TAP terminal proof. Require exactly the requested top-level pass and
+  `1..1`; consistent tests/pass totals and zero fail/cancel/skip/todo counters;
+  zero exit status and no signal. Require all 169 parent registrations and
+  completions in order. Run real nested success, assertion failure, abrupt exit,
+  explicit selection, duplicate and inventory-mismatch fixtures.
+- [x] Use the private adapter in the retirement file; retain all 163 original
+  names/bodies and include six regressions for expected count 169. Run the focused corrected
+  sixteen-mode controller test and all helper regressions, TypeScript, contracts
+  and an independent review. Exercise the entire retirement file and audit its
+  complete name inventory against the child/parent completion diagnostics.
+- [ ] Record reviewed clean checkpoint evidence, run every adjacent check
+  including the inline helper regressions, and repeat the exact full P3 matrix
+  at the final SHA. Missing child results, OOM or abnormal exit always fail;
+  no partial aggregate is treated as a pass.
+
+The inline adapter regressions passed 6/6 (6.338s) after relocation. They cover
+fresh module state and distinct PIDs, abrupt zero exit, missing/duplicate names,
+explicit selection, real nested execution and failure propagation, literal
+regex names, skip/todo rejection and bounded output. Removing only inherited
+`NODE_TEST_CONTEXT` is required to start a real Node test runner; it does not
+alter production authority or runtime configuration. Full coverage remains
+pending until every parent registration has a successful child completion.
+
+Complete unfiltered retirement verification then passed 169/169 in 1494.296s,
+zero failures/cancellations/skips/todos. Independent log accounting matched all
+169 unique parent names to their ordered child completion diagnostics, totaling
+246 child tests including nested cases. The previously failing sixteen-mode
+controller test passed, and all 63 previously unreported original registrations
+completed. Log: `logs/2026-09-14T19-13-30.919Z-retirement-isolation-full.log`.
+Independent read-only review found no blocking code issues; its documentation
+reconciliation note was addressed by keeping the adapter and six tests inline.
+No-emit TypeScript, twelve Mission Control artifacts, English/path contracts,
+migration digests and diff checks passed. This is pre-checkpoint evidence only;
+the next clean checkpoint still requires complete adjacent and exact P3 gates.
+
 ### P3 run persistence ABI assertion repair (2026-09-14, in progress)
 
 The clean `28b5a068` remainder preflight passed files 19–29, including migration
