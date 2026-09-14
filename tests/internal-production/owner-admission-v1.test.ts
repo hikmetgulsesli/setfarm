@@ -4207,7 +4207,11 @@ test("P3 runner cleans setup primary crash and signal failures without crossing 
       assert.notEqual(result.status, 0);
       assert.match(result.output, /^P3_TEST_READINESS_PUBLISHED_BEFORE_SETUP_CRASH$/m);
       assert.match(result.output, /ISOLATED_TEST_COMMAND_SIGNAL:SIGKILL/);
-      assert.deepEqual(result.temporaryEntries, []);
+      assert.deepEqual(
+        result.temporaryEntries.filter((entry) => entry.startsWith("setfarm-p3-projection-")),
+        [],
+        "setup crash must remove every owned source projection",
+      );
       assert.deepEqual(await p3DatabaseInventoryV1(admin), baseline);
     } finally {
       moduleLoss.cleanup();

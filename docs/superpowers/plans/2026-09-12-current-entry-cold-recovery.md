@@ -2002,7 +2002,7 @@ helper, runner, process guard, database authority or timeout changes.
   non-symlink, nonempty), synchronous `writeFileSync(2, marker)` and
   `process.kill(process.pid, "SIGKILL")`. Require exactly one injection anchor.
   Await the real nested runner's completion and require the exact marker line,
-  nonzero signal failure, empty temporary entries and original DB inventory.
+  nonzero signal failure, no owned source-projection entries and original DB inventory.
   Retain the separate externally killed pre-publication setup test unchanged.
   This targets the same real process-death boundary without a45s rendezvous.
 - [ ] Run TypeScript no-emit and whitespace checks; independently review the
@@ -2011,6 +2011,20 @@ helper, runner, process guard, database authority or timeout changes.
   issue. Existing nested-runner output capture uses exit rather than close;
   this preexisting transport limitation is not evidence of the observed45s
   readiness deadline failure and is not changed in this synchronization fix.
+- Diagnostic run `7e327c01bd1b162dff94e2e5bcd190f3de23855e` completed103
+  tests,101 passed,2 failed (1359.924s), log
+  `/Users/setrox/ai/setrox/logs/2026-09-14-owner-preflight-7e327c01.log`.
+  Root mistakenly applied umask077 to the whole logging pipeline, not just
+  its log file. The launch-output fixture consequently received different
+  physical modes: its pure test reproduced failure under077 (0.536s), then
+  passed under the ordinary environment (0.421s). Do not change source guards
+  for this diagnostic-launch mistake; subsequent gates retain ordinary umask.
+  The real post-readiness marker and SIGKILL assertions passed. Its new empty
+  temporary-root assertion then rejected the toolchain's `tsx-501` cache.
+  Scope this assertion to `setfarm-p3-projection-` entries, exactly like the
+  existing runner tests; the helper still removes its entire own temporary
+  root after inventory and the full database-baseline assertion remains.
+  Standard-environment whole-file and full-matrix verification remain due.
 - [ ] Run the complete owner-admission file through the unchanged isolated
   runner on that clean checkpoint. Then preflight receipt acceptance and repeat
   the full exact P3 matrix before delivery. No partial result grants delivery.
