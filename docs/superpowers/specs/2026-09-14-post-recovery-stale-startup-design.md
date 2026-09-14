@@ -41,10 +41,18 @@ before unlink. There is no await between final checks and unlink. A replaced
 file, historical identity/PID, live owner, permission-denied liveness probe,
 missing readiness, or changing evidence refuses without deleting the candidate.
 
-Every acquired descriptor has one retained cleanup owner. Closing a read-only
+Every acquired descriptor has one retained cleanup owner, including the inner
+stale-file reader. Register before the first descriptor observation and record
+the actual opened identity separately from the pre-open pathname witness.
+Stop cleanup immediately when the singleton owner is live; do not proceed to
+an unrelated stale PID candidate. Closing a read-only
 authority pin never removes its file. Existing startup cleanup remains
 identity-bound and cannot remove a replacement owner's file. Failure does not
 become permission for normal producers, another dispatch, or journal repair.
+An uncertain close is never repeated: observed EBADF settles it, a changed
+descriptor is preserved, and a same-inode or still-open ambiguous slot retains
+its refusal fence. Test-only explicit closure may demonstrate terminal cleanup;
+production cannot infer that a thrown close happened before its effect.
 
 ## File map
 

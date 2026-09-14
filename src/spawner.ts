@@ -402,7 +402,7 @@ let lastGatewayCleanupRestartMs = 0;
 let lastGuardGatewayRestartMs = 0;
 let spawnerLockFd: number | null = null;
 type SpawnerStartupParentV1 = Readonly<{ path: string; identity: fs.BigIntStats }>;
-type OwnedSpawnerStartupFileV1 = { file: string; descriptor: number; bytes: Buffer; identity: fs.BigIntStats | null; unlinked: boolean; parents: readonly SpawnerStartupParentV1[] };
+type OwnedSpawnerStartupFileV1 = { file: string; descriptor: number; bytes: Buffer; identity: fs.BigIntStats | null; unlinked: boolean; parents: readonly SpawnerStartupParentV1[]; readOnlyClose?: () => void };
 const spawnerStartupFilesV1: OwnedSpawnerStartupFileV1[] = [];
 let spawnerColdStartupPhaseV1: "idle" | "singleton-held" | "claim-ready" | "sealed" | "stopping" | "closed" = "idle";
 let spawnerColdStartupStopV1: (() => void) | null = null;
@@ -522,6 +522,7 @@ function createOwnedSpawnerStartupFileV1(file: string, bytes: Buffer): OwnedSpaw
 }
 
 function closeOwnedSpawnerStartupFileV1(owned: OwnedSpawnerStartupFileV1): void {
+  if (owned.readOnlyClose) { owned.readOnlyClose(); return; }
   if (!owned.unlinked && owned.identity !== null) {
     try {
       assertSpawnerStartupFileParentsV1(owned.parents);
@@ -545,6 +546,38 @@ function closeOwnedSpawnerStartupFileV1(owned: OwnedSpawnerStartupFileV1): void 
   fs.closeSync(owned.descriptor);
   spawnerStartupFilesV1.splice(spawnerStartupFilesV1.indexOf(owned), 1);
   if (spawnerLockFd === owned.descriptor) spawnerLockFd = null;
+}
+
+function closeReadOnlySpawnerStartupPinV1(owned: OwnedSpawnerStartupFileV1, state: { identity: fs.BigIntStats | null; closeEntered: boolean; closed: boolean }): void {
+  if (state.closed) return;
+  const forget = () => {
+    state.closed = true;
+    const index = spawnerStartupFilesV1.indexOf(owned);
+    if (index >= 0) spawnerStartupFilesV1.splice(index, 1);
+  };
+  const observedClosedOrReused = (): boolean => {
+    let current: fs.BigIntStats;
+    try { current = fs.fstatSync(owned.descriptor, { bigint: true }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "EBADF") { forget(); return true; } throw error; }
+    const original = state.identity;
+    if (original === null && !state.closeEntered) state.identity = current;
+    if (original !== null && ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => original[key as keyof fs.BigIntStats] !== current[key as keyof fs.BigIntStats])) {
+      forget(); // Revoke the old slot without closing its new occupant.
+      if (!state.closeEntered) throw Error("SPAWNER_READ_ONLY_PIN_DESCRIPTOR_REUSED");
+      return true;
+    }
+    return false;
+  };
+  if (observedClosedOrReused()) return;
+  // Same-inode reopening is indistinguishable from the original open-file
+  // description after an uncertain close. Retain the fence; never close twice.
+  if (state.closeEntered || state.identity === null) throw Error("SPAWNER_READ_ONLY_PIN_CLOSE_UNCERTAIN");
+  state.closeEntered = true;
+  try { fs.closeSync(owned.descriptor); forget(); }
+  catch (error) {
+    try { observedClosedOrReused(); } catch { /* Preserve the original error and retained ownership. */ }
+    throw error;
+  }
 }
 
 function observeOwnedSpawnerStartupFileV1(file: string, expectedBytes: Buffer, lock: boolean) {
@@ -723,14 +756,19 @@ function publishSpawnerPidFileV1(): void {
   }
 }
 
-function reclaimDeadSpawnerStartupFileV1(file: string): "removed" | "alive" {
-  if (observeInternalProductionColdSpawnerBootstrapJournalCensusV1().state !== "absent") throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+function reclaimDeadSpawnerStartupFileV1(file: string, retainedAuthority?: () => void): "removed" | "alive" {
+  const assertAuthority = retainedAuthority ?? (() => {
+    if (observeInternalProductionColdSpawnerBootstrapJournalCensusV1().state !== "absent") throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  });
+  assertAuthority();
   const originalParents = observeSpawnerStartupFileParentsV1(file); file = originalParents.file;
   const before = fs.lstatSync(file, { bigint: true });
   if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.uid !== BigInt(process.getuid!())
     || (before.mode & 0o022n) !== 0n || before.size < 1n || before.size > 32n) throw Error("SPAWNER_STALE_FILE_IDENTITY_INVALID");
   const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   const reader: OwnedSpawnerStartupFileV1 = { file, descriptor, bytes: Buffer.alloc(0), identity: null, unlinked: false, parents: originalParents.parents };
+  const closeState: { identity: fs.BigIntStats | null; closeEntered: boolean; closed: boolean } = { identity: null, closeEntered: false, closed: false };
+  reader.readOnlyClose = () => closeReadOnlySpawnerStartupPinV1(reader, closeState);
   spawnerStartupFilesV1.push(reader);
   const same = (value: fs.BigIntStats) => value.isFile() && !value.isSymbolicLink() && value.nlink === 1n
     && value.dev === before.dev && value.ino === before.ino && value.uid === before.uid && value.gid === before.gid
@@ -738,7 +776,8 @@ function reclaimDeadSpawnerStartupFileV1(file: string): "removed" | "alive" {
     && value.mtimeNs === before.mtimeNs && value.ctimeNs === before.ctimeNs;
   try {
     assertSpawnerStartupFileParentsV1(reader.parents);
-    if (!same(fs.fstatSync(descriptor, { bigint: true }))) throw Error("SPAWNER_STALE_FILE_IDENTITY_INVALID");
+    const opened = fs.fstatSync(descriptor, { bigint: true }); closeState.identity = opened;
+    if (!same(opened)) throw Error("SPAWNER_STALE_FILE_IDENTITY_INVALID");
     const bytes = Buffer.alloc(Number(before.size) + 1);
     if (fs.readSync(descriptor, bytes, 0, bytes.length, 0) !== Number(before.size)) throw Error("SPAWNER_STALE_FILE_BYTES_INVALID");
     const value = bytes.subarray(0, Number(before.size)).toString("utf8");
@@ -750,8 +789,14 @@ function reclaimDeadSpawnerStartupFileV1(file: string): "removed" | "alive" {
       catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return true; throw Error("SPAWNER_STALE_FILE_LIVENESS_UNPROVEN"); }
     };
     if (!dead()) return "alive";
-    if (observeInternalProductionColdSpawnerBootstrapJournalCensusV1().state !== "absent") throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+    assertAuthority();
     const current = Buffer.alloc(bytes.length);
+    if (!dead() || !same(fs.fstatSync(descriptor, { bigint: true })) || !same(fs.lstatSync(file, { bigint: true }))
+      || fs.readSync(descriptor, current, 0, current.length, 0) !== Number(before.size) || !current.equals(bytes)
+      || !same(fs.lstatSync(file, { bigint: true }))) throw Error("SPAWNER_STALE_FILE_CHANGED");
+    assertSpawnerStartupFileParentsV1(reader.parents);
+    assertAuthority();
+    // Authority checks can be expensive: rebind the exact dead candidate last.
     if (!dead() || !same(fs.fstatSync(descriptor, { bigint: true })) || !same(fs.lstatSync(file, { bigint: true }))
       || fs.readSync(descriptor, current, 0, current.length, 0) !== Number(before.size) || !current.equals(bytes)
       || !same(fs.lstatSync(file, { bigint: true }))) throw Error("SPAWNER_STALE_FILE_CHANGED");
@@ -10990,7 +11035,101 @@ async function observeOrdinarySpawnerColdRecoveryAdmissionV1() {
   const retirement = await import("./internal-production/baseline-restart-authority-retirement-v1.js");
   const terminal = await retirement.observeInternalProductionDirectSpawnerRebindTerminalHistoryV1({ currentEntryOperation, restartAuthority });
   if (task12CanonicalV1(observeInternalProductionColdSpawnerBootstrapJournalCensusV1()) !== task12CanonicalV1(cold)) throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
-  return Object.freeze({ witnessHash: task12HashV1({ cold, currentEntryOperation, restartAuthority, admissionReady, terminal, generationHash: ready.unchangedSpawnerGenerationHash }), generationHash: ready.unchangedSpawnerGenerationHash });
+  const result = { witnessHash: task12HashV1({ cold, currentEntryOperation, restartAuthority, admissionReady, terminal, generationHash: ready.unchangedSpawnerGenerationHash }), generationHash: ready.unchangedSpawnerGenerationHash };
+  const evidence = Object.freeze({ cold, status, ready, terminal });
+  Object.defineProperty(result, "evidence", { value: evidence });
+  return Object.freeze(result) as Readonly<typeof result & { evidence: typeof evidence }>;
+}
+
+// Only main's freshly resolved normal-ready evidence can enter this private path.
+// The ordinary absent-only reclaimer remains the default for every other caller.
+async function reclaimPostRecoveryOrdinaryStartupFilesV1(admission: Awaited<ReturnType<typeof observeOrdinarySpawnerColdRecoveryAdmissionV1>>): Promise<void> {
+  if (admission === null) return;
+  for (const owner of [...spawnerStartupFilesV1]) if (owner.readOnlyClose) closeOwnedSpawnerStartupFileV1(owner);
+  for (const target of [LOCK_FILE, PID_FILE]) {
+    try { fs.lstatSync(target); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+    const pins: Array<{ owner: OwnedSpawnerStartupFileV1; identity: fs.BigIntStats; bytes: Buffer }> = [];
+    const owners: OwnedSpawnerStartupFileV1[] = [];
+    const same = (a: fs.BigIntStats, b: fs.BigIntStats) => ["dev", "ino", "uid", "gid", "mode", "nlink", "size", "birthtimeNs", "mtimeNs", "ctimeNs"].every(key => a[key as keyof fs.BigIntStats] === b[key as keyof fs.BigIntStats]);
+    const pin = (file: string, maximum: number, privateRecord = false) => {
+      const parents = observeSpawnerStartupFileParentsV1(file);
+      const original = fs.lstatSync(parents.file, { bigint: true });
+      const descriptor = fs.openSync(parents.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      const owner: OwnedSpawnerStartupFileV1 = { file: parents.file, descriptor, bytes: Buffer.alloc(0), identity: null, unlinked: false, parents: parents.parents };
+      const closeState: { identity: fs.BigIntStats | null; closeEntered: boolean; closed: boolean } = { identity: null, closeEntered: false, closed: false };
+      owner.readOnlyClose = () => closeReadOnlySpawnerStartupPinV1(owner, closeState);
+      spawnerStartupFilesV1.push(owner); // Read-only pin: identity stays null, so cleanup never unlinks it.
+      owners.push(owner); // Register locally before the first fallible descriptor observation.
+      const identity = fs.fstatSync(descriptor, { bigint: true });
+      closeState.identity = identity; // The opened FD is owned even when its pathname witness changed.
+      const held = { owner, identity, bytes: Buffer.alloc(0) }; pins.push(held);
+      assertSpawnerStartupFileParentsV1(owner.parents);
+      if (!identity.isFile() || identity.nlink !== 1n || identity.uid !== BigInt(process.getuid!())
+        || (identity.mode & 0o022n) !== 0n || privateRecord && (identity.mode & 0o7777n) !== 0o600n
+        || identity.size < 1n || identity.size > BigInt(maximum) || !same(identity, original) || !same(identity, fs.lstatSync(owner.file, { bigint: true }))) throw Error("SPAWNER_NORMAL_RECLAIM_PIN_INVALID");
+      const bytes = Buffer.alloc(Number(identity.size) + 1);
+      if (fs.readSync(descriptor, bytes, 0, bytes.length, 0) !== Number(identity.size)) throw Error("SPAWNER_NORMAL_RECLAIM_PIN_INVALID");
+      held.bytes = bytes.subarray(0, Number(identity.size));
+      return held;
+    };
+    const assertPins = () => {
+      for (const held of pins) {
+        assertSpawnerStartupFileParentsV1(held.owner.parents);
+        const bytes = Buffer.alloc(held.bytes.length + 1);
+        if (!same(held.identity, fs.fstatSync(held.owner.descriptor, { bigint: true })) || !same(held.identity, fs.lstatSync(held.owner.file, { bigint: true }))
+          || fs.readSync(held.owner.descriptor, bytes, 0, bytes.length, 0) !== held.bytes.length || !bytes.subarray(0, held.bytes.length).equals(held.bytes)
+          || !same(held.identity, fs.fstatSync(held.owner.descriptor, { bigint: true })) || !same(held.identity, fs.lstatSync(held.owner.file, { bigint: true }))) throw Error("SPAWNER_NORMAL_RECLAIM_PIN_CHANGED");
+      }
+    };
+    try {
+      const candidate = pin(target, 32), text = candidate.bytes.toString("utf8");
+      if (!/^[1-9][0-9]{0,9}\n?$/.test(text)) throw Error("SPAWNER_STALE_FILE_PID_INVALID");
+      const pid = Number(text.trim()), { status, ready, terminal, cold } = admission.evidence;
+      if (!Number.isSafeInteger(pid) || pid > 2_147_483_647 || pid === process.pid) throw Error("SPAWNER_STALE_FILE_PID_INVALID");
+      const exclusion = terminal.startupExclusion;
+      for (const ownership of [exclusion.direct, exclusion.cold]) {
+        if (ownership === null) continue;
+        const historical = ownership as Record<string, any>;
+        if (pid === historical.pid || [historical.singleton, historical.pidFile].some(file => file.devDecimal === String(candidate.identity.dev) && file.inoDecimal === String(candidate.identity.ino))) throw Error("SPAWNER_NORMAL_RECLAIM_HISTORICAL_OWNER");
+      }
+      if (pid === exclusion.predecessorPid) throw Error("SPAWNER_NORMAL_RECLAIM_HISTORICAL_OWNER");
+      const root = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1");
+      const record = (kind: string, hash: string, expected: unknown) => {
+        if (!/^[a-f0-9]{64}$/.test(hash)) throw Error("SPAWNER_NORMAL_RECLAIM_RECORD_INVALID");
+        const held = pin(path.join(root, `records/${kind}/sha256`, hash.slice(0, 2), `${hash}.json`), 1_048_576, true);
+        if (!held.bytes.equals(Buffer.from(`${task12CanonicalV1(expected)}\n`))) throw Error("SPAWNER_NORMAL_RECLAIM_RECORD_CROSSED");
+      };
+      record("status", status.statusHash, status);
+      record("admission-ready", ready.admissionReadyHash, ready);
+      const directory = path.join(root, "operations/sha256", status.currentEntryOperation!.operationHash);
+      const inventory = fs.readdirSync(directory).sort();
+      for (const [name, expected] of [
+        ["status-06-normal-task0-admission-ready.pair.json", { statusRef: status.statusRef, statusHash: status.statusHash }],
+        ["08-admission-ready.pair.json", { admissionReadyRef: ready.admissionReadyRef, admissionReadyHash: ready.admissionReadyHash }],
+      ] as const) {
+        if (!pin(path.join(directory, name), 65_536, true).bytes.equals(Buffer.from(`${task12CanonicalV1(expected)}\n`))) throw Error("SPAWNER_NORMAL_RECLAIM_LOCATOR_CROSSED");
+      }
+      const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
+      assertPins();
+      const source = receipt.observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+      const current = await observeOrdinarySpawnerColdRecoveryAdmissionV1();
+      if (current === null || current.witnessHash !== admission.witnessHash) throw Error("SPAWNER_NORMAL_RECLAIM_ADMISSION_CHANGED");
+      const assertAuthority = () => {
+        if (task12CanonicalV1(receipt.observeCurrentInternalProductionCleanSetfarmSourceBuildV1()) !== task12CanonicalV1(source)) throw Error("SPAWNER_NORMAL_RECLAIM_SOURCE_CHANGED");
+        assertPins(); terminal.assertStable();
+        if (task12CanonicalV1(observeInternalProductionColdSpawnerBootstrapJournalCensusV1()) !== task12CanonicalV1(cold)
+          || task12CanonicalV1(fs.readdirSync(directory).sort()) !== task12CanonicalV1(inventory)) throw Error("SPAWNER_NORMAL_RECLAIM_ADMISSION_CHANGED");
+        assertPins();
+      };
+      assertAuthority();
+      if (reclaimDeadSpawnerStartupFileV1(target, assertAuthority) === "alive") throw Error("SPAWNER_NORMAL_RECLAIM_LIVE_OWNER");
+    } finally {
+      let failure: unknown;
+      for (const owner of owners.reverse()) try { closeOwnedSpawnerStartupFileV1(owner); } catch (error) { failure ??= error; }
+      if (failure) throw failure;
+    }
+  }
 }
 
 async function assertOrdinarySpawnerColdRecoveryAdmissionV1(before: Awaited<ReturnType<typeof observeOrdinarySpawnerColdRecoveryAdmissionV1>>) {
@@ -11012,6 +11151,7 @@ async function main() {
   if (await runInternalProductionDirectSpawnerStartupV1()) return;
   if (await runInternalProductionColdSpawnerStartupV1()) return;
   const coldRecoveryAdmission = await observeOrdinarySpawnerColdRecoveryAdmissionV1();
+  await reclaimPostRecoveryOrdinaryStartupFilesV1(coldRecoveryAdmission);
   acquireSpawnerSingletonLock();
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
   publishSpawnerPidFileV1();

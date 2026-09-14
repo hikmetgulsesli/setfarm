@@ -65,19 +65,19 @@ forever after cold recovery. This refines the historical post-recovery startup
 section below: its default guards stay strict, but authenticated nonhistorical
 ordinary residue needs a separate private cleanup owner.
 
-- [ ] RED: extend actual-main fixture with `settled-ready-crash-restart`.
+- [x] RED: extend actual-main fixture with `settled-ready-crash-restart`.
   At its existing pre-producer boundary, the first actual main writes a private
   crash marker and exits without cleanup. Assert both startup files contain
   that dead child PID; launch the identical copied main again and require the
   normal boundary marker. Current expected failure: `COLD_BOOTSTRAP_NOT_ABSENT`.
-- [ ] Add actual terminal exclusion/fence tests. Historical PID/inode evidence
+- [x] Add actual terminal exclusion/fence tests. Historical PID/inode evidence
   must be immutable and never become caller-supplied deletion permission;
   replacing any original terminal input makes its synchronous fence reject.
-- [ ] Implement private post-ready cleanup before singleton acquisition, with
+- [x] Implement private post-ready cleanup before singleton acquisition, with
   retained candidate/readiness pins, final full admission reobservation and a
   no-await synchronous source/history/readiness/death/identity tail. Preserve
   default absent-only reclamation and all existing cold/direct restrictions.
-- [ ] Add adversarial actual cleanup cases: original historical PID/inode,
+- [x] Add adversarial actual cleanup cases: original historical PID/inode,
   live/ambiguous PID, source/readiness/history drift, same-byte replacement,
   parent replacement and interrupted close. Assert unchanged foreign evidence
   and drained owned descriptors, not just thrown exceptions.
@@ -85,6 +85,41 @@ ordinary residue needs a separate private cleanup owner.
   independent review, and record a clean checkpoint before complete adjacent
   and exact full P3 verification. Resolve the separate cold-history fixture
   setup failure before another full matrix run.
+
+Verification ledger: actual-main crash/restart first failed with
+`COLD_BOOTSTRAP_NOT_ABSENT` (6.855s), then passed. Retained terminal fencing first
+failed on the absent synchronous fence, then passed with a real same-byte claim
+replacement. Review exposed and tests reproduced three cleanup edges: live
+singleton/dead PID incorrectly removed PID; after-effect close reused a foreign
+descriptor and closed it on retry; lstat/open replacement abandoned an opened
+reader (`open: true, owners: 0`). The inner stale reader had the same unsafe
+close path and independently reproduced the foreign-FD failure.
+
+The final private read-only close owner records the opened FD identity, not its
+pre-open pathname witness; registers cleanup before fstat; preserves reused
+foreign descriptors; and never repeats an uncertain close, including a same-
+inode reopen. A before-effect injected close failure is not distinguishable to
+production, so the old test now requires a retained uncertainty fence, followed
+by test-only explicit closure and observed EBADF settlement. Default absent-
+only reclamation, normal owned startup-file unlink behavior, public cold census,
+persisted records, runtime exports and frozen source tuple stay unchanged.
+
+Latest focused evidence: actual main passed all 22 scenarios (136.607s),
+including candidate-open replacement and first-fstat failure with actual
+`open: false, owners: 0` observations. Three reader/reclamation regressions
+passed 3/3 (1.676s). Six historical/replay checks passed 6/6 (117.237s), including
+the complete 33-mode cold-history test and retained same-byte replacement
+refusal. Four adjacent owner checks passed six tests including nested cases.
+No-emit, twelve Mission Control artifacts, English/path contracts, migration
+digests and diff checks passed. Final clean-checkpoint broad gates remain open.
+
+The earlier cold-history setup disappearance has not reproduced: diagnostic
+root replay passed, and an immutable `b9c9bb57` snapshot plus diagnostic catch
+passed three repetitions (93.58s, 97.17s, 93.18s). Logs remain in
+`/private/tmp/setfarm-cold-history-diagnostic.kIRS0p/repetition-{1,2,3}.log`.
+No cause is claimed and no liveness guard was weakened. The owning test now
+includes the mode and child error file in a failed initial invocation so a
+recurrence cannot lose that evidence during fixture cleanup.
 
 ### Retirement fixture repair evidence
 

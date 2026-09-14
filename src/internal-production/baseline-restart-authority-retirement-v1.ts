@@ -774,7 +774,7 @@ export function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(): 
         const settled = observeColdControllerSettlementHistoryV1();
         guard.assertStable();
         if (!sameColdFileMetadataV1(before, lstatSync(nearest, { bigint: true }))) fail("cold settlement ancestor changed");
-        return settled;
+        return settled.census;
       } catch { return fail("COLD_BOOTSTRAP_UNSETTLED: cold controller settlement chain is unauthenticated"); }
     }
     try { lstatSync(target); fail("COLD_BOOTSTRAP_UNSETTLED: cold history has no authenticated controller settlement"); }
@@ -845,7 +845,7 @@ function observeColdControllerSettlementHistoryV1() {
     inventory();
     const body = { schema: "setfarm.internal-production-cold-spawner-bootstrap-journal-census.v1" as const, state: "settled" as const,
       incompleteOwnerCount: 0 as const, settlement: record, settlementIdentity: coldFileIdentityTupleV1(publication.stats) };
-    return freezeColdDataV1({ ...body, censusHash: sha256(canonical(body)) });
+    return freezeColdDataV1({ census: { ...body, censusHash: sha256(canonical(body)) }, startupOwnership: claim.startupFiles });
   } finally { finishRetainedColdCleanupV1(() => { while (guards.length > 0) { guards.at(-1)!.close(); guards.pop(); } }); }
 }
 
@@ -2683,13 +2683,26 @@ export async function observeInternalProductionDirectSpawnerRebindTerminalHistor
     if (canonical(record.currentEntryOperation) !== canonical(currentEntryOperation)
       || canonical(record.restartAuthority) !== canonical(restartAuthority)) fail("direct terminal input pair is crossed");
   }
-  const proof = freezeColdDataV1({ currentEntryOperation, restartAuthority,
+  const coldCensus = observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+  const coldHistory = coldCensus.state === "settled" ? observeColdControllerSettlementHistoryV1() : null;
+  if (coldHistory !== null && canonical(coldHistory.census) !== canonical(coldCensus)) fail("direct terminal cold exclusion history changed");
+  const startupExclusion = freezeColdDataV1({ direct: history.claim.startupFiles, cold: coldHistory?.startupOwnership ?? null,
+    predecessorPid: (history.preMutation.spawner as Record<string, unknown>).pid });
+  const assertStable = () => {
+    assertDirectSpawnerControllerSettlementHistoryStableV1(history);
+    const currentCold = observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+    if (coldHistory === null ? currentCold.state !== "absent" : canonical(currentCold) !== canonical(coldHistory.census)) fail("direct terminal cold exclusion history changed");
+    assertDirectSpawnerControllerSettlementHistoryStableV1(history);
+  };
+  const proof = { currentEntryOperation, restartAuthority,
     preSchemaHelperJournalHash: history.preSchemaHelperJournalHash,
     preSchemaHelperSettlementRef: history.preSchemaHelperSettlementRef,
     preSchemaHelperSettlementHash: history.preSchemaHelperSettlementHash,
-    settlementIdentity: history.settlementIdentity });
-  assertDirectSpawnerControllerSettlementHistoryStableV1(history);
-  return proof;
+    settlementIdentity: history.settlementIdentity };
+  // Process-local read-only evidence, never part of the persisted/hash projection.
+  Object.defineProperties(proof, { assertStable: { value: assertStable }, startupExclusion: { value: startupExclusion } });
+  assertStable();
+  return freezeColdDataV1(proof) as Readonly<typeof proof & { assertStable: () => void; startupExclusion: typeof startupExclusion }>;
 }
 
 async function observeDirectSpawnerControllerSettlementHistoryV1() {

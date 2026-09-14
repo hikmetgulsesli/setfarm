@@ -1256,6 +1256,13 @@ process.stdout.write(JSON.stringify({pid:process.pid,terminalHash:terminal.helpe
         assert.deepEqual(terminalProof.currentEntryOperation, terminalInput.currentEntryOperation);
         assert.deepEqual(terminalProof.restartAuthority, terminalInput.restartAuthority);
         assert.equal(Object.isFrozen(terminalProof), true);
+        assert.equal(typeof terminalProof.assertStable, "function", "retained terminal proof needs a synchronous final fence");
+        assert.equal(Object.prototype.propertyIsEnumerable.call(terminalProof, "assertStable"), false);
+        assert.equal(Object.prototype.propertyIsEnumerable.call(terminalProof, "startupExclusion"), false);
+        assert.equal(Object.isFrozen(terminalProof.startupExclusion), true);
+        assert.deepEqual(terminalProof.startupExclusion.direct, history.claim.startupFiles);
+        assert.equal(terminalProof.startupExclusion.predecessorPid, history.preMutation.spawner.pid);
+        terminalProof.assertStable();
         for (const stem of ["currentEntryOperation", "restartAuthority"] as const) {
           const prefix = stem === "currentEntryOperation" ? "operation" : "restartAuthority";
           await assert.rejects(fresh.observeInternalProductionDirectSpawnerRebindTerminalHistoryV1({ ...terminalInput, [stem]: { ...terminalInput[stem], [`${prefix}Hash`]: "f".repeat(64) } }), /crossed|pair/);
@@ -1331,6 +1338,13 @@ process.stdout.write(JSON.stringify({pid:process.pid,terminalHash:terminal.helpe
         assert.deepEqual({ signals: readFileSync(signals), spawns: readFileSync(directSpawnTracePath) }, effects, "recovery performs no new termination/helper/child effect");
         const originalChild = parseColdFixtureExitRowV1(readFileSync(directChildCleanupPath, "utf8"));
         assert.equal(assertColdFixtureExitObservationV1(observeColdFixtureExitV1(Number(originalChild.pid)), originalChild), directControllerFault === "settle-public-child-departed" ? "absent" : "running");
+        if (directControllerFault === "settle-dead-owner") {
+          const claimPath = path.join(journalRoot, "claim.json"), bytes = readFileSync(claimPath);
+          renameSync(claimPath, path.join(fixture, "retained-original-claim"));
+          writeFileSync(claimPath, bytes, { mode: 0o600, flag: "wx" });
+          assert.throws(() => terminalProof.assertStable(), /changed|crossed/, "same-byte replacement revokes the retained synchronous proof");
+          assert.deepEqual(readFileSync(claimPath), bytes, "read-only fencing never deletes the replacement");
+        }
         return;
       }
       lease = await runtime.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
@@ -3884,7 +3898,10 @@ test("cold settlement history rejects crossed immutable records without live pro
     try {
       const output = await import(pathToFileURL(path.join(fixture.fixture, "dist/internal-production/baseline-spawner-launch-environment-v1.js")).href);
       Reflect.set(globalThis, "__coldControllerCompiledOutputVerifier", output.verifyInternalProductionSpawnerLaunchOutputCandidateV1);
-      const claim = await fixture.isolated.invokeColdControllerFixtureV1(); childPid = claim.child.pid;
+      const claim = await fixture.isolated.invokeColdControllerFixtureV1().catch((error: Error) => {
+        const diagnostic = path.join(fixture.fixture, "fixture-claim-error");
+        throw Error(`${mode}: ${error.message}; child diagnostic: ${existsSync(diagnostic) ? readFileSync(diagnostic, "utf8") : "absent"}`, { cause: error });
+      }); childPid = claim.child.pid;
       const ordinary = await import(pathToFileURL(path.join(fixture.fixture, "ordinary-spawner-census-fixture.mjs")).href);
       Reflect.set(globalThis, "__coldControllerServiceCensusObserver", async () => {
         const body = { schema: "setfarm.internal-production-service-census.v1", spawner: ordinary.observeFixtureSpawner(), ...Reflect.get(globalThis, "__coldGenesisObservation").remainingServices };

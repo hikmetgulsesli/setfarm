@@ -3350,7 +3350,7 @@ for(const mode of ['absent','ready','incomplete','settled-owner','v1','sealed','
 test("ordinary stale startup reclamation requires exact bytes, definite death and an absent cold journal", async () => {
   const typescript = await import("typescript");
   const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8"), tree = typescript.createSourceFile("spawner.ts", source, typescript.ScriptTarget.Latest, true);
-  const functions = ["observeSpawnerStartupFileParentsV1", "assertSpawnerStartupFileParentsV1", "reclaimDeadSpawnerStartupFileV1", "closeOwnedSpawnerStartupFileV1", "releaseSpawnerSingletonLock"].map((name) => {
+  const functions = ["observeSpawnerStartupFileParentsV1", "assertSpawnerStartupFileParentsV1", "reclaimDeadSpawnerStartupFileV1", "closeOwnedSpawnerStartupFileV1", "closeReadOnlySpawnerStartupPinV1", "releaseSpawnerSingletonLock"].map((name) => {
     const declaration = tree.statements.find((statement) => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
     assert.ok(declaration); return declaration.getText(tree);
   }).join("\n");
@@ -3377,13 +3377,92 @@ for(fault of ['settled-history','settled-arrival','none','non-ascii','double-new
  if(fault==='none')assert.equal(reclaimDeadSpawnerStartupFileV1(target),'removed');
  else if(fault==='alive')assert.equal(reclaimDeadSpawnerStartupFileV1(target),'alive');
  else assert.throws(()=>reclaimDeadSpawnerStartupFileV1(target),undefined,fault+' must not grant stale deletion');
- releaseSpawnerSingletonLock();assert.equal(ownedDescriptors.size,0,fault+' must close its readers');
+ if(fault==='close'){
+  assert.throws(()=>releaseSpawnerSingletonLock(),/SPAWNER_READ_ONLY_PIN_CLOSE_UNCERTAIN/);
+  assert.equal(ownedDescriptors.size,1,'unknown close outcome retains its fence instead of retrying a possibly reused slot');
+  for(const fd of ownedDescriptors){actualFs.closeSync(fd);ownedDescriptors.delete(fd);} // Test owns the simulated pre-close fault.
+ }
+ releaseSpawnerSingletonLock();assert.equal(ownedDescriptors.size,0,fault+' must close or observe terminal closure of its readers');
  if(!['none','close'].includes(fault))assert.deepEqual(actualFs.readFileSync(target),bytes,fault+' preserves exact retained evidence');
 }
 `, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText);
     const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 15000, maxBuffer: 65536, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
     assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
   } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test("read-only startup pins preserve reused descriptors after uncertain close", async () => {
+  const typescript = await import("typescript");
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  const tree = typescript.createSourceFile("spawner.ts", source, typescript.ScriptTarget.Latest, true);
+  const functions = ["closeOwnedSpawnerStartupFileV1", "closeReadOnlySpawnerStartupPinV1"].map(name => {
+    const declaration = tree.statements.find(statement => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
+    if (name === "closeOwnedSpawnerStartupFileV1") assert.ok(declaration);
+    return declaration?.getText(tree) ?? "";
+  }).join("\n");
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-readonly-startup-close-")));
+  try {
+    const runner = path.join(root, "close.mjs");
+    writeFileSync(runner, typescript.transpileModule(`
+import assert from 'node:assert/strict';import realFs from 'node:fs';
+const root=${JSON.stringify(root)},spawnerStartupFilesV1=[];let spawnerLockFd=null;
+let fault='',closeCalls=0,statCalls=0,replacement=null,original='',foreign='';
+const fs={...realFs,fstatSync(...args){if(fault==='first-stat'&&++statCalls===1)throw Error('fixture first stat failure');return realFs.fstatSync(...args);},closeSync(fd){closeCalls++;if(fault==='before'&&closeCalls===1)throw Error('fixture before close');realFs.closeSync(fd);if(['foreign','same-inode'].includes(fault)&&closeCalls===1){replacement=realFs.openSync(fault==='foreign'?foreign:original,'r');assert.equal(replacement,fd);throw Error('fixture after close');}}};
+${functions}
+for(fault of ['foreign','same-inode','before','first-stat','normal']){
+ closeCalls=0;statCalls=0;replacement=null;original=root+'/'+fault;foreign=original+'-foreign';
+ realFs.writeFileSync(original,'original');realFs.writeFileSync(foreign,'foreign');
+ const descriptor=realFs.openSync(original,'r'),identity=realFs.fstatSync(descriptor,{bigint:true});
+ const state={identity:fault==='first-stat'?null:identity,closeEntered:false,closed:false};
+ const owner={file:original,descriptor,bytes:Buffer.alloc(0),identity:null,unlinked:false,parents:[]};
+ owner.readOnlyClose=()=>closeReadOnlySpawnerStartupPinV1(owner,state);spawnerStartupFilesV1.push(owner);
+ try {
+  if(fault==='normal')closeOwnedSpawnerStartupFileV1(owner);else assert.throws(()=>closeOwnedSpawnerStartupFileV1(owner));
+  try{closeOwnedSpawnerStartupFileV1(owner);}catch(error){assert.match(String(error),/SPAWNER_READ_ONLY_PIN_CLOSE_UNCERTAIN/);}
+  if(['foreign','same-inode','before'].includes(fault)){
+   const current=realFs.fstatSync(descriptor,{bigint:true});
+   assert.equal(current.ino,realFs.lstatSync(fault==='foreign'?foreign:original,{bigint:true}).ino,'cleanup must preserve the uncertain/reused descriptor');
+   assert.equal(closeCalls,1,'an uncertain close never receives a second close syscall');
+  }else assert.throws(()=>realFs.fstatSync(descriptor),{code:'EBADF'});
+  assert.equal(realFs.readFileSync(original,'utf8'),'original');assert.equal(realFs.readFileSync(foreign,'utf8'),'foreign');
+  assert.equal(spawnerStartupFilesV1.includes(owner),['same-inode','before'].includes(fault));
+ }finally{try{realFs.closeSync(descriptor);}catch(error){if(error.code!=='EBADF')throw error;}const index=spawnerStartupFilesV1.indexOf(owner);if(index>=0)spawnerStartupFilesV1.splice(index,1);}
+}
+`, { compilerOptions: { target: typescript.ScriptTarget.ES2022, module: typescript.ModuleKind.ESNext } }).outputText);
+    const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("stale startup inner reader preserves a foreign descriptor after close response loss", async () => {
+  const typescript = await import("typescript");
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  const tree = typescript.createSourceFile("spawner.ts", source, typescript.ScriptTarget.Latest, true);
+  const functions = ["observeSpawnerStartupFileParentsV1", "assertSpawnerStartupFileParentsV1", "reclaimDeadSpawnerStartupFileV1", "closeOwnedSpawnerStartupFileV1", "closeReadOnlySpawnerStartupPinV1", "releaseSpawnerSingletonLock"].map(name => {
+    const declaration = tree.statements.find(statement => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
+    assert.ok(declaration); return declaration.getText(tree);
+  }).join("\n");
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-inner-startup-close-")));
+  try {
+    const runner = path.join(root, "inner.mjs");
+    writeFileSync(runner, typescript.transpileModule(`
+import assert from 'node:assert/strict';import realFs from 'node:fs';import path from 'node:path';import {spawnSync} from 'node:child_process';
+const root=${JSON.stringify(root)},target=root+'/spawner.lock',foreign=root+'/foreign',spawnerStartupFilesV1=[];let spawnerLockFd=null,replacement=null,closeCalls=0;
+const predecessor=spawnSync(process.execPath,['-e','']);assert.equal(predecessor.status,0);
+realFs.writeFileSync(target,predecessor.pid+'\\n',{mode:0o600});realFs.writeFileSync(foreign,'foreign',{mode:0o600});
+const fs={...realFs,closeSync(fd){closeCalls++;realFs.closeSync(fd);if(closeCalls===1){replacement=realFs.openSync(foreign,'r');assert.equal(replacement,fd);throw Error('fixture inner close response lost');}}};
+function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){return {state:'absent'};}
+${functions}
+try{
+ assert.throws(()=>reclaimDeadSpawnerStartupFileV1(target),/fixture inner close response lost/);
+ releaseSpawnerSingletonLock();
+ assert.equal(realFs.fstatSync(replacement,{bigint:true}).ino,realFs.lstatSync(foreign,{bigint:true}).ino,'inner stale reader must never close a reused foreign descriptor');
+ assert.equal(closeCalls,1);assert.equal(spawnerStartupFilesV1.length,0);assert.equal(realFs.readFileSync(foreign,'utf8'),'foreign');
+}finally{if(replacement!==null)try{realFs.closeSync(replacement);}catch(error){if(error.code!=='EBADF')throw error;}}
+`, { compilerOptions: { target: typescript.ScriptTarget.ES2022, module: typescript.ModuleKind.ESNext } }).outputText);
+    const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("spawner fatal refusal stays nonzero when startup cleanup is interrupted", () => {
@@ -3450,13 +3529,19 @@ for(fault of ['none','partial','replacement']){
 });
 
 test("P4 real spawner main remains sealed until signal and cleans its lock and pid", async () => {
-  for (const mode of ["settled-ready", "settled-history", "settled-appears", "sealed", "existing-cold", "cold-appears", "foreign-pid", "foreign-lock", "stale-pid", "parent-symlink"]) {
+  for (const mode of ["settled-ready-crash-restart", ...["open-replaced", "first-pin-stat", "live-lock-dead-pid", "historical-pid", "historical-inode", "live-owner", "ready-replaced", "terminal-replaced", "source-changed", "startup-replaced", "parent-replaced"].map(fault => `settled-ready-crash-restart-${fault}`), "settled-ready", "settled-history", "settled-appears", "sealed", "existing-cold", "cold-appears", "foreign-pid", "foreign-lock", "stale-pid", "parent-symlink"]) {
   const repository = path.resolve(import.meta.dirname, "../..");
   const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-real-sealed-spawner-")));
   const fixtureSource = path.join(fixture, "src");
   const pidFile = path.join(fixture, "state/spawner.pid");
   const lockFile = path.join(fixture, "state/spawner.lock");
   const normalMarker = path.join(fixture, "normal-startup-called");
+  const crashMarker = path.join(fixture, "ordinary-startup-crashed");
+  const terminalMarker = path.join(fixture, "terminal-history-marker");
+  const pinCleanupMarker = path.join(fixture, "pin-cleanup-observed");
+  writeFileSync(terminalMarker, "immutable history", { mode: 0o600 });
+  const crashCase = mode.startsWith("settled-ready-crash-restart");
+  const crashRefusal = crashCase && mode !== "settled-ready-crash-restart";
   const admissionMarker = path.join(fixture, "ordinary-admission-called");
   const providerMarker = path.join(fixture, "provider-discovery-called");
   const ordinaryDirectories = ["agent-scratch", "transcripts", "attempt-workspaces"].map((name) => path.join(fixture, "ordinary", name));
@@ -3499,7 +3584,7 @@ export async function resolveInternalProductionPreSchemaSpawnerReplacementProces
 export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){return ${JSON.stringify(source)}}
 export async function observeInternalProductionServiceCensusV1(){return {spawner:{processIdentityHash:${JSON.stringify(processIdentityHash)},generationHash:${JSON.stringify(generationHash)}}}}
 `, "utf8");
-  if (mode === "settled-ready") {
+  if (mode.startsWith("settled-ready")) {
     // Only external authority ports are replaced: actual main must admit ready
     // history, publish its owned files, and check the new PID before producers.
     const retirementPath = path.join(fixtureSource, "internal-production/baseline-restart-authority-retirement-v1.ts");
@@ -3507,20 +3592,52 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
     const terminalStart = retirementSource.indexOf("export async function observeInternalProductionDirectSpawnerRebindTerminalHistoryV1(");
     const terminalBody = retirementSource.indexOf("  const value =", terminalStart);
     assert.ok(terminalStart >= 0 && terminalBody > terminalStart);
-    writeFileSync(retirementPath, retirementSource.slice(0, terminalBody) + `  if(input.currentEntryOperation.operationRef!=='fixture-operation'||input.restartAuthority.restartAuthorityRef!=='fixture-restart')throw Error('FIXTURE_TERMINAL_INPUT_CROSSED');return {currentEntryOperation:input.currentEntryOperation,restartAuthority:input.restartAuthority,preSchemaHelperJournalHash:'d'.repeat(64),preSchemaHelperSettlementRef:'fixture-terminal',preSchemaHelperSettlementHash:'e'.repeat(64),settlementIdentity:['1','2','3']};\n` + retirementSource.slice(terminalBody));
+    writeFileSync(retirementPath, "import { existsSync as fixtureExistsSync } from 'node:fs';\n" + retirementSource.slice(0, terminalBody) + `  if(input.currentEntryOperation.operationRef!=='fixture-operation'||input.restartAuthority.restartAuthorityRef!=='fixture-restart')throw Error('FIXTURE_TERMINAL_INPUT_CROSSED');const fixtureHistoricalStat=lstatSync(${JSON.stringify(terminalMarker)},{bigint:true});const fixtureTerminalProof={currentEntryOperation:input.currentEntryOperation,restartAuthority:input.restartAuthority,preSchemaHelperJournalHash:'d'.repeat(64),preSchemaHelperSettlementRef:'fixture-terminal',preSchemaHelperSettlementHash:'e'.repeat(64),settlementIdentity:['1','2','3']};Object.defineProperties(fixtureTerminalProof,{assertStable:{value:()=>{const current=lstatSync(${JSON.stringify(terminalMarker)},{bigint:true});if(current.dev!==fixtureHistoricalStat.dev||current.ino!==fixtureHistoricalStat.ino)throw Error('SPAWNER_NORMAL_RECLAIM_TERMINAL_CHANGED');}},startupExclusion:{value:{direct:{pid:${JSON.stringify(mode)}.endsWith('-historical-pid')&&fixtureExistsSync(${JSON.stringify(crashMarker)})?Number(readFileSync(${JSON.stringify(crashMarker)},'utf8')):1,singleton:${JSON.stringify(mode)}.endsWith('-historical-inode')&&fixtureExistsSync(${JSON.stringify(lockFile)})?{devDecimal:String(lstatSync(${JSON.stringify(lockFile)},{bigint:true}).dev),inoDecimal:String(lstatSync(${JSON.stringify(lockFile)},{bigint:true}).ino)}:{devDecimal:'0',inoDecimal:'1'},pidFile:{devDecimal:'0',inoDecimal:'2'}},cold:null,predecessorPid:2}}});return Object.freeze(fixtureTerminalProof);\n` + retirementSource.slice(terminalBody));
+    const fixtureOperation = { operationHash: "a".repeat(64), operationRef: "fixture-operation" };
+    const fixtureRestart = { restartAuthorityHash: "b".repeat(64), restartAuthorityRef: "fixture-restart" };
+    const fixtureReadyPair = { admissionReadyHash: "c".repeat(64), admissionReadyRef: "fixture-ready" };
+    const fixtureStatus = { state: "normal_task0_admission_ready", currentEntryOperation: fixtureOperation, restartAuthority: fixtureRestart, admissionReady: fixtureReadyPair, statusHash: "9".repeat(64), statusRef: "fixture-status" };
+    const fixtureReady = { state: "normal-task0-admission-ready", ...fixtureReadyPair, ...fixtureRestart, currentEntryOperationRef: fixtureOperation.operationRef, currentEntryOperationHash: fixtureOperation.operationHash, unchangedSpawnerGenerationHash: generationHash };
     writeFileSync(path.join(fixtureSource, "internal-production/baseline-spawner-startup-admission-v1.ts"), `
 import assert from 'node:assert/strict';
 const operation={operationHash:'a'.repeat(64),operationRef:'fixture-operation'};
 const restartAuthority={restartAuthorityHash:'b'.repeat(64),restartAuthorityRef:'fixture-restart'};
 const admissionReady={admissionReadyHash:'c'.repeat(64),admissionReadyRef:'fixture-ready'};
-export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){return {state:'normal_task0_admission_ready',currentEntryOperation:operation,restartAuthority,admissionReady};}
+export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){return ${JSON.stringify(fixtureStatus)};}
 export async function resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(pair){assert.deepEqual(Object.keys(pair),['restartAuthorityRef','restartAuthorityHash']);assert.equal(pair.restartAuthorityHash,restartAuthority.restartAuthorityHash);return {schema:'setfarm.internal-production-pre-schema-spawner-restart-authority.v2',...restartAuthority,currentEntryOperationRef:operation.operationRef,currentEntryOperationHash:operation.operationHash};}
 export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair){assert.deepEqual(Object.keys(pair),['admissionReadyRef','admissionReadyHash']);assert.equal(pair.admissionReadyHash,admissionReady.admissionReadyHash);return {state:'normal-task0-admission-ready',...admissionReady,...restartAuthority,currentEntryOperationRef:operation.operationRef,currentEntryOperationHash:operation.operationHash,unchangedSpawnerGenerationHash:${JSON.stringify(generationHash)}};}
 `);
     writeFileSync(path.join(fixtureSource, "internal-production/baseline-post-handoff-receipt-v1.ts"), `
 import assert from 'node:assert/strict';import fs from 'node:fs';
+export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){return ${JSON.stringify(source)};}
 export async function observeInternalProductionServiceCensusV1(){assert.equal(fs.readFileSync(${JSON.stringify(pidFile)},'utf8'),String(process.pid));assert.equal(fs.readFileSync(${JSON.stringify(lockFile)},'utf8'),process.pid+'\\n');return {spawner:{pid:process.pid,processIdentityHash:${JSON.stringify(processIdentityHash)},generationHash:${JSON.stringify(generationHash)}}};}
 `);
+    const authorityRoot = path.join(fixture, "data/internal-production-baseline/pre-schema-spawner-rebind-v1");
+    const canonical = (value: unknown): string => value !== null && typeof value === "object"
+      ? Array.isArray(value) ? `[${value.map(canonical).join(",")}]` : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(",")}}`
+      : JSON.stringify(value);
+    for (const [relative, body] of [
+      [`records/status/sha256/99/${fixtureStatus.statusHash}.json`, fixtureStatus],
+      [`records/admission-ready/sha256/cc/${fixtureReadyPair.admissionReadyHash}.json`, fixtureReady],
+      [`operations/sha256/${fixtureOperation.operationHash}/status-06-normal-task0-admission-ready.pair.json`, { statusRef: fixtureStatus.statusRef, statusHash: fixtureStatus.statusHash }],
+      [`operations/sha256/${fixtureOperation.operationHash}/08-admission-ready.pair.json`, fixtureReadyPair],
+    ] as const) {
+      const target = path.join(authorityRoot, relative); mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+      writeFileSync(target, `${canonical(body)}\n`, { mode: 0o600 });
+    }
+    const startupPort = path.join(fixtureSource, "internal-production/baseline-spawner-startup-admission-v1.ts");
+    let mutation = "";
+    const readyPath = path.join(authorityRoot, `records/admission-ready/sha256/cc/${fixtureReadyPair.admissionReadyHash}.json`);
+    const replaceFile = (target: string) => `const target=${JSON.stringify(target)},bytes=fixtureFs.readFileSync(target);fixtureFs.renameSync(target,target+'.original');fixtureFs.writeFileSync(target,bytes,{mode:0o600,flag:'wx'});`;
+    if (mode.endsWith("-ready-replaced")) mutation = replaceFile(readyPath);
+    if (mode.endsWith("-terminal-replaced")) mutation = replaceFile(terminalMarker);
+    if (mode.endsWith("-startup-replaced")) mutation = replaceFile(lockFile);
+    if (mode.endsWith("-parent-replaced")) mutation = `const directory=${JSON.stringify(path.dirname(lockFile))};fixtureFs.renameSync(directory,directory+'.original');fixtureFs.mkdirSync(directory,{mode:0o700});for(const name of ['spawner.pid','spawner.lock'])fixtureFs.writeFileSync(directory+'/'+name,fixtureFs.readFileSync(directory+'.original/'+name),{mode:0o600});`;
+    if (mutation) writeFileSync(startupPort, `import fixtureFs from 'node:fs';let fixtureStatusCalls=0;\n` + readFileSync(startupPort, "utf8").replace("export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){", `export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){if(fixtureFs.existsSync(${JSON.stringify(crashMarker)})&&++fixtureStatusCalls===2){${mutation}}`));
+    if (mode.endsWith("-source-changed")) {
+      const receiptPort = path.join(fixtureSource, "internal-production/baseline-post-handoff-receipt-v1.ts");
+      writeFileSync(receiptPort, "let fixtureSourceCalls=0;\n" + readFileSync(receiptPort, "utf8").replace("export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){", `export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){if(++fixtureSourceCalls>=2)return ${JSON.stringify({ ...source, sha: "0".repeat(40) })};`));
+    }
   }
   const spawnerPath = path.join(fixtureSource, "spawner.ts");
   let spawnerBytes = readFileSync(spawnerPath, "utf8")
@@ -3535,13 +3652,31 @@ export async function observeInternalProductionServiceCensusV1(){assert.equal(fs
       '    console.log("[spawner] Pre-manifest bootstrap sealed; owner producers and listeners are blocked");\n    if (process.env.SETFARM_TEST_SEALED_SIGNAL_WINDOW === "1") Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000);',
     )
     .replace("if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {", "if (true) {");
-  if (mode === "settled-ready") {
-    spawnerBytes = spawnerBytes.replace("  initializeAgentRuntimeV1();", `  fs.writeFileSync(${JSON.stringify(normalMarker)},'ready-before-producers');throw Error('FIXTURE_NORMAL_BOUNDARY_REACHED');`);
+  if (mode.startsWith("settled-ready")) {
+    const crash = crashCase ? `if(!fs.existsSync(${JSON.stringify(crashMarker)})){fs.writeFileSync(${JSON.stringify(crashMarker)},String(process.pid));process.exit(0);}` : "";
+    spawnerBytes = spawnerBytes.replace("  initializeAgentRuntimeV1();", `  ${crash}fs.writeFileSync(${JSON.stringify(normalMarker)},'ready-before-producers');throw Error('FIXTURE_NORMAL_BOUNDARY_REACHED');`);
   }
   if (mode === "cold-appears") {
     const publication = spawnerBytes.includes("  publishSpawnerPidFileV1();") ? "  publishSpawnerPidFileV1();" : "  fs.writeFileSync(PID_FILE, String(process.pid));";
     assert.equal(spawnerBytes.split(publication).length, 2);
     spawnerBytes = spawnerBytes.replace(publication, `${publication}\n  fs.mkdirSync(${JSON.stringify(coldRoot)}, {recursive:true,mode:0o700});`);
+  }
+  if (mode.endsWith("-open-replaced") || mode.endsWith("-first-pin-stat")) {
+    const opening = "      const descriptor = fs.openSync(parents.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);";
+    assert.equal(spawnerBytes.split(opening).length, 2);
+    spawnerBytes = spawnerBytes.replace(opening, `${opening}\n      globalThis.__fixturePinFD=descriptor;`);
+    if (mode.endsWith("-open-replaced")) {
+      const observation = "      const original = fs.lstatSync(parents.file, { bigint: true });";
+      assert.equal(spawnerBytes.split(observation).length, 2);
+      spawnerBytes = spawnerBytes.replace(observation, `${observation}\n      if(file===LOCK_FILE){const bytes=fs.readFileSync(file);fs.renameSync(file,file+'.original');fs.writeFileSync(file,bytes,{mode:0o600,flag:'wx'});}`);
+    } else {
+      const registration = "      owners.push(owner);";
+      assert.equal(spawnerBytes.split(registration).length, 2);
+      spawnerBytes = spawnerBytes.replace(registration, `${registration}throw Error('SPAWNER_NORMAL_RECLAIM_FIXTURE_FIRST_STAT');`);
+    }
+    const cleanup = "  await reclaimPostRecoveryOrdinaryStartupFilesV1(coldRecoveryAdmission);";
+    assert.equal(spawnerBytes.split(cleanup).length, 2);
+    spawnerBytes = spawnerBytes.replace(cleanup, `  try{await reclaimPostRecoveryOrdinaryStartupFilesV1(coldRecoveryAdmission);}finally{if(globalThis.__fixturePinFD!==undefined){let open=true;try{fs.fstatSync(globalThis.__fixturePinFD);}catch(error){if(error.code==='EBADF')open=false;else throw error;}fs.writeFileSync(${JSON.stringify(pinCleanupMarker)},JSON.stringify({open,owners:spawnerStartupFilesV1.length}));}}`);
   }
   for (const signature of ["function commandFromPath(name: string): string {", "function commandIsUsable(command: string): boolean {", "function kimiWeeklyQuotaExhausted(): boolean {"]) {
     assert.equal(spawnerBytes.split(signature).length, 2, "provider side-effect port is exact");
@@ -3557,6 +3692,25 @@ export async function observeInternalProductionServiceCensusV1(){assert.equal(fs
   }
   writeFileSync(spawnerPath, spawnerBytes);
   writeFileSync(path.join(fixture, "package.json"), `${JSON.stringify({ type: "module" })}\n`);
+  if (crashCase) {
+    const predecessor = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), spawnerPath], {
+      cwd: fixture, encoding: "utf8", timeout: 10_000,
+      env: { ...process.env, SETFARM_PG_URL: "postgresql://sealed.invalid/must-not-connect", SETFARM_AGENT_RUNTIME: "codex" },
+    });
+    assert.equal(predecessor.error, undefined);
+    assert.equal(predecessor.status, 0, predecessor.stderr);
+    assert.equal(readFileSync(crashMarker, "utf8"), String(predecessor.pid));
+    assert.equal(readFileSync(pidFile, "utf8"), String(predecessor.pid));
+    assert.equal(readFileSync(lockFile, "utf8"), `${predecessor.pid}\n`);
+    assert.throws(() => process.kill(predecessor.pid, 0), { code: "ESRCH" });
+    assert.equal(existsSync(normalMarker), false, "first actual main exits without cleanup before producers");
+    if (mode.endsWith("-live-owner")) {
+      writeFileSync(pidFile, String(process.pid)); writeFileSync(lockFile, `${process.pid}\n`);
+    }
+    if (mode.endsWith("-live-lock-dead-pid")) writeFileSync(lockFile, `${process.pid}\n`);
+    unlinkSync(admissionMarker); // The second invocation must independently reach admission.
+  }
+  const retainedStartup = crashCase ? [pidFile, lockFile].map(file => ({ file, bytes: readFileSync(file), ino: lstatSync(file).ino })) : [];
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), spawnerPath], {
     cwd: fixture,
     env: { ...process.env, SETFARM_PG_URL: "postgresql://sealed.invalid/must-not-connect", SETFARM_AGENT_RUNTIME: "codex", SETFARM_TEST_SEALED_SIGNAL_WINDOW: "1" },
@@ -3569,10 +3723,24 @@ export async function observeInternalProductionServiceCensusV1(){assert.equal(fs
   child.stderr.on("data", (chunk: string) => { stderr += chunk; });
   const closed = new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
   try {
-    if (mode === "settled-ready") {
+    if (mode.startsWith("settled-ready")) {
       const timeout = setTimeout(() => child.kill("SIGTERM"), 10_000);
       const exit = await closed; clearTimeout(timeout);
       assert.deepEqual(exit, { code: 1, signal: null }, stderr);
+      if (crashRefusal) {
+        assert.doesNotMatch(stderr, /FIXTURE_NORMAL_BOUNDARY_REACHED/, mode);
+        assert.match(stderr, /SPAWNER_NORMAL_RECLAIM_|SPAWNER_READ_ONLY_PIN_|SPAWNER_STARTUP_FILE_PARENT_CHANGED|COLD_BOOTSTRAP_NOT_ABSENT/, mode);
+        for (const item of retainedStartup) {
+          assert.deepEqual(readFileSync(item.file), item.bytes, `${mode}: refuse without deleting retained bytes`);
+          if (mode.endsWith("-startup-replaced") || mode.endsWith("-parent-replaced") || mode.endsWith("-open-replaced")) {
+            if (item.file === lockFile || mode.endsWith("-parent-replaced")) assert.notEqual(lstatSync(item.file).ino, item.ino);
+          } else assert.equal(lstatSync(item.file).ino, item.ino, mode);
+        }
+        assert.equal(existsSync(admissionMarker), false, `${mode}: no ordinary admission after refusal`);
+        if (mode.endsWith("-open-replaced") || mode.endsWith("-first-pin-stat")) assert.deepEqual(JSON.parse(readFileSync(pinCleanupMarker, "utf8")), { open: false, owners: 0 }, `${mode}: every newly opened reader is closed locally`);
+        for (const untouched of [normalMarker, providerMarker, ...ordinaryDirectories]) assert.equal(existsSync(untouched), false, mode);
+        continue;
+      }
       assert.match(stderr, /FIXTURE_NORMAL_BOUNDARY_REACHED/, "authenticated completed cold recovery must not permanently block ordinary startup");
       assert.equal(readFileSync(normalMarker, "utf8"), "ready-before-producers");
       assert.equal(existsSync(admissionMarker), true);
