@@ -1957,6 +1957,34 @@ exercises the production consumer rather than failing in fixture setup.
   rebind tests and fault injections. Keep final 33-pair verifier graph exact and
   recursively bind new authority through its existing roots.
 
+### P3 sanitized temporary-directory fixture correction (2026-09-14)
+
+- The exact clean `fe1a7c2916638d94ddcc6eb4a3b49fac042ba2cf` gate
+  completed with exit1 at file16, with source unchanged. Raw evidence:
+  `/Users/setrox/ai/setrox/logs/2026-09-13T23-20-15.136Z-p3-fe1a7c29.log`.
+  Files1–15 passed377 tests; lifecycle file15 covered all29 tests across its
+  authenticated serial shards (10+10+9 passes, zero failures). File16 completed
+  all103 tests:100 passed,3 failed. Files17–45 and adjacent gates were not run.
+- All three failures were `SPAWNER_STARTUP_FILE_PARENT_INVALID` in stale
+  startup reclamation, startup-file publication, and actual sealed spawner main.
+  The isolated runner intentionally omits TMPDIR/TMP/TEMP; Node therefore uses
+  Darwin's `/tmp` alias. These three test fixtures passed that symlink-backed
+  path to the genuine parent-identity guard, which correctly rejected it.
+  This is test setup, not a production startup admission defect.
+- File Map: only `tests/internal-production/owner-admission-v1.test.ts` and
+  this ledger. Resolve each newly allocated fixture root with `realpathSync`,
+  matching the existing physical fixture convention. Keep the production
+  parent guard, sanitized runner environment, explicit parent-symlink negative,
+  all assertions and cleanup unchanged.
+- RED: all three exact pure selectors failed with TMPDIR=/tmp (5.436s),
+  reproducing the full-gate errors. GREEN: the same three selectors passed3/3
+  with TMPDIR/TMP/TEMP and both DB variables unset (43.471s), including all ten
+  actual-main scenarios and deliberate parent-symlink refusal. Mission Control
+  API and Setfarm dashboard returned HTTP200; no live service or DB changed.
+  Fresh TypeScript no-emit and whitespace checks passed. Independent read-only
+  review found no issue and confirmed the explicit post-start parent-symlink
+  negative remains meaningful. A clean successor full P3 remains required.
+
 ## Task 4: Verify, review, deliver, then resume A–E
 
 - [ ] Root checkpoints scoped changes on the feature branch for clean-worktree

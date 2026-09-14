@@ -3354,7 +3354,7 @@ test("ordinary stale startup reclamation requires exact bytes, definite death an
     const declaration = tree.statements.find((statement) => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
     assert.ok(declaration); return declaration.getText(tree);
   }).join("\n");
-  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-stale-startup-"));
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-stale-startup-")));
   try {
     const runner = path.join(fixture, "stale.mjs");
     writeFileSync(runner, typescript.transpileModule(`
@@ -3418,7 +3418,7 @@ test("spawner startup-file publication refuses short writes and replaced paths",
     assert.ok(declaration, `actual startup ownership implementation is missing: ${name}`);
     return declaration.getText(tree);
   }).join("\n");
-  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-startup-file-publication-"));
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-startup-file-publication-")));
   try {
     const runner = path.join(fixture, "publication.mjs");
     writeFileSync(runner, typescript.transpileModule(`
@@ -3452,7 +3452,7 @@ for(fault of ['none','partial','replacement']){
 test("P4 real spawner main remains sealed until signal and cleans its lock and pid", async () => {
   for (const mode of ["settled-ready", "settled-history", "settled-appears", "sealed", "existing-cold", "cold-appears", "foreign-pid", "foreign-lock", "stale-pid", "parent-symlink"]) {
   const repository = path.resolve(import.meta.dirname, "../..");
-  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-real-sealed-spawner-"));
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-real-sealed-spawner-")));
   const fixtureSource = path.join(fixture, "src");
   const pidFile = path.join(fixture, "state/spawner.pid");
   const lockFile = path.join(fixture, "state/spawner.lock");
