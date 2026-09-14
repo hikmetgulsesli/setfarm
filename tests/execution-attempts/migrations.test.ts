@@ -39,6 +39,18 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 const guardedMigrationId = "contract-spine-bootstrap-main-claim-handoff-v1";
 const recoveryPublicationMigrationId = "033_v3_recovery_claim_runtime_publication_v1";
 
+async function observeGuardedMigrationFixtureSource(database: TestDatabase): Promise<string> {
+  // createIsolatedTestDatabase authenticates the P3 marker before returning this name.
+  // Observe the input authority before applying; never derive expectations from the journal.
+  if (!database.database.startsWith("setfarm_p3_")) return "a".repeat(40);
+  const { observePreparedInternalProductionCurrentEntryOperationV1 } = await import(
+    "../../src/internal-production/baseline-post-handoff-receipt-v1.js"
+  );
+  const operation = await observePreparedInternalProductionCurrentEntryOperationV1();
+  assert.ok(operation, "authenticated P3 migration fixture requires its prepared operation");
+  return operation.controllerSource.sha;
+}
+
 type V3RecoveryClaimRuntimePublicationVerifierV1 =
   (transaction: unknown) => Promise<void>;
 
@@ -1559,6 +1571,7 @@ describe("contract spine migration journal", () => {
   });
 
   it("test-private zero-argument capability applies guarded 32 exactly once", async () => {
+    const guardedReleaseSha = await observeGuardedMigrationFixtureSource(database);
     const capability = database.applyBootstrapMainClaimHandoffGuardedMigration32ForTestV1;
     assert.equal(typeof capability, "function");
     assert.equal(capability.length, 0);
@@ -1590,7 +1603,7 @@ describe("contract spine migration journal", () => {
        WHERE version = 32
     `;
     assert.deepEqual(applicationIdentity.map((row) => ({ ...row })), [{
-      release_sha: "a".repeat(40),
+      release_sha: guardedReleaseSha,
       verified_release_sha: descendantReleaseSha,
     }]);
     const second = await capability.call(database);
@@ -2257,12 +2270,17 @@ describe("contract spine migration journal", () => {
       {
         symbol: seamSymbols[0],
         file: "tests/execution-attempts/test-database.ts",
-        count: 4,
+        count: 5,
       },
       {
         symbol: seamSymbols[1],
         file: "tests/execution-attempts/test-database.ts",
-        count: 6,
+        count: 7,
+      },
+      {
+        symbol: seamSymbols[0],
+        file: "tests/internal-production/baseline-post-handoff-receipt-v1.test.ts",
+        count: 2,
       },
       {
         symbol: seamSymbols[0],
@@ -2304,6 +2322,7 @@ describe("contract spine migration journal", () => {
   });
 
   it("applies, journals, verifies, and reapplies idempotently", async () => {
+    const guardedReleaseSha = await observeGuardedMigrationFixtureSource(database);
     const releaseSha = "c".repeat(40);
     const first = await applyContractSpineMigrations(database.sql, { releaseSha });
     assert.equal(first.applied.length >= 1, true);
@@ -2324,9 +2343,9 @@ describe("contract spine migration journal", () => {
       ORDER BY version
     `;
     assert.equal(journal.slice(0, 31).every((row) => row.release_sha === releaseSha), true);
-    assert.equal(journal[31]?.release_sha, "a".repeat(40));
+    assert.equal(journal[31]?.release_sha, guardedReleaseSha);
     assert.equal(
-      journal.slice(0, 32).every((row) => row.verified_release_sha === "a".repeat(40)),
+      journal.slice(0, 32).every((row) => row.verified_release_sha === guardedReleaseSha),
       true,
     );
     assert.deepEqual(journal[32], { release_sha: null, verified_release_sha: null });
@@ -2348,7 +2367,7 @@ describe("contract spine migration journal", () => {
       SELECT release_sha FROM setfarm_schema_migrations ORDER BY version
     `;
     assert.equal(originalReleases.slice(0, 31).every((row) => row.release_sha === releaseSha), true);
-    assert.equal(originalReleases[31]?.release_sha, "a".repeat(40));
+    assert.equal(originalReleases[31]?.release_sha, guardedReleaseSha);
     assert.equal(originalReleases[32]?.release_sha, null);
   });
 

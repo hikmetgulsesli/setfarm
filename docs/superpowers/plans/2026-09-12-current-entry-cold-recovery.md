@@ -44,6 +44,39 @@ their owning tests. Root updates the literal main-plan/closure-design File Maps
 and projection/source-boundary contracts for every new runtime file. No source
 outside that causally necessary boundary is included.
 
+### Full P3 migration fixture integration repair (2026-09-14, in progress)
+
+The clean `f2d37162` full Step 3 run passed files 1–18, including all 924
+receipt tests, then completed file 19 with 51 passes and three failures. Source
+remained unchanged and both isolated databases were dropped. This is a failed
+P3 result, not delivery evidence. The complete log is
+`logs/2026-09-14T11-23-38.756Z-p3-f2d37162.log` in the workspace diagnostics.
+
+File Map refinement: `tests/execution-attempts/migrations.test.ts` and this plan
+only. The authenticated P3 migration adapter now uses its prepared operation's
+real controller source; two older assertions still expected the standalone
+synthetic source. Observe that independently authenticated input before applying
+the migration, retain the explicit descendant verification releases, and verify
+that reattestation never rewrites original application identity. Missing or
+invalid P3 authority must fail, never fall back to a synthetic value.
+
+The third failure is the exhaustive capability occurrence inventory: two
+receipt test stubs and one authenticated adapter use were already present but
+unlisted. Independent read-only review verified these are test-only uses and
+all production counts remain unchanged. Reconcile only their exact entries;
+retain the exhaustive scan, forbidden production export and package-command
+checks. No migration implementation, digest, runtime guard, or P3 authority
+changes are required. Verify the owning file in standalone isolation and the
+authenticated P3 projection before repeating the exact clean-checkpoint matrix.
+
+Standalone focused verification passed 3/3 (48.763s), then the whole migration
+file passed 54/54 (277.642s), with no failures, cancellations or skips and its
+disposable database dropped. TypeScript no-emit, English/path contracts,
+migration digest validation and whitespace checks passed. Independent read-only
+diff review found no actionable issue and confirmed the expected source comes
+from input authority rather than journal output. These results permit the clean
+checkpoint; authenticated P3 and full-matrix verification remain pending.
+
 ### Full receipt integration repair (2026-09-13, in progress)
 
 The authenticated isolated full receipt run uses the immutable `81bf9794`
