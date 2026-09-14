@@ -15241,36 +15241,6 @@ async function observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1
   if (current === null || endpointDescriptor.policy !== "task12-receipt") currentEntryFail("external Task12 endpoint authority is crossed");
   authority.assertStable();
   if (operation.operationRef !== authority.successorOperation.operationRef || operation.operationHash !== authority.successorOperation.operationHash) currentEntryFail("external Task12 operation is crossed");
-  if (arrow.family === "current-audit") {
-    if (arrow.ordinal !== 0 || arrow.prior !== "terminal" || arrow.next !== "current"
-      || endpointDescriptor.endpointOrdinal !== 0 || endpointDescriptor.material !== "current-audit" || endpointDescriptor.role !== "content"
-      || current.schema !== "setfarm.internal-production-pre-manifest-migration-32-authorization-status.v1" || current.state !== "terminal"
-      || !isPlainRecord(current.currentEntryOperation) || current.currentEntryOperation.operationRef !== operation.operationRef || current.currentEntryOperation.operationHash !== operation.operationHash) {
-      currentEntryFail("migration-32 current-audit endpoint authority is crossed");
-    }
-    let closed = false;
-    const assertStable = (): void => {
-      if (closed) currentEntryFail("external current-audit endpoint observation is closed");
-      authority.assertStable();
-    };
-    assertStable();
-    return Object.freeze({
-      material: endpointDescriptor.material,
-      role: endpointDescriptor.role,
-      policy: endpointDescriptor.policy,
-      target: null,
-      expectedBytes: null,
-      publication: null,
-      writer: null,
-      database: null,
-      cas: null,
-      assertStable,
-      close(): void {
-        if (closed) currentEntryFail("external current-audit endpoint observation closed twice");
-        closed = true;
-      },
-    });
-  }
   if (arrow.family === "recovery-source") {
     const capability = exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.get(current)?.get(
       exactPoisonPostVisibleRecoveryEndpointCapabilityKeyV1(arrow),
@@ -15325,6 +15295,26 @@ async function observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1
     if (entryOwner.pair === null || entryOwner.pairBytes === null || entryOwner.contentTarget === null) currentEntryFail("entry external endpoint authority is incomplete");
     target = content ? entryOwner.contentTarget : entryOwner.locatorTarget;
     expectedBytes = content ? task12ReceiptCanonicalBytesV1(entryOwner.value) : entryOwner.pairBytes;
+  } else if (arrow.family === "current-audit") {
+    if (entryOwner !== null || arrow.ordinal !== 0 || arrow.prior !== "terminal" || arrow.next !== "current"
+      || endpointDescriptor.endpointOrdinal !== 0 || endpointDescriptor.material !== "current-audit" || endpointDescriptor.role !== "content"
+      || current.schema !== "setfarm.internal-production-pre-manifest-migration-32-authorization-status.v1" || current.state !== "terminal"
+      || !isPlainRecord(current.currentEntryOperation) || current.currentEntryOperation.operationRef !== operation.operationRef || current.currentEntryOperation.operationHash !== operation.operationHash
+      || typeof current.statusHash !== "string" || !SHA256.test(current.statusHash)
+      || current.statusRef !== `${TASK12_MIGRATION_PREFIXES_V1.status}${current.statusHash}`) currentEntryFail("migration-32 current-audit endpoint authority is crossed");
+    const statusBody = { ...current }; delete statusBody.statusRef; delete statusBody.statusHash;
+    if (hashCanonicalJson(statusBody) !== current.statusHash) currentEntryFail("migration-32 current-audit status self-hash is crossed");
+    const migrationReceipt = requirePair(current.migrationReceipt, "migrationReceiptRef", "migrationReceiptHash", TASK12_MIGRATION_PREFIXES_V1.receipt);
+    await resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1(migrationReceipt as InternalProductionBaselineBootstrapHandoffMigrationReceiptPairV1, operation);
+    authority.assertStable();
+    const databaseAudit = await auditCurrentInternalProductionBaselineBootstrapHandoffMigration32V1();
+    authority.assertStable();
+    const auditBody = Object.freeze({ schema: "setfarm.internal-production-bootstrap-handoff-current-audit.v1", currentStatus: "current", currentEntryOperation: operationPair(operation), migrationReceipt, databaseAudit });
+    const bootstrapHandoffCurrentAuditHash = hashCanonicalJson(auditBody);
+    target = task12MigrationRecordPathV1("current-audits", bootstrapHandoffCurrentAuditHash);
+    expectedBytes = task12ReceiptCanonicalBytesV1(Object.freeze({ ...auditBody, bootstrapHandoffCurrentAuditRef: `${TASK12_MIGRATION_PREFIXES_V1.currentAudit}${bootstrapHandoffCurrentAuditHash}`, bootstrapHandoffCurrentAuditHash }));
+    content = true;
+    contentShard = true;
   } else if (arrow.family === "migration-32" && [0, 1, 2].includes(arrow.ordinal)) {
     const expectedState = arrow.ordinal === 0 ? "prepared" : arrow.ordinal === 1 ? "consumed" : "terminal";
     if (entryOwner !== null || current.state !== expectedState || !isPlainRecord(current.currentEntryOperation)
@@ -15380,21 +15370,26 @@ async function observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1
   const owner = contentShard
     ? observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1(target, expectedBytes)
     : observeExactPoisonPostVisibleTask12ReceiptEndpointNoWriteV1(target, expectedBytes, directoryPolicy);
-  const projection = requireExactPoisonPostVisibleTask12ReceiptEndpointPublicationV1(owner, target, expectedBytes);
-  owner.assertStable();
-  return Object.freeze({
-    material: endpointDescriptor.material,
-    role: endpointDescriptor.role,
-    policy: endpointDescriptor.policy,
-    target,
-    expectedBytes,
-    publication: projection.publication,
-    writer: projection.writer,
-    database: null,
-    cas: null,
-    assertStable: owner.assertStable,
-    close: owner.close,
-  });
+  try {
+    const projection = requireExactPoisonPostVisibleTask12ReceiptEndpointPublicationV1(owner, target, expectedBytes);
+    owner.assertStable();
+    return Object.freeze({
+      material: endpointDescriptor.material,
+      role: endpointDescriptor.role,
+      policy: endpointDescriptor.policy,
+      target,
+      expectedBytes,
+      publication: projection.publication,
+      writer: projection.writer,
+      database: null,
+      cas: null,
+      assertStable: owner.assertStable,
+      close: owner.close,
+    });
+  } catch (error) {
+    try { owner.close(); } catch { /* preserve the primary construction failure */ }
+    throw error;
+  }
 }
 
 async function observeExactPoisonPostVisibleSpawnerAdmissionEndpointNoWriteV1(
@@ -15851,6 +15846,16 @@ async function observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(
       return decisive
         ? Object.freeze({ state: "ready", entryAuthority: retainedEntryPair })
         : Object.freeze({ state: "fence-released", entryAuthority: null });
+    })() : arrow.family === "current-audit" ? (() => {
+      const endpoint = children[0];
+      if (endpoint === undefined || endpoint.material !== "current-audit" || endpoint.role !== "content" || current === null) currentEntryFail("current-audit external endpoint is absent");
+      const decisive = isPlainRecord(endpoint.publication)
+        && (endpoint.publication.state === "F2u" || endpoint.publication.state === "F3" || endpoint.publication.state === "F4");
+      if (!decisive) return current;
+      if (!Buffer.isBuffer(endpoint.expectedBytes)) currentEntryFail("current-audit external projection bytes are absent");
+      const audit = strictCanonicalRecord(endpoint.expectedBytes, "current-audit external projection");
+      const currentAudit = requirePair({ bootstrapHandoffCurrentAuditRef: audit.bootstrapHandoffCurrentAuditRef, bootstrapHandoffCurrentAuditHash: audit.bootstrapHandoffCurrentAuditHash }, "bootstrapHandoffCurrentAuditRef", "bootstrapHandoffCurrentAuditHash", TASK12_MIGRATION_PREFIXES_V1.currentAudit);
+      return Object.freeze({ ...current, currentAudit });
     })() : current;
     const observed: ExactPoisonPostVisibleExternalRawPublicationObservationV1 = Object.freeze({
       state: activeEndpointOrdinal === null ? "none" : "publishing",

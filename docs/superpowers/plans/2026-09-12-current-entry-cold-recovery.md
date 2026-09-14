@@ -2029,6 +2029,96 @@ helper, runner, process guard, database authority or timeout changes.
   runner on that clean checkpoint. Then preflight receipt acceptance and repeat
   the full exact P3 matrix before delivery. No partial result grants delivery.
 
+### Complete owner and receipt preflight findings (2026-09-14)
+
+- Standard-environment isolated owner-admission on clean
+  `6ff3737b3f9a9e4f0068cbbae1290971a4417092` passed103/103 (1586.318s),
+  including all startup and post-readiness crash corrections. Its primary and
+  template databases were dropped. Log:
+  `/Users/setrox/ai/setrox/logs/2026-09-14-owner-preflight-6ff3737b.log`.
+- Complete isolated receipt preflight on the same clean checkpoint finished
+  924 tests:921 passed,3 failed (6047.300s), with database cleanup. Log:
+  `/Users/setrox/ai/setrox/logs/2026-09-14-receipt-preflight-6ff3737b.log`.
+  Genuine cold prepare/rebind/replay and ordinary/cold final33-pair graphs
+  passed. No partial file or preflight result substitutes for exact full P3.
+- H4 completion ran its ten independent real fixture scenarios successfully,
+  then failed an obsolete source regex at the selected-pass controller binding:
+  it assumed the recovery callback immediately followed controllerLock, omitting
+  the legitimate assertPredecessorStable method. Replace that textual adjacency
+  assumption with execution of the actual registration statement: exact frozen
+  fields, identical controller handle, real ordered predecessor fence, and
+  callback forwarding of only the captured context and controller.
+- Migration retained-adoption failed before its expected stop marker with
+  `post-effect completed authority is crossed`; retained migration response-loss
+  retry failed with `progress raw row-tail database is invalid`. These are not
+  descriptor-count failures. Trace actual post-effect fresh-pass and fixture
+  row-tail observations before changing either guards or fixtures.
+- Production root confirmed: the current-audit endpoint always returns an
+  unaddressed null tuple, so the mandatory fresh post-effect pass cannot observe
+  the audit that the preceding effect actually published. The raw projector
+  requires both decisive physical publication and the exact current-audit pair.
+  File Map for this causal refinement: this ledger,
+  `src/internal-production/baseline-post-handoff-receipt-v1.ts`, and
+  `tests/internal-production/baseline-post-handoff-receipt-v1.test.ts`; these are
+  existing owning File Map members, with no new export or final33 pair.
+- Design: derive the canonical audit candidate from the exact terminal migration
+  receipt, selected operation, and fresh read-only database audit. Observe its
+  deterministic content-shard target using the existing retained physical owner.
+  Absence remains F0; only decisive publication exposes the pair in the private
+  external projection. Do not mutate the hashed migration status, add a public
+  locator/schema, or relax the post-effect completed-authority guard. Reusing
+  the existing endpoint owner avoids introducing a second filesystem reader.
+- [x] Replace the old null-only endpoint assertion with executable absent,
+  published, and invalid-content cases; witness RED before source edits.
+- [x] Add current-audit routing to the existing Task12 endpoint owner and private
+  external-current projection, then run focused physical and retained-adoption
+  tests. Keep operation, receipt, canonical-byte and physical generation checks.
+- [x] Synchronize the retry fixture's row-tail database projection with the
+  actual durable status pair/body instead of observer invocation count. Repeated
+  pre-CAS passes must remain row9; only the actual CAS can select row10.
+- [ ] Run focused GREEN, TypeScript no-emit, independent review, checkpoint,
+  complete receipt preflight, then the exact full P3 matrix.
+  Keep all production checks, real effect
+  counts, response-loss cases and source ownership requirements intact. Obtain
+  focused RED/GREEN and independent review, checkpoint, then repeat receipt and
+  the exact full P3 matrix before delivery.
+- Focused RED: real current-audit endpoint returned null publication/writer
+  instead of the physically owned F0/A0 absence (4.200s). GREEN physical cases
+  cover absent/published/crossed bytes, exact target and canonical body, private
+  completed-pair projection, and unchanged filesystem snapshots. Independent
+  source review found no issue; a separate H4 review caught and fixed a test
+  identity assertion (deep equality of empty sentinels was insufficient).
+- H4 and physical audit tests passed2/2 (32.879s). Retained migration adoption
+  and all retained migration response-loss boundaries passed2/2 (86.679s).
+  The final fixture now rejects repeated durable audit publication instead of
+  labeling it replayable; a broader fresh selector run is still required.
+- The first new migration audit path showed descriptorDelta7. `lsof` identified
+  only TSX loader-worker primitives and TSX cache descriptors, not operation
+  files. Warm the declaration-only copied DB module before the migration
+  fixture's baseline, just as startup is already warmed. The same assertion
+  then returned zero. Temporary lsof instrumentation was removed; no FD
+  tolerance, sleep extension, runtime cleanup exception, or production import
+  side effect was added. Fixture audits now mirror the actual five-field DB
+  port body. Three read-only audits (initial/effect/fresh) surround one audit
+  publication; migration apply/prepare counts remain zero.
+- The broader external-dispatch/response-loss/physical-audit/retained-migration
+  selectors passed5/5 (169.377s). Review also identified an exception-safety gap
+  in the shared Task12 endpoint transfer now used by current-audit: after owner
+  acquisition, projection or final stability failure could throw before return
+  without closing that owner. A copied-module fault test failed as expected
+  (projection failure: closeCalls0 instead of1,6.409s). Same source/test File
+  Map, causally required to make the new observer's failure path resource-safe:
+  wrap only projection/assert/return in catch-close, preserve the primary
+  error if cleanup also fails, and test projection/stability with/without
+  secondary close failure against real acquired pins and unchanged bytes.
+- Final focused transfer/H4/shared-endpoint/terminal-receipt selector passed4/4
+  (43.806s), including all four construction/secondary-close failures with
+  closeCalls1 and descriptorDelta0. TypeScript no-emit and diff whitespace
+  checks passed; independent incremental review has no open findings. Checkpoint
+  this coupled slice before the complete isolated receipt run. The earlier
+  5/5 broader result predates only the exception-safe owner-transfer correction;
+  neither result certifies the upcoming full receipt or P3 gate.
+
 ## Task 4: Verify, review, deliver, then resume A–E
 
 - [ ] Root checkpoints scoped changes on the feature branch for clean-worktree

@@ -9970,7 +9970,7 @@ ${publicResumeMarker}`);
     const selected = probe.faultBoundary ?? "";
     const selectedIndex = ordered.indexOf(selected);
     const currentIndex = ordered.indexOf(_boundary);
-    const replayableSelected = selected.startsWith("before-") || selected.includes("-locator-") || selected.includes("-content-") || selected === "after-migration-current-audit-publication";
+    const replayableSelected = selected.startsWith("before-") || selected.includes("-locator-") || selected.includes("-content-");
     if (_boundary === selected && replayableSelected) currentEntryFail(\`P5C_S_RESPONSE_RETRY_ADOPTED:\${_boundary}\`);
     if (_boundary === selected) currentEntryFail(\`P5C_S_RESPONSE_RETRY_DUPLICATED_DURABLE_ACTION:\${_boundary}\`);
     if (selectedIndex >= 0 && currentIndex > selectedIndex) currentEntryFail(\`P5C_S_RESPONSE_RETRY_ADOPTED:\${_boundary}\`);
@@ -12607,7 +12607,7 @@ function phase5cSBuildExternalRawCausalChainFixtureV1(
   if (arrow.family === "current-audit") {
     const migrationArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "migration-32" && candidate.ordinal === 2)!;
     const terminal = phase5cSExternalRawCausalChainFixtureV1(migrationArrow, "A", authenticSelectedOperation ?? undefined).next;
-    const databaseAudit = Object.freeze({ schema: "setfarm.internal-production-baseline-bootstrap-handoff-current-database-audit.v1", currentStatus: "current", currentEntryOperation: operation, migrationReceipt: (terminal as Readonly<Record<string, unknown>>).migrationReceipt, auditHash: "a".repeat(64) });
+    const databaseAudit = Object.freeze({ migrationOrdinal: 32, migrationId: "contract-spine-bootstrap-main-claim-handoff-v1", migrationChecksum: PHASE5C_S_EXACT_MIGRATION_JOURNAL_V1[32].checksum, migrationState: "current", schemaProjectionHash: "a".repeat(64) });
     const auditValue = withPair(Object.freeze({ schema: "setfarm.internal-production-bootstrap-handoff-current-audit.v1", currentStatus: "current", currentEntryOperation: operation, migrationReceipt: terminal.migrationReceipt, databaseAudit }), "bootstrapHandoffCurrentAuditRef", "bootstrapHandoffCurrentAuditHash", "setfarm://internal-production/bootstrap-handoff-current-audit/sha256/");
     return Object.freeze({ prior: terminal, next: Object.freeze({ ...terminal, currentAudit: pairFrom(auditValue, "bootstrapHandoffCurrentAuditRef", "bootstrapHandoffCurrentAuditHash") }), materials: Object.freeze({ "current-audit": auditValue }) });
   }
@@ -13828,6 +13828,12 @@ function runPhase5cZeroProgressFixtureV1(
 ): Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> {
   const transportPath = path.join(path.dirname(root), ".p5c-zero-progress-observations.json");
   const startupModule = pathToFileURL(path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.js")).href;
+  const resumeMode = (observations.sResume?.[0] as Readonly<Record<string, unknown>> | undefined)?.mode;
+  // Warm the copied, declaration-only DB fixture before measuring owned FDs;
+  // first-use TSX loader workers/cache descriptors are not operation resources.
+  const databaseWarmup = resumeMode === "migration"
+    ? `await import(${JSON.stringify(pathToFileURL(path.join(root, "src/db-pg.ts")).href)});`
+    : "";
   fixtureFile(path.dirname(root), ".p5c-zero-progress-observations.json", `${JSON.stringify(fixtureTransportValueV1(observations))}\n`, 0o600);
   const call = entry === "selector"
     ? "m.p5bRunStrictCEntryFixtureV1()"
@@ -13844,7 +13850,7 @@ function runPhase5cZeroProgressFixtureV1(
           : entry === "controller-construction"
             ? `m.p5cSControllerGenerationConstructionFaultFixtureV1(${JSON.stringify(controllerConstructionInput)})`
           : "m.p5cPrepareCurrentEntryFixtureV1()";
-  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const path=await import("node:path");await import(${JSON.stringify(startupModule)});const descriptorCount=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).filter((name)=>{try{fs.fstatSync(Number(name));return true}catch{return false}}).length;await new Promise((resolve)=>setTimeout(resolve,100));const before=descriptorCount();const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(fs.readFileSync(${JSON.stringify(transportPath)},"utf8")));const mutation=${JSON.stringify(mutation)};const cursors={};const z={lowerReturnCalls:0,mutation,transientApplied:false,originalRewriteApplied:false,originalDirectorySwapApplied:false,rootIdentity:null,reviewApplied:false,createdTarget:null};const p={driftTarget:${JSON.stringify(preStatusDriftTarget)},driftApplied:false,driftOriginal:null};const s={dispatcherCalls:0,preStatusPassCalls:0,progressValidatorCalls:0,progressPassCalls:0,equalityCalls:0,qStates:[]};const sr=Array.isArray(values.sResume)&&values.sResume.length>0?Object.assign(values.sResume[0],{prepareCalls:0,executeCalls:0,executeInputs:[],observeCalls:0,resolverCalls:0,advanceStates:[],events:[],faultApplied:false,migrationPrepareCalls:0,retainedMigrationReadCalls:0,completedRetainedReadCalls:0,applyCalls:0,migrationObserveCalls:0,receiptResolveCalls:0,currentAuditResolveCalls:0,auditCalls:0}):null;if(p.driftTarget)p.driftOriginal=fs.readFileSync(p.driftTarget);const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5C_Z_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;if(mutation.kind==="original-rewrite"&&kind==="source"&&!z.originalRewriteApplied){const bytes=fs.readFileSync(mutation.target);fs.writeFileSync(mutation.target,bytes);z.originalRewriteApplied=true}if(mutation.kind==="original-directory-swap"&&kind==="source"&&!z.originalDirectorySwapApplied){fs.renameSync(mutation.target,mutation.backup);fs.mkdirSync(mutation.target,{mode:0o700});for(const name of fs.readdirSync(mutation.backup))fs.copyFileSync(path.join(mutation.backup,name),path.join(mutation.target,name));z.originalDirectorySwapApplied=true}return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const shared={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:null};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",shared);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);Reflect.set(globalThis,"__p5cZeroProgressProbeV1",z);Reflect.set(globalThis,"__p5cPreStatusProbeV1",p);Reflect.set(globalThis,"__p5cProgressProbeV1",s);if(sr)Reflect.set(globalThis,"__p5cSResumeProbeV1",sr);let outcome="returned",message=null,value=null;try{value=await ${call}}catch(error){outcome="threw";message=String(error)}finally{if(z.originalDirectorySwapApplied){fs.rmSync(mutation.target,{recursive:true,force:true});fs.renameSync(mutation.backup,mutation.target)}if(z.reviewApplied&&mutation.backup&&!new Set(["f2-selected-post-fresh-replace","f2-redundant-post-fresh-replace","f1-linked-replace"]).has(mutation.kind)){if(mutation.targetType==="hardlink-parent"&&fs.existsSync(mutation.target)&&fs.existsSync(mutation.backup)){for(const name of fs.readdirSync(mutation.target))fs.renameSync(path.join(mutation.target,name),path.join(mutation.backup,name))}fs.rmSync(mutation.target,{recursive:true,force:true});if(fs.existsSync(mutation.backup))fs.renameSync(mutation.backup,mutation.target)}if(z.createdTarget&&fs.existsSync(z.createdTarget))fs.rmSync(z.createdTarget,{recursive:true,force:true});if(p.driftApplied&&p.driftTarget&&p.driftOriginal)fs.writeFileSync(p.driftTarget,p.driftOriginal)}const after=descriptorCount();const {contextIds:_,mainContext:__,...serializable}=shared;process.stdout.write(JSON.stringify({outcome,message,value,...serializable,...s,sResume:sr,admissionCalls:admission.admissionCalls,lowerReturnCalls:z.lowerReturnCalls,transientApplied:z.transientApplied,originalRewriteApplied:z.originalRewriteApplied,originalDirectorySwapApplied:z.originalDirectorySwapApplied,reviewApplied:z.reviewApplied,createdTarget:z.createdTarget,rootIdentity:z.rootIdentity,preStatusDriftApplied:p.driftApplied,cursors,descriptorDelta:after-before}))})()`);
+  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const path=await import("node:path");await import(${JSON.stringify(startupModule)});${databaseWarmup}const descriptorCount=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).filter((name)=>{try{fs.fstatSync(Number(name));return true}catch{return false}}).length;await new Promise((resolve)=>setTimeout(resolve,100));const before=descriptorCount();const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(fs.readFileSync(${JSON.stringify(transportPath)},"utf8")));const mutation=${JSON.stringify(mutation)};const cursors={};const z={lowerReturnCalls:0,mutation,transientApplied:false,originalRewriteApplied:false,originalDirectorySwapApplied:false,rootIdentity:null,reviewApplied:false,createdTarget:null};const p={driftTarget:${JSON.stringify(preStatusDriftTarget)},driftApplied:false,driftOriginal:null};const s={dispatcherCalls:0,preStatusPassCalls:0,progressValidatorCalls:0,progressPassCalls:0,equalityCalls:0,qStates:[]};const sr=Array.isArray(values.sResume)&&values.sResume.length>0?Object.assign(values.sResume[0],{prepareCalls:0,executeCalls:0,executeInputs:[],observeCalls:0,resolverCalls:0,advanceStates:[],events:[],faultApplied:false,migrationPrepareCalls:0,retainedMigrationReadCalls:0,completedRetainedReadCalls:0,applyCalls:0,migrationObserveCalls:0,receiptResolveCalls:0,currentAuditResolveCalls:0,auditCalls:0}):null;if(p.driftTarget)p.driftOriginal=fs.readFileSync(p.driftTarget);const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5C_Z_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;if(mutation.kind==="original-rewrite"&&kind==="source"&&!z.originalRewriteApplied){const bytes=fs.readFileSync(mutation.target);fs.writeFileSync(mutation.target,bytes);z.originalRewriteApplied=true}if(mutation.kind==="original-directory-swap"&&kind==="source"&&!z.originalDirectorySwapApplied){fs.renameSync(mutation.target,mutation.backup);fs.mkdirSync(mutation.target,{mode:0o700});for(const name of fs.readdirSync(mutation.backup))fs.copyFileSync(path.join(mutation.backup,name),path.join(mutation.target,name));z.originalDirectorySwapApplied=true}if(kind==="rowTail"&&sr?.rowTailCurrentStatusTarget){const pair=JSON.parse(fs.readFileSync(sr.rowTailCurrentStatusTarget,"utf8"));if(!/^[a-f0-9]{64}$/.test(pair.statusHash))throw Error("P5C_S_DURABLE_ROW_HASH_INVALID");const body=JSON.parse(fs.readFileSync(path.join(sr.rowTailStatusRecordsRoot,pair.statusHash.slice(0,2),pair.statusHash+".json"),"utf8"));if(body.statusRef!==pair.statusRef||body.statusHash!==pair.statusHash||body.state!=="migration_applying"||body.operationHash!==sr.terminal.currentEntryOperation.operationHash)throw Error("P5C_S_DURABLE_ROW_STATUS_CROSSED");const ordinal={prepared:7,consumed:8,receipt_published:9,current_audited:10}[body.migrationApplyingPhase?.phase];const selected=sequence.find(value=>value.database.databasePrefixOrdinal===ordinal);if(!selected)throw Error("P5C_S_DURABLE_ROW_OBSERVATION_MISSING");return selected}return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const shared={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:null};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",shared);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);Reflect.set(globalThis,"__p5cZeroProgressProbeV1",z);Reflect.set(globalThis,"__p5cPreStatusProbeV1",p);Reflect.set(globalThis,"__p5cProgressProbeV1",s);if(sr)Reflect.set(globalThis,"__p5cSResumeProbeV1",sr);let outcome="returned",message=null,value=null;try{value=await ${call}}catch(error){outcome="threw";message=String(error)}finally{if(z.originalDirectorySwapApplied){fs.rmSync(mutation.target,{recursive:true,force:true});fs.renameSync(mutation.backup,mutation.target)}if(z.reviewApplied&&mutation.backup&&!new Set(["f2-selected-post-fresh-replace","f2-redundant-post-fresh-replace","f1-linked-replace"]).has(mutation.kind)){if(mutation.targetType==="hardlink-parent"&&fs.existsSync(mutation.target)&&fs.existsSync(mutation.backup)){for(const name of fs.readdirSync(mutation.target))fs.renameSync(path.join(mutation.target,name),path.join(mutation.backup,name))}fs.rmSync(mutation.target,{recursive:true,force:true});if(fs.existsSync(mutation.backup))fs.renameSync(mutation.backup,mutation.target)}if(z.createdTarget&&fs.existsSync(z.createdTarget))fs.rmSync(z.createdTarget,{recursive:true,force:true});if(p.driftApplied&&p.driftTarget&&p.driftOriginal)fs.writeFileSync(p.driftTarget,p.driftOriginal)}const after=descriptorCount();const {contextIds:_,mainContext:__,...serializable}=shared;process.stdout.write(JSON.stringify({outcome,message,value,...serializable,...s,sResume:sr,admissionCalls:admission.admissionCalls,lowerReturnCalls:z.lowerReturnCalls,transientApplied:z.transientApplied,originalRewriteApplied:z.originalRewriteApplied,originalDirectorySwapApplied:z.originalDirectorySwapApplied,reviewApplied:z.reviewApplied,createdTarget:z.createdTarget,rootIdentity:z.rootIdentity,preStatusDriftApplied:p.driftApplied,cursors,descriptorDelta:after-before}))})()`);
 }
 
 function phase5cSWithRowTailOrdinalsV1(
@@ -28232,8 +28238,40 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
     assert.ok(currentEntryController && new RegExp(`openExactPoisonPostVisibleSelectedProgressPassV1\\(\\s*context\\s*,\\s*operation\\s*,\\s*${currentEntryController[1]!}\\s*\\)`).test(currentEntryCaller),
       "the current-entry progress loop passes its exact acquired controller handle into the selected pass owner");
     const selectedPassOwner = topLevelFunctionRegionV1(productionSource, "openExactPoisonPostVisibleSelectedProgressPassV1");
-    assert.match(selectedPassOwner, /exactPoisonPostVisibleSelectedProgressPassControllerLocksV1\.set\(\s*owner\s*,\s*Object\.freeze\(\s*\{\s*controllerLock\s*,\s*resumeRecoverySourceBootstrapHeldLockV1:\s*\(\)\s*=>\s*resumeRecoverySourceBootstrapHeldLockV1\(\s*context\s*,\s*controllerLock\s*\)/,
-      "the selected pass owner carries only its exact controller handle and bound held-recovery callback");
+    const typescript = await import("typescript");
+    const selectedTree = typescript.createSourceFile("selected.ts", selectedPassOwner, typescript.ScriptTarget.Latest, true);
+    const registrations: string[] = [];
+    const visitRegistration = (node: import("typescript").Node): void => {
+      if (typescript.isExpressionStatement(node) && typescript.isCallExpression(node.expression)
+        && node.expression.expression.getText(selectedTree) === "exactPoisonPostVisibleSelectedProgressPassControllerLocksV1.set") registrations.push(node.getText(selectedTree));
+      typescript.forEachChild(node, visitRegistration);
+    };
+    visitRegistration(selectedTree);
+    assert.equal(registrations.length, 1, "the real selected pass registers exactly one controller capability");
+    const registration = new Function(
+      "exactPoisonPostVisibleSelectedProgressPassControllerLocksV1", "owner", "controllerLock", "context",
+      "assertRootStable", "status", "currentStatusCas", "currentEntryFail", "resumeRecoverySourceBootstrapHeldLockV1",
+      transformSync(registrations[0]!, { loader: "ts", format: "esm" }).code,
+    );
+    const controllerRegistry = new WeakMap<object, Record<string, unknown>>();
+    const selectedOwner = {}, exactController = {}, exactContext = {}, resumed = {};
+    const fenceOrder: string[] = [];
+    const resumeArguments: unknown[][] = [];
+    registration(controllerRegistry, selectedOwner, exactController, exactContext,
+      () => fenceOrder.push("root"), { assertStable: () => fenceOrder.push("status") },
+      { assertStable: () => fenceOrder.push("cas") }, (message: string) => { throw Error(message); },
+      (...args: unknown[]) => { resumeArguments.push(args); return resumed; });
+    const registered = controllerRegistry.get(selectedOwner)!;
+    assert.ok(Object.isFrozen(registered));
+    assert.deepEqual(Object.keys(registered), ["controllerLock", "assertPredecessorStable", "resumeRecoverySourceBootstrapHeldLockV1"]);
+    assert.equal(registered.controllerLock, exactController);
+    (registered.assertPredecessorStable as () => void)();
+    assert.deepEqual(fenceOrder, ["root", "status", "cas", "status", "root"]);
+    assert.equal((registered.resumeRecoverySourceBootstrapHeldLockV1 as () => unknown)(), resumed);
+    assert.equal(resumeArguments.length, 1);
+    assert.equal(resumeArguments[0]!.length, 2);
+    assert.equal(resumeArguments[0]![0], exactContext, "held recovery receives the captured context identity");
+    assert.equal(resumeArguments[0]![1], exactController, "held recovery receives the captured controller identity");
     const progressEffect = topLevelFunctionRegionV1(productionSource, "advanceExactPoisonPostVisibleProgressEffectV1");
     const controllerAuthority = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*exactPoisonPostVisibleSelectedProgressPassControllerLocksV1\.get\(\s*passOwner\s*\)\s*;/.exec(progressEffect);
     assert.ok(controllerAuthority && new RegExp(`case\\s+["']recover-source["']:[\\s\\S]*await\\s+${controllerAuthority[1]!}\\.resumeRecoverySourceBootstrapHeldLockV1\\(\\)`).test(progressEffect),
@@ -33379,8 +33417,6 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       "the prepared migration endpoint resolves its exact authorization content");
     assert.match(policy, /arrow\.family\s*===\s*"migration-32"[\s\S]*arrow\.ordinal\s*===\s*1[\s\S]*resolveInternalProductionPreManifestMigration32AuthorizationConsumptionV1/,
       "the consumed migration endpoint resolves its exact consumption content");
-    assert.match(policy, /arrow\.family\s*===\s*"current-audit"[\s\S]*target:\s*null[\s\S]*expectedBytes:\s*null[\s\S]*publication:\s*null[\s\S]*writer:\s*null/,
-      "the current-audit transition exposes an explicit unaddressed content tuple until a durable audit locator exists");
     const root = createFixture();
     try {
       installExactCurrentSuccessorGitFixtureV1(root);
@@ -33411,7 +33447,7 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       writeRecord("statuses", String(consumed.next.statusHash), consumed.next);
       const operationDirectory = path.join(migrationRoot, "operations", "sha256", "aa", "a".repeat(64));
       phase5cEnsurePublicationParentV1(path.join(operationDirectory, "status-00.pair.json"));
-      const migrationTerminalChain = phase5cSExternalRawCausalChainFixtureV1(PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "migration-32" && candidate.ordinal === 2)!, "B");
+      const migrationTerminalChain = phase5cSExternalRawCausalChainFixtureV1(PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "migration-32" && candidate.ordinal === 2)!, "A", operation);
       const migrationTerminal = migrationTerminalChain.next;
       writeRecord("receipts", String(migrationTerminalChain.materials.receipt!.migrationReceiptHash), migrationTerminalChain.materials.receipt!);
       for (const [ordinal, status] of [prepared.next, consumed.next, migrationTerminal].entries()) {
@@ -33423,7 +33459,7 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
           ...(material.kind === null ? [] : [Object.freeze({ endpointOrdinal: endpointOrdinal++, material: material.name, role: "content", policy: arrow.policy })]),
           ...(material.locator === null ? [] : [Object.freeze({ endpointOrdinal: endpointOrdinal++, material: material.name, role: "locator", policy: arrow.policy })]),
         ]));
-        return descriptors.map((descriptor) => Object.freeze({ operation, successorRoot: root, arrow, current: chains[arrowIndex]!.next, descriptor }));
+        return descriptors.map((descriptor) => Object.freeze({ operation, successorRoot: root, arrow, current: arrow.family === "current-audit" ? chains[arrowIndex]!.prior : chains[arrowIndex]!.next, descriptor }));
       });
       const expression = `(async()=>{Reflect.set(globalThis,"__p5cSResumeProbeV1",{mode:"task12",auditCalls:0,databaseAudit:${JSON.stringify(audited.materials["current-audit"]!.databaseAudit)}});const values=[];try{for(const input of ${JSON.stringify(calls)})values.push(await m.p5cSObserveTask12PolicyEndpointFixtureV1(input));}finally{Reflect.deleteProperty(globalThis,"__p5cSResumeProbeV1");}process.stdout.write(JSON.stringify(values))})()`;
       const result = await runFixtureExpressionAsync(root, expression);
@@ -33438,8 +33474,94 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
         ["returned", "consumption", "content", "task12-receipt", "F2u", "A0"],
         ["returned", "status", "content", "task12-receipt", "F2u", "A0"],
         ["returned", "status", "locator", "task12-receipt", "F2u", "A0"],
-        ["returned", "current-audit", "content", "task12-receipt", null, null],
+        ["returned", "current-audit", "content", "task12-receipt", "F0", "A0"],
       ]);
+      const audit = audited.materials["current-audit"]!;
+      const auditTarget = path.join(migrationRoot, "records/current-audits/sha256", String(audit.bootstrapHandoffCurrentAuditHash).slice(0, 2), `${audit.bootstrapHandoffCurrentAuditHash}.json`);
+      assert.equal(observed[6]!.target, auditTarget, "absence is pinned at the exact content-addressed audit target");
+      assert.equal(observed[6]!.expectedBytesBase64, canonicalFixtureRecordV1(audit).toString("base64"));
+      const observeAuditProjection = async (): Promise<Readonly<Record<string, unknown>>> => {
+        const input = Object.freeze({ operation, successorRoot: root, arrow: arrows[2], current: audited.prior, databaseObservation: Object.freeze({}) });
+        const result = await runFixtureExpressionAsync(root, `(async()=>{Reflect.set(globalThis,"__p5cSResumeProbeV1",{mode:"task12",auditCalls:0,databaseAudit:${JSON.stringify(audit.databaseAudit)}});try{process.stdout.write(JSON.stringify(await m.p5cSObserveExternalDatabaseFixtureV1(${JSON.stringify(input)})))}finally{Reflect.deleteProperty(globalThis,"__p5cSResumeProbeV1")}})()`);
+        assert.equal(result.status, 0, result.stderr);
+        return JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      };
+      const absentTree = filesystemTreeSnapshot(migrationRoot);
+      const absentProjection = await observeAuditProjection();
+      assert.equal(absentProjection.outcome, "returned", String(absentProjection.message));
+      assert.equal(absentProjection.state, "none");
+      assert.equal(absentProjection.activeEndpointOrdinal, null);
+      assert.deepEqual(absentProjection.current, audited.prior, "an absent audit never fabricates a completed pair");
+      assert.deepEqual(filesystemTreeSnapshot(migrationRoot), absentTree, "audit absence observation creates no directories or records");
+      writeRecord("current-audits", String(audit.bootstrapHandoffCurrentAuditHash), audit);
+      const published = await runFixtureExpressionAsync(root, expression);
+      assert.equal(published.status, 0, published.stderr);
+      const publishedAudit = (JSON.parse(published.stdout) as readonly Readonly<Record<string, unknown>>[])[6]!;
+      assert.deepEqual([publishedAudit.outcome, publishedAudit.publication, publishedAudit.writer], ["returned", "F2u", "A0"], String(publishedAudit.message));
+      assert.equal(publishedAudit.expectedBytesBase64, canonicalFixtureRecordV1(audit).toString("base64"));
+      const publishedTree = filesystemTreeSnapshot(migrationRoot);
+      const publishedProjection = await observeAuditProjection();
+      assert.equal(publishedProjection.outcome, "returned", String(publishedProjection.message));
+      assert.equal(publishedProjection.state, "publishing");
+      assert.equal(publishedProjection.activeEndpointOrdinal, 0);
+      assert.deepEqual(publishedProjection.current, audited.next, "decisive real publication exposes only the exact audit pair");
+      assert.deepEqual(filesystemTreeSnapshot(migrationRoot), publishedTree, "completed audit observation is read-only");
+      writeFileSync(auditTarget, canonicalFixtureRecordV1({ ...audit, currentStatus: "crossed" }), { mode: 0o600 });
+      const crossed = await runFixtureExpressionAsync(root, expression);
+      assert.equal(crossed.status, 0, crossed.stderr);
+      const crossedAudit = (JSON.parse(crossed.stdout) as readonly Readonly<Record<string, unknown>>[])[6]!;
+      assert.equal(crossedAudit.outcome, "threw", "wrong content at the exact audit target must never become completed evidence");
+      writeFileSync(auditTarget, canonicalFixtureRecordV1(audit), { mode: 0o600 });
+      const copiedPolicyPath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      const copiedSource = readFileSync(copiedPolicyPath, "utf8");
+      const copiedPolicy = topLevelFunctionRegionV1(copiedSource, "observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1");
+      const typescript = await import("typescript");
+      const tree = typescript.createSourceFile("policy.ts", copiedPolicy, typescript.ScriptTarget.Latest, true);
+      const acquisitions: string[] = [];
+      const visitAcquisition = (node: import("typescript").Node): void => {
+        if (typescript.isVariableDeclaration(node) && node.name.getText(tree) === "owner" && node.initializer) acquisitions.push(node.initializer.getText(tree));
+        typescript.forEachChild(node, visitAcquisition);
+      };
+      visitAcquisition(tree);
+      assert.equal(acquisitions.length, 1, "transfer fault wraps one actual physical owner acquisition");
+      const acquisition = acquisitions[0]!;
+      const wrappedAcquisition = `(() => {
+        const actualOwner = (${acquisition});
+        const probe = Reflect.get(globalThis,"__p5cSTask12TransferFaultV1") as undefined | {fault:string;closeFault:boolean;openCalls:number;closeCalls:number};
+        if (probe === undefined) return actualOwner;
+        probe.openCalls += 1;
+        return Object.freeze({ ...actualOwner,
+          get publication() { if (probe.fault === "projection") throw new Error("P5C_S_TRANSFER_PRIMARY"); return actualOwner.publication; },
+          assertStable() { if (probe.fault === "stable") throw new Error("P5C_S_TRANSFER_PRIMARY"); actualOwner.assertStable(); },
+          close() { probe.closeCalls += 1; actualOwner.close(); if (probe.closeFault) throw new Error("P5C_S_TRANSFER_CLOSE_SECONDARY"); },
+        });
+      })()`;
+      writeFileSync(copiedPolicyPath, copiedSource.replace(copiedPolicy, copiedPolicy.replace(acquisition, wrappedAcquisition)));
+      const faultTree = filesystemTreeSnapshot(migrationRoot);
+      for (const fault of ["projection", "stable"] as const) for (const closeFault of [false, true]) {
+        const input = calls[6]!;
+        const result = await runFixtureExpressionAsync(root, `(async()=>{
+          const fs=await import("node:fs");
+          Reflect.set(globalThis,"__p5cSResumeProbeV1",{mode:"task12",auditCalls:0,databaseAudit:${JSON.stringify(audit.databaseAudit)}});
+          const warm=await m.p5cSObserveTask12PolicyEndpointFixtureV1(${JSON.stringify(input)});
+          if(warm.outcome!=="returned")throw Error("P5C_S_TRANSFER_WARMUP:"+warm.message);
+          await new Promise(resolve=>setTimeout(resolve,100));
+          const count=()=>fs.readdirSync("/dev/fd").filter(name=>/^[0-9]+$/.test(name)).filter(name=>{try{fs.fstatSync(Number(name));return true}catch{return false}}).length;
+          const before=count();
+          const probe={fault:${JSON.stringify(fault)},closeFault:${closeFault},openCalls:0,closeCalls:0};
+          Reflect.set(globalThis,"__p5cSTask12TransferFaultV1",probe);
+          try{const value=await m.p5cSObserveTask12PolicyEndpointFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({...value,...probe,descriptorDelta:count()-before}))}
+          finally{Reflect.deleteProperty(globalThis,"__p5cSTask12TransferFaultV1");Reflect.deleteProperty(globalThis,"__p5cSResumeProbeV1")}
+        })()`);
+        assert.equal(result.status, 0, result.stderr);
+        const observedFault = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observedFault.outcome, "threw");
+        assert.equal(observedFault.message, "Error: P5C_S_TRANSFER_PRIMARY", "cleanup must preserve the primary construction failure");
+        assert.equal(observedFault.openCalls, 1);
+        assert.equal(observedFault.closeCalls, 1, `${fault}/${closeFault}: failed transfer closes its actual acquired owner exactly once`);
+        assert.equal(observedFault.descriptorDelta, 0, `${fault}/${closeFault}: failed transfer releases every physical descriptor`);
+        assert.deepEqual(filesystemTreeSnapshot(migrationRoot), faultTree, "failed observation remains read-only");
+      }
     } finally {
       removeFixture(root);
     }
@@ -34311,7 +34433,7 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
         migrationTerminal: terminal.body,
         migrationReceipt: terminal.body.migrationReceipt,
         migrationReceiptBody: phase5cSMigrationReceiptBodyFixtureV1(operation),
-        databaseAudit: Object.freeze({ schema: "fixture.current-database-audit.v1", status: "verified" }),
+        databaseAudit: Object.freeze({ migrationOrdinal: 32, migrationId: "contract-spine-bootstrap-main-claim-handoff-v1", migrationChecksum: PHASE5C_S_EXACT_MIGRATION_JOURNAL_V1[32].checksum, migrationState: "current", schemaProjectionHash: "a".repeat(64) }),
         applyCalls: 0,
         migrationObserveCalls: 0,
         receiptResolveCalls: 0,
@@ -34352,8 +34474,8 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       const sum = (key: string): number => resumes.reduce((total, resume) => total + Number(resume[key]), 0);
       assert.deepEqual(
         { migrationPrepareCalls: sum("migrationPrepareCalls"), retainedMigrationReadCalls: sum("retainedMigrationReadCalls"), completedRetainedReadCalls: sum("completedRetainedReadCalls"), applyCalls: sum("applyCalls"), migrationObserveCalls: sum("migrationObserveCalls"), receiptResolveCalls: sum("receiptResolveCalls"), auditCalls: sum("auditCalls"), currentAuditResolveCalls: sum("currentAuditResolveCalls") },
-        { migrationPrepareCalls: 0, retainedMigrationReadCalls: 0, completedRetainedReadCalls: 2, applyCalls: 0, migrationObserveCalls: 0, receiptResolveCalls: 1, auditCalls: 1, currentAuditResolveCalls: 1 },
-        "a terminal raw migration is adopted without a second apply and is audited once",
+        { migrationPrepareCalls: 0, retainedMigrationReadCalls: 0, completedRetainedReadCalls: 2, applyCalls: 0, migrationObserveCalls: 0, receiptResolveCalls: 3, auditCalls: 3, currentAuditResolveCalls: 1 },
+        "migration is never reapplied; initial and fresh physical observations revalidate receipt and DB audit around the single audit publication",
       );
       assert.deepEqual(resumes.flatMap((resume) => resume.advanceStates as readonly unknown[]), [
         { state: "migration_applying", rawState: "pre_manifest_bootstrap_sealed", migrationPhase: "consumed" },
@@ -34427,7 +34549,7 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
           migrationTerminal: terminal.body,
           migrationReceipt: terminal.body.migrationReceipt,
           migrationReceiptBody: phase5cSMigrationReceiptBodyFixtureV1(operation),
-          databaseAudit: Object.freeze({ schema: "fixture.current-database-audit.v1", status: "verified" }),
+          databaseAudit: Object.freeze({ migrationOrdinal: 32, migrationId: "contract-spine-bootstrap-main-claim-handoff-v1", migrationChecksum: PHASE5C_S_EXACT_MIGRATION_JOURNAL_V1[32].checksum, migrationState: "current", schemaProjectionHash: "a".repeat(64) }),
           currentStatusTarget: targets.currentStatus,
         });
         const observations = phase5cSWithRowTailOrdinalsV1(
@@ -34625,6 +34747,8 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
           mode: "migration",
           faultBoundary,
           stopAfterFault: true,
+          rowTailCurrentStatusTarget: targets.currentStatus,
+          rowTailStatusRecordsRoot: path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot, "records/statuses/sha256"),
           authorization: retainedRebind.body.authorization,
           restartAuthority: retainedRebind.body.restartAuthority,
           terminal: retainedRebind.body,
@@ -34654,8 +34778,8 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
         const resume = observed.sResume as Readonly<Record<string, unknown>>;
         const events = resume.events as readonly string[];
         const readOnly = faultBoundary.includes("-locator-") || faultBoundary.includes("-content-");
-        const replayablePublication = faultBoundary === "after-migration-current-audit-publication";
-        assert.equal(events.filter((event) => event === `s-fault:${faultBoundary}`).length, faultBoundary.startsWith("before-") || readOnly || replayablePublication ? 2 : 1);
+        assert.equal(events.filter((event) => event === `s-fault:${faultBoundary}`).length, faultBoundary.startsWith("before-") || readOnly ? 2 : 1,
+          `${faultBoundary}: durable audit publication is adopted without repeating its publication effect`);
         assert.deepEqual({ migrationPrepareCalls: resume.migrationPrepareCalls, applyCalls: resume.applyCalls }, { migrationPrepareCalls: 0, applyCalls: 0 }, `${faultBoundary}: retained terminal migration never prepares or applies a second authorization`);
         assert.equal(resume.faultApplied, true);
         assert.equal(observed.descriptorDelta, 0, `${faultBoundary}: retry closes retained/Q/writer/controller ownership`);
