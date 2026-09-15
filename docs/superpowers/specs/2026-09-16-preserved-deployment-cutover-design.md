@@ -150,6 +150,9 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## File map and boundaries
 
+- `tests/internal-production/baseline-service-restart-helper-v1.test.ts`: keep
+  positive helper fixtures physically canonical under the isolated runner's
+  sanitized temp environment; preserve all production guards and assertions.
 - New `src/internal-production/baseline-deployment-cutover-process-observation-v1.ts`:
   global old/new-neutral process-family and fixed3333 listener bracket; exact
   per-process executable paths may differ across Node versions. This diagnostic

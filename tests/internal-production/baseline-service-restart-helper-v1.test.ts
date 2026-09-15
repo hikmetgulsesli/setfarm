@@ -116,7 +116,7 @@ test("P4 helper binds fixed pre-schema action", async () => {
   assert.match(source, /fd:\s*3/);
   assert.doesNotMatch(source, /^export /m);
 
-  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-helper-"));
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-helper-")));
   try {
     const internal = path.join(fixture, "src/internal-production");
     mkdirSync(internal, { recursive: true });
@@ -385,7 +385,7 @@ test("P4 restart helper dispatches at most once", async () => {
   assert.match(source, /journal\.maximumDispatchCount !== 1/);
   assert.doesNotMatch(source, /^export /m);
 
-  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-baseline-helper-"));
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-baseline-helper-")));
   try {
     const internal = path.join(fixture, "src/internal-production");
     mkdirSync(internal, { recursive: true });
