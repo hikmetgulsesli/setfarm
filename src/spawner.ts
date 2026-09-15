@@ -4,11 +4,14 @@
  * and immediately spawns agent sessions via openclaw CLI.
  */
 import { runtimeConfig } from "./runtime-config.js";
+import { acquireInternalProductionDirectSpawnerChildStartupContextV1, consumeInternalProductionColdSpawnerPidResidueV1, observeInternalProductionColdSpawnerBootstrapJournalCensusV1, publishInternalProductionColdSpawnerBootstrapClaimV1, resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1, resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
 import postgres from "postgres";
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { authenticateInternalProductionBaselineWorkspaceAnchorV1 } from "./internal-production/baseline-workspace-authority-path-v1.js";
+import { resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProductionBaselineWorkspaceRootV1 } from "./internal-production/baseline-workspace-authority-path-v1.js";
 import os from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -298,11 +301,28 @@ function resolveAgentRuntime(): AgentRuntime {
   return requested === "openclaw" ? "openclaw" : requested === "kimi" ? "kimi" : "codex";
 }
 
-const CODEX_CLI = resolveCodexCli();
-const OPENCLAW_CLI = resolveOpenClawCli();
-const KIMI_CLI = resolveKimiCli();
-const OPENCODE_CLI = resolveOpencodeCli();
-const AGENT_RUNTIME: AgentRuntime = resolveAgentRuntime();
+let CODEX_CLI: string;
+let OPENCLAW_CLI: string;
+let KIMI_CLI: string;
+let OPENCODE_CLI: string;
+let AGENT_RUNTIME: AgentRuntime;
+let MAX_CONCURRENT: number;
+let AGENT_STARTUP_SILENCE_MS: number;
+let agentRuntimeInitializedV1 = false;
+
+function initializeAgentRuntimeV1(): void {
+  if (agentRuntimeInitializedV1) return;
+  CODEX_CLI = resolveCodexCli();
+  OPENCLAW_CLI = resolveOpenClawCli();
+  KIMI_CLI = resolveKimiCli();
+  OPENCODE_CLI = resolveOpencodeCli();
+  AGENT_RUNTIME = resolveAgentRuntime();
+  const DEFAULT_MAX_CONCURRENT = AGENT_RUNTIME === "openclaw" ? 8 : 2;
+  MAX_CONCURRENT = parsePositiveInt(process.env.SETFARM_MAX_CONCURRENT, DEFAULT_MAX_CONCURRENT);
+  const DEFAULT_AGENT_STARTUP_SILENCE_MS = AGENT_RUNTIME === "kimi" ? 12 * 60_000 : 4 * 60_000;
+  AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, DEFAULT_AGENT_STARTUP_SILENCE_MS);
+  agentRuntimeInitializedV1 = true;
+}
 const OPENCLAW_TASKS_DB = process.env.OPENCLAW_TASKS_DB || path.join(os.homedir(), ".openclaw", "tasks", "runs.sqlite");
 const POLL_INTERVAL_MS = 30_000;
 const ACTIVE_RETRY_STORY_SQL = "(retry_count > 0 OR COALESCE(output, '') ~* 'PR_REVIEW_COMMENTS_OPEN|actionable PR review comments')";
@@ -310,8 +330,6 @@ const ACTIVE_RETRY_STORY_ALIAS_SQL = "(active_st.retry_count > 0 OR COALESCE(act
 const AGENT_TIMEOUT_SECONDS = 1800;
 const PID_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");
 const LOCK_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.lock");
-const DEFAULT_MAX_CONCURRENT = AGENT_RUNTIME === "openclaw" ? 8 : 2;
-const MAX_CONCURRENT = parsePositiveInt(process.env.SETFARM_MAX_CONCURRENT, DEFAULT_MAX_CONCURRENT);
 const SPAWN_STAGGER_MS = parseInt(process.env.SETFARM_SPAWN_STAGGER_MS || "12000", 10);
 const RUNTIME_USAGE_LIMIT_DEFAULT_COOLDOWN_MS = parsePositiveInt(process.env.SETFARM_RUNTIME_USAGE_LIMIT_COOLDOWN_MS, 4 * 60_000);
 const WORKFLOW_DEFER_RETRY_MS = parsePositiveInt(process.env.SETFARM_WORKFLOW_DEFER_RETRY_MS, POLL_INTERVAL_MS);
@@ -343,8 +361,6 @@ const V3_RECOVERY_OWNER_LEASE_MS = Math.max(30_000, V3_RECOVERY_OWNER_HEARTBEAT_
   process.env.SETFARM_V3_RECOVERY_OWNER_LEASE_MS,
   2 * 60_000,
 ));
-const DEFAULT_AGENT_STARTUP_SILENCE_MS = AGENT_RUNTIME === "kimi" ? 12 * 60_000 : 4 * 60_000;
-const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, DEFAULT_AGENT_STARTUP_SILENCE_MS);
 const AGENT_MODEL_TURN_STALL_MS = parsePositiveInt(process.env.SETFARM_AGENT_MODEL_TURN_STALL_MS, 8 * 60_000);
 const AGENT_SELF_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_CHECK_AFTER_MS, 6 * 60_000);
 const AGENT_REPEATED_TOOL_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGENT_REPEATED_TOOL_LOOP_CHECK_AFTER_MS, 2 * 60_000);
@@ -385,6 +401,15 @@ let lastGatewayPrespawnRestartMs = 0;
 let lastGatewayCleanupRestartMs = 0;
 let lastGuardGatewayRestartMs = 0;
 let spawnerLockFd: number | null = null;
+type SpawnerStartupParentV1 = Readonly<{ path: string; identity: fs.BigIntStats }>;
+type OwnedSpawnerStartupFileV1 = { file: string; descriptor: number; bytes: Buffer; identity: fs.BigIntStats | null; unlinked: boolean; parents: readonly SpawnerStartupParentV1[]; readOnlyClose?: () => void };
+const spawnerStartupFilesV1: OwnedSpawnerStartupFileV1[] = [];
+let spawnerColdStartupPhaseV1: "idle" | "singleton-held" | "claim-ready" | "sealed" | "stopping" | "closed" = "idle";
+let spawnerColdStartupStopV1: (() => void) | null = null;
+const spawnerColdStartupReadinessCleanupV1 = new Set<() => void>();
+let spawnerDirectStartupPhaseV1: "idle" | "admitting" | "claim-ready" | "sealed" | "stopping" | "closed" = "idle";
+let spawnerDirectStartupStopV1: (() => void) | null = null;
+const spawnerDirectStartupReadinessCleanupV1 = new Set<() => void>();
 
 // Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
 // setfarm-repo. Previously execFile inherited the spawner's cwd (the systemd
@@ -450,35 +475,360 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
+function observeSpawnerStartupFileParentsV1(file: string): { file: string; parents: readonly SpawnerStartupParentV1[] } {
+  if (!path.isAbsolute(file)) throw Error("SPAWNER_STARTUP_FILE_PATH_INVALID");
+  // Only Darwin's fixed system /var alias is supported, as in the workspace guard.
+  const physical = process.platform === "darwin" && file.startsWith("/var/") ? `/private${file}` : file;
+  const parents: SpawnerStartupParentV1[] = [];
+  for (let current = path.dirname(physical); ; current = path.dirname(current)) {
+    const identity = fs.lstatSync(current, { bigint: true });
+    if (!identity.isDirectory() || identity.isSymbolicLink() || parents.length >= 128) throw Error("SPAWNER_STARTUP_FILE_PARENT_INVALID");
+    parents.push({ path: current, identity });
+    if (path.dirname(current) === current) break;
+  }
+  return { file: physical, parents };
+}
+
+function assertSpawnerStartupFileParentsV1(parents: readonly SpawnerStartupParentV1[]): void {
+  for (const { path: target, identity } of parents) {
+    const current = fs.lstatSync(target, { bigint: true });
+    if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== identity.dev || current.ino !== identity.ino
+      || current.uid !== identity.uid || current.gid !== identity.gid || current.mode !== identity.mode
+      || current.birthtimeNs !== identity.birthtimeNs) throw Error("SPAWNER_STARTUP_FILE_PARENT_CHANGED");
+  }
+}
+
+function createOwnedSpawnerStartupFileV1(file: string, bytes: Buffer): OwnedSpawnerStartupFileV1 {
+  const originalParents = observeSpawnerStartupFileParentsV1(file); file = originalParents.file;
+  const descriptor = fs.openSync(file, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW, 0o600);
+  const owned: OwnedSpawnerStartupFileV1 = { file, descriptor, bytes, identity: null, unlinked: false, parents: originalParents.parents };
+  spawnerStartupFilesV1.push(owned);
+  assertSpawnerStartupFileParentsV1(owned.parents);
+  const before = fs.fstatSync(descriptor, { bigint: true });
+  if (!before.isFile() || before.nlink !== 1n || before.uid !== BigInt(process.getuid!())) throw Error("SPAWNER_STARTUP_FILE_IDENTITY_INVALID");
+  fs.writeFileSync(descriptor, bytes);
+  const after = fs.fstatSync(descriptor, { bigint: true });
+  const same = (value: fs.BigIntStats) => value.isFile() && !value.isSymbolicLink() && value.nlink === 1n
+    && value.dev === before.dev && value.ino === before.ino && value.uid === before.uid && value.gid === before.gid
+    && value.mode === before.mode && value.birthtimeNs === before.birthtimeNs && value.size === BigInt(bytes.length)
+    && value.mtimeNs === after.mtimeNs && value.ctimeNs === after.ctimeNs;
+  const observed = Buffer.alloc(bytes.length + 1);
+  if (!same(after) || !same(fs.lstatSync(file, { bigint: true }))
+    || fs.readSync(descriptor, observed, 0, observed.length, 0) !== bytes.length || !observed.subarray(0, bytes.length).equals(bytes)
+    || !same(fs.fstatSync(descriptor, { bigint: true })) || !same(fs.lstatSync(file, { bigint: true }))) throw Error("SPAWNER_STARTUP_FILE_PUBLICATION_INVALID");
+  owned.identity = after;
+  assertSpawnerStartupFileParentsV1(owned.parents);
+  return owned;
+}
+
+function closeOwnedSpawnerStartupFileV1(owned: OwnedSpawnerStartupFileV1): void {
+  if (owned.readOnlyClose) { owned.readOnlyClose(); return; }
+  if (!owned.unlinked && owned.identity !== null) {
+    try {
+      assertSpawnerStartupFileParentsV1(owned.parents);
+      const original = owned.identity, held = fs.fstatSync(owned.descriptor, { bigint: true }), current = fs.lstatSync(owned.file, { bigint: true });
+      const same = (value: fs.BigIntStats) => value.isFile() && !value.isSymbolicLink() && value.nlink === 1n
+        && value.dev === original.dev && value.ino === original.ino && value.uid === original.uid && value.mode === original.mode
+        && value.size === original.size && value.birthtimeNs === original.birthtimeNs && value.mtimeNs === original.mtimeNs && value.ctimeNs === original.ctimeNs;
+      const bytes = Buffer.alloc(owned.bytes.length + 1);
+      if (same(held) && same(current) && fs.readSync(owned.descriptor, bytes, 0, bytes.length, 0) === owned.bytes.length
+        && bytes.subarray(0, owned.bytes.length).equals(owned.bytes) && same(fs.fstatSync(owned.descriptor, { bigint: true }))
+        && same(fs.lstatSync(owned.file, { bigint: true }))) {
+        assertSpawnerStartupFileParentsV1(owned.parents);
+        fs.unlinkSync(owned.file);
+        owned.unlinked = true;
+      }
+    } catch (error) {
+      // A missing or changed path never grants permission to remove another file.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.warn("[spawner] Startup-file cleanup preserved an unverified path");
+    }
+  }
+  fs.closeSync(owned.descriptor);
+  spawnerStartupFilesV1.splice(spawnerStartupFilesV1.indexOf(owned), 1);
+  if (spawnerLockFd === owned.descriptor) spawnerLockFd = null;
+}
+
+function closeReadOnlySpawnerStartupPinV1(owned: OwnedSpawnerStartupFileV1, state: { identity: fs.BigIntStats | null; closeEntered: boolean; closed: boolean }): void {
+  if (state.closed) return;
+  const forget = () => {
+    state.closed = true;
+    const index = spawnerStartupFilesV1.indexOf(owned);
+    if (index >= 0) spawnerStartupFilesV1.splice(index, 1);
+  };
+  const observedClosedOrReused = (): boolean => {
+    let current: fs.BigIntStats;
+    try { current = fs.fstatSync(owned.descriptor, { bigint: true }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "EBADF") { forget(); return true; } throw error; }
+    const original = state.identity;
+    if (original === null && !state.closeEntered) state.identity = current;
+    if (original !== null && ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => original[key as keyof fs.BigIntStats] !== current[key as keyof fs.BigIntStats])) {
+      forget(); // Revoke the old slot without closing its new occupant.
+      if (!state.closeEntered) throw Error("SPAWNER_READ_ONLY_PIN_DESCRIPTOR_REUSED");
+      return true;
+    }
+    return false;
+  };
+  if (observedClosedOrReused()) return;
+  // Same-inode reopening is indistinguishable from the original open-file
+  // description after an uncertain close. Retain the fence; never close twice.
+  if (state.closeEntered || state.identity === null) throw Error("SPAWNER_READ_ONLY_PIN_CLOSE_UNCERTAIN");
+  state.closeEntered = true;
+  try { fs.closeSync(owned.descriptor); forget(); }
+  catch (error) {
+    try { observedClosedOrReused(); } catch { /* Preserve the original error and retained ownership. */ }
+    throw error;
+  }
+}
+
+function observeOwnedSpawnerStartupFileV1(file: string, expectedBytes: Buffer, lock: boolean) {
+    const physical = observeSpawnerStartupFileParentsV1(file).file;
+    const owned = spawnerStartupFilesV1.find((value) => value.file === physical);
+    if (!owned || !owned.identity || owned.unlinked || (lock && owned.descriptor !== spawnerLockFd) || !owned.bytes.equals(expectedBytes)) throw Error("SPAWNER_COLD_STARTUP_FILE_NOT_OWNED");
+    assertSpawnerStartupFileParentsV1(owned.parents);
+    const original = owned.identity;
+    const same = (value: fs.BigIntStats) => value.isFile() && !value.isSymbolicLink() && value.nlink === 1n
+      && value.dev === original.dev && value.ino === original.ino && value.uid === original.uid && value.gid === original.gid
+      && value.mode === original.mode && value.size === original.size && value.birthtimeNs === original.birthtimeNs
+      && value.mtimeNs === original.mtimeNs && value.ctimeNs === original.ctimeNs;
+    const bytes = Buffer.alloc(expectedBytes.length + 1);
+    if (!same(fs.fstatSync(owned.descriptor, { bigint: true })) || !same(fs.lstatSync(physical, { bigint: true }))
+      || fs.readSync(owned.descriptor, bytes, 0, bytes.length, 0) !== expectedBytes.length || !bytes.subarray(0, expectedBytes.length).equals(expectedBytes)
+      || !same(fs.fstatSync(owned.descriptor, { bigint: true })) || !same(fs.lstatSync(physical, { bigint: true }))) throw Error("SPAWNER_COLD_STARTUP_FILE_CHANGED");
+    assertSpawnerStartupFileParentsV1(owned.parents);
+    return Object.freeze({ path: physical, devDecimal: String(original.dev), inoDecimal: String(original.ino), uid: Number(original.uid), mode: Number(original.mode & 0o7777n),
+      byteLength: expectedBytes.length, bytesHash: crypto.createHash("sha256").update(expectedBytes).digest("hex"),
+      identityHash: crypto.createHash("sha256").update(JSON.stringify([original.dev, original.ino, original.uid, original.gid, original.mode, original.nlink, original.size, original.birthtimeNs, original.mtimeNs, original.ctimeNs].map(String))).digest("hex") });
+}
+
+export function observeInternalProductionColdSpawnerSingletonOwnershipV1() {
+  if (spawnerColdStartupPhaseV1 !== "singleton-held" || !spawnerColdStartupStopV1
+    || !process.listeners("SIGTERM").includes(spawnerColdStartupStopV1) || !process.listeners("SIGINT").includes(spawnerColdStartupStopV1)
+    || spawnerStartupFilesV1.length !== 1 || spawnerLockFd === null) throw Error("SPAWNER_COLD_SINGLETON_OWNERSHIP_UNAVAILABLE");
+  return observeOwnedSpawnerStartupFileV1(LOCK_FILE, Buffer.from(`${process.pid}\n`), true);
+}
+
+export function observeInternalProductionColdSpawnerStartupOwnershipV1() {
+  if (!["claim-ready", "sealed"].includes(spawnerColdStartupPhaseV1) || !spawnerColdStartupStopV1
+    || !process.listeners("SIGTERM").includes(spawnerColdStartupStopV1) || !process.listeners("SIGINT").includes(spawnerColdStartupStopV1)
+    || spawnerStartupFilesV1.length !== 2 || spawnerLockFd === null) throw Error("SPAWNER_COLD_STARTUP_OWNERSHIP_UNAVAILABLE");
+  return Object.freeze({ schema: "setfarm.internal-production-cold-spawner-startup-ownership.v1", pid: process.pid, uid: process.getuid!(),
+    singleton: observeOwnedSpawnerStartupFileV1(LOCK_FILE, Buffer.from(`${process.pid}\n`), true), pidFile: observeOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid)), false) });
+}
+
+async function runInternalProductionColdSpawnerStartupV1(): Promise<boolean> {
+  const authentication = resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1();
+  if (authentication === null) return false;
+  if (spawnerColdStartupPhaseV1 !== "idle" || spawnerStartupFilesV1.length !== 0) throw Error("SPAWNER_COLD_STARTUP_ALREADY_ENTERED");
+  let claim: Awaited<ReturnType<typeof publishInternalProductionColdSpawnerBootstrapClaimV1>> | null = null;
+  let keepAlive: ReturnType<typeof setInterval> | undefined;
+  let closeReadiness: (() => void) | undefined;
+  try {
+    for (const close of spawnerColdStartupReadinessCleanupV1) close();
+    const readiness = fs.fstatSync(6, { bigint: true });
+    if ((!readiness.isSocket() && !readiness.isFIFO()) || readiness.uid !== BigInt(process.getuid!())) throw Error("SPAWNER_COLD_READINESS_ENDPOINT_INVALID");
+    let readinessClosed = false;
+    const assertReadiness = () => {
+      const current = fs.fstatSync(6, { bigint: true });
+      if (readinessClosed || (!current.isSocket() && !current.isFIFO())
+        || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some((key) => current[key as keyof fs.BigIntStats] !== readiness[key as keyof fs.BigIntStats])) throw Error("SPAWNER_COLD_READINESS_ENDPOINT_CHANGED");
+    };
+    closeReadiness = () => {
+      if (readinessClosed) return;
+      assertReadiness(); fs.closeSync(6); readinessClosed = true;
+      spawnerColdStartupReadinessCleanupV1.delete(closeReadiness!);
+    };
+    spawnerColdStartupReadinessCleanupV1.add(closeReadiness);
+    // Cold startup never reclaims an unbound predecessor lock or PID residue.
+    spawnerLockFd = createOwnedSpawnerStartupFileV1(LOCK_FILE, Buffer.from(`${process.pid}\n`)).descriptor;
+    const stopped = new Promise<void>((resolve) => {
+      spawnerColdStartupStopV1 = () => { spawnerColdStartupPhaseV1 = "stopping"; resolve(); };
+      process.once("SIGTERM", spawnerColdStartupStopV1);
+      process.once("SIGINT", spawnerColdStartupStopV1);
+    });
+    keepAlive = setInterval(() => {}, 60_000);
+    spawnerColdStartupPhaseV1 = "singleton-held";
+    await consumeInternalProductionColdSpawnerPidResidueV1();
+    observeInternalProductionColdSpawnerSingletonOwnershipV1();
+    createOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid)));
+    spawnerColdStartupPhaseV1 = "claim-ready";
+    claim = await publishInternalProductionColdSpawnerBootstrapClaimV1();
+    if (!["stopping"].includes(spawnerColdStartupPhaseV1)) spawnerColdStartupPhaseV1 = "sealed";
+    observeInternalProductionColdSpawnerStartupOwnershipV1();
+    if (!["sealed"].includes(spawnerColdStartupPhaseV1)) throw Error("SPAWNER_COLD_STOPPED_BEFORE_READINESS");
+    resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1();
+    const ready = Buffer.from(`${JSON.stringify({ claimHash: claim.claimHash, claimIdentity: claim.claimIdentity, claimRef: claim.claimRef, journalIdentity: claim.journalIdentity, schema: "setfarm.internal-production-cold-spawner-readiness.v1" })}\n`);
+    if (ready.length > 4096) throw Error("SPAWNER_COLD_READINESS_EXCEEDS_CAP");
+    assertReadiness();
+    if (fs.writeSync(6, ready) !== ready.length) throw Error("SPAWNER_COLD_READINESS_WRITE_INCOMPLETE");
+    closeReadiness();
+    await stopped;
+    return true;
+  } finally {
+    spawnerColdStartupPhaseV1 = "closed";
+    if (keepAlive) clearInterval(keepAlive);
+    if (spawnerColdStartupStopV1) { process.removeListener("SIGTERM", spawnerColdStartupStopV1); process.removeListener("SIGINT", spawnerColdStartupStopV1); }
+    spawnerColdStartupStopV1 = null;
+    try { authentication.close(); } finally {
+      try { releaseSpawnerSingletonLock(); } finally {
+        try { closeReadiness?.(); }
+        catch (error) { try { closeReadiness?.(); } catch { /* Exact unfinished endpoint stays retained. */ } throw error; }
+      }
+    }
+  }
+}
+
+export function observeInternalProductionDirectSpawnerStartupOwnershipV1() {
+  if (!["claim-ready", "sealed"].includes(spawnerDirectStartupPhaseV1) || !spawnerDirectStartupStopV1
+    || !process.listeners("SIGTERM").includes(spawnerDirectStartupStopV1) || !process.listeners("SIGINT").includes(spawnerDirectStartupStopV1)
+    || spawnerStartupFilesV1.length !== 2 || spawnerLockFd === null) throw Error("SPAWNER_DIRECT_STARTUP_OWNERSHIP_UNAVAILABLE");
+  return Object.freeze({ schema: "setfarm.internal-production-direct-spawner-startup-ownership.v1", pid: process.pid, uid: process.getuid!(),
+    singleton: observeOwnedSpawnerStartupFileV1(LOCK_FILE, Buffer.from(`${process.pid}\n`), true), pidFile: observeOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid)), false) });
+}
+
+async function runInternalProductionDirectSpawnerStartupV1(): Promise<boolean> {
+  const runtime = resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1();
+  if (runtime?.role !== "direct-child") return false;
+  if (spawnerDirectStartupPhaseV1 !== "idle" || spawnerStartupFilesV1.length !== 0) throw Error("SPAWNER_DIRECT_STARTUP_ALREADY_ENTERED");
+  let context: Awaited<ReturnType<typeof acquireInternalProductionDirectSpawnerChildStartupContextV1>> | null = null;
+  let keepAlive: ReturnType<typeof setInterval> | undefined;
+  let closeReadiness: (() => void) | undefined;
+  try {
+    const stopped = new Promise<void>(resolve => {
+      spawnerDirectStartupStopV1 = () => { spawnerDirectStartupPhaseV1 = "stopping"; resolve(); };
+      process.once("SIGTERM", spawnerDirectStartupStopV1); process.once("SIGINT", spawnerDirectStartupStopV1);
+    });
+    keepAlive = setInterval(() => {}, 60_000);
+    spawnerDirectStartupPhaseV1 = "admitting";
+    context = await acquireInternalProductionDirectSpawnerChildStartupContextV1();
+    if (!["admitting"].includes(spawnerDirectStartupPhaseV1)) throw Error("SPAWNER_DIRECT_STOPPED_BEFORE_STARTUP");
+    for (const close of spawnerDirectStartupReadinessCleanupV1) close();
+    const readiness = fs.fstatSync(6, { bigint: true });
+    if ((!readiness.isSocket() && !readiness.isFIFO()) || readiness.uid !== BigInt(process.getuid!())) throw Error("SPAWNER_DIRECT_READINESS_ENDPOINT_INVALID");
+    let readinessClosed = false, closeEntered = false;
+    const assertReadiness = () => {
+      const current = fs.fstatSync(6, { bigint: true });
+      if (readinessClosed || closeEntered || (!current.isSocket() && !current.isFIFO())
+        || ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof fs.BigIntStats] !== readiness[key as keyof fs.BigIntStats])) throw Error("SPAWNER_DIRECT_READINESS_ENDPOINT_CHANGED");
+    };
+    closeReadiness = () => {
+      if (readinessClosed) return;
+      let current: fs.BigIntStats;
+      try { current = fs.fstatSync(6, { bigint: true }); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "EBADF") throw error; readinessClosed = true; spawnerDirectStartupReadinessCleanupV1.delete(closeReadiness!); return; }
+      if (["dev", "ino", "uid", "gid", "mode", "birthtimeNs"].some(key => current[key as keyof fs.BigIntStats] !== readiness[key as keyof fs.BigIntStats])) {
+        readinessClosed = true; spawnerDirectStartupReadinessCleanupV1.delete(closeReadiness!); throw Error("SPAWNER_DIRECT_READINESS_DESCRIPTOR_REUSED");
+      }
+      assertReadiness(); closeEntered = true; fs.closeSync(6); readinessClosed = true;
+      spawnerDirectStartupReadinessCleanupV1.delete(closeReadiness!);
+    };
+    spawnerDirectStartupReadinessCleanupV1.add(closeReadiness);
+    // Direct termination history grants no cold residue or stale-file removal.
+    spawnerLockFd = createOwnedSpawnerStartupFileV1(LOCK_FILE, Buffer.from(`${process.pid}\n`)).descriptor;
+    createOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid)));
+    spawnerDirectStartupPhaseV1 = "claim-ready";
+    const claim = await context.publishClaim();
+    if (!["claim-ready"].includes(spawnerDirectStartupPhaseV1)) throw Error("SPAWNER_DIRECT_STOPPED_BEFORE_READINESS");
+    spawnerDirectStartupPhaseV1 = "sealed";
+    observeInternalProductionDirectSpawnerStartupOwnershipV1();
+    resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1();
+    const ready = Buffer.from(`${JSON.stringify({ claimHash: claim.claimHash, claimIdentity: claim.claimIdentity, claimRef: claim.claimRef, journalIdentity: claim.journalIdentity, schema: "setfarm.internal-production-direct-spawner-readiness.v1" })}\n`);
+    if (ready.length > 4096) throw Error("SPAWNER_DIRECT_READINESS_EXCEEDS_CAP");
+    assertReadiness();
+    if (fs.writeSync(6, ready) !== ready.length) throw Error("SPAWNER_DIRECT_READINESS_WRITE_INCOMPLETE");
+    closeReadiness();
+    await stopped;
+    return true;
+  } finally {
+    spawnerDirectStartupPhaseV1 = "closed";
+    if (keepAlive) clearInterval(keepAlive);
+    if (spawnerDirectStartupStopV1) { process.removeListener("SIGTERM", spawnerDirectStartupStopV1); process.removeListener("SIGINT", spawnerDirectStartupStopV1); }
+    spawnerDirectStartupStopV1 = null;
+    try { context?.close(); } finally { try { releaseSpawnerSingletonLock(); } finally { closeReadiness?.(); } }
+  }
+}
+
+function publishSpawnerPidFileV1(): void {
+  try { createOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid))); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if (reclaimDeadSpawnerStartupFileV1(PID_FILE) !== "removed") throw Error("SPAWNER_PID_FILE_UNAVAILABLE");
+    createOwnedSpawnerStartupFileV1(PID_FILE, Buffer.from(String(process.pid)));
+  }
+}
+
+function reclaimDeadSpawnerStartupFileV1(file: string, retainedAuthority?: () => void): "removed" | "alive" {
+  const assertAuthority = retainedAuthority ?? (() => {
+    if (observeInternalProductionColdSpawnerBootstrapJournalCensusV1().state !== "absent") throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  });
+  assertAuthority();
+  const originalParents = observeSpawnerStartupFileParentsV1(file); file = originalParents.file;
+  const before = fs.lstatSync(file, { bigint: true });
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.uid !== BigInt(process.getuid!())
+    || (before.mode & 0o022n) !== 0n || before.size < 1n || before.size > 32n) throw Error("SPAWNER_STALE_FILE_IDENTITY_INVALID");
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  const reader: OwnedSpawnerStartupFileV1 = { file, descriptor, bytes: Buffer.alloc(0), identity: null, unlinked: false, parents: originalParents.parents };
+  const closeState: { identity: fs.BigIntStats | null; closeEntered: boolean; closed: boolean } = { identity: null, closeEntered: false, closed: false };
+  reader.readOnlyClose = () => closeReadOnlySpawnerStartupPinV1(reader, closeState);
+  spawnerStartupFilesV1.push(reader);
+  const same = (value: fs.BigIntStats) => value.isFile() && !value.isSymbolicLink() && value.nlink === 1n
+    && value.dev === before.dev && value.ino === before.ino && value.uid === before.uid && value.gid === before.gid
+    && value.mode === before.mode && value.size === before.size && value.birthtimeNs === before.birthtimeNs
+    && value.mtimeNs === before.mtimeNs && value.ctimeNs === before.ctimeNs;
+  try {
+    assertSpawnerStartupFileParentsV1(reader.parents);
+    const opened = fs.fstatSync(descriptor, { bigint: true }); closeState.identity = opened;
+    if (!same(opened)) throw Error("SPAWNER_STALE_FILE_IDENTITY_INVALID");
+    const bytes = Buffer.alloc(Number(before.size) + 1);
+    if (fs.readSync(descriptor, bytes, 0, bytes.length, 0) !== Number(before.size)) throw Error("SPAWNER_STALE_FILE_BYTES_INVALID");
+    const value = bytes.subarray(0, Number(before.size)).toString("utf8");
+    if (!/^[1-9][0-9]{0,9}\n?$/.test(value)) throw Error("SPAWNER_STALE_FILE_PID_INVALID");
+    const pid = Number(value.trim());
+    if (!Number.isSafeInteger(pid) || pid > 2_147_483_647 || pid === process.pid) throw Error("SPAWNER_STALE_FILE_PID_INVALID");
+    const dead = () => {
+      try { process.kill(pid, 0); return false; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return true; throw Error("SPAWNER_STALE_FILE_LIVENESS_UNPROVEN"); }
+    };
+    if (!dead()) return "alive";
+    assertAuthority();
+    const current = Buffer.alloc(bytes.length);
+    if (!dead() || !same(fs.fstatSync(descriptor, { bigint: true })) || !same(fs.lstatSync(file, { bigint: true }))
+      || fs.readSync(descriptor, current, 0, current.length, 0) !== Number(before.size) || !current.equals(bytes)
+      || !same(fs.lstatSync(file, { bigint: true }))) throw Error("SPAWNER_STALE_FILE_CHANGED");
+    assertSpawnerStartupFileParentsV1(reader.parents);
+    assertAuthority();
+    // Authority checks can be expensive: rebind the exact dead candidate last.
+    if (!dead() || !same(fs.fstatSync(descriptor, { bigint: true })) || !same(fs.lstatSync(file, { bigint: true }))
+      || fs.readSync(descriptor, current, 0, current.length, 0) !== Number(before.size) || !current.equals(bytes)
+      || !same(fs.lstatSync(file, { bigint: true }))) throw Error("SPAWNER_STALE_FILE_CHANGED");
+    assertSpawnerStartupFileParentsV1(reader.parents);
+    fs.unlinkSync(file);
+    return "removed";
+  } finally { closeOwnedSpawnerStartupFileV1(reader); }
+}
+
 function acquireSpawnerSingletonLock(): void {
   fs.mkdirSync(path.dirname(LOCK_FILE), { recursive: true });
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      spawnerLockFd = fs.openSync(LOCK_FILE, "wx");
-      fs.writeFileSync(spawnerLockFd, `${process.pid}\n`);
+      spawnerLockFd = createOwnedSpawnerStartupFileV1(LOCK_FILE, Buffer.from(`${process.pid}\n`)).descriptor;
       return;
     } catch (err: any) {
       if (err?.code !== "EEXIST") throw err;
-      const existingPid = Number(fs.readFileSync(LOCK_FILE, "utf-8").trim());
-      if (processIsAlive(existingPid)) {
-        console.warn(`[spawner] Another spawner is already running (PID ${existingPid}); exiting duplicate PID ${process.pid}`);
+      if (reclaimDeadSpawnerStartupFileV1(LOCK_FILE) === "alive") {
+        console.warn(`[spawner] Another spawner is already running; exiting duplicate PID ${process.pid}`);
         process.exit(0);
       }
-      try { fs.unlinkSync(LOCK_FILE); } catch {}
     }
   }
   throw new Error("SPAWNER_LOCK_UNAVAILABLE: could not acquire singleton lock");
 }
 
 function releaseSpawnerSingletonLock(): void {
-  if (spawnerLockFd !== null) {
-    try { fs.closeSync(spawnerLockFd); } catch {}
-    spawnerLockFd = null;
+  let failure: unknown;
+  for (const owned of [...spawnerStartupFilesV1].reverse()) {
+    try { closeOwnedSpawnerStartupFileV1(owned); } catch (error) { failure ??= error; }
   }
-  try {
-    const existingPid = Number(fs.readFileSync(LOCK_FILE, "utf-8").trim());
-    if (existingPid === process.pid || !processIsAlive(existingPid)) fs.unlinkSync(LOCK_FILE);
-  } catch {}
+  if (failure) throw failure;
 }
 
 const STORY_WORKDIR_CANDIDATE_KEYS = [
@@ -4423,6 +4773,9 @@ export async function releaseUntransferredPostClaimOwnership(
     ) {
       throw new Error(`POST_CLAIM_RUNTIME_IDENTITY_MISMATCH:${claim.runtimeSessionId}`);
     }
+    // This exported cleanup can run without main(); initialize only after the
+    // exact provider-owned session is authenticated, never at module import.
+    if (current.runtimeKind === "openclaw_session") initializeAgentRuntimeV1();
     const draining = current.state === "drain_requested"
       ? current
       : await sessions.requestDrain({
@@ -9847,7 +10200,7 @@ async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(
       throw new Error("INTERNAL_PRODUCTION_PRE_SCHEMA_SPAWNER_STARTUP_TOKEN_REQUIRED");
     }
     const startupToken = await dependencies.startupAdmission.resolveInternalProductionPreSchemaSpawnerStartupTokenV1(
-      preSchemaStatus.startupToken,
+      { startupTokenRef: preSchemaStatus.startupToken.startupTokenRef, startupTokenHash: preSchemaStatus.startupToken.startupTokenHash },
     );
     const receiptAuthority = await dependencies.loadReceiptAuthority();
     const executingSource = receiptAuthority.observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
@@ -9862,7 +10215,8 @@ async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(
     ) throw new Error("INTERNAL_PRODUCTION_PRE_SCHEMA_SPAWNER_STARTUP_TOKEN_INVALID");
     const dispatchPrefix = preSchemaStatus.dispatchPrefix;
     if (dispatchPrefix?.replacementProcessObservation !== null && dispatchPrefix?.replacementProcessObservation !== undefined) {
-      const replacement = await dependencies.startupAdmission.resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1(dispatchPrefix.replacementProcessObservation);
+      const pair = dispatchPrefix.replacementProcessObservation;
+      const replacement = await dependencies.startupAdmission.resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1({ replacementProcessObservationRef: pair.replacementProcessObservationRef, replacementProcessObservationHash: pair.replacementProcessObservationHash });
       const census = await receiptAuthority.observeInternalProductionServiceCensusV1();
       if (replacement.replacementSpawnerProcessIdentityHash !== census.spawner.processIdentityHash || replacement.actualSpawnerGenerationHash !== census.spawner.generationHash || replacement.actualSpawnerSourceSha !== executingSource.sha || replacement.actualSpawnerTreeHash !== executingSource.treeHash || replacement.actualSpawnerBuildHash !== executingSource.buildHash) throw new Error("INTERNAL_PRODUCTION_PRE_SCHEMA_SPAWNER_REPLACEMENT_IDENTITY_INVALID");
     }
@@ -9875,7 +10229,8 @@ async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(
   if (preSchemaStatus.state === "normal_task0_admission_ready") {
     const readyPair = (preSchemaStatus as Readonly<Record<string, unknown>>).admissionReady;
     if (!readyPair || typeof readyPair !== "object" || Array.isArray(readyPair)) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_ADMISSION_READY_REQUIRED");
-    const ready = await dependencies.startupAdmission.resolveInternalProductionTask0SpawnerAdmissionReadyV1(readyPair as Readonly<{ admissionReadyRef: string; admissionReadyHash: string }>);
+    const pair = readyPair as Readonly<{ admissionReadyRef: string; admissionReadyHash: string }>;
+    const ready = await dependencies.startupAdmission.resolveInternalProductionTask0SpawnerAdmissionReadyV1({ admissionReadyRef: pair.admissionReadyRef, admissionReadyHash: pair.admissionReadyHash });
     const receiptAuthority = await dependencies.loadReceiptAuthority();
     const census = await receiptAuthority.observeInternalProductionServiceCensusV1();
     if (ready.state !== "normal-task0-admission-ready" || ready.unchangedSpawnerGenerationHash !== census.spawner.generationHash) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_ADMISSION_READY_INVALID");
@@ -9925,12 +10280,10 @@ export type InternalProductionBaselineSpawnerStartupClaimV1 = Readonly<{
   startupClaimHash: string;
 }>;
 
-const TASK12_STARTUP_ADMISSION_ROOT_V1 = path.join(
-  path.dirname(path.dirname(fileURLToPath(import.meta.url))),
+const TASK12_STARTUP_ADMISSION_ROOT_V1 = resolveInternalProductionBaselineAuthorityPathV1(
   "data/internal-production-baseline/baseline-spawner-startup-admission-v1",
 );
-const TASK12_BOOTSTRAP_RESTART_ROOT_V1 = path.join(
-  path.dirname(path.dirname(fileURLToPath(import.meta.url))),
+const TASK12_BOOTSTRAP_RESTART_ROOT_V1 = resolveInternalProductionBaselineAuthorityPathV1(
   "data/internal-production-baseline/baseline-spawner-bootstrap-restart-v1",
 );
 const TASK12_STARTUP_ADMISSION_PREFIX_V1 = "setfarm://internal-production/baseline-spawner-startup-admission/sha256/";
@@ -9973,23 +10326,26 @@ function task12ExactInputV1(value: unknown, keys: readonly string[], code: strin
 type Task12PrivateDirectoryGuardV1 = Readonly<{ assertStable: () => void; close: () => void }>;
 
 function authenticateTask12PrivateDirectoryChainV1(target: string): Task12PrivateDirectoryGuardV1 {
-  const anchor = path.resolve(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+  const anchor = resolveInternalProductionBaselineWorkspaceRootV1();
   const resolvedTarget = path.resolve(target);
   const relative = path.relative(anchor, resolvedTarget);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_ESCAPE");
   const segments = relative === "" ? [] : relative.split(path.sep);
   const paths = [anchor, ...segments.map((_, index) => path.join(anchor, ...segments.slice(0, index + 1)))];
+  const workspaceAnchor = authenticateInternalProductionBaselineWorkspaceAnchorV1();
   const descriptors: number[] = [];
   const held: Array<ReturnType<typeof fs.fstatSync>> = [];
   let closed = false;
   const assertStable = (): void => {
     if (closed) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_GUARD_CLOSED");
+    workspaceAnchor.assertStable();
     for (const [index, current] of paths.entries()) {
       const atPath = fs.lstatSync(current, { bigint: true });
       const atDescriptor = fs.fstatSync(descriptors[index]!, { bigint: true });
       const expected = held[index]!;
       if (!atPath.isDirectory() || atPath.isSymbolicLink() || !atDescriptor.isDirectory() || atPath.dev !== expected.dev || atPath.ino !== expected.ino || atPath.mode !== expected.mode || atDescriptor.dev !== expected.dev || atDescriptor.ino !== expected.ino || atDescriptor.mode !== expected.mode) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_CHANGED");
     }
+    workspaceAnchor.assertStable();
   };
   try {
     for (const [index, current] of paths.entries()) {
@@ -10001,16 +10357,16 @@ function authenticateTask12PrivateDirectoryChainV1(target: string): Task12Privat
       held.push(observed);
     }
     assertStable();
-    return Object.freeze({ assertStable, close: () => { if (closed) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_GUARD_CLOSED"); closed = true; for (const descriptor of descriptors.reverse()) fs.closeSync(descriptor); } });
+    return Object.freeze({ assertStable, close: () => { if (closed) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_GUARD_CLOSED"); closed = true; try { for (const descriptor of descriptors.reverse()) fs.closeSync(descriptor); } finally { workspaceAnchor.close(); } } });
   } catch (error) {
     closed = true;
-    for (const descriptor of descriptors.reverse()) fs.closeSync(descriptor);
+    try { for (const descriptor of descriptors.reverse()) fs.closeSync(descriptor); } finally { workspaceAnchor.close(); }
     throw error;
   }
 }
 
 function ensureTask12PrivateDirectoryV1(directory: string): Task12PrivateDirectoryGuardV1 {
-  const anchor = path.resolve(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+  const anchor = resolveInternalProductionBaselineWorkspaceRootV1();
   const target = path.resolve(directory);
   const relative = path.relative(anchor, target);
   if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("INTERNAL_PRODUCTION_TASK12_DIRECTORY_ESCAPE");
@@ -10612,8 +10968,9 @@ export async function transitionInternalProductionTask0SpawnerToNormalAdmissionR
   const startup = await import("./internal-production/baseline-spawner-startup-admission-v1.js");
   const status = await startup.observeInternalProductionPreSchemaSpawnerRebindStatusV1();
   if (status.state === "normal_task0_admission_ready" && status.admissionReady) {
-    await startup.resolveInternalProductionTask0SpawnerAdmissionReadyV1(status.admissionReady);
-    return status.admissionReady;
+    const pair = Object.freeze({ admissionReadyRef: status.admissionReady.admissionReadyRef, admissionReadyHash: status.admissionReady.admissionReadyHash });
+    await startup.resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair);
+    return pair;
   }
   if (status.state !== "pre_manifest_bootstrap_sealed" || !status.currentEntryOperation || !status.authorization || !status.startupToken || !status.restartAuthority || !status.dispatchPrefix || !status.sealedAdmission) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_NOT_SEALED");
   const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
@@ -10623,7 +10980,7 @@ export async function transitionInternalProductionTask0SpawnerToNormalAdmissionR
   const verification = await db.verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1();
   const initialization = await db.initializeInternalProductionCurrentEntryDatabaseV1();
   const census = await receipt.observeInternalProductionServiceCensusV1();
-  const sealed = await startup.resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1(status.sealedAdmission);
+  const sealed = await startup.resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1({ sealedAdmissionRef: status.sealedAdmission.sealedAdmissionRef, sealedAdmissionHash: status.sealedAdmission.sealedAdmissionHash });
   if (census.spawner.generationHash !== sealed.currentSpawnerGenerationHash) throw new Error("INTERNAL_PRODUCTION_TASK0_SPAWNER_GENERATION_CHANGED");
   const migration = currentEntry.migrationApplyingPhase as Record<string, unknown>;
   const manifest = currentEntry.manifestActivation as Record<string, unknown>;
@@ -10648,7 +11005,7 @@ export async function transitionInternalProductionTask0SpawnerToNormalAdmissionR
   const admissionReadyHash = task12HashV1(body);
   const admissionReadyRef = `setfarm://internal-production/task0-spawner-admission-ready/sha256/${admissionReadyHash}`;
   const ready = { ...body, admissionReadyRef, admissionReadyHash };
-  const root = path.resolve(process.cwd(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1");
+  const root = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1");
   task12WriteNoReplaceV1(path.join(root, "records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`), ready);
   const operationDirectory = path.join(root, "operations/sha256", status.currentEntryOperation.operationHash);
   task12WriteNoReplaceV1(path.join(operationDirectory, "08-admission-ready.pair.json"), { admissionReadyRef, admissionReadyHash });
@@ -10659,19 +11016,146 @@ export async function transitionInternalProductionTask0SpawnerToNormalAdmissionR
   return startup.resolveInternalProductionTask0SpawnerAdmissionReadyV1({ admissionReadyRef, admissionReadyHash });
 }
 
+async function observeOrdinarySpawnerColdRecoveryAdmissionV1() {
+  const cold = observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+  if (cold.state === "absent") return null;
+  if (cold.state !== "settled" || cold.incompleteOwnerCount !== 0) throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  const startup = await import("./internal-production/baseline-spawner-startup-admission-v1.js");
+  const status = await startup.observeInternalProductionPreSchemaSpawnerRebindStatusV1();
+  if (status.state !== "normal_task0_admission_ready" || !status.currentEntryOperation || !status.restartAuthority || !status.admissionReady) throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  const currentEntryOperation = { operationRef: status.currentEntryOperation.operationRef, operationHash: status.currentEntryOperation.operationHash };
+  const restartAuthority = { restartAuthorityRef: status.restartAuthority.restartAuthorityRef, restartAuthorityHash: status.restartAuthority.restartAuthorityHash };
+  const admissionReady = { admissionReadyRef: status.admissionReady.admissionReadyRef, admissionReadyHash: status.admissionReady.admissionReadyHash };
+  const restart = await startup.resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(restartAuthority);
+  if (restart.schema !== "setfarm.internal-production-pre-schema-spawner-restart-authority.v2") throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  const ready = await startup.resolveInternalProductionTask0SpawnerAdmissionReadyV1(admissionReady);
+  if (ready.state !== "normal-task0-admission-ready"
+    || ready.currentEntryOperationRef !== currentEntryOperation.operationRef || ready.currentEntryOperationHash !== currentEntryOperation.operationHash
+    || ready.restartAuthorityRef !== restartAuthority.restartAuthorityRef || ready.restartAuthorityHash !== restartAuthority.restartAuthorityHash) throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  const retirement = await import("./internal-production/baseline-restart-authority-retirement-v1.js");
+  const terminal = await retirement.observeInternalProductionDirectSpawnerRebindTerminalHistoryV1({ currentEntryOperation, restartAuthority });
+  if (task12CanonicalV1(observeInternalProductionColdSpawnerBootstrapJournalCensusV1()) !== task12CanonicalV1(cold)) throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  const result = { witnessHash: task12HashV1({ cold, currentEntryOperation, restartAuthority, admissionReady, terminal, generationHash: ready.unchangedSpawnerGenerationHash }), generationHash: ready.unchangedSpawnerGenerationHash };
+  const evidence = Object.freeze({ cold, status, ready, terminal });
+  Object.defineProperty(result, "evidence", { value: evidence });
+  return Object.freeze(result) as Readonly<typeof result & { evidence: typeof evidence }>;
+}
+
+// Only main's freshly resolved normal-ready evidence can enter this private path.
+// The ordinary absent-only reclaimer remains the default for every other caller.
+async function reclaimPostRecoveryOrdinaryStartupFilesV1(admission: Awaited<ReturnType<typeof observeOrdinarySpawnerColdRecoveryAdmissionV1>>): Promise<void> {
+  if (admission === null) return;
+  for (const owner of [...spawnerStartupFilesV1]) if (owner.readOnlyClose) closeOwnedSpawnerStartupFileV1(owner);
+  for (const target of [LOCK_FILE, PID_FILE]) {
+    try { fs.lstatSync(target); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+    const pins: Array<{ owner: OwnedSpawnerStartupFileV1; identity: fs.BigIntStats; bytes: Buffer }> = [];
+    const owners: OwnedSpawnerStartupFileV1[] = [];
+    const same = (a: fs.BigIntStats, b: fs.BigIntStats) => ["dev", "ino", "uid", "gid", "mode", "nlink", "size", "birthtimeNs", "mtimeNs", "ctimeNs"].every(key => a[key as keyof fs.BigIntStats] === b[key as keyof fs.BigIntStats]);
+    const pin = (file: string, maximum: number, privateRecord = false) => {
+      const parents = observeSpawnerStartupFileParentsV1(file);
+      const original = fs.lstatSync(parents.file, { bigint: true });
+      const descriptor = fs.openSync(parents.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      const owner: OwnedSpawnerStartupFileV1 = { file: parents.file, descriptor, bytes: Buffer.alloc(0), identity: null, unlinked: false, parents: parents.parents };
+      const closeState: { identity: fs.BigIntStats | null; closeEntered: boolean; closed: boolean } = { identity: null, closeEntered: false, closed: false };
+      owner.readOnlyClose = () => closeReadOnlySpawnerStartupPinV1(owner, closeState);
+      spawnerStartupFilesV1.push(owner); // Read-only pin: identity stays null, so cleanup never unlinks it.
+      owners.push(owner); // Register locally before the first fallible descriptor observation.
+      const identity = fs.fstatSync(descriptor, { bigint: true });
+      closeState.identity = identity; // The opened FD is owned even when its pathname witness changed.
+      const held = { owner, identity, bytes: Buffer.alloc(0) }; pins.push(held);
+      assertSpawnerStartupFileParentsV1(owner.parents);
+      if (!identity.isFile() || identity.nlink !== 1n || identity.uid !== BigInt(process.getuid!())
+        || (identity.mode & 0o022n) !== 0n || privateRecord && (identity.mode & 0o7777n) !== 0o600n
+        || identity.size < 1n || identity.size > BigInt(maximum) || !same(identity, original) || !same(identity, fs.lstatSync(owner.file, { bigint: true }))) throw Error("SPAWNER_NORMAL_RECLAIM_PIN_INVALID");
+      const bytes = Buffer.alloc(Number(identity.size) + 1);
+      if (fs.readSync(descriptor, bytes, 0, bytes.length, 0) !== Number(identity.size)) throw Error("SPAWNER_NORMAL_RECLAIM_PIN_INVALID");
+      held.bytes = bytes.subarray(0, Number(identity.size));
+      return held;
+    };
+    const assertPins = () => {
+      for (const held of pins) {
+        assertSpawnerStartupFileParentsV1(held.owner.parents);
+        const bytes = Buffer.alloc(held.bytes.length + 1);
+        if (!same(held.identity, fs.fstatSync(held.owner.descriptor, { bigint: true })) || !same(held.identity, fs.lstatSync(held.owner.file, { bigint: true }))
+          || fs.readSync(held.owner.descriptor, bytes, 0, bytes.length, 0) !== held.bytes.length || !bytes.subarray(0, held.bytes.length).equals(held.bytes)
+          || !same(held.identity, fs.fstatSync(held.owner.descriptor, { bigint: true })) || !same(held.identity, fs.lstatSync(held.owner.file, { bigint: true }))) throw Error("SPAWNER_NORMAL_RECLAIM_PIN_CHANGED");
+      }
+    };
+    try {
+      const candidate = pin(target, 32), text = candidate.bytes.toString("utf8");
+      if (!/^[1-9][0-9]{0,9}\n?$/.test(text)) throw Error("SPAWNER_STALE_FILE_PID_INVALID");
+      const pid = Number(text.trim()), { status, ready, terminal, cold } = admission.evidence;
+      if (!Number.isSafeInteger(pid) || pid > 2_147_483_647 || pid === process.pid) throw Error("SPAWNER_STALE_FILE_PID_INVALID");
+      const exclusion = terminal.startupExclusion;
+      for (const ownership of [exclusion.direct, exclusion.cold]) {
+        if (ownership === null) continue;
+        const historical = ownership as Record<string, any>;
+        if (pid === historical.pid || [historical.singleton, historical.pidFile].some(file => file.devDecimal === String(candidate.identity.dev) && file.inoDecimal === String(candidate.identity.ino))) throw Error("SPAWNER_NORMAL_RECLAIM_HISTORICAL_OWNER");
+      }
+      if (pid === exclusion.predecessorPid) throw Error("SPAWNER_NORMAL_RECLAIM_HISTORICAL_OWNER");
+      const root = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1");
+      const record = (kind: string, hash: string, expected: unknown) => {
+        if (!/^[a-f0-9]{64}$/.test(hash)) throw Error("SPAWNER_NORMAL_RECLAIM_RECORD_INVALID");
+        const held = pin(path.join(root, `records/${kind}/sha256`, hash.slice(0, 2), `${hash}.json`), 1_048_576, true);
+        if (!held.bytes.equals(Buffer.from(`${task12CanonicalV1(expected)}\n`))) throw Error("SPAWNER_NORMAL_RECLAIM_RECORD_CROSSED");
+      };
+      record("status", status.statusHash, status);
+      record("admission-ready", ready.admissionReadyHash, ready);
+      const directory = path.join(root, "operations/sha256", status.currentEntryOperation!.operationHash);
+      const inventory = fs.readdirSync(directory).sort();
+      for (const [name, expected] of [
+        ["status-06-normal-task0-admission-ready.pair.json", { statusRef: status.statusRef, statusHash: status.statusHash }],
+        ["08-admission-ready.pair.json", { admissionReadyRef: ready.admissionReadyRef, admissionReadyHash: ready.admissionReadyHash }],
+      ] as const) {
+        if (!pin(path.join(directory, name), 65_536, true).bytes.equals(Buffer.from(`${task12CanonicalV1(expected)}\n`))) throw Error("SPAWNER_NORMAL_RECLAIM_LOCATOR_CROSSED");
+      }
+      const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
+      assertPins();
+      const source = receipt.observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+      const current = await observeOrdinarySpawnerColdRecoveryAdmissionV1();
+      if (current === null || current.witnessHash !== admission.witnessHash) throw Error("SPAWNER_NORMAL_RECLAIM_ADMISSION_CHANGED");
+      const assertAuthority = () => {
+        if (task12CanonicalV1(receipt.observeCurrentInternalProductionCleanSetfarmSourceBuildV1()) !== task12CanonicalV1(source)) throw Error("SPAWNER_NORMAL_RECLAIM_SOURCE_CHANGED");
+        assertPins(); terminal.assertStable();
+        if (task12CanonicalV1(observeInternalProductionColdSpawnerBootstrapJournalCensusV1()) !== task12CanonicalV1(cold)
+          || task12CanonicalV1(fs.readdirSync(directory).sort()) !== task12CanonicalV1(inventory)) throw Error("SPAWNER_NORMAL_RECLAIM_ADMISSION_CHANGED");
+        assertPins();
+      };
+      assertAuthority();
+      if (reclaimDeadSpawnerStartupFileV1(target, assertAuthority) === "alive") throw Error("SPAWNER_NORMAL_RECLAIM_LIVE_OWNER");
+    } finally {
+      let failure: unknown;
+      for (const owner of owners.reverse()) try { closeOwnedSpawnerStartupFileV1(owner); } catch (error) { failure ??= error; }
+      if (failure) throw failure;
+    }
+  }
+}
+
+async function assertOrdinarySpawnerColdRecoveryAdmissionV1(before: Awaited<ReturnType<typeof observeOrdinarySpawnerColdRecoveryAdmissionV1>>) {
+  const after = await observeOrdinarySpawnerColdRecoveryAdmissionV1();
+  if (task12CanonicalV1(before) !== task12CanonicalV1(after)) throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+  if (after === null) return;
+  const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
+  const census = await receipt.observeInternalProductionServiceCensusV1();
+  if (census.spawner.pid !== process.pid || census.spawner.generationHash !== after.generationHash) throw Error("COLD_BOOTSTRAP_NORMAL_READY_PROCESS_CROSSED");
+  if (task12CanonicalV1(await observeOrdinarySpawnerColdRecoveryAdmissionV1()) !== task12CanonicalV1(after)) throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
+}
+
 async function main() {
   process.on("unhandledRejection", (err) => {
     console.warn(`[spawner] unhandled rejection: ${String(err).slice(0, 500)}`);
   });
 
-  try { fs.mkdirSync(AGENT_SAFE_CWD, { recursive: true }); } catch { /* best-effort */ }
-  try { fs.mkdirSync(TRANSCRIPT_ROOT, { recursive: true }); } catch { /* best-effort */ }
-  try { fs.mkdirSync(OPENCLAW_ATTEMPT_WORKSPACE_ROOT, { recursive: true }); } catch { /* best-effort */ }
-  assertAgentCwdSafe();
-
+  // Refusal-only preflight preserves any already-visible unsettled evidence.
+  if (await runInternalProductionDirectSpawnerStartupV1()) return;
+  if (await runInternalProductionColdSpawnerStartupV1()) return;
+  const coldRecoveryAdmission = await observeOrdinarySpawnerColdRecoveryAdmissionV1();
+  await reclaimPostRecoveryOrdinaryStartupFilesV1(coldRecoveryAdmission);
   acquireSpawnerSingletonLock();
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
-  fs.writeFileSync(PID_FILE, String(process.pid));
+  publishSpawnerPidFileV1();
+  await assertOrdinarySpawnerColdRecoveryAdmissionV1(coldRecoveryAdmission);
   const activeStartupAdmission = await resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1();
   if (activeStartupAdmission) {
     const startupClaim = await claimInternalProductionBaselineSpawnerStartupAdmissionV1({ admission: activeStartupAdmission });
@@ -10698,11 +11182,15 @@ async function main() {
       process.once("SIGINT", stop);
     }),
     cleanupSealedProcess: () => {
-      try { fs.unlinkSync(PID_FILE); } catch {}
       releaseSpawnerSingletonLock();
     },
   });
   if (startupGate === "sealed") return;
+  initializeAgentRuntimeV1();
+  try { fs.mkdirSync(AGENT_SAFE_CWD, { recursive: true }); } catch { /* best-effort */ }
+  try { fs.mkdirSync(TRANSCRIPT_ROOT, { recursive: true }); } catch { /* best-effort */ }
+  try { fs.mkdirSync(OPENCLAW_ATTEMPT_WORKSPACE_ROOT, { recursive: true }); } catch { /* best-effort */ }
+  assertAgentCwdSafe();
   assertAgentRuntimeAvailable();
   console.log(`[spawner] Starting (PID ${process.pid}, runtime=${AGENT_RUNTIME})`);
   await pgMigrate();
@@ -10813,7 +11301,6 @@ async function main() {
       const failed = results.filter((result) => result.status === "quarantined");
       await runRecoveryCoordinator.close();
       await pgClose();
-      try { fs.unlinkSync(PID_FILE); } catch {}
       releaseSpawnerSingletonLock();
       const exitCode = failed.length > 0 ? 1 : 0;
       process.exitCode = exitCode;
@@ -10823,7 +11310,6 @@ async function main() {
       console.error(`[spawner] Shutdown failed closed: ${String(error).slice(0, 1_000)}`);
       process.exitCode = 1;
       try { await pgClose(); } catch {}
-      try { fs.unlinkSync(PID_FILE); } catch {}
       releaseSpawnerSingletonLock();
       return 1;
     });
@@ -10872,7 +11358,12 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((err) => {
-    releaseSpawnerSingletonLock();
+    process.exitCode = 1;
+    try { releaseSpawnerSingletonLock(); }
+    catch {
+      try { releaseSpawnerSingletonLock(); }
+      catch { console.error("[spawner] Fatal startup cleanup could not finish before exit"); }
+    }
     console.error(`[spawner] Fatal: ${String(err)}`);
     process.exit(1);
   });

@@ -3,6 +3,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, openSync, closeSync, fsyncSync, fstatSync, lstatSync, readFileSync, readSync, readdirSync, writeFileSync, linkSync, unlinkSync, constants } from "node:fs";
 import path from "node:path";
+import { authenticateInternalProductionBaselineWorkspaceAnchorV1 } from "../internal-production/baseline-workspace-authority-path-v1.js";
+import { resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProductionBaselineWorkspaceRootV1 } from "../internal-production/baseline-workspace-authority-path-v1.js";
 import { fileURLToPath } from "node:url";
 
 import type postgres from "postgres";
@@ -210,9 +212,7 @@ const completionBootstrapSelectedRecoveryCandidatesV1 = new WeakMap<object, Comp
 let completionBootstrapPendingSelectedRecoveryTokenV1: object | null = null;
 const completionBootstrapSelectedRecoveryContextV1 = new AsyncLocalStorage<CompletionBootstrapSelectedRecoveryCandidateV1>();
 
-const COMPLETION_BOOTSTRAP_REPOSITORY_ROOT_V1 = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
-const COMPLETION_BOOTSTRAP_ROOT_V1 = path.join(
-  COMPLETION_BOOTSTRAP_REPOSITORY_ROOT_V1,
+const COMPLETION_BOOTSTRAP_ROOT_V1 = resolveInternalProductionBaselineAuthorityPathV1(
   "data/internal-production-baseline/completion-owner-bootstrap-target-guard-v1",
 );
 const COMPLETION_BOOTSTRAP_MAX_BYTES_V1 = 1_048_576;
@@ -244,17 +244,19 @@ function completionBootstrapHasExactStoredKeysV1(value: Record<string, unknown>,
 type CompletionBootstrapPrivateDirectoryGuardV1 = Readonly<{ assertStable: () => void; close: () => void }>;
 
 function authenticateCompletionBootstrapPrivateDirectoryChainV1(target: string): CompletionBootstrapPrivateDirectoryGuardV1 {
-  const anchor = path.resolve(COMPLETION_BOOTSTRAP_REPOSITORY_ROOT_V1);
+  const anchor = resolveInternalProductionBaselineWorkspaceRootV1();
   const resolvedTarget = path.resolve(target);
   const relative = path.relative(anchor, resolvedTarget);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) completionBootstrapFailV1("directory escaped repository");
   const segments = relative === "" ? [] : relative.split(path.sep);
   const paths = [anchor, ...segments.map((_, index) => path.join(anchor, ...segments.slice(0, index + 1)))];
+  const workspaceAnchor = authenticateInternalProductionBaselineWorkspaceAnchorV1();
   const descriptors: number[] = [];
   const held: Array<ReturnType<typeof fstatSync>> = [];
   let closed = false;
   const assertStable = (): void => {
     if (closed) completionBootstrapFailV1("directory guard closed");
+    workspaceAnchor.assertStable();
     for (const [index, current] of paths.entries()) {
       const after = lstatSync(current, { bigint: true });
       const descriptorAfter = fstatSync(descriptors[index]!, { bigint: true });
@@ -266,6 +268,7 @@ function authenticateCompletionBootstrapPrivateDirectoryChainV1(target: string):
         || descriptorAfter.mode !== observed.mode
       ) completionBootstrapFailV1("directory changed while authenticated");
     }
+    workspaceAnchor.assertStable();
   };
   try {
     for (const [index, current] of paths.entries()) {
@@ -288,18 +291,18 @@ function authenticateCompletionBootstrapPrivateDirectoryChainV1(target: string):
       close: () => {
         if (closed) completionBootstrapFailV1("directory guard already closed");
         closed = true;
-        for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+        try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
       },
     });
   } catch (error) {
     closed = true;
-    for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+    try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
     throw error;
   }
 }
 
 function completionBootstrapEnsurePrivateDirectoryV1(directory: string): CompletionBootstrapPrivateDirectoryGuardV1 {
-  const anchor = path.resolve(COMPLETION_BOOTSTRAP_REPOSITORY_ROOT_V1);
+  const anchor = resolveInternalProductionBaselineWorkspaceRootV1();
   const target = path.resolve(directory);
   const relative = path.relative(anchor, target);
   if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) completionBootstrapFailV1("directory escaped repository");

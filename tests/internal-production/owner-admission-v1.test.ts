@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, chmodSync, closeSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
@@ -10,6 +10,257 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import test from "node:test";
 import postgres from "postgres";
+import { transformSync } from "esbuild";
+import { createFindingSetV1 } from "../../src/findings/finding-set.js";
+import { observeLegacyFindingPublicationInventoryV1, requireFindingPublicationV1 } from "../../src/findings/finding-publication-v1.js";
+import { validateLegacyFindingPublicationInventoryV1 } from "../../src/findings/legacy-finding-publication-inventory-v1.js";
+
+test("cold launch output verification covers every dependency and rejects crossed physical trees", async () => {
+  const leaf = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-spawner-launch-environment-v1.ts");
+  const original = await import(pathToFileURL(leaf).href);
+  assert.equal(typeof original.verifyInternalProductionSpawnerLaunchOutputCandidateV1, "function", "cold output verification is not implemented");
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-cold-output-")));
+  try {
+    const internal = path.join(fixture, "dist/internal-production");
+    mkdirSync(internal, { recursive: true, mode: 0o755 });
+    const modulePath = path.join(internal, "baseline-spawner-launch-environment-v1.js");
+    writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}');
+    writeFileSync(modulePath, transformSync(readFileSync(leaf, "utf8"), { loader: "ts", format: "esm" }).code, { mode: 0o644 });
+    writeFileSync(path.join(fixture, "dist/spawner.js"), "// inert fixture spawner\n", { mode: 0o644 });
+    writeFileSync(path.join(fixture, "dist/runtime-config.js"), "// inert fixture config\n", { mode: 0o644 });
+    writeFileSync(path.join(fixture, "dist/dependency.js"), "// original dependency\n", { mode: 0o644 });
+    const files = ["dist/dependency.js", "dist/internal-production/baseline-spawner-launch-environment-v1.js", "dist/runtime-config.js", "dist/spawner.js"];
+    const sha = "a".repeat(40), treeHash = "b".repeat(40);
+    const hashBytes = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
+    const body = { schema: "setfarm.platform-build-output-tree.v1", sourceSha: sha, sourceTreeHash: treeHash,
+      entries: files.map((locator) => { const bytes = readFileSync(path.join(fixture, locator)); return { locator, mode: 0o644, byteLength: bytes.length, sha256: hashBytes(bytes) }; }) };
+    const output = Buffer.from(`${JSON.stringify({ ...body, outputTreeHash: hashCanonicalJson(body) })}\n`);
+    const info = Buffer.from('{"fixture":"build-info"}\n'), manifest = Buffer.from('{"fixture":"release-manifest"}\n');
+    for (const [name, bytes] of [["BUILD_INFO.json", info], ["PLATFORM_RELEASE_MANIFEST.json", manifest], ["PLATFORM_BUILD_OUTPUT_TREE.json", output]] as const) {
+      writeFileSync(path.join(fixture, "dist", name), bytes, { mode: 0o444 });
+    }
+    const rootStats = lstatSync(fixture, { bigint: true });
+    const expected = { rootIdentity: { devDecimal: String(rootStats.dev), inoDecimal: String(rootStats.ino), uid: Number(rootStats.uid) },
+      sourceSha: sha, sourceTreeHash: treeHash, buildInfoBytesHash: hashBytes(info), outputTreeBytesHash: hashBytes(output), releaseManifestBytesHash: hashBytes(manifest) };
+    const { verifyInternalProductionSpawnerLaunchOutputCandidateV1: verify } = await import(pathToFileURL(modulePath).href);
+    assert.doesNotThrow(() => verify(expected));
+    assert.throws(() => verify({ ...expected, rootIdentity: { ...expected.rootIdentity, inoDecimal: "1" } }), /LAUNCH_ENVIRONMENT_INVALID/);
+    assert.throws(() => verify({ ...expected, sourceSha: "c".repeat(40) }), /LAUNCH_ENVIRONMENT_INVALID/);
+    assert.throws(() => verify({ ...expected, outputTreeBytesHash: "d".repeat(64) }), /LAUNCH_ENVIRONMENT_INVALID/);
+    const dependency = path.join(fixture, "dist/dependency.js"), originalDependency = readFileSync(dependency);
+    writeFileSync(dependency, "// changed dependency\n");
+    assert.throws(() => verify(expected), /LAUNCH_ENVIRONMENT_INVALID/, "checking entrypoint alone misses dependency drift");
+    writeFileSync(dependency, originalDependency);
+    chmodSync(dependency, 0o666);
+    assert.throws(() => verify(expected), /LAUNCH_ENVIRONMENT_INVALID/);
+    chmodSync(dependency, 0o644);
+    unlinkSync(dependency); symlinkSync(path.join(fixture, "dist/spawner.js"), dependency);
+    assert.throws(() => verify(expected), /LAUNCH_ENVIRONMENT_INVALID/);
+    unlinkSync(dependency); writeFileSync(dependency, originalDependency, { mode: 0o644 });
+    const extra = path.join(fixture, "dist/unlisted.js"); writeFileSync(extra, "// unlisted\n");
+    assert.throws(() => verify(expected), /LAUNCH_ENVIRONMENT_INVALID/);
+    unlinkSync(extra);
+    assert.doesNotThrow(() => verify(expected));
+    const empty = path.join(fixture, "dist/unlisted-empty"); mkdirSync(empty, { mode: 0o755 });
+    assert.throws(() => verify(expected), /LAUNCH_ENVIRONMENT_INVALID/, "empty directory additions must not evade exact output topology");
+    rmSync(empty, { recursive: true });
+    for (const mutate of [
+      (entries: typeof body.entries) => [...entries, entries[0]!],
+      (entries: typeof body.entries) => [{ ...entries[0]!, locator: "dist/../outside.js" }, ...entries.slice(1)],
+      (entries: typeof body.entries) => entries.filter((entry) => entry.locator !== "dist/runtime-config.js"),
+      (entries: typeof body.entries) => [...entries].reverse(),
+      (entries: typeof body.entries) => [{ ...entries[0]!, unexpected: true }, ...entries.slice(1)],
+      (entries: typeof body.entries) => [{ ...entries[0]!, mode: 0o755 }, ...entries.slice(1)],
+    ]) {
+      const crossedBody = { ...body, entries: mutate(body.entries) };
+      const crossedBytes = Buffer.from(`${JSON.stringify({ ...crossedBody, outputTreeHash: hashCanonicalJson(crossedBody) })}\n`);
+      const target = path.join(fixture, "dist/PLATFORM_BUILD_OUTPUT_TREE.json");
+      chmodSync(target, 0o644); writeFileSync(target, crossedBytes); chmodSync(target, 0o444);
+      assert.throws(() => verify({ ...expected, outputTreeBytesHash: hashBytes(crossedBytes) }), /LAUNCH_ENVIRONMENT_INVALID/);
+    }
+    // Lower only the copied fixture's entry budget. Count actual filesystem
+    // enumeration, including eagerly returned readdir entries, not loop bodies.
+    const rawSource = readFileSync(leaf, "utf8"), budgetExpression = "++entryCount > 10_000";
+    assert.equal(rawSource.split(budgetExpression).length, 2);
+    const limitedModule = path.join(internal, "limited-enumeration.js");
+    writeFileSync(limitedModule, transformSync(rawSource.replace(budgetExpression, "++entryCount > 5"), { loader: "ts", format: "esm" }).code);
+    const script = `import fs from'node:fs';import{syncBuiltinESMExports}from'node:module';
+      let consumed=0,opened=0,closed=0;const list=fs.readdirSync,open=fs.opendirSync;
+      fs.readdirSync=(...args)=>{const entries=list(...args);consumed+=entries.length;return entries;};
+      fs.opendirSync=(...args)=>{const dir=open(...args);opened++;const read=dir.readSync.bind(dir),close=dir.closeSync.bind(dir);
+        dir.readSync=()=>{const entry=read();if(entry)consumed++;return entry;};dir.closeSync=()=>{closed++;return close();};return dir;};
+      syncBuiltinESMExports();const {verifyInternalProductionSpawnerLaunchOutputCandidateV1:verify}=await import(${JSON.stringify(pathToFileURL(limitedModule).href)});
+      let refused=false;try{verify(${JSON.stringify(expected)});}catch{refused=true;}
+      process.stdout.write(JSON.stringify({consumed,opened,closed,refused}));`;
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", script], { env: { PATH: "/usr/bin:/bin" }, cwd: fixture, encoding: "utf8", timeout: 5_000 });
+    assert.equal(child.status, 0, child.stderr);
+    const enumeration = JSON.parse(child.stdout);
+    assert.equal(enumeration.refused, true);
+    assert.ok(enumeration.consumed <= 5, "entry budget must bound actual enumeration, not only subsequent iteration");
+    assert.equal(enumeration.closed, enumeration.opened, "failure must close every enumeration descriptor");
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test("cold inherited frame reads only bounded private unlinked regular descriptors", async () => {
+  const modulePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-spawner-launch-environment-v1.ts");
+  const api = await import(pathToFileURL(modulePath).href);
+  assert.equal(typeof api.readInternalProductionSpawnerUntrustedInheritedFrameV1, "function", "cold inherited frame reader is not implemented");
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-cold-frame-")));
+  try {
+    for (const scenario of ["private", "linked", "mode", "empty", "oversized", "pipe", "missing", "mutated"]) {
+      let descriptor: number | undefined;
+      let mutationDescriptor: number | undefined;
+      try {
+        const bytes = scenario === "oversized" ? Buffer.alloc(1048577, 65)
+          : scenario === "empty" ? Buffer.alloc(0) : Buffer.from("fixture-secret-do-not-print");
+        if (!["pipe", "missing"].includes(scenario)) {
+          const file = path.join(fixture, scenario);
+          writeFileSync(file, bytes, { mode: 0o600 });
+          if (scenario === "mode") chmodSync(file, 0o640);
+          descriptor = openSync(file, "r");
+          if (scenario === "mutated") mutationDescriptor = openSync(file, "r+");
+          if (scenario !== "linked") unlinkSync(file);
+          readFileSync(descriptor); // shared descriptor offset is deliberately EOF
+        }
+        const script = `import{createHash}from'node:crypto';import fs from'node:fs';import{syncBuiltinESMExports}from'node:module';
+          if(${JSON.stringify(scenario)}==='mutated'){const original=fs.readSync;fs.readSync=(...args)=>{const count=original(...args);if(args[0]===3)fs.writeSync(4,Buffer.from('X'),0,1,0);return count;};syncBuiltinESMExports();}
+          const {readInternalProductionSpawnerUntrustedInheritedFrameV1:read}=await import(${JSON.stringify(pathToFileURL(modulePath).href)});
+          try{const bytes=read();process.stdout.write(createHash('sha256').update(bytes).digest('hex'));}
+          catch(error){process.stderr.write(error.message);process.exitCode=7;}`;
+        const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "-e", script], {
+          cwd: fixture, env: { PATH: "/usr/bin:/bin" },
+          stdio: ["ignore", "pipe", "pipe", descriptor ?? (scenario === "pipe" ? "pipe" : "ignore"), mutationDescriptor ?? "ignore"],
+          encoding: "utf8", timeout: 5_000,
+        });
+        assert.equal(child.error, undefined, `${scenario}: reader must not block on a pipe`);
+        if (scenario === "private") {
+          assert.equal(child.status, 0, child.stderr);
+          assert.equal(child.stdout, createHash("sha256").update(bytes).digest("hex"));
+        } else {
+          assert.equal(child.status, 7, `${scenario}: invalid descriptor accepted`);
+          assert.equal(child.stderr, "INTERNAL_PRODUCTION_LAUNCH_ENVIRONMENT_INVALID");
+          assert.equal(child.stdout, "");
+        }
+      } finally {
+        if (descriptor !== undefined) closeSync(descriptor);
+        if (mutationDescriptor !== undefined) closeSync(mutationDescriptor);
+      }
+    }
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test("ordinary runtime env retains process priority and repeated local-file overrides", () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-env-precedence-")));
+  try {
+    const sourceRoot = path.resolve(import.meta.dirname, "../../src");
+    let source = readFileSync(path.join(sourceRoot, "runtime-config.ts"), "utf8");
+    for (const dependency of ["product-compiler/artifact-capacity", "execution/v3-seal-capacity", "internal-production/baseline-restart-authority-retirement-v1"]) {
+      source = source.replace(`"./${dependency}.js"`, JSON.stringify(pathToFileURL(path.join(sourceRoot, `${dependency}.ts`)).href));
+    }
+    mkdirSync(path.join(fixture, "internal-production"));
+    const leaf = path.join(sourceRoot, "internal-production/baseline-spawner-launch-environment-v1.ts");
+    if (existsSync(leaf)) cpSync(leaf, path.join(fixture, "internal-production", path.basename(leaf)));
+    writeFileSync(path.join(fixture, "runtime-config.ts"), source);
+    writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}');
+    writeFileSync(path.join(fixture, ".env"), 'KEPT=file\nLOCAL=first\nLOCAL=ignored\nEMPTY=\nexport QUOTED="two words"\n');
+    writeFileSync(path.join(fixture, ".env.local"), "KEPT=local\nLOCAL=second\n");
+    const script = `import{writeFileSync}from'node:fs';import{loadRuntimeEnv}from${JSON.stringify(pathToFileURL(path.join(fixture, "runtime-config.ts")).href)};
+      const first={KEPT:process.env.KEPT,LOCAL:process.env.LOCAL,EMPTY:process.env.EMPTY,QUOTED:process.env.QUOTED};
+      writeFileSync(${JSON.stringify(path.join(fixture, ".env.local"))},'LOCAL=third\\n');loadRuntimeEnv();
+      process.stdout.write(JSON.stringify({first,after:process.env.LOCAL}));`;
+    const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "-e", script], {
+      cwd: fixture, env: { PATH: "/usr/bin:/bin", SETFARM_ENV_DIR: fixture, KEPT: "process" },
+      encoding: "utf8", timeout: 10_000,
+    });
+    assert.equal(child.status, 0, child.stderr);
+    assert.deepEqual(JSON.parse(child.stdout), {
+      first: { KEPT: "process", LOCAL: "second", EMPTY: "", QUOTED: "two words" }, after: "third",
+    });
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test("runtime configuration never treats unauthenticated inherited selectors as ordinary dotenv mode", () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-inherited-mode-refusal-")));
+  try {
+    const runtime = path.resolve(import.meta.dirname, "../../src/runtime-config.ts");
+    const script = `try{await import(${JSON.stringify(pathToFileURL(runtime).href)});process.stdout.write('accepted')}catch(error){process.stdout.write(error.message);process.exitCode=7}`;
+    for (const marker of ["SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER", "SETFARM_INTERNAL_PRODUCTION_DIRECT_CHILD", "SETFARM_INTERNAL_PRODUCTION_UNKNOWN"]) {
+      for (const origin of ["process", "dotenv"]) {
+        writeFileSync(path.join(fixture, ".env"), origin === "dotenv" ? `${marker}=1\n` : "", { mode: 0o600 });
+        const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), "--input-type=module", "-e", script], {
+          cwd: fixture, env: { PATH: "/usr/bin:/bin", SETFARM_ENV_DIR: fixture, ...(origin === "process" ? { [marker]: "1" } : {}) }, encoding: "utf8", timeout: 10000,
+        });
+        assert.equal(child.status, 7, `${origin}/${marker}: marker is not authenticated configuration authority`);
+        assert.match(child.stdout, /CONFIGURATION_INVALID/);
+        assert.equal(child.stderr, "");
+      }
+    }
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test("runtime PATH projection shares the ordinary deterministic normalization without effects", async () => {
+  const leaf = await import("../../src/internal-production/baseline-spawner-launch-environment-v1.js") as Record<string, any>;
+  assert.equal(typeof leaf.normalizeRuntimePathV1, "function", "shared effective PATH projection is not implemented");
+  const before = process.env.PATH;
+  const expected = "/fixture/node/bin:/fixture/account/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/custom/bin";
+  assert.equal(leaf.normalizeRuntimePathV1("/bin::/custom/bin:/usr/bin:/custom/bin", "/fixture/account", "/fixture/node/bin/node"), expected);
+  assert.equal(leaf.normalizeRuntimePathV1(expected, "/fixture/account", "/fixture/node/bin/node"), expected, "repeated normalization is exact");
+  assert.equal(leaf.normalizeRuntimePathV1("", "/fixture/account", "/usr/bin/node"), "/usr/bin:/fixture/account/.local/bin:/opt/homebrew/bin:/usr/local/bin:/bin:/usr/sbin:/sbin");
+  assert.equal(process.env.PATH, before, "projection never installs a process environment");
+});
+
+test("detached launch environment candidate is bounded, inert and preserves dotenv precedence", async () => {
+  const modulePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-spawner-launch-environment-v1.ts");
+  assert.equal(existsSync(modulePath), true, "detached launch environment projection is not implemented");
+  const { projectInternalProductionSpawnerLaunchEnvironmentCandidateV1: project } = await import(pathToFileURL(modulePath).href);
+  const base = Object.freeze({
+    HOME: "/fixture/account", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
+    SETFARM_REPO_DIR: "/fixture/repository", SETFARM_ENV_DIR: "/fixture/scripts",
+    SETFARM_PG_URL: "postgresql://fixture.invalid/disposable",
+  });
+  const ordinary = Buffer.from('FROM_FILE=first\nFROM_FILE=ignored\nexport QUOTED="two words"\nLOCAL=base\nEMPTY=\n# ignored\n');
+  const local = Buffer.from("LOCAL=local\nFROM_FILE=local\nSINGLE='literal $HOME'\n");
+  const environmentDigest = () => createHash("sha256").update(JSON.stringify(Object.entries(process.env).sort())).digest("hex");
+  const before = environmentDigest();
+  const value = project(base, [ordinary, local]);
+  assert.deepEqual({ ...value.environment }, {
+    ...base, FROM_FILE: "local", QUOTED: "two words", LOCAL: "local", EMPTY: "", SINGLE: "literal $HOME",
+  });
+  assert.equal(environmentDigest(), before, "pure candidate must not install environment values");
+  assert.ok(Object.isFrozen(value) && Object.isFrozen(value.environment));
+  assert.match(value.environmentHash, /^[a-f0-9]{64}$/);
+  assert.notEqual(project(base, [ordinary, null]).environmentHash, value.environmentHash);
+  assert.notEqual(project(base, [Buffer.from("LOCAL=other"), null]).environmentHash, project(base, [ordinary, null]).environmentHash);
+  assert.deepEqual(value.envFileContentHashes, [
+    createHash("sha256").update(ordinary).digest("hex"), createHash("sha256").update(local).digest("hex"),
+  ]);
+  assert.deepEqual(project(base, [null, null]).envFileContentHashes, [null, null]);
+  assert.notDeepEqual(project(base, [Buffer.alloc(0), null]).envFileContentHashes, [null, null]);
+  for (const key of ["NODE_OPTIONS", "NODE_PATH", "DYLD_INSERT_LIBRARIES", "LD_PRELOAD", "SETFARM_SKIP_RUNTIME_GUARD", "SETFARM_ALLOW_DIRTY_BUILD", "SETFARM_TEST_PG_ADMIN_URL", "SETFARM_INTERNAL_PRODUCTION_DETACHED_ENV_V1"]) {
+    assert.throws(() => project(base, [Buffer.from(`${key}=sensitive-never-print`), null]), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /LAUNCH_ENVIRONMENT_INVALID/);
+      assert.ok(!error.message.includes("sensitive-never-print"));
+      return true;
+    });
+  }
+  for (const key of Object.keys(base)) {
+    assert.throws(() => project(base, [Buffer.from(`${key}=crossed`), null]), /LAUNCH_ENVIRONMENT_INVALID/);
+  }
+  for (const bytes of [Buffer.from("BAD-KEY=value"), Buffer.from("TOKEN=bad\0value"), Buffer.from([0xff]), Buffer.alloc(262145, 65)]) {
+    assert.throws(() => project(base, [bytes, null]), /LAUNCH_ENVIRONMENT_INVALID/);
+  }
+  assert.throws(() => project({ ...base, EXTRA: "ambient" }, [null, null]), /LAUNCH_ENVIRONMENT_INVALID/);
+  assert.throws(() => project(base, [null]), /LAUNCH_ENVIRONMENT_INVALID/);
+  assert.throws(() => project(base, [Buffer.from(`VALUE=${"x".repeat(65537)}`), null]), /LAUNCH_ENVIRONMENT_INVALID/);
+  const many = Buffer.from(Array.from({ length: 1017 }, (_, index) => `KEY_${index}=x`).join("\n"));
+  assert.equal(Object.keys(project(base, [many, null]).environment).length, 1024);
+  assert.throws(() => project(base, [many, Buffer.from("ONE_TOO_MANY=x")]), /LAUNCH_ENVIRONMENT_INVALID/);
+  const escaped = (offset: number) => Buffer.from(Array.from({ length: 4 }, (_, index) => `KEY_${offset + index}=${"\\".repeat(60000)}`).join("\n"));
+  assert.throws(() => project(base, [escaped(0), escaped(4)]), /LAUNCH_ENVIRONMENT_INVALID/);
+  assert.notEqual(project({ ...base, SETFARM_REPO_DIR: "/fixture/other" }, [null, null]).environmentHash,
+    project(base, [null, null]).environmentHash);
+});
 
 import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import * as ownerAdmissionApi from "../../src/internal-production/owner-admission-v1.js";
@@ -2008,11 +2259,11 @@ function p3TestGitBytes(root: string, args: readonly string[]): Buffer {
   return result.stdout;
 }
 
-const P3_RECEIPT_SOURCE_LOCATOR_V1 = "src/internal-production/baseline-post-handoff-receipt-v1.ts";
+const P3_RECEIPT_SOURCE_LOCATOR_V1 = "src/internal-production/baseline-workspace-authority-path-v1.ts";
 const P3_RECEIPT_WORKSPACE_SOURCE_V1 =
   'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");';
 const P3_RECEIPT_WORKSPACE_PROJECTION_V1 =
-  'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());';
+  'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");';
 
 function restoreP3NestedRunnerReceiptSourceV1(root: string): void {
   const projectionRoot = realpathSync(process.cwd());
@@ -2063,6 +2314,7 @@ function createP3RunnerRefusalFixture(): Readonly<{ root: string; cleanup: () =>
   assert.equal(cloned.status, 0, cloned.stderr);
   const currentByteLocators = [
     "scripts/run-isolated-postgres-tests.ts",
+    "src/internal-production/baseline-workspace-authority-path-v1.ts",
     "src/db-pg.ts",
     "src/internal-production/owner-admission-v1.ts",
     "src/installer/step-fail.ts",
@@ -2384,7 +2636,7 @@ test("P3 setup owns the generic successor apply and full verification slot befor
   );
   assert.match(
     helperSource,
-    /const CODE_OWNED_WORKSPACE_ROOT_V1 = path\.dirname\(fixedRepositoryRoot\(\)\);/,
+    /const CODE_OWNED_WORKSPACE_ROOT_V1 = path\.resolve\(import\.meta\.dirname, "\.\.\/\.\.\/\.\."\);/,
   );
   const runnerSource = readFileSync(
     path.join(process.cwd(), "scripts/run-isolated-postgres-tests.ts"),
@@ -2394,7 +2646,7 @@ test("P3 setup owns the generic successor apply and full verification slot befor
   const projectionEnd = runnerSource.indexOf("\n\nfunction readStableIndexedMemberV1", projectionStart);
   assert.ok(projectionStart >= 0 && projectionEnd > projectionStart);
   const projectionAuthority = runnerSource.slice(projectionStart, projectionEnd);
-  assert.match(projectionAuthority, /locator !== "src\/internal-production\/baseline-post-handoff-receipt-v1\.ts"/);
+  assert.match(projectionAuthority, /locator !== "src\/internal-production\/baseline-workspace-authority-path-v1\.ts"/);
   assert.match(projectionAuthority, /sourceParts\.length !== 2/);
   assert.match(projectionAuthority, /P3_CURRENT_ENTRY_WORKSPACE_PROJECTION_V1/);
   assert.doesNotMatch(projectionAuthority, /process\.env|callback|options|caller|HOME/);
@@ -2888,80 +3140,431 @@ process.stdout.write("MALFORMED_REFUSED");
   ]) assert.ok(fixtureSource.includes(literal), `missing fixed P3 shadow boundary ${literal}`);
 });
 
+function projectCopiedWorkspaceLocatorV1(root: string, workspace: string): void {
+  const target = path.join(root, "src/internal-production/baseline-workspace-authority-path-v1.ts");
+  const source = readFileSync(target, "utf8");
+  const candidates = [
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");',
+  ];
+  const matches = candidates.filter((candidate) => source.includes(candidate));
+  assert.equal(matches.length, 1, "copied source must expose exactly one authenticated workspace projection");
+  assert.equal(source.split(matches[0]!).length, 2);
+  writeFileSync(target, source.replace(matches[0]!, `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(realpathSync(workspace))};`));
+}
+
+test("copied startup workspace projection preserves the authenticated physical root", () => {
+  const container = mkdtempSync(path.join(tmpdir(), "setfarm-workspace-projection-"));
+  const root = path.join(container, "repository");
+  const locator = "src/internal-production/baseline-workspace-authority-path-v1.ts";
+  try {
+    mkdirSync(path.dirname(path.join(root, locator)), { recursive: true });
+    cpSync(path.join(process.cwd(), locator), path.join(root, locator));
+    projectCopiedWorkspaceLocatorV1(root, container);
+    const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e",
+      `const m=await import(${JSON.stringify(pathToFileURL(path.join(root, locator)).href)});process.stdout.write(m.resolveInternalProductionBaselineWorkspaceRootV1());`,
+    ], { cwd: process.cwd(), encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, realpathSync(container));
+  } finally {
+    rmSync(container, { recursive: true, force: true });
+  }
+});
+
 test("P4 sealed spawner gate authenticates replacement and exits before normal startup", async () => {
   const productionSpawnerSource = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
   assert.doesNotMatch(productionSpawnerSource, /^export async function enforceInternalProductionPreSchemaSpawnerStartupGateV1/m);
   const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-private-spawner-gate-"));
-  cpSync(path.resolve(import.meta.dirname, "../../src"), path.join(fixture, "src"), { recursive: true });
-  symlinkSync(path.resolve(import.meta.dirname, "../../node_modules"), path.join(fixture, "node_modules"), "dir");
-  const fixtureSpawner = path.join(fixture, "src/spawner.ts");
-  writeFileSync(fixtureSpawner, productionSpawnerSource.replace("async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(", "export async function enforceInternalProductionPreSchemaSpawnerStartupGateV1("));
-  const spawner = await import(`${pathToFileURL(fixtureSpawner).href}?p4-sealed-gate=${Date.now()}`);
-  const source = { sha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64) };
-  const operationHash = "4".repeat(64);
-  const startupTokenHash = "5".repeat(64);
-  const replacementHash = "6".repeat(64);
-  const processIdentityHash = "7".repeat(64);
-  const generationHash = "8".repeat(64);
-  const calls: string[] = [];
-  const status = Object.freeze({
-    state: "pre_manifest_bootstrap_sealed",
-    currentEntryOperation: Object.freeze({ operationRef: `setfarm://internal-production/current-entry-operation/sha256/${operationHash}`, operationHash }),
-    startupToken: Object.freeze({ startupTokenRef: `setfarm://internal-production/pre-schema-spawner-startup-token/sha256/${startupTokenHash}`, startupTokenHash }),
-    dispatchPrefix: Object.freeze({ replacementProcessObservation: Object.freeze({ replacementProcessObservationRef: `setfarm://internal-production/pre-schema-spawner-replacement-process-observation/sha256/${replacementHash}`, replacementProcessObservationHash: replacementHash }) }),
-  });
-  const dependencies = {
-    startupAdmission: {
-      observeInternalProductionPreSchemaSpawnerRebindStatusV1: async () => { calls.push("observe-status"); return status; },
-      resolveInternalProductionPreSchemaSpawnerStartupTokenV1: async () => {
-        calls.push("resolve-token");
-        return Object.freeze({ startupMode: "pre-manifest-bootstrap-sealed", currentEntryOperationRef: status.currentEntryOperation.operationRef, currentEntryOperationHash: operationHash, task0SpawnerSourceSha: source.sha, task0SpawnerTreeHash: source.treeHash, task0SpawnerBuildHash: source.buildHash });
+  try {
+    cpSync(path.resolve(import.meta.dirname, "../../src"), path.join(fixture, "src"), { recursive: true });
+    projectCopiedWorkspaceLocatorV1(fixture, fixture);
+    symlinkSync(path.resolve(import.meta.dirname, "../../node_modules"), path.join(fixture, "node_modules"), "dir");
+    const fixtureSpawner = path.join(fixture, "src/spawner.ts");
+    writeFileSync(fixtureSpawner, productionSpawnerSource.replace("async function enforceInternalProductionPreSchemaSpawnerStartupGateV1(", "export async function enforceInternalProductionPreSchemaSpawnerStartupGateV1("));
+    const spawner = await import(`${pathToFileURL(fixtureSpawner).href}?p4-sealed-gate=${Date.now()}`);
+    const source = { sha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64) };
+    const operationHash = "4".repeat(64);
+    const startupTokenHash = "5".repeat(64);
+    const replacementHash = "6".repeat(64);
+    const processIdentityHash = "7".repeat(64);
+    const generationHash = "8".repeat(64);
+    const calls: string[] = [];
+    const status = Object.freeze({
+      state: "pre_manifest_bootstrap_sealed",
+      currentEntryOperation: Object.freeze({ operationRef: `setfarm://internal-production/current-entry-operation/sha256/${operationHash}`, operationHash }),
+      startupToken: Object.freeze({ startupTokenHash, startupTokenRef: `setfarm://internal-production/pre-schema-spawner-startup-token/sha256/${startupTokenHash}` }),
+      dispatchPrefix: Object.freeze({ replacementProcessObservation: Object.freeze({ replacementProcessObservationHash: replacementHash, replacementProcessObservationRef: `setfarm://internal-production/pre-schema-spawner-replacement-process-observation/sha256/${replacementHash}` }) }),
+    });
+    const dependencies = {
+      startupAdmission: {
+        observeInternalProductionPreSchemaSpawnerRebindStatusV1: async () => { calls.push("observe-status"); return status; },
+        resolveInternalProductionPreSchemaSpawnerStartupTokenV1: async (pair: unknown) => {
+          assert.deepEqual(Reflect.ownKeys(pair as object), ["startupTokenRef", "startupTokenHash"]);
+          calls.push("resolve-token");
+          return Object.freeze({ startupMode: "pre-manifest-bootstrap-sealed", currentEntryOperationRef: status.currentEntryOperation.operationRef, currentEntryOperationHash: operationHash, task0SpawnerSourceSha: source.sha, task0SpawnerTreeHash: source.treeHash, task0SpawnerBuildHash: source.buildHash });
+        },
+        resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1: async (pair: unknown) => {
+          assert.deepEqual(Reflect.ownKeys(pair as object), ["replacementProcessObservationRef", "replacementProcessObservationHash"]);
+          calls.push("resolve-replacement");
+          return Object.freeze({ replacementSpawnerProcessIdentityHash: processIdentityHash, actualSpawnerGenerationHash: generationHash, actualSpawnerSourceSha: source.sha, actualSpawnerTreeHash: source.treeHash, actualSpawnerBuildHash: source.buildHash });
+        },
       },
-      resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1: async () => {
-        calls.push("resolve-replacement");
-        return Object.freeze({ replacementSpawnerProcessIdentityHash: processIdentityHash, actualSpawnerGenerationHash: generationHash, actualSpawnerSourceSha: source.sha, actualSpawnerTreeHash: source.treeHash, actualSpawnerBuildHash: source.buildHash });
+      loadReceiptAuthority: async () => {
+        calls.push("load-receipt");
+        return {
+          observeCurrentInternalProductionCleanSetfarmSourceBuildV1: () => { calls.push("observe-source"); return source; },
+          observeInternalProductionServiceCensusV1: async () => { calls.push("observe-census"); return { spawner: { processIdentityHash, generationHash } }; },
+        };
       },
-    },
-    loadReceiptAuthority: async () => {
-      calls.push("load-receipt");
-      return {
-        observeCurrentInternalProductionCleanSetfarmSourceBuildV1: () => { calls.push("observe-source"); return source; },
-        observeInternalProductionServiceCensusV1: async () => { calls.push("observe-census"); return { spawner: { processIdentityHash, generationHash } }; },
-      };
-    },
-    waitForStop: async () => { calls.push("wait-stop"); },
-    cleanupSealedProcess: () => { calls.push("cleanup-lock-pid"); },
-  };
-  assert.equal(await spawner.enforceInternalProductionPreSchemaSpawnerStartupGateV1(dependencies), "sealed");
-  assert.deepEqual(calls, ["observe-status", "resolve-token", "load-receipt", "observe-source", "resolve-replacement", "observe-census", "wait-stop", "cleanup-lock-pid"]);
+      waitForStop: async () => { calls.push("wait-stop"); },
+      cleanupSealedProcess: () => { calls.push("cleanup-lock-pid"); },
+    };
+    assert.equal(await spawner.enforceInternalProductionPreSchemaSpawnerStartupGateV1(dependencies), "sealed");
+    assert.deepEqual(calls, ["observe-status", "resolve-token", "load-receipt", "observe-source", "resolve-replacement", "observe-census", "wait-stop", "cleanup-lock-pid"]);
 
-  calls.length = 0;
-  dependencies.startupAdmission.resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1 = async () => ({
-    replacementSpawnerProcessIdentityHash: "9".repeat(64), actualSpawnerGenerationHash: generationHash,
-    actualSpawnerSourceSha: source.sha, actualSpawnerTreeHash: source.treeHash, actualSpawnerBuildHash: source.buildHash,
-  });
-  await assert.rejects(spawner.enforceInternalProductionPreSchemaSpawnerStartupGateV1(dependencies), /REPLACEMENT_IDENTITY_INVALID/);
-  assert.equal(calls.includes("wait-stop"), false);
-  assert.equal(calls.includes("cleanup-lock-pid"), false);
+    calls.length = 0;
+    dependencies.startupAdmission.resolveInternalProductionPreSchemaSpawnerReplacementProcessObservationV1 = async () => ({
+      replacementSpawnerProcessIdentityHash: "9".repeat(64), actualSpawnerGenerationHash: generationHash,
+      actualSpawnerSourceSha: source.sha, actualSpawnerTreeHash: source.treeHash, actualSpawnerBuildHash: source.buildHash,
+    });
+    await assert.rejects(spawner.enforceInternalProductionPreSchemaSpawnerStartupGateV1(dependencies), /REPLACEMENT_IDENTITY_INVALID/);
+    assert.equal(calls.includes("wait-stop"), false);
+    assert.equal(calls.includes("cleanup-lock-pid"), false);
 
-  const spawnerSource = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
-  const main = spawnerSource.slice(spawnerSource.indexOf("async function main()"));
-  const gateIndex = main.indexOf("await enforceInternalProductionPreSchemaSpawnerStartupGateV1");
-  assert.ok(gateIndex >= 0);
-  for (const normalBoundary of ["assertAgentRuntimeAvailable()", "await pgMigrate()", "postgres(pgUrl"]) {
-    assert.ok(main.indexOf(normalBoundary) > gateIndex, `${normalBoundary} must remain after the sealed gate`);
+    const spawnerSource = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+    const main = spawnerSource.slice(spawnerSource.indexOf("async function main()"));
+    const gateIndex = main.indexOf("await enforceInternalProductionPreSchemaSpawnerStartupGateV1");
+    assert.ok(gateIndex >= 0);
+    for (const normalBoundary of ["assertAgentRuntimeAvailable()", "await pgMigrate()", "postgres(pgUrl"]) {
+      assert.ok(main.indexOf(normalBoundary) > gateIndex, `${normalBoundary} must remain after the sealed gate`);
+    }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
   }
-  rmSync(fixture, { recursive: true, force: true });
+});
+
+test("database producer admission accepts canonical stored readiness through the strict startup parser", async () => {
+  const typescript = await import("typescript");
+  const dbSource = readFileSync(path.resolve(import.meta.dirname, "../../src/db-pg.ts"), "utf8");
+  const tree = typescript.createSourceFile("db-pg.ts", dbSource, typescript.ScriptTarget.Latest, true);
+  const names = ["requireWorkflowRunAdmissionReadyV1", "validateInternalProductionRunPersistenceReadinessModuleNamespaceV1", "isRecursivelyFrozenV1", "sameJsonValueV1"];
+  const functions = names.map(name => {
+    const declaration = tree.statements.find(statement => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
+    assert.ok(declaration); return declaration.getText(tree).replace("await import(RUN_PERSISTENCE_READINESS_MODULE_SPECIFIER_V1)", "ports");
+  }).join("\n");
+  const constants = tree.statements.filter(statement => typescript.isVariableStatement(statement) && statement.declarationList.declarations.some(declaration => typescript.isIdentifier(declaration.name) && /^(RUN_PERSISTENCE_READINESS_|WORKFLOW_RUN_MANIFEST_A_HASH_V1$)/.test(declaration.name.text))).map(statement => statement.getText(tree)).join("\n");
+  const startupSource = readFileSync(path.resolve(import.meta.dirname, "../../src/internal-production/baseline-spawner-startup-admission-v1.ts"), "utf8");
+  const startupTree = typescript.createSourceFile("startup.ts", startupSource, typescript.ScriptTarget.Latest, true);
+  const parser = startupTree.statements.find(statement => typescript.isFunctionDeclaration(statement) && statement.name?.text === "exactPair"); assert.ok(parser);
+  const program = `
+import assert from 'node:assert/strict';
+const SHA256=/^[a-f0-9]{64}$/,fail=message=>{throw Error(message)},canonicalJsonStringify=JSON.stringify;
+${parser.getText(startupTree)}
+${constants}
+${functions}
+const freeze=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))freeze(child);Object.freeze(value)}return value};
+const INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1={manifestHash:WORKFLOW_RUN_MANIFEST_A_HASH_V1};
+const current={nodes:[{receipt:{phase:'A',orderedPlans:['A'],orderedManifestHashes:[WORKFLOW_RUN_MANIFEST_A_HASH_V1],activationRef:'activation',activationHash:'b'.repeat(64)},head:{headRef:'head',headHash:'c'.repeat(64)}}]};
+const hash='a'.repeat(64),prefix='setfarm://internal-production/task0-spawner-admission-ready/sha256/';
+let mode='ready';
+const ports={observeInternalProductionPreSchemaSpawnerRebindStatusV1:async()=>freeze({state:mode==='unready'?'pre_manifest_bootstrap_sealed':'normal_task0_admission_ready',admissionReady:{admissionReadyHash:hash,admissionReadyRef:prefix+hash}}),resolveInternalProductionTask0SpawnerAdmissionReadyV1:async pair=>{exactPair(pair,'admissionReadyRef','admissionReadyHash',prefix);return freeze({state:'normal-task0-admission-ready',admissionReadyRef:pair.admissionReadyRef,admissionReadyHash:pair.admissionReadyHash,manifestActivationRef:'activation',manifestActivationHash:mode==='crossed'?'d'.repeat(64):'b'.repeat(64),manifestHeadRef:'head',manifestHeadHash:'c'.repeat(64)})}};
+await requireWorkflowRunAdmissionReadyV1(current);
+mode='unready';await assert.rejects(requireWorkflowRunAdmissionReadyV1(current),/RUN_PERSISTENCE_ADMISSION_READY_UNAVAILABLE/);
+mode='crossed';await assert.rejects(requireWorkflowRunAdmissionReadyV1(current),/RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID/);
+`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", typescript.transpileModule(program, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText], { encoding: "utf8", timeout: 10000, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+  assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+});
+
+test("Task0 normal admission transition remints canonical stored resolver pairs", async (context) => {
+  const typescript = await import("typescript");
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  const tree = typescript.createSourceFile("spawner.ts", source, typescript.ScriptTarget.Latest, true);
+  const declaration = tree.statements.find(statement => typescript.isFunctionDeclaration(statement) && statement.name?.text === "transitionInternalProductionTask0SpawnerToNormalAdmissionReadyV1");
+  assert.ok(declaration);
+  for (const mode of ["ready-replay", "sealed-transition"]) await context.test(mode, () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-ready-pair-transition-"));
+    try {
+      const internal = path.join(fixture, "internal-production"); mkdirSync(internal);
+      writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}');
+      writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.js"), `
+import assert from 'node:assert/strict';
+export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){return ${JSON.stringify(mode)}==='ready-replay'?{state:'normal_task0_admission_ready',admissionReady:{admissionReadyHash:'a'.repeat(64),admissionReadyRef:'ready'}}:{state:'pre_manifest_bootstrap_sealed',currentEntryOperation:{},authorization:{},startupToken:{},restartAuthority:{},dispatchPrefix:{},sealedAdmission:{sealedAdmissionHash:'b'.repeat(64),sealedAdmissionRef:'sealed'}};}
+export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair){assert.deepEqual(Object.keys(pair),['admissionReadyRef','admissionReadyHash']);assert.equal(pair.admissionReadyRef,'ready');return pair;}
+export async function resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1(pair){assert.deepEqual(Object.keys(pair),['sealedAdmissionRef','sealedAdmissionHash']);assert.equal(pair.sealedAdmissionRef,'sealed');throw Error('FIXTURE_SEALED_PAIR_VALIDATED');}
+`);
+      writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.js"), `export async function observeInternalProductionCurrentEntryAuthorityStatusV1(){return {state:'spawner_admission_transitioning',migrationApplyingPhase:{},manifestActivation:{}};}export async function observeInternalProductionServiceCensusV1(){return {spawner:{generationHash:'generation'}};}`);
+      writeFileSync(path.join(fixture, "db-pg.js"), `export async function verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1(){return {};}export async function initializeInternalProductionCurrentEntryDatabaseV1(){return {};}`);
+      const runner = path.join(fixture, "runner.mjs");
+      writeFileSync(runner, typescript.transpileModule(`import assert from 'node:assert/strict';\n${declaration.getText(tree)}\n${mode === "ready-replay" ? "assert.deepEqual(await transitionInternalProductionTask0SpawnerToNormalAdmissionReadyV1(),{admissionReadyRef:'ready',admissionReadyHash:'a'.repeat(64)});assert.deepEqual(Object.keys(await transitionInternalProductionTask0SpawnerToNormalAdmissionReadyV1()),['admissionReadyRef','admissionReadyHash']);" : "await assert.rejects(transitionInternalProductionTask0SpawnerToNormalAdmissionReadyV1(),/FIXTURE_SEALED_PAIR_VALIDATED/);"}`, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText);
+      const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 10000, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+      assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+    } finally { rmSync(fixture, { recursive: true, force: true }); }
+  });
+});
+
+test("ordinary cold recovery admission refuses crossed or changing readiness before producers", async () => {
+  const typescript = await import("typescript");
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  const tree = typescript.createSourceFile("spawner.ts", source, typescript.ScriptTarget.Latest, true);
+  const functions = ["observeOrdinarySpawnerColdRecoveryAdmissionV1", "assertOrdinarySpawnerColdRecoveryAdmissionV1", "task12CanonicalV1", "task12HashV1"].map(name => {
+    const declaration = tree.statements.find(statement => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
+    assert.ok(declaration); return declaration.getText(tree);
+  }).join("\n");
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-normal-cold-admission-"));
+  try {
+    const internal = path.join(fixture, "internal-production"); mkdirSync(internal);
+    writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}');
+    writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.js"), `
+import assert from 'node:assert/strict';
+const f=()=>globalThis.fixture;
+export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){const x=f();if(x.mode==='status-corrupt')throw Error('CORRUPT_STATUS');return {state:x.mode==='sealed'?'pre_manifest_bootstrap_sealed':x.mode==='unrelated'?'absent':'normal_task0_admission_ready',currentEntryOperation:{operationHash:'a'.repeat(64),operationRef:'operation'},restartAuthority:{restartAuthorityHash:'b'.repeat(64),restartAuthorityRef:'restart'},admissionReady:{admissionReadyHash:'c'.repeat(64),admissionReadyRef:'ready'}};}
+export async function resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(pair){assert.deepEqual(Object.keys(pair),['restartAuthorityRef','restartAuthorityHash']);return {schema:'setfarm.internal-production-pre-schema-spawner-restart-authority.'+(f().mode==='v1'?'v1':'v2')};}
+export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair){assert.deepEqual(Object.keys(pair),['admissionReadyRef','admissionReadyHash']);return {state:'normal-task0-admission-ready',currentEntryOperationRef:f().mode==='crossed-operation'?'other':'operation',currentEntryOperationHash:'a'.repeat(64),restartAuthorityRef:f().mode==='crossed-restart'?'other':'restart',restartAuthorityHash:'b'.repeat(64),unchangedSpawnerGenerationHash:'d'.repeat(64)};}
+`);
+    writeFileSync(path.join(internal, "baseline-restart-authority-retirement-v1.js"), `
+import assert from 'node:assert/strict';
+export async function observeInternalProductionDirectSpawnerRebindTerminalHistoryV1(input){const x=globalThis.fixture;assert.equal(input.currentEntryOperation.operationRef,'operation');assert.equal(input.restartAuthority.restartAuthorityRef,'restart');x.terminals++;if(x.mode==='terminal-missing')throw Error('MISSING_TERMINAL');return {settlementHash:x.mode==='terminal-changed'&&x.published?'changed':'original'};}
+`);
+    writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.js"), `
+import assert from 'node:assert/strict';
+export async function observeInternalProductionServiceCensusV1(){const x=globalThis.fixture;assert.equal(x.published,true,'live census cannot run before PID publication');x.censuses++;if(x.mode==='cold-after-census')x.changed=true;return {spawner:{pid:x.mode==='wrong-pid'?process.pid+1:process.pid,generationHash:x.mode==='wrong-generation'?'crossed':'d'.repeat(64)}};}
+`);
+    const runner = path.join(fixture, "runner.mjs");
+    writeFileSync(runner, typescript.transpileModule(`
+import assert from 'node:assert/strict';import crypto from 'node:crypto';
+function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){const x=globalThis.fixture;x.colds++;if(x.mode==='incomplete')throw Error('COLD_BOOTSTRAP_UNSETTLED');if(x.mode==='absent')return {state:'absent'};if(x.mode==='cold-disappeared'&&x.published)return {state:'absent'};return {state:'settled',incompleteOwnerCount:x.mode==='settled-owner'?1:0,censusHash:x.changed||x.mode==='cold-during-preflight'&&x.colds===2?'changed':'original'};}
+${functions}
+for(const mode of ['absent','ready','incomplete','settled-owner','v1','sealed','unrelated','status-corrupt','crossed-operation','crossed-restart','terminal-missing','cold-during-preflight','cold-disappeared','terminal-changed','wrong-pid','wrong-generation','cold-after-census']){
+ const x=globalThis.fixture={mode,published:false,colds:0,censuses:0,terminals:0,changed:false};
+ const run=async()=>{const before=await observeOrdinarySpawnerColdRecoveryAdmissionV1();x.published=true;await assertOrdinarySpawnerColdRecoveryAdmissionV1(before);};
+ if(['absent','ready'].includes(mode)){await run();assert.equal(x.censuses,mode==='ready'?1:0);}
+ else {await assert.rejects(run,undefined,mode+' must not admit producers');if(['incomplete','settled-owner','v1','sealed','unrelated','status-corrupt','crossed-operation','crossed-restart','terminal-missing','cold-during-preflight'].includes(mode)){assert.equal(x.published,false);assert.equal(x.censuses,0);}}
+}
+`, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText);
+    const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 10000, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+    assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test("ordinary stale startup reclamation requires exact bytes, definite death and an absent cold journal", async () => {
+  const typescript = await import("typescript");
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8"), tree = typescript.createSourceFile("spawner.ts", source, typescript.ScriptTarget.Latest, true);
+  const functions = ["observeSpawnerStartupFileParentsV1", "assertSpawnerStartupFileParentsV1", "reclaimDeadSpawnerStartupFileV1", "closeOwnedSpawnerStartupFileV1", "closeReadOnlySpawnerStartupPinV1", "releaseSpawnerSingletonLock"].map((name) => {
+    const declaration = tree.statements.find((statement) => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
+    assert.ok(declaration); return declaration.getText(tree);
+  }).join("\n");
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-stale-startup-")));
+  try {
+    const runner = path.join(fixture, "stale.mjs");
+    writeFileSync(runner, typescript.transpileModule(`
+import assert from 'node:assert/strict';import actualFs from 'node:fs';import actualProcess from 'node:process';import {spawnSync} from 'node:child_process';import path from 'node:path';
+const root=${JSON.stringify(fixture)},ownedDescriptors=new Set(),spawnerStartupFilesV1=[];
+let spawnerLockFd=null,fault='',target='',reads=0,kills=0,censuses=0,interrupted=false;
+const process=Object.create(actualProcess);process.kill=(pid,signal)=>{kills++;if(fault==='eperm')throw Object.assign(Error('fixture permission refusal'),{code:'EPERM'});if(fault==='pid-reappears'&&kills===2)return true;return actualProcess.kill(pid,signal);};
+const fs={...actualFs,openSync(...args){const fd=actualFs.openSync(...args);ownedDescriptors.add(fd);return fd;},closeSync(fd){if(fault==='close'&&!interrupted){interrupted=true;throw Error('fixture pre-close failure')}actualFs.closeSync(fd);ownedDescriptors.delete(fd);},
+readSync(...args){const count=actualFs.readSync(...args);if(++reads===1&&fault==='replacement'){actualFs.renameSync(target,target+'.original');actualFs.writeFileSync(target,actualFs.readFileSync(target+'.original'),{mode:0o600});}return count;}};
+function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){censuses++;if(fault==='cold-arrival'&&censuses===2)actualFs.mkdirSync(path.join(root,'cold-journal'));if(actualFs.existsSync(path.join(root,'cold-journal')))throw Error('COLD_BOOTSTRAP_UNSETTLED');return {state:fault==='settled-history'||fault==='settled-arrival'&&censuses===2?'settled':'absent'};}
+${functions}
+const predecessor=spawnSync(actualProcess.execPath,['-e',''],{env:{PATH:'/usr/bin:/bin'}});assert.equal(predecessor.status,0);
+for(fault of ['settled-history','settled-arrival','none','non-ascii','double-newline','eperm','pid-reappears','replacement','symlink','hardlink','writable','alive','close','cold-arrival']){
+ target=path.join(root,fault+'.pid');reads=0;kills=0;censuses=0;interrupted=false;
+ const text=String(fault==='alive'?actualProcess.ppid:predecessor.pid),bytes=Buffer.from(text+(fault==='double-newline'?'\\n\\n':''));if(fault==='non-ascii')bytes[0]|=128;
+ actualFs.writeFileSync(target,bytes,{mode:0o600});
+ if(fault==='symlink'){actualFs.renameSync(target,target+'.original');actualFs.symlinkSync(target+'.original',target);}
+ if(fault==='hardlink')actualFs.linkSync(target,target+'.linked');
+ if(fault==='writable')actualFs.chmodSync(target,0o666);
+ if(fault==='none')assert.equal(reclaimDeadSpawnerStartupFileV1(target),'removed');
+ else if(fault==='alive')assert.equal(reclaimDeadSpawnerStartupFileV1(target),'alive');
+ else assert.throws(()=>reclaimDeadSpawnerStartupFileV1(target),undefined,fault+' must not grant stale deletion');
+ if(fault==='close'){
+  assert.throws(()=>releaseSpawnerSingletonLock(),/SPAWNER_READ_ONLY_PIN_CLOSE_UNCERTAIN/);
+  assert.equal(ownedDescriptors.size,1,'unknown close outcome retains its fence instead of retrying a possibly reused slot');
+  for(const fd of ownedDescriptors){actualFs.closeSync(fd);ownedDescriptors.delete(fd);} // Test owns the simulated pre-close fault.
+ }
+ releaseSpawnerSingletonLock();assert.equal(ownedDescriptors.size,0,fault+' must close or observe terminal closure of its readers');
+ if(!['none','close'].includes(fault))assert.deepEqual(actualFs.readFileSync(target),bytes,fault+' preserves exact retained evidence');
+}
+`, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText);
+    const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 15000, maxBuffer: 65536, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+    assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test("read-only startup pins preserve reused descriptors after uncertain close", async () => {
+  const typescript = await import("typescript");
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  const tree = typescript.createSourceFile("spawner.ts", source, typescript.ScriptTarget.Latest, true);
+  const functions = ["closeOwnedSpawnerStartupFileV1", "closeReadOnlySpawnerStartupPinV1"].map(name => {
+    const declaration = tree.statements.find(statement => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
+    if (name === "closeOwnedSpawnerStartupFileV1") assert.ok(declaration);
+    return declaration?.getText(tree) ?? "";
+  }).join("\n");
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-readonly-startup-close-")));
+  try {
+    const runner = path.join(root, "close.mjs");
+    writeFileSync(runner, typescript.transpileModule(`
+import assert from 'node:assert/strict';import realFs from 'node:fs';
+const root=${JSON.stringify(root)},spawnerStartupFilesV1=[];let spawnerLockFd=null;
+let fault='',closeCalls=0,statCalls=0,replacement=null,original='',foreign='';
+const fs={...realFs,fstatSync(...args){if(fault==='first-stat'&&++statCalls===1)throw Error('fixture first stat failure');return realFs.fstatSync(...args);},closeSync(fd){closeCalls++;if(fault==='before'&&closeCalls===1)throw Error('fixture before close');realFs.closeSync(fd);if(['foreign','same-inode'].includes(fault)&&closeCalls===1){replacement=realFs.openSync(fault==='foreign'?foreign:original,'r');assert.equal(replacement,fd);throw Error('fixture after close');}}};
+${functions}
+for(fault of ['foreign','same-inode','before','first-stat','normal']){
+ closeCalls=0;statCalls=0;replacement=null;original=root+'/'+fault;foreign=original+'-foreign';
+ realFs.writeFileSync(original,'original');realFs.writeFileSync(foreign,'foreign');
+ const descriptor=realFs.openSync(original,'r'),identity=realFs.fstatSync(descriptor,{bigint:true});
+ const state={identity:fault==='first-stat'?null:identity,closeEntered:false,closed:false};
+ const owner={file:original,descriptor,bytes:Buffer.alloc(0),identity:null,unlinked:false,parents:[]};
+ owner.readOnlyClose=()=>closeReadOnlySpawnerStartupPinV1(owner,state);spawnerStartupFilesV1.push(owner);
+ try {
+  if(fault==='normal')closeOwnedSpawnerStartupFileV1(owner);else assert.throws(()=>closeOwnedSpawnerStartupFileV1(owner));
+  try{closeOwnedSpawnerStartupFileV1(owner);}catch(error){assert.match(String(error),/SPAWNER_READ_ONLY_PIN_CLOSE_UNCERTAIN/);}
+  if(['foreign','same-inode','before'].includes(fault)){
+   const current=realFs.fstatSync(descriptor,{bigint:true});
+   assert.equal(current.ino,realFs.lstatSync(fault==='foreign'?foreign:original,{bigint:true}).ino,'cleanup must preserve the uncertain/reused descriptor');
+   assert.equal(closeCalls,1,'an uncertain close never receives a second close syscall');
+  }else assert.throws(()=>realFs.fstatSync(descriptor),{code:'EBADF'});
+  assert.equal(realFs.readFileSync(original,'utf8'),'original');assert.equal(realFs.readFileSync(foreign,'utf8'),'foreign');
+  assert.equal(spawnerStartupFilesV1.includes(owner),['same-inode','before'].includes(fault));
+ }finally{try{realFs.closeSync(descriptor);}catch(error){if(error.code!=='EBADF')throw error;}const index=spawnerStartupFilesV1.indexOf(owner);if(index>=0)spawnerStartupFilesV1.splice(index,1);}
+}
+`, { compilerOptions: { target: typescript.ScriptTarget.ES2022, module: typescript.ModuleKind.ESNext } }).outputText);
+    const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("stale startup inner reader preserves a foreign descriptor after close response loss", async () => {
+  const typescript = await import("typescript");
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  const tree = typescript.createSourceFile("spawner.ts", source, typescript.ScriptTarget.Latest, true);
+  const functions = ["observeSpawnerStartupFileParentsV1", "assertSpawnerStartupFileParentsV1", "reclaimDeadSpawnerStartupFileV1", "closeOwnedSpawnerStartupFileV1", "closeReadOnlySpawnerStartupPinV1", "releaseSpawnerSingletonLock"].map(name => {
+    const declaration = tree.statements.find(statement => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
+    assert.ok(declaration); return declaration.getText(tree);
+  }).join("\n");
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-inner-startup-close-")));
+  try {
+    const runner = path.join(root, "inner.mjs");
+    writeFileSync(runner, typescript.transpileModule(`
+import assert from 'node:assert/strict';import realFs from 'node:fs';import path from 'node:path';import {spawnSync} from 'node:child_process';
+const root=${JSON.stringify(root)},target=root+'/spawner.lock',foreign=root+'/foreign',spawnerStartupFilesV1=[];let spawnerLockFd=null,replacement=null,closeCalls=0;
+const predecessor=spawnSync(process.execPath,['-e','']);assert.equal(predecessor.status,0);
+realFs.writeFileSync(target,predecessor.pid+'\\n',{mode:0o600});realFs.writeFileSync(foreign,'foreign',{mode:0o600});
+const fs={...realFs,closeSync(fd){closeCalls++;realFs.closeSync(fd);if(closeCalls===1){replacement=realFs.openSync(foreign,'r');assert.equal(replacement,fd);throw Error('fixture inner close response lost');}}};
+function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){return {state:'absent'};}
+${functions}
+try{
+ assert.throws(()=>reclaimDeadSpawnerStartupFileV1(target),/fixture inner close response lost/);
+ releaseSpawnerSingletonLock();
+ assert.equal(realFs.fstatSync(replacement,{bigint:true}).ino,realFs.lstatSync(foreign,{bigint:true}).ino,'inner stale reader must never close a reused foreign descriptor');
+ assert.equal(closeCalls,1);assert.equal(spawnerStartupFilesV1.length,0);assert.equal(realFs.readFileSync(foreign,'utf8'),'foreign');
+}finally{if(replacement!==null)try{realFs.closeSync(replacement);}catch(error){if(error.code!=='EBADF')throw error;}}
+`, { compilerOptions: { target: typescript.ScriptTarget.ES2022, module: typescript.ModuleKind.ESNext } }).outputText);
+    const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 10_000 });
+    assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("spawner fatal refusal stays nonzero when startup cleanup is interrupted", () => {
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  const boundary = source.slice(source.lastIndexOf('if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {'));
+  assert.ok(boundary.includes("main().catch"));
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-fatal-cleanup-"));
+  try {
+    const runner = path.join(fixture, "fatal.mjs");
+    writeFileSync(runner, `
+import {openSync,closeSync} from 'node:fs';
+const descriptor=openSync(import.meta.filename,'r');let attempts=0,closed=false;
+function releaseSpawnerSingletonLock(){if(++attempts===1)throw Error('fixture pre-close failure');closeSync(descriptor);closed=true;}
+async function main(){process.on('unhandledRejection',()=>console.warn('unexpected unhandled cleanup'));throw Error('fixture fatal admission refusal');}
+process.on('exit',()=>process.stdout.write(JSON.stringify({attempts,closed})));
+${boundary.replace('if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)', 'if (true)')}
+`);
+    const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 10000, maxBuffer: 65536, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+    assert.equal(result.error, undefined); assert.equal(result.status, 1, "cleanup failure cannot turn fatal refusal into a successful exit");
+    assert.deepEqual(JSON.parse(result.stdout), { attempts: 2, closed: true });
+    assert.match(result.stderr, /fixture fatal admission refusal/); assert.doesNotMatch(result.stderr, /unexpected unhandled cleanup/);
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test("spawner startup-file publication refuses short writes and replaced paths", async () => {
+  const typescript = await import("typescript");
+  const source = readFileSync(path.resolve(import.meta.dirname, "../../src/spawner.ts"), "utf8");
+  const tree = typescript.createSourceFile("spawner.ts", source, typescript.ScriptTarget.Latest, true);
+  const names = ["observeSpawnerStartupFileParentsV1", "assertSpawnerStartupFileParentsV1", "createOwnedSpawnerStartupFileV1", "closeOwnedSpawnerStartupFileV1", "releaseSpawnerSingletonLock"];
+  const functions = names.map((name) => {
+    const declaration = tree.statements.find((statement) => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
+    assert.ok(declaration, `actual startup ownership implementation is missing: ${name}`);
+    return declaration.getText(tree);
+  }).join("\n");
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-startup-file-publication-")));
+  try {
+    const runner = path.join(fixture, "publication.mjs");
+    writeFileSync(runner, typescript.transpileModule(`
+import assert from 'node:assert/strict';import actualFs from 'node:fs';import path from 'node:path';
+const root=${JSON.stringify(fixture)},ownedDescriptors=new Set();
+let spawnerLockFd=null,fault='none',target='';const spawnerStartupFilesV1=[];
+const fs={...actualFs,
+openSync(...args){const fd=actualFs.openSync(...args);ownedDescriptors.add(fd);return fd;},
+closeSync(fd){actualFs.closeSync(fd);ownedDescriptors.delete(fd);},
+writeFileSync(fd,bytes,...args){
+  if(fault==='partial')return actualFs.writeFileSync(fd,bytes.subarray(0,1),...args);
+  if(fault==='replacement'){actualFs.renameSync(target,target+'.original');actualFs.writeFileSync(target,'foreign',{flag:'wx',mode:0o600});}
+  return actualFs.writeFileSync(fd,bytes,...args);
+}};
+${functions}
+for(fault of ['none','partial','replacement']){
+  target=path.join(root,fault+'.pid');
+  if(fault==='none')createOwnedSpawnerStartupFileV1(target,Buffer.from(String(process.pid)));
+  else assert.throws(()=>createOwnedSpawnerStartupFileV1(target,Buffer.from(String(process.pid))),/STARTUP_FILE/,'publication must verify actual bytes and original path');
+  releaseSpawnerSingletonLock();releaseSpawnerSingletonLock();
+  assert.equal(ownedDescriptors.size,0,'publication refusal closes every owned descriptor');
+  if(fault==='replacement')assert.equal(actualFs.readFileSync(target,'utf8'),'foreign');
+  if(fault==='none')assert.equal(actualFs.existsSync(target),false);
+}
+`, { compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022 } }).outputText);
+    const result = spawnSync(process.execPath, [runner], { encoding: "utf8", timeout: 10000, maxBuffer: 65536, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+    assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
 });
 
 test("P4 real spawner main remains sealed until signal and cleans its lock and pid", async () => {
+  for (const mode of ["settled-ready-crash-restart", ...["open-replaced", "first-pin-stat", "live-lock-dead-pid", "historical-pid", "historical-inode", "live-owner", "ready-replaced", "terminal-replaced", "source-changed", "startup-replaced", "parent-replaced"].map(fault => `settled-ready-crash-restart-${fault}`), "settled-ready", "settled-history", "settled-appears", "sealed", "existing-cold", "cold-appears", "foreign-pid", "foreign-lock", "stale-pid", "parent-symlink"]) {
   const repository = path.resolve(import.meta.dirname, "../..");
-  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-real-sealed-spawner-"));
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-real-sealed-spawner-")));
   const fixtureSource = path.join(fixture, "src");
   const pidFile = path.join(fixture, "state/spawner.pid");
   const lockFile = path.join(fixture, "state/spawner.lock");
   const normalMarker = path.join(fixture, "normal-startup-called");
+  const crashMarker = path.join(fixture, "ordinary-startup-crashed");
+  const terminalMarker = path.join(fixture, "terminal-history-marker");
+  const pinCleanupMarker = path.join(fixture, "pin-cleanup-observed");
+  writeFileSync(terminalMarker, "immutable history", { mode: 0o600 });
+  const crashCase = mode.startsWith("settled-ready-crash-restart");
+  const crashRefusal = crashCase && mode !== "settled-ready-crash-restart";
+  const admissionMarker = path.join(fixture, "ordinary-admission-called");
+  const providerMarker = path.join(fixture, "provider-discovery-called");
+  const ordinaryDirectories = ["agent-scratch", "transcripts", "attempt-workspaces"].map((name) => path.join(fixture, "ordinary", name));
+  const coldRoot = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/cold-spawner-bootstrap-v1");
+  if (mode === "existing-cold") {
+    mkdirSync(coldRoot, { recursive: true, mode: 0o700 });
+    mkdirSync(path.dirname(pidFile), { recursive: true, mode: 0o700 });
+    writeFileSync(pidFile, String(process.pid)); writeFileSync(lockFile, `${process.pid}\n`);
+  }
+  if (mode === "stale-pid") {
+    const predecessor = spawnSync(process.execPath, ["-e", ""], { env: { PATH: "/usr/bin:/bin" } });
+    assert.equal(predecessor.status, 0);
+    mkdirSync(path.dirname(pidFile), { recursive: true, mode: 0o700 });
+    writeFileSync(pidFile, String(predecessor.pid), { mode: 0o644 });
+  }
   cpSync(path.join(repository, "src"), fixtureSource, { recursive: true });
+  projectCopiedWorkspaceLocatorV1(fixture, fixture);
+  if (mode.startsWith("settled-")) {
+    const retirementPath = path.join(fixtureSource, "internal-production/baseline-restart-authority-retirement-v1.ts"), retirement = readFileSync(retirementPath, "utf8");
+    const start = retirement.indexOf("export function observeInternalProductionColdSpawnerBootstrapJournalCensusV1("), body = retirement.indexOf("  const workspace =", start);
+    assert.ok(start >= 0 && body > start);
+    writeFileSync(retirementPath, retirement.slice(0, body) + `  globalThis.__fixtureColdCensusCalls=(globalThis.__fixtureColdCensusCalls??0)+1;return {state:${mode !== "settled-appears" ? "'settled'" : "globalThis.__fixtureColdCensusCalls>=2?'settled':'absent'"},incompleteOwnerCount:0,censusHash:'7'.repeat(64),settlement:{settlementRef:'fixture-cold-settlement',settlementHash:'8'.repeat(64)},settlementIdentity:['1','2','3']};\n` + retirement.slice(body));
+  }
   symlinkSync(path.join(repository, "node_modules"), path.join(fixture, "node_modules"), "dir");
   const operationHash = "a".repeat(64);
   const tokenHash = "b".repeat(64);
@@ -2981,11 +3584,67 @@ export async function resolveInternalProductionPreSchemaSpawnerReplacementProces
 export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){return ${JSON.stringify(source)}}
 export async function observeInternalProductionServiceCensusV1(){return {spawner:{processIdentityHash:${JSON.stringify(processIdentityHash)},generationHash:${JSON.stringify(generationHash)}}}}
 `, "utf8");
+  if (mode.startsWith("settled-ready")) {
+    // Only external authority ports are replaced: actual main must admit ready
+    // history, publish its owned files, and check the new PID before producers.
+    const retirementPath = path.join(fixtureSource, "internal-production/baseline-restart-authority-retirement-v1.ts");
+    const retirementSource = readFileSync(retirementPath, "utf8");
+    const terminalStart = retirementSource.indexOf("export async function observeInternalProductionDirectSpawnerRebindTerminalHistoryV1(");
+    const terminalBody = retirementSource.indexOf("  const value =", terminalStart);
+    assert.ok(terminalStart >= 0 && terminalBody > terminalStart);
+    writeFileSync(retirementPath, "import { existsSync as fixtureExistsSync } from 'node:fs';\n" + retirementSource.slice(0, terminalBody) + `  if(input.currentEntryOperation.operationRef!=='fixture-operation'||input.restartAuthority.restartAuthorityRef!=='fixture-restart')throw Error('FIXTURE_TERMINAL_INPUT_CROSSED');const fixtureHistoricalStat=lstatSync(${JSON.stringify(terminalMarker)},{bigint:true});const fixtureTerminalProof={currentEntryOperation:input.currentEntryOperation,restartAuthority:input.restartAuthority,preSchemaHelperJournalHash:'d'.repeat(64),preSchemaHelperSettlementRef:'fixture-terminal',preSchemaHelperSettlementHash:'e'.repeat(64),settlementIdentity:['1','2','3']};Object.defineProperties(fixtureTerminalProof,{assertStable:{value:()=>{const current=lstatSync(${JSON.stringify(terminalMarker)},{bigint:true});if(current.dev!==fixtureHistoricalStat.dev||current.ino!==fixtureHistoricalStat.ino)throw Error('SPAWNER_NORMAL_RECLAIM_TERMINAL_CHANGED');}},startupExclusion:{value:{direct:{pid:${JSON.stringify(mode)}.endsWith('-historical-pid')&&fixtureExistsSync(${JSON.stringify(crashMarker)})?Number(readFileSync(${JSON.stringify(crashMarker)},'utf8')):1,singleton:${JSON.stringify(mode)}.endsWith('-historical-inode')&&fixtureExistsSync(${JSON.stringify(lockFile)})?{devDecimal:String(lstatSync(${JSON.stringify(lockFile)},{bigint:true}).dev),inoDecimal:String(lstatSync(${JSON.stringify(lockFile)},{bigint:true}).ino)}:{devDecimal:'0',inoDecimal:'1'},pidFile:{devDecimal:'0',inoDecimal:'2'}},cold:null,predecessorPid:2}}});return Object.freeze(fixtureTerminalProof);\n` + retirementSource.slice(terminalBody));
+    const fixtureOperation = { operationHash: "a".repeat(64), operationRef: "fixture-operation" };
+    const fixtureRestart = { restartAuthorityHash: "b".repeat(64), restartAuthorityRef: "fixture-restart" };
+    const fixtureReadyPair = { admissionReadyHash: "c".repeat(64), admissionReadyRef: "fixture-ready" };
+    const fixtureStatus = { state: "normal_task0_admission_ready", currentEntryOperation: fixtureOperation, restartAuthority: fixtureRestart, admissionReady: fixtureReadyPair, statusHash: "9".repeat(64), statusRef: "fixture-status" };
+    const fixtureReady = { state: "normal-task0-admission-ready", ...fixtureReadyPair, ...fixtureRestart, currentEntryOperationRef: fixtureOperation.operationRef, currentEntryOperationHash: fixtureOperation.operationHash, unchangedSpawnerGenerationHash: generationHash };
+    writeFileSync(path.join(fixtureSource, "internal-production/baseline-spawner-startup-admission-v1.ts"), `
+import assert from 'node:assert/strict';
+const operation={operationHash:'a'.repeat(64),operationRef:'fixture-operation'};
+const restartAuthority={restartAuthorityHash:'b'.repeat(64),restartAuthorityRef:'fixture-restart'};
+const admissionReady={admissionReadyHash:'c'.repeat(64),admissionReadyRef:'fixture-ready'};
+export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){return ${JSON.stringify(fixtureStatus)};}
+export async function resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(pair){assert.deepEqual(Object.keys(pair),['restartAuthorityRef','restartAuthorityHash']);assert.equal(pair.restartAuthorityHash,restartAuthority.restartAuthorityHash);return {schema:'setfarm.internal-production-pre-schema-spawner-restart-authority.v2',...restartAuthority,currentEntryOperationRef:operation.operationRef,currentEntryOperationHash:operation.operationHash};}
+export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair){assert.deepEqual(Object.keys(pair),['admissionReadyRef','admissionReadyHash']);assert.equal(pair.admissionReadyHash,admissionReady.admissionReadyHash);return {state:'normal-task0-admission-ready',...admissionReady,...restartAuthority,currentEntryOperationRef:operation.operationRef,currentEntryOperationHash:operation.operationHash,unchangedSpawnerGenerationHash:${JSON.stringify(generationHash)}};}
+`);
+    writeFileSync(path.join(fixtureSource, "internal-production/baseline-post-handoff-receipt-v1.ts"), `
+import assert from 'node:assert/strict';import fs from 'node:fs';
+export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){return ${JSON.stringify(source)};}
+export async function observeInternalProductionServiceCensusV1(){assert.equal(fs.readFileSync(${JSON.stringify(pidFile)},'utf8'),String(process.pid));assert.equal(fs.readFileSync(${JSON.stringify(lockFile)},'utf8'),process.pid+'\\n');return {spawner:{pid:process.pid,processIdentityHash:${JSON.stringify(processIdentityHash)},generationHash:${JSON.stringify(generationHash)}}};}
+`);
+    const authorityRoot = path.join(fixture, "data/internal-production-baseline/pre-schema-spawner-rebind-v1");
+    const canonical = (value: unknown): string => value !== null && typeof value === "object"
+      ? Array.isArray(value) ? `[${value.map(canonical).join(",")}]` : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(",")}}`
+      : JSON.stringify(value);
+    for (const [relative, body] of [
+      [`records/status/sha256/99/${fixtureStatus.statusHash}.json`, fixtureStatus],
+      [`records/admission-ready/sha256/cc/${fixtureReadyPair.admissionReadyHash}.json`, fixtureReady],
+      [`operations/sha256/${fixtureOperation.operationHash}/status-06-normal-task0-admission-ready.pair.json`, { statusRef: fixtureStatus.statusRef, statusHash: fixtureStatus.statusHash }],
+      [`operations/sha256/${fixtureOperation.operationHash}/08-admission-ready.pair.json`, fixtureReadyPair],
+    ] as const) {
+      const target = path.join(authorityRoot, relative); mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+      writeFileSync(target, `${canonical(body)}\n`, { mode: 0o600 });
+    }
+    const startupPort = path.join(fixtureSource, "internal-production/baseline-spawner-startup-admission-v1.ts");
+    let mutation = "";
+    const readyPath = path.join(authorityRoot, `records/admission-ready/sha256/cc/${fixtureReadyPair.admissionReadyHash}.json`);
+    const replaceFile = (target: string) => `const target=${JSON.stringify(target)},bytes=fixtureFs.readFileSync(target);fixtureFs.renameSync(target,target+'.original');fixtureFs.writeFileSync(target,bytes,{mode:0o600,flag:'wx'});`;
+    if (mode.endsWith("-ready-replaced")) mutation = replaceFile(readyPath);
+    if (mode.endsWith("-terminal-replaced")) mutation = replaceFile(terminalMarker);
+    if (mode.endsWith("-startup-replaced")) mutation = replaceFile(lockFile);
+    if (mode.endsWith("-parent-replaced")) mutation = `const directory=${JSON.stringify(path.dirname(lockFile))};fixtureFs.renameSync(directory,directory+'.original');fixtureFs.mkdirSync(directory,{mode:0o700});for(const name of ['spawner.pid','spawner.lock'])fixtureFs.writeFileSync(directory+'/'+name,fixtureFs.readFileSync(directory+'.original/'+name),{mode:0o600});`;
+    if (mutation) writeFileSync(startupPort, `import fixtureFs from 'node:fs';let fixtureStatusCalls=0;\n` + readFileSync(startupPort, "utf8").replace("export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){", `export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){if(fixtureFs.existsSync(${JSON.stringify(crashMarker)})&&++fixtureStatusCalls===2){${mutation}}`));
+    if (mode.endsWith("-source-changed")) {
+      const receiptPort = path.join(fixtureSource, "internal-production/baseline-post-handoff-receipt-v1.ts");
+      writeFileSync(receiptPort, "let fixtureSourceCalls=0;\n" + readFileSync(receiptPort, "utf8").replace("export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){", `export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){if(++fixtureSourceCalls>=2)return ${JSON.stringify({ ...source, sha: "0".repeat(40) })};`));
+    }
+  }
   const spawnerPath = path.join(fixtureSource, "spawner.ts");
   let spawnerBytes = readFileSync(spawnerPath, "utf8")
     .replace('const PID_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");', `const PID_FILE = ${JSON.stringify(pidFile)};`)
     .replace('const LOCK_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.lock");', `const LOCK_FILE = ${JSON.stringify(lockFile)};`)
     .replace("  assertAgentRuntimeAvailable();", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"runtime\\n");\n  assertAgentRuntimeAvailable();`)
+    .replace("  const activeStartupAdmission = await resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1();", `  fs.writeFileSync(${JSON.stringify(admissionMarker)}, "entered");\n  const activeStartupAdmission = await resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1();`)
     .replace("  await pgMigrate();", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"migration\\n");\n  await pgMigrate();`)
     .replace("  const listener = postgres(pgUrl, { max: 1 });", `  fs.appendFileSync(${JSON.stringify(normalMarker)},"listener\\n");\n  const listener = postgres(pgUrl, { max: 1 });`)
     .replace(
@@ -2993,8 +3652,65 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
       '    console.log("[spawner] Pre-manifest bootstrap sealed; owner producers and listeners are blocked");\n    if (process.env.SETFARM_TEST_SEALED_SIGNAL_WINDOW === "1") Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000);',
     )
     .replace("if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {", "if (true) {");
+  if (mode.startsWith("settled-ready")) {
+    const crash = crashCase ? `if(!fs.existsSync(${JSON.stringify(crashMarker)})){fs.writeFileSync(${JSON.stringify(crashMarker)},String(process.pid));process.exit(0);}` : "";
+    spawnerBytes = spawnerBytes.replace("  initializeAgentRuntimeV1();", `  ${crash}fs.writeFileSync(${JSON.stringify(normalMarker)},'ready-before-producers');throw Error('FIXTURE_NORMAL_BOUNDARY_REACHED');`);
+  }
+  if (mode === "cold-appears") {
+    const publication = spawnerBytes.includes("  publishSpawnerPidFileV1();") ? "  publishSpawnerPidFileV1();" : "  fs.writeFileSync(PID_FILE, String(process.pid));";
+    assert.equal(spawnerBytes.split(publication).length, 2);
+    spawnerBytes = spawnerBytes.replace(publication, `${publication}\n  fs.mkdirSync(${JSON.stringify(coldRoot)}, {recursive:true,mode:0o700});`);
+  }
+  if (mode.endsWith("-open-replaced") || mode.endsWith("-first-pin-stat")) {
+    const opening = "      const descriptor = fs.openSync(parents.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);";
+    assert.equal(spawnerBytes.split(opening).length, 2);
+    spawnerBytes = spawnerBytes.replace(opening, `${opening}\n      globalThis.__fixturePinFD=descriptor;`);
+    if (mode.endsWith("-open-replaced")) {
+      const observation = "      const original = fs.lstatSync(parents.file, { bigint: true });";
+      assert.equal(spawnerBytes.split(observation).length, 2);
+      spawnerBytes = spawnerBytes.replace(observation, `${observation}\n      if(file===LOCK_FILE){const bytes=fs.readFileSync(file);fs.renameSync(file,file+'.original');fs.writeFileSync(file,bytes,{mode:0o600,flag:'wx'});}`);
+    } else {
+      const registration = "      owners.push(owner);";
+      assert.equal(spawnerBytes.split(registration).length, 2);
+      spawnerBytes = spawnerBytes.replace(registration, `${registration}throw Error('SPAWNER_NORMAL_RECLAIM_FIXTURE_FIRST_STAT');`);
+    }
+    const cleanup = "  await reclaimPostRecoveryOrdinaryStartupFilesV1(coldRecoveryAdmission);";
+    assert.equal(spawnerBytes.split(cleanup).length, 2);
+    spawnerBytes = spawnerBytes.replace(cleanup, `  try{await reclaimPostRecoveryOrdinaryStartupFilesV1(coldRecoveryAdmission);}finally{if(globalThis.__fixturePinFD!==undefined){let open=true;try{fs.fstatSync(globalThis.__fixturePinFD);}catch(error){if(error.code==='EBADF')open=false;else throw error;}fs.writeFileSync(${JSON.stringify(pinCleanupMarker)},JSON.stringify({open,owners:spawnerStartupFilesV1.length}));}}`);
+  }
+  for (const signature of ["function commandFromPath(name: string): string {", "function commandIsUsable(command: string): boolean {", "function kimiWeeklyQuotaExhausted(): boolean {"]) {
+    assert.equal(spawnerBytes.split(signature).length, 2, "provider side-effect port is exact");
+    spawnerBytes = spawnerBytes.replace(signature, `${signature}\n  fs.appendFileSync(${JSON.stringify(providerMarker)}, "provider\\n"); throw new Error("SEALED_PROVIDER_DISCOVERY_FORBIDDEN");`);
+  }
+  for (const [index, declaration] of [
+    'const AGENT_SAFE_CWD = path.join(os.homedir(), ".openclaw", "workspace", "agent-scratch");',
+    'const TRANSCRIPT_ROOT = path.join(os.homedir(), ".openclaw", "workspace", "transcripts");',
+    'const OPENCLAW_ATTEMPT_WORKSPACE_ROOT = path.join(os.homedir(), ".openclaw", "setfarm", "attempt-workspaces");',
+  ].entries()) {
+    assert.equal(spawnerBytes.split(declaration).length, 2);
+    spawnerBytes = spawnerBytes.replace(declaration, declaration.slice(0, declaration.indexOf("=")) + `= ${JSON.stringify(ordinaryDirectories[index])};`);
+  }
   writeFileSync(spawnerPath, spawnerBytes);
   writeFileSync(path.join(fixture, "package.json"), `${JSON.stringify({ type: "module" })}\n`);
+  if (crashCase) {
+    const predecessor = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), spawnerPath], {
+      cwd: fixture, encoding: "utf8", timeout: 10_000,
+      env: { ...process.env, SETFARM_PG_URL: "postgresql://sealed.invalid/must-not-connect", SETFARM_AGENT_RUNTIME: "codex" },
+    });
+    assert.equal(predecessor.error, undefined);
+    assert.equal(predecessor.status, 0, predecessor.stderr);
+    assert.equal(readFileSync(crashMarker, "utf8"), String(predecessor.pid));
+    assert.equal(readFileSync(pidFile, "utf8"), String(predecessor.pid));
+    assert.equal(readFileSync(lockFile, "utf8"), `${predecessor.pid}\n`);
+    assert.throws(() => process.kill(predecessor.pid, 0), { code: "ESRCH" });
+    assert.equal(existsSync(normalMarker), false, "first actual main exits without cleanup before producers");
+    if (mode.endsWith("-live-owner")) {
+      writeFileSync(pidFile, String(process.pid)); writeFileSync(lockFile, `${process.pid}\n`);
+    }
+    if (mode.endsWith("-live-lock-dead-pid")) writeFileSync(lockFile, `${process.pid}\n`);
+    unlinkSync(admissionMarker); // The second invocation must independently reach admission.
+  }
+  const retainedStartup = crashCase ? [pidFile, lockFile].map(file => ({ file, bytes: readFileSync(file), ino: lstatSync(file).ino })) : [];
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), spawnerPath], {
     cwd: fixture,
     env: { ...process.env, SETFARM_PG_URL: "postgresql://sealed.invalid/must-not-connect", SETFARM_AGENT_RUNTIME: "codex", SETFARM_TEST_SEALED_SIGNAL_WINDOW: "1" },
@@ -3005,7 +3721,48 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
   child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => { stdout += chunk; });
   child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+  const closed = new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
   try {
+    if (mode.startsWith("settled-ready")) {
+      const timeout = setTimeout(() => child.kill("SIGTERM"), 10_000);
+      const exit = await closed; clearTimeout(timeout);
+      assert.deepEqual(exit, { code: 1, signal: null }, stderr);
+      if (crashRefusal) {
+        assert.doesNotMatch(stderr, /FIXTURE_NORMAL_BOUNDARY_REACHED/, mode);
+        assert.match(stderr, /SPAWNER_NORMAL_RECLAIM_|SPAWNER_READ_ONLY_PIN_|SPAWNER_STARTUP_FILE_PARENT_CHANGED|COLD_BOOTSTRAP_NOT_ABSENT/, mode);
+        for (const item of retainedStartup) {
+          assert.deepEqual(readFileSync(item.file), item.bytes, `${mode}: refuse without deleting retained bytes`);
+          if (mode.endsWith("-startup-replaced") || mode.endsWith("-parent-replaced") || mode.endsWith("-open-replaced")) {
+            if (item.file === lockFile || mode.endsWith("-parent-replaced")) assert.notEqual(lstatSync(item.file).ino, item.ino);
+          } else assert.equal(lstatSync(item.file).ino, item.ino, mode);
+        }
+        assert.equal(existsSync(admissionMarker), false, `${mode}: no ordinary admission after refusal`);
+        if (mode.endsWith("-open-replaced") || mode.endsWith("-first-pin-stat")) assert.deepEqual(JSON.parse(readFileSync(pinCleanupMarker, "utf8")), { open: false, owners: 0 }, `${mode}: every newly opened reader is closed locally`);
+        for (const untouched of [normalMarker, providerMarker, ...ordinaryDirectories]) assert.equal(existsSync(untouched), false, mode);
+        continue;
+      }
+      assert.match(stderr, /FIXTURE_NORMAL_BOUNDARY_REACHED/, "authenticated completed cold recovery must not permanently block ordinary startup");
+      assert.equal(readFileSync(normalMarker, "utf8"), "ready-before-producers");
+      assert.equal(existsSync(admissionMarker), true);
+      for (const untouched of [pidFile, lockFile, providerMarker, ...ordinaryDirectories]) assert.equal(existsSync(untouched), false);
+      continue;
+    }
+    if (mode === "existing-cold" || mode === "cold-appears" || mode.startsWith("settled-")) {
+      const timeout = setTimeout(() => child.kill("SIGTERM"), 10_000);
+      const exit = await closed; clearTimeout(timeout);
+      assert.deepEqual(exit, { code: 1, signal: null }, `${mode}: incomplete cold journal must refuse ordinary startup: ${stderr}`);
+      assert.match(stderr, /COLD_BOOTSTRAP_(?:UNSETTLED|NOT_ABSENT)/);
+      if (!mode.startsWith("settled-")) {
+        assert.equal(existsSync(coldRoot), true);
+        assert.deepEqual(readdirSync(coldRoot), [], "ordinary refusal preserves the exact incomplete journal");
+      }
+      for (const marker of [admissionMarker, normalMarker, providerMarker, ...ordinaryDirectories]) assert.equal(existsSync(marker), false);
+      if (mode === "existing-cold") {
+        assert.equal(readFileSync(pidFile, "utf8"), String(process.pid));
+        assert.equal(readFileSync(lockFile, "utf8"), `${process.pid}\n`);
+      } else { assert.equal(existsSync(pidFile), false); assert.equal(existsSync(lockFile), false); }
+      continue;
+    }
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error(`sealed spawner did not wait: ${stderr}`)), 10_000);
       const inspect = () => {
@@ -3018,16 +3775,35 @@ export async function observeInternalProductionServiceCensusV1(){return {spawner
     });
     assert.equal(existsSync(pidFile), true);
     assert.equal(existsSync(lockFile), true);
+    assert.equal(existsSync(admissionMarker), true, "ordinary sealed fixture reaches its genuine admission boundary");
     assert.equal(existsSync(normalMarker), false);
+    assert.equal(existsSync(providerMarker), false, "sealed startup performs no provider CLI or quota discovery");
+    for (const directory of ordinaryDirectories) assert.equal(existsSync(directory), false, "sealed startup creates no ordinary producer workspace");
+    const replacement = mode === "foreign-pid" ? pidFile : mode === "foreign-lock" ? lockFile : null;
+    let replacementInode: number | undefined;
+    if (replacement) {
+      const bytes = readFileSync(replacement);
+      renameSync(replacement, `${replacement}.original`);
+      writeFileSync(replacement, bytes);
+      replacementInode = lstatSync(replacement).ino;
+    }
+    if (mode === "parent-symlink") {
+      renameSync(path.dirname(pidFile), `${path.dirname(pidFile)}.original`);
+      symlinkSync(`${path.dirname(pidFile)}.original`, path.dirname(pidFile), "dir");
+    }
     child.kill("SIGTERM");
-    const exit = await new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
+    const exit = await closed;
     assert.deepEqual(exit, { code: 0, signal: null });
-    assert.equal(existsSync(pidFile), false);
-    assert.equal(existsSync(lockFile), false);
+    assert.equal(existsSync(pidFile), mode === "foreign-pid" || mode === "parent-symlink");
+    assert.equal(existsSync(lockFile), mode === "foreign-lock" || mode === "parent-symlink");
+    if (replacement) assert.equal(lstatSync(replacement).ino, replacementInode, "cleanup preserves a same-byte foreign replacement inode");
     assert.equal(existsSync(normalMarker), false);
+    assert.equal(existsSync(providerMarker), false);
+    for (const directory of ordinaryDirectories) assert.equal(existsSync(directory), false);
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     rmSync(fixture, { recursive: true, force: true });
+  }
   }
 });
 
@@ -3581,36 +4357,29 @@ test("P3 runner cleans setup primary crash and signal failures without crossing 
       const helperPath = path.join(moduleLoss.root, "tests/execution-attempts/test-database.ts");
       const helperSource = readFileSync(helperPath, "utf8");
       const holdAnchor = "      database,\n    );\n  } catch (error) {";
-      assert.equal(helperSource.includes(holdAnchor), true);
+      assert.equal(helperSource.split(holdAnchor).length, 2);
       writeFileSync(helperPath, helperSource.replace(
         holdAnchor,
-        "      database,\n    );\n    await new Promise((resolve) => setTimeout(resolve, 30_000));\n  } catch (error) {",
+        `      database,
+    );
+    const published = lstatSync(path.join(capability.marker.projectionRoot, "src/internal-production/baseline-spawner-startup-admission-v1.js"));
+    assert.ok(published.isFile() && !published.isSymbolicLink() && published.size > 0);
+    writeFileSync(2, "P3_TEST_READINESS_PUBLISHED_BEFORE_SETUP_CRASH\\n");
+    process.kill(process.pid, "SIGKILL");
+  } catch (error) {`,
       ));
       p3TestGit(moduleLoss.root, ["add", helperPath]);
-      p3TestGit(moduleLoss.root, ["commit", "-qm", "hold after readiness publication"]);
+      p3TestGit(moduleLoss.root, ["commit", "-qm", "crash after readiness publication"]);
       const running = spawnP3NestedRunner(moduleLoss.root);
-      const setupPid = await waitForP3ConditionV1(() => {
-        const rows = execFileSync("/bin/ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" });
-        for (const row of rows.split("\n")) {
-          const match = /^\s*([0-9]+)\s+([0-9]+)\s+(.+)$/.exec(row);
-          if (match && Number(match[2]) === running.pid && match[3]!.includes("test-database.ts")) {
-            return Number(match[1]);
-          }
-        }
-        return null;
-      }, "module-loss setup child");
-      const readinessPath = await waitForP3ConditionV1(() => {
-        const lsof = execFileSync("/usr/sbin/lsof", ["-a", "-p", String(setupPid), "-d", "cwd", "-Fn"], { encoding: "utf8" });
-        const cwd = lsof.split("\n").find((line) => line.startsWith("n"))?.slice(1);
-        if (!cwd) return null;
-        const candidate = path.join(cwd, "src/internal-production/baseline-spawner-startup-admission-v1.js");
-        return statSync(candidate, { throwIfNoEntry: false })?.isFile() ? candidate : null;
-      }, "readiness module publication");
-      assert.match(readinessPath, /baseline-spawner-startup-admission-v1\.js$/);
-      process.kill(setupPid, "SIGKILL");
       const result = await running.completed;
       assert.notEqual(result.status, 0);
-      assert.match(result.output, /ISOLATED_TEST_COMMAND_SIGNAL:SIGKILL|P3_TEMPLATE_SETUP_FAILED/);
+      assert.match(result.output, /^P3_TEST_READINESS_PUBLISHED_BEFORE_SETUP_CRASH$/m);
+      assert.match(result.output, /ISOLATED_TEST_COMMAND_SIGNAL:SIGKILL/);
+      assert.deepEqual(
+        result.temporaryEntries.filter((entry) => entry.startsWith("setfarm-p3-projection-")),
+        [],
+        "setup crash must remove every owned source projection",
+      );
       assert.deepEqual(await p3DatabaseInventoryV1(admin), baseline);
     } finally {
       moduleLoss.cleanup();
@@ -3794,6 +4563,7 @@ function createPreparedActivationRepositoryFixture(): Readonly<{ root: string; v
   const root = path.join(container, "setfarm");
   mkdirSync(root, { recursive: true, mode: 0o700 });
   cpSync(path.join(activationFixtureSourceRoot, "src"), path.join(root, "src"), { recursive: true });
+  projectCopiedWorkspaceLocatorV1(root, container);
   rmSync(path.join(
     root,
     "src/internal-production/baseline-spawner-startup-admission-v1.ts",
@@ -4673,15 +5443,17 @@ const READY = deepFreeze(${JSON.stringify({
 const STATUS = deepFreeze({
   state: "normal_task0_admission_ready",
   admissionReady: {
-    admissionReadyRef: READY.admissionReadyRef,
     admissionReadyHash: READY.admissionReadyHash,
+    admissionReadyRef: READY.admissionReadyRef,
   },
 });
 export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1() {
   return STATUS;
 }
 export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair) {
-  if (pair.admissionReadyRef !== READY.admissionReadyRef
+  if (!pair || Object.getPrototypeOf(pair) !== Object.prototype
+    || JSON.stringify(Reflect.ownKeys(pair)) !== JSON.stringify(["admissionReadyRef", "admissionReadyHash"])
+    || pair.admissionReadyRef !== READY.admissionReadyRef
     || pair.admissionReadyHash !== READY.admissionReadyHash) throw new Error("PAIR_INVALID");
   return READY;
 }
@@ -4754,15 +5526,17 @@ const READY = deepFreeze(${JSON.stringify({
 const STATUS = deepFreeze({
   state: "normal_task0_admission_ready",
   admissionReady: {
-    admissionReadyRef: READY.admissionReadyRef,
     admissionReadyHash: READY.admissionReadyHash,
+    admissionReadyRef: READY.admissionReadyRef,
   },
 });
 export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1() {
   return STATUS;
 }
 export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair) {
-  if (pair.admissionReadyRef !== READY.admissionReadyRef
+  if (!pair || Object.getPrototypeOf(pair) !== Object.prototype
+    || JSON.stringify(Reflect.ownKeys(pair)) !== JSON.stringify(["admissionReadyRef", "admissionReadyHash"])
+    || pair.admissionReadyRef !== READY.admissionReadyRef
     || pair.admissionReadyHash !== READY.admissionReadyHash) throw new Error("PAIR_INVALID");
   return READY;
 }
@@ -7883,22 +8657,23 @@ test("real PostgreSQL remaining P3 terminal ports prove every status and fixed p
   ] as const;
   const findingInputs: Array<Readonly<{ findingSetHash: string }>> = [];
   for (const implementationId of findingImplementations) {
-    const findingSetHash = hashCanonicalJson({ implementationId, sequence: ++sequence });
-    const findingSetId = `FSET_${findingSetHash}`;
-    const findingId = `FIND_${hashCanonicalJson({ findingSetHash })}`;
-    const identity = createInternalProductionFindingCanonicalOwnerIdentityV1(
-      Object.freeze({ findingSetHash }),
-    );
-    const payload = {
-      schema: "setfarm.finding-set.v1",
-      findingSetHash,
-      findingSetId,
+    const payload = createFindingSetV1({
       runId: parent.run_id,
-      storyId: `task2-story-${sequence}`,
+      storyId: `TASK2-STORY-${++sequence}`,
       packetHash: SHA_A,
       sliceHash: SHA_B,
       sourceRevision: { sha: GIT_A, treeHash: GIT_B },
-    };
+      findings: [{ origin: "test", classification: "structured", invariantRef: "INV_TASK2",
+        sourceLocators: [{ path: `src/task2-${sequence}.ts`, contentHash: SHA_C }],
+        observedEvidenceRefs: [SHA_A], expectedPredicateRef: "EVID_TASK2", status: "satisfied",
+        resolutionEvidenceRefs: [SHA_B] }],
+    });
+    const { findingSetHash, findingSetId } = payload;
+    const findingPayload = payload.findings[0]!;
+    const { findingId } = findingPayload;
+    const identity = createInternalProductionFindingCanonicalOwnerIdentityV1(
+      Object.freeze({ findingSetHash }),
+    );
     const bound = await bindTerminalOwner(implementationId, identity, async (transaction) => {
       await transaction`
         INSERT INTO finding_sets (
@@ -7909,20 +8684,13 @@ test("real PostgreSQL remaining P3 terminal ports prove every status and fixed p
           ${GIT_A},${GIT_B},${transaction.json([findingId])},${transaction.json(payload)}
         )
       `;
-      const findingPayload = {
-        findingId,
-        origin: "test",
-        classification: "structured",
-        invariantRef: "INV_TASK2",
-        status: "satisfied",
-      };
       await transaction`
         INSERT INTO findings (
           finding_set_hash,finding_id,origin,classification,invariant_ref,status,
           source_fingerprint,payload
         ) VALUES (
           ${findingSetHash},${findingId},'test','structured','INV_TASK2','satisfied',
-          ${SHA_C},${transaction.json(findingPayload)}
+          ${hashCanonicalJson(findingPayload.sourceLocators)},${transaction.json(findingPayload)}
         )
       `;
     });
@@ -8084,7 +8852,16 @@ test("real PostgreSQL remaining P3 terminal ports prove every status and fixed p
     /EXECUTION_ATTEMPT_OWNER_UNAVAILABLE/,
   );
 
-  const partialFindingSetHash = hashCanonicalJson({ partial: ++sequence });
+  const partialPayload = createFindingSetV1({
+    runId: parent.run_id, storyId: `TASK2-PARTIAL-STORY-${++sequence}`,
+    packetHash: SHA_A, sliceHash: SHA_B, sourceRevision: { sha: GIT_A, treeHash: GIT_B },
+    findings: [0, 1].map((index) => ({ origin: "test" as const, classification: "structured" as const,
+      invariantRef: "INV_TASK2_PARTIAL",
+      sourceLocators: [{ path: `src/partial-${sequence}-${index}.ts`, contentHash: SHA_C }],
+      observedEvidenceRefs: [SHA_A], expectedPredicateRef: "EVID_TASK2_PARTIAL",
+      status: "satisfied" as const, resolutionEvidenceRefs: [SHA_B] })),
+  });
+  const partialFindingSetHash = partialPayload.findingSetHash;
   const partialFindingIdentity = createInternalProductionFindingCanonicalOwnerIdentityV1(
     Object.freeze({ findingSetHash: partialFindingSetHash }),
   );
@@ -8094,19 +8871,11 @@ test("real PostgreSQL remaining P3 terminal ports prove every status and fixed p
         producerImplementationId: "a-finding-recovery-repository-v1",
         ownerKey: partialFindingSetHash,
       });
-      const firstFindingId = `FIND_${hashCanonicalJson({ partialFindingSetHash, index: 0 })}`;
-      const missingFindingId = `FIND_${hashCanonicalJson({ partialFindingSetHash, index: 1 })}`;
-      const findingSetId = `FSET_${partialFindingSetHash}`;
-      const payload = {
-        schema: "setfarm.finding-set.v1",
-        findingSetHash: partialFindingSetHash,
-        findingSetId,
-        runId: parent.run_id,
-        storyId: `task2-partial-story-${sequence}`,
-        packetHash: SHA_A,
-        sliceHash: SHA_B,
-        sourceRevision: { sha: GIT_A, treeHash: GIT_B },
-      };
+      const payload = partialPayload;
+      const { findingSetId } = payload;
+      const findingPayload = payload.findings[0]!;
+      const firstFindingId = findingPayload.findingId;
+      const missingFindingId = payload.findings[1]!.findingId;
       await transaction`
         INSERT INTO finding_sets (
           finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
@@ -8117,20 +8886,13 @@ test("real PostgreSQL remaining P3 terminal ports prove every status and fixed p
           ${transaction.json([firstFindingId, missingFindingId])},${transaction.json(payload)}
         )
       `;
-      const findingPayload = {
-        findingId: firstFindingId,
-        origin: "test",
-        classification: "structured",
-        invariantRef: "INV_TASK2_PARTIAL",
-        status: "satisfied",
-      };
       await transaction`
         INSERT INTO findings (
           finding_set_hash,finding_id,origin,classification,invariant_ref,status,
           source_fingerprint,payload
         ) VALUES (
           ${partialFindingSetHash},${firstFindingId},'test','structured','INV_TASK2_PARTIAL',
-          'satisfied',${SHA_C},${transaction.json(findingPayload)}
+          'satisfied',${hashCanonicalJson(findingPayload.sourceLocators)},${transaction.json(findingPayload)}
         )
       `;
       await db.bindInternalProductionOwnerReservationV1(transaction, {
@@ -8489,6 +9251,246 @@ const EXPECTED_A_TUPLES = [
   ["src/db-pg.ts", "reserveRecoverySourceRunOwnerV1", "a-recovery-source-run-v1", "source-run", "source-bootstrap-operation-run-v1", "sourceRunOwnerCount"],
   ["src/db-pg.ts", "reserveRecoverySourceBootstrapRunOwnerV1", "a-recovery-source-bootstrap-run-v1", "run", "source-bootstrap-reciprocal-run-v1", "activeRunCount"],
 ] as const;
+
+test("finding terminal projection authenticates complete published content, not only member IDs", async () => {
+  const source = readFileSync(path.join(process.cwd(), "src/db-pg.ts"), "utf8");
+  const start = source.indexOf("const FINDING_TERMINAL_RESOLVER_CONFIG_V1:");
+  const end = source.indexOf("const OPERATIONAL_DELIVERY_TERMINAL_RESOLVER_CONFIG_V1:", start);
+  assert.ok(start >= 0 && end > start);
+  const config = source.slice(start, end);
+  const header = "  lockProjection: ";
+  assert.equal(config.split(header).length, 2);
+  const arrow = config.slice(config.indexOf(header) + header.length, config.lastIndexOf("\n  },") + 4);
+  const executable = transformSync(`const project = ${arrow};`, { loader: "ts", target: "es2022" }).code;
+  const project = Function("createInternalProductionFindingCanonicalOwnerIdentityV1", "hashCanonicalJson", "requireFindingPublicationV1", `${executable}\nreturn project;`)(
+    createInternalProductionFindingCanonicalOwnerIdentityV1,
+    hashCanonicalJson,
+    requireFindingPublicationV1,
+  ) as (sql: unknown, input: Readonly<{ findingSetHash: string }>) => Promise<Readonly<{ status: string; terminalOwnerHash: string }>>;
+  const value = createFindingSetV1({
+    runId: "finding-publication-terminal-fixture", storyId: "US-001", packetHash: SHA_A, sliceHash: SHA_B,
+    sourceRevision: { sha: GIT_A, treeHash: GIT_B },
+    findings: [{ origin: "test", classification: "structured", invariantRef: "INV_PUBLICATION",
+      sourceLocators: [{ path: "src/example.ts", contentHash: SHA_C }], observedEvidenceRefs: [SHA_A],
+      expectedPredicateRef: "EVID_PUBLICATION", status: "open" },
+      { origin: "runtime", classification: "structured", invariantRef: "INV_SECOND_PUBLICATION",
+        sourceLocators: [{ path: "src/second.ts", contentHash: SHA_B }], observedEvidenceRefs: [SHA_C],
+        expectedPredicateRef: "EVID_SECOND_PUBLICATION", status: "open" }],
+  });
+  const parent = { finding_set_hash: value.findingSetHash, finding_set_id: value.findingSetId,
+    run_id: value.runId, story_id: value.storyId, packet_hash: value.packetHash, slice_hash: value.sliceHash,
+    source_sha: value.sourceRevision.sha, source_tree_hash: value.sourceRevision.treeHash,
+    finding_ids: value.findings.map((finding) => finding.findingId), payload: value };
+  const children = value.findings.map((finding) => ({ finding_set_hash: value.findingSetHash,
+    finding_id: finding.findingId, origin: finding.origin, classification: finding.classification,
+    invariant_ref: finding.invariantRef, status: finding.status,
+    source_fingerprint: hashCanonicalJson(finding.sourceLocators), payload: finding }));
+  const observe = (selectedParent: unknown, selectedChildren: readonly unknown[]) => project(
+    async (query: TemplateStringsArray, ...params: unknown[]) => {
+      assert.equal(params[0], value.findingSetHash);
+      const text = query.join("?");
+      assert.match(text, /FOR UPDATE/);
+      if (/FROM finding_sets\b/.test(text)) return [selectedParent];
+      assert.match(text, /FROM findings\b/);
+      return selectedChildren;
+    }, { findingSetHash: value.findingSetHash },
+  );
+  const published = await observe(parent, children);
+  assert.equal(published.status, "published", "open issue status does not keep publication ownership active");
+  assert.equal(published.terminalOwnerHash, hashCanonicalJson({
+    schema: "setfarm.internal-production-finding-terminal-owner.v1", findingSetHash: value.findingSetHash, status: "published",
+  }));
+  await assert.rejects(observe(parent, [{ ...children[0], source_fingerprint: SHA_B }, ...children.slice(1)]), /INTERNAL_PRODUCTION_FINDING_OWNER_UNAVAILABLE/);
+  await assert.rejects(observe(parent, [{ ...children[0], payload: { ...children[0]!.payload, status: "invalid" } }, ...children.slice(1)]), /INTERNAL_PRODUCTION_FINDING_OWNER_UNAVAILABLE/);
+  await assert.rejects(observe({ ...parent, source_sha: GIT_B }, children), /INTERNAL_PRODUCTION_FINDING_OWNER_UNAVAILABLE/);
+  assert.deepEqual(requireFindingPublicationV1(parent, [...children].reverse()), value, "row order is not publication identity");
+  for (const field of ["finding_set_hash", "finding_set_id", "run_id", "story_id", "packet_hash", "slice_hash", "source_sha", "source_tree_hash"] as const) {
+    assert.throws(() => requireFindingPublicationV1({ ...parent, [field]: "crossed" }, children), /FINDING_PUBLICATION_INVALID/, field);
+  }
+  for (const field of ["finding_set_hash", "finding_id", "origin", "classification", "invariant_ref", "status", "source_fingerprint"] as const) {
+    assert.throws(() => requireFindingPublicationV1(parent, [{ ...children[0]!, [field]: "crossed" }, ...children.slice(1)]), /FINDING_PUBLICATION_INVALID/, field);
+  }
+  for (const selected of [children.slice(1), [...children, children[0]!], [children[0]!, children[0]!]]) {
+    assert.throws(() => requireFindingPublicationV1(parent, selected), /FINDING_PUBLICATION_INVALID/, "missing, extra or duplicated member");
+  }
+  const sparse = new Array<typeof children[number]>(children.length);
+  sparse[0] = children[0]!;
+  assert.throws(() => requireFindingPublicationV1(parent, sparse), /FINDING_PUBLICATION_INVALID/);
+  assert.throws(() => requireFindingPublicationV1({ ...parent, finding_ids: [...parent.finding_ids].reverse() }, children), /FINDING_PUBLICATION_INVALID/);
+  assert.throws(() => requireFindingPublicationV1({ ...parent, payload: { ...value, findingSetHash: SHA_A } }, children), /FINDING_PUBLICATION_INVALID/);
+  const inventory = observeLegacyFindingPublicationInventoryV1([parent], children, [{ id: value.runId, status: "failed" }]);
+  assert.deepEqual(inventory.entries, [{ findingSetHash: value.findingSetHash,
+    publicationHash: hashCanonicalJson({ schema: "setfarm.finding-publication.v1", findingSet: value }),
+    runId: value.runId, terminalRunStatus: "failed" }]);
+  assert.deepEqual(validateLegacyFindingPublicationInventoryV1(inventory), inventory);
+  const sharedRunEntries = [
+    { ...inventory.entries[0]!, findingSetHash: "1".repeat(64) },
+    { ...inventory.entries[0]!, findingSetHash: "2".repeat(64) },
+  ];
+  const sharedBody = { schema: inventory.schema, entries: sharedRunEntries };
+  assert.equal(validateLegacyFindingPublicationInventoryV1({ ...sharedBody, inventoryHash: hashCanonicalJson(sharedBody) }).entries.length, 2);
+  const conflictBody = { ...sharedBody, entries: [sharedRunEntries[0]!, { ...sharedRunEntries[1]!, terminalRunStatus: "completed" }] };
+  assert.throws(() => validateLegacyFindingPublicationInventoryV1({ ...conflictBody, inventoryHash: hashCanonicalJson(conflictBody) }), /INVENTORY_INVALID/);
+  assert.deepEqual(observeLegacyFindingPublicationInventoryV1([], [], []).entries, []);
+  assert.deepEqual(observeLegacyFindingPublicationInventoryV1([parent], [...children].reverse(), [{ id: value.runId, status: "failed" }]), inventory);
+  for (const [parents, members, runs] of [
+    [Array(4097).fill(parent), [], []],
+    [[], Array(65537).fill(children[0]), []],
+    [[], [], Array(4097).fill({ id: value.runId, status: "failed" })],
+  ] as const) assert.throws(() => observeLegacyFindingPublicationInventoryV1(parents, members, runs), /INVENTORY_LIMIT/);
+  const maximalEntries = Array.from({ length: 4096 }, (_, index) => ({ ...inventory.entries[0]!, findingSetHash: index.toString(16).padStart(64, "0") }));
+  const maximalBody = { schema: inventory.schema, entries: maximalEntries };
+  assert.equal(validateLegacyFindingPublicationInventoryV1({ ...maximalBody, inventoryHash: hashCanonicalJson(maximalBody) }).entries.length, 4096);
+  const overLimitBody = { ...maximalBody, entries: [...maximalEntries, { ...inventory.entries[0]!, findingSetHash: "f".repeat(64) }] };
+  assert.throws(() => validateLegacyFindingPublicationInventoryV1({ ...overLimitBody, inventoryHash: hashCanonicalJson(overLimitBody) }), /INVENTORY_INVALID/);
+  assert.throws(() => observeLegacyFindingPublicationInventoryV1([parent], children, []), /TERMINAL_RUN_INVALID/);
+  assert.throws(() => observeLegacyFindingPublicationInventoryV1([parent], children, [{ id: value.runId, status: "running" }]), /TERMINAL_RUN_INVALID/);
+  assert.throws(() => observeLegacyFindingPublicationInventoryV1([parent], children, [{ id: value.runId, status: "failed" }, { id: value.runId, status: "failed" }]), /TERMINAL_RUN_INVALID/);
+  assert.throws(() => observeLegacyFindingPublicationInventoryV1([], children, []), /ORPHAN_CHILD/);
+  assert.throws(() => observeLegacyFindingPublicationInventoryV1([parent, parent], children, [{ id: value.runId, status: "failed" }]), /PARENT_DUPLICATE/);
+  assert.throws(() => observeLegacyFindingPublicationInventoryV1([parent], children.slice(1), [{ id: value.runId, status: "failed" }]), /FINDING_PUBLICATION_INVALID/);
+  for (const entries of [[...inventory.entries, ...inventory.entries], [{ ...inventory.entries[0], terminalRunStatus: ["failed"] }], [{ ...inventory.entries[0], extra: true }]]) {
+    const body = { schema: inventory.schema, entries };
+    assert.throws(() => validateLegacyFindingPublicationInventoryV1({ ...body, inventoryHash: hashCanonicalJson(body) }), /INVENTORY_INVALID/);
+  }
+  assert.throws(() => validateLegacyFindingPublicationInventoryV1({ ...inventory, inventoryHash: SHA_A }), /INVENTORY_INVALID/);
+  assert.equal(Object.isFrozen(inventory.entries[0]), true);
+});
+
+test("post32 finding census refuses closed sidecars without publications before authority lookup", async () => {
+  const source = readFileSync(path.join(process.cwd(), "src/db-pg.ts"), "utf8");
+  const start = source.indexOf("async function observePostManifestFindingPublicationOwnersV1(");
+  const end = source.indexOf("export async function observeInternalProductionPostManifestOwnerCensusSnapshotV1(", start);
+  assert.ok(start >= 0 && end > start);
+  const executable = transformSync(source.slice(start, end), { loader: "ts", target: "es2022" }).code;
+  const observe = Function("LEGACY_FINDING_PUBLICATION_MAX_SETS_V1", "LEGACY_FINDING_PUBLICATION_MAX_CHILDREN_V1", "FINDING_OWNER_IMPLEMENTATION_IDS_V1", `${executable}\nreturn observePostManifestFindingPublicationOwnersV1;`)(4096, 65536, ["a-finding-recovery-repository-v1"]);
+  const rows = [{ state: "closed", owner_key: SHA_A, producer_implementation_id: "a-finding-recovery-repository-v1" }];
+  let calls = 0;
+  await assert.rejects(observe(async (query: TemplateStringsArray) => {
+    calls += 1;
+    assert.doesNotMatch(query.join("?"), /FOR UPDATE|INSERT|DELETE|UPDATE/);
+    if (query.join("?").includes("FROM finding_sets") || query.join("?").includes("FROM findings")) return [];
+    assert.match(query.join("?"), /FROM internal_production_owner_reservations_v1/);
+    return rows;
+  }, 0), /COMPLETE_FINDING_PUBLICATION_CORRUPTION/);
+  assert.equal(calls, 3);
+});
+
+test("post32 census compares the entire migration inventory even when every legacy row is missing", async () => {
+  const source = readFileSync(path.join(process.cwd(), "src/db-pg.ts"), "utf8");
+  const start = source.indexOf("async function observePostManifestFindingPublicationOwnersV1(");
+  const end = source.indexOf("export async function observeInternalProductionPostManifestOwnerCensusSnapshotV1(", start);
+  assert.ok(start >= 0 && end > start);
+  const executable = transformSync(source.slice(start, end).replace('await import("./internal-production/baseline-post-handoff-receipt-v1.js")', "provenancePort"), { loader: "ts", target: "es2022" }).code;
+  const value = createFindingSetV1({ runId: "legacy-census-run", storyId: "US-001", packetHash: SHA_A, sliceHash: SHA_B,
+    sourceRevision: { sha: GIT_A, treeHash: GIT_B }, findings: [{ origin: "test", classification: "structured",
+      invariantRef: "INV_LEGACY_CENSUS", sourceLocators: [{ path: "src/example.ts", contentHash: SHA_C }],
+      observedEvidenceRefs: [SHA_A], expectedPredicateRef: "EVID_LEGACY_CENSUS", status: "open" }] });
+  const parent = { finding_set_hash: value.findingSetHash, finding_set_id: value.findingSetId, run_id: value.runId,
+    story_id: value.storyId, packet_hash: value.packetHash, slice_hash: value.sliceHash, source_sha: GIT_A,
+    source_tree_hash: GIT_B, finding_ids: value.findings.map((f) => f.findingId), payload: value };
+  const children = value.findings.map((f) => ({ finding_set_hash: value.findingSetHash, finding_id: f.findingId,
+    origin: f.origin, classification: f.classification, invariant_ref: f.invariantRef, status: f.status,
+    source_fingerprint: hashCanonicalJson(f.sourceLocators), payload: f }));
+  const retained = observeLegacyFindingPublicationInventoryV1([parent], children, [{ id: value.runId, status: "failed" }]);
+  const empty = observeLegacyFindingPublicationInventoryV1([], [], []);
+  const application = { evidenceHash: SHA_C };
+  const journal = { version: 32, name: "contract-spine-bootstrap-main-claim-handoff-v1", checksum: SHA_B, state: "applied", release_sha: GIT_A };
+  const observe = async (present: boolean, inventory = retained, runStatus = "failed", journalOverride = {}, unavailable = false, modern = false, journalCopies = 1) => {
+    let provenanceReads = 0;
+    const identity = createInternalProductionFindingCanonicalOwnerIdentityV1({ findingSetHash: value.findingSetHash });
+    const row = { state: "closed", owner_key: value.findingSetHash, producer_implementation_id: "a-finding-recovery-repository-v1",
+      reservation_ref: "reserved", reservation_hash: SHA_B, close_ref: "closed", close_hash: SHA_C, head_version: 1,
+      close_head_predecessor_hash: SHA_B, close_head_successor_hash: SHA_A };
+    const dependencies = {
+      LEGACY_FINDING_PUBLICATION_MAX_SETS_V1: 4096, LEGACY_FINDING_PUBLICATION_MAX_CHILDREN_V1: 65536,
+      FINDING_OWNER_IMPLEMENTATION_IDS_V1: ["a-finding-recovery-repository-v1"], requireFindingPublicationV1, observeLegacyFindingPublicationInventoryV1,
+      sameJsonValueV1: (a: unknown, b: unknown) => canonicalJsonStringify(a) === canonicalJsonStringify(b),
+      validateCurrentInternalProductionOwnerAdmissionHeadV1: async (sql: unknown) => { assert.equal(sql, querySql); return { hash: SHA_A, version: 1, migrationApplication: application }; },
+      validateOwnerAdmissionAncestryToGenesisV1: async (sql: unknown) => { assert.equal(sql, querySql); return modern ? [{ version: 1, authority: { authority_kind: "close", authority_ref: row.close_ref, authority_hash: row.close_hash, predecessor_head_hash: SHA_B, successor_head_hash: SHA_A } }] : []; },
+      resolveOwnerReservationInTransactionV1: async (sql: unknown, _pair: unknown, lock: boolean) => { assert.equal(sql, querySql); assert.equal(lock, false); return { category: "finding", ownerKey: value.findingSetHash }; },
+      validateInternalProductionBoundOwnerReservationV1: () => ({ canonicalOwnerIdentity: identity }),
+      validateInternalProductionOwnerReservationCloseV1: () => ({ terminalOwnerRef: `${identity.ownerRef}/terminal/published`, terminalOwnerHash: hashCanonicalJson({ schema: "setfarm.internal-production-finding-terminal-owner.v1", findingSetHash: value.findingSetHash, status: "published" }) }),
+      createInternalProductionFindingCanonicalOwnerIdentityV1, hashCanonicalJson,
+      isExactAppliedBootstrapMainClaimHandoffMigration32JournalRowV1: (row: unknown) => canonicalJsonStringify(row) === canonicalJsonStringify(journal),
+      provenancePort: { resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1: async (input: unknown) => {
+        provenanceReads += 1;
+        assert.deepEqual(input, { migrationApplication: application, migrationSourceSha: GIT_A });
+        if (unavailable) throw new Error("EXACT_MIGRATION_PROVENANCE_MISSING");
+        return inventory;
+      } },
+    };
+    const census = Function(...Object.keys(dependencies), `${executable}\nreturn observePostManifestFindingPublicationOwnersV1;`)(...Object.values(dependencies));
+    const querySql = async (query: TemplateStringsArray) => {
+      const text = query.join("?");
+      assert.doesNotMatch(text, /FOR UPDATE|INSERT|DELETE|UPDATE/);
+      if (/FROM finding_sets\b/.test(text)) return present ? [parent] : [];
+      if (/FROM findings\b/.test(text)) return present ? children : [];
+      if (/FROM internal_production_owner_reservations_v1\b/.test(text)) return modern ? [row] : [];
+      if (/FROM internal_production_owner_admission_head_v1\b/.test(text)) return [{ head_version: 1, head_hash: SHA_A }];
+      if (/FROM (?:public\.)?setfarm_schema_migrations\b/.test(text)) return Array.from({ length: journalCopies }, () => ({ ...journal, ...journalOverride }));
+      if (/FROM (?:public\.)?runs\b/.test(text)) return present && !modern ? [{ id: value.runId, status: runStatus }] : [];
+      assert.fail(`unexpected census query: ${text}`);
+    };
+    const result = await census(querySql, present ? 1 : 0);
+    assert.equal(provenanceReads, 1, "even empty census must authenticate historical membership");
+    return result;
+  };
+  await assert.rejects(observe(false), /LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT/, "all retained legacy rows missing must refuse");
+  assert.equal(await observe(true), 0);
+  assert.equal(await observe(false, empty), 0);
+  await assert.rejects(observe(true, empty), /LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT/, "new unreserved publication is not legacy");
+  await assert.rejects(observe(true, retained, "completed"), /LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT/);
+  await assert.rejects(observe(true, retained, "running"), /TERMINAL_RUN_INVALID/);
+  await assert.rejects(observe(false, empty, "failed", {}, true), /EXACT_MIGRATION_PROVENANCE_MISSING/);
+  assert.equal(await observe(true, empty, "failed", {}, false, true), 0);
+  await assert.rejects(observe(true, retained, "failed", {}, false, true), /LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT/, "modern sidecar cannot hide retained legacy membership");
+  for (const count of [0, 2]) await assert.rejects(observe(false, empty, "failed", {}, false, false, count), /COMPLETE_FINDING_PUBLICATION_CORRUPTION/);
+  for (const override of [{ state: "pending" }, { checksum: SHA_C }, { name: "wrong" }, { version: 31 }]) {
+    await assert.rejects(observe(false, empty, "failed", override), /COMPLETE_FINDING_PUBLICATION_CORRUPTION/);
+  }
+});
+
+test("P3 authority transfer preserves private directory modes under host umask", () => {
+  const temporary = mkdtempSync(path.join(tmpdir(), "setfarm-p3-copy-mode-"));
+  const previousUmask = process.umask(0o022);
+  try {
+    const fixture = { root: path.join(temporary, "fixture/setfarm") };
+    const projectionRoot = path.join(temporary, "projection/setfarm");
+    mkdirSync(fixture.root, { recursive: true, mode: 0o700 });
+    mkdirSync(projectionRoot, { recursive: true, mode: 0o700 });
+    const data = path.join(path.dirname(fixture.root), "data");
+    mkdirSync(path.join(data, "internal-production-baseline/current-entry-v1"), { recursive: true, mode: 0o700 });
+    const record = "internal-production-baseline/current-entry-v1/record.json";
+    writeFileSync(path.join(data, record), "authority bytes\n", { mode: 0o600 });
+    const source = readFileSync(path.join(process.cwd(), "tests/execution-attempts/test-database.ts"), "utf8");
+    const start = source.indexOf('cpSync(path.join(path.dirname(fixture.root), "data"),');
+    const end = source.indexOf("\n    });", start);
+    assert.ok(start >= 0 && end > start);
+    Function("cpSync", "path", "fixture", "projectionRoot", source.slice(start, end + 8))(cpSync, path, fixture, projectionRoot);
+    const copied = path.join(path.dirname(projectionRoot), "data");
+    for (const directory of ["", "internal-production-baseline", "internal-production-baseline/current-entry-v1"]) {
+      assert.equal(lstatSync(path.join(copied, directory)).mode & 0o777, 0o700, directory || "data");
+    }
+    assert.equal(lstatSync(path.join(copied, record)).mode & 0o777, 0o600);
+    assert.equal(readFileSync(path.join(copied, record), "utf8"), "authority bytes\n");
+  } finally { process.umask(previousUmask); rmSync(temporary, { recursive: true, force: true }); }
+});
+
+test("legacy migration continuity cannot acquire nonempty membership from historical V1", async () => {
+  const module = await import("../../src/findings/legacy-finding-publication-inventory-v1.js");
+  const empty = module.createLegacyFindingPublicationInventoryValueV1([]);
+  const published = module.createLegacyFindingPublicationInventoryValueV1([{ findingSetHash: SHA_A, publicationHash: SHA_B, runId: "terminal-run", terminalRunStatus: "failed" }]);
+  module.requireLegacyFindingPublicationInventoryContinuityV1(null, null);
+  module.requireLegacyFindingPublicationInventoryContinuityV1(null, empty);
+  module.requireLegacyFindingPublicationInventoryContinuityV1(empty, null);
+  module.requireLegacyFindingPublicationInventoryContinuityV1(published, structuredClone(published));
+  for (const [before, after] of [[null, published], [published, null], [empty, published], [published, empty]] as const) {
+    assert.throws(() => module.requireLegacyFindingPublicationInventoryContinuityV1(before, after), /INVENTORY_DRIFT/);
+  }
+  const changed = module.createLegacyFindingPublicationInventoryValueV1([{ ...published.entries[0]!, publicationHash: "f".repeat(64) }]);
+  assert.throws(() => module.requireLegacyFindingPublicationInventoryContinuityV1(published, changed), /INVENTORY_DRIFT/);
+});
 
 test("freezes the exact 35-category registry and complete 36-counter census mapping", () => {
   assert.deepEqual(INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_V1, EXPECTED_CATEGORIES);

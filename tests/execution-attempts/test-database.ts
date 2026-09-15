@@ -37,6 +37,8 @@ import {
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { observeLegacyFindingPublicationInventoryV1 } from "../../src/findings/finding-publication-v1.js";
+import { validateLegacyFindingPublicationInventoryV1, type LegacyFindingPublicationInventoryV1 } from "../../src/findings/legacy-finding-publication-inventory-v1.js";
 import {
   convergenceArtifactRef,
   createV3ReleaseAdmissionV1,
@@ -377,7 +379,7 @@ async function verifyP3ActivatedCloneV1(
   assertRecursivelyFrozenV1(status);
   assert.equal(status.state, "normal_task0_admission_ready");
   const ready = await readiness.resolveInternalProductionTask0SpawnerAdmissionReadyV1(
-    status.admissionReady,
+    { admissionReadyRef: status.admissionReady.admissionReadyRef, admissionReadyHash: status.admissionReady.admissionReadyHash },
   );
   assertRecursivelyFrozenV1(ready);
   assert.deepEqual({
@@ -484,7 +486,11 @@ export async function createIsolatedTestDatabase(
         database,
         name,
       });
-      const evidence = mintBootstrapMainClaimHandoffGuardedMigration32EvidenceForControllerV1({
+      const p3Operation = marker === null ? null : await (await import("../../src/internal-production/baseline-post-handoff-receipt-v1.js")).observePreparedInternalProductionCurrentEntryOperationV1();
+      if (marker !== null && p3Operation === null) throw new Error("P3_MIGRATION_PROVENANCE_OPERATION_MISSING");
+      const evidence = mintBootstrapMainClaimHandoffGuardedMigration32EvidenceForControllerV1(marker !== null && p3Operation !== null
+        ? createP3LegacyMigrationProvenanceV1(p3Operation, marker.templateDatabaseName).evidence
+        : {
           schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-evidence.v1",
           purpose: "task6a-guarded-migration-32-after-sealed-spawner-v1",
           currentEntryOperationRef: `setfarm://tests/${database}/current-entry-operation`,
@@ -762,16 +768,74 @@ function completeP3PbaObservationV1(vendorProducerCommit: string) {
   };
 }
 
-function p3FixtureReceiptWithOperationPublisherV1(source: string): string {
+function createP3LegacyMigrationProvenanceV1(
+  operation: import("../../src/internal-production/baseline-post-handoff-receipt-v1.js").InternalProductionCurrentEntryOperationV1,
+  templateDatabase: string,
+  inventory?: LegacyFindingPublicationInventoryV1,
+) {
+  const fact = (name: string) => hashCanonicalJson({ schema: "setfarm.p3-template-activation-fact.v1", database: templateDatabase, name });
+  const censusKeys = [
+    "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount", "activeCompletionOwnerCount", "unsettledMandatoryEffectCount",
+    "ordinaryStartingCount", "restartReservationCount", "serviceRestartOperationCount", "launchPreparationCount", "preparedLaunchCount", "stagedCaseCount",
+    "fixtureAttemptCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount", "docsSessionCount", "docsLeaseCount", "fleetStageCount",
+    "fleetInflightCount", "fleetPendingReviewCount", "matrixInflightCount", "launchOutboxCount", "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount",
+    "operationalDeliveryCount", "sourceRunOwnerCount", "coldRehearsalOwnerCount", "compilationLeaseCount", "executionLeaseCount", "ownedProcessCount",
+    "ownedListenerCount", "ownedWorktreeCount", "dirtyWorktreeCount", "staleChildCount",
+  ];
+  const legacyBody = {
+    schema: inventory === undefined ? "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1" : "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2",
+    ...(inventory === undefined ? {} : { legacyFindingPublicationInventory: validateLegacyFindingPublicationInventoryV1(inventory) }),
+    observationKind: "legacy-pre-manifest-existing-live-truth",
+    ...operation.authorityV3Migration31Audit,
+    cleanSetfarmSourceSha: operation.controllerSource.sha, cleanSetfarmTreeHash: operation.controllerSource.treeHash,
+    cleanSetfarmBuildHash: operation.controllerSource.buildHash, observedSpawnerGenerationHash: fact("sealed-spawner-generation"),
+    census: Object.fromEntries(censusKeys.map((key) => [key, 0])), allThirtySixScalarCountsZero: true,
+    ownerReservationSidecarState: "absent-before-migration-32", ownerAdmissionHeadState: "absent-before-migration-32",
+    manifestActivationState: "absent-before-initial-a-activation",
+  };
+  const observationHash = hashCanonicalJson(legacyBody);
+  const legacy = { ...legacyBody, observationRef: `setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/${observationHash}`, observationHash };
+  const facts = {
+    currentEntryOperationRef: operation.operationRef, currentEntryOperationHash: operation.operationHash,
+    sealedSpawnerAdmissionRef: `setfarm://internal-production/pre-schema-spawner-sealed-admission/sha256/${fact("sealed-spawner-admission")}`,
+    sealedSpawnerAdmissionHash: fact("sealed-spawner-admission"),
+    postPredecessorTerminationLegacyZeroOwnerObservationRef: legacy.observationRef,
+    postPredecessorTerminationLegacyZeroOwnerObservationHash: legacy.observationHash,
+    ...operation.authorityV3Migration31Audit, ...operation.pendingBootstrapHandoffMigration,
+    cleanSetfarmSourceSha: operation.controllerSource.sha, cleanSetfarmTreeHash: operation.controllerSource.treeHash,
+    cleanSetfarmBuildHash: operation.controllerSource.buildHash,
+    freshLegacyZeroOwnerObservationRef: legacy.observationRef, freshLegacyZeroOwnerObservationHash: legacy.observationHash,
+  };
+  const purpose = "task6a-guarded-migration-32-after-sealed-spawner-v1" as const;
+  const authorizationBody = { schema: "setfarm.internal-production-pre-manifest-migration-32-authorization.v1", purpose, ...facts };
+  const authorizationHash = hashCanonicalJson(authorizationBody);
+  const authorization = { ...authorizationBody, authorizationRef: `setfarm://internal-production/pre-manifest-migration32-authorization/sha256/${authorizationHash}`, authorizationHash };
+  const consumptionBody = { schema: "setfarm.internal-production-pre-manifest-migration-32-authorization-consumption.v1",
+    currentEntryOperationRef: facts.currentEntryOperationRef, currentEntryOperationHash: facts.currentEntryOperationHash,
+    authorizationRef: authorization.authorizationRef, authorizationHash,
+    sealedSpawnerAdmissionRef: facts.sealedSpawnerAdmissionRef, sealedSpawnerAdmissionHash: facts.sealedSpawnerAdmissionHash,
+    migrationId: "contract-spine-bootstrap-main-claim-handoff-v1", migrationOrdinal: 32 };
+  const consumptionHash = hashCanonicalJson(consumptionBody);
+  const consumption = { ...consumptionBody, consumptionRef: `setfarm://internal-production/pre-manifest-migration32-authorization-consumption/sha256/${consumptionHash}`, consumptionHash };
+  const evidence = { schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-evidence.v1" as const, purpose, ...facts,
+    migrationSourceSha: operation.controllerSource.sha,
+    preManifestMigration32AuthorizationRef: authorization.authorizationRef, preManifestMigration32AuthorizationHash: authorizationHash,
+    preManifestMigration32AuthorizationConsumptionRef: consumption.consumptionRef, preManifestMigration32AuthorizationConsumptionHash: consumptionHash };
+  assert.equal(Object.keys(evidence).length, 22);
+  return { legacy, authorization, consumption, evidence };
+}
+
+function p3FixtureReceiptWithOperationPublisherV1(source: string, root: string): string {
+  const locatorSource = readFileSync(path.join(root, "src/internal-production/baseline-workspace-authority-path-v1.ts"), "utf8");
   const fixtureWorkspaceAuthority =
-    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());';
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");';
   assert.equal(
-    source.split(fixtureWorkspaceAuthority).length,
+    locatorSource.split(fixtureWorkspaceAuthority).length,
     2,
     "P3 activation fixture must inherit exactly one projected workspace authority",
   );
   assert.equal(
-    source.includes('const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");'),
+    locatorSource.includes('const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");'),
     false,
     "P3 activation fixture must not inherit the production workspace authority",
   );
@@ -795,7 +859,73 @@ function p3FixtureReceiptWithOperationPublisherV1(source: string): string {
   assert.equal(continuationReplacements, 2, "P3 fixture operation publisher must stop at both status-continuation boundaries");
   assert.match(fixturePublisher, /export async function prepareP3FixtureCurrentEntryOperationV1/);
   assert.doesNotMatch(fixturePublisher, /prepareInternalProductionCurrentEntryOperationV1|observeInternalProductionServiceCensusV1|ensureTask12PreparedCurrentEntryStatusV1|acquireTask12ControllerLockV1|launchctl|lsof/);
-  return `${fixtureBoundSource}\n${fixturePublisher}\n`;
+  return `${fixtureBoundSource}\n${fixturePublisher}\n${p3FixtureLegacyProvenancePublisherSourceV1()}\n`;
+}
+
+function p3FixtureLegacyProvenancePublisherSourceV1(): string {
+  return `
+export async function publishP3FixtureLegacyMigrationProvenanceV1(value) {
+  publishLegacyZeroRecordV1(legacyZeroPathV1(value.legacy.observationHash), await canonicalRecordBytes(value.legacy));
+  for (const [kind,record,refKey,hashKey,prefix] of [
+    ["authorizations",value.authorization,"authorizationRef","authorizationHash",TASK12_MIGRATION_PREFIXES_V1.authorization],
+    ["consumptions",value.consumption,"consumptionRef","consumptionHash",TASK12_MIGRATION_PREFIXES_V1.consumption],
+  ]) {
+    const body={...record}; delete body[refKey]; delete body[hashKey];
+    const published=await publishTask12HashedRecordV1(kind,body,refKey,hashKey,prefix);
+    if(canonicalComparable(published)!==canonicalComparable(record)) throw new Error("P3_MIGRATION_PROVENANCE_CROSSED");
+  }
+  const body={schema:"setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1", evidenceHash:hashCanonicalJson(value.evidence),
+    authorizationRef:value.authorization.authorizationRef, authorizationHash:value.authorization.authorizationHash,
+    authorizationConsumptionRef:value.consumption.consumptionRef, authorizationConsumptionHash:value.consumption.consumptionHash};
+  return resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1({migrationApplication:{...body,applicationHash:hashCanonicalJson(body)},migrationSourceSha:value.evidence.migrationSourceSha});
+}
+`;
+}
+
+// This capability-gated test adapter exposes existing private leaves only in
+// exact-URL module instances. It adds no runtime port and changes no source file.
+export async function applyP3LegacyFindingMigration32ForTestV1(database: TestDatabase) {
+  authenticateP3ProjectedReadinessTestCapabilityV1();
+  const marker = readP3MarkerV1();
+  assert.ok(database.database.startsWith(`${marker.runDatabasePrefix}_empty_`));
+  assert.equal((await database.sql`SELECT current_database() AS name`)[0]?.name, database.database);
+  const journal = await database.sql`SELECT version,state FROM setfarm_schema_migrations WHERE version>=32 ORDER BY version`;
+  assert.deepEqual([...journal], [], "pending guarded migration has not published a journal row");
+  const pending = await inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1(database.sql);
+  assert.equal(pending.status, "exact_pending_guarded_successor");
+  assert.equal(pending.migration.version, 32);
+  assert.equal(pending.migration.state, "pending");
+  const nonce = randomBytes(12).toString("hex");
+  const receiptUrl = `${pathToFileURL(path.join(P3_FIXTURE_SOURCE_ROOT, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href}?p3-legacy=${nonce}`;
+  const dbUrl = `${pathToFileURL(path.join(P3_FIXTURE_SOURCE_ROOT, "src/db-pg.ts")).href}?p3-legacy=${nonce}`;
+  const hook = `let receiptUrl,dbUrl,publisher;
+export function initialize(data){({receiptUrl,dbUrl,publisher}=data)}
+export async function load(url,context,nextLoad){
+  const result=await nextLoad(url,context);
+  if(url!==receiptUrl && url!==dbUrl)return result;
+  const suffix=url===receiptUrl?publisher:"\\nexport { observePostManifestFindingPublicationOwnersV1 as observeP3LegacyFindingOwnersV1 };\\n";
+  return {...result,source:Buffer.from(result.source).toString("utf8")+suffix};
+}`;
+  register(`data:text/javascript;base64,${Buffer.from(hook).toString("base64")}#${nonce}`, {
+    parentURL: import.meta.url, data: { receiptUrl, dbUrl, publisher: p3FixtureLegacyProvenancePublisherSourceV1() },
+  });
+  const receipt = await import(receiptUrl);
+  const operation = await receipt.observePreparedInternalProductionCurrentEntryOperationV1();
+  assert.ok(operation);
+  const inventory = await database.sql.begin("isolation level repeatable read read only", async (sql) => {
+    const parents = await sql`SELECT finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,source_sha,source_tree_hash,finding_ids,payload FROM finding_sets ORDER BY finding_set_hash LIMIT 4097`;
+    const children = await sql`SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload FROM findings ORDER BY finding_set_hash,finding_id LIMIT 65537`;
+    const runs = await sql`SELECT id,status FROM runs WHERE id IN (SELECT run_id FROM finding_sets) ORDER BY id LIMIT 4097`;
+    return observeLegacyFindingPublicationInventoryV1(parents, children, runs);
+  });
+  const provenance = createP3LegacyMigrationProvenanceV1(operation, database.database, inventory);
+  assert.deepEqual(await receipt.publishP3FixtureLegacyMigrationProvenanceV1(provenance), inventory);
+  await applyBootstrapMainClaimHandoffGuardedMigration32V1(database.sql, mintBootstrapMainClaimHandoffGuardedMigration32EvidenceForControllerV1(provenance.evidence));
+  const exposed = await import(dbUrl);
+  return async () => database.sql.begin("isolation level repeatable read read only", async (sql) => {
+    const counts = await sql`SELECT COUNT(*)::integer AS count FROM findings WHERE status='open'`;
+    return exposed.observeP3LegacyFindingOwnersV1(sql, counts[0]!.count) as Promise<number>;
+  });
 }
 
 function createP3PreparedActivationFixtureV1(): Readonly<{ root: string; vendorCommit: string }> {
@@ -839,7 +969,7 @@ function createP3PreparedActivationFixtureV1(): Readonly<{ root: string; vendorC
   writeP3FixtureFileV1(
     root,
     receiptLocator,
-    p3FixtureReceiptWithOperationPublisherV1(readFileSync(path.join(root, receiptLocator), "utf8")),
+    p3FixtureReceiptWithOperationPublisherV1(readFileSync(path.join(root, receiptLocator), "utf8"), root),
   );
   p3FixtureGitV1(root, ["add", "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts", receiptLocator]);
   p3FixtureGitV1(root, ["commit", "-qm", "P3 fixture controller source"]);
@@ -912,47 +1042,19 @@ async function activateP3TemplateAndWriteReadinessV1(
     p3FixtureGitV1(projectionRoot, [
       "fetch", "--no-tags", fixture.root, operation.controllerSource.sha,
     ]);
+    const provenance = createP3LegacyMigrationProvenanceV1(operation, database);
+    const authenticatedInventory = await fixtureReceipt.publishP3FixtureLegacyMigrationProvenanceV1(provenance);
+    assert.deepEqual(authenticatedInventory.entries, [], "historical P3 fixture has no legacy publication membership");
     cpSync(path.join(path.dirname(fixture.root), "data"), path.join(path.dirname(projectionRoot), "data"), {
       recursive: true,
       errorOnExist: true,
       force: false,
+      // The filtered copy path preserves source directory modes. Node 26's
+      // native unfiltered path creates 0755 directories under umask 0022,
+      // invalidating these already-authenticated private 0700 authorities.
+      filter: () => true,
     });
-    const fact = (name: string) => hashCanonicalJson({
-      schema: "setfarm.p3-template-activation-fact.v1",
-      database,
-      name,
-    });
-    const evidence = mintBootstrapMainClaimHandoffGuardedMigration32EvidenceForControllerV1({
-      schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-evidence.v1",
-      purpose: "task6a-guarded-migration-32-after-sealed-spawner-v1",
-      currentEntryOperationRef: operation.operationRef,
-      currentEntryOperationHash: operation.operationHash,
-      sealedSpawnerAdmissionRef: `setfarm://tests/${database}/sealed-spawner-admission`,
-      sealedSpawnerAdmissionHash: fact("sealed-spawner-admission"),
-      postPredecessorTerminationLegacyZeroOwnerObservationRef:
-        `setfarm://tests/${database}/post-termination-zero-owner`,
-      postPredecessorTerminationLegacyZeroOwnerObservationHash: fact("post-termination-zero-owner"),
-      authorityV3Migration31AuditRef:
-        operation.authorityV3Migration31Audit.authorityV3Migration31AuditRef,
-      authorityV3Migration31AuditHash:
-        operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash,
-      pendingBootstrapHandoffMigrationRef:
-        operation.pendingBootstrapHandoffMigration.pendingBootstrapHandoffMigrationRef,
-      pendingBootstrapHandoffMigrationHash:
-        operation.pendingBootstrapHandoffMigration.pendingBootstrapHandoffMigrationHash,
-      cleanSetfarmSourceSha: operation.controllerSource.sha,
-      cleanSetfarmTreeHash: operation.controllerSource.treeHash,
-      cleanSetfarmBuildHash: operation.controllerSource.buildHash,
-      migrationSourceSha: operation.controllerSource.sha,
-      freshLegacyZeroOwnerObservationRef: `setfarm://tests/${database}/fresh-zero-owner`,
-      freshLegacyZeroOwnerObservationHash: fact("fresh-zero-owner"),
-      preManifestMigration32AuthorizationRef:
-        `setfarm://tests/${database}/migration-32-authorization`,
-      preManifestMigration32AuthorizationHash: fact("migration-32-authorization"),
-      preManifestMigration32AuthorizationConsumptionRef:
-        `setfarm://tests/${database}/migration-32-authorization-consumption`,
-      preManifestMigration32AuthorizationConsumptionHash: fact("migration-32-authorization-consumption"),
-    });
+    const evidence = mintBootstrapMainClaimHandoffGuardedMigration32EvidenceForControllerV1(provenance.evidence);
     await applyBootstrapMainClaimHandoffGuardedMigration32V1(db.getSql(), evidence);
     await applyAndVerifyP3GenericSuccessorV1(db);
     await db.pgMigrate();
@@ -1038,8 +1140,8 @@ const READY = deepFreeze(${JSON.stringify({
 const STATUS = deepFreeze({
   state: "normal_task0_admission_ready",
   admissionReady: {
-    admissionReadyRef: READY.admissionReadyRef,
     admissionReadyHash: READY.admissionReadyHash,
+    admissionReadyRef: READY.admissionReadyRef,
   },
 });
 async function verifySelectedDatabase() {
@@ -1068,7 +1170,9 @@ export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1() 
 }
 export async function resolveInternalProductionTask0SpawnerAdmissionReadyV1(pair) {
   await verifySelectedDatabase();
-  if (pair?.admissionReadyRef !== READY.admissionReadyRef
+  if (!pair || Object.getPrototypeOf(pair) !== Object.prototype
+    || JSON.stringify(Reflect.ownKeys(pair)) !== JSON.stringify(["admissionReadyRef", "admissionReadyHash"])
+    || pair.admissionReadyRef !== READY.admissionReadyRef
     || pair?.admissionReadyHash !== READY.admissionReadyHash) throw new Error("PAIR_INVALID");
   return READY;
 }

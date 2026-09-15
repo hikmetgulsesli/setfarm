@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -12,6 +12,86 @@ import ts from "typescript";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 
 const sourcePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-spawner-startup-admission-v1.ts");
+
+function installWorkspaceLocatorFixtureV1(internal: string, workspace: string): void {
+  const locatorPath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-workspace-authority-path-v1.ts");
+  const locator = readFileSync(locatorPath, "utf8");
+  const candidates = [
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");',
+  ];
+  const matches = candidates.filter((candidate) => locator.includes(candidate));
+  assert.equal(matches.length, 1);
+  const marker = matches[0]!;
+  assert.equal(locator.split(marker).length, 2, "project exactly one code-owned workspace into the disposable fixture");
+  writeFileSync(path.join(internal, path.basename(locatorPath)), locator.replace(marker, `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(workspace)};`));
+}
+
+for (const ancestorSymlink of [false, true]) test(ancestorSymlink
+  ? "cold recovery startup authority rejects a symlink above the workspace"
+  : "cold recovery startup authority round trips outside the executing linked worktree", async () => {
+  // Regression: repository-local publication cannot be read by workspace-bound
+  // receipt consumers, and a path-only fix still fails the directory guards.
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-cold-workspace-")));
+  try {
+    const physicalWorkspace = path.join(fixture, "physical", "workspace");
+    mkdirSync(physicalWorkspace, { recursive: true, mode: 0o700 });
+    if (ancestorSymlink) symlinkSync(path.dirname(physicalWorkspace), path.join(fixture, "alias"), "dir");
+    const workspace = ancestorSymlink ? path.join(fixture, "alias", "workspace") : physicalWorkspace;
+    const checkout = path.join(workspace, ".worktrees", "setfarm");
+    const internal = path.join(checkout, "src/internal-production");
+    const compiler = path.join(checkout, "src/product-compiler");
+    mkdirSync(internal, { recursive: true, mode: 0o700 });
+    mkdirSync(compiler, { recursive: true, mode: 0o700 });
+    const production = readFileSync(sourcePath, "utf8");
+    writeFileSync(path.join(internal, path.basename(sourcePath)), `${production}\nexport { root, recordPath, writeNoReplace, readRecord };\n`);
+    writeFileSync(path.join(compiler, "canonical-json.ts"), readFileSync(path.resolve(import.meta.dirname, "../../src/product-compiler/canonical-json.ts")));
+    installWorkspaceLocatorFixtureV1(internal, workspace);
+    writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), [
+      "observePreparedInternalProductionCurrentEntryOperationV1",
+      "resolveInternalProductionCurrentEntryOperationV1",
+      "observeInternalProductionServiceCensusV1",
+      "observeInternalProductionLegacyPreManifestZeroOwnerV1",
+      "resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1",
+    ].map((name) => `export async function ${name}(){throw new Error("unexpected authority call")}`).join("\n"));
+    writeFileSync(path.join(internal, "baseline-restart-authority-retirement-v1.ts"), [
+      "acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1",
+      "releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1",
+      "invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1",
+    ].map((name) => `export async function ${name}(){throw new Error("unexpected transport call")}`).join("\n"));
+    const module = await import(pathToFileURL(path.join(internal, path.basename(sourcePath))).href);
+    const expected = path.join(workspace, "data/internal-production-baseline/pre-schema-spawner-rebind-v1");
+    assert.equal(module.root(), expected);
+    const hash = "a".repeat(64);
+    const target = module.recordPath("process-identity", hash);
+    assert.equal(target, path.join(expected, "records/process-identity/sha256/aa", `${hash}.json`));
+    const value = { schema: "fixture.process-identity.v1", identityHash: hash };
+    if (ancestorSymlink) {
+      assert.throws(() => module.writeNoReplace(target, value), /workspace.*(?:ancestor|anchor|identity)/i);
+      assert.equal(existsSync(path.join(workspace, "data")), false, "reject redirect before creating authority state");
+      return;
+    }
+    module.writeNoReplace(target, value);
+    assert.deepEqual(module.readRecord(target), value);
+    assert.equal(existsSync(path.join(checkout, "data")), false, "publication must not create a second worktree-local authority store");
+    const locator = await import(pathToFileURL(path.join(internal, "baseline-workspace-authority-path-v1.ts")).href);
+    for (const invalid of ["../escape", "/absolute", "data/internal-production-baseline/../escape", "data/internal-production-baseline//crossed", "data/internal-production-baseline/with\\separator"]) {
+      assert.throws(() => locator.resolveInternalProductionBaselineAuthorityPathV1(invalid), /LOCATOR_INVALID/);
+    }
+    const anchorGuard = locator.authenticateInternalProductionBaselineWorkspaceAnchorV1();
+    try {
+      const physicalParent = path.dirname(physicalWorkspace);
+      const retiredParent = path.join(fixture, "retired-parent");
+      renameSync(physicalParent, retiredParent);
+      mkdirSync(physicalParent, { mode: 0o700 });
+      renameSync(path.join(retiredParent, "workspace"), physicalWorkspace);
+      assert.throws(() => anchorGuard.assertStable(), /WORKSPACE_ANCESTOR_IDENTITY_INVALID/,
+        "replacing an ancestor refuses even when the workspace inode itself survives");
+    } finally { anchorGuard.close(); }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 test("P4 startup module exact11 seals generation", async () => {
   const module = await import(`../../src/internal-production/baseline-spawner-startup-admission-v1.js?p4-real=${Date.now()}`);
@@ -133,6 +213,9 @@ test("P4 startup fixed locators serialize CAS and normalize only authenticated s
   try {
     const sourceDirectory = path.join(fixture, "src");
     mkdirSync(sourceDirectory, { recursive: true });
+    const internal = path.join(sourceDirectory, "internal-production");
+    mkdirSync(internal, { mode: 0o700 });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     const harnessPath = path.join(sourceDirectory, "locator-harness.ts");
     writeFileSync(harnessPath, `
 import crypto from "node:crypto";
@@ -140,6 +223,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { authenticateInternalProductionBaselineWorkspaceAnchorV1, resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProductionBaselineWorkspaceRootV1 } from "./internal-production/baseline-workspace-authority-path-v1.js";
 type InternalProductionBaselineSpawnerStartupAdmissionPairV1 = Readonly<{ startupAdmissionRef: string; startupAdmissionHash: string }>;
 ${locatorKernel}
 ${publicActiveSlice}
@@ -335,6 +419,48 @@ function statExists(target: string): boolean {
   try { statSync(target); return true; } catch (error) { if (error instanceof Error && "code" in error && error.code === "ENOENT") return false; throw error; }
 }
 
+test("direct rebind restart schema is distinct from immutable launchctl history", async () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-rebind-schema-")));
+  try {
+    const source = readFileSync(sourcePath, "utf8");
+    const tree = ts.createSourceFile(sourcePath, source, ts.ScriptTarget.Latest, true);
+    const names = ["validateResolvedRecord", "exactKeys", "canonical", "fail"];
+    if (source.includes("function validatePreSchemaSpawnerRestartTransportV1(")) names.push("validatePreSchemaSpawnerRestartTransportV1");
+    const declarations = tree.statements.filter(statement => ts.isFunctionDeclaration(statement) && statement.name && names.includes(statement.name.text));
+    assert.equal(declarations.length, names.length);
+    const harness = `${source.match(/^const SHA256 = .*;$/m)![0]}\n${declarations.map(statement => statement.getText(tree)).join("\n")}\nexport function validate(value){validateResolvedRecord('restart-authority',value)}`;
+    writeFileSync(path.join(fixture, "harness.mjs"), ts.transpileModule(harness, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText);
+    const module = await import(pathToFileURL(path.join(fixture, "harness.mjs")).href);
+    const hash = "a".repeat(64), uid = process.getuid!();
+    const common = { actionId: "task6a-pre-schema-setfarm-spawner-rebind-v1", service: "setfarm-spawner", currentEntryOperationRef: `setfarm://internal-production/current-entry-operation/sha256/${hash}`, currentEntryOperationHash: hash, preSchemaSpawnerRebindAuthorizationRef: `setfarm://internal-production/pre-schema-spawner-rebind-authorization/sha256/${hash}`, preSchemaSpawnerRebindAuthorizationHash: hash, startupTokenRef: `setfarm://internal-production/pre-schema-spawner-startup-token/sha256/${hash}`, startupTokenHash: hash, predecessorSpawnerProcessIdentityRef: `setfarm://internal-production/spawner-process-identity/sha256/${hash}`, predecessorSpawnerProcessIdentityHash: hash, predecessorSpawnerServiceIdentityHash: hash, predecessorSpawnerGenerationHash: hash, targetSpawnerSourceSha: "b".repeat(40), targetSpawnerTreeHash: "c".repeat(40), targetSpawnerBuildHash: hash, uid, restartAuthorityRef: `setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/${hash}`, restartAuthorityHash: hash };
+    const v1 = { ...common, schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v1", launchdLabel: "com.setrox.setfarm-spawner", executable: "/bin/launchctl", argv: ["kickstart", "-k", `gui/${uid}/com.setrox.setfarm-spawner`] };
+    const v2 = { ...common, schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v2", transport: "direct-detached-node-v1", launchProfileHash: "d".repeat(64), terminationSignal: "SIGTERM", maximumTerminationDispatchCount: 1, maximumSpawnDispatchCount: 1, preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${hash}`, preMutationLoadedRuntimeServiceAuthorityHash: hash };
+    const ordered = (value: Record<string, unknown>) => Object.fromEntries(Object.entries(value).sort(([left], [right]) => Buffer.compare(Buffer.from(left), Buffer.from(right))));
+    for (const value of [v1, v2]) {
+      const body = Object.freeze(ordered(value)), before = JSON.stringify(body);
+      assert.doesNotThrow(() => module.validate(body));
+      assert.equal(JSON.stringify(body), before, "parsing cannot rewrite historical or direct authority bytes");
+    }
+    const invalid: Array<Record<string, unknown>> = [];
+    for (const field of ["transport", "launchProfileHash", "terminationSignal", "maximumTerminationDispatchCount", "maximumSpawnDispatchCount", "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash"]) {
+      const missing: Record<string, unknown> = { ...v2 }; delete missing[field]; invalid.push(missing);
+      invalid.push({ ...v1, [field]: v2[field as keyof typeof v2] });
+    }
+    for (const field of ["launchdLabel", "executable", "argv"]) invalid.push({ ...v2, [field]: v1[field as keyof typeof v1] });
+    for (const transport of ["launchctl", "cold-spawner-v1", "direct-detached-node-v2", null]) invalid.push({ ...v2, transport });
+    for (const terminationSignal of ["SIGKILL", "SIGINT", 15]) invalid.push({ ...v2, terminationSignal });
+    for (const count of [0, 2, -1, 1.5, "1"]) {
+      invalid.push({ ...v2, maximumTerminationDispatchCount: count }, { ...v2, maximumSpawnDispatchCount: count });
+    }
+    for (const launchProfileHash of ["", "D".repeat(64), "d".repeat(63), null]) invalid.push({ ...v2, launchProfileHash });
+    for (const preMutationLoadedRuntimeServiceAuthorityRef of [common.currentEntryOperationRef, v2.preMutationLoadedRuntimeServiceAuthorityRef + "extra", null]) invalid.push({ ...v2, preMutationLoadedRuntimeServiceAuthorityRef });
+    for (const preMutationLoadedRuntimeServiceAuthorityHash of ["b".repeat(64), "A".repeat(64), null]) invalid.push({ ...v2, preMutationLoadedRuntimeServiceAuthorityHash });
+    for (const base of [v1, v2]) invalid.push({ ...base, uid: -1 }, { ...base, uid: "501" }, { ...base, actionId: "cold-bootstrap" }, { ...base, service: "setfarm-dashboard" });
+    invalid.push({ ...v2, schema: v1.schema }, { ...v1, schema: v2.schema }, { ...v1, argv: ["kickstart", `gui/${uid}/com.setrox.setfarm-spawner`] });
+    for (const value of invalid) assert.throws(() => module.validate(ordered(value)), /fields|fixed action|transport/);
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
 test("P4 startup executeOrRecover is sole mutation writer", () => {
   const source = readFileSync(sourcePath, "utf8");
   const tree = ts.createSourceFile(sourcePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -373,6 +499,7 @@ test("P4 startup resolvers reject impossible status and fixed-prefix gaps", asyn
     const compiler = path.join(fixture, "src/product-compiler");
     mkdirSync(internal, { recursive: true });
     mkdirSync(compiler, { recursive: true });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), readFileSync(sourcePath));
     writeFileSync(path.join(compiler, "canonical-json.ts"), readFileSync(path.resolve(import.meta.dirname, "../../src/product-compiler/canonical-json.ts")));
     const operationHash = "a".repeat(64);
@@ -393,15 +520,15 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
     const store = path.join(fixture, "data/internal-production-baseline/pre-schema-spawner-rebind-v1");
     const statusStore = path.join(store, "records/status/sha256");
     const operationStore = path.join(store, "operations/sha256", operationHash);
-    mkdirSync(operationStore, { recursive: true });
+    mkdirSync(operationStore, { recursive: true, mode: 0o700 });
     const persistStatus = (input: Record<string, unknown>, locator: string | null) => {
       const statusHash = hashCanonicalJson(input);
       const statusRef = `setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/${statusHash}`;
       const value = { ...input, statusRef, statusHash };
       const directory = path.join(statusStore, statusHash.slice(0, 2));
-      mkdirSync(directory, { recursive: true });
-      writeFileSync(path.join(directory, `${statusHash}.json`), `${canonical(value)}\n`);
-      if (locator !== null) writeFileSync(path.join(operationStore, `${locator}.pair.json`), `${canonical({ statusRef, statusHash })}\n`);
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+      writeFileSync(path.join(directory, `${statusHash}.json`), `${canonical(value)}\n`, { mode: 0o600 });
+      if (locator !== null) writeFileSync(path.join(operationStore, `${locator}.pair.json`), `${canonical({ statusRef, statusHash })}\n`, { mode: 0o600 });
       return { statusRef, statusHash };
     };
     const absentPair = persistStatus({
@@ -466,25 +593,34 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
   }
 });
 
-test("P4 startup recovery reopens the durable helper-blocked prefix before live derivation", async () => {
+test("P4 startup recovery emits V2 and reopens the durable helper-blocked prefix before live derivation", async () => {
   const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-startup-reentry-"));
   try {
     const internal = path.join(fixture, "src/internal-production");
     const compiler = path.join(fixture, "src/product-compiler");
     mkdirSync(internal, { recursive: true });
     mkdirSync(compiler, { recursive: true });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), readFileSync(sourcePath));
     writeFileSync(path.join(compiler, "canonical-json.ts"), readFileSync(path.resolve(import.meta.dirname, "../../src/product-compiler/canonical-json.ts")));
     const operationHash = "1".repeat(64);
     const operationRef = `setfarm://internal-production/current-entry-operation/sha256/${operationHash}`;
     writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), `
+import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 let legacyCalls = 0;
+export const directCalls = { p3: 0, profile: 0 };
+export const directFault = { profileHook: null };
 const operation = {
   operationRef:${JSON.stringify(operationRef)}, operationHash:${JSON.stringify(operationHash)},
   controllerSource:{sha:${JSON.stringify("2".repeat(40))},treeHash:${JSON.stringify("3".repeat(40))},buildHash:${JSON.stringify("4".repeat(64))}},
   authorityV3Migration31Audit:{authorityV3Migration31AuditRef:${JSON.stringify(`setfarm://internal-production/authority-v3-migration31-audit/sha256/${"5".repeat(64)}`)},authorityV3Migration31AuditHash:${JSON.stringify("5".repeat(64))}}
 };
 const census = {spawner:{pid:99999,processStartTimeEpochMs:1,processIdentityHash:${JSON.stringify("6".repeat(64))},serviceIdentityHash:${JSON.stringify("7".repeat(64))},generationHash:${JSON.stringify("8".repeat(64))},loadedSourceSha:operation.controllerSource.sha,loadedTreeHash:operation.controllerSource.treeHash,loadedBuildHash:operation.controllerSource.buildHash}};
+export const preMutation = {currentEntryOperationRef:operation.operationRef,currentEntryOperationHash:operation.operationHash,preMutationLoadedRuntimeServiceAuthorityRef:${JSON.stringify(`setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${"b".repeat(64)}`)},preMutationLoadedRuntimeServiceAuthorityHash:${JSON.stringify("b".repeat(64))},spawner:{...census.spawner,processOwnerCount:1,listener:null}};
+const profileBody = {source:operation.controllerSource,uid:process.getuid()};
+export const profile = {...profileBody,profileHash:hashCanonicalJson(profileBody)};
+export async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(pair){directCalls.p3+=1;if(pair.operationRef!==operation.operationRef||pair.operationHash!==operation.operationHash)throw new Error("CROSSED_P3_INPUT");return structuredClone(preMutation)}
+export async function observeInternalProductionSpawnerLaunchProfileCandidateV1(){directCalls.profile+=1;await directFault.profileHook?.();return {profile}}
 const legacy = {observationRef:${JSON.stringify(`setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/${"9".repeat(64)}`)},observationHash:${JSON.stringify("9".repeat(64))},cleanSetfarmSourceSha:operation.controllerSource.sha,cleanSetfarmTreeHash:operation.controllerSource.treeHash,cleanSetfarmBuildHash:operation.controllerSource.buildHash,observedSpawnerGenerationHash:census.spawner.generationHash};
 export async function observePreparedInternalProductionCurrentEntryOperationV1(){return operation}
 export async function resolveInternalProductionCurrentEntryOperationV1(){return operation}
@@ -494,14 +630,24 @@ export async function resolveInternalProductionLegacyPreManifestZeroOwnerObserva
 `, "utf8");
     writeFileSync(path.join(internal, "baseline-restart-authority-retirement-v1.ts"), `
 let invokes=0;
+export const inputs = [];
 const lease=Object.freeze({schema:"setfarm.internal-production-physical-service-restart-authority-transition-lease.v1"});
 export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){return lease}
 export async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){}
-export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(){invokes+=1;throw new Error(invokes===1?"HELPER_DISPATCH_SETTLEMENT_UNKNOWN":"SECOND_REACHED_RETIREMENT")}
+export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(lease,input){inputs.push(input);invokes+=1;throw new Error(invokes===1?"HELPER_DISPATCH_SETTLEMENT_UNKNOWN":"SECOND_REACHED_RETIREMENT")}
 `, "utf8");
     const module = await import(`${pathToFileURL(path.join(internal, "baseline-spawner-startup-admission-v1.ts")).href}?reentry=${Date.now()}`);
     const authorization = await module.prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1();
     await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /HELPER_DISPATCH_SETTLEMENT_UNKNOWN/);
+    const retirement = await import(pathToFileURL(path.join(internal, "baseline-restart-authority-retirement-v1.ts")).href);
+    const receipt = await import(pathToFileURL(path.join(internal, "baseline-post-handoff-receipt-v1.ts")).href);
+    const restart = await module.resolveInternalProductionPreSchemaSpawnerRestartAuthorityV1(retirement.inputs[0].restartAuthority);
+    assert.equal(restart.schema, "setfarm.internal-production-pre-schema-spawner-restart-authority.v2");
+    assert.equal(restart.preMutationLoadedRuntimeServiceAuthorityHash, receipt.preMutation.preMutationLoadedRuntimeServiceAuthorityHash);
+    assert.equal(restart.launchProfileHash, receipt.profile.profileHash);
+    assert.equal(restart.transport, "direct-detached-node-v1");
+    assert.equal(restart.executable, undefined);
+    assert.ok(receipt.directCalls.p3 > 0 && receipt.directCalls.profile > 0);
     const blocked = await module.observeInternalProductionPreSchemaSpawnerRebindStatusV1();
     assert.equal(blocked.state, "blocked");
     assert.equal(blocked.refusalCode, "HELPER_DISPATCH_SETTLEMENT_UNKNOWN");
@@ -510,6 +656,7 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
     const collisionTemporary = path.join(operationDirectory, ".03-restart-authority.pair.json.123e4567-e89b-42d3-a456-426614174000.tmp");
     writeFileSync(collisionTemporary, readFileSync(restartFinal), { mode: 0o600 });
     await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /SECOND_REACHED_RETIREMENT/);
+    assert.deepEqual(retirement.inputs[1], retirement.inputs[0], "recovery must reuse the exact persisted V2 pair");
     assert.throws(() => readFileSync(collisionTemporary), /ENOENT/, "exact EEXIST collision temp must be cleaned before recovery advances");
     const laterTemporary = path.join(operationDirectory, ".07-sealed-admission.pair.json.123e4567-e89b-42d3-a456-426614174000.tmp");
     const sealedHash = "a".repeat(64);
@@ -517,6 +664,101 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
     await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /not the immediate next publication/);
     unlinkSync(laterTemporary);
     await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /SECOND_REACHED_RETIREMENT/);
+    const invocationCount = retirement.inputs.length;
+    const persistedPairBytes = readFileSync(restartFinal);
+    const originalP3 = structuredClone(receipt.preMutation);
+    const originalProfile = structuredClone(receipt.profile);
+    const restoreEvidence = () => {
+      for (const key of Object.keys(receipt.preMutation)) delete receipt.preMutation[key];
+      Object.assign(receipt.preMutation, structuredClone(originalP3));
+      for (const key of Object.keys(receipt.profile)) delete receipt.profile[key];
+      Object.assign(receipt.profile, structuredClone(originalProfile));
+    };
+    const faults: Array<readonly [string, () => void]> = [
+      ["P3 operation", () => { receipt.preMutation.currentEntryOperationHash = "c".repeat(64); }],
+      ["P3 pair", () => { receipt.preMutation.preMutationLoadedRuntimeServiceAuthorityHash = "c".repeat(64); receipt.preMutation.preMutationLoadedRuntimeServiceAuthorityRef = `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${"c".repeat(64)}`; }],
+      ["predecessor PID", () => { receipt.preMutation.spawner.pid += 1; }],
+      ["predecessor start", () => { receipt.preMutation.spawner.processStartTimeEpochMs += 1; }],
+      ["predecessor identity", () => { receipt.preMutation.spawner.processIdentityHash = "c".repeat(64); }],
+      ["predecessor service", () => { receipt.preMutation.spawner.serviceIdentityHash = "c".repeat(64); }],
+      ["predecessor generation", () => { receipt.preMutation.spawner.generationHash = "c".repeat(64); }],
+      ["predecessor source", () => { receipt.preMutation.spawner.loadedBuildHash = "c".repeat(64); }],
+      ["predecessor owners", () => { receipt.preMutation.spawner.processOwnerCount = 2; }],
+      ["predecessor listener", () => { receipt.preMutation.spawner.listener = {}; }],
+      ["profile hash", () => { receipt.profile.profileHash = "c".repeat(64); }],
+      ["profile UID", () => { receipt.profile.uid += 1; const { profileHash, ...body } = receipt.profile; receipt.profile.profileHash = hashCanonicalJson(body); }],
+      ["profile source", () => { receipt.profile.source.buildHash = "c".repeat(64); const { profileHash, ...body } = receipt.profile; receipt.profile.profileHash = hashCanonicalJson(body); }],
+    ];
+    for (const [label, mutate] of faults) {
+      restoreEvidence(); mutate();
+      await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /direct startup/, label);
+      await assert.rejects(module.observeInternalProductionPreSchemaSpawnerRebindStatusV1(), /direct startup/, `${label}: observed replay`);
+      assert.equal(retirement.inputs.length, invocationCount, `${label}: no helper invocation`);
+      assert.deepEqual(readFileSync(restartFinal), persistedPairBytes, `${label}: no authority replacement`);
+    }
+    restoreEvidence();
+    await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /SECOND_REACHED_RETIREMENT/);
+    receipt.directFault.profileHook = () => { receipt.preMutation.spawner.pid += 1; };
+    await assert.rejects(module.observeInternalProductionPreSchemaSpawnerRebindStatusV1(), /direct startup/, "P3 must be reauthenticated after the profile await");
+    restoreEvidence();
+    receipt.directFault.profileHook = null;
+
+    // Seed an internally consistent historical V1 graph, including its status
+    // links. This changes only disposable fixture evidence, never the emitter.
+    const { restartAuthorityRef, restartAuthorityHash, transport, launchProfileHash, terminationSignal,
+      maximumTerminationDispatchCount, maximumSpawnDispatchCount, preMutationLoadedRuntimeServiceAuthorityRef,
+      preMutationLoadedRuntimeServiceAuthorityHash, ...common } = restart;
+    const v1Body = { ...common, schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v1",
+      launchdLabel: "com.setrox.setfarm-spawner", executable: "/bin/launchctl", argv: ["kickstart", "-k", `gui/${process.getuid!()}/com.setrox.setfarm-spawner`] };
+    const v1Hash = hashCanonicalJson(v1Body);
+    const v1Pair = { restartAuthorityRef: `setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/${v1Hash}`, restartAuthorityHash: v1Hash };
+    const store = path.join(fixture, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
+    const saveRecord = (kind: string, hash: string, value: unknown) => {
+      const file = path.join(store, kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+      mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      writeFileSync(file, `${canonical(value)}\n`, { mode: 0o600 });
+      return file;
+    };
+    const crossedProcessHash = "d".repeat(64);
+    const { restartAuthorityRef: unusedRef, restartAuthorityHash: unusedHash, ...crossedBody } = restart;
+    crossedBody.predecessorSpawnerProcessIdentityHash = crossedProcessHash;
+    crossedBody.predecessorSpawnerProcessIdentityRef = `setfarm://internal-production/spawner-process-identity/sha256/${crossedProcessHash}`;
+    const crossedHash = hashCanonicalJson(crossedBody);
+    const crossedPair = { restartAuthorityRef: `setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/${crossedHash}`, restartAuthorityHash: crossedHash };
+    saveRecord("restart-authority", crossedHash, { ...crossedBody, ...crossedPair });
+    unlinkSync(restartFinal);
+    writeFileSync(collisionTemporary, `${canonical(crossedPair)}\n`, { mode: 0o600 });
+    const crossedTemporaryBytes = readFileSync(collisionTemporary);
+    await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /crossed/);
+    assert.equal(existsSync(restartFinal), false, "crossed predecessor must refuse before publishing its recovery temporary");
+    assert.deepEqual(readFileSync(collisionTemporary), crossedTemporaryBytes);
+    unlinkSync(collisionTemporary);
+    writeFileSync(restartFinal, persistedPairBytes, { mode: 0o600 });
+    const v1Record = saveRecord("restart-authority", v1Hash, { ...v1Body, ...v1Pair });
+    writeFileSync(restartFinal, `${canonical(v1Pair)}\n`);
+    for (const basename of ["status-02-restart-authority-published", "status-blocked-helper-dispatch-settlement-unknown"]) {
+      const file = path.join(operationDirectory, `${basename}.pair.json`);
+      const pair = JSON.parse(readFileSync(file, "utf8"));
+      const { statusRef, statusHash, ...body } = await module.resolveInternalProductionPreSchemaSpawnerRebindStatusV1({ statusRef: pair.statusRef, statusHash: pair.statusHash });
+      body.restartAuthority = v1Pair;
+      const hash = hashCanonicalJson(body);
+      const replacement = { statusRef: `setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/${hash}`, statusHash: hash };
+      saveRecord("status", hash, { ...body, ...replacement });
+      writeFileSync(file, `${canonical(replacement)}\n`);
+    }
+    const v1Bytes = readFileSync(v1Record), v1PairBytes = readFileSync(restartFinal);
+    const callsBeforeV1 = { ...receipt.directCalls };
+    // Invalid direct evidence must be completely irrelevant to V1 replay.
+    receipt.preMutation.spawner.pid = -1;
+    receipt.profile.profileHash = "invalid";
+    for (let replay = 0; replay < 2; replay += 1) {
+      await assert.rejects(module.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization), /SECOND_REACHED_RETIREMENT/);
+      assert.equal((await module.observeInternalProductionPreSchemaSpawnerRebindStatusV1()).state, "blocked");
+      assert.deepEqual(retirement.inputs.at(-1).restartAuthority, v1Pair);
+      assert.deepEqual(readFileSync(v1Record), v1Bytes);
+      assert.deepEqual(readFileSync(restartFinal), v1PairBytes);
+      assert.deepEqual(receipt.directCalls, callsBeforeV1, "V1 replay must call neither new direct port");
+    }
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
@@ -530,6 +772,7 @@ test("P4 startup durable publication automaton repairs every fixed crash boundar
     mkdirSync(internal, { recursive: true });
     mkdirSync(compiler, { recursive: true });
     const source = readFileSync(sourcePath, "utf8").replace("function writeNoReplace(file: string, value: unknown): void", "export function writeNoReplace(file: string, value: unknown): void");
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), source);
     writeFileSync(path.join(compiler, "canonical-json.ts"), readFileSync(path.resolve(import.meta.dirname, "../../src/product-compiler/canonical-json.ts")));
     writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), "export async function observePreparedInternalProductionCurrentEntryOperationV1(){return null}\nexport async function resolveInternalProductionCurrentEntryOperationV1(){throw new Error('UNUSED')}\nexport async function observeInternalProductionServiceCensusV1(){throw new Error('UNUSED')}\nexport async function observeInternalProductionLegacyPreManifestZeroOwnerV1(){throw new Error('UNUSED')}\nexport async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(){throw new Error('UNUSED')}\n");
@@ -658,6 +901,7 @@ test("P4 startup authenticates every historical status against the material pref
     mkdirSync(internal, { recursive: true });
     mkdirSync(compiler, { recursive: true });
     const source = readFileSync(sourcePath, "utf8").replace("function authenticateObservedStatusHistoryV1(", "export function authenticateObservedStatusHistoryV1(");
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     writeFileSync(path.join(internal, "baseline-spawner-startup-admission-v1.ts"), source);
     writeFileSync(path.join(compiler, "canonical-json.ts"), readFileSync(path.resolve(import.meta.dirname, "../../src/product-compiler/canonical-json.ts")));
     writeFileSync(path.join(internal, "baseline-post-handoff-receipt-v1.ts"), "export async function observePreparedInternalProductionCurrentEntryOperationV1(){return null}\nexport async function resolveInternalProductionCurrentEntryOperationV1(){throw new Error('UNUSED')}\nexport async function observeInternalProductionServiceCensusV1(){throw new Error('UNUSED')}\nexport async function observeInternalProductionLegacyPreManifestZeroOwnerV1(){throw new Error('UNUSED')}\nexport async function resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(){throw new Error('UNUSED')}\n");

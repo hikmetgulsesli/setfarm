@@ -45,6 +45,9 @@ const P3_TRACKED_SCOPE = new Set([
   "src/db/contract-spine-migrations.ts",
   "src/db/contract-spine-migration-source-integrity.ts",
   "src/db/contract-spine-migration-digests.generated.ts",
+  "src/internal-production/baseline-workspace-authority-path-v1.ts",
+  "src/internal-production/baseline-spawner-launch-environment-v1.ts",
+  "src/runtime-config.ts",
   "src/internal-production/owner-admission-head-v1.ts",
   "src/internal-production/owner-admission-v1.ts",
   "src/execution/attempt-reconciler.ts",
@@ -62,6 +65,8 @@ const P3_TRACKED_SCOPE = new Set([
   "src/execution/runtime-completion-effect-runner.ts",
   "src/execution/runtime-completion.ts",
   "src/execution/runtime-session-repository.ts",
+  "src/findings/finding-publication-v1.ts",
+  "src/findings/legacy-finding-publication-inventory-v1.ts",
   "src/execution/v3-implementation-attempt.ts",
   "src/installer/cleanup-ops.ts",
   "src/installer/step-fail.ts",
@@ -218,10 +223,10 @@ function isAcceptedPinnedGitPhysicalModeV1(gitMode: string, physicalMode: number
 const P3_CURRENT_ENTRY_WORKSPACE_SOURCE_V1 =
   'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");';
 const P3_CURRENT_ENTRY_WORKSPACE_PROJECTION_V1 =
-  'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());';
+  'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");';
 
 function projectP3CurrentEntryWorkspaceAuthorityV1(locator: string, bytes: Buffer): Buffer {
-  if (locator !== "src/internal-production/baseline-post-handoff-receipt-v1.ts") return bytes;
+  if (locator !== "src/internal-production/baseline-workspace-authority-path-v1.ts") return bytes;
   const source = bytes.toString("utf8");
   if (!Buffer.from(source, "utf8").equals(bytes)) {
     throw new Error("P3_PROJECTION_CURRENT_ENTRY_SOURCE_INVALID");

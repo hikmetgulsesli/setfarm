@@ -1,7 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, delimiter, dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { applyRuntimeEnvFileV1, normalizeRuntimePathV1 } from "./internal-production/baseline-spawner-launch-environment-v1.js";
+import { resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
 import {
   DEFAULT_ARTIFACT_CAPACITY_LIMITS,
   normalizeArtifactCapacityLimits,
@@ -14,14 +16,11 @@ import {
 } from "./execution/v3-seal-capacity.js";
 
 const loadedEnvKeys = new Set<string>();
+let runtimeEnvironmentModeV1: "unloaded" | "ordinary" | "refused" | "cold-helper" | "cold-child" | "direct-helper" | "direct-child" = "unloaded";
+let inheritedEffectiveEnvironmentV1: Readonly<Record<string, string>> | null = null;
 
-function parseEnvValue(raw: string): string {
-  const value = raw.trim();
-  const quote = value[0];
-  if ((quote === '"' || quote === "'") && value[value.length - 1] === quote) {
-    return value.slice(1, -1);
-  }
-  return value;
+function environmentIdentityV1(environment: Readonly<Record<string, string | undefined>>): string {
+  return JSON.stringify(Object.keys(environment).sort().map((key) => [key, environment[key]]));
 }
 
 export function expandRuntimePath(value: string): string {
@@ -40,23 +39,36 @@ function resolvePackageRoot(): string {
 function loadEnvFile(envDir: string, filename: string, overrideFileValues: boolean): void {
   const envPath = join(envDir, filename);
   if (!existsSync(envPath)) return;
-  const lines = readFileSync(envPath, "utf-8").split(/\r?\n/);
-  for (const line of lines) {
-    const trimmed = line.trim().replace(/^export\s+/, "");
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const val = parseEnvValue(trimmed.slice(eq + 1));
-    const alreadyFromProcess = process.env[key] !== undefined && !loadedEnvKeys.has(key);
-    if (alreadyFromProcess) continue;
-    if (!overrideFileValues && process.env[key] !== undefined) continue;
-    process.env[key] = val;
-    loadedEnvKeys.add(key);
-  }
+  applyRuntimeEnvFileV1(process.env, loadedEnvKeys, readFileSync(envPath, "utf-8"), overrideFileValues);
 }
 
 export function loadRuntimeEnv(): void {
+  const refuse = (): never => { runtimeEnvironmentModeV1 = "refused"; throw new Error("INTERNAL_PRODUCTION_INHERITED_RUNTIME_CONFIGURATION_INVALID"); };
+  if (runtimeEnvironmentModeV1 === "refused") refuse();
+  let snapshot: ReturnType<typeof resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1>;
+  try { snapshot = resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1(); } catch { return refuse(); }
+  const modeKeys = {
+    "cold-helper": "SETFARM_INTERNAL_PRODUCTION_COLD_HELPER", "cold-child": "SETFARM_INTERNAL_PRODUCTION_COLD_CHILD",
+    "direct-helper": "SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER", "direct-child": "SETFARM_INTERNAL_PRODUCTION_DIRECT_CHILD",
+  } as const;
+  const inheritedKeys = () => Object.keys(process.env).filter(key => key.startsWith("SETFARM_INTERNAL_PRODUCTION_"));
+  const selected = inheritedKeys();
+  if (snapshot !== null || selected.length !== 0 || (runtimeEnvironmentModeV1 !== "ordinary" && runtimeEnvironmentModeV1 !== "unloaded")) {
+    if (!snapshot || selected.length !== 1 || selected[0] !== modeKeys[snapshot.role] || process.env[selected[0]!] !== "1"
+      || (runtimeEnvironmentModeV1 !== "unloaded" && runtimeEnvironmentModeV1 !== snapshot.role)) return refuse();
+    const environment = snapshot.environment, modeKey = modeKeys[snapshot.role];
+    if (Object.keys(environment).some(key => key.startsWith("SETFARM_INTERNAL_PRODUCTION_"))) refuse();
+    const effective = Object.freeze({ ...environment, PATH: normalizeRuntimePathV1(environment.PATH!, homedir(), process.execPath), [modeKey]: "1" });
+    if (inheritedEffectiveEnvironmentV1 === null) {
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      Object.assign(process.env, effective);
+      inheritedEffectiveEnvironmentV1 = effective;
+      runtimeEnvironmentModeV1 = snapshot.role;
+    } else if (environmentIdentityV1(effective) !== environmentIdentityV1(inheritedEffectiveEnvironmentV1)
+      || environmentIdentityV1(process.env) !== environmentIdentityV1(inheritedEffectiveEnvironmentV1)) refuse();
+    return;
+  }
+  runtimeEnvironmentModeV1 = "ordinary";
   const explicitEnvDir = process.env.SETFARM_ENV_DIR?.trim();
   const envDirs = explicitEnvDir
     ? [expandRuntimePath(explicitEnvDir)]
@@ -66,30 +78,12 @@ export function loadRuntimeEnv(): void {
     loadEnvFile(envDir, ".env", false);
     loadEnvFile(envDir, ".env.local", true);
   }
+  if (inheritedKeys().length !== 0) refuse();
   ensureRuntimePath();
 }
 
 function ensureRuntimePath(): void {
-  const nodeDir = dirname(process.execPath);
-  const existing = (process.env.PATH || "")
-    .split(delimiter)
-    .filter(Boolean);
-  const required = [
-    nodeDir,
-    join(homedir(), ".local", "bin"),
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-    "/usr/bin",
-    "/bin",
-    "/usr/sbin",
-    "/sbin",
-  ];
-  const next: string[] = [];
-  for (const entry of [...required, ...existing]) {
-    if (!entry || next.includes(entry)) continue;
-    next.push(entry);
-  }
-  process.env.PATH = next.join(delimiter);
+  process.env.PATH = normalizeRuntimePathV1(process.env.PATH || "", homedir(), process.execPath);
 }
 
 loadRuntimeEnv();

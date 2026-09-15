@@ -23,6 +23,7 @@ import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
+import { transformSync } from "esbuild";
 import {
   createInternalProductionGlobalOwnerAdmissionFenceV1,
   createInternalProductionGlobalOwnerAdmissionFenceReleaseTransitionV1,
@@ -44,6 +45,16 @@ const observerSource = path.join(sourceRoot, "src/internal-production/baseline-p
 const isolatedRunner = path.join(sourceRoot, "scripts/run-isolated-postgres-tests.ts");
 const dbSource = path.join(sourceRoot, "src/db-pg.ts");
 const tsxLoader = import.meta.resolve("tsx");
+function assertColdRecoveryRuntimeExportContractV1(names: readonly (string | undefined)[]): string[] {
+  const additions = ["observeInternalProductionColdBootstrapObservationV1", "resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1", "observeInternalProductionSpawnerLaunchProfileCandidateV1", "observeInternalProductionColdSpawnerHelperBootstrapObservationV1", "resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1"];
+  assert.equal(names.length, 58, "cold recovery adds exactly the five fixed read-only ports");
+  assert.deepEqual(names.filter((name) => additions.includes(name!)).sort(), [...additions].sort());
+  const historical = names.filter((name): name is string => typeof name === "string" && !additions.includes(name));
+  assert.equal(historical.length, 53);
+  assert.equal(canonicalHash(historical), "fd89f0cfa3a86ac07655f1fbc6640867ad937bb88b2e9fdebef6327283b665fd",
+    "all historical runtime exports remain exactly ordered and unchanged");
+  return historical;
+}
 const EXACT_POISON_OPERATION_HASH_V1 = "90fc2fedc56db22bb013ad1b243e9dc386473d6b4284ede135e26fd1ab82fe3d";
 const EXACT_POISON_OPERATION_REF_V1 = `setfarm://internal-production/current-entry-operation/sha256/${EXACT_POISON_OPERATION_HASH_V1}`;
 const EXACT_POISON_OPERATION_BYTES_SHA256_V1 = "ebcba187e953fda9e7962a0ce0cf4fc10feed881e9ce69b6d59140a9ef43d7f6";
@@ -626,6 +637,12 @@ function writeRawCurrentEntryOperationFixtureV1(root: string, bytes: Buffer): st
   return store;
 }
 
+function coldPreselectionRetirementFixtureSourceV1(): string {
+  return `export function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){return globalThis.__coldPreselectionPorts?.history() ?? globalThis.__nestedColdHistoryV1?.() ?? Object.freeze({schema:'setfarm.internal-production-cold-spawner-bootstrap-journal-census.v1',state:'absent',incompleteOwnerCount:0,absenceIdentityHash:'a'.repeat(64),censusHash:'b'.repeat(64)})}
+export async function ensureInternalProductionColdSpawnerBootstrapSettledV1(){if(!globalThis.__coldPreselectionPorts)throw Error('UNEXPECTED_COLD_PRESELECTION_FACADE');return globalThis.__coldPreselectionPorts.facade()}
+`;
+}
+
 function instrumentExactPoisonPreselectionFixtureV1(root: string): void {
   const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
   const source = readFileSync(modulePath, "utf8");
@@ -637,7 +654,7 @@ function instrumentExactPoisonPreselectionFixtureV1(root: string): void {
   const prehook = source.slice(prehookStart, prehookEnd);
   const publisherCall = "await resumeExactPoisonQuarantinePublisherCoreV1();";
   assert.equal(prehook.split(publisherCall).length - 1, 1, "the private prehook must have one exact zero-input poison-quarantine publisher-core call");
-  const probeCall = '{ const value=Reflect.get(globalThis,"__p4ExactPoisonPreselectionProbeV1"); if(!value||typeof value!=="object")throw new Error("P4_EXACT_POISON_PROBE_MISSING"); const probe=value as {calls:number;throwOnCall:boolean}; probe.calls+=1; if(probe.throwOnCall)throw new Error("P4_EXACT_POISON_PUBLISHER_CORE_CALLED"); }';
+  const probeCall = '{ const value=Reflect.get(globalThis,"__p4ExactPoisonPreselectionProbeV1"); if(!value||typeof value!=="object")throw new Error("P4_EXACT_POISON_PROBE_MISSING"); const probe=value as {calls:number;throwOnCall:boolean;events?:string[]}; probe.calls+=1; probe.events?.push("publisher"); if(probe.throwOnCall)throw new Error("P4_EXACT_POISON_PUBLISHER_CORE_CALLED"); }';
   let instrumented = source.slice(0, prehookStart)
     + prehook.replace(prehookMarker, `export ${prehookMarker}`).replace(publisherCall, probeCall)
     + source.slice(prehookEnd);
@@ -980,7 +997,10 @@ function buildExactPoisonStrictChainFixtureV1(
   const successorOperationBytes = canonicalFixtureRecordV1(successorOperation);
 
   const successorLegacyZeroCore = Object.freeze({
-    schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1",
+    schema: options === undefined
+      ? "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1"
+      : "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2",
+    ...(options === undefined ? {} : { legacyFindingPublicationInventory: emptyLegacyFindingInventoryFixtureV1() }),
     observationKind: "legacy-pre-manifest-existing-live-truth",
     authorityV3Migration31AuditRef: successorAuthorityV31.ref,
     authorityV3Migration31AuditHash: successorAuthorityV31.hash,
@@ -1887,30 +1907,14 @@ function publishExactPoisonCurrentPrerequisiteOverlayFixtureV1(
   ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
   ExactPoisonCurrentPrerequisiteOverlayFixtureCandidateV1,
 ] {
-  const observed = runFixtureExpression(root, `Promise.all([m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1(),m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()]).then(([authority,pending])=>process.stdout.write(JSON.stringify({authority,pending})))`);
-  assert.equal(observed.status, 0, observed.stderr);
-  const values = JSON.parse(observed.stdout) as Readonly<{
-    authority: Readonly<Record<string, string>>;
-    pending: Readonly<Record<string, string>>;
-  }>;
-  const authorityTarget = currentEntryPrerequisiteRecord(root, "authority-v3-migration31-audits", values.authority.authorityV3Migration31AuditHash!);
-  const pendingTarget = currentEntryPrerequisiteRecord(root, "pending-bootstrap-handoff-migrations", values.pending.pendingBootstrapHandoffMigrationHash!);
-  return Object.freeze([
-    Object.freeze({
-      kind: "authorityV3Migration31Audit" as const,
-      target: authorityTarget,
-      value: values.authority,
-      bytes: readFileSync(authorityTarget),
-      pair: Object.freeze({ ref: values.authority.authorityV3Migration31AuditRef!, hash: values.authority.authorityV3Migration31AuditHash! }),
-    }),
-    Object.freeze({
-      kind: "pendingBootstrapHandoffMigration" as const,
-      target: pendingTarget,
-      value: values.pending,
-      bytes: readFileSync(pendingTarget),
-      pair: Object.freeze({ ref: values.pending.pendingBootstrapHandoffMigrationRef!, hash: values.pending.pendingBootstrapHandoffMigrationHash! }),
-    }),
-  ] as const);
+  // Seed already-settled pre-fix prefixes without asking the now-guarded public
+  // publisher to create another generation in the contaminated legacy store.
+  const overlay = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+  for (const candidate of overlay) {
+    mkdirSync(path.dirname(candidate.target), { recursive: true, mode: 0o700 });
+    writeFileSync(candidate.target, candidate.bytes, { flag: "wx", mode: 0o600 });
+  }
+  return overlay;
 }
 
 function instrumentExactPoisonTask3BoundaryFixtureV1(
@@ -4343,6 +4347,7 @@ function assertPhase5cSNarrowSelectedEffectResumeStaticsV1(
     const auditedEffectLeaves = new Set([
       ...Object.values(PHASE5C_S_EFFECT_PORTS_V1).flat(),
       "advanceTask12CurrentStatusV1",
+      "openExactPoisonPostVisibleSelectedProgressPassV1",
       "buildExactPoisonPostVisibleProgressNextStatusV1",
       "requireExactPoisonPostVisibleProgressEffectV1",
       "task12RecordPathV1",
@@ -4359,11 +4364,11 @@ function assertPhase5cSNarrowSelectedEffectResumeStaticsV1(
     assert.equal((source.match(/\bselectedCurrentEntryStoreContextStatesV1\b/g) ?? []).length, 3,
       "P5c-S keeps the selected-context WeakMap at its declaration plus exact set/get ownership sites only");
     assert.deepEqual({ selectedStateRequire: (source.match(/\brequireSelectedCurrentEntryStoreContextStateV1\b/g) ?? []).length, selectedRootOpen: (source.match(/\bopenSelectedCurrentEntryPrerequisiteRootReaderV1\b/g) ?? []).length },
-      { selectedStateRequire: 17, selectedRootOpen: 7 },
-      "P5c-S owns selected-state/root primitives at their exact reviewed sites, including both no-write prerequisite builders and migration status context fencing");
+      { selectedStateRequire: 18, selectedRootOpen: 7 },
+      "P5c-S owns selected-state/root primitives at their exact reviewed sites, including both no-write prerequisite builders, migration status context fencing, and the prerequisite-publication fence");
     assert.deepEqual({ pinnedChain: (source.match(/\bopenExactPoisonRecoveryPinnedCommitChainV1\b/g) ?? []).length, detachedProgress: (source.match(/\bobserveExactPoisonPostVisibleProgressPassNoWriteV1\b/g) ?? []).length },
-      { pinnedChain: 8, detachedProgress: 3 },
-      "P5c-S keeps pinned-chain identifiers at the reviewed selector, durability, historical-operation, and two committed-prerequisite fallback sites while progress observation stays detached and exact");
+      { pinnedChain: 9, detachedProgress: 3 },
+      "P5c-S keeps pinned-chain identifiers at the reviewed selector, durability, historical-operation, historical pre-mutation, and two committed-prerequisite fallback sites while progress observation stays detached and exact");
     assert.deepEqual({ processEnv: (source.match(/\bprocess\.env\b/g) ?? []).length, denoEnv: (source.match(/\bDeno\.env\b/g) ?? []).length, bunEnv: (source.match(/\bBun\.env\b/g) ?? []).length, globalThis: (source.match(/\bglobalThis\b/g) ?? []).length, asyncLocal: (source.match(/\bAsyncLocalStorage\b/g) ?? []).length },
       { processEnv: 3, denoEnv: 0, bunEnv: 0, globalThis: 0, asyncLocal: 0 },
       "P5c-S permits only the three reviewed database observation leaves to read the database URL and adds no other ambient channel");
@@ -4918,12 +4923,14 @@ function instrumentPhase5cZeroProgressFixtureV1(root: string): void {
 function instrumentPhase5cPreStatusFixtureV1(root: string): void {
   const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
   let source = readFileSync(modulePath, "utf8");
-  const copiedWorkspaceLiteral = "const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());";
-  assert.equal(source.split(copiedWorkspaceLiteral).length - 1, 1, "P5c-P copied fixture retains one test-bound workspace root");
-  source = source.replace(
+  const locatorPath = path.join(root, "src/internal-production/baseline-workspace-authority-path-v1.ts");
+  const locatorSource = readFileSync(locatorPath, "utf8");
+  const copiedWorkspaceLiteral = 'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");';
+  assert.equal(locatorSource.split(copiedWorkspaceLiteral).length - 1, 1, "P5c-P copied fixture retains one test-bound workspace root");
+  writeFileSync(locatorPath, locatorSource.replace(
     copiedWorkspaceLiteral,
     `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(realpathSync(path.dirname(root)))};`,
-  );
+  ));
   const selectedServiceCall = "await observeInternalProductionServiceCensusV1()";
   const serviceProbeCall = '(Reflect.get(globalThis,"__p4ExactPoisonPublisherAdmissionV1") as {next:(kind:string)=>unknown}).next("service") as InternalProductionServiceCensusV1';
   const ensureStart = source.indexOf("async function ensureTask12PreparedCurrentEntryStatusV1(");
@@ -5341,11 +5348,11 @@ function phase5cExpectedPredecessorCasPathsV1(root: string, operationHash = "c".
   writerTarget: string;
   writerFixed: string;
 }> {
-  const physicalRoot = realpathSync(root);
-  const directory = path.join(physicalRoot, ".setfarm", "internal-production", "task12-current-entry", "operations", "sha256", operationHash.slice(0, 2), operationHash);
+  const physicalRoot = realpathSync(path.dirname(root));
+  const directory = path.join(physicalRoot, "data", "internal-production-baseline", "current-entry-v1", "operations", "sha256", operationHash.slice(0, 2), operationHash);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  let current = path.join(physicalRoot, ".setfarm");
-  for (const segment of ["internal-production", "task12-current-entry", "operations", "sha256", operationHash.slice(0, 2), operationHash]) {
+  let current = path.join(physicalRoot, "data");
+  for (const segment of ["internal-production-baseline", "current-entry-v1", "operations", "sha256", operationHash.slice(0, 2), operationHash]) {
     chmodSync(current, 0o700);
     current = path.join(current, segment);
   }
@@ -5912,8 +5919,8 @@ function ensurePhase5cStartupFixtureV1(root: string): void {
   const startupPath = path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.ts");
   if (!existsSync(startupPath)) {
     fixtureFile(root, "src/internal-production/baseline-spawner-startup-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/baseline-spawner-startup-admission-v1.ts")));
-    fixtureFile(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts", "export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){return Object.freeze({})}\nexport async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){}\nexport async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(){}\n");
-    git(root, ["add", "src/internal-production/baseline-spawner-startup-admission-v1.ts", "src/internal-production/baseline-restart-authority-retirement-v1.ts"]);
+    fixtureFile(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts", "export async function acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){return Object.freeze({})}\nexport async function releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(){}\nexport async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderTransitionLeaseV1(){}\n" + coldPreselectionRetirementFixtureSourceV1());
+    git(root, ["add", "src/internal-production/baseline-spawner-startup-admission-v1.ts", "src/internal-production/baseline-restart-authority-retirement-v1.ts", "src/internal-production/baseline-spawner-launch-environment-v1.ts"]);
     git(root, ["commit", "-qm", "fixture startup import support"]);
     git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
   }
@@ -6290,7 +6297,7 @@ ${progressWriterProcessResult}`);
     }
     const controllerWriterCrossed = 'currentEntryFail("progress raw controller writer authority is crossed")';
     assert.equal(rawRegion.split(controllerWriterCrossed).length - 1, 1, "P5c-S copied raw fixture retains one controller-writer crossing boundary");
-    for (const port of ["buildTask12PreparedCurrentEntryPublicationSetV1", "observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1", "observeTask12ReceiptLocatorWriterNoWriteV1"] as const) {
+    for (const port of ["buildTask12PreparedCurrentEntryReplayPublicationSetV1", "observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1", "observeTask12ReceiptLocatorWriterNoWriteV1"] as const) {
       let cursor = 0;
       while (true) {
         const callStart = rawRegion.indexOf(`${port}(`, cursor);
@@ -6493,6 +6500,7 @@ ${progressWriterProcessResult}`);
     const probedOwner = p5cSSelectedPassOwnerProbe.open(context, operation, requireSelectedCurrentEntryStoreContextStateV1(context), (pass, assertContext, assertRootStable, assertFilesystemStable, assertStableWithoutCurrentStatusCas, assertStable, close) => Object.freeze({ [exactPoisonPostVisibleSelectedProgressPassOwnerBrandV1]: true as const, operation, operationDirectory: task12OperationDirectoryV1(context, operation.operationHash), pass, assertContext, assertRootStable, assertFilesystemStable, assertStableWithoutCurrentStatusCas, assertStable, close }));
     exactPoisonPostVisibleSelectedProgressPassControllerLocksV1.set(probedOwner, Object.freeze({
       controllerLock,
+      assertPredecessorStable(): void { probedOwner.assertRootStable(); probedOwner.pass.currentStatusCas.assertStable(); probedOwner.assertRootStable(); },
       resumeRecoverySourceBootstrapHeldLockV1: () => resumeRecoverySourceBootstrapHeldLockV1(context, controllerLock),
     }));
     return probedOwner;
@@ -6504,6 +6512,7 @@ ${progressWriterProcessResult}`);
     const probedOwner = p5cSSelectedPassOwnerProbe.open(context, operation, requireSelectedCurrentEntryStoreContextStateV1(context), (pass, assertContext, assertRootStable, assertStableWithoutCurrentStatusCas, assertStable, close) => Object.freeze({ [exactPoisonPostVisibleSelectedProgressPassOwnerBrandV1]: true as const, operation, operationDirectory: task12OperationDirectoryV1(context, operation.operationHash), pass, assertContext, assertRootStable, assertStableWithoutCurrentStatusCas, assertStable, close }));
     exactPoisonPostVisibleSelectedProgressPassControllerLocksV1.set(probedOwner, Object.freeze({
       controllerLock,
+      assertPredecessorStable(): void { probedOwner.assertRootStable(); probedOwner.pass.currentStatusCas.assertStable(); probedOwner.assertRootStable(); },
       resumeRecoverySourceBootstrapHeldLockV1: () => resumeRecoverySourceBootstrapHeldLockV1(context, controllerLock),
     }));
     return probedOwner;
@@ -6593,6 +6602,14 @@ ${progressWriterProcessResult}`);
       builderCursor = callStart + replacement.length;
     }
     source = source.slice(0, start) + region + source.slice(end);
+    if (source.includes("async function advanceTask12CurrentStatusAfterOwnedEffectV1(")) {
+      const handoff = topLevelFunctionRegionV1(source, "advanceTask12CurrentStatusAfterOwnedEffectV1");
+      const advance = "    await advanceTask12CurrentStatusV1(context, fresh, candidate);";
+      assert.equal(handoff.split(advance).length, 2, "the post-effect handoff has one existing CAS boundary");
+      source = source.replace(handoff, handoff.replace(advance, `    const p5cSPostEffectCasProbe = Reflect.get(globalThis,"__p5cSEffectArmProbeV1") as undefined | {observe:(effect:string,port:string,args:readonly unknown[])=>unknown};
+    if (p5cSPostEffectCasProbe) await p5cSPostEffectCasProbe.observe(requireExactPoisonPostVisibleProgressEffectV1(predecessor.pass.row).effect,"advanceTask12CurrentStatusV1",[context,fresh,candidate]);
+    else await advanceTask12CurrentStatusV1(context, fresh, candidate);`));
+    }
   }
   const privatePublisherMarker = "\nasync function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
   const exportedPublisherMarker = "\nexport async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {";
@@ -6727,7 +6744,7 @@ ${progressWriterProcessResult}`);
     finally { if (priorCreatorProbe === undefined) Reflect.deleteProperty(globalThis, "__p5bStrictCEntryProbeV1"); }
   })();
   const status = Object.freeze({ ...input.status, operationRef: operation.operationRef, operationHash: operation.operationHash }) as InternalProductionCurrentEntryAuthorityStatusV1;
-  const currentStatusCas = Object.freeze({ state: input.row === "ready" ? "terminal" : "Q0", transition: input.row === "ready" ? "terminal-current" : "current-to-next", selectedRoute: "current", requiresNormalization: false, assertStable(): void {}, close(): void {} }) as Task12CurrentStatusCasForProgressNoWriteObservationV1;
+  const currentStatusCas = Object.freeze({ state: input.row === "ready" ? "terminal" : "Q0", transition: input.row === "ready" ? "terminal-current" : "current-to-next", selectedRoute: "current", requiresNormalization: false, currentPairBytes: await canonicalRecordBytes({statusRef:status.statusRef,statusHash:status.statusHash}), assertStable(): void {}, close(): void {} }) as Task12CurrentStatusCasForProgressNoWriteObservationV1;
   const rawNextPairBytes = input.rawNextPairBytesBase64 == null ? null : Buffer.from(input.rawNextPairBytesBase64, "base64");
   const rawImmediateBytes = input.rawImmediateBytesBase64 == null ? null : Buffer.from(input.rawImmediateBytesBase64, "base64");
   const pass = Object.freeze({ row: input.row, pair: Object.freeze({ statusRef: status.statusRef, statusHash: status.statusHash }), status, nested: Object.freeze({}), raw: Object.freeze({ rawKind: "effect-fixture", current: input.rawCurrent, evidence: input.rawEvidence ?? "prior-only", effectResult: input.rawEffectResult ?? null, nextPairBytes: rawNextPairBytes, immediate: input.rawImmediateTarget == null || rawImmediateBytes === null ? null : Object.freeze({ target: input.rawImmediateTarget, bytes: rawImmediateBytes }), publication: null, writer: null, assertStable(): void {}, close(): void {} }), physical: Object.freeze({}), publication: null, writer: null, currentStatusCas }) as ExactPoisonPostVisibleProgressPassV1;
@@ -6735,11 +6752,13 @@ ${progressWriterProcessResult}`);
   const builderCalls: unknown[] = [];
   const builderValues: unknown[] = [];
   const timeline: string[] = [];
-  const ownerState = { openCalls: 0, contextChecks: 0, rootStableCalls: 0, postEffectRootFences: 0, stableCalls: 0, closeCalls: 0, closed: false, contextBound: false, operationBound: false, effectReturned: false };
+  const ownerState = { openCalls: 0, contextChecks: 0, rootStableCalls: 0, postEffectRootFences: 0, stableCalls: 0, closeCalls: 0, closeOrder: [] as number[], closed: false, contextBound: false, operationBound: false, effectReturned: false };
   const entryEndpointState = { openCalls: 0, policyBoundCalls: 0, stableCalls: 0, closeCalls: 0, publisherCalls: 0, publisherMutations: 0, openOrder: [] as string[], closeOrder: [] as string[] };
   const entryEndpointOwners: Array<{target:string;expectedBytesBase64:string|null;publicationState:string;publication:Readonly<Record<string,unknown>>;writer:Readonly<Record<string,unknown>>;outcome:"success"|"unequal"|"live"|"ambiguous";stableFault:boolean;closeFault:boolean;closed:boolean;stableCalls:number;handle:unknown}> = [];
   const ownerProbe = Object.freeze({ open(observedContext: SelectedCurrentEntryStoreContextV1, observedOperation: InternalProductionCurrentEntryOperationV1, selectedState: ReturnType<typeof requireSelectedCurrentEntryStoreContextStateV1>, mint: (...args: readonly unknown[]) => ExactPoisonPostVisibleSelectedProgressPassOwnerV1): ExactPoisonPostVisibleSelectedProgressPassOwnerV1 {
     ownerState.openCalls += 1;
+    const ownerOrdinal = ownerState.openCalls;
+    let localClosed = false;
     ownerState.contextBound = observedContext === context;
     ownerState.operationBound = observedOperation === operation;
     timeline.push("selected-pass:open");
@@ -6747,14 +6766,20 @@ ${progressWriterProcessResult}`);
     if (input.ownerMutation === "cross-operation") currentEntryFail("P5C_S_SELECTED_PASS_OPERATION_CROSSED");
     if (input.ownerFault === "open") currentEntryFail("P5C_S_SELECTED_PASS_OPEN_FAULT");
     const assertContext = (candidate: SelectedCurrentEntryStoreContextV1): void => { ownerState.contextChecks += 1; if (candidate !== observedContext) currentEntryFail("P5C_S_SELECTED_PASS_CONTEXT_CROSSED"); };
-    const assertRootStable = (): void => { if (ownerState.closed) currentEntryFail("P5C_S_SELECTED_PASS_ROOT_STABLE_AFTER_CLOSE"); ownerState.rootStableCalls += 1; if (ownerState.effectReturned) ownerState.postEffectRootFences += 1; timeline.push("selected-root:stable"); };
-    const assertFilesystemStable = (): void => { if (ownerState.closed) currentEntryFail("P5C_S_SELECTED_PASS_FILESYSTEM_STABLE_AFTER_CLOSE"); timeline.push("selected-pass:filesystem-stable"); };
-    const assertStableWithoutCurrentStatusCas = async (): Promise<void> => { if (ownerState.closed) currentEntryFail("P5C_S_SELECTED_PASS_NARROW_STABLE_AFTER_CLOSE"); timeline.push("selected-pass:narrow-stable"); };
-    const assertStable = async (): Promise<void> => { if (ownerState.closed) currentEntryFail("P5C_S_SELECTED_PASS_STABLE_AFTER_CLOSE"); ownerState.stableCalls += 1; timeline.push("selected-pass:stable"); if (input.ownerFault === "stable") currentEntryFail("P5C_S_SELECTED_PASS_STABLE_FAULT"); };
-    const close = async (): Promise<void> => { if (ownerState.closed) currentEntryFail("P5C_S_SELECTED_PASS_CLOSED_TWICE"); ownerState.closed = true; ownerState.closeCalls += 1; timeline.push("selected-pass:close"); if (input.ownerFault === "close") currentEntryFail("P5C_S_SELECTED_PASS_CLOSE_FAULT"); };
+    const assertRootStable = (): void => { if (localClosed) currentEntryFail("P5C_S_SELECTED_PASS_ROOT_STABLE_AFTER_CLOSE"); ownerState.rootStableCalls += 1; if (ownerState.effectReturned) ownerState.postEffectRootFences += 1; timeline.push("selected-root:stable"); };
+    const assertFilesystemStable = (): void => { if (localClosed) currentEntryFail("P5C_S_SELECTED_PASS_FILESYSTEM_STABLE_AFTER_CLOSE"); timeline.push("selected-pass:filesystem-stable"); };
+    const assertStableWithoutCurrentStatusCas = async (): Promise<void> => { if (localClosed) currentEntryFail("P5C_S_SELECTED_PASS_NARROW_STABLE_AFTER_CLOSE"); timeline.push("selected-pass:narrow-stable"); };
+    const assertStable = async (): Promise<void> => { if (localClosed) currentEntryFail("P5C_S_SELECTED_PASS_STABLE_AFTER_CLOSE"); ownerState.stableCalls += 1; timeline.push("selected-pass:stable"); if (input.ownerFault === "stable") currentEntryFail("P5C_S_SELECTED_PASS_STABLE_FAULT"); };
+    const close = async (): Promise<void> => { if (localClosed) currentEntryFail("P5C_S_SELECTED_PASS_CLOSED_TWICE"); localClosed = true; ownerState.closeCalls += 1; ownerState.closed = ownerState.closeCalls === ownerState.openCalls; ownerState.closeOrder.push(ownerOrdinal); timeline.push("selected-pass:close"); if (input.ownerFault === "close") currentEntryFail("P5C_S_SELECTED_PASS_CLOSE_FAULT"); };
+    const ownedPass = ownerOrdinal === 1 ? pass : (() => {
+      const candidate = builderValues.at(-1) as ExactPoisonPostVisibleProgressNextStatusV1 | undefined;
+      const built = builderCalls.at(-1) as {effectResult:ExactPoisonPostVisibleProgressEffectResultV1} | undefined;
+      if (ownerOrdinal !== 2 || candidate === undefined || built === undefined || !ownerState.effectReturned) currentEntryFail("P5C_S_POST_EFFECT_OWNER_OPEN_ORDER_INVALID");
+      return Object.freeze({...pass,raw:Object.freeze({...pass.raw,evidence:"completed" as const,effectResult:built.effectResult,nextPairBytes:candidate.pairBytes})});
+    })();
     return mint.length >= 7
-      ? mint(pass, assertContext, assertRootStable, assertFilesystemStable, assertStableWithoutCurrentStatusCas, assertStable, close)
-      : mint(pass, assertContext, assertRootStable, assertStableWithoutCurrentStatusCas, assertStable, close);
+      ? mint(ownedPass, assertContext, assertRootStable, assertFilesystemStable, assertStableWithoutCurrentStatusCas, assertStable, close)
+      : mint(ownedPass, assertContext, assertRootStable, assertStableWithoutCurrentStatusCas, assertStable, close);
   } });
   const probe = Object.freeze({ observe(effect: string, port: string, args: readonly unknown[]): unknown {
     const records = args.filter((argument): argument is Readonly<Record<string, unknown>> => typeof argument === "object" && argument !== null);
@@ -7704,7 +7729,7 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
   };
   const probe = Object.freeze({ record, observe(rawKind: string, port: string, args: readonly unknown[]): unknown {
     record(rawKind, port, args);
-    if (port === "buildTask12PreparedCurrentEntryPublicationSetV1") {
+    if (port === "buildTask12PreparedCurrentEntryReplayPublicationSetV1") {
       const preMutation = effectiveStatus.preMutationLoadedRuntimeServiceAuthority as Readonly<Record<string,unknown>>;
       const preMutationHash = String(preMutation.preMutationLoadedRuntimeServiceAuthorityHash);
       const preMutationRef = String(preMutation.preMutationLoadedRuntimeServiceAuthorityRef);
@@ -7794,7 +7819,7 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
     return own(port, value);
   } });
   const rawAuthority = authority;
-  authority = Object.freeze({ ...rawAuthority, buildPreparedPublicationSet: async (): Promise<Task12PreparedCurrentEntryPublicationSetV1> => probe.observe(selection.state === "blocked" ? selection.lastValidRow : selection.row, "buildTask12PreparedCurrentEntryPublicationSetV1", [Object.freeze({ context })]) as Task12PreparedCurrentEntryPublicationSetV1 });
+  authority = Object.freeze({ ...rawAuthority, buildPreparedPublicationSet: async (statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1): Promise<Task12PreparedCurrentEntryPublicationSetV1> => { if(statusOwner.status !== input.status) currentEntryFail("P5C_S_PREPARED_REPLAY_STATUS_CROSSED"); return probe.observe(selection.state === "blocked" ? selection.lastValidRow : selection.row, "buildTask12PreparedCurrentEntryReplayPublicationSetV1", [Object.freeze({ context }),statusOwner]) as Task12PreparedCurrentEntryPublicationSetV1; } });
   Reflect.set(globalThis, "__p5cSRawRouteProbeV1", probe);
   let value: Awaited<ReturnType<typeof observeExactPoisonPostVisibleProgressRawNoWriteV1>> | null = null;
   let outcome: "returned" | "threw" = "returned";
@@ -7921,7 +7946,12 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
     ? `export function p5cSPrewarmFixedRepositoryRootFixtureV1(): string { return fixedRepositoryRoot(); }
 
 export async function p5cSObservePreSchemaAtRootFixtureV1(input: Readonly<{operation:Readonly<Record<string,unknown>>;successorRoot:string;mutation:"none"|"absent-child-appearance"|"absent-parent-aba"|"status-member-aba"|"content-member-aba"|"content-parent-aba"|"content-drift"|"material-locator-aba"|"operation-directory-aba";mutationTarget:string;observeExternal?:boolean;externalOrdinal?:number;internalCloseFaultAt?:number|null;internalCloseFaultTarget?:string|null;authorityFaultAt?:number|null}>): Promise<Readonly<Record<string,unknown>>> {
-  const descriptorBefore=readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;
+  // Let the tsx loader finish its compilation-cache writes before measuring
+  // authority resources; never settle or exclude descriptors after the action.
+  await new Promise((resolve)=>setTimeout(resolve,100));
+  const descriptorSnapshot=()=>readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).flatMap((name)=>{try{const s=fstatSync(Number(name));return [{fd:Number(name),dev:s.dev,ino:s.ino,mode:s.mode}];}catch{return [];}});
+  const descriptorsBefore=descriptorSnapshot();
+  const descriptorBefore=descriptorsBefore.length;
   const operation=input.operation as unknown as InternalProductionCurrentEntryOperationV1;
   let authorityStableCalls=0;const authorityEvents:string[]=[];
   const context=Object.freeze({successorRoot:input.successorRoot,successorOperation:operation,assertStable():void{authorityStableCalls+=1;authorityEvents.push("authority-stable:"+authorityStableCalls);if(input.authorityFaultAt===authorityStableCalls)currentEntryFail("P5C_S_PRE_SCHEMA_AUTHORITY_STABLE_FAULT:"+authorityStableCalls);}}) as unknown as ExactPoisonRecoveryPinnedCommitChainV1;
@@ -7964,7 +7994,9 @@ export async function p5cSObservePreSchemaAtRootFixtureV1(input: Readonly<{opera
       if(mutationApplied&&input.mutation==="content-drift"&&driftOriginal!==null)writeFileSync(input.mutationTarget,driftOriginal,{mode:0o600});
     }
   }
-  const descriptorAfter=readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;
+  const descriptorsAfter=descriptorSnapshot();
+  const descriptorAfter=descriptorsAfter.length;
+  if(descriptorAfter!==descriptorBefore)process.stderr.write(JSON.stringify({descriptorsBefore,descriptorsAfter})+"\\n");
   return Object.freeze({outcome,message,value:owner?.value??null,external:external===null?null:Object.freeze({state:external.state,family:external.family,activeEndpointOrdinal:external.activeEndpointOrdinal,current:external.current,endpoints:Object.freeze(external.endpoints.map((endpoint)=>Object.freeze({material:endpoint.material,role:endpoint.role,policy:endpoint.policy,target:endpoint.target,expectedBytesBase64:Buffer.isBuffer(endpoint.expectedBytes)?endpoint.expectedBytes.toString("base64"):null,publication:isPlainRecord(endpoint.publication)?endpoint.publication.state:null,writer:isPlainRecord(endpoint.writer)?endpoint.writer.state:null})))}),closeCount,mutationApplied,memberBytesEqual,memberGenerationChanged,internalCloseCalls:closeProbe.closeCalls,authorityStableCalls,events:Object.freeze([...authorityEvents,...closeProbe.events,...endpointCloseProbe.events]),descriptorDelta:descriptorAfter-descriptorBefore});
 }
 
@@ -8849,6 +8881,8 @@ export function p5cSProjectProgressNestedAuthorityPairFixtureV1(..._args: readon
   let memberReplaced = false;
   try {
     opened = await openExactPoisonPostVisibleProgressNestedAuthorityV1(authority, input.status as InternalProductionCurrentEntryAuthorityStatusV1, descriptor);
+    const afterOpen = Reflect.get(globalThis, "__p5cSNestedAfterOpenV1");
+    if (typeof afterOpen === "function") afterOpen();
     if (input.mutation === "member-cross") {
       const bytes = readFileSync(input.expectedTarget);
       renameSync(input.expectedTarget, input.expectedTarget + ".p5c-s-old");
@@ -9936,7 +9970,7 @@ ${publicResumeMarker}`);
     const selected = probe.faultBoundary ?? "";
     const selectedIndex = ordered.indexOf(selected);
     const currentIndex = ordered.indexOf(_boundary);
-    const replayableSelected = selected.startsWith("before-") || selected.includes("-locator-") || selected.includes("-content-") || selected === "after-migration-current-audit-publication";
+    const replayableSelected = selected.startsWith("before-") || selected.includes("-locator-") || selected.includes("-content-");
     if (_boundary === selected && replayableSelected) currentEntryFail(\`P5C_S_RESPONSE_RETRY_ADOPTED:\${_boundary}\`);
     if (_boundary === selected) currentEntryFail(\`P5C_S_RESPONSE_RETRY_DUPLICATED_DURABLE_ACTION:\${_boundary}\`);
     if (selectedIndex >= 0 && currentIndex > selectedIndex) currentEntryFail(\`P5C_S_RESPONSE_RETRY_ADOPTED:\${_boundary}\`);
@@ -10190,6 +10224,20 @@ ${writerMutationFence}
   source = source.slice(0, validatorAt) + `          const selection = Reflect.get(globalThis, "__p5cSResumeProbeV1")
             ? Object.freeze({ storeRoot: context.successorRoot, operation: context.successorOperation, selectionKind: "successor-progress" as const })
             : await revalidatePostVisibleCurrentEntryStoreV1(context);` + source.slice(validatorAt + validatorCall.length);
+  const postEffectOwnerRegion = topLevelFunctionRegionV1(source, "openExactPoisonPostVisibleSelectedProgressPassV1");
+  const postEffectOwnerHeader = /^async function openExactPoisonPostVisibleSelectedProgressPassV1\([\s\S]*?\):\s*Promise<ExactPoisonPostVisibleSelectedProgressPassOwnerV1>\s*\{/.exec(postEffectOwnerRegion)?.[0];
+  assert.ok(postEffectOwnerHeader, "post-effect transport probe bounds the actual selected owner");
+  const cleanupExit = "    if (firstError !== null) throw firstError;";
+  assert.equal(postEffectOwnerRegion.split(cleanupExit).length, 2, "one selected-owner cleanup exit follows all physical closes");
+  source = source.replace(postEffectOwnerRegion, postEffectOwnerRegion
+    .replace(postEffectOwnerHeader, `${postEffectOwnerHeader}
+  const p5cSPostEffectProbe = Reflect.get(globalThis,"__p5cSResumeProbeV1") as undefined | {executePublications?:unknown[];postEffectOwnerOpens:number;postEffectOwnerCloses:number[];freshCloseFault:boolean};
+  const p5cSPostEffectOrdinal = p5cSPostEffectProbe?.executePublications ? ++p5cSPostEffectProbe.postEffectOwnerOpens : 0;`)
+    .replace(cleanupExit, `    if (p5cSPostEffectOrdinal !== 0) {
+      p5cSPostEffectProbe!.postEffectOwnerCloses.push(p5cSPostEffectOrdinal);
+      if (p5cSPostEffectOrdinal === 2 && p5cSPostEffectProbe!.freshCloseFault) firstError ??= new Error("P5C_S_POST_EFFECT_CLOSE_FAULT");
+    }
+${cleanupExit}`));
   writeFileSync(modulePath, source);
 
   const startupPath = path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.ts");
@@ -10212,8 +10260,22 @@ ${writerMutationFence}
     "export async function executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(",
     "): Promise<InternalProductionPreSchemaSpawnerRestartAuthorityPairV1> {",
     `
-  const probe = Reflect.get(globalThis, "__p5cSResumeProbeV1") as undefined | {executeCalls:number;executeInputs:unknown[];restartAuthority:InternalProductionPreSchemaSpawnerRestartAuthorityPairV1};
-  if (probe) { probe.executeCalls += 1; probe.executeInputs.push(input); return probe.restartAuthority; }`,
+  const probe = Reflect.get(globalThis, "__p5cSResumeProbeV1") as undefined | {executeCalls:number;executeInputs:unknown[];restartAuthority:InternalProductionPreSchemaSpawnerRestartAuthorityPairV1;executePublications?:readonly {target:string;bytesBase64:string}[];executeMutation?:string;materialTarget?:string;predecessorTarget?:string;predecessorBackup?:string};
+  if (probe) {
+    probe.executeCalls += 1; probe.executeInputs.push(input);
+    for (const publication of probe.executePublications ?? []) {
+      mkdirSync(path.dirname(publication.target), {recursive:true,mode:0o700});
+      writeFileSync(publication.target, Buffer.from(publication.bytesBase64,"base64"), {flag:"wx",mode:0o600});
+    }
+    if (probe.executeMutation === "missing-material") unlinkSync(probe.materialTarget!);
+    if (probe.executeMutation === "predecessor-aba") {
+      const {renameSync} = await import("node:fs");
+      const bytes = readFileSync(probe.predecessorTarget!);
+      renameSync(probe.predecessorTarget!,probe.predecessorBackup!);
+      writeFileSync(probe.predecessorTarget!,bytes,{flag:"wx",mode:0o600});
+    }
+    return probe.restartAuthority;
+  }`,
   );
   insert(
     "export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(",
@@ -10728,6 +10790,7 @@ function phase5cSSeedRecoveryAtRootFixtureV1(
   const writeRecoveryRecord = (kind: string, value: Readonly<Record<string, unknown>>, hashKey: string): string => {
     const hash = String(value[hashKey]);
     const target = path.join(recoveryRoot, "records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+    phase5cEnsurePublicationParentV1(target);
     fixtureFile(successorRoot, path.relative(successorRoot, target), canonicalFixtureRecordV1(value), 0o600);
     return target;
   };
@@ -10833,6 +10896,7 @@ function phase5cSSeedRecoveryAtRootFixtureV1(
     ? pairCloseCross === null ? terminal : Object.freeze({ ...crossedTerminalValue, statusHash: canonicalHash(crossedTerminalValue) })
     : state === "prepared" ? chain.prior! : pendingStatus;
   const pendingTarget = path.join(recoveryRoot, "recovery-source-bootstrap-pending-input.json");
+  phase5cEnsurePublicationParentV1(pendingTarget);
   fixtureFile(successorRoot, path.relative(successorRoot, pendingTarget), canonicalFixtureRecordV1(pending), 0o600);
   for (const visibility of state === "terminal" ? [pendingVisibility, preparedVisibility, terminalVisibility] : state === "prepared" ? [pendingVisibility, preparedVisibility] : [pendingVisibility]) {
     writeRecoveryRecord("visibility-heads", visibility, "visibilityHeadHash");
@@ -10856,6 +10920,7 @@ function phase5cSSeedRecoveryAtRootFixtureV1(
       String(pairClose.targetReservationPairCloseHash).slice(0, 2),
       `${String(pairClose.targetReservationPairCloseHash)}.json`,
     );
+    phase5cEnsurePublicationParentV1(pairCloseTarget);
     fixtureFile(successorRoot, path.relative(successorRoot, pairCloseTarget), canonicalFixtureRecordV1(pairClose), 0o600);
   }
   const visibilityPointerTarget = path.join(recoveryRoot, "recovery-source-bootstrap-visibility-head.json");
@@ -12401,16 +12466,43 @@ function phase5cSAuthenticPreSchemaCurrentEntryOperationFixtureV1(): Readonly<Re
   return Object.freeze({ ...body, operationRef: `setfarm://internal-production/current-entry-operation/sha256/${operationHash}`, operationHash });
 }
 
+type DirectRestartEvidenceFixtureV2 = Readonly<{
+  preMutationLoadedRuntimeServiceAuthorityRef: string;
+  preMutationLoadedRuntimeServiceAuthorityHash: string;
+  launchProfileHash: string;
+}>;
+
+function installDirectReceiptEvidenceProbeFixtureV1(root: string): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  let source = readFileSync(modulePath, "utf8");
+  for (const [name, marker, inserted] of [
+    ["resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1", "): Promise<Readonly<Record<string, unknown>>> {", `
+  const probe = Reflect.get(globalThis, "__directReceiptEvidenceV1");
+  if (probe) { const value = probe.p3s[Math.min(probe.p3Calls++, probe.p3s.length - 1)]; if (pair.operationRef !== value.currentEntryOperationRef || pair.operationHash !== value.currentEntryOperationHash) throw Error("direct fixture original operation crossed"); await probe.onP3?.(probe.p3Calls); return structuredClone(value); }
+`],
+    ["observeInternalProductionSpawnerLaunchProfileCandidateV1", "observeInternalProductionSpawnerLaunchProfileCandidateV1() {", `
+  const probe = Reflect.get(globalThis, "__directReceiptEvidenceV1");
+  if (probe) { probe.profileCalls++; await probe.onProfile?.(); const value = { profile: probe.profile }; Object.defineProperty(value, "environment", { value: Object.freeze({}), enumerable: false }); return value as never; }
+`],
+  ] as const) {
+    const region = topLevelFunctionRegionV1(source, name);
+    assert.equal(region.split(marker).length, 2, `${name}: instrument exactly its function entry`);
+    source = source.replace(region, region.replace(marker, marker + inserted));
+  }
+  writeFileSync(modulePath, source);
+}
+
 function phase5cSExternalRawCausalChainFixtureV1(
   arrow: typeof PHASE5C_S_EXTERNAL_RAW_ARROWS_V1[number],
   recoveryVariant: "A" | "B" = "A",
   selectedOperation?: Readonly<Record<string, unknown>>,
   selectedSpawnerGeneration?: Readonly<{ serviceIdentityHash: string; generationHash: string }>,
+  directRestart?: DirectRestartEvidenceFixtureV2,
 ): Phase5cSExternalRawCausalChainFixtureV1 {
-  const key = `${arrow.family}:${arrow.ordinal}:${arrow.prior}:${arrow.next}:${recoveryVariant}:${String(selectedOperation?.operationHash ?? "default")}:${selectedSpawnerGeneration?.serviceIdentityHash ?? "default"}:${selectedSpawnerGeneration?.generationHash ?? "default"}`;
+  const key = `${arrow.family}:${arrow.ordinal}:${arrow.prior}:${arrow.next}:${recoveryVariant}:${String(selectedOperation?.operationHash ?? "default")}:${selectedSpawnerGeneration?.serviceIdentityHash ?? "default"}:${selectedSpawnerGeneration?.generationHash ?? "default"}:${directRestart ? canonicalHash(directRestart) : "v1"}`;
   const cached = PHASE5C_S_EXTERNAL_RAW_CAUSAL_CHAIN_CACHE_V1.get(key);
   if (cached !== undefined) return cached;
-  const value = phase5cSBuildExternalRawCausalChainFixtureV1(arrow, recoveryVariant, selectedOperation, selectedSpawnerGeneration);
+  const value = phase5cSBuildExternalRawCausalChainFixtureV1(arrow, recoveryVariant, selectedOperation, selectedSpawnerGeneration, directRestart);
   PHASE5C_S_EXTERNAL_RAW_CAUSAL_CHAIN_CACHE_V1.set(key, value);
   return value;
 }
@@ -12420,6 +12512,7 @@ function phase5cSBuildExternalRawCausalChainFixtureV1(
   recoveryVariant: "A" | "B" = "A",
   selectedOperation?: Readonly<Record<string, unknown>>,
   selectedSpawnerGeneration?: Readonly<{ serviceIdentityHash: string; generationHash: string }>,
+  directRestart?: DirectRestartEvidenceFixtureV2,
 ): Phase5cSExternalRawCausalChainFixtureV1 {
   const authenticSelectedOperation = (arrow.family === "pre-schema" && recoveryVariant === "B") || arrow.family === "migration-32" || arrow.family === "current-audit"
     ? (selectedOperation ?? phase5cSAuthenticPreSchemaCurrentEntryOperationFixtureV1())
@@ -12454,7 +12547,11 @@ function phase5cSBuildExternalRawCausalChainFixtureV1(
     const startupToken = pairFrom(startupValue, "startupTokenRef", "startupTokenHash");
     const restartUid = process.getuid?.() ?? 501;
     const restartBody = Object.freeze({ schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v1", actionId: "task6a-pre-schema-setfarm-spawner-rebind-v1", service: "setfarm-spawner", currentEntryOperationRef: operationRef, currentEntryOperationHash: operationHash, preSchemaSpawnerRebindAuthorizationRef: authorization.authorizationRef, preSchemaSpawnerRebindAuthorizationHash: authorization.authorizationHash, startupTokenRef: startupToken.startupTokenRef, startupTokenHash: startupToken.startupTokenHash, predecessorSpawnerProcessIdentityRef: startupValue.predecessorSpawnerProcessIdentityRef, predecessorSpawnerProcessIdentityHash: startupValue.predecessorSpawnerProcessIdentityHash, predecessorSpawnerServiceIdentityHash: startupValue.predecessorSpawnerServiceIdentityHash, predecessorSpawnerGenerationHash: startupValue.predecessorSpawnerGenerationHash, targetSpawnerSourceSha: controllerSource.sha, targetSpawnerTreeHash: controllerSource.treeHash, targetSpawnerBuildHash: controllerSource.buildHash, uid: restartUid, launchdLabel: "com.setrox.setfarm-spawner", executable: "/bin/launchctl", argv: Object.freeze(["kickstart", "-k", `gui/${restartUid}/com.setrox.setfarm-spawner`]) });
-    const restartValue = withPair(restartBody, "restartAuthorityRef", "restartAuthorityHash", "setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/");
+    const { launchdLabel, executable, argv, ...restartCommon } = restartBody;
+    const selectedRestartBody = directRestart ? { ...restartCommon,
+      schema: "setfarm.internal-production-pre-schema-spawner-restart-authority.v2", ...directRestart,
+      transport: "direct-detached-node-v1", terminationSignal: "SIGTERM", maximumTerminationDispatchCount: 1, maximumSpawnDispatchCount: 1 } : restartBody;
+    const restartValue = withPair(selectedRestartBody, "restartAuthorityRef", "restartAuthorityHash", "setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/");
     const restartAuthority = pairFrom(restartValue, "restartAuthorityRef", "restartAuthorityHash");
     const predecessorBody = Object.freeze({ schema: "setfarm.internal-production-pre-schema-spawner-predecessor-termination-observation.v1", currentEntryOperationRef: operationRef, currentEntryOperationHash: operationHash, preSchemaSpawnerRebindAuthorizationRef: authorization.authorizationRef, preSchemaSpawnerRebindAuthorizationHash: authorization.authorizationHash, startupTokenRef: startupToken.startupTokenRef, startupTokenHash: startupToken.startupTokenHash, restartAuthorityRef: restartAuthority.restartAuthorityRef, restartAuthorityHash: restartAuthority.restartAuthorityHash, predecessorSpawnerProcessIdentityRef: startupValue.predecessorSpawnerProcessIdentityRef, predecessorSpawnerProcessIdentityHash: startupValue.predecessorSpawnerProcessIdentityHash, predecessorSpawnerServiceIdentityHash: startupValue.predecessorSpawnerServiceIdentityHash, predecessorSpawnerGenerationHash: startupValue.predecessorSpawnerGenerationHash, observedProcessState: "terminal-and-not-running", observedListenerState: "absent" });
     const predecessorValue = withPair(predecessorBody, "predecessorTerminationObservationRef", "predecessorTerminationObservationHash", "setfarm://internal-production/pre-schema-spawner-predecessor-termination-observation/sha256/");
@@ -12510,7 +12607,7 @@ function phase5cSBuildExternalRawCausalChainFixtureV1(
   if (arrow.family === "current-audit") {
     const migrationArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "migration-32" && candidate.ordinal === 2)!;
     const terminal = phase5cSExternalRawCausalChainFixtureV1(migrationArrow, "A", authenticSelectedOperation ?? undefined).next;
-    const databaseAudit = Object.freeze({ schema: "setfarm.internal-production-baseline-bootstrap-handoff-current-database-audit.v1", currentStatus: "current", currentEntryOperation: operation, migrationReceipt: (terminal as Readonly<Record<string, unknown>>).migrationReceipt, auditHash: "a".repeat(64) });
+    const databaseAudit = Object.freeze({ migrationOrdinal: 32, migrationId: "contract-spine-bootstrap-main-claim-handoff-v1", migrationChecksum: PHASE5C_S_EXACT_MIGRATION_JOURNAL_V1[32].checksum, migrationState: "current", schemaProjectionHash: "a".repeat(64) });
     const auditValue = withPair(Object.freeze({ schema: "setfarm.internal-production-bootstrap-handoff-current-audit.v1", currentStatus: "current", currentEntryOperation: operation, migrationReceipt: terminal.migrationReceipt, databaseAudit }), "bootstrapHandoffCurrentAuditRef", "bootstrapHandoffCurrentAuditHash", "setfarm://internal-production/bootstrap-handoff-current-audit/sha256/");
     return Object.freeze({ prior: terminal, next: Object.freeze({ ...terminal, currentAudit: pairFrom(auditValue, "bootstrapHandoffCurrentAuditRef", "bootstrapHandoffCurrentAuditHash") }), materials: Object.freeze({ "current-audit": auditValue }) });
   }
@@ -12750,8 +12847,8 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
   terminalOrdinal: -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6,
   blocked = false,
   selectedOperation?: Readonly<Record<string, unknown>>,
-  mirrorContentIntoWorkspaceAuthority = false,
   selectedSpawnerGeneration?: Readonly<{ serviceIdentityHash: string; generationHash: string }>,
+  directRestart?: DirectRestartEvidenceFixtureV2,
 ): Readonly<{
   operation: Readonly<{ operationRef: string; operationHash: string }>;
   current: Readonly<Record<string, unknown>>;
@@ -12764,7 +12861,7 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
 }> {
   const operation = selectedOperation ?? phase5cSAuthenticPreSchemaCurrentEntryOperationFixtureV1();
   const successorRoot = path.join(path.dirname(root), "data/internal-production-baseline/current-entry-poison-successor-v1");
-  const operationDirectory = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", String(operation.operationHash));
+  const operationDirectory = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", String(operation.operationHash));
   mkdirSync(successorRoot, { recursive: true, mode: 0o700 });
   const authorityV3Migration31Audit = JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8")) as Readonly<Record<string, unknown>>;
   const authorityV3Migration31AuditHash = String(authorityV3Migration31Audit.authorityV3Migration31AuditHash);
@@ -12782,14 +12879,11 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
     assert.ok(arrow, `pre-schema physical ordinal ${ordinal} exists`);
     return arrow;
   });
-  const chains = arrows.map((arrow) => phase5cSExternalRawCausalChainFixtureV1(arrow, "B", operation, selectedSpawnerGeneration));
+  const chains = arrows.map((arrow) => phase5cSExternalRawCausalChainFixtureV1(arrow, "B", operation, selectedSpawnerGeneration, directRestart));
   const materials = chains[0]!.materials;
   let current = chains.at(-1)!.next;
   assert.deepEqual(current.currentEntryOperation, Object.freeze({ operationRef: operation.operationRef, operationHash: operation.operationHash }), "physical pre-schema status binds the authentic self-hashed operation pair");
-  const contentRoot = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
-  const contentRoots = mirrorContentIntoWorkspaceAuthority
-    ? Object.freeze([contentRoot, path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records")])
-    : Object.freeze([contentRoot]);
+  const contentRoot = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
   const writeCanonical = (target: string, value: Readonly<Record<string, unknown>>): void => {
     phase5cEnsurePublicationParentV1(target);
     writeFileSync(target, canonicalFixtureRecordV1(value), { mode: 0o600 });
@@ -12797,7 +12891,7 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
   const pair = (value: Readonly<Record<string, unknown>>, refKey: string, hashKey: string): Readonly<Record<string, unknown>> => Object.freeze({ [refKey]: value[refKey], [hashKey]: value[hashKey] });
   const record = (kind: string, value: Readonly<Record<string, unknown>>, hashKey: string): void => {
     const hash = String(value[hashKey]);
-    for (const targetRoot of contentRoots) writeCanonical(path.join(targetRoot, kind, "sha256", hash.slice(0, 2), `${hash}.json`), value);
+    writeCanonical(path.join(contentRoot, kind, "sha256", hash.slice(0, 2), `${hash}.json`), value);
   };
   const locatorRows = Object.freeze([
     Object.freeze({ ordinal: 0, name: "00-pre-dispatch-legacy-zero.pair.json", material: "pre-dispatch-legacy-zero-content", refKey: "observationRef", hashKey: "observationHash" }),
@@ -12823,7 +12917,7 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
   if (blocked) {
     assert.equal(terminalOrdinal, 2, "blocked physical history branches only from the restart-authority prefix");
     const blockedArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.next === "blocked")!;
-    const blockedStatus = phase5cSExternalRawCausalChainFixtureV1(blockedArrow, "B", operation).next;
+    const blockedStatus = phase5cSExternalRawCausalChainFixtureV1(blockedArrow, "B", operation, selectedSpawnerGeneration, directRestart).next;
     const blockedTarget = path.join(operationDirectory, "status-blocked-helper-dispatch-settlement-unknown.pair.json");
     writeCanonical(blockedTarget, pair(blockedStatus, "statusRef", "statusHash"));
     record("status", blockedStatus, "statusHash");
@@ -12844,7 +12938,7 @@ function phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(
     if (row.ordinal > terminalOrdinal) continue;
     const value = materials[row.material]!;
     const hash = row.hashKey === null ? canonicalHash(value) : String(value[row.hashKey]);
-    for (const targetRoot of contentRoots) writeCanonical(path.join(targetRoot, row.kind, "sha256", hash.slice(0, 2), `${hash}.json`), value);
+    writeCanonical(path.join(contentRoot, row.kind, "sha256", hash.slice(0, 2), `${hash}.json`), value);
   }
   for (const material of ["pre-dispatch-legacy-zero-content", ...(terminalOrdinal >= 5 ? ["post-termination-legacy-zero-content"] : [])]) {
     const value = materials[material]!;
@@ -12896,9 +12990,9 @@ function phase5cSExternalRawPublicationFixtureV1(
   const next = chain.next;
   const prior = chain.prior;
   const fixedRoot = arrow.family === "pre-schema"
-    ? path.join(fixtureRoot, "data/internal-production-baseline/pre-schema-spawner-rebind-v1")
+    ? path.join(path.dirname(fixtureRoot), "data/internal-production-baseline/pre-schema-spawner-rebind-v1")
     : arrow.family === "migration-32" || arrow.family === "current-audit"
-      ? path.join(fixtureRoot, "data/internal-production-baseline/pre-manifest-migration32-v1")
+      ? path.join(path.dirname(fixtureRoot), "data/internal-production-baseline/pre-manifest-migration32-v1")
       : arrow.family === "recovery-source" ? path.join(fixtureRoot, "p5c-s-real-raw/recovery-source-bootstrap-v1") : path.join(fixtureRoot, "p5c-s-real-raw");
   const identity = (inode: number, links = 1, mode = "0600"): Readonly<Record<string, string>> => Object.freeze({ deviceDecimal: "1", inodeDecimal: String(inode), modeOctal: mode, uidDecimal: "501", linkCountDecimal: String(links), sizeDecimal: "128", mtimeNanosecondsDecimal: "1700000000000000000", ctimeNanosecondsDecimal: "1700000000000000000" });
   const publication = (target: string, bytes: Buffer, physicalState: "F-1" | "F0" | "F1" | "F2" | "F2u" | "F3" | "F4", seed: number, corrupt: boolean, independentF2 = false): Readonly<Record<string, unknown>> => {
@@ -13108,7 +13202,7 @@ function phase5cSExternalRawPublicationFixtureV1(
     }
     if (material.kind !== null) {
       const contentHash = processIdentity ? canonicalHash(value) : String(value[projection!.hashKey]);
-      const contentRoot = "root" in material && material.root === "legacy-zero" ? path.join(fixtureRoot, "data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1") : fixedRoot;
+      const contentRoot = "root" in material && material.root === "legacy-zero" ? path.join(path.dirname(fixtureRoot), "data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1") : fixedRoot;
       const contentTarget = path.join(contentRoot, "records", material.kind, "sha256", contentHash.slice(0, 2), `${contentHash}.json`);
       endpoints.push(Object.freeze({ material: material.name, role: "content", policy: arrow.policy === "mixed-receipt-q-db" ? "task12-receipt" : arrow.policy, target: contentTarget, expectedBytesBase64: canonicalFixtureRecordV1(value).toString("base64"), alternateBytesBase64: canonicalFixtureRecordV1(alternateValue).toString("base64") }));
     }
@@ -13334,7 +13428,7 @@ function phase5cSSeedRetainedReaderFixturesV1(
     && typeof selectedOperation.authorityV3Migration31Audit === "object" && selectedOperation.authorityV3Migration31Audit !== null;
   const preSchemaBodies = usePhysicalAtRoot
     ? (() => {
-        const physical = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 5, false, selectedOperation, true);
+        const physical = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 5, false, selectedOperation);
         assert.deepEqual(
           { operationRef: physical.operation.operationRef, operationHash: physical.operation.operationHash },
           operationPair,
@@ -13380,9 +13474,6 @@ function phase5cSSeedRetainedReaderFixturesV1(
     const content = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", record.pair.statusHash.slice(0, 2), `${record.pair.statusHash}.json`);
     phase5cEnsurePublicationParentV1(content);
     writeFileSync(content, record.bytes, { mode: 0o600 });
-    const controllerContent = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", record.pair.statusHash.slice(0, 2), `${record.pair.statusHash}.json`);
-    phase5cEnsurePublicationParentV1(controllerContent);
-    writeFileSync(controllerContent, record.bytes, { mode: 0o600 });
     return Object.freeze({ ordinal: ordinal as 0 | 1 | 2 | 3 | 4 | 5, pair: record.pair, body: record.body });
   });
 
@@ -13737,6 +13828,12 @@ function runPhase5cZeroProgressFixtureV1(
 ): Promise<Readonly<{ status: number | null; stdout: string; stderr: string }>> {
   const transportPath = path.join(path.dirname(root), ".p5c-zero-progress-observations.json");
   const startupModule = pathToFileURL(path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.js")).href;
+  const resumeMode = (observations.sResume?.[0] as Readonly<Record<string, unknown>> | undefined)?.mode;
+  // Warm the copied, declaration-only DB fixture before measuring owned FDs;
+  // first-use TSX loader workers/cache descriptors are not operation resources.
+  const databaseWarmup = resumeMode === "migration"
+    ? `await import(${JSON.stringify(pathToFileURL(path.join(root, "src/db-pg.ts")).href)});`
+    : "";
   fixtureFile(path.dirname(root), ".p5c-zero-progress-observations.json", `${JSON.stringify(fixtureTransportValueV1(observations))}\n`, 0o600);
   const call = entry === "selector"
     ? "m.p5bRunStrictCEntryFixtureV1()"
@@ -13753,7 +13850,7 @@ function runPhase5cZeroProgressFixtureV1(
           : entry === "controller-construction"
             ? `m.p5cSControllerGenerationConstructionFaultFixtureV1(${JSON.stringify(controllerConstructionInput)})`
           : "m.p5cPrepareCurrentEntryFixtureV1()";
-  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const path=await import("node:path");await import(${JSON.stringify(startupModule)});const descriptorCount=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).filter((name)=>{try{fs.fstatSync(Number(name));return true}catch{return false}}).length;await new Promise((resolve)=>setTimeout(resolve,100));const before=descriptorCount();const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(fs.readFileSync(${JSON.stringify(transportPath)},"utf8")));const mutation=${JSON.stringify(mutation)};const cursors={};const z={lowerReturnCalls:0,mutation,transientApplied:false,originalRewriteApplied:false,originalDirectorySwapApplied:false,rootIdentity:null,reviewApplied:false,createdTarget:null};const p={driftTarget:${JSON.stringify(preStatusDriftTarget)},driftApplied:false,driftOriginal:null};const s={dispatcherCalls:0,preStatusPassCalls:0,progressValidatorCalls:0,progressPassCalls:0,equalityCalls:0,qStates:[]};const sr=Array.isArray(values.sResume)&&values.sResume.length>0?Object.assign(values.sResume[0],{prepareCalls:0,executeCalls:0,executeInputs:[],observeCalls:0,resolverCalls:0,advanceStates:[],events:[],faultApplied:false,migrationPrepareCalls:0,retainedMigrationReadCalls:0,completedRetainedReadCalls:0,applyCalls:0,migrationObserveCalls:0,receiptResolveCalls:0,currentAuditResolveCalls:0,auditCalls:0}):null;if(p.driftTarget)p.driftOriginal=fs.readFileSync(p.driftTarget);const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5C_Z_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;if(mutation.kind==="original-rewrite"&&kind==="source"&&!z.originalRewriteApplied){const bytes=fs.readFileSync(mutation.target);fs.writeFileSync(mutation.target,bytes);z.originalRewriteApplied=true}if(mutation.kind==="original-directory-swap"&&kind==="source"&&!z.originalDirectorySwapApplied){fs.renameSync(mutation.target,mutation.backup);fs.mkdirSync(mutation.target,{mode:0o700});for(const name of fs.readdirSync(mutation.backup))fs.copyFileSync(path.join(mutation.backup,name),path.join(mutation.target,name));z.originalDirectorySwapApplied=true}return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const shared={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:null};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",shared);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);Reflect.set(globalThis,"__p5cZeroProgressProbeV1",z);Reflect.set(globalThis,"__p5cPreStatusProbeV1",p);Reflect.set(globalThis,"__p5cProgressProbeV1",s);if(sr)Reflect.set(globalThis,"__p5cSResumeProbeV1",sr);let outcome="returned",message=null,value=null;try{value=await ${call}}catch(error){outcome="threw";message=String(error)}finally{if(z.originalDirectorySwapApplied){fs.rmSync(mutation.target,{recursive:true,force:true});fs.renameSync(mutation.backup,mutation.target)}if(z.reviewApplied&&mutation.backup&&!new Set(["f2-selected-post-fresh-replace","f2-redundant-post-fresh-replace","f1-linked-replace"]).has(mutation.kind)){if(mutation.targetType==="hardlink-parent"&&fs.existsSync(mutation.target)&&fs.existsSync(mutation.backup)){for(const name of fs.readdirSync(mutation.target))fs.renameSync(path.join(mutation.target,name),path.join(mutation.backup,name))}fs.rmSync(mutation.target,{recursive:true,force:true});if(fs.existsSync(mutation.backup))fs.renameSync(mutation.backup,mutation.target)}if(z.createdTarget&&fs.existsSync(z.createdTarget))fs.rmSync(z.createdTarget,{recursive:true,force:true});if(p.driftApplied&&p.driftTarget&&p.driftOriginal)fs.writeFileSync(p.driftTarget,p.driftOriginal)}const after=descriptorCount();const {contextIds:_,mainContext:__,...serializable}=shared;process.stdout.write(JSON.stringify({outcome,message,value,...serializable,...s,sResume:sr,admissionCalls:admission.admissionCalls,lowerReturnCalls:z.lowerReturnCalls,transientApplied:z.transientApplied,originalRewriteApplied:z.originalRewriteApplied,originalDirectorySwapApplied:z.originalDirectorySwapApplied,reviewApplied:z.reviewApplied,createdTarget:z.createdTarget,rootIdentity:z.rootIdentity,preStatusDriftApplied:p.driftApplied,cursors,descriptorDelta:after-before}))})()`);
+  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const path=await import("node:path");await import(${JSON.stringify(startupModule)});${databaseWarmup}const descriptorCount=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).filter((name)=>{try{fs.fstatSync(Number(name));return true}catch{return false}}).length;await new Promise((resolve)=>setTimeout(resolve,100));const before=descriptorCount();const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(fs.readFileSync(${JSON.stringify(transportPath)},"utf8")));const mutation=${JSON.stringify(mutation)};const cursors={};const z={lowerReturnCalls:0,mutation,transientApplied:false,originalRewriteApplied:false,originalDirectorySwapApplied:false,rootIdentity:null,reviewApplied:false,createdTarget:null};const p={driftTarget:${JSON.stringify(preStatusDriftTarget)},driftApplied:false,driftOriginal:null};const s={dispatcherCalls:0,preStatusPassCalls:0,progressValidatorCalls:0,progressPassCalls:0,equalityCalls:0,qStates:[]};const sr=Array.isArray(values.sResume)&&values.sResume.length>0?Object.assign(values.sResume[0],{prepareCalls:0,executeCalls:0,executeInputs:[],observeCalls:0,resolverCalls:0,advanceStates:[],events:[],faultApplied:false,migrationPrepareCalls:0,retainedMigrationReadCalls:0,completedRetainedReadCalls:0,applyCalls:0,migrationObserveCalls:0,receiptResolveCalls:0,currentAuditResolveCalls:0,auditCalls:0}):null;if(p.driftTarget)p.driftOriginal=fs.readFileSync(p.driftTarget);const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5C_Z_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;if(mutation.kind==="original-rewrite"&&kind==="source"&&!z.originalRewriteApplied){const bytes=fs.readFileSync(mutation.target);fs.writeFileSync(mutation.target,bytes);z.originalRewriteApplied=true}if(mutation.kind==="original-directory-swap"&&kind==="source"&&!z.originalDirectorySwapApplied){fs.renameSync(mutation.target,mutation.backup);fs.mkdirSync(mutation.target,{mode:0o700});for(const name of fs.readdirSync(mutation.backup))fs.copyFileSync(path.join(mutation.backup,name),path.join(mutation.target,name));z.originalDirectorySwapApplied=true}if(kind==="rowTail"&&sr?.rowTailCurrentStatusTarget){const pair=JSON.parse(fs.readFileSync(sr.rowTailCurrentStatusTarget,"utf8"));if(!/^[a-f0-9]{64}$/.test(pair.statusHash))throw Error("P5C_S_DURABLE_ROW_HASH_INVALID");const body=JSON.parse(fs.readFileSync(path.join(sr.rowTailStatusRecordsRoot,pair.statusHash.slice(0,2),pair.statusHash+".json"),"utf8"));if(body.statusRef!==pair.statusRef||body.statusHash!==pair.statusHash||body.state!=="migration_applying"||body.operationHash!==sr.terminal.currentEntryOperation.operationHash)throw Error("P5C_S_DURABLE_ROW_STATUS_CROSSED");const ordinal={prepared:7,consumed:8,receipt_published:9,current_audited:10}[body.migrationApplyingPhase?.phase];const selected=sequence.find(value=>value.database.databasePrefixOrdinal===ordinal);if(!selected)throw Error("P5C_S_DURABLE_ROW_OBSERVATION_MISSING");return selected}return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const shared={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:null};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",shared);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);Reflect.set(globalThis,"__p5cZeroProgressProbeV1",z);Reflect.set(globalThis,"__p5cPreStatusProbeV1",p);Reflect.set(globalThis,"__p5cProgressProbeV1",s);if(sr)Reflect.set(globalThis,"__p5cSResumeProbeV1",sr);let outcome="returned",message=null,value=null;try{value=await ${call}}catch(error){outcome="threw";message=String(error)}finally{if(z.originalDirectorySwapApplied){fs.rmSync(mutation.target,{recursive:true,force:true});fs.renameSync(mutation.backup,mutation.target)}if(z.reviewApplied&&mutation.backup&&!new Set(["f2-selected-post-fresh-replace","f2-redundant-post-fresh-replace","f1-linked-replace"]).has(mutation.kind)){if(mutation.targetType==="hardlink-parent"&&fs.existsSync(mutation.target)&&fs.existsSync(mutation.backup)){for(const name of fs.readdirSync(mutation.target))fs.renameSync(path.join(mutation.target,name),path.join(mutation.backup,name))}fs.rmSync(mutation.target,{recursive:true,force:true});if(fs.existsSync(mutation.backup))fs.renameSync(mutation.backup,mutation.target)}if(z.createdTarget&&fs.existsSync(z.createdTarget))fs.rmSync(z.createdTarget,{recursive:true,force:true});if(p.driftApplied&&p.driftTarget&&p.driftOriginal)fs.writeFileSync(p.driftTarget,p.driftOriginal)}const after=descriptorCount();const {contextIds:_,mainContext:__,...serializable}=shared;process.stdout.write(JSON.stringify({outcome,message,value,...serializable,...s,sResume:sr,admissionCalls:admission.admissionCalls,lowerReturnCalls:z.lowerReturnCalls,transientApplied:z.transientApplied,originalRewriteApplied:z.originalRewriteApplied,originalDirectorySwapApplied:z.originalDirectorySwapApplied,reviewApplied:z.reviewApplied,createdTarget:z.createdTarget,rootIdentity:z.rootIdentity,preStatusDriftApplied:p.driftApplied,cursors,descriptorDelta:after-before}))})()`);
 }
 
 function phase5cSWithRowTailOrdinalsV1(
@@ -13862,6 +13959,22 @@ function configurePhase5bHistoricalStrictChainFixtureV1(
   const seeded = seedExactPoisonStrictChainFixtureV1(root, admitted.chain, through);
   instrumentPhase5bHistoricalOperationFixtureV1(root);
   return Object.freeze({ original, admitted, seeded });
+}
+
+function seedHistoricalPreMutationFixtureV1(store: string, operation: Phase5bHistoricalOperationPairFixtureV1, cold?: Readonly<Record<string, unknown>>) {
+  const service = exactZeroEffectServiceCensusV1();
+  const projection = { schema: cold ? "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2" : "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1", currentEntryOperationRef: operation.operationRef, currentEntryOperationHash: operation.operationHash, observedServiceCensusHash: service.censusHash, spawner: service.spawner, dashboard: service.dashboard, missionControl: service.missionControl, openClaw: service.openClaw, ...(cold ? { coldSpawnerPredecessor: cold } : {}) };
+  const body = { ...projection, serviceProjectionSetHash: canonicalHash(projection) };
+  const hash = canonicalHash(body);
+  const pair = { preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${hash}`, preMutationLoadedRuntimeServiceAuthorityHash: hash };
+  const value = { ...body, ...pair };
+  const locator = path.join(store, "operations", "sha256", operation.operationHash.slice(0, 2), operation.operationHash, "00-pre-mutation-loaded-runtime-service-authority.pair.json");
+  const record = path.join(store, "records/pre-mutation-loaded-runtime-service-authorities/sha256", hash.slice(0, 2), `${hash}.json`);
+  for (const [target, content] of [[locator, pair], [record, value]] as const) {
+    phase5cEnsurePublicationParentV1(target);
+    writeFileSync(target, canonicalFixtureRecordV1(content), { mode: 0o600 });
+  }
+  return { service, value, pair, locator, record };
 }
 
 function phase5bLegacyBaitPathV1(store: string, successorLocator: string): string {
@@ -14767,6 +14880,11 @@ function buildExactPoisonPublisherAdmissionFixtureV1(
   return Object.freeze({ chain, value });
 }
 
+function emptyLegacyFindingInventoryFixtureV1(): Readonly<Record<string, unknown>> {
+  const body = { schema: "setfarm.legacy-finding-publication-inventory.v1", entries: [] };
+  return Object.freeze({ ...body, inventoryHash: canonicalHash(body) });
+}
+
 function buildExactPoisonPublisherRawObservationsV1(
   original: ExactOriginalPoisonStoreFixtureV1,
   admitted: Readonly<{ chain: ExactPoisonStrictChainFixtureV1; value: Readonly<Record<string, unknown>> }>,
@@ -14802,12 +14920,12 @@ function buildExactPoisonPublisherRawObservationsV1(
     assert.deepEqual(record.pair, { [refKey]: record.value[refKey], [hashKey]: record.value[hashKey] }, `${label} no-write pair`);
   }
   const completeZero = zeroOwnerCensusFixtureV1();
-  const database = Object.freeze(Object.fromEntries([
+  const database = Object.freeze({ ...Object.fromEntries([
     "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount",
     "activeCompletionOwnerCount", "unsettledMandatoryEffectCount", "artifactReservationCount",
     "publicationBatchCount", "artifactPublicationCount", "terminationOwnerCount", "findingOwnerCount",
     "recoveryOwnerCount", "operationalDeliveryCount",
-  ].map((key) => [key, completeZero[key]])));
+  ].map((key) => [key, completeZero[key]])), legacyFindingPublicationInventory: emptyLegacyFindingInventoryFixtureV1() });
   const phase = Object.freeze(Object.fromEntries([
     "ordinaryStartingCount", "restartReservationCount", "serviceRestartOperationCount", "launchPreparationCount",
     "preparedLaunchCount", "stagedCaseCount", "fixtureAttemptCount", "docsSessionCount", "docsLeaseCount",
@@ -15129,6 +15247,10 @@ function fixtureFile(root: string, locator: string, bytes: string | Buffer, mode
   if (locator === "src/internal-production/baseline-post-handoff-receipt-v1.ts") {
     ensureBaselinePostHandoffImportSupportV1(root);
   }
+  if (locator === "src/internal-production/baseline-restart-authority-retirement-v1.ts") {
+    const dependency = "src/internal-production/baseline-spawner-launch-environment-v1.ts";
+    if (!existsSync(path.join(root, dependency))) fixtureFile(root, dependency, readFileSync(path.join(sourceRoot, dependency)));
+  }
 }
 
 function ensureBaselinePostHandoffImportSupportV1(root: string): void {
@@ -15139,6 +15261,11 @@ function ensureBaselinePostHandoffImportSupportV1(root: string): void {
     writeFileSync(target, bytes, { mode: 0o644 });
   };
   ensure("src/product-compiler/canonical-json.ts", readFileSync(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")));
+  ensure("src/findings/legacy-finding-publication-inventory-v1.ts", readFileSync(path.join(sourceRoot, "src/findings/legacy-finding-publication-inventory-v1.ts")));
+  ensure("src/internal-production/baseline-workspace-authority-path-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/baseline-workspace-authority-path-v1.ts"), "utf8").replace(
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");',
+  ));
   ensure("src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
   ensure("src/execution/recovery-source-bootstrap-repository-v1.ts", readFileSync(path.join(sourceRoot, "src/execution/recovery-source-bootstrap-repository-v1.ts")));
   ensure("src/execution/recovery-source-bootstrap-run-authority-v1.ts", readFileSync(path.join(sourceRoot, "src/execution/recovery-source-bootstrap-run-authority-v1.ts")));
@@ -15246,20 +15373,22 @@ ${mutationMarker}`);
     assert.ok(publisherStart >= 0, "concurrent content fixture locates its bounded publisher region");
     fixtureObserver = fixtureObserver.slice(0, publisherStart) + instrumentedPublisher + fixtureObserver.slice(publisherStart + publisher.length);
   }
+  let fixtureWorkspaceLocator = readFileSync(path.join(sourceRoot, "src/internal-production/baseline-workspace-authority-path-v1.ts"), "utf8");
   if (!options.preserveCodeOwnedWorkspaceRoot) {
     const workspaceRootSource =
       'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");';
     const fixtureWorkspaceRoot =
-      'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());';
-    if (fixtureObserver.includes(workspaceRootSource)) {
-      assert.equal(fixtureObserver.split(workspaceRootSource).length, 2,
+      'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");';
+    if (fixtureWorkspaceLocator.includes(workspaceRootSource)) {
+      assert.equal(fixtureWorkspaceLocator.split(workspaceRootSource).length, 2,
         "fixture replaces exactly one code-owned workspace root");
-      fixtureObserver = fixtureObserver.replace(workspaceRootSource, fixtureWorkspaceRoot);
+      fixtureWorkspaceLocator = fixtureWorkspaceLocator.replace(workspaceRootSource, fixtureWorkspaceRoot);
     } else {
-      assert.equal(fixtureObserver.split(fixtureWorkspaceRoot).length, 2,
+      assert.equal(fixtureWorkspaceLocator.split(fixtureWorkspaceRoot).length, 2,
         "an authenticated P3 projection may pre-bind exactly one fixture workspace root");
     }
   }
+  fixtureFile(root, "src/internal-production/baseline-workspace-authority-path-v1.ts", fixtureWorkspaceLocator);
   if (options.preparedAccessorReobservationDrift) {
     const driftedBasename = {
       authorityV3Migration31Audit: "authority-v3-migration31-audit.json",
@@ -15344,7 +15473,13 @@ ${mutationMarker}`);
       'const directory = directorySnapshot(path.join(store.directory, entry), `prepared current-entry ${entry}`, store.device + 1n);',
     );
   }
-  fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", fixtureObserver);
+  // Generic copied receipts represent the ordinary spawner path explicitly.
+  // Cold routing tests override this physical-observation port; none may probe
+  // the live host or invoke a real controller through a copied fixture.
+  const processRows = topLevelFunctionRegionV1(fixtureObserver, "observeColdSpawnerGlobalProcessRowsV1");
+  fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", fixtureObserver.replace(processRows,
+    'function observeColdSpawnerGlobalProcessRowsV1(){return globalThis.__coldPreselectionPorts?.rows() ?? [{command:"/fixture/node /fixture/spawner.js"}]}'));
+  fixtureFile(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts", coldPreselectionRetirementFixtureSourceV1());
   fixtureFile(root, "src/internal-production/owner-admission-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-v1.ts")));
   const bootstrapMigrationSource = readFileSync(path.join(sourceRoot, "src/db/bootstrap-main-claim-handoff-v1-migration.ts"), "utf8");
   const bootstrapSchemaProjector = topLevelFunctionRegionV1(bootstrapMigrationSource, "projectBootstrapMainClaimHandoffV1Schema");
@@ -15510,11 +15645,15 @@ function materializeOutputs(root: string): void {
     "dist/execution/recovery-source-bootstrap-repository-v1.js": "// compiled recovery repository fixture\n",
     "dist/execution/recovery-source-bootstrap-run-authority-v1.js": "// compiled recovery authority fixture\n",
     "dist/execution/v3-git-revision.js": "// compiled git fixture\n",
+    "dist/findings/legacy-finding-publication-inventory-v1.js": "// compiled legacy finding inventory fixture\n",
     "dist/installer/compat-rules.json": "{}\n",
     "dist/installer/prompts/prompt.md": "prompt\n",
     "dist/installer/run.js": "// compiled recovery installer fixture\n",
     "dist/installer/steps/nested/step.md": "step\n",
     "dist/internal-production/baseline-post-handoff-receipt-v1.js": "// compiled observer fixture\n",
+    "dist/internal-production/baseline-restart-authority-retirement-v1.js": "// compiled cold routing fixture\n",
+    "dist/internal-production/baseline-spawner-launch-environment-v1.js": "// compiled launch environment fixture\n",
+    "dist/internal-production/baseline-workspace-authority-path-v1.js": "// compiled workspace locator fixture\n",
     "dist/internal-production/owner-admission-v1.js": "// compiled owner admission fixture\n",
     "dist/internal-production/product-build-authority-v2-delivery-evidence-v1.js": "// compiled PBA fixture\n",
     "dist/product-compiler/canonical-json.js": "// compiled canonical fixture\n",
@@ -15534,6 +15673,732 @@ function finalizedFixture(options: FixtureOptions = {}): Readonly<{ root: string
   assert.equal(finalized.status, 0, finalized.stderr);
   return Object.freeze({ root, buildInputSetHash: receipt.buildInputSetHash });
 }
+
+function coldRecoveryPbaResponseFixtureV1(): Readonly<Record<string, unknown>> {
+  const original = JSON.parse(exactPoisonOperationFixtureBytesV1().toString("utf8")).productBuildAuthorityV2Observation.response;
+  const source = { branch: "main", clean: true, sha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64), originMainSha: "1".repeat(40) };
+  const vendor = structuredClone(original.evidence.vendorLock);
+  delete vendor.vendorLockProjectionHash;
+  vendor.producerCommit = source.sha;
+  const evidence = rehashFixtureRecordV1(original.evidence, "deliveryEvidenceRef", "deliveryEvidenceHash",
+    "mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/", core => {
+      core.currentSource = source;
+      core.vendorLock = { ...vendor, vendorLockProjectionHash: canonicalHash(vendor) };
+    });
+  return Object.freeze({ ...original, deliveryEvidenceRef: evidence.ref, deliveryEvidenceHash: evidence.hash, evidence: evidence.value });
+}
+
+function coldRecoveryRawServicesFixtureV1(root: string, home: string, launches: Record<string, string>): string {
+  const uid = process.getuid!(), node = realpathSync(process.execPath), mcRoot = path.join(home, "ai/setrox/mission-control");
+  for (const directory of [mcRoot, path.join(home, "projects"), path.join(home, ".openclaw/workspaces/workflows"),
+    path.join(home, ".openclaw/workspace/agent-scratch/story-worktrees"), path.join(path.dirname(root), ".worktrees"),
+    path.join(root, ".worktrees"), path.join(mcRoot, ".worktrees")]) mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const mcPid = 74152, dashPid = 74151, ocPid = 74153, lstart = "Sun Aug 16 15:42:28 2026";
+  const mcEntry = path.join(mcRoot, "dist-server/index.js"), mcToken = "m".repeat(64);
+  const mcCli = path.join(mcRoot, "dist-server/services/product-build-authority-v2-delivery-evidence-v1.js");
+  fixtureFile(mcRoot, "dist-server/index.js", "throw Error('synthetic Mission Control service must not execute');\n");
+  fixtureFile(mcRoot, "dist-server/services/product-build-authority-v2-delivery-evidence-v1.js", "throw Error('synthetic Mission Control CLI transport must not execute');\n");
+  const mcEnvironment = {
+    CLI_PATH: path.join(home, ".local/bin"), MC_HOST: "0.0.0.0", MC_INTERNAL_URL: "http://127.0.0.1:3080", MC_PORT: "3080",
+    PATH: "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", PROJECTS_DIR: path.join(home, "projects"),
+    PROJECTS_JSON: path.join(home, "projects/mission-control/projects.json"), SETFARM_DIR: path.join(home, ".openclaw/setfarm"),
+    SETFARM_OPERATIONAL_WRITE_TOKEN: mcToken, SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm",
+    SETFARM_REPO_DIR: root, SETFARM_URL: "http://127.0.0.1:3333",
+  };
+  const mcPlist = { EnvironmentVariables: mcEnvironment, KeepAlive: true, Label: "com.setrox.mission-control",
+    ProgramArguments: [node, mcEntry], RunAtLoad: true, StandardErrorPath: path.join(home, ".openclaw/logs/mission-control.err.log"),
+    StandardOutPath: path.join(home, ".openclaw/logs/mission-control.out.log"), WorkingDirectory: mcRoot };
+  fixtureFile(home, "Library/LaunchAgents/com.setrox.mission-control.plist", JSON.stringify(mcPlist), 0o600);
+  const mcDomain = `gui/${uid}/com.setrox.mission-control`;
+  launches[mcDomain] = `${mcDomain} = {\n\tpath = ${path.join(home, "Library/LaunchAgents/com.setrox.mission-control.plist")}\n\tstate = running\n\tprogram = ${node}\n\tworking directory = ${mcRoot}\n\tstdout path = ${mcPlist.StandardOutPath}\n\tstderr path = ${mcPlist.StandardErrorPath}\n\targuments = {\n\t\t${node}\n\t\t${mcEntry}\n\t}\n\tenvironment = {\n${Object.entries({ ...mcEnvironment, OSLogRateLimit: "64", XPC_SERVICE_NAME: "com.setrox.mission-control" }).map(([key, value]) => `\t\t${key} => ${value}\n`).join("")}\t}\n\tpid = ${mcPid}\n\ttype = LaunchAgent\n\tactive count = 1\n\tlast exit code = 0\n}\n`;
+  launches[`gui/${uid}/ai.openclaw.gateway`] = `gateway = {\n\tpid = ${ocPid}\n}\n`;
+  const identity = { schema: "mission-control.internal-production-build-identity.v1", sourceSha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64) };
+  const loaded = { schema: "mission-control.product-build-authority-v2-loaded-build.v1",
+    entryModulePath: "dist-server/services/product-build-authority-v2-delivery-evidence-v1.js", entryModuleHash: "4".repeat(64),
+    buildIdentity: identity, buildIdentityHash: createHash("sha256").update(JSON.stringify(identity) + "\n").digest("hex") };
+  const loadedHash = canonicalHash(loaded);
+  const response = { schema: "mission-control.product-build-authority-v2-loaded-build-response.v1",
+    loadedBuildRef: `mission-control://internal-production/product-build-authority-v2-loaded-build/sha256/${loadedHash}`,
+    loadedBuildHash: loadedHash, startupInstance: { schema: "mission-control.product-build-authority-v2-startup-instance.v1", pid: mcPid,
+      instanceId: "123e4567-e89b-42d3-a456-426614174000" }, loadedBuild: loaded };
+  const services = [
+    { pid: dashPid, command: `${node} ${path.join(root, "dist/server/daemon.js")} 3333`, cwd: root, port: 3333, fd: 13, address: "127.0.0.1:3333" },
+    { pid: mcPid, command: `${node} ${mcEntry}`, cwd: mcRoot, port: 3080, fd: 14, address: "*:3080" },
+    { pid: ocPid, command: `${node} ${path.join(home, "openclaw-gateway.js")}`, cwd: home, port: 18789, fd: 18, address: "127.0.0.1:18789" },
+  ];
+  return `
+import {spawnSync as hostSpawnSync} from 'node:child_process';import {readFileSync} from 'node:fs';import {EventEmitter} from 'node:events';import assert from 'node:assert/strict';
+const launches=${JSON.stringify(launches)},services=${JSON.stringify(services)},root=${JSON.stringify(root)},home=${JSON.stringify(home)},node=${JSON.stringify(node)},lstart=${JSON.stringify(lstart)},uid=${uid};
+const columns='uid=,pid=,ppid=,pgid=,stat=,lstart=,command=';
+const result=(stdout,status=0)=>({status,signal:null,error:undefined,stdout:Buffer.from(stdout),stderr:Buffer.alloc(0)});
+const row=s=>uid+' '+s.pid+' 1 '+s.pid+' Ss '+lstart+' '+s.command+'\\n';
+function realRows(){
+ const p=hostSpawnSync('/bin/ps',['-ww','-axo',columns],{encoding:'utf8',timeout:2000,maxBuffer:1048576});
+ if(p.error||p.status!==0||p.stderr!=='')throw Error('JOINED_REAL_PROCESS_SCAN_FAILED');
+ return p.stdout.split('\\n').filter(line=>{const words=line.trim().split(/\\s+/),pid=Number(words[1]),command=words.slice(10).join(' ');
+  return pid===process.pid||command===node+' '+root+'/dist/spawner.js'||command===node+' '+root+'/dist/internal-production/baseline-service-restart-helper-v1.js';});
+}
+export function spawnSync(executable,args,options){
+ if(executable==='/bin/launchctl'){
+  if(args.length!==2||args[0]!=='print'||!Object.hasOwn(launches,args[1]))throw Error('UNEXPECTED_JOINED_LAUNCHCTL');return result(launches[args[1]]);
+ }
+ if(executable==='/bin/ps'){
+  if(args.includes('-axo')){const rows=[...services.map(row).map(s=>s.trimEnd()),...realRows()];
+   if(args.at(-1)===columns)return result(rows.join('\\n')+'\\n');
+   if(args.at(-1)==='command=')return result(rows.map(line=>line.trim().split(/\\s+/).slice(10).join(' ')).join('\\n')+'\\n');
+   throw Error('UNEXPECTED_JOINED_PS_GLOBAL');
+  }
+  const pid=Number(args[args.indexOf('-p')+1]),service=services.find(s=>s.pid===pid);
+  if(service){const field=args.at(-1);if(field===columns)return result(row(service));if(field==='lstart=')return result(lstart+'\\n');if(field==='command=')return result(service.command+'\\n');if(field==='comm=')return result(node+'\\n');throw Error('UNEXPECTED_JOINED_PS_FIELD');}
+  return hostSpawnSync(executable,args,options);
+ }
+ if(executable==='/usr/sbin/lsof'){
+  if(args.includes('+D')){const target=args[args.indexOf('+D')+1];if(!target.startsWith(home+'/'))throw Error('UNEXPECTED_JOINED_REFERENCE_ROOT');return result('',1);}
+  const pid=Number(args[args.indexOf('-p')+1]),service=services.find(s=>s.pid===pid);
+  if(service){if(args.includes('cwd'))return result('p'+pid+'\\0cnode\\0R1\\0\\nfcwd\\0n'+service.cwd+'\\0\\n');
+   if(!args.includes('-sTCP:LISTEN'))throw Error('UNEXPECTED_JOINED_LSOF');
+   return result('p'+pid+'\\0cnode\\0\\nf'+service.fd+'\\0n'+service.address+'\\0\\n');}
+  return hostSpawnSync(executable,args,options);
+ }
+ if(!['git','/usr/bin/git','/usr/bin/plutil'].includes(executable))throw Error('UNEXPECTED_JOINED_COMMAND');
+ return hostSpawnSync(executable,args,options);
+}
+export function httpRequest(options,callback){
+ assert.deepEqual(options,{protocol:'http:',hostname:'127.0.0.1',port:3080,method:'GET',path:'/api/internal-production/product-build-authority-v2-loaded-build',agent:false,headers:{accept:'application/json',connection:'close','x-setfarm-operational-token':${JSON.stringify(mcToken)}}});
+ const request=new EventEmitter();request.setTimeout=(ms)=>{assert.equal(ms,10000);return request};request.destroy=error=>queueMicrotask(()=>request.emit('error',error));
+ request.end=(...args)=>{assert.equal(args.length,0);queueMicrotask(()=>{const response=new EventEmitter();response.statusCode=200;response.headers={'cache-control':'no-store, max-age=0, must-revalidate',pragma:'no-cache',expires:'0','content-type':'application/json; charset=utf-8'};callback(response);queueMicrotask(()=>{response.emit('data',Buffer.from(${JSON.stringify(JSON.stringify(response))}));response.emit('end')});});};return request;
+}
+export function execFile(executable,args,options,callback){
+ try {
+  let stdout;
+  if(executable==='/bin/launchctl')stdout=spawnSync(executable,args,options).stdout.toString('utf8');
+  else if(executable==='/usr/bin/plutil'){
+   assert.equal(args.length,6);assert.equal(args[0],'-extract');assert.equal(args[3],'-o');assert.equal(args[4],'-');
+   assert.equal(args[5],${JSON.stringify(path.join(home, "Library/LaunchAgents/com.setrox.mission-control.plist"))});
+   const plist=JSON.parse(readFileSync(args[5],'utf8'));
+   if(args[1]==='ProgramArguments'){assert.equal(args[2],'json');stdout=JSON.stringify(plist.ProgramArguments)}
+   else{assert.ok(['Label','WorkingDirectory'].includes(args[1]));assert.equal(args[2],'raw');stdout=plist[args[1]]+'\\n'}
+  }else{
+   assert.equal(executable,node);assert.deepEqual(args,[${JSON.stringify(mcCli)},'--json']);assert.equal(options.cwd,${JSON.stringify(mcRoot)});
+   stdout=${JSON.stringify(JSON.stringify(coldRecoveryPbaResponseFixtureV1()) + "\n")};
+  }
+  queueMicrotask(()=>callback(null,stdout,''));
+ }catch(error){queueMicrotask(()=>callback(error,'',''))}
+}
+`;
+}
+
+// Frozen read-only PostgreSQL 17 catalog responses, authenticated by the real
+// V31 verifier on capture. The joined fixture never reads the live database.
+function coldRecoveryV31CatalogQueriesFixtureV1() {
+  return [{"query":"SELECT convalidated AS validated,\n            pg_get_expr(conbin, conrelid, true) AS expression\n       FROM pg_constraint\n      WHERE conrelid = to_regclass('public.run_termination_requests')\n        AND conname = $1","args":["run_termination_requests_operational_failure_cause_check"],"rows":[{"validated":true,"expression":"\nCASE\n    WHEN NOT evidence ? 'operationalFailureCause'::text THEN true\n    WHEN target_status <> 'failed'::text THEN false\n    WHEN jsonb_typeof(evidence -> 'operationalFailureCause'::text) IS DISTINCT FROM 'object'::text THEN false\n    ELSE ((evidence -> 'operationalFailureCause'::text) - 'schema'::text - 'workflowStepId'::text - 'boundary'::text - 'failureClass'::text - 'failureCode'::text) = '{}'::jsonb AND (evidence -> 'operationalFailureCause'::text) ?& ARRAY['schema'::text, 'workflowStepId'::text, 'boundary'::text, 'failureClass'::text, 'failureCode'::text] AND jsonb_typeof((evidence -> 'operationalFailureCause'::text) -> 'schema'::text) = 'string'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'schema'::text) = 'setfarm.operational-failure-cause.v1'::text AND jsonb_typeof((evidence -> 'operationalFailureCause'::text) -> 'workflowStepId'::text) = 'string'::text AND length((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) >= 1 AND length((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) <= 100 AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$'::text AND jsonb_typeof((evidence -> 'operationalFailureCause'::text) -> 'boundary'::text) = 'string'::text AND length((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) >= 1 AND length((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) <= 160 AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) ~ '^[a-z][a-z0-9]*([._-][a-z0-9]+)*$'::text AND jsonb_typeof((evidence -> 'operationalFailureCause'::text) -> 'failureClass'::text) = 'string'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = ANY (ARRAY['contract_invalid'::text, 'generated_artifact_invalid'::text, 'retry_delta_missing'::text, 'platform_authority_invalid'::text, 'infrastructure_failure'::text, 'platform_invariant_failed'::text, 'recovery_exhausted'::text])) AND jsonb_typeof((evidence -> 'operationalFailureCause'::text) -> 'failureCode'::text) = 'string'::text AND length((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) >= 3 AND length((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) <= 160 AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) ~ '^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$'::text AND (requested_by = 'setfarm.product-compiler.plan-refusal'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'plan'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.plan_refusal'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_PLAN_CLARIFICATION_REQUIRED'::text OR requested_by = 'setfarm.product-compiler.deploy-refusal'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'deploy'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.deploy_authority'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_DEPLOY_ACCEPTED_CANDIDATE_MISSING'::text, 'V3_DEPLOY_ACCEPTED_CANDIDATE_INVALID'::text, 'V3_DEPLOY_ACCEPTED_CANDIDATE_POINTER_MISMATCH'::text, 'V3_DEPLOY_SOURCE_REVISION_MISMATCH'::text, 'V3_DEPLOY_PACKET_INVALID'::text, 'V3_DEPLOY_RUNTIME_ENV_MISSING'::text])) OR requested_by = 'setfarm.product-compiler.deploy-refusal'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'deploy'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.deploy_authority'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'infrastructure_failure'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_DEPLOY_SOURCE_UNAVAILABLE'::text, 'V3_DEPLOY_PLATFORM_FAILED'::text, 'V3_DEPLOY_HEALTH_FAILED'::text])) OR requested_by = 'setfarm.product-compiler.deploy-refusal'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'deploy'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.deploy_authority'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_DEPLOY_RUN_NOT_FOUND'::text, 'V3_DEPLOY_TARGET_UNSUPPORTED'::text])) OR requested_by = 'setfarm.product-compiler.deploy-refusal'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'deploy'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.deploy_authority'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_invariant_failed'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DEPLOY_ROLLBACK_FAILED'::text OR requested_by = 'setfarm.step-fail.single'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'setup-build'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.setup_build_packet'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['SETUP_PACKET_ACTIVATION_REJECTED'::text, 'SETUP_PACKET_DESIGN_GRAPH_REJECTED'::text, 'SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED'::text, 'SETUP_PACKET_DELIVERY_PROFILE_REJECTED'::text, 'SETUP_PACKET_ENTRYPOINT_AMBIGUOUS'::text, 'SETUP_PACKET_ENTRYPOINT_MISSING'::text, 'SETUP_PACKET_FILE_INVALID'::text, 'SETUP_PACKET_GENERATED_SOURCE_AMBIGUOUS'::text, 'SETUP_PACKET_GENERATED_SOURCE_MISSING'::text, 'SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING'::text, 'SETUP_PACKET_JSON_INVALID'::text, 'SETUP_PACKET_PLAN_REJECTED'::text, 'SETUP_PACKET_PROTOCOL_MISMATCH'::text, 'SETUP_PACKET_REPO_DIRTY'::text, 'SETUP_PACKET_REPO_IDENTITY_INVALID'::text, 'SETUP_PACKET_RUNTIME_EVIDENCE_REJECTED'::text, 'SETUP_PACKET_RUN_ID_MISMATCH'::text, 'SETUP_PACKET_SOURCE_NON_CANONICAL'::text, 'SETUP_PACKET_STORY_PLAN_REJECTED'::text, 'SETUP_PACKET_TOPOLOGY_OWNER_AMBIGUOUS'::text, 'SETUP_PACKET_TOPOLOGY_REJECTED'::text])) OR requested_by = 'setfarm.step-fail.single'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'setup-build'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'stitch.converter.input_contract'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['STITCH_DESIGN_MANIFEST_JSON_INVALID'::text, 'V3_PROJECTION_CONTRACT_PARTIAL'::text, 'V3_PROJECTION_CONTRACT_JSON_INVALID'::text, 'V3_PROJECTION_TARGETS_INVALID'::text, 'V3_PROJECTION_BINDINGS_INVALID'::text, 'V3_PROJECTION_TARGET_ID_INVALID'::text, 'V3_PROJECTION_RESPONSE_BINDING_INVALID'::text, 'V3_PROJECTION_SCREEN_UNBOUND'::text])) OR requested_by = 'setfarm.step-fail.single'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'setup-build'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'stitch.converter.generated_tsx'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'generated_artifact_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_OBSERVABLE_REF_INVALID'::text, 'V3_OBSERVABLE_SELECTOR_INVALID'::text, 'V3_OBSERVABLE_SELECTOR_MISSING'::text, 'V3_OBSERVABLE_SELECTOR_AMBIGUOUS'::text])) OR requested_by = 'setfarm.step-fail.single'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'setup-build'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'stitch.converter.result_contract'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_invariant_failed'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['STITCH_CONVERTER_RESULT_MISSING'::text, 'STITCH_CONVERTER_RESULT_INVALID'::text])) OR requested_by = 'setfarm.step-fail.single'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'setup-build'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'stitch.design_import_validator'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'generated_artifact_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'STITCH_DESIGN_IMPORT_INVALID'::text OR requested_by = 'setfarm-v3-downstream-compiler'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = ANY (ARRAY['qa-test'::text, 'final-test'::text])) AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.downstream_recovery'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_PACKET_AMENDMENT_REQUIRED'::text OR requested_by = 'setfarm-v3-downstream-compiler'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = ANY (ARRAY['qa-test'::text, 'final-test'::text])) AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.downstream_recovery'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_DOWNSTREAM_SPECIFICATION_INCOMPLETE'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_03'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_05'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_07'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_09'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0B'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0D'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0F'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_11'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_12'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_13'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_14'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_15'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_16'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_17'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_18'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_19'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1A'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1B'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1C'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1D'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1E'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1F'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_21'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_23'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_25'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_27'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_29'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2B'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2D'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2F'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_30'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_31'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_32'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_33'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_34'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_35'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_36'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_37'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_38'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_39'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3A'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3B'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3C'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3D'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3E'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3F'::text, 'V3_DOWNSTREAM_UPSTREAM_RECOMPILE_REQUIRED'::text])) OR requested_by = 'setfarm-v3-downstream-compiler'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = ANY (ARRAY['qa-test'::text, 'final-test'::text])) AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.downstream_recovery'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_DOWNSTREAM_EVIDENCE_INCONCLUSIVE'::text, 'V3_DOWNSTREAM_OPERATOR_REQUIRED'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_22'::text])) OR requested_by = 'setfarm-v3-downstream-compiler'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = ANY (ARRAY['qa-test'::text, 'final-test'::text])) AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.downstream_recovery'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'recovery_exhausted'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_DOWNSTREAM_RECOVERY_BUDGET_EXHAUSTED'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_06'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_24'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_26'::text])) OR requested_by = 'setfarm-v3-downstream-compiler'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = ANY (ARRAY['qa-test'::text, 'final-test'::text])) AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.downstream_recovery'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_DOWNSTREAM_SOURCE_SUPERSEDED'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0A'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0C'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0E'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_28'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2A'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2C'::text, 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2E'::text])) OR requested_by = 'setfarm.step-ops.stories-completeness'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'stories'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'story_plan.completeness'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'STORIES_REQUIRED_OUTPUT_MISSING'::text OR requested_by = 'setfarm.v3-stage-input-authority'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = ANY (ARRAY['plan'::text, 'design'::text, 'stories'::text, 'setup-repo'::text, 'setup-build'::text, 'implement'::text, 'verify'::text, 'security-gate'::text, 'qa-test'::text, 'final-test'::text, 'deploy'::text, 'supervise'::text])) AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'stage_context_assembly'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_STAGE_INPUT_UNRESOLVED'::text OR requested_by = 'setfarm.v3-stage-retry-authority'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = ANY (ARRAY['plan'::text, 'design'::text, 'stories'::text, 'setup-repo'::text, 'setup-build'::text, 'implement'::text, 'verify'::text, 'security-gate'::text, 'qa-test'::text, 'final-test'::text, 'deploy'::text, 'supervise'::text])) AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'stage_retry_authority'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_STAGE_RETRY_DUPLICATE_UNCHANGED_TUPLE'::text OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_PREPARATION_AUTHORITY_UNAVAILABLE'::text OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.eligibility'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['RUNTIME_PACKET_NOT_ACTIVE'::text, 'V3_PREPARATION_WORKTREE_UNAVAILABLE'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_MISSING'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISSING'::text, 'V3_SLICE_SOURCE_CHANGED_DURING_CAPTURE'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.eligibility'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_EVIDENCE_PLAN_COMPILATION_REJECTED'::text, 'V3_IMPLEMENTATION_CONTEXT_CAPACITY_EXCEEDED'::text, 'V3_RUNTIME_EVIDENCE_CONTRACT_REJECTED'::text, 'V3_RUNTIME_EVIDENCE_STACK_UNSUPPORTED'::text, 'V3_SLICE_COMPILATION_REJECTED'::text, 'V3_SLICE_DEPENDENCY_PATH_INVALID'::text, 'V3_SLICE_DEPENDENCY_PATH_REF_CONFLICT'::text, 'V3_SLICE_DEPENDENCY_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_PATH_BINDING_MISSING'::text, 'V3_SLICE_SHARED_GRANT_MISSING'::text, 'V3_SLICE_SOURCE_PATH_ESCAPE'::text, 'V3_SLICE_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_STORY_NOT_IN_PACKET'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.eligibility'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'infrastructure_failure'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['EAI_AGAIN'::text, 'ERRNO_ECONNRESET'::text, 'ERRNO_EMFILE'::text, 'ERRNO_ENFILE'::text, 'ERRNO_ENOSPC'::text, 'ERRNO_ETIMEDOUT'::text, 'SQLSTATE_40001'::text, 'SQLSTATE_40P01'::text, 'SQLSTATE_55P03'::text, 'SQLSTATE_57014'::text, 'SQLSTATE_EBUSY'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.eligibility'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_invariant_failed'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_ATTEMPT_ACTIVE_CONFLICT'::text, 'V3_ATTEMPT_CLAIM_ID_REQUIRED'::text, 'V3_ATTEMPT_CONTEXT_ARTIFACT_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EVIDENCE_PLAN_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_IDENTITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_INDEX_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_PACKET_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_RECOVERY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_SLICE_MISMATCH'::text, 'V3_ATTEMPT_DUPLICATE_UNCHANGED_SOURCE'::text, 'V3_ATTEMPT_RESERVATION_BINDING_MISMATCH'::text, 'V3_DOWNSTREAM_EVIDENCE_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_ONLY_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_PLAN_PUBLICATION_HASH_MISMATCH'::text, 'V3_EVIDENCE_PUBLICATION_AUTHORITY_CONFLICT'::text, 'V3_IMPLEMENTATION_CRITICAL_CONTEXT_EMPTY'::text, 'V3_IMPLEMENTATION_INPUT_UNRESOLVED'::text, 'V3_OPERATIONAL_RETRY_AUTHORITY_CONFLICT'::text, 'V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_NOT_TERMINAL'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_UNAVAILABLE'::text, 'V3_OPERATIONAL_RETRY_PUBLICATION_HASH_MISMATCH'::text, 'V3_PREPARATION_PUBLICATION_RESULT_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_NOT_FOUND'::text, 'V3_RECOVERY_AUTHORIZATION_UNAVAILABLE'::text, 'V3_RECOVERY_CONTRACT_SLICE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_CONTRACT_SLICE_INVALID'::text, 'V3_RECOVERY_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_RECOVERY_FINDING_SET_NOT_FOUND'::text, 'V3_RECOVERY_FINDING_SET_OVERRIDE_REJECTED'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_ARTIFACT_INVALID'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_REF_INVALID'::text, 'V3_RECOVERY_SOURCE_REVISION_MISMATCH'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISMATCH'::text, 'V3_SLICE_PUBLICATION_HASH_MISMATCH'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.packet'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['RUNTIME_PACKET_NOT_ACTIVE'::text, 'V3_PREPARATION_WORKTREE_UNAVAILABLE'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_MISSING'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISSING'::text, 'V3_SLICE_SOURCE_CHANGED_DURING_CAPTURE'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.packet'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_EVIDENCE_PLAN_COMPILATION_REJECTED'::text, 'V3_IMPLEMENTATION_CONTEXT_CAPACITY_EXCEEDED'::text, 'V3_RUNTIME_EVIDENCE_CONTRACT_REJECTED'::text, 'V3_RUNTIME_EVIDENCE_STACK_UNSUPPORTED'::text, 'V3_SLICE_COMPILATION_REJECTED'::text, 'V3_SLICE_DEPENDENCY_PATH_INVALID'::text, 'V3_SLICE_DEPENDENCY_PATH_REF_CONFLICT'::text, 'V3_SLICE_DEPENDENCY_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_PATH_BINDING_MISSING'::text, 'V3_SLICE_SHARED_GRANT_MISSING'::text, 'V3_SLICE_SOURCE_PATH_ESCAPE'::text, 'V3_SLICE_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_STORY_NOT_IN_PACKET'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.packet'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'infrastructure_failure'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['EAI_AGAIN'::text, 'ERRNO_ECONNRESET'::text, 'ERRNO_EMFILE'::text, 'ERRNO_ENFILE'::text, 'ERRNO_ENOSPC'::text, 'ERRNO_ETIMEDOUT'::text, 'SQLSTATE_40001'::text, 'SQLSTATE_40P01'::text, 'SQLSTATE_55P03'::text, 'SQLSTATE_57014'::text, 'SQLSTATE_EBUSY'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.packet'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_invariant_failed'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_ATTEMPT_ACTIVE_CONFLICT'::text, 'V3_ATTEMPT_CLAIM_ID_REQUIRED'::text, 'V3_ATTEMPT_CONTEXT_ARTIFACT_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EVIDENCE_PLAN_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_IDENTITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_INDEX_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_PACKET_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_RECOVERY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_SLICE_MISMATCH'::text, 'V3_ATTEMPT_DUPLICATE_UNCHANGED_SOURCE'::text, 'V3_ATTEMPT_RESERVATION_BINDING_MISMATCH'::text, 'V3_DOWNSTREAM_EVIDENCE_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_ONLY_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_PLAN_PUBLICATION_HASH_MISMATCH'::text, 'V3_EVIDENCE_PUBLICATION_AUTHORITY_CONFLICT'::text, 'V3_IMPLEMENTATION_CRITICAL_CONTEXT_EMPTY'::text, 'V3_IMPLEMENTATION_INPUT_UNRESOLVED'::text, 'V3_OPERATIONAL_RETRY_AUTHORITY_CONFLICT'::text, 'V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_NOT_TERMINAL'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_UNAVAILABLE'::text, 'V3_OPERATIONAL_RETRY_PUBLICATION_HASH_MISMATCH'::text, 'V3_PREPARATION_PUBLICATION_RESULT_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_NOT_FOUND'::text, 'V3_RECOVERY_AUTHORIZATION_UNAVAILABLE'::text, 'V3_RECOVERY_CONTRACT_SLICE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_CONTRACT_SLICE_INVALID'::text, 'V3_RECOVERY_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_RECOVERY_FINDING_SET_NOT_FOUND'::text, 'V3_RECOVERY_FINDING_SET_OVERRIDE_REJECTED'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_ARTIFACT_INVALID'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_REF_INVALID'::text, 'V3_RECOVERY_SOURCE_REVISION_MISMATCH'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISMATCH'::text, 'V3_SLICE_PUBLICATION_HASH_MISMATCH'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.source'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['RUNTIME_PACKET_NOT_ACTIVE'::text, 'V3_PREPARATION_WORKTREE_UNAVAILABLE'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_MISSING'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISSING'::text, 'V3_SLICE_SOURCE_CHANGED_DURING_CAPTURE'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.source'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_EVIDENCE_PLAN_COMPILATION_REJECTED'::text, 'V3_IMPLEMENTATION_CONTEXT_CAPACITY_EXCEEDED'::text, 'V3_RUNTIME_EVIDENCE_CONTRACT_REJECTED'::text, 'V3_RUNTIME_EVIDENCE_STACK_UNSUPPORTED'::text, 'V3_SLICE_COMPILATION_REJECTED'::text, 'V3_SLICE_DEPENDENCY_PATH_INVALID'::text, 'V3_SLICE_DEPENDENCY_PATH_REF_CONFLICT'::text, 'V3_SLICE_DEPENDENCY_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_PATH_BINDING_MISSING'::text, 'V3_SLICE_SHARED_GRANT_MISSING'::text, 'V3_SLICE_SOURCE_PATH_ESCAPE'::text, 'V3_SLICE_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_STORY_NOT_IN_PACKET'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.source'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'infrastructure_failure'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['EAI_AGAIN'::text, 'ERRNO_ECONNRESET'::text, 'ERRNO_EMFILE'::text, 'ERRNO_ENFILE'::text, 'ERRNO_ENOSPC'::text, 'ERRNO_ETIMEDOUT'::text, 'SQLSTATE_40001'::text, 'SQLSTATE_40P01'::text, 'SQLSTATE_55P03'::text, 'SQLSTATE_57014'::text, 'SQLSTATE_EBUSY'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.source'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_invariant_failed'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_ATTEMPT_ACTIVE_CONFLICT'::text, 'V3_ATTEMPT_CLAIM_ID_REQUIRED'::text, 'V3_ATTEMPT_CONTEXT_ARTIFACT_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EVIDENCE_PLAN_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_IDENTITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_INDEX_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_PACKET_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_RECOVERY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_SLICE_MISMATCH'::text, 'V3_ATTEMPT_DUPLICATE_UNCHANGED_SOURCE'::text, 'V3_ATTEMPT_RESERVATION_BINDING_MISMATCH'::text, 'V3_DOWNSTREAM_EVIDENCE_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_ONLY_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_PLAN_PUBLICATION_HASH_MISMATCH'::text, 'V3_EVIDENCE_PUBLICATION_AUTHORITY_CONFLICT'::text, 'V3_IMPLEMENTATION_CRITICAL_CONTEXT_EMPTY'::text, 'V3_IMPLEMENTATION_INPUT_UNRESOLVED'::text, 'V3_OPERATIONAL_RETRY_AUTHORITY_CONFLICT'::text, 'V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_NOT_TERMINAL'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_UNAVAILABLE'::text, 'V3_OPERATIONAL_RETRY_PUBLICATION_HASH_MISMATCH'::text, 'V3_PREPARATION_PUBLICATION_RESULT_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_NOT_FOUND'::text, 'V3_RECOVERY_AUTHORIZATION_UNAVAILABLE'::text, 'V3_RECOVERY_CONTRACT_SLICE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_CONTRACT_SLICE_INVALID'::text, 'V3_RECOVERY_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_RECOVERY_FINDING_SET_NOT_FOUND'::text, 'V3_RECOVERY_FINDING_SET_OVERRIDE_REJECTED'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_ARTIFACT_INVALID'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_REF_INVALID'::text, 'V3_RECOVERY_SOURCE_REVISION_MISMATCH'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISMATCH'::text, 'V3_SLICE_PUBLICATION_HASH_MISMATCH'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.reservation'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['RUNTIME_PACKET_NOT_ACTIVE'::text, 'V3_PREPARATION_WORKTREE_UNAVAILABLE'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_MISSING'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISSING'::text, 'V3_SLICE_SOURCE_CHANGED_DURING_CAPTURE'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.reservation'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_EVIDENCE_PLAN_COMPILATION_REJECTED'::text, 'V3_IMPLEMENTATION_CONTEXT_CAPACITY_EXCEEDED'::text, 'V3_RUNTIME_EVIDENCE_CONTRACT_REJECTED'::text, 'V3_RUNTIME_EVIDENCE_STACK_UNSUPPORTED'::text, 'V3_SLICE_COMPILATION_REJECTED'::text, 'V3_SLICE_DEPENDENCY_PATH_INVALID'::text, 'V3_SLICE_DEPENDENCY_PATH_REF_CONFLICT'::text, 'V3_SLICE_DEPENDENCY_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_PATH_BINDING_MISSING'::text, 'V3_SLICE_SHARED_GRANT_MISSING'::text, 'V3_SLICE_SOURCE_PATH_ESCAPE'::text, 'V3_SLICE_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_STORY_NOT_IN_PACKET'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.reservation'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'infrastructure_failure'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['EAI_AGAIN'::text, 'ERRNO_ECONNRESET'::text, 'ERRNO_EMFILE'::text, 'ERRNO_ENFILE'::text, 'ERRNO_ENOSPC'::text, 'ERRNO_ETIMEDOUT'::text, 'SQLSTATE_40001'::text, 'SQLSTATE_40P01'::text, 'SQLSTATE_55P03'::text, 'SQLSTATE_57014'::text, 'SQLSTATE_EBUSY'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.reservation'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_invariant_failed'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_ATTEMPT_ACTIVE_CONFLICT'::text, 'V3_ATTEMPT_CLAIM_ID_REQUIRED'::text, 'V3_ATTEMPT_CONTEXT_ARTIFACT_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EVIDENCE_PLAN_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_IDENTITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_INDEX_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_PACKET_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_RECOVERY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_SLICE_MISMATCH'::text, 'V3_ATTEMPT_DUPLICATE_UNCHANGED_SOURCE'::text, 'V3_ATTEMPT_RESERVATION_BINDING_MISMATCH'::text, 'V3_DOWNSTREAM_EVIDENCE_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_ONLY_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_PLAN_PUBLICATION_HASH_MISMATCH'::text, 'V3_EVIDENCE_PUBLICATION_AUTHORITY_CONFLICT'::text, 'V3_IMPLEMENTATION_CRITICAL_CONTEXT_EMPTY'::text, 'V3_IMPLEMENTATION_INPUT_UNRESOLVED'::text, 'V3_OPERATIONAL_RETRY_AUTHORITY_CONFLICT'::text, 'V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_NOT_TERMINAL'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_UNAVAILABLE'::text, 'V3_OPERATIONAL_RETRY_PUBLICATION_HASH_MISMATCH'::text, 'V3_PREPARATION_PUBLICATION_RESULT_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_NOT_FOUND'::text, 'V3_RECOVERY_AUTHORIZATION_UNAVAILABLE'::text, 'V3_RECOVERY_CONTRACT_SLICE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_CONTRACT_SLICE_INVALID'::text, 'V3_RECOVERY_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_RECOVERY_FINDING_SET_NOT_FOUND'::text, 'V3_RECOVERY_FINDING_SET_OVERRIDE_REJECTED'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_ARTIFACT_INVALID'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_REF_INVALID'::text, 'V3_RECOVERY_SOURCE_REVISION_MISMATCH'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISMATCH'::text, 'V3_SLICE_PUBLICATION_HASH_MISMATCH'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.publication'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['RUNTIME_PACKET_NOT_ACTIVE'::text, 'V3_PREPARATION_WORKTREE_UNAVAILABLE'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_MISSING'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISSING'::text, 'V3_SLICE_SOURCE_CHANGED_DURING_CAPTURE'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.publication'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_EVIDENCE_PLAN_COMPILATION_REJECTED'::text, 'V3_IMPLEMENTATION_CONTEXT_CAPACITY_EXCEEDED'::text, 'V3_RUNTIME_EVIDENCE_CONTRACT_REJECTED'::text, 'V3_RUNTIME_EVIDENCE_STACK_UNSUPPORTED'::text, 'V3_SLICE_COMPILATION_REJECTED'::text, 'V3_SLICE_DEPENDENCY_PATH_INVALID'::text, 'V3_SLICE_DEPENDENCY_PATH_REF_CONFLICT'::text, 'V3_SLICE_DEPENDENCY_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_PATH_BINDING_MISSING'::text, 'V3_SLICE_SHARED_GRANT_MISSING'::text, 'V3_SLICE_SOURCE_PATH_ESCAPE'::text, 'V3_SLICE_SOURCE_TYPE_UNSUPPORTED'::text, 'V3_SLICE_STORY_NOT_IN_PACKET'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.publication'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'infrastructure_failure'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['EAI_AGAIN'::text, 'ERRNO_ECONNRESET'::text, 'ERRNO_EMFILE'::text, 'ERRNO_ENFILE'::text, 'ERRNO_ENOSPC'::text, 'ERRNO_ETIMEDOUT'::text, 'SQLSTATE_40001'::text, 'SQLSTATE_40P01'::text, 'SQLSTATE_55P03'::text, 'SQLSTATE_57014'::text, 'SQLSTATE_EBUSY'::text])) OR requested_by = 'setfarm.v3-pre-dispatch'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'implement'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'implementation.pre_dispatch.publication'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_invariant_failed'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['V3_ATTEMPT_ACTIVE_CONFLICT'::text, 'V3_ATTEMPT_CLAIM_ID_REQUIRED'::text, 'V3_ATTEMPT_CONTEXT_ARTIFACT_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EVIDENCE_PLAN_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_IDENTITY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_INDEX_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_PACKET_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_RECOVERY_MISMATCH'::text, 'V3_ATTEMPT_CONTEXT_SLICE_MISMATCH'::text, 'V3_ATTEMPT_DUPLICATE_UNCHANGED_SOURCE'::text, 'V3_ATTEMPT_RESERVATION_BINDING_MISMATCH'::text, 'V3_DOWNSTREAM_EVIDENCE_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_ONLY_PUBLICATION_INPUT_INVALID'::text, 'V3_EVIDENCE_PLAN_PUBLICATION_HASH_MISMATCH'::text, 'V3_EVIDENCE_PUBLICATION_AUTHORITY_CONFLICT'::text, 'V3_IMPLEMENTATION_CRITICAL_CONTEXT_EMPTY'::text, 'V3_IMPLEMENTATION_INPUT_UNRESOLVED'::text, 'V3_OPERATIONAL_RETRY_AUTHORITY_CONFLICT'::text, 'V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_NOT_TERMINAL'::text, 'V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_UNAVAILABLE'::text, 'V3_OPERATIONAL_RETRY_PUBLICATION_HASH_MISMATCH'::text, 'V3_PREPARATION_PUBLICATION_RESULT_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_AUTHORIZATION_NOT_FOUND'::text, 'V3_RECOVERY_AUTHORIZATION_UNAVAILABLE'::text, 'V3_RECOVERY_CONTRACT_SLICE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_CONTRACT_SLICE_INVALID'::text, 'V3_RECOVERY_EXECUTION_AUTHORITY_MISMATCH'::text, 'V3_RECOVERY_FINDING_SET_NOT_FOUND'::text, 'V3_RECOVERY_FINDING_SET_OVERRIDE_REJECTED'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_ARTIFACT_INVALID'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_IDENTITY_MISMATCH'::text, 'V3_RECOVERY_REVIEW_EVIDENCE_REF_INVALID'::text, 'V3_RECOVERY_SOURCE_REVISION_MISMATCH'::text, 'V3_SLICE_DEPENDENCY_ATTEMPT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_INVALID'::text, 'V3_SLICE_DEPENDENCY_COMMIT_MISMATCH'::text, 'V3_SLICE_PUBLICATION_HASH_MISMATCH'::text])) OR requested_by = 'setfarm.step-fail.single'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'design'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.design_source.semantic_closure'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'DESIGN_SOURCE_SEMANTIC_CLOSURE_REJECTED'::text OR requested_by = 'setfarm.step-fail.single'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'workflowStepId'::text) = 'setup-build'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'boundary'::text) = 'product_compiler.setup_build_packet'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = ANY (ARRAY['SETUP_PACKET_DESIGN_SOURCE_ATTEMPT_REJECTED'::text, 'SETUP_PACKET_DESIGN_SOURCE_CLOSURE_REJECTED'::text, 'SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED'::text]))) AND ((requested_by <> 'setfarm.product-compiler.deploy-refusal'::text OR (evidence ->> 'schema'::text) = 'setfarm.v3-deploy-authority-termination.v1'::text AND (evidence ->> 'authorityCode'::text) = ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text)) AND (requested_by <> 'setfarm.v3-pre-dispatch'::text OR jsonb_typeof(evidence -> 'errorCode'::text) = 'string'::text AND\n    CASE\n        WHEN (evidence ->> 'errorCode'::text) ~ '^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$'::text THEN evidence ->> 'errorCode'::text\n        WHEN (evidence ->> 'errorCode'::text) ~ '^[0-9A-Z]{5}$'::text THEN 'SQLSTATE_'::text || (evidence ->> 'errorCode'::text)\n        WHEN (evidence ->> 'errorCode'::text) ~ '^E[A-Z0-9_]{2,120}$'::text THEN 'ERRNO_'::text || (evidence ->> 'errorCode'::text)\n        ELSE NULL::text\n    END = ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text)) AND (requested_by <> 'setfarm-v3-downstream-compiler'::text OR (evidence ->> 'schema'::text) = 'setfarm.v3-downstream-termination-evidence.v1'::text AND ((evidence ->> 'outcome'::text) = 'packet_amendment_required'::text AND NOT evidence ? 'terminalReasonCodes'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_PACKET_AMENDMENT_REQUIRED'::text OR (evidence ->> 'outcome'::text) = 'bounded_recovery_blocked'::text AND (((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_SPECIFICATION_INCOMPLETE'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_EVIDENCE_INCONCLUSIVE'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_03'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'recovery_exhausted'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_RECOVERY_BUDGET_EXHAUSTED'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_05'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'recovery_exhausted'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_06'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_07'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_SOURCE_SUPERSEDED'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_09'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0A'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0B'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0C'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\", \"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0D'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\", \"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0E'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_0F'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_UPSTREAM_RECOMPILE_REQUIRED'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_11'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_12'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_13'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_14'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_15'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_16'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_17'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_18'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_19'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1A'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1B'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1C'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1D'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1E'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_1F'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_OPERATOR_REQUIRED'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_21'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'platform_authority_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_22'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_23'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'recovery_exhausted'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_24'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_25'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'recovery_exhausted'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_26'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_27'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_28'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_29'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2A'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2B'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2C'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\", \"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2D'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\", \"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'retry_delta_missing'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2E'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_2F'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_30'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_31'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_32'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_33'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_34'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_35'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_36'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_37'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_38'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_39'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3A'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3B'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3C'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3D'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3E'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb OR ((evidence -> 'operationalFailureCause'::text) ->> 'failureClass'::text) = 'contract_invalid'::text AND ((evidence -> 'operationalFailureCause'::text) ->> 'failureCode'::text) = 'V3_DOWNSTREAM_TERMINAL_REASON_SET_3F'::text AND (evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\", \"evidence_inconclusive\", \"budget_exhausted\", \"source_superseded\", \"upstream_recompile_required\", \"operator_required\"]'::jsonb)))) IS TRUE\nEND"}]},{"query":"SELECT trigger_row.tgname AS \"triggerName\",\n            pg_get_triggerdef(trigger_row.oid, true) AS \"triggerDefinition\",\n            trigger_row.tgenabled AS enabled,\n            trigger_row.tgtype::integer AS \"typeBits\",\n            relation_namespace.nspname AS \"relationSchema\",\n            relation.relname AS \"relationName\",\n            ARRAY(\n              SELECT attribute.attname\n                FROM unnest(trigger_row.tgattr::smallint[]) WITH ORDINALITY\n                     AS columns(attnum, ordinality)\n                JOIN pg_attribute attribute\n                  ON attribute.attrelid=trigger_row.tgrelid\n                 AND attribute.attnum=columns.attnum\n               ORDER BY columns.ordinality\n            ) AS \"updateColumns\",\n            function_namespace.nspname AS \"functionSchema\",\n            routine.proname AS \"functionName\",\n            language.lanname AS language,\n            routine.prorettype::regtype::text AS \"returnType\",\n            routine.provolatile AS volatility,\n            routine.prosecdef AS \"securityDefiner\",\n            routine.proleakproof AS leakproof,\n            routine.proisstrict AS strict,\n            routine.pronargs::integer AS \"argumentCount\",\n            COALESCE(routine.proconfig, ARRAY[]::text[]) AS configuration,\n            routine.prosrc AS \"functionSource\"\n       FROM pg_trigger trigger_row\n       JOIN pg_class relation ON relation.oid=trigger_row.tgrelid\n       JOIN pg_namespace relation_namespace ON relation_namespace.oid=relation.relnamespace\n       JOIN pg_proc routine ON routine.oid=trigger_row.tgfoid\n       JOIN pg_namespace function_namespace ON function_namespace.oid=routine.pronamespace\n       JOIN pg_language language ON language.oid=routine.prolang\n      WHERE NOT trigger_row.tgisinternal\n        AND relation_namespace.nspname=$1\n        AND relation.relname=$2\n      ORDER BY trigger_row.tgname","args":["public","run_termination_requests"],"rows":[{"triggerName":"trg_run_termination_requests_operational_failure_cause_immutabl","triggerDefinition":"CREATE TRIGGER trg_run_termination_requests_operational_failure_cause_immutabl BEFORE UPDATE OF evidence, target_status, requested_by ON run_termination_requests FOR EACH ROW EXECUTE FUNCTION setfarm_enforce_operational_failure_cause_immutable()","enabled":"O","typeBits":19,"relationSchema":"public","relationName":"run_termination_requests","updateColumns":["evidence","target_status","requested_by"],"functionSchema":"public","functionName":"setfarm_enforce_operational_failure_cause_immutable","language":"plpgsql","returnType":"trigger","volatility":"v","securityDefiner":false,"leakproof":false,"strict":false,"argumentCount":0,"configuration":[],"functionSource":"\n   BEGIN\n     IF OLD.target_status IS DISTINCT FROM NEW.target_status THEN\n       RAISE EXCEPTION 'SETFARM_RUN_TERMINATION_TARGET_STATUS_IMMUTABLE'\n         USING ERRCODE = '55000';\n     END IF;\n     IF OLD.requested_by IS DISTINCT FROM NEW.requested_by THEN\n       RAISE EXCEPTION 'SETFARM_RUN_TERMINATION_REQUESTED_BY_IMMUTABLE'\n         USING ERRCODE = '55000';\n     END IF;\n     IF OLD.evidence->'operationalFailureCause'\n          IS DISTINCT FROM NEW.evidence->'operationalFailureCause' THEN\n       RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_CAUSE_IMMUTABLE'\n         USING ERRCODE = '55000';\n     END IF;\n     IF OLD.requested_by = 'setfarm.product-compiler.deploy-refusal'\n          AND OLD.evidence ? 'operationalFailureCause'\n          AND (\n            OLD.evidence->'schema' IS DISTINCT FROM NEW.evidence->'schema'\n            OR OLD.evidence->'authorityCode'\n                 IS DISTINCT FROM NEW.evidence->'authorityCode'\n          ) THEN\n       RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_EVIDENCE_BINDING_IMMUTABLE'\n         USING ERRCODE = '55000';\n     END IF;\n     IF OLD.requested_by = 'setfarm.v3-pre-dispatch'\n          AND OLD.evidence ? 'operationalFailureCause'\n          AND OLD.evidence->'errorCode' IS DISTINCT FROM NEW.evidence->'errorCode' THEN\n       RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_EVIDENCE_BINDING_IMMUTABLE'\n         USING ERRCODE = '55000';\n     END IF;\n     IF OLD.requested_by = 'setfarm-v3-downstream-compiler'\n          AND OLD.evidence ? 'operationalFailureCause'\n          AND (\n            OLD.evidence->'schema' IS DISTINCT FROM NEW.evidence->'schema'\n            OR OLD.evidence->'outcome' IS DISTINCT FROM NEW.evidence->'outcome'\n            OR OLD.evidence->'terminalReasonCodes'\n                 IS DISTINCT FROM NEW.evidence->'terminalReasonCodes'\n          ) THEN\n       RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_EVIDENCE_BINDING_IMMUTABLE'\n         USING ERRCODE = '55000';\n     END IF;\n     RETURN NEW;\n   END;\n   "}]}];
+}
+
+async function finalizedColdRecoveryControllerFixtureV1(oldPrepareWithoutColdRecovery = false): Promise<Readonly<{ root: string; home: string; buildInputSetHash: string }>> {
+  const typescript = await import("typescript");
+  const pba = await import("../../src/internal-production/product-build-authority-v2-delivery-evidence-v1.js");
+  pba.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(coldRecoveryPbaResponseFixtureV1());
+  let root = createFixture();
+  const home = realpathSync(mkdtempSync(path.join(userInfo().homedir, ".setfarm-cold-controller-")));
+  try {
+    mkdirSync(path.join(home, "ai"), { mode: 0o700 });
+    const workspace = path.join(home, "ai/setrox");
+    renameSync(path.dirname(root), workspace);
+    root = path.join(workspace, "setfarm");
+    const launcher = path.join(home, ".local/bin/setfarm");
+    mkdirSync(path.dirname(launcher), { recursive: true, mode: 0o700 });
+    symlinkSync(path.join(root, "dist/cli/cli.js"), launcher);
+    const launchOutputs: Record<string, string> = {};
+    for (const service of ["spawner", "dashboard"]) {
+      const label = `com.setrox.setfarm-${service}`;
+      const plist = path.join(home, "Library/LaunchAgents", `${label}.plist`);
+      const args = [launcher, service, "start", ...(service === "dashboard" ? ["--port", "3333"] : [])];
+      const environment = { PATH: "/usr/bin:/bin", SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm",
+        ...(service === "dashboard" ? { SETFARM_OPERATIONAL_WRITE_TOKEN: "joined-fixture-token" } : {}) };
+      mkdirSync(path.dirname(plist), { recursive: true, mode: 0o700 });
+      writeFileSync(plist, JSON.stringify({ Label: label, RunAtLoad: true, StartInterval: 60,
+        ProgramArguments: args, EnvironmentVariables: environment,
+        StandardOutPath: path.join(home, `.openclaw/logs/setfarm-${service}.watch.log`),
+        StandardErrorPath: path.join(home, `.openclaw/logs/setfarm-${service}.watch.err.log`),
+      }), { mode: 0o600, flag: "wx" });
+      const domain = `gui/${process.getuid!()}/${label}`;
+      launchOutputs[domain] = `${domain} = {\n\tactive count = 0\n\tpath = ${plist}\n\ttype = LaunchAgent\n\tstate = not running\n\tprogram = ${launcher}\n\targuments = {\n${args.map(argument => `\t\t${argument}\n`).join("")}\t}\n\tinherited environment = {\n\t\tSETFARM_ENV_DIR => ${path.join(root, "scripts")}\n\t\tSSH_AUTH_SOCK => /var/run/com.apple.launchd.Fixture123/Listeners\n\t}\n\tdefault environment = {\n\t\tPATH => /usr/bin:/bin:/usr/sbin:/sbin\n\t}\n\tenvironment = {\n\t\tOSLogRateLimit => 64\n${Object.entries(environment).map(([key, value]) => `\t\t${key} => ${value}\n`).join("")}\t\tXPC_SERVICE_NAME => ${label}\n\t}\n\trun interval = 60 seconds\n\tproperties = runatload | inferred program\n}\n`;
+    }
+    fixtureFile(root, "src/internal-production/cold-recovery-fixture-transport.ts", coldRecoveryRawServicesFixtureV1(root, home, launchOutputs));
+    const mcRoot = path.join(home, "ai/setrox/mission-control");
+    git(mcRoot, ["init", "-q", "-b", "main"]);
+    git(mcRoot, ["config", "user.name", "Setfarm Test"]);
+    git(mcRoot, ["config", "user.email", "setfarm-test@example.invalid"]);
+    git(mcRoot, ["config", "commit.gpgsign", "false"]);
+    git(mcRoot, ["commit", "--allow-empty", "-qm", "fixture Mission Control root"]);
+    const originalPoison = seedExactOriginalPoisonStoreV1(root);
+    // Preserve only the existing workspace anchor and out-of-scope external
+    // ports. Controller, retirement, startup and configuration stay real.
+    const existingPorts = new Set([
+      "internal-production/baseline-workspace-authority-path-v1.ts",
+      "db-pg.ts", "db/bootstrap-main-claim-handoff-v1-migration.ts",
+      "db/contract-spine-migrations.ts",
+      "db/contract-spine-migration-digests.generated.ts", "db/contract-spine-migration-source-integrity.ts",
+      "execution/v3-git-revision.ts",
+      "internal-production/cold-recovery-fixture-transport.ts",
+    ]);
+    const compiled = new Map<string, string>();
+    const copyClosure = (relative: string): void => {
+      if (compiled.has(relative)) return;
+      assert.ok(compiled.size < 128, "cold controller fixture static closure is bounded");
+      assert.ok(!path.isAbsolute(relative) && !relative.startsWith(".."), "cold controller source stays within src");
+      let source = readFileSync(path.join(existingPorts.has(relative) ? root : sourceRoot, "src", relative), "utf8");
+      if (relative === "internal-production/baseline-restart-authority-retirement-v1.ts") {
+        // Preserve every refusal and transport descriptor. Surface swallowed
+        // causes only on this disposable fixture's diagnostic stderr.
+        const route = topLevelFunctionRegionV1(source, "invokeDirectSpawnerRebindPublicRouteV1");
+        const catchAnchor = "catch (error) {\n    if (retainedDirectSpawnerRebindIntentV1?.lease === lease)";
+        assert.equal(route.split(catchAnchor).length, 2);
+        source = source.replace(route, () => route.replace(catchAnchor,
+          'catch (error) {\n    process.stderr.write("joined direct cause: " + String(error instanceof Error ? error.stack : error) + "\\n");\n    if (retainedDirectSpawnerRebindIntentV1?.lease === lease)'));
+        source = source.replaceAll('} catch { invocation.failed = true; }',
+          '} catch (error) { process.stderr.write("joined helper setup: " + String(error instanceof Error ? error.stack : error) + "\\n"); invocation.failed = true; }');
+        source = source.replaceAll('stdio: ["ignore", "pipe", "ignore", handles.frameDescriptor',
+          'stdio: ["ignore", "pipe", "inherit", handles.frameDescriptor');
+      }
+      if (relative === "internal-production/product-build-authority-v2-delivery-evidence-v1.ts") {
+        const anchor = 'import { execFile } from "node:child_process";';
+        assert.equal(source.split(anchor).length, 2);
+        source = source.replace(anchor, 'import { execFile } from "./cold-recovery-fixture-transport.js";');
+      }
+      if (relative === "internal-production/baseline-post-handoff-receipt-v1.ts") {
+        if (oldPrepareWithoutColdRecovery) {
+          // Restore the exact pre-6c37dc4a public preparation control edge.
+          // All ordinary collectors remain real, and this happens before
+          // committing/preparing/finalizing the immutable fixture build.
+          const beforeSelection = topLevelFunctionRegionV1(source, "resumeExactPoisonQuarantineBeforeSelectionV1");
+          const coldEdge = "    await ensureExactPoisonSpawnerBeforeQuarantineV1();\n";
+          assert.equal(beforeSelection.split(coldEdge).length, 2);
+          source = source.replace(beforeSelection, () => beforeSelection.replace(coldEdge, ""));
+        }
+        const anchor = 'import { userInfo } from "node:os";';
+        assert.equal(source.split(anchor).length, 2);
+        source = source.replace(anchor, 'import { userInfo as hostUserInfo } from "node:os";\nconst userInfo = () => ({ ...hostUserInfo(), homedir: ' + JSON.stringify(home) + ' });');
+        const spawnAnchor = 'import { spawnSync } from "node:child_process";';
+        assert.equal(source.split(spawnAnchor).length, 2);
+        source = source.replace(spawnAnchor, 'import { spawnSync } from "./cold-recovery-fixture-transport.js";');
+        const httpAnchor = 'import { request as httpRequest } from "node:http";';
+        assert.equal(source.split(httpAnchor).length, 2);
+        source = source.replace(httpAnchor, 'import { httpRequest } from "./cold-recovery-fixture-transport.js";');
+        const sqlAnchor = 'const postgresModule = await import("postgres");';
+        const census = topLevelFunctionRegionV1(source, "observeLegacyDatabaseCensusV1");
+        assert.equal(census.split(sqlAnchor).length, 2);
+        source = source.replace(census, census.replace(sqlAnchor, legacyDatabaseCensusSqlTransportFixtureV1(JSON.stringify([legacyDatabaseCensusRow()]))));
+        const database = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleProgressDatabaseTransactionNoWriteV1");
+        assert.equal(database.split(sqlAnchor).length, 2);
+        const queryRows = phase5cSRowTailPhysicalQueryRowsFixtureV1("database", PHASE5C_S_NONBLOCKED_ROWS_V1[0]!);
+        source = source.replace(database, () => database.replace(sqlAnchor, () => `
+          const rows = ${JSON.stringify(queryRows)};
+          const catalogQueries = ${JSON.stringify(coldRecoveryV31CatalogQueriesFixtureV1())};
+          let ended = false;
+          const fixtureSql = {
+            async begin(mode, body) {
+              if (ended || mode !== "isolation level repeatable read read only") throw new Error("COLD_PROGRESS_SQL_TRANSACTION_INVALID");
+              let count = 0;
+              const connection = async (strings, ...values) => {
+                if (ended || values.length !== 0) throw new Error("COLD_PROGRESS_SQL_QUERY_INVALID");
+                const query = strings.join("?");
+                count += 1;
+                if (count === 1 && query.trim() === "SET LOCAL statement_timeout = '5s'") return [];
+                if (count === 2 && query.trim() === "SET LOCAL lock_timeout = '1s'") return [];
+                if (count === 3 && query.includes("public.setfarm_schema_migrations") && query.includes("ORDER BY expected.version")) return rows["migration-journal"];
+                if (count === 4 && query.includes("pg_catalog.pg_class") && query.includes("ORDER BY versions.version")) return rows["migration-catalog"];
+                throw new Error("COLD_PROGRESS_SQL_QUERY_UNMAPPED:" + count);
+              };
+              connection.unsafe = async (query, parameters) => {
+                const expected = catalogQueries[count - 4];
+                if (ended || !expected || query !== expected.query || JSON.stringify(parameters) !== JSON.stringify(expected.args)) throw new Error("COLD_PROGRESS_SQL_CATALOG_QUERY_INVALID");
+                count += 1;
+                return expected.rows;
+              };
+              const result = await body(connection);
+              if (count !== 6) throw new Error("COLD_PROGRESS_SQL_QUERY_COUNT");
+              return result;
+            },
+            async end() { if (ended) throw new Error("COLD_PROGRESS_SQL_DOUBLE_CLOSE"); ended = true; },
+          };
+          const postgresModule = { default(url, options) {
+            if (url !== "postgresql://fixture.invalid/setfarm" || JSON.stringify(options) !== JSON.stringify({max:1,idle_timeout:1,connect_timeout:5})) throw new Error("COLD_PROGRESS_SQL_OPTIONS_INVALID");
+            return fixtureSql;
+          } };
+        `));
+      }
+      fixtureFile(root, path.join("src", relative), source);
+      if (relative === "internal-production/baseline-post-handoff-receipt-v1.ts") {
+        rewriteExactPoisonPhysicalInventoryFixtureV1(root, originalPoison);
+        source = readFileSync(path.join(root, "src", relative), "utf8");
+      }
+      const output = typescript.transpileModule(source, { compilerOptions: {
+        module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022,
+      } }).outputText;
+      compiled.set(relative, output);
+      const tree = typescript.createSourceFile(relative.replace(/\.ts$/, ".js"), output, typescript.ScriptTarget.Latest, true, typescript.ScriptKind.JS);
+      for (const statement of tree.statements) {
+        if (!typescript.isImportDeclaration(statement) && !typescript.isExportDeclaration(statement)) continue;
+        const specifier = statement.moduleSpecifier;
+        if (!specifier || !typescript.isStringLiteral(specifier) || !specifier.text.startsWith(".")) continue;
+        assert.match(specifier.text, /\.js$/, "cold controller closure uses explicit JavaScript runtime imports");
+        copyClosure(path.normalize(path.join(path.dirname(relative), specifier.text.replace(/\.js$/, ".ts"))));
+      }
+    };
+    for (const relative of [
+      "internal-production/baseline-post-handoff-receipt-v1.ts",
+      "internal-production/baseline-restart-authority-retirement-v1.ts",
+      "internal-production/baseline-spawner-startup-admission-v1.ts",
+      "internal-production/baseline-service-restart-helper-v1.ts",
+      "runtime-config.ts", "findings/finding-publication-v1.ts", "db-pg.ts",
+    ]) copyClosure(relative);
+    const spawnerSource = readFileSync(path.join(sourceRoot, "src/spawner.ts"), "utf8");
+    const spawnerTree = typescript.createSourceFile("spawner.ts", spawnerSource, typescript.ScriptTarget.Latest, true);
+    const startupNames = new Set([
+      "observeSpawnerStartupFileParentsV1", "assertSpawnerStartupFileParentsV1", "createOwnedSpawnerStartupFileV1",
+      "closeOwnedSpawnerStartupFileV1", "publishSpawnerPidFileV1", "reclaimDeadSpawnerStartupFileV1",
+      "acquireSpawnerSingletonLock", "releaseSpawnerSingletonLock", "observeOwnedSpawnerStartupFileV1",
+      "observeInternalProductionColdSpawnerSingletonOwnershipV1", "observeInternalProductionColdSpawnerStartupOwnershipV1",
+      "runInternalProductionColdSpawnerStartupV1", "observeInternalProductionDirectSpawnerStartupOwnershipV1",
+      "runInternalProductionDirectSpawnerStartupV1", "observeOrdinarySpawnerColdRecoveryAdmissionV1",
+      "assertOrdinarySpawnerColdRecoveryAdmissionV1", "task12CanonicalV1", "task12HashV1", "main",
+    ]);
+    const startupFunctions = spawnerTree.statements.filter(statement => typescript.isFunctionDeclaration(statement)
+      && statement.name && startupNames.has(statement.name.text));
+    assert.equal(startupFunctions.length, startupNames.size);
+    const startupVariables = spawnerTree.statements.filter(statement => typescript.isVariableStatement(statement)
+      && statement.declarationList.declarations.some(declaration => typescript.isIdentifier(declaration.name)
+        && /^spawner(?:LockFd|StartupFilesV1|ColdStartup|DirectStartup)/.test(declaration.name.text)));
+    const retirementImport = spawnerTree.statements.find(statement => typescript.isImportDeclaration(statement)
+      && typescript.isStringLiteral(statement.moduleSpecifier)
+      && statement.moduleSpecifier.text === "./internal-production/baseline-restart-authority-retirement-v1.js");
+    assert.ok(retirementImport);
+    const entryAnchor = 'if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {';
+    assert.equal(spawnerSource.split(entryAnchor).length, 2);
+    const runtime = path.join(home, ".openclaw/setfarm");
+    mkdirSync(runtime, { recursive: true, mode: 0o700 });
+    const startupSource = `
+import './runtime-config.js';
+import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';import {pathToFileURL} from 'node:url';
+${retirementImport.getText(spawnerTree)}
+const PID_FILE=${JSON.stringify(path.join(runtime, "spawner.pid"))},LOCK_FILE=${JSON.stringify(path.join(runtime, "spawner.lock"))};
+async function resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1(){throw Error('joined child reached ordinary admission')}
+function initializeAgentRuntimeV1(){throw Error('joined child reached provider discovery')}
+async function pgMigrate(){throw Error('joined child reached database initialization')}
+${[...startupVariables, ...startupFunctions].map(statement => statement.getText(spawnerTree)).join("\n")}
+${spawnerSource.slice(spawnerSource.indexOf(entryAnchor))}
+`;
+    fixtureFile(root, "src/spawner.ts", startupSource);
+    compiled.set("spawner.ts", typescript.transpileModule(startupSource, { compilerOptions: {
+      module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ES2022,
+    } }).outputText);
+    const dashboardSource = "throw Error('synthetic dashboard must not execute');\n";
+    fixtureFile(root, "src/server/daemon.ts", dashboardSource);
+    compiled.set("server/daemon.ts", dashboardSource);
+    const packagePath = path.join(root, "package.json");
+    fixtureFile(root, "package.json", JSON.stringify({ ...JSON.parse(readFileSync(packagePath, "utf8")), type: "module" }) + "\n");
+    fixtureFile(root, ".gitignore", readFileSync(path.join(root, ".gitignore"), "utf8") + "node_modules\n");
+    symlinkSync(path.join(sourceRoot, "node_modules"), path.join(root, "node_modules"));
+    git(root, ["add", "src", "package.json", ".gitignore"]);
+    git(root, ["commit", "-qm", "fixture real cold controller closure"]);
+    git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    const prepared = runProducer(root, "--prepare");
+    assert.equal(prepared.status, 0, prepared.stderr);
+    const prepare = JSON.parse(readFileSync(path.join(root, "dist/PLATFORM_BUILD_PREPARE.json"), "utf8"));
+    materializeOutputs(root);
+    for (const [relative, output] of compiled) fixtureFile(root, path.join("dist", relative.replace(/\.ts$/, ".js")), output, 0o600);
+    const finalized = runProducer(root, "--finalize");
+    assert.equal(finalized.status, 0, finalized.stderr);
+    return Object.freeze({ root, home, buildInputSetHash: prepare.buildInputSetHash });
+  } catch (error) { removeFixture(root); rmSync(home, { recursive: true, force: true }); throw error; }
+}
+
+it("cold recovery compiled fixture authenticates its retained source and rejects output drift", async () => {
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1();
+  try {
+    const moduleUrl = pathToFileURL(path.join(root, "dist/internal-production/baseline-post-handoff-receipt-v1.js")).href;
+    const observe = () => spawnSync(process.execPath, ["--input-type=module", "-e",
+      "const m=await import(" + JSON.stringify(moduleUrl) + ");process.stdout.write(JSON.stringify(m.observeCurrentInternalProductionCleanSetfarmSourceBuildV1()));",
+    ], { cwd: path.dirname(root), encoding: "utf8", timeout: 30_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, SETFARM_ENV_DIR: path.join(root, "scripts") } });
+    const first = observe();
+    assert.equal(first.status, 0, first.stderr);
+    const source = JSON.parse(first.stdout);
+    assert.equal(source.sha, git(root, ["rev-parse", "HEAD"]).trim());
+    assert.equal(source.treeHash, git(root, ["rev-parse", "HEAD^{tree}"]).trim());
+    assert.equal(source.clean, true);
+    const output = path.join(root, "dist/internal-production/baseline-spawner-launch-environment-v1.js");
+    chmodSync(output, 0o600);
+    writeFileSync(output, "export const crossed = true;\n");
+    const crossed = observe();
+    assert.notEqual(crossed.status, 0);
+    assert.equal(crossed.stdout, "");
+    assert.match(crossed.stderr, /output|build/i);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+async function stopColdRecoveryFixtureChildrenV1(root: string, controllerPid: number | undefined, controllerPgid: number): Promise<void> {
+  const node = realpathSync(process.execPath), columns = "uid=,pid=,ppid=,pgid=,stat=,lstart=,command=";
+  const commands = [node + " " + path.join(root, "dist/spawner.js"), node + " " + path.join(root, "dist/internal-production/baseline-service-restart-helper-v1.js")];
+  const observe = (pid?: number) => {
+    const result = spawnSync("/bin/ps", pid === undefined ? ["-ww", "-axo", columns] : ["-ww", "-p", String(pid), "-o", columns],
+      { encoding: "utf8", timeout: 5000, maxBuffer: 1048576, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+    assert.equal(result.error, undefined);
+    assert.ok(result.status === 0 || (pid !== undefined && result.status === 1 && result.stdout === ""));
+    return result.stdout.split("\n").filter(Boolean).map(line => {
+      const words = line.trim().split(/\s+/);
+      return { uid: Number(words[0]), pid: Number(words[1]), ppid: Number(words[2]), pgid: Number(words[3]), stat: words[4]!,
+        lstart: words.slice(5, 10).join(" "), command: words.slice(10).join(" ") };
+    });
+  };
+  for (const target of observe().filter(row => commands.includes(row.command))) {
+    assert.equal(target.uid, process.getuid!());
+    if (target.command === commands[0]) assert.equal(target.pgid, target.pid, "fixture spawner must retain its detached group");
+    else {
+      assert.equal(target.pgid, controllerPgid, "fixture helper must retain the invoking controller's group");
+      assert.ok(target.ppid === controllerPid || target.ppid === 1, "fixture helper must belong to the invoking or departed controller");
+    }
+    const current = observe(target.pid)[0];
+    if (!current) continue;
+    const identity = ({ stat: _stat, ...value }: typeof target) => value;
+    assert.deepEqual(identity(current), identity(target), "fixture cleanup must retain exact process identity");
+    if (!/[ZE]/.test(current.stat)) process.kill(target.pid, "SIGTERM");
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && observe(target.pid).length !== 0) await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(observe(target.pid).length, 0, "fixture child must exit before its private home is removed");
+  }
+  assert.equal(observe().filter(row => commands.includes(row.command)).length, 0);
+}
+
+it("cold recovery cleanup stops an inherited-group helper and a detached spawner", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-cold-cleanup-")));
+  const children: ReturnType<typeof spawn>[] = [];
+  try {
+    const source = "process.stdout.write('ready\\n');setInterval(()=>{},1000);\n";
+    for (const entry of ["internal-production/baseline-service-restart-helper-v1.js", "spawner.js"]) {
+      fixtureFile(root, path.join("dist", entry), source);
+      const child = spawn(realpathSync(process.execPath), [path.join(root, "dist", entry)], {
+        cwd: root, stdio: ["ignore", "pipe", "pipe"], detached: entry === "spawner.js",
+        env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+      });
+      children.push(child);
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(Error("cleanup fixture child did not become ready")), 5000);
+        child.once("error", error => { clearTimeout(timer); reject(error); });
+        child.stdout!.once("data", chunk => { clearTimeout(timer); try { assert.equal(chunk.toString(), "ready\n"); resolve(); } catch (error) { reject(error); } });
+      });
+    }
+    const group = spawnSync("/bin/ps", ["-p", String(process.pid), "-o", "pgid="], { encoding: "utf8", timeout: 5000 });
+    assert.equal(group.status, 0, group.stderr);
+    const controllerPgid = Number(group.stdout.trim());
+    assert.notEqual(children[0]!.pid, controllerPgid, "helper is not a detached group leader");
+    await stopColdRecoveryFixtureChildrenV1(root, process.pid, controllerPgid);
+    for (const child of children) {
+      const observed = spawnSync("/bin/ps", ["-p", String(child.pid), "-o", "pid="], { encoding: "utf8", timeout: 5000 });
+      assert.equal(observed.status, 1);
+      assert.equal(observed.stdout, "");
+    }
+  } finally {
+    for (const child of children) {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+        await new Promise<void>(resolve => child.once("close", () => resolve()));
+      }
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("old exact-poison preparation refuses absent spawner at the unchanged four-service census", async () => {
+  const group = spawnSync("/bin/ps", ["-p", String(process.pid), "-o", "pgid="], { encoding: "utf8", timeout: 5000 });
+  assert.equal(group.status, 0, group.stderr);
+  const controllerPgid = Number(group.stdout.trim());
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1(true);
+  let controllerPid: number | undefined;
+  try {
+    const before = ["src", "dist"].map(name => filesystemTreeSnapshot(path.join(root, name)));
+    const receipt = pathToFileURL(path.join(root, "dist/internal-production/baseline-post-handoff-receipt-v1.js")).href;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e",
+      `const m=await import(${JSON.stringify(receipt)});await m.prepareInternalProductionCurrentEntryOperationV1();`,
+    ], { cwd: path.dirname(root), encoding: "utf8", timeout: 90_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, SETFARM_ENV_DIR: path.join(root, "scripts"), SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm" } });
+    controllerPid = result.pid;
+    assert.equal(result.error, undefined, result.stderr);
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /com\.setrox\.setfarm-spawner detached daemon family count is not exactly one/);
+    assert.deepEqual(["src", "dist"].map(name => filesystemTreeSnapshot(path.join(root, name))), before);
+    const authority = path.join(home, "ai/setrox/data/internal-production-baseline/restart-authority-retirement-v1");
+    for (const name of ["cold-spawner-bootstrap-v1", "cold-spawner-bootstrap-controller-settlement-v1.json", "physical-service-restart-authority.transition.lock"]) {
+      assert.equal(existsSync(path.join(authority, name)), false);
+    }
+    assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.pid")), false);
+    assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.lock")), false);
+  } finally {
+    await stopColdRecoveryFixtureChildrenV1(root, controllerPid, controllerPgid);
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+it("stored startup pairs cross receipt recovery and both migration boundaries", async (context) => {
+  const source = readFileSync(observerSource, "utf8");
+  const startupSource = readFileSync(path.join(path.dirname(observerSource), "baseline-spawner-startup-admission-v1.ts"), "utf8");
+  const functions = ["executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1", "prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1", "applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1"].map(name => topLevelFunctionRegionV1(source, name)
+    .replaceAll('await import("./baseline-spawner-startup-admission-v1.js")', "ports")
+    .replaceAll('await import("../db/bootstrap-main-claim-handoff-v1-migration.js")', "ports")
+    .replaceAll('await import("../db-pg.js")', "ports")).join("\n");
+  const exactPair = topLevelFunctionRegionV1(startupSource, "exactPair");
+  for (const mode of ["recovery", "prepare", "postcommit"]) await context.test(mode, () => {
+    // Real receipt control flow and real strict startup pair parser. Transaction
+    // ports record the commit/publication boundary; this is not a live DB test.
+    const program = `
+import assert from 'node:assert/strict';import {createHash} from 'node:crypto';
+${canonical.toString()}
+const canonicalComparable=canonical,hashCanonicalJson=value=>createHash('sha256').update(canonical(value)).digest('hex');
+const fail=message=>{throw Error(message)},currentEntryFail=fail,SHA256=/^[a-f0-9]{64}$/;
+const isPlainRecord=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+const hasExactKeys=(value,keys)=>JSON.stringify(Object.keys(value).sort())===JSON.stringify([...keys].sort());
+const requireSha256=(value)=>{assert.match(value,SHA256);return value};
+${topLevelFunctionRegionV1(source, "requirePair")}
+${exactPair}
+const mode=${JSON.stringify(mode)},effects=[],hash='a'.repeat(64),sealedPrefix='setfarm://internal-production/pre-schema-spawner-sealed-admission/sha256/',authorizationPrefix='setfarm://internal-production/pre-schema-spawner-rebind-authorization/sha256/';
+const operation={operationRef:'operation',operationHash:hash,authorityV3Migration31Audit:{},pendingBootstrapHandoffMigration:{},controllerSource:{sha:'b'.repeat(40),treeHash:'c'.repeat(40),buildHash:'d'.repeat(64)}};
+const sealedPair=JSON.parse(canonical({sealedAdmissionRef:sealedPrefix+hash,sealedAdmissionHash:hash}));
+const recoveryPair=JSON.parse(canonical({authorizationRef:authorizationPrefix+hash,authorizationHash:hash}));
+const fresh={observationRef:'zero',observationHash:hash,census:{},observedSpawnerGenerationHash:'generation'};
+const sealed={postPredecessorTerminationLegacyZeroOwnerObservationRef:fresh.observationRef,postPredecessorTerminationLegacyZeroOwnerObservationHash:fresh.observationHash};
+const input={authorizationRef:'migration-authorization',authorizationHash:hash};
+const authorization={currentEntryOperationRef:operation.operationRef,currentEntryOperationHash:hash,freshLegacyZeroOwnerObservationRef:fresh.observationRef,freshLegacyZeroOwnerObservationHash:fresh.observationHash,postPredecessorTerminationLegacyZeroOwnerObservationRef:fresh.observationRef,postPredecessorTerminationLegacyZeroOwnerObservationHash:fresh.observationHash};
+const status={state:'pre_manifest_bootstrap_sealed',currentEntryOperation:operation,sealedAdmission:sealedPair,authorization:{},startupToken:{},restartAuthority:{},dispatchPrefix:{predecessorTerminationObservation:{},replacementProcessObservation:{}}};
+const ports={
+ observeInternalProductionPreSchemaSpawnerRebindStatusV1:async()=>status,
+ executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1:async pair=>{exactPair(pair,'authorizationRef','authorizationHash',authorizationPrefix);effects.push('recovery');return {state:'sealed'}},
+ resolveInternalProductionPreSchemaSpawnerSealedAdmissionV1:async pair=>{exactPair(pair,'sealedAdmissionRef','sealedAdmissionHash',sealedPrefix);effects.push('sealed-resolved');return sealed},
+ openInternalProductionCurrentEntryMigration32TransactionV1:async()=>{effects.push('open');return {}},
+ mintBootstrapMainClaimHandoffGuardedMigration32EvidenceForControllerV1:value=>value,
+ stageInternalProductionCurrentEntryMigration32InTransactionV1:async()=>{effects.push('stage')},
+ commitInternalProductionCurrentEntryMigration32TransactionV1:async()=>{effects.push('commit');return {schemaProjection:{}}},
+ abortInternalProductionCurrentEntryMigration32TransactionV1:async()=>{effects.push('abort')},
+};
+const resolveInternalProductionPreManifestMigration32AuthorizationV1=async()=>authorization;
+const observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1=async()=>({state:'consumed',authorization:input,consumption:{consumptionRef:'consumption',consumptionHash:hash}});
+const resolveInternalProductionPreManifestMigration32AuthorizationConsumptionV1=async()=>input;
+const resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1=async()=>fresh;
+const observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1=async()=>fresh;
+const requireLegacyZeroVersionedFieldsV1=value=>value,requireLegacyFindingPublicationInventoryContinuityV1=()=>{};
+const resolveInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1=async()=>({migrationImplementation:{},pendingSuccessor:{}});
+const TASK12_MIGRATION_PREFIXES_V1={authorization:'authorization',receipt:'receipt'};
+const publishTask12HashedRecordV1=async(kind,body,refKey,hashKey)=>{effects.push('publish-'+kind);assert.equal(kind==='receipts'?effects.includes('commit'):effects.includes('sealed-resolved'),true);return {...body,[refKey]:kind,[hashKey]:hash}};
+const operationPair=value=>value,publishTask12MigrationStatusV1=async()=>{effects.push('status')};
+const resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1=async()=>{effects.push('receipt-verified')};
+${functions}
+if(mode==='recovery'){await executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(recoveryPair,operation);assert.deepEqual(effects,['recovery']);}
+if(mode==='prepare'){const result=await prepareInternalProductionPreManifestMigration32AuthorizationForOperationV1({},operation);assert.deepEqual(result,{authorizationRef:'authorizations',authorizationHash:hash});assert.deepEqual(effects,['sealed-resolved','publish-authorizations','status']);}
+if(mode==='postcommit'){const result=await applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1({},operation,input);assert.deepEqual(result,{migrationReceiptRef:'receipts',migrationReceiptHash:hash});assert.deepEqual(effects,['open','stage','commit','sealed-resolved','publish-receipts','status','receipt-verified']);}
+`;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", transformSync(program, { loader: "ts", format: "esm", target: "es2022" }).code], { encoding: "utf8", timeout: 10000, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+    assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+  });
+});
+
+it("cold recovery joins real prepare to sealed direct rebind without relaunching on replay", async () => {
+  const group = spawnSync("/bin/ps", ["-p", String(process.pid), "-o", "pgid="], { encoding: "utf8", timeout: 5000 });
+  assert.equal(group.status, 0, group.stderr);
+  const controllerPgid = Number(group.stdout.trim());
+  assert.ok(Number.isSafeInteger(controllerPgid) && controllerPgid > 0);
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1();
+  let controllerPid: number | undefined;
+  try {
+    const receipt = pathToFileURL(path.join(root, "dist/internal-production/baseline-post-handoff-receipt-v1.js")).href;
+    const retirement = pathToFileURL(path.join(root, "dist/internal-production/baseline-restart-authority-retirement-v1.js")).href;
+    const startup = pathToFileURL(path.join(root, "dist/internal-production/baseline-spawner-startup-admission-v1.js")).href;
+    const script = `import assert from 'node:assert/strict';import {spawnSync as hostSpawnSync} from 'node:child_process';
+import {existsSync,fstatSync,lstatSync,readFileSync,readdirSync} from 'node:fs';import {join} from 'node:path';
+const m=await import(${JSON.stringify(receipt)}),r=await import(${JSON.stringify(retirement)}),s=await import(${JSON.stringify(startup)});
+const authority=${JSON.stringify(path.join(path.dirname(root), "data/internal-production-baseline/restart-authority-retirement-v1"))};
+const fdCount=()=>readdirSync('/dev/fd').filter(name=>{if(!/^\\d+$/.test(name))return false;try{fstatSync(Number(name));return true}catch{return false}}).length;
+const read=target=>JSON.parse(readFileSync(target,'utf8'));
+const snapshot=targets=>targets.map(target=>{const stat=lstatSync(target,{bigint:true});return {target,identity:['dev','ino','uid','gid','mode','nlink','size','birthtimeNs','mtimeNs','ctimeNs'].map(key=>String(stat[key])),bytes:stat.isFile()?readFileSync(target).toString('base64'):null}});
+process.stderr.write('joined: prepare\\n');
+const operation=await m.prepareInternalProductionCurrentEntryOperationV1();
+const prepared=await m.observeInternalProductionCurrentEntryAuthorityStatusV1();assert.equal(prepared.state,'operation_prepared');
+assert.equal(prepared.operationHash,operation.operationHash);
+const history=r.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();assert.equal(history.state,'settled');
+const before=await m.observeInternalProductionServiceCensusV1();assert.equal(history.settlement.serviceCensus.spawner.pid,before.spawner.pid);
+assert.deepEqual(await m.prepareInternalProductionCurrentEntryOperationV1(),operation);
+process.stderr.write('joined: authorize\\n');
+const authorization=await s.prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1();
+const baselineFds=fdCount();
+process.stderr.write('joined: rebind\\n');
+const restart=await s.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization);
+assert.equal(fdCount(),baselineFds,'direct execution releases owned descriptors');
+assert.equal(existsSync(join(authority,'physical-service-restart-authority.transition.lock')),false);
+const sealed=await s.observeInternalProductionPreSchemaSpawnerRebindStatusV1();assert.equal(sealed.state,'pre_manifest_bootstrap_sealed');
+const after=await m.observeInternalProductionServiceCensusV1();assert.notEqual(after.spawner.pid,before.spawner.pid);
+assert.equal(after.spawner.processOwnerCount,1);
+assert.equal(sealed.dispatchPrefix.phase,'replacement_observed');
+const terminationPair=sealed.dispatchPrefix.predecessorTerminationObservation;
+const terminated=await s.resolveInternalProductionPreSchemaSpawnerPredecessorTerminationObservationV1({predecessorTerminationObservationRef:terminationPair.predecessorTerminationObservationRef,predecessorTerminationObservationHash:terminationPair.predecessorTerminationObservationHash});
+assert.equal(terminated.observedProcessState,'terminal-and-not-running');assert.equal(terminated.observedListenerState,'absent');
+assert.equal(terminated.predecessorSpawnerProcessIdentityHash,(await s.resolveInternalProductionPreSchemaSpawnerStartupTokenV1({startupTokenRef:sealed.startupToken.startupTokenRef,startupTokenHash:sealed.startupToken.startupTokenHash})).predecessorSpawnerProcessIdentityHash);
+const oldPs=hostSpawnSync('/bin/ps',['-p',String(before.spawner.pid),'-o','pid='],{encoding:'utf8',timeout:5000,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}});
+assert.equal(oldPs.status,1,oldPs.stderr);assert.equal(oldPs.stdout,'');
+const directRoot=join(authority,'direct-spawner-rebind-v1'),names=['claim.json','spawn-dispatch.json','termination-dispatch.json','termination-receipt.json'];
+assert.deepEqual(readdirSync(directRoot).sort(),names);
+const claim=read(join(directRoot,'claim.json')),spawnDispatch=read(join(directRoot,'spawn-dispatch.json')),termDispatch=read(join(directRoot,'termination-dispatch.json')),termReceipt=read(join(directRoot,'termination-receipt.json'));
+assert.equal(termDispatch.target.pid,before.spawner.pid);assert.equal(termDispatch.maximumTerminationDispatchCount,1);
+assert.equal(termReceipt.signalDispatchCount,1);assert.equal(termReceipt.signalCallOutcome,'returned');
+assert.equal(termReceipt.observedProcessState,'terminal-and-not-running');assert.equal(termReceipt.observedListenerState,'absent');
+assert.equal(spawnDispatch.maximumSpawnDispatchCount,1);assert.equal(claim.maximumClaimCount,1);
+assert.equal(claim.child.pid,after.spawner.pid);assert.equal(claim.startupFiles.pid,after.spawner.pid);
+const settlements=join(authority,'pre-schema-helper-settlements/sha256'),shards=readdirSync(settlements);assert.equal(shards.length,1);
+const members=readdirSync(join(settlements,shards[0]));assert.equal(members.length,1);
+const settlementPath=join(settlements,shards[0],members[0]),settlement=read(settlementPath);
+assert.equal(members[0],settlement.helperSettlementHash+'.json');assert.equal(shards[0],settlement.helperSettlementHash.slice(0,2));
+assert.equal(settlement.terminationDispatchCount,1);assert.equal(settlement.spawnDispatchCount,1);assert.equal(settlement.serviceObservationCount,2);
+assert.deepEqual(settlement.currentEntryOperation,{operationRef:operation.operationRef,operationHash:operation.operationHash});
+assert.deepEqual(settlement.restartAuthority,restart);assert.deepEqual(settlement.serviceCensus,after);
+assert.equal(settlement.completion.claimHash,claim.claimHash);assert.equal(settlement.completion.dispatchHash,spawnDispatch.dispatchHash);
+for(const service of ['dashboard','missionControl','openClaw'])assert.deepEqual(after[service],before[service]);
+assert.deepEqual(r.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(),history);
+const directTargets=[join(authority,'pre-schema-helper-journal.json'),directRoot,...names.map(name=>join(directRoot,name)),settlementPath],directBefore=snapshot(directTargets);
+process.stderr.write('joined: replay\\n');
+assert.deepEqual(await s.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(authorization),restart);
+assert.equal(fdCount(),baselineFds,'direct replay releases owned descriptors');
+assert.equal(existsSync(join(authority,'physical-service-restart-authority.transition.lock')),false);
+assert.deepEqual(snapshot(directTargets),directBefore);
+assert.deepEqual(r.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(),history);
+assert.deepEqual(await m.observeInternalProductionServiceCensusV1(),after);
+process.stderr.write('joined: migration authorization\\n');
+const migrationAuthorization=await m.prepareInternalProductionPreManifestMigration32AuthorizationV1();
+const migrationStatus=await m.observeInternalProductionPreManifestMigration32AuthorizationStatusV1();
+assert.equal(migrationStatus.state,'prepared');
+assert.deepEqual(migrationStatus.currentEntryOperation,{operationRef:operation.operationRef,operationHash:operation.operationHash});
+assert.deepEqual(migrationStatus.authorization,migrationAuthorization);
+assert.equal(fdCount(),baselineFds,'migration authorization releases its readers');
+assert.deepEqual(snapshot(directTargets),directBefore);
+assert.deepEqual(r.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(),history);
+process.stdout.write(JSON.stringify({state:sealed.state,oldPid:before.spawner.pid,newPid:after.spawner.pid,operationHash:operation.operationHash}));
+`;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: path.dirname(root), encoding: "utf8", timeout: 900_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, SETFARM_ENV_DIR: path.join(root, "scripts"), SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm" } });
+    controllerPid = result.pid;
+    assert.equal(result.error, undefined, result.stderr);
+    assert.equal(result.status, 0, result.stderr);
+    const resultBody = JSON.parse(result.stdout);
+    assert.equal(resultBody.state, "pre_manifest_bootstrap_sealed");
+    assert.notEqual(resultBody.oldPid, resultBody.newPid);
+    assert.notEqual(resultBody.operationHash, EXACT_POISON_OPERATION_HASH_V1);
+  } finally {
+    await stopColdRecoveryFixtureChildrenV1(root, controllerPid, controllerPgid);
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+it("cold recovery compiled controller completes the real cold observation without publishing", async () => {
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1();
+  try {
+    const moduleUrl = pathToFileURL(path.join(root, "dist/internal-production/baseline-post-handoff-receipt-v1.js")).href;
+    const before = filesystemTreeSnapshot(path.join(home, "ai/setrox/data"));
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e",
+      "const m=await import(" + JSON.stringify(moduleUrl) + ");process.stdout.write(JSON.stringify(await m.observeInternalProductionColdBootstrapObservationV1()));",
+    ], { cwd: path.dirname(root), encoding: "utf8", timeout: 60_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, SETFARM_ENV_DIR: path.join(root, "scripts"), SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm" } });
+    assert.equal(result.status, 0, result.stderr);
+    const observation = JSON.parse(result.stdout);
+    assert.equal(observation.schema, "setfarm.internal-production-cold-bootstrap-observation.v1");
+    assert.equal(observation.source.sha, git(root, ["rev-parse", "HEAD"]).trim());
+    assert.equal(observation.remainingServices.dashboard.pid, 74151);
+    assert.equal(observation.remainingServices.missionControl.pid, 74152);
+    assert.equal(observation.remainingServices.openClaw.pid, 74153);
+    assert.ok(Object.values(observation.census).every(value => value === 0));
+    assert.deepEqual(filesystemTreeSnapshot(path.join(home, "ai/setrox/data")), before);
+    assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.pid")), false);
+    assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.lock")), false);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+it("cold recovery compiled V31 verifier authenticates raw catalog rows and refuses constraint or seal drift", async () => {
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1();
+  try {
+    const moduleUrl = pathToFileURL(path.join(root, "dist/db/operational-failure-cause-authority-v3-catalog.js")).href;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      import assert from 'node:assert/strict';
+      const m=await import(${JSON.stringify(moduleUrl)});
+      const samples=${JSON.stringify(coldRecoveryV31CatalogQueriesFixtureV1())};
+      for(const drift of ['none','constraint','seal']){
+        let index=0;
+        const transaction={async unsafe(query,args){
+          const sample=samples[index++];assert.ok(sample);assert.equal(query,sample.query);assert.deepEqual(args,sample.args);
+          if(drift==='constraint' && index===1)return [{...sample.rows[0],expression:'true'}];
+          if(drift==='seal' && index===2)return [{...sample.rows[0],enabled:'D'}];
+          return sample.rows;
+        }};
+        if(drift!=='none')await assert.rejects(m.verifyOperationalFailureCauseAuthorityV3CatalogV1(transaction),drift==='constraint'?/catalog identity is invalid/:/immutability seal identity is invalid/);
+        else {await m.verifyOperationalFailureCauseAuthorityV3CatalogV1(transaction);assert.equal(index,2);}
+      }
+    `], { cwd: path.dirname(root), encoding: "utf8", timeout: 30_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home } });
+    assert.equal(result.status, 0, result.stderr);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+it("cold recovery compiled PBA transport returns strict current source evidence", async () => {
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1();
+  try {
+    const moduleUrl = pathToFileURL(path.join(root, "dist/internal-production/product-build-authority-v2-delivery-evidence-v1.js")).href;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e",
+      "const m=await import(" + JSON.stringify(moduleUrl) + ");const observation=await m.observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1();process.stdout.write(JSON.stringify(m.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(observation.response)));",
+    ], { cwd: path.dirname(root), encoding: "utf8", timeout: 30_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, SETFARM_ENV_DIR: path.join(root, "scripts") } });
+    assert.equal(result.status, 0, result.stderr);
+    const response = JSON.parse(result.stdout);
+    assert.deepEqual(response.evidence.currentSource, { branch: "main", clean: true, sha: "1".repeat(40),
+      treeHash: "2".repeat(40), buildHash: "3".repeat(64), originMainSha: "1".repeat(40) });
+    assert.equal(response.evidence.schema, "mission-control.product-build-authority-v2-delivery-evidence.v1");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+it("cold recovery compiled controller pins its real launch inputs before any child exists", async () => {
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1();
+  try {
+    const moduleUrl = pathToFileURL(path.join(root, "dist/internal-production/baseline-post-handoff-receipt-v1.js")).href;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e",
+      "const m=await import(" + JSON.stringify(moduleUrl) + ");const candidate=await m.observeInternalProductionSpawnerLaunchProfileCandidateV1();process.stdout.write(JSON.stringify(candidate));",
+    ], { cwd: path.dirname(root), encoding: "utf8", timeout: 30_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, SETFARM_ENV_DIR: path.join(root, "scripts") } });
+    assert.equal(result.status, 0, result.stderr);
+    const candidate = JSON.parse(result.stdout);
+    assert.deepEqual(Object.keys(candidate), ["profile"], "launch environment must not serialize");
+    assert.equal(candidate.profile.home, home);
+    assert.equal(candidate.profile.repository, root);
+    assert.deepEqual(candidate.profile.arguments, [path.join(root, "dist/spawner.js")]);
+    assert.equal(candidate.profile.source.sha, git(root, ["rev-parse", "HEAD"]).trim());
+    assert.equal(candidate.profile.executable.path, realpathSync(process.execPath));
+    assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.pid")), false);
+    assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.lock")), false);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+it("cold recovery compiled children refuse unauthenticated inherited roles before startup", async () => {
+  const { root, home } = await finalizedColdRecoveryControllerFixtureV1();
+  try {
+    for (const role of ["COLD_CHILD", "DIRECT_CHILD"]) {
+      const result = spawnSync(process.execPath, [path.join(root, "dist/spawner.js")], {
+        cwd: path.dirname(root), encoding: "utf8", timeout: 10_000,
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, SETFARM_ENV_DIR: path.join(root, "scripts"),
+          ["SETFARM_INTERNAL_PRODUCTION_" + role]: "1" },
+      });
+      assert.equal(result.error, undefined, role);
+      assert.notEqual(result.status, 0, role);
+      assert.match(result.stderr, /INTERNAL_PRODUCTION_INHERITED_RUNTIME_CONFIGURATION_INVALID/, role);
+      assert.equal(result.stdout, "", role);
+      assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.pid")), false, role);
+      assert.equal(existsSync(path.join(home, ".openclaw/setfarm/spawner.lock")), false, role);
+    }
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
 
 function finalizedCurrentEntryContentFaultFixture(): Readonly<{ root: string; buildInputSetHash: string }> {
   const root = createFixture();
@@ -15588,8 +16453,17 @@ function runFixtureExpressionAsync(root: string, expression: string): Promise<Re
   });
 }
 
-function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard", fault = "none"): ReturnType<typeof spawnSync> {
+function runPrecompiledRecoveryFixtureExpressionV1(root: string, expression: string): ReturnType<typeof runFixtureExpressionAsync> {
+  // These copied modules contain declarations only. Their first lazy imports
+  // otherwise leave tsx's asynchronous cache-file writes inside the FD probe.
+  // Settle compilation before its baseline, never after any recovery action.
+  const modules = ["src/db-pg.ts", "src/installer/run.ts"].map((locator) => pathToFileURL(path.join(root, locator)).href);
+  return runFixtureExpressionAsync(root, `(async()=>{for(const url of ${JSON.stringify(modules)})await import(url);await new Promise(resolve=>setTimeout(resolve,100));return ${expression}})()`);
+}
+
+function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard", fault = "none", mode: "ordinary" | "cold" | "launch-profile" = "ordinary"): ReturnType<typeof spawnSync> {
   const source = readFileSync(observerSource, "utf8");
+  if (mode === "launch-profile") assert.ok(source.includes("export async function observeInternalProductionSpawnerLaunchProfileCandidateV1()"), "real launch profile candidate is not implemented");
   const start = source.indexOf("type DetachedSetfarmServiceLabelV1 =");
   const end = source.indexOf("\nfunction observeServiceProcessV1(", start);
   assert.notEqual(start, -1, "detached service production slice must exist");
@@ -15598,7 +16472,11 @@ function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.se
     "function observeDetachedSetfarmServiceV1(",
     "export function observeDetachedSetfarmServiceV1(",
   );
-  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-detached-census-")));
+  const processParser = topLevelFunctionRegionV1(source, "parsePhysicalProcessesV1").replace("function parsePhysicalProcessesV1(", "function parseColdPhysicalProcessesForHarnessV1(");
+  // The real profile authenticates every ancestor. P3 deliberately omits
+  // TMPDIR, so its /tmp fallback is not a private launch-profile ancestor.
+  const fixtureParent = mode === "launch-profile" ? realpathSync(userInfo().homedir) : tmpdir();
+  const root = realpathSync(mkdtempSync(path.join(fixtureParent, ".setfarm-detached-census-")));
   const harnessPath = path.join(root, "harness.ts");
   const canonicalRoot = path.join(root, "workspace", "setfarm");
   const fixtureHome = path.join(root, "home");
@@ -15627,19 +16505,54 @@ function runDetachedServiceHarness(label: "com.setrox.setfarm-spawner" | "com.se
   );
   writePlist("com.setrox.setfarm-spawner", [launcher, "spawner", "start"], "setfarm-spawner");
   writePlist("com.setrox.setfarm-dashboard", [launcher, "dashboard", "start", "--port", "3333"], "setfarm-dashboard");
+  const singletonRoot = path.join(fixtureHome, ".openclaw", "setfarm");
+  mkdirSync(singletonRoot, { recursive: true, mode: 0o700 });
+  if (["stale_pid", "pid_permission_denied", "pid_bad", "pid_writable", "live_pid"].includes(fault)) {
+    writeFileSync(path.join(singletonRoot, "spawner.pid"), fault === "pid_bad" ? "02147483647\n" : fault === "live_pid" ? String(process.pid) : "2147483647", { mode: fault === "pid_writable" ? 0o666 : 0o644 });
+    if (fault === "pid_writable") chmodSync(path.join(singletonRoot, "spawner.pid"), 0o666);
+  }
+  if (fault === "dead_lock") writeFileSync(path.join(singletonRoot, "spawner.lock"), "2147483647\n", { mode: 0o644 });
+  if (fault === "pid_symlink") { writeFileSync(path.join(fixtureHome, "other.pid"), "2147483647"); symlinkSync(path.join(fixtureHome, "other.pid"), path.join(singletonRoot, "spawner.pid")); }
+  if (mode === "launch-profile") {
+    const scripts = path.join(fixtureHome, "ai/setrox/setfarm/scripts");
+    mkdirSync(scripts, { recursive: true, mode: 0o700 });
+    fixtureFile(scripts, ".env", fault === "profile_injection" ? "NODE_OPTIONS=fixture-sensitive-value\n" : "TEST_FLAG=fixture-sensitive-value\n", 0o600);
+    if (fault === "profile_env_symlink") { unlinkSync(path.join(scripts, ".env")); symlinkSync(path.join(canonicalRoot, "dist/spawner.js"), path.join(scripts, ".env")); }
+    for (const name of ["BUILD_INFO.json", "PLATFORM_BUILD_OUTPUT_TREE.json", "PLATFORM_RELEASE_MANIFEST.json"]) fixtureFile(canonicalRoot, `dist/${name}`, `{"fixture":"${name}"}\n`, 0o444);
+    fixtureFile(root, "baseline-spawner-launch-environment-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/baseline-spawner-launch-environment-v1.ts")));
+  }
   const harness = String.raw`
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync, symlinkSync, unlinkSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync as realReadFileSync, readSync as realReadSync, realpathSync as realRealpathSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import type { BigIntStats } from "node:fs";
 import path from "node:path";
-const CURRENT_ENTRY_MAX_BYTES=1048576, MAX_BUILD_FILE_BYTES_V1=33554432;
+const CURRENT_ENTRY_MAX_BYTES=1048576, MAX_BUILD_FILE_BYTES_V1=33554432, PHYSICAL_PROCESS_CAP_V1=4096;
 type InternalProductionServiceCensusSpawnerV1=Readonly<Record<string,unknown>>;
 type InternalProductionListeningServiceCensusV1=Readonly<Record<string,unknown>>;
 const fault=process.env.FAULT??"none";
+const mode=process.env.MODE??"ordinary";
+let profileReadBytes=0, profileGrew=false;
+function isProfilePlistRead(target:string|number){if(fault!=="profile_plist_growth")return false;const file=path.join(userInfo().homedir,"Library/LaunchAgents/com.setrox.setfarm-spawner.plist");if(typeof target==="string")return target===file;return fstatSync(target,{bigint:true}).ino===lstatSync(file,{bigint:true}).ino}
+function growProfilePlist(target:string|number){const match=isProfilePlistRead(target);if(match&&!profileGrew){profileGrew=true;writeFileSync(path.join(userInfo().homedir,"Library/LaunchAgents/com.setrox.setfarm-spawner.plist"),Buffer.alloc(1048577,32))}return match}
+function readFileSync(target:string|number){const match=growProfilePlist(target);const bytes=realReadFileSync(target);if(match)profileReadBytes+=bytes.length;return bytes}
+function readSync(fd:number,buffer:Buffer,offset:number,length:number,position:number){const match=growProfilePlist(fd);const count=realReadSync(fd,buffer,offset,length,position);if(match)profileReadBytes+=count;return count}
+if(fault==="pid_permission_denied")process.kill=((pid,signal)=>{if(pid!==2147483647||signal!==0)throw new Error("unexpected process signal");throw Object.assign(new Error("denied"),{code:"EPERM"})}) as typeof process.kill;
 let activeLabel="", scan=0, launchScan=0;
+function realpathSync(target:string){if(mode==="cold"&&fault==="cli_drift"&&scan>0&&target.endsWith("/.local/bin/setfarm"))return fixedRepositoryRoot()+"/dist/spawner.js";return realRealpathSync(target)}
 function currentEntryFail(message:string):never{throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:"+message)}
+function strictUtf8(bytes:Buffer,label:string){const value=bytes.toString("utf8");if(!Buffer.from(value,"utf8").equals(bytes))currentEntryFail(label);return value}
 function fixedRepositoryRoot(){return process.env.CANONICAL_ROOT!}
 function userInfo(){return {homedir:process.env.FIXTURE_HOME!}}
+function resolveInternalProductionBaselineWorkspaceRootV1(){return path.join(userInfo().homedir,"ai/setrox")}
+let sourceScans=0;
+function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){
+  if(sourceScans++===1){const file=path.join(userInfo().homedir,"ai/setrox/setfarm/scripts/.env.local");
+    if(fault==="profile_env_appears"||fault==="profile_env_aba")writeFileSync(file,"LOCAL=fixture-sensitive-value\n",{mode:0o600});
+    if(fault==="profile_env_aba")unlinkSync(file);
+    if(fault==="profile_env_write")writeFileSync(path.join(path.dirname(file),".env"),"TEST_FLAG=changed-sensitive-value\n");
+  }
+  return {branch:"main",clean:true,sha:fault==="profile_source_drift"&&sourceScans>1?"d".repeat(40):"a".repeat(40),treeHash:"b".repeat(40),buildHash:"c".repeat(64),originMainSha:"a".repeat(40)};
+}
 function recursivelyFreeze<T>(value:T):T{if(value&&typeof value==="object"){for(const key of Reflect.ownKeys(value as object)){const d=Object.getOwnPropertyDescriptor(value as object,key);if(d&&"value" in d)recursivelyFreeze(d.value)}Object.freeze(value)}return value}
 function canonicalComparable(value:unknown):string{if(value===null||typeof value!=="object")return JSON.stringify(value);if(Array.isArray(value))return "["+value.map(canonicalComparable).join(",")+"]";const r=value as Record<string,unknown>;return "{"+Object.keys(r).sort().map(k=>JSON.stringify(k)+":"+canonicalComparable(r[k])).join(",")+"}"}
 function compareBytes(a:string,b:string){return Buffer.compare(Buffer.from(a),Buffer.from(b))}
@@ -15654,22 +16567,44 @@ function plistText(label:string,args:readonly string[]){const home=userInfo().ho
 ...(label.endsWith("dashboard")?{SETFARM_OPERATIONAL_WRITE_TOKEN:"fixture-token"}:{})},StartInterval:60,ProgramArguments:actual,StandardErrorPath:home+"/.openclaw/logs/"+stem+".watch.err.log",RunAtLoad:true,Label:label})}
 function boundedChildText(executable:string,args:readonly string[],_label:string,input?:Buffer){if(executable==="/bin/launchctl"){activeLabel=args[1]!.split("/").at(-1)!;const profile=detachedSetfarmServiceProfileV1(activeLabel as DetachedSetfarmServiceLabelV1);const result=launchText(activeLabel,profile.launchArguments);launchScan+=1;return result}if(executable==="/usr/bin/plutil"){const parsed=JSON.parse(input!.toString());if(fault==="plist_args")parsed.ProgramArguments.push("extra");return JSON.stringify(parsed)}if(executable==="/bin/ps")return (fault==="wrong_comm"?"/tmp/crossed":realpathSync(process.execPath))+"\n";throw new Error("unexpected command "+executable)}
 function processRows(){const profile=detachedSetfarmServiceProfileV1(activeLabel as DetachedSetfarmServiceLabelV1);const pid=activeLabel.endsWith("spawner")?101:102;const node=realpathSync(process.execPath);const args=[node,profile.entrypoint,...profile.daemonArguments];if(fault==="wrong_args")args.push("extra");const row={uid:fault==="selected_nobody"?-2:fault==="wrong_uid"?process.getuid!()+1:process.getuid!(),pid,ppid:fault==="wrong_ppid"?2:1,pgid:fault==="wrong_pgid"?7:pid,stat:fault==="zombie"?"Z":fault==="stat_drift"&&scan>0?"R":"Ss",lstart:"Sun Aug 16 15:42:28 2026",command:args.join(" "),cwd:null};const rows=fault==="zero"?[]:[Object.freeze(row)];if(fault==="multiple"||(fault==="multiple_after"&&scan>0))rows.push(Object.freeze({...row,pid:pid+20,pgid:pid+20,command:[node,profile.entrypoint,"crossed"].join(" ")}));if(fault==="drift"&&scan>0&&rows[0])rows[0]=Object.freeze({...row,lstart:"Sun Aug 16 15:42:29 2026"});if(fault==="cli_drift"&&scan>0){unlinkSync(profile.launchArguments[0]!);symlinkSync(profile.entrypoint,profile.launchArguments[0]!)}scan+=1;return Object.freeze(rows)}
-function runPhysicalCommandV1(executable:string,args:readonly string[]){if(executable==="/usr/sbin/lsof"){const pid=Number(args[3]);if(fault==="partial_lsof")return Object.freeze({status:1,stdout:Buffer.from("partial")});if(activeLabel.endsWith("spawner")||fault==="listener_missing")return Object.freeze({status:1,stdout:Buffer.alloc(0)});return Object.freeze({status:0,stdout:Buffer.from("listener:"+pid)})}return Object.freeze({status:0,stdout:Buffer.from("fixture\n")})}
-function parsePhysicalProcessesV1(){return processRows()}
+function runPhysicalCommandV1(executable:string,args:readonly string[]){if(mode==="cold"&&executable==="/bin/ps"){
+  if(JSON.stringify(args)!==JSON.stringify(["-ww","-axo","uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]))throw new Error("cold global process argv is crossed");
+  const rows=coldProcessRows();return {status:0,stdout:Buffer.from(rows.map(row=>row.uid+" "+row.pid+" "+row.ppid+" "+row.pgid+" "+row.stat+" "+row.lstart+" "+row.command).join("\n")+"\n")};
+}if(executable==="/usr/sbin/lsof"){const pid=Number(args[3]);if(fault==="partial_lsof")return Object.freeze({status:1,stdout:Buffer.from("partial")});if(activeLabel.endsWith("spawner")||fault==="listener_missing")return Object.freeze({status:1,stdout:Buffer.alloc(0)});return Object.freeze({status:0,stdout:Buffer.from("listener:"+pid)})}return Object.freeze({status:0,stdout:Buffer.from("fixture\n")})}
+function coldProcessRows(){
+  const pass=scan++;
+  if(fault==="empty_processes")return [];
+  const own={uid:process.getuid!()+(fault==="wrong_self_uid"?1:0),pid:fault==="omitted_self"?929292:process.pid,ppid:1,pgid:process.pid,stat:"Ss",lstart:"Sun Aug 16 15:42:28 2026",command:"/usr/bin/node /fixture/controller.js",cwd:null};
+  if(fault==="foreign_spawner"||fault==="foreign_launcher"||fault==="cold_appears"&&pass>0){
+    const command=fault==="foreign_launcher"?"/usr/bin/node /unrelated/worktree/dist/cli/cli.js spawner start":"/usr/bin/node /unrelated/worktree/dist/spawner.js";
+    return [own,{uid:process.getuid!()+1,pid:919191,ppid:1,pgid:919191,stat:"Ss",lstart:"Sun Aug 16 15:42:28 2026",command,cwd:null}];
+  }
+  return [own];
+}
+${processParser}
+function parsePhysicalProcessesV1(bytes:Buffer){return mode==="cold"?parseColdPhysicalProcessesForHarnessV1(bytes):processRows()}
 function parseProcessListenersV1(_bytes:Buffer,pid:number){if(fault==="listener_cross")return Object.freeze([{pid:pid+1,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}]);if(fault==="listener_multiple")return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333},{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3334}]);return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}])}
 function observeProcessListenersV1(pid:number){if(activeLabel.endsWith("spawner"))return Object.freeze([]);if(fault==="listener_missing")return Object.freeze([]);if(fault==="listener_cross")return Object.freeze([{pid:pid+1,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}]);if(fault==="listener_multiple")return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333},{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3334}]);return Object.freeze([{pid,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}])}
 ${slice}
 const label=process.env.LABEL as DetachedSetfarmServiceLabelV1;
-const result=observeDetachedSetfarmServiceV1(label,label.endsWith("spawner")?null:3333,Object.freeze({sha:"a".repeat(40),treeHash:"b".repeat(40),buildHash:"c".repeat(64)}));
-process.stdout.write(JSON.stringify(result)+"\n");
+const source=Object.freeze({sha:"a".repeat(40),treeHash:"b".repeat(40),buildHash:"c".repeat(64)});
+if(mode==="launch-profile"){
+  observeInternalProductionSpawnerLaunchProfileCandidateV1().then(result=>process.stdout.write(JSON.stringify({...result,
+    environmentInstalled:result.environment.TEST_FLAG==="fixture-sensitive-value",
+    plaintextLeaked:JSON.stringify(result).includes("fixture-sensitive-value")||JSON.stringify(result).includes("postgresql://fixture/setfarm")})+"\n")).catch(error=>{process.stderr.write(error.message+(fault==="profile_plist_growth"?"\nprofile-read-bytes:"+profileReadBytes:""));process.exitCode=7});
+}else{const result=mode==="cold"?observeColdSpawnerAbsenceV1(source):observeDetachedSetfarmServiceV1(label,label.endsWith("spawner")?null:3333,source);process.stdout.write(JSON.stringify(result)+"\n");}
 `;
   try {
     fixtureFile(root, "harness.ts", harness);
-    return spawnSync(process.execPath, ["--import", tsxLoader, harnessPath], {
+    const beforeRun = filesystemTreeSnapshot(root);
+    const result = spawnSync(process.execPath, ["--import", tsxLoader, harnessPath], {
       cwd: root,
       encoding: "utf8",
-      env: { ...process.env, LABEL: label, FAULT: fault, CANONICAL_ROOT: canonicalRoot, FIXTURE_HOME: fixtureHome },
+      env: { ...process.env, LABEL: label, FAULT: fault, MODE: mode, CANONICAL_ROOT: canonicalRoot, FIXTURE_HOME: fixtureHome },
     });
+    if (mode === "cold") assert.deepEqual(filesystemTreeSnapshot(root), beforeRun, "cold absence leaf must not mutate PID/lock or any fixture files");
+    if (mode === "launch-profile" && fault === "none") assert.deepEqual(filesystemTreeSnapshot(root), beforeRun, "launch profile candidate must remain read-only");
+    return result;
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -15735,6 +16670,8 @@ function runOpenClawPhysicalInventoryHarness(
   serviceBytes: Buffer,
   physicalBytes: Buffer,
   openClawBroadListeners: readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>[],
+  persistentMode: "ordinary" | "cold" | "ordinary-without-spawner" = "ordinary",
+  fault = "none",
 ): ReturnType<typeof spawnSync> {
   const source = readFileSync(observerSource, "utf8");
   const listenerStart = source.indexOf("type OpenClawListenerInventoryV1 =");
@@ -15747,6 +16684,8 @@ function runOpenClawPhysicalInventoryHarness(
     assert.notEqual(offset, -1, `OpenClaw physical production slice is missing ${label}`);
   }
   const fragments = [
+    topLevelFunctionRegionV1(source, "parsePhysicalProcessesV1"),
+    topLevelFunctionRegionV1(source, "assertPhysicalInventoryPassStableV1"),
     source.slice(listenerStart, listenerEnd),
     source.slice(predicateStart, predicateEnd),
     source.slice(physicalStart, physicalEnd).replace("function observePhysicalInventoryV1(", "export function observePhysicalInventoryV1("),
@@ -15754,6 +16693,7 @@ function runOpenClawPhysicalInventoryHarness(
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-openclaw-physical-integrated-")));
   const harness = String.raw`
 import { createHash } from "node:crypto";
+import {lstatSync,openSync,closeSync,fstatSync,constants,realpathSync,mkdirSync,renameSync} from "node:fs";
 type InternalProductionListeningServiceCensusV1=Readonly<Record<string,any>>;
 type InternalProductionServiceCensusV1=Readonly<Record<string,any>>;
 type PhysicalProcessV1=Readonly<{uid:number;pid:number;ppid:number;pgid:number;stat:string;lstart:string;command:string;cwd:string|null}>;
@@ -15768,35 +16708,57 @@ function canonicalComparable(value:unknown):string{if(value===null||typeof value
 function compareBytes(left:string,right:string){return Buffer.compare(Buffer.from(left),Buffer.from(right))}
 function sha256(value:Buffer|string){return createHash("sha256").update(value).digest("hex")}
 const lstart="Sun Aug 16 15:42:28 2026";
-const rows=[1,2,3,94886].map((pid)=>Object.freeze({uid:501,pid,ppid:1,pgid:pid,stat:"Ss",lstart,command:"fixture "+pid,cwd:null}));
-function parsePhysicalProcessesV1(){return Object.freeze(rows)}
+const persistentMode=process.env.PERSISTENT_MODE;
+const fault=process.env.PHYSICAL_FAULT;
+const PHYSICAL_PROCESS_CAP_V1=4096;
+let psPass=0,worktreePass=0,referencePass=0,lateDescendant=false,managedPass=0,projectPass=0,cwdCalls=0,listenerCalls=0,openClawCalls=0;
+const rows=(persistentMode==="ordinary"?[1,2,3,94886]:[2,3,94886]).map((pid)=>Object.freeze({uid:501,pid,ppid:1,pgid:pid,stat:"Ss",lstart,command:"fixture "+pid,cwd:null}));
 function runPhysicalCommandV1(executable:string,args:readonly string[]){
-  if(executable==="/usr/sbin/lsof"&&args.includes("-iTCP:18789"))return Object.freeze({status:0,stdout:physicalBytes});
-  if(executable==="/bin/ps")return Object.freeze({status:0,stdout:Buffer.from("fixture\n")});
+  if(executable==="/usr/sbin/lsof"&&args.includes("-iTCP:18789")){openClawCalls++;return Object.freeze({status:0,stdout:physicalBytes})}
+  if(executable==="/bin/ps"){
+    psPass++;const sample=rows.map(row=>({...row}));
+    if(worktreePass===2&&fault==="persistent-command")sample[0]!.command="changed service";
+    if(worktreePass===2&&fault==="persistent-start")sample[0]!.lstart="Sun Aug 16 15:42:29 2026";
+    if(worktreePass===2&&fault==="persistent-zombie")sample[0]!.stat="Z";
+    if(fault==="scheduler-churn"&&worktreePass===2)sample[0]!.stat="R";
+    sample.push({uid:501,pid:97000+psPass,ppid:999,pgid:999,stat:"R",lstart,command:"/bin/ps -axo uid=,pid=,ppid=,pgid=,stat=,lstart=,command=",cwd:null});
+    sample.push({uid:501,pid:8888,ppid:999,pgid:8888,stat:psPass===1?"R":"S",lstart,command:"unrelated worker",cwd:null});
+    if((fault==="owned-appears"&&worktreePass===2)||(fault==="owned-disappears"&&worktreePass===1)||["new-descendant","stable-descendant","owned-cwd","owned-zombie"].includes(fault!)||lateDescendant)sample.push({uid:501,pid:601,ppid:2,pgid:601,stat:fault==="owned-zombie"&&worktreePass===2?"Z":"S",lstart,command:"owned child",cwd:null});
+    if(fault==="new-descendant"&&worktreePass===2)sample.push({uid:501,pid:602,ppid:601,pgid:601,stat:"S",lstart,command:"owned grandchild",cwd:null});
+    if(fault==="duplicate-row"&&worktreePass===2)sample.push(sample[0]!);
+    const text=sample.map(row=>[row.uid,row.pid,row.ppid,row.pgid,row.stat,row.lstart,row.command].join(" ")).join("\n")+"\n";
+    return Object.freeze({status:0,stdout:Buffer.from(fault==="truncated-row"&&worktreePass===2?text.slice(0,-1):text)});
+  }
   throw new Error("unexpected physical command "+executable+" "+args.join(" "));
 }
-function observeManagedWorktreesV1(){return Object.freeze([])}
-function physicalManagedBasesV1(){return Object.freeze([])}
-function physicalImmediateProjectsV1(){return Object.freeze([])}
-function lsofReferencedPidsV1(){return Object.freeze({pids:Object.freeze([]),deleted:Object.freeze([])})}
-function observeProcessCwdV1(){throw new Error("no owned process may request cwd")}
+const managedRoot=process.cwd()+"/managed",extraRoot=process.cwd()+"/extra";mkdirSync(managedRoot,{mode:0o700});mkdirSync(extraRoot,{mode:0o700});
+function observeManagedWorktreesV1(){worktreePass++;return (fault==="worktree-appears"&&worktreePass===2)||fault==="dirty-worktree"?Object.freeze([{root:managedRoot,dirty:fault==="dirty-worktree"&&worktreePass===2}]):Object.freeze([])}
+function physicalManagedBasesV1(){managedPass++;return Object.freeze(fault==="managed-root-appears"&&worktreePass===2?[managedRoot,extraRoot].sort(compareBytes):[managedRoot])}
+function physicalImmediateProjectsV1(){projectPass++;return Object.freeze(fault==="project-appears"&&worktreePass===2?[extraRoot]:[])}
+function lsofReferencedPidsV1(){referencePass++;if(fault==="root-replace"&&referencePass===2){renameSync(managedRoot,managedRoot+".old");mkdirSync(managedRoot,{mode:0o700})}return Object.freeze({pids:Object.freeze((fault==="late-reference"&&worktreePass===2)||["stable-reference","deleted-reference"].includes(fault!)?[8888]:[]),deleted:Object.freeze(fault==="deleted-reference"&&worktreePass===2?[8888]:[])})}
+function observeProcessCwdV1(pid:number){cwdCalls++;return ((fault==="persistent-cwd"&&pid===2)||(fault==="owned-cwd"&&pid===601))&&worktreePass===2?process.cwd()+"/changed":process.cwd()}
 function observeProcessListenersV1(pid:number){
+  listenerCalls++;
+  if(fault==="late-descendant"&&worktreePass===2)lateDescendant=true;
   if(pid===1)return Object.freeze([]);
-  if(pid===2)return Object.freeze([{pid:2,protocol:"TCP" as const,localAddress:"127.0.0.1",port:3333}]);
+  if(pid===2)return Object.freeze([{pid:2,protocol:"TCP" as const,localAddress:"127.0.0.1",port:fault==="listener-drift"&&worktreePass===2?3334:3333}]);
   if(pid===3)return Object.freeze([{pid:3,protocol:"TCP" as const,localAddress:"*",port:3080}]);
   if(pid===94886)return Object.freeze(openClawBroad);
-  throw new Error("unexpected listener pid "+pid);
+  if([601,602,8888].includes(pid))return Object.freeze([]);throw new Error("unexpected listener pid "+pid);
 }
-function assertPhysicalInventoryPassStableV1(first:unknown,second:unknown){if(canonicalComparable(first)!==canonicalComparable(second))currentEntryFail("physical inventory changed across observation passes")}
+function requirePhysicalDirectoryV1(target:string){const value=lstatSync(target);if(!value.isDirectory()||value.isSymbolicLink()||realpathSync(target)!==target)currentEntryFail("physical directory invalid")}
 ${fragments}
 const common=(pid:number)=>({pid,processStartTimeEpochMs:Date.parse(lstart),processIdentityHash:sha256(pid+"\n"+lstart+"\n"),processOwnerCount:1});
 const services:any={
-  spawner:{...common(1),listener:null},
+  ...(persistentMode==="cold"?{}:{spawner:{...common(1),listener:null}}),
   dashboard:{...common(2),listenerOwnerCount:1,listener:{host:"127.0.0.1",port:3333,listenerIdentityHash:"a".repeat(64)}},
   missionControl:{...common(3),listenerOwnerCount:1,listener:{host:"127.0.0.1",port:3080,listenerIdentityHash:"b".repeat(64)}},
   openClaw:{...common(94886),loadedSourceSha:null,loadedTreeHash:null,loadedBuildHash:null,listenerOwnerCount:1,listener:{host:"127.0.0.1",port:18789,listenerIdentityHash:sha256(serviceBytes)}},
 };
-process.stdout.write(JSON.stringify(observePhysicalInventoryV1(services,0))+"\n");
+const inventory=persistentMode==="cold"?observeColdPhysicalInventoryV1(services,0):observePhysicalInventoryV1(services,0);
+const expectedPerProcess=2*((persistentMode==="cold"?3:4)+Number(inventory.ownedProcessCount));
+if(psPass!==4||worktreePass!==2||managedPass!==2||projectPass!==2||referencePass!==2||openClawCalls!==2||cwdCalls!==expectedPerProcess||listenerCalls!==expectedPerProcess)throw Error("physical ports were not sampled through both complete bracketed passes");
+process.stdout.write(JSON.stringify(inventory)+"\n");
 `;
   try {
     fixtureFile(root, "harness.ts", harness);
@@ -15808,6 +16770,8 @@ process.stdout.write(JSON.stringify(observePhysicalInventoryV1(services,0))+"\n"
         SERVICE_BYTES: serviceBytes.toString("base64"),
         PHYSICAL_BYTES: physicalBytes.toString("base64"),
         OPENCLAW_BROAD: JSON.stringify(openClawBroadListeners),
+        PERSISTENT_MODE: persistentMode,
+        PHYSICAL_FAULT: fault,
       },
     });
   } finally {
@@ -16236,25 +17200,27 @@ function legacyDatabaseCensusRow(overrides: Readonly<Record<string, unknown>> = 
   };
 }
 
-function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown>[]): string {
-  const root = mkdtempSync(path.join(tmpdir(), "setfarm-p4-legacy-census-"));
-  let source = readFileSync(observerSource, "utf8");
-  source = source.replace(
-    "async function observeLegacyDatabaseCensusV1()",
-    "export async function observeLegacyDatabaseCensusV1()",
-  );
-  source = source.replace(
-    'const postgresModule = await import("postgres");',
-    `const fixtureRows=JSON.parse(process.env.P4_LEGACY_CENSUS_ROWS ?? "[]");
+function legacyDatabaseCensusSqlTransportFixtureV1(
+  rowsExpression = 'JSON.parse(process.env.P4_LEGACY_CENSUS_ROWS ?? "[]")',
+  coldCatalogRows: readonly Record<string, unknown>[] = [{ laterJournalCount: "0", relationCount: "0", functionCount: "0", typeCount: "0", triggerCount: "0" }],
+): string {
+  return `const fixtureRows=${rowsExpression};
+    const coldQueryOffset=coldBootstrap ? 1 : 0;
     let queryCalls=0;
     const fixtureSql=Object.assign(async (strings: readonly string[]) => {
       queryCalls+=1;
       const query=Array.from(strings).join("?");
+      if(coldBootstrap && queryCalls===3){
+        for(const token of ["public.setfarm_schema_migrations", "pg_catalog.pg_class", "pg_catalog.pg_proc", "pg_catalog.pg_type", "pg_catalog.pg_trigger", "version >= 32"]){
+          if(!query.includes(token))throw new Error("MISSING_COLD_CATALOG_CONTRACT_"+token);
+        }
+        return ${JSON.stringify(coldCatalogRows)};
+      }
       if(queryCalls===1){
         if(!query.includes("SET LOCAL statement_timeout = '5s'")) throw new Error("MISSING_STATEMENT_TIMEOUT");
       }else if(queryCalls===2){
         if(!query.includes("SET LOCAL lock_timeout = '1s'")) throw new Error("MISSING_LOCK_TIMEOUT");
-      }else if(queryCalls===3){
+      }else if(queryCalls===3+coldQueryOffset){
         for(const literal of ["pg_catalog.pg_attribute","runtime_completion_effects","artifact_publication_batch_items","recovery_dispatch_deliveries"]){
           if(!query.includes(literal)) throw new Error("MISSING_CATALOG_CONTRACT_"+literal);
         }
@@ -16274,6 +17240,15 @@ function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown
           "state IN ('authorized','leased','attempt_reserved','running')",
           "state IN ('pending','leased')",
         ]) if(!query.includes(literal)) throw new Error("MISSING_AGGREGATE_PREDICATE_"+literal);
+      }else if(queryCalls===4+coldQueryOffset){
+        if(!query.includes("FROM public.finding_sets") || !query.includes("LIMIT 4097")) throw new Error("WRONG_FINDING_PARENT_QUERY");
+        return [];
+      }else if(queryCalls===5+coldQueryOffset){
+        if(!query.includes("FROM public.findings") || !query.includes("LIMIT 65537")) throw new Error("WRONG_FINDING_CHILD_QUERY");
+        return [];
+      }else if(queryCalls===6+coldQueryOffset){
+        if(!query.includes("FROM public.runs") || !query.includes("LIMIT 4097")) throw new Error("WRONG_FINDING_RUN_QUERY");
+        return [];
       }else throw new Error("EXTRA_DATABASE_QUERY");
       return fixtureRows;
     }, {
@@ -16281,9 +17256,25 @@ function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown
         if(mode!=="isolation level repeatable read read only") throw new Error("WRONG_DATABASE_SNAPSHOT_MODE");
         return callback(fixtureSql);
       },
-      end: async () => {if(queryCalls!==3) throw new Error("WRONG_DATABASE_QUERY_COUNT");},
+      end: async () => {if(queryCalls!==3 && queryCalls!==3+coldQueryOffset && queryCalls!==6+coldQueryOffset) throw new Error("WRONG_DATABASE_QUERY_COUNT");},
     });
-    const postgresModule={default:()=>fixtureSql};`,
+    const postgresModule={default:()=>fixtureSql};`;
+}
+
+function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown>[], coldCatalogRows?: readonly Record<string, unknown>[]): string {
+  const root = mkdtempSync(path.join(tmpdir(), "setfarm-p4-legacy-census-"));
+  let source = readFileSync(observerSource, "utf8");
+  // Execute the actual pure publication validator from its dependency-complete
+  // source tree; only the PostgreSQL transport below is a bounded test double.
+  source = source.replace('await import("../findings/finding-publication-v1.js")',
+    `await import(${JSON.stringify(pathToFileURL(path.join(sourceRoot, "src/findings/finding-publication-v1.ts")).href)})`);
+  source = source.replace(
+    "async function observeLegacyDatabaseCensusV1(coldBootstrap = false)",
+    "export async function observeLegacyDatabaseCensusV1(coldBootstrap = false)",
+  );
+  source = source.replace(
+    'const postgresModule = await import("postgres");',
+    legacyDatabaseCensusSqlTransportFixtureV1(undefined, coldCatalogRows),
   );
   fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
   fixtureFile(
@@ -16579,7 +17570,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
         const source = readFileSync(modulePath, "utf8").replace("function publishLegacyZeroRecordV1(", "export function publishLegacyZeroRecordV1(");
         assert.notEqual(source, readFileSync(modulePath, "utf8"));
         writeFileSync(modulePath, source);
-        const canonicalRoot = realpathSync(root);
+        const canonicalRoot = realpathSync(path.dirname(root));
         const directory = path.join(canonicalRoot, "data/internal-production-baseline/p4-receipt-prelinks");
         for (const member of [path.join(canonicalRoot, "data"), path.join(canonicalRoot, "data/internal-production-baseline"), directory]) { mkdirSync(member, { recursive: true, mode: 0o700 }); chmodSync(member, 0o700); }
         const target = path.join(directory, `record-${count}.json`);
@@ -16614,7 +17605,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
           );
         assert.notEqual(source, original);
         writeFileSync(modulePath, source);
-        const canonicalRoot = realpathSync(root);
+        const canonicalRoot = realpathSync(path.dirname(root));
         const directory = path.join(canonicalRoot, "data/internal-production-baseline/p4-receipt-cleanup-race");
         for (const member of [path.join(canonicalRoot, "data"), path.join(canonicalRoot, "data/internal-production-baseline"), directory]) { mkdirSync(member, { recursive: true, mode: 0o700 }); chmodSync(member, 0o700); }
         const value = { schema: "setfarm.tests.task12-receipt-cleanup-race.v1" };
@@ -16657,7 +17648,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       const source = readFileSync(modulePath, "utf8").replace("function publishLegacyZeroRecordV1(", "export function publishLegacyZeroRecordV1(");
       assert.notEqual(source, readFileSync(modulePath, "utf8"));
       writeFileSync(modulePath, source);
-      const canonicalRoot = realpathSync(root);
+      const canonicalRoot = realpathSync(path.dirname(root));
       const directory = path.join(canonicalRoot, "data/internal-production-baseline/p4-receipt-unequal-fixed");
       for (const member of [path.join(canonicalRoot, "data"), path.join(canonicalRoot, "data/internal-production-baseline"), directory]) {
         mkdirSync(member, { recursive: true, mode: 0o700 });
@@ -16690,7 +17681,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
         .replace('    const result = spawnSync("/bin/ps",', '    (globalThis as Record<string, number>).__p4ReceiptOwnerObservations = ((globalThis as Record<string, number>).__p4ReceiptOwnerObservations ?? 0) + 1;\n    const result = spawnSync("/bin/ps",');
       assert.notEqual(source, original);
       writeFileSync(modulePath, source);
-      const canonicalRoot = realpathSync(root);
+      const canonicalRoot = realpathSync(path.dirname(root));
       const directory = path.join(canonicalRoot, "data/internal-production-baseline/p4-receipt-lock");
       for (const member of [path.join(canonicalRoot, "data"), path.join(canonicalRoot, "data/internal-production-baseline"), directory]) { mkdirSync(member, { recursive: true, mode: 0o700 }); chmodSync(member, 0o700); }
       const target = path.join(directory, "record.json");
@@ -16710,6 +17701,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       const result = runFixtureExpression(root, `(async()=>{globalThis.__p4ReceiptOwnerObservations=0;try{m.acquireTask12ReceiptLocatorWriterV1(${JSON.stringify(target)}).close()}catch(error){process.stdout.write(String(globalThis.__p4ReceiptOwnerObservations));throw error}})()`);
       assert.notEqual(result.status, 0);
       assert.equal(result.stdout, "0", "a non-sole stale lock is rejected before owner observation");
+      assert.match(result.stderr, /Task12 receipt writer lock (?:member|topology) is invalid/, "the actual hardlink guard must reject the lock");
       assert.equal(lstatSync(lockPath, { bigint: true }).nlink, 2n);
       assert.equal(lstatSync(alias, { bigint: true }).nlink, 2n);
     } finally {
@@ -16720,8 +17712,8 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
   it("P4 Task12 receipt writer closes every busy guard and recovers a post-link fault", () => {
     const root = createFixture();
     try {
-      const canonicalRoot = realpathSync(root);
-      const modulePath = path.join(canonicalRoot, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      const canonicalRoot = realpathSync(path.dirname(root));
+      const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
       const original = readFileSync(modulePath, "utf8");
       const authenticatedPostLinkAnchor = ") currentEntryFail(\"Task12 receipt writer linked identity is invalid\");";
       assert.equal(
@@ -16729,10 +17721,12 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
         1,
         "the generic writer fault hook must target the sole authenticated linked temp/fixed boundary",
       );
+      const guardCloseAnchor = '        if (closed) currentEntryFail("Task12 receipt directory guard closed twice");\n        closed = true;';
+      assert.equal(original.split(guardCloseAnchor).length, 2, "instrument exactly one successful chain-guard close entry");
       const source = original
         .replace("function acquireTask12ReceiptLocatorWriterV1(", "export function acquireTask12ReceiptLocatorWriterV1(")
         .replace("function authenticateTask12ReceiptDirectoryChainV1(target: string): Task12ReceiptDirectoryGuardV1 {", "function authenticateTask12ReceiptDirectoryChainV1(target: string): Task12ReceiptDirectoryGuardV1 { (globalThis as Record<string, number>).__p4ReceiptGuardCreates=((globalThis as Record<string, number>).__p4ReceiptGuardCreates??0)+1;")
-        .replace("        closed = true;\n        for (const descriptor of descriptors.reverse()) closeSync(descriptor);", "        closed = true; (globalThis as Record<string, number>).__p4ReceiptGuardCloses=((globalThis as Record<string, number>).__p4ReceiptGuardCloses??0)+1;\n        for (const descriptor of descriptors.reverse()) closeSync(descriptor);")
+        .replace(guardCloseAnchor, `${guardCloseAnchor} (globalThis as Record<string, number>).__p4ReceiptGuardCloses=((globalThis as Record<string, number>).__p4ReceiptGuardCloses??0)+1;`)
         .replace("const deadline = Date.now() + 10_000;", "const deadline = Date.now() + 75;")
         .replace(
           authenticatedPostLinkAnchor,
@@ -16762,6 +17756,50 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     } finally {
       removeFixture(root);
     }
+  });
+
+  for (const consumer of ["prepare", "consume"] as const) it(`P4 receipt ${consumer} rejects absent helper state before publication`, async () => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-receipt-terminal-state-")));
+    const operationHash = "a".repeat(64), zeroOwnerGuardHash = "b".repeat(64), helperHash = "c".repeat(64);
+    const input = { zeroOwnerGuardRef: `setfarm://internal-production/baseline-zero-owner-mutation-guard/sha256/${zeroOwnerGuardHash}`, zeroOwnerGuardHash,
+      operationRef: `setfarm://internal-production/physical-service-restart-authority-cutover-operation/sha256/${operationHash}`, operationHash };
+    const zero = { observationRef: "test-zero-ref", observationHash: "d".repeat(64), ownerIdentitySetHash: "e".repeat(64) };
+    const guard = { zeroOwnerGuardRef: input.zeroOwnerGuardRef, zeroOwnerGuardHash, completeZeroOwnerCensusObservationRef: zero.observationRef,
+      completeZeroOwnerCensusObservationHash: zero.observationHash, baselineServiceRestartHelperJournalCensusHash: helperHash };
+    const operation = { ...input, ownerAdmissionFenceRef: "test-fence-ref", ownerAdmissionFenceHash: "f".repeat(64), pendingInputRef: "test-pending-ref", pendingInputHash: "1".repeat(64), predecessorPhysicalRestartEpochOrdinal: 1 };
+    const status = { state: "prepared", guardConsumed: false, operationRef: input.operationRef, operationHash, ownerAdmissionFenceRef: operation.ownerAdmissionFenceRef, ownerAdmissionFenceHash: operation.ownerAdmissionFenceHash };
+    const fence = { purpose: "recovery-d-physical-service-restart-authority-cutover-v1", fenceRef: operation.ownerAdmissionFenceRef, fenceHash: operation.ownerAdmissionFenceHash,
+      pendingInputRef: operation.pendingInputRef, pendingInputHash: operation.pendingInputHash, observedUnrelatedReservationCount: 0, observedUnrelatedOwnerCount: 0, ownerIdentitySetHash: zero.ownerIdentitySetHash };
+    const helper = { schema: "setfarm.internal-production-baseline-service-restart-helper-journal-census.v1", preSchemaHelperState: "absent",
+      registeredBaselineHelperJournalCount: 0, terminalBaselineHelperJournalCount: 0, liveBaselineHelperJournalCount: 0, ambiguousBaselineHelperJournalCount: 0,
+      helperJournalRegistryHeadRef: null, helperJournalRegistryHeadHash: null, retainedHelperJournalSettlementSetHash: "2".repeat(64), censusHash: helperHash };
+    let source = readFileSync(observerSource, "utf8");
+    // Keep both actual consumers and all their local validation. Stub only the
+    // already-authenticated read ports and stop before any physical publication.
+    for (const [name, replacement] of [
+      ["observeCompleteInternalProductionZeroOwnerCensusV1", `export async function observeCompleteInternalProductionZeroOwnerCensusV1(){return ${JSON.stringify(zero)}}`],
+      ["resolveInternalProductionBaselineZeroOwnerMutationGuardV1", `export async function resolveInternalProductionBaselineZeroOwnerMutationGuardV1(input){return ${JSON.stringify(guard)}}`],
+      ["canonicalRecordBytes", "async function canonicalRecordBytes(value){return Buffer.from(canonicalComparable(value)+'\\n')}"],
+      ["publishLegacyZeroRecordV1", "function publishLegacyZeroRecordV1(){globalThis.__terminalReceiptPublicationCalls++;throw Error('REACHED_PUBLICATION')}"],
+    ]) source = source.replace(topLevelFunctionRegionV1(source, name!), `${replacement}\n`);
+    fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+    fixtureFile(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts", `export async function observeInternalProductionBaselineServiceRestartHelperJournalCensusV1(){return {...${JSON.stringify(helper)},preSchemaHelperState:globalThis.__terminalReceiptAllowClosed?'terminal':'absent'}}
+export async function resolveInternalProductionPhysicalServiceRestartAuthorityCutoverOperationV1(input){return ${JSON.stringify(operation)}}
+export async function observeInternalProductionPhysicalServiceRestartAuthorityCutoverStatusV1(){return ${JSON.stringify(status)}}\n`);
+    fixtureFile(root, "src/db-pg.ts", `export async function reobserveInternalProductionGlobalOwnerAdmissionFenceV1(input){return ${JSON.stringify(fence)}}\n`);
+    fixtureFile(root, "package.json", '{"type":"module"}\n');
+    Reflect.set(globalThis, "__terminalReceiptPublicationCalls", 0);
+    try {
+      const module = await import(pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href);
+      const call = consumer === "prepare" ? () => module.prepareInternalProductionBaselineZeroOwnerMutationGuardV1()
+        : () => module.consumeInternalProductionBaselinePhysicalServiceRestartAuthorityCutoverZeroOwnerGuardV1(input);
+      await assert.rejects(call(), /helper-journal census (?:is not terminal zero|changed before consumption)/);
+      assert.equal(Reflect.get(globalThis, "__terminalReceiptPublicationCalls"), 0);
+      assert.equal(existsSync(path.join(root, "data")), false);
+      Reflect.set(globalThis, "__terminalReceiptAllowClosed", true);
+      await assert.rejects(call(), /REACHED_PUBLICATION/, "the same bound evidence with terminal state reaches the publication boundary");
+      assert.equal(Reflect.get(globalThis, "__terminalReceiptPublicationCalls"), 1);
+    } finally { Reflect.deleteProperty(globalThis, "__terminalReceiptPublicationCalls"); Reflect.deleteProperty(globalThis, "__terminalReceiptAllowClosed"); rmSync(root, { recursive: true, force: true }); }
   });
 
   it("P4 receipt owns startup prerequisite observations", async () => {
@@ -16835,6 +17873,175 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     ]) assert.ok(source.includes(producer), `missing phase-closed producer proof for ${producer}`);
   });
 
+  it("legacy zero parsers authenticate V2 inventory and preserve exact historical V1", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "setfarm-legacy-zero-parser-"));
+    try {
+      fixtureFile(root, "package.json", '{"type":"module"}\n');
+      fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts",
+        readFileSync(observerSource, "utf8") + "\nexport { parseLegacyZeroV1, parseCurrentEntryStoreLegacyZeroOwnerV1, buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1, requireLegacyZeroVersionedFieldsV1 };\n");
+      const source = { branch: "main", clean: true, sha: "a".repeat(40), treeHash: "b".repeat(40), buildHash: "c".repeat(64), originMainSha: "a".repeat(40) };
+      const auditHash = "d".repeat(64);
+      const auditPair = { authorityV3Migration31AuditRef: `setfarm://internal-production/authority-v3-migration31-audit/sha256/${auditHash}`, authorityV3Migration31AuditHash: auditHash };
+      const body = {
+        schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1",
+        observationKind: "legacy-pre-manifest-existing-live-truth", ...auditPair,
+        cleanSetfarmSourceSha: source.sha, cleanSetfarmTreeHash: source.treeHash, cleanSetfarmBuildHash: source.buildHash,
+        observedSpawnerGenerationHash: "e".repeat(64), census: zeroOwnerCensusFixtureV1(), allThirtySixScalarCountsZero: true,
+        ownerReservationSidecarState: "absent-before-migration-32", ownerAdmissionHeadState: "absent-before-migration-32", manifestActivationState: "absent-before-initial-a-activation",
+      };
+      const inventoryBody = { schema: "setfarm.legacy-finding-publication-inventory.v1", entries: [{ findingSetHash: "1".repeat(64), publicationHash: "2".repeat(64), runId: "terminal-run", terminalRunStatus: "failed" }] };
+      const inventory = { ...inventoryBody, inventoryHash: canonicalHash(inventoryBody) };
+      const wrap = (core: Record<string, unknown>) => {
+        const observationHash = canonicalHash(core);
+        return { ...core, observationHash, observationRef: `setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/${observationHash}` };
+      };
+      const v2 = { ...body, schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2", legacyFindingPublicationInventory: inventory };
+      const records = [wrap(body), wrap(v2), wrap({ ...v2, legacyFindingPublicationInventory: { ...inventory, inventoryHash: "f".repeat(64) } }), wrap({ ...body, legacyFindingPublicationInventory: inventory }), wrap({ ...v2, legacyFindingPublicationInventory: undefined }), wrap({ ...v2, extra: true })];
+      const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+      const observer = readFileSync(observerSource, "utf8");
+      const causalStart = observer.indexOf("const validateDynamicMaterialCausal = async");
+      const causalEnd = observer.indexOf("const dynamicMaterialContentKeys", causalStart);
+      assert.ok(causalStart >= 0 && causalEnd > causalStart);
+      const causalExecutable = transformSync(observer.slice(causalStart, causalEnd), { loader: "ts", target: "es2022" }).code;
+      const applyExecutable = transformSync(topLevelFunctionRegionV1(observer, "applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1")
+        .replace('await import("../db/bootstrap-main-claim-handoff-v1-migration.js")', "ports")
+        .replace('await import("../db-pg.js")', "ports"), { loader: "ts", target: "es2022" }).code;
+      const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", `
+        const m=await import(${JSON.stringify(moduleUrl)}); const records=${JSON.stringify(records)};
+        const outcomes=[];
+        for(const value of records){
+          const pair={observationRef:value.observationRef,observationHash:value.observationHash};
+          const each=[];
+          try { const parsed=await m.parseLegacyZeroV1(value,pair,async()=>({controllerSource:${JSON.stringify(source)}})); each.push(JSON.stringify(parsed)===JSON.stringify(value)); } catch { each.push(false); }
+          try { m.parseCurrentEntryStoreLegacyZeroOwnerV1(value,${JSON.stringify(source)},${JSON.stringify({ ref: auditPair.authorityV3Migration31AuditRef, hash: auditHash })}); each.push(true); } catch { each.push(false); }
+          outcomes.push(each);
+        }
+        const built=m.buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(${JSON.stringify(source)},{pair:${JSON.stringify(auditPair)}},{spawner:{generationHash:${JSON.stringify(body.observedSpawnerGenerationHash)}}},{},${JSON.stringify(body.census)},${JSON.stringify(body.census)},${JSON.stringify(inventory)});
+        outcomes.push([built.schema==="setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2",JSON.stringify(built.legacyFindingPublicationInventory)===${JSON.stringify(JSON.stringify(inventory))}]);
+        const operation={authorityV3Migration31Audit:${JSON.stringify(auditPair)}};
+        const source=${JSON.stringify(source)};
+        const bodies=Array.from({length:6},()=>({actualSpawnerGenerationHash:${JSON.stringify(body.observedSpawnerGenerationHash)}}));
+        const currentEntryFail=(reason)=>{throw new Error(reason)};
+        const requireLegacyZeroVersionedFieldsV1=m.requireLegacyZeroVersionedFieldsV1;
+        ${causalExecutable}
+        for(const value of records.slice(0,3)){
+          const each=[]; for(const index of [0,6]){try{await validateDynamicMaterialCausal(index,value);each.push(true)}catch{each.push(false)}} outcomes.push(each);
+        }
+        const {requireLegacyFindingPublicationInventoryContinuityV1}=await import(${JSON.stringify(pathToFileURL(path.join(root, "src/findings/legacy-finding-publication-inventory-v1.ts")).href)});
+        const isPlainRecord=(v)=>v!==null&&typeof v==="object"&&!Array.isArray(v);
+        let state="prepared",post=records[0],effects=[];
+        const fresh=records[1],input={authorizationRef:"authorization",authorizationHash:"authorization-hash"};
+        const applyOperation={operationRef:"operation",operationHash:"operation-hash"};
+        const authorization={currentEntryOperationRef:applyOperation.operationRef,currentEntryOperationHash:applyOperation.operationHash,freshLegacyZeroOwnerObservationRef:fresh.observationRef,freshLegacyZeroOwnerObservationHash:fresh.observationHash};
+        const resolveInternalProductionPreManifestMigration32AuthorizationV1=async()=>authorization;
+        const observeInternalProductionPreManifestMigration32AuthorizationStatusForOperationV1=async()=>({state,authorization:input,consumption:{consumptionRef:"consumption",consumptionHash:"consumption-hash"}});
+        const observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1=async()=>fresh;
+        const resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1=async(_context,pair)=>{
+          if(pair.observationRef!==post.observationRef||pair.observationHash!==post.observationHash)throw new Error("CROSSED_POST_LOOKUP");return post;
+        };
+        const resolveInternalProductionPreManifestMigration32AuthorizationConsumptionV1=async()=>input;
+        const publishTask12HashedRecordV1=async()=>{effects.push("publish");return {consumptionRef:"consumption",consumptionHash:"consumption-hash"}};
+        const publishTask12MigrationStatusV1=async()=>{},operationPair=(v)=>v,TASK12_MIGRATION_PREFIXES_V1={consumption:"consumption"};
+        const ports={mintBootstrapMainClaimHandoffGuardedMigration32EvidenceForControllerV1:()=>{effects.push("mint");return {}},openInternalProductionCurrentEntryMigration32TransactionV1:async()=>({}),stageInternalProductionCurrentEntryMigration32InTransactionV1:async()=>{effects.push("stage");throw new Error("STAGE_REACHED")},commitInternalProductionCurrentEntryMigration32TransactionV1:async()=>{},abortInternalProductionCurrentEntryMigration32TransactionV1:async()=>{}};
+        ${applyExecutable}
+        for(state of ["prepared","consumed"]){
+          for(post of [records[0],fresh]){
+            effects=[];
+            authorization.postPredecessorTerminationLegacyZeroOwnerObservationRef=post.observationRef;
+            authorization.postPredecessorTerminationLegacyZeroOwnerObservationHash=post.observationHash;
+            let failure="";try{await applyInternalProductionBaselineBootstrapHandoffMigrationForOperationV1({},applyOperation,input)}catch(error){failure=error.message}
+            outcomes.push(post===fresh?[failure==="STAGE_REACHED",effects.includes("stage")]:[failure==="LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT",effects.length===0]);
+          }
+        }
+        process.stdout.write(JSON.stringify(outcomes));
+      `], { cwd: root, encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, timeout: 30_000 });
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), [[true, true], [true, true], [false, false], [false, false], [false, false], [false, false], [true, true], [true, true], [true, true], [false, false], [true, true], [true, true], [true, true], [true, true]]);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("cold legacy census authenticates pre-32 absence before the ordinary read-only aggregate", () => {
+    const rows = [legacyDatabaseCensusRow()];
+    const previousRows = process.env.P4_LEGACY_CENSUS_ROWS;
+    const root = createLegacyDatabaseCensusFixture(rows);
+    try {
+      const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+      const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e",
+        "const m=await import(" + JSON.stringify(moduleUrl) + ");const values=[];for(const cold of [true,true,false])values.push(await m.observeLegacyDatabaseCensusV1(cold));process.stdout.write(JSON.stringify(values));",
+      ], { cwd: root, encoding: "utf8", env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin", SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm",
+        P4_LEGACY_CENSUS_ROWS: JSON.stringify(rows),
+      } });
+      assert.equal(result.status, 0, result.stderr);
+      const values = JSON.parse(result.stdout);
+      assert.equal(values.length, 3);
+      assert.deepEqual(values[1], values[0], "a second cold observation owns a fresh connection and complete query sequence");
+      assert.deepEqual(values[2], values[0], "ordinary and cold observations agree only after their respective complete checks");
+      const { legacyFindingPublicationInventory, ...counts } = values[0];
+      assert.deepEqual(counts, {
+        activeRunCount: 0, openClaimCount: 0, executionAttemptCount: 0, activeRuntimeSessionCount: 0,
+        activeCompletionOwnerCount: 0, unsettledMandatoryEffectCount: 0, artifactReservationCount: 0,
+        publicationBatchCount: 0, artifactPublicationCount: 0, terminationOwnerCount: 0,
+        findingOwnerCount: 0, recoveryOwnerCount: 0, operationalDeliveryCount: 0,
+      });
+      assert.ok(legacyFindingPublicationInventory);
+    } finally {
+      if (previousRows === undefined) delete process.env.P4_LEGACY_CENSUS_ROWS;
+      else process.env.P4_LEGACY_CENSUS_ROWS = previousRows;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("cold legacy census preserves aggregate refusal through connection cleanup", () => {
+    const previousRows = process.env.P4_LEGACY_CENSUS_ROWS;
+    const root = createLegacyDatabaseCensusFixture([]);
+    try {
+      const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+      for (const rows of [[], [legacyDatabaseCensusRow({ catalogViolationCount: "invalid" })]]) {
+        const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e",
+          "const m=await import(" + JSON.stringify(moduleUrl) + ");await m.observeLegacyDatabaseCensusV1(true);",
+        ], { cwd: root, encoding: "utf8", env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin", SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm",
+          P4_LEGACY_CENSUS_ROWS: JSON.stringify(rows),
+        } });
+        assert.notEqual(result.status, 0);
+        assert.doesNotMatch(result.stderr, /WRONG_DATABASE_QUERY_COUNT/);
+        assert.match(result.stderr, rows.length === 0 ? /legacy zero-owner database aggregate must return exactly one row/ : /catalogViolationCount is not a canonical nonnegative integer/);
+        assert.equal(result.stdout, "");
+      }
+    } finally {
+      if (previousRows === undefined) delete process.env.P4_LEGACY_CENSUS_ROWS;
+      else process.env.P4_LEGACY_CENSUS_ROWS = previousRows;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("cold legacy census refuses every later catalog owner before reading the ordinary aggregate", () => {
+    const absent = { laterJournalCount: "0", relationCount: "0", functionCount: "0", typeCount: "0", triggerCount: "0" };
+    const previousRows = process.env.P4_LEGACY_CENSUS_ROWS;
+    try {
+      for (const key of Object.keys(absent)) {
+        // Empty ordinary rows would fail independently if the cold guard were skipped.
+        const root = createLegacyDatabaseCensusFixture([], [{ ...absent, [key]: "1" }]);
+        try {
+          const moduleUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href;
+          const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e",
+            "const m=await import(" + JSON.stringify(moduleUrl) + ");await m.observeLegacyDatabaseCensusV1(true);",
+          ], { cwd: root, encoding: "utf8", env: {
+            PATH: process.env.PATH ?? "/usr/bin:/bin", SETFARM_PG_URL: "postgresql://fixture.invalid/setfarm",
+            P4_LEGACY_CENSUS_ROWS: "[]",
+          } });
+          assert.notEqual(result.status, 0, key);
+          assert.match(result.stderr, /cold bootstrap migration32\/33 catalog or journal is not absent/, key);
+          assert.equal(result.stdout, "");
+        } finally { rmSync(root, { recursive: true, force: true }); }
+      }
+    } finally {
+      if (previousRows === undefined) delete process.env.P4_LEGACY_CENSUS_ROWS;
+      else process.env.P4_LEGACY_CENSUS_ROWS = previousRows;
+    }
+  });
+
   it("P4 legacy census rejects a nonzero open claim instead of synthesizing zero", () => {
     const rows = [legacyDatabaseCensusRow({ openClaimCount: "1" })];
     const root = createLegacyDatabaseCensusFixture(rows);
@@ -16886,7 +18093,7 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
       for (const key of liveKeys) {
         const result = run(legacyDatabaseCensusRow({ [key]: "1" }));
         assert.notEqual(result.status, 0, `${key} must refuse`);
-        assert.match(result.stderr, new RegExp(key));
+        assert.match(result.stderr, key === "findingOwnerCount" ? /legacy finding publication aggregate is crossed/ : new RegExp(key));
       }
       for (const [key, value] of [
         ["openClaimCount", "-1"],
@@ -16908,6 +18115,91 @@ describe("OA17 zero-input current Setfarm source/build observation", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("cold journal ownership prevents the executing phase-zero census from returning zeros", async () => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-cold-phase-zero-")));
+    const sourceIdentity = { branch: "main", clean: true, sha: "1".repeat(40), treeHash: "2".repeat(40), buildHash: "3".repeat(64), originMainSha: "1".repeat(40) };
+    let source = readFileSync(observerSource, "utf8");
+    const cleanObserver = topLevelFunctionRegionV1(source, "observeCurrentInternalProductionCleanSetfarmSourceBuildV1");
+    source = source.replace(cleanObserver, `export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){globalThis.__coldPhaseSourceHook?.();return Object.freeze(${JSON.stringify(sourceIdentity)});}\n`)
+      .replace("async function observePhaseClosedZeroV1(", "export async function observePhaseClosedZeroV1(")
+      .replaceAll("coldJournal.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()", "(globalThis.__helperPhaseOnly ? { state: 'isolated-cold-census' } : coldJournal.observeInternalProductionColdSpawnerBootstrapJournalCensusV1())");
+    fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+    fixtureFile(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/baseline-restart-authority-retirement-v1.ts")));
+    const locator = readFileSync(path.join(sourceRoot, "src/internal-production/baseline-workspace-authority-path-v1.ts"), "utf8");
+    const locatorRoots = [
+      'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
+      'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");',
+    ].filter((candidate) => locator.includes(candidate));
+    assert.equal(locatorRoots.length, 1, "accept only the source or authenticated P3 workspace binding");
+    const locatorRoot = locatorRoots[0]!;
+    assert.equal(locator.split(locatorRoot).length, 2);
+    fixtureFile(root, "src/internal-production/baseline-workspace-authority-path-v1.ts", locator.replace(locatorRoot, `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(root)};`));
+    fixtureFile(root, "src/runtime-config.ts", `export const runtimeConfig={setfarmDir:${JSON.stringify(path.join(root, "runtime"))}};\n`);
+    fixtureFile(root, "package.json", '{"type":"module"}\n');
+    const cold = path.join(root, "data/internal-production-baseline/restart-authority-retirement-v1/cold-spawner-bootstrap-v1");
+    try {
+      const module = await import(pathToFileURL(path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts")).href);
+      const absent = await module.observePhaseClosedZeroV1(sourceIdentity);
+      assert.ok(Object.values(absent).every((value) => value === 0));
+      mkdirSync(path.dirname(cold), { recursive: true, mode: 0o700 });
+      for (const name of ["pre-schema-helper-journal.json", ".pre-schema-helper-journal.json.pending", "direct-spawner-rebind-v1"]) {
+        const target = path.join(path.dirname(cold), name);
+        if (name === "direct-spawner-rebind-v1") mkdirSync(target, { mode: 0o700 });
+        else writeFileSync(target, "{}\n", { mode: 0o600 });
+        const before = lstatSync(target, { bigint: true });
+        await assert.rejects(module.observePhaseClosedZeroV1(sourceIdentity), /pre-schema|direct|helper/i, `${name} cannot be reported as phase-zero`);
+        assert.equal(lstatSync(target, { bigint: true }).ino, before.ino, "phase-zero never repairs a partial helper record");
+        rmSync(target, { recursive: true });
+      }
+      mkdirSync(cold, { recursive: true, mode: 0o700 });
+      writeFileSync(path.join(cold, "intent.json"), '{"disposition":"completed","schema":"unbound"}\n', { mode: 0o600 });
+      const bytes = readFileSync(path.join(cold, "intent.json"));
+      await assert.rejects(module.observePhaseClosedZeroV1(sourceIdentity), /COLD_BOOTSTRAP_UNSETTLED/);
+      assert.deepEqual(readFileSync(path.join(cold, "intent.json")), bytes);
+      assert.deepEqual(readdirSync(cold), ["intent.json"], "phase census never settles or rewrites an unbound cold prefix");
+      rmSync(cold, { recursive: true });
+      let sourceCalls = 0;
+      Reflect.set(globalThis, "__coldPhaseSourceHook", () => {
+        if (++sourceCalls === 2) mkdirSync(cold, { mode: 0o700 });
+      });
+      await assert.rejects(module.observePhaseClosedZeroV1(sourceIdentity), /COLD_BOOTSTRAP_UNSETTLED/, "late cold-owner appearance is checked again before zero return");
+      assert.equal(sourceCalls, 2);
+      rmSync(cold, { recursive: true });
+      sourceCalls = 0;
+      Reflect.set(globalThis, "__coldPhaseSourceHook", () => {
+        if (++sourceCalls === 2) { mkdirSync(cold, { mode: 0o700 }); rmSync(cold, { recursive: true }); }
+      });
+      await assert.rejects(module.observePhaseClosedZeroV1(sourceIdentity), /cold journal ancestry changed/, "transient owner appearance cannot hide between the two absence reads");
+      Reflect.deleteProperty(globalThis, "__coldPhaseSourceHook");
+      Reflect.set(globalThis, "__helperPhaseOnly", true); // Isolate the new helper witness from the independently tested cold parent witness.
+      for (const name of ["pre-schema-helper-journal.json", "direct-spawner-rebind-v1"]) for (const transient of [false, true]) {
+        sourceCalls = 0;
+        const target = path.join(path.dirname(cold), name);
+        Reflect.set(globalThis, "__coldPhaseSourceHook", () => {
+          if (++sourceCalls !== 2) return;
+          if (name === "direct-spawner-rebind-v1") mkdirSync(target, { mode: 0o700 });
+          else writeFileSync(target, "{}\n", { mode: 0o600 });
+          if (transient) rmSync(target, { recursive: true });
+        });
+        await assert.rejects(module.observePhaseClosedZeroV1(sourceIdentity), /helper/i, `${name} ${transient ? 'ABA' : 'appearance'} must be caught by helper bracketing itself`);
+        assert.equal(sourceCalls, 2);
+        if (!transient) rmSync(target, { recursive: true });
+      }
+      Reflect.deleteProperty(globalThis, "__coldPhaseSourceHook");
+      assert.deepEqual(await module.observePhaseClosedZeroV1(sourceIdentity), absent);
+      sourceCalls = 0;
+      const futureAuthority = path.join(root, "runtime/internal-production");
+      Reflect.set(globalThis, "__coldPhaseSourceHook", () => {
+        if (++sourceCalls === 2) queueMicrotask(() => mkdirSync(futureAuthority, { recursive: true, mode: 0o700 }));
+      });
+      await assert.rejects(module.observePhaseClosedZeroV1(sourceIdentity), /future producer authority root.*present/, "future authority appearing during the final helper await must not escape phase-zero");
+      Reflect.deleteProperty(globalThis, "__coldPhaseSourceHook");
+      rmSync(futureAuthority, { recursive: true });
+      assert.match(source, /const CURRENT_ENTRY_MAX_BYTES = 1_048_576;/, "authority-record cap is unchanged");
+      assert.ok(Buffer.byteLength(source) > 1_048_576, "the executing source exceeds the separate record cap");
+    } finally { Reflect.deleteProperty(globalThis, "__coldPhaseSourceHook"); Reflect.deleteProperty(globalThis, "__helperPhaseOnly"); rmSync(root, { recursive: true, force: true }); }
   });
 
   it("P4 phase-closed census refuses every present or symlinked future authority path", async () => {
@@ -17232,6 +18524,226 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const refused = runOpenClawServiceHarness(bytes);
       assert.notEqual(refused.status, 0);
       assert.equal(refused.stdout, "");
+    }
+  });
+
+  it("cold bootstrap bracket binds the real poison incident and two complete read-only observations", () => {
+    const root = createFixture();
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const target = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      let source = readFileSync(target, "utf8");
+      const ports = [
+        "observeCurrentInternalProductionCleanSetfarmSourceBuildV1", "observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1",
+        "observeExactPoisonSyntheticGitObjectAbsenceV1", "observeServiceProcessV1", "observeMissionControlLoadedBuildServiceV1",
+        "observeColdSpawnerAbsenceV1", "observeColdPhysicalInventoryV1", "observePhaseClosedZeroV1", "observeLegacyDatabaseCensusV1",
+      ];
+      for (const name of ports) {
+        const region = topLevelFunctionRegionV1(source, name);
+        source = source.replace(region, `${region.startsWith("export ") ? "export " : ""}function ${name}(...args: unknown[]) { return Reflect.get(globalThis, "__coldBracketProbeV1").port(${JSON.stringify(name)}, args); }\n`);
+      }
+      source += '\nexport const coldBracketForTestV1 = typeof observeExactPoisonColdBootstrapBracketNoWriteV1 === "function" ? observeExactPoisonColdBootstrapBracketNoWriteV1 : undefined;\n';
+      fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
+      fixtureFile(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/baseline-restart-authority-retirement-v1.ts")));
+      const authority = JSON.parse(exactCurrentAuthorityV31FixtureBytesV1().toString("utf8"));
+      const pending = JSON.parse(exactCurrentPendingFixtureBytesV1().toString("utf8"));
+      const inventoryBody = { schema: "setfarm.legacy-finding-publication-inventory.v1", entries: [{
+        findingSetHash: "a".repeat(64), publicationHash: "b".repeat(64), runId: "legacy-terminal", terminalRunStatus: "failed",
+      }] };
+      const inventory = { ...inventoryBody, inventoryHash: canonicalHash(inventoryBody) };
+      const before = filesystemTreeSnapshot(path.dirname(root));
+      const result = runFixtureExpression(root, `(async()=>{
+        const assert=(await import("node:assert/strict")).default;
+        const {createHash}=await import("node:crypto");
+        const fs=await import("node:fs"),path=(await import("node:path")).default;
+        const store=${JSON.stringify(original.store)},operationFile=path.join(store,"current-entry-operation.json");
+        const edge=path.join(store,"records/current-entry-store-successor-edges/by-predecessor-operation/sha256/90/"+${JSON.stringify(EXACT_POISON_OPERATION_HASH_V1)}+".json");
+        let undo=()=>{};
+        const addEdge=()=>{
+          const created=[];let current=path.dirname(edge);
+          while(!fs.existsSync(current)){created.push(current);current=path.dirname(current);}
+          for(const directory of [...created].reverse())fs.mkdirSync(directory,{mode:0o700});
+          fs.writeFileSync(edge,"{}\\n",{mode:0o600,flag:"wx"});
+          undo=()=>{fs.unlinkSync(edge);for(const directory of created)fs.rmdirSync(directory);};
+        };
+        const authority=${JSON.stringify(authority)},pending=${JSON.stringify(pending)},inventory=${JSON.stringify(inventory)};
+        const services=${JSON.stringify(exactZeroEffectServiceCensusV1())},zeros=${JSON.stringify(zeroOwnerCensusFixtureV1())};
+        const physical=${JSON.stringify(exactZeroEffectPhysicalInventoryV1())};
+        const dbKeys=["activeRunCount","openClaimCount","executionAttemptCount","activeRuntimeSessionCount","activeCompletionOwnerCount","unsettledMandatoryEffectCount","artifactReservationCount","publicationBatchCount","artifactPublicationCount","terminationOwnerCount","findingOwnerCount","recoveryOwnerCount","operationalDeliveryCount"];
+        const phaseKeys=Object.keys(zeros).filter(k=>!dbKeys.includes(k)&&!Object.hasOwn(physical,k));
+        const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==="object"?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
+        const record=(value,stem)=>({value,bytes:Buffer.from(JSON.stringify(canonical(value))+"\\n"),pair:{[stem+"Ref"]:value[stem+"Ref"],[stem+"Hash"]:value[stem+"Hash"]}});
+        const prerequisites={authorityV3Migration31Audit:record(authority,"authorityV3Migration31Audit"),pendingBootstrapHandoffMigration:record(pending,"pendingBootstrapHandoffMigration")};
+        Reflect.set(globalThis,"__coldBracketProbeV1",{port:()=>{throw new Error("untrusted context reached an observation port")}});
+        for(const foreign of [{},{schema:"setfarm.internal-production-cold-helper-context.v1"}]){
+          await assert.rejects(()=>m.observeInternalProductionColdSpawnerHelperBootstrapObservationV1(foreign),/cold helper context is foreign/);
+        }
+        for(const fault of ["none","helper-context","source-drift","prerequisite-drift","crossed-source","service-drift","absence-drift","physical-drift","phase-nonzero","database-nonzero","inventory-drift","inventory-invalid","database-refusal","edge-present","edge-appears","edge-transient","operation-replaced","directory-replaced"]){
+          const calls={};
+          const helperContext=fault==="helper-context"?Object.freeze({fixture:"opaque routing identity"}):undefined;
+          undo=()=>{};
+          if(fault==="edge-present")addEdge();
+          Reflect.set(globalThis,"__coldBracketProbeV1",{port:(name,args)=>{
+            const n=calls[name]=(calls[name]??0)+1;
+            if(name==="observeCurrentInternalProductionCleanSetfarmSourceBuildV1")return {...authority.controllerSource,...(fault==="source-drift"&&n>1?{buildHash:"e".repeat(64)}:{})};
+            if(name==="observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1"){
+              const p=structuredClone(prerequisites); for(const k of Object.keys(p))p[k].bytes=Buffer.from(prerequisites[k].bytes);
+              if((fault==="prerequisite-drift"&&n>1)||fault==="crossed-source"){
+                p.pendingBootstrapHandoffMigration.value.controllerSource.buildHash="f".repeat(64);
+                p.pendingBootstrapHandoffMigration=record(p.pendingBootstrapHandoffMigration.value,"pendingBootstrapHandoffMigration");
+              }return p;
+            }
+            if(name==="observeExactPoisonSyntheticGitObjectAbsenceV1")return [
+              {repository:"setfarm",objectSha:"4fc67f20df0e935c703c4658a29dbbaa9aa0a956",objectType:"commit",state:"absent",networkAccess:"forbidden"},
+              {repository:"mission-control",objectSha:"4ec5fc99a076453a87381c0c75e508d25dd8882d",objectType:"commit",state:"absent",networkAccess:"forbidden"}
+            ];
+            if(name==="observeServiceProcessV1"){
+              assert.notEqual(args[0],"com.setrox.setfarm-spawner","never manufacture a fourth service");
+              const value=structuredClone(args[0]==="com.setrox.setfarm-dashboard"?services.dashboard:services.openClaw);
+              if(args[0]==="com.setrox.setfarm-dashboard")Object.assign(value,{loadedSourceSha:args[2].sha,loadedTreeHash:args[2].treeHash,loadedBuildHash:args[2].buildHash});
+              if(fault==="service-drift"&&n>2)value.pid+=1;
+              return value;
+            }
+            if(name==="observeMissionControlLoadedBuildServiceV1")return services.missionControl;
+            if(name==="observeColdSpawnerAbsenceV1")return {schema:"setfarm.internal-production-cold-spawner-absence.v1",absenceHash:fault==="absence-drift"&&n>1?"d".repeat(64):"c".repeat(64)};
+            if(name==="observeColdPhysicalInventoryV1"){
+              assert.equal(Object.hasOwn(args[0],"spawner"),false);return {...physical,...(fault==="physical-drift"&&n>1?{ownedProcessCount:1}:{})};
+            }
+            if(name==="observePhaseClosedZeroV1"){
+              assert.equal(args[1],helperContext,"both phase passes receive the same explicit context; ordinary remains undefined");
+              return {...Object.fromEntries(phaseKeys.map(k=>[k,0])),...(fault==="phase-nonzero"?{restartReservationCount:1}:{})};
+            }
+            if(name==="observeLegacyDatabaseCensusV1"){
+              assert.equal(args[0],true,"cold catalog checks remain inside the real read-only DB transaction");
+              if(n===2&&fault==="edge-appears")addEdge();
+              if(n===2&&fault==="edge-transient"){addEdge();undo();undo=()=>{};}
+              if(n===2&&fault==="operation-replaced"){
+                const old=operationFile+".test-original",bytes=fs.readFileSync(operationFile);
+                fs.renameSync(operationFile,old);fs.writeFileSync(operationFile,bytes,{mode:0o600,flag:"wx"});
+                undo=()=>{fs.unlinkSync(operationFile);fs.renameSync(old,operationFile);};
+              }
+              if(n===2&&fault==="directory-replaced"){
+                const records=path.join(store,"records"),old=records+".test-original";
+                fs.renameSync(records,old);fs.mkdirSync(records,{mode:0o700});
+                undo=()=>{fs.rmdirSync(records);fs.renameSync(old,records);};
+              }
+              if(fault==="database-refusal")throw new Error("DB_CATALOG_OR_MIGRATION_REFUSAL");
+              const value=structuredClone(inventory);
+              if(fault==="inventory-drift"&&n>1){value.entries=[];value.inventoryHash=createHash("sha256").update(JSON.stringify(canonical({schema:value.schema,entries:[]}))).digest("hex");}
+              if(fault==="inventory-invalid")value.inventoryHash="0".repeat(64);
+              return {...Object.fromEntries(dbKeys.map(k=>[k,0])),...(fault==="database-nonzero"?{activeRunCount:1}:{}),legacyFindingPublicationInventory:value};
+            }
+            throw new Error("unexpected port:"+name);
+          }});
+          if(fault==="none"||fault==="helper-context"){
+            const value=await m.coldBracketForTestV1(helperContext);
+            assert.equal(value.schema,"setfarm.internal-production-cold-bootstrap-observation.v1");
+            assert.equal(value.operation.operationHash,${JSON.stringify(EXACT_POISON_OPERATION_HASH_V1)});
+            assert.equal(value.contaminationFingerprintHash,${JSON.stringify(EXACT_POISON_CONTAMINATION_FINGERPRINT_HASH_V1)});
+            assert.deepEqual(value.census,zeros);assert.deepEqual(value.legacyFindingPublicationInventory,inventory);
+            assert.equal(Object.hasOwn(value.remainingServices,"spawner"),false);
+            const {observationHash,...body}=value;
+            assert.equal(observationHash,(await import("node:crypto")).createHash("sha256").update(JSON.stringify(canonical(body))).digest("hex"));
+            for(const name of ["observeLegacyDatabaseCensusV1","observeColdSpawnerAbsenceV1","observeColdPhysicalInventoryV1","observePhaseClosedZeroV1","observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1"])assert.equal(calls[name],2,name);
+          }else await assert.rejects(()=>m.coldBracketForTestV1(),
+            fault.startsWith("edge-")?/successor (edge|parent)/:
+            fault==="operation-replaced"?/cold bootstrap poison operation/:
+            fault==="directory-replaced"?/directory chain changed/:undefined,fault);
+          undo();
+        }
+        const retained=operationFile+".test-original";
+        fs.renameSync(operationFile,retained);
+        try{
+          fs.writeFileSync(operationFile,Buffer.from(${JSON.stringify(strictNonpoisonOperationFixtureBytesV1().toString("base64"))},"base64"),{mode:0o600,flag:"wx"});
+          await assert.rejects(()=>m.coldBracketForTestV1(),/cold bootstrap operation is not the recognized incident/);
+        }finally{fs.unlinkSync(operationFile);fs.renameSync(retained,operationFile);}
+        console.log("cold bracket verified");
+      })()`);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /cold bracket verified/);
+      assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), before, "complete cold bracket must write no files, records, locks or inode changes");
+      assert.deepEqual(filesystemTreeSnapshot(original.store), original.originalSnapshot);
+    } finally { rmSync(path.dirname(root), { recursive: true, force: true }); }
+  });
+
+  it("real launch profile brackets source and secret inputs without serializing plaintext", () => {
+    const result = runDetachedServiceHarness("com.setrox.setfarm-spawner", "none", "launch-profile");
+    assert.equal(result.status, 0, result.stderr);
+    const value = JSON.parse(result.stdout);
+    assert.equal(value.profile.schema, "setfarm.internal-production-spawner-launch-profile.v1");
+    assert.equal(value.environmentInstalled, true);
+    assert.equal(value.plaintextLeaked, false);
+    assert.equal(value.profile.environmentFiles[1].state, "absent");
+    assert.equal(value.profile.source.sha, "a".repeat(40));
+    assert.match(value.profile.profileHash, /^[a-f0-9]{64}$/);
+    const growing = runDetachedServiceHarness("com.setrox.setfarm-spawner", "profile_plist_growth", "launch-profile");
+    assert.notEqual(growing.status, 0);
+    const readBytes = /profile-read-bytes:(\d+)/.exec(String(growing.stderr));
+    assert.ok(readBytes, growing.stderr);
+    assert.ok(Number(readBytes[1]) > 0 && Number(readBytes[1]) <= 1048576, "a growing plist must not be read beyond the explicit cap");
+    for (const fault of ["profile_source_drift", "profile_env_appears", "profile_env_aba", "profile_env_write", "profile_env_symlink", "profile_injection", "launch_environment", "plist_args"]) {
+      const refused = runDetachedServiceHarness("com.setrox.setfarm-spawner", fault, "launch-profile");
+      assert.notEqual(refused.status, 0, fault);
+      assert.equal(refused.stdout, "");
+      assert.ok(!String(refused.stderr).includes("fixture-sensitive-value"), "secret input must not enter diagnostics");
+    }
+  });
+
+  it("cold spawner absence authenticates all-root processes and read-only singleton residue", () => {
+    for (const fault of ["none", "stale_pid"]) {
+      const result = runDetachedServiceHarness("com.setrox.setfarm-spawner", fault, "cold");
+      assert.equal(result.status, 0, result.stderr);
+      const value = JSON.parse(result.stdout);
+      assert.equal(value.schema, "setfarm.internal-production-cold-spawner-absence.v1");
+      assert.equal(value.globalSpawnerFamilyCount, 0);
+      assert.equal(value.singletonLockState, "absent");
+      assert.equal(value.pidFile.state, fault === "stale_pid" ? "stale-dead-pid" : "absent");
+      if (fault === "stale_pid") assert.equal(value.pidFile.pid, 2147483647);
+    }
+    for (const fault of ["empty_processes", "omitted_self", "wrong_self_uid", "foreign_spawner", "foreign_launcher", "cold_appears", "live_pid", "pid_bad", "pid_writable", "pid_symlink", "pid_permission_denied", "dead_lock", "launch_running", "active_count", "cli_drift", "launch_environment", "plist_args"]) {
+      const result = runDetachedServiceHarness("com.setrox.setfarm-spawner", fault, "cold");
+      assert.notEqual(result.status, 0, `${fault} must not grant cold absence`);
+      assert.equal(result.stdout, "");
+    }
+  });
+
+  it("cold physical collection uses the actual three services without relaxing ordinary four-service collection", () => {
+    const bytes = Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789\0\n");
+    const listeners = [{ pid: 94886, protocol: "TCP" as const, localAddress: "127.0.0.1", port: 18789 }];
+    const cold = runOpenClawPhysicalInventoryHarness(bytes, bytes, listeners, "cold");
+    assert.equal(cold.status, 0, cold.stderr);
+    const value = JSON.parse(cold.stdout);
+    assert.equal(value.ownedProcessCount, 0);
+    assert.equal(value.ownedListenerCount, 0);
+    assert.deepEqual(value.processes, []);
+    assert.deepEqual(value.listeners, []);
+    const ordinary = runOpenClawPhysicalInventoryHarness(bytes, bytes, listeners, "ordinary-without-spawner");
+    assert.notEqual(ordinary.status, 0, "ordinary observation must not admit a missing fourth service");
+    assert.match(ordinary.stderr, /persistent service changed during physical census/);
+    const extra = { pid: 94886, protocol: "TCP" as const, localAddress: "127.0.0.1", port: 18790 };
+    const unownedPort = runOpenClawPhysicalInventoryHarness(bytes, bytes, [...listeners, extra], "cold");
+    assert.equal(unownedPort.status, 0, unownedPort.stderr);
+    assert.equal(JSON.parse(unownedPort.stdout).ownedListenerCount, 1, "cold collection retains nonzero owner evidence");
+  });
+
+  it("physical collection ignores unrelated probe churn but reobserves every ownership-bearing pass", () => {
+    const bytes = Buffer.from("p94886\0cnode\0\nf18\0n127.0.0.1:18789\0\n");
+    const listeners = [{ pid: 94886, protocol: "TCP" as const, localAddress: "127.0.0.1", port: 18789 }];
+    for (const fault of ["none", "scheduler-churn"]) {
+      const result = runOpenClawPhysicalInventoryHarness(bytes, bytes, listeners, "cold", fault);
+      assert.equal(result.status, 0, `${fault}: ${result.stderr}`);
+      assert.equal(JSON.parse(result.stdout).ownedProcessCount, 0);
+    }
+    for (const fault of ["stable-descendant", "stable-reference"]) {
+      const result = runOpenClawPhysicalInventoryHarness(bytes, bytes, listeners, "cold", fault);
+      assert.equal(result.status, 0, `${fault}: ${result.stderr}`);
+      assert.equal(JSON.parse(result.stdout).ownedProcessCount, 1, "normalization must preserve nonzero ownership");
+    }
+    for (const fault of ["owned-appears", "owned-disappears", "new-descendant", "late-reference", "persistent-command", "persistent-start", "persistent-cwd", "persistent-zombie", "worktree-appears", "root-replace", "listener-drift", "duplicate-row", "truncated-row", "late-descendant", "owned-cwd", "owned-zombie", "managed-root-appears", "project-appears", "dirty-worktree", "deleted-reference"]) {
+      const result = runOpenClawPhysicalInventoryHarness(bytes, bytes, listeners, "cold", fault);
+      assert.notEqual(result.status, 0, `${fault}: ownership drift must refuse`);
+      assert.equal(result.stdout, "");
+      assert.match(result.stderr, /physical|process|persistent/);
     }
   });
 
@@ -17598,10 +19110,12 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.ok(prepareStart >= 0 && prepareEnd > prepareStart, "prepare must retain one exact source boundary");
     const prepareBody = source.slice(prepareStart + prepareMarker.length, prepareEnd);
     assert.match(prepareBody, /^\n  await resumeExactPoisonQuarantineBeforeSelectionV1\(\);/, "the prehook must be prepare's first executable statement");
-    assert.equal([...source.matchAll(/\bresumeExactPoisonQuarantineBeforeSelectionV1\(\)/g)].length, 2, "one private definition and one prepare call are exact");
+    assert.equal([...source.matchAll(/\bresumeExactPoisonQuarantineBeforeSelectionV1\(\)/g)].length, 3, "one private definition and both prepare/resume calls are exact");
+    const resume = topLevelFunctionRegionV1(source, "resumeInternalProductionCurrentEntryAuthorityV1");
+    assert.match(resume, /Promise<InternalProductionCurrentEntryAuthorityStatusV1> \{\n  await resumeExactPoisonQuarantineBeforeSelectionV1\(\);\n  const context = await selectCurrentEntryStoreContextV1\(\);/);
     assert.doesNotMatch(source, /export\s+async\s+function\s+resumeExactPoisonQuarantineBeforeSelectionV1/);
     const runtimeExports = [...source.matchAll(/export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z0-9_]+)/g)].map((match) => match[1]);
-    assert.equal(runtimeExports.length, 53, "the existing public runtime export set must not widen");
+    assertColdRecoveryRuntimeExportContractV1(runtimeExports);
     assert.equal(runtimeExports.includes("prepareInternalProductionCurrentEntryOperationV1"), true);
     assert.equal(runtimeExports.includes("resumeExactPoisonQuarantineBeforeSelectionV1"), false);
     const loaded = await import(`${pathToFileURL(observerSource).href}?p4-exact-poison-private=${Date.now()}`) as Record<string, unknown>;
@@ -17613,6 +19127,37 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "only the declaration and byte-unchanged historical P0 retain the legacy directory token",
     );
     assert.equal(PHASE5B_SELECTED_CONTEXT_CONSUMERS_V1.length, 11, "the final active-store contract is the explicit exact-eleven semantic consumer table");
+  });
+
+  it("cold preselection connects both public entries before publisher and selection", () => {
+    for (const entry of ["prepareInternalProductionCurrentEntryOperationV1", "resumeInternalProductionCurrentEntryAuthorityV1"]) {
+      for (const state of ["cold", "ordinary", "ordinary-locked", "ordinary-unsafe-lock", "absent", "nonpoison", "complete"]) {
+        const root = finalizedFixture().root;
+        try {
+          if (state === "complete") seedExactPoisonStrictChainFixtureV1(root, buildExactPoisonStrictChainFixtureV1(root), "C");
+          else if (state !== "absent") writeRawCurrentEntryOperationFixtureV1(root, state === "nonpoison" ? strictNonpoisonOperationFixtureBytesV1() : exactPoisonOperationFixtureBytesV1());
+          if (state.startsWith("ordinary-")) {
+            const lock = path.join(path.dirname(root), "data/internal-production-baseline/restart-authority-retirement-v1/physical-service-restart-authority.transition.lock");
+            phase5cEnsurePublicationParentV1(lock);
+            writeFileSync(lock, "retained pre-intent lease\n", { flag: "wx", mode: state === "ordinary-unsafe-lock" ? 0o644 : 0o600 });
+          }
+          instrumentExactPoisonPreselectionFixtureV1(root);
+          const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+          let source = readFileSync(modulePath, "utf8");
+          source = source.replace(topLevelFunctionRegionV1(source, "selectCurrentEntryStoreContextV1"), 'async function selectCurrentEntryStoreContextV1(){globalThis.__coldPreselectionPorts.events.push("selection");throw Error("SELECTION_REACHED")}');
+          source = source.replace(topLevelFunctionRegionV1(source, "observeInternalProductionServiceCensusV1"), 'export async function observeInternalProductionServiceCensusV1(){globalThis.__coldPreselectionPorts.events.push("ordinary");return globalThis.__coldPreselectionPorts.ordinary}');
+          writeFileSync(modulePath, source);
+          const before = filesystemTreeSnapshot(path.dirname(root));
+          const result = runFixtureExpression(root, `(async()=>{const events=[],ordinary=${JSON.stringify(exactZeroEffectServiceCensusV1())},settled={state:'settled',settlement:{serviceCensus:ordinary},settlementIdentity:['1','2']};let facadeDone=false;globalThis.__coldPreselectionPorts={events,ordinary,rows(){events.push('ps');return ${JSON.stringify(state)}==='cold'?[]:[{command:'/fixture/node /fixture/spawner.js'}]},history(){events.push('history');return facadeDone?settled:{state:'absent'}},async facade(){events.push('facade');if(${JSON.stringify(state)}.startsWith('ordinary-'))throw Error('STRICT_RETAINED_OWNER_REFUSAL');facadeDone=true;return settled}};const probe={calls:0,afterPrehook:0,throwOnCall:false,events};globalThis.__p4ExactPoisonPreselectionProbeV1=probe;let message=null;try{await m.${entry}()}catch(error){message=String(error)}process.stdout.write(JSON.stringify({events,message,calls:probe.calls}))})()`);
+          assert.equal(result.status, 0, `${entry}/${state}: ${result.stderr}`);
+          const observed = JSON.parse(result.stdout);
+          const expected = state === "cold" ? ["history", "ps", "facade", "ordinary", "history", "publisher", "selection"] : state === "ordinary" ? ["history", "ps", "history", "publisher", "selection"] : state.startsWith("ordinary-") ? ["history", "ps", "facade"] : ["selection"];
+          assert.deepEqual(observed.events, expected, `${entry}/${state}: ${observed.message}`);
+          assert.match(observed.message, state.startsWith("ordinary-") ? /STRICT_RETAINED_OWNER_REFUSAL/ : /SELECTION_REACHED/);
+          assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), before, "copied routing ports must not mutate the disposable store");
+        } finally { removeFixture(root); }
+      }
+    }
   });
 
   it("P4 dispatches only exact-poison incomplete preselection before routing", () => {
@@ -17830,6 +19375,241 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.deepEqual(admission.chain.records.successorPending.value.controllerSource, successorSource);
       assert.equal(admission.chain.records.seal.value.completeZeroEffectBracketHash, admission.chain.completeZeroEffectBracketHash);
       assert.equal(admission.chain.records.commit.value.postSealCompleteZeroEffectBracketHash, admission.chain.completeZeroEffectBracketHash);
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("historical prerequisite cold recovery admits authenticated prior generation without selecting it", () => {
+    // Missing historical admission rejects this valid prior-generation shard; selecting
+    // it as current would cross the independent second-generation pair assertions.
+    const root = createFixture();
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      instrumentExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root, original);
+      const history = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+      writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(original.store, history, [0, 1]);
+      const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      // Only the disposable copy substitutes incident identities. The historical
+      // bytes, schemas, Git ancestry and content hashes are validated by real code.
+      writeFileSync(modulePath, readFileSync(modulePath, "utf8")
+        .replaceAll("8d80ed98b713cb870b2743af9cdcf8edc11a2f7f0fd599553c1fe4a7be0308f6", history[0].pair.hash)
+        .replaceAll("b7ddaeba33704753b1387a98def676b6b2585fc9c13809a33f8cd94f02eaa7ab", history[1].pair.hash));
+      git(root, ["add", "src/internal-production/baseline-post-handoff-receipt-v1.ts"]);
+      git(root, ["commit", "--allow-empty", "-qm", "fixture source advances after historical prerequisites"]);
+      git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      assert.equal(runProducer(root, "--prepare").status, 0);
+      materializeOutputs(root);
+      assert.equal(runProducer(root, "--finalize").status, 0);
+      const current = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+      assert.notEqual(current[0].pair.hash, history[0].pair.hash);
+      assert.notEqual(current[1].pair.hash, history[1].pair.hash);
+      const before = filesystemTreeSnapshot(original.store);
+      const result = runExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout);
+      assert.equal(observed.outcome, "returned", observed.message);
+      assert.deepEqual(observed.admission.currentPrerequisiteOverlay.map((entry: { pair: unknown }) => entry.pair), current.map((entry) => entry.pair));
+      assert.equal(observed.stableOutcome, "returned");
+      assert.deepEqual(filesystemTreeSnapshot(original.store), before);
+      assert.deepEqual(observeExactOriginalPoisonIdentityV1(original.store).inventoryBody, original.inventoryBody);
+      const rejectsHistory = (label: string): void => {
+        const rejected = runExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root);
+        assert.equal(rejected.status, 0, rejected.stderr);
+        const failure = JSON.parse(rejected.stdout);
+        assert.equal(failure.outcome, "threw", label);
+        assert.match(failure.message, /historical|inventory|overlay|record|mode|link|identity|pair|hash/i, label);
+      };
+      writeFileSync(history[0].target, current[0].bytes);
+      rejectsHistory("a different valid canonical audit cannot occupy the historical hash locator");
+      writeFileSync(history[0].target, history[0].bytes);
+      chmodSync(history[0].target, 0o644);
+      rejectsHistory("historical file must be private 0600");
+      chmodSync(history[0].target, 0o600);
+      const historicalSaved = path.join(path.dirname(root), "held-historical-audit.json");
+      renameSync(history[0].target, historicalSaved);
+      symlinkSync(historicalSaved, history[0].target);
+      rejectsHistory("historical symlink is not followed");
+      unlinkSync(history[0].target);
+      linkSync(historicalSaved, history[0].target);
+      rejectsHistory("historical hardlink is rejected");
+      unlinkSync(history[0].target);
+      renameSync(historicalSaved, history[0].target);
+      chmodSync(path.dirname(history[0].target), 0o755);
+      rejectsHistory("historical parent must remain private 0700");
+      chmodSync(path.dirname(history[0].target), 0o700);
+      writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(original.store, current, [0, 1]);
+      git(root, ["commit", "--allow-empty", "-qm", "fixture third source generation"]);
+      git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      assert.equal(runProducer(root, "--prepare").status, 0);
+      materializeOutputs(root);
+      assert.equal(runProducer(root, "--finalize").status, 0);
+      rejectsHistory("valid but unallowlisted prior generation must not become general historical admission");
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  for (const bothHistoricalRecords of [true, false]) {
+  it(`historical prerequisite cold recovery publishes V2 and cold-pins ${bothHistoricalRecords ? "both historical records" : "one historical record and one absence"}`, () => {
+    // Omitting durable history or reopening only its hash would accept a replaced
+    // inode after controller exit. This exercises the real publisher and cold pins.
+    const root = createFixture({ stopAfterCurrentEntryOperationPublication: true });
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      instrumentExactPoisonTask3BoundaryFixtureV1(root, { boundary: "post-commit-response-loss", marker: path.join(path.dirname(root), "history-commit-response-loss") });
+      instrumentExactPoisonPublisherCoreFixtureV1(root, original, null, false, false);
+      const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      writeFileSync(modulePath, readFileSync(modulePath, "utf8")
+        .replace("async function openExactPoisonRecoveryPinnedCommitChainV1(", "export async function openExactPoisonRecoveryPinnedCommitChainV1(")
+        .replace("async function parseCurrentEntryStoreQuarantineDispositionV1(", "export async function parseCurrentEntryStoreQuarantineDispositionV1(")
+        .replace("function openExactPoisonRecoveryPostVisibleOriginalsV1(", "export function openExactPoisonRecoveryPostVisibleOriginalsV1("));
+      finalizeExactPoisonTask3FixtureV1(root, "fixture historical generation");
+      const history = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+      writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(original.store, history, bothHistoricalRecords ? [0, 1] : [0]);
+      writeFileSync(modulePath, readFileSync(modulePath, "utf8")
+        .replaceAll("8d80ed98b713cb870b2743af9cdcf8edc11a2f7f0fd599553c1fe4a7be0308f6", history[0].pair.hash)
+        .replaceAll("b7ddaeba33704753b1387a98def676b6b2585fc9c13809a33f8cd94f02eaa7ab", history[1].pair.hash));
+      finalizeExactPoisonTask3FixtureV1(root, "fixture recovery generation");
+      const current = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+      const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original, current);
+      const observations = buildExactPoisonPublisherRawObservationsV1(original, admitted);
+      const published = runExactPoisonTask3FixtureV1(root, observations);
+      assert.equal(published.status, 0, published.stderr);
+      assert.equal(JSON.parse(published.stdout).outcome, "threw", published.stdout);
+      assert.match(JSON.parse(published.stdout).message, /P4C_POST_COMMIT_RESPONSE_LOSS/);
+      const resumed = runExactPoisonTask3FixtureV1(root, observations);
+      assert.equal(resumed.status, 0, resumed.stderr);
+      assert.equal(JSON.parse(resumed.stdout).outcome, "returned", resumed.stdout);
+      const edge = JSON.parse(readFileSync(path.join(original.store, admitted.chain.records.edge.locator), "utf8"));
+      const dispositionHash = edge.disposition.dispositionHash as string;
+      const dispositionPath = path.join(original.store, "records/current-entry-store-quarantine-dispositions/sha256", dispositionHash.slice(0, 2), `${dispositionHash}.json`);
+      const disposition = JSON.parse(readFileSync(dispositionPath, "utf8"));
+      assert.equal(disposition.schema, "setfarm.internal-production-current-entry-store-quarantine-disposition.v2");
+      assert.deepEqual(disposition.quarantinedInventory, { inventoryBody: original.inventoryBody, inventoryHash: original.inventoryHash });
+      assert.deepEqual(disposition.successorGenesis.authorityV3Migration31Audit, { authorityV3Migration31AuditRef: current[0].pair.ref, authorityV3Migration31AuditHash: current[0].pair.hash });
+      const historicalInventory = disposition.historicalPrerequisiteInventory;
+      assert.equal(historicalInventory.inventoryHash, canonicalHash(historicalInventory.inventoryBody));
+      assert.deepEqual(historicalInventory.inventoryBody.orderedRecords.map((entry: { hash: string }) => entry.hash), history.map((entry) => entry.pair.hash));
+      assert.deepEqual(historicalInventory.inventoryBody.orderedRecords.map((entry: { state: string }) => entry.state), bothHistoricalRecords ? ["present", "present"] : ["present", "absent"]);
+      for (const mutation of ["unknown-field", "crossed-order", "v1-with-history", "missing-history"] as const) {
+        const core = structuredClone(disposition);
+        delete core.dispositionRef;
+        delete core.dispositionHash;
+        if (mutation === "unknown-field") core.historicalPrerequisiteInventory.inventoryBody.orderedRecords[0].file.extra = true;
+        if (mutation === "crossed-order") core.historicalPrerequisiteInventory.inventoryBody.orderedRecords.reverse();
+        if (mutation === "v1-with-history") core.schema = "setfarm.internal-production-current-entry-store-quarantine-disposition.v1";
+        if (mutation === "missing-history") delete core.historicalPrerequisiteInventory;
+        if (core.historicalPrerequisiteInventory) core.historicalPrerequisiteInventory.inventoryHash = canonicalHash(core.historicalPrerequisiteInventory.inventoryBody);
+        const hash = canonicalHash(core);
+        const ref = `setfarm://internal-production/current-entry-store-quarantine-disposition/sha256/${hash}`;
+        const malformed = { ...core, dispositionRef: ref, dispositionHash: hash };
+        const parsed = runFixtureExpression(root, `(async()=>{try{await m.parseCurrentEntryStoreQuarantineDispositionV1(Buffer.from(${JSON.stringify(Buffer.from(`${canonical(malformed)}\n`).toString("base64"))},"base64"),${JSON.stringify({ ref, hash })});process.stdout.write("returned");}catch(error){process.stdout.write("threw:"+String(error));}})()`);
+        assert.equal(parsed.status, 0, parsed.stderr);
+        assert.match(parsed.stdout, /^threw:.*(?:field|historical|inventory|schema)/i, mutation);
+      }
+      const replay = (): { outcome: string; message: string | null } => {
+        const result = runFixtureExpression(root, `(async()=>{let context,originals;try{context=await m.openExactPoisonRecoveryPinnedCommitChainV1();originals=m.openExactPoisonRecoveryPostVisibleOriginalsV1(context);originals.evidence.assertStableOriginals();process.stdout.write(JSON.stringify({outcome:"returned",message:null}));}catch(error){process.stdout.write(JSON.stringify({outcome:"threw",message:String(error)}));}finally{originals?.close();context?.close();}})()`);
+        assert.equal(result.status, 0, result.stderr);
+        return JSON.parse(result.stdout);
+      };
+      assert.equal(replay().outcome, "returned");
+      const legacyBeforePublic = filesystemTreeSnapshot(path.join(original.store, "records/authority-v3-migration31-audits"));
+      const selectedPublishers = runFixtureExpression(root, exactPoisonTask3ProbeExpressionV1(root, observations, "publisher-core").replace("await m.resumeExactPoisonQuarantinePublisherCoreV1()", "value=[(await m.observeCurrentInternalProductionAuthorityV3Migration31AuditV1()).authorityV3Migration31AuditHash,(await m.observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1()).pendingBootstrapHandoffMigrationHash]"));
+      assert.equal(selectedPublishers.status, 0, selectedPublishers.stderr);
+      assert.equal(JSON.parse(selectedPublishers.stdout).outcome, "returned", selectedPublishers.stdout);
+      assert.deepEqual(JSON.parse(selectedPublishers.stdout).value, current.map((entry) => entry.pair.hash), "ordinary publishers remain usable in the authenticated selected successor");
+      assert.deepEqual(filesystemTreeSnapshot(path.join(original.store, "records/authority-v3-migration31-audits")), legacyBeforePublic);
+      // Current source advances independently: immutable historical replay must not
+      // consult current builders or re-select the previous generation as current.
+      git(root, ["commit", "--allow-empty", "-qm", "fixture post-commit source advance"]);
+      git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      assert.equal(replay().outcome, "returned");
+      if (!bothHistoricalRecords) {
+        const shardExisted = existsSync(path.dirname(history[1].target));
+        writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(original.store, history, [1]);
+        assert.equal(replay().outcome, "threw", "the exact historically absent pair cannot appear after commit");
+        unlinkSync(history[1].target);
+        if (!shardExisted) rmdirSync(path.dirname(history[1].target));
+        assert.equal(replay().outcome, "returned");
+      }
+      const saved = `${history[0].target}.held`;
+      renameSync(history[0].target, saved);
+      writeFileSync(history[0].target, history[0].bytes, { flag: "wx", mode: 0o600 });
+      assert.equal(replay().outcome, "threw", "equal bytes at a replaced historical inode must fail cold replay");
+      const resolvedOperation = admitted.chain.records.successorOperation.value;
+      const publicReplay = runFixtureExpression(root, `(async()=>{try{await m.resolveInternalProductionCurrentEntryOperationV1(${JSON.stringify({ operationRef: resolvedOperation.operationRef, operationHash: resolvedOperation.operationHash })});process.stdout.write("returned");}catch(error){process.stdout.write("threw:"+String(error));}})()`);
+      assert.equal(publicReplay.status, 0, publicReplay.stderr);
+      assert.match(publicReplay.stdout, /^threw:.*historical/i, "public historical operation replay must transitively pin its V2 history");
+      unlinkSync(history[0].target);
+      renameSync(saved, history[0].target);
+      assert.equal(replay().outcome, "returned");
+      const historicalParent = path.dirname(history[0].target);
+      const savedParent = path.join(path.dirname(root), "held-historical-parent");
+      renameSync(historicalParent, savedParent);
+      mkdirSync(historicalParent, { mode: 0o700 });
+      renameSync(path.join(savedParent, path.basename(history[0].target)), history[0].target);
+      assert.equal(replay().outcome, "threw", "same historical file under a replaced parent inode must fail");
+      renameSync(history[0].target, path.join(savedParent, path.basename(history[0].target)));
+      rmdirSync(historicalParent);
+      renameSync(savedParent, historicalParent);
+      assert.equal(replay().outcome, "returned");
+      const foreign = path.join(historicalParent, "unexpected.json");
+      writeFileSync(foreign, history[0].bytes, { flag: "wx", mode: 0o600 });
+      assert.equal(replay().outcome, "threw", "historical shard appearance cannot be ignored on cold replay");
+      unlinkSync(foreign);
+      assert.equal(replay().outcome, "returned");
+      renameSync(history[0].target, `${history[0].target}.held`);
+      assert.equal(replay().outcome, "threw", "deleted historical record must fail cold replay");
+    } finally {
+      removeFixture(root);
+    }
+  });
+  }
+
+  it("historical prerequisite cold recovery deduplicates only completely equal current/history records", () => {
+    const root = createFixture();
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      instrumentExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root, original);
+      const current = deriveExactPoisonCurrentPrerequisiteOverlayFixtureV1(root);
+      writeExactPoisonCurrentPrerequisiteOverlayPrefixFixtureV1(original.store, current, [0, 1]);
+      const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      // This direct inventory-consumer test uses already validated real builder
+      // records. No source observer runs after substituting this copied allowlist.
+      writeFileSync(modulePath, readFileSync(modulePath, "utf8")
+        .replaceAll("8d80ed98b713cb870b2743af9cdcf8edc11a2f7f0fd599553c1fe4a7be0308f6", current[0].pair.hash)
+        .replaceAll("b7ddaeba33704753b1387a98def676b6b2585fc9c13809a33f8cd94f02eaa7ab", current[1].pair.hash));
+      const transported = current.map((record) => ({ ...record, bytes: record.bytes.toString("base64") }));
+      const before = filesystemTreeSnapshot(original.store);
+      for (const crossed of [false, true]) {
+        const result = runFixtureExpression(root, `(async()=>{const context=await m.selectCurrentEntryStoreContextV1();const expected=${JSON.stringify(transported)}.map(record=>({...record,target:m.currentEntryPrerequisiteRecordPathV1(context,record.kind,record.pair.hash),bytes:Buffer.from(record.bytes,"base64")}));const history=expected.map(record=>({...record}));${crossed ? 'history[0]={...history[0],bytes:Buffer.from("{}\\n")};' : ""}try{const operation=m.requireExactPoisonRecoverySnapshotV1(m.fixedLegacyCurrentEntryOperationPathV1(),"overlap operation");const value=m.observeExactPoisonQuarantinedInventoryV1(operation,{assertStable:()=>{}},expected,history);value.assertStableOriginals();process.stdout.write(JSON.stringify({outcome:"returned",count:value.currentPrerequisiteOverlay.length}));}catch(error){process.stdout.write(JSON.stringify({outcome:"threw",message:String(error)}));}})()`);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.outcome, crossed ? "threw" : "returned", observed.message);
+        if (crossed) assert.match(observed.message, /overlap is crossed/);
+        else assert.equal(observed.count, 2);
+        assert.deepEqual(filesystemTreeSnapshot(original.store), before);
+      }
+    } finally {
+      removeFixture(root);
+    }
+  });
+
+  it("historical prerequisite cold recovery public publishers refuse unrecovered poison before writes", () => {
+    const root = createFixture();
+    try {
+      const original = seedExactOriginalPoisonStoreV1(root);
+      instrumentExactPoisonCurrentPrerequisiteOverlayAdmissionFixtureV1(root, original);
+      const before = filesystemTreeSnapshot(original.store);
+      for (const name of ["observeCurrentInternalProductionAuthorityV3Migration31AuditV1", "observeCurrentInternalProductionPendingBootstrapHandoffMigrationV1"]) {
+        const result = runFixtureExpression(root, `(async()=>{try{await m[${JSON.stringify(name)}]();process.stdout.write(JSON.stringify({outcome:"returned"}));}catch(error){process.stdout.write(JSON.stringify({outcome:"threw",message:String(error)}));}})()`);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.outcome, "threw", name);
+        assert.match(observed.message, /prepare-current-entry/);
+        assert.deepEqual(filesystemTreeSnapshot(original.store), before, "public publisher refuses before creating even a prerequisite shard");
+      }
     } finally {
       removeFixture(root);
     }
@@ -18773,13 +20553,16 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const historicalResolverRegion = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryOperationV1");
     const historicalAuthorityResolverRegion = topLevelFunctionRegionV1(source, "resolveInternalProductionAuthorityV3Migration31AuditAtCommittedExactPoisonSuccessorV1");
     const historicalPendingResolverRegion = topLevelFunctionRegionV1(source, "resolveInternalProductionPendingBootstrapHandoffMigrationAtCommittedExactPoisonSuccessorV1");
-    assert.equal(source.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 6, "C durability has exactly one definition, one publisher call, one current-selector call, and three exact historical-resolver calls");
+    const historicalPreMutationResolverRegion = topLevelFunctionRegionV1(source, "resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1");
+    assert.equal(source.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 7, "C durability has exactly one definition, one publisher call, one current-selector call, and four exact historical-resolver calls");
     assert.equal(commitRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "C durability retains one private definition");
     assert.equal(core.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "publisher invokes C durability exactly once");
     assert.equal(selectorRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "current strict-C selection invokes C durability exactly once");
     assert.equal(historicalResolverRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "historical strict-C resolution invokes C durability exactly once");
     assert.equal(historicalAuthorityResolverRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "historical committed audit resolution invokes C durability exactly once");
     assert.equal(historicalPendingResolverRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "historical committed pending resolution invokes C durability exactly once");
+    assert.equal(historicalPreMutationResolverRegion.split("durablyAuthenticateSuccessorActivationCommitV1(").length - 1, 1, "historical committed pre-mutation resolution invokes C durability exactly once");
+    assert.match(historicalPreMutationResolverRegion, /context\.assertStable\(\);\s*await durablyAuthenticateSuccessorActivationCommitV1\(context\);\s*context\.assertStable\(\);/, "historical pre-mutation resolution retains its exact C context across durability");
     assert.match(core, /heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await durablyAuthenticateSuccessorActivationCommitV1\([^;]+\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);/, "publisher fences the generic C helper with the exact H writer and pinned C context immediately before and after its await");
     assert.equal(core.split("acquireExactPoisonRecoveryWriterV1()").length - 1, 1, "publisher holds one H writer across S and C durability");
     assert.doesNotMatch(source, /export\s+async\s+function\s+(?:openExactPoisonRecoveryPinned|durablyAuthenticateSuccessorActivation)/);
@@ -19250,8 +21033,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.doesNotMatch(region, /^(?:export\s+)?async\s+function/m, `${consumer.name}: remains synchronous`);
       assert.doesNotMatch(region, /\bawait\b|selectCurrentEntryStoreContextV1\(|durablyAuthenticateSuccessorActivation|postVisible|PostVisible|WeakMap|process\.env|AsyncLocalStorage/, `${consumer.name}: performs no selection, durability, post-visible validation, await, or ambient lookup`);
     }
-    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(context)").length - 1, 16,
-      "the authenticator is consumed by the eleven synchronous path groups, two private no-write prerequisite builders, selected effect executor, and migration-status pre/post context fences");
+    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(context)").length - 1, 17,
+      "the authenticator retains the eleven path groups, two private builders, selected effect executor, selected-operation recheck, and migration-status pre/post fences");
     const fixedPathRegion = topLevelFunctionRegionV1(source, "fixedCurrentEntryPath");
     assert.match(fixedPathRegion, /context:\s*SelectedCurrentEntryStoreContextV1/);
     assert.match(fixedPathRegion, /readCurrentEntryStore\(context/);
@@ -19263,7 +21046,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.doesNotMatch(source, /AsyncLocalStorage|SETFARM_[A-Z0-9_]*CURRENT_ENTRY_(?:ROOT|STORE|CONTEXT)|JSON\.stringify\([^\n]*SelectedCurrentEntryStoreContextV1/);
     assert.doesNotMatch(source, /export\s+(?:async\s+)?function\s+(?:selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|requireSelectedCurrentEntryStoreContextStateV1)/);
     const runtimeExports = [...source.matchAll(/export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z0-9_]+)/g)].map((match) => match[1]);
-    assert.equal(runtimeExports.length, 53, "the public runtime export set remains unchanged");
+    assertColdRecoveryRuntimeExportContractV1(runtimeExports);
     const loaded = await import(`${pathToFileURL(observerSource).href}?p5b-private=${Date.now()}`) as Record<string, unknown>;
     for (const privateName of [
       "selectedCurrentEntryStoreContextBrandV1",
@@ -19741,6 +21524,104 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const equality = topLevelFunctionRegionV1(source, "assertExactPoisonRecoveryPinnedChainEqualV1");
     assert.match(equality, /canonicalComparable\(expected\.successorOperation\)[\s\S]*?canonicalComparable\(observed\.successorOperation\)/, "fresh C-helper reopen compares the fully parsed successor operation semantically");
     assert.doesNotMatch(source, /export\s+(?:async\s+)?function resolveSuccessorHistorical|process\.env\.[A-Za-z0-9_]*P5B|successor-activation-(?:decision|finalization|authority)/, "B2 adds no public test seam, runtime seam, or fourth marker family");
+  });
+
+  it("historical predecessor reader uses immutable P3 without current-status selection", async () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      const original = seedExactOriginalPoisonStoreV1(root);
+      const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+      const ordinary = seedPhase5bOrdinaryHistoricalOperationFixtureV1(root, admitted);
+      const service = exactZeroEffectServiceCensusV1();
+      const projection = { schema: "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1", currentEntryOperationRef: ordinary.pair.operationRef, currentEntryOperationHash: ordinary.pair.operationHash, observedServiceCensusHash: service.censusHash, spawner: service.spawner, dashboard: service.dashboard, missionControl: service.missionControl, openClaw: service.openClaw };
+      const body = { ...projection, serviceProjectionSetHash: canonicalHash(projection) };
+      const hash = canonicalHash(body);
+      const pair = { preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${hash}`, preMutationLoadedRuntimeServiceAuthorityHash: hash };
+      const expected = { ...body, ...pair };
+      const locator = path.join(ordinary.store, "operations", "sha256", ordinary.pair.operationHash.slice(0, 2), ordinary.pair.operationHash, "00-pre-mutation-loaded-runtime-service-authority.pair.json");
+      const record = path.join(ordinary.store, "records/pre-mutation-loaded-runtime-service-authorities/sha256", hash.slice(0, 2), `${hash}.json`);
+      for (const [target, value] of [[locator, pair], [record, expected]] as const) {
+        phase5cEnsurePublicationParentV1(target);
+        writeFileSync(target, canonicalFixtureRecordV1(value), { mode: 0o600 });
+      }
+      // A partial/malformed live status must not participate in historical reads.
+      writeFileSync(path.join(path.dirname(locator), "01-current-status.pair.json"), "{", { mode: 0o600 });
+      const before = filesystemTreeSnapshot(path.dirname(root));
+      const result = await runFixtureExpressionAsync(root, `(async()=>{const value=await m.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(${JSON.stringify(ordinary.pair)});process.stdout.write(JSON.stringify({value,frozen:Object.isFrozen(value)&&Object.isFrozen(value.spawner)}))})()`);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), { value: expected, frozen: true });
+      assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), before, "historical reading cannot publish or repair live status");
+      unlinkSync(locator);
+      const absent = await runFixtureExpressionAsync(root, `m.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(${JSON.stringify(ordinary.pair)})`);
+      assert.notEqual(absent.status, 0, "a hash record without its original P3 locator grants no historical binding");
+      assert.match(absent.stderr, /ENOENT/);
+    } finally { removeFixture(root); }
+  });
+
+  it("historical predecessor reader authenticates only the committed successor P3 root", async () => {
+    for (const mode of ["valid", "missing-C", "unknown-operation", "missing-P3-with-legacy-bait", "crossed-record", "pair-mode", "record-hardlink"] as const) {
+      const root = createFixture();
+      try {
+        const harness = configurePhase5bHistoricalStrictChainFixtureV1(root, "C");
+        const operation = phase5bOperationPairFixtureV1(harness.admitted.chain.records.successorOperation.value);
+        const store = path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot);
+        const fixture = seedHistoricalPreMutationFixtureV1(store, operation);
+        if (mode === "missing-C") unlinkSync(harness.seeded.C);
+        if (mode === "missing-P3-with-legacy-bait") {
+          seedHistoricalPreMutationFixtureV1(harness.original.store, operation);
+          unlinkSync(fixture.locator);
+        }
+        if (mode === "crossed-record") writeFileSync(fixture.record, canonicalFixtureRecordV1({ ...fixture.value, currentEntryOperationHash: "a".repeat(64) }));
+        if (mode === "pair-mode") chmodSync(fixture.locator, 0o644);
+        if (mode === "record-hardlink") linkSync(fixture.record, `${fixture.record}.alias`);
+        const input = mode === "unknown-operation" ? { operationRef: `setfarm://internal-production/current-entry-operation/sha256/${"b".repeat(64)}`, operationHash: "b".repeat(64) } : operation;
+        const before = filesystemTreeSnapshot(path.dirname(root));
+        const result = await runFixtureExpressionAsync(root, `(async()=>{try{const value=await m.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({outcome:'returned',value}))}catch(error){process.stdout.write(JSON.stringify({outcome:'threw',message:String(error)}))}})()`);
+        assert.equal(result.status, 0, `${mode}: ${result.stderr}`);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.outcome, mode === "valid" ? "returned" : "threw", `${mode}: ${observed.message}`);
+        if (mode === "valid") assert.deepEqual(observed.value, fixture.value);
+        else assert.doesNotMatch(observed.message, /not a function|ReferenceError|TypeError/);
+        assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), before, `${mode}: historical resolution does not repair or publish`);
+      } finally { removeFixture(root); }
+    }
+  });
+
+  it("historical predecessor reader retains original P3 and cold identity across awaits", async () => {
+    for (const mutation of ["none", "locator", "record", "operation", "parent", "cold", "close-response-loss"] as const) {
+      const root = createFixture();
+      try {
+        installExactCurrentSuccessorGitFixtureV1(root);
+        const original = seedExactOriginalPoisonStoreV1(root);
+        const admitted = buildExactPoisonPublisherAdmissionFixtureV1(root, original);
+        const ordinary = seedPhase5bOrdinaryHistoricalOperationFixtureV1(root, admitted);
+        const terminal = path.join(path.dirname(root), "cold-history.json");
+        writeFileSync(terminal, "{}\n", { mode: 0o600 });
+        const identity = lstatSync(terminal, { bigint: true });
+        const cold = { settlementRef: `setfarm://internal-production/cold-spawner-controller-settlement/sha256/${"f".repeat(64)}`, settlementHash: "f".repeat(64), settlementIdentity: [identity.dev, identity.ino, identity.uid, identity.gid, identity.mode, identity.nlink, identity.size, identity.birthtimeNs, identity.mtimeNs, identity.ctimeNs].map(String) };
+        const fixture = seedHistoricalPreMutationFixtureV1(ordinary.store, ordinary.pair, cold);
+        const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+        let source = readFileSync(modulePath, "utf8");
+        const marker = "    const assertColdHistoryStable = await openTask12ColdSpawnerPredecessorHistoryV1(value);";
+        assert.equal(source.split(marker).length - 1, 1, "instrument actual reader after asynchronous cold authentication");
+        source = source.replace(marker, `${marker}\n    await Reflect.get(globalThis, '__historicalP3AfterAwaitV1')();`);
+        if (mutation === "close-response-loss") {
+          const reader = topLevelFunctionRegionV1(source, "readHistoricalPreMutationRuntimeAuthorityAtRootV1");
+          assert.equal(reader.split("closeSync(pin.descriptor)").length - 1, 1);
+          source = source.replace(reader, reader.replace("closeSync(pin.descriptor)", "(() => { closeSync(pin.descriptor); if (path.basename(pin.target) !== '00-pre-mutation-loaded-runtime-service-authority.pair.json') throw new Error('HISTORICAL_P3_CLOSE_RESPONSE_LOSS'); })()"));
+        }
+        writeFileSync(modulePath, source);
+        const target = mutation === "locator" ? fixture.locator : mutation === "record" ? fixture.record : mutation === "operation" ? path.join(ordinary.store, "current-entry-operation.json") : mutation === "parent" ? path.dirname(fixture.record) : terminal;
+        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import('node:fs');await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts")).href)});const terminal=${JSON.stringify(terminal)},mutation=${JSON.stringify(mutation)},target=${JSON.stringify(target)};globalThis.__nestedColdHistoryV1=()=>{const s=fs.lstatSync(terminal,{bigint:true});return {state:'settled',settlement:{settlementRef:${JSON.stringify(cold.settlementRef)},settlementHash:${JSON.stringify(cold.settlementHash)},serviceCensus:${JSON.stringify(fixture.service)}},settlementIdentity:[s.dev,s.ino,s.uid,s.gid,s.mode,s.nlink,s.size,s.birthtimeNs,s.mtimeNs,s.ctimeNs].map(String)}};globalThis.__historicalP3AfterAwaitV1=async()=>{if(mutation==='none'||mutation==='close-response-loss')return;if(mutation==='parent'){fs.renameSync(target,target+'.old');fs.mkdirSync(target,{mode:0o700});for(const name of fs.readdirSync(target+'.old'))fs.copyFileSync(target+'.old/'+name,target+'/'+name)}else{const bytes=fs.readFileSync(target);fs.renameSync(target,target+'.old');fs.writeFileSync(target,bytes,{mode:0o600})}};const count=()=>fs.readdirSync('/dev/fd').filter(n=>{try{fs.fstatSync(Number(n));return true}catch{return false}}).length;await new Promise(resolve=>setTimeout(resolve,100));const before=count();let outcome='returned',message=null,value=null;try{value=await m.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(${JSON.stringify(ordinary.pair)})}catch(error){outcome='threw';message=String(error)}process.stdout.write(JSON.stringify({outcome,message,value,descriptorDelta:count()-before}))})()`);
+        assert.equal(result.status, 0, `${mutation}: ${result.stderr}`);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.outcome, mutation === "none" ? "returned" : "threw", `${mutation}: ${observed.message}`);
+        assert.equal(observed.descriptorDelta, 0, `${mutation}: all retained descriptors are closed`);
+        if (mutation === "none") assert.deepEqual(observed.value, fixture.value);
+        else assert.match(observed.message, /changed|crossed|HISTORICAL_P3_CLOSE_RESPONSE_LOSS/);
+      } finally { removeFixture(root); }
+    }
   });
 
   it("P5b-B2 ordinary fixed operation remains legacy while unknown no-chain requests fail closed", async () => {
@@ -20904,6 +22785,210 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
+  it("cold preselection router requires positive absence and fresh settled ordinary identity", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "setfarm-cold-preselection-"));
+    try {
+      const source = readFileSync(observerSource, "utf8");
+      const names = ["ensureExactPoisonSpawnerBeforeQuarantineV1", "observeColdSpawnerGlobalProcessRowsV1", "isColdSpawnerFamilyProcessV1", "parsePhysicalProcessesV1", "canonicalComparable", "strictUtf8", "currentEntryFail", "fail"];
+      const body = names.map(name => topLevelFunctionRegionV1(source, name)).join("\n");
+      writeFileSync(path.join(root, "package.json"), '{"type":"module"}\n');
+      writeFileSync(path.join(root, "baseline-restart-authority-retirement-v1.js"), `export function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){return globalThis.__coldRouterPorts.history()}
+export async function ensureInternalProductionColdSpawnerBootstrapSettledV1(){return globalThis.__coldRouterPorts.facade()}
+`);
+      const sticky = source.match(/^let exactPoisonColdPreselectionMayOwnResourcesV1 = false;$/m)?.[0];
+      assert.ok(sticky, "copied router must retain the actual private ownership flag");
+      const harness = `${sticky}\nconst UTF8=new TextDecoder('utf-8',{fatal:true}),PHYSICAL_PROCESS_CAP_V1=100000;
+let ports;
+function runPhysicalCommandV1(command,args){ports.events.push('ps');if(ports.psError)throw Error('ps failed');if(command!=='/bin/ps'||JSON.stringify(args)!==JSON.stringify(['-ww','-axo','uid=,pid=,ppid=,pgid=,stat=,lstart=,command=']))throw Error('unexpected physical command');return {stdout:Buffer.from(ports.rows)}}
+function resolveInternalProductionBaselineAuthorityPathV1(value){if(value!=='data/internal-production-baseline/restart-authority-retirement-v1/physical-service-restart-authority.transition.lock')throw Error('wrong lock locator');return value}
+function readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(){ports.events.push('lock');if(ports.lockError)throw Error('unsafe lock');return (ports.lockSequence?ports.lockSequence.shift():ports.lockPresent)?{}:null}
+async function observeInternalProductionServiceCensusV1(){ports.events.push('ordinary');if(ports.ordinaryError)throw Error('ordinary dead');return ports.ordinary}
+${body}
+export async function run(value){ports=value;if(!value.continueOwner)exactPoisonColdPreselectionMayOwnResourcesV1=false;globalThis.__coldRouterPorts={history(){ports.events.push('history');const value=ports.histories.shift();if(value==='partial')throw Error('partial prefix');return value},async facade(){ports.events.push('facade');if(ports.facadeError)throw Error('strict facade refusal');return ports.settled}};try{await ensureExactPoisonSpawnerBeforeQuarantineV1();return {outcome:'returned',events:ports.events}}catch(error){return {outcome:'threw',message:String(error),events:ports.events}}finally{delete globalThis.__coldRouterPorts}}
+`;
+      writeFileSync(path.join(root, "harness.js"), transformSync(harness, { loader: "ts", format: "esm", target: "node22" }).code);
+      const module = await import(pathToFileURL(path.join(root, "harness.js")).href);
+      const ordinary = exactZeroEffectServiceCensusV1();
+      const settled = { state: "settled", settlement: { settlementRef: "fixed-ref", settlementHash: "a".repeat(64), serviceCensus: ordinary }, settlementIdentity: ["1", "2"], censusHash: "b".repeat(64) };
+      const absent = { state: "absent", absenceIdentityHash: "c".repeat(64) };
+      const row = (pid: number, uid = process.getuid!(), stat = "S", command = "/fixture/node /fixture/controller.js") => `${uid} ${pid} 1 ${pid} ${stat} Sun Sep 13 00:00:00 2026 ${command}\n`;
+      const observer = row(process.pid);
+      const cases = [
+        { name: "cold", histories: [absent, settled], events: ["history", "ps", "facade", "ordinary", "history"] },
+        { name: "settled", histories: [settled, settled], events: ["history", "facade", "ordinary", "history"] },
+        { name: "retained partial", histories: ["partial", settled], events: ["history", "facade", "ordinary", "history"] },
+        { name: "unretained partial", histories: ["partial"], facadeError: true, events: ["history", "facade"], error: /strict facade refusal/ },
+        { name: "cold refused", histories: [absent], facadeError: true, events: ["history", "ps", "facade"], error: /strict facade refusal/ },
+        { name: "ordinary", rows: observer + row(2147483601, process.getuid!(), "S", "/fixture/node /fixture/spawner.js"), histories: [absent, absent], events: ["history", "ps", "lock", "history", "lock"] },
+        { name: "foreign family", rows: observer + row(2147483601, 0, "S", "/fixture/setfarm spawner"), histories: [absent, absent], events: ["history", "ps", "lock", "history", "lock"] },
+        { name: "zombie family", rows: observer + row(2147483601, process.getuid!(), "Z", "/fixture/node /fixture/spawner.ts"), histories: [absent, absent], events: ["history", "ps", "lock", "history", "lock"] },
+        { name: "journal appeared during ps", rows: observer + row(2147483601, process.getuid!(), "S", "/fixture/node /fixture/spawner.js"), histories: [absent, "partial"], facadeError: true, events: ["history", "ps", "lock", "history", "facade"], error: /strict facade refusal/ },
+        { name: "lock appeared on final read", rows: observer + row(2147483601, process.getuid!(), "S", "/fixture/node /fixture/spawner.js"), histories: [absent, absent], lockSequence: [false, true], facadeError: true, events: ["history", "ps", "lock", "history", "lock", "facade"], error: /strict facade refusal/ },
+        { name: "pre-intent lease", rows: observer + row(2147483601, process.getuid!(), "S", "/fixture/node /fixture/spawner.js"), histories: [absent], lockPresent: true, facadeError: true, events: ["history", "ps", "lock", "facade"], error: /strict facade refusal/ },
+        { name: "unsafe lease", rows: observer + row(2147483601, process.getuid!(), "S", "/fixture/node /fixture/spawner.js"), histories: [absent], lockError: true, facadeError: true, events: ["history", "ps", "lock", "facade"], error: /strict facade refusal/ },
+        { name: "ps command failure", histories: [absent], psError: true, events: ["history", "ps"], error: /ps failed/ },
+        { name: "malformed ps", rows: "unparseable\n", histories: [absent], events: ["history", "ps"], error: /process row is malformed/ },
+        { name: "missing observer", rows: row(2147483601), histories: [absent], events: ["history", "ps"], error: /observer is missing or crossed/ },
+        { name: "zombie observer", rows: row(process.pid, process.getuid!(), "Z"), histories: [absent], events: ["history", "ps"], error: /observer is missing or crossed/ },
+        { name: "dead settled child", histories: [settled], ordinaryError: true, events: ["history", "facade", "ordinary"], error: /ordinary dead/ },
+        { name: "crossed ordinary", histories: [settled], ordinary: { ...ordinary, censusHash: "d".repeat(64) }, events: ["history", "facade", "ordinary"], error: /ordinary census/ },
+        { name: "initial terminal replaced", histories: [{ ...settled, settlementIdentity: ["1", "3"] }], events: ["history", "facade"], error: /history changed/ },
+        { name: "late terminal replaced", histories: [settled, { ...settled, settlementIdentity: ["1", "3"] }], events: ["history", "facade", "ordinary", "history"], error: /history changed/ },
+        { name: "late terminal absent", histories: [settled, absent], events: ["history", "facade", "ordinary", "history"], error: /history changed/ },
+        { name: "late terminal unsafe", histories: [settled, "partial"], events: ["history", "facade", "ordinary", "history"], error: /partial prefix/ },
+      ];
+      for (const testCase of cases) {
+        const result = await module.run({ rows: observer, ordinary, settled, ...testCase, histories: [...testCase.histories], events: [] });
+        assert.equal(result.outcome, testCase.error ? "threw" : "returned", `${testCase.name}: ${result.message}`);
+        if (testCase.error) assert.match(result.message, testCase.error, testCase.name);
+        assert.deepEqual(result.events, testCase.events, testCase.name);
+      }
+      const held = await module.run({ rows: observer, ordinary, settled, histories: [absent], facadeError: true, events: [] });
+      assert.equal(held.outcome, "threw");
+      const retained = await module.run({ rows: observer + row(2147483601, process.getuid!(), "S", "/fixture/node /fixture/spawner.js"), ordinary, settled, histories: [absent], facadeError: true, continueOwner: true, events: [] });
+      assert.equal(retained.outcome, "threw");
+      assert.deepEqual(retained.events, ["history", "facade"], "failed retained cleanup must not take ordinary shortcut even after lock unlink");
+      const released = await module.run({ rows: observer, ordinary, settled, histories: [absent, settled], continueOwner: true, events: [] });
+      assert.equal(released.outcome, "returned");
+      const next = await module.run({ rows: observer + row(2147483601, process.getuid!(), "S", "/fixture/node /fixture/spawner.js"), ordinary, settled, histories: [absent, absent], continueOwner: true, events: [] });
+      assert.deepEqual(next.events, ["history", "ps", "lock", "history", "lock"], "successful strict bracket clears only the router's retained suspicion");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("cold predecessor preparation binds fixed settlement history without changing V1 publication bytes", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "setfarm-cold-predecessor-builder-"));
+    try {
+      const source = readFileSync(observerSource, "utf8");
+      const service = exactZeroEffectServiceCensusV1();
+      const operation = { operationRef: `setfarm://internal-production/current-entry-operation/sha256/${"a".repeat(64)}`, operationHash: "a".repeat(64), controllerSource: { sha: "b".repeat(40), treeHash: "c".repeat(40), buildHash: "d".repeat(64) }, productBuildAuthorityV2DeliveryEvidence: {}, authorityV3Migration31Audit: {}, pendingBootstrapHandoffMigration: {} };
+      operation.productBuildAuthorityV2DeliveryEvidence = { deliveryEvidenceRef: `mission-control://internal-production/product-build-authority-v2-delivery-evidence/sha256/${"1".repeat(64)}`, deliveryEvidenceHash: "1".repeat(64) };
+      operation.authorityV3Migration31Audit = { authorityV3Migration31AuditRef: `setfarm://internal-production/authority-v3-migration31-audit/sha256/${"2".repeat(64)}`, authorityV3Migration31AuditHash: "2".repeat(64) };
+      operation.pendingBootstrapHandoffMigration = { pendingBootstrapHandoffMigrationRef: `setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/${"3".repeat(64)}`, pendingBootstrapHandoffMigrationHash: "3".repeat(64) };
+      const settlementBody = { schema: "setfarm.internal-production-cold-spawner-controller-settlement.v1", purpose: "exact-poison-sealed-cold-spawner-v1", serviceCensus: service };
+      const settlementHash = canonicalHash(settlementBody);
+      const settlement = { ...settlementBody, settlementRef: `setfarm://internal-production/cold-spawner-controller-settlement/sha256/${settlementHash}`, settlementHash };
+      const settled = { schema: "setfarm.internal-production-cold-spawner-bootstrap-journal-census.v1", state: "settled", incompleteOwnerCount: 0, settlement, settlementIdentity: ["1", "2", String(process.getuid!()), "20", "33152", "1", "512", "1", "2", "3"], censusHash: "f".repeat(64) };
+      // The fixed retirement port is independently covered with genuine files,
+      // helper and child. This copied builder controls only that observed port.
+      writeFileSync(path.join(root, "baseline-restart-authority-retirement-v1.js"), "export function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){return globalThis.__preparedColdHistory();}\n");
+      writeFileSync(path.join(root, "package.json"), '{"type":"module"}\n');
+      const names = ["buildTask12PreparedCurrentEntryPublicationSetV1", "currentEntryFail", "fail", "requireSha256", "canonicalComparable", "compareBytes", "sha256", "recursivelyFreeze", "isPlainRecord", "hasExactKeys"];
+      names.push("parseInternalProductionCurrentEntryAuthorityStatusV1", "requireExactPoisonPostVisibleProgressNestedAuthorityBodyV1", "strictCanonicalRecord", "strictUtf8");
+      names.push("exactPoisonPostVisibleProgressObservationAuthorityFromPinnedCommitChainV1", "createPinnedSuccessorTask12PreparedCurrentEntryPublicationAuthorityV1");
+      for (const name of ["buildTask12PreparedCurrentEntryReplayPublicationSetV1", "materializeTask12PreparedCurrentEntryPublicationSetV1"]) if (source.includes(`function ${name}(`)) names.push(name);
+      if (source.includes("function requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(")) names.push("requireTask12PreMutationLoadedRuntimeServiceAuthorityV1", "requirePair", "requireGitHash", "requireExactPoisonPostVisibleServiceCensusEffectV1", "requireExactPoisonPostVisibleSpawnerServiceCensusMemberV1", "requireExactPoisonPostVisibleListeningServiceCensusMemberV1", "requireExactPoisonPostVisibleServiceCensusMemberCommonV1");
+      if (source.includes("function openTask12ColdSpawnerPredecessorHistoryV1(")) names.push("openTask12ColdSpawnerPredecessorHistoryV1");
+      const typescript = await import("typescript");
+      const tree = typescript.createSourceFile("receipt.ts", source, typescript.ScriptTarget.Latest, true);
+      const declarations = tree.statements.filter(statement => typescript.isFunctionDeclaration(statement) && statement.name && names.includes(statement.name.text));
+      assert.equal(declarations.length, names.length, "copied builder extracts each production dependency exactly once");
+      const body = declarations.map(statement => statement.getText(tree)).join("\n");
+      const harness = `import path from 'node:path';import {createHash} from 'node:crypto';
+import {hashCanonicalJson} from ${JSON.stringify(pathToFileURL(path.join(sourceRoot, "src/product-compiler/canonical-json.ts")).href)};
+const SHA256=/^[a-f0-9]{64}$/,FULL_HASH=/^[a-f0-9]{40}$/,task12PreparedCurrentEntryPublicationAuthorityBrandV1=Symbol('fixture-private-authority');
+const TASK12_PRE_MUTATION_PREFIX_V1='setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/';
+const TASK12_STATUS_PREFIX_V1='setfarm://internal-production/current-entry-authority-status/sha256/';
+const CURRENT_ENTRY_MAX_BYTES=1048576,UTF8=new TextDecoder('utf-8',{fatal:true});
+async function canonicalRecordBytes(value){await globalThis.__preparedSerialization?.();return Buffer.from(canonicalComparable(value)+'\\n');}
+async function observeInternalProductionServiceCensusV1(){return globalThis.__preparedOrdinaryCensus();}
+${body}
+export function build(operation){return buildTask12PreparedCurrentEntryPublicationSetV1({[task12PreparedCurrentEntryPublicationAuthorityBrandV1]:true,kind:'pinned-successor',context:{successorOperation:operation,successorRoot:${JSON.stringify(root)},assertStable(){}}});}
+export function validate(value){return requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(value);}
+export function authenticate(value){return openTask12ColdSpawnerPredecessorHistoryV1(value);}
+export function replay(operation,status,target){return exactPoisonPostVisibleProgressObservationAuthorityFromPinnedCommitChainV1({successorOperation:operation,successorRoot:${JSON.stringify(root)},assertStable(){}}).buildPreparedPublicationSet({status,lastValidStatus:null,target,assertStable(){globalThis.__preparedStatusFence?.();}});}
+export function status(value){return parseInternalProductionCurrentEntryAuthorityStatusV1(value);}
+export function nested(value){return requireExactPoisonPostVisibleProgressNestedAuthorityBodyV1({name:'preMutationLoadedRuntimeServiceAuthority',sourceKind:'status-pair',pairKeys:['preMutationLoadedRuntimeServiceAuthorityRef','preMutationLoadedRuntimeServiceAuthorityHash']},{preMutationLoadedRuntimeServiceAuthorityRef:value.preMutationLoadedRuntimeServiceAuthorityRef,preMutationLoadedRuntimeServiceAuthorityHash:value.preMutationLoadedRuntimeServiceAuthorityHash},Buffer.from(canonicalComparable(value)+'\\n'));}
+`;
+      const target = path.join(root, "builder.mjs");
+      writeFileSync(target, transformSync(harness, { loader: "ts", format: "esm", target: "es2022" }).code);
+      const builder = await import(pathToFileURL(target).href);
+      let currentHistory: any = { schema: settled.schema, state: "absent", incompleteOwnerCount: 0, absenceIdentityHash: "e".repeat(64), censusHash: "e".repeat(64) };
+      Reflect.set(globalThis, "__preparedColdHistory", () => currentHistory);
+      Reflect.set(globalThis, "__preparedOrdinaryCensus", () => service);
+      const original = await builder.build(operation);
+      const v1 = JSON.parse(original.candidates[0].bytes.toString());
+      assert.equal(v1.schema, "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1");
+      assert.equal("coldSpawnerPredecessor" in v1, false);
+      currentHistory = settled;
+      const prepared = await builder.build(operation), v2 = JSON.parse(prepared.candidates[0].bytes.toString());
+      assert.equal(v2.schema, "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2", "cold preparation cannot silently downgrade to unbound V1");
+      assert.deepEqual(v2.coldSpawnerPredecessor, { settlementRef: settlement.settlementRef, settlementHash, settlementIdentity: settled.settlementIdentity });
+      assert.notEqual(v2.serviceProjectionSetHash, v1.serviceProjectionSetHash);
+      assert.notEqual(v2.preMutationLoadedRuntimeServiceAuthorityHash, v1.preMutationLoadedRuntimeServiceAuthorityHash);
+      assert.deepEqual(prepared.candidates.map((candidate: any) => candidate.phase), ["P2", "P3", "P4", "P5"]);
+      assert.deepEqual(JSON.parse(prepared.candidates[2].bytes.toString()).preMutationLoadedRuntimeServiceAuthority, v2);
+      assert.deepEqual(builder.validate(structuredClone(v1)), v1);
+      assert.deepEqual(builder.validate(structuredClone(v2)), v2);
+      const preparedStatus = JSON.parse(prepared.candidates[2].bytes.toString());
+      assert.deepEqual(builder.status(structuredClone(preparedStatus)), preparedStatus);
+      assert.deepEqual(builder.nested(structuredClone(v1)), v1);
+      assert.deepEqual(builder.nested(structuredClone(v2)), v2, "nested replay accepts an authenticated V2 shape");
+      const rehash = (value: any) => {
+        delete value.preMutationLoadedRuntimeServiceAuthorityRef; delete value.preMutationLoadedRuntimeServiceAuthorityHash; delete value.serviceProjectionSetHash;
+        value.serviceProjectionSetHash = canonicalHash(value);
+        value.preMutationLoadedRuntimeServiceAuthorityHash = canonicalHash(value);
+        value.preMutationLoadedRuntimeServiceAuthorityRef = `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${value.preMutationLoadedRuntimeServiceAuthorityHash}`;
+        return value;
+      };
+      for (const mutate of [
+        (value: any) => { delete value.coldSpawnerPredecessor; },
+        (value: any) => { value.schema = v1.schema; },
+        (value: any) => { value.foreign = true; },
+        (value: any) => { value.coldSpawnerPredecessor.foreign = true; },
+        (value: any) => { value.coldSpawnerPredecessor.settlementRef += "crossed"; },
+        (value: any) => { value.coldSpawnerPredecessor.settlementIdentity.pop(); },
+        (value: any) => { value.coldSpawnerPredecessor.settlementIdentity[1] = "02"; },
+        (value: any) => { value.coldSpawnerPredecessor.settlementIdentity[5] = "2"; },
+        (value: any) => { value.spawner.listener = {}; },
+      ]) {
+        const crossed = structuredClone(v2); mutate(crossed); rehash(crossed);
+        assert.throws(() => builder.validate(crossed), undefined, "self-hashed crossed pre-mutation authority must refuse");
+        assert.throws(() => builder.nested(crossed), undefined, "nested consumer cannot accept a rehashed crossed authority");
+        const crossedStatus = structuredClone(preparedStatus);
+        crossedStatus.preMutationLoadedRuntimeServiceAuthority = crossed;
+        crossedStatus.preMutationLoadedRuntimeServiceAuthorityRef = crossed.preMutationLoadedRuntimeServiceAuthorityRef;
+        crossedStatus.preMutationLoadedRuntimeServiceAuthorityHash = crossed.preMutationLoadedRuntimeServiceAuthorityHash;
+        assert.throws(() => builder.status(crossedStatus), undefined, "status consumer validates the embedded versioned authority");
+      }
+      const assertHistory = await builder.authenticate(v2);
+      assertHistory();
+      currentHistory = { ...settled, settlementIdentity: [...settled.settlementIdentity] };
+      currentHistory.settlementIdentity[1] = "3";
+      assert.throws(assertHistory, undefined, "retained predecessor history refuses same-byte terminal replacement");
+      await assert.rejects(builder.authenticate(v2));
+      currentHistory = { ...settled, state: "absent" };
+      assert.throws(assertHistory);
+      const oldHistory = await builder.authenticate(v1);
+      oldHistory();
+      currentHistory = settled;
+      Reflect.set(globalThis, "__preparedSerialization", () => { currentHistory = { ...settled, settlementIdentity: [...settled.settlementIdentity.slice(0, 1), "4", ...settled.settlementIdentity.slice(2)] }; });
+      await assert.rejects(builder.build(operation), undefined, "terminal replacement across serialization cannot escape in candidate bytes");
+      currentHistory = { schema: settled.schema, state: "absent", incompleteOwnerCount: 0, absenceIdentityHash: "e".repeat(64), censusHash: "e".repeat(64) };
+      Reflect.set(globalThis, "__preparedSerialization", () => { currentHistory = settled; });
+      await assert.rejects(builder.build(operation), undefined, "late cold history cannot escape as stale V1");
+      Reflect.deleteProperty(globalThis, "__preparedSerialization");
+      currentHistory = settled;
+      Reflect.set(globalThis, "__preparedOrdinaryCensus", () => { throw new Error("departed predecessor must not be observed during historical replay"); });
+      const replay = await builder.replay(operation, preparedStatus, prepared.candidates[3].target);
+      assert.deepEqual(replay.candidates.map((candidate: any) => candidate.bytes), prepared.candidates.map((candidate: any) => candidate.bytes), "historical replay preserves all four published candidates after child departure");
+      assert.deepEqual(replay.serviceCensus, service);
+      await assert.rejects(builder.replay(operation, preparedStatus, prepared.candidates[3].target + ".crossed"));
+      Reflect.set(globalThis, "__preparedSerialization", () => { currentHistory = { ...settled, settlementIdentity: [...settled.settlementIdentity.slice(0, 1), "5", ...settled.settlementIdentity.slice(2)] }; });
+      await assert.rejects(builder.replay(operation, preparedStatus, prepared.candidates[3].target), undefined, "replay also retains cold history through serialization");
+      Reflect.deleteProperty(globalThis, "__preparedSerialization");
+      Reflect.set(globalThis, "__preparedOrdinaryCensus", () => service);
+      currentHistory = { ...settled, settlement: { ...settlement, serviceCensus: { ...service, censusHash: "0".repeat(64) } } };
+      await assert.rejects(builder.build(operation), undefined, "creation requires the actual ordinary census to equal its cold predecessor");
+      currentHistory = { schema: settled.schema, state: "absent", incompleteOwnerCount: 0, absenceIdentityHash: "e".repeat(64), censusHash: "e".repeat(64) };
+      const unchanged = await builder.build(operation);
+      assert.deepEqual(unchanged.candidates.map((candidate: any) => candidate.bytes), original.candidates.map((candidate: any) => candidate.bytes));
+    } finally {
+      Reflect.deleteProperty(globalThis, "__preparedColdHistory"); Reflect.deleteProperty(globalThis, "__preparedOrdinaryCensus");
+      Reflect.deleteProperty(globalThis, "__preparedSerialization");
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("P5c-P freezes one shared prepared publication set for the writer and post-visible validator", async () => {
     const source = readFileSync(observerSource, "utf8");
     assert.equal(source.split("const task12PreparedCurrentEntryPublicationAuthorityBrandV1: unique symbol").length - 1, 1,
@@ -20933,6 +23018,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
 
     const builderName = "buildTask12PreparedCurrentEntryPublicationSetV1";
     const builder = topLevelFunctionRegionV1(source, builderName);
+    const materializer = topLevelFunctionRegionV1(source, "materializeTask12PreparedCurrentEntryPublicationSetV1");
+    const replayName = "buildTask12PreparedCurrentEntryReplayPublicationSetV1";
     assert.match(builder, /authority:\s*Task12PreparedCurrentEntryPublicationAuthorityV1/,
       "the shared builder accepts only the authenticated selected-or-pinned authority union");
     assert.doesNotMatch(builder, /ensureTask12PreparedCurrentEntryStatusV1|revalidatePostVisibleCurrentEntryStoreV1|acquireTask12|publishLegacyZeroRecordV1|task12ReceiptExpectedPredecessorCasV1|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
@@ -20944,14 +23031,16 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.match(builder, /authority\.kind\s*===\s*"pinned-successor"[\s\S]*authority\.context\.assertStable\(\)/,
       "P validation authority is authenticated from the pinned C context");
     assert.match(builder, /task12OperationDirectoryV1\(/, "all selected-writer P locators retain context-bound operation-directory derivation");
-    assert.match(builder, /task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1\(/,
+    assert.match(materializer, /task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1\(/,
       "P2 content retains exact11 group seven path derivation");
-    assert.match(builder, /path\.join\(operationDirectory,\s*"00-pre-mutation-loaded-runtime-service-authority\.pair\.json"\)/);
-    assert.match(builder, /task12RecordPathV1\(context,\s*"statuses",/);
-    assert.match(builder, /task12CurrentStatusPathV1\(/,
+    assert.match(materializer, /path\.join\(operationDirectory,\s*"00-pre-mutation-loaded-runtime-service-authority\.pair\.json"\)/);
+    assert.match(materializer, /task12RecordPathV1\(context,\s*"statuses",/);
+    assert.match(materializer, /task12CurrentStatusPathV1\(/,
       "P5 retains exact11 group eight path derivation");
 
-    assert.equal(source.split(`${builderName}(`).length - 1, 5, "the private definition has exactly four production calls");
+    assert.equal(source.split(`${builderName}(`).length - 1, 3, "fresh creation has exactly two production calls plus its definition");
+    assert.equal(source.split(`${replayName}(`).length - 1, 3, "historical replay has exactly two origin-bound calls plus its definition");
+    assert.equal(source.split("materializeTask12PreparedCurrentEntryPublicationSetV1(").length - 1, 3, "fresh and historical construction share one exact candidate serializer");
     const writer = topLevelFunctionRegionV1(source, "ensureTask12PreparedCurrentEntryStatusV1");
     const validator = topLevelFunctionRegionV1(source, "revalidatePostVisibleCurrentEntryStoreV1");
     assert.equal(writer.split(`${builderName}(`).length - 1, 1, "the existing writer uses the one shared builder exactly once");
@@ -20961,7 +23050,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.equal(progressRaw.split(`${builderName}(`).length - 1, 0, "the post-visible S raw pass cannot reconstruct prepared authority outside its origin-bound closure");
     assert.equal(progressRaw.split("authority.buildPreparedPublicationSet(").length - 1, 1, "the post-visible S raw pass invokes its pinned-or-selected origin builder exactly once");
     const selectedProgressOpen = topLevelFunctionRegionV1(source, "openExactPoisonPostVisibleSelectedProgressPassV1");
-    assert.equal(selectedProgressOpen.split(`${builderName}(`).length - 1, 1, "the selected owner injects exactly one selected-context prepared builder closure");
+    assert.equal(selectedProgressOpen.split(`${builderName}(`).length - 1, 0, "selected progress cannot recapture a departed predecessor");
+    assert.equal(selectedProgressOpen.split(`${replayName}(`).length - 1, 1, "the selected owner injects exactly one selected-context historical builder closure");
     assert.equal(validator.split(`${builderName}(`).length - 1, 0, "the validator delegates candidate reconstruction to one P pass");
     assert.doesNotMatch(writer, /const serviceProjection\s*=|const statusBody\s*=/,
       "the writer cannot retain a second independently drifting prepared-set construction");
@@ -20969,7 +23059,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "the existing exact11 writer group privately brands its selected authority");
     assert.match(pass, /createPinnedSuccessorTask12PreparedCurrentEntryPublicationAuthorityV1\(context\)/,
       "the pinned-C owner privately brands the successor authority without minting a selected context");
-    assert.match(selectedProgressOpen, /buildTask12PreparedCurrentEntryPublicationSetV1\([\s\S]*createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1\(context,\s*operation\)/,
+    assert.match(selectedProgressOpen, /buildTask12PreparedCurrentEntryReplayPublicationSetV1\([\s\S]*createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1\(context,\s*operation\),\s*statusOwner\)/,
       "the selected owner injects a non-escaping builder closure branded by its exact selected context and operation");
 
     for (const privateName of [
@@ -20997,8 +23087,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     ]) assert.equal(Reflect.get(loaded, valueName), undefined, `${valueName} is absent from the runtime public ABI`);
 
     assert.equal((source.match(/CURRENT_ENTRY_STORE_DIRECTORY/g) ?? []).length, 2, "P5c-P preserves the final literal exact2 contract");
-    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 17,
-      "P5c-P retains one definition, eleven synchronous path consumers, the selected effect executor, two migration-status context fences, and two current-prerequisite builder fences");
+    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 18,
+      "P5c-P retains one definition, eleven synchronous path consumers, the selected effect executor, two migration-status context fences, two current-prerequisite builder fences, and the prerequisite-publication fence");
   });
 
   it("P5c-P freezes read-only writer-owner and publication F observers plus the exact P0-P5 topology", () => {
@@ -21266,8 +23356,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
 
     const builder = topLevelFunctionRegionV1(source, "buildTask12PreparedCurrentEntryPublicationSetV1");
     assert.match(builder, /expectedServiceCensus\?: InternalProductionServiceCensusV1/);
-    assert.match(builder, /value\.preMutationLoadedRuntimeServiceAuthorityRef\s*===\s*`\$\{TASK12_PRE_MUTATION_PREFIX_V1\}\$\{value\.preMutationLoadedRuntimeServiceAuthorityHash\}`/);
-    assert.match(builder, /value\.statusRef\s*===\s*`\$\{TASK12_STATUS_PREFIX_V1\}\$\{value\.statusHash\}`/);
+    const materializer = topLevelFunctionRegionV1(source, "materializeTask12PreparedCurrentEntryPublicationSetV1");
+    assert.match(materializer, /value\.preMutationLoadedRuntimeServiceAuthorityRef\s*===\s*`\$\{TASK12_PRE_MUTATION_PREFIX_V1\}\$\{value\.preMutationLoadedRuntimeServiceAuthorityHash\}`/);
+    assert.match(materializer, /value\.statusRef\s*===\s*`\$\{TASK12_STATUS_PREFIX_V1\}\$\{value\.statusHash\}`/);
 
     const publisher = topLevelFunctionRegionV1(source, "publishTask12PreparedCurrentEntryCandidateV1");
     const durable = publisher.indexOf('if (["F2u", "F3", "F4"].includes(observed.state)) {');
@@ -22378,8 +24469,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const root = createFixture();
     try {
       instrumentPhase5cProgressFixtureV1(root);
-      const storeRoot = path.join(realpathSync(root), ".p5c-s-effect-store");
-      mkdirSync(storeRoot, { mode: 0o700 });
+      const storeRoot = path.join(realpathSync(path.dirname(root)), "data/internal-production-baseline/p5c-s-effect-store");
+      mkdirSync(storeRoot, { recursive: true, mode: 0o700 });
       const resetStoreRoot = (): void => {
         rmSync(storeRoot, { recursive: true, force: true });
         mkdirSync(storeRoot, { mode: 0o700 });
@@ -22604,10 +24695,12 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const builderCalls = wrapped.builderCalls as readonly Readonly<{ effect: string; args: readonly unknown[]; value: Readonly<Record<string, unknown>>; contextBound: boolean; predecessorBound: boolean; effectResult: Readonly<Record<string, unknown>>; parsedContent: Readonly<Record<string, unknown>>; parsedPair: Readonly<Record<string, unknown>>; parsedRow: string }>[];
         const timeline = wrapped.timeline as readonly string[];
         const ownerState = wrapped.ownerState as Readonly<Record<string, unknown>>;
-        assert.equal(ownerState.openCalls, 1, `${input.label}: one fresh selected owner opens`);
-        assert.equal(ownerState.contextChecks, 2, `${input.label}: caller and executor both bind the exact opaque context`);
-        assert.equal(ownerState.stableCalls, 1, `${input.label}: one aggregate status/raw/Q fence precedes awaited effect execution`);
-        assert.equal(ownerState.closeCalls, 1, `${input.label}: selected owner closes exactly once`);
+        const ownerCount = input.effect.next === null ? 1 : 2;
+        assert.equal(ownerState.openCalls, ownerCount, `${input.label}: a real effect adds one fresh post-effect owner under the same controller`);
+        assert.equal(ownerState.contextChecks, ownerCount * 2, `${input.label}: caller/executor and post-effect handoff bind the exact opaque context`);
+        assert.equal(ownerState.stableCalls, ownerCount, `${input.label}: aggregate status/raw/Q fencing covers each selected owner`);
+        assert.equal(ownerState.closeCalls, ownerCount, `${input.label}: every selected owner closes exactly once`);
+        assert.deepEqual(ownerState.closeOrder, ownerCount === 1 ? [1] : [2, 1], `${input.label}: post-effect ownership closes before its retained predecessor`);
         assert.equal(ownerState.closed, true, `${input.label}: selected owner is closed after delegation`);
         assert.equal(ownerState.contextBound, true, `${input.label}: selected owner is minted for the exact context`);
         assert.equal(ownerState.operationBound, true, `${input.label}: selected owner is minted for the exact prepared operation`);
@@ -22659,13 +24752,13 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           `${input.label}: actual effect candidate pair bytes parse to its returned pair`);
         const rootFenceCount = timeline.filter((entry) => entry === "selected-root:stable").length;
         const selectedPublicationCount = input.expectedPorts.filter((port) => port === "publishLegacyZeroRecordV1" || port === "publishExactPoisonPostVisibleTask12ReceiptEndpointV1").length;
-        assert.equal(rootFenceCount, input.expectedPorts.length + selectedPublicationCount + 2,
+        assert.equal(rootFenceCount, input.expectedPorts.length + selectedPublicationCount + 8,
           `${input.label}: every awaited effect return, selected-root publication, canonical build, and adjacent CAS boundary has its exact root-only fence`);
         assert.equal(ownerState.rootStableCalls, rootFenceCount, `${input.label}: every observed root fence delegates through the branded owner`);
         assert.equal(ownerState.effectReturned, true, `${input.label}: root-only fencing becomes armed only after a real external result returns`);
-        assert.equal(Number(ownerState.postEffectRootFences), input.expectedPorts.length + selectedPublicationCount + 2,
+        assert.equal(Number(ownerState.postEffectRootFences), input.expectedPorts.length + selectedPublicationCount + 8,
           `${input.label}: post-effect root ABA protection stays armed through every effect return, build, and adjacent CAS`);
-        assert.deepEqual(timeline.filter((entry) => entry !== "selected-root:stable" && !entry.startsWith("entry-endpoint:")), ["selected-pass:open", "selected-pass:stable", ...input.expectedPorts, "buildExactPoisonPostVisibleProgressNextStatusV1", "advanceTask12CurrentStatusV1", "selected-pass:close"],
+        assert.deepEqual(timeline.filter((entry) => entry !== "selected-root:stable" && !entry.startsWith("entry-endpoint:")), ["selected-pass:open", "selected-pass:stable", ...input.expectedPorts, "buildExactPoisonPostVisibleProgressNextStatusV1", "selected-pass:open", "selected-pass:stable", "advanceTask12CurrentStatusV1", "selected-pass:close", "selected-pass:close"],
           `${input.label}: root-only fences add no extra external effect, publication, build, or CAS work`);
         for (const port of input.expectedPorts) {
           let from = 0;
@@ -22967,7 +25060,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     try {
       instrumentPhase5cProgressFixtureV1(root);
       const operationHash = "a".repeat(64);
-      const operationDirectory = path.join(root, "entry-operation", operationHash);
+      const operationDirectory = path.join(path.dirname(root), "data/internal-production-baseline/entry-operation", operationHash);
       mkdirSync(operationDirectory, { recursive: true, mode: 0o700 });
       const status00 = path.join(operationDirectory, "00-pre-mutation-loaded-runtime-service-authority.pair.json");
       const status01 = path.join(operationDirectory, "01-current-status.pair.json");
@@ -22991,7 +25084,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.equal(result.status, 0, result.stderr);
       const observed = JSON.parse(result.stdout) as Readonly<{ value: Readonly<Record<string, unknown>>; descriptorDelta: number }>;
       assert.deepEqual({ outcome: observed.value.outcome, publicationState: observed.value.publicationState, writerState: observed.value.writerState, closeCount: observed.value.closeCount, descriptorDelta: observed.descriptorDelta }, { outcome: "returned", publicationState: "F0", writerState: "A0", closeCount: 1, descriptorDelta: 0 },
-        "the retained locator binder accepts F0+A0 after projecting only operation-02 from a fully pinned operation inventory");
+        `the retained locator binder accepts F0+A0 after projecting only operation-02 from a fully pinned operation inventory: ${String(observed.value.message ?? "")}`);
       const expectedTargets = [controllerWriter, status00, status01].sort((left, right) => Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8")));
       assert.deepEqual(observed.value.publicationTargets, [], "the strict external binder receives only the target-local F0 projection");
       assert.deepEqual(observed.value.ownerPublicationTargets, expectedTargets, "the live owner retains every authenticated 00/01/controller sibling while binding only the locator family");
@@ -23008,7 +25101,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const material = phase5cSEntryAuthorityAtRootMaterialV1(operation);
       const sibling = phase5cSFindEntryAuthorityShardSiblingV1(material);
       assert.equal(sibling.pair.entryAuthorityHash.slice(0, 2), material.pair.entryAuthorityHash.slice(0, 2));
-      const directory = path.join(root, "entry-content-shard", material.pair.entryAuthorityHash.slice(0, 2));
+      const directory = path.join(path.dirname(root), "data/internal-production-baseline/entry-content-shard", material.pair.entryAuthorityHash.slice(0, 2));
       const target = path.join(directory, `${material.pair.entryAuthorityHash}.json`);
       const siblingTarget = path.join(directory, `${sibling.pair.entryAuthorityHash}.json`);
       mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -23120,7 +25213,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const root = createFixture();
     try {
       instrumentPhase5cProgressFixtureV1(root);
-      const directory = path.join(root, "entry-generation-boundary", "aa");
+      const directory = path.join(path.dirname(root), "data/internal-production-baseline/entry-generation-boundary", "aa");
       mkdirSync(directory, { recursive: true, mode: 0o700 });
       const target = path.join(directory, `${"a".repeat(64)}.json`);
       const bytes = canonicalFixtureRecordV1(Object.freeze({ entryAuthorityRef: `setfarm://internal-production/current-entry-authority/sha256/${"a".repeat(64)}`, entryAuthorityHash: "a".repeat(64) }));
@@ -23138,7 +25231,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       } catch (error) {
         generationFailures.push(`replace-present: ${String(error)}`);
       }
-      const missingRoot = path.join(root, "entry-missing-generation-boundary");
+      const missingRoot = path.join(path.dirname(root), "data/internal-production-baseline/entry-missing-generation-boundary");
       const missingDirectory = path.join(missingRoot, "aa");
       const missingTarget = path.join(missingDirectory, `${"b".repeat(64)}.json`);
       const missingPolicy = Object.freeze([Object.freeze({ target: missingTarget, allowFinal: true, allowPublicationTemporaries: true, allowWriterFamily: true })]);
@@ -23161,7 +25254,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const root = createFixture();
     try {
       instrumentPhase5cProgressFixtureV1(root);
-      const directory = path.join(root, "entry-post-fence-writer-aba", "ee");
+      const directory = path.join(path.dirname(root), "data/internal-production-baseline/entry-post-fence-writer-aba", "ee");
       mkdirSync(directory, { recursive: true, mode: 0o700 });
       const targetHash = "e".repeat(64);
       const target = path.join(directory, `${targetHash}.json`);
@@ -23210,7 +25303,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const staleWriterFailures: string[] = [];
       for (const state of ["A1", "A2"] as const) {
         try {
-          const directory = path.join(root, `entry-stale-writer-${state.toLowerCase()}`);
+          const directory = path.join(path.dirname(root), `data/internal-production-baseline/entry-stale-writer-${state.toLowerCase()}`);
           mkdirSync(directory, { recursive: true, mode: 0o700 });
           const targetHash = (state === "A1" ? "c" : "d").repeat(64);
           const target = path.join(directory, `${targetHash}.json`);
@@ -23239,8 +25332,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const root = createFixture();
     try {
       instrumentPhase5cProgressFixtureV1(root);
-      const storeRoot = path.join(realpathSync(root), ".p5c-s-effect-store");
-      mkdirSync(storeRoot, { mode: 0o700 });
+      const storeRoot = path.join(realpathSync(path.dirname(root)), "data/internal-production-baseline/p5c-s-effect-store");
+      mkdirSync(storeRoot, { recursive: true, mode: 0o700 });
       const descriptor = PHASE5C_S_NEXT_EFFECTS_V1.find((candidate) => candidate.effect === "publish-entry-authority")!;
       const statusDescriptor = PHASE5C_S_NONBLOCKED_ROWS_V1.find((candidate) => candidate.row === descriptor.row)!;
       const operationHash = "a".repeat(64);
@@ -23848,13 +25941,92 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
+  it("cold nested owner retains its fixed historical settlement through the final fence", async () => {
+    const root = createFixture();
+    try {
+      instrumentPhase5cProgressFixtureV1(root);
+      const retirementPath = path.join(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts");
+      const successorRoot = path.join(path.dirname(realpathSync(root)), "data/internal-production-baseline/cold-nested-store");
+      const descriptor = PHASE5C_S_NESTED_AUTHORITIES_V1.find(value => value.name === "preMutationLoadedRuntimeServiceAuthority")!;
+      const original = phase5cSNestedSemanticBodyFixtureV1(descriptor);
+      const serviceCensus = { schema: "setfarm.internal-production-service-census.v1", spawner: original.spawner, dashboard: original.dashboard, missionControl: original.missionControl, openClaw: original.openClaw, censusHash: original.observedServiceCensusHash };
+      for (const mutation of ["replace", "none", "absent", "v1"] as const) {
+        const terminal = path.join(root, `cold-terminal-${mutation}.json`);
+        writeFileSync(terminal, '{"fixture":"retirement port terminal"}\n', { flag: "wx", mode: 0o600 });
+        const stat = lstatSync(terminal, { bigint: true });
+        const identity = [stat.dev, stat.ino, stat.uid, stat.gid, stat.mode, stat.nlink, stat.size, stat.birthtimeNs, stat.mtimeNs, stat.ctimeNs].map(String);
+        const settlementHash = "7".repeat(64), settlementRef = `setfarm://internal-production/cold-spawner-controller-settlement/sha256/${settlementHash}`;
+        const body: Record<string, unknown> = structuredClone(original);
+        if (mutation !== "v1") {
+          delete body.preMutationLoadedRuntimeServiceAuthorityRef; delete body.preMutationLoadedRuntimeServiceAuthorityHash; delete body.serviceProjectionSetHash;
+          body.schema = "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2";
+          body.coldSpawnerPredecessor = { settlementRef, settlementHash, settlementIdentity: identity };
+          body.serviceProjectionSetHash = canonicalHash(body);
+          body.preMutationLoadedRuntimeServiceAuthorityHash = canonicalHash(body);
+          body.preMutationLoadedRuntimeServiceAuthorityRef = `${descriptor.prefix}${body.preMutationLoadedRuntimeServiceAuthorityHash}`;
+        }
+        const pair = Object.fromEntries(descriptor.pairKeys.map(key => [key, body[key]]));
+        const hash = String(body.preMutationLoadedRuntimeServiceAuthorityHash);
+        const target = path.join(successorRoot, "records", descriptor.recordKind!, "sha256", hash.slice(0, 2), `${hash}.json`);
+        phase5cEnsurePublicationParentV1(target);
+        writeFileSync(target, canonicalFixtureRecordV1(body), { flag: "wx", mode: 0o600 });
+        const before = lstatSync(target, { bigint: true }), beforeBytes = readFileSync(target);
+        const input = { name: descriptor.name, status: phase5cSStatusWithNestedPairFixtureV1(descriptor, pair), successorRoot, expectedTarget: target, mutation: "none" };
+        // Warm only module compilation before the FD baseline: tsx otherwise
+        // temporarily opens its own two cache handles during this first import.
+        // No cold census is called until the actual nested owner opens.
+        const result = await runFixtureExpressionAsync(root, `(async()=>{await import(${JSON.stringify(pathToFileURL(retirementPath).href)});const fs=await import('node:fs');let calls=0;const terminal=${JSON.stringify(terminal)},mutation=${JSON.stringify(mutation)};globalThis.__nestedColdHistoryV1=()=>{calls++;if(mutation==='v1')throw Error('V1 does not depend on cold history');if(!fs.existsSync(terminal))return {state:'absent'};const s=fs.lstatSync(terminal,{bigint:true});return {state:'settled',settlement:{settlementRef:${JSON.stringify(settlementRef)},settlementHash:${JSON.stringify(settlementHash)},serviceCensus:${JSON.stringify(serviceCensus)}},settlementIdentity:[s.dev,s.ino,s.uid,s.gid,s.mode,s.nlink,s.size,s.birthtimeNs,s.mtimeNs,s.ctimeNs].map(String)}};globalThis.__p5cSNestedAfterOpenV1=()=>{if(mutation==='none'||mutation==='v1')return;const bytes=fs.readFileSync(terminal);fs.renameSync(terminal,terminal+'.old');if(mutation==='replace')fs.writeFileSync(terminal,bytes,{flag:'wx',mode:0o600})};const before=fs.readdirSync('/dev/fd').length;try{await m.p5cSOpenProgressNestedAuthorityFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({outcome:'returned',calls,descriptorDelta:fs.readdirSync('/dev/fd').length-before}))}catch(error){process.stdout.write(JSON.stringify({outcome:'threw',message:String(error),calls,descriptorDelta:fs.readdirSync('/dev/fd').length-before}))}})()`);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.outcome, mutation === "none" || mutation === "v1" ? "returned" : "threw", `${mutation}: actual nested owner must preserve cold-history binding: ${observed.message ?? ""}`);
+        if (mutation !== "none" && mutation !== "v1") assert.match(observed.message, /cold predecessor history is crossed/);
+        assert.equal(observed.descriptorDelta, 0, `${mutation}: nested owner closes all real descriptors`);
+        if (mutation === "v1") assert.equal(observed.calls, 0);
+        else assert.ok(observed.calls >= 2, `${mutation}: original and retained fences observe cold history`);
+        assert.equal(lstatSync(target, { bigint: true }).ino, before.ino);
+        assert.deepEqual(readFileSync(target), beforeBytes);
+      }
+    } finally { removeFixture(root); }
+  });
+
+  it("direct V2 restart authority crosses the actual nested receipt reader without changing its pair domain", async () => {
+    const root = createFixture();
+    try {
+      instrumentPhase5cProgressFixtureV1(root);
+      const descriptor = PHASE5C_S_NESTED_AUTHORITIES_V1.find((candidate) => candidate.name === "restartAuthority")!;
+      const original = phase5cSNestedSemanticBodyFixtureV1(descriptor);
+      const { restartAuthorityRef, restartAuthorityHash, launchdLabel, executable, argv, ...common } = original;
+      const fixtureWorkspaceRoot = path.dirname(realpathSync(root));
+      const successorRoot = path.join(fixtureWorkspaceRoot, "data/internal-production-baseline/p5c-s-nested-store");
+      for (const version of [2, 3]) {
+        const body = { ...common, schema: `setfarm.internal-production-pre-schema-spawner-restart-authority.v${version}`,
+          preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${"d".repeat(64)}`,
+          preMutationLoadedRuntimeServiceAuthorityHash: "d".repeat(64), launchProfileHash: "e".repeat(64),
+          transport: "direct-detached-node-v1", terminationSignal: "SIGTERM", maximumTerminationDispatchCount: 1, maximumSpawnDispatchCount: 1 };
+        const hash = canonicalHash(body);
+        const pair = { restartAuthorityRef: `${descriptor.prefix}${hash}`, restartAuthorityHash: hash };
+        const target = path.join(fixtureWorkspaceRoot, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/restart-authority/sha256", hash.slice(0, 2), `${hash}.json`);
+        phase5cEnsurePublicationParentV1(target);
+        const bytes = canonicalFixtureRecordV1({ ...body, ...pair });
+        writeFileSync(target, bytes, { flag: "wx", mode: 0o600 });
+        const input = { name: descriptor.name, status: phase5cSStatusWithNestedPairFixtureV1(descriptor, pair), successorRoot, expectedTarget: target, mutation: "none" };
+        const result = await runFixtureExpressionAsync(root, `(async()=>{try{await m.p5cSOpenProgressNestedAuthorityFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({outcome:'returned'}))}catch(error){process.stdout.write(JSON.stringify({outcome:'threw',message:String(error)}))}})()`);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.outcome, version === 2 ? "returned" : "threw", String(observed.message));
+        if (version === 3) assert.match(observed.message, /nested authority schema is invalid/);
+        assert.deepEqual(readFileSync(target), bytes);
+      }
+    } finally { removeFixture(root); }
+  });
+
   it("P5c-S opens every file-backed nested root route and retains its member and parent generation", async () => {
     const root = createFixture();
     try {
       instrumentPhase5cProgressFixtureV1(root);
       const fixtureRoot = realpathSync(root);
       const fixtureWorkspaceRoot = path.dirname(fixtureRoot);
-      const successorRoot = path.join(fixtureRoot, "p5c-s-nested-store");
+      const successorRoot = path.join(fixtureWorkspaceRoot, "data/internal-production-baseline/p5c-s-nested-store");
       const operationHash = "a".repeat(64);
       const fileBacked = PHASE5C_S_NESTED_AUTHORITIES_V1.filter((descriptor) => descriptor.recordKind !== null && !descriptor.sourceKind.startsWith("raw-derived"));
       const routeKey = (descriptor: typeof fileBacked[number]): string => `${descriptor.rootAuthority}:${descriptor.sourceKind}:${descriptor.recordKind}:${descriptor.pairKeys.join("+")}`;
@@ -23952,10 +26124,11 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         delete rawStatus.statusHash;
         const statusHash = canonicalHash(rawStatus);
         const status = Object.freeze({ ...rawStatus, statusRef: `${PHASE5C_Q_STATUS_PREFIX_V1}${statusHash}`, statusHash });
-        const successorRoot = path.join(realpathSync(root), `p5c-s-status-composite-${descriptorIndex}`);
+        const successorRoot = path.join(realpathSync(path.dirname(root)), `data/internal-production-baseline/p5c-s-status-composite-${descriptorIndex}`);
         const operationDirectory = path.join(successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
         const contentTarget = path.join(successorRoot, "records", "statuses", "sha256", String(status.statusHash).slice(0, 2), `${String(status.statusHash)}.json`);
         mkdirSync(operationDirectory, { recursive: true, mode: 0o700 });
+        mkdirSync(path.dirname(contentTarget), { recursive: true, mode: 0o700 });
         fixtureFile(root, path.relative(root, contentTarget), canonicalFixtureRecordV1(status), 0o600);
         fixtureFile(root, path.relative(root, path.join(operationDirectory, "01-current-status.pair.json")), canonicalFixtureRecordV1(Object.freeze({ statusRef: status.statusRef, statusHash: status.statusHash })), 0o600);
         const applicable = PHASE5C_S_NESTED_AUTHORITIES_V1.filter((candidate) => !candidate.sourceKind.startsWith("raw-derived") && rowIndex(candidate.from) <= rowIndex(descriptor.from));
@@ -24269,7 +26442,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     try {
       installExactCurrentSuccessorGitFixtureV1(root);
       instrumentPhase5cProgressFixtureV1(root);
-      const successorRoot = path.join(root, "p5c-s-recovery-pending-external");
+      const successorRoot = path.join(path.dirname(root), "data/internal-production-baseline/p5c-s-recovery-pending-external");
       const seeded = phase5cSSeedRecoveryAtRootFixtureV1(successorRoot, "A", "pending-input");
       const input = Object.freeze({
         status: phase5cSCanonicalProgressStatusFixtureV1("canary_running/running"),
@@ -24326,7 +26499,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       instrumentPhase5cProgressFixtureV1(root);
       const rows = [] as Readonly<Record<string, unknown>>[];
       for (const state of ["prepared", "terminal"] as const) {
-        const successorRoot = path.join(root, `p5c-s-recovery-${state}-task12`);
+        const successorRoot = path.join(path.dirname(root), `data/internal-production-baseline/p5c-s-recovery-${state}-task12`);
         const seeded = phase5cSSeedRecoveryAtRootFixtureV1(successorRoot, "B", state);
         const input = Object.freeze({
           status: phase5cSCanonicalProgressStatusFixtureV1("canary_running/running"),
@@ -24355,13 +26528,13 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           : path.join(successorRoot, "recovery-source-bootstrap-v1", "records", specification.kind, "sha256", hash.slice(0, 2), `${hash}.json`);
         return Object.freeze({ material: specification.material, role: "content", policy: "task12-receipt", target, expectedBytesBase64: canonicalFixtureRecordV1(value).toString("base64"), publication: "F2u", writer: "A0" });
       });
-      const preparedExpected = expected(path.join(root, "p5c-s-recovery-prepared-task12"), preparedMaterials, Object.freeze([
+      const preparedExpected = expected(path.join(path.dirname(root), "data/internal-production-baseline/p5c-s-recovery-prepared-task12"), preparedMaterials, Object.freeze([
         Object.freeze({ material: "start-intent", kind: "start-intents", hashKey: "startIntentHash" }),
         Object.freeze({ material: "start-outbox", kind: "start-outboxes", hashKey: "startOutboxHash" }),
         Object.freeze({ material: "recovery-operation", kind: "operations", hashKey: "operationHash" }),
         Object.freeze({ material: "prepared-visibility-head", kind: "visibility-heads", hashKey: "visibilityHeadHash" }),
       ]));
-      const terminalExpected = expected(path.join(root, "p5c-s-recovery-terminal-task12"), terminalMaterials, Object.freeze([
+      const terminalExpected = expected(path.join(path.dirname(root), "data/internal-production-baseline/p5c-s-recovery-terminal-task12"), terminalMaterials, Object.freeze([
         Object.freeze({ material: "terminal-source-run", kind: "terminal-source-runs", hashKey: "terminalSourceRunHash" }),
         Object.freeze({ material: "terminal-run-launch", kind: "terminal-run-launches", hashKey: "terminalRunLaunchHash" }),
         Object.freeze({ material: "target-pair-close", kind: "source-run-launch-target-reservation-pair-closes", hashKey: "targetReservationPairCloseHash", root: "successor" as const }),
@@ -24391,7 +26564,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       instrumentPhase5cProgressFixtureV1(root);
       const rows = [] as Readonly<Record<string, unknown>>[];
       for (const state of ["prepared", "terminal"] as const) {
-        const successorRoot = path.join(root, `p5c-s-recovery-${state}-cas`);
+        const successorRoot = path.join(path.dirname(root), `data/internal-production-baseline/p5c-s-recovery-${state}-cas`);
         const seeded = phase5cSSeedRecoveryAtRootFixtureV1(successorRoot, "A", state);
         const input = Object.freeze({
           status: phase5cSCanonicalProgressStatusFixtureV1("canary_running/running"),
@@ -24430,7 +26603,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           }),
         });
       };
-      const comparableRows = rows.map((row, index) => Object.freeze({ ...row, successorRoot: path.join(root, `p5c-s-recovery-${index === 0 ? "prepared" : "terminal"}-cas`) }));
+      const comparableRows = rows.map((row, index) => Object.freeze({ ...row, successorRoot: path.join(path.dirname(root), `data/internal-production-baseline/p5c-s-recovery-${index === 0 ? "prepared" : "terminal"}-cas`) }));
       assert.deepEqual(rows.map((row) => row.outcome), ["returned", "returned"]);
       assert.deepEqual(rows.map((row) => row.casEndpoints), [
         Object.freeze([expectedCas(comparableRows[0]!, preparedMaterials["pending-visibility-head"]!)]),
@@ -24456,7 +26629,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     try {
       installExactCurrentSuccessorGitFixtureV1(root);
       instrumentPhase5cProgressFixtureV1(root);
-      const successorRoot = path.join(root, "p5c-s-recovery-terminal-external");
+      const successorRoot = path.join(path.dirname(root), "data/internal-production-baseline/p5c-s-recovery-terminal-external");
       const seeded = phase5cSSeedRecoveryAtRootFixtureV1(successorRoot, "A", "terminal");
       const arrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "recovery-source" && candidate.ordinal === 2)!;
       const materials = phase5cSExternalRawCausalChainFixtureV1(arrow, "A").materials;
@@ -24567,7 +26740,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     try {
       installExactCurrentSuccessorGitFixtureV1(root);
       instrumentPhase5cProgressFixtureV1(root);
-      const successorRoot = path.join(root, "p5c-s-recovery-prepared-external");
+      const successorRoot = path.join(path.dirname(root), "data/internal-production-baseline/p5c-s-recovery-prepared-external");
       const seeded = phase5cSSeedRecoveryAtRootFixtureV1(successorRoot, "B", "prepared");
       const arrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "recovery-source" && candidate.ordinal === 1)!;
       const materials = phase5cSExternalRawCausalChainFixtureV1(arrow, "B").materials;
@@ -24740,7 +26913,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         Object.freeze({ label: "returned-middle-close-fault", variant: "B" as const, state: "terminal" as const, mutation: "none" as const, fault: "returned-cleanup" as const }),
       ]);
       const inputs = definitions.map((definition, index) => {
-        const successorRoot = path.join(root, "p5c-s-recovery-at-root", String(index));
+        const successorRoot = path.join(path.dirname(root), "data/internal-production-baseline/p5c-s-recovery-at-root", String(index));
         const pairCloseCross = definition.fault === "source-reservation"
           ? "source"
           : definition.fault === "run-reservation"
@@ -24806,7 +26979,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           }
         }
         const crossed = definition.fault === "release"
-          ? phase5cSSeedRecoveryAtRootFixtureV1(path.join(root, "p5c-s-recovery-at-root-release-bait", String(index)), definition.variant === "A" ? "B" : "A").release!
+          ? phase5cSSeedRecoveryAtRootFixtureV1(path.join(path.dirname(root), "data/internal-production-baseline/p5c-s-recovery-at-root-release-bait", String(index)), definition.variant === "A" ? "B" : "A").release!
           : seeded.release ?? Object.freeze({});
         const mutationTarget = definition.mutation === "pair-close-parent-aba" ? seeded.pairCloseTarget! : seeded.visibilityPointerTarget;
         return Object.freeze({
@@ -25646,18 +27819,24 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const pairCloseTarget = path.join(successorRoot, "records", "source-run-launch-target-reservation-pair-closes", "sha256", String(seeded.graph.pairClose.targetReservationPairCloseHash).slice(0, 2), `${String(seeded.graph.pairClose.targetReservationPairCloseHash)}.json`);
         const receiptTarget = immutableTarget("run-receipts", String(seeded.graph.receipt.sourceRunHash));
         if (scenario.artifact === "terminal-only" || scenario.artifact === "all") {
+          phase5cEnsurePublicationParentV1(sourceTarget);
+          phase5cEnsurePublicationParentV1(runTarget);
           fixtureFile(successorRoot, path.relative(successorRoot, sourceTarget), canonicalFixtureRecordV1(seeded.graph.terminalSource), 0o600);
           fixtureFile(successorRoot, path.relative(successorRoot, runTarget), canonicalFixtureRecordV1(seeded.graph.terminalRun), 0o600);
         } else if (scenario.artifact === "crossed-source") {
+          phase5cEnsurePublicationParentV1(sourceTarget);
           fixtureFile(successorRoot, path.relative(successorRoot, sourceTarget), canonicalFixtureRecordV1(terminalB["terminal-source-run"]!), 0o600);
         }
-        if (scenario.artifact === "all") fixtureFile(successorRoot, path.relative(successorRoot, pairCloseTarget), canonicalFixtureRecordV1(seeded.graph.pairClose), 0o600);
+        if (scenario.artifact === "all") {
+          phase5cEnsurePublicationParentV1(pairCloseTarget);
+          fixtureFile(successorRoot, path.relative(successorRoot, pairCloseTarget), canonicalFixtureRecordV1(seeded.graph.pairClose), 0o600);
+        }
         const operationDirectory = path.join(successorRoot, "operations", "sha256", operation.operationHash.slice(0, 2), operation.operationHash);
         mkdirSync(operationDirectory, { recursive: true, mode: 0o700 });
         chmodSync(operationDirectory, 0o700);
         const preCallTree = filesystemTreeSnapshot(successorRoot);
         const input = Object.freeze({ storeRoot: successorRoot, operation, mutation: scenario.mutation });
-        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const probe={persistedRun:${JSON.stringify(scenario.observed)},dispatchResult:{},fence:${JSON.stringify(databaseMaterials.fence)},pairClose:${JSON.stringify(seeded.graph.pairClose)},release:${JSON.stringify(scenario.release)},releaseFaults:${scenario.releaseFaults},observeCalls:0,dispatchCalls:0,dispatchAuthorities:[],reobserveCalls:0,closeTargetCalls:0,releaseCalls:0,terminalVisibilityCalls:0,events:[],mutationArmed:false,mutationApplied:false,lateVisibilityMutation:false,fenceEvents:[],controllerReleaseAttempts:0,controllerReleases:0,controllerReleaseMessage:null,controllerReplacementStillPresentAtRelease:false,controllerReplacementStillPresentAfterRelease:false,controllerReplacementBeforeRelease:null,controllerReplacementAfterRelease:null,controllerReplacementPreservedAfterRelease:false};Reflect.set(globalThis,"__p5cSActiveRecoveryAdoptionProbeV1",probe);const attempts=[];const values=[];for(let index=0;index<${scenario.calls};index+=1){try{const value=await m.p5cSResumeActiveRecoveryFixtureV1(${JSON.stringify(input)});values.push(value);attempts.push({outcome:"returned",message:null})}catch(error){attempts.push({outcome:"threw",message:String(error)})}}const operationMembers=fs.readdirSync(${JSON.stringify(operationDirectory)}).filter((name)=>name.includes("current-entry-controller.lock"));const visibilityPair=JSON.parse(fs.readFileSync(${JSON.stringify(seeded.visibilityPointerTarget)},"utf8"));const records={source:fs.existsSync(${JSON.stringify(sourceTarget)})?JSON.parse(fs.readFileSync(${JSON.stringify(sourceTarget)},"utf8")):null,run:fs.existsSync(${JSON.stringify(runTarget)})?JSON.parse(fs.readFileSync(${JSON.stringify(runTarget)},"utf8")):null,pairClose:fs.existsSync(${JSON.stringify(pairCloseTarget)})?JSON.parse(fs.readFileSync(${JSON.stringify(pairCloseTarget)},"utf8")):null,receipt:fs.existsSync(${JSON.stringify(receiptTarget)})?JSON.parse(fs.readFileSync(${JSON.stringify(receiptTarget)},"utf8")):null};const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;process.stdout.write(JSON.stringify({attempts,values,probe,operationMembers,visibilityPair,records,descriptorDelta:after-before}))})()`);
+        const result = await runPrecompiledRecoveryFixtureExpressionV1(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const probe={persistedRun:${JSON.stringify(scenario.observed)},dispatchResult:{},fence:${JSON.stringify(databaseMaterials.fence)},pairClose:${JSON.stringify(seeded.graph.pairClose)},release:${JSON.stringify(scenario.release)},releaseFaults:${scenario.releaseFaults},observeCalls:0,dispatchCalls:0,dispatchAuthorities:[],reobserveCalls:0,closeTargetCalls:0,releaseCalls:0,terminalVisibilityCalls:0,events:[],mutationArmed:false,mutationApplied:false,lateVisibilityMutation:false,fenceEvents:[],controllerReleaseAttempts:0,controllerReleases:0,controllerReleaseMessage:null,controllerReplacementStillPresentAtRelease:false,controllerReplacementStillPresentAfterRelease:false,controllerReplacementBeforeRelease:null,controllerReplacementAfterRelease:null,controllerReplacementPreservedAfterRelease:false};Reflect.set(globalThis,"__p5cSActiveRecoveryAdoptionProbeV1",probe);const attempts=[];const values=[];for(let index=0;index<${scenario.calls};index+=1){try{const value=await m.p5cSResumeActiveRecoveryFixtureV1(${JSON.stringify(input)});values.push(value);attempts.push({outcome:"returned",message:null})}catch(error){attempts.push({outcome:"threw",message:String(error)})}}const operationMembers=fs.readdirSync(${JSON.stringify(operationDirectory)}).filter((name)=>name.includes("current-entry-controller.lock"));const visibilityPair=JSON.parse(fs.readFileSync(${JSON.stringify(seeded.visibilityPointerTarget)},"utf8"));const records={source:fs.existsSync(${JSON.stringify(sourceTarget)})?JSON.parse(fs.readFileSync(${JSON.stringify(sourceTarget)},"utf8")):null,run:fs.existsSync(${JSON.stringify(runTarget)})?JSON.parse(fs.readFileSync(${JSON.stringify(runTarget)},"utf8")):null,pairClose:fs.existsSync(${JSON.stringify(pairCloseTarget)})?JSON.parse(fs.readFileSync(${JSON.stringify(pairCloseTarget)},"utf8")):null,receipt:fs.existsSync(${JSON.stringify(receiptTarget)})?JSON.parse(fs.readFileSync(${JSON.stringify(receiptTarget)},"utf8")):null};const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;process.stdout.write(JSON.stringify({attempts,values,probe,operationMembers,visibilityPair,records,descriptorDelta:after-before}))})()`);
         assert.equal(result.status, 0, result.stderr);
         const diagnostic = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
         const attempts = diagnostic.attempts as readonly Readonly<Record<string, unknown>>[];
@@ -25907,22 +28086,32 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const runTarget = immutableTarget("terminal-run-launches", String(seeded.graph.terminalRun.terminalRunLaunchHash));
         const pairCloseTarget = path.join(successorRoot, "records", "source-run-launch-target-reservation-pair-closes", "sha256", String(seeded.graph.pairClose.targetReservationPairCloseHash).slice(0, 2), `${String(seeded.graph.pairClose.targetReservationPairCloseHash)}.json`);
         const receiptTarget = immutableTarget("run-receipts", String(seeded.graph.receipt.sourceRunHash));
-        if (scenario.artifact !== "missing-source") fixtureFile(successorRoot, path.relative(successorRoot, sourceTarget), canonicalFixtureRecordV1(seeded.graph.terminalSource), 0o600);
+        if (scenario.artifact !== "missing-source") {
+          phase5cEnsurePublicationParentV1(sourceTarget);
+          fixtureFile(successorRoot, path.relative(successorRoot, sourceTarget), canonicalFixtureRecordV1(seeded.graph.terminalSource), 0o600);
+        }
+        phase5cEnsurePublicationParentV1(runTarget);
         fixtureFile(successorRoot, path.relative(successorRoot, runTarget), canonicalFixtureRecordV1(
           scenario.artifact === "crossed-run" ? terminalB["terminal-run-launch"]! : seeded.graph.terminalRun,
         ), 0o600);
-        if (scenario.artifact !== "missing-pair-close") fixtureFile(successorRoot, path.relative(successorRoot, pairCloseTarget), canonicalFixtureRecordV1(seeded.graph.pairClose), 0o600);
+        if (scenario.artifact !== "missing-pair-close") {
+          phase5cEnsurePublicationParentV1(pairCloseTarget);
+          fixtureFile(successorRoot, path.relative(successorRoot, pairCloseTarget), canonicalFixtureRecordV1(seeded.graph.pairClose), 0o600);
+        }
         const expectedReceipt = seeded.graph.receipt;
         const expectedVisibility = seeded.graph.terminalVisibility;
         const seededReceipt = scenario.mutation === "visibility-root-aba";
-        if (seededReceipt) fixtureFile(successorRoot, path.relative(successorRoot, receiptTarget), canonicalFixtureRecordV1(expectedReceipt), 0o600);
+        if (seededReceipt) {
+          phase5cEnsurePublicationParentV1(receiptTarget);
+          fixtureFile(successorRoot, path.relative(successorRoot, receiptTarget), canonicalFixtureRecordV1(expectedReceipt), 0o600);
+        }
         const input = Object.freeze({ storeRoot: successorRoot, operation, mutation: scenario.mutation });
         const operationDirectory = path.join(successorRoot, "operations", "sha256", operation.operationHash.slice(0, 2), operation.operationHash);
         mkdirSync(operationDirectory, { recursive: true, mode: 0o700 });
         chmodSync(operationDirectory, 0o700);
         const preCallTree = filesystemTreeSnapshot(successorRoot);
         const callCount = scenario.success ? 2 : 1;
-        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const probe={persistedRun:${JSON.stringify(scenario.observed)},dispatchResult:{},fence:${JSON.stringify(databaseMaterials.fence)},pairClose:${JSON.stringify(seeded.graph.pairClose)},release:${JSON.stringify(databaseMaterials.fenceRelease)},observeCalls:0,dispatchCalls:0,dispatchAuthorities:[],reobserveCalls:0,closeTargetCalls:0,releaseCalls:0,terminalVisibilityCalls:0,events:[],mutationArmed:false,mutationApplied:false,lateVisibilityMutation:${scenario.mutation === "visibility-root-aba"},fenceEvents:[],controllerReleaseAttempts:0,controllerReleases:0,controllerReleaseMessage:null,controllerReplacementStillPresentAtRelease:false,controllerReplacementStillPresentAfterRelease:false,controllerReplacementBeforeRelease:null,controllerReplacementAfterRelease:null,controllerReplacementPreservedAfterRelease:false};Reflect.set(globalThis,"__p5cSActiveRecoveryAdoptionProbeV1",probe);let outcome="returned",message=null,values=[];try{for(let index=0;index<${callCount};index+=1)values.push(await m.p5cSResumeActiveRecoveryFixtureV1(${JSON.stringify(input)}))}catch(error){outcome="threw";message=String(error)}const operationMembers=fs.readdirSync(${JSON.stringify(operationDirectory)}).filter((name)=>name.includes("current-entry-controller.lock"));const visibilityPair=JSON.parse(fs.readFileSync(${JSON.stringify(seeded.visibilityPointerTarget)},"utf8"));const receiptExists=fs.existsSync(${JSON.stringify(receiptTarget)});const receipt=receiptExists?JSON.parse(fs.readFileSync(${JSON.stringify(receiptTarget)},"utf8")):null;const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;process.stdout.write(JSON.stringify({outcome,message,values,probe,operationMembers,visibilityPair,receiptExists,receipt,descriptorDelta:after-before}))})()`);
+        const result = await runPrecompiledRecoveryFixtureExpressionV1(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const probe={persistedRun:${JSON.stringify(scenario.observed)},dispatchResult:{},fence:${JSON.stringify(databaseMaterials.fence)},pairClose:${JSON.stringify(seeded.graph.pairClose)},release:${JSON.stringify(databaseMaterials.fenceRelease)},observeCalls:0,dispatchCalls:0,dispatchAuthorities:[],reobserveCalls:0,closeTargetCalls:0,releaseCalls:0,terminalVisibilityCalls:0,events:[],mutationArmed:false,mutationApplied:false,lateVisibilityMutation:${scenario.mutation === "visibility-root-aba"},fenceEvents:[],controllerReleaseAttempts:0,controllerReleases:0,controllerReleaseMessage:null,controllerReplacementStillPresentAtRelease:false,controllerReplacementStillPresentAfterRelease:false,controllerReplacementBeforeRelease:null,controllerReplacementAfterRelease:null,controllerReplacementPreservedAfterRelease:false};Reflect.set(globalThis,"__p5cSActiveRecoveryAdoptionProbeV1",probe);let outcome="returned",message=null,values=[];try{for(let index=0;index<${callCount};index+=1)values.push(await m.p5cSResumeActiveRecoveryFixtureV1(${JSON.stringify(input)}))}catch(error){outcome="threw";message=String(error)}const operationMembers=fs.readdirSync(${JSON.stringify(operationDirectory)}).filter((name)=>name.includes("current-entry-controller.lock"));const visibilityPair=JSON.parse(fs.readFileSync(${JSON.stringify(seeded.visibilityPointerTarget)},"utf8"));const receiptExists=fs.existsSync(${JSON.stringify(receiptTarget)});const receipt=receiptExists?JSON.parse(fs.readFileSync(${JSON.stringify(receiptTarget)},"utf8")):null;const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;process.stdout.write(JSON.stringify({outcome,message,values,probe,operationMembers,visibilityPair,receiptExists,receipt,descriptorDelta:after-before}))})()`);
         assert.equal(result.status, 0, result.stderr);
         const diagnostic = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
         assert.equal(diagnostic.outcome, scenario.success ? "returned" : "threw", `${scenario.label}: only exact released H4 plus every retained local immutable artifact can finish prepared filesystem visibility (${String(diagnostic.message)})`);
@@ -26049,8 +28238,40 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.ok(currentEntryController && new RegExp(`openExactPoisonPostVisibleSelectedProgressPassV1\\(\\s*context\\s*,\\s*operation\\s*,\\s*${currentEntryController[1]!}\\s*\\)`).test(currentEntryCaller),
       "the current-entry progress loop passes its exact acquired controller handle into the selected pass owner");
     const selectedPassOwner = topLevelFunctionRegionV1(productionSource, "openExactPoisonPostVisibleSelectedProgressPassV1");
-    assert.match(selectedPassOwner, /exactPoisonPostVisibleSelectedProgressPassControllerLocksV1\.set\(\s*owner\s*,\s*Object\.freeze\(\s*\{\s*controllerLock\s*,\s*resumeRecoverySourceBootstrapHeldLockV1:\s*\(\)\s*=>\s*resumeRecoverySourceBootstrapHeldLockV1\(\s*context\s*,\s*controllerLock\s*\)/,
-      "the selected pass owner carries only its exact controller handle and bound held-recovery callback");
+    const typescript = await import("typescript");
+    const selectedTree = typescript.createSourceFile("selected.ts", selectedPassOwner, typescript.ScriptTarget.Latest, true);
+    const registrations: string[] = [];
+    const visitRegistration = (node: import("typescript").Node): void => {
+      if (typescript.isExpressionStatement(node) && typescript.isCallExpression(node.expression)
+        && node.expression.expression.getText(selectedTree) === "exactPoisonPostVisibleSelectedProgressPassControllerLocksV1.set") registrations.push(node.getText(selectedTree));
+      typescript.forEachChild(node, visitRegistration);
+    };
+    visitRegistration(selectedTree);
+    assert.equal(registrations.length, 1, "the real selected pass registers exactly one controller capability");
+    const registration = new Function(
+      "exactPoisonPostVisibleSelectedProgressPassControllerLocksV1", "owner", "controllerLock", "context",
+      "assertRootStable", "status", "currentStatusCas", "currentEntryFail", "resumeRecoverySourceBootstrapHeldLockV1",
+      transformSync(registrations[0]!, { loader: "ts", format: "esm" }).code,
+    );
+    const controllerRegistry = new WeakMap<object, Record<string, unknown>>();
+    const selectedOwner = {}, exactController = {}, exactContext = {}, resumed = {};
+    const fenceOrder: string[] = [];
+    const resumeArguments: unknown[][] = [];
+    registration(controllerRegistry, selectedOwner, exactController, exactContext,
+      () => fenceOrder.push("root"), { assertStable: () => fenceOrder.push("status") },
+      { assertStable: () => fenceOrder.push("cas") }, (message: string) => { throw Error(message); },
+      (...args: unknown[]) => { resumeArguments.push(args); return resumed; });
+    const registered = controllerRegistry.get(selectedOwner)!;
+    assert.ok(Object.isFrozen(registered));
+    assert.deepEqual(Object.keys(registered), ["controllerLock", "assertPredecessorStable", "resumeRecoverySourceBootstrapHeldLockV1"]);
+    assert.equal(registered.controllerLock, exactController);
+    (registered.assertPredecessorStable as () => void)();
+    assert.deepEqual(fenceOrder, ["root", "status", "cas", "status", "root"]);
+    assert.equal((registered.resumeRecoverySourceBootstrapHeldLockV1 as () => unknown)(), resumed);
+    assert.equal(resumeArguments.length, 1);
+    assert.equal(resumeArguments[0]!.length, 2);
+    assert.equal(resumeArguments[0]![0], exactContext, "held recovery receives the captured context identity");
+    assert.equal(resumeArguments[0]![1], exactController, "held recovery receives the captured controller identity");
     const progressEffect = topLevelFunctionRegionV1(productionSource, "advanceExactPoisonPostVisibleProgressEffectV1");
     const controllerAuthority = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*exactPoisonPostVisibleSelectedProgressPassControllerLocksV1\.get\(\s*passOwner\s*\)\s*;/.exec(progressEffect);
     assert.ok(controllerAuthority && new RegExp(`case\\s+["']recover-source["']:[\\s\\S]*await\\s+${controllerAuthority[1]!}\\.resumeRecoverySourceBootstrapHeldLockV1\\(\\)`).test(progressEffect),
@@ -27525,7 +29746,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       type DownstreamPhysicalStageV1 = "stable" | "q-temporary" | "q-writer" | "q-temporary-writer" | "q-unequal" | "q-crossed" | "q-with-f" | "controller-writer" | "controller-writer-crossed-owner" | "controller-writer-aba" | "entry-02-fixed" | "entry-02-temporary" | "entry-02-writer" | "entry-02-unequal" | "entry-02-second" | "later" | "unknown" | "over-cap";
       const seedDownstream = (descriptor: typeof PHASE5C_S_NONBLOCKED_ROWS_V1[number], kind: DownstreamPhysicalStageV1): void => {
         const status = phase5cSCanonicalProgressStatusFixtureV1(descriptor.row);
-        const successorRoot = path.join(realpathSync(root), `p5c-s-leaf-downstream-${PHASE5C_S_NONBLOCKED_ROWS_V1.indexOf(descriptor)}-${kind}`);
+        const successorRoot = path.join(realpathSync(path.dirname(root)), `data/internal-production-baseline/p5c-s-leaf-downstream-${PHASE5C_S_NONBLOCKED_ROWS_V1.indexOf(descriptor)}-${kind}`);
         const operationDirectory = path.join(successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
         const topology = phase5cSNextStatusContentTopologyFixtureV1(descriptor, status, successorRoot);
         mkdirSync(operationDirectory, { recursive: true, mode: 0o700 });
@@ -27604,7 +29825,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         for (const kind of kinds) seedDownstream(descriptor, kind);
       }
       const downstreamObserved: Readonly<Record<string, unknown>>[] = [];
-      const downstreamTreeBefore = filesystemTreeSnapshot(root);
+      const downstreamTreeBefore = filesystemTreeSnapshot(path.dirname(root));
       for (let offset = 0; offset < downstreamInputs.length; offset += 8) {
         const batch = downstreamInputs.slice(offset, offset + 8);
         const batchTarget = path.join(path.dirname(root), `.p5c-s-downstream-batch-${offset}.json`);
@@ -27660,7 +29881,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           }
         } catch (error) { leafCaseFailures.push(`${String(input.label)}: ${String(error)}`); }
       }
-      try { assert.deepEqual(filesystemTreeSnapshot(root), downstreamTreeBefore, "all post-effect downstream member/parent ABA rows restore the exact disposable tree"); }
+      try { assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), downstreamTreeBefore, "all post-effect downstream member/parent ABA rows restore the exact disposable workspace tree"); }
       catch (error) { leafCaseFailures.push(`downstream-tree: ${String(error)}`); }
       assert.deepEqual(leafCaseFailures, [], "every phase-aware SQL and post-effect operation-directory boundary executes independently");
     } finally {
@@ -28868,7 +31089,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           for (const port of expected.expectedPorts) assert.equal(calledPorts.filter((called) => called === port).length, 1, `${expected.label}: actual arm invokes ${port} exactly once`);
           const publications = calls.filter((call) => call.port === "observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1");
           const writers = calls.filter((call) => call.port === "observeTask12ReceiptLocatorWriterNoWriteV1");
-          const builders = calls.filter((call) => call.port === "buildTask12PreparedCurrentEntryPublicationSetV1");
+          const builders = calls.filter((call) => call.port === "buildTask12PreparedCurrentEntryReplayPublicationSetV1");
           const immediateDerivations = calls.filter((call) => call.port === "deriveExactPoisonPostVisibleProgressImmediatePublicationV1");
           const topology = wrapped.expectedTopology as Readonly<Record<string, unknown>>;
           assert.equal(wrapped.observedEvidence, expected.evidence, `${expected.label}: raw result carries its exact prior-only/completed/terminal discriminator`);
@@ -29240,12 +31461,12 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         durableImmediateOverride?: boolean,
       ): void => {
         const evidence: Phase5cSProgressEvidenceKindV1 = descriptor.next === null ? "terminal" : rawState === "prepared" ? "prior-only" : "completed";
-        const proof = phase5cSProgressEvidenceFixtureV1(descriptor, evidence, path.join(root, `p5c-s-physical-q-${label}`));
+        const successorRoot = path.join(path.dirname(root), `data/internal-production-baseline/p5c-s-physical-q-${label}`);
+        const proof = phase5cSProgressEvidenceFixtureV1(descriptor, evidence, successorRoot);
         const status = proof.status as Readonly<Record<string, unknown>>;
         const operationHash = String(status.operationHash);
         const previousPairBytesBase64 = proof.previousPairBytesBase64 as string | null;
         const currentPairBytes = Buffer.from(String(proof.currentPairBytesBase64), "base64");
-        const successorRoot = path.join(root, `p5c-s-physical-q-${label}`);
         const operationDirectory = path.join(successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
         const target = path.join(operationDirectory, "01-current-status.pair.json");
         const topology = Object.freeze({ immediateTarget: proof.immediateTarget as string | null, immediateBytesBase64: proof.immediateBytesBase64 as string | null });
@@ -29254,10 +31475,12 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const outgoingCandidatePresent = members.some((kind) => kind === "next" || kind === "prefix-zero" || kind === "prefix-partial" || kind === "prefix-second");
         const durableImmediate = durableImmediateOverride ?? (evidence === "completed" && outgoingCandidatePresent);
         assert.equal(fixed, "current", `${label}: a fresh S pass opens fixed 01 as its authenticated current status and never adopts another fixed pair`);
+        phase5cEnsurePublicationParentV1(target);
         fixtureFile(root, path.relative(root, target), currentPairBytes, 0o600);
         if (durableImmediate) {
           assert.notEqual(topology.immediateTarget, null, `${label}: durable outgoing Q evidence has one exact candidate content target`);
           assert.notEqual(topology.immediateBytesBase64, null, `${label}: durable outgoing Q evidence has exact candidate content bytes`);
+          phase5cEnsurePublicationParentV1(String(topology.immediateTarget));
           fixtureFile(root, path.relative(root, String(topology.immediateTarget)), Buffer.from(String(topology.immediateBytesBase64), "base64"), 0o600);
         }
         const crossedHash = "9".repeat(64);
@@ -29356,10 +31579,11 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       try {
         installExactCurrentSuccessorGitFixtureV1(root);
         instrumentPhase5cProgressFixtureV1(root);
-        const successorRoot = path.join(root, `p5c-s-progress-q-${mutation}`);
+        const successorRoot = path.join(path.dirname(root), `data/internal-production-baseline/p5c-s-progress-q-${mutation}`);
         const operationHash = String(status.operationHash);
         const operationDirectory = path.join(successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
         const target = path.join(operationDirectory, "01-current-status.pair.json");
+        phase5cEnsurePublicationParentV1(target);
         fixtureFile(root, path.relative(root, target), pairBytes(status), 0o600);
         const before = filesystemTreeSnapshot(successorRoot);
         const input = Object.freeze({
@@ -29370,7 +31594,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           nextPairBytesBase64: pairBytes(nextStatus).toString("base64"),
           mutation,
         });
-        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const count=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const before=count();try{const value=await m.p5cSObserveProgressQStabilityFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({outcome:"returned",value,descriptorDelta:count()-before}))}catch(error){process.stdout.write(JSON.stringify({outcome:"threw",message:String(error),descriptorDelta:count()-before}))}})()`);
+        // Settle initial tsx compilation before measuring the real owned Q lifetime.
+        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const count=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;await new Promise(resolve=>setTimeout(resolve,100));const before=count();try{const value=await m.p5cSObserveProgressQStabilityFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({outcome:"returned",value,descriptorDelta:count()-before}))}catch(error){process.stdout.write(JSON.stringify({outcome:"threw",message:String(error),descriptorDelta:count()-before}))}})()`);
         assert.equal(result.status, 0, result.stderr);
         const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
         assert.equal(observed.outcome, "returned", `${mutation}: copied physical S-aware classifier executes rather than a wrapper fallback: ${String(observed.message ?? "")}`);
@@ -29420,7 +31645,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       try {
         instrumentPhase5cProgressFixtureV1(root);
         const fixtureRoot = realpathSync(root);
-        const requestedSuccessorRoot = path.join(fixtureRoot, `p5c-s-progress-q1-authority-${testCase.label}`);
+        const requestedSuccessorRoot = path.join(path.dirname(fixtureRoot), `data/internal-production-baseline/p5c-s-progress-q1-authority-${testCase.label}`);
         mkdirSync(requestedSuccessorRoot, { recursive: true, mode: 0o700 });
         const successorRoot = realpathSync(requestedSuccessorRoot);
         const operationHash = String(status.operationHash);
@@ -29428,6 +31653,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const target = path.join(operationDirectory, "01-current-status.pair.json");
         const currentPairBytes = pairBytes(status);
         const nextPairBytes = pairBytes(nextStatus);
+        phase5cEnsurePublicationParentV1(target);
         fixtureFile(fixtureRoot, path.relative(fixtureRoot, target), currentPairBytes, 0o600);
         let ambiguousPid: number | undefined;
         if (testCase.authority !== "crossed-capability" && testCase.authority !== "retained") {
@@ -29563,10 +31789,11 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const previousPairBytes = previousStatus === null ? null : pairBytes(previousStatus);
         const currentPairBytes = pairBytes(status);
         const nextPairBytes = nextStatus === null ? null : pairBytes(nextStatus);
-        const successorRoot = path.join(root, `p5c-s-normalize-${label}`);
+        const successorRoot = path.join(path.dirname(root), `data/internal-production-baseline/p5c-s-normalize-${label}`);
         const operationHash = String(status.operationHash);
         const operationDirectory = path.join(successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
         const target = path.join(operationDirectory, "01-current-status.pair.json");
+        phase5cEnsurePublicationParentV1(target);
         fixtureFile(root, path.relative(root, target), currentPairBytes, 0o600);
         if (staleWriter) {
           assert.equal(members.length, 1, `${label}: stale Q1 owns exactly one incomplete adjacent temporary`);
@@ -30245,18 +32472,18 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const firstPreSchemaStatus = phase5cSExternalRawCausalChainFixtureV1(firstPreSchemaArrow, "B").next;
         const priorStatusLocatorTarget = path.join(seeded.operationDirectory, PHASE5C_S_PRE_SCHEMA_PHYSICAL_STATUS_BASENAMES_V1[0]);
         const priorStatusHash = String(firstPreSchemaStatus.statusHash);
-        const priorStatusContentTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", priorStatusHash.slice(0, 2), `${priorStatusHash}.json`);
+        const priorStatusContentTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", priorStatusHash.slice(0, 2), `${priorStatusHash}.json`);
         const preLegacyValue = phase5cSExternalRawCausalChainFixtureV1(firstPreSchemaArrow, "B").materials["pre-dispatch-legacy-zero-content"]!;
         const preLegacyHash = String(preLegacyValue.observationHash);
         const preLegacyContentTarget = path.join(path.dirname(root), "data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1/records/sha256", preLegacyHash.slice(0, 2), `${preLegacyHash}.json`);
         const startupArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === 1)!;
         const predecessorIdentity = phase5cSExternalRawCausalChainFixtureV1(startupArrow, "B").materials["predecessor-process-identity"]!;
         const predecessorIdentityHash = canonicalHash(predecessorIdentity);
-        const predecessorIdentityContentTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", predecessorIdentityHash.slice(0, 2), `${predecessorIdentityHash}.json`);
+        const predecessorIdentityContentTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", predecessorIdentityHash.slice(0, 2), `${predecessorIdentityHash}.json`);
         const readyArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === 6)!;
         const admissionReadyValue = phase5cSExternalRawCausalChainFixtureV1(readyArrow, "B").materials["admission-ready"]!;
         const admissionReadyHash = String(admissionReadyValue.admissionReadyHash);
-        const admissionReadyContentTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`);
+        const admissionReadyContentTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`);
         const sealedArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === 5)!;
         const postLegacyValue = phase5cSExternalRawCausalChainFixtureV1(sealedArrow, "B").materials["post-termination-legacy-zero-content"]!;
         const postLegacyHash = String(postLegacyValue.observationHash);
@@ -30264,8 +32491,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const replacementArrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === 4)!;
         const replacementIdentity = phase5cSExternalRawCausalChainFixtureV1(replacementArrow, "B").materials["replacement-process-identity"]!;
         const replacementIdentityHash = canonicalHash(replacementIdentity);
-        const replacementIdentityContentTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", replacementIdentityHash.slice(0, 2), `${replacementIdentityHash}.json`);
-        const physicalContentRoot = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
+        const replacementIdentityContentTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", replacementIdentityHash.slice(0, 2), `${replacementIdentityHash}.json`);
+        const physicalContentRoot = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
         const physicalLegacyRoot = path.join(path.dirname(root), "data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1/records/sha256");
         const writePhysical = (target: string, value: Readonly<Record<string, unknown>>): void => {
           phase5cEnsurePublicationParentV1(target);
@@ -30402,8 +32629,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           const authorization = rehash(chain.materials.authorization!, "authorizationRef", "authorizationHash", "setfarm://internal-production/pre-schema-spawner-rebind-authorization/sha256/", Object.freeze({ currentEntryOperationRef: `setfarm://internal-production/current-entry-operation/sha256/${crossedOperationHash}`, currentEntryOperationHash: crossedOperationHash }));
           const crossedStatus = rehash(chain.next, "statusRef", "statusHash", "setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/", Object.freeze({ authorization: Object.freeze({ authorizationRef: authorization.authorizationRef, authorizationHash: authorization.authorizationHash }) }));
           const write = (target: string, value: Readonly<Record<string, unknown>>): void => { phase5cEnsurePublicationParentV1(target); writeFileSync(target, canonicalFixtureRecordV1(value), { mode: 0o600 }); };
-          write(path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", String(authorization.authorizationHash).slice(0, 2), `${String(authorization.authorizationHash)}.json`), authorization);
-          write(path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", String(crossedStatus.statusHash).slice(0, 2), `${String(crossedStatus.statusHash)}.json`), crossedStatus);
+          write(path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", String(authorization.authorizationHash).slice(0, 2), `${String(authorization.authorizationHash)}.json`), authorization);
+          write(path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", String(crossedStatus.statusHash).slice(0, 2), `${String(crossedStatus.statusHash)}.json`), crossedStatus);
           write(path.join(seeded.operationDirectory, "01-authorization.pair.json"), Object.freeze({ authorizationRef: authorization.authorizationRef, authorizationHash: authorization.authorizationHash }));
           write(seeded.currentStatusTarget, Object.freeze({ statusRef: crossedStatus.statusRef, statusHash: crossedStatus.statusHash }));
         } else if (["valid-response-loss", "fixed-next-f2u", "linked-next-f2", "independent-next-f2", "next-status-f1", "duplicate-producer", "writer-temp8", "writer-temp9", "writer-a2-linked", "producer-f1-nlink2", "writer-a0-nlink2", "writer-a2-extra-nlink2", "producer-wrong-pair", "dynamic-startup-crossed-authorization", "dynamic-status-crossed-startup", "writer-wrong-body", "later-producer", "blocked-later-producer"].includes(String(entry.inventoryFault))) {
@@ -30426,7 +32653,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
               const alternateStartupHash = canonicalHash(startupBody);
               const alternateStartup = Object.freeze({ ...startupBody, startupTokenRef: `setfarm://internal-production/pre-schema-spawner-startup-token/sha256/${alternateStartupHash}`, startupTokenHash: alternateStartupHash });
               producerPair = Object.freeze({ startupTokenRef: alternateStartup.startupTokenRef, startupTokenHash: alternateStartup.startupTokenHash });
-              const alternateStartupContent = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/startup-token/sha256", alternateStartupHash.slice(0, 2), `${alternateStartupHash}.json`);
+              const alternateStartupContent = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/startup-token/sha256", alternateStartupHash.slice(0, 2), `${alternateStartupHash}.json`);
               phase5cEnsurePublicationParentV1(alternateStartupContent);
               writeFileSync(alternateStartupContent, canonicalFixtureRecordV1(alternateStartup), { mode: 0o600 });
             }
@@ -30465,7 +32692,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             const nonce = "50000000-0000-4000-8000-000000000005";
             writeFileSync(path.join(seeded.operationDirectory, `.${path.basename(nextStatusTarget)}.${nonce}.tmp`), canonicalFixtureRecordV1(Object.freeze({ statusRef: nextStatus.statusRef, statusHash: nextStatus.statusHash })), { mode: 0o600 });
             const nextStatusHash = String(nextStatus.statusHash);
-            const nextStatusContent = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", nextStatusHash.slice(0, 2), `${nextStatusHash}.json`);
+            const nextStatusContent = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", nextStatusHash.slice(0, 2), `${nextStatusHash}.json`);
             phase5cEnsurePublicationParentV1(nextStatusContent);
             writeFileSync(nextStatusContent, canonicalFixtureRecordV1(nextStatus), { mode: 0o600 });
           }
@@ -30545,17 +32772,17 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
             const nonce = "40000000-0000-4000-8000-000000000004";
             writeFileSync(path.join(seeded.operationDirectory, `.${laterName}.${nonce}.tmp`), canonicalFixtureRecordV1(laterPair), { mode: 0o600 });
             const laterHash = String(laterValue[laterHashKey]);
-            const laterContent = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records", laterKind, "sha256", laterHash.slice(0, 2), `${laterHash}.json`);
+            const laterContent = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records", laterKind, "sha256", laterHash.slice(0, 2), `${laterHash}.json`);
             phase5cEnsurePublicationParentV1(laterContent);
             writeFileSync(laterContent, canonicalFixtureRecordV1(laterValue), { mode: 0o600 });
           }
           const startupHash = String(startup.startupTokenHash);
-          const startupContent = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/startup-token/sha256", startupHash.slice(0, 2), `${startupHash}.json`);
+          const startupContent = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/startup-token/sha256", startupHash.slice(0, 2), `${startupHash}.json`);
           phase5cEnsurePublicationParentV1(startupContent);
           writeFileSync(startupContent, canonicalFixtureRecordV1(startup), { mode: 0o600 });
           const predecessorIdentity = nextChain.materials["predecessor-process-identity"]!;
           const predecessorHash = canonicalHash(predecessorIdentity);
-          const predecessorContent = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", predecessorHash.slice(0, 2), `${predecessorHash}.json`);
+          const predecessorContent = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", predecessorHash.slice(0, 2), `${predecessorHash}.json`);
           phase5cEnsurePublicationParentV1(predecessorContent);
           writeFileSync(predecessorContent, canonicalFixtureRecordV1(predecessorIdentity), { mode: 0o600 });
         } else if (entry.inventoryFault === "restart-crossed-uid") {
@@ -30602,14 +32829,14 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           delete alternateSealedBody.sealedAdmissionRef; delete alternateSealedBody.sealedAdmissionHash;
           const alternateSealedHash = canonicalHash(alternateSealedBody);
           const alternateSealed = Object.freeze({ ...alternateSealedBody, sealedAdmissionRef: `setfarm://internal-production/pre-schema-spawner-sealed-admission/sha256/${alternateSealedHash}`, sealedAdmissionHash: alternateSealedHash });
-          const alternateSealedTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/sealed-admission/sha256", alternateSealedHash.slice(0, 2), `${alternateSealedHash}.json`);
+          const alternateSealedTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/sealed-admission/sha256", alternateSealedHash.slice(0, 2), `${alternateSealedHash}.json`);
           phase5cEnsurePublicationParentV1(alternateSealedTarget);
           writeFileSync(alternateSealedTarget, canonicalFixtureRecordV1(alternateSealed), { mode: 0o600 });
           const admissionBody = { ...admissionReadyValue, sealedAdmissionRef: alternateSealed.sealedAdmissionRef, sealedAdmissionHash: alternateSealed.sealedAdmissionHash };
           delete admissionBody.admissionReadyRef; delete admissionBody.admissionReadyHash;
           const alternateAdmissionHash = canonicalHash(admissionBody);
           const alternateAdmission = Object.freeze({ ...admissionBody, admissionReadyRef: `setfarm://internal-production/task0-spawner-admission-ready/sha256/${alternateAdmissionHash}`, admissionReadyHash: alternateAdmissionHash });
-          const alternateAdmissionTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", alternateAdmissionHash.slice(0, 2), `${alternateAdmissionHash}.json`);
+          const alternateAdmissionTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", alternateAdmissionHash.slice(0, 2), `${alternateAdmissionHash}.json`);
           phase5cEnsurePublicationParentV1(alternateAdmissionTarget);
           writeFileSync(alternateAdmissionTarget, canonicalFixtureRecordV1(alternateAdmission), { mode: 0o600 });
           writeFileSync(path.join(seeded.operationDirectory, "08-admission-ready.pair.json"), canonicalFixtureRecordV1(Object.freeze({ admissionReadyRef: alternateAdmission.admissionReadyRef, admissionReadyHash: alternateAdmission.admissionReadyHash })), { mode: 0o600 });
@@ -30617,7 +32844,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           delete statusBody.statusRef; delete statusBody.statusHash;
           const alternateStatusHash = canonicalHash(statusBody);
           const alternateStatus = Object.freeze({ ...statusBody, statusRef: `setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/${alternateStatusHash}`, statusHash: alternateStatusHash });
-          const alternateStatusTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", alternateStatusHash.slice(0, 2), `${alternateStatusHash}.json`);
+          const alternateStatusTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", alternateStatusHash.slice(0, 2), `${alternateStatusHash}.json`);
           phase5cEnsurePublicationParentV1(alternateStatusTarget);
           writeFileSync(alternateStatusTarget, canonicalFixtureRecordV1(alternateStatus), { mode: 0o600 });
           writeFileSync(seeded.currentStatusTarget, canonicalFixtureRecordV1(Object.freeze({ statusRef: alternateStatus.statusRef, statusHash: alternateStatus.statusHash })), { mode: 0o600 });
@@ -30628,14 +32855,14 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           delete alternateAuthorizationBody.authorizationRef; delete alternateAuthorizationBody.authorizationHash;
           const alternateAuthorizationHash = canonicalHash(alternateAuthorizationBody);
           const alternateAuthorization = Object.freeze({ ...alternateAuthorizationBody, authorizationRef: `setfarm://internal-production/pre-schema-spawner-rebind-authorization/sha256/${alternateAuthorizationHash}`, authorizationHash: alternateAuthorizationHash });
-          const alternateAuthorizationTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", alternateAuthorizationHash.slice(0, 2), `${alternateAuthorizationHash}.json`);
+          const alternateAuthorizationTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", alternateAuthorizationHash.slice(0, 2), `${alternateAuthorizationHash}.json`);
           phase5cEnsurePublicationParentV1(alternateAuthorizationTarget);
           writeFileSync(alternateAuthorizationTarget, canonicalFixtureRecordV1(alternateAuthorization), { mode: 0o600 });
           const body = { ...firstPreSchemaStatus, authorization: Object.freeze({ authorizationRef: alternateAuthorization.authorizationRef, authorizationHash: alternateAuthorization.authorizationHash }) };
           delete body.statusRef; delete body.statusHash;
           const alternateHash = canonicalHash(body);
           const alternateStatus = Object.freeze({ ...body, statusRef: `setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/${alternateHash}`, statusHash: alternateHash });
-          const alternateTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", alternateHash.slice(0, 2), `${alternateHash}.json`);
+          const alternateTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", alternateHash.slice(0, 2), `${alternateHash}.json`);
           phase5cEnsurePublicationParentV1(alternateTarget);
           writeFileSync(alternateTarget, canonicalFixtureRecordV1(alternateStatus), { mode: 0o600 });
           writeFileSync(priorStatusLocatorTarget, canonicalFixtureRecordV1(Object.freeze({ statusRef: alternateStatus.statusRef, statusHash: alternateStatus.statusHash })), { mode: 0o600 });
@@ -30733,10 +32960,113 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         ["status", "content", "pre-schema-no-replace", null, null, null, null],
         ["status", "locator", "pre-schema-no-replace", path.join(seeded.operationDirectory, "status-00-prepared.pair.json"), "", "F0", "A0"],
       ]);
-      assert.equal(observed.descriptorDelta, 0, "the absent frontier releases every retained directory descriptor");
+      assert.equal(observed.descriptorDelta, 0, `the absent frontier releases every retained directory descriptor: ${result.stderr}`);
     } finally {
       removeFixture(root);
     }
+  });
+
+  for (const responseLoss of [false, true]) it(`direct V2 restart is authenticated by the physical receipt reader against original P3 and profile (${responseLoss ? "response-loss" : "fixed"})`, async () => {
+    const root = createFixture();
+    try {
+      installExactCurrentSuccessorGitFixtureV1(root);
+      instrumentPhase5cProgressFixtureV1(root);
+      installDirectReceiptEvidenceProbeFixtureV1(root);
+      const operation = phase5cSAuthenticPreSchemaCurrentEntryOperationFixtureV1();
+      const source = operation.controllerSource as Record<string, unknown>;
+      const service = structuredClone(exactZeroEffectServiceCensusV1()) as Record<string, any>;
+      const spawner = { ...service.spawner, pid: 101, processStartTimeEpochMs: 1_700_000_000_101, processIdentityHash: "6".repeat(64),
+        loadedSourceSha: source.sha, loadedTreeHash: source.treeHash, loadedBuildHash: source.buildHash, processOwnerCount: 1, listener: null };
+      spawner.generationHash = canonicalHash({ schema: "setfarm.internal-production-loaded-service-generation.v1", label: "com.setrox.setfarm-spawner", serviceIdentityHash: spawner.serviceIdentityHash, source: { sha: source.sha, treeHash: source.treeHash, buildHash: source.buildHash } });
+      service.spawner = spawner;
+      delete service.censusHash;
+      const projection = { schema: "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1", currentEntryOperationRef: operation.operationRef, currentEntryOperationHash: operation.operationHash,
+        observedServiceCensusHash: canonicalHash(service), spawner, dashboard: service.dashboard, missionControl: service.missionControl, openClaw: service.openClaw };
+      const p3Body = { ...projection, serviceProjectionSetHash: canonicalHash(projection) };
+      const p3Hash = canonicalHash(p3Body);
+      const p3Pair = { preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${p3Hash}`, preMutationLoadedRuntimeServiceAuthorityHash: p3Hash };
+      const preMutation = { ...p3Body, ...p3Pair };
+      const profileBody = { schema: "setfarm.internal-production-spawner-launch-profile.v1", source, uid: process.getuid!() };
+      const profile = { ...profileBody, profileHash: canonicalHash(profileBody) };
+      const seedForProfile = (launchProfileHash: string) => {
+        const priorTemporary = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", String(operation.operationHash), ".03-restart-authority.pair.json.00000010-0000-4000-8000-000000000010.tmp");
+        if (responseLoss && existsSync(priorTemporary)) unlinkSync(priorTemporary);
+        const directEvidence = { ...p3Pair, launchProfileHash };
+        const seeded = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, responseLoss ? 1 : 2, !responseLoss, operation, spawner, directEvidence);
+        if (responseLoss) {
+          const arrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === 2 && candidate.next !== "blocked")!;
+          const restart = phase5cSExternalRawCausalChainFixtureV1(arrow, "B", operation, spawner, directEvidence).materials["restart-authority"]!;
+          const hash = String(restart.restartAuthorityHash);
+          const record = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/restart-authority/sha256", hash.slice(0, 2), `${hash}.json`);
+          phase5cEnsurePublicationParentV1(record);
+          writeFileSync(record, canonicalFixtureRecordV1(restart), { mode: 0o600 });
+          writeFileSync(path.join(seeded.operationDirectory, ".03-restart-authority.pair.json.00000010-0000-4000-8000-000000000010.tmp"), canonicalFixtureRecordV1({ restartAuthorityRef: restart.restartAuthorityRef, restartAuthorityHash: hash }), { mode: 0o600 });
+        }
+        return seeded;
+      };
+      const cases: Array<{ label: string; p3s: unknown[]; profile: Record<string, unknown>; valid: boolean }> = [
+        { label: "stable", p3s: [preMutation], profile, valid: true },
+        { label: "crossed P3 pair", p3s: [{ ...preMutation, preMutationLoadedRuntimeServiceAuthorityHash: "f".repeat(64) }], profile, valid: false },
+        { label: "crossed predecessor", p3s: [{ ...preMutation, spawner: { ...spawner, pid: 102 } }], profile, valid: false },
+        { label: "P3 drift during profile", p3s: [preMutation, { ...preMutation, spawner: { ...spawner, pid: 102 } }], profile, valid: false },
+        { label: "profile hash", p3s: [preMutation], profile: { ...profile, outputTreeBytesHash: "f".repeat(64), profileHash: canonicalHash({ ...profileBody, outputTreeBytesHash: "f".repeat(64) }) }, valid: false },
+        { label: "profile body hash", p3s: [preMutation], profile: { ...profile, schema: "crossed-profile-body" }, valid: false },
+        { label: "profile uid", p3s: [preMutation], profile: { ...profile, uid: profile.uid + 1, profileHash: canonicalHash({ ...profileBody, uid: profile.uid + 1 }) }, valid: false },
+        { label: "profile source", p3s: [preMutation], profile: { ...profile, source: { ...source, buildHash: "f".repeat(64) }, profileHash: canonicalHash({ ...profileBody, source: { ...source, buildHash: "f".repeat(64) } }) }, valid: false },
+      ];
+      for (const entry of cases) {
+        if (entry.label === "profile hash") {
+          const { profileHash, ...body } = entry.profile;
+          assert.equal(canonicalHash(body), profileHash, "binding negative has an internally valid profile hash");
+          assert.notEqual(profileHash, profile.profileHash, "only the restart/profile pair binding is crossed");
+        }
+        const seeded = seedForProfile(["profile uid", "profile source"].includes(entry.label) ? String(entry.profile.profileHash) : profile.profileHash);
+        const input = { operation: seeded.operation, successorRoot: seeded.successorRoot, mutation: "none", mutationTarget: seeded.operationDirectory };
+        const beforeTree = filesystemTreeSnapshot(path.dirname(root));
+        const result = await runFixtureExpressionAsync(root, `(async()=>{globalThis.__directReceiptEvidenceV1={p3s:${JSON.stringify(entry.p3s)},p3Calls:0,profile:${JSON.stringify(entry.profile)},profileCalls:0};await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.js")).href)});m.p5cSPrewarmFixedRepositoryRootFixtureV1();const value=await m.p5cSObservePreSchemaAtRootFixtureV1(${JSON.stringify(input)});const probe=globalThis.__directReceiptEvidenceV1;process.stdout.write(JSON.stringify({value,p3Calls:probe.p3Calls,profileCalls:probe.profileCalls}))})()`);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.value.outcome, entry.valid ? "returned" : "threw", `${entry.label}: ${String(observed.value.message)}`);
+        if (entry.valid) {
+          assert.deepEqual(observed.value.value, seeded.current);
+          assert.equal(observed.p3Calls, 2);
+          assert.equal(observed.profileCalls, 1);
+        } else assert.match(String(observed.value.message), /pre-schema direct restart/);
+        assert.equal(observed.value.descriptorDelta, 0, `${entry.label}: no descriptor leak`);
+        assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), beforeTree, `${entry.label}: no writes`);
+      }
+      for (const boundary of ["p3-first", "profile", "p3-final"] as const) for (const kind of ["member", "parent"] as const) {
+        const seeded = seedForProfile(profile.profileHash);
+        const input = { operation: seeded.operation, successorRoot: seeded.successorRoot, mutation: "none", mutationTarget: seeded.operationDirectory };
+        const target = seeded.authorizationContentTarget;
+        const beforeTree = filesystemTreeSnapshot(path.dirname(root));
+        const result = await runFixtureExpressionAsync(root, `(async()=>{
+          const fs=await import('node:fs'),path=await import('node:path');
+          const target=${JSON.stringify(target)},kind=${JSON.stringify(kind)},boundary=${JSON.stringify(boundary)};
+          const parent=path.dirname(target),backup=(kind==='parent'?parent:target)+'.direct-await-original';
+          let mutated=false,bytesEqual=false,generationChanged=false;
+          const mutate=()=>{if(mutated)throw Error('duplicate fixture mutation');const bytes=fs.readFileSync(target);const before=fs.lstatSync(kind==='parent'?parent:target,{bigint:true});
+            if(kind==='member'){fs.renameSync(target,backup);fs.writeFileSync(target,bytes,{flag:'wx',mode:0o600});}
+            else{fs.renameSync(parent,backup);fs.mkdirSync(parent,{mode:0o700});for(const name of fs.readdirSync(backup))fs.writeFileSync(path.join(parent,name),fs.readFileSync(path.join(backup,name)),{flag:'wx',mode:0o600});}
+            mutated=true;bytesEqual=fs.readFileSync(target).equals(bytes);generationChanged=fs.lstatSync(kind==='parent'?parent:target,{bigint:true}).ino!==before.ino;};
+          const probe={p3s:[${JSON.stringify(preMutation)}],p3Calls:0,profile:${JSON.stringify(profile)},profileCalls:0,
+            onP3:async(count)=>{if(boundary===(count===1?'p3-first':'p3-final'))mutate()},onProfile:async()=>{if(boundary==='profile')mutate()}};
+          globalThis.__directReceiptEvidenceV1=probe;
+          await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.js")).href)});
+          m.p5cSPrewarmFixedRepositoryRootFixtureV1();
+          try{const value=await m.p5cSObservePreSchemaAtRootFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({value,mutated,bytesEqual,generationChanged,p3Calls:probe.p3Calls,profileCalls:probe.profileCalls}));}
+          finally{if(mutated){if(kind==='member'){fs.unlinkSync(target);fs.renameSync(backup,target);}else{for(const name of fs.readdirSync(parent))fs.unlinkSync(path.join(parent,name));fs.rmdirSync(parent);fs.renameSync(backup,parent);}}}
+        })()`);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout);
+        assert.equal(observed.mutated && observed.bytesEqual && observed.generationChanged, true, `${boundary}/${kind}: real same-byte generation replacement`);
+        assert.equal(observed.value.outcome, "threw", `${boundary}/${kind}: original physical owner must refuse`);
+        assert.equal(observed.p3Calls, boundary === "p3-final" ? 2 : 1, `${boundary}/${kind}: no later P3 call`);
+        assert.equal(observed.profileCalls, boundary === "p3-first" ? 0 : 1, `${boundary}/${kind}: no later profile call`);
+        assert.equal(observed.value.descriptorDelta, 0, `${boundary}/${kind}: original descriptors all closed`);
+        assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), beforeTree, `${boundary}/${kind}: fixture restores original evidence and reader writes nothing`);
+      }
+    } finally { removeFixture(root); }
   });
 
   it("P5c-S retains every present idle pre-schema frontier through ordinal four", async () => {
@@ -31087,8 +33417,6 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "the prepared migration endpoint resolves its exact authorization content");
     assert.match(policy, /arrow\.family\s*===\s*"migration-32"[\s\S]*arrow\.ordinal\s*===\s*1[\s\S]*resolveInternalProductionPreManifestMigration32AuthorizationConsumptionV1/,
       "the consumed migration endpoint resolves its exact consumption content");
-    assert.match(policy, /arrow\.family\s*===\s*"current-audit"[\s\S]*target:\s*null[\s\S]*expectedBytes:\s*null[\s\S]*publication:\s*null[\s\S]*writer:\s*null/,
-      "the current-audit transition exposes an explicit unaddressed content tuple until a durable audit locator exists");
     const root = createFixture();
     try {
       installExactCurrentSuccessorGitFixtureV1(root);
@@ -31119,7 +33447,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       writeRecord("statuses", String(consumed.next.statusHash), consumed.next);
       const operationDirectory = path.join(migrationRoot, "operations", "sha256", "aa", "a".repeat(64));
       phase5cEnsurePublicationParentV1(path.join(operationDirectory, "status-00.pair.json"));
-      const migrationTerminalChain = phase5cSExternalRawCausalChainFixtureV1(PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "migration-32" && candidate.ordinal === 2)!, "B");
+      const migrationTerminalChain = phase5cSExternalRawCausalChainFixtureV1(PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "migration-32" && candidate.ordinal === 2)!, "A", operation);
       const migrationTerminal = migrationTerminalChain.next;
       writeRecord("receipts", String(migrationTerminalChain.materials.receipt!.migrationReceiptHash), migrationTerminalChain.materials.receipt!);
       for (const [ordinal, status] of [prepared.next, consumed.next, migrationTerminal].entries()) {
@@ -31131,7 +33459,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           ...(material.kind === null ? [] : [Object.freeze({ endpointOrdinal: endpointOrdinal++, material: material.name, role: "content", policy: arrow.policy })]),
           ...(material.locator === null ? [] : [Object.freeze({ endpointOrdinal: endpointOrdinal++, material: material.name, role: "locator", policy: arrow.policy })]),
         ]));
-        return descriptors.map((descriptor) => Object.freeze({ operation, successorRoot: root, arrow, current: chains[arrowIndex]!.next, descriptor }));
+        return descriptors.map((descriptor) => Object.freeze({ operation, successorRoot: root, arrow, current: arrow.family === "current-audit" ? chains[arrowIndex]!.prior : chains[arrowIndex]!.next, descriptor }));
       });
       const expression = `(async()=>{Reflect.set(globalThis,"__p5cSResumeProbeV1",{mode:"task12",auditCalls:0,databaseAudit:${JSON.stringify(audited.materials["current-audit"]!.databaseAudit)}});const values=[];try{for(const input of ${JSON.stringify(calls)})values.push(await m.p5cSObserveTask12PolicyEndpointFixtureV1(input));}finally{Reflect.deleteProperty(globalThis,"__p5cSResumeProbeV1");}process.stdout.write(JSON.stringify(values))})()`;
       const result = await runFixtureExpressionAsync(root, expression);
@@ -31146,8 +33474,94 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         ["returned", "consumption", "content", "task12-receipt", "F2u", "A0"],
         ["returned", "status", "content", "task12-receipt", "F2u", "A0"],
         ["returned", "status", "locator", "task12-receipt", "F2u", "A0"],
-        ["returned", "current-audit", "content", "task12-receipt", null, null],
+        ["returned", "current-audit", "content", "task12-receipt", "F0", "A0"],
       ]);
+      const audit = audited.materials["current-audit"]!;
+      const auditTarget = path.join(migrationRoot, "records/current-audits/sha256", String(audit.bootstrapHandoffCurrentAuditHash).slice(0, 2), `${audit.bootstrapHandoffCurrentAuditHash}.json`);
+      assert.equal(observed[6]!.target, auditTarget, "absence is pinned at the exact content-addressed audit target");
+      assert.equal(observed[6]!.expectedBytesBase64, canonicalFixtureRecordV1(audit).toString("base64"));
+      const observeAuditProjection = async (): Promise<Readonly<Record<string, unknown>>> => {
+        const input = Object.freeze({ operation, successorRoot: root, arrow: arrows[2], current: audited.prior, databaseObservation: Object.freeze({}) });
+        const result = await runFixtureExpressionAsync(root, `(async()=>{Reflect.set(globalThis,"__p5cSResumeProbeV1",{mode:"task12",auditCalls:0,databaseAudit:${JSON.stringify(audit.databaseAudit)}});try{process.stdout.write(JSON.stringify(await m.p5cSObserveExternalDatabaseFixtureV1(${JSON.stringify(input)})))}finally{Reflect.deleteProperty(globalThis,"__p5cSResumeProbeV1")}})()`);
+        assert.equal(result.status, 0, result.stderr);
+        return JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+      };
+      const absentTree = filesystemTreeSnapshot(migrationRoot);
+      const absentProjection = await observeAuditProjection();
+      assert.equal(absentProjection.outcome, "returned", String(absentProjection.message));
+      assert.equal(absentProjection.state, "none");
+      assert.equal(absentProjection.activeEndpointOrdinal, null);
+      assert.deepEqual(absentProjection.current, audited.prior, "an absent audit never fabricates a completed pair");
+      assert.deepEqual(filesystemTreeSnapshot(migrationRoot), absentTree, "audit absence observation creates no directories or records");
+      writeRecord("current-audits", String(audit.bootstrapHandoffCurrentAuditHash), audit);
+      const published = await runFixtureExpressionAsync(root, expression);
+      assert.equal(published.status, 0, published.stderr);
+      const publishedAudit = (JSON.parse(published.stdout) as readonly Readonly<Record<string, unknown>>[])[6]!;
+      assert.deepEqual([publishedAudit.outcome, publishedAudit.publication, publishedAudit.writer], ["returned", "F2u", "A0"], String(publishedAudit.message));
+      assert.equal(publishedAudit.expectedBytesBase64, canonicalFixtureRecordV1(audit).toString("base64"));
+      const publishedTree = filesystemTreeSnapshot(migrationRoot);
+      const publishedProjection = await observeAuditProjection();
+      assert.equal(publishedProjection.outcome, "returned", String(publishedProjection.message));
+      assert.equal(publishedProjection.state, "publishing");
+      assert.equal(publishedProjection.activeEndpointOrdinal, 0);
+      assert.deepEqual(publishedProjection.current, audited.next, "decisive real publication exposes only the exact audit pair");
+      assert.deepEqual(filesystemTreeSnapshot(migrationRoot), publishedTree, "completed audit observation is read-only");
+      writeFileSync(auditTarget, canonicalFixtureRecordV1({ ...audit, currentStatus: "crossed" }), { mode: 0o600 });
+      const crossed = await runFixtureExpressionAsync(root, expression);
+      assert.equal(crossed.status, 0, crossed.stderr);
+      const crossedAudit = (JSON.parse(crossed.stdout) as readonly Readonly<Record<string, unknown>>[])[6]!;
+      assert.equal(crossedAudit.outcome, "threw", "wrong content at the exact audit target must never become completed evidence");
+      writeFileSync(auditTarget, canonicalFixtureRecordV1(audit), { mode: 0o600 });
+      const copiedPolicyPath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      const copiedSource = readFileSync(copiedPolicyPath, "utf8");
+      const copiedPolicy = topLevelFunctionRegionV1(copiedSource, "observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1");
+      const typescript = await import("typescript");
+      const tree = typescript.createSourceFile("policy.ts", copiedPolicy, typescript.ScriptTarget.Latest, true);
+      const acquisitions: string[] = [];
+      const visitAcquisition = (node: import("typescript").Node): void => {
+        if (typescript.isVariableDeclaration(node) && node.name.getText(tree) === "owner" && node.initializer) acquisitions.push(node.initializer.getText(tree));
+        typescript.forEachChild(node, visitAcquisition);
+      };
+      visitAcquisition(tree);
+      assert.equal(acquisitions.length, 1, "transfer fault wraps one actual physical owner acquisition");
+      const acquisition = acquisitions[0]!;
+      const wrappedAcquisition = `(() => {
+        const actualOwner = (${acquisition});
+        const probe = Reflect.get(globalThis,"__p5cSTask12TransferFaultV1") as undefined | {fault:string;closeFault:boolean;openCalls:number;closeCalls:number};
+        if (probe === undefined) return actualOwner;
+        probe.openCalls += 1;
+        return Object.freeze({ ...actualOwner,
+          get publication() { if (probe.fault === "projection") throw new Error("P5C_S_TRANSFER_PRIMARY"); return actualOwner.publication; },
+          assertStable() { if (probe.fault === "stable") throw new Error("P5C_S_TRANSFER_PRIMARY"); actualOwner.assertStable(); },
+          close() { probe.closeCalls += 1; actualOwner.close(); if (probe.closeFault) throw new Error("P5C_S_TRANSFER_CLOSE_SECONDARY"); },
+        });
+      })()`;
+      writeFileSync(copiedPolicyPath, copiedSource.replace(copiedPolicy, copiedPolicy.replace(acquisition, wrappedAcquisition)));
+      const faultTree = filesystemTreeSnapshot(migrationRoot);
+      for (const fault of ["projection", "stable"] as const) for (const closeFault of [false, true]) {
+        const input = calls[6]!;
+        const result = await runFixtureExpressionAsync(root, `(async()=>{
+          const fs=await import("node:fs");
+          Reflect.set(globalThis,"__p5cSResumeProbeV1",{mode:"task12",auditCalls:0,databaseAudit:${JSON.stringify(audit.databaseAudit)}});
+          const warm=await m.p5cSObserveTask12PolicyEndpointFixtureV1(${JSON.stringify(input)});
+          if(warm.outcome!=="returned")throw Error("P5C_S_TRANSFER_WARMUP:"+warm.message);
+          await new Promise(resolve=>setTimeout(resolve,100));
+          const count=()=>fs.readdirSync("/dev/fd").filter(name=>/^[0-9]+$/.test(name)).filter(name=>{try{fs.fstatSync(Number(name));return true}catch{return false}}).length;
+          const before=count();
+          const probe={fault:${JSON.stringify(fault)},closeFault:${closeFault},openCalls:0,closeCalls:0};
+          Reflect.set(globalThis,"__p5cSTask12TransferFaultV1",probe);
+          try{const value=await m.p5cSObserveTask12PolicyEndpointFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({...value,...probe,descriptorDelta:count()-before}))}
+          finally{Reflect.deleteProperty(globalThis,"__p5cSTask12TransferFaultV1");Reflect.deleteProperty(globalThis,"__p5cSResumeProbeV1")}
+        })()`);
+        assert.equal(result.status, 0, result.stderr);
+        const observedFault = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observedFault.outcome, "threw");
+        assert.equal(observedFault.message, "Error: P5C_S_TRANSFER_PRIMARY", "cleanup must preserve the primary construction failure");
+        assert.equal(observedFault.openCalls, 1);
+        assert.equal(observedFault.closeCalls, 1, `${fault}/${closeFault}: failed transfer closes its actual acquired owner exactly once`);
+        assert.equal(observedFault.descriptorDelta, 0, `${fault}/${closeFault}: failed transfer releases every physical descriptor`);
+        assert.deepEqual(filesystemTreeSnapshot(migrationRoot), faultTree, "failed observation remains read-only");
+      }
     } finally {
       removeFixture(root);
     }
@@ -31304,7 +33718,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         ? path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", operationHash, PHASE5C_S_PRE_SCHEMA_STATUS_BASENAMES_V1[ordinal]!)
         : path.join(path.dirname(root), "data/internal-production-baseline/pre-manifest-migration32-v1/operations/sha256", operationHash.slice(0, 2), operationHash, `status-0${ordinal}.pair.json`);
       const contentTargetFor = (family: "pre-schema" | "migration-32", statusHash: string): string => family === "pre-schema"
-        ? path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`)
+        ? path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`)
         : path.join(path.dirname(root), "data/internal-production-baseline/pre-manifest-migration32-v1/records/statuses/sha256", statusHash.slice(0, 2), `${statusHash}.json`);
       const inputs = Object.freeze([
         ...representatives.map(({ descriptor, family, entry }) => Object.freeze({ label: `${descriptor.row}:${family}:${entry.ordinal}:stable`, status: phase5cSCanonicalProgressStatusFixtureV1(descriptor.row), successorRoot: path.join(root, "p5c-s-completed-retained"), family, ordinal: entry.ordinal, pairTarget: targetFor(family, entry.ordinal), contentTarget: contentTargetFor(family, entry.pair.statusHash), mutation: "none" as const, expected: entry })),
@@ -31381,7 +33795,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const preSchema = fault.startsWith("pre-schema");
         const entry = preSchema ? retained.preSchema[1]! : retained.migration[0]!;
         const content = preSchema
-          ? path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", entry.pair.statusHash.slice(0, 2), `${entry.pair.statusHash}.json`)
+          ? path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", entry.pair.statusHash.slice(0, 2), `${entry.pair.statusHash}.json`)
           : path.join(path.dirname(root), "data/internal-production-baseline/pre-manifest-migration32-v1/records/statuses/sha256", entry.pair.statusHash.slice(0, 2), `${entry.pair.statusHash}.json`);
         const pairPath = preSchema
           ? path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", operation.operationHash, PHASE5C_S_PRE_SCHEMA_STATUS_BASENAMES_V1[entry.ordinal]!)
@@ -31468,7 +33882,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           ? path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", operation.operationHash, PHASE5C_S_PRE_SCHEMA_STATUS_BASENAMES_V1[0])
           : path.join(path.dirname(root), "data/internal-production-baseline/pre-manifest-migration32-v1/operations/sha256", operation.operationHash.slice(0, 2), operation.operationHash, "status-01.pair.json");
         const contentPath = retainedKind === "pre-schema"
-          ? path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", alternate.pair.statusHash.slice(0, 2), `${alternate.pair.statusHash}.json`)
+          ? path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", alternate.pair.statusHash.slice(0, 2), `${alternate.pair.statusHash}.json`)
           : path.join(path.dirname(root), "data/internal-production-baseline/pre-manifest-migration32-v1/records/statuses/sha256", alternate.pair.statusHash.slice(0, 2), `${alternate.pair.statusHash}.json`);
         phase5cEnsurePublicationParentV1(contentPath);
         writeFileSync(contentPath, alternate.bytes, { mode: 0o600 });
@@ -31839,7 +34253,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
   });
 
-  it("P5c-S resumes an absent raw pre-schema frontier into one exact adjacent status", async () => {
+  for (const fault of ["none", "missing-material", "predecessor-aba", "fresh-close", "missing-material-and-close"] as const) {
+  it(`P5c-S resumes an absent raw pre-schema frontier into one exact adjacent status${fault === "none" ? "" : ` (${fault})`}`, async () => {
       const root = createFixture();
       try {
         const harness = configurePhase5cZeroProgressFixtureV1(root, true);
@@ -31847,14 +34262,48 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
         assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
         const operation = harness.admitted.chain.records.successorOperation.value as Readonly<{ operationRef: string; operationHash: string }>;
-        const retained = phase5cSSeedRetainedReaderFixturesV1(root, operation, false);
-        const prepared = retained.preSchema[0]!.body;
-        const restartPublished = retained.preSchema[2]!.body;
-        const terminal = retained.preSchema[5]!.body;
+        const arrow = PHASE5C_S_EXTERNAL_RAW_ARROWS_V1.find((candidate) => candidate.family === "pre-schema" && candidate.ordinal === 0)!;
+        const chain = phase5cSExternalRawCausalChainFixtureV1(arrow, "B", operation);
+        const prepared = chain.next;
+        const workspace = path.dirname(root);
+        const preSchemaRoot = path.join(workspace, "data/internal-production-baseline/pre-schema-spawner-rebind-v1");
+        const operationDirectory = path.join(preSchemaRoot, "operations/sha256", operation.operationHash);
+        // Build transport material in a separate disposable tree. Nothing is
+        // preseeded in the observed workspace; the execute boundary publishes it.
+        const materialWorkspace = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-pre-schema-material-")));
+        const executePublications: Readonly<{ target: string; bytesBase64: string }>[] = [];
+        let terminal: Readonly<Record<string, unknown>>;
+        try {
+          const physical = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(path.join(materialWorkspace, "setfarm"), 5, false, operation);
+          terminal = physical.current;
+          const files = filesystemTreeSnapshot(materialWorkspace).filter((entry) => entry.kind === "file"
+            && /\/internal-production-baseline\/(?:pre-schema-spawner-rebind-v1|legacy-pre-manifest-zero-owner-observation-v1)\//.test(String(entry.locator)));
+          files.sort((left, right) => {
+            const rank = (locator: string): number => locator.includes("/operations/") ? path.basename(locator).startsWith("status-") ? 2 : 1 : 0;
+            return rank(String(left.locator)) - rank(String(right.locator)) || String(left.locator).localeCompare(String(right.locator));
+          });
+          for (const entry of files) executePublications.push(Object.freeze({ target: path.join(workspace, String(entry.locator)), bytesBase64: readFileSync(path.join(materialWorkspace, String(entry.locator))).toString("base64") }));
+        } finally {
+          rmSync(materialWorkspace, { recursive: true, force: true });
+        }
+        assert.equal(executePublications.filter((entry) => path.dirname(entry.target) === operationDirectory).length, 14, "transport contains eight material locators and six contiguous statuses");
+        assert.equal(existsSync(operationDirectory), false, "the raw frontier is genuinely absent before resume, not a preseeded status-only chain");
+        for (const entry of executePublications) assert.equal(existsSync(entry.target), false, "fresh transport artifacts are absent before the effect");
+        const targets = phase5cPreparedPublicationTargetsV1(harness.original, harness.admitted.chain);
+        const predecessorBytes = readFileSync(targets.currentStatus);
+        const predecessorIdentity = lstatSync(targets.currentStatus).ino;
         const resumeProbe = Object.freeze({
           mode: "pre-schema",
           authorization: prepared.authorization,
-          restartAuthority: restartPublished.restartAuthority,
+          restartAuthority: terminal.restartAuthority,
+          executePublications,
+          executeMutation: fault.startsWith("missing-material") ? "missing-material" : fault,
+          materialTarget: executePublications.find((entry) => entry.target.includes("/records/authorization/"))!.target,
+          predecessorTarget: targets.currentStatus,
+          predecessorBackup: path.join(root, ".post-effect-original-status"),
+          postEffectOwnerOpens: 0,
+          postEffectOwnerCloses: [],
+          freshCloseFault: fault.endsWith("close"),
           terminal,
           observedStatuses: [terminal],
         });
@@ -31862,22 +34311,43 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const result = await runPhase5cZeroProgressFixtureV1(root, observations, Object.freeze({ kind: "none" }), "resume");
         assert.equal(result.status, 0, result.stderr);
         const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
-        assert.equal(observed.outcome, "returned", String(observed.message));
-        const value = observed.value as Readonly<Record<string, unknown>>;
-        assert.equal(value.state, "pre_schema_spawner_rebinding");
-        assert.equal((value.preSchemaSpawnerRebindStatusBody as Readonly<Record<string, unknown>>).state, "prepared");
         const resume = observed.sResume as Readonly<Record<string, unknown>>;
         assert.equal(resume.prepareCalls, 1, "exact raw absence permits one fresh authorization");
         assert.equal(resume.executeCalls, 1, "one idempotent execute/recover continuation runs");
         assert.deepEqual(resume.executeInputs, [prepared.authorization], "execute uses the exact fresh authorization bound to status-00");
-        assert.equal(resume.resolverCalls, 1, "the adjacent retained status-00 body is reopened after the external continuation");
+        assert.equal(resume.postEffectOwnerOpens, fault === "predecessor-aba" ? 1 : 2, "only a stable predecessor allows one fresh same-controller owner");
+        assert.deepEqual(resume.postEffectOwnerCloses, fault === "predecessor-aba" ? [1] : [2, 1], "fresh and original owners close once in reverse lifetime order, including construction failure");
+        assert.equal(observed.descriptorDelta, 0);
+        if (fault !== "none") {
+          assert.equal(observed.outcome, "threw", "post-effect authority or cleanup failure is never reported as success");
+          if (fault === "fresh-close") {
+            assert.match(String(observed.message), /P5C_S_POST_EFFECT_CLOSE_FAULT/);
+            assert.notDeepEqual(readFileSync(targets.currentStatus), predecessorBytes, "a post-CAS close error retains the one committed adjacent status");
+          } else {
+            assert.deepEqual(readFileSync(targets.currentStatus), predecessorBytes, "failed post-effect authority never advances the current pair");
+            assert.doesNotMatch(String(observed.message), /P5C_S_POST_EFFECT_CLOSE_FAULT/, "authority refusal remains primary over cleanup failure");
+            if (fault === "predecessor-aba") {
+              assert.notEqual(lstatSync(targets.currentStatus).ino, predecessorIdentity, "the same-byte predecessor replacement really occurred");
+              assert.match(String(observed.message), /changed|identity|stable|replacement/i);
+            } else assert.match(String(observed.message), /pre-schema|ENOENT|authorization/i);
+          }
+          return;
+        }
+        assert.equal(observed.outcome, "returned", String(observed.message));
+        const value = observed.value as Readonly<Record<string, unknown>>;
+        assert.equal(value.state, "pre_schema_spawner_rebinding");
+        assert.equal((value.preSchemaSpawnerRebindStatusBody as Readonly<Record<string, unknown>>).state, "prepared");
+        assert.equal(resume.resolverCalls, 8, "the effect reopens status-00, then the fresh owner authenticates six historical statuses and its adjacent completed status");
         assert.deepEqual(resume.advanceStates, [{ state: "pre_schema_spawner_rebinding", rawState: "prepared", migrationPhase: null }],
           "one resume invocation advances exactly one adjacent pre-schema state");
+        assert.equal(readdirSync(operationDirectory).length, 14, "execution publishes the complete terminal history while receipt advances only one adjacent status");
+        for (const entry of executePublications) assert.equal(readFileSync(entry.target).toString("base64"), entry.bytesBase64, "the real retained reader consumes the exact published causal records");
         assert.equal(observed.descriptorDelta, 0);
       } finally {
         removeFixture(root);
       }
   });
+  }
 
   it("P5c-S never invokes a pre-schema controller for a blocked current status", async () => {
     const root = createFixture();
@@ -31963,7 +34433,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         migrationTerminal: terminal.body,
         migrationReceipt: terminal.body.migrationReceipt,
         migrationReceiptBody: phase5cSMigrationReceiptBodyFixtureV1(operation),
-        databaseAudit: Object.freeze({ schema: "fixture.current-database-audit.v1", status: "verified" }),
+        databaseAudit: Object.freeze({ migrationOrdinal: 32, migrationId: "contract-spine-bootstrap-main-claim-handoff-v1", migrationChecksum: PHASE5C_S_EXACT_MIGRATION_JOURNAL_V1[32].checksum, migrationState: "current", schemaProjectionHash: "a".repeat(64) }),
         applyCalls: 0,
         migrationObserveCalls: 0,
         receiptResolveCalls: 0,
@@ -32004,8 +34474,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       const sum = (key: string): number => resumes.reduce((total, resume) => total + Number(resume[key]), 0);
       assert.deepEqual(
         { migrationPrepareCalls: sum("migrationPrepareCalls"), retainedMigrationReadCalls: sum("retainedMigrationReadCalls"), completedRetainedReadCalls: sum("completedRetainedReadCalls"), applyCalls: sum("applyCalls"), migrationObserveCalls: sum("migrationObserveCalls"), receiptResolveCalls: sum("receiptResolveCalls"), auditCalls: sum("auditCalls"), currentAuditResolveCalls: sum("currentAuditResolveCalls") },
-        { migrationPrepareCalls: 0, retainedMigrationReadCalls: 0, completedRetainedReadCalls: 2, applyCalls: 0, migrationObserveCalls: 0, receiptResolveCalls: 1, auditCalls: 1, currentAuditResolveCalls: 1 },
-        "a terminal raw migration is adopted without a second apply and is audited once",
+        { migrationPrepareCalls: 0, retainedMigrationReadCalls: 0, completedRetainedReadCalls: 2, applyCalls: 0, migrationObserveCalls: 0, receiptResolveCalls: 3, auditCalls: 3, currentAuditResolveCalls: 1 },
+        "migration is never reapplied; initial and fresh physical observations revalidate receipt and DB audit around the single audit publication",
       );
       assert.deepEqual(resumes.flatMap((resume) => resume.advanceStates as readonly unknown[]), [
         { state: "migration_applying", rawState: "pre_manifest_bootstrap_sealed", migrationPhase: "consumed" },
@@ -32079,7 +34549,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           migrationTerminal: terminal.body,
           migrationReceipt: terminal.body.migrationReceipt,
           migrationReceiptBody: phase5cSMigrationReceiptBodyFixtureV1(operation),
-          databaseAudit: Object.freeze({ schema: "fixture.current-database-audit.v1", status: "verified" }),
+          databaseAudit: Object.freeze({ migrationOrdinal: 32, migrationId: "contract-spine-bootstrap-main-claim-handoff-v1", migrationChecksum: PHASE5C_S_EXACT_MIGRATION_JOURNAL_V1[32].checksum, migrationState: "current", schemaProjectionHash: "a".repeat(64) }),
           currentStatusTarget: targets.currentStatus,
         });
         const observations = phase5cSWithRowTailOrdinalsV1(
@@ -32277,6 +34747,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           mode: "migration",
           faultBoundary,
           stopAfterFault: true,
+          rowTailCurrentStatusTarget: targets.currentStatus,
+          rowTailStatusRecordsRoot: path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot, "records/statuses/sha256"),
           authorization: retainedRebind.body.authorization,
           restartAuthority: retainedRebind.body.restartAuthority,
           terminal: retainedRebind.body,
@@ -32306,8 +34778,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const resume = observed.sResume as Readonly<Record<string, unknown>>;
         const events = resume.events as readonly string[];
         const readOnly = faultBoundary.includes("-locator-") || faultBoundary.includes("-content-");
-        const replayablePublication = faultBoundary === "after-migration-current-audit-publication";
-        assert.equal(events.filter((event) => event === `s-fault:${faultBoundary}`).length, faultBoundary.startsWith("before-") || readOnly || replayablePublication ? 2 : 1);
+        assert.equal(events.filter((event) => event === `s-fault:${faultBoundary}`).length, faultBoundary.startsWith("before-") || readOnly ? 2 : 1,
+          `${faultBoundary}: durable audit publication is adopted without repeating its publication effect`);
         assert.deepEqual({ migrationPrepareCalls: resume.migrationPrepareCalls, applyCalls: resume.applyCalls }, { migrationPrepareCalls: 0, applyCalls: 0 }, `${faultBoundary}: retained terminal migration never prepares or applies a second authorization`);
         assert.equal(resume.faultApplied, true);
         assert.equal(observed.descriptorDelta, 0, `${faultBoundary}: retry closes retained/Q/writer/controller ownership`);
@@ -32818,7 +35290,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "successorOperation: InternalProductionCurrentEntryOperationV1",
       "operationDirectory: string",
       "currentStatusTarget: string",
-      "buildPreparedPublicationSet(): Promise<Task12PreparedCurrentEntryPublicationSetV1>",
+      "buildPreparedPublicationSet(statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1): Promise<Task12PreparedCurrentEntryPublicationSetV1>",
       "assertStable(): void",
     ] as const) assert.equal(observationAuthorityType.includes(field), true, `narrow S observation authority freezes exact ${field}`);
     assert.doesNotMatch(observationAuthorityType, /ExactPoisonRecoveryPinnedCommitChainV1|SelectedCurrentEntryStoreContextV1|SelectedCurrentEntryPrerequisiteRootReaderV1|successor(?:AuthorityV31|Pending)|close\(\)/,
@@ -32827,7 +35299,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const selectedObservationAuthority = topLevelFunctionRegionV1(source, "exactPoisonPostVisibleProgressObservationAuthorityFromSelectedRootReaderV1");
     assert.match(pinnedObservationAuthority.slice(0, pinnedObservationAuthority.indexOf("{")), /context:\s*ExactPoisonRecoveryPinnedCommitChainV1[\s\S]*ExactPoisonPostVisibleProgressObservationAuthorityV1/,
       "the first and only pre-mint adapter narrows the already pinned commit chain");
-    assert.match(selectedObservationAuthority.slice(0, selectedObservationAuthority.indexOf("{")), /rootReader:\s*SelectedCurrentEntryPrerequisiteRootReaderV1,\s*operation:\s*InternalProductionCurrentEntryOperationV1,\s*buildPreparedPublicationSet:\s*\(\)\s*=>\s*Promise<Task12PreparedCurrentEntryPublicationSetV1>[\s\S]*ExactPoisonPostVisibleProgressObservationAuthorityV1/,
+    assert.match(selectedObservationAuthority.slice(0, selectedObservationAuthority.indexOf("{")), /rootReader:\s*SelectedCurrentEntryPrerequisiteRootReaderV1,\s*operation:\s*InternalProductionCurrentEntryOperationV1,\s*buildPreparedPublicationSet:\s*\(statusOwner:\s*ExactPoisonPostVisibleProgressStatusObservationV1\)\s*=>\s*Promise<Task12PreparedCurrentEntryPublicationSetV1>[\s\S]*ExactPoisonPostVisibleProgressObservationAuthorityV1/,
       "the second and only post-selection adapter narrows the selected root reader plus its validated full operation and an origin-owned prepared builder closure");
     for (const [kind, adapter] of [["pinned-commit-chain", pinnedObservationAuthority], ["selected-root-reader", selectedObservationAuthority]] as const) {
       const authorityBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*\{/.exec(adapter);
@@ -32842,11 +35314,11 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
     assert.match(pinnedObservationAuthority, /successorRoot:\s*context\.successorRoot[\s\S]*successorOperation:\s*context\.successorOperation/,
       "pre-mint adapter derives root and operation only from the live pinned chain");
-    assert.match(pinnedObservationAuthority, /createPinnedSuccessorTask12PreparedCurrentEntryPublicationAuthorityV1\(context\)[\s\S]*buildTask12PreparedCurrentEntryPublicationSetV1\([\s\S]*context\.assertStable\(\)/,
+    assert.match(pinnedObservationAuthority, /createPinnedSuccessorTask12PreparedCurrentEntryPublicationAuthorityV1\(context\)[\s\S]*buildTask12PreparedCurrentEntryReplayPublicationSetV1\(preparedAuthority,\s*statusOwner\)[\s\S]*context\.assertStable\(\)/,
       "pre-mint adapter owns the pinned prepared builder and delegates its live stability fence");
     assert.match(selectedObservationAuthority, /rootReader\.selectedBinding[\s\S]*operationRef[\s\S]*operation\.operationRef[\s\S]*operationHash[\s\S]*operation\.operationHash[\s\S]*successorOperation:\s*operation/,
       "post-selection adapter rechecks the carried selected operation pair");
-    assert.match(selectedObservationAuthority, /buildPreparedPublicationSet\(\)[\s\S]*rootReader\.assertStable\(\)/,
+    assert.match(selectedObservationAuthority, /buildPreparedPublicationSet\(statusOwner\)[\s\S]*rootReader\.assertStable\(\)/,
       "post-selection adapter delegates prepared construction to its injected closure and stability only to its live root reader");
     assert.doesNotMatch(selectedObservationAuthority, /buildTask12PreparedCurrentEntryPublicationSetV1|createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1|SelectedCurrentEntryStoreContextV1/,
       "the selected adapter cannot reconstruct a context or prepared authority behind its injected closure");
@@ -33004,7 +35476,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "the selected-side pass opens its root from the already-selected context instead of a detached pre-mint chain");
     assert.match(selectedPassOpen, /rootReader\.selectedBinding[\s\S]*storeRoot[\s\S]*(?:rootReader\.store\.directory|rootReader\.root)[\s\S]*selectionKind[\s\S]*successor-progress[\s\S]*operationRef[\s\S]*operation\.operationRef[\s\S]*operationHash[\s\S]*operation\.operationHash|operation\.operationRef[\s\S]*operationRef[\s\S]*operation\.operationHash[\s\S]*operationHash[\s\S]*rootReader\.selectedBinding[\s\S]*selectionKind[\s\S]*successor-progress/,
       "before any child open, the selected owner consumes its root reader's already-authenticated root/progress/operation binding");
-    const selectedPreparedBuilder = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?\(\)\s*(?::\s*Promise<Task12PreparedCurrentEntryPublicationSetV1>)?\s*=>[\s\S]*?buildTask12PreparedCurrentEntryPublicationSetV1\([\s\S]*?createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1\(context,\s*operation\)/.exec(selectedPassOpen);
+    const selectedPreparedBuilder = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*async\s*\(statusOwner:\s*ExactPoisonPostVisibleProgressStatusObservationV1\)\s*:\s*Promise<Task12PreparedCurrentEntryPublicationSetV1>\s*=>[\s\S]*?buildTask12PreparedCurrentEntryReplayPublicationSetV1\([\s\S]*?createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1\(context,\s*operation\),\s*statusOwner\)/.exec(selectedPassOpen);
     assert.ok(selectedPreparedBuilder, "the selected owner binds one non-escaping exact-context prepared builder closure");
     assert.match(selectedPassOpen, new RegExp(`exactPoisonPostVisibleProgressObservationAuthorityFromSelectedRootReaderV1\\(rootReader,\\s*operation,\\s*${selectedPreparedBuilder[1]!}\\)[\\s\\S]*const\\s+operationDirectory\\s*=\\s*authority\\.operationDirectory;[\\s\\S]*authenticateTask12ReceiptDirectoryChainV1\\(operationDirectory\\)[\\s\\S]*openExactPoisonPostVisibleProgressStatusV1\\(authority\\)[\\s\\S]*observeExactPoisonPostVisibleProgressRawNoWriteV1\\(authority,\\s*status,[\\s\\S]*deriveExactPoisonPostVisibleProgressStatusLineageV1\\(authority,`),
       "the selected owner injects its exact-context builder, pins the operation directory, and threads narrow authority through status, raw, and lineage observers");
@@ -33394,8 +35866,8 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "status parsing is pure and shared by selected and pinned readers");
     const selectedResolver = topLevelFunctionRegionV1(source, "resolveInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1");
     assert.match(selectedResolver, /parseInternalProductionCurrentEntryAuthorityStatusV1\(/);
-    assert.equal(source.split("parseInternalProductionCurrentEntryAuthorityStatusV1(").length - 1, 5,
-      "the parser has one definition and exactly the selected, pinned, canonical-builder, and previous-lineage call sites");
+    assert.equal(source.split("parseInternalProductionCurrentEntryAuthorityStatusV1(").length - 1, 6,
+      "the parser has one definition and exactly the selected, pinned, canonical-builder, previous-lineage, and historical prepared-replay call sites");
     const reconstructPrevious = topLevelFunctionRegionV1(source, "reconstructExactPoisonPostVisibleProgressPreviousStatusV1");
     assert.match(reconstructPrevious, /parseInternalProductionCurrentEntryAuthorityStatusV1\([\s\S]*requireExactPoisonPostVisibleProgressRowV1\([\s\S]*EXACT_POISON_POST_VISIBLE_PROGRESS_ROWS_V1\[\s*currentIndex\s*-\s*1\s*\]!\.row/,
       "the previous-lineage helper parses and classifies its reconstruction before requiring the exact immediately preceding row");
@@ -33667,10 +36139,10 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "pre-schema raw authority is borrowed only from the narrow live successor root and exact operation, then returned as an owner");
     assert.match(preSchemaAtRoot, /operationHash[\s\S]*(?:pre-schema-spawner-rebind-v1|operations)[\s\S]*(?:readdirSync|opendirSync|openExactPoisonPostVisibleTask12ReceiptEndpointDirectoryNoWriteV1)\(/,
       "the pre-schema lower reader owns only the exact successor-operation directory whose dynamic F/writer siblings must be complete");
-    assert.match(preSchemaAtRoot, /fixedRepositoryRoot\(\)[\s\S]*data\/internal-production-baseline\/pre-schema-spawner-rebind-v1\/operations\/sha256/,
-      "pre-schema operation locators are rooted in the canonical repository-owned producer store, independently of the selected successor store");
-    assert.match(preSchemaAtRoot, /fixedRepositoryRoot\(\)[\s\S]*data\/internal-production-baseline\/pre-schema-spawner-rebind-v1\/records/,
-      "pre-schema status, material, and process-identity contents resolve from the canonical repository-owned producer store");
+    assert.match(preSchemaAtRoot, /fixedWorkspaceAuthorityPathV1\("data\/internal-production-baseline\/pre-schema-spawner-rebind-v1\/operations\/sha256", operation\.operationHash\)/,
+      "pre-schema operation locators use the shared canonical workspace producer store, independently of source worktrees and selected successor store");
+    assert.match(preSchemaAtRoot, /fixedWorkspaceAuthorityPathV1\("data\/internal-production-baseline\/pre-schema-spawner-rebind-v1\/records", kind, "sha256", hash\.slice\(0, 2\), `\$\{hash\}\.json`\)/,
+      "pre-schema status, material, and process-identity contents resolve from the shared canonical workspace producer store");
     assert.match(preSchemaAtRoot, /fixedWorkspaceAuthorityPathV1\([\s\S]*legacy-pre-manifest-zero-owner-observation-v1/,
       "legacy-zero content alone resolves from its canonical workspace-owned store");
     const preSchemaResolverTable = /const\s+resolvers\s*=\s*\[([\s\S]*?)\]\s*as const\s*;/.exec(preSchemaAtRoot);
@@ -33782,23 +36254,30 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       "a dynamic startup material is cross-bound to the already pinned authorization pair, not only its operation and self-hash");
     assert.match(preSchemaAtRoot, /dynamic status[\s\S]*(?:startupToken|restartAuthority|dispatchPrefix)[\s\S]*(?:pairs|bodies)[\s\S]*(?:currentEntryFail|fail)/,
       "a dynamic successor status is cross-bound to the complete fixed prior material/status prefix");
-    const preSchemaUidBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*process\.getuid\?\.\(\)(?:\s*\?\?\s*-1)?\s*;/.exec(preSchemaAtRoot);
+    const preSchemaTransport = topLevelFunctionRegionV1(source, "authenticatePreSchemaRestartTransportAtReceiptV1");
+    const preSchemaUidBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*process\.getuid\?\.\(\)(?:\s*\?\?\s*-1)?\s*;/.exec(preSchemaTransport);
     assert.ok(preSchemaUidBinding, "the reader captures the live host uid once for restart validation");
     const preSchemaUid = preSchemaUidBinding[1]!;
     const preSchemaRestartBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*bodies\[3\]!\s*;/.exec(preSchemaAtRoot);
     assert.ok(preSchemaRestartBinding, "restart authority is captured from the same pinned material prefix");
     const preSchemaRestart = preSchemaRestartBinding[1]!;
-    assert.match(preSchemaAtRoot, new RegExp(`${preSchemaRestart}\\.uid\\s*!==\\s*${preSchemaUid}`),
+    assert.match(preSchemaAtRoot, new RegExp(`await authenticatePreSchemaRestartTransportAtReceiptV1\\(${preSchemaRestart}, bodies\\[2\\]!, operation, assertStable\\)`));
+    assert.match(preSchemaAtRoot, /await authenticatePreSchemaRestartTransportAtReceiptV1\(value, bodies\[2\]!, operation, assertStable\)/);
+    assert.match(preSchemaTransport, new RegExp(`restart\\.uid\\s*!==\\s*${preSchemaUid}`),
       "restart authority uid is bound to the captured live host uid");
     const tick = "`";
     const exactRestartArgvVector = `\\[\\s*["']kickstart["']\\s*,\\s*["']-k["']\\s*,\\s*${tick}gui/\\$\\{${preSchemaUid}\\}/com\\.setrox\\.setfarm-spawner${tick}\\s*\\]`;
     const exactRestartArgvExpression = `(?:Object\\.freeze\\(\\s*${exactRestartArgvVector}\\s*\\)|${exactRestartArgvVector}(?:\\s+as\\s+const)?)`;
-    const preSchemaExpectedArgvBinding = new RegExp(`const\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*${exactRestartArgvExpression}\\s*;`).exec(preSchemaAtRoot);
+    const preSchemaExpectedArgvBinding = new RegExp(`const\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*${exactRestartArgvExpression}\\s*;`).exec(preSchemaTransport);
     const exactRestartArgvAuthority = preSchemaExpectedArgvBinding === null
       ? exactRestartArgvExpression
       : `(?:${preSchemaExpectedArgvBinding[1]}|${exactRestartArgvExpression})`;
-    assert.match(preSchemaAtRoot, new RegExp(`canonicalComparable\\(\\s*${preSchemaRestart}\\.argv\\s*\\)\\s*!==\\s*canonicalComparable\\(\\s*${exactRestartArgvAuthority}\\s*\\)`),
+    assert.match(preSchemaTransport, new RegExp(`canonicalComparable\\(\\s*restart\\.argv\\s*\\)\\s*!==\\s*canonicalComparable\\(\\s*${exactRestartArgvAuthority}\\s*\\)`),
       "restart argv is canonically equal to the exact host-bound launchctl vector; dead token mentions cannot satisfy the contract");
+    assert.match(preSchemaTransport, /restart\.schema === "setfarm\.internal-production-pre-schema-spawner-restart-authority\.v1"[\s\S]*return;[\s\S]*await resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1/,
+      "persisted V1 returns before either direct evidence port");
+    assert.match(preSchemaTransport, /await resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1\(pair\);\s*assertStable\(\);[\s\S]*await observeInternalProductionSpawnerLaunchProfileCandidateV1\(\);\s*assertStable\(\);[\s\S]*await resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1\(pair\);\s*assertStable\(\);/,
+      "V2 brackets both P3 reads and profile with the original physical owner");
     const preSchemaStartupBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*bodies\[2\]!\s*;/.exec(preSchemaAtRoot);
     const preSchemaPredecessorBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*bodies\[4\]!\s*;/.exec(preSchemaAtRoot);
     assert.ok(preSchemaStartupBinding && preSchemaPredecessorBinding,
@@ -34234,7 +36713,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           `${port}: ${alias} transfers into the unified owner vector before another lower-port acquisition`);
       }
     }
-    const preparedSetBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*await\s+authority\.buildPreparedPublicationSet\(\)/.exec(raw);
+    const preparedSetBinding = /const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*await\s+authority\.buildPreparedPublicationSet\(status\)/.exec(raw);
     assert.ok(preparedSetBinding, "the operation-prepared raw arm invokes exactly the builder closure carried by its pinned-or-selected observation authority");
     const preparedSetAlias = preparedSetBinding[1]!;
     const preparedSetTail = raw.slice(preparedSetBinding.index);
@@ -34971,16 +37450,16 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const exports = [...source.matchAll(/^export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)|^export\s+type\s+([A-Za-z0-9_]+)/gm)].map((match) => match[1] ?? match[2]);
     assert.deepEqual(exports.filter((name) => /ExactPoisonPostVisibleProgress|ProgressPass|ProgressStatus|ProgressRaw/.test(name)), []);
     const runtimeExports = [...source.matchAll(/^export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z0-9_]+)/gm)].map((match) => match[1]);
-    assert.equal(runtimeExports.length, 53);
-    assert.equal(canonicalHash(runtimeExports), "fd89f0cfa3a86ac07655f1fbc6640867ad937bb88b2e9fdebef6327283b665fd",
+    const historicalRuntimeExports = assertColdRecoveryRuntimeExportContractV1(runtimeExports);
+    assert.equal(canonicalHash(historicalRuntimeExports), "fd89f0cfa3a86ac07655f1fbc6640867ad937bb88b2e9fdebef6327283b665fd",
       "S preserves the exact ordered public runtime export set, not only a name-pattern subset");
     const typeExports = [...source.matchAll(/^export\s+type\s+([A-Za-z0-9_]+)/gm)].map((match) => match[1]);
     assert.equal(typeExports.length, 26);
     assert.equal(canonicalHash(typeExports), "c655b478e687a8df2f04f49017de4e288e108a97a2c2428fcab97dbf3978f998",
       "S preserves the exact ordered public type export set while every S contract remains private");
     assert.equal((source.match(/CURRENT_ENTRY_STORE_DIRECTORY/g) ?? []).length, 2);
-    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 17,
-      "S retains the two private no-write prerequisite builders and adds the selected-operation recheck at the Q normalization frontier plus the migration-status pre/post context fence");
+    assert.equal(source.split("requireSelectedCurrentEntryStoreContextStateV1(").length - 1, 18,
+      "one definition plus seventeen consumers retain both private builders, the selected-operation recheck and migration-status pre/post context fences");
   });
 
   it("P5c-S resumes retained pre-schema and migration history in exact CAS order before later effects", () => {
@@ -36139,7 +38618,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
           linkSync(seeded.temporaries[0]!, path.join(root, "q-hardlink-alias-outside-operation"));
         }
         instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
-        const before = filesystemTreeSnapshot(root);
+        const before = filesystemTreeSnapshot(path.dirname(root));
         const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held");
         assert.equal(result.status, 0, result.stderr);
         const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
@@ -36147,7 +38626,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         assert.equal(observed.outcome, "threw");
         assert.match(String(observed.message), /Q|CAS|temp|candidate|grammar|mode|link|mixed|unequal|cap/i);
         assert.equal(observed.descriptorDelta, 0);
-        assert.deepEqual(filesystemTreeSnapshot(root), before, `${invalid}: invalid evidence is immutable`);
+        assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), before, `${invalid}: invalid evidence is immutable`);
       } finally { removeFixture(root); }
     });
   }
@@ -38021,16 +40500,18 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const source = readFileSync(observerSource, "utf8");
     assert.equal(
       [...source.matchAll(/fixedWorkspaceAuthorityPathV1\(/g)].length,
-      20,
-      "one helper definition plus all nineteen fixed authority-store call sites must remain bound",
+      30,
+      "one helper definition plus all twenty-nine fixed authority-store call sites must remain bound",
     );
     assert.match(source, /const CODE_OWNER_HOME_V1 = userInfo\(\)\.homedir;/);
-    const workspaceRootDefinitions = source.match(/const CODE_OWNED_WORKSPACE_ROOT_V1 = [^\n]+;/g) ?? [];
+    assert.match(source, /const CODE_OWNED_WORKSPACE_ROOT_V1 = resolveInternalProductionBaselineWorkspaceRootV1\(\);/);
+    const locatorSource = readFileSync(path.join(sourceRoot, "src/internal-production/baseline-workspace-authority-path-v1.ts"), "utf8");
+    const workspaceRootDefinitions = locatorSource.match(/const CODE_OWNED_WORKSPACE_ROOT_V1 = [^\n]+;/g) ?? [];
     assert.equal(workspaceRootDefinitions.length, 1, "one code-owned workspace root definition is frozen");
     assert.equal(
       new Set([
         'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
-        "const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());",
+        'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");',
       ]).has(workspaceRootDefinitions[0]!),
       true,
       "the source uses either the canonical account workspace or the authenticated P3 projection root",
@@ -38083,15 +40564,16 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
       assert.notEqual(exposed, source);
       writeFileSync(modulePath, exposed);
       const moduleUrl = pathToFileURL(modulePath).href;
-      const program = `import(${JSON.stringify(moduleUrl)}).then((m) => { const target=m.fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/current-entry-v1", "probe.json"); process.stdout.write(JSON.stringify({target,anchor:m.task12ReceiptStoreAnchorV1(target)})); })`;
+      const program = `import(${JSON.stringify(moduleUrl)}).then((m) => { const target=m.fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/current-entry-v1", "probe.json"); let alternateRejected=false; try{m.task12ReceiptStoreAnchorV1(${JSON.stringify(path.join(root, "data/internal-production-baseline/current-entry-v1"))})}catch{alternateRejected=true} process.stdout.write(JSON.stringify({target,anchor:m.task12ReceiptStoreAnchorV1(target),alternateRejected})); })`;
       const result = spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", program], {
         cwd: root,
         encoding: "utf8",
         env: { ...process.env, HOME: path.join(path.dirname(root), "crossed-home") },
       });
       assert.equal(result.status, 0, result.stderr);
-      const observed = JSON.parse(result.stdout) as Readonly<{ target: string; anchor: string }>;
-      const projectedWorkspace = source.includes("const CODE_OWNED_WORKSPACE_ROOT_V1 = path.dirname(fixedRepositoryRoot());");
+      const observed = JSON.parse(result.stdout) as Readonly<{ target: string; anchor: string; alternateRejected: boolean }>;
+      assert.equal(observed.alternateRejected, true, "the executing checkout is not an alternate runtime authority anchor");
+      const projectedWorkspace = readFileSync(path.join(root, "src/internal-production/baseline-workspace-authority-path-v1.ts"), "utf8").includes('const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");');
       const expectedWorkspace = projectedWorkspace
         ? realpathSync(path.dirname(root))
         : path.join(userInfo().homedir, "ai", "setrox");
@@ -39352,7 +41834,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     const source = readFileSync(observerSource, "utf8");
     const runtimeExports = [...source.matchAll(/export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z0-9_]+)/g)]
       .map((match) => match[1]);
-    assert.deepEqual(runtimeExports, [
+    assert.deepEqual(assertColdRecoveryRuntimeExportContractV1(runtimeExports), [
       "observeCurrentInternalProductionCleanSetfarmSourceBuildV1",
       "resolveInternalProductionBaselineTask12P0DeliveryAuthorityV1",
       "observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1",
@@ -39415,6 +41897,11 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.match(source, /spawnSync\("\/usr\/bin\/git"/);
     const imports = [...source.matchAll(/from\s+"([^"]+)"/g)].map((match) => match[1]);
     assert.deepEqual(imports.filter((specifier) => specifier.startsWith(".")), [
+      "./baseline-workspace-authority-path-v1.js",
+      "./baseline-workspace-authority-path-v1.js",
+      "../findings/legacy-finding-publication-inventory-v1.js",
+      "../findings/legacy-finding-publication-inventory-v1.js",
+      "../findings/finding-publication-v1.js",
       "../product-compiler/canonical-json.js",
       "../db/contract-spine-migration-digests.generated.js",
       "../db/contract-spine-migration-source-integrity.js",
@@ -39730,6 +42217,18 @@ export async function observeInternalProductionPostManifestOwnerCensusSnapshotV1
   if (currentEntryVerifierProbe) { const index = Math.min(currentEntryVerifierProbe.serviceCalls++, currentEntryVerifierProbe.services.length - 1); return currentEntryVerifierProbe.services[index]!; }`);
     source = source.replace(serviceRegion, serviceReplacement);
 
+    for (const [name, needle, replacement] of [
+      ["canonicalRecordBytes", "  const url =", "  await currentEntryVerifierColdHistoryBoundaryV1('serialize:' + String((value as Record<string,unknown>).schema));\n  const url ="],
+      ["resolveTask12PredecessorAuthorityPairV1", '  const resolvedRecord =', "  await currentEntryVerifierColdHistoryBoundaryV1('graph:' + name);\n  const resolvedRecord ="],
+      ["resolveTask12FreshCoreV1", "  if (canonicalComparable(zero)", "  await currentEntryVerifierColdHistoryBoundaryV1('fresh-zero');\n  if (canonicalComparable(zero)"],
+      ["resolveInternalProductionCurrentEntryVerificationWithSelectedCurrentEntryStoreContextV1", "  const freshOwners =", "  await currentEntryVerifierColdHistoryBoundaryV1('final-live');\n  const freshOwners ="],
+    ] as const) {
+      const region = topLevelFunctionRegionV1(source, name);
+      assert.equal(region.split(needle).length - 1, 1, `${name}: exact cold-history boundary`);
+      source = source.replace(region, region.replace(needle, replacement));
+    }
+    source += `\nasync function currentEntryVerifierColdHistoryBoundaryV1(label:string):Promise<void>{const probe=Reflect.get(globalThis,'__currentEntryVerifierAcceptanceProbeV1') as undefined|{coldFault:string|null;coldFaultApplied:boolean;coldHistory:{terminal:string}|null};if(!probe?.coldHistory||probe.coldFaultApplied||probe.coldFault!==label)return;const target=probe.coldHistory.terminal,bytes=readFileSync(target);renameSync(target,target+'.old');writeFileSync(target,bytes,{flag:'wx',mode:0o600});probe.coldFaultApplied=true;}\n`;
+
     const physicalHeader = "function observePhysicalInventoryV1(services: InternalProductionServiceCensusV1, activeRunCount: number): PhysicalInventoryV1 {";
     assert.equal(source.split(physicalHeader).length - 1, 1, "current-entry verifier fixture bounds the copied physical observer");
     source = source.replace(physicalHeader, `${physicalHeader}
@@ -39782,6 +42281,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
 `;
     source = source.slice(0, publisherStart) + publisherHelper + publisherReplacement + source.slice(publisherEnd);
     writeFileSync(modulePath, source);
+    installDirectReceiptEvidenceProbeFixtureV1(root);
     git(root, ["add", "src/db-pg.ts", "src/internal-production/baseline-post-handoff-receipt-v1.ts", "src/internal-production/product-build-authority-v2-delivery-evidence-v1.ts"]);
     git(root, ["commit", "-qm", "fixture current-entry verifier acceptance seams"]);
     git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
@@ -39818,7 +42318,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     writeFileSync(target, canonicalFixtureRecordV1(value), { mode: 0o600 });
   }
 
-  function currentEntryVerifierReadyFixtureV1(): Readonly<{
+  function currentEntryVerifierReadyFixtureV1(coldV2 = false, coldPredecessorCross: "pid" | "processStartTimeEpochMs" | "processIdentityHash" | "serviceIdentityHash" | "generationHash" | null = null, directRestartV2 = false): Readonly<{
     root: string;
     store: string;
     authority: Readonly<Record<string, unknown>>;
@@ -39831,6 +42331,8 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     manifest: ReturnType<typeof currentEntryVerifierManifestFixtureV1>;
     reservations: readonly Readonly<Record<string, unknown>>[];
     release: Readonly<Record<string, unknown>>;
+    coldHistory: Readonly<{ terminal: string; settlement: Readonly<Record<string, unknown>> }> | null;
+    launchProfile: Readonly<Record<string, unknown>> | null;
   }> {
     const root = createFixture({ stubServiceCensus: true });
     const pba = installCurrentEntryVerifierAcceptanceFixtureV1(root);
@@ -39839,6 +42341,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     materializeOutputs(root);
     fixtureFile(root, "dist/internal-production/baseline-spawner-startup-admission-v1.js", "// compiled startup fixture\n", 0o600);
     fixtureFile(root, "dist/internal-production/baseline-restart-authority-retirement-v1.js", "// compiled retirement fixture\n", 0o600);
+    fixtureFile(root, "dist/internal-production/baseline-spawner-launch-environment-v1.js", "// compiled launch environment fixture\n", 0o600);
     const finalized = runProducer(root, "--finalize");
     assert.equal(finalized.status, 0, finalized.stderr);
     const operationResult = runFixtureExpression(root, "m.prepareInternalProductionCurrentEntryOperationV1().then((value)=>process.stdout.write(JSON.stringify(value)))");
@@ -39872,16 +42375,16 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     });
     const retained = phase5cSSeedRetainedReaderFixturesV1(root, operation);
     const observedSpawner = serviceBody.spawner as Readonly<Record<string, unknown>>;
-    const preSchema = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 6, false, operation, true, Object.freeze({
+    let preSchema = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 6, false, operation, Object.freeze({
       serviceIdentityHash: String(observedSpawner.serviceIdentityHash),
       generationHash: String(observedSpawner.generationHash),
     }));
     const preSchemaReplacementPair = (preSchema.current as Readonly<Record<string, unknown>>).dispatchPrefix as Readonly<Record<string, unknown>>;
     const replacementPair = preSchemaReplacementPair.replacementProcessObservation as Readonly<Record<string, string>>;
-    const replacementTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/replacement-process/sha256", replacementPair.replacementProcessObservationHash!.slice(0, 2), `${replacementPair.replacementProcessObservationHash}.json`);
+    const replacementTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/replacement-process/sha256", replacementPair.replacementProcessObservationHash!.slice(0, 2), `${replacementPair.replacementProcessObservationHash}.json`);
     const replacement = JSON.parse(readFileSync(replacementTarget, "utf8")) as Readonly<Record<string, unknown>>;
     const replacementIdentityHash = String(replacement.replacementSpawnerProcessIdentityHash);
-    const replacementIdentityTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", replacementIdentityHash.slice(0, 2), `${replacementIdentityHash}.json`);
+    const replacementIdentityTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", replacementIdentityHash.slice(0, 2), `${replacementIdentityHash}.json`);
     const replacementIdentity = JSON.parse(readFileSync(replacementIdentityTarget, "utf8")) as Readonly<Record<string, unknown>>;
     Object.assign(serviceBody.spawner as Record<string, unknown>, {
       pid: replacementIdentity.pid,
@@ -39915,13 +42418,44 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         loadedBuildHash: loadedService.loadedBuildHash,
       });
     }
-    preMutationBody.observedServiceCensusHash = canonicalHash(Object.freeze({
+    if (coldV2 || directRestartV2) {
+      const startup = (preSchema.current as Readonly<Record<string, unknown>>).startupToken as Readonly<Record<string, unknown>>;
+      const startupHash = String(startup.startupTokenHash);
+      const startupBody = JSON.parse(readFileSync(path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/startup-token/sha256", startupHash.slice(0, 2), `${startupHash}.json`), "utf8"));
+      const identityHash = String(startupBody.predecessorSpawnerProcessIdentityHash);
+      const identity = JSON.parse(readFileSync(path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", identityHash.slice(0, 2), `${identityHash}.json`), "utf8"));
+      Object.assign(preMutationBody.spawner as Record<string, unknown>, { pid: identity.pid, processStartTimeEpochMs: identity.processStartTimeEpochMs, processIdentityHash: identity.processIdentityHash });
+      if (coldPredecessorCross !== null) {
+        const spawner = preMutationBody.spawner as Record<string, unknown>;
+        if (coldPredecessorCross === "serviceIdentityHash" || coldPredecessorCross === "generationHash") {
+          if (coldPredecessorCross === "serviceIdentityHash") spawner.serviceIdentityHash = "8".repeat(64);
+          else spawner.loadedBuildHash = "9".repeat(64);
+          spawner.generationHash = canonicalHash({ schema: "setfarm.internal-production-loaded-service-generation.v1", label: "com.setrox.setfarm-spawner", serviceIdentityHash: spawner.serviceIdentityHash, source: { sha: spawner.loadedSourceSha, treeHash: spawner.loadedTreeHash, buildHash: spawner.loadedBuildHash } });
+        } else spawner[coldPredecessorCross] = replacementIdentity[coldPredecessorCross];
+      }
+    }
+    const preMutationCensusBody = Object.freeze({
       schema: "setfarm.internal-production-service-census.v1",
       spawner: preMutationBody.spawner,
       dashboard: preMutationBody.dashboard,
       missionControl: preMutationBody.missionControl,
       openClaw: preMutationBody.openClaw,
-    }));
+    });
+    preMutationBody.observedServiceCensusHash = canonicalHash(preMutationCensusBody);
+    let coldHistory: Readonly<{ terminal: string; settlement: Readonly<Record<string, unknown>> }> | null = null;
+    if (coldV2) {
+      const settlementBody = { schema: "setfarm.internal-production-cold-spawner-controller-settlement.v1", purpose: "exact-poison-sealed-cold-spawner-v1", serviceCensus: { ...preMutationCensusBody, censusHash: preMutationBody.observedServiceCensusHash } };
+      const settlementHash = canonicalHash(settlementBody), settlementRef = `setfarm://internal-production/cold-spawner-controller-settlement/sha256/${settlementHash}`;
+      const settlement = { ...settlementBody, settlementRef, settlementHash };
+      const terminal = path.join(path.dirname(root), "data/internal-production-baseline/cold-verifier-fixture/settlement.json");
+      phase5cEnsurePublicationParentV1(terminal);
+      writeFileSync(terminal, canonicalFixtureRecordV1(settlement), { flag: "wx", mode: 0o600 });
+      const stat = lstatSync(terminal, { bigint: true });
+      const settlementIdentity = [stat.dev, stat.ino, stat.uid, stat.gid, stat.mode, stat.nlink, stat.size, stat.birthtimeNs, stat.mtimeNs, stat.ctimeNs].map(String);
+      preMutationBody.schema = "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2";
+      preMutationBody.coldSpawnerPredecessor = { settlementRef, settlementHash, settlementIdentity };
+      coldHistory = { terminal, settlement };
+    }
     const preMutationProjection = Object.freeze({
       schema: preMutationBody.schema,
       currentEntryOperationRef: preMutationBody.currentEntryOperationRef,
@@ -39931,6 +42465,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       dashboard: preMutationBody.dashboard,
       missionControl: preMutationBody.missionControl,
       openClaw: preMutationBody.openClaw,
+      ...(coldV2 ? { coldSpawnerPredecessor: preMutationBody.coldSpawnerPredecessor } : {}),
     });
     preMutationBody.serviceProjectionSetHash = canonicalHash(preMutationProjection);
     const preMutationHash = canonicalHash(preMutationBody);
@@ -39942,6 +42477,16 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     const preMutationTarget = path.join(store, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", preMutationHash.slice(0, 2), `${preMutationHash}.json`);
     phase5cEnsurePublicationParentV1(preMutationTarget);
     writeFileSync(preMutationTarget, canonicalFixtureRecordV1(preMutation), { mode: 0o600 });
+    let launchProfile: Readonly<Record<string, unknown>> | null = null;
+    if (directRestartV2) {
+      const profileBody = { schema: "setfarm.internal-production-spawner-launch-profile.v1", source: operation.controllerSource, uid: process.getuid!() };
+      launchProfile = Object.freeze({ ...profileBody, profileHash: canonicalHash(profileBody) });
+      // Rebuild the disposable causal chain through its existing builder before
+      // any verifier runs; all downstream records bind the V2 restart pair.
+      preSchema = phase5cSSeedPreSchemaAtRootPhysicalFixtureV1(root, 6, false, operation, Object.freeze({
+        serviceIdentityHash: String(observedSpawner.serviceIdentityHash), generationHash: String(observedSpawner.generationHash),
+      }), { ...preMutationPair, launchProfileHash: String(launchProfile.profileHash) });
+    }
     const seededRecovery = phase5cSSeedRecoveryAtRootFixtureV1(store, "A");
     const terminal = seededRecovery.value;
     assert.notEqual(seededRecovery.release, null);
@@ -40080,7 +42625,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     const migrationPhase = Object.freeze({ phase: "current_audited", authorization: Object.freeze({ authorizationRef: migrationAuthorization.authorizationRef, authorizationHash: migrationAuthorization.authorizationHash }), consumption: Object.freeze({ consumptionRef: migrationConsumption.consumptionRef, consumptionHash: migrationConsumption.consumptionHash }), migrationReceipt: Object.freeze({ migrationReceiptRef: migrationReceipt.migrationReceiptRef, migrationReceiptHash: migrationReceipt.migrationReceiptHash }), currentAudit: auditPair });
     const freshLegacyPair = postLegacy;
     const originalAdmissionReady = originalPreSchemaCurrent.admissionReady as Readonly<Record<string, string>>;
-    const originalAdmissionReadyTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", originalAdmissionReady.admissionReadyHash!.slice(0, 2), `${originalAdmissionReady.admissionReadyHash}.json`);
+    const originalAdmissionReadyTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", originalAdmissionReady.admissionReadyHash!.slice(0, 2), `${originalAdmissionReady.admissionReadyHash}.json`);
     const admissionReadyBody = JSON.parse(readFileSync(originalAdmissionReadyTarget, "utf8")) as Record<string, unknown>;
     delete admissionReadyBody.admissionReadyRef;
     delete admissionReadyBody.admissionReadyHash;
@@ -40096,7 +42641,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     });
     const admissionReadyHash = canonicalHash(admissionReadyBody);
     const admissionReadyPair = Object.freeze({ admissionReadyRef: `setfarm://internal-production/task0-spawner-admission-ready/sha256/${admissionReadyHash}`, admissionReadyHash });
-    const admissionReadyTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`);
+    const admissionReadyTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`);
     phase5cEnsurePublicationParentV1(admissionReadyTarget);
     writeFileSync(admissionReadyTarget, canonicalFixtureRecordV1(Object.freeze({ ...admissionReadyBody, ...admissionReadyPair })), { mode: 0o600 });
     const preSchemaCurrentBody = structuredClone(originalPreSchemaCurrent) as Record<string, unknown>;
@@ -40105,7 +42650,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     preSchemaCurrentBody.admissionReady = admissionReadyPair;
     const preSchemaCurrentHash = canonicalHash(preSchemaCurrentBody);
     const preSchemaCurrentPair = Object.freeze({ statusRef: `setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/${preSchemaCurrentHash}`, statusHash: preSchemaCurrentHash });
-    const preSchemaCurrentTarget = path.join(root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", preSchemaCurrentHash.slice(0, 2), `${preSchemaCurrentHash}.json`);
+    const preSchemaCurrentTarget = path.join(path.dirname(root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", preSchemaCurrentHash.slice(0, 2), `${preSchemaCurrentHash}.json`);
     phase5cEnsurePublicationParentV1(preSchemaCurrentTarget);
     const preSchemaCurrent = Object.freeze({ ...preSchemaCurrentBody, ...preSchemaCurrentPair });
     writeFileSync(preSchemaCurrentTarget, canonicalFixtureRecordV1(preSchemaCurrent), { mode: 0o600 });
@@ -40185,7 +42730,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     writeFileSync(path.join(operationDirectory, "01-current-status.pair.json"), canonicalFixtureRecordV1(statusPair), { mode: 0o600 });
     const physical = phase5cSRawPortValueFixtureV1("observePhysicalInventoryV1", 0, PHASE5C_S_NONBLOCKED_ROWS_V1[0]!);
     return Object.freeze({
-      root, store, authority, authorityPair, status, statusPair, service, physical,
+      root, store, authority, authorityPair, status, statusPair, service, physical, coldHistory, launchProfile,
       databaseAudit,
       manifest,
       reservations: Object.freeze([
@@ -40195,6 +42740,108 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       release,
     });
   }
+
+  it("legacy finding provenance resolves only the migration-bound historical inventory", () => {
+    const fixture = currentEntryVerifierReadyFixtureV1();
+    try {
+      const { root, authority } = fixture;
+      fixtureFile(root, "src/internal-production/owner-admission-head-v1.ts", readFileSync(path.join(sourceRoot, "src/internal-production/owner-admission-head-v1.ts")));
+      const loadMigration = (kind: string, hash: string) => JSON.parse(readFileSync(path.join(path.dirname(root), "data/internal-production-baseline/pre-manifest-migration32-v1/records", kind, "sha256", hash.slice(0, 2), `${hash}.json`), "utf8")) as Record<string, unknown>;
+      const authorizationPair = authority.preManifestMigration32Authorization as Record<string, string>;
+      const consumptionPair = authority.preManifestMigration32AuthorizationConsumption as Record<string, string>;
+      const originalAuthorization = loadMigration("authorizations", authorizationPair.authorizationHash!);
+      const originalConsumption = loadMigration("consumptions", consumptionPair.consumptionHash!);
+      const wrap = (body: Record<string, unknown>, refKey: string, hashKey: string, prefix: string) => {
+        const core = { ...body }; delete core[refKey]; delete core[hashKey];
+        const hash = canonicalHash(core); return { ...core, [refKey]: `${prefix}${hash}`, [hashKey]: hash };
+      };
+      const inputFor = (authorization: Record<string, unknown>, consumption: Record<string, unknown>) => {
+        const evidence = {
+          schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-evidence.v1", purpose: "task6a-guarded-migration-32-after-sealed-spawner-v1",
+          currentEntryOperationRef: authorization.currentEntryOperationRef, currentEntryOperationHash: authorization.currentEntryOperationHash,
+          sealedSpawnerAdmissionRef: authorization.sealedSpawnerAdmissionRef, sealedSpawnerAdmissionHash: authorization.sealedSpawnerAdmissionHash,
+          postPredecessorTerminationLegacyZeroOwnerObservationRef: authorization.postPredecessorTerminationLegacyZeroOwnerObservationRef,
+          postPredecessorTerminationLegacyZeroOwnerObservationHash: authorization.postPredecessorTerminationLegacyZeroOwnerObservationHash,
+          authorityV3Migration31AuditRef: authorization.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: authorization.authorityV3Migration31AuditHash,
+          pendingBootstrapHandoffMigrationRef: authorization.pendingBootstrapHandoffMigrationRef, pendingBootstrapHandoffMigrationHash: authorization.pendingBootstrapHandoffMigrationHash,
+          cleanSetfarmSourceSha: authorization.cleanSetfarmSourceSha, cleanSetfarmTreeHash: authorization.cleanSetfarmTreeHash, cleanSetfarmBuildHash: authorization.cleanSetfarmBuildHash,
+          migrationSourceSha: authorization.cleanSetfarmSourceSha,
+          freshLegacyZeroOwnerObservationRef: authorization.freshLegacyZeroOwnerObservationRef, freshLegacyZeroOwnerObservationHash: authorization.freshLegacyZeroOwnerObservationHash,
+          preManifestMigration32AuthorizationRef: authorization.authorizationRef, preManifestMigration32AuthorizationHash: authorization.authorizationHash,
+          preManifestMigration32AuthorizationConsumptionRef: consumption.consumptionRef, preManifestMigration32AuthorizationConsumptionHash: consumption.consumptionHash,
+        };
+        assert.equal(Object.keys(evidence).length, 22, "historical migration evidence projection stays exact");
+        const body = { schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1", evidenceHash: canonicalHash(evidence),
+          authorizationRef: authorization.authorizationRef, authorizationHash: authorization.authorizationHash,
+          authorizationConsumptionRef: consumption.consumptionRef, authorizationConsumptionHash: consumption.consumptionHash };
+        return { migrationApplication: { ...body, applicationHash: canonicalHash(body) }, migrationSourceSha: authorization.cleanSetfarmSourceSha };
+      };
+      const observe = (input: unknown) => {
+        const before = filesystemTreeSnapshot(path.dirname(root));
+        const result = runFixtureExpression(root, `m.resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1(${JSON.stringify(input)}).then(value=>process.stdout.write(JSON.stringify(value)))`);
+        assert.deepEqual(filesystemTreeSnapshot(path.dirname(root)), before, "historical provenance lookup is read-only");
+        return result;
+      };
+      const historical = observe(inputFor(originalAuthorization, originalConsumption));
+      assert.equal(historical.status, 0, historical.stderr);
+      assert.deepEqual(JSON.parse(historical.stdout).entries, []);
+      const inventoryCore = { schema: "setfarm.legacy-finding-publication-inventory.v1", entries: [{ findingSetHash: "1".repeat(64), publicationHash: "2".repeat(64), runId: "legacy-terminal-run", terminalRunStatus: "failed" }] };
+      const inventory = { ...inventoryCore, inventoryHash: canonicalHash(inventoryCore) };
+      const upgradeLegacy = (hash: string, selectedInventory: unknown, overrides: Record<string, unknown> = {}) => {
+        const directory = path.join(path.dirname(root), "data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1/records/sha256");
+        const original = JSON.parse(readFileSync(path.join(directory, hash.slice(0, 2), `${hash}.json`), "utf8"));
+        const value = wrap({ ...original, schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2", legacyFindingPublicationInventory: selectedInventory, ...overrides }, "observationRef", "observationHash", "setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/");
+        const target = path.join(directory, String(value.observationHash).slice(0, 2), `${value.observationHash}.json`);
+        phase5cEnsurePublicationParentV1(target); writeFileSync(target, canonicalFixtureRecordV1(value), { mode: 0o600 });
+        return value;
+      };
+      const post = upgradeLegacy(String(originalAuthorization.postPredecessorTerminationLegacyZeroOwnerObservationHash), inventory);
+      const fresh = upgradeLegacy(String(originalAuthorization.freshLegacyZeroOwnerObservationHash), inventory);
+      const authorization = wrap({ ...originalAuthorization,
+        postPredecessorTerminationLegacyZeroOwnerObservationRef: post.observationRef, postPredecessorTerminationLegacyZeroOwnerObservationHash: post.observationHash,
+        freshLegacyZeroOwnerObservationRef: fresh.observationRef, freshLegacyZeroOwnerObservationHash: fresh.observationHash,
+      }, "authorizationRef", "authorizationHash", "setfarm://internal-production/pre-manifest-migration32-authorization/sha256/");
+      currentEntryVerifierWriteRecordV1(root, "authorizations", authorization, "authorizationHash");
+      const consumption = wrap({ ...originalConsumption, authorizationRef: authorization.authorizationRef, authorizationHash: authorization.authorizationHash }, "consumptionRef", "consumptionHash", "setfarm://internal-production/pre-manifest-migration32-authorization-consumption/sha256/");
+      currentEntryVerifierWriteRecordV1(root, "consumptions", consumption, "consumptionHash");
+      const input = inputFor(authorization, consumption);
+      const valid = observe(input);
+      assert.equal(valid.status, 0, valid.stderr);
+      assert.deepEqual(JSON.parse(valid.stdout), inventory);
+      const crossedApplication = { ...input.migrationApplication, evidenceHash: "f".repeat(64) };
+      const { applicationHash: _ignored, ...crossedBody } = crossedApplication;
+      crossedApplication.applicationHash = canonicalHash(crossedBody);
+      for (const crossed of [{ ...input, migrationSourceSha: "f".repeat(40) }, { ...input, migrationApplication: crossedApplication }, inputFor(authorization, originalConsumption)]) {
+        const result = observe(crossed);
+        assert.notEqual(result.status, 0, "crossed migration provenance must refuse");
+        assert.match(result.stderr, /legacy finding migration (source|evidence|consumption) is crossed/);
+      }
+      const withAuthorization = (overrides: Record<string, unknown>) => {
+        const next = wrap({ ...authorization, ...overrides }, "authorizationRef", "authorizationHash", "setfarm://internal-production/pre-manifest-migration32-authorization/sha256/");
+        currentEntryVerifierWriteRecordV1(root, "authorizations", next, "authorizationHash");
+        const consumed = wrap({ ...consumption, authorizationRef: next.authorizationRef, authorizationHash: next.authorizationHash }, "consumptionRef", "consumptionHash", "setfarm://internal-production/pre-manifest-migration32-authorization-consumption/sha256/");
+        currentEntryVerifierWriteRecordV1(root, "consumptions", consumed, "consumptionHash");
+        return inputFor(next, consumed);
+      };
+      const emptyCore = { schema: "setfarm.legacy-finding-publication-inventory.v1", entries: [] };
+      const driftedInventory = upgradeLegacy(String(originalAuthorization.freshLegacyZeroOwnerObservationHash), { ...emptyCore, inventoryHash: canonicalHash(emptyCore) });
+      const driftedGeneration = upgradeLegacy(String(originalAuthorization.freshLegacyZeroOwnerObservationHash), inventory, { observedSpawnerGenerationHash: "e".repeat(64) });
+      for (const [changed, expected] of [[driftedInventory, /LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT/], [driftedGeneration, /legacy finding observation bracket drifted/]] as const) {
+        const result = observe(withAuthorization({ freshLegacyZeroOwnerObservationRef: changed.observationRef, freshLegacyZeroOwnerObservationHash: changed.observationHash }));
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, expected);
+      }
+      const crossedSource = observe(withAuthorization({ cleanSetfarmBuildHash: "e".repeat(64) }));
+      assert.notEqual(crossedSource.status, 0);
+      assert.match(crossedSource.stderr, /legacy finding observation migration authority is crossed/);
+      const crossedAudit = observe(withAuthorization({ authorityV3Migration31AuditRef: `setfarm://internal-production/authority-v3-migration31-audit/sha256/${"e".repeat(64)}`, authorityV3Migration31AuditHash: "e".repeat(64) }));
+      assert.notEqual(crossedAudit.status, 0);
+      assert.match(crossedAudit.stderr, /legacy finding observation migration authority is crossed/);
+      const missing = observe(withAuthorization({ freshLegacyZeroOwnerObservationRef: `setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/${"9".repeat(64)}`, freshLegacyZeroOwnerObservationHash: "9".repeat(64) }));
+      assert.notEqual(missing.status, 0, "other existing historical records cannot replace the exact missing record");
+      assert.match(missing.stderr, /ENOENT|missing|absent/);
+    } finally { removeFixture(fixture.root); }
+  });
 
   function currentEntryVerifierOwnerSnapshotV1(
     fixture: ReturnType<typeof currentEntryVerifierReadyFixtureV1>,
@@ -40222,6 +42869,10 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       resolveCompleteZeroPair?: Readonly<{ observationRef: string; observationHash: string }>;
       resolveFreshPair?: Readonly<{ freshRuntimeAndOwnerObservationRef: string; freshRuntimeAndOwnerObservationHash: string }>;
       resolvePair?: Readonly<{ currentEntryVerificationRef: string; currentEntryVerificationHash: string }>;
+      coldFault?: string;
+      directP3s?: readonly Readonly<Record<string, unknown>>[];
+      directProfile?: Readonly<Record<string, unknown>>;
+      directColdAwaitFault?: "p3-first" | "profile" | "p3-final";
     }> = Object.freeze({}),
   ): Readonly<Record<string, unknown>> {
     const service = structuredClone(options.serviceOverride ?? fixture.service) as Record<string, unknown>;
@@ -40241,6 +42892,9 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       : [structuredClone(baseOwner)];
     const databaseAudit = options.crossedAudit ? Object.freeze({ ...fixture.databaseAudit, currentEntryVerifierCrossed: true }) : fixture.databaseAudit;
     const probe = {
+      coldHistory: fixture.coldHistory,
+      coldFault: options.coldFault ?? null,
+      coldFaultApplied: false,
       services,
       serviceCalls: 0,
       physical: fixture.physical,
@@ -40265,7 +42919,10 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         : options.resolvePair === undefined
           ? "m.verifyCurrentInternalProductionCurrentEntryV1()"
           : `m.resolveInternalProductionCurrentEntryVerificationV1(${JSON.stringify(options.resolvePair)})`;
-    const expression = `(async()=>{const probe=${JSON.stringify(probe)};Reflect.set(globalThis,"__currentEntryVerifierAcceptanceProbeV1",probe);const RealDate=Date;globalThis.Date=class extends RealDate{constructor(...args){super(args.length===0?"2040-01-02T03:04:05.006Z":args[0])}static now(){return Date.parse("2040-01-02T03:04:05.006Z")}};const protectedBefore=JSON.stringify(probe.protectedState);let outcome="returned",message=null,value=null;try{value=await ${invocation}}catch(error){outcome="threw";message=String(error)}const protectedAfter=JSON.stringify(probe.protectedState);process.stdout.write(JSON.stringify({outcome,message,value,publicationEvents:probe.publicationEvents,serviceCalls:probe.serviceCalls,physicalCalls:probe.physicalCalls,databaseCalls:probe.databaseCalls,operationalMutationCalls:probe.operationalMutationCalls,operationalMutationNames:probe.operationalMutationNames,protectedBefore,protectedAfter}))})()`;
+    const coldSetup = `if(probe.coldHistory){const fs=await import('node:fs');globalThis.__nestedColdHistoryV1=()=>{if(!fs.existsSync(probe.coldHistory.terminal))return {state:'absent'};const s=fs.lstatSync(probe.coldHistory.terminal,{bigint:true});return {schema:'setfarm.internal-production-cold-spawner-bootstrap-journal-census.v1',state:'settled',incompleteOwnerCount:0,settlement:probe.coldHistory.settlement,settlementIdentity:[s.dev,s.ino,s.uid,s.gid,s.mode,s.nlink,s.size,s.birthtimeNs,s.mtimeNs,s.ctimeNs].map(String)}}}`;
+    const directProbe = { p3s: options.directP3s ?? [fixture.status.preMutationLoadedRuntimeServiceAuthority], profile: options.directProfile ?? fixture.launchProfile, p3Calls: 0, profileCalls: 0 };
+    const directFaultSetup = options.directColdAwaitFault === undefined ? "" : `const fs=await import('node:fs');const fault=${JSON.stringify(options.directColdAwaitFault)};const mutate=()=>{if(probe.coldFaultApplied)throw Error('duplicate direct fixture mutation');const target=probe.coldHistory.terminal,bytes=fs.readFileSync(target),before=fs.lstatSync(target,{bigint:true});fs.renameSync(target,target+'.direct-await-original');fs.writeFileSync(target,bytes,{flag:'wx',mode:0o600});if(!fs.readFileSync(target).equals(bytes)||fs.lstatSync(target,{bigint:true}).ino===before.ino)throw Error('fixture replacement not physical');probe.coldFaultApplied=true;};globalThis.__directReceiptEvidenceV1.onP3=async(count)=>{if(fault===(count===1?'p3-first':'p3-final'))mutate()};globalThis.__directReceiptEvidenceV1.onProfile=async()=>{if(fault==='profile')mutate()};`;
+    const expression = `(async()=>{const probe=${JSON.stringify(probe)};globalThis.__directReceiptEvidenceV1=${JSON.stringify(directProbe)};${coldSetup}${directFaultSetup}Reflect.set(globalThis,"__currentEntryVerifierAcceptanceProbeV1",probe);const RealDate=Date;globalThis.Date=class extends RealDate{constructor(...args){super(args.length===0?"2040-01-02T03:04:05.006Z":args[0])}static now(){return Date.parse("2040-01-02T03:04:05.006Z")}};const protectedBefore=JSON.stringify(probe.protectedState);let outcome="returned",message=null,value=null;try{value=await ${invocation}}catch(error){outcome="threw";message=String(error)}const protectedAfter=JSON.stringify(probe.protectedState);process.stdout.write(JSON.stringify({outcome,message,value,directP3Calls:globalThis.__directReceiptEvidenceV1.p3Calls,directProfileCalls:globalThis.__directReceiptEvidenceV1.profileCalls,coldFaultApplied:probe.coldFaultApplied,publicationEvents:probe.publicationEvents,serviceCalls:probe.serviceCalls,physicalCalls:probe.physicalCalls,databaseCalls:probe.databaseCalls,operationalMutationCalls:probe.operationalMutationCalls,operationalMutationNames:probe.operationalMutationNames,protectedBefore,protectedAfter}))})()`;
     const result = runFixtureExpression(fixture.root, expression);
     assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
@@ -40408,6 +43065,139 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
     writeFileSync(path.join(operationDirectory, "01-current-status.pair.json"), canonicalFixtureRecordV1(statusPair), { mode: 0o600 });
     return Object.freeze({ authority, authorityPair, status, statusPair, service });
   }
+
+  for (const crossedField of ["pid", "processStartTimeEpochMs", "processIdentityHash", "serviceIdentityHash", "generationHash"] as const) {
+    it(`cold predecessor graph rejects a self-hashed crossed ${crossedField}`, () => {
+      const fixture = currentEntryVerifierReadyFixtureV1(true, crossedField);
+      try {
+        const before = currentEntryVerifierCurrentLocatorSnapshotV1(fixture);
+        const observed = currentEntryVerifierRunV1(fixture);
+        assert.equal(observed.outcome, "threw", `${crossedField}: matching settlement bytes do not replace the actual predecessor commitment`);
+        assert.match(String(observed.message), /cold pre-mutation spawner predecessor is crossed/);
+        assert.equal(observed.operationalMutationCalls, 0);
+        assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), before);
+        assert.equal(currentEntryVerifierRecordsV1(fixture.root, "verification").length, 0);
+      } finally { removeFixture(fixture.root); }
+    });
+  }
+
+  for (const coldFault of ["graph:ownerAdmissionFenceRelease", "fresh-zero", "final-live", "serialize:setfarm.internal-production-current-entry-verification.v1", "serialize:setfarm.internal-production-current-entry-fresh-runtime-and-owner-observation.v1"] as const) {
+    it(`cold final graph retains its original settlement across ${coldFault}`, () => {
+      const fixture = currentEntryVerifierReadyFixtureV1(true);
+      try {
+        const before = currentEntryVerifierCurrentLocatorSnapshotV1(fixture);
+        const observed = currentEntryVerifierRunV1(fixture, { coldFault });
+        assert.equal(observed.coldFaultApplied, true, "fault reaches the intended actual awaited boundary");
+        assert.equal(observed.outcome, "threw", `${coldFault}: late terminal replacement must refuse`);
+        assert.match(String(observed.message), /cold predecessor history is crossed/);
+        assert.equal(observed.operationalMutationCalls, 0);
+        assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), before);
+        if (coldFault !== "final-live") assert.equal(currentEntryVerifierRecordsV1(fixture.root, "verification").length, 0, "known crossed history cannot publish verification authority");
+        if (coldFault.endsWith("current-entry-fresh-runtime-and-owner-observation.v1")) assert.equal(currentEntryVerifierRecordsV1(fixture.root, "fresh").length, 0, "crossed history across fresh serialization refuses before publication");
+      } finally { removeFixture(fixture.root); }
+    });
+  }
+
+  for (const coldV2 of [false, true]) it(`direct V2 restart survives the actual final 33-pair graph (${coldV2 ? "cold" : "ordinary"} P3)`, () => {
+    const fixture = currentEntryVerifierReadyFixtureV1(coldV2, null, true);
+    try {
+      const before = currentEntryVerifierCurrentLocatorSnapshotV1(fixture);
+      const p3 = fixture.status.preMutationLoadedRuntimeServiceAuthority as Readonly<Record<string, unknown>>;
+      const crossedP3 = { ...p3, serviceProjectionSetHash: "f".repeat(64) };
+      const profile = fixture.launchProfile!;
+      const { profileHash: originalProfileHash, ...profileBody } = profile;
+      const alternateProfileBody = { ...profileBody, outputTreeBytesHash: "f".repeat(64) };
+      assert.notEqual(canonicalHash(alternateProfileBody), originalProfileHash, "internally valid alternate profile crosses only the bound restart hash");
+      const negativeCases = [
+        ["selected P3 body", { directP3s: [crossedP3] }, 1, 0],
+        ["P3 across profile", { directP3s: [p3, crossedP3] }, 2, 1],
+        ["restart/profile hash", { directProfile: { ...alternateProfileBody, profileHash: canonicalHash(alternateProfileBody) } }, 1, 1],
+        ["profile canonical hash", { directProfile: { ...profile, schema: "crossed-profile-body" } }, 1, 1],
+      ] as const;
+      for (const [label, options, p3Calls, profileCalls] of negativeCases) {
+        const rejected = currentEntryVerifierRunV1(fixture, options);
+        assert.equal(rejected.outcome, "threw", `${label}: ${String(rejected.message)}`);
+        assert.match(String(rejected.message), /pre-schema direct restart/);
+        assert.equal(rejected.directP3Calls, p3Calls, label);
+        assert.equal(rejected.directProfileCalls, profileCalls, label);
+        assert.equal(rejected.operationalMutationCalls, 0);
+        assert.equal(rejected.protectedAfter, rejected.protectedBefore);
+        assert.equal(currentEntryVerifierRecordsV1(fixture.root, "verification").length, 0, `${label}: no verification authority is published`);
+        assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), before);
+      }
+      const observed = currentEntryVerifierRunV1(fixture);
+      assert.equal(observed.outcome, "returned", String(observed.message));
+      assert.equal(observed.operationalMutationCalls, 0);
+      assert.equal(observed.protectedAfter, observed.protectedBefore);
+      assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), before);
+      assert.equal(observed.directP3Calls, 2);
+      assert.equal(observed.directProfileCalls, 1);
+      const value = observed.value as Record<string, unknown>;
+      const replay = currentEntryVerifierRunV1(fixture, { resolvePair: { currentEntryVerificationRef: String(value.currentEntryVerificationRef), currentEntryVerificationHash: String(value.currentEntryVerificationHash) } });
+      assert.equal(replay.outcome, "returned", String(replay.message));
+      assert.deepEqual(replay.value, value);
+      assert.equal(replay.directP3Calls, 2);
+      assert.equal(replay.directProfileCalls, 1);
+      const verificationRecords = currentEntryVerifierRecordsV1(fixture.root, "verification");
+      for (const [label, options, p3Calls, profileCalls] of negativeCases) {
+        const rejected = currentEntryVerifierRunV1(fixture, { ...options, resolvePair: { currentEntryVerificationRef: String(value.currentEntryVerificationRef), currentEntryVerificationHash: String(value.currentEntryVerificationHash) } });
+        assert.equal(rejected.outcome, "threw", `${label}: published verification cannot bypass fresh direct evidence`);
+        assert.match(String(rejected.message), /pre-schema direct restart/);
+        assert.equal(rejected.directP3Calls, p3Calls);
+        assert.equal(rejected.directProfileCalls, profileCalls);
+        assert.equal(rejected.operationalMutationCalls, 0);
+        assert.deepEqual(currentEntryVerifierRecordsV1(fixture.root, "verification"), verificationRecords);
+        assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), before);
+      }
+    } finally { removeFixture(fixture.root); }
+  });
+
+  for (const boundary of ["p3-first", "profile", "p3-final"] as const) it(`direct V2 final graph retains cold predecessor identity across ${boundary}`, () => {
+    const fixture = currentEntryVerifierReadyFixtureV1(true, null, true);
+    try {
+      const before = currentEntryVerifierCurrentLocatorSnapshotV1(fixture);
+      const rejected = currentEntryVerifierRunV1(fixture, { directColdAwaitFault: boundary });
+      assert.equal(rejected.coldFaultApplied, true, "the actual cold terminal is replaced with equal bytes and a different inode");
+      assert.equal(rejected.outcome, "threw", String(rejected.message));
+      assert.match(String(rejected.message), /cold predecessor history is crossed/);
+      assert.equal(rejected.directP3Calls, boundary === "p3-final" ? 2 : 1);
+      assert.equal(rejected.directProfileCalls, boundary === "p3-first" ? 0 : 1);
+      assert.equal(rejected.operationalMutationCalls, 0);
+      assert.equal(rejected.protectedAfter, rejected.protectedBefore);
+      assert.equal(currentEntryVerifierRecordsV1(fixture.root, "verification").length, 0, "crossed original cold history cannot publish verification authority");
+      assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), before);
+    } finally { removeFixture(fixture.root); }
+  });
+
+  for (const coldV2 of [false, true]) it(coldV2 ? "cold predecessor V2 survives the actual final graph without reviving its departed process" : "ordinary predecessor V1 retains final verification and replay compatibility", () => {
+    const fixture = currentEntryVerifierReadyFixtureV1(coldV2);
+    try {
+      const before = currentEntryVerifierCurrentLocatorSnapshotV1(fixture);
+      const observed = currentEntryVerifierRunV1(fixture);
+      assert.equal(observed.outcome, "returned", String(observed.message));
+      assert.equal(observed.directP3Calls, 0, "V1 graph does not acquire direct history");
+      assert.equal(observed.directProfileCalls, 0, "V1 graph does not acquire a current launch profile");
+      assert.equal(observed.operationalMutationCalls, 0);
+      assert.equal(observed.protectedAfter, observed.protectedBefore);
+      assert.deepEqual(currentEntryVerifierCurrentLocatorSnapshotV1(fixture), before);
+      assert.notEqual((fixture.status.preMutationLoadedRuntimeServiceAuthority as any).spawner.pid, (fixture.service.spawner as any).pid);
+      const result = observed.value as Record<string, unknown>;
+      assert.equal(result.schema, "setfarm.internal-production-current-entry-verification.v1");
+      const replay = currentEntryVerifierRunV1(fixture, { resolvePair: { currentEntryVerificationRef: String(result.currentEntryVerificationRef), currentEntryVerificationHash: String(result.currentEntryVerificationHash) } });
+      assert.equal(replay.outcome, "returned", String(replay.message));
+      assert.deepEqual(replay.value, result);
+      assert.equal(replay.directP3Calls, 0);
+      assert.equal(replay.directProfileCalls, 0);
+      if (coldV2) {
+        const terminal = fixture.coldHistory!.terminal, bytes = readFileSync(terminal);
+        renameSync(terminal, terminal + ".old");
+        writeFileSync(terminal, bytes, { flag: "wx", mode: 0o600 });
+        const crossed = currentEntryVerifierRunV1(fixture, { resolvePair: { currentEntryVerificationRef: String(result.currentEntryVerificationRef), currentEntryVerificationHash: String(result.currentEntryVerificationHash) } });
+        assert.equal(crossed.outcome, "threw", "a published verifier cannot outlive replacement of its original cold terminal");
+        assert.match(String(crossed.message), /cold predecessor history is crossed/);
+      }
+    } finally { removeFixture(fixture.root); }
+  });
 
   it("accepts the real current-entry verifier only for the exact ordered 33-pair fresh graph and adopts response-loss publications byte-identically", () => {
     const fixture = currentEntryVerifierReadyFixtureV1();
@@ -41170,10 +43960,28 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
           status.pendingBootstrapHandoffMigration = driftReadyStatusPairV1(status.pendingBootstrapHandoffMigration, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "d");
         }, false],
         ["pre-mutation loaded runtime", (status: Record<string, unknown>) => {
-          const pair = driftReadyStatusPairV1({ preMutationLoadedRuntimeServiceAuthorityRef: status.preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash: status.preMutationLoadedRuntimeServiceAuthorityHash }, "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash", "e");
+          const projection = structuredClone(status.preMutationLoadedRuntimeServiceAuthority) as Record<string, unknown>;
+          delete projection.preMutationLoadedRuntimeServiceAuthorityRef;
+          delete projection.preMutationLoadedRuntimeServiceAuthorityHash;
+          delete projection.serviceProjectionSetHash;
+          const spawner = projection.spawner as Record<string, unknown>;
+          const alternateProcessHash = spawner.processIdentityHash === "e".repeat(64) ? "d".repeat(64) : "e".repeat(64);
+          spawner.processIdentityHash = alternateProcessHash;
+          projection.observedServiceCensusHash = canonicalHash({
+            schema: "setfarm.internal-production-service-census.v1",
+            spawner, dashboard: projection.dashboard, missionControl: projection.missionControl, openClaw: projection.openClaw,
+          });
+          const body = { ...projection, serviceProjectionSetHash: canonicalHash(projection) };
+          const hash = canonicalHash(body);
+          const pair = Object.freeze({
+            preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${hash}`,
+            preMutationLoadedRuntimeServiceAuthorityHash: hash,
+          });
+          assert.notEqual(pair.preMutationLoadedRuntimeServiceAuthorityHash, status.preMutationLoadedRuntimeServiceAuthorityHash,
+            "valid alternate embedded authority must cross only the entry-authority overlap");
           status.preMutationLoadedRuntimeServiceAuthorityRef = pair.preMutationLoadedRuntimeServiceAuthorityRef;
           status.preMutationLoadedRuntimeServiceAuthorityHash = pair.preMutationLoadedRuntimeServiceAuthorityHash;
-          status.preMutationLoadedRuntimeServiceAuthority = Object.freeze({ ...(status.preMutationLoadedRuntimeServiceAuthority as Readonly<Record<string, unknown>>), ...pair });
+          status.preMutationLoadedRuntimeServiceAuthority = Object.freeze({ ...body, ...pair });
         }, false],
         ["pre-schema rebind authorization", (status: Record<string, unknown>) => {
           const rebind = status.preSchemaSpawnerRebindStatusBody as Record<string, unknown>;
@@ -41368,6 +44176,9 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         currentEntryOperationRef: edgeOperationBPair.operationRef,
         currentEntryOperationHash: edgeOperationBPair.operationHash,
       });
+      const crossedPreMutationProjection = { ...crossedPreMutationBody };
+      delete crossedPreMutationProjection.serviceProjectionSetHash;
+      crossedPreMutationBody.serviceProjectionSetHash = canonicalHash(crossedPreMutationProjection);
       const crossedPreMutationHash = canonicalHash(crossedPreMutationBody);
       const crossedPreMutationPair = Object.freeze({
         preMutationLoadedRuntimeServiceAuthorityRef: `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${crossedPreMutationHash}`,
@@ -41393,9 +44204,13 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       Object.assign(edgeCrossedStatusBody, {
         preMutationLoadedRuntimeServiceAuthorityRef: crossedPreMutationPair.preMutationLoadedRuntimeServiceAuthorityRef,
         preMutationLoadedRuntimeServiceAuthorityHash: crossedPreMutationPair.preMutationLoadedRuntimeServiceAuthorityHash,
-        preMutationLoadedRuntimeServiceAuthority: Object.freeze({ ...(edgeCrossedStatusBody.preMutationLoadedRuntimeServiceAuthority as Readonly<Record<string, unknown>>), ...crossedPreMutationPair }),
+        preMutationLoadedRuntimeServiceAuthority: Object.freeze({ ...crossedPreMutationBody, ...crossedPreMutationPair }),
         entryAuthority: edgeCrossedAuthorityPair,
       });
+      assert.notEqual(crossedPreMutationBody.currentEntryOperationHash, edgeCrossedStatusBody.operationHash,
+        "self-consistent embedded pre-mutation authority belongs to operation B, not status operation A");
+      assert.deepEqual(edgeCrossedStatusBody.preMutationLoadedRuntimeServiceAuthority, JSON.parse(readFileSync(crossedPreMutationTarget, "utf8")),
+        "embedded pre-mutation body and pair exactly match the separately stored alternate authority");
       const edgeCrossedStatusHash = canonicalHash(edgeCrossedStatusBody);
       const edgeCrossedStatusPair = Object.freeze({ statusRef: `${PHASE5C_Q_STATUS_PREFIX_V1}${edgeCrossedStatusHash}`, statusHash: edgeCrossedStatusHash });
       const edgeCrossedStatusTarget = path.join(fixture.store, "records", "statuses", "sha256", edgeCrossedStatusHash.slice(0, 2), `${edgeCrossedStatusHash}.json`);
@@ -41492,7 +44307,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
         writeFileSync(target, rehashed.bytes, { mode: 0o600 });
         return rehashed.value;
       };
-      const preSchemaRecordsRoot = path.join(fixture.root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
+      const preSchemaRecordsRoot = path.join(path.dirname(fixture.root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records");
       const migrationRecordsRoot = path.join(path.dirname(fixture.root), "data/internal-production-baseline/pre-manifest-migration32-v1/records");
       const currentUid = process.getuid?.();
       assert.equal(Number.isSafeInteger(currentUid) && Number(currentUid) >= 0, true, "current host exposes a canonical uid for current-entry verification");
@@ -41629,14 +44444,14 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       }, /pre-schema restart-authority current uid is crossed/);
 
       const rebindAuthorizationPair = fixture.authority.preSchemaSpawnerRebindAuthorization as Readonly<Record<string, string>>;
-      const rebindAuthorizationTarget = path.join(fixture.root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", rebindAuthorizationPair.authorizationHash!.slice(0, 2), `${rebindAuthorizationPair.authorizationHash}.json`);
+      const rebindAuthorizationTarget = path.join(path.dirname(fixture.root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", rebindAuthorizationPair.authorizationHash!.slice(0, 2), `${rebindAuthorizationPair.authorizationHash}.json`);
       const crossedRebindAuthorizationBody = JSON.parse(readFileSync(rebindAuthorizationTarget, "utf8")) as Record<string, unknown>;
       delete crossedRebindAuthorizationBody.authorizationRef;
       delete crossedRebindAuthorizationBody.authorizationHash;
       Object.assign(crossedRebindAuthorizationBody, { currentEntryOperationRef: edgeOperationBPair.operationRef, currentEntryOperationHash: edgeOperationBPair.operationHash });
       const crossedRebindAuthorizationHash = canonicalHash(crossedRebindAuthorizationBody);
       const crossedRebindAuthorizationPair = Object.freeze({ authorizationRef: `setfarm://internal-production/pre-schema-spawner-rebind-authorization/sha256/${crossedRebindAuthorizationHash}`, authorizationHash: crossedRebindAuthorizationHash });
-      const crossedRebindAuthorizationTarget = path.join(fixture.root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", crossedRebindAuthorizationHash.slice(0, 2), `${crossedRebindAuthorizationHash}.json`);
+      const crossedRebindAuthorizationTarget = path.join(path.dirname(fixture.root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/authorization/sha256", crossedRebindAuthorizationHash.slice(0, 2), `${crossedRebindAuthorizationHash}.json`);
       phase5cEnsurePublicationParentV1(crossedRebindAuthorizationTarget);
       writeFileSync(crossedRebindAuthorizationTarget, canonicalFixtureRecordV1(Object.freeze({ ...crossedRebindAuthorizationBody, ...crossedRebindAuthorizationPair })), { mode: 0o600 });
 
@@ -41647,7 +44462,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
       rebindBody.authorization = crossedRebindAuthorizationPair;
       const crossedRebindHash = canonicalHash(rebindBody);
       const crossedRebindPair = Object.freeze({ statusRef: `setfarm://internal-production/pre-schema-spawner-rebind-status/sha256/${crossedRebindHash}`, statusHash: crossedRebindHash });
-      const crossedRebindTarget = path.join(fixture.root, "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", crossedRebindHash.slice(0, 2), `${crossedRebindHash}.json`);
+      const crossedRebindTarget = path.join(path.dirname(fixture.root), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", crossedRebindHash.slice(0, 2), `${crossedRebindHash}.json`);
       phase5cEnsurePublicationParentV1(crossedRebindTarget);
       writeFileSync(crossedRebindTarget, canonicalFixtureRecordV1(Object.freeze({ ...rebindBody, ...crossedRebindPair })), { mode: 0o600 });
       assert.notDeepEqual(crossedRebindPair, rebindPair);
@@ -41751,7 +44566,7 @@ function currentEntryVerifierAcceptancePublisherBoundaryV1(target: string, bound
 
       const hashValidDualEdgeCases = Object.freeze([
         alternateUidGraph,
-        Object.freeze({ label: "pre-mutation operation", freshPair: edgeCrossedFreshPair, verificationPair: edgeCrossedVerificationPair, pattern: /pre-mutation loaded runtime service authority operation is crossed/, releaseOverride: undefined }),
+        Object.freeze({ label: "pre-mutation operation", freshPair: edgeCrossedFreshPair, verificationPair: edgeCrossedVerificationPair, pattern: /current-entry pre-mutation runtime authority is crossed/, releaseOverride: undefined }),
         buildHashValidDualEdgeGraphV1("pre-schema authorization operation", Object.freeze({ preSchemaSpawnerRebindAuthorization: crossedRebindAuthorizationPair, preSchemaSpawnerRebindStatus: crossedRebindPair }), (status, pairs) => { status.preSchemaSpawnerRebindStatus = pairs.preSchemaSpawnerRebindStatus; status.preSchemaSpawnerRebindStatusBody = Object.freeze({ ...rebindBody, ...crossedRebindPair }); }, /pre-schema authorization operation is crossed/),
         buildHashValidDualEdgeGraphV1("migration consumption authorization", Object.freeze({ preManifestMigration32AuthorizationConsumption: crossedConsumptionPair }), (status, pairs) => { (status.migrationApplyingPhase as Record<string, unknown>).consumption = pairs.preManifestMigration32AuthorizationConsumption; }, /migration-32 consumption authorization is crossed/),
         buildHashValidDualEdgeGraphV1("target close terminal run", Object.freeze({ targetClose: crossedTargetClosePair }), (status, pairs) => { const pair = pairs.targetClose!; const settled = status.settledPhase as Record<string, unknown>; settled.targetCloseRef = pair.targetReservationPairCloseRef; settled.targetCloseHash = pair.targetReservationPairCloseHash; }, /target close terminal authority is crossed/),

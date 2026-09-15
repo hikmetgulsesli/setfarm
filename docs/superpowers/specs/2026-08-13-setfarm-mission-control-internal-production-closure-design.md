@@ -2672,3 +2672,89 @@ Take read-only snapshots by default. Any restart or fault injection is an explic
 ## Follow-On Program
 
 After internal completion, create a separate external-distribution design covering Developer ID identities, public trust configuration, notarization credentials, signed native catalog, PKG composition, installer receipt and helper authority, AMFI join, upgrade/rollback/uninstall, clean-host acceptance, and public release operations. The current production-admission preflight provides the entry census for that future program.
+
+## Workspace authority storage convergence amendment v1
+
+This additive amendment supersedes the current exact140 Task 0 / exact59 P3
+inventories only for the shared runtime authority locator. Historical receipts,
+base tuples and prior amendments remain historical evidence.
+
+Task 0 insert `src/internal-production/baseline-workspace-authority-path-v1.ts` after `src/internal-production/baseline-spawner-startup-admission-v1.ts`.
+P3 insert `src/internal-production/baseline-workspace-authority-path-v1.ts` after `src/installer/step-ops.ts`.
+
+The resulting current inventories are Task 0 exact141 and P3 exact60:
+32 production/package paths plus the unchanged 28 test/helper paths. The
+executable partition remains 25 database tests, 1 source-only test and 2
+non-executable helpers. No additional executable or runtime activation is
+authorized by this amendment.
+
+The helper is causally required by Task 6A cold recovery: linked-worktree
+writers, receipt readers and helper descriptor checks must share the fixed
+account workspace while Git/build identity remains bound to the executing
+checkout. Include the helper in the isolated runner's tracked scope and move
+its existing bounded workspace projection to this module. Unknown alternate
+runtime stores do not authorize fallback or automatic migration.
+
+## Finding publication validation amendment v1
+
+This additive amendment extends the current exact141 Task 0 / exact60 P3
+inventories with one pure shared publication validator. Prior tuples and
+historical receipts retain their original meaning.
+
+Task 0 insert `src/findings/finding-publication-v1.ts` after `src/execution/runtime-session-repository.ts`.
+P3 insert `src/findings/finding-publication-v1.ts` after `src/execution/runtime-session-repository.ts`.
+
+Current inventories become Task 0 exact142 and P3 exact61: 33 production/package
+paths and the unchanged 28 test/helper paths. The executable partition remains
+25 database tests, 1 source-only test and 2 non-executable helpers. Existing
+owner-admission tests cover the pure validator and production terminal reader.
+
+This extraction is causally required for Task 6A's authenticated legacy finding
+inventory. It shares exact canonical parent/child validation between publication
+and terminal resolution without changing terminal hashes, producer identities,
+issue statuses or SQL schemas. It grants no legacy admission exemption by itself.
+
+## Legacy finding inventory evidence amendment v1
+
+This additive amendment extends exact142 Task 0 / exact61 P3 with the pure,
+strict legacy publication inventory evidence contract required for Task 6A
+cold recovery. Prior source tuples and historical receipts remain unchanged.
+
+Task 0 insert `src/findings/legacy-finding-publication-inventory-v1.ts` after `src/findings/finding-publication-v1.ts`.
+P3 insert `src/findings/legacy-finding-publication-inventory-v1.ts` after `src/findings/finding-publication-v1.ts`.
+
+Current inventories become Task 0 exact143 and P3 exact62: 34 production/package
+paths and the unchanged 28 test/helper paths (25 database tests, 1 source-only
+test, 2 non-executable helpers). Existing finding and owner-admission tests own
+the inventory behavior; receipt tests own versioned observation integration.
+
+New legacy-zero observations use V2 and bind complete immutable publications
+from terminal runs in the existing observation hash. Historical V1 is readable
+but grants no finding membership. The 36-counter census and 33-pair final graph
+do not grow; SQL schemas, finding issue statuses and terminal hashes do not
+change. Post-migration exemption still requires the authenticated migration
+chain and an exact same-snapshot publication match; this pure module alone
+grants no admission authority.
+
+## Detached launch environment amendment v1
+
+This additive Task 6A refinement extends exact143 Task 0 / exact62 P3 with the
+cycle-free launch-environment leaf and its ordinary runtime-config consumer.
+Static configuration consumers require authentication before cold loading, not
+late replacement inside spawner main. Prior receipts and source tuples remain
+historical; no arbitrary root/environment flag becomes a launch capability.
+
+Task 0 insert `src/internal-production/baseline-spawner-launch-environment-v1.ts` after `src/internal-production/baseline-workspace-authority-path-v1.ts`.
+P3 insert `src/internal-production/baseline-spawner-launch-environment-v1.ts` after `src/internal-production/baseline-workspace-authority-path-v1.ts`.
+Task 0 insert `src/runtime-config.ts` after `src/recovery/v3-recovery-lifecycle-reconciler.ts`.
+P3 insert `src/runtime-config.ts` after `src/recovery/v3-recovery-lifecycle-reconciler.ts`.
+
+Current inventories become Task 0 exact145 and P3 exact64: 36 production/package
+paths and the unchanged 28 test/helper paths (25 database tests, 1 source-only
+test, 2 non-executable helpers). Existing owner-admission tests own environment
+composition, ordinary-loader compatibility and later sealed-child integration.
+The first slice is a bounded pure candidate builder and unchanged ordinary
+dotenv parser extraction, not authenticated consumption or launch authority.
+Future cold consumption must independently bind fixed physical inputs, source,
+host, lease and one-shot dispatch before installing the private snapshot.
+No plaintext environment values enter durable records or diagnostics.

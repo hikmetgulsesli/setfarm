@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { after, before, describe, it } from "node:test";
+import { transformSync } from "esbuild";
 
 import { createEvidenceBundleV2, computeObservationRef } from "../../src/evidence/evidence-bundle-v2.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
 import { createFindingSetV1, type FindingSetV1 } from "../../src/findings/finding-set.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { validateCurrentInternalProductionOwnerAdmissionHeadV1 } from "../../src/internal-production/owner-admission-head-v1.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
-import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
+import { applyP3LegacyFindingMigration32ForTestV1, createIsolatedMigration31TestDatabase, createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -132,6 +139,264 @@ function evidenceBundle(
     completedAt: "2026-07-13T00:00:01.000Z",
   });
 }
+
+it("legacy schema31 census authenticates terminal published findings without mutating issue status", async () => {
+  const database = await createIsolatedMigration31TestDatabase();
+  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-legacy-finding-census-"));
+  try {
+    const value = structuredFindingSet();
+    await database.sql`
+      INSERT INTO runs (id,workflow_id,task,status,protocol,compiler_release_sha,activation_preflight_hash)
+      VALUES (${value.runId},'feature-dev','legacy publication census','failed','shadow',${SHA_A},${HASH_A})
+    `;
+    await database.sql`
+      INSERT INTO finding_sets (finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
+        source_sha,source_tree_hash,finding_ids,payload)
+      VALUES (${value.findingSetHash},${value.findingSetId},${value.runId},${value.storyId},${value.packetHash},${value.sliceHash},
+        ${value.sourceRevision.sha},${value.sourceRevision.treeHash},
+        ${database.sql.json(value.findings.map((finding) => finding.findingId))},${database.sql.json(value)})
+    `;
+    for (const finding of value.findings) {
+      await database.sql`
+        INSERT INTO findings (finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload)
+        VALUES (${value.findingSetHash},${finding.findingId},${finding.origin},${finding.classification},${finding.invariantRef},
+          ${finding.status},${hashCanonicalJson(finding.sourceLocators)},${database.sql.json(finding)})
+      `;
+    }
+    const snapshot = async () => ({
+      parents: [...await database.sql`SELECT * FROM finding_sets ORDER BY finding_set_hash`],
+      children: [...await database.sql`SELECT * FROM findings ORDER BY finding_set_hash,finding_id`],
+      runs: [...await database.sql`SELECT * FROM runs ORDER BY id`],
+    });
+    const before = await snapshot();
+    cpSync(path.join(process.cwd(), "src"), path.join(fixture, "src"), { recursive: true });
+    symlinkSync(path.join(process.cwd(), "node_modules"), path.join(fixture, "node_modules"), "dir");
+    writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}\n');
+    const locator = path.join(fixture, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+    const source = readFileSync(locator, "utf8");
+    const header = "async function observeLegacyDatabaseCensusV1(coldBootstrap = false)";
+    assert.equal(source.split(header).length, 2, "fixture exposes only the existing read-only database leaf");
+    writeFileSync(locator, source.replace(header, `export ${header}`));
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, SETFARM_PG_URL: database.url };
+    delete childEnv.NODE_OPTIONS;
+    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e",
+      `const m=await import(${JSON.stringify(pathToFileURL(locator).href)});try{const value=await m.observeLegacyDatabaseCensusV1();process.stdout.write(JSON.stringify({outcome:"returned",value}));}catch(error){process.stdout.write(JSON.stringify({outcome:"threw",message:String(error)}));}`,
+    ], { cwd: fixture, env: childEnv, encoding: "utf8", timeout: 30_000, maxBuffer: 1_048_576 });
+    assert.equal(child.status, 0, child.stderr);
+    const observed = JSON.parse(child.stdout);
+    assert.deepEqual(await snapshot(), before, "read-only census must preserve every immutable finding and issue status");
+    assert.equal(observed.outcome, "returned", observed.message);
+    assert.equal(observed.value.findingOwnerCount, 0);
+    assert.deepEqual(observed.value.legacyFindingPublicationInventory.entries.map((entry: { findingSetHash: string }) => entry.findingSetHash), [value.findingSetHash]);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+    await database.cleanup();
+  }
+});
+
+it("cold pre32 catalog rejects unjournaled relations and orphan routines or triggers without writes", async () => {
+  const source = readFileSync(path.join(process.cwd(), "src/internal-production/baseline-post-handoff-receipt-v1.ts"), "utf8");
+  const regions = ["requireColdPre32CatalogAbsenceV1", "isPlainRecord", "hasExactKeys", "canonicalComparable", "compareBytes", "currentEntryFail"].map((name) => {
+    const match = new RegExp(`^(?:export )?(?:async )?function ${name}\\(`, "m").exec(source);
+    assert.ok(match, `${name} is the actual private implementation`);
+    const tail = source.slice(match.index + match[0].length);
+    const end = /\n(?=(?:export\s+)?(?:async\s+)?function\s+|(?:const|type|interface)\s+[A-Za-z0-9_]+)/.exec(tail);
+    assert.ok(end, `${name} has a bounded source region`);
+    return source.slice(match.index, match.index + match[0].length + end.index);
+  });
+  const compiled = transformSync(`${regions.join("\n")}\nexport {requireColdPre32CatalogAbsenceV1};`, { loader: "ts", format: "cjs", target: "node22" }).code;
+  const module = { exports: {} as { requireColdPre32CatalogAbsenceV1: (sql: TestDatabase["sql"]) => Promise<void> } };
+  new Function("module", "exports", compiled)(module, module.exports);
+  const absent = { laterJournalCount: "0", relationCount: "0", functionCount: "0", typeCount: "0", triggerCount: "0" };
+  await module.exports.requireColdPre32CatalogAbsenceV1((async () => [absent]) as unknown as TestDatabase["sql"]);
+  for (const rows of [[], [absent, absent], [{ ...absent, typeCount: 0 }], [{ ...absent, triggerCount: "1" }], [{ ...absent, extra: "0" }]]) {
+    await assert.rejects(() => module.exports.requireColdPre32CatalogAbsenceV1((async () => rows) as unknown as TestDatabase["sql"]), /cold bootstrap migration32\/33 catalog or journal is not absent/);
+  }
+  const database = await createIsolatedMigration31TestDatabase();
+  const { sql } = database;
+  try {
+    const observe = () => sql.begin("isolation level repeatable read read only", async (tx) => {
+      await tx`SET LOCAL statement_timeout = '5s'`;
+      await tx`SET LOCAL lock_timeout = '1s'`;
+      await module.exports.requireColdPre32CatalogAbsenceV1(tx as unknown as TestDatabase["sql"]);
+    });
+    const snapshot = async () => ({
+      journal: [...await sql`SELECT * FROM setfarm_schema_migrations ORDER BY version`],
+      relations: [...await sql`SELECT oid,relname,relkind FROM pg_class WHERE relnamespace='public'::regnamespace ORDER BY oid`],
+      routines: [...await sql`SELECT oid,proname,proargtypes::text FROM pg_proc WHERE pronamespace='public'::regnamespace ORDER BY oid`],
+      types: [...await sql`SELECT oid,typname,typtype FROM pg_type WHERE typnamespace='public'::regnamespace ORDER BY oid`],
+      triggers: [...await sql`SELECT oid,tgname,tgrelid,tgenabled FROM pg_trigger WHERE NOT tgisinternal ORDER BY oid`],
+    });
+    const clean = await snapshot();
+    await observe();
+    assert.deepEqual(await snapshot(), clean);
+    const cases = [
+      {
+        name: "journal32 without any migration objects",
+        create: () => sql`INSERT INTO setfarm_schema_migrations (version,name,checksum,state,release_sha)
+          VALUES (32,'contract-spine-bootstrap-main-claim-handoff-v1',${HASH_A},'applied',${SHA_A})`,
+        remove: () => sql`DELETE FROM setfarm_schema_migrations WHERE version=32`,
+      },
+      {
+        name: "explicit migration32 index on an unrelated table",
+        create: () => sql`CREATE INDEX ip_op_sba_v1_plan_manifest_idx ON runs(id)`,
+        remove: () => sql`DROP INDEX ip_op_sba_v1_plan_manifest_idx`,
+      },
+      {
+        name: "migration33 backing-index name on an unrelated table",
+        create: () => sql`CREATE INDEX ip_v3_recovery_publications_pkey ON runs(id)`,
+        remove: () => sql`DROP INDEX ip_v3_recovery_publications_pkey`,
+      },
+      {
+        name: "standalone type colliding with migration33 row type",
+        create: () => sql`CREATE TYPE internal_production_v3_recovery_claim_publications_v1 AS ENUM ('fixture')`,
+        remove: () => sql`DROP TYPE internal_production_v3_recovery_claim_publications_v1`,
+      },
+      {
+        name: "unjournaled migration33 view",
+        create: () => sql`CREATE VIEW internal_production_v3_recovery_claim_publications_v1 AS SELECT 1 AS value`,
+        remove: () => sql`DROP VIEW internal_production_v3_recovery_claim_publications_v1`,
+      },
+      {
+        name: "orphan migration32 truncated-name routine",
+        create: () => sql`CREATE FUNCTION setfarm_forbid_internal_production_owner_admission_authority_mutation() RETURNS integer LANGUAGE SQL AS 'SELECT 1'`,
+        remove: () => sql`DROP FUNCTION setfarm_forbid_internal_production_owner_admission_authority_mutation()`,
+      },
+      {
+        name: "orphan migration33 overload",
+        create: () => sql`CREATE FUNCTION ip_v3_recovery_publication_immutable_v1(integer) RETURNS integer LANGUAGE SQL AS 'SELECT $1'`,
+        remove: () => sql`DROP FUNCTION ip_v3_recovery_publication_immutable_v1(integer)`,
+      },
+    ];
+    for (const fault of cases) {
+      await fault.create();
+      const before = await snapshot();
+      await assert.rejects(observe, /cold bootstrap migration32\/33 catalog or journal is not absent/, fault.name);
+      assert.deepEqual(await snapshot(), before, fault.name);
+      await fault.remove();
+      await observe();
+    }
+    await sql`CREATE TABLE cold_catalog_probe_v1 (value integer)`;
+    await sql`CREATE FUNCTION cold_catalog_probe_trigger_v1() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END'`;
+    await sql`CREATE TRIGGER ip_v3_recovery_publication_row_immutable_v1 BEFORE INSERT ON cold_catalog_probe_v1 FOR EACH ROW EXECUTE FUNCTION cold_catalog_probe_trigger_v1()`;
+    await sql`ALTER TABLE cold_catalog_probe_v1 DISABLE TRIGGER ip_v3_recovery_publication_row_immutable_v1`;
+    const beforeTrigger = await snapshot();
+    await assert.rejects(observe, /cold bootstrap migration32\/33 catalog or journal is not absent/, "disabled misattached trigger is still residue");
+    assert.deepEqual(await snapshot(), beforeTrigger);
+    await sql`DROP TRIGGER ip_v3_recovery_publication_row_immutable_v1 ON cold_catalog_probe_v1`;
+    await observe();
+  } finally { await database.cleanup(); }
+});
+
+it("post32 legacy census accepts only the complete inventory frozen before real guarded migration", async () => {
+  const database = await createIsolatedMigration31TestDatabase();
+  try {
+    const { sql } = database;
+    const value = structuredFindingSet();
+    await sql`INSERT INTO runs (id,workflow_id,task,status,protocol,compiler_release_sha,activation_preflight_hash)
+      VALUES (${value.runId},'feature-dev','legacy migration provenance','failed','shadow',${SHA_A},${HASH_A})`;
+    const publish = async (findingSet: FindingSetV1) => {
+      await sql`INSERT INTO finding_sets (finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,source_sha,source_tree_hash,finding_ids,payload)
+        VALUES (${findingSet.findingSetHash},${findingSet.findingSetId},${findingSet.runId},${findingSet.storyId},${findingSet.packetHash},${findingSet.sliceHash},
+          ${findingSet.sourceRevision.sha},${findingSet.sourceRevision.treeHash},${sql.json(findingSet.findings.map((finding) => finding.findingId))},${sql.json(findingSet)})`;
+      for (const finding of findingSet.findings) await sql`INSERT INTO findings (finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload)
+        VALUES (${findingSet.findingSetHash},${finding.findingId},${finding.origin},${finding.classification},${finding.invariantRef},${finding.status},${hashCanonicalJson(finding.sourceLocators)},${sql.json(finding)})`;
+    };
+    await publish(value);
+    const observe = await applyP3LegacyFindingMigration32ForTestV1(database);
+    const snapshot = async () => ({
+      parents: [...await sql`SELECT * FROM finding_sets ORDER BY finding_set_hash`],
+      children: [...await sql`SELECT * FROM findings ORDER BY finding_set_hash,finding_id`],
+      runs: [...await sql`SELECT * FROM runs ORDER BY id`],
+      owners: [...await sql`SELECT * FROM internal_production_owner_reservations_v1 ORDER BY reservation_ref`],
+      head: [...await sql`SELECT * FROM internal_production_owner_admission_head_v1`],
+      journal: [...await sql`SELECT * FROM setfarm_schema_migrations ORDER BY version`],
+    });
+    const before = await snapshot();
+    assert.equal(before.owners.length, 0, "legacy publication has no modern sidecar");
+    assert.equal(before.children[0]!.status, "open");
+    assert.equal(await observe(), 0);
+    assert.deepEqual(await snapshot(), before, "post32 legacy census is strictly read-only");
+    await publish(structuredFindingSet(HASH_C, "US-NOT-IN-MIGRATION"));
+    const withUnreserved = await snapshot();
+    await assert.rejects(observe(), /LEGACY_FINDING_PUBLICATION_INVENTORY_DRIFT/);
+    assert.deepEqual(await snapshot(), withUnreserved, "unknown publication must refuse without repairing or adopting it");
+  } finally { await database.cleanup(); }
+});
+
+it("post32 census excludes authenticated closed modern finding publication without mutating issues", async () => {
+  const database = await createIsolatedTestDatabase();
+  try {
+    const { db, sql } = database;
+    const initial = await db.observeInternalProductionPostManifestOwnerCensusSnapshotV1();
+    assert.ok(Object.values(initial.census).every((count) => count === 0));
+    const value = structuredFindingSet();
+    await sql.begin(async (transaction) => {
+      const reservation = await db.beginOrAdoptInternalProductionOwnerReservationV1(transaction, {
+        producerImplementationId: "a-runtime-run-v1", ownerKey: value.runId,
+      });
+      await transaction`INSERT INTO runs (id,workflow_id,task,status) VALUES (${value.runId},'feature-dev','closed publication census','completed')`;
+      await db.bindInternalProductionOwnerReservationV1(transaction, {
+        reservationRef: reservation.reservationRef, reservationHash: reservation.reservationHash,
+        canonicalOwnerIdentity: db.createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(value.runId),
+      });
+      const { runOwnerReservationRef, runOwnerReservationHash, ...terminal } = await db.resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1(transaction, { runId: value.runId });
+      await db.closeInternalProductionOwnerReservationV1(transaction, {
+        reservationRef: runOwnerReservationRef, reservationHash: runOwnerReservationHash, ...terminal,
+      });
+    });
+    const beforePublicationHead = (await sql`SELECT * FROM internal_production_owner_admission_head_v1`)[0]!;
+    assert.equal((await createFindingRecoveryRepository(sql).putFindingSet(value)).status, "inserted");
+    const owners = await sql<Array<{ state: string; producer_implementation_id: string; close_ref: string; close_hash: string }>>`
+      SELECT state,producer_implementation_id,close_ref,close_hash FROM internal_production_owner_reservations_v1
+       WHERE category='finding' AND owner_key=${value.findingSetHash}
+    `;
+    assert.equal(owners.length, 1);
+    assert.equal(owners[0]!.state, "closed");
+    assert.equal(owners[0]!.producer_implementation_id, "a-finding-recovery-repository-v1");
+    await sql.begin(async (transaction) => {
+      await db.resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(transaction, { findingSetHash: value.findingSetHash });
+      await db.resolveInternalProductionOwnerReservationCloseInTransactionV1(transaction, { closeRef: owners[0]!.close_ref, closeHash: owners[0]!.close_hash });
+    });
+    const snapshot = async () => ({
+      parents: [...await sql`SELECT * FROM finding_sets ORDER BY finding_set_hash`],
+      children: [...await sql`SELECT * FROM findings ORDER BY finding_set_hash,finding_id`],
+      owners: [...await sql`SELECT * FROM internal_production_owner_reservations_v1 ORDER BY reservation_ref`],
+      head: [...await sql`SELECT * FROM internal_production_owner_admission_head_v1`],
+    });
+    const before = await snapshot();
+    assert.equal(before.children[0]!.status, "open");
+    const census = await db.observeInternalProductionPostManifestOwnerCensusSnapshotV1();
+    assert.deepEqual(await snapshot(), before);
+    assert.equal(census.census.findingOwnerCount, 0);
+    assert.ok(Object.values(census.census).every((count) => count === 0));
+    // A self-consistent older head cannot adopt a close from another branch.
+    await sql`UPDATE internal_production_owner_admission_head_v1 SET head_version=${beforePublicationHead.head_version},head_hash=${beforePublicationHead.head_hash},head_payload=${sql.json(beforePublicationHead.head_payload)} WHERE singleton=TRUE`;
+    await sql.begin(async (transaction) => {
+      const head = (await transaction`SELECT * FROM internal_production_owner_admission_head_v1`)[0]!;
+      await validateCurrentInternalProductionOwnerAdmissionHeadV1(transaction, head as Parameters<typeof validateCurrentInternalProductionOwnerAdmissionHeadV1>[1]);
+    });
+    await assert.rejects(db.observeInternalProductionPostManifestOwnerCensusSnapshotV1(), /COMPLETE_FINDING_PUBLICATION_CORRUPTION/);
+    const currentHead = before.head[0]!;
+    await sql`UPDATE internal_production_owner_admission_head_v1 SET head_version=${currentHead.head_version},head_hash=${currentHead.head_hash},head_payload=${sql.json(currentHead.head_payload)} WHERE singleton=TRUE`;
+    assert.deepEqual(await snapshot(), before);
+    // Existing publications are immutable. Seed a different malformed birth in
+    // this disposable database; never disable the immutable update/delete guard.
+    const malformed = structuredFindingSet(HASH_C, "US-CENSUS-CORRUPT");
+    await sql`
+      INSERT INTO finding_sets (finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,source_sha,source_tree_hash,finding_ids,payload)
+      VALUES (${malformed.findingSetHash},${malformed.findingSetId},${malformed.runId},${malformed.storyId},${malformed.packetHash},${malformed.sliceHash},
+        ${malformed.sourceRevision.sha},${malformed.sourceRevision.treeHash},${sql.json(malformed.findings.map((finding) => finding.findingId))},${sql.json(malformed)})
+    `;
+    for (const finding of malformed.findings) {
+      await sql`
+        INSERT INTO findings (finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload)
+        VALUES (${malformed.findingSetHash},${finding.findingId},${finding.origin},${finding.classification},${finding.invariantRef},${finding.status},${HASH_F},${sql.json(finding)})
+      `;
+    }
+    await assert.rejects(db.observeInternalProductionPostManifestOwnerCensusSnapshotV1(), /FINDING_PUBLICATION_INVALID/);
+  } finally { await database.cleanup(); }
+});
 
 describe("finding, evidence, and recovery repository", () => {
   let database: TestDatabase;

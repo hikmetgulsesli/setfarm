@@ -23,6 +23,11 @@ import {
 import type { BigIntStats } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
+import { authenticateInternalProductionBaselineWorkspaceAnchorV1 } from "./baseline-workspace-authority-path-v1.js";
+import { resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProductionBaselineWorkspaceRootV1 } from "./baseline-workspace-authority-path-v1.js";
+import type { LegacyFindingPublicationInventoryV1 } from "../findings/legacy-finding-publication-inventory-v1.js";
+import { createLegacyFindingPublicationInventoryValueV1, requireLegacyFindingPublicationInventoryContinuityV1, validateLegacyFindingPublicationInventoryV1 } from "../findings/legacy-finding-publication-inventory-v1.js";
+import type { FindingPublicationParentRowV1, FindingPublicationChildRowV1 } from "../findings/finding-publication-v1.js";
 import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
 
@@ -93,7 +98,7 @@ const GIT_PREFIX = Object.freeze([
   "-c", "core.fsmonitor=false",
 ]);
 const CODE_OWNER_HOME_V1 = userInfo().homedir;
-const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");
+const CODE_OWNED_WORKSPACE_ROOT_V1 = resolveInternalProductionBaselineWorkspaceRootV1();
 const EXACT_SCRIPTS = Object.freeze({
   prebuild: "node scripts/write-build-info.mjs --prepare && node scripts/check-version-contract.mjs && node scripts/check-english-contract.mjs && node scripts/check-path-contract.mjs && npm run check:migration-digests && npm run check:mission-control-contracts",
   build: "umask 077 && tsc -p tsconfig.json && cp src/server/index.html dist/server/index.html && cp src/installer/compat-rules.json dist/installer/compat-rules.json && mkdir -p dist/installer/prompts && cp src/installer/prompts/*.md dist/installer/prompts/ && node scripts/copy-step-assets.mjs && chmod +x dist/cli/cli.js && node scripts/inject-version.js",
@@ -485,7 +490,7 @@ function fixedWorkspaceAuthorityPathV1(...segments: string[]): string {
   ) fail("workspace authority locator is not code-owned");
   const repository = fixedRepositoryRoot();
   const workspace = CODE_OWNED_WORKSPACE_ROOT_V1;
-  const target = path.resolve(workspace, ...segments);
+  const target = resolveInternalProductionBaselineAuthorityPathV1(...segments);
   const workspaceRelative = path.relative(workspace, target);
   const repositoryRelative = path.relative(repository, target);
   if (
@@ -2311,10 +2316,21 @@ export async function observeCurrentInternalProductionAuthorityV3Migration31Audi
   return observeCurrentInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(context);
 }
 
+function assertCurrentPrerequisitePublicationStoreV1(context: SelectedCurrentEntryStoreContextV1): void {
+  const state = requireSelectedCurrentEntryStoreContextStateV1(context);
+  if (state.storeRoot !== fixedLegacyCurrentEntryRootV1()) return;
+  const operation = readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(fixedLegacyCurrentEntryOperationPathV1(), "prerequisite publication operation");
+  if (operation !== null && sha256(operation.observed.bytes) === EXACT_POISON_OPERATION_BYTES_SHA256_V1) {
+    currentEntryFail("unrecovered exact-poison prerequisite publication is forbidden; run prepare-current-entry");
+  }
+}
+
 async function observeCurrentInternalProductionAuthorityV3Migration31AuditWithSelectedCurrentEntryStoreContextV1(
   context: SelectedCurrentEntryStoreContextV1,
 ): Promise<InternalProductionAuthorityV3Migration31AuditV1> {
+  assertCurrentPrerequisitePublicationStoreV1(context);
   const record = await buildCurrentInternalProductionAuthorityV3Migration31AuditNoWriteV1(context);
+  assertCurrentPrerequisitePublicationStoreV1(context);
   publishLegacyZeroRecordV1(
     currentEntryPrerequisiteRecordPathV1(context, "authorityV3Migration31Audit", record.pair.hash),
     record.bytes,
@@ -2378,7 +2394,9 @@ export async function observeCurrentInternalProductionPendingBootstrapHandoffMig
 async function observeCurrentInternalProductionPendingBootstrapHandoffMigrationWithSelectedCurrentEntryStoreContextV1(
   context: SelectedCurrentEntryStoreContextV1,
 ): Promise<InternalProductionPendingBootstrapHandoffMigrationProjectionV1> {
+  assertCurrentPrerequisitePublicationStoreV1(context);
   const record = await buildCurrentInternalProductionPendingBootstrapHandoffMigrationNoWriteV1(context);
+  assertCurrentPrerequisitePublicationStoreV1(context);
   publishLegacyZeroRecordV1(
     currentEntryPrerequisiteRecordPathV1(context, "pendingBootstrapHandoffMigration", record.pair.hash),
     record.bytes,
@@ -3290,12 +3308,8 @@ function parseCurrentEntryStoreLegacyZeroOwnerV1(
   successorSource: InternalProductionCleanSetfarmSourceBuildV1,
   successorAuditPair: CurrentEntryStoreRecordPairV1,
 ): void {
-  if (!isPlainRecord(value) || !hasExactKeys(value, [
-    "schema", "observationKind", "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash",
-    "cleanSetfarmSourceSha", "cleanSetfarmTreeHash", "cleanSetfarmBuildHash", "observedSpawnerGenerationHash",
-    "census", "allThirtySixScalarCountsZero", "ownerReservationSidecarState", "ownerAdmissionHeadState",
-    "manifestActivationState", "observationRef", "observationHash",
-  ])) currentEntryFail("successor legacy zero-owner fields are invalid");
+  if (!isPlainRecord(value)) currentEntryFail("successor legacy zero-owner fields are invalid");
+  requireLegacyZeroVersionedFieldsV1(value);
   const core = { ...value };
   delete core.observationRef;
   delete core.observationHash;
@@ -3305,8 +3319,7 @@ function parseCurrentEntryStoreLegacyZeroOwnerV1(
   }
   const census = value.census;
   if (
-    value.schema !== "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1"
-    || value.observationKind !== "legacy-pre-manifest-existing-live-truth"
+    value.observationKind !== "legacy-pre-manifest-existing-live-truth"
     || value.allThirtySixScalarCountsZero !== true
     || value.ownerReservationSidecarState !== "absent-before-migration-32"
     || value.ownerAdmissionHeadState !== "absent-before-migration-32"
@@ -3461,10 +3474,11 @@ async function parseCurrentEntryStoreQuarantineDispositionV1(
   bytes: Buffer,
   expected: CurrentEntryStoreRecordPairV1,
 ): Promise<CurrentEntryStoreQuarantineDispositionV1> {
+  const historyBearing = strictCanonicalRecord(bytes, "quarantine disposition").schema === "setfarm.internal-production-current-entry-store-quarantine-disposition.v2";
   const parsed = parseCurrentEntryStoreHashedWrapperV1(
     bytes,
     "quarantine disposition",
-    ["schema", "reason", "predecessorOperation", "contaminationFingerprint", "quarantinedInventory", "zeroEffectProof", "successorGenesis"],
+    ["schema", "reason", "predecessorOperation", "contaminationFingerprint", "quarantinedInventory", "zeroEffectProof", "successorGenesis", ...(historyBearing ? ["historicalPrerequisiteInventory"] : [])],
     "dispositionRef",
     "dispositionHash",
     CURRENT_ENTRY_STORE_QUARANTINE_DISPOSITION_PREFIX_V1,
@@ -3472,7 +3486,7 @@ async function parseCurrentEntryStoreQuarantineDispositionV1(
   );
   assertCurrentEntryStorePairEqualV1(parsed.pair, expected, "quarantine disposition");
   if (
-    parsed.value.schema !== "setfarm.internal-production-current-entry-store-quarantine-disposition.v1"
+    parsed.value.schema !== (historyBearing ? "setfarm.internal-production-current-entry-store-quarantine-disposition.v2" : "setfarm.internal-production-current-entry-store-quarantine-disposition.v1")
     || parsed.value.reason !== "p3-projected-fixture-workspace-root-contamination-v1"
   ) currentEntryFail("quarantine disposition discriminator is invalid");
   requireExactPoisonPredecessorV1(parsed.value.predecessorOperation, "quarantine disposition");
@@ -3492,6 +3506,7 @@ async function parseCurrentEntryStoreQuarantineDispositionV1(
     || !isPlainRecord(inventory.inventoryBody)
     || hashCanonicalJson(inventory.inventoryBody) !== EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1
   ) currentEntryFail("quarantined inventory is crossed");
+  if (historyBearing) await parseExactPoisonHistoricalInventoryV1(parsed.value.historicalPrerequisiteInventory);
   const zeroEffectProof = await parseCurrentEntryStoreZeroEffectProofV1(parsed.value.zeroEffectProof);
   const successorGenesis = parseCurrentEntryStoreSuccessorGenesisV1(parsed.value.successorGenesis, zeroEffectProof);
   return Object.freeze({ value: recursivelyFreeze(parsed.value), pair: parsed.pair, zeroEffectProof, successorGenesis });
@@ -3946,6 +3961,7 @@ type ExactPoisonRecoveryInventoryEvidenceV1 = Readonly<{
   inventoryHash: typeof EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1;
   predecessorFileIdentities: typeof EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1;
   currentPrerequisiteOverlay: readonly ExactPoisonRecoveryAdmittedCurrentPrerequisiteOverlayCandidateV1[];
+  historicalPrerequisiteInventory?: Readonly<Record<string, unknown>>;
   assertStableOriginals: () => void;
 }>;
 
@@ -3978,6 +3994,93 @@ type ExactPoisonQuarantineAdmissionV1 = Readonly<{
 
 const EXACT_POISON_CURRENT_AUTHORITY_V31_HASH_V1 = "e2165d663f766b2506245a1018d5195c919e8deeb7eeff82b0f35a5e61cc3025";
 const EXACT_POISON_CURRENT_PENDING_HASH_V1 = "ce21b1c0b332b4f98bbb560a947c29fb80e0360046d2c34829d6c4e43c32b015";
+// Independently authenticated incident history; never a source of current pairs.
+const EXACT_POISON_HISTORICAL_PREREQUISITES_V1 = Object.freeze([
+  Object.freeze({ kind: "authorityV3Migration31Audit" as const, hash: "8d80ed98b713cb870b2743af9cdcf8edc11a2f7f0fd599553c1fe4a7be0308f6" }),
+  Object.freeze({ kind: "pendingBootstrapHandoffMigration" as const, hash: "b7ddaeba33704753b1387a98def676b6b2585fc9c13809a33f8cd94f02eaa7ab" }),
+]);
+
+async function observeExactPoisonHistoricalPrerequisitesNoWriteV1(): Promise<readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[]> {
+  const records: ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[] = [];
+  const root = fixedLegacyCurrentEntryRootV1();
+  for (const { kind, hash } of EXACT_POISON_HISTORICAL_PREREQUISITES_V1) {
+    const target = currentEntryPrerequisiteRecordPathAtRootV1(root, kind, hash);
+    const snapshot = readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(target, "exact-poison historical prerequisite");
+    if (snapshot === null) continue;
+    const value = strictCanonicalRecord(snapshot.observed.bytes, "exact-poison historical prerequisite");
+    const refKey = kind === "authorityV3Migration31Audit" ? "authorityV3Migration31AuditRef" : "pendingBootstrapHandoffMigrationRef";
+    const hashKey = kind === "authorityV3Migration31Audit" ? "authorityV3Migration31AuditHash" : "pendingBootstrapHandoffMigrationHash";
+    const prefix = kind === "authorityV3Migration31Audit" ? "setfarm://internal-production/authority-v3-migration31-audit/sha256/" : "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/";
+    const expected = Object.freeze({ [refKey]: `${prefix}${hash}`, [hashKey]: hash });
+    if (kind === "authorityV3Migration31Audit") await parseAuthorityV3Migration31AuditBody(value, expected);
+    else parsePendingBootstrapHandoffMigrationBody(value, expected);
+    assertExactPoisonRecoverySnapshotStableV1(snapshot, "exact-poison historical prerequisite");
+    records.push(Object.freeze({ kind, target, value, bytes: snapshot.observed.bytes, pair: Object.freeze({ ref: `${prefix}${hash}`, hash }) }));
+  }
+  return Object.freeze(records);
+}
+
+function buildExactPoisonHistoricalInventoryV1(files: readonly FileSnapshot[]): Readonly<Record<string, unknown>> {
+  const root = fixedLegacyCurrentEntryRootV1();
+  const rootIdentity = lstatSync(root, { bigint: true });
+  const orderedRecords = EXACT_POISON_HISTORICAL_PREREQUISITES_V1.map(({ kind, hash }) => {
+    const target = currentEntryPrerequisiteRecordPathAtRootV1(root, kind, hash);
+    const locator = path.relative(root, target);
+    const file = files.find((entry) => entry.locator === target);
+    const parents: Readonly<Record<string, unknown>>[] = [];
+    const segments = path.dirname(locator).split(path.sep);
+    for (let index = 0; index <= segments.length; index += 1) {
+      const parentLocator = index === 0 ? "." : segments.slice(0, index).join(path.sep);
+      const parentTarget = path.join(root, parentLocator);
+      let stats: BigIntStats;
+      try { stats = lstatSync(parentTarget, { bigint: true }); } catch (error) {
+        if (!isEnoent(error) || file !== undefined || index !== segments.length) throw error;
+        break;
+      }
+      if (!stats.isDirectory() || stats.isSymbolicLink() || (stats.mode & 0o7777n) !== 0o700n || stats.uid !== rootIdentity.uid || stats.dev !== rootIdentity.dev) currentEntryFail("exact-poison historical prerequisite parent identity is crossed");
+      parents.push(Object.freeze({ locator: parentLocator, deviceDecimal: String(stats.dev), inodeDecimal: String(stats.ino), uidDecimal: String(stats.uid), mode: "0700", members: index >= segments.length - 1 ? Object.freeze(readdirSync(parentTarget).sort(compareBytes)) : null }));
+    }
+    if (file === undefined) {
+      if (readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(target, "exact-poison absent historical prerequisite") !== null) currentEntryFail("exact-poison historical prerequisite appeared while observed");
+      return Object.freeze({ kind, hash, locator, state: "absent", parents: Object.freeze(parents) });
+    }
+    const stats = file.observed.stats;
+    if (file.observed.mode !== 0o600 || stats.nlink !== 1n || stats.uid !== rootIdentity.uid || stats.dev !== rootIdentity.dev) currentEntryFail("exact-poison historical prerequisite file identity is crossed");
+    assertExactPoisonRecoverySnapshotStableV1(file, "exact-poison historical inventory file");
+    return Object.freeze({ kind, hash, locator, state: "present", parents: Object.freeze(parents), file: Object.freeze({ deviceDecimal: String(stats.dev), inodeDecimal: String(stats.ino), uidDecimal: String(stats.uid), mode: "0600", linkCount: 1, byteLength: file.observed.bytes.length, bytesSha256: sha256(file.observed.bytes), bytesBase64: file.observed.bytes.toString("base64") }) });
+  });
+  const inventoryBody = recursivelyFreeze({ schema: "setfarm.internal-production-current-entry-historical-prerequisite-inventory.v1", storeLocator: exactPoisonQuarantinedStoreLocatorV1(), orderedRecords });
+  return recursivelyFreeze({ inventoryBody, inventoryHash: hashCanonicalJson(inventoryBody) });
+}
+
+async function parseExactPoisonHistoricalInventoryV1(value: unknown): Promise<void> {
+  if (!isPlainRecord(value) || !hasExactKeys(value, ["inventoryBody", "inventoryHash"]) || !isPlainRecord(value.inventoryBody) || hashCanonicalJson(value.inventoryBody) !== requireSha256(value.inventoryHash, "historical prerequisite inventory hash")) currentEntryFail("historical prerequisite inventory hash is crossed");
+  const body = value.inventoryBody;
+  if (!hasExactKeys(body, ["schema", "storeLocator", "orderedRecords"]) || body.schema !== "setfarm.internal-production-current-entry-historical-prerequisite-inventory.v1" || body.storeLocator !== exactPoisonQuarantinedStoreLocatorV1() || !Array.isArray(body.orderedRecords) || body.orderedRecords.length !== 2) currentEntryFail("historical prerequisite inventory schema is invalid");
+  let positiveCount = 0;
+  for (const [index, expected] of EXACT_POISON_HISTORICAL_PREREQUISITES_V1.entries()) {
+    const record = body.orderedRecords[index];
+    if (!isPlainRecord(record) || !hasExactKeys(record, ["kind", "hash", "locator", "state", "parents", ...(record.state === "present" ? ["file"] : [])]) || record.kind !== expected.kind || record.hash !== expected.hash || !["present", "absent"].includes(String(record.state))) currentEntryFail("historical prerequisite inventory record is crossed");
+    const target = currentEntryPrerequisiteRecordPathAtRootV1(fixedLegacyCurrentEntryRootV1(), expected.kind, expected.hash);
+    const locator = path.relative(fixedLegacyCurrentEntryRootV1(), target);
+    const segments = path.dirname(locator).split(path.sep);
+    if (record.locator !== locator || !Array.isArray(record.parents) || (record.parents.length !== segments.length + 1 && !(record.state === "absent" && record.parents.length === segments.length))) currentEntryFail("historical prerequisite parent topology is crossed");
+    for (const [parentIndex, parent] of record.parents.entries()) {
+      if (!isPlainRecord(parent) || !hasExactKeys(parent, ["locator", "deviceDecimal", "inodeDecimal", "uidDecimal", "mode", "members"]) || parent.locator !== (parentIndex === 0 ? "." : segments.slice(0, parentIndex).join(path.sep)) || parent.mode !== "0700" || ![parent.deviceDecimal, parent.inodeDecimal, parent.uidDecimal].every((entry) => typeof entry === "string" && /^(?:0|[1-9][0-9]*)$/.test(entry))) currentEntryFail("historical prerequisite parent identity is invalid");
+      if (parentIndex < segments.length - 1 ? parent.members !== null : !Array.isArray(parent.members) || parent.members.some((entry: unknown) => typeof entry !== "string" || !entry || entry === "." || entry === ".." || entry.includes("/")) || canonicalComparable(parent.members) !== canonicalComparable([...new Set(parent.members)].sort(compareBytes))) currentEntryFail("historical prerequisite parent membership is invalid");
+    }
+    if (record.state === "absent") continue;
+    positiveCount += 1;
+    const file = record.file;
+    if (!isPlainRecord(file) || !hasExactKeys(file, ["deviceDecimal", "inodeDecimal", "uidDecimal", "mode", "linkCount", "byteLength", "bytesSha256", "bytesBase64"]) || file.mode !== "0600" || file.linkCount !== 1 || ![file.deviceDecimal, file.inodeDecimal, file.uidDecimal].every((entry) => typeof entry === "string" && /^(?:0|[1-9][0-9]*)$/.test(entry)) || typeof file.bytesBase64 !== "string") currentEntryFail("historical prerequisite file identity is invalid");
+    const bytes = Buffer.from(file.bytesBase64, "base64");
+    if (bytes.toString("base64") !== file.bytesBase64 || bytes.length !== file.byteLength || sha256(bytes) !== file.bytesSha256) currentEntryFail("historical prerequisite file bytes are crossed");
+    const stored = strictCanonicalRecord(bytes, "historical prerequisite inventory bytes");
+    if (expected.kind === "authorityV3Migration31Audit") await parseAuthorityV3Migration31AuditBody(stored, { authorityV3Migration31AuditRef: `setfarm://internal-production/authority-v3-migration31-audit/sha256/${expected.hash}`, authorityV3Migration31AuditHash: expected.hash });
+    else parsePendingBootstrapHandoffMigrationBody(stored, { pendingBootstrapHandoffMigrationRef: `setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/${expected.hash}`, pendingBootstrapHandoffMigrationHash: expected.hash });
+  }
+  if (positiveCount === 0) currentEntryFail("history-bearing disposition has no historical prerequisites");
+}
 const EXACT_POISON_ORIGINAL_DIRECTORY_LOCATORS_V1 = Object.freeze([
   ".",
   "records",
@@ -4389,6 +4492,7 @@ function observeExactPoisonQuarantinedInventoryV1(
   operation: FileSnapshot,
   heldWriter: ExactPoisonRecoveryWriterV1,
   expectedPublished: ExactPoisonRecoveryCurrentPrerequisiteOverlayV1,
+  historicalPrerequisites: readonly ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[] = [],
 ): ExactPoisonRecoveryInventoryEvidenceV1 {
   heldWriter.assertStable();
   const writerTransients = observeExactPoisonRecoveryWriterTransientsV1(heldWriter);
@@ -4408,6 +4512,15 @@ function observeExactPoisonQuarantinedInventoryV1(
     ["records/pending-bootstrap-handoff-migrations/sha256/ce", new Set([`${EXACT_POISON_CURRENT_PENDING_HASH_V1}.json`])],
   ]);
   const overlayCandidates = requireExactPoisonRecoveryCurrentPrerequisiteOverlayV1(expectedPublished);
+  const physicalCandidates = [...overlayCandidates];
+  for (const historical of historicalPrerequisites) {
+    const overlap = physicalCandidates.find((candidate) => candidate.target === historical.target || candidate.pair.hash === historical.pair.hash);
+    if (overlap) {
+      if (canonicalComparable({ ...overlap, bytes: undefined }) !== canonicalComparable({ ...historical, bytes: undefined }) || !overlap.bytes.equals(historical.bytes)) {
+        currentEntryFail("exact-poison historical/current prerequisite overlap is crossed");
+      }
+    } else physicalCandidates.push(historical);
+  }
   const rootStats = lstatSync(root, { bigint: true });
   const expectedUid = rootStats.uid;
   const expectedDevice = rootStats.dev;
@@ -4423,7 +4536,7 @@ function observeExactPoisonQuarantinedInventoryV1(
     parentSnapshot: DirectorySnapshot;
   }>> = [];
   const overlayByShard = new Map<string, ExactPoisonRecoveryCurrentPrerequisiteOverlayCandidateV1[]>();
-  for (const candidate of overlayCandidates) {
+  for (const candidate of physicalCandidates) {
     const shardTarget = path.dirname(candidate.target);
     const shardLocator = path.relative(root, shardTarget);
     if (
@@ -4591,6 +4704,13 @@ function observeExactPoisonQuarantinedInventoryV1(
   if (canonicalComparable(identities) !== canonicalComparable(EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1)) {
     currentEntryFail("exact-poison predecessor file identities are crossed");
   }
+  const historicalPrerequisiteInventory = historicalPrerequisites.length === 0 ? undefined : buildExactPoisonHistoricalInventoryV1(
+    historicalPrerequisites.map((candidate) => {
+      const file = overlayFileSnapshots.find((entry) => entry.candidate.target === candidate.target);
+      if (!file) currentEntryFail("exact-poison historical prerequisite disappeared before inventory");
+      return file.snapshot;
+    }),
+  );
   const assertStableOriginals = (): void => {
     heldWriter.assertStable();
     const stableWriterTransients = observeExactPoisonRecoveryWriterTransientsV1(heldWriter);
@@ -4612,6 +4732,10 @@ function observeExactPoisonQuarantinedInventoryV1(
     for (const { candidate, snapshot } of overlayFileSnapshots) {
       assertExactPoisonRecoverySnapshotStableV1(snapshot, `exact-poison stable overlay record ${candidate.kind}`);
     }
+    if (historicalPrerequisiteInventory !== undefined) {
+      const historicalFiles = overlayFileSnapshots.filter(({ candidate }) => historicalPrerequisites.some((entry) => entry.target === candidate.target)).map(({ snapshot }) => snapshot);
+      if (canonicalComparable(buildExactPoisonHistoricalInventoryV1(historicalFiles)) !== canonicalComparable(historicalPrerequisiteInventory)) currentEntryFail("exact-poison historical prerequisite inventory changed across fence");
+    }
     for (const absent of absentOverlayShards) {
       assertDirectory(absent.parentTarget, absent.parentSnapshot, `parent of stable absent exact-poison overlay shard ${absent.locator}`);
       try {
@@ -4630,6 +4754,7 @@ function observeExactPoisonQuarantinedInventoryV1(
     inventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
     predecessorFileIdentities: EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1,
     currentPrerequisiteOverlay,
+    ...(historicalPrerequisiteInventory === undefined ? {} : { historicalPrerequisiteInventory }),
     assertStableOriginals,
   });
 }
@@ -4727,6 +4852,7 @@ function buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(
   database: Record<string, unknown>,
   phase: Record<string, unknown>,
   physical: PhysicalInventoryV1,
+  legacyFindingPublicationInventory: LegacyFindingPublicationInventoryV1,
 ): Record<string, unknown> {
   const census = recursivelyFreeze({
     ...database,
@@ -4741,7 +4867,8 @@ function buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(
     currentEntryFail("exact-poison complete legacy census is not zero");
   }
   const body = {
-    schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1",
+    schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2",
+    legacyFindingPublicationInventory: validateLegacyFindingPublicationInventoryV1(legacyFindingPublicationInventory),
     observationKind: "legacy-pre-manifest-existing-live-truth",
     authorityV3Migration31AuditRef: audit.pair.authorityV3Migration31AuditRef,
     authorityV3Migration31AuditHash: audit.pair.authorityV3Migration31AuditHash,
@@ -4757,6 +4884,120 @@ function buildExactPoisonRecoveryLegacyZeroOwnerNoWriteV1(
   };
   const observationHash = hashCanonicalJson(body);
   return recursivelyFreeze({ ...body, observationRef: `${LEGACY_ZERO_PREFIX_V1}${observationHash}`, observationHash });
+}
+
+// Evidence only: genesis must repeat this under its physical transition lease,
+// and separately authenticate retirement/cutover history before any mutation.
+async function observeExactPoisonColdBootstrapBracketNoWriteV1(helperContext?: object) {
+  const operation = requireExactPoisonRecoverySnapshotV1(
+    path.join(fixedLegacyCurrentEntryRootV1(), "current-entry-operation.json"), "cold bootstrap poison operation",
+  );
+  let edgeParent = path.dirname(fixedLegacyExactPoisonSuccessorEdgePathV1());
+  for (;;) {
+    try { lstatSync(edgeParent); break; }
+    catch (error) { if (!isEnoent(error)) throw error; edgeParent = path.dirname(edgeParent); }
+  }
+  const directoryGuard = authenticateTask12ReceiptDirectoryChainV1(edgeParent);
+  let edgeParentDescriptor: number | null = null;
+  try {
+    const edgeParentMetadata = lstatSync(edgeParent, { bigint: true });
+    edgeParentDescriptor = openSync(edgeParent, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+    if (!sameRegularMetadata(edgeParentMetadata, fstatSync(edgeParentDescriptor, { bigint: true }))) {
+      currentEntryFail("cold bootstrap successor parent changed while pinned");
+    }
+    const pair = parsePreselectionCurrentEntryOperationV1(operation.observed.bytes);
+    if (canonicalComparable(pair) !== canonicalComparable(exactPoisonOperationPairV1())) {
+      currentEntryFail("cold bootstrap operation is not the recognized incident");
+    }
+    const contamination = exactPoisonContaminationFingerprintV1(operation);
+    const assertEdgeParentStable = (): void => {
+      directoryGuard.assertStable();
+      if (!sameRegularMetadata(edgeParentMetadata, lstatSync(edgeParent, { bigint: true }))
+        || !sameRegularMetadata(edgeParentMetadata, fstatSync(edgeParentDescriptor!, { bigint: true }))) {
+        currentEntryFail("cold bootstrap successor parent absence topology changed");
+      }
+    };
+    const requireNoSuccessor = (): void => {
+      assertEdgeParentStable();
+      if (readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(
+        fixedLegacyExactPoisonSuccessorEdgePathV1(), "cold bootstrap successor edge",
+      ) !== null) currentEntryFail("cold bootstrap successor edge is already present");
+      assertEdgeParentStable();
+    };
+    requireNoSuccessor();
+    const source = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
+    const observePass = async () => {
+      requireNoSuccessor();
+      const prerequisites = requireExactPoisonRecoveryPrerequisitesV1(await observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1());
+      for (const record of [prerequisites.authorityV3Migration31Audit, prerequisites.pendingBootstrapHandoffMigration]) {
+        if (canonicalComparable(record.value.controllerSource) !== canonicalComparable(source)) {
+          currentEntryFail("cold bootstrap prerequisites are crossed with source");
+        }
+      }
+      const syntheticGitAbsence = observeExactPoisonSyntheticGitObjectAbsenceV1();
+      if (canonicalComparable(syntheticGitAbsence) !== canonicalComparable(EXACT_POISON_UNAVAILABLE_SYNTHETIC_GIT_OBJECTS_V1)) {
+        currentEntryFail("cold bootstrap synthetic Git absence is crossed");
+      }
+      const remainingServices = await observeColdRemainingServicesV1(source);
+      const spawnerAbsence = observeColdSpawnerAbsenceV1(source);
+      const physical = observeColdPhysicalInventoryV1(remainingServices, 0);
+      const phase = requireExactZeroCountsV1(await observePhaseClosedZeroV1(source, helperContext), EXACT_POISON_PHASE_ZERO_KEYS_V1, "cold bootstrap phase");
+      const { legacyFindingPublicationInventory, ...database } = await observeLegacyDatabaseCensusV1(true);
+      requireExactZeroCountsV1(database, [
+        "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount", "activeCompletionOwnerCount",
+        "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
+        "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount",
+      ], "cold bootstrap database");
+      const census = requireExactZeroCountsV1({
+        ...database, ...phase,
+        ownedProcessCount: physical.ownedProcessCount, ownedListenerCount: physical.ownedListenerCount,
+        ownedWorktreeCount: physical.ownedWorktreeCount, dirtyWorktreeCount: physical.dirtyWorktreeCount,
+        staleChildCount: physical.staleChildCount,
+      }, COMPLETE_ZERO_CENSUS_KEYS_V1, "cold bootstrap complete census");
+      if (canonicalComparable(source) !== canonicalComparable(requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1()))) {
+        currentEntryFail("cold bootstrap source drifted");
+      }
+      requireNoSuccessor();
+      return {
+        prerequisites,
+        value: recursivelyFreeze({
+          remainingServices, spawnerAbsence, physical, census, syntheticGitAbsence,
+          legacyFindingPublicationInventory: validateLegacyFindingPublicationInventoryV1(legacyFindingPublicationInventory),
+        }),
+      };
+    };
+    const first = await observePass();
+    const second = await observePass();
+    assertExactPoisonRecoveryPrerequisitesEqualV1(second.prerequisites, first.prerequisites, "cold bootstrap A/B");
+    if (canonicalComparable(first.value) !== canonicalComparable(second.value)) currentEntryFail("cold bootstrap A/B observations drifted");
+    assertExactPoisonRecoverySnapshotStableV1(operation, "cold bootstrap poison operation");
+    requireNoSuccessor();
+    const body = recursivelyFreeze({
+      schema: "setfarm.internal-production-cold-bootstrap-observation.v1",
+      operation: pair, operationBytesSha256: sha256(operation.observed.bytes),
+      contaminationFingerprintHash: contamination.fingerprintHash, source,
+      authorityV3Migration31Audit: first.prerequisites.authorityV3Migration31Audit.pair,
+      pendingBootstrapHandoffMigration: first.prerequisites.pendingBootstrapHandoffMigration.pair,
+      ...first.value,
+    });
+    return recursivelyFreeze({ ...body, observationHash: hashCanonicalJson(body) });
+  } finally {
+    try { if (edgeParentDescriptor !== null) closeSync(edgeParentDescriptor); }
+    finally { directoryGuard.close(); }
+  }
+}
+
+export async function observeInternalProductionColdBootstrapObservationV1() {
+  return observeExactPoisonColdBootstrapBracketNoWriteV1();
+}
+
+export async function observeInternalProductionColdSpawnerHelperBootstrapObservationV1(context: object) {
+  const retirement = await import("./baseline-restart-authority-retirement-v1.js");
+  const before = retirement.observeInternalProductionColdSpawnerHelperIntentPhaseV1(context);
+  const observation = await observeExactPoisonColdBootstrapBracketNoWriteV1(context);
+  const after = retirement.observeInternalProductionColdSpawnerHelperIntentPhaseV1(context);
+  if (canonicalComparable(before) !== canonicalComparable(after)) currentEntryFail("cold helper owned intent changed across full observation");
+  return observation;
 }
 
 async function observeExactPoisonRecoveryCandidatesNoWriteV1(
@@ -4784,7 +5025,9 @@ async function observeExactPoisonRecoveryCandidatesNoWriteV1(
   const phaseA = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), EXACT_POISON_PHASE_ZERO_KEYS_V1, "exact-poison phase-a");
   const serviceA = await observeInternalProductionServiceCensusV1();
   const physicalA = observePhysicalInventoryV1(serviceA, 0);
-  const database = requireExactZeroCountsV1(await observeLegacyDatabaseCensusV1(), [
+  const { legacyFindingPublicationInventory, ...databaseCounts } = await observeLegacyDatabaseCensusV1();
+  validateLegacyFindingPublicationInventoryV1(legacyFindingPublicationInventory);
+  const database = requireExactZeroCountsV1(databaseCounts, [
     "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount", "activeCompletionOwnerCount",
     "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
     "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount",
@@ -4836,6 +5079,7 @@ async function observeExactPoisonRecoveryCandidatesNoWriteV1(
     database,
     phaseA,
     physicalA,
+    legacyFindingPublicationInventory,
   );
   const completeZeroEffectBracket: CompleteZeroEffectBracketHashInputV1 = recursivelyFreeze([
     { observation: "controller-source-a", value: sourceA },
@@ -4891,11 +5135,12 @@ async function observeExactPoisonRecoveryCandidatesNoWriteV1(
   const successorStoreHash = hashCanonicalJson(genesisCore);
   const successorGenesis = recursivelyFreeze({ ...genesisCore, successorStoreHash });
   const dispositionCore = recursivelyFreeze({
-    schema: "setfarm.internal-production-current-entry-store-quarantine-disposition.v1",
+    schema: inventory.historicalPrerequisiteInventory === undefined ? "setfarm.internal-production-current-entry-store-quarantine-disposition.v1" : "setfarm.internal-production-current-entry-store-quarantine-disposition.v2",
     reason: "p3-projected-fixture-workspace-root-contamination-v1",
     predecessorOperation: exactPoisonOperationPairV1(),
     contaminationFingerprint,
     quarantinedInventory: { inventoryBody: inventory.inventoryBody, inventoryHash: inventory.inventoryHash },
+    ...(inventory.historicalPrerequisiteInventory === undefined ? {} : { historicalPrerequisiteInventory: inventory.historicalPrerequisiteInventory }),
     zeroEffectProof,
     successorGenesis,
   });
@@ -4973,7 +5218,8 @@ async function observeExactPoisonQuarantineAdmissionCoreV1(
     derivedCurrentPrerequisiteOverlay,
     "exact-poison expected current prerequisite overlay",
   );
-  const inventory = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter, expectedCurrentPrerequisiteOverlay);
+  const historicalPrerequisites = await observeExactPoisonHistoricalPrerequisitesNoWriteV1();
+  const inventory = observeExactPoisonQuarantinedInventoryV1(operation, heldWriter, expectedCurrentPrerequisiteOverlay, historicalPrerequisites);
   assertExactPoisonRecoveryCurrentPrerequisiteOverlayEqualV1(
     inventory.currentPrerequisiteOverlay,
     expectedCurrentPrerequisiteOverlay,
@@ -5232,8 +5478,10 @@ async function openExactPoisonRecoveryPinnedChainV1(
   const parsed = await readExactPoisonRecoveryChainV1(operation, includeCommit);
   const records: ExactPoisonRecoveryPinnedRecordV1[] = [];
   const parents = new Map<string, ExactPoisonRecoveryOwnedParentV1>();
+  let historicalPins: Readonly<{ assertStable: () => void; close: () => void }> | undefined;
   let closed = false;
   try {
+    historicalPins = openExactPoisonHistoricalInventoryPinsV1(parsed.dispositionValue.value.historicalPrerequisiteInventory);
     for (const [index, snapshot] of parsed.snapshots.entries()) {
       const record = openExactPoisonRecoveryPinnedRecordV1(snapshot.locator, `exact-poison pinned chain member ${index}`);
       records.push(record);
@@ -5269,15 +5517,18 @@ async function openExactPoisonRecoveryPinnedChainV1(
     }
     const assertStable = (): void => {
       if (closed) currentEntryFail("exact-poison pinned chain is closed");
+      historicalPins!.assertStable();
       for (const parent of parents.values()) parent.pin.assertStable();
       for (const [index, record] of records.entries()) {
         assertExactPoisonRecoveryPinnedRecordStableV1(record, `exact-poison pinned chain member ${index}`);
       }
       for (const parent of parents.values()) parent.pin.assertStable();
+      historicalPins!.assertStable();
     };
     const close = (): void => {
       if (closed) return;
       closed = true;
+      historicalPins!.close();
       for (let index = records.length - 1; index >= 0; index -= 1) closeSync(records[index]!.descriptor);
       for (const parent of [...parents.values()].reverse()) parent.close();
     };
@@ -5315,6 +5566,7 @@ async function openExactPoisonRecoveryPinnedChainV1(
   } catch (error) {
     if (!closed) {
       closed = true;
+      historicalPins?.close();
       for (let index = records.length - 1; index >= 0; index -= 1) closeSync(records[index]!.descriptor);
       for (const parent of [...parents.values()].reverse()) parent.close();
     }
@@ -5471,11 +5723,13 @@ async function observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(
   database: Record<string, unknown>,
   phase: Record<string, unknown>,
   physical: PhysicalInventoryV1,
+  legacyFindingPublicationInventory: LegacyFindingPublicationInventoryV1,
 ): Promise<Readonly<Record<string, unknown>>> {
   const exact = await observeExactPoisonRecoveryDownstreamAbsenceNoWriteV1();
   const { task12: _task12, ...remaining } = exact;
   return recursivelyFreeze({
-    schema: "setfarm.internal-production-current-entry-pre-status-downstream-observation.v1",
+    schema: "setfarm.internal-production-current-entry-pre-status-downstream-observation.v2",
+    legacyFindingPublicationInventory: validateLegacyFindingPublicationInventoryV1(legacyFindingPublicationInventory),
     remaining,
     database,
     phase,
@@ -5500,19 +5754,21 @@ async function observeExactPoisonPostVisiblePreStatusRawFenceNoWriteV1(
   const phaseA = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), EXACT_POISON_PHASE_ZERO_KEYS_V1, "pre-status phase-a");
   const serviceA = await observeInternalProductionServiceCensusV1();
   const physicalA = observePhysicalInventoryV1(serviceA, 0);
-  const database = requireExactZeroCountsV1(await observeLegacyDatabaseCensusV1(), [
+  const { legacyFindingPublicationInventory, ...databaseCounts } = await observeLegacyDatabaseCensusV1();
+  validateLegacyFindingPublicationInventoryV1(legacyFindingPublicationInventory);
+  const database = requireExactZeroCountsV1(databaseCounts, [
     "activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount", "activeCompletionOwnerCount",
     "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
     "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount",
   ], "pre-status database");
-  const downstreamA = await observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(database, phaseA, physicalA);
+  const downstreamA = await observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(database, phaseA, physicalA, legacyFindingPublicationInventory);
   const serviceB = await observeInternalProductionServiceCensusV1();
   const physicalB = observePhysicalInventoryV1(serviceB, 0);
   const phaseB = requireExactZeroCountsV1(await observePhaseClosedZeroV1(sourceA), Object.keys(phaseA), "pre-status phase-b");
   const sourceB = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
   const pbaB = await observeCurrentPba();
   const prerequisitesB = requireExactPoisonRecoveryPrerequisitesV1(await observeExactPoisonRecoveryCurrentPrerequisitesNoWriteV1());
-  const downstreamB = await observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(database, phaseB, physicalB);
+  const downstreamB = await observeExactPoisonPostVisiblePreStatusDownstreamNoWriteV1(database, phaseB, physicalB, legacyFindingPublicationInventory);
   const expectedOperation = context.successorOperation;
   assertExactPoisonRecoveryPrerequisitesEqualV1(prerequisitesB, prerequisitesA, "post-visible pre-status raw A/B prerequisites");
   if (
@@ -5953,6 +6209,50 @@ function exactPoisonRecoveryPinnedRecordFileSnapshotV1(
   });
 }
 
+function openExactPoisonHistoricalInventoryPinsV1(
+  inventory: unknown,
+): Readonly<{ assertStable: () => void; close: () => void }> {
+  const directories: ExactPoisonRecoveryOwnedParentV1[] = [];
+  const files: ExactPoisonRecoveryPinnedRecordV1[] = [];
+  let closed = false;
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    for (const file of files) closeSync(file.descriptor);
+    for (const directory of directories.reverse()) directory.close();
+  };
+  const assertStable = (): void => {
+    if (closed) currentEntryFail("historical prerequisite pins are closed");
+    if (inventory === undefined) return;
+    for (const directory of directories) directory.pin.assertStable();
+    for (const file of files) assertExactPoisonRecoveryPinnedRecordStableV1(file, "historical prerequisite");
+    const observed = buildExactPoisonHistoricalInventoryV1(files.map(exactPoisonRecoveryPinnedRecordFileSnapshotV1));
+    if (canonicalComparable(observed) !== canonicalComparable(inventory)) currentEntryFail("historical prerequisite pinned inventory is crossed");
+    for (const directory of directories) directory.pin.assertStable();
+  };
+  try {
+    if (inventory !== undefined) {
+      // Called only after the strict V2 parser authenticates these exact incident
+      // locators, canonical stored bytes, and historical Git/migration relations.
+      if (!isPlainRecord(inventory) || !isPlainRecord(inventory.inventoryBody) || !Array.isArray(inventory.inventoryBody.orderedRecords)) currentEntryFail("historical prerequisite inventory is invalid");
+      const root = fixedLegacyCurrentEntryRootV1();
+      for (const record of inventory.inventoryBody.orderedRecords) {
+        if (!isPlainRecord(record) || !Array.isArray(record.parents) || typeof record.locator !== "string") currentEntryFail("historical prerequisite record is invalid");
+        for (const parent of record.parents) {
+          if (!isPlainRecord(parent) || typeof parent.locator !== "string") currentEntryFail("historical prerequisite parent is invalid");
+          directories.push(openExactPoisonRecoveryPinnedParentV1(path.join(root, parent.locator)));
+        }
+        if (record.state === "present") files.push(openExactPoisonRecoveryPinnedRecordV1(path.join(root, record.locator), "historical prerequisite"));
+      }
+    }
+    assertStable();
+    return Object.freeze({ assertStable, close });
+  } catch (error) {
+    close();
+    throw error;
+  }
+}
+
 function openExactPoisonRecoveryPostVisibleOriginalsV1(
   context: ExactPoisonRecoveryPinnedCommitChainV1,
 ): ExactPoisonRecoveryPostVisibleOriginalsV1 {
@@ -6034,6 +6334,7 @@ function openExactPoisonRecoveryPostVisibleOriginalsV1(
       return record;
     });
     if (directoryPins.length !== 10 || filePins.length !== 5) currentEntryFail("post-visible original pin count is crossed");
+    const historicalPrerequisiteInventory = context.dispositionValue.value.historicalPrerequisiteInventory;
     const assertStableOriginals = (): void => {
       if (closed) currentEntryFail("post-visible original pins are closed");
       context.assertStable();
@@ -6051,6 +6352,7 @@ function openExactPoisonRecoveryPostVisibleOriginalsV1(
         inventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,
         predecessorFileIdentities: EXACT_POISON_PREDECESSOR_FILE_IDENTITIES_V1,
         currentPrerequisiteOverlay: Object.freeze([]),
+        ...(historicalPrerequisiteInventory === undefined ? {} : { historicalPrerequisiteInventory: historicalPrerequisiteInventory as Readonly<Record<string, unknown>> }),
         assertStableOriginals,
       }),
       close,
@@ -6567,6 +6869,39 @@ async function publishExactPoisonRecoveryCandidateV1(
   }
 }
 
+let exactPoisonColdPreselectionMayOwnResourcesV1 = false;
+
+async function ensureExactPoisonSpawnerBeforeQuarantineV1(): Promise<void> {
+  const retirement = await import("./baseline-restart-authority-retirement-v1.js");
+  let before: ReturnType<typeof retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1> | null = null;
+  try { before = retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(); }
+  catch {
+    // A partial/uncertain census grants nothing. Only the strict facade can
+    // authenticate retained ownership; unretained partial journals refuse.
+  }
+  if (before?.state === "absent" && !exactPoisonColdPreselectionMayOwnResourcesV1
+    && observeColdSpawnerGlobalProcessRowsV1().some(isColdSpawnerFamilyProcessV1)) {
+    const lock = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/restart-authority-retirement-v1/physical-service-restart-authority.transition.lock");
+    try {
+      if (readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(lock, "preselection physical transition lock") === null
+        && canonicalComparable(retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()) === canonicalComparable(before)
+        && readFixedLegacyCurrentEntryRecordSnapshotIfPresentV1(lock, "preselection physical transition lock recheck") === null) return;
+    } catch {
+      // Durable pre-intent ownership or uncertain lock ancestry also selects
+      // only the strict facade, including after a controller process restart.
+    }
+  }
+  // Path absence alone cannot retire our own unlinked descriptor cleanup.
+  // Keep routing to its sole owner after rejection until the whole bracket ends.
+  exactPoisonColdPreselectionMayOwnResourcesV1 = true;
+  const settled = await retirement.ensureInternalProductionColdSpawnerBootstrapSettledV1();
+  if (before?.state === "settled" && canonicalComparable(before) !== canonicalComparable(settled)) currentEntryFail("preselection cold history changed across facade");
+  const ordinary = await observeInternalProductionServiceCensusV1();
+  if (canonicalComparable(ordinary) !== canonicalComparable(settled.settlement.serviceCensus)) currentEntryFail("preselection ordinary census is not its cold settlement");
+  if (canonicalComparable(retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()) !== canonicalComparable(settled)) currentEntryFail("preselection cold history changed across ordinary observation");
+  exactPoisonColdPreselectionMayOwnResourcesV1 = false;
+}
+
 async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
   const operation = requireExactPoisonRecoverySnapshotV1(
     fixedLegacyCurrentEntryOperationPathV1(),
@@ -6635,6 +6970,7 @@ async function resumeExactPoisonQuarantineBeforeSelectionV1(): Promise<void> {
   ) currentEntryFail("fixed legacy exact-poison operation bytes are crossed");
   const chain = await inspectExactPoisonRecoveryChainBeforeSelectionV1(operation);
   if (chain.state === "dispatch") {
+    await ensureExactPoisonSpawnerBeforeQuarantineV1();
     await resumeExactPoisonQuarantinePublisherCoreV1();
   } else {
     chain.context.close();
@@ -6741,6 +7077,102 @@ export async function resolveInternalProductionCurrentEntryOperationV1(
     return context.successorOperation;
   } finally {
     context.close();
+  }
+}
+
+/** Historical evidence only: P3 does not authorize preparation completion or a process effect. */
+export async function resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(
+  pair: InternalProductionCurrentEntryOperationPairV1,
+): Promise<Readonly<Record<string, unknown>>> {
+  const expected = requirePair(pair, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
+  const rootReader = openFixedLegacyCurrentEntryPrerequisiteRootReaderV1();
+  let operationPin: ExactPoisonRecoveryPinnedRecordV1 | null = null;
+  const prerequisites: CurrentEntryPrerequisiteSnapshotV1[] = [];
+  try {
+    rootReader.assertStable();
+    operationPin = openExactPoisonRecoveryPinnedRecordV1(path.join(rootReader.store.directory, CURRENT_ENTRY_FILES.operation), "historical predecessor operation");
+    const fixedOperation = parsePreselectionCurrentEntryOperationV1(operationPin.bytes);
+    if (expected.operationRef === fixedOperation.operationRef && expected.operationHash === fixedOperation.operationHash) {
+      const operation = await parseCurrentEntryOperationBodyCoreV1(
+        strictCanonicalRecord(operationPin.bytes, "historical predecessor operation"), expected,
+        (nested, retained) => resolveInternalProductionAuthorityV3Migration31AuditAtFixedLegacyRootV1(nested, rootReader, retained),
+        (nested, retained) => resolveInternalProductionPendingBootstrapHandoffMigrationAtFixedLegacyRootV1(nested, rootReader, retained),
+        prerequisites,
+      );
+      const assertStable = (): void => {
+        rootReader.assertStable();
+        assertExactPoisonRecoveryPinnedRecordStableV1(operationPin!, "historical predecessor operation");
+        for (const retained of prerequisites) {
+          const final = readTask12ReceiptStoreSnapshotV1(retained.source.locator);
+          if (!sameRegularMetadata(retained.source.observed.stats, final.stats) || !retained.source.observed.bytes.equals(final.bytes)) currentEntryFail("historical predecessor prerequisite changed");
+          if (retained.absentContentLocator !== null) assertFixedLegacyHistoricalPrerequisiteContentAbsentV1(rootReader, retained.absentContentLocator, "historical predecessor prerequisite");
+        }
+        rootReader.assertStable();
+      };
+      assertStable();
+      return await readHistoricalPreMutationRuntimeAuthorityAtRootV1(rootReader.store.directory, operation, assertStable);
+    }
+  } finally {
+    try { if (operationPin !== null) closeSync(operationPin.descriptor); }
+    finally { rootReader.close(); }
+  }
+  const context = await openExactPoisonRecoveryPinnedCommitChainV1();
+  try {
+    if (expected.operationRef !== context.successorOperationPair.ref || expected.operationHash !== context.successorOperationPair.hash
+      || expected.operationRef !== context.successorOperation.operationRef || expected.operationHash !== context.successorOperation.operationHash) currentEntryFail("historical predecessor operation pair is unknown");
+    context.assertStable();
+    await durablyAuthenticateSuccessorActivationCommitV1(context);
+    context.assertStable();
+    return await readHistoricalPreMutationRuntimeAuthorityAtRootV1(context.successorRoot, context.successorOperation, context.assertStable);
+  } finally { context.close(); }
+}
+
+async function readHistoricalPreMutationRuntimeAuthorityAtRootV1(
+  storeRoot: string,
+  operation: InternalProductionCurrentEntryOperationV1,
+  assertOperationStable: () => void,
+): Promise<Readonly<Record<string, unknown>>> {
+  const locator = path.join(storeRoot, "operations", "sha256", operation.operationHash.slice(0, 2), operation.operationHash, "00-pre-mutation-loaded-runtime-service-authority.pair.json");
+  const guards: Task12ReceiptDirectoryGuardV1[] = [];
+  const pins: ExactPoisonRecoveryPinnedRecordV1[] = [];
+  const assertStable = (): void => {
+    assertOperationStable();
+    for (const guard of guards) guard.assertStable();
+    for (const pin of pins) assertExactPoisonRecoveryPinnedRecordStableV1(pin, "historical predecessor P3 evidence");
+    assertOperationStable();
+  };
+  const openPinned = (target: string): ExactPoisonRecoveryPinnedRecordV1 => {
+    assertStable();
+    guards.push(authenticateTask12ReceiptDirectoryChainV1(path.dirname(target)));
+    const pin = openExactPoisonRecoveryPinnedRecordV1(target, "historical predecessor P3 evidence");
+    pins.push(pin);
+    assertStable();
+    return pin;
+  };
+  try {
+    const pair = requirePair(strictCanonicalRecord(openPinned(locator).bytes, "historical predecessor P3 locator"), "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash", TASK12_PRE_MUTATION_PREFIX_V1);
+    const hash = pair.preMutationLoadedRuntimeServiceAuthorityHash!;
+    const record = openPinned(path.join(storeRoot, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", hash.slice(0, 2), `${hash}.json`));
+    const value = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(strictCanonicalRecord(record.bytes, "historical predecessor P3 record"));
+    if (value.preMutationLoadedRuntimeServiceAuthorityRef !== pair.preMutationLoadedRuntimeServiceAuthorityRef || value.preMutationLoadedRuntimeServiceAuthorityHash !== hash
+      || value.currentEntryOperationRef !== operation.operationRef || value.currentEntryOperationHash !== operation.operationHash) currentEntryFail("historical predecessor P3 operation or pair is crossed");
+    assertStable();
+    const assertColdHistoryStable = await openTask12ColdSpawnerPredecessorHistoryV1(value);
+    assertStable();
+    assertColdHistoryStable();
+    assertStable();
+    return value;
+  } finally {
+    // Closing one resource must not prevent attempts to release the others.
+    // A close error rejects the evidence; an ambiguous OS close is not retried.
+    let cleanupError: unknown = null;
+    for (const pin of pins.reverse()) {
+      try { closeSync(pin.descriptor); } catch (error) { cleanupError ??= error; }
+    }
+    for (const guard of guards.reverse()) {
+      try { guard.close(); } catch (error) { cleanupError ??= error; }
+    }
+    if (cleanupError !== null) throw cleanupError;
   }
 }
 
@@ -6857,7 +7289,7 @@ export type InternalProductionLegacyPreManifestZeroOwnerObservationPairV1 = Read
   observationHash: Sha256V1;
 }>;
 
-export type InternalProductionLegacyPreManifestZeroOwnerObservationV1 = Readonly<{
+type HistoricalLegacyPreManifestZeroOwnerObservationV1 = Readonly<{
   schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1";
   observationKind: "legacy-pre-manifest-existing-live-truth";
   authorityV3Migration31AuditRef: CanonicalRefV1;
@@ -6874,6 +7306,25 @@ export type InternalProductionLegacyPreManifestZeroOwnerObservationV1 = Readonly
   observationRef: CanonicalRefV1;
   observationHash: Sha256V1;
 }>;
+
+export type InternalProductionLegacyPreManifestZeroOwnerObservationV1 =
+  | HistoricalLegacyPreManifestZeroOwnerObservationV1
+  | Readonly<Omit<HistoricalLegacyPreManifestZeroOwnerObservationV1, "schema"> & {
+      schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2";
+      legacyFindingPublicationInventory: LegacyFindingPublicationInventoryV1;
+    }>;
+
+function requireLegacyZeroVersionedFieldsV1(value: Record<string, unknown>): LegacyFindingPublicationInventoryV1 | null {
+  const keys = ["schema", "observationKind", "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "cleanSetfarmSourceSha", "cleanSetfarmTreeHash", "cleanSetfarmBuildHash", "observedSpawnerGenerationHash", "census", "allThirtySixScalarCountsZero", "ownerReservationSidecarState", "ownerAdmissionHeadState", "manifestActivationState", "observationRef", "observationHash"];
+  if (value.schema === "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1") {
+    if (!hasExactKeys(value, keys)) currentEntryFail("historical legacy zero-owner fields are invalid");
+    // Historical V1 proves zero owners, but grants no finding membership.
+    return null;
+  }
+  if (value.schema !== "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2"
+    || !hasExactKeys(value, [...keys, "legacyFindingPublicationInventory"])) currentEntryFail("legacy zero-owner fields are invalid");
+  return validateLegacyFindingPublicationInventoryV1(value.legacyFindingPublicationInventory);
+}
 
 const LEGACY_ZERO_STORE_V1 = "data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1";
 const LEGACY_ZERO_PREFIX_V1 = "setfarm://internal-production/legacy-pre-manifest-zero-owner-observation/sha256/";
@@ -7184,7 +7635,7 @@ function observeProcessListenersV1(pid: number): readonly Readonly<{ pid: number
 
 function isExpectedPersistentListenerV1(
   listener: Readonly<{ pid: number; protocol: "TCP"; localAddress: string; port: number }>,
-  services: InternalProductionServiceCensusV1,
+  services: Pick<InternalProductionServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
   serviceBoundOpenClawListeners: readonly Readonly<{ pid: number; protocol: "TCP"; localAddress: "127.0.0.1" | "[::1]"; port: 18789 }>[],
 ): boolean {
   return (listener.pid === services.dashboard.pid && listener.localAddress === "127.0.0.1" && listener.port === 3333)
@@ -7201,14 +7652,58 @@ function assertPhysicalInventoryPassStableV1(first: unknown, second: unknown): v
 }
 
 function observePhysicalInventoryV1(services: InternalProductionServiceCensusV1, activeRunCount: number): PhysicalInventoryV1 {
+  return observePhysicalInventoryForPersistentServicesV1(services, [services.spawner, services.dashboard, services.missionControl, services.openClaw], activeRunCount);
+}
+
+// A collection leaf only: cold admission must additionally prove global
+// spawner absence and bind the incident/source/zero-owner observation bracket.
+function observeColdPhysicalInventoryV1(
+  services: Pick<InternalProductionServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
+  activeRunCount: number,
+): PhysicalInventoryV1 {
+  return observePhysicalInventoryForPersistentServicesV1(services, [services.dashboard, services.missionControl, services.openClaw], activeRunCount);
+}
+
+function observePhysicalInventoryForPersistentServicesV1(
+  services: Pick<InternalProductionServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
+  persistent: readonly (InternalProductionServiceCensusSpawnerV1 | InternalProductionListeningServiceCensusV1)[],
+  activeRunCount: number,
+): PhysicalInventoryV1 {
+  const first = collectPhysicalInventoryPassV1(services, persistent, activeRunCount);
+  const second = collectPhysicalInventoryPassV1(services, persistent, activeRunCount);
+  assertPhysicalInventoryPassStableV1(first.witness, second.witness);
+  return first.inventory;
+}
+
+function observePhysicalDirectoryIdentityV1(target: string) {
+  requirePhysicalDirectoryV1(target, "physical reference root");
+  const metadata = (stats: BigIntStats) => Object.fromEntries([
+    "dev", "ino", "uid", "gid", "mode", "nlink", "size", "birthtimeNs", "mtimeNs", "ctimeNs",
+  ].map((key) => [key, String(stats[key as keyof BigIntStats])]));
+  const before = lstatSync(target, { bigint: true });
+  const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+  try {
+    const held = fstatSync(descriptor, { bigint: true });
+    const after = lstatSync(target, { bigint: true });
+    if (!held.isDirectory() || !after.isDirectory() || after.isSymbolicLink()
+      || canonicalComparable(metadata(before)) !== canonicalComparable(metadata(held))
+      || canonicalComparable(metadata(before)) !== canonicalComparable(metadata(after))) currentEntryFail("physical reference root changed while observed");
+    return recursivelyFreeze({ path: target, ...metadata(held) });
+  } finally { closeSync(descriptor); }
+}
+
+function collectPhysicalInventoryPassV1(
+  services: Pick<InternalProductionServiceCensusV1, "dashboard" | "missionControl" | "openClaw">,
+  persistent: readonly (InternalProductionServiceCensusSpawnerV1 | InternalProductionListeningServiceCensusV1)[],
+  activeRunCount: number,
+) {
   if (process.platform !== "darwin") currentEntryFail("physical census requires Darwin");
   const worktrees = observeManagedWorktreesV1();
   const processes = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
   const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
-  const persistent = [services.spawner, services.dashboard, services.missionControl, services.openClaw];
   for (const service of persistent) {
     const row = byPid.get(service.pid);
-    if (!row || Date.parse(row.lstart) !== service.processStartTimeEpochMs || sha256(`${row.pid}\n${row.lstart}\n`) !== service.processIdentityHash) currentEntryFail("persistent service changed during physical census");
+    if (!row || row.stat.includes("Z") || Date.parse(row.lstart) !== service.processStartTimeEpochMs || sha256(`${row.pid}\n${row.lstart}\n`) !== service.processIdentityHash) currentEntryFail("persistent service changed during physical census");
   }
   const observedOpenClawListeners = observeOpenClawListenerInventoryV1(services.openClaw.pid);
   const serviceBoundOpenClawListeners = requireServiceBoundOpenClawListenersV1(services.openClaw, observedOpenClawListeners);
@@ -7216,8 +7711,12 @@ function observePhysicalInventoryV1(services: InternalProductionServiceCensusV1,
   const immediateProjects = physicalImmediateProjectsV1();
   const referencePids = new Set<number>();
   const deletedPids = new Set<number>();
-  for (const root of [...managedRoots, ...worktrees.map((entry) => entry.root), ...immediateProjects]) {
+  const referenceRoots = [...new Set([...managedRoots, ...worktrees.map((entry) => entry.root), ...immediateProjects])].sort(compareBytes);
+  const rootIdentities = referenceRoots.map(observePhysicalDirectoryIdentityV1);
+  const referenceWitness: Array<Readonly<{ root: string; pids: readonly number[]; deleted: readonly number[] }>> = [];
+  for (const root of referenceRoots) {
     const refs = lsofReferencedPidsV1(root);
+    referenceWitness.push(Object.freeze({ root, ...refs }));
     refs.pids.forEach((pid) => referencePids.add(pid));
     refs.deleted.forEach((pid) => deletedPids.add(pid));
   }
@@ -7269,9 +7768,7 @@ function observePhysicalInventoryV1(services: InternalProductionServiceCensusV1,
     return complete;
   });
   const extraListeners = listeners.filter((listener) => !isExpectedPersistentListenerV1(listener, services, serviceBoundOpenClawListeners));
-  const processesAgain = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
-  assertPhysicalInventoryPassStableV1(processes, processesAgain);
-  return recursivelyFreeze({
+  const inventory: PhysicalInventoryV1 = recursivelyFreeze({
     worktrees,
     processes: owned.sort((left, right) => left.pid - right.pid),
     listeners: extraListeners.sort((left, right) => left.pid - right.pid || left.port - right.port),
@@ -7282,6 +7779,35 @@ function observePhysicalInventoryV1(services: InternalProductionServiceCensusV1,
     dirtyWorktreeCount: worktrees.filter((entry) => entry.dirty).length,
     staleChildCount: stale.size,
   });
+  const processWitness = ({ stat, ...row }: PhysicalProcessV1) => ({ ...row, zombie: stat.includes("Z") });
+  const persistentProcesses = persistent.map((service) => {
+    const row = byPid.get(service.pid)!;
+    return processWitness({ ...row, cwd: observeProcessCwdV1(row.pid, row.ppid) });
+  }).sort((left, right) => left.pid - right.pid);
+  assertPhysicalInventoryPassStableV1(rootIdentities, referenceRoots.map(observePhysicalDirectoryIdentityV1));
+  const processFence = (rows: readonly PhysicalProcessV1[]) => {
+    const descendants = new Set(persistentPids);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const row of rows) if (!descendants.has(row.pid) && descendants.has(row.ppid)) { descendants.add(row.pid); changed = true; }
+    }
+    return rows.filter((row) => descendants.has(row.pid) || referencePids.has(row.pid)
+      || orphanPattern.test(row.command) || commandReferencesManagedStoryWorktree(row.command)).map(processWitness);
+  };
+  // Keep a closing process fence after lsof/cwd/listener observation. A new
+  // descendant or changed service here must not escape the final zero claim.
+  const closingProcesses = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
+  assertPhysicalInventoryPassStableV1(processFence(processes), processFence(closingProcesses));
+  // Repeat every discovery/reference/cwd/listener port in the second pass.
+  // Unrelated scheduler state and the observing ps child confer no ownership;
+  // their churn must not substitute for comparing the actual authority evidence.
+  return recursivelyFreeze({ inventory, witness: {
+    ...inventory, processes: inventory.processes.map(processWitness), persistentProcesses,
+    managedRoots, immediateProjects, rootIdentities, referenceWitness,
+    completeListeners: [...listeners].sort((left, right) => compareBytes(canonicalComparable(left), canonicalComparable(right))),
+    openClawListenerBytesHash: sha256(observedOpenClawListeners.bytes),
+  } });
 }
 
 function boundedChildBytes(executable: string, args: readonly string[], label: string, input?: Buffer): Buffer {
@@ -7747,6 +8273,7 @@ function assertPhaseSourceEqualV1(expected: unknown, observed: unknown): void {
 
 async function observePhaseClosedZeroV1(
   expectedSource: InternalProductionCleanSetfarmSourceBuildV1,
+  helperContext?: object,
 ): Promise<Readonly<{
   ordinaryStartingCount: 0; restartReservationCount: 0; serviceRestartOperationCount: 0;
   launchPreparationCount: 0; preparedLaunchCount: 0; stagedCaseCount: 0; fixtureAttemptCount: 0;
@@ -7757,11 +8284,21 @@ async function observePhaseClosedZeroV1(
   const codeRoot = fixedRepositoryRoot();
   const before = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   assertPhaseSourceEqualV1(expectedSource, before);
+  const coldJournal = await import("./baseline-restart-authority-retirement-v1.js");
+  const coldBefore = helperContext === undefined ? coldJournal.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()
+    : coldJournal.observeInternalProductionColdSpawnerHelperIntentPhaseV1(helperContext);
+  const requireSettledHelpers = (census: Awaited<ReturnType<typeof coldJournal.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1>>) => {
+    if (!["absent", "terminal"].includes(census.preSchemaHelperState)
+      || census.registeredBaselineHelperJournalCount !== census.terminalBaselineHelperJournalCount
+      || census.liveBaselineHelperJournalCount !== 0 || census.ambiguousBaselineHelperJournalCount !== 0) currentEntryFail("phase-zero helper journal census is incomplete");
+    return census;
+  };
+  const helperBefore = requireSettledHelpers(await coldJournal.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1());
   for (const [locator, producer] of PHASE_CLOSED_FUTURE_PRODUCERS_V1) {
     requireAbsentPhasePathV1(path.join(codeRoot, locator), `${producer} module`);
   }
   const ownBytes = strictUtf8(
-    readStableRegular(fileURLToPath(import.meta.url), CURRENT_ENTRY_MAX_BYTES, lstatSync(fileURLToPath(import.meta.url), { bigint: true }).dev, 1).bytes,
+    readStableRegular(fileURLToPath(import.meta.url), MAX_BUILD_FILE_BYTES_V1, lstatSync(fileURLToPath(import.meta.url), { bigint: true }).dev, 1).bytes,
     "phase-closed receipt source",
   );
   const sourceRunProducer = ["reserveRecovery", "SourceRunOwnerV1"].join("");
@@ -7770,12 +8307,22 @@ async function observePhaseClosedZeroV1(
   const setfarmDir = runtime.runtimeConfig?.setfarmDir;
   if (typeof setfarmDir !== "string" || !path.isAbsolute(setfarmDir)) currentEntryFail("phase-closed Setfarm authority base is invalid");
   const authorityRoot = path.join(setfarmDir, "internal-production");
-  requireAbsentPhasePathV1(authorityRoot, "future producer authority root");
-  for (const child of ["golden-results", "fixtures", "recovery", "golden-fleet"]) {
-    requireAbsentPhasePathV1(path.join(authorityRoot, child), `future producer authority child ${child}`);
-  }
+  const assertFutureAuthorityAbsent = () => {
+    requireAbsentPhasePathV1(authorityRoot, "future producer authority root");
+    for (const child of ["golden-results", "fixtures", "recovery", "golden-fleet"]) {
+      requireAbsentPhasePathV1(path.join(authorityRoot, child), `future producer authority child ${child}`);
+    }
+  };
+  assertFutureAuthorityAbsent();
   const after = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   assertPhaseSourceEqualV1(before, after);
+  const helperAfter = requireSettledHelpers(await coldJournal.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1());
+  assertFutureAuthorityAbsent();
+  const coldAfter = helperContext === undefined ? coldJournal.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()
+    : coldJournal.observeInternalProductionColdSpawnerHelperIntentPhaseV1(helperContext);
+  if (canonicalComparable(coldBefore) !== canonicalComparable(coldAfter)) currentEntryFail("cold journal ancestry changed during phase-zero observation");
+  if (canonicalComparable(helperBefore) !== canonicalComparable(helperAfter)) currentEntryFail("helper journal ancestry changed during phase-zero observation");
+  assertPhaseSourceEqualV1(before, observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
   return recursivelyFreeze({
     ordinaryStartingCount: 0, restartReservationCount: 0, serviceRestartOperationCount: 0,
     launchPreparationCount: 0, preparedLaunchCount: 0, stagedCaseCount: 0, fixtureAttemptCount: 0,
@@ -7881,6 +8428,10 @@ function observeDetachedLaunchPlistV1(profile: DetachedSetfarmServiceProfileV1):
   const plistPath = path.join(userInfo().homedir, "Library", "LaunchAgents", `${profile.label}.plist`);
   const parent = lstatSync(path.dirname(plistPath), { bigint: true });
   const observed = readStableRegular(plistPath, CURRENT_ENTRY_MAX_BYTES, parent.dev, 1);
+  return parseDetachedLaunchPlistV1(profile, observed);
+}
+
+function parseDetachedLaunchPlistV1(profile: DetachedSetfarmServiceProfileV1, observed: Readonly<{ bytes: Buffer; stats: BigIntStats }>): Readonly<{ bytes: Buffer; stats: BigIntStats; environment: Readonly<Record<string, string>> }> {
   if ((Number(observed.stats.mode & 0o7777n) & 0o022) !== 0 || observed.stats.uid !== BigInt(process.getuid?.() ?? -1)) currentEntryFail(`${profile.label} plist ownership is invalid`);
   const converted = boundedChildText("/usr/bin/plutil", ["-convert", "json", "-o", "-", "-"], `${profile.label} plist`, observed.bytes);
   let parsed: unknown;
@@ -7974,6 +8525,235 @@ function observeDetachedSetfarmServiceV1(
   return recursivelyFreeze({ ...common, listenerOwnerCount: 1 as const, listener: { host: "127.0.0.1" as const, port, listenerIdentityHash: sha256(listenersBefore.bytes) } });
 }
 
+function observeColdSpawnerGlobalProcessRowsV1(): readonly PhysicalProcessV1[] {
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || (uid ?? -1) < 0) currentEntryFail("cold spawner UID is invalid");
+  const rows = parsePhysicalProcessesV1(runPhysicalCommandV1("/bin/ps", ["-ww", "-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="]).stdout);
+  const observer = rows.filter((row) => row.pid === process.pid);
+  if (observer.length !== 1 || observer[0]!.uid !== uid || observer[0]!.stat.includes("Z")) currentEntryFail("cold spawner global process observer is missing or crossed");
+  return rows;
+}
+
+function isColdSpawnerFamilyProcessV1(row: PhysicalProcessV1): boolean {
+  const tokens = row.command.split(/\s+/).map((token) => token.replace(/^["']|["']$/g, ""));
+  const daemon = tokens.some((token) => /(?:^|\/)spawner\.(?:js|ts|mjs|cjs)$/.test(token));
+  const launcher = tokens.includes("spawner") && tokens.some((token) => /(?:^|\/)(?:setfarm(?:\.(?:js|mjs|cjs))?|cli\.(?:js|ts|mjs|cjs))$/.test(token));
+  return daemon || launcher;
+}
+
+// Read-only absence leaf, not launch authority. The cold controller must bind
+// this evidence to the incident/source/zero-owner bracket under its lease.
+function observeColdSpawnerAbsenceV1(source: Readonly<{ sha: string; treeHash: string; buildHash: string }>) {
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || (uid ?? -1) < 0) currentEntryFail("cold spawner UID is invalid");
+  const home = userInfo().homedir;
+  const singletonRoot = path.join(home, ".openclaw", "setfarm");
+  const pins: Array<{ target: string; descriptor: number; identity: BigIntStats }> = [];
+  const metadata = (stats: BigIntStats) => ({ dev: String(stats.dev), ino: String(stats.ino), uid: String(stats.uid),
+    mode: Number(stats.mode & 0o7777n), nlink: String(stats.nlink), size: String(stats.size), mtimeNs: String(stats.mtimeNs), ctimeNs: String(stats.ctimeNs) });
+  const assertPins = () => {
+    for (const pin of pins) {
+      const atPath = lstatSync(pin.target, { bigint: true });
+      if (!atPath.isDirectory() || atPath.isSymbolicLink() || realpathSync(pin.target) !== pin.target
+        || !sameRegularMetadata(pin.identity, atPath) || !sameRegularMetadata(pin.identity, fstatSync(pin.descriptor, { bigint: true }))) currentEntryFail("cold singleton ancestor changed");
+    }
+  };
+  try {
+    for (const target of [home, path.join(home, ".openclaw"), singletonRoot]) {
+      if (realpathSync(target) !== target) currentEntryFail("cold singleton ancestor is not physical");
+      const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+      let identity: BigIntStats;
+      try { identity = fstatSync(descriptor, { bigint: true }); } catch (error) { closeSync(descriptor); throw error; }
+      pins.push({ target, descriptor, identity });
+      if (!identity.isDirectory() || identity.uid !== BigInt(uid!) || (identity.mode & 0o022n) !== 0n
+        || identity.dev !== pins[0]!.identity.dev) currentEntryFail("cold singleton ancestor ownership is invalid");
+      assertPins();
+    }
+    const profile = detachedSetfarmServiceProfileV1("com.setrox.setfarm-spawner");
+    const cli = profile.launchArguments[0]!;
+    const expectedCli = path.join(fixedRepositoryRoot(), "dist", "cli", "cli.js");
+    const cliBefore = lstatSync(cli, { bigint: true });
+    if (!cliBefore.isSymbolicLink() || cliBefore.nlink !== 1n || cliBefore.uid !== BigInt(uid!) || realpathSync(cli) !== expectedCli) currentEntryFail("cold spawner launcher link is invalid");
+    const entryDevice = lstatSync(path.dirname(profile.entrypoint), { bigint: true }).dev;
+    const entryBefore = readStableRegular(profile.entrypoint, MAX_BUILD_FILE_BYTES_V1, entryDevice, 1);
+    const plistBefore = observeDetachedLaunchPlistV1(profile);
+    const launchBefore = observeDetachedLaunchProjectionV1(profile, uid!);
+    for (const [key, value] of Object.entries(plistBefore.environment)) if (launchBefore.environment[key] !== value) currentEntryFail("cold spawner launch environment is crossed");
+    const observeAbsentProcesses = () => {
+      const rows = observeColdSpawnerGlobalProcessRowsV1();
+      if (rows.some(isColdSpawnerFamilyProcessV1)) currentEntryFail("cold spawner global process family is present");
+      return rows;
+    };
+    const readPidResidue = (rows: readonly PhysicalProcessV1[]) => {
+      assertPins();
+      try {
+        lstatSync(path.join(singletonRoot, "spawner.lock"), { bigint: true });
+        currentEntryFail("cold spawner singleton lock is present");
+      } catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+      }
+      const pidPath = path.join(singletonRoot, "spawner.pid");
+      let observed: StableRegular;
+      try { observed = readStableRegular(pidPath, 32, pins[0]!.identity.dev, 1); } catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+        assertPins();
+        return { state: "absent" as const };
+      }
+      const text = observed.bytes.toString("ascii");
+      if (!Buffer.from(text, "ascii").equals(observed.bytes) || !/^[1-9][0-9]*$/.test(text)
+        || observed.stats.uid !== BigInt(uid!) || (observed.stats.mode & 0o022n) !== 0n) currentEntryFail("cold spawner PID residue is invalid");
+      const pid = Number(text);
+      if (!Number.isSafeInteger(pid) || pid > 2_147_483_647 || rows.some((row) => row.pid === pid)) currentEntryFail("cold spawner PID is not absent");
+      let definitelyDead = false;
+      try { process.kill(pid, 0); } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ESRCH") definitelyDead = true;
+        else currentEntryFail("cold spawner PID liveness is ambiguous");
+      }
+      if (!definitelyDead) currentEntryFail("cold spawner PID is live or reused");
+      assertPins();
+      return { state: "stale-dead-pid" as const, pid, bytesSha256: sha256(observed.bytes), identity: metadata(observed.stats) };
+    };
+    const pidBefore = readPidResidue(observeAbsentProcesses());
+    const launchAfter = observeDetachedLaunchProjectionV1(profile, uid!);
+    const plistAfter = observeDetachedLaunchPlistV1(profile);
+    const entryAfter = readStableRegular(profile.entrypoint, MAX_BUILD_FILE_BYTES_V1, entryDevice, 1);
+    const pidAfter = readPidResidue(observeAbsentProcesses());
+    const cliAfter = lstatSync(cli, { bigint: true });
+    assertPins();
+    if (canonicalComparable(pidBefore) !== canonicalComparable(pidAfter) || canonicalComparable(launchBefore) !== canonicalComparable(launchAfter)
+      || !sameStableRegularV1(plistBefore, plistAfter) || !sameStableRegularV1(entryBefore, entryAfter)
+      || !cliAfter.isSymbolicLink() || !sameRegularMetadata(cliBefore, cliAfter) || realpathSync(cli) !== expectedCli) currentEntryFail("cold spawner absence changed during observation");
+    const body = { schema: "setfarm.internal-production-cold-spawner-absence.v1" as const,
+      source: { sha: source.sha, treeHash: source.treeHash, buildHash: source.buildHash }, uid,
+      globalSpawnerFamilyCount: 0 as const, singletonLockState: "absent" as const, pidFile: pidBefore,
+      ancestors: pins.map((pin) => ({ path: pin.target, ...metadata(pin.identity) })),
+      launcher: { path: cli, target: expectedCli, ...metadata(cliBefore) }, entrypoint: profile.entrypoint,
+      entrypointBytesSha256: sha256(entryBefore.bytes), plistBytesSha256: sha256(plistBefore.bytes), launchProjectionHash: hashCanonicalJson(launchBefore) };
+    return recursivelyFreeze({ ...body, absenceHash: hashCanonicalJson(body) });
+  } finally { for (const pin of pins.reverse()) closeSync(pin.descriptor); }
+}
+
+// A read-only candidate, never launch authority. Only the authenticated cold
+// intent/dispatch protocol may authorize use of its runtime-only environment.
+export async function observeInternalProductionSpawnerLaunchProfileCandidateV1() {
+  const { projectInternalProductionSpawnerLaunchEnvironmentCandidateV1 } = await import("./baseline-spawner-launch-environment-v1.js");
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || (uid ?? -1) < 0) currentEntryFail("launch profile UID is invalid");
+  const source = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+  const home = userInfo().homedir;
+  const repository = fixedRepositoryRoot();
+  const workspace = resolveInternalProductionBaselineWorkspaceRootV1();
+  const environmentDirectory = path.join(home, "ai", "setrox", "setfarm", "scripts");
+  const nodeExecutable = realpathSync(process.execPath);
+  const service = detachedSetfarmServiceProfileV1("com.setrox.setfarm-spawner");
+  const pins = new Map<string, { descriptor: number; stats: BigIntStats }>();
+  const identity = (stats: BigIntStats) => ({ devDecimal: String(stats.dev), inoDecimal: String(stats.ino), uid: Number(stats.uid), gid: Number(stats.gid), mode: Number(stats.mode & 0o7777n) });
+  const metadata = (stats: BigIntStats) => [stats.dev, stats.ino, stats.mode, stats.uid, stats.gid, stats.nlink, stats.size, stats.birthtimeNs, stats.mtimeNs, stats.ctimeNs].join(":");
+  const assertPins = () => {
+    for (const [target, pin] of pins) {
+      if (realpathSync(target) !== target || metadata(lstatSync(target, { bigint: true })) !== metadata(pin.stats)
+        || metadata(fstatSync(pin.descriptor, { bigint: true })) !== metadata(pin.stats)) currentEntryFail("launch profile ancestor changed");
+    }
+  };
+  const pinDirectory = (target: string, nodeAncestry = false) => {
+    if (pins.has(target)) return;
+    if (path.dirname(target) !== target) pinDirectory(path.dirname(target), nodeAncestry);
+    if (realpathSync(target) !== target) currentEntryFail("launch profile ancestor is not physical");
+    const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+    let stats: BigIntStats;
+    try { stats = fstatSync(descriptor, { bigint: true }); } catch (error) { closeSync(descriptor); throw error; }
+    pins.set(target, { descriptor, stats });
+    // The actual Darwin Homebrew Cellar is admin-group writable. Record that
+    // existing host dependency; do not relax private/source/env root guards.
+    // A consumer must match this exact identity/mode/gid, never rebaseline it.
+    const trustedNodeAdminGroup = nodeAncestry && process.platform === "darwin" && stats.gid === 80n;
+    if (!stats.isDirectory() || (stats.uid !== 0n && stats.uid !== BigInt(uid!))
+      || (stats.mode & (trustedNodeAdminGroup ? 0o002n : 0o022n)) !== 0n) currentEntryFail("launch profile ancestor ownership is invalid");
+    assertPins();
+  };
+  // Fixed-size positional reads bound allocation even if the same inode grows.
+  const read = (target: string, cap: number, requiredMode?: number) => {
+    const before = lstatSync(target, { bigint: true });
+    if (!before.isFile() || before.isSymbolicLink() || before.uid !== BigInt(uid!) || before.nlink !== 1n
+      || before.size < 0n || before.size > BigInt(cap) || (before.mode & 0o022n) !== 0n
+      || (requiredMode !== undefined && (before.mode & 0o7777n) !== BigInt(requiredMode))) currentEntryFail("launch profile file is invalid");
+    const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      if (metadata(fstatSync(descriptor, { bigint: true })) !== metadata(before)) currentEntryFail("launch profile file changed before read");
+      const bytes = Buffer.alloc(Number(before.size));
+      let offset = 0;
+      while (offset < bytes.length) {
+        const count = readSync(descriptor, bytes, offset, Math.min(64 * 1024, bytes.length - offset), offset);
+        if (count < 1) currentEntryFail("launch profile file read is partial");
+        offset += count;
+      }
+      if (readSync(descriptor, Buffer.alloc(1), 0, 1, offset) !== 0 || metadata(fstatSync(descriptor, { bigint: true })) !== metadata(before)
+        || metadata(lstatSync(target, { bigint: true })) !== metadata(before)) currentEntryFail("launch profile file changed during read");
+      return { bytes, stats: before };
+    } finally { closeSync(descriptor); }
+  };
+  const environmentPaths = [path.join(environmentDirectory, ".env"), path.join(environmentDirectory, ".env.local")] as const;
+  const observeFiles = () => environmentPaths.map((target) => {
+    try { lstatSync(target, { bigint: true }); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+    return read(target, 256 * 1024);
+  });
+  const artifactPaths = ["BUILD_INFO.json", "PLATFORM_BUILD_OUTPUT_TREE.json", "PLATFORM_RELEASE_MANIFEST.json"] as const;
+  try {
+    for (const target of [home, workspace, repository, environmentDirectory, path.join(repository, "dist"), path.join(home, "Library", "LaunchAgents")]) pinDirectory(target);
+    pinDirectory(path.dirname(nodeExecutable), true);
+    for (const target of [home, workspace, repository, environmentDirectory]) if (pins.get(target)!.stats.uid !== BigInt(uid!)) currentEntryFail("launch profile root ownership is invalid");
+    const node = read(nodeExecutable, 256 * 1024 * 1024);
+    if ((node.stats.mode & 0o111n) === 0n) currentEntryFail("launch profile Node is not executable");
+    const plistPath = path.join(home, "Library", "LaunchAgents", `${service.label}.plist`);
+    const plist = parseDetachedLaunchPlistV1(service, read(plistPath, CURRENT_ENTRY_MAX_BYTES));
+    const launch = observeDetachedLaunchProjectionV1(service, uid!);
+    for (const [key, value] of Object.entries(plist.environment)) if (launch.environment[key] !== value) currentEntryFail("launch profile loaded environment is crossed");
+    const artifacts = artifactPaths.map((name) => read(path.join(repository, "dist", name), MAX_BUILD_FILE_BYTES_V1, 0o444));
+    const files = observeFiles();
+    const candidate = projectInternalProductionSpawnerLaunchEnvironmentCandidateV1({
+      HOME: home, LANG: "C", LC_ALL: "C", PATH: plist.environment.PATH!, SETFARM_ENV_DIR: environmentDirectory,
+      SETFARM_PG_URL: plist.environment.SETFARM_PG_URL!, SETFARM_REPO_DIR: repository,
+    }, [files[0]?.bytes ?? null, files[1]?.bytes ?? null]);
+    const sourceAfter = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+    const filesAfter = observeFiles();
+    const artifactsAfter = artifactPaths.map((name) => read(path.join(repository, "dist", name), MAX_BUILD_FILE_BYTES_V1, 0o444));
+    const nodeAfter = read(nodeExecutable, 256 * 1024 * 1024);
+    const plistAfter = parseDetachedLaunchPlistV1(service, read(plistPath, CURRENT_ENTRY_MAX_BYTES));
+    const launchAfter = observeDetachedLaunchProjectionV1(service, uid!);
+    if (canonicalComparable(sourceAfter) !== canonicalComparable(source) || realpathSync(process.execPath) !== nodeExecutable
+      || !sameStableRegularV1(node, nodeAfter) || !sameStableRegularV1(plist, plistAfter)
+      || canonicalComparable(launch) !== canonicalComparable(launchAfter)
+      || artifacts.some((entry, index) => !sameStableRegularV1(entry, artifactsAfter[index]!))
+      || files.some((entry, index) => entry === null ? filesAfter[index] !== null : filesAfter[index] === null || !sameStableRegularV1(entry, filesAfter[index]!))) currentEntryFail("launch profile inputs changed");
+    assertPins();
+    const body = {
+      schema: "setfarm.internal-production-spawner-launch-profile.v1" as const,
+      source, uid, home, workspace, repository, rootIdentity: identity(pins.get(repository)!.stats),
+      hostDirectories: [...pins].map(([target, pin]) => ({ path: target, ...identity(pin.stats) })),
+      executable: { path: nodeExecutable, ...identity(node.stats), bytesHash: sha256(node.bytes) },
+      arguments: [service.entrypoint], cwd: repository, environmentDirectory,
+      buildInfoBytesHash: sha256(artifacts[0]!.bytes), outputTreeBytesHash: sha256(artifacts[1]!.bytes), releaseManifestBytesHash: sha256(artifacts[2]!.bytes),
+      plistBytesHash: sha256(plist.bytes), loadedLaunchProjectionHash: hashCanonicalJson(launch),
+      environmentHash: candidate.environmentHash,
+      environmentFiles: files.map((entry, index) => entry === null ? { path: environmentPaths[index]!, state: "absent" as const }
+        : { path: environmentPaths[index]!, state: "present" as const, ...identity(entry.stats), bytesHash: sha256(entry.bytes) }),
+    };
+    const profile = recursivelyFreeze({ ...body, profileHash: hashCanonicalJson(body) });
+    // JSON/spread of the observation must never persist credentials. Plaintext
+    // is available only to the private inherited-descriptor transport.
+    const result = { profile } as { readonly profile: typeof profile; readonly environment: typeof candidate.environment };
+    Object.defineProperty(result, "environment", { value: candidate.environment, enumerable: false, writable: false, configurable: false });
+    return Object.freeze(result);
+  } catch {
+    currentEntryFail("launch profile observation failed");
+  } finally {
+    for (const pin of [...pins.values()].reverse()) closeSync(pin.descriptor);
+  }
+}
+
 function observeServiceProcessV1(
   label: "com.setrox.setfarm-spawner" | "com.setrox.setfarm-dashboard" | "com.setrox.mission-control" | "ai.openclaw.gateway",
   port: null | 3333 | 3080 | 18789,
@@ -8056,6 +8836,15 @@ function observeServiceProcessV1(
   });
 }
 
+async function observeColdRemainingServicesV1(source: InternalProductionCleanSetfarmSourceBuildV1) {
+  const loaded = Object.freeze({ sha: source.sha, treeHash: source.treeHash, buildHash: source.buildHash });
+  return recursivelyFreeze({
+    dashboard: observeServiceProcessV1("com.setrox.setfarm-dashboard", 3333, loaded) as InternalProductionListeningServiceCensusV1,
+    missionControl: await observeMissionControlLoadedBuildServiceV1(),
+    openClaw: observeServiceProcessV1("ai.openclaw.gateway", 18789, null) as InternalProductionListeningServiceCensusV1,
+  });
+}
+
 export async function observeInternalProductionServiceCensusV1(): Promise<InternalProductionServiceCensusV1> {
   const setfarm = observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
   const source = Object.freeze({ sha: setfarm.sha, treeHash: setfarm.treeHash, buildHash: setfarm.buildHash });
@@ -8069,13 +8858,66 @@ export async function observeInternalProductionServiceCensusV1(): Promise<Intern
   return recursivelyFreeze({ ...body, censusHash: hashCanonicalJson(body) });
 }
 
-async function observeLegacyDatabaseCensusV1(): Promise<Readonly<{
+async function requireColdPre32CatalogAbsenceV1(connection: import("postgres").Sql): Promise<void> {
+  const rows = await connection<Array<Record<string, unknown>>>`
+    WITH expected_tables(name) AS (VALUES
+      ('internal_production_bootstrap_main_claim_handoff_operations_v1'), ('internal_production_owner_reservations_v1'),
+      ('internal_production_owner_admission_authorities_v1'), ('internal_production_owner_admission_head_v1'),
+      ('internal_production_owner_producer_source_build_authorities_v1'), ('internal_production_owner_producer_manifest_set_activations_v1'),
+      ('internal_production_owner_producer_manifest_activation_heads_v1'), ('internal_production_owner_producer_manifest_set_current_v1'),
+      ('internal_production_v3_recovery_claim_publications_v1')
+    ), expected_indexes(name) AS (VALUES
+      ('ip_op_sba_v1_plan_manifest_idx'), ('ip_op_msa_v1_phase_manifest_idx'),
+      ('ip_op_msa_v1_pred_activation_idx'), ('ip_op_msa_v1_pred_head_idx'),
+      ('ip_op_mah_v1_phase_activation_idx'), ('ip_op_mah_v1_pred_head_idx'),
+      ('internal_production_bootstrap_handoff_operation_pkey'),
+      ('internal_production_bootstrap_handoff_continuation_grant_unique'), ('internal_production_bootstrap_handoff_claim_unique'),
+      ('internal_production_owner_reservation_pkey'), ('internal_production_owner_reservation_hash_unique'),
+      ('internal_production_owner_reservation_key_unique'), ('internal_production_owner_admission_authority_pkey'),
+      ('internal_production_owner_admission_authority_hash_unique'), ('internal_production_owner_admission_authority_phase_unique'),
+      ('internal_production_owner_admission_head_pkey'),
+      ('ip_op_sba_v1_pkey'), ('ip_op_sba_v1_hash_uq'), ('ip_op_sba_v1_pair_uq'),
+      ('ip_op_msa_v1_pkey'), ('ip_op_msa_v1_hash_uq'), ('ip_op_msa_v1_pair_uq'),
+      ('ip_op_mah_v1_pkey'), ('ip_op_mah_v1_hash_uq'), ('ip_op_mah_v1_pair_uq'), ('ip_op_mah_v1_activation_pair_uq'),
+      ('ip_op_msc_v1_pkey'), ('ip_v3_recovery_publications_pkey'),
+      ('ip_v3_recovery_publications_runtime_key'), ('ip_v3_recovery_publications_dispatch_key')
+    ), expected_relations(name) AS (
+      SELECT name FROM expected_tables UNION ALL SELECT name FROM expected_indexes
+    ), expected_functions(name) AS (VALUES
+      ('setfarm_forbid_internal_production_owner_admission_authority_mutation'),
+      ('ip_op_reject_immutable_v1'), ('ip_op_enforce_current_update_v1'), ('ip_v3_recovery_publication_immutable_v1')
+    ), expected_triggers(name) AS (VALUES
+      ('trg_internal_production_owner_admission_authority_immutable'),
+      ('trg_internal_production_owner_admission_authority_truncate_forbidden'),
+      ('ip_op_sba_v1_immutable_trg'), ('ip_op_msa_v1_immutable_trg'), ('ip_op_mah_v1_immutable_trg'),
+      ('ip_op_msc_v1_delete_truncate_trg'), ('ip_op_msc_v1_update_trg'),
+      ('ip_v3_recovery_publication_row_immutable_v1'), ('ip_v3_recovery_publication_truncate_forbidden_v1')
+    )
+    SELECT
+      (SELECT COUNT(*) FROM public.setfarm_schema_migrations WHERE version >= 32)::text AS "laterJournalCount",
+      (SELECT COUNT(*) FROM pg_catalog.pg_class actual JOIN expected_relations expected
+        ON actual.relname = left(expected.name, 63) AND actual.relnamespace = 'public'::regnamespace)::text AS "relationCount",
+      (SELECT COUNT(*) FROM pg_catalog.pg_proc actual JOIN expected_functions expected
+        ON actual.proname = left(expected.name, 63) AND actual.pronamespace = 'public'::regnamespace)::text AS "functionCount",
+      (SELECT COUNT(*) FROM pg_catalog.pg_type actual JOIN expected_tables expected
+        ON actual.typname = left(expected.name, 63) AND actual.typnamespace = 'public'::regnamespace)::text AS "typeCount",
+      (SELECT COUNT(*) FROM pg_catalog.pg_trigger actual JOIN expected_triggers expected
+        ON actual.tgname = left(expected.name, 63))::text AS "triggerCount"
+  `;
+  const keys = ["laterJournalCount", "relationCount", "functionCount", "typeCount", "triggerCount"];
+  if (rows.length !== 1 || !isPlainRecord(rows[0]) || !hasExactKeys(rows[0], keys)
+    || keys.some((key) => rows[0]![key] !== "0")) currentEntryFail("cold bootstrap migration32/33 catalog or journal is not absent");
+}
+
+async function observeLegacyDatabaseCensusV1(coldBootstrap = false): Promise<Readonly<{
   activeRunCount: number; openClaimCount: number; executionAttemptCount: number;
   activeRuntimeSessionCount: number; activeCompletionOwnerCount: number; unsettledMandatoryEffectCount: number;
   artifactReservationCount: number; publicationBatchCount: number; artifactPublicationCount: number;
   terminationOwnerCount: number; findingOwnerCount: number; recoveryOwnerCount: number; operationalDeliveryCount: number;
+  legacyFindingPublicationInventory: LegacyFindingPublicationInventoryV1;
 }>> {
   const postgresModule = await import("postgres");
+  const { observeLegacyFindingPublicationInventoryV1 } = await import("../findings/finding-publication-v1.js");
   const databaseUrl = process.env.SETFARM_PG_URL;
   if (!databaseUrl) currentEntryFail("legacy zero-owner database is unavailable");
   const sql = postgresModule.default(databaseUrl, { max: 1, idle_timeout: 1, connect_timeout: 5 });
@@ -8084,9 +8926,11 @@ async function observeLegacyDatabaseCensusV1(): Promise<Readonly<{
       const connection = tx as unknown as typeof sql;
       await connection`SET LOCAL statement_timeout = '5s'`;
       await connection`SET LOCAL lock_timeout = '1s'`;
+      if (coldBootstrap) await requireColdPre32CatalogAbsenceV1(connection);
       const rows = await connection<Array<Record<string, unknown>>>`
         WITH required_columns(table_name,column_name,type_name,required_not_null) AS (
           VALUES
+            ('runs','id','text',TRUE),
             ('runs','status','text',TRUE),
             ('claim_log','outcome','text',FALSE),
             ('execution_attempts','disposition','text',TRUE),
@@ -8110,6 +8954,23 @@ async function observeLegacyDatabaseCensusV1(): Promise<Readonly<{
             ('artifact_publication_batch_items','reservation_id','text',FALSE),
             ('run_termination_requests','state','text',TRUE),
             ('findings','status','text',TRUE),
+            ('finding_sets','finding_set_hash','text',TRUE),
+            ('finding_sets','finding_set_id','text',TRUE),
+            ('finding_sets','run_id','text',TRUE),
+            ('finding_sets','story_id','text',TRUE),
+            ('finding_sets','packet_hash','text',TRUE),
+            ('finding_sets','slice_hash','text',TRUE),
+            ('finding_sets','source_sha','text',TRUE),
+            ('finding_sets','source_tree_hash','text',TRUE),
+            ('finding_sets','finding_ids','jsonb',TRUE),
+            ('finding_sets','payload','jsonb',TRUE),
+            ('findings','finding_set_hash','text',TRUE),
+            ('findings','finding_id','text',TRUE),
+            ('findings','origin','text',TRUE),
+            ('findings','classification','text',TRUE),
+            ('findings','invariant_ref','text',TRUE),
+            ('findings','source_fingerprint','text',TRUE),
+            ('findings','payload','jsonb',TRUE),
             ('recovery_cases','status','text',TRUE),
             ('recovery_dispatch_deliveries','state','text',TRUE),
             ('operational_event_deliveries','state','text',TRUE)
@@ -8203,6 +9064,24 @@ async function observeLegacyDatabaseCensusV1(): Promise<Readonly<{
       for (const key of ["catalogViolationCount", "aprbChildViolationCount", "ordinaryBatchViolationCount", "activeHeaderViolationCount"]) {
         if (parseCount(key) !== 0) currentEntryFail(`${key} is nonzero`);
       }
+      const findingParents = await connection<FindingPublicationParentRowV1[]>`
+        SELECT finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
+               source_sha,source_tree_hash,finding_ids,payload
+          FROM public.finding_sets ORDER BY finding_set_hash LIMIT 4097
+      `;
+      const findingChildren = await connection<FindingPublicationChildRowV1[]>`
+        SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+          FROM public.findings ORDER BY finding_set_hash,finding_id LIMIT 65537
+      `;
+      const findingRuns = await connection<Array<{ id: string; status: string }>>`
+        SELECT id,status FROM public.runs
+         WHERE id IN (SELECT run_id FROM public.finding_sets)
+         ORDER BY id LIMIT 4097
+      `;
+      const legacyFindingPublicationInventory = observeLegacyFindingPublicationInventoryV1(findingParents, findingChildren, findingRuns);
+      if (findingChildren.filter((finding) => finding.status === "open").length !== parseCount("findingOwnerCount")) {
+        currentEntryFail("legacy finding publication aggregate is crossed");
+      }
       const observed = Object.freeze({
         activeRunCount: parseCount("activeRunCount"),
         openClaimCount: parseCount("openClaimCount"),
@@ -8214,12 +9093,15 @@ async function observeLegacyDatabaseCensusV1(): Promise<Readonly<{
         publicationBatchCount: parseCount("publicationBatchCount"),
         artifactPublicationCount: parseCount("artifactPublicationCount"),
         terminationOwnerCount: parseCount("terminationOwnerCount"),
-        findingOwnerCount: parseCount("findingOwnerCount"),
+        // Every inventoried publication is complete and belongs to a terminal
+        // run. Orphans, partial publications and nonterminal relations refuse
+        // above; issue status itself does not retain publication ownership.
+        findingOwnerCount: 0,
         recoveryOwnerCount: parseCount("recoveryOwnerCount"),
         operationalDeliveryCount: parseCount("operationalDeliveryCount"),
       });
       for (const [key, count] of Object.entries(observed)) if (count !== 0) currentEntryFail(`${key} is nonzero`);
-      return recursivelyFreeze(observed);
+      return recursivelyFreeze({ ...observed, legacyFindingPublicationInventory });
     });
   } finally {
     await sql.end({ timeout: 1 });
@@ -8251,15 +9133,11 @@ function task12ReceiptPresentedPathV1(candidate: string): string {
 }
 
 function task12ReceiptStoreAnchorV1(target: string): string {
-  const repository = task12ReceiptPresentedPathV1(fixedRepositoryRoot());
   const workspace = task12ReceiptPresentedPathV1(CODE_OWNED_WORKSPACE_ROOT_V1);
   const resolved = task12ReceiptPresentedPathV1(target);
-  const within = (anchor: string): boolean => {
-    const relative = path.relative(anchor, resolved);
-    return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-  };
-  if (within(repository)) return repository;
-  if (within(workspace)) return workspace;
+  const relative = path.relative(workspace, resolved);
+  if (relative === "" || relative === "data" || relative === "data/internal-production-baseline"
+    || relative.startsWith("data/internal-production-baseline/")) return workspace;
   currentEntryFail("Task12 receipt store escaped the workspace");
 }
 
@@ -8270,17 +9148,20 @@ function authenticateTask12ReceiptDirectoryChainV1(target: string): Task12Receip
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) currentEntryFail("Task12 receipt store escaped the repository");
   const segments = relative === "" ? [] : relative.split(path.sep);
   const paths = [anchor, ...segments.map((_, index) => path.join(anchor, ...segments.slice(0, index + 1)))];
+  const workspaceAnchor = authenticateInternalProductionBaselineWorkspaceAnchorV1();
   const descriptors: number[] = [];
   const identities: BigIntStats[] = [];
   let closed = false;
   const assertStable = (): void => {
     if (closed) currentEntryFail("Task12 receipt directory guard is closed");
+    workspaceAnchor.assertStable();
     for (const [index, member] of paths.entries()) {
       const atPath = lstatSync(member, { bigint: true });
       const atDescriptor = fstatSync(descriptors[index]!, { bigint: true });
       const expected = identities[index]!;
       if (!atPath.isDirectory() || atPath.isSymbolicLink() || !atDescriptor.isDirectory() || atPath.dev !== expected.dev || atPath.ino !== expected.ino || atPath.mode !== expected.mode || atDescriptor.dev !== expected.dev || atDescriptor.ino !== expected.ino || atDescriptor.mode !== expected.mode) currentEntryFail("Task12 receipt directory chain changed");
     }
+    workspaceAnchor.assertStable();
   };
   try {
     for (const [index, member] of paths.entries()) {
@@ -8297,12 +9178,12 @@ function authenticateTask12ReceiptDirectoryChainV1(target: string): Task12Receip
       close: () => {
         if (closed) currentEntryFail("Task12 receipt directory guard closed twice");
         closed = true;
-        for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+        try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
       },
     });
   } catch (error) {
     closed = true;
-    for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+    try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
     throw error;
   }
 }
@@ -9913,14 +10794,14 @@ async function parseLegacyZeroV1(
   pair: InternalProductionLegacyPreManifestZeroOwnerObservationPairV1,
   resolveAudit: (pair: InternalProductionAuthorityV3Migration31AuditPairV1) => Promise<InternalProductionAuthorityV3Migration31AuditV1>,
 ): Promise<InternalProductionLegacyPreManifestZeroOwnerObservationV1> {
-  if (!hasExactKeys(value, ["schema", "observationKind", "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "cleanSetfarmSourceSha", "cleanSetfarmTreeHash", "cleanSetfarmBuildHash", "observedSpawnerGenerationHash", "census", "allThirtySixScalarCountsZero", "ownerReservationSidecarState", "ownerAdmissionHeadState", "manifestActivationState", "observationRef", "observationHash"])) currentEntryFail("legacy zero-owner fields are invalid");
+  requireLegacyZeroVersionedFieldsV1(value);
   const projection = { ...value };
   delete projection.observationRef;
   delete projection.observationHash;
   const hash = requireSha256(value.observationHash, "legacy zero-owner hash");
   if (hashCanonicalJson(projection) !== hash || value.observationRef !== `${LEGACY_ZERO_PREFIX_V1}${hash}` || pair.observationRef !== value.observationRef || pair.observationHash !== hash) currentEntryFail("legacy zero-owner pair/hash is invalid");
   const census = value.census;
-  if (value.schema !== "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1" || value.observationKind !== "legacy-pre-manifest-existing-live-truth" || value.allThirtySixScalarCountsZero !== true || value.ownerReservationSidecarState !== "absent-before-migration-32" || value.ownerAdmissionHeadState !== "absent-before-migration-32" || value.manifestActivationState !== "absent-before-initial-a-activation" || !isPlainRecord(census) || !hasExactKeys(census, COMPLETE_ZERO_CENSUS_KEYS_V1) || COMPLETE_ZERO_CENSUS_KEYS_V1.some((key) => census[key] !== 0)) currentEntryFail("legacy zero-owner body is invalid");
+  if (value.observationKind !== "legacy-pre-manifest-existing-live-truth" || value.allThirtySixScalarCountsZero !== true || value.ownerReservationSidecarState !== "absent-before-migration-32" || value.ownerAdmissionHeadState !== "absent-before-migration-32" || value.manifestActivationState !== "absent-before-initial-a-activation" || !isPlainRecord(census) || !hasExactKeys(census, COMPLETE_ZERO_CENSUS_KEYS_V1) || COMPLETE_ZERO_CENSUS_KEYS_V1.some((key) => census[key] !== 0)) currentEntryFail("legacy zero-owner body is invalid");
   const auditPair = requirePair(
     { authorityV3Migration31AuditRef: value.authorityV3Migration31AuditRef, authorityV3Migration31AuditHash: value.authorityV3Migration31AuditHash },
     "authorityV3Migration31AuditRef",
@@ -10005,7 +10886,8 @@ async function observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1
   } satisfies InternalProductionCompleteZeroOwnerCensusV1);
   for (const key of COMPLETE_ZERO_CENSUS_KEYS_V1) if (census[key] !== 0) currentEntryFail(`${key} is nonzero`);
   const body = {
-    schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1" as const,
+    schema: "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v2" as const,
+    legacyFindingPublicationInventory: validateLegacyFindingPublicationInventoryV1(database.legacyFindingPublicationInventory),
     observationKind: "legacy-pre-manifest-existing-live-truth" as const,
     authorityV3Migration31AuditRef: audit.authorityV3Migration31AuditRef,
     authorityV3Migration31AuditHash: audit.authorityV3Migration31AuditHash,
@@ -10172,7 +11054,7 @@ export async function prepareInternalProductionBaselineZeroOwnerMutationGuardV1(
   const observeCensus = retirement.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1;
   if (typeof observeCensus !== "function" || observeCensus.length !== 0) currentEntryFail("baseline helper-journal census observer is unavailable");
   const helper = await (observeCensus as () => Promise<Record<string, unknown>>)();
-  if (helper.registeredBaselineHelperJournalCount !== helper.terminalBaselineHelperJournalCount || helper.liveBaselineHelperJournalCount !== 0 || helper.ambiguousBaselineHelperJournalCount !== 0) currentEntryFail("baseline helper-journal census is not terminal zero");
+  if (helper.preSchemaHelperState !== "terminal" || helper.registeredBaselineHelperJournalCount !== helper.terminalBaselineHelperJournalCount || helper.liveBaselineHelperJournalCount !== 0 || helper.ambiguousBaselineHelperJournalCount !== 0) currentEntryFail("baseline helper-journal census is not terminal zero");
   const body = {
     schema: "setfarm.internal-production-baseline-zero-owner-mutation-guard.v1",
     completeZeroOwnerCensusObservationRef: zero.observationRef,
@@ -10223,7 +11105,7 @@ export async function consumeInternalProductionBaselinePhysicalServiceRestartAut
   const freshZero = await observeCompleteInternalProductionZeroOwnerCensusV1();
   if (freshZero.observationRef !== guard.completeZeroOwnerCensusObservationRef || freshZero.observationHash !== guard.completeZeroOwnerCensusObservationHash || freshZero.ownerIdentitySetHash !== fence.ownerIdentitySetHash) currentEntryFail("cutover complete zero-owner authority changed before consumption");
   const helper = await (observeHelperCensus as () => Promise<Record<string, unknown>>)();
-  if (helper.censusHash !== guard.baselineServiceRestartHelperJournalCensusHash || helper.registeredBaselineHelperJournalCount !== helper.terminalBaselineHelperJournalCount || helper.liveBaselineHelperJournalCount !== 0 || helper.ambiguousBaselineHelperJournalCount !== 0) currentEntryFail("cutover helper-journal census changed before consumption");
+  if (helper.preSchemaHelperState !== "terminal" || helper.censusHash !== guard.baselineServiceRestartHelperJournalCensusHash || helper.registeredBaselineHelperJournalCount !== helper.terminalBaselineHelperJournalCount || helper.liveBaselineHelperJournalCount !== 0 || helper.ambiguousBaselineHelperJournalCount !== 0) currentEntryFail("cutover helper-journal census changed before consumption");
   const body = { schema: "setfarm.internal-production-baseline-physical-service-restart-authority-cutover-zero-owner-guard-consumption.v1", purpose: "recovery-d-physical-service-restart-authority-cutover-v1", zeroOwnerGuardRef: input.zeroOwnerGuardRef, zeroOwnerGuardHash: input.zeroOwnerGuardHash, completeZeroOwnerCensusObservationRef: guard.completeZeroOwnerCensusObservationRef, completeZeroOwnerCensusObservationHash: guard.completeZeroOwnerCensusObservationHash, baselineServiceRestartHelperJournalCensusHash: guard.baselineServiceRestartHelperJournalCensusHash, operationRef: input.operationRef, operationHash: input.operationHash, guardConsumed: true };
   const consumptionHash = hashCanonicalJson(body);
   const consumptionRef = `${CUTOVER_ZERO_OWNER_CONSUMPTION_PREFIX_V1}${consumptionHash}`;
@@ -10453,7 +11335,7 @@ type ExactPoisonPostVisibleProgressObservationAuthorityV1 = Readonly<{
   successorOperation: InternalProductionCurrentEntryOperationV1;
   operationDirectory: string;
   currentStatusTarget: string;
-  buildPreparedPublicationSet(): Promise<Task12PreparedCurrentEntryPublicationSetV1>;
+  buildPreparedPublicationSet(statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1): Promise<Task12PreparedCurrentEntryPublicationSetV1>;
   assertStable(): void;
 }>;
 
@@ -10525,6 +11407,7 @@ type ExactPoisonPostVisibleProgressPassV1 = Readonly<{
 const exactPoisonPostVisibleSelectedProgressPassOwnerBrandV1: unique symbol = Symbol("exact-poison-post-visible-selected-progress-pass-owner-v1");
 const exactPoisonPostVisibleSelectedProgressPassControllerLocksV1 = new WeakMap<object, Readonly<{
   controllerLock: Task12ControllerLockHandleV1;
+  assertPredecessorStable(): void;
   resumeRecoverySourceBootstrapHeldLockV1: () => Promise<Readonly<{ sourceRunRef: string; sourceRunHash: string }>>;
 }>>();
 
@@ -10552,9 +11435,9 @@ function exactPoisonPostVisibleProgressObservationAuthorityFromPinnedCommitChain
     successorOperation: context.successorOperation,
     operationDirectory,
     currentStatusTarget: path.join(operationDirectory, "01-current-status.pair.json"),
-    buildPreparedPublicationSet(): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
+    buildPreparedPublicationSet(statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
       context.assertStable();
-      return buildTask12PreparedCurrentEntryPublicationSetV1(preparedAuthority);
+      return buildTask12PreparedCurrentEntryReplayPublicationSetV1(preparedAuthority, statusOwner);
     },
     assertStable(): void { context.assertStable(); },
   };
@@ -10564,7 +11447,7 @@ function exactPoisonPostVisibleProgressObservationAuthorityFromPinnedCommitChain
 function exactPoisonPostVisibleProgressObservationAuthorityFromSelectedRootReaderV1(
   rootReader: SelectedCurrentEntryPrerequisiteRootReaderV1,
   operation: InternalProductionCurrentEntryOperationV1,
-  buildPreparedPublicationSet: () => Promise<Task12PreparedCurrentEntryPublicationSetV1>,
+  buildPreparedPublicationSet: (statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1) => Promise<Task12PreparedCurrentEntryPublicationSetV1>,
 ): ExactPoisonPostVisibleProgressObservationAuthorityV1 {
   const selected = rootReader.selectedBinding;
   if (!selected.operation || selected.operation.operationRef !== operation.operationRef || selected.operation.operationHash !== operation.operationHash) currentEntryFail("selected progress operation binding is crossed");
@@ -10575,9 +11458,9 @@ function exactPoisonPostVisibleProgressObservationAuthorityFromSelectedRootReade
     successorOperation: operation,
     operationDirectory,
     currentStatusTarget: path.join(operationDirectory, "01-current-status.pair.json"),
-    buildPreparedPublicationSet(): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
+    buildPreparedPublicationSet(statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
       rootReader.assertStable();
-      return buildPreparedPublicationSet();
+      return buildPreparedPublicationSet(statusOwner);
     },
     assertStable(): void { rootReader.assertStable(); },
   };
@@ -11307,7 +12190,6 @@ function requireExactPoisonPostVisibleProgressNestedAuthorityBodyV1(
     return recursivelyFreeze(value);
   }
   const schemas: Readonly<Record<string, string>> = Object.freeze({
-    preMutationLoadedRuntimeServiceAuthority: "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1",
     preSchemaAuthorization: "setfarm.internal-production-pre-schema-spawner-rebind-authorization.v1",
     startupToken: "setfarm.internal-production-pre-schema-spawner-startup-token.v1",
     restartAuthority: "setfarm.internal-production-pre-schema-spawner-restart-authority.v1",
@@ -11323,7 +12205,8 @@ function requireExactPoisonPostVisibleProgressNestedAuthorityBodyV1(
     targetClose: "setfarm.internal-production-source-run-launch-target-reservation-pair-close.v1",
     entryAuthority: "setfarm.internal-production-current-entry-authority.v1",
   });
-  if (descriptor.name === "authorityV3Migration31Audit") {
+  if (descriptor.name === "preMutationLoadedRuntimeServiceAuthority") requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(value);
+  else if (descriptor.name === "authorityV3Migration31Audit") {
     const keys = ["schema", "currentStatus", "controllerSource", "pr86Delivery", "authorityV3ContractSpineThroughMigration31", "currentAuthorityAudit", "currentAuthorityAuditHash", "migration31SemanticDigest", "migration31SourceManifestEntryHash", "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash"] as const;
     if (!hasExactKeys(value, keys) || value.schema !== "setfarm.internal-production-authority-v3-migration31-audit.v1" || value.currentStatus !== "current") currentEntryFail("nested v31 audit shape is invalid");
     requireSource(value.controllerSource);
@@ -11340,7 +12223,8 @@ function requireExactPoisonPostVisibleProgressNestedAuthorityBodyV1(
     if (!isPlainRecord(value.migrationImplementation) || !hasExactKeys(value.migrationImplementation, ["locator", "gitMode", "gitBlobHash"]) || value.migrationImplementation.locator !== "src/db/bootstrap-main-claim-handoff-v1-migration.ts" || value.migrationImplementation.gitMode !== "100644") currentEntryFail("nested pending migration implementation is invalid");
     requireGitHash(value.migrationImplementation.gitBlobHash, "nested pending migration implementation blob");
   }
-  else if (value.schema !== schemas[descriptor.name]) currentEntryFail(`nested authority schema is invalid: ${descriptor.name}`);
+  else if (value.schema !== schemas[descriptor.name]
+    && !(descriptor.name === "restartAuthority" && value.schema === "setfarm.internal-production-pre-schema-spawner-restart-authority.v2")) currentEntryFail(`nested authority schema is invalid: ${descriptor.name}`);
   if (descriptor.name === "preMutationLoadedRuntimeServiceAuthority" && (value.currentEntryOperationRef === undefined || value.currentEntryOperationHash === undefined || typeof value.serviceProjectionSetHash !== "string")) currentEntryFail("nested pre-mutation runtime authority binding is invalid");
   for (const key of descriptor.pairKeys) if (value[key] !== pair[key]) currentEntryFail(`nested authority pair is crossed: ${descriptor.name}`);
   const hashKey = descriptor.pairKeys.find((key) => key.endsWith("Hash"));
@@ -11384,13 +12268,17 @@ async function openExactPoisonPostVisibleProgressNestedAuthorityV1(
     content = openExactPoisonRecoveryMemberV1(target, `nested authority content ${knownDescriptor.name}`);
     if (!sameRegularMetadata(locator.identity, content.identity) || !locator.bytes.equals(content.bytes)) currentEntryFail(`nested authority split generation is invalid: ${knownDescriptor.name}`);
     const body = requireExactPoisonPostVisibleProgressNestedAuthorityBodyV1(knownDescriptor, pair, content.bytes);
+    const assertColdHistory = knownDescriptor.name === "preMutationLoadedRuntimeServiceAuthority"
+      ? await openTask12ColdSpawnerPredecessorHistoryV1(body) : null;
     const assertStable = (): void => {
       if (closed || parent === null || locator === null || content === null) currentEntryFail(`nested authority owner is closed: ${knownDescriptor.name}`);
       authority.assertStable();
+      assertColdHistory?.();
       parent.assertStable();
       assertExactPoisonRecoveryPinnedMemberStableV1(target, locator, `nested authority locator ${knownDescriptor.name}`);
       assertExactPoisonRecoveryPinnedMemberStableV1(target, content, `nested authority content ${knownDescriptor.name}`);
       parent.assertStable();
+      assertColdHistory?.();
       authority.assertStable();
     };
     const close = (): void => {
@@ -12195,13 +13083,58 @@ function requireExactPoisonPostVisibleProgressPreSchemaOperationInventoryV1(
   return Object.freeze({ ordinal, requiredMaterialIndex, immediateTarget, nextStatusTarget, dynamicTargets: Object.freeze(dynamicTargets) });
 }
 
+async function authenticatePreSchemaRestartTransportAtReceiptV1(
+  restart: Readonly<Record<string, unknown>>,
+  startup: Readonly<Record<string, unknown>>,
+  operation: Readonly<Record<string, unknown>>,
+  assertStable: () => void,
+  selectedPreMutation?: Readonly<Record<string, unknown>>,
+): Promise<void> {
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || (uid as number) < 0 || restart.uid !== uid) currentEntryFail("pre-schema restart authority current uid is crossed");
+  if (restart.schema === "setfarm.internal-production-pre-schema-spawner-restart-authority.v1") {
+    if (restart.executable !== "/bin/launchctl" || canonicalComparable(restart.argv) !== canonicalComparable(["kickstart", "-k", `gui/${uid}/com.setrox.setfarm-spawner`])) currentEntryFail("pre-schema restart authority launchctl transport is crossed");
+    return;
+  }
+  assertStable();
+  if (restart.schema !== "setfarm.internal-production-pre-schema-spawner-restart-authority.v2"
+    || restart.actionId !== "task6a-pre-schema-setfarm-spawner-rebind-v1" || restart.service !== "setfarm-spawner"
+    || restart.transport !== "direct-detached-node-v1" || restart.terminationSignal !== "SIGTERM"
+    || restart.maximumTerminationDispatchCount !== 1 || restart.maximumSpawnDispatchCount !== 1) currentEntryFail("pre-schema direct restart transport is crossed");
+  const pair = requirePair({ operationRef: operation.operationRef, operationHash: operation.operationHash }, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/") as InternalProductionCurrentEntryOperationPairV1;
+  const preMutation = await resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(pair);
+  assertStable();
+  if (selectedPreMutation !== undefined && canonicalComparable(preMutation) !== canonicalComparable(selectedPreMutation)) currentEntryFail("pre-schema direct restart selected P3 graph is crossed");
+  if (preMutation.currentEntryOperationRef !== operation.operationRef || preMutation.currentEntryOperationHash !== operation.operationHash
+    || restart.preMutationLoadedRuntimeServiceAuthorityRef !== preMutation.preMutationLoadedRuntimeServiceAuthorityRef
+    || restart.preMutationLoadedRuntimeServiceAuthorityHash !== preMutation.preMutationLoadedRuntimeServiceAuthorityHash) currentEntryFail("pre-schema direct restart original P3 pair is crossed");
+  const spawner = preMutation.spawner;
+  if (!isPlainRecord(spawner) || spawner.processOwnerCount !== 1 || spawner.listener !== null) currentEntryFail("pre-schema direct restart original spawner is crossed");
+  const predecessorHash = hashCanonicalJson({ schema: "setfarm.internal-production-spawner-process-identity.v1", pid: spawner.pid, processStartTimeEpochMs: spawner.processStartTimeEpochMs, processIdentityHash: spawner.processIdentityHash });
+  for (const value of [restart, startup]) {
+    if (value.predecessorSpawnerProcessIdentityRef !== `setfarm://internal-production/spawner-process-identity/sha256/${predecessorHash}`
+      || value.predecessorSpawnerProcessIdentityHash !== predecessorHash || value.predecessorSpawnerServiceIdentityHash !== spawner.serviceIdentityHash
+      || value.predecessorSpawnerGenerationHash !== spawner.generationHash) currentEntryFail("pre-schema direct restart original predecessor is crossed");
+  }
+  const source = requireSource(operation.controllerSource);
+  if (spawner.loadedSourceSha !== source.sha || spawner.loadedTreeHash !== source.treeHash || spawner.loadedBuildHash !== source.buildHash) currentEntryFail("pre-schema direct restart original source is crossed");
+  const { profile } = await observeInternalProductionSpawnerLaunchProfileCandidateV1();
+  assertStable();
+  const { profileHash, ...profileBody } = profile;
+  if (profile.uid !== uid || profileHash !== restart.launchProfileHash || hashCanonicalJson(profileBody) !== profileHash
+    || canonicalComparable(profile.source) !== canonicalComparable(source)) currentEntryFail("pre-schema direct restart launch profile is crossed");
+  const finalPreMutation = await resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(pair);
+  assertStable();
+  if (canonicalComparable(finalPreMutation) !== canonicalComparable(preMutation)) currentEntryFail("pre-schema direct restart original P3 changed during profile observation");
+}
+
 async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
   authority: ExactPoisonPostVisibleProgressObservationAuthorityV1,
   operation: InternalProductionCurrentEntryOperationV1
 ): Promise<ExactPoisonPostVisibleProgressPreSchemaObservationV1> {
   authority.assertStable();
   if (operation.operationRef !== authority.successorOperation.operationRef || operation.operationHash !== authority.successorOperation.operationHash) currentEntryFail("pre-schema raw operation is crossed");
-  const operationDirectory = path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", operation.operationHash);
+  const operationDirectory = fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/operations/sha256", operation.operationHash);
   const materialLocators = Object.freeze([
     "00-pre-dispatch-legacy-zero.pair.json", "01-authorization.pair.json", "02-startup-token.pair.json",
     "03-restart-authority.pair.json", "04-predecessor-termination.pair.json", "05-replacement-process.pair.json",
@@ -12336,7 +13269,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
       if (typeof hash !== "string" || !SHA256.test(hash)) currentEntryFail(`pre-schema ${kind} hash is invalid`);
       const contentTarget = legacy
         ? fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1", "records", "sha256", hash.slice(0, 2), `${hash}.json`)
-        : path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
+        : fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records", kind, "sha256", hash.slice(0, 2), `${hash}.json`);
       const guard = authenticateTask12ReceiptDirectoryChainV1(path.dirname(contentTarget));
       let member: ExactPoisonRecoveryPinnedMemberV1 | null = null;
       try {
@@ -12412,7 +13345,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
     }
     const openProcessIdentity = async (ref: unknown, hash: unknown, label: string, capabilityKey?: string): Promise<Readonly<Record<string, unknown>>> => {
       if (typeof hash !== "string" || !SHA256.test(hash) || ref !== `setfarm://internal-production/spawner-process-identity/sha256/${hash}`) currentEntryFail(`pre-schema ${label} pair is crossed`);
-      const contentTarget = path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", hash.slice(0, 2), `${hash}.json`);
+      const contentTarget = fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", hash.slice(0, 2), `${hash}.json`);
       const guard = authenticateTask12ReceiptDirectoryChainV1(path.dirname(contentTarget));
       let member: ExactPoisonRecoveryPinnedMemberV1 | null = null;
       try {
@@ -12447,9 +13380,8 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
     }
     if (inventory.requiredMaterialIndex >= 3) {
       const restartAuthority = bodies[3]!;
-      const currentUid = process.getuid?.() ?? -1;
-      const expectedArgv = Object.freeze(["kickstart", "-k", `gui/${currentUid}/com.setrox.setfarm-spawner`]);
-      if (restartAuthority.currentEntryOperationRef !== operation.operationRef || restartAuthority.currentEntryOperationHash !== operation.operationHash || restartAuthority.preSchemaSpawnerRebindAuthorizationRef !== pairs[1]!.authorizationRef || restartAuthority.preSchemaSpawnerRebindAuthorizationHash !== pairs[1]!.authorizationHash || restartAuthority.startupTokenRef !== pairs[2]!.startupTokenRef || restartAuthority.startupTokenHash !== pairs[2]!.startupTokenHash || restartAuthority.predecessorSpawnerProcessIdentityRef !== bodies[2]!.predecessorSpawnerProcessIdentityRef || restartAuthority.predecessorSpawnerProcessIdentityHash !== bodies[2]!.predecessorSpawnerProcessIdentityHash || restartAuthority.predecessorSpawnerServiceIdentityHash !== bodies[2]!.predecessorSpawnerServiceIdentityHash || restartAuthority.predecessorSpawnerGenerationHash !== bodies[2]!.predecessorSpawnerGenerationHash || restartAuthority.targetSpawnerSourceSha !== source.sha || restartAuthority.targetSpawnerTreeHash !== source.treeHash || restartAuthority.targetSpawnerBuildHash !== source.buildHash || restartAuthority.uid !== currentUid || restartAuthority.executable !== "/bin/launchctl" || canonicalComparable(restartAuthority.argv) !== canonicalComparable(expectedArgv)) currentEntryFail("pre-schema restartAuthority controllerSource/host launch authority is crossed");
+      if (restartAuthority.currentEntryOperationRef !== operation.operationRef || restartAuthority.currentEntryOperationHash !== operation.operationHash || restartAuthority.preSchemaSpawnerRebindAuthorizationRef !== pairs[1]!.authorizationRef || restartAuthority.preSchemaSpawnerRebindAuthorizationHash !== pairs[1]!.authorizationHash || restartAuthority.startupTokenRef !== pairs[2]!.startupTokenRef || restartAuthority.startupTokenHash !== pairs[2]!.startupTokenHash || restartAuthority.predecessorSpawnerProcessIdentityRef !== bodies[2]!.predecessorSpawnerProcessIdentityRef || restartAuthority.predecessorSpawnerProcessIdentityHash !== bodies[2]!.predecessorSpawnerProcessIdentityHash || restartAuthority.predecessorSpawnerServiceIdentityHash !== bodies[2]!.predecessorSpawnerServiceIdentityHash || restartAuthority.predecessorSpawnerGenerationHash !== bodies[2]!.predecessorSpawnerGenerationHash || restartAuthority.targetSpawnerSourceSha !== source.sha || restartAuthority.targetSpawnerTreeHash !== source.treeHash || restartAuthority.targetSpawnerBuildHash !== source.buildHash) currentEntryFail("pre-schema restartAuthority controllerSource/host launch authority is crossed");
+      await authenticatePreSchemaRestartTransportAtReceiptV1(restartAuthority, bodies[2]!, operation, assertStable);
     }
     if (inventory.requiredMaterialIndex >= 4) {
       const predecessorTerminationObservation = bodies[4]!;
@@ -12496,7 +13428,8 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
     }
     const validateDynamicMaterialCausal = async (index: number, value: Readonly<Record<string, unknown>>, processIdentityCapabilityKey?: string): Promise<void> => {
       if (index === 0) {
-        if (value.schema !== "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1" || value.authorityV3Migration31AuditRef !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditRef || value.authorityV3Migration31AuditHash !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash || value.cleanSetfarmSourceSha !== source.sha || value.cleanSetfarmTreeHash !== source.treeHash || value.cleanSetfarmBuildHash !== source.buildHash) currentEntryFail("pre-schema dynamic publication pre-dispatch legacy authority is crossed");
+        requireLegacyZeroVersionedFieldsV1(value);
+        if (value.authorityV3Migration31AuditRef !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditRef || value.authorityV3Migration31AuditHash !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash || value.cleanSetfarmSourceSha !== source.sha || value.cleanSetfarmTreeHash !== source.treeHash || value.cleanSetfarmBuildHash !== source.buildHash) currentEntryFail("pre-schema dynamic publication pre-dispatch legacy authority is crossed");
         return;
       }
       if (index === 1) {
@@ -12509,9 +13442,8 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
         return;
       }
       if (index === 3) {
-        const currentUid = process.getuid?.() ?? -1;
-        const expectedArgv = Object.freeze(["kickstart", "-k", `gui/${currentUid}/com.setrox.setfarm-spawner`]);
-        if (value.currentEntryOperationRef !== operation.operationRef || value.currentEntryOperationHash !== operation.operationHash || value.preSchemaSpawnerRebindAuthorizationRef !== pairs[1]!.authorizationRef || value.preSchemaSpawnerRebindAuthorizationHash !== pairs[1]!.authorizationHash || value.startupTokenRef !== pairs[2]!.startupTokenRef || value.startupTokenHash !== pairs[2]!.startupTokenHash || value.predecessorSpawnerProcessIdentityRef !== bodies[2]!.predecessorSpawnerProcessIdentityRef || value.predecessorSpawnerProcessIdentityHash !== bodies[2]!.predecessorSpawnerProcessIdentityHash || value.predecessorSpawnerServiceIdentityHash !== bodies[2]!.predecessorSpawnerServiceIdentityHash || value.predecessorSpawnerGenerationHash !== bodies[2]!.predecessorSpawnerGenerationHash || value.targetSpawnerSourceSha !== source.sha || value.targetSpawnerTreeHash !== source.treeHash || value.targetSpawnerBuildHash !== source.buildHash || value.uid !== currentUid || value.executable !== "/bin/launchctl" || canonicalComparable(value.argv) !== canonicalComparable(expectedArgv)) currentEntryFail("pre-schema dynamic publication restart authority is crossed");
+        if (value.currentEntryOperationRef !== operation.operationRef || value.currentEntryOperationHash !== operation.operationHash || value.preSchemaSpawnerRebindAuthorizationRef !== pairs[1]!.authorizationRef || value.preSchemaSpawnerRebindAuthorizationHash !== pairs[1]!.authorizationHash || value.startupTokenRef !== pairs[2]!.startupTokenRef || value.startupTokenHash !== pairs[2]!.startupTokenHash || value.predecessorSpawnerProcessIdentityRef !== bodies[2]!.predecessorSpawnerProcessIdentityRef || value.predecessorSpawnerProcessIdentityHash !== bodies[2]!.predecessorSpawnerProcessIdentityHash || value.predecessorSpawnerServiceIdentityHash !== bodies[2]!.predecessorSpawnerServiceIdentityHash || value.predecessorSpawnerGenerationHash !== bodies[2]!.predecessorSpawnerGenerationHash || value.targetSpawnerSourceSha !== source.sha || value.targetSpawnerTreeHash !== source.treeHash || value.targetSpawnerBuildHash !== source.buildHash) currentEntryFail("pre-schema dynamic publication restart authority is crossed");
+        await authenticatePreSchemaRestartTransportAtReceiptV1(value, bodies[2]!, operation, assertStable);
         return;
       }
       if (index === 4) {
@@ -12525,7 +13457,8 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
         return;
       }
       if (index === 6) {
-        if (value.schema !== "setfarm.internal-production-legacy-pre-manifest-zero-owner-observation.v1" || value.authorityV3Migration31AuditRef !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditRef || value.authorityV3Migration31AuditHash !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash || value.cleanSetfarmSourceSha !== source.sha || value.cleanSetfarmTreeHash !== source.treeHash || value.cleanSetfarmBuildHash !== source.buildHash || value.observedSpawnerGenerationHash !== bodies[5]!.actualSpawnerGenerationHash) currentEntryFail("pre-schema dynamic publication post-termination legacy authority/generation is crossed");
+        requireLegacyZeroVersionedFieldsV1(value);
+        if (value.authorityV3Migration31AuditRef !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditRef || value.authorityV3Migration31AuditHash !== operation.authorityV3Migration31Audit.authorityV3Migration31AuditHash || value.cleanSetfarmSourceSha !== source.sha || value.cleanSetfarmTreeHash !== source.treeHash || value.cleanSetfarmBuildHash !== source.buildHash || value.observedSpawnerGenerationHash !== bodies[5]!.actualSpawnerGenerationHash) currentEntryFail("pre-schema dynamic publication post-termination legacy authority/generation is crossed");
         return;
       }
       if (index === 7) {
@@ -12770,7 +13703,7 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
           : Object.freeze({ prior: "pre_manifest_bootstrap_sealed", next: "normal_task0_admission_ready", ordinal: 6 });
       if (inventory.ordinal === "blocked") {
         const statusHash = String(value.statusHash);
-        addContentEndpoint("blocked-status:content", value, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
+        addContentEndpoint("blocked-status:content", value, fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
         addLocatorEndpoint("blocked-status:locator", blockedLocator);
       } else if (inventory.ordinal === 5) {
         const legacyHash = String(bodies[6]!.observationHash);
@@ -12778,16 +13711,16 @@ async function observeInternalProductionPreSchemaSpawnerRebindStatusAtRootV1(
         const statusHash = String(value.statusHash);
         addContentEndpoint("post-termination-legacy-zero-content:content", bodies[6]!, fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/legacy-pre-manifest-zero-owner-observation-v1", "records", "sha256", legacyHash.slice(0, 2), `${legacyHash}.json`));
         addLocatorEndpoint("post-termination-legacy-zero:locator", materialLocators[6]);
-        addContentEndpoint("sealed-admission:content", bodies[7]!, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/sealed-admission/sha256", sealedHash.slice(0, 2), `${sealedHash}.json`));
+        addContentEndpoint("sealed-admission:content", bodies[7]!, fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/sealed-admission/sha256", sealedHash.slice(0, 2), `${sealedHash}.json`));
         addLocatorEndpoint("sealed-admission:locator", materialLocators[7]);
-        addContentEndpoint("status:content", value, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
+        addContentEndpoint("status:content", value, fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
         addLocatorEndpoint("status:locator", statusLocators[5]);
       } else {
         const admissionReadyHash = String(bodies[8]!.admissionReadyHash);
         const statusHash = String(value.statusHash);
-        addContentEndpoint("admission-ready:content", bodies[8]!, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`));
+        addContentEndpoint("admission-ready:content", bodies[8]!, fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/admission-ready/sha256", admissionReadyHash.slice(0, 2), `${admissionReadyHash}.json`));
         addLocatorEndpoint("admission-ready:locator", materialLocators[8]);
-        addContentEndpoint("status:content", value, path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
+        addContentEndpoint("status:content", value, fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256", statusHash.slice(0, 2), `${statusHash}.json`));
         addLocatorEndpoint("status:locator", statusLocators[6]);
       }
       const capability = Object.freeze({
@@ -13034,8 +13967,7 @@ async function openExactPoisonPostVisibleProgressCompletedRetainedStatusV1(
       ) as Readonly<{ statusRef: string; statusHash: string }>;
       exactPoisonPostVisibleProgressFaultV1(readFaults.afterLocator);
       const contentTarget = family === "pre-schema"
-        ? path.join(
-          fixedRepositoryRoot(),
+        ? fixedWorkspaceAuthorityPathV1(
           "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/status/sha256",
           pair.statusHash.slice(0, 2),
           `${pair.statusHash}.json`,
@@ -14309,36 +15241,6 @@ async function observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1
   if (current === null || endpointDescriptor.policy !== "task12-receipt") currentEntryFail("external Task12 endpoint authority is crossed");
   authority.assertStable();
   if (operation.operationRef !== authority.successorOperation.operationRef || operation.operationHash !== authority.successorOperation.operationHash) currentEntryFail("external Task12 operation is crossed");
-  if (arrow.family === "current-audit") {
-    if (arrow.ordinal !== 0 || arrow.prior !== "terminal" || arrow.next !== "current"
-      || endpointDescriptor.endpointOrdinal !== 0 || endpointDescriptor.material !== "current-audit" || endpointDescriptor.role !== "content"
-      || current.schema !== "setfarm.internal-production-pre-manifest-migration-32-authorization-status.v1" || current.state !== "terminal"
-      || !isPlainRecord(current.currentEntryOperation) || current.currentEntryOperation.operationRef !== operation.operationRef || current.currentEntryOperation.operationHash !== operation.operationHash) {
-      currentEntryFail("migration-32 current-audit endpoint authority is crossed");
-    }
-    let closed = false;
-    const assertStable = (): void => {
-      if (closed) currentEntryFail("external current-audit endpoint observation is closed");
-      authority.assertStable();
-    };
-    assertStable();
-    return Object.freeze({
-      material: endpointDescriptor.material,
-      role: endpointDescriptor.role,
-      policy: endpointDescriptor.policy,
-      target: null,
-      expectedBytes: null,
-      publication: null,
-      writer: null,
-      database: null,
-      cas: null,
-      assertStable,
-      close(): void {
-        if (closed) currentEntryFail("external current-audit endpoint observation closed twice");
-        closed = true;
-      },
-    });
-  }
   if (arrow.family === "recovery-source") {
     const capability = exactPoisonPostVisibleRecoveryEndpointCapabilitiesV1.get(current)?.get(
       exactPoisonPostVisibleRecoveryEndpointCapabilityKeyV1(arrow),
@@ -14393,6 +15295,26 @@ async function observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1
     if (entryOwner.pair === null || entryOwner.pairBytes === null || entryOwner.contentTarget === null) currentEntryFail("entry external endpoint authority is incomplete");
     target = content ? entryOwner.contentTarget : entryOwner.locatorTarget;
     expectedBytes = content ? task12ReceiptCanonicalBytesV1(entryOwner.value) : entryOwner.pairBytes;
+  } else if (arrow.family === "current-audit") {
+    if (entryOwner !== null || arrow.ordinal !== 0 || arrow.prior !== "terminal" || arrow.next !== "current"
+      || endpointDescriptor.endpointOrdinal !== 0 || endpointDescriptor.material !== "current-audit" || endpointDescriptor.role !== "content"
+      || current.schema !== "setfarm.internal-production-pre-manifest-migration-32-authorization-status.v1" || current.state !== "terminal"
+      || !isPlainRecord(current.currentEntryOperation) || current.currentEntryOperation.operationRef !== operation.operationRef || current.currentEntryOperation.operationHash !== operation.operationHash
+      || typeof current.statusHash !== "string" || !SHA256.test(current.statusHash)
+      || current.statusRef !== `${TASK12_MIGRATION_PREFIXES_V1.status}${current.statusHash}`) currentEntryFail("migration-32 current-audit endpoint authority is crossed");
+    const statusBody = { ...current }; delete statusBody.statusRef; delete statusBody.statusHash;
+    if (hashCanonicalJson(statusBody) !== current.statusHash) currentEntryFail("migration-32 current-audit status self-hash is crossed");
+    const migrationReceipt = requirePair(current.migrationReceipt, "migrationReceiptRef", "migrationReceiptHash", TASK12_MIGRATION_PREFIXES_V1.receipt);
+    await resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1(migrationReceipt as InternalProductionBaselineBootstrapHandoffMigrationReceiptPairV1, operation);
+    authority.assertStable();
+    const databaseAudit = await auditCurrentInternalProductionBaselineBootstrapHandoffMigration32V1();
+    authority.assertStable();
+    const auditBody = Object.freeze({ schema: "setfarm.internal-production-bootstrap-handoff-current-audit.v1", currentStatus: "current", currentEntryOperation: operationPair(operation), migrationReceipt, databaseAudit });
+    const bootstrapHandoffCurrentAuditHash = hashCanonicalJson(auditBody);
+    target = task12MigrationRecordPathV1("current-audits", bootstrapHandoffCurrentAuditHash);
+    expectedBytes = task12ReceiptCanonicalBytesV1(Object.freeze({ ...auditBody, bootstrapHandoffCurrentAuditRef: `${TASK12_MIGRATION_PREFIXES_V1.currentAudit}${bootstrapHandoffCurrentAuditHash}`, bootstrapHandoffCurrentAuditHash }));
+    content = true;
+    contentShard = true;
   } else if (arrow.family === "migration-32" && [0, 1, 2].includes(arrow.ordinal)) {
     const expectedState = arrow.ordinal === 0 ? "prepared" : arrow.ordinal === 1 ? "consumed" : "terminal";
     if (entryOwner !== null || current.state !== expectedState || !isPlainRecord(current.currentEntryOperation)
@@ -14448,21 +15370,26 @@ async function observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1
   const owner = contentShard
     ? observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1(target, expectedBytes)
     : observeExactPoisonPostVisibleTask12ReceiptEndpointNoWriteV1(target, expectedBytes, directoryPolicy);
-  const projection = requireExactPoisonPostVisibleTask12ReceiptEndpointPublicationV1(owner, target, expectedBytes);
-  owner.assertStable();
-  return Object.freeze({
-    material: endpointDescriptor.material,
-    role: endpointDescriptor.role,
-    policy: endpointDescriptor.policy,
-    target,
-    expectedBytes,
-    publication: projection.publication,
-    writer: projection.writer,
-    database: null,
-    cas: null,
-    assertStable: owner.assertStable,
-    close: owner.close,
-  });
+  try {
+    const projection = requireExactPoisonPostVisibleTask12ReceiptEndpointPublicationV1(owner, target, expectedBytes);
+    owner.assertStable();
+    return Object.freeze({
+      material: endpointDescriptor.material,
+      role: endpointDescriptor.role,
+      policy: endpointDescriptor.policy,
+      target,
+      expectedBytes,
+      publication: projection.publication,
+      writer: projection.writer,
+      database: null,
+      cas: null,
+      assertStable: owner.assertStable,
+      close: owner.close,
+    });
+  } catch (error) {
+    try { owner.close(); } catch { /* preserve the primary construction failure */ }
+    throw error;
+  }
 }
 
 async function observeExactPoisonPostVisibleSpawnerAdmissionEndpointNoWriteV1(
@@ -14919,6 +15846,16 @@ async function observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(
       return decisive
         ? Object.freeze({ state: "ready", entryAuthority: retainedEntryPair })
         : Object.freeze({ state: "fence-released", entryAuthority: null });
+    })() : arrow.family === "current-audit" ? (() => {
+      const endpoint = children[0];
+      if (endpoint === undefined || endpoint.material !== "current-audit" || endpoint.role !== "content" || current === null) currentEntryFail("current-audit external endpoint is absent");
+      const decisive = isPlainRecord(endpoint.publication)
+        && (endpoint.publication.state === "F2u" || endpoint.publication.state === "F3" || endpoint.publication.state === "F4");
+      if (!decisive) return current;
+      if (!Buffer.isBuffer(endpoint.expectedBytes)) currentEntryFail("current-audit external projection bytes are absent");
+      const audit = strictCanonicalRecord(endpoint.expectedBytes, "current-audit external projection");
+      const currentAudit = requirePair({ bootstrapHandoffCurrentAuditRef: audit.bootstrapHandoffCurrentAuditRef, bootstrapHandoffCurrentAuditHash: audit.bootstrapHandoffCurrentAuditHash }, "bootstrapHandoffCurrentAuditRef", "bootstrapHandoffCurrentAuditHash", TASK12_MIGRATION_PREFIXES_V1.currentAudit);
+      return Object.freeze({ ...current, currentAudit });
     })() : current;
     const observed: ExactPoisonPostVisibleExternalRawPublicationObservationV1 = Object.freeze({
       state: activeEndpointOrdinal === null ? "none" : "publishing",
@@ -16359,7 +17296,7 @@ async function observeExactPoisonPostVisibleProgressRawNoWriteV1(
           if (controllerWriterObservation === null) currentEntryFail("progress raw controller writer observation is absent");
           return Object.freeze({ rawKind: descriptor.rawKind, current: blockedCurrent, controllerWriter: controllerWriterObservation, completedRetained: null, evidence: "terminal", effectResult: null, nextPairBytes: null, immediate: null, publication: null, writer: null, assertFilesystemStable, assertStable, close });
         }
-        const preparedPublicationSet = await authority.buildPreparedPublicationSet();
+        const preparedPublicationSet = await authority.buildPreparedPublicationSet(status);
         await requireExactPoisonPostVisiblePreparedPublicationSetMatchesStatusV1(authority, status, preparedPublicationSet);
         const externalArrowCurrent = selectExactPoisonPostVisibleExternalArrowV1(descriptor, preSchemaCurrent);
         const externalPublicationCurrent = await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority, operation, externalArrowCurrent, preSchemaCurrent, null);
@@ -17189,8 +18126,8 @@ async function openExactPoisonPostVisibleSelectedProgressPassV1(
       || selectedBinding.operation.operationHash !== operation.operationHash
     ) currentEntryFail("selected progress binding is crossed");
     rootReader.assertStable();
-    const buildPreparedPublicationSet = async (): Promise<Task12PreparedCurrentEntryPublicationSetV1> =>
-      buildTask12PreparedCurrentEntryPublicationSetV1(createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1(context, operation));
+    const buildPreparedPublicationSet = async (statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1): Promise<Task12PreparedCurrentEntryPublicationSetV1> =>
+      buildTask12PreparedCurrentEntryReplayPublicationSetV1(createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1(context, operation), statusOwner);
     const authority = exactPoisonPostVisibleProgressObservationAuthorityFromSelectedRootReaderV1(rootReader, operation, buildPreparedPublicationSet);
     const operationDirectory = authority.operationDirectory;
     operationDirectoryGuard = authenticateTask12ReceiptDirectoryChainV1(operationDirectory);
@@ -17320,6 +18257,14 @@ async function openExactPoisonPostVisibleSelectedProgressPassV1(
     });
     exactPoisonPostVisibleSelectedProgressPassControllerLocksV1.set(owner, Object.freeze({
       controllerLock,
+      assertPredecessorStable(): void {
+        assertRootStable();
+        if (status === null || currentStatusCas === null) currentEntryFail("selected progress predecessor authority is absent");
+        status.assertStable();
+        currentStatusCas.assertStable();
+        status.assertStable();
+        assertRootStable();
+      },
       resumeRecoverySourceBootstrapHeldLockV1: () => resumeRecoverySourceBootstrapHeldLockV1(context, controllerLock),
     }));
     return owner;
@@ -17742,6 +18687,43 @@ async function advanceTask12CurrentStatusV1(
   return reopened;
 }
 
+async function advanceTask12CurrentStatusAfterOwnedEffectV1(
+  context: SelectedCurrentEntryStoreContextV1,
+  predecessor: ExactPoisonPostVisibleSelectedProgressPassOwnerV1,
+  candidate: ExactPoisonPostVisibleProgressNextStatusV1,
+): Promise<void> {
+  predecessor.assertContext(context);
+  const retained = exactPoisonPostVisibleSelectedProgressPassControllerLocksV1.get(predecessor);
+  if (retained === undefined || predecessor.pass.raw.evidence !== "prior-only") currentEntryFail("post-effect predecessor authority is invalid");
+  retained.assertPredecessorStable();
+  let fresh: ExactPoisonPostVisibleSelectedProgressPassOwnerV1 | null = null;
+  let failure: unknown = null;
+  try {
+    fresh = await openExactPoisonPostVisibleSelectedProgressPassV1(context, predecessor.operation, retained.controllerLock);
+    retained.assertPredecessorStable();
+    fresh.assertContext(context);
+    if (
+      fresh.pass.row !== predecessor.pass.row
+      || canonicalComparable(fresh.pass.status) !== canonicalComparable(predecessor.pass.status)
+      || canonicalComparable(fresh.pass.pair) !== canonicalComparable(predecessor.pass.pair)
+      || !fresh.pass.currentStatusCas.currentPairBytes.equals(predecessor.pass.currentStatusCas.currentPairBytes)
+      || fresh.pass.currentStatusCas.requiresNormalization
+      || fresh.pass.raw.evidence !== "completed"
+      || fresh.pass.raw.nextPairBytes === null
+      || !fresh.pass.raw.nextPairBytes.equals(candidate.pairBytes)
+    ) currentEntryFail("post-effect completed authority is crossed");
+    await fresh.assertStable();
+    retained.assertPredecessorStable();
+    await advanceTask12CurrentStatusV1(context, fresh, candidate);
+  } catch (error) {
+    failure = error;
+  } finally {
+    try { await fresh?.close(); }
+    catch (error) { failure ??= error; }
+  }
+  if (failure !== null) throw failure;
+}
+
 async function prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1(): Promise<Readonly<Record<string, unknown>>> {
   const startup = await import("./baseline-spawner-startup-admission-v1.js") as unknown as Readonly<Record<string, unknown>>;
   const port = startup.prepareInternalProductionPreSchemaSpawnerRebindAuthorizationV1;
@@ -17757,7 +18739,8 @@ async function executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1(
   const startup = await import("./baseline-spawner-startup-admission-v1.js") as unknown as Readonly<Record<string, unknown>>;
   const port = startup.executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1;
   if (typeof port !== "function" || port.length !== 1) currentEntryFail("pre-schema execute/recover controller is unavailable");
-  return (port as (value: unknown) => Promise<Readonly<Record<string, unknown>>>)(authorization);
+  const pair = requirePair(authorization, "authorizationRef", "authorizationHash", "setfarm://internal-production/pre-schema-spawner-rebind-authorization/sha256/");
+  return (port as (value: unknown) => Promise<Readonly<Record<string, unknown>>>)(pair);
 }
 
 async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(): Promise<Readonly<Record<string, unknown>>> {
@@ -18049,7 +19032,8 @@ async function advanceExactPoisonPostVisibleProgressEffectV1(
   else if (effect.effect === "apply-or-adopt-migration-32") exactPoisonPostVisibleProgressFaultV1("before-migration-retained-cas-consumed");
   else if (effect.effect === "publish-migration-receipt") exactPoisonPostVisibleProgressFaultV1("before-migration-retained-cas-receipt");
   else if (effect.effect === "audit-migration-current") exactPoisonPostVisibleProgressFaultV1("before-migration-retained-cas-current-audited");
-  await advanceTask12CurrentStatusV1(context, passOwner, candidate);
+  if (raw.evidence === "prior-only") await advanceTask12CurrentStatusAfterOwnedEffectV1(context, passOwner, candidate);
+  else await advanceTask12CurrentStatusV1(context, passOwner, candidate);
   if (effect.effect === "resume-pre-schema") exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-cas-00");
   else if (effect.effect === "retained-pre-schema-01") exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-cas-01");
   else if (effect.effect === "retained-pre-schema-02") exactPoisonPostVisibleProgressFaultV1("after-pre-schema-retained-cas-02");
@@ -18118,12 +19102,21 @@ async function buildTask12PreparedCurrentEntryPublicationSetV1(
     : path.join(authority.context.successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
   if (authority.kind === "pinned-successor") authority.context.assertStable();
 
+  const retirement = await import("./baseline-restart-authority-retirement-v1.js");
+  const coldBefore = retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
   const census = await observeInternalProductionServiceCensusV1();
+  const coldAfter = retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+  if (canonicalComparable(coldBefore) !== canonicalComparable(coldAfter)) currentEntryFail("prepared publication cold predecessor changed");
+  if (coldAfter.state === "settled" && canonicalComparable(coldAfter.settlement.serviceCensus) !== canonicalComparable(census)) {
+    currentEntryFail("prepared publication ordinary census is not its cold predecessor");
+  }
   if (expectedServiceCensus !== undefined && canonicalComparable(census) !== canonicalComparable(expectedServiceCensus)) {
     currentEntryFail("prepared publication service census changed");
   }
   const serviceProjection = {
-    schema: "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1",
+    schema: coldAfter.state === "settled"
+      ? "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2"
+      : "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1",
     currentEntryOperationRef: operation.operationRef,
     currentEntryOperationHash: operation.operationHash,
     observedServiceCensusHash: census.censusHash,
@@ -18131,16 +19124,16 @@ async function buildTask12PreparedCurrentEntryPublicationSetV1(
     dashboard: census.dashboard,
     missionControl: census.missionControl,
     openClaw: census.openClaw,
+    ...(coldAfter.state === "settled" ? { coldSpawnerPredecessor: {
+      settlementRef: coldAfter.settlement.settlementRef, settlementHash: coldAfter.settlement.settlementHash,
+      settlementIdentity: coldAfter.settlementIdentity,
+    } } : {}),
   };
   const serviceProjectionSetHash = hashCanonicalJson(serviceProjection);
   const preMutationBody = { ...serviceProjection, serviceProjectionSetHash };
   const preMutationLoadedRuntimeServiceAuthorityHash = hashCanonicalJson(preMutationBody);
   const preMutationLoadedRuntimeServiceAuthorityRef = `${TASK12_PRE_MUTATION_PREFIX_V1}${preMutationLoadedRuntimeServiceAuthorityHash}`;
   const preMutation = recursivelyFreeze({ ...preMutationBody, preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash });
-  const preMutationTarget = authority.kind === "selected"
-    ? task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1(authority.context, preMutationLoadedRuntimeServiceAuthorityHash)
-    : path.join(authority.context.successorRoot, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", preMutationLoadedRuntimeServiceAuthorityHash.slice(0, 2), `${preMutationLoadedRuntimeServiceAuthorityHash}.json`);
-  const preMutationPair = recursivelyFreeze({ preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash });
   const source = operation.controllerSource;
   const statusBody = {
     schema: "setfarm.internal-production-current-entry-authority-status.v1",
@@ -18167,6 +19160,63 @@ async function buildTask12PreparedCurrentEntryPublicationSetV1(
   const statusHash = hashCanonicalJson(statusBody);
   const statusRef = `${TASK12_STATUS_PREFIX_V1}${statusHash}`;
   const status = recursivelyFreeze({ ...statusBody, statusRef, statusHash });
+  const prepared = await materializeTask12PreparedCurrentEntryPublicationSetV1(authority, preMutation, status, census);
+  if (canonicalComparable(retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1()) !== canonicalComparable(coldAfter)) currentEntryFail("prepared publication cold predecessor changed during serialization");
+  if (authority.kind === "pinned-successor") authority.context.assertStable();
+  return prepared;
+}
+
+async function buildTask12PreparedCurrentEntryReplayPublicationSetV1(
+  authority: Task12PreparedCurrentEntryPublicationAuthorityV1,
+  statusOwner: ExactPoisonPostVisibleProgressStatusObservationV1,
+): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
+  if (!(task12PreparedCurrentEntryPublicationAuthorityBrandV1 in authority)) currentEntryFail("prepared replay authority is invalid");
+  const operation = authority.kind === "selected" ? authority.operation : authority.context.successorOperation;
+  const operationHash = requireSha256(operation.operationHash, "prepared replay operation hash");
+  const currentStatusTarget = authority.kind === "selected"
+    ? task12CurrentStatusPathV1(authority.context, operationHash)
+    : path.join(authority.context.successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash, "01-current-status.pair.json");
+  if (authority.kind === "pinned-successor") authority.context.assertStable();
+  statusOwner.assertStable();
+  const status = parseInternalProductionCurrentEntryAuthorityStatusV1(statusOwner.lastValidStatus ?? statusOwner.status);
+  if (statusOwner.target !== currentStatusTarget || status.state !== "operation_prepared" || status.operationRef !== operation.operationRef || status.operationHash !== operationHash
+    || canonicalComparable(status.controllerSourceAuthority) !== canonicalComparable({ controllerSourceSha: operation.controllerSource.sha, controllerTreeHash: operation.controllerSource.treeHash, controllerBuildHash: operation.controllerSource.buildHash })
+    || canonicalComparable(status.productBuildAuthorityV2DeliveryEvidence) !== canonicalComparable(operation.productBuildAuthorityV2DeliveryEvidence)
+    || canonicalComparable(status.authorityV3Migration31Audit) !== canonicalComparable(operation.authorityV3Migration31Audit)
+    || canonicalComparable(status.pendingBootstrapHandoffMigration) !== canonicalComparable(operation.pendingBootstrapHandoffMigration)) currentEntryFail("prepared replay status is not its owned origin");
+  const statusBody: Record<string, unknown> = { ...status }; delete statusBody.statusRef; delete statusBody.statusHash;
+  const statusHash = hashCanonicalJson(statusBody);
+  if (status.statusHash !== statusHash || status.statusRef !== `${TASK12_STATUS_PREFIX_V1}${statusHash}`) currentEntryFail("prepared replay status hash is crossed");
+  const preMutation = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(status.preMutationLoadedRuntimeServiceAuthority);
+  const assertHistory = await openTask12ColdSpawnerPredecessorHistoryV1(preMutation);
+  statusOwner.assertStable();
+  const census = requireExactPoisonPostVisibleServiceCensusEffectV1({ schema: "setfarm.internal-production-service-census.v1", spawner: preMutation.spawner, dashboard: preMutation.dashboard, missionControl: preMutation.missionControl, openClaw: preMutation.openClaw, censusHash: preMutation.observedServiceCensusHash }) as unknown as InternalProductionServiceCensusV1;
+  const prepared = await materializeTask12PreparedCurrentEntryPublicationSetV1(authority, preMutation, status, census);
+  assertHistory();
+  statusOwner.assertStable();
+  if (authority.kind === "pinned-successor") authority.context.assertStable();
+  return prepared;
+}
+
+async function materializeTask12PreparedCurrentEntryPublicationSetV1(
+  authority: Task12PreparedCurrentEntryPublicationAuthorityV1,
+  preMutation: Readonly<Record<string, unknown>>,
+  status: Readonly<Record<string, unknown>>,
+  census: InternalProductionServiceCensusV1,
+): Promise<Task12PreparedCurrentEntryPublicationSetV1> {
+  if (!(task12PreparedCurrentEntryPublicationAuthorityBrandV1 in authority)) currentEntryFail("prepared materialization authority is invalid");
+  const operation = authority.kind === "selected" ? authority.operation : authority.context.successorOperation;
+  const operationHash = requireSha256(operation.operationHash, "prepared materialization operation hash");
+  const operationDirectory = authority.kind === "selected"
+    ? task12OperationDirectoryV1(authority.context, operationHash)
+    : path.join(authority.context.successorRoot, "operations", "sha256", operationHash.slice(0, 2), operationHash);
+  const preMutationLoadedRuntimeServiceAuthorityHash = requireSha256(preMutation.preMutationLoadedRuntimeServiceAuthorityHash, "prepared materialization pre-mutation hash");
+  const preMutationLoadedRuntimeServiceAuthorityRef = preMutation.preMutationLoadedRuntimeServiceAuthorityRef;
+  const preMutationTarget = authority.kind === "selected"
+    ? task12PreparedPreMutationLoadedRuntimeServiceAuthorityPathV1(authority.context, preMutationLoadedRuntimeServiceAuthorityHash)
+    : path.join(authority.context.successorRoot, "records", "pre-mutation-loaded-runtime-service-authorities", "sha256", preMutationLoadedRuntimeServiceAuthorityHash.slice(0, 2), `${preMutationLoadedRuntimeServiceAuthorityHash}.json`);
+  const preMutationPair = recursivelyFreeze({ preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash });
+  const statusHash = requireSha256(status.statusHash, "prepared materialization status hash"), statusRef = status.statusRef;
   const statusPair = recursivelyFreeze({ statusRef, statusHash });
   let statusTarget: string;
   if (authority.kind === "selected") {
@@ -18243,6 +19293,45 @@ async function buildTask12PreparedCurrentEntryPublicationSetV1(
       Task12PreparedCurrentEntryPublicationCandidateV1<"P5">,
     ]),
   });
+}
+
+function requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(value: unknown): Readonly<Record<string, unknown>> {
+  if (!isPlainRecord(value)) currentEntryFail("pre-mutation runtime authority is not a record");
+  const v2 = value.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2";
+  const keys = ["schema", "currentEntryOperationRef", "currentEntryOperationHash", "observedServiceCensusHash", "spawner", "dashboard", "missionControl", "openClaw", "serviceProjectionSetHash", "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash"];
+  if (v2) keys.push("coldSpawnerPredecessor");
+  if ((!v2 && value.schema !== "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1") || !hasExactKeys(value, keys)) currentEntryFail("pre-mutation runtime authority versioned shape is invalid");
+  requirePair({ operationRef: value.currentEntryOperationRef, operationHash: value.currentEntryOperationHash }, "operationRef", "operationHash", "setfarm://internal-production/current-entry-operation/sha256/");
+  const pair = requirePair({ preMutationLoadedRuntimeServiceAuthorityRef: value.preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash: value.preMutationLoadedRuntimeServiceAuthorityHash }, "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash", TASK12_PRE_MUTATION_PREFIX_V1);
+  requireExactPoisonPostVisibleServiceCensusEffectV1({ schema: "setfarm.internal-production-service-census.v1", spawner: value.spawner, dashboard: value.dashboard, missionControl: value.missionControl, openClaw: value.openClaw, censusHash: value.observedServiceCensusHash });
+  if (v2) {
+    const cold = value.coldSpawnerPredecessor;
+    if (!isPlainRecord(cold) || !hasExactKeys(cold, ["settlementRef", "settlementHash", "settlementIdentity"])) currentEntryFail("pre-mutation cold predecessor fields are invalid");
+    requirePair({ settlementRef: cold.settlementRef, settlementHash: cold.settlementHash }, "settlementRef", "settlementHash", "setfarm://internal-production/cold-spawner-controller-settlement/sha256/");
+    const identity = cold.settlementIdentity;
+    if (!Array.isArray(identity) || identity.length !== 10 || identity.some(value => typeof value !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(value))
+      || BigInt(identity[1]) < 1n || identity[2] !== String(process.getuid?.()) || identity[4] !== String(0o100600)
+      || identity[5] !== "1" || BigInt(identity[6]) < 1n || BigInt(identity[6]) > 65_536n) currentEntryFail("pre-mutation cold predecessor identity is invalid");
+  }
+  const body = { ...value }; delete body.preMutationLoadedRuntimeServiceAuthorityRef; delete body.preMutationLoadedRuntimeServiceAuthorityHash;
+  const projection = { ...body }; delete projection.serviceProjectionSetHash;
+  if (value.serviceProjectionSetHash !== hashCanonicalJson(projection) || hashCanonicalJson(body) !== pair.preMutationLoadedRuntimeServiceAuthorityHash) currentEntryFail("pre-mutation runtime authority hashes are crossed");
+  return recursivelyFreeze(value);
+}
+
+async function openTask12ColdSpawnerPredecessorHistoryV1(value: unknown): Promise<() => void> {
+  const preMutation = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(value);
+  if (preMutation.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1") return () => {};
+  const predecessor = preMutation.coldSpawnerPredecessor as Readonly<Record<string, unknown>>;
+  const retirement = await import("./baseline-restart-authority-retirement-v1.js");
+  const assertStable = () => {
+    const history = retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
+    if (history.state !== "settled" || history.settlement.settlementRef !== predecessor.settlementRef || history.settlement.settlementHash !== predecessor.settlementHash
+      || canonicalComparable(history.settlementIdentity) !== canonicalComparable(predecessor.settlementIdentity)
+      || canonicalComparable(history.settlement.serviceCensus) !== canonicalComparable({ schema: "setfarm.internal-production-service-census.v1", spawner: preMutation.spawner, dashboard: preMutation.dashboard, missionControl: preMutation.missionControl, openClaw: preMutation.openClaw, censusHash: preMutation.observedServiceCensusHash })) currentEntryFail("pre-mutation cold predecessor history is crossed");
+  };
+  assertStable();
+  return assertStable;
 }
 
 function createSelectedTask12PreparedCurrentEntryPublicationAuthorityV1(
@@ -19514,7 +20603,7 @@ function parseInternalProductionCurrentEntryAuthorityStatusV1(
   requirePair(status.authorityV3Migration31Audit, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/");
   requirePair(status.pendingBootstrapHandoffMigration, "pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/");
   requirePair({ preMutationLoadedRuntimeServiceAuthorityRef: status.preMutationLoadedRuntimeServiceAuthorityRef, preMutationLoadedRuntimeServiceAuthorityHash: status.preMutationLoadedRuntimeServiceAuthorityHash }, "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash", TASK12_PRE_MUTATION_PREFIX_V1);
-  const preMutation = status.preMutationLoadedRuntimeServiceAuthority as Record<string, unknown>;
+  const preMutation = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(status.preMutationLoadedRuntimeServiceAuthority);
   if (preMutation.currentEntryOperationRef !== status.operationRef || preMutation.currentEntryOperationHash !== status.operationHash || preMutation.preMutationLoadedRuntimeServiceAuthorityRef !== status.preMutationLoadedRuntimeServiceAuthorityRef || preMutation.preMutationLoadedRuntimeServiceAuthorityHash !== status.preMutationLoadedRuntimeServiceAuthorityHash) currentEntryFail("current-entry pre-mutation runtime authority is crossed");
 
   const rebindRequired = status.state !== "operation_prepared" && status.state !== "pre_schema_spawner_rebinding";
@@ -19889,15 +20978,12 @@ async function resolveTask12PredecessorAuthorityPairV1(
     const exact = requirePair(pair, "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash", TASK12_PRE_MUTATION_PREFIX_V1);
     const hash = String(exact.preMutationLoadedRuntimeServiceAuthorityHash);
     const target = task12PredecessorPreMutationLoadedRuntimeServiceAuthorityPathV1(context, hash);
-    const value = strictCanonicalRecord(readTask12ReceiptStoreBytesV1(target), "pre-mutation loaded runtime service authority");
-    const body = { ...value }; delete body.preMutationLoadedRuntimeServiceAuthorityRef; delete body.preMutationLoadedRuntimeServiceAuthorityHash;
+    const value = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(strictCanonicalRecord(readTask12ReceiptStoreBytesV1(target), "pre-mutation loaded runtime service authority"));
     if (
-      !hasExactKeys(value, ["schema", "currentEntryOperationRef", "currentEntryOperationHash", "observedServiceCensusHash", "spawner", "dashboard", "missionControl", "openClaw", "serviceProjectionSetHash", "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash"])
-      || value.schema !== "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v1"
-      || value.preMutationLoadedRuntimeServiceAuthorityRef !== exact.preMutationLoadedRuntimeServiceAuthorityRef
+      value.preMutationLoadedRuntimeServiceAuthorityRef !== exact.preMutationLoadedRuntimeServiceAuthorityRef
       || value.preMutationLoadedRuntimeServiceAuthorityHash !== hash
-      || hashCanonicalJson(body) !== hash
     ) currentEntryFail("pre-mutation loaded runtime service authority is crossed");
+    await openTask12ColdSpawnerPredecessorHistoryV1(value);
     return resolvedRecord(value);
   }
   if (name === "postPredecessorTerminationLegacyZeroOwnerObservation" || name === "freshLegacyZeroOwnerObservation") return resolvedRecord(await resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(pair as Readonly<{ observationRef: string; observationHash: string }>));
@@ -19968,6 +21054,7 @@ async function resolveTask12PredecessorAuthorityPairV1(
 type Task12AuthenticatedPredecessorGraphV1 = Readonly<{
   orderedPairs: readonly Readonly<{ name: string; pair: Readonly<Record<string, unknown>> }>[];
   nodes: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  assertColdHistory(): void;
 }>;
 
 function resolveTask12SpawnerProcessIdentityV1(
@@ -19977,7 +21064,7 @@ function resolveTask12SpawnerProcessIdentityV1(
 ): Readonly<Record<string, unknown>> {
   const hash = requireSha256(hashValue, `${label} content hash`);
   if (ref !== `setfarm://internal-production/spawner-process-identity/sha256/${hash}`) currentEntryFail(`${label} pair is crossed`);
-  const target = path.join(fixedRepositoryRoot(), "data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", hash.slice(0, 2), `${hash}.json`);
+  const target = fixedWorkspaceAuthorityPathV1("data/internal-production-baseline/pre-schema-spawner-rebind-v1/records/process-identity/sha256", hash.slice(0, 2), `${hash}.json`);
   const value = strictCanonicalRecord(readTask12ReceiptStoreBytesV1(target), label);
   if (
     !hasExactKeys(value, ["schema", "pid", "processStartTimeEpochMs", "processIdentityHash"])
@@ -20019,12 +21106,10 @@ function requireTask12PredecessorGraphRelationsV1(
   const source = requireSource(operation.controllerSource);
   const sourceMatches = (body: Readonly<Record<string, unknown>>, prefix: string): boolean => body[`${prefix}SourceSha`] === source.sha && body[`${prefix}TreeHash`] === source.treeHash && body[`${prefix}BuildHash`] === source.buildHash;
 
-  const preMutation = node("preMutationLoadedRuntimeServiceAuthority");
+  const preMutation = requireTask12PreMutationLoadedRuntimeServiceAuthorityV1(node("preMutationLoadedRuntimeServiceAuthority"));
   if (!operationMatches(preMutation)) currentEntryFail("pre-mutation loaded runtime service authority operation is crossed");
   if (!isPlainRecord(status.preMutationLoadedRuntimeServiceAuthority) || !exact(preMutation, status.preMutationLoadedRuntimeServiceAuthority)) currentEntryFail("pre-mutation loaded runtime service authority external/embedded body is crossed");
   const preMutationCensus = requireExactPoisonPostVisibleServiceCensusEffectV1(Object.freeze({ schema: "setfarm.internal-production-service-census.v1", spawner: preMutation.spawner, dashboard: preMutation.dashboard, missionControl: preMutation.missionControl, openClaw: preMutation.openClaw, censusHash: preMutation.observedServiceCensusHash }));
-  const preMutationProjection = Object.freeze({ schema: preMutation.schema, currentEntryOperationRef: preMutation.currentEntryOperationRef, currentEntryOperationHash: preMutation.currentEntryOperationHash, observedServiceCensusHash: preMutationCensus.censusHash, spawner: preMutationCensus.spawner, dashboard: preMutationCensus.dashboard, missionControl: preMutationCensus.missionControl, openClaw: preMutationCensus.openClaw });
-  if (preMutation.serviceProjectionSetHash !== hashCanonicalJson(preMutationProjection)) currentEntryFail("pre-mutation loaded runtime service projection hash is crossed");
 
   const preDispatchLegacy = node("preDispatchLegacyZeroOwnerObservation");
   const authorization = node("preSchemaSpawnerRebindAuthorization");
@@ -20034,16 +21119,28 @@ function requireTask12PredecessorGraphRelationsV1(
   const startup = node("preSchemaSpawnerStartupToken");
   if (!operationMatches(startup) || !matches(startup, "preSchemaSpawnerRebindAuthorizationRef", "preSchemaSpawnerRebindAuthorizationHash", "preSchemaSpawnerRebindAuthorization", "authorizationRef", "authorizationHash") || !sourceMatches(startup, "task0Spawner") || startup.predecessorSpawnerServiceIdentityHash !== authorization.predecessorSpawnerServiceIdentityHash || startup.predecessorSpawnerGenerationHash !== authorization.predecessorSpawnerGenerationHash) currentEntryFail("pre-schema startup-token graph is crossed");
   const restart = node("preSchemaSpawnerRestartAuthority");
-  if (!operationMatches(restart) || !matches(restart, "preSchemaSpawnerRebindAuthorizationRef", "preSchemaSpawnerRebindAuthorizationHash", "preSchemaSpawnerRebindAuthorization", "authorizationRef", "authorizationHash") || !matches(restart, "startupTokenRef", "startupTokenHash", "preSchemaSpawnerStartupToken") || !sourceMatches(restart, "targetSpawner") || restart.predecessorSpawnerProcessIdentityRef !== startup.predecessorSpawnerProcessIdentityRef || restart.predecessorSpawnerProcessIdentityHash !== startup.predecessorSpawnerProcessIdentityHash || restart.predecessorSpawnerServiceIdentityHash !== startup.predecessorSpawnerServiceIdentityHash || restart.predecessorSpawnerGenerationHash !== startup.predecessorSpawnerGenerationHash || restart.executable !== "/bin/launchctl" || !exact(restart.argv, ["kickstart", "-k", `gui/${String(restart.uid)}/com.setrox.setfarm-spawner`])) currentEntryFail("pre-schema restart-authority graph is crossed");
+  if (!operationMatches(restart) || !matches(restart, "preSchemaSpawnerRebindAuthorizationRef", "preSchemaSpawnerRebindAuthorizationHash", "preSchemaSpawnerRebindAuthorization", "authorizationRef", "authorizationHash") || !matches(restart, "startupTokenRef", "startupTokenHash", "preSchemaSpawnerStartupToken") || !sourceMatches(restart, "targetSpawner") || restart.predecessorSpawnerProcessIdentityRef !== startup.predecessorSpawnerProcessIdentityRef || restart.predecessorSpawnerProcessIdentityHash !== startup.predecessorSpawnerProcessIdentityHash || restart.predecessorSpawnerServiceIdentityHash !== startup.predecessorSpawnerServiceIdentityHash || restart.predecessorSpawnerGenerationHash !== startup.predecessorSpawnerGenerationHash) currentEntryFail("pre-schema restart-authority graph is crossed");
+  if (restart.schema === "setfarm.internal-production-pre-schema-spawner-restart-authority.v1") {
+    if (restart.executable !== "/bin/launchctl" || !exact(restart.argv, ["kickstart", "-k", `gui/${String(restart.uid)}/com.setrox.setfarm-spawner`])) currentEntryFail("pre-schema restart-authority graph is crossed");
+  } else if (restart.schema !== "setfarm.internal-production-pre-schema-spawner-restart-authority.v2"
+    || !matches(restart, "preMutationLoadedRuntimeServiceAuthorityRef", "preMutationLoadedRuntimeServiceAuthorityHash", "preMutationLoadedRuntimeServiceAuthority")
+    || restart.transport !== "direct-detached-node-v1" || restart.terminationSignal !== "SIGTERM"
+    || restart.maximumTerminationDispatchCount !== 1 || restart.maximumSpawnDispatchCount !== 1) currentEntryFail("pre-schema direct restart-authority graph is crossed");
   const currentUid = process.getuid?.();
   if (!Number.isSafeInteger(currentUid) || (currentUid as number) < 0) currentEntryFail("current-entry current host uid is unavailable");
-  if (restart.uid !== currentUid || !exact(restart.argv, ["kickstart", "-k", `gui/${String(currentUid)}/com.setrox.setfarm-spawner`])) currentEntryFail("pre-schema restart-authority current uid is crossed");
+  if (restart.uid !== currentUid || (restart.schema === "setfarm.internal-production-pre-schema-spawner-restart-authority.v1" && !exact(restart.argv, ["kickstart", "-k", `gui/${String(currentUid)}/com.setrox.setfarm-spawner`]))) currentEntryFail("pre-schema restart-authority current uid is crossed");
   const predecessor = node("predecessorTerminationObservation");
   if (!operationMatches(predecessor) || !matches(predecessor, "preSchemaSpawnerRebindAuthorizationRef", "preSchemaSpawnerRebindAuthorizationHash", "preSchemaSpawnerRebindAuthorization", "authorizationRef", "authorizationHash") || !matches(predecessor, "startupTokenRef", "startupTokenHash", "preSchemaSpawnerStartupToken") || !matches(predecessor, "restartAuthorityRef", "restartAuthorityHash", "preSchemaSpawnerRestartAuthority") || predecessor.predecessorSpawnerProcessIdentityRef !== startup.predecessorSpawnerProcessIdentityRef || predecessor.predecessorSpawnerProcessIdentityHash !== startup.predecessorSpawnerProcessIdentityHash || predecessor.predecessorSpawnerServiceIdentityHash !== startup.predecessorSpawnerServiceIdentityHash || predecessor.predecessorSpawnerGenerationHash !== startup.predecessorSpawnerGenerationHash) currentEntryFail("pre-schema predecessor-termination graph is crossed");
   const replacement = node("replacementProcessObservation");
   if (!operationMatches(replacement) || !matches(replacement, "preSchemaSpawnerRebindAuthorizationRef", "preSchemaSpawnerRebindAuthorizationHash", "preSchemaSpawnerRebindAuthorization", "authorizationRef", "authorizationHash") || !matches(replacement, "startupTokenRef", "startupTokenHash", "preSchemaSpawnerStartupToken") || !matches(replacement, "restartAuthorityRef", "restartAuthorityHash", "preSchemaSpawnerRestartAuthority") || !matches(replacement, "predecessorTerminationObservationRef", "predecessorTerminationObservationHash", "predecessorTerminationObservation") || !sourceMatches(replacement, "actualSpawner") || replacement.replacementSpawnerProcessIdentityHash === startup.predecessorSpawnerProcessIdentityHash || replacement.replacementSpawnerServiceIdentityHash !== startup.predecessorSpawnerServiceIdentityHash || replacement.actualSpawnerGenerationHash !== startup.predecessorSpawnerGenerationHash) currentEntryFail("pre-schema replacement-process graph is crossed");
   const predecessorIdentity = node("predecessorSpawnerProcessIdentity");
   const replacementIdentity = node("replacementSpawnerProcessIdentity");
+  if (preMutation.schema === "setfarm.internal-production-pre-mutation-loaded-runtime-service-projection-set.v2") {
+    const coldSpawner = preMutationCensus.spawner as Readonly<Record<string, unknown>>;
+    if (coldSpawner.pid !== predecessorIdentity.pid || coldSpawner.processStartTimeEpochMs !== predecessorIdentity.processStartTimeEpochMs
+      || coldSpawner.processIdentityHash !== predecessorIdentity.processIdentityHash || coldSpawner.serviceIdentityHash !== startup.predecessorSpawnerServiceIdentityHash
+      || coldSpawner.generationHash !== startup.predecessorSpawnerGenerationHash) currentEntryFail("cold pre-mutation spawner predecessor is crossed");
+  }
   if (restart.predecessorSpawnerProcessIdentityRef !== startup.predecessorSpawnerProcessIdentityRef || restart.predecessorSpawnerProcessIdentityHash !== startup.predecessorSpawnerProcessIdentityHash || predecessor.predecessorSpawnerProcessIdentityRef !== startup.predecessorSpawnerProcessIdentityRef || predecessor.predecessorSpawnerProcessIdentityHash !== startup.predecessorSpawnerProcessIdentityHash || predecessorIdentity.processIdentityHash === replacementIdentity.processIdentityHash || replacement.differsFromPredecessorProcessIdentity !== true) currentEntryFail("pre-schema process-identity graph is crossed");
   const loadedRuntime = node("loadedRuntimeServiceAuthority");
   const loadedSpawner = loadedRuntime.spawner;
@@ -20071,6 +21168,7 @@ function requireTask12PredecessorGraphRelationsV1(
   if (!matches(postLegacy, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "authorityV3Migration31Audit") || !sourceMatches(postLegacy, "cleanSetfarm") || postLegacy.observedSpawnerGenerationHash !== replacement.actualSpawnerGenerationHash) currentEntryFail("post-termination legacy zero-owner graph is crossed");
   const freshLegacy = node("freshLegacyZeroOwnerObservation");
   if (!matches(freshLegacy, "authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "authorityV3Migration31Audit") || !sourceMatches(freshLegacy, "cleanSetfarm") || freshLegacy.observedSpawnerGenerationHash !== replacement.actualSpawnerGenerationHash || !exact(freshLegacy.census, postLegacy.census)) currentEntryFail("fresh legacy zero-owner graph is crossed");
+  requireLegacyFindingPublicationInventoryContinuityV1(requireLegacyZeroVersionedFieldsV1(postLegacy), requireLegacyZeroVersionedFieldsV1(freshLegacy));
   const sealed = node("preSchemaSpawnerSealedAdmission");
   if (!operationMatches(sealed) || !matches(sealed, "preSchemaSpawnerRebindAuthorizationRef", "preSchemaSpawnerRebindAuthorizationHash", "preSchemaSpawnerRebindAuthorization", "authorizationRef", "authorizationHash") || !matches(sealed, "startupTokenRef", "startupTokenHash", "preSchemaSpawnerStartupToken") || !matches(sealed, "preSchemaSpawnerRestartAuthorityRef", "preSchemaSpawnerRestartAuthorityHash", "preSchemaSpawnerRestartAuthority", "restartAuthorityRef", "restartAuthorityHash") || !matches(sealed, "predecessorTerminationObservationRef", "predecessorTerminationObservationHash", "predecessorTerminationObservation") || !matches(sealed, "replacementProcessObservationRef", "replacementProcessObservationHash", "replacementProcessObservation") || !matches(sealed, "postPredecessorTerminationLegacyZeroOwnerObservationRef", "postPredecessorTerminationLegacyZeroOwnerObservationHash", "postPredecessorTerminationLegacyZeroOwnerObservation", "observationRef", "observationHash") || sealed.currentSpawnerGenerationHash !== replacement.actualSpawnerGenerationHash) currentEntryFail("pre-schema sealed-admission graph is crossed");
   const ready = node("task0SpawnerAdmissionReady");
@@ -20163,6 +21261,7 @@ async function authenticateTask12EntryAuthorityPredecessorPairsV1(
 ): Promise<Task12AuthenticatedPredecessorGraphV1> {
   const orderedPairs: Array<Readonly<{ name: string; pair: Readonly<Record<string, unknown>> }>> = [];
   const nodes: Record<string, Readonly<Record<string, unknown>>> = Object.create(null) as Record<string, Readonly<Record<string, unknown>>>;
+  let assertColdHistory: () => void = () => {};
   for (const [name, refKey, hashKey, prefix] of TASK12_RESOLVED_PAIR_SPECS_V1) {
     const member = authority[name];
     const pairInput = name === "loadedRuntimeServiceAuthority" && isPlainRecord(member)
@@ -20171,6 +21270,7 @@ async function authenticateTask12EntryAuthorityPredecessorPairsV1(
     const pair = requirePair(pairInput, refKey, hashKey, prefix);
     const exactPair = recursivelyFreeze({ [refKey]: pair[refKey], [hashKey]: pair[hashKey] });
     nodes[name] = await resolveTask12PredecessorAuthorityPairV1(context, name, exactPair, authority);
+    if (name === "preMutationLoadedRuntimeServiceAuthority") assertColdHistory = await openTask12ColdSpawnerPredecessorHistoryV1(nodes[name]);
     orderedPairs.push(Object.freeze({ name, pair: exactPair }));
   }
   const authorization = nodes.preSchemaSpawnerRebindAuthorization;
@@ -20188,8 +21288,12 @@ async function authenticateTask12EntryAuthorityPredecessorPairsV1(
   nodes.recoverySourcePendingInput = await resolveInternalProductionRecoverySourceBootstrapPendingInputWithSelectedCurrentEntryStoreContextV1(context, requirePair({ pendingInputRef: nodes.recoverySourceOperation.pendingInputRef, pendingInputHash: nodes.recoverySourceOperation.pendingInputHash }, "pendingInputRef", "pendingInputHash", "setfarm://internal-production/recovery-source-bootstrap-pending-input/sha256/") as Readonly<{ pendingInputRef: string; pendingInputHash: string }>);
   nodes.terminalRunLaunch = await resolveInternalProductionRecoveryRunLaunchTerminalAuthorityWithSelectedCurrentEntryStoreContextV1(context, requirePair({ terminalRunLaunchRef: targetClose.terminalRunLaunchRef, terminalRunLaunchHash: targetClose.terminalRunLaunchHash }, "terminalRunLaunchRef", "terminalRunLaunchHash", "setfarm://internal-production/recovery-run-launch-terminal-authority/sha256/") as Readonly<{ terminalRunLaunchRef: string; terminalRunLaunchHash: string }>);
   if (orderedPairs.length !== TASK12_RESOLVED_PAIR_SPECS_V1.length) currentEntryFail("current-entry predecessor authority set cardinality is invalid");
-  const graph = recursivelyFreeze({ orderedPairs, nodes });
+  const graph = recursivelyFreeze({ orderedPairs, nodes, assertColdHistory });
   requireTask12PredecessorGraphRelationsV1(authority, status, graph);
+  if (nodes.preSchemaSpawnerRestartAuthority!.schema === "setfarm.internal-production-pre-schema-spawner-restart-authority.v2") {
+    await authenticatePreSchemaRestartTransportAtReceiptV1(nodes.preSchemaSpawnerRestartAuthority!, startup, nodes.currentEntryOperation!, graph.assertColdHistory, nodes.preMutationLoadedRuntimeServiceAuthority!);
+  }
+  graph.assertColdHistory();
   return graph;
 }
 
@@ -20212,6 +21316,7 @@ async function resolveInternalProductionCurrentEntryVerificationWithSelectedCurr
   const entryAuthority = requirePair(verification.entryAuthority, "entryAuthorityRef", "entryAuthorityHash", TASK12_AUTHORITY_PREFIX_V1) as InternalProductionCurrentEntryAuthorityPairV1;
   const freshPair = requirePair(verification.freshRuntimeAndOwnerObservation, "freshRuntimeAndOwnerObservationRef", "freshRuntimeAndOwnerObservationHash", TASK12_FRESH_OBSERVATION_PREFIX_V1) as Readonly<{ freshRuntimeAndOwnerObservationRef: string; freshRuntimeAndOwnerObservationHash: string }>;
   const fresh = authenticatedFresh ?? await resolveTask12FreshCoreV1(context, freshPair);
+  fresh.predecessorGraph.assertColdHistory();
   if (canonicalComparable(fresh.currentEntryStatus) !== canonicalComparable(currentEntryStatus) || canonicalComparable(fresh.entryAuthority) !== canonicalComparable(entryAuthority)) currentEntryFail("current-entry verification fresh observation is crossed");
   const orderedPairs = deriveTask12ResolvedAuthorityPairsV1(
     fresh.predecessorGraph,
@@ -20223,6 +21328,7 @@ async function resolveInternalProductionCurrentEntryVerificationWithSelectedCurr
   if (hashCanonicalJson(orderedPairs) !== verification.resolvedAuthoritySetHash) currentEntryFail("current-entry verification resolved authority set is crossed");
   const freshServices = await observeInternalProductionServiceCensusV1();
   const freshOwners = await observeCompleteInternalProductionZeroOwnerCensusV1();
+  fresh.predecessorGraph.assertColdHistory();
   if (canonicalComparable(freshServices) !== canonicalComparable(fresh.value.serviceCensus) || canonicalComparable(freshOwners) !== canonicalComparable(fresh.value.completeZeroOwnerCensusObservationBody)) currentEntryFail("current-entry verification runtime/owner evidence is stale");
   return verification;
 }
@@ -20279,6 +21385,7 @@ async function resolveTask12FreshCoreV1(
   ) currentEntryFail("current-entry authority complete-zero observation is crossed");
   const zero = await resolveInternalProductionCompleteZeroOwnerCensusObservationV1(authorityZeroPair as Readonly<{ observationRef: string; observationHash: string }>);
   if (canonicalComparable(zero) !== canonicalComparable(value.completeZeroOwnerCensusObservationBody)) currentEntryFail("current-entry fresh complete-zero body is crossed");
+  predecessorGraph.assertColdHistory();
   return recursivelyFreeze({ value, currentEntryStatus, entryAuthority, status, authority, predecessorGraph });
 }
 
@@ -20300,6 +21407,69 @@ export async function resolveInternalProductionPreManifestMigration32Authorizati
   const value = await resolveTask12MigrationRecordV1(input, "consumptions", "consumptionRef", "consumptionHash", TASK12_MIGRATION_PREFIXES_V1.consumption, "migration-32 authorization consumption");
   if (!hasExactKeys(value as Record<string, unknown>, ["schema", "currentEntryOperationRef", "currentEntryOperationHash", "authorizationRef", "authorizationHash", "sealedSpawnerAdmissionRef", "sealedSpawnerAdmissionHash", "migrationId", "migrationOrdinal", "consumptionRef", "consumptionHash"]) || value.schema !== "setfarm.internal-production-pre-manifest-migration-32-authorization-consumption.v1" || value.migrationId !== "contract-spine-bootstrap-main-claim-handoff-v1" || value.migrationOrdinal !== 32) currentEntryFail("migration-32 consumption shape is invalid");
   return value;
+}
+
+/** Read-only historical evidence. The caller must anchor the application and source in its DB snapshot. */
+export async function resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1(
+  input: Readonly<{ migrationApplication: unknown; migrationSourceSha: string }>,
+): Promise<import("../findings/legacy-finding-publication-inventory-v1.js").LegacyFindingPublicationInventoryV1> {
+  if (!isPlainRecord(input) || !hasExactKeys(input, ["migrationApplication", "migrationSourceSha"]) || !isPlainRecord(input.migrationApplication)) currentEntryFail("legacy finding migration provenance shape is invalid");
+  const { validateOwnerAdmissionMigrationApplicationV1 } = await import("./owner-admission-head-v1.js");
+  const application = validateOwnerAdmissionMigrationApplicationV1(input.migrationApplication, requireSha256(input.migrationApplication.evidenceHash, "migration application evidence hash"));
+  const authorization = await resolveInternalProductionPreManifestMigration32AuthorizationV1({ authorizationRef: application.authorizationRef, authorizationHash: application.authorizationHash });
+  const consumption = await resolveInternalProductionPreManifestMigration32AuthorizationConsumptionV1({ consumptionRef: application.authorizationConsumptionRef, consumptionHash: application.authorizationConsumptionHash });
+  for (const key of ["authorizationRef", "authorizationHash", "currentEntryOperationRef", "currentEntryOperationHash", "sealedSpawnerAdmissionRef", "sealedSpawnerAdmissionHash"] as const) {
+    if (consumption[key] !== authorization[key]) currentEntryFail("legacy finding migration consumption is crossed");
+  }
+  for (const [refKey, hashKey, prefix] of [
+    ["currentEntryOperationRef", "currentEntryOperationHash", "setfarm://internal-production/current-entry-operation/sha256/"],
+    ["sealedSpawnerAdmissionRef", "sealedSpawnerAdmissionHash", "setfarm://internal-production/pre-schema-spawner-sealed-admission/sha256/"],
+    ["authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "setfarm://internal-production/authority-v3-migration31-audit/sha256/"],
+    ["pendingBootstrapHandoffMigrationRef", "pendingBootstrapHandoffMigrationHash", "setfarm://internal-production/pending-bootstrap-handoff-migration/sha256/"],
+  ] as const) requirePair({ [refKey]: authorization[refKey], [hashKey]: authorization[hashKey] }, refKey, hashKey, prefix);
+  const source = requireSource({ branch: "main", clean: true, sha: authorization.cleanSetfarmSourceSha, treeHash: authorization.cleanSetfarmTreeHash, buildHash: authorization.cleanSetfarmBuildHash, originMainSha: authorization.cleanSetfarmSourceSha });
+  if (requireGitHash(input.migrationSourceSha, "migration source SHA") !== source.sha) currentEntryFail("legacy finding migration source is crossed");
+  // Preserve the exact 22-field migration-32 projection; historical evidence is never minted here.
+  const evidence = {
+    schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-evidence.v1",
+    purpose: "task6a-guarded-migration-32-after-sealed-spawner-v1",
+    currentEntryOperationRef: authorization.currentEntryOperationRef,
+    currentEntryOperationHash: authorization.currentEntryOperationHash,
+    sealedSpawnerAdmissionRef: authorization.sealedSpawnerAdmissionRef,
+    sealedSpawnerAdmissionHash: authorization.sealedSpawnerAdmissionHash,
+    postPredecessorTerminationLegacyZeroOwnerObservationRef: authorization.postPredecessorTerminationLegacyZeroOwnerObservationRef,
+    postPredecessorTerminationLegacyZeroOwnerObservationHash: authorization.postPredecessorTerminationLegacyZeroOwnerObservationHash,
+    authorityV3Migration31AuditRef: authorization.authorityV3Migration31AuditRef,
+    authorityV3Migration31AuditHash: authorization.authorityV3Migration31AuditHash,
+    pendingBootstrapHandoffMigrationRef: authorization.pendingBootstrapHandoffMigrationRef,
+    pendingBootstrapHandoffMigrationHash: authorization.pendingBootstrapHandoffMigrationHash,
+    cleanSetfarmSourceSha: authorization.cleanSetfarmSourceSha,
+    cleanSetfarmTreeHash: authorization.cleanSetfarmTreeHash,
+    cleanSetfarmBuildHash: authorization.cleanSetfarmBuildHash,
+    migrationSourceSha: source.sha,
+    freshLegacyZeroOwnerObservationRef: authorization.freshLegacyZeroOwnerObservationRef,
+    freshLegacyZeroOwnerObservationHash: authorization.freshLegacyZeroOwnerObservationHash,
+    preManifestMigration32AuthorizationRef: authorization.authorizationRef,
+    preManifestMigration32AuthorizationHash: authorization.authorizationHash,
+    preManifestMigration32AuthorizationConsumptionRef: consumption.consumptionRef,
+    preManifestMigration32AuthorizationConsumptionHash: consumption.consumptionHash,
+  };
+  if (hashCanonicalJson(evidence) !== application.evidenceHash) currentEntryFail("legacy finding migration evidence is crossed");
+  const legacy = [];
+  for (const prefix of ["postPredecessorTerminationLegacyZeroOwnerObservation", "freshLegacyZeroOwnerObservation"] as const) {
+    const pair = requirePair({ observationRef: authorization[`${prefix}Ref`], observationHash: authorization[`${prefix}Hash`] }, "observationRef", "observationHash", LEGACY_ZERO_PREFIX_V1) as InternalProductionLegacyPreManifestZeroOwnerObservationPairV1;
+    const value = await resolveInternalProductionLegacyPreManifestZeroOwnerObservationV1(pair);
+    for (const key of ["authorityV3Migration31AuditRef", "authorityV3Migration31AuditHash", "cleanSetfarmSourceSha", "cleanSetfarmTreeHash", "cleanSetfarmBuildHash"] as const) {
+      if (value[key] !== authorization[key]) currentEntryFail("legacy finding observation migration authority is crossed");
+    }
+    legacy.push(value);
+  }
+  const [post, fresh] = legacy;
+  if (!post || !fresh || canonicalComparable(post.census) !== canonicalComparable(fresh.census) || post.observedSpawnerGenerationHash !== fresh.observedSpawnerGenerationHash) currentEntryFail("legacy finding observation bracket drifted");
+  const postInventory = requireLegacyZeroVersionedFieldsV1(post);
+  const freshInventory = requireLegacyZeroVersionedFieldsV1(fresh);
+  requireLegacyFindingPublicationInventoryContinuityV1(postInventory, freshInventory);
+  return postInventory ?? createLegacyFindingPublicationInventoryValueV1([]);
 }
 
 export async function resolveInternalProductionBaselineBootstrapHandoffMigrationReceiptV1(
@@ -20423,7 +21593,7 @@ async function prepareInternalProductionPreManifestMigration32AuthorizationForOp
   const status = await (observeStatus as () => Promise<Record<string, unknown>>)();
   if (status.state !== "pre_manifest_bootstrap_sealed" || !isPlainRecord(status.currentEntryOperation) || !isPlainRecord(status.sealedAdmission)) currentEntryFail("sealed spawner admission is unavailable");
   if (status.currentEntryOperation.operationRef !== operation.operationRef || status.currentEntryOperation.operationHash !== operation.operationHash) currentEntryFail("sealed spawner operation is crossed");
-  const sealed = await (resolveSealed as (input: unknown) => Promise<Record<string, unknown>>)(status.sealedAdmission);
+  const sealed = await (resolveSealed as (input: unknown) => Promise<Record<string, unknown>>)({ sealedAdmissionRef: status.sealedAdmission.sealedAdmissionRef, sealedAdmissionHash: status.sealedAdmission.sealedAdmissionHash });
   const postZeroPair = {
     observationRef: String(sealed.postPredecessorTerminationLegacyZeroOwnerObservationRef),
     observationHash: String(sealed.postPredecessorTerminationLegacyZeroOwnerObservationHash),
@@ -20431,6 +21601,7 @@ async function prepareInternalProductionPreManifestMigration32AuthorizationForOp
   const postZero = await resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1(context, postZeroPair);
   const freshZero = await observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1(context, operation);
   if (canonicalComparable(postZero.census) !== canonicalComparable(freshZero.census) || postZero.observedSpawnerGenerationHash !== freshZero.observedSpawnerGenerationHash) currentEntryFail("legacy zero-owner reobservation drifted");
+  requireLegacyFindingPublicationInventoryContinuityV1(requireLegacyZeroVersionedFieldsV1(postZero), requireLegacyZeroVersionedFieldsV1(freshZero));
   const body = {
     schema: "setfarm.internal-production-pre-manifest-migration-32-authorization.v1",
     purpose: "task6a-guarded-migration-32-after-sealed-spawner-v1",
@@ -20491,6 +21662,11 @@ async function applyInternalProductionBaselineBootstrapHandoffMigrationForOperat
   try {
     const fresh = await observeInternalProductionLegacyPreManifestZeroOwnerForOperationV1(context, operation);
     if (fresh.observationRef !== authorization.freshLegacyZeroOwnerObservationRef || fresh.observationHash !== authorization.freshLegacyZeroOwnerObservationHash) currentEntryFail("migration-32 final zero observation changed");
+    const postZero = await resolveInternalProductionLegacyPreManifestZeroOwnerObservationWithSelectedCurrentEntryStoreContextV1(context, {
+      observationRef: String(authorization.postPredecessorTerminationLegacyZeroOwnerObservationRef),
+      observationHash: String(authorization.postPredecessorTerminationLegacyZeroOwnerObservationHash),
+    });
+    requireLegacyFindingPublicationInventoryContinuityV1(requireLegacyZeroVersionedFieldsV1(postZero), requireLegacyZeroVersionedFieldsV1(fresh));
     if (observed.state === "consumed") {
       if (!isPlainRecord(observed.consumption)) currentEntryFail("migration-32 consumed prefix is incomplete");
       consumptionPair = { consumptionRef: String(observed.consumption.consumptionRef), consumptionHash: String(observed.consumption.consumptionHash) };
@@ -20549,7 +21725,7 @@ async function applyInternalProductionBaselineBootstrapHandoffMigrationForOperat
   if (typeof observeStartup !== "function" || typeof resolveSealed !== "function") currentEntryFail("migration receipt sealed ports are unavailable");
   const startupStatus = await (observeStartup as () => Promise<Record<string, unknown>>)();
   if (!isPlainRecord(startupStatus.authorization) || !isPlainRecord(startupStatus.startupToken) || !isPlainRecord(startupStatus.restartAuthority) || !isPlainRecord(startupStatus.dispatchPrefix) || !isPlainRecord(startupStatus.sealedAdmission)) currentEntryFail("migration receipt startup prefix is incomplete");
-  const sealed = await (resolveSealed as (value: unknown) => Promise<Record<string, unknown>>)(startupStatus.sealedAdmission);
+  const sealed = await (resolveSealed as (value: unknown) => Promise<Record<string, unknown>>)({ sealedAdmissionRef: startupStatus.sealedAdmission.sealedAdmissionRef, sealedAdmissionHash: startupStatus.sealedAdmission.sealedAdmissionHash });
   const pendingSuccessor = pending.pendingSuccessor as Record<string, unknown>;
   const schemaProjection = result.schemaProjection as Record<string, unknown>;
   const receiptBody = {
@@ -21377,6 +22553,7 @@ export async function resumeActiveInternalProductionRecoverySourceBootstrapRunV1
 
 export async function resumeInternalProductionCurrentEntryAuthorityV1(
 ): Promise<InternalProductionCurrentEntryAuthorityStatusV1> {
+  await resumeExactPoisonQuarantineBeforeSelectionV1();
   const context = await selectCurrentEntryStoreContextV1();
   const operation = await observePreparedInternalProductionCurrentEntryOperationWithSelectedCurrentEntryStoreContextV1(context);
   if (!operation) currentEntryFail("CURRENT_ENTRY_UNAVAILABLE");
@@ -21426,6 +22603,7 @@ export async function verifyCurrentInternalProductionCurrentEntryV1(
   const context = await selectCurrentEntryStoreContextV1();
   const status = await observeInternalProductionCurrentEntryAuthorityStatusWithSelectedCurrentEntryStoreContextV1(context);
   if (status.state !== "ready" || !status.entryAuthority || typeof status.entryAuthority !== "object") currentEntryFail("current entry is not ready");
+  const assertColdHistory = await openTask12ColdSpawnerPredecessorHistoryV1(status.preMutationLoadedRuntimeServiceAuthority);
   const pair = status.entryAuthority as InternalProductionCurrentEntryAuthorityPairV1;
   const authority = await resolveInternalProductionCurrentEntryAuthorityWithSelectedCurrentEntryStoreContextV1(context, pair);
   const serviceCensus = await observeInternalProductionServiceCensusV1();
@@ -21452,7 +22630,9 @@ export async function verifyCurrentInternalProductionCurrentEntryV1(
   const freshRuntimeAndOwnerObservationHash = hashCanonicalJson(freshBody);
   const freshRuntimeAndOwnerObservationRef = `${TASK12_FRESH_OBSERVATION_PREFIX_V1}${freshRuntimeAndOwnerObservationHash}`;
   const freshValue = recursivelyFreeze({ ...freshBody, freshRuntimeAndOwnerObservationRef, freshRuntimeAndOwnerObservationHash });
-  publishLegacyZeroRecordV1(task12RecordPathV1(context, "fresh-runtime-and-owner-observations", freshRuntimeAndOwnerObservationHash), await canonicalRecordBytes(freshValue));
+  const freshBytes = await canonicalRecordBytes(freshValue);
+  assertColdHistory();
+  publishLegacyZeroRecordV1(task12RecordPathV1(context, "fresh-runtime-and-owner-observations", freshRuntimeAndOwnerObservationHash), freshBytes);
   const authenticatedFresh = await resolveTask12FreshCoreV1(context, { freshRuntimeAndOwnerObservationRef, freshRuntimeAndOwnerObservationHash });
   const orderedPairs = deriveTask12ResolvedAuthorityPairsV1(authenticatedFresh.predecessorGraph, pair, currentEntryStatus, completeZeroOwnerCensusObservation, { freshRuntimeAndOwnerObservationRef, freshRuntimeAndOwnerObservationHash });
   const resolvedAuthoritySetHash = hashCanonicalJson(orderedPairs);
@@ -21460,7 +22640,9 @@ export async function verifyCurrentInternalProductionCurrentEntryV1(
   const currentEntryVerificationHash = hashCanonicalJson(body);
   const currentEntryVerificationRef = `${TASK12_VERIFICATION_PREFIX_V1}${currentEntryVerificationHash}`;
   const value = recursivelyFreeze({ ...body, currentEntryVerificationRef, currentEntryVerificationHash });
-  publishLegacyZeroRecordV1(task12RecordPathV1(context, "verifications", currentEntryVerificationHash), await canonicalRecordBytes(value));
+  const verificationBytes = await canonicalRecordBytes(value);
+  authenticatedFresh.predecessorGraph.assertColdHistory();
+  publishLegacyZeroRecordV1(task12RecordPathV1(context, "verifications", currentEntryVerificationHash), verificationBytes);
   return resolveInternalProductionCurrentEntryVerificationWithSelectedCurrentEntryStoreContextV1(context, { currentEntryVerificationRef, currentEntryVerificationHash }, authenticatedFresh);
 }
 

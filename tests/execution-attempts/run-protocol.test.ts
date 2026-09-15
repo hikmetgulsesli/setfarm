@@ -2020,7 +2020,36 @@ describe("run-pinned product compiler protocol", () => {
       1,
     );
     assert.match(dbSource, /observeInternalProductionPreSchemaSpawnerRebindStatusV1\(\)/);
-    assert.match(dbSource, /resolveInternalProductionTask0SpawnerAdmissionReadyV1\(status\.admissionReady\)/);
+    // Execute the production call: forwarding the stored body leaks extra keys
+    // and its noncanonical key order across the strict two-field resolver ABI.
+    const typescript = await import("typescript");
+    const dbTree = typescript.createSourceFile("db-pg.ts", dbSource, typescript.ScriptTarget.Latest, true);
+    const readinessFunction = dbTree.statements.find(statement =>
+      typescript.isFunctionDeclaration(statement) && statement.name?.text === "requireWorkflowRunAdmissionReadyV1");
+    assert.ok(readinessFunction);
+    const resolverCalls: import("typescript").CallExpression[] = [];
+    const visit = (node: import("typescript").Node): void => {
+      if (typescript.isCallExpression(node) && typescript.isPropertyAccessExpression(node.expression)
+        && node.expression.name.text === "resolveInternalProductionTask0SpawnerAdmissionReadyV1") resolverCalls.push(node);
+      typescript.forEachChild(node, visit);
+    };
+    visit(readinessFunction);
+    assert.equal(resolverCalls.length, 1);
+    const invokeResolver = new Function("module", "admissionReady", "status", `return ${typescript.transpileModule(
+      resolverCalls[0]!.getText(dbTree),
+      { compilerOptions: { target: typescript.ScriptTarget.ES2022 } },
+    ).outputText}`);
+    const storedReady = Object.freeze({ admissionReadyHash: "a".repeat(64), admissionReadyRef: "fixture-ready", state: "stored-body" });
+    const received: unknown[][] = [];
+    const resolvedReady = Object.freeze({ state: "resolved-fixture" });
+    assert.equal(await invokeResolver({
+      resolveInternalProductionTask0SpawnerAdmissionReadyV1: async (...args: unknown[]) => {
+        received.push(args);
+        return resolvedReady;
+      },
+    }, storedReady, { admissionReady: storedReady }), resolvedReady);
+    assert.deepEqual(received, [[{ admissionReadyRef: "fixture-ready", admissionReadyHash: "a".repeat(64) }]]);
+    assert.deepEqual(Reflect.ownKeys(received[0]![0] as object), ["admissionReadyRef", "admissionReadyHash"]);
     assert.match(dbSource, /Reflect\.ownKeys\(namespace\)/);
     assert.match(dbSource, /observeInternalProductionPreSchemaSpawnerRebindStatusV1\.length !== 0/);
     assert.match(dbSource, /resolveInternalProductionTask0SpawnerAdmissionReadyV1\.length !== 1/);

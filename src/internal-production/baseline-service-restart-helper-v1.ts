@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { authenticateInternalProductionBaselineWorkspaceAnchorV1 } from "./baseline-workspace-authority-path-v1.js";
+import { resolveInternalProductionBaselineAuthorityPathV1, resolveInternalProductionBaselineWorkspaceRootV1 } from "./baseline-workspace-authority-path-v1.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -79,7 +81,7 @@ function publishSettlement(settlementPath: string, value: unknown): void {
 function settlementAlreadyExists(settlementPath: string, expected: unknown): boolean {
   let directoryGuard: PrivateDirectoryGuardV1 | null = null;
   try {
-    directoryGuard = authenticatePrivateDirectoryChainV1(path.resolve(repositoryRoot()), path.dirname(settlementPath));
+    directoryGuard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), path.dirname(settlementPath));
     directoryGuard.assertStable();
     const descriptor = openSync(settlementPath, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
@@ -135,11 +137,13 @@ function authenticatePrivateDirectoryChainV1(anchor: string, target: string): Pr
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail("authority directory escapes the repository root");
   const segments = relative === "" ? [] : relative.split(path.sep);
   const paths = [anchor, ...segments.map((_, index) => path.join(anchor, ...segments.slice(0, index + 1)))];
+  const workspaceAnchor = authenticateInternalProductionBaselineWorkspaceAnchorV1();
   const descriptors: number[] = [];
   const held: Array<ReturnType<typeof fstatSync>> = [];
   let closed = false;
   const assertStable = (): void => {
     if (closed) fail("authority directory guard is closed");
+    workspaceAnchor.assertStable();
     for (const [index, current] of paths.entries()) {
       const after = lstatSync(current, { bigint: true });
       const descriptorAfter = fstatSync(descriptors[index]!, { bigint: true });
@@ -151,6 +155,7 @@ function authenticatePrivateDirectoryChainV1(anchor: string, target: string): Pr
         || descriptorAfter.mode !== observed.mode
       ) fail("authority directory changed while authenticated");
     }
+    workspaceAnchor.assertStable();
   };
   try {
     for (const [index, current] of paths.entries()) {
@@ -173,18 +178,18 @@ function authenticatePrivateDirectoryChainV1(anchor: string, target: string): Pr
       close: () => {
         if (closed) fail("authority directory guard is already closed");
         closed = true;
-        for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+        try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
       },
     });
   } catch (error) {
     closed = true;
-    for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+    try { for (const descriptor of descriptors.reverse()) closeSync(descriptor); } finally { workspaceAnchor.close(); }
     throw error;
   }
 }
 
 function ensurePrivateAuthorityDirectoryV1(directory: string): PrivateDirectoryGuardV1 {
-  const anchor = path.resolve(repositoryRoot());
+  const anchor = resolveInternalProductionBaselineWorkspaceRootV1();
   const target = path.resolve(directory);
   const relative = path.relative(anchor, target);
   if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail("authority directory escapes the repository root");
@@ -212,7 +217,7 @@ function authenticateCanonicalTransitionLock(fd: number): Readonly<{
   identity: Readonly<{ devDecimal: string; inoDecimal: string }>;
   transitionLock: Readonly<Record<string, unknown>>;
 }> {
-  const lockPath = path.join(repositoryRoot(), "data/internal-production-baseline/restart-authority-retirement-v1/physical-service-restart-authority.transition.lock");
+  const lockPath = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/restart-authority-retirement-v1/physical-service-restart-authority.transition.lock");
   const held = fstatSync(fd, { bigint: true });
   const pathStats = lstatSync(lockPath, { bigint: true });
   const reopened = openSync(lockPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -242,12 +247,13 @@ function authenticateCanonicalTransitionLock(fd: number): Readonly<{
   } finally { closeSync(reopened); }
 }
 
-function authenticateCanonicalJournalCapability(fd: number, journalPath = path.join(repositoryRoot(), "data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-journal.json")): Readonly<{ identity: Readonly<{ devDecimal: string; inoDecimal: string }>; bytes: Buffer }> {
-  const guard = authenticatePrivateDirectoryChainV1(path.resolve(repositoryRoot()), path.dirname(journalPath));
-  const held = fstatSync(fd, { bigint: true });
-  const atPath = lstatSync(journalPath, { bigint: true });
-  const reopened = openSync(journalPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+function authenticateCanonicalJournalCapability(fd: number, journalPath = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-journal.json")): Readonly<{ identity: Readonly<{ devDecimal: string; inoDecimal: string }>; bytes: Buffer }> {
+  const guard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), path.dirname(journalPath));
+  let reopened: number | undefined;
   try {
+    const held = fstatSync(fd, { bigint: true });
+    const atPath = lstatSync(journalPath, { bigint: true });
+    reopened = openSync(journalPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     guard.assertStable();
     const again = fstatSync(reopened, { bigint: true });
     const bytes = readFileSync(reopened);
@@ -255,13 +261,13 @@ function authenticateCanonicalJournalCapability(fd: number, journalPath = path.j
     guard.assertStable();
     return Object.freeze({ identity: Object.freeze({ devDecimal: held.dev.toString(10), inoDecimal: held.ino.toString(10) }), bytes });
   } finally {
-    closeSync(reopened);
-    try { guard.assertStable(); } finally { guard.close(); }
+    try { if (reopened !== undefined) closeSync(reopened); }
+    finally { try { guard.assertStable(); } finally { guard.close(); } }
   }
 }
 
 function helperSettlementPath(hash: string): string {
-  return path.join(repositoryRoot(), "data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-settlements/sha256", hash.slice(0, 2), `${hash}.json`);
+  return resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-settlements/sha256", hash.slice(0, 2), `${hash}.json`);
 }
 
 const BASELINE_ACTIONS = Object.freeze({
@@ -271,7 +277,7 @@ const BASELINE_ACTIONS = Object.freeze({
 } as const);
 
 function readStableBaselineAuthorityBytes(file: string, label: string): Buffer {
-  const guard = authenticatePrivateDirectoryChainV1(path.resolve(repositoryRoot()), path.dirname(file));
+  const guard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), path.dirname(file));
   try {
     guard.assertStable();
     const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -293,9 +299,9 @@ function readStableBaselineAuthorityBytes(file: string, label: string): Buffer {
 function readBaselineRestartOperation(pair: Record<string, unknown>): Readonly<Record<string, unknown>> {
   const operation = exactPair(pair, "operationRef", "operationHash");
   const operationHash = operation.operationHash as string;
-  const authorityRoot = path.join(repositoryRoot(), "data/internal-production-baseline/baseline-service-restart-v1");
+  const authorityRoot = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/baseline-service-restart-v1");
   const operationPath = path.join(authorityRoot, "operations/sha256", operationHash.slice(0, 2), `${operationHash}.json`);
-  const guard = authenticatePrivateDirectoryChainV1(path.resolve(repositoryRoot()), path.dirname(operationPath));
+  const guard = authenticatePrivateDirectoryChainV1(resolveInternalProductionBaselineWorkspaceRootV1(), path.dirname(operationPath));
   try {
     guard.assertStable();
     const descriptor = openSync(operationPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -341,7 +347,7 @@ function readBaselineRestartOperation(pair: Record<string, unknown>): Readonly<R
 }
 
 function baselineSettlementPath(hash: string): string {
-  return path.join(repositoryRoot(), "data/internal-production-baseline/restart-authority-retirement-v1/baseline-helper-settlements/sha256", hash.slice(0, 2), `${hash}.json`);
+  return resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/restart-authority-retirement-v1/baseline-helper-settlements/sha256", hash.slice(0, 2), `${hash}.json`);
 }
 
 function executeBaselineRestart(frameValue: unknown): void {
@@ -353,7 +359,7 @@ function executeBaselineRestart(frameValue: unknown): void {
   const journalIdentity = exactRecord(frame.journalIdentity, ["devDecimal", "inoDecimal"]);
   const operation = readBaselineRestartOperation(restartOperation);
   const operationHash = restartOperation.operationHash as string;
-  const journalPath = path.join(repositoryRoot(), "data/internal-production-baseline/restart-authority-retirement-v1/baseline-helper-journals/sha256", operationHash.slice(0, 2), `${operationHash}.json`);
+  const journalPath = resolveInternalProductionBaselineAuthorityPathV1("data/internal-production-baseline/restart-authority-retirement-v1/baseline-helper-journals/sha256", operationHash.slice(0, 2), `${operationHash}.json`);
   const journalCapability = authenticateCanonicalJournalCapability(5, journalPath);
   const lockCapability = authenticateCanonicalTransitionLock(4);
   if (canonical(lockIdentity) !== canonical(lockCapability.identity) || canonical(journalIdentity) !== canonical(journalCapability.identity)) fail("baseline inherited capability descriptors are crossed");
@@ -393,6 +399,24 @@ function executeBaselineRestart(frameValue: unknown): void {
 
 async function main(): Promise<void> {
   if (process.argv.length !== 2) fail("argv must be empty");
+  if (process.env.SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER !== undefined) {
+    if (process.env.SETFARM_INTERNAL_PRODUCTION_DIRECT_HELPER !== "1" || process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER !== undefined) fail("direct helper selector is invalid or mixed");
+    const retirement = await import("./baseline-restart-authority-retirement-v1.js");
+    const completion = await retirement.runInternalProductionDirectSpawnerHelperV1();
+    await new Promise<void>((resolve, reject) => {
+      process.stdout.write(`${canonical(completion)}\n`, (error) => error ? reject(error) : resolve());
+    });
+    return;
+  }
+  if (process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER !== undefined) {
+    if (process.env.SETFARM_INTERNAL_PRODUCTION_COLD_HELPER !== "1") fail("cold helper selector is invalid");
+    const retirement = await import("./baseline-restart-authority-retirement-v1.js");
+    const completion = await retirement.runInternalProductionColdSpawnerHelperV1();
+    await new Promise<void>((resolve, reject) => {
+      process.stdout.write(`${JSON.stringify(completion)}\n`, (error) => error ? reject(error) : resolve());
+    });
+    return;
+  }
   const frameBytes = readFileSync(3, { flag: "r" }); // code-owned inherited capability fd: 3
   if (frameBytes.length < 1 || frameBytes.length > MAX_FRAME_BYTES) fail("capability frame size is invalid");
   let value: unknown;

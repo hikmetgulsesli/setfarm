@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -9,6 +9,20 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const tsxLoader = import.meta.resolve("tsx");
 const helperSourcePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-service-restart-helper-v1.ts");
+
+function installWorkspaceLocatorFixtureV1(internal: string, workspace: string): void {
+  const locatorPath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-workspace-authority-path-v1.ts");
+  let source = readFileSync(locatorPath, "utf8");
+  const candidates = [
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");',
+    'const CODE_OWNED_WORKSPACE_ROOT_V1 = path.resolve(import.meta.dirname, "../../..");',
+  ];
+  const matches = candidates.filter((candidate) => source.includes(candidate));
+  assert.equal(matches.length, 1, "fixture authenticates exactly one workspace projection");
+  assert.equal(source.split(matches[0]!).length, 2);
+  source = source.replace(matches[0]!, `const CODE_OWNED_WORKSPACE_ROOT_V1 = ${JSON.stringify(workspace)};`);
+  writeFileSync(path.join(internal, path.basename(locatorPath)), source);
+}
 
 function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -25,6 +39,69 @@ function identity(fd: number) {
   const stats = fstatSync(fd, { bigint: true });
   return { devDecimal: stats.dev.toString(10), inoDecimal: stats.ino.toString(10) };
 }
+
+test("watcher start adopts a real detached daemon and cannot prove predecessor replacement", async () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-detached-watcher-repro-")));
+  let pid: number | undefined;
+  const daemon = path.join(fixture, "fixture-daemon.mjs"), ready = path.join(fixture, "ready");
+  const readProcess = () => spawnSync("/bin/ps", ["-p", String(pid), "-o", "uid=,pid=,ppid=,pgid=,lstart=,command="], { encoding: "utf8", timeout: 2_000 });
+  try {
+    writeFileSync(daemon, `import{writeFileSync,renameSync}from"node:fs";process.on("SIGTERM",()=>process.exit(0));const ready=${JSON.stringify(ready)},pending=ready+'.'+process.pid+'.pending';writeFileSync(pending,String(process.pid),{mode:0o600,flag:'wx'});renameSync(pending,ready);setInterval(()=>{},1000);\n`, { mode: 0o600 });
+    const launcher = spawnSync(process.execPath, ["--input-type=module", "-e", `import{spawn}from"node:child_process";const child=spawn(process.execPath,[${JSON.stringify(daemon)}],{detached:true,stdio:"ignore"});child.unref();process.stdout.write(String(child.pid));`], { encoding: "utf8", timeout: 3_000 });
+    assert.equal(launcher.status, 0, launcher.stderr);
+    assert.match(launcher.stdout, /^[1-9][0-9]*$/); pid = Number(launcher.stdout);
+    for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(readFileSync(ready, "utf8"), String(pid));
+    assert.equal(existsSync(`${ready}.${pid}.pending`), false, "readiness appears only after the closed complete PID file is renamed");
+    const before = readProcess();
+    assert.equal(before.status, 0, before.stderr);
+    assert.match(before.stdout, new RegExp(`^\\s*${process.getuid!()}\\s+${pid}\\s+1\\s+${pid}\\s+`));
+    assert.ok(before.stdout.trimEnd().endsWith(daemon), "the process is exactly this fixture's daemon");
+    const controller = readFileSync(path.resolve(import.meta.dirname, "../../src/server/spawnerctl.ts"), "utf8");
+    const pidExpression = 'path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid")';
+    const logExpression = 'path.join(os.homedir(), ".openclaw", "setfarm", "spawner.log")';
+    assert.equal(controller.split(pidExpression).length, 2); assert.equal(controller.split(logExpression).length, 2);
+    mkdirSync(path.join(fixture, "src/server"), { recursive: true });
+    writeFileSync(path.join(fixture, "src/server/spawnerctl.ts"), controller.replace(pidExpression, JSON.stringify(path.join(fixture, "spawner.pid"))).replace(logExpression, JSON.stringify(path.join(fixture, "spawner.log"))));
+    writeFileSync(path.join(fixture, "src/runtime-config.ts"), 'export function loadRuntimeEnv(){throw new Error("WATCHER_MUST_ONLY_ADOPT_EXISTING");}\n');
+    writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}\n');
+    writeFileSync(path.join(fixture, "spawner.pid"), String(pid));
+    const actual = await import(pathToFileURL(path.join(fixture, "src/server/spawnerctl.ts")).href);
+    for (let watcherStart = 0; watcherStart < 2; watcherStart++) {
+      const adopted = await actual.startSpawner();
+      assert.equal(adopted.pid, pid, "actual watcher start adopts the existing daemon");
+      assert.deepEqual(readProcess().stdout, before.stdout, "PID, start time and detached ownership are unchanged");
+    }
+    assert.equal(existsSync(path.join(fixture, "spawner.log")), false, "no replacement dispatch was attempted");
+  } finally {
+    if (pid !== undefined) {
+      const owned = readProcess();
+      if (owned.status === 0 && owned.stdout.trimEnd().endsWith(daemon)) {
+        process.kill(pid, "SIGTERM");
+        for (let attempt = 0; attempt < 100 && readProcess().status === 0; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.notEqual(readProcess().status, 0, "the exact disposable daemon must terminate");
+      }
+    }
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("restart helper closes ancestor guards when its inherited journal descriptor is invalid", async () => {
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-helper-guard-release-")));
+  try {
+    const internal = path.join(fixture, "src/internal-production");
+    mkdirSync(internal, { recursive: true, mode: 0o700 });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
+    const modulePath = path.join(internal, "baseline-service-restart-helper-v1.ts");
+    writeFileSync(modulePath, `${readFileSync(helperSourcePath, "utf8")}\nexport { authenticateCanonicalJournalCapability };\n`);
+    const module = await import(pathToFileURL(modulePath).href);
+    const journal = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-journal.json");
+    mkdirSync(path.dirname(journal), { recursive: true, mode: 0o700 });
+    const before = readdirSync("/dev/fd").length;
+    assert.throws(() => module.authenticateCanonicalJournalCapability(-1, journal), /fd|descriptor|range/i);
+    assert.equal(readdirSync("/dev/fd").length, before, "failed inherited-descriptor validation must release every workspace/private ancestor pin");
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
 
 test("P4 helper binds fixed pre-schema action", async () => {
   const module = await import(`../../src/internal-production/baseline-service-restart-helper-v1.js?p4-helper=${Date.now()}`);
@@ -43,6 +120,7 @@ test("P4 helper binds fixed pre-schema action", async () => {
   try {
     const internal = path.join(fixture, "src/internal-production");
     mkdirSync(internal, { recursive: true });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     const counter = path.join(fixture, "dispatch-count.txt");
     const fakeLaunchctl = path.join(fixture, "fake-launchctl.mjs");
     writeFileSync(fakeLaunchctl, `#!/bin/sh
@@ -65,7 +143,7 @@ printf '%s' "$count" > '${counter}'
     const restartAuthority = { restartAuthorityRef: `setfarm://internal-production/pre-schema-spawner-restart-authority/sha256/${restartHash}`, restartAuthorityHash: restartHash };
     const lockPath = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/physical-service-restart-authority.transition.lock");
     const journalPath = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/pre-schema-helper-journal.json");
-    mkdirSync(path.dirname(lockPath), { recursive: true });
+    mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
     const ownerProcess = spawnSync("/bin/ps", ["-p", String(process.pid), "-o", "lstart=,command="], { encoding: "utf8" });
     assert.equal(ownerProcess.status, 0, ownerProcess.stderr);
     const ownerRow = ownerProcess.stdout.slice(0, -1);
@@ -311,6 +389,7 @@ test("P4 restart helper dispatches at most once", async () => {
   try {
     const internal = path.join(fixture, "src/internal-production");
     mkdirSync(internal, { recursive: true });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     const counter = path.join(fixture, "dispatch-count.txt");
     const fakeLaunchctl = path.join(fixture, "fake-launchctl.sh");
     writeFileSync(fakeLaunchctl, `#!/bin/sh
@@ -391,6 +470,7 @@ test("P4 helper rejects insecure settlement-store ancestors", async () => {
   try {
     const internal = path.join(fixture, "src/internal-production");
     mkdirSync(internal, { recursive: true });
+    installWorkspaceLocatorFixtureV1(internal, fixture);
     const source = readFileSync(helperSourcePath, "utf8").replace(
       "function publishSettlement(settlementPath: string, value: unknown): void",
       "export function publishSettlement(settlementPath: string, value: unknown): void",
@@ -454,6 +534,7 @@ function runStartupFamilyImportProbe({
 }: Readonly<{ injectedImportUrl?: string | null; retainedRequestPath?: string | null }> = {}) {
   const repository = path.resolve(import.meta.dirname, "../..");
   const instrumentedModuleUrls = [
+    "baseline-workspace-authority-path-v1.ts",
     "baseline-post-handoff-receipt-v1.ts",
     "baseline-spawner-startup-admission-v1.ts",
     "baseline-restart-authority-retirement-v1.ts",
