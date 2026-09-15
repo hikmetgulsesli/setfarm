@@ -150,6 +150,12 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## File map and boundaries
 
+- New `src/internal-production/baseline-deployment-cutover-launcher-observation-v1.ts`:
+  fixed two-launcher read-only physical/configuration bracket without deployment
+  root agreement; secret-free durable and transient commitments. Loaded-idle
+  launcher state is not an absent-process or zero-owner proof.
+- New `tests/internal-production/baseline-deployment-cutover-launcher-observation-v1.test.ts`:
+  real plist conversion, config drift, secret containment and close-loss tests.
 - New `src/internal-production/baseline-deployment-cutover-cli-observation-v1.ts`:
   read-only fixed CLI link and physical target commitment. This removes the
   premature same-root prerequisite from diagnostic preflight only; it grants

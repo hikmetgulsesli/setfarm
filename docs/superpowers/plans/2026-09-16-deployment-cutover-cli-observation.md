@@ -64,7 +64,7 @@ assert.equal(fs.lstatSync(link).ino, originalLinkInode);
 - [x] Prove close-response loss cannot close a reused descriptor. Verify invalid
   target is rejected before entry bytes are read. Run full new tests GREEN,
   noemit/contracts and independent review.
-- [ ] Checkpoint the reviewed read-only unit.
+- [x] Checkpoint the reviewed read-only unit (da3be5f5).
 - [x] Perform one read-only live observation after qualification; report only
   paths and commitments, never source bytes or environment secrets.
 
