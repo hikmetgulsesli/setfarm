@@ -34,10 +34,13 @@ function assertParents(parents) {
   }
 }
 
-export function publishControllerPidReservationV1(directory) {
+export function publishControllerPidReservationV1(directory, reservationNonce = randomUUID()) {
+  if (typeof reservationNonce !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(reservationNonce)) {
+    fail("RESERVATION_NONCE_INVALID");
+  }
   const parents = observeParents(directory);
   const target = path.join(directory, "spawner.lock");
-  const staging = path.join(directory, `.spawner-maintenance-${randomUUID()}.tmp`);
+  const staging = path.join(directory, `.spawner-maintenance-${reservationNonce}.tmp`);
   const bytes = Buffer.from(`${process.pid}\n`);
   let descriptor = null, closed = false;
   const close = () => {

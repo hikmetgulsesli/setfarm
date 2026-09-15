@@ -1,11 +1,29 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 // Exercise the actual refusal branch without importing modules whose selectors
 // can publish durable activation evidence. This is not a physical barrier test.
 const source = readFileSync(new URL("../../src/spawner.ts", import.meta.url), "utf8");
+
+function compileRetainedGate(status) {
+  const retained = execFileSync("/usr/bin/git", ["show", "eef9f6c4059daa487a5a367f8f1609b1d1e39142:src/spawner.ts"],
+    { cwd: fileURLToPath(new URL("../../", import.meta.url)), encoding: "utf8", timeout: 5000, maxBuffer: 2097152 });
+  const name = "enforceInternalProductionPreSchemaSpawnerStartupGateV1";
+  const js = ts.transpileModule(extractFunction(retained, name), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
+  }).outputText;
+  const gate = new Function(`${js}\nreturn ${name};`)();
+  return () => gate({ startupAdmission: {
+    observeInternalProductionPreSchemaSpawnerRebindStatusV1: async () => {
+      if (status instanceof Error) throw status;
+      return status;
+    },
+  } });
+}
 
 function extractFunction(text, name) {
   const tree = ts.createSourceFile("spawner.ts", text, ts.ScriptTarget.Latest, true);
@@ -72,4 +90,18 @@ test("qualification detects a fail-open absent-status mutation", async () => {
   await assert.rejects(async () => {
     await assert.rejects(mutant, /COLD_BOOTSTRAP_NOT_ABSENT/);
   }, { code: "ERR_ASSERTION", message: "Missing expected rejection." });
+});
+
+test("retained ordinary gate permits absent status and cannot supply maintenance refusal", async () => {
+  assert.equal(await compileRetainedGate(absentStatus)(), "normal");
+});
+
+test("retained ordinary gate rejects a prepared status without invoking owner producers", async () => {
+  await assert.rejects(compileRetainedGate({ ...absentStatus, state: "prepared" }),
+    /INTERNAL_PRODUCTION_PRE_SCHEMA_SPAWNER_ADMISSION_BLOCKED/);
+});
+
+test("retained observer error is distinguishable from authenticated admission refusal", async () => {
+  const error = Error("historical Git evidence unavailable");
+  await assert.rejects(compileRetainedGate(error), value => value === error);
 });

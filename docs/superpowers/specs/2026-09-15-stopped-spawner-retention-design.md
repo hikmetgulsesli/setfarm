@@ -3,6 +3,10 @@
 Status: user-approved design; qualification in progress. No runtime authorization
 record or maintenance-controller implementation.
 
+Qualification update: the current host does not satisfy the durable-refusal
+prerequisite below. Internal reservation/journal helpers are implemented and
+tested, but the live maintenance path must not be enabled from those tests.
+
 ## Objective and causal scope
 
 PR #124 passed its exact P3 gate and was merged as `1c750547`.
@@ -161,3 +165,36 @@ verify the original authenticated configuration and record its observed result.
 - Full build/sealed-successor/restoration integration passes before authorizing
   the first real archive mutation; if it cannot, retain this as an unimplemented
   design and report the specific missing invariant.
+
+## September 15 qualification finding: retained admission prerequisite
+
+Read-only inspection authenticated canonical hashes of the existing historical
+operation and its two prerequisite records. They bind source `4fc67f20`, which
+is absent from deployment Git. The retained parser requires that historical Git
+evidence before it reads pre-schema status. The pre-schema store is absent; if
+historical parsing succeeds, the retained ordinary entry permits that absence.
+Therefore current parser failure is not the durable authenticated refusal required
+by this design. No fabricated status or deliberately missing Git object is an
+acceptable replacement for admission authority.
+
+The existing rebind preparation only derives an authorization pair. Publishing
+`status-00-prepared` requires authenticated live service census and source/build
+identity through the full rebind executor. The absent live predecessor cannot
+satisfy this route. The current cold route requires the current clean build;
+its cold journal is not understood by the retained executable.
+
+A normal build in another clean checkout does not by itself resolve the loop.
+The cold route also authenticates the dashboard and CLI launcher against the
+executing checkout's fixed root. The live dashboard and CLI link point to the
+deployment checkout. Relocating either is outside the approved spawner-only
+maintenance scope; copying staged dist into deployment would evade its guarded
+publication rather than qualify it. A broader transition requires a separately
+reviewed design and the owner's specific scope approval before service changes.
+
+Implementation references (current source):
+`src/internal-production/baseline-spawner-startup-admission-v1.ts`
+(`deriveAuthorization`, `executeOrRecoverInternalProductionPreSchemaSpawnerRebindV1`);
+`src/internal-production/baseline-post-handoff-receipt-v1.ts`
+(cold source/build prerequisites and dashboard launcher/family authentication).
+Retained `eef9f6c4` admission behavior must be checked from its own Git source,
+not inferred from the current module.

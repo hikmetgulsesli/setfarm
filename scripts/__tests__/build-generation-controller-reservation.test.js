@@ -27,6 +27,20 @@ test("publishes real owner PID exclusively and close preserves the reservation",
   assert.equal(readFileSync(held.path, "utf8"), `${process.pid}\n`);
 }));
 
+test("invalid pre-journaled nonce refuses before creating files", () => fixture(root => {
+  assert.throws(() => publishControllerPidReservationV1(root, "../escape"), /RESERVATION_NONCE_INVALID/);
+  assert.throws(() => lstatSync(path.join(root, "spawner.lock")), { code: "ENOENT" });
+}));
+
+test("uses the journaled nonce and preserves an existing staging attempt", () => fixture(root => {
+  const nonce = "10000000-0000-4000-8000-000000000001";
+  const staging = path.join(root, `.spawner-maintenance-${nonce}.tmp`);
+  writeFileSync(staging, "historical partial attempt", { mode: 0o600 });
+  assert.throws(() => publishControllerPidReservationV1(root, nonce), { code: "EEXIST" });
+  assert.equal(readFileSync(staging, "utf8"), "historical partial attempt");
+  assert.throws(() => lstatSync(path.join(root, "spawner.lock")), { code: "ENOENT" });
+}));
+
 test("rejects same-byte replacement without removing either inode", () => fixture(root => {
   const held = publishControllerPidReservationV1(root);
   try {
