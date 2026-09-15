@@ -11,6 +11,13 @@ let cleanupUncertain = false;
 function fail(): never { throw Error("DEPLOYMENT_CUTOVER_OBSERVATION_INVALID"); }
 function missing(error: unknown): boolean { return error instanceof Error && "code" in error && error.code === "ENOENT"; }
 
+// Refusal only: neither historical intent nor caller input grants admission.
+export function assertOrdinarySpawnerDeploymentCutoverAdmissionV1(): void {
+  if (observeDeploymentCutoverIntentV1().state !== "absent") {
+    throw Error("DEPLOYMENT_CUTOVER_ORDINARY_START_REFUSED");
+  }
+}
+
 // Read-only fixed-root observation. Open/partial records never authorize startup.
 // A completed admission protocol is deliberately not interpreted by this slice.
 export function observeDeploymentCutoverIntentV1(): Observation {

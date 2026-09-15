@@ -22,7 +22,7 @@ function publishFixture(root: string): void {
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   fs.writeFileSync(path.join(root, "intent.json"), intentBytes, { mode: 0o600 });
 }
-function observe(home: string, fault = ""): any {
+function observe(home: string, fault = "", assertion = false): any {
   const moduleUrl = new URL("../../src/internal-production/baseline-deployment-cutover-v1.ts", import.meta.url).href;
   const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
     import os from "node:os";
@@ -32,12 +32,13 @@ function observe(home: string, fault = ""): any {
     let observationActive = false;
     ${fault}
     syncBuiltinESMExports();
-    const { observeDeploymentCutoverIntentV1 } = await import(${JSON.stringify(moduleUrl)});
+    const { observeDeploymentCutoverIntentV1, assertOrdinarySpawnerDeploymentCutoverAdmissionV1 } = await import(${JSON.stringify(moduleUrl)});
     observationActive = true;
-    try { process.stdout.write(JSON.stringify(observeDeploymentCutoverIntentV1())); }
+    const run = () => ${assertion ? "(assertOrdinarySpawnerDeploymentCutoverAdmissionV1(), { admitted: true })" : "observeDeploymentCutoverIntentV1()"};
+    try { process.stdout.write(JSON.stringify(run())); }
     catch (error) {
       let retryError = null;
-      try { observeDeploymentCutoverIntentV1(); } catch (retry) { retryError = retry.message; }
+      try { run(); } catch (retry) { retryError = retry.message; }
       process.stdout.write(JSON.stringify({ error: error.message, retryError,
         causes: (error.errors ?? []).map(cause => cause.message),
         closeAttempts: typeof closeAttempts === "undefined" ? null : closeAttempts }));
@@ -46,6 +47,31 @@ function observe(home: string, fault = ""): any {
   assert.equal(child.status, 0, child.stderr);
   return JSON.parse(child.stdout);
 }
+
+test("ordinary assertion preserves absent compatibility without publishing authority", () => fixture((home, root) => {
+  assert.deepEqual(observe(home, "", true), { admitted: true });
+  assert.equal(fs.existsSync(root), false);
+}));
+
+test("ordinary assertion refuses persisted open intent in every fresh process", () => fixture((home, root) => {
+  publishFixture(root);
+  const original = fs.lstatSync(path.join(root, "intent.json"), { bigint: true });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = observe(home, "", true);
+    assert.equal(result.error, "DEPLOYMENT_CUTOVER_ORDINARY_START_REFUSED");
+    assert.equal(result.retryError, result.error);
+  }
+  assert.deepEqual(fs.readFileSync(path.join(root, "intent.json")), intentBytes);
+  assert.equal(fs.lstatSync(path.join(root, "intent.json"), { bigint: true }).ino, original.ino);
+}));
+
+test("ordinary assertion refuses partial publication without repairing it", () => fixture((home, root) => {
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const result = observe(home, "", true);
+  assert.equal(result.error, "DEPLOYMENT_CUTOVER_OBSERVATION_INVALID");
+  assert.equal(result.retryError, result.error);
+  assert.deepEqual(fs.readdirSync(root), []);
+}));
 
 test("missing descendant is observed absent without creating any directory", () => fixture((home, root) => {
   assert.deepEqual(observe(home), { state: "absent" });

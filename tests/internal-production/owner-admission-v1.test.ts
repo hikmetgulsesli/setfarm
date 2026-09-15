@@ -3360,15 +3360,16 @@ test("ordinary stale startup reclamation requires exact bytes, definite death an
     writeFileSync(runner, typescript.transpileModule(`
 import assert from 'node:assert/strict';import actualFs from 'node:fs';import actualProcess from 'node:process';import {spawnSync} from 'node:child_process';import path from 'node:path';
 const root=${JSON.stringify(fixture)},ownedDescriptors=new Set(),spawnerStartupFilesV1=[];
-let spawnerLockFd=null,fault='',target='',reads=0,kills=0,censuses=0,interrupted=false;
+let spawnerLockFd=null,fault='',target='',reads=0,kills=0,censuses=0,cutovers=0,interrupted=false;
 const process=Object.create(actualProcess);process.kill=(pid,signal)=>{kills++;if(fault==='eperm')throw Object.assign(Error('fixture permission refusal'),{code:'EPERM'});if(fault==='pid-reappears'&&kills===2)return true;return actualProcess.kill(pid,signal);};
 const fs={...actualFs,openSync(...args){const fd=actualFs.openSync(...args);ownedDescriptors.add(fd);return fd;},closeSync(fd){if(fault==='close'&&!interrupted){interrupted=true;throw Error('fixture pre-close failure')}actualFs.closeSync(fd);ownedDescriptors.delete(fd);},
 readSync(...args){const count=actualFs.readSync(...args);if(++reads===1&&fault==='replacement'){actualFs.renameSync(target,target+'.original');actualFs.writeFileSync(target,actualFs.readFileSync(target+'.original'),{mode:0o600});}return count;}};
 function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){censuses++;if(fault==='cold-arrival'&&censuses===2)actualFs.mkdirSync(path.join(root,'cold-journal'));if(actualFs.existsSync(path.join(root,'cold-journal')))throw Error('COLD_BOOTSTRAP_UNSETTLED');return {state:fault==='settled-history'||fault==='settled-arrival'&&censuses===2?'settled':'absent'};}
+function assertOrdinarySpawnerDeploymentCutoverAdmissionV1(){cutovers++;if(fault==='cutover-open'||fault==='cutover-arrival'&&cutovers>=2)throw Error('DEPLOYMENT_CUTOVER_ORDINARY_START_REFUSED');}
 ${functions}
 const predecessor=spawnSync(actualProcess.execPath,['-e',''],{env:{PATH:'/usr/bin:/bin'}});assert.equal(predecessor.status,0);
-for(fault of ['settled-history','settled-arrival','none','non-ascii','double-newline','eperm','pid-reappears','replacement','symlink','hardlink','writable','alive','close','cold-arrival']){
- target=path.join(root,fault+'.pid');reads=0;kills=0;censuses=0;interrupted=false;
+for(fault of ['cutover-open','cutover-arrival','settled-history','settled-arrival','none','non-ascii','double-newline','eperm','pid-reappears','replacement','symlink','hardlink','writable','alive','close','cold-arrival']){
+ target=path.join(root,fault+'.pid');reads=0;kills=0;censuses=0;cutovers=0;interrupted=false;
  const text=String(fault==='alive'?actualProcess.ppid:predecessor.pid),bytes=Buffer.from(text+(fault==='double-newline'?'\\n\\n':''));if(fault==='non-ascii')bytes[0]|=128;
  actualFs.writeFileSync(target,bytes,{mode:0o600});
  if(fault==='symlink'){actualFs.renameSync(target,target+'.original');actualFs.symlinkSync(target+'.original',target);}
@@ -3452,6 +3453,7 @@ const predecessor=spawnSync(process.execPath,['-e','']);assert.equal(predecessor
 realFs.writeFileSync(target,predecessor.pid+'\\n',{mode:0o600});realFs.writeFileSync(foreign,'foreign',{mode:0o600});
 const fs={...realFs,closeSync(fd){closeCalls++;realFs.closeSync(fd);if(closeCalls===1){replacement=realFs.openSync(foreign,'r');assert.equal(replacement,fd);throw Error('fixture inner close response lost');}}};
 function observeInternalProductionColdSpawnerBootstrapJournalCensusV1(){return {state:'absent'};}
+function assertOrdinarySpawnerDeploymentCutoverAdmissionV1(){} // Absent external cutover port; this case targets close-response ownership.
 ${functions}
 try{
  assert.throws(()=>reclaimDeadSpawnerStartupFileV1(target),/fixture inner close response lost/);
@@ -3529,7 +3531,7 @@ for(fault of ['none','partial','replacement']){
 });
 
 test("P4 real spawner main remains sealed until signal and cleans its lock and pid", async () => {
-  for (const mode of ["settled-ready-crash-restart", ...["open-replaced", "first-pin-stat", "live-lock-dead-pid", "historical-pid", "historical-inode", "live-owner", "ready-replaced", "terminal-replaced", "source-changed", "startup-replaced", "parent-replaced"].map(fault => `settled-ready-crash-restart-${fault}`), "settled-ready", "settled-history", "settled-appears", "sealed", "existing-cold", "cold-appears", "foreign-pid", "foreign-lock", "stale-pid", "parent-symlink"]) {
+  for (const mode of ["cutover-open", "cutover-partial", "cutover-after-cold-observation", "cutover-after-pid", "settled-ready-crash-restart", ...["cutover-arrives", "open-replaced", "first-pin-stat", "live-lock-dead-pid", "historical-pid", "historical-inode", "live-owner", "ready-replaced", "terminal-replaced", "source-changed", "startup-replaced", "parent-replaced"].map(fault => `settled-ready-crash-restart-${fault}`), "settled-ready", "settled-history", "settled-appears", "sealed", "existing-cold", "cold-appears", "foreign-pid", "foreign-lock", "stale-pid", "parent-symlink"]) {
   const repository = path.resolve(import.meta.dirname, "../..");
   const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-real-sealed-spawner-")));
   const fixtureSource = path.join(fixture, "src");
@@ -3539,6 +3541,7 @@ test("P4 real spawner main remains sealed until signal and cleans its lock and p
   const crashMarker = path.join(fixture, "ordinary-startup-crashed");
   const terminalMarker = path.join(fixture, "terminal-history-marker");
   const pinCleanupMarker = path.join(fixture, "pin-cleanup-observed");
+  const startupEffectsMarker = path.join(fixture, "startup-effects-observed");
   writeFileSync(terminalMarker, "immutable history", { mode: 0o600 });
   const crashCase = mode.startsWith("settled-ready-crash-restart");
   const crashRefusal = crashCase && mode !== "settled-ready-crash-restart";
@@ -3546,6 +3549,18 @@ test("P4 real spawner main remains sealed until signal and cleans its lock and p
   const providerMarker = path.join(fixture, "provider-discovery-called");
   const ordinaryDirectories = ["agent-scratch", "transcripts", "attempt-workspaces"].map((name) => path.join(fixture, "ordinary", name));
   const coldRoot = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1/cold-spawner-bootstrap-v1");
+  const cutoverRoot = path.join(fixture, "data/internal-production-baseline/deployment-cutover-v1");
+  const cutover = await import("../../src/internal-production/baseline-deployment-cutover-records-v1.js");
+  const cutoverBytes = cutover.encodeDeploymentCutoverIntentV1(cutover.createDeploymentCutoverIntentV1({
+    oldDeployment: { checkoutPath: "/fixture/old", checkoutDirectoryIdentityHash: "a".repeat(64), sourceSha: "b".repeat(40), sourceTreeHash: "c".repeat(40), buildHash: "d".repeat(64) },
+    newDeployment: { checkoutPath: "/fixture/new", checkoutDirectoryIdentityHash: "e".repeat(64), sourceSha: "f".repeat(40), sourceTreeHash: "1".repeat(40), buildHash: "2".repeat(64) },
+    cliLinkObservationHash: "3".repeat(64), spawnerLauncherConfigurationHash: "4".repeat(64),
+    dashboardLauncherConfigurationHash: "5".repeat(64), maintenanceIntentHash: "6".repeat(64), dashboardPort: 3333,
+  }));
+  if (mode === "cutover-open" || mode === "cutover-partial") {
+    mkdirSync(cutoverRoot, { recursive: true, mode: 0o700 });
+    if (mode === "cutover-open") writeFileSync(path.join(cutoverRoot, "intent.json"), cutoverBytes, { mode: 0o600 });
+  }
   if (mode === "existing-cold") {
     mkdirSync(coldRoot, { recursive: true, mode: 0o700 });
     mkdirSync(path.dirname(pidFile), { recursive: true, mode: 0o700 });
@@ -3631,6 +3646,7 @@ export async function observeInternalProductionServiceCensusV1(){assert.equal(fs
     const replaceFile = (target: string) => `const target=${JSON.stringify(target)},bytes=fixtureFs.readFileSync(target);fixtureFs.renameSync(target,target+'.original');fixtureFs.writeFileSync(target,bytes,{mode:0o600,flag:'wx'});`;
     if (mode.endsWith("-ready-replaced")) mutation = replaceFile(readyPath);
     if (mode.endsWith("-terminal-replaced")) mutation = replaceFile(terminalMarker);
+    if (mode.endsWith("-cutover-arrives")) mutation = `fixtureFs.mkdirSync(${JSON.stringify(cutoverRoot)},{recursive:true,mode:0o700});fixtureFs.writeFileSync(${JSON.stringify(path.join(cutoverRoot, "intent.json"))},${JSON.stringify(cutoverBytes.toString())},{mode:0o600});`;
     if (mode.endsWith("-startup-replaced")) mutation = replaceFile(lockFile);
     if (mode.endsWith("-parent-replaced")) mutation = `const directory=${JSON.stringify(path.dirname(lockFile))};fixtureFs.renameSync(directory,directory+'.original');fixtureFs.mkdirSync(directory,{mode:0o700});for(const name of ['spawner.pid','spawner.lock'])fixtureFs.writeFileSync(directory+'/'+name,fixtureFs.readFileSync(directory+'.original/'+name),{mode:0o600});`;
     if (mutation) writeFileSync(startupPort, `import fixtureFs from 'node:fs';let fixtureStatusCalls=0;\n` + readFileSync(startupPort, "utf8").replace("export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){", `export async function observeInternalProductionPreSchemaSpawnerRebindStatusV1(){if(fixtureFs.existsSync(${JSON.stringify(crashMarker)})&&++fixtureStatusCalls===2){${mutation}}`));
@@ -3660,6 +3676,20 @@ export async function observeInternalProductionServiceCensusV1(){assert.equal(fs
     const publication = spawnerBytes.includes("  publishSpawnerPidFileV1();") ? "  publishSpawnerPidFileV1();" : "  fs.writeFileSync(PID_FILE, String(process.pid));";
     assert.equal(spawnerBytes.split(publication).length, 2);
     spawnerBytes = spawnerBytes.replace(publication, `${publication}\n  fs.mkdirSync(${JSON.stringify(coldRoot)}, {recursive:true,mode:0o700});`);
+  }
+  if (mode === "cutover-after-cold-observation" || mode === "cutover-after-pid") {
+    const boundary = mode === "cutover-after-pid" ? "  publishSpawnerPidFileV1();" : "  const coldRecoveryAdmission = await observeOrdinarySpawnerColdRecoveryAdmissionV1();";
+    assert.equal(spawnerBytes.split(boundary).length, 2);
+    spawnerBytes = spawnerBytes.replace(boundary, `${boundary}\n  fs.mkdirSync(${JSON.stringify(cutoverRoot)},{recursive:true,mode:0o700});fs.writeFileSync(${JSON.stringify(path.join(cutoverRoot, "intent.json"))},${JSON.stringify(cutoverBytes.toString())},{mode:0o600});`);
+  }
+  if (mode.startsWith("cutover-")) {
+    for (const [signature, effect] of [
+      ["function acquireSpawnerSingletonLock(): void {", "singleton"],
+      ["function publishSpawnerPidFileV1(): void {", "pid"],
+    ]) {
+      assert.equal(spawnerBytes.split(signature).length, 2);
+      spawnerBytes = spawnerBytes.replace(signature, `${signature}\n  fs.appendFileSync(${JSON.stringify(startupEffectsMarker)},${JSON.stringify(`${effect}\n`)});`);
+    }
   }
   if (mode.endsWith("-open-replaced") || mode.endsWith("-first-pin-stat")) {
     const opening = "      const descriptor = fs.openSync(parents.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);";
@@ -3723,13 +3753,26 @@ export async function observeInternalProductionServiceCensusV1(){assert.equal(fs
   child.stderr.on("data", (chunk: string) => { stderr += chunk; });
   const closed = new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
   try {
+    if (mode.startsWith("cutover-")) {
+      const timeout = setTimeout(() => child.kill("SIGTERM"), 10_000);
+      const exit = await closed; clearTimeout(timeout);
+      assert.deepEqual(exit, { code: 1, signal: null }, stderr);
+      assert.match(stderr, mode === "cutover-partial" ? /DEPLOYMENT_CUTOVER_OBSERVATION_INVALID/ : /DEPLOYMENT_CUTOVER_ORDINARY_START_REFUSED/);
+      if (mode === "cutover-after-pid") assert.equal(readFileSync(startupEffectsMarker, "utf8"), "singleton\npid\n");
+      else assert.equal(existsSync(startupEffectsMarker), false, `${mode}: no startup publication may precede refusal`);
+      for (const marker of [pidFile, lockFile, admissionMarker, normalMarker, providerMarker, ...ordinaryDirectories]) assert.equal(existsSync(marker), false, `${mode}: ordinary effects remain absent or owned startup files are cleaned`);
+      assert.deepEqual(readdirSync(cutoverRoot), mode === "cutover-partial" ? [] : ["intent.json"]);
+      if (mode !== "cutover-partial") assert.deepEqual(readFileSync(path.join(cutoverRoot, "intent.json")), cutoverBytes);
+      continue;
+    }
     if (mode.startsWith("settled-ready")) {
       const timeout = setTimeout(() => child.kill("SIGTERM"), 10_000);
       const exit = await closed; clearTimeout(timeout);
       assert.deepEqual(exit, { code: 1, signal: null }, stderr);
       if (crashRefusal) {
         assert.doesNotMatch(stderr, /FIXTURE_NORMAL_BOUNDARY_REACHED/, mode);
-        assert.match(stderr, /SPAWNER_NORMAL_RECLAIM_|SPAWNER_READ_ONLY_PIN_|SPAWNER_STARTUP_FILE_PARENT_CHANGED|COLD_BOOTSTRAP_NOT_ABSENT/, mode);
+        assert.match(stderr, /SPAWNER_NORMAL_RECLAIM_|SPAWNER_READ_ONLY_PIN_|SPAWNER_STARTUP_FILE_PARENT_CHANGED|COLD_BOOTSTRAP_NOT_ABSENT|DEPLOYMENT_CUTOVER_ORDINARY_START_REFUSED/, mode);
+        if (mode.endsWith("-cutover-arrives")) assert.match(stderr, /DEPLOYMENT_CUTOVER_ORDINARY_START_REFUSED/, "the valid late cutover intent, not unrelated drift, must refuse deletion");
         for (const item of retainedStartup) {
           assert.deepEqual(readFileSync(item.file), item.bytes, `${mode}: refuse without deleting retained bytes`);
           if (mode.endsWith("-startup-replaced") || mode.endsWith("-parent-replaced") || mode.endsWith("-open-replaced")) {

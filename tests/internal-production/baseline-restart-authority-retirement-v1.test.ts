@@ -1654,6 +1654,7 @@ if(fault==='child-main-stop-claim')globalThis.__directClaimPauseV1=async()=>{pro
 if(fault==='child-main-foreign-pid'){probe.foreignPidBytes=String(globalThis.__directRebindInputFixtureV1.records.preMutation.spawner.pid);fs.writeFileSync(PID_FILE,probe.foreignPidBytes,{mode:0o644,flag:'wx'});probe.fired=true;probe.foreignPid=String(fs.lstatSync(PID_FILE,{bigint:true}).ino);}
 const forbiddenCalls={admission:0,provider:0,database:0};
 async function resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1(){forbiddenCalls.admission++;throw Error('direct child reached ordinary admission')}
+function assertOrdinarySpawnerDeploymentCutoverAdmissionV1(){throw Error('direct child reached ordinary cutover refusal')}
 function initializeAgentRuntimeV1(){forbiddenCalls.provider++;throw Error('direct child reached provider discovery')}
 async function pgMigrate(){forbiddenCalls.database++;throw Error('direct child reached database initialization')}
 ${[...variables,...declarations].map(statement=>statement.getText(tree)).join("\n")}
@@ -3351,6 +3352,7 @@ import {runtimeConfig,loadRuntimeEnv} from './runtime-config.js';import fs from 
 ${retirementImport.getText(tree)}
 const PID_FILE=${JSON.stringify(path.join(runtime, "spawner.pid"))},LOCK_FILE=${JSON.stringify(path.join(runtime, "spawner.lock"))};
 async function resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1(){throw Error('cold child reached ordinary admission')}
+function assertOrdinarySpawnerDeploymentCutoverAdmissionV1(){throw Error('cold child reached ordinary cutover refusal')}
 function initializeAgentRuntimeV1(){throw Error('cold child reached provider discovery')}
 async function pgMigrate(){throw Error('cold child reached database initialization')}
 ${[...variables, ...declarations].map((statement) => statement.getText(tree)).join("\n")}
