@@ -129,3 +129,9 @@ zero skips,5725.547459ms; no-emit exit0; English1496 and paths861 pass;
 diff whitespace check passes. This is a reviewed source checkpoint, not P3
 completion or authorization to perform live cutover. The complete isolated
 owner-admission rerun and complete retirement rerun remain pending.
+
+Superseding full verification: retirement at8845d2df passed169/169 registered
+parents and246 child tests,zero failures/skips. Solitary isolated owner-admission
+at22b93b61 passed105/105,zero failures/skips1703344.576708ms, and cleaned its owned
+primary/template databases. These qualify the bounded startup/source changes;
+controller integration and actual cutover/Task6A completion remain unproven.

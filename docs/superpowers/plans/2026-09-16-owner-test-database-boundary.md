@@ -46,7 +46,7 @@ isolation.authenticateP3ProjectedReadinessTestCapabilityV1();
 ```
 
 - [x] Rerun negative cases GREEN, noemit/contracts and independent review.
-- [ ] Rerun the complete owner file through the unchanged isolated runner alone.
+- [x] Rerun the complete owner file through the unchanged isolated runner alone.
   Genuine P3 authority and original PostgreSQL assertions are the positive witness.
 
 The earlier raw-suite failures remain failed evidence. Current isolated source
@@ -64,3 +64,9 @@ FD3 early-close fixture global inventory at2873 lost unrelated template
 setfarm_p3_26af60255092c7e4dcf84e29_template while raw nested work overlapped.
 Its own primary/template stayed present and were subsequently cleaned by runner.
 No other test failed; revised-checkpoint solitary full P3 remains required.
+
+Superseding solitary verification at22b93b61 finished105/105,zero failures/skips,
+1703344.576708ms. All four authenticated positive PostgreSQL fixtures passed.
+Runner cleaned its primary/template prefix49009c195e6e66514069d3ee; no other DB
+suite ran concurrently. Durable log: workspace logs/2026-09-16-owner-admission-22b93b61.log.
+This supersedes the rerun requirement, not the historical failed evidence.

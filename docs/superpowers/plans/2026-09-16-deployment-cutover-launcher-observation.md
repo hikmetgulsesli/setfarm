@@ -103,7 +103,7 @@ assert.throws(observe, error => {
   contracts and `git diff --check`. Obtain independent read-only review, repair
   findings. Normal build still requires clean
   finalized main under the existing build guard; no override is permitted.
-- [ ] Checkpoint the reviewed bounded unit.
+- [x] Checkpoint the reviewed bounded unit (74aefcef).
 - [x] Perform a read-only live diagnostic only after fixture qualification;
   report fixed labels/state/hashes only. A failure is evidence for preflight,
   never permission to rewrite plists or restart services.

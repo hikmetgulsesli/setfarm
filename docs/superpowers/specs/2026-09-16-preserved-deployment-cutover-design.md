@@ -150,6 +150,12 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## File map and boundaries
 
+- New `src/internal-production/baseline-deployment-cutover-process-observation-v1.ts`:
+  global old/new-neutral process-family and fixed3333 listener bracket; exact
+  per-process executable paths may differ across Node versions. This diagnostic
+  grants neither executable build provenance nor signaling/zero-owner authority.
+- New `tests/internal-production/baseline-deployment-cutover-process-observation-v1.test.ts`:
+  all-root contenders, birth drift, listener ownership and Node-version tests.
 - New `src/internal-production/baseline-deployment-cutover-launcher-observation-v1.ts`:
   fixed two-launcher read-only physical/configuration bracket without deployment
   root agreement; secret-free durable and transient commitments. Loaded-idle
