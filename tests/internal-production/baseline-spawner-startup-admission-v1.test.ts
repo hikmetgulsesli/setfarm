@@ -493,7 +493,7 @@ function canonical(value: unknown): string {
 }
 
 test("P4 startup resolvers reject impossible status and fixed-prefix gaps", async () => {
-  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-startup-resolver-"));
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-startup-resolver-")));
   try {
     const internal = path.join(fixture, "src/internal-production");
     const compiler = path.join(fixture, "src/product-compiler");
@@ -594,7 +594,7 @@ export async function invokeInternalProductionPreSchemaSpawnerRebindHelperUnderT
 });
 
 test("P4 startup recovery emits V2 and reopens the durable helper-blocked prefix before live derivation", async () => {
-  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-startup-reentry-"));
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-startup-reentry-")));
   try {
     const internal = path.join(fixture, "src/internal-production");
     const compiler = path.join(fixture, "src/product-compiler");
@@ -894,7 +894,7 @@ test("P4 startup durable publication automaton repairs every fixed crash boundar
 });
 
 test("P4 startup authenticates every historical status against the material prefix", async () => {
-  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-startup-status-history-"));
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-startup-status-history-")));
   try {
     const internal = path.join(fixture, "src/internal-production");
     const compiler = path.join(fixture, "src/product-compiler");

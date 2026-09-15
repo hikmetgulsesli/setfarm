@@ -45,3 +45,25 @@ const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-baselin
 Full isolated rerun atd7fc4336 passed19/19,zero failures/skips36644.202875ms.
 Runner removed its primary/template prefix3bb6ad469e61bf7c31f1d866. Original failed
 log is retained; successful log is workspace logs/2026-09-16-restart-helper-d7fc4336.log.
+
+## Same-root fixture continuation: sequence and startup
+
+The next complete isolated sequence gate at eff1eb72 finished2/5 with three
+identical ancestor-identity failures, then cleaned both databases. A DB-free
+TMPDIR-absent rerun reproduced all three. Canonicalizing the three injected
+fixture roots (public surface, terminal receipt, durable-prefix loop) gives5/5,
+3371.475792ms; independent review found no issue.
+
+The startup fixture suite was checked without TMPDIR before its isolated gate:
+11/12 passed, recovery reentry failed on the same ancestor before reaching its
+expected helper-settlement refusal. Canonicalize its root plus the two other
+remaining injected physical workspace roots (resolver and historical status),
+so ancestor refusal cannot mask the negative body under test. No assertions or
+production behavior change.
+
+Additional File Map: `tests/internal-production/baseline-service-restart-sequence-v1.test.ts`
+and `tests/internal-production/baseline-spawner-startup-admission-v1.test.ts`.
+Full corrected isolated sequence/startup results remain required.
+
+Startup DB-free TMPDIR-absent recheck passed12/12,zero skips5517.088125ms;
+independent review found no issue in all three physical-root changes.

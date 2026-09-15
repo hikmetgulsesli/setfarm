@@ -70,7 +70,7 @@ test("restart sequence exposes the fixed public surface", async () => {
   assert.equal(module.observeInternalProductionBaselineRestartSequenceStatusV1.length, 1);
   assert.equal(module.resolveInternalProductionBaselineRestartSequenceReceiptV1.length, 1);
 
-  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-sequence-public-surface-"));
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-sequence-public-surface-")));
   try {
     const internal = path.join(fixture, "src/internal-production");
     mkdirSync(internal, { recursive: true });
@@ -98,7 +98,7 @@ test("restart sequence exposes the fixed public surface", async () => {
 });
 
 test("P4 restart sequence requires the exact terminal migration receipt before mutation", async () => {
-  const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-restart-sequence-terminal-receipt-"));
+  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-restart-sequence-terminal-receipt-")));
   try {
     const internal = path.join(fixture, "src/internal-production");
     mkdirSync(internal, { recursive: true });
@@ -181,7 +181,7 @@ test("P4 restart sequence resumes every durable prefix", async () => {
   assert.match(source, /authority\.zeroOwnerGuardRef\s*!==\s*authorization\.zeroOwnerGuardRef/);
   assert.match(source, /receipt\.finalRuntimeSourceProjectionHash\s*!==\s*finalAdvance\.afterRuntimeSourceProjectionHash/);
   for (const failAt of [1, 2, 3]) {
-    const fixture = mkdtempSync(path.join(tmpdir(), `setfarm-p4-restart-sequence-${failAt}-`));
+    const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), `setfarm-p4-restart-sequence-${failAt}-`)));
     try {
       const internal = path.join(fixture, "src/internal-production");
       mkdirSync(internal, { recursive: true });

@@ -153,6 +153,10 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 - `tests/internal-production/baseline-service-restart-helper-v1.test.ts`: keep
   positive helper fixtures physically canonical under the isolated runner's
   sanitized temp environment; preserve all production guards and assertions.
+- `tests/internal-production/baseline-service-restart-sequence-v1.test.ts` and
+  `tests/internal-production/baseline-spawner-startup-admission-v1.test.ts`: apply
+  the same physical fixture-root correction so sequence/recovery assertions
+  reach their intended bodies instead of unrelated system-temp symlink refusal.
 - New `src/internal-production/baseline-deployment-cutover-process-observation-v1.ts`:
   global old/new-neutral process-family and fixed3333 listener bracket; exact
   per-process executable paths may differ across Node versions. This diagnostic
