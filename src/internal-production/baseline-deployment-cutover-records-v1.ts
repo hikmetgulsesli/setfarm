@@ -146,3 +146,89 @@ export function assertDeploymentCutoverMaintenanceRelationV1(input: unknown): vo
     || maintenance.cutoverPlanHash !== cutoverPlanHashV1(plan)
     || maintenance.maintenanceIntentHash !== cutover.maintenanceIntentHash) fail();
 }
+
+export type DeploymentCutoverOwnerV1 = Readonly<{
+  uid: number; pid: number; processLstart: string; processGroupId: number;
+  bootSessionHash: string; reservationNonce: string;
+}>;
+export type DeploymentCutoverOwnerClaimV1 = Readonly<{
+  schema: "setfarm.internal-production-deployment-cutover-owner-claim.v1";
+  maintenanceIntentHash: string; ordinal: number; previousOwnerClaimHash: string | null;
+  previousOwnerDeathObservationHash: string | null; owner: DeploymentCutoverOwnerV1;
+  ownerClaimRef: string; ownerClaimHash: string;
+}>;
+const OWNER_SCHEMA = "setfarm.internal-production-deployment-cutover-owner-claim.v1";
+const OWNER_PREFIX = "setfarm://internal-production/deployment-cutover-owner-claim/sha256/";
+const OWNER_KEYS = ["uid", "pid", "processLstart", "processGroupId", "bootSessionHash", "reservationNonce"];
+const CLAIM_BODY_KEYS = ["schema", "maintenanceIntentHash", "ordinal", "previousOwnerClaimHash", "previousOwnerDeathObservationHash", "owner"];
+function ownerV1(input: unknown): DeploymentCutoverOwnerV1 {
+  const value = exact(input, OWNER_KEYS);
+  if (typeof value.uid !== "number" || !Number.isSafeInteger(value.uid) || value.uid < 0
+    || typeof value.pid !== "number" || !Number.isSafeInteger(value.pid) || value.pid < 1
+    || typeof value.processGroupId !== "number" || !Number.isSafeInteger(value.processGroupId) || value.processGroupId < 1
+    || typeof value.processLstart !== "string" || !/^[A-Z][a-z]{2} [A-Z][a-z]{2} (?: [1-9]|[12][0-9]|3[01]) [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}$/.test(value.processLstart)
+    || typeof value.reservationNonce !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value.reservationNonce)) fail();
+  return Object.freeze({ uid: value.uid, pid: value.pid, processLstart: value.processLstart, processGroupId: value.processGroupId,
+    bootSessionHash: hash(value.bootSessionHash), reservationNonce: value.reservationNonce });
+}
+function claimFromBodyV1(input: unknown): DeploymentCutoverOwnerClaimV1 {
+  const value = exact(input, CLAIM_BODY_KEYS);
+  if (value.schema !== OWNER_SCHEMA || typeof value.ordinal !== "number" || !Number.isSafeInteger(value.ordinal)
+    || value.ordinal < 1 || value.ordinal > 4096) fail();
+  if (value.ordinal === 1 && (value.previousOwnerClaimHash !== null || value.previousOwnerDeathObservationHash !== null)) fail();
+  const body = { schema: OWNER_SCHEMA, maintenanceIntentHash: hash(value.maintenanceIntentHash), ordinal: value.ordinal,
+    previousOwnerClaimHash: value.ordinal === 1 ? null : hash(value.previousOwnerClaimHash),
+    previousOwnerDeathObservationHash: value.ordinal === 1 ? null : hash(value.previousOwnerDeathObservationHash), owner: ownerV1(value.owner) } as const;
+  const ownerClaimHash = hashCanonicalJson(body);
+  return Object.freeze({ ...body, ownerClaimHash, ownerClaimRef: OWNER_PREFIX + ownerClaimHash });
+}
+function validateOwnerClaimV1(input: unknown): DeploymentCutoverOwnerClaimV1 {
+  const value = exact(input, [...CLAIM_BODY_KEYS, "ownerClaimHash", "ownerClaimRef"]);
+  const expected = claimFromBodyV1(Object.fromEntries(CLAIM_BODY_KEYS.map(key => [key, value[key]])));
+  if (value.ownerClaimHash !== expected.ownerClaimHash || value.ownerClaimRef !== expected.ownerClaimRef) fail();
+  return expected;
+}
+function ownerSuccessorV1(previous: DeploymentCutoverOwnerClaimV1, next: DeploymentCutoverOwnerClaimV1): void {
+  if (previous.maintenanceIntentHash !== next.maintenanceIntentHash || next.ordinal !== previous.ordinal + 1
+    || next.previousOwnerClaimHash !== previous.ownerClaimHash
+    || (["uid", "pid", "processLstart", "bootSessionHash"] as const).every(key => previous.owner[key] === next.owner[key])) fail();
+}
+// History only: neither this factory nor a valid death hash grants live takeover.
+export function createDeploymentCutoverOwnerClaimV1(input: unknown): DeploymentCutoverOwnerClaimV1 {
+  const value = exact(input, ["maintenance", "owner", "previous", "previousOwnerDeathObservationHash"]);
+  const maintenance = validateMaintenanceV1(value.maintenance), previous = value.previous === null ? null : validateOwnerClaimV1(value.previous);
+  const claim = claimFromBodyV1({ schema: OWNER_SCHEMA, maintenanceIntentHash: maintenance.maintenanceIntentHash,
+    ordinal: previous === null ? 1 : previous.ordinal + 1, previousOwnerClaimHash: previous?.ownerClaimHash ?? null,
+    previousOwnerDeathObservationHash: value.previousOwnerDeathObservationHash, owner: value.owner });
+  if (previous) ownerSuccessorV1(previous, claim);
+  return claim;
+}
+export function encodeDeploymentCutoverOwnerClaimV1(input: unknown): Buffer {
+  return Buffer.from(`${canonicalJsonStringify(validateOwnerClaimV1(input))}\n`);
+}
+function parseOwnerClaimV1(bytes: Buffer): DeploymentCutoverOwnerClaimV1 {
+  if (types.isProxy(bytes) || !types.isUint8Array(bytes) || !Buffer.isBuffer(bytes)) fail();
+  const length = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "length")!.get!.call(bytes) as number;
+  if (length === 0 || length > 65536) fail();
+  const owned = Buffer.alloc(length); Uint8Array.prototype.set.call(owned, bytes);
+  let parsed: unknown; try { parsed = JSON.parse(owned.toString("utf8")); } catch { fail(); }
+  const result = validateOwnerClaimV1(parsed);
+  if (!owned.equals(encodeDeploymentCutoverOwnerClaimV1(result))) fail();
+  return result;
+}
+export function parseDeploymentCutoverOwnerHistoryV1(maintenanceBytes: Buffer, claimBytes: readonly Buffer[]) {
+  const maintenance = parseDeploymentCutoverMaintenanceIntentV1(maintenanceBytes);
+  if (types.isProxy(claimBytes) || !Array.isArray(claimBytes) || Object.getPrototypeOf(claimBytes) !== Array.prototype || claimBytes.length > 4096) fail();
+  const descriptors = Object.getOwnPropertyDescriptors(claimBytes), keys = Reflect.ownKeys(descriptors);
+  if (keys.length !== claimBytes.length + 1 || keys.some(key => typeof key !== "string"
+    || (key !== "length" && (!/^(?:0|[1-9][0-9]*)$/.test(key) || Number(key) >= claimBytes.length
+      || !descriptors[key]!.enumerable || !("value" in descriptors[key]!))))) fail();
+  const claims: DeploymentCutoverOwnerClaimV1[] = [];
+  for (let index = 0; index < claimBytes.length; index++) {
+    const claim = parseOwnerClaimV1(descriptors[String(index)]!.value as Buffer);
+    if (claim.ordinal !== index + 1 || claim.maintenanceIntentHash !== maintenance.maintenanceIntentHash) fail();
+    if (index > 0) ownerSuccessorV1(claims[index - 1]!, claim);
+    claims.push(claim);
+  }
+  return Object.freeze({ maintenance, claims: Object.freeze(claims) });
+}

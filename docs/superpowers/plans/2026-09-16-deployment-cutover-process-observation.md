@@ -74,7 +74,7 @@ node --import tsx --test tests/internal-production/baseline-deployment-cutover-p
   malformed/truncated output and secret-bearing command failure cases.
 - [x] Verify full new suite, noemit, contracts and independent review; then run
   read-only live diagnostic. No service effect is authorized by this task.
-- [ ] Checkpoint the reviewed source unit.
+- [x] Checkpoint the reviewed source unit (3449f606).
 
 ## Remaining controller boundary
 

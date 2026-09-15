@@ -42,7 +42,7 @@ previousOwnerDeathObservationHash,owner,ownerClaimRef,ownerClaimHash. Schema is
 `setfarm.internal-production-deployment-cutover-owner-claim.v1`; pair prefix is
 `setfarm://internal-production/deployment-cutover-owner-claim/sha256/`.
 
-- [ ] Write independent canonical-wire fixtures, not factory-derived expected
+- [x] Write independent canonical-wire fixtures, not factory-derived expected
   hashes; require deeply detached/frozen first and successor claims:
 
 ```ts
@@ -53,15 +53,19 @@ assert.equal(second.previousOwnerClaimHash, first.ownerClaimHash);
 assert.equal(history.claims.length, 2);
 ```
 
-- [ ] Run RED, implement strict own-data/no-proxy snapshots and native owned
+- [x] Run RED, implement strict own-data/no-proxy snapshots and native owned
   Buffer parsing. Reuse existing maintenance validation, never archive codecs.
   Ordinals1..4096; first predecessor/death null; successor requires both hashes,
   exact previous hash/ordinal and unchanged maintenance identity. Same physical
   uid/pid/birth/boot owner cannot mint a successor with only a fresh nonce.
-- [ ] Test crossed intent, missing/reordered predecessor, malformed owner, changed
+- [x] Test crossed intent, missing/reordered predecessor, malformed owner, changed
   self-pair, noncanonical bytes, proxy/accessor traps and mutable input detachment.
-- [ ] Run complete focused records suite, noemit/contracts, independent review
-  and checkpoint. These records remain historical, not ownership capability.
+- [x] Run complete focused records suite, noemit/contracts and independent review.
+- [ ] Checkpoint Task1. These records remain historical, not ownership capability.
+
+Task1 evidence: first4RED missing exports, then7 owner tests plus5 maintenance
+tests passed12/12. Complete cutover suite151/151,zero skips14187.681042ms;
+noemit0,English1515/path865. Independent review found no material issue.
 
 ## Task2: fixed immutable owner store
 
@@ -87,8 +91,20 @@ assert.deepEqual(foreignBytesAfter, foreignBytesBefore);
   Reuse reviewed publication mechanics, not archive historical grammar. Matching
   replay must fsync file and ancestor directories, not just assume durability.
 - [ ] Fault-inject every publication edge, file/ancestor swaps, short writes,
-  response loss and descriptor reuse. Partial or uncertain state cannot return
-  a finalized observation; no cleanup of foreign/ambiguous stage is inferred.
+  response loss and descriptor reuse. Only committed fixed names contribute to
+  history. A bounded, owner600, regular singly-linked staging file with a valid
+  stage name is inert non-authority, whether complete or incomplete; preserve it
+  and report its identity/hash/size separately. Stable inert stages do not defeat
+  a fully validated committed tip or allow adoption of their proposed owner.
+  A two-link stage is permitted only as the exact byte/inode alias of its
+  committed destination; publication response-loss recovery must fsync the held
+  file and directory before treating that fixed record as durable. Reject other
+  link counts, crossed aliases, unexpected names, unsafe modes and changing
+  stage metadata. Never delete a stage based on its mere presence or owner death.
+  Cap inert stages at8; reaching the cap refuses new publication, not history
+  reading. This preserves crash/loser evidence without a partial-write authority
+  or a permanent first-loser veto. Uncertain current writes/close/fsync still
+  return no new capability; a later fresh attempt must reauthenticate durability.
 - [ ] Review, focused tests/noemit/contracts and checkpoint storage-only unit.
 
 ## Task3: process-local current owner capability
@@ -101,6 +117,15 @@ assert.deepEqual(foreignBytesAfter, foreignBytesBefore);
 cutover store/codecs from the controller's authenticated checkout. Reuse existing
 `observeCurrentMaintenanceOwnerV1` and `observeMaintenanceOwnerProcessV1`.
 Opaque capabilities live only in a module-private WeakMap.
+
+There is exactly one in-process acquisition/workflow owner. Reserve that slot
+before the first await or effect; every further public acquisition while active
+refuses. Same-process exact replay is internal continuation of that acquisition,
+never a second public handle. The eventual controller
+must serialize its workflow entry as well as capability creation; assertion alone
+cannot serialize two callers holding the same handle. Retain failed acquisition
+state as uncertain until a fresh authenticated retry, never release via a generic
+finally while asynchronous helpers may still execute.
 
 - [ ] Write real competing child-process fixtures. A loser, forged object,
   transferred serialization, stale tip or crossed physical store must fail:

@@ -172,7 +172,10 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 - New `tests/internal-production/baseline-deployment-cutover-cli-observation-v1.test.ts`:
   physical relative/absolute link, containment, drift and descriptor-loss tests.
 - New `src/internal-production/baseline-deployment-cutover-records-v1.ts`: pure
-  strict cutover intent codecs, separate from live observation and publication.
+  strict cutover intent and cutover-specific historical owner-chain codecs,
+  separate from live observation, ownership capabilities and publication.
+- New `tests/internal-production/baseline-deployment-cutover-owner-records-v1.test.ts`:
+  independent canonical owner history, predecessor/binding and hostile-input tests.
 - New `src/internal-production/baseline-deployment-cutover-v1.ts`: fixed-root strict
   intent/status validation and read-only ordinary refusal; static imports only.
 - `src/spawner.ts`: invoke refusal before ordinary startup effects, while keeping

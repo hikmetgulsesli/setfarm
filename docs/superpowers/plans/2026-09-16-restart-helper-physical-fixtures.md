@@ -39,5 +39,9 @@ const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-p4-baselin
 - [x] Rerun the exact failing command GREEN (2/2,6303.086167ms), retain at-most-once/forged-capability
   and insecure-ancestor assertions, and independently review the two-line diff
   (no findings).
-- [ ] Checkpoint then repeat complete helper file through unchanged isolated
+- [x] Checkpoint then repeat complete helper file through unchanged isolated
   runner alone. Continue sequence/startup qualification only after full result.
+
+Full isolated rerun atd7fc4336 passed19/19,zero failures/skips36644.202875ms.
+Runner removed its primary/template prefix3bb6ad469e61bf7c31f1d866. Original failed
+log is retained; successful log is workspace logs/2026-09-16-restart-helper-d7fc4336.log.
