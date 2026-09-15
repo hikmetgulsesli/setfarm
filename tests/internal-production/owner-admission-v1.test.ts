@@ -5028,6 +5028,8 @@ test("database keeps the authenticated terminal-body close private behind the fi
 });
 
 test("historical source rejects a self-consistent non-contract PBA before target scans", async () => {
+  const isolation = await import("../execution-attempts/test-database.js");
+  isolation.authenticateP3ProjectedReadinessTestCapabilityV1();
   const db = await import("../../src/db-pg.js");
   const valid = authorityA();
   const invalidBody = structuredClone(authorityAInput());
@@ -5079,7 +5081,8 @@ test("historical source rejects a self-consistent non-contract PBA before target
 });
 
 test("PostgreSQL source rows reject every noncanonical TEXT spelling before historical ports", async () => {
-  if (process.env.SETFARM_PG_URL === undefined) return;
+  const isolation = await import("../execution-attempts/test-database.js");
+  isolation.authenticateP3ProjectedReadinessTestCapabilityV1();
   const db = await import("../../src/db-pg.js");
   const sql = db.getSql();
   const bodies = [
@@ -5112,7 +5115,8 @@ test("PostgreSQL source rows reject every noncanonical TEXT spelling before hist
 });
 
 test("PostgreSQL target resolution rejects noncanonical activation bytes before source or head adoption", async () => {
-  if (process.env.SETFARM_PG_URL === undefined) return;
+  const isolation = await import("../execution-attempts/test-database.js");
+  isolation.authenticateP3ProjectedReadinessTestCapabilityV1();
   const db = await import("../../src/db-pg.js");
   const sql = db.getSql();
   const activationHash = "6".repeat(64);
@@ -5146,7 +5150,8 @@ test("PostgreSQL target resolution rejects noncanonical activation bytes before 
 });
 
 test("real PostgreSQL initial activation rolls back a write prefix then identical publishers converge and adopt response loss", async () => {
-  if (process.env.SETFARM_PG_URL === undefined) return;
+  const isolation = await import("../execution-attempts/test-database.js");
+  isolation.authenticateP3ProjectedReadinessTestCapabilityV1();
   const fixture = createPreparedActivationRepositoryFixture();
   try {
     const db = await import("../../src/db-pg.js");

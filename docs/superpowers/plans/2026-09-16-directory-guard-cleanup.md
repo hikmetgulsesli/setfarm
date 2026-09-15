@@ -78,6 +78,12 @@ failures. Reader/physical-close and foreign-owner expectations remain unchanged.
 Fresh focused history/raw cases pass (98688.303ms/1840.270666ms); final full release
 case passes42680.113667ms. Its cleanup-only phase inspector is test-only; the test
 also verifies the original usable-lease inspector refuses that revoked capability.
+
+Fresh full retirement run at8845d2df completed169/169 registered bodies,
+246/246 nested child tests, zero failures/skips,1690075.530084ms. Durable output:
+`logs/2026-09-16-retirement-8845d2df.log` in the canonical workspace logs directory.
+This supersedes the earlier failed run for this unchanged guard/retirement source;
+other applicable delivery suites remain required.
 Earlier six focused guard/frame cases and36 startup/restart/helper caller tests
 passed. No-emit, English1495, paths861 and diff checks pass; independent review
 found no material production or fixture issues. A later complete affected-suite
