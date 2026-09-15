@@ -59,6 +59,14 @@ owner history. Use a fixed workspace authority root, not a caller-selected path.
 The internal maintenance journal is reusable history infrastructure, not existing
 live authority. Its death-hash commitment alone never authorizes file reclamation.
 
+For this protocol, maintenanceIntentHash resolves a cutover-specific maintenance
+intent, not the archive-maintenance grammar requiring candidateCompletionHash.
+It commits the authenticated controller-source hash and a domain-separated plan
+projection (old/new deployments, CLI and launcher commitments, port3333), excluding
+maintenance and self pairs to avoid a hash cycle. A pure relation check binds that
+history to the final cutover intent; fresh ownership/exclusion remains separately
+required. Never invent an archive candidate to populate the preserved route.
+
 In the new executable, every ordinary spawner start must observe this intent
 before singleton/PID publication and before owner producers. An open intent,
 malformed fixed authority or ambiguous partial publication refuses ordinary
@@ -184,5 +192,7 @@ Source and fresh read-only host checks support this route's checkout/launcher
 compatibility. Both HTTP services returned 200 on September16. Available disk was
 approximately19GiB; recheck the build/dependency space budget before preparation.
 No new checkout, service stop, link replacement, archive deletion or admission
-write has been performed. The new refusal/controller implementation and complete
-crash/handoff tests are not yet present. This document does not claim otherwise.
+write has been performed. Ordinary refusal, immutable intent publication and
+cutover-specific maintenance relation codecs now have focused test coverage.
+The live controller, completion and complete crash/handoff qualification remain
+unimplemented; these storage/history slices do not authorize live cutover.
