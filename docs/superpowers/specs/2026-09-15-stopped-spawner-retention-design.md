@@ -1,6 +1,7 @@
 # Stopped-spawner build retention design
 
-Status: design for review; no runtime authorization record or implementation.
+Status: user-approved design; qualification in progress. No runtime authorization
+record or maintenance-controller implementation.
 
 ## Objective and causal scope
 
