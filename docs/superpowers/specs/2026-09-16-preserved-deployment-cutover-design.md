@@ -150,6 +150,12 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## File map and boundaries
 
+- New `src/internal-production/baseline-deployment-cutover-cli-observation-v1.ts`:
+  read-only fixed CLI link and physical target commitment. This removes the
+  premature same-root prerequisite from diagnostic preflight only; it grants
+  neither authenticated source/build identity nor link replacement authority.
+- New `tests/internal-production/baseline-deployment-cutover-cli-observation-v1.test.ts`:
+  physical relative/absolute link, containment, drift and descriptor-loss tests.
 - New `src/internal-production/baseline-deployment-cutover-records-v1.ts`: pure
   strict cutover intent codecs, separate from live observation and publication.
 - New `src/internal-production/baseline-deployment-cutover-v1.ts`: fixed-root strict
