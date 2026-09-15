@@ -352,8 +352,10 @@ function repositoryRoot(): string {
 }
 
 type PrivateDirectoryGuardV1 = Readonly<{ assertStable: () => void; close: () => void }>;
+let privateDirectoryCleanupUncertainV1 = false;
 
 function authenticatePrivateDirectoryChainV1(anchor: string, target: string): PrivateDirectoryGuardV1 {
+  if (privateDirectoryCleanupUncertainV1) fail("authority directory cleanup is uncertain");
   const relative = path.relative(anchor, target);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) fail("authority directory escapes the repository root");
   const segments = relative === "" ? [] : relative.split(path.sep);
@@ -364,16 +366,18 @@ function authenticatePrivateDirectoryChainV1(anchor: string, target: string): Pr
   let closed = false;
   let closing = false;
   const close = (): void => {
-    if (closed) fail("authority directory guard is already closed");
+    if (closed) return;
     closing = true;
-    // Advance ownership only after each successful close. A caller retaining
-    // this guard may finish an interrupted cleanup, but never authenticate it.
+    const errors: unknown[] = [];
+    // A close exception cannot prove the descriptor is still owned. Consume
+    // first, drain untouched owners and never retry an ambiguous descriptor.
     while (descriptors.length > 0) {
-      closeSync(descriptors[descriptors.length - 1]!);
-      descriptors.pop(); held.pop();
+      const descriptor = descriptors.pop()!; held.pop();
+      try { closeSync(descriptor); } catch (error) { privateDirectoryCleanupUncertainV1 = true; errors.push(error); }
     }
-    workspaceAnchor.close();
+    try { workspaceAnchor.close(); } catch (error) { privateDirectoryCleanupUncertainV1 = true; errors.push(error); }
     closed = true;
+    if (errors.length > 0) throw new AggregateError(errors, "INTERNAL_PRODUCTION_RESTART_AUTHORITY_TRANSITION_INVALID:authority directory cleanup is uncertain");
   };
   const assertStable = (): void => {
     if (closed || closing) fail("authority directory guard is closed");
@@ -412,12 +416,8 @@ function authenticatePrivateDirectoryChainV1(anchor: string, target: string): Pr
       close,
     });
   } catch (error) {
-    const cleanup = () => { close(); pendingColdHelperAuthenticationCleanupV1.delete(cleanup); };
-    try { cleanup(); }
-    catch {
-      pendingColdHelperAuthenticationCleanupV1.add(cleanup);
-      try { cleanup(); } catch { /* The unreturned guard remains owned until close completes. */ }
-    }
+    try { close(); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], "INTERNAL_PRODUCTION_RESTART_AUTHORITY_TRANSITION_INVALID:authority directory acquisition cleanup is uncertain"); }
     throw error;
   }
 }

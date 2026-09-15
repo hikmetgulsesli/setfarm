@@ -212,7 +212,7 @@ function installWorkspaceLocatorFixtureV1(internal: string, workspace: string): 
   writeFileSync(path.join(internal, path.basename(locatorPath)), source);
 }
 
-test("workspace anchor interrupted close resumes only its remaining descriptors", async () => {
+test("workspace anchor interrupted close drains untouched descriptors without ambiguous retry", async () => {
   const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-workspace-close-progress-"));
   const internal = path.join(fixture, "src/internal-production");
   mkdirSync(internal, { recursive: true, mode: 0o700 });
@@ -235,11 +235,12 @@ function closeSync(fd:number){globalThis.__anchorBeforeCloseHook?.(fd);realAncho
     guard = isolated.authenticateInternalProductionBaselineWorkspaceAnchorV1();
     Reflect.set(globalThis, "__anchorBeforeCloseHook", () => { if (++attempts === 2) throw new Error("fixture ancestor close interrupted"); });
     Reflect.set(globalThis, "__anchorClosedHook", (fd: number) => { owned.delete(fd); if (++closedCount === 1) sentinel = openSync(sentinelPath, "r"); });
-    assert.throws(() => guard!.close(), /interrupted/);
+    assert.throws(() => guard!.close());
     assert.throws(() => guard!.assertStable(), /IDENTITY_INVALID/);
-    assert.ok(owned.size > 0);
+    assert.equal(owned.size, 1, "only the ambiguous pre-close descriptor may remain");
     guard!.close();
-    assert.equal(owned.size, 0, "retry drains every remaining authority descriptor");
+    assert.equal(owned.size, 1, "an ambiguous descriptor must never be retried");
+    assert.throws(() => isolated.authenticateInternalProductionBaselineWorkspaceAnchorV1(), /IDENTITY_INVALID/);
     assert.throws(() => guard!.assertStable(), /IDENTITY_INVALID/);
     assert.equal(fstatSync(sentinel!).ino, lstatSync(sentinelPath).ino, "a completed descriptor slot must not be closed again");
     guard!.close(); // Preserve the locator's existing idempotent closed behavior.
@@ -251,33 +252,67 @@ function closeSync(fd:number){globalThis.__anchorBeforeCloseHook?.(fd);realAncho
   }
 });
 
-test("failed workspace and private-chain acquisition close every unreturned descriptor", async () => {
+test("failed workspace and private-chain acquisition preserve errors without ambiguous close retry", async () => {
   for (const scope of ["workspace", "private-chain"]) {
+   for (const timing of ["before", "after"]) {
+    for (const mode of ["acquisition", "retained-stack"]) {
     const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-acquisition-close-")), owned = new Set<number>();
     const instrument = (source: string) => source.replace(/\bcloseSync,/, "closeSync as actualCloseSync,").replace(/\bopenSync([, }])/, "openSync as actualOpenSync$1").replace(/\bfstatSync,/, "fstatSync as actualFstatSync,") + `
 function openSync(...args:any[]){const fd=actualOpenSync(...args);globalThis.__acquisitionOpened?.(fd);return fd;}
 function closeSync(fd:number){globalThis.__acquisitionBeforeClose?.(fd);actualCloseSync(fd);globalThis.__acquisitionClosed?.(fd);}
 function fstatSync(...args:any[]){globalThis.__acquisitionBeforeStat?.();return actualFstatSync(...args);}
 `;
-    let injected = false, invalid = false;
+    let injected = false, invalid = false, sentinel: number | undefined;
+    const sentinelPath = path.join(fixture, "sentinel.txt");
+    writeFileSync(sentinelPath, "not-owned-by-guard", { mode: 0o600 });
+    const attempts = new Map<number, number>();
     try {
       const modulePath = installRetirementFixture(fixture, instrument(readFileSync(sourcePath, "utf8")) + "\nexport {authenticatePrivateDirectoryChainV1};\n");
       const locator = path.join(fixture, "src/internal-production/baseline-workspace-authority-path-v1.ts");
       writeFileSync(locator, instrument(readFileSync(locator, "utf8")));
       const isolated = await import(pathToFileURL(scope === "workspace" ? locator : modulePath).href);
       Reflect.set(globalThis, "__acquisitionOpened", (fd: number) => owned.add(fd));
-      Reflect.set(globalThis, "__acquisitionClosed", (fd: number) => owned.delete(fd));
-      Reflect.set(globalThis, "__acquisitionBeforeClose", () => { if (!injected) { injected = true; throw Error("fixture acquisition pre-close failure"); } });
-      Reflect.set(globalThis, "__acquisitionBeforeStat", () => { if (scope === "workspace" && !invalid) { invalid = true; throw Error("fixture acquisition identity failure"); } });
-      const unsafe = path.join(fixture, "unsafe"); mkdirSync(unsafe, { mode: 0o755 });
-      assert.throws(() => scope === "workspace" ? isolated.authenticateInternalProductionBaselineWorkspaceAnchorV1() : isolated.authenticatePrivateDirectoryChainV1(fixture, unsafe));
+      Reflect.set(globalThis, "__acquisitionClosed", (fd: number) => {
+        owned.delete(fd);
+        if (timing === "after" && !injected) { injected = true; sentinel = openSync(sentinelPath, "r"); throw Error("fixture acquisition consumed-close failure"); }
+      });
+      Reflect.set(globalThis, "__acquisitionBeforeClose", (fd: number) => {
+        attempts.set(fd, (attempts.get(fd) ?? 0) + 1);
+        if (timing === "before" && !injected) { injected = true; throw Error("fixture acquisition pre-close failure"); }
+      });
+      Reflect.set(globalThis, "__acquisitionBeforeStat", () => { if (mode === "acquisition" && scope === "workspace" && !invalid) { invalid = true; throw Error("fixture acquisition identity failure"); } });
+      const unsafe = path.join(fixture, "unsafe"); mkdirSync(unsafe, { mode: mode === "acquisition" ? 0o755 : 0o700 });
+      const authenticate = () => scope === "workspace" ? isolated.authenticateInternalProductionBaselineWorkspaceAnchorV1() : isolated.authenticatePrivateDirectoryChainV1(fixture, unsafe);
+      const stack = mode === "retained-stack" ? [authenticate(), authenticate()] : [];
+      const attempt = mode === "acquisition" ? authenticate : () => { while (stack.length) { stack.at(-1)!.close(); stack.pop(); } };
+      let failure: unknown;
+      try { attempt(); } catch (error) { failure = error; }
+      assert.ok(failure instanceof AggregateError, "cleanup errors must survive");
+      const messages = (error: unknown): string[] => error instanceof AggregateError
+        ? [error.message, ...error.errors.flatMap(messages)] : error instanceof Error ? [error.message] : [];
+      if (mode === "acquisition") assert.ok(messages(failure).some(message => message.includes(scope === "workspace"
+        ? "fixture acquisition identity failure" : "authority directory identity is invalid")), "preserve original validation failure");
+      assert.ok(messages(failure).some(message => message.includes(timing === "before"
+        ? "fixture acquisition pre-close failure" : "fixture acquisition consumed-close failure")), "preserve cleanup failure");
       assert.equal(injected, true);
-      assert.equal(owned.size, 0, `${scope}: failed acquisition must retain and finish its unreturned cleanup`);
+      if (mode === "retained-stack") {
+        assert.doesNotThrow(attempt, "retry must discard consumed guards and drain older guards");
+        assert.equal(stack.length, 0);
+      }
+      assert.equal(owned.size, timing === "before" ? 1 : 0, `${scope}: drain only unambiguous descriptors`);
+      assert.ok([...attempts.values()].every(count => count === 1), "never retry a possibly consumed descriptor");
+      const attemptCount = [...attempts.values()].reduce((a, b) => a + b, 0);
+      assert.throws(authenticate);
+      assert.equal([...attempts.values()].reduce((a, b) => a + b, 0), attemptCount, "poisoned authentication must not close again");
+      if (sentinel !== undefined) assert.equal(fstatSync(sentinel).ino, lstatSync(sentinelPath).ino);
     } finally {
       for (const name of ["Opened", "Closed", "BeforeClose", "BeforeStat"]) Reflect.deleteProperty(globalThis, `__acquisition${name}`);
       for (const fd of owned) closeSync(fd);
+      if (sentinel !== undefined) { try { closeSync(sentinel); } catch { /* Preserve the test's primary failure if old code consumed the sentinel. */ } }
       rmSync(fixture, { recursive: true, force: true });
     }
+    }
+   }
   }
 });
 
@@ -689,6 +724,7 @@ export function drainColdFrameFixtureV1(){for(const close of pendingColdHelperAu
 export async function invokeColdControllerFixtureV1(){const result=await invokeColdSpawnerBootstrapHelperV1();globalThis.__coldControllerAfterObservationHook?.();return result;}
 export async function settleColdControllerFixtureV1(){const result=await settleColdSpawnerBootstrapV1();globalThis.__coldControllerAfterSettlementHook?.();return result;}
 export async function releaseColdControllerFixtureV1(){if(!retainedColdBootstrapIntentV1)throw Error('fixture cold controller absent');return releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(retainedColdBootstrapIntentV1.lease);}
+export function inspectColdReleasePhaseFixtureV1(){return retainedColdBootstrapIntentV1?.phase??null;}
 export async function invokeFreshColdControllerFixtureV1(){const original=retainedColdBootstrapIntentV1;retainedColdBootstrapIntentV1=null;try{return await invokeColdSpawnerBootstrapHelperV1();}finally{retainedColdBootstrapIntentV1=original;}}
 export async function ensureUnretainedColdControllerFixtureV1(){const original=retainedColdBootstrapIntentV1;retainedColdBootstrapIntentV1=null;try{return await ensureInternalProductionColdSpawnerBootstrapSettledV1();}finally{retainedColdBootstrapIntentV1=original;}}
 `;
@@ -700,7 +736,7 @@ test("cold helper frame retains descriptor ownership through failed close and pr
     const fixture = await createColdFrameFixtureV1();
     const owned = new Set<number>();
     let guardDescriptors = new Set<number>();
-    let injected = false, scratchPath = "", directoryCloses = 0;
+    let injected = false, scratchPath = "", directoryCloses = 0, uncertainDirectory: number | undefined;
     try {
       await fixture.isolated.prepareColdSpawnerBootstrapIntentV1();
       const retained = fixture.isolated.inspectColdIntentFixtureV1();
@@ -722,7 +758,7 @@ test("cold helper frame retains descriptor ownership through failed close and pr
       });
       Reflect.set(globalThis, "__coldFrameBeforeCloseHook", (fd: number) => {
         const stats = fstatSync(fd);
-        if (fault === "directory-close" && !injected && guardDescriptors.has(fd) && stats.isDirectory() && ++directoryCloses === 2) { injected = true; throw new Error("fixture directory close interrupted"); }
+        if (fault === "directory-close" && !injected && guardDescriptors.has(fd) && stats.isDirectory() && ++directoryCloses === 2) { injected = true; uncertainDirectory = fd; throw new Error("fixture directory close interrupted"); }
         if (fault === "writer-close" && !injected && stats.isFile() && stats.nlink === 0 && stats.size > 0) { injected = true; throw new Error("fixture writer close interrupted"); }
       });
       Reflect.set(globalThis, "__coldFrameGuardCloseHook", () => { if (fault === "guard-close" && !injected) { injected = true; throw new Error("fixture guard close interrupted"); } });
@@ -738,6 +774,12 @@ test("cold helper frame retains descriptor ownership through failed close and pr
         assert.equal(owned.size, 1); assert.throws(() => fixture.isolated.drainColdFrameFixtureV1(), /ambiguous/);
         const descriptor = [...owned][0]!; closeSync(descriptor); owned.delete(descriptor); // Fixture knows its injected close failed before the syscall.
         assert.equal(fixture.isolated.drainColdFrameFixtureV1(), 0);
+      }
+      if (fault === "directory-close") {
+        assert.deepEqual([...owned], [uncertainDirectory], "only the ambiguous directory remains");
+        assert.throws(() => fixture.isolated.openColdFrameFixtureV1(), /uncertain/);
+        assert.deepEqual([...owned], [uncertainDirectory], "retry must not reopen or close the ambiguous descriptor");
+        closeSync(uncertainDirectory!); owned.delete(uncertainDirectory!); // Only the fixture knows the syscall was never entered.
       }
       assert.equal(owned.size, 0, `${fault}: all newly owned descriptors close on failure`);
       assert.equal(fstatSync(retained.descriptor).nlink, 1, "transport failure must not release the retained lease");
@@ -3806,6 +3848,7 @@ test("cold controller release drains its real owned resources after historical s
   Reflect.set(globalThis, "__coldFrameClosedHook", (fd: number) => owned.delete(fd));
   const fixture = await createAuthenticatedColdChildFixtureV1("claim-real-helper-controller-settlement-release");
   let childPid: number | undefined;
+  let uncertainDirectory: number | undefined;
   const sentinels: number[] = [];
   const identity = (pid: number) => spawnSync("/bin/ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8", timeout: 2000, maxBuffer: 65536 }).stdout.trim();
   try {
@@ -3832,13 +3875,13 @@ test("cold controller release drains its real owned resources after historical s
     assert.equal(identity(childPid!), "");
     writeFileSync(path.join(fixture.root, "epoch-head.json"), "advanced fixture epoch\n");
     assert.ok(owned.size > 0, "actual controller owns descriptors before release");
-    let fired = false, blocked = true, selected: number | undefined;
+    let fired = false, blocked = true, selected: number | undefined, selectedCloseAttempts = 0;
     if (mode === "authority-close") selected = [...owned].find(([, file]) => file === path.join(fixture.root, "epoch-head.json"))?.[0];
     if (mode === "guard-close") selected = [...owned].find(([fd, file]) => file === fixture.root && !originalRootDescriptors.has(fd))?.[0];
     if (mode === "root-guard-close") selected = [...originalRootDescriptors][0];
     if (mode === "physical-close") selected = fixture.state.descriptor;
     if (mode === "lock-reader-close") Reflect.set(globalThis, "__coldFrameOpenedHook", (fd: number, file: string) => { owned.set(fd, String(file)); if (selected === undefined && file === fixture.lock) selected = fd; });
-    if (mode.endsWith("-close")) Reflect.set(globalThis, "__coldFrameBeforeCloseHook", (fd: number) => { if (blocked && fd === selected) { fired = true; throw Error(`fixture ${mode}`); } });
+    if (mode.endsWith("-close")) Reflect.set(globalThis, "__coldFrameBeforeCloseHook", (fd: number) => { if (fd === selected) { selectedCloseAttempts++; if (blocked) { fired = true; if (mode === "guard-close" || mode === "root-guard-close") uncertainDirectory = fd; throw Error(`fixture ${mode}`); } } });
     if (mode === "unlink") Reflect.set(globalThis, "__coldFrameBeforeUnlinkHook", (file: string) => { if (blocked && file === fixture.lock) { fired = true; throw Error("fixture lock unlink"); } });
     if (mode.startsWith("post-unlink")) Reflect.set(globalThis, "__coldReleaseAfterUnlinkHook", () => { if (blocked) { fired = true; if (mode === "post-unlink-new-owner") writeFileSync(fixture.lock, "new independent owner\n", { mode: 0o600, flag: "wx" }); throw Error("fixture after owned unlink"); } });
     if (mode === "parent-sync") Reflect.set(globalThis, "__coldFrameBeforeSyncHook", (fd: number) => { if (blocked && owned.get(fd) === fixture.root && !existsSync(fixture.lock)) { fired = true; throw Error("fixture lock parent sync"); } });
@@ -3873,8 +3916,29 @@ test("cold controller release drains its real owned resources after historical s
       blocked = false;
     }
     const newOwner = mode === "post-unlink-new-owner" ? { identity: lstatSync(fixture.lock, { bigint: true }), bytes: readFileSync(fixture.lock) } : null;
+    if (mode === "guard-close") {
+      const before = coldGenesisTreeSnapshotV1(fixture.root);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await assert.rejects(fixture.isolated.releaseColdControllerFixtureV1(), /cleanup is uncertain/);
+        assert.throws(() => fixture.isolated.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(), /cleanup is uncertain/);
+      }
+      assert.equal(selectedCloseAttempts, 1);
+      assert.equal(fstatSync(fixture.state.descriptor).nlink, 1, "uncertain pre-unlink cleanup preserves the physical fence");
+      assert.equal(fixture.isolated.inspectColdReleasePhaseFixtureV1(), "releasing");
+      assert.throws(() => fixture.isolated.inspectColdIntentFixtureV1(), /lease is foreign, cloned, or released/, "cleanup-only ownership cannot regain a usable lease");
+      assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), before);
+      continue;
+    }
     await fixture.isolated.releaseColdControllerFixtureV1();
     for (const fd of sentinels) assert.equal(readFileSync(fd, "utf8"), "sentinel", "release retry must not close reused foreign descriptors");
+    if (mode === "root-guard-close") {
+      assert.deepEqual([...owned.keys()], [uncertainDirectory]);
+      assert.equal(selectedCloseAttempts, 1);
+      assert.equal(existsSync(fixture.lock), false);
+      assert.equal(fixture.isolated.inspectColdIntentFixtureV1(), null);
+      assert.throws(() => fixture.isolated.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(), /cleanup is uncertain/);
+      continue;
+    }
     assert.equal(owned.size, 0, `production release must drain managed resources before fixture cleanup: ${JSON.stringify([...owned])}`);
     if (newOwner) { assert.deepEqual(lstatSync(fixture.lock, { bigint: true }), newOwner.identity); assert.deepEqual(readFileSync(fixture.lock), newOwner.bytes); }
     else assert.equal(existsSync(fixture.lock), false);
@@ -3886,6 +3950,7 @@ test("cold controller release drains its real owned resources after historical s
     if (!childPid && existsSync(path.join(fixture.fixture, "fixture-spawn-pids"))) childPid = Number(readFileSync(path.join(fixture.fixture, "fixture-spawn-pids"), "utf8").trim());
     if (childPid && identity(childPid).includes(path.join(fixture.fixture, "dist/spawner.js"))) { process.kill(childPid, "SIGTERM"); const deadline = Date.now() + 5000; while (Date.now() < deadline && identity(childPid)) await new Promise(resolve => setTimeout(resolve, 20)); assert.equal(identity(childPid), ""); }
     try { fixture.close(); } catch (error) { if (!String(error).includes("lease is foreign, cloned, or released")) throw error; fixture.cleanup(); }
+    finally { if (uncertainDirectory !== undefined) closeSync(uncertainDirectory); } // Fixture knows the injected close never reached the OS.
   }
   }
 });
@@ -3893,7 +3958,7 @@ test("cold controller release drains its real owned resources after historical s
 test("cold settlement history rejects crossed immutable records without live process authority", async () => {
   for (const mode of ["profile-dist-omitted", "profile-launchagents-omitted", "profile-library-omitted", "profile-dist-mode", "profile-launchagents-mode", "profile-host-mode", "profile-root-owner", "late-intent", "pending-arrival", "reader-close", "guard-close", "profile-extra", "profile-relative-node", "profile-environment-secret", "pending", "pending-symlink", "orphan-final", "extra-member", "intent-replace", "dispatch-replace", "claim-replace", "genesis-replace", "journal-replace", "completion-pair", "completion-identity", "epoch-pair", "epoch-identity", "ordinary-hash", "remaining-service", "listener", "unknown-key", "bad-hash", "noncanonical"]) {
     const fixture = await createAuthenticatedColdChildFixtureV1("claim-real-helper-controller-settlement-history");
-    let childPid: number | undefined;
+    let childPid: number | undefined, uncertainDirectory: number | undefined;
     const identity = (pid: number) => spawnSync("/bin/ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8", timeout: 2000, maxBuffer: 65536 }).stdout.trim();
     try {
       const output = await import(pathToFileURL(path.join(fixture.fixture, "dist/internal-production/baseline-spawner-launch-environment-v1.js")).href);
@@ -3915,17 +3980,27 @@ test("cold settlement history rejects crossed immutable records without live pro
       assert.equal(identity(childPid!), "");
       const root = path.join(fixture.root, "cold-spawner-bootstrap-v1"), target = path.join(fixture.root, "cold-spawner-bootstrap-controller-settlement-v1.json");
       if (mode.endsWith("-close")) {
-        let blocked = true, descriptor: number | undefined, acquisitions = 0;
+        let blocked = true, descriptor: number | undefined, acquisitions = 0, selectedCloseAttempts = 0;
         const owned = new Set<number>();
         Reflect.set(globalThis, "__coldFrameOpenedHook", (fd: number, file: string) => { acquisitions++; owned.add(fd); if (descriptor === undefined && file === (mode === "reader-close" ? target : root)) descriptor = fd; });
         Reflect.set(globalThis, "__coldFrameClosedHook", (fd: number) => { owned.delete(fd); });
-        Reflect.set(globalThis, "__coldFrameBeforeCloseHook", (fd: number) => { if (blocked && fd === descriptor) throw Error("fixture persistent historical close"); });
+        Reflect.set(globalThis, "__coldFrameBeforeCloseHook", (fd: number) => { if (fd === descriptor) { selectedCloseAttempts++; if (blocked) { if (mode === "guard-close") uncertainDirectory = fd; throw Error("fixture persistent historical close"); } } });
+        const before = coldGenesisTreeSnapshotV1(fixture.root);
         assert.throws(() => fixture.isolated.observeInternalProductionColdSpawnerBootstrapJournalCensusV1());
         assert.notEqual(descriptor, undefined);
         const originalAcquisitions = acquisitions;
         assert.throws(() => fixture.isolated.observeInternalProductionColdSpawnerBootstrapJournalCensusV1());
         assert.equal(acquisitions, originalAcquisitions, `${mode}: unfinished cleanup fences every later acquisition`);
         blocked = false;
+        if (mode === "guard-close") {
+          assert.throws(() => fixture.isolated.observeInternalProductionColdSpawnerBootstrapJournalCensusV1(), /cleanup is uncertain/);
+          assert.equal(acquisitions, originalAcquisitions);
+          assert.deepEqual([...owned], [descriptor]);
+          assert.equal(selectedCloseAttempts, 1);
+          assert.deepEqual(coldGenesisTreeSnapshotV1(fixture.root), before);
+          closeSync(uncertainDirectory!); uncertainDirectory = undefined; // Known fixture-only pre-syscall failure.
+          continue;
+        }
         assert.equal(fixture.isolated.observeInternalProductionColdSpawnerBootstrapJournalCensusV1().state, "settled");
         assert.equal(owned.size, 0, `${mode}: next read drains exact retained resources`);
         continue;
@@ -4006,7 +4081,8 @@ test("cold settlement history rejects crossed immutable records without live pro
       Reflect.deleteProperty(globalThis, "__coldControllerCompiledOutputVerifier"); Reflect.deleteProperty(globalThis, "__coldControllerServiceCensusObserver");
       if (!childPid && existsSync(path.join(fixture.fixture, "fixture-spawn-pids"))) childPid = Number(readFileSync(path.join(fixture.fixture, "fixture-spawn-pids"), "utf8").trim());
       if (childPid && identity(childPid).includes(path.join(fixture.fixture, "dist/spawner.js"))) { process.kill(childPid, "SIGTERM"); const deadline = Date.now() + 5000; while (Date.now() < deadline && identity(childPid)) await new Promise(resolve => setTimeout(resolve, 20)); assert.equal(identity(childPid), ""); }
-      fixture.close();
+      try { fixture.close(); }
+      finally { if (uncertainDirectory !== undefined) closeSync(uncertainDirectory); }
     }
   }
 });
@@ -4496,24 +4572,33 @@ test("cold helper refuses crossed inherited identities, snapshots and awaited au
   }
 });
 
-test("cold helper authentication refusal drains interrupted directory cleanup", async () => {
+test("cold helper authentication refusal drains untouched directories without ambiguous retry", async () => {
   for (const persistent of [false, true]) {
   const fixture = await createColdHelperAuthenticationFixtureV1((source) => source
     .replace("  openSync,", "  openSync as actualOpenSync,").replace("  closeSync,", "  closeSync as actualCloseSync,") + `
-const testOwned=new Set<number>();let testClosing=false,testCloseCount=0,testFault=false;
+const testOwned=new Set<number>(),testUncertain=new Set<number>();let testClosing=false,testCloseCount=0,testFault=false,testRetries=0;
 function openSync(...args:any[]){const fd=actualOpenSync(...args);testOwned.add(fd);return fd;}
-function closeSync(fd:number){if(testClosing&&fstatSync(fd).isDirectory()&&++testCloseCount${persistent ? ">=" : "==="}2){testFault=true;throw Error('fixture pre-close fault')}actualCloseSync(fd);testOwned.delete(fd);}
+function closeSync(fd:number){if(testUncertain.has(fd))testRetries++;if(testClosing&&fstatSync(fd).isDirectory()&&++testCloseCount${persistent ? ">=" : "==="}2){testFault=true;testUncertain.add(fd);throw Error('fixture pre-close fault')}actualCloseSync(fd);testOwned.delete(fd);}
 globalThis.__coldHelperRefuse=()=>{testClosing=true;throw Error('fixture profile refusal')};
-globalThis.__coldHelperDiagnostic=()=>{const retained=pendingColdHelperAuthenticationCleanupV1.size;testClosing=false;for(const close of pendingColdHelperAuthenticationCleanupV1)close();return {owned:testOwned.size,injected:testFault,retained,pending:pendingColdHelperAuthenticationCleanupV1.size}};
+globalThis.__coldHelperDiagnostic=()=>{
+ testClosing=false;for(const close of pendingColdHelperAuthenticationCleanupV1)close();
+ const diagnostic={untouched:[...testOwned].filter(fd=>!testUncertain.has(fd)).length,uncertain:testUncertain.size,retries:testRetries,injected:testFault,pending:pendingColdHelperAuthenticationCleanupV1.size};
+ // Only this fixture knows the injected error occurred before the OS close.
+ // Production must not retry these ambiguous descriptors.
+ for(const fd of testUncertain){actualCloseSync(fd);testOwned.delete(fd)}
+ return diagnostic;
+};
 `);
   try {
     fixture.observer("globalThis.__coldHelperRefuse()");
     const result = fixture.run();
     assert.equal(result.accepted, false);
     assert.equal(result.diagnostic.injected, true);
-    assert.equal(result.diagnostic.retained, persistent ? 1 : 0);
     assert.equal(result.diagnostic.pending, 0);
-    assert.equal(result.diagnostic.owned, 0, "remaining authenticated directory handles must not disappear after a close error");
+    assert.equal(result.diagnostic.untouched, 0, "all unambiguous directory owners must drain");
+    assert.ok(result.diagnostic.uncertain >= 1, "the pre-close fault leaves explicit uncertain ownership");
+    assert.equal(result.diagnostic.retries, 0, "ambiguous descriptors must never be retried");
+    assert.equal(fstatSync(fixture.state.descriptor).nlink, 1, "refusal preserves the controller lease");
   } finally { fixture.close(); }
   }
 });
@@ -4996,7 +5081,7 @@ export function rawFixtureState(){const raw=retainedColdGenesisRawV1;return raw?
 export function disposeRawFixture(){const raw=retainedColdGenesisRawV1,state=raw&&rawPhysicalTransitionLocksV1.get(raw);if(state){if(!state.cleanup.rootGuardClosed)state.rootGuard.close();if(!state.cleanup.descriptorClosed)closeSync(state.descriptor);rawPhysicalTransitionLocksV1.delete(raw);}retainedColdGenesisRawV1=null;}
 `;
     const fixture = await createColdEpochGenesisFixtureV1(source), owned = new Map<number, string>();
-    let blocked = true, fired = false, selected: number | undefined, directoryCloses = 0;
+    let blocked = true, fired = false, selected: number | undefined, directoryCloses = 0, selectedCloseAttempts = 0, preparations = 0;
     try {
       const warmup = await fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1();
       await fixture.isolated.releaseInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1(warmup);
@@ -5007,15 +5092,14 @@ export function disposeRawFixture(){const raw=retainedColdGenesisRawV1,state=raw
         if (lock !== fixture.lock) return;
         if (mode === "new-owner" && blocked) { fired = true; writeFileSync(lock, "new raw-path owner\n", { mode: 0o600, flag: "wx" }); throw Error("fixture raw owned-unlink response lost"); }
         Reflect.set(globalThis, "__rawFixtureBeforeClose", (fd: number) => {
-          if (!blocked) return;
           const file = owned.get(fd);
-          if (selected === undefined && file) {
+          if (blocked && selected === undefined && file) {
             const stats = fstatSync(fd);
             if (mode === "reader-close" && file === fixture.lock && stats.nlink === 0) selected = fd;
             else if (mode === "guard-close" && stats.isDirectory() && ++directoryCloses === 3) selected = fd;
             else if (mode === "physical-close" && file === fixture.lock && stats.nlink === 0 && ++directoryCloses === 2) selected = fd;
           }
-          if (selected === fd) { fired = true; throw Error("fixture raw resource pre-close failure"); }
+          if (selected === fd) { selectedCloseAttempts++; if (blocked) { fired = true; throw Error("fixture raw resource pre-close failure"); } }
         });
       });
       await assert.rejects(fixture.isolated.acquireInternalProductionColdRecoveryEpochGenesisTransitionLeaseV1(), /raw publication refusal/);
@@ -5025,10 +5109,17 @@ export function disposeRawFixture(){const raw=retainedColdGenesisRawV1,state=raw
       const foreign = mode === "new-owner" ? { bytes: readFileSync(fixture.lock), stats: lstatSync(fixture.lock, { bigint: true }) } : null;
       blocked = false;
       Reflect.deleteProperty(globalThis, "__rawFixturePublicationFault");
-      Reflect.set(globalThis, "__rawFixturePreparation", () => { throw Error("fixture stop before new preparation"); });
-      await assert.rejects(fixture.isolated.ensureInternalProductionColdSpawnerBootstrapSettledV1(), /stop before new preparation/);
+      Reflect.set(globalThis, "__rawFixturePreparation", () => { preparations++; throw Error("fixture stop before new preparation"); });
+      await assert.rejects(fixture.isolated.ensureInternalProductionColdSpawnerBootstrapSettledV1(), mode === "guard-close" ? /cleanup is uncertain/ : /stop before new preparation/);
       assert.equal(fixture.isolated.rawFixtureState(), null);
-      assert.equal(owned.size, 0, `${mode}: no old raw resource survives facade cleanup`);
+      if (mode === "guard-close") {
+        assert.deepEqual([...owned.keys()], [selected]);
+        assert.equal(selectedCloseAttempts, 1, "an uncertain directory close is never retried");
+        assert.equal(preparations, 0, "poisoned authentication cannot start another preparation");
+      } else {
+        assert.equal(owned.size, 0, `${mode}: no old raw resource survives facade cleanup`);
+        assert.equal(preparations, 1);
+      }
       if (foreign) { assert.deepEqual(readFileSync(fixture.lock), foreign.bytes); assert.deepEqual(lstatSync(fixture.lock, { bigint: true }), foreign.stats); }
       else assert.equal(existsSync(fixture.lock), false);
     } finally {
