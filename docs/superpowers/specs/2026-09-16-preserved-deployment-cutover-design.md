@@ -1,6 +1,7 @@
 # Preserved-deployment cutover design
 
-Status: proposed design for owner review; not executable live authority.
+Status: owner-approved September16; implementation in progress. Design approval
+is not executable live authority or proof that qualification has passed.
 
 ## Objective and approved scope
 
@@ -141,6 +142,8 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## File map and boundaries
 
+- New `src/internal-production/baseline-deployment-cutover-records-v1.ts`: pure
+  strict cutover intent codecs, separate from live observation and publication.
 - New `src/internal-production/baseline-deployment-cutover-v1.ts`: fixed-root strict
   intent/status validation and read-only ordinary refusal; static imports only.
 - `src/spawner.ts`: invoke refusal before ordinary startup effects, while keeping
