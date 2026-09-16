@@ -159,6 +159,47 @@ test("default launcher binds both passive generations before fresh idle and priv
   assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL|SocketSentinel|plistBytesHash|configurationHash|loadedStateHash|launcherObservationHash/);
 }));
 
+for (const [transition, expectedStage] of [["idle", null], ["native-error", "sampled-native"],
+  ["identity-mismatch", "sampled-bind"], ["replacement", "sampled-postcheck"], ["malformed-idle", "sampled-postcheck"], ["settled-restart", "sampled-generation"]] as const) {
+  test(`sampled monitor ${transition} preserves authenticated settlement and refusal boundaries`, () => defaultFixture((home, texts) => {
+    const result = observe(home, texts, `
+      const transition=${JSON.stringify(transition)},identify=globalThis.identify,command=cp.spawnSync;
+      let monitored=false;
+      globalThis.identify=request=>{
+        const value=identify(request);
+        if(globalThis.samples===2){
+          monitored=true;
+          if(transition==='settled-restart')globalThis.runningIndex=request.pid===12345?1:undefined;
+          if(transition==='idle'||transition==='native-error'||transition==='identity-mismatch')globalThis.idle=true;
+          if(transition==='native-error')throw Error('TOKEN_SENTINEL');
+          if(transition==='identity-mismatch')return {...value,startMicroseconds:57};
+        }
+        return value;
+      };
+      cp.spawnSync=(exe,args,options)=>{
+        const value=command(exe,args,options);
+        if(monitored&&exe==='/bin/launchctl'&&args[1].endsWith('setfarm-spawner')){
+          if(transition==='replacement')return {...value,stdout:Buffer.from(value.stdout.toString().replace('pid = 12345','pid = 22345'))};
+          if(transition==='malformed-idle')return {...value,stdout:Buffer.from(value.stdout.toString().replace('state = running','state = spawn scheduled'))};
+        }
+        return value;
+      };
+      evidence=()=>({monitored,dbCalls:globalThis.dbCalls,samples:globalThis.samples,nodeCloses:globalThis.nodeCloses});
+    `, undefined, `const qualification=await context.qualifyPassiveHome();await context.census();return qualification;`);
+    assert.equal(result.evidence.monitored, true, JSON.stringify(result));
+    assert.equal(result.evidence.samples, 2); assert.equal(result.evidence.nodeCloses, 2);
+    if (expectedStage === null) {
+      assert.equal(result.error, undefined, JSON.stringify(result));
+      assert.equal(result.observation.samples.length, 2); assert.equal(result.evidence.dbCalls, 1);
+    } else {
+      assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+      assert.equal(result.launcherStage, expectedStage, JSON.stringify(result));
+      assert.equal(result.evidence.dbCalls, 0);
+    }
+    assert.doesNotMatch(JSON.stringify(result), /TOKEN_SENTINEL|PG_SENTINEL/);
+  }));
+}
+
 for (const [fault, stage] of [["identify", "identity"], ["measure", "measure"], ["generation", "measurement-bind"], ["process", "idle"]]) {
   test(`default launcher finite diagnostic identifies ${fault} refusal without secrets`, () => defaultFixture((home, texts) => {
     const result = observe(home, texts, `

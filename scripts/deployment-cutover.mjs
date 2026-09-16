@@ -35,7 +35,8 @@ function ownerRefusal(error) {
       "resolve", "prequalify", "resolution-bind", "qualify", "postqualify", "census", "postcensus", "census-shape", "final-recheck", "cleanup"].includes(phase)
       || (typeof cleanupFailed !== "boolean" && !(cleanupFailed === null && ["acquire-selected", "acquire-retained", "acquire-absence", "acquire-launcher"].includes(phase)))
       || (launcherStage !== null && (phase !== "qualify" || !["precheck", "baseline", "transport", "waiting",
-        "sampled-identity", "identity", "pid-recheck", "measure", "measurement-bind", "settling", "idle"].includes(launcherStage)))) return null;
+        "sampled-identity", "sampled-snapshot", "sampled-generation", "sampled-native", "sampled-bind", "sampled-postcheck",
+        "identity", "pid-recheck", "measure", "measurement-bind", "settling", "idle"].includes(launcherStage)))) return null;
     return { scope, stage: phase, launcherStage, cleanupFailed };
   } catch { return null; }
 }

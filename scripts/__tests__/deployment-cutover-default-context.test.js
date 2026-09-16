@@ -45,7 +45,7 @@ function run(fault = "") {
         resolveModules(){events.push('resolve');if(fault==='resolution')throw Error('PRIVATE_SENTINEL');return {profileHash:fault==='resolution-cross'?'crossed':'profile',selectedDeploymentObservationHash:'selected',contexts:[{home:'account'},{home:'absent'}]}},
         async qualifyPassiveHome(){events.push('sample');await Promise.resolve();sampled=true;if(['sample','sample-close-loss'].includes(fault))throw Error('PRIVATE_SENTINEL');
           if(fault.startsWith('launcher-stage-')){const error=Error('PRIVATE_SENTINEL');Object.defineProperty(error,'cutoverLauncherStage',
-            fault==='launcher-stage-accessor'?{get(){process.stdout.write('PRIVATE_SENTINEL');throw Error('PRIVATE_SENTINEL')}}:{value:fault==='launcher-stage-valid'?'measure':'PRIVATE_SENTINEL'});throw error}
+            fault==='launcher-stage-accessor'?{get(){process.stdout.write('PRIVATE_SENTINEL');throw Error('PRIVATE_SENTINEL')}}:{value:fault==='launcher-stage-valid'?'measure':fault.startsWith('launcher-stage-sampled-')?fault.slice('launcher-stage-'.length):'PRIVATE_SENTINEL'});throw error}
           return {samples:[],processObservation:{families:[],listener:null}}},
         async census(){events.push('db');await Promise.resolve();queried=true;if(fault==='db')throw Error('PRIVATE_SENTINEL');return {activeRunCount:fault==='nonzero'?1:fault==='malformed-count'?'0':0,openClaimCount:0,executionAttemptCount:0,activeRuntimeSessionCount:0,activeCompletionOwnerCount:0,unsettledMandatoryEffectCount:0,artifactReservationCount:0,publicationBatchCount:0,artifactPublicationCount:0,terminationOwnerCount:0,findingOwnerCount:0,recoveryOwnerCount:0,operationalDeliveryCount:0,legacyFindingPublicationInventory:{entries:[]}}}
       }};
@@ -152,9 +152,9 @@ test("default owner retains nested cleanup failure on reentry before reacquiring
   assert.deepEqual(result.closed, ["absence", "retained", "selected"]);
   assert.equal(result.events.filter(event => event.startsWith("hold:")).length, 3);
 });
-for (const kind of ["valid", "accessor", "unknown"]) test(`default owner sanitizes launcher ${kind} stage`, () => {
+for (const kind of ["valid", "accessor", "unknown", "sampled-snapshot", "sampled-generation", "sampled-native", "sampled-bind", "sampled-postcheck"]) test(`default owner sanitizes launcher ${kind} stage`, () => {
   const result = run(`launcher-stage-${kind}`);
-  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "qualify", launcherStage: kind === "valid" ? "measure" : null, cleanupFailed: false });
+  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "qualify", launcherStage: kind === "valid" ? "measure" : kind.startsWith("sampled-") ? kind : null, cleanupFailed: false });
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE_SENTINEL/);
   assert.equal(result.events.includes("db"), false);
 });
