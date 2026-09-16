@@ -5,6 +5,48 @@ import path from "node:path";
 import { spawnSync, execFileSync } from "node:child_process";
 import { fixture, run, write, git } from "./fixtures/deployment-cutover-bootstrap.mjs";
 
+function envAbsenceFixture(body) {
+  fixture((root, expected, home) => {
+    const old = path.join(home, "ai/setrox/old");
+    write(old, "dist/cli/cli.js", "preserved entry\n");
+    fs.mkdirSync(path.join(home, ".local/bin"), { recursive: true, mode: 0o755 });
+    fs.symlinkSync(path.join(old, "dist/cli/cli.js"), path.join(home, ".local/bin/setfarm"));
+    body(root, old, home);
+  }, source => source.replace("const closure = ", "import net from 'node:net';net.Socket.prototype.connect=()=>{throw Error('UNEXPECTED_CONNECTION')};syncBuiltinESMExports();const closure = "),
+  { genuine: true, envAbsence: true });
+}
+
+test("trusted env-file inspection reports only physical candidate absence and remaining blockers", () => envAbsenceFixture((root, old, home) => {
+  const result = run(root, ["inspect-envfiles", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout);
+  assert.equal(observed.envFiles.scope, "default-candidate-absence-only");
+  assert.equal(observed.envFiles.selectedCheckoutPath, old);
+  assert.equal(observed.envFiles.currentCheckoutPath, root);
+  assert.equal(observed.envFiles.candidates.length, 6);
+  assert.deepEqual(observed.envFiles.blockers, ["runtime-effective-environment-not-authenticated", "controller-ownership-not-acquired"]);
+  assert.equal(Object.hasOwn(observed, "host"), false);
+  assert.equal(fs.existsSync(path.join(home, "ai/setrox/data")), false);
+}));
+
+for (const fault of ["present-selected-env", "present-home-env", "crossed-cli", "tampered-observer"]) {
+  test(`trusted env-file inspection refuses ${fault} without output or authority`, () => envAbsenceFixture((root, old, home) => {
+    if (fault === "present-selected-env") write(old, ".env", "PRIVATE_ENV_CANARY\n", 0o600);
+    if (fault === "present-home-env") write(home, ".openclaw/setfarm/.env.local", "PRIVATE_ENV_CANARY\n", 0o600);
+    if (fault === "crossed-cli") {
+      const link = path.join(home, ".local/bin/setfarm"); fs.renameSync(link, `${link}.preserved`); fs.symlinkSync("missing-cli", link);
+    }
+    if (fault === "tampered-observer") fs.appendFileSync(path.join(root, "dist/internal-production/baseline-deployment-cutover-env-absence-v1.js"), '\nprocess.stdout.write("UNVERIFIED_ENV_OBSERVER_EXECUTED");\n');
+    const result = run(root, ["inspect-envfiles", "--json"]);
+    assert.equal(result.status, 1); assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
+    assert.equal(fs.existsSync(path.join(home, "ai/setrox/data")), false);
+    if (fault === "present-selected-env") assert.equal(fs.readFileSync(path.join(old, ".env"), "utf8"), "PRIVATE_ENV_CANARY\n");
+    if (fault === "present-home-env") assert.equal(fs.readFileSync(path.join(home, ".openclaw/setfarm/.env.local"), "utf8"), "PRIVATE_ENV_CANARY\n");
+    if (fault === "crossed-cli") assert.equal(fs.readlinkSync(path.join(home, ".local/bin/setfarm")), "missing-cli");
+  }));
+}
+
 test("authenticated bootstrap accepts legitimate partial output-file reads", () => fixture(root => {
   const result = run(root); assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).sourceBuild.clean, true);
