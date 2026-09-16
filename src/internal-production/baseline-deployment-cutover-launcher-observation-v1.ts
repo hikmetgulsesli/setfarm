@@ -234,7 +234,11 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
     while (resources.length) {
       try { resources.pop()!.close(); } catch { uncertain = true; cleanupUncertain = true; }
     }
-    if (uncertain) fail();
+    if (uncertain) {
+      const error = Error("DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID");
+      Object.defineProperty(error, "cutoverCleanupFailed", { value: true });
+      throw error;
+    }
   };
   try {
     const accountProjection = () => {

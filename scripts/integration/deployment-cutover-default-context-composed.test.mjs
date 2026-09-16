@@ -9,7 +9,7 @@ const countNames = ["activeRunCount", "openClaimCount", "executionAttemptCount",
   "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
   "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount"];
 
-for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-after-sample"]) test(`authenticated real default composition ${fault || "success"}`, () => {
+for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-after-sample", "acquire-cleanup-loss", "acquire-unknown"]) test(`authenticated real default composition ${fault || "success"}`, () => {
   retainedFixture(({ root }) => {
     const result = run(root, ["inspect-default-context", "--json"]);
     if (fault) {
@@ -18,8 +18,8 @@ for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-
       const lines = result.stderr.trimEnd().split("\n");
       assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
       assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: "default-owner",
-        stage: fault === "sample-refusal" ? "qualify" : "postqualify", launcherStage: fault === "sample-refusal" ? "measure" : null,
-        cleanupFailed: fault !== "sample-refusal" });
+        stage: fault.startsWith("acquire-") ? "acquire-launcher" : fault === "sample-refusal" ? "qualify" : "postqualify", launcherStage: fault === "sample-refusal" ? "measure" : null,
+        cleanupFailed: fault === "acquire-unknown" ? null : fault !== "sample-refusal" });
       assert.doesNotMatch(result.stderr, /PRIVATE_(?:TOKEN|PASSWORD)|PRIVATESOCKET/);
       assert.equal(fs.existsSync(path.join(root, ".setfarm/census-called")), false);
     } else {
@@ -73,7 +73,9 @@ async function inspect() {`).replace('load(url, context, nextLoad) {',
       'load(url, context, nextLoad) { if(url.endsWith("/deployment-cutover-passive-home.mjs"))globalThis.fixtureAllowRunning=true;'), controllerOptions: {
     envAbsence: true,
     sourceInstrument: (locator, source) => locator.endsWith("baseline-deployment-cutover-node-path-v1")
-      ? `export function holdDeploymentCutoverNodePathV1(){return Object.freeze({observation:Object.freeze({candidatePath:process.execPath,executablePath:process.execPath}),recheck(){},close(){}})}` : source,
+      ? `let holds=0;export function holdDeploymentCutoverNodePathV1(){
+        const fault=${JSON.stringify(fault)};if(fault==='acquire-unknown'||(fault==='acquire-cleanup-loss'&&++holds===2))throw Error('PRIVATE_PASSWORD');
+        return Object.freeze({observation:Object.freeze({candidatePath:process.execPath,executablePath:process.execPath}),recheck(){},close(){if(fault==='acquire-cleanup-loss')throw Error('PRIVATE_PASSWORD')}})}` : source,
     extraSources: { "internal-production/baseline-legacy-database-census-v1": `
       import fs from 'node:fs';import path from 'node:path';import {fileURLToPath} from 'node:url';
       export async function observeLegacyDatabaseCensusV1(url,cold,profile){

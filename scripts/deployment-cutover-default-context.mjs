@@ -21,6 +21,13 @@ function launcherFailureStage(error) {
     return descriptor && Object.hasOwn(descriptor, "value") && launcherStages.includes(descriptor.value) ? descriptor.value : null;
   } catch { return null; }
 }
+function acquisitionCleanupFailure(error) {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(error, "cutoverCleanupFailed");
+    if (descriptor && Object.hasOwn(descriptor, "value") && descriptor.value === true) return true;
+  } catch { /* An unreturned holder cannot certify cleanup through an accessor. */ }
+  return null;
+}
 const counts = ["activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount", "activeCompletionOwnerCount",
   "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
   "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount"];
@@ -80,7 +87,11 @@ export async function observeDeploymentCutoverDefaultContextV1() {
       selectedDeployment: selected.observation, retainedProfile: retained.observation, resolution,
       defaultEnvAbsence: absence.observation, launcher: launcher.observation, passiveQualification, databaseCensus, blockers });
     stage = "final-recheck"; check();
-  } catch (error) { invalid = true; if (stage === "qualify") launcherStage = launcherFailureStage(error); }
+  } catch (error) {
+    invalid = true;
+    if (stage === "qualify") launcherStage = launcherFailureStage(error);
+    if (stage.startsWith("acquire-")) cleanupFailed = acquisitionCleanupFailure(error);
+  }
   while (contexts.length) {
     try { contexts.pop().close(); } catch { if (!invalid) stage = "cleanup"; invalid = true; uncertain = true; cleanupFailed = true; }
   }

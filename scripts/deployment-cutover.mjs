@@ -33,7 +33,8 @@ function ownerRefusal(error) {
     const scope = fields.scope.value, phase = fields.stage.value, launcherStage = fields.launcherStage.value, cleanupFailed = fields.cleanupFailed.value;
     if (scope !== "default-owner" || !["entry", "account", "acquire-selected", "acquire-retained", "acquire-absence", "acquire-launcher", "crossbind",
       "resolve", "prequalify", "resolution-bind", "qualify", "postqualify", "census", "postcensus", "census-shape", "final-recheck", "cleanup"].includes(phase)
-      || typeof cleanupFailed !== "boolean" || (launcherStage !== null && (phase !== "qualify" || !["precheck", "baseline", "transport", "waiting",
+      || (typeof cleanupFailed !== "boolean" && !(cleanupFailed === null && ["acquire-selected", "acquire-retained", "acquire-absence", "acquire-launcher"].includes(phase)))
+      || (launcherStage !== null && (phase !== "qualify" || !["precheck", "baseline", "transport", "waiting",
         "sampled-identity", "identity", "pid-recheck", "measure", "measurement-bind", "settling", "idle"].includes(launcherStage)))) return null;
     return { scope, stage: phase, launcherStage, cleanupFailed };
   } catch { return null; }
@@ -250,7 +251,10 @@ async function inspect() {
       ...(host ? { host } : {}), ...(envFiles ? { envFiles } : {}), ...(helpers ? { helpers } : {}), ...(retainedProfile ? { retainedProfile } : {}),
       ...(defaultContext ? { defaultContext } : {}) };
   } catch (error) {
-    if (process.argv[2] === "inspect-default-context" && refusal.stage === "default-context") refusal = ownerRefusal(error) ?? refusal;
+    // A throwing nested observer may have acquired resources we never received.
+    // Missing sanitized cleanup evidence means unknown, not successful cleanup.
+    const owned = process.argv[2] === "inspect-default-context" && refusal.stage === "default-context" ? ownerRefusal(error) : null;
+    refusal = owned ?? { ...refusal, cleanupFailed: null };
     invalid = true;
   }
   while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch {

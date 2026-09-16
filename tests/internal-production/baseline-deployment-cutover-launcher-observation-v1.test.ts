@@ -105,7 +105,7 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
     } catch(error) {
       let retryError = null;
       if (run && ${defaultAction === undefined}) { try { await run(); } catch (retry) { retryError = render(retry,{depth:null}); } }
-      process.stdout.write(JSON.stringify({error:render(error,{depth:null}),launcherStage:error.cutoverLauncherStage,retryError,prints,conversions,evidence:evidence()}));
+      process.stdout.write(JSON.stringify({error:render(error,{depth:null}),launcherStage:error.cutoverLauncherStage,cleanupFailed:error.cutoverCleanupFailed,retryError,prints,conversions,evidence:evidence()}));
     }
   `], { encoding: "utf8", env: {}, timeout: 15000 });
   assert.equal(child.status, 0, child.stderr); return JSON.parse(child.stdout);
@@ -174,6 +174,17 @@ for (const [fault, stage] of [["identify", "identity"], ["measure", "measure"], 
     assert.doesNotMatch(JSON.stringify(result), /TOKEN_SENTINEL|PG_SENTINEL/);
   }));
 }
+
+test("default partial acquisition exposes sanitized cleanup loss before returning a holder", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts, `
+    let calls=0;const node=globalThis.nodeHold;
+    globalThis.nodeHold=(...args)=>{if(++calls===2)throw Error('TOKEN_SENTINEL');const held=node(...args);return {...held,close(){held.close();throw Error('TOKEN_SENTINEL')}}};
+    evidence=()=>({dbCalls:globalThis.dbCalls,nodeCloses:globalThis.nodeCloses});
+  `, undefined, `return context.observation;`);
+  assert.equal(result.cleanupFailed, true, JSON.stringify(result));
+  assert.equal(result.evidence.nodeCloses, 1); assert.equal(result.evidence.dbCalls, 0);
+  assert.doesNotMatch(JSON.stringify(result), /TOKEN_SENTINEL/);
+}));
 
 for (const fault of ["generation", "parent", "native-refusal", "process-contender", "temp", "account", "pid", "node-second"]) {
   test(`default ${fault} refusal prevents census and drains held nodes`, () => defaultFixture((home, texts) => {

@@ -25,6 +25,14 @@ bootstrap validates exact own-data fields against fixed allowlists, never invoke
 accessors or serializes an arbitrary error. Launcher diagnostics follow the same
 rule and disclose only local control-flow stage, not underlying native errors.
 
+Cleanup evidence is tri-state: true means an observed failed close, false means
+the returned contexts drained without a close error, null means nested acquisition
+or bootstrap observation failed before its cleanup could be certified. A holder
+that never returns cannot imply successful cleanup. Only an owned data descriptor
+with literal true propagates a nested failure; missing/false/accessor status stays
+unknown. Later outer cleanup failure overrides unknown with true, retaining the
+original refusal stage. This diagnostic never substitutes for resource authority.
+
 ## File map and sequence
 
 - scripts/deployment-cutover-default-context.mjs: owner local phase tracking and
@@ -54,3 +62,13 @@ passed. Independent review found no blockers; suggested second-label stage reset
 applied, then final launcher/composed gates rerun. Getter side-effect sentinels
 prove non-invocation, not merely suppression of their thrown errors. Dual-failure
 tests preserve the first failure and drain resources while marking cleanup loss.
+
+PR137 review4025446702 found unreturned nested-holder cleanup uncertainty was
+reported as false. Owner RED2 and launcher RED1 reproduced it. Acquisition now
+propagates a sanitized observed failure or null=unknown; bootstrap unclassified
+nested failures likewise remain unknown. Added actual composed acquisition-loss
+and unknown cases, descriptor/accessor/false/unknown canaries and unknown plus
+outer cleanup failure. Follow-up owner46/46, launcher77/77, composed6/6,
+bootstrap diagnostic14/14, cutover321/321, manifest18/18, noemit and contracts
+passed. Independent follow-up review found no blockers; final serial genuine
+group passed30/30 in50.2s (57780), including both added composed cases.
