@@ -275,6 +275,17 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## Required proof before live effects
 
+Default-mode composition must hold package inventory and env-absence evidence
+across asynchronous DB work. Add zero-input held contexts beneath the existing
+retained-profile and env-absence snapshot APIs, with frozen evidence, recheck and
+consume-once close only. Recheck after close or uncertain cleanup refuses. Keep
+all current standalone blockers and the existing strict launcher API unchanged.
+This supporting lifetime task is specified in the September16 held-qualification
+plan; it creates no new inspection mode and does not itself qualify default env.
+Selected finalized source/CLI and mode-correct Node resolution must additionally
+remain bound across the complete owning composition before environment/DB target
+blockers may be discharged.
+
 Retained compatibility is fixed-byte and ARM64-only, never a generic old-runtime
 fallback. Bind generation eef9f6c4059daa487a5a367f8f1609b1d1e39142 and output tree
 2cc9696322bb131070560d122a602b73a560fe9e8d26943404c9078094f27054 through the existing
