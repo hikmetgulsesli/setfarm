@@ -9,7 +9,7 @@ const countNames = ["activeRunCount", "openClaimCount", "executionAttemptCount",
   "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
   "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount"];
 
-for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-after-sample", "acquire-cleanup-loss", "acquire-unknown"]) test(`authenticated real default composition ${fault || "success"}`, () => {
+for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-after-sample", "acquire-cleanup-loss", "acquire-unknown", "acquire-config-cleanup-loss"]) test(`authenticated real default composition ${fault || "success"}`, () => {
   retainedFixture(({ root }) => {
     const result = run(root, ["inspect-default-context", "--json"]);
     if (fault) {
@@ -37,8 +37,11 @@ for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-
 import cp from 'node:child_process';
 const actualSpawn=cp.spawnSync, labels=['com.setrox.setfarm-spawner','com.setrox.setfarm-dashboard'];
 let fixtureSamples=0,fixtureIdle=false;
+const actualClose=fs.closeSync;let fixtureConfigCloseLoss=false;
+fs.closeSync=fd=>{actualClose(fd);if(fixtureConfigCloseLoss){fixtureConfigCloseLoss=false;throw Error('PRIVATE_PASSWORD')}};
 cp.spawnSync=(executable,args,options)=>{
   const success=stdout=>({status:0,signal:null,stdout:Buffer.from(stdout),stderr:Buffer.alloc(0)});
+  if(executable==='/usr/bin/plutil'&&${JSON.stringify(fault)}==='acquire-config-cleanup-loss'){fixtureConfigCloseLoss=true;throw Error('PRIVATE_PASSWORD')}
   if(executable==='/usr/bin/getconf')return success('/var/folders/fixture/T/\\n');
   if(executable==='/bin/launchctl'){
     const index=labels.findIndex(label=>args[1]==='gui/'+process.getuid()+'/'+label);

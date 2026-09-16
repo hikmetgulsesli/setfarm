@@ -38,7 +38,7 @@ let occupied = false, uncertain = false;
 // Reviewed retained startup may replace live PATH/DEBUG; the trusted Node/libc
 // prerequisite preserves saved initial stack strings and HOME/PG/root selectors.
 export async function observeDeploymentCutoverDefaultContextV1() {
-  if (arguments.length || occupied || uncertain) fail({ scope: "default-owner", stage: "entry", launcherStage: null, cleanupFailed: false });
+  if (arguments.length || occupied || uncertain) fail({ scope: "default-owner", stage: "entry", launcherStage: null, cleanupFailed: uncertain });
   occupied = true;
   const contexts = [];
   let invalid = false, result, stage = "account", launcherStage = null, cleanupFailed = false;
@@ -90,7 +90,9 @@ export async function observeDeploymentCutoverDefaultContextV1() {
   } catch (error) {
     invalid = true;
     if (stage === "qualify") launcherStage = launcherFailureStage(error);
-    if (stage.startsWith("acquire-")) cleanupFailed = acquisitionCleanupFailure(error);
+    const nestedCleanup = acquisitionCleanupFailure(error);
+    if (stage.startsWith("acquire-") || nestedCleanup === true) cleanupFailed = nestedCleanup;
+    if (cleanupFailed === true) uncertain = true;
   }
   while (contexts.length) {
     try { contexts.pop().close(); } catch { if (!invalid) stage = "cleanup"; invalid = true; uncertain = true; cleanupFailed = true; }

@@ -72,3 +72,16 @@ outer cleanup failure. Follow-up owner46/46, launcher77/77, composed6/6,
 bootstrap diagnostic14/14, cutover321/321, manifest18/18, noemit and contracts
 passed. Independent follow-up review found no blockers; final serial genuine
 group passed30/30 in50.2s (57780), including both added composed cases.
+
+Second cloud review4025522629/4025522641 exposed configuration-acquisition close
+loss before the holder returns and false cleanup status on poisoned owner reentry.
+Both RED cases reproduced. Central default-only launcher error construction now
+preserves module-sticky known cleanup failure on every wrapped refusal. Owner
+retains nested known loss and reports it on subsequent entry refusal; unknown
+acquisition remains null. Strict APIs and acceptance requirements are unchanged.
+Added real configuration descriptor-close fault, nested-owner reentry and composed
+configuration-acquisition cleanup-loss cases. Final owner47/47, launcher78/78,
+composed7/7, cutover322/322, manifest18/18, noemit and English1564/path892 passed.
+Independent read-only follow-up found no remaining provenance contradiction.
+Final standard serial genuine group passed31/31 in52.1s (37142), including the
+new configuration close-loss case. Exact-head cloud review remains pending.

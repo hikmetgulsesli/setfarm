@@ -223,8 +223,15 @@ function holdLauncherConfigurationV1(defaultMode = false) {
 
 // Separate, zero-input default-mode holder. Secret-bearing configuration and
 // comparisons stay private; strict diagnostic schemas above remain unchanged.
+function defaultLauncherFailure(stage?: string): never {
+  const error = Error("DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID");
+  if (stage !== undefined) Object.defineProperty(error, "cutoverLauncherStage", { value: stage });
+  if (cleanupUncertain) Object.defineProperty(error, "cutoverCleanupFailed", { value: true });
+  throw error;
+}
+
 export function holdDeploymentCutoverDefaultLauncherV1() {
-  if (arguments.length !== 0 || cleanupUncertain) fail();
+  if (arguments.length !== 0 || cleanupUncertain) defaultLauncherFailure();
   const resources: { close(): void }[] = [];
   let closed = false, invalid = false, qualifying = false, qualified = false, censusRunning = false;
   const close = () => {
@@ -234,11 +241,7 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
     while (resources.length) {
       try { resources.pop()!.close(); } catch { uncertain = true; cleanupUncertain = true; }
     }
-    if (uncertain) {
-      const error = Error("DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID");
-      Object.defineProperty(error, "cutoverCleanupFailed", { value: true });
-      throw error;
-    }
+    if (uncertain) defaultLauncherFailure();
   };
   try {
     const accountProjection = () => {
@@ -275,7 +278,7 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
       configuration.recheck(); nodes.forEach(node => node.recheck());
       checkAccount();
     };
-    const recheck = () => { try { check(); } catch { invalid = true; fail(); } };
+    const recheck = () => { try { check(); } catch { invalid = true; defaultLauncherFailure(); } };
     const idle = () => {
       check();
       for (let index = 0; index < inputs.entries.length; index++) {
@@ -383,9 +386,7 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
         }))), processObservation });
       } catch {
         invalid = true;
-        const error = Error("DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID");
-        Object.defineProperty(error, "cutoverLauncherStage", { value: stage });
-        throw error;
+        defaultLauncherFailure(stage);
       }
       finally { qualifying = false; }
     };
@@ -397,12 +398,12 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
         const result = await configuration.census();
         idle();
         return result;
-      } catch { invalid = true; fail(); }
+      } catch { invalid = true; defaultLauncherFailure(); }
       finally { censusRunning = false; }
     };
     check();
     return Object.freeze({ observation, qualifyPassiveHome, recheck, census, close });
-  } catch { invalid = true; close(); fail(); }
+  } catch { invalid = true; close(); defaultLauncherFailure(); }
 }
 
 export function observeDeploymentCutoverLauncherConfigurationV1() {

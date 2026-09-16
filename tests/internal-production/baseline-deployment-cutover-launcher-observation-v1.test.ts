@@ -186,6 +186,18 @@ test("default partial acquisition exposes sanitized cleanup loss before returnin
   assert.doesNotMatch(JSON.stringify(result), /TOKEN_SENTINEL/);
 }));
 
+test("default configuration acquisition retains observed descriptor cleanup loss", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts, `
+    const close=fs.closeSync,spawnCommand=cp.spawnSync;let lost=false;
+    cp.spawnSync=(command,args,options)=>{if(active&&command==='/usr/bin/plutil')throw Error('TOKEN_SENTINEL');return spawnCommand(command,args,options)};
+    fs.closeSync=fd=>{close(fd);if(active&&!lost){lost=true;throw Error('TOKEN_SENTINEL')}};
+    evidence=()=>({lost,dbCalls:globalThis.dbCalls,nodeCloses:globalThis.nodeCloses});
+  `, undefined, `return context.observation;`);
+  assert.equal(result.evidence.lost, true); assert.equal(result.cleanupFailed, true, JSON.stringify(result));
+  assert.equal(result.evidence.nodeCloses, 0); assert.equal(result.evidence.dbCalls, 0);
+  assert.doesNotMatch(JSON.stringify(result), /TOKEN_SENTINEL/);
+}));
+
 for (const fault of ["generation", "parent", "native-refusal", "process-contender", "temp", "account", "pid", "node-second"]) {
   test(`default ${fault} refusal prevents census and drains held nodes`, () => defaultFixture((home, texts) => {
     const result = observe(home, texts, `
