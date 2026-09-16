@@ -14,7 +14,8 @@ export function resolutionFixtureParent() {
   return suiteParent ??= fs.realpathSync(fs.mkdtempSync(path.join(userInfo().homedir, ".cutover-retained-suite-")));
 }
 after(() => { if (suiteParent) fs.rmSync(suiteParent, { recursive: true, force: true }); });
-export function retainedFixture(body, { genuine = false, nested = false, conditional = false, nearerShadow = false, resolution = false } = {}) {
+export function retainedFixture(body, { genuine = false, nested = false, conditional = false, nearerShadow = false, resolution = false,
+  bootstrapInstrument = source => source, controllerOptions = {} } = {}) {
   const temporaryParent = resolution ? resolutionFixtureParent() : undefined;
   let selected, expectedProfile;
   fixture((root, _build, home) => {
@@ -30,7 +31,7 @@ export function retainedFixture(body, { genuine = false, nested = false, conditi
       catch(error){process.stderr.write(error.message);process.exitCode=1;}
     `], { cwd: root, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }, encoding: "utf8", timeout: 30000 });
     body({ root, home, selected, expectedProfile, observe });
-  }, undefined, { genuine, temporaryParent, prepare(root, home) {
+  }, bootstrapInstrument, { ...controllerOptions, genuine, temporaryParent, prepare(root, home) {
     fixture((oldRoot, oldBuild) => {
       selected = path.join(home, "ai/setrox/old"); fs.renameSync(oldRoot, selected);
       fs.mkdirSync(path.join(home, ".local/bin"), { recursive: true, mode: 0o755 });
@@ -67,5 +68,6 @@ export function retainedFixture(body, { genuine = false, nested = false, conditi
       write(root, "scripts/deployment-cutover-retained-profile.v1.json", JSON.stringify(expectedProfile));
       write(root, "scripts/deployment-cutover-retained-profile.mjs", fs.readFileSync(new URL("../../deployment-cutover-retained-profile.mjs", import.meta.url)));
     }, undefined, { temporaryParent });
+    controllerOptions.prepare?.(root, home);
   } });
 }

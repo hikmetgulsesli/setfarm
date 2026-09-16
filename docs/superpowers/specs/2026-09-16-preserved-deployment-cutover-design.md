@@ -155,6 +155,18 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## File map and boundaries
 
+- `scripts/deployment-cutover-default-context.mjs` is the zero-input owner behind
+  authenticated `inspect-default-context --json`. It cross-binds held selected
+  build/CLI, retained profile/resolution, six default-file absences and both
+  launcher account/Node/process measurements before a private pre32 census.
+  Every context survives both awaits and is rechecked, then drained in reverse
+  order. New evidence excludes credential-derived launcher hashes; strict legacy
+  diagnostic schemas remain unchanged. Successful observation still carries
+  filesystem/helper-phase, controller-ownership and journaled-transition blockers.
+  Initial-stack evidence is not current getenv: known retained startup PATH and
+  DEBUG replacements are supported only under the reviewed trusted Node/libsystem
+  saved-string-storage premise. Actual host qualification remains a separate gate.
+
 - The retained-profile held context's zero-input selected-startup resolver
   qualifies only the fixed reviewed ESM/CJS edge table under HOME-absent and
   account-HOME contexts. It holds nearer lookup boundaries and never evaluates
@@ -179,6 +191,14 @@ not an arbitrary same-user actor deliberately launching a retired executable.
   composition. Existing strict launcher APIs remain unchanged; no raw environment
   or credential-derived hashes leave the native bridge. See the passive-HOME
   implementation plan for file map, parser constraints and regression gates.
+  The default-owner continuation commits process generation with a separate
+  identity-only native operation before reading environment. Its private finite
+  environment family requires exact configured values and account HOME; optional
+  USER/LOGNAME/SHELL/TMPDIR must match independent account/getconf values. Optional
+  XPC_FLAGS=0x0 and UID-bound CF zero-script/zero-region encoding are explicit
+  supported restrictions, not inferred universal launchd defaults. Unknowns
+  refuse. Both native reads must match including optional presence; actual
+  launcher provenance, generation, Node paths and account state remain held.
 
 - `scripts/deployment-cutover-dependencies.mjs` and its script tests: fixed
   postgres/Zod cache archives authenticated against reviewed lock SRI, bounded

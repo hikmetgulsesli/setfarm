@@ -63,6 +63,17 @@ test("native buffer tolerates bounded erased Apple strings after exact environme
   assert.equal(qualify(packed({ trailing: 128 })), "QUALIFIED");
 });
 
+test("finite optional environment family accepts only exact declared system fields", () => {
+  const profile = { ...expected, optionalEnvironment: { USER: "fixture", XPC_FLAGS: "0x0" } };
+  const mandatory = Object.entries(expected.environment).map(([key, value]) => `${key}=${value}`);
+  assert.equal(qualify(packed(), profile), "QUALIFIED");
+  assert.equal(qualify(packed({ environment: [...mandatory, "USER=fixture", "XPC_FLAGS=0x0"] }), profile), "QUALIFIED");
+  assert.equal(qualify(packed({ environment: [...mandatory, "USER=foreign"] }), profile), "REFUSED");
+  assert.equal(qualify(packed({ environment: [...mandatory, "NODE_OPTIONS=--require=foreign"] }), profile), "REFUSED");
+  assert.equal(qualify(packed(), { ...profile, optionalEnvironment: { HOME: expected.environment.HOME } }), "REFUSED");
+  assert.equal(qualify(packed(), { ...profile, optionalEnvironment: { NODE_OPTIONS: "" } }), "REFUSED");
+});
+
 for (const [name, options] of [
   ["duplicate HOME", { environment: ["HOME=/fixture/account", "HOME=/fixture/account", "PATH=/usr/bin:/bin", "SECRET=PRIVATE_SENTINEL"] }],
   ["HOME moved into Apple suffix", { environment: ["PATH=/usr/bin:/bin", "SECRET=PRIVATE_SENTINEL"], suffix: ["HOME=/fixture/account"] }],
@@ -88,18 +99,23 @@ test("native buffer refuses truncated suffix and redaction after argv", () => {
 });
 
 for (const [fault, accepted, allocations] of [
+  ["identity-only", true, 0], ["stale-generation", false, 0],
+  ["optional-presence-drift", false, 2],
   ["none", true, 2], ["short-info", false, 0], ["unterminated-path", false, 0],
   ["length-disagreement", false, 1], ["second-read-failure", false, 2],
-  ["start-drift", false, 2], ["credential-drift", false, 1], ["buffer-drift", false, 2],
+  ["start-drift", false, 1], ["credential-drift", false, 1], ["buffer-drift", false, 2],
 ]) test(`native bridge ${fault} drains and zeros every sensitive allocation`, nativeOptions, () => {
   const source = fs.readFileSync(helper, "utf8");
-  const request = { pid: 12345, uid: process.getuid(), gid: process.getgid(), launchExecutable: expected.executable, ...expected };
+  const request = { pid: 12345, uid: process.getuid(), gid: process.getgid(), launchExecutable: expected.executable,
+    expectedStartSeconds: fault === "stale-generation" ? 1233 : 1234, expectedStartMicroseconds: 5678, ...expected };
+  if (fault === "optional-presence-drift") request.optionalEnvironment = { USER: "fixture" };
   const result = spawnSync("/usr/bin/python3", ["-I", "-S", "-B", "-c", `
 import base64, ctypes, json, sys
 scope = {"__name__": "passive_home_test"}
 exec(compile(${JSON.stringify(source)}, "authenticated-fixture-source", "exec"), scope)
 request = json.load(sys.stdin)
 data = bytearray(base64.b64decode(request["bytes"]))
+alternate = bytearray(base64.b64decode(request["alternate"]))
 fault = request["fault"]
 saved = []
 counts = {"identities": 0, "reads": 0}
@@ -125,18 +141,20 @@ def path(pid, target, size):
     if fault == "unterminated-path": target[len(raw)] = 1
     return len(raw)
 def sysctl(mib, count, target, size_pointer, new, new_size):
+    if fault in ("identity-only", "stale-generation"): raise AssertionError("IDENTITY_MUST_PRECEDE_ENV_READ")
     size = ctypes.cast(size_pointer, ctypes.POINTER(ctypes.c_size_t))
     if mib[1] == 8:
         ctypes.cast(target, ctypes.POINTER(ctypes.c_int))[0] = 1048576
         size[0] = 4
         return 0
+    current = alternate if fault == "optional-presence-drift" and counts["reads"] >= 1 else data
     if target is None:
-        size[0] = len(data)
+        size[0] = len(current)
         return 0
     counts["reads"] += 1
     saved.append(target)
-    ctypes.memmove(target, (ctypes.c_ubyte * len(data)).from_buffer(data), len(data))
-    size[0] = len(data)
+    ctypes.memmove(target, (ctypes.c_ubyte * len(current)).from_buffer(current), len(current))
+    size[0] = len(current)
     if fault == "length-disagreement": size[0] -= 1
     if fault == "second-read-failure" and counts["reads"] == 2: return -1
     if fault == "buffer-drift" and counts["reads"] == 2: target[len(data) - 4] ^= 1
@@ -145,25 +163,34 @@ library.proc_pidinfo, library.proc_pidpath, library.sysctl = Call(info), Call(pa
 ctypes.CDLL = lambda *args, **kwargs: library
 accepted = False
 try:
-    scope["measure_process"](request["expected"])
+    if fault == "identity-only":
+        identity = scope["identify_process"]({key: request["expected"][key] for key in ("pid", "uid", "gid", "executable")})
+        assert identity == {"schema": "setfarm.internal-production-passive-process-identity.v1", "pid": 12345, "ppid": 1,
+                            "uid": request["expected"]["uid"], "gid": request["expected"]["gid"], "startSeconds": 1234, "startMicroseconds": 5678}
+    else:
+        scope["measure_process"](request["expected"])
     accepted = True
 except ValueError:
     pass
 print(json.dumps({"accepted": accepted, "allocations": len(saved), "allZero": all(all(byte == 0 for byte in buffer) for buffer in saved)}))
-`], { input: JSON.stringify({ expected: request, bytes: packed().toString("base64"), fault }), encoding: "utf8",
+`], { input: JSON.stringify({ expected: request, bytes: packed(fault === "optional-presence-drift" ? {
+      environment: [...Object.entries(expected.environment).map(([key, value]) => `${key}=${value}`), "USER=fixture"],
+    } : {}).toString("base64"), alternate: packed().toString("base64"), fault }), encoding: "utf8",
     cwd: "/", env: { PATH: "/usr/bin:/bin" }, timeout: 5000, maxBuffer: 65536 });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stderr, "");
   assert.deepEqual(JSON.parse(result.stdout), { accepted, allocations, allZero: true });
 });
 
-for (const linked of [false, true]) test(`native bridge measures identity-bound owned ${linked ? "symlink" : "physical"} child`, nativeOptions, async () => {
+for (const kind of ["physical", "symlink", "mutated-live-environment"]) test(`native bridge measures identity-bound owned ${kind} child`, nativeOptions, async () => {
+  const linked = kind === "symlink";
   const executable = fs.realpathSync.native(process.execPath);
   const directory = linked ? fs.mkdtempSync(path.join(os.tmpdir(), "cutover-passive-native-")) : null;
   const launched = directory ? path.join(directory, "node") : executable;
   if (directory) fs.symlinkSync(executable, launched);
-  const argv = [launched, "-e", 'process.stdout.write("READY");setTimeout(()=>{},10000)'];
-  const environment = { HOME: "/fixture/account", SECRET: "NATIVE_PRIVATE_SENTINEL", PAD: "" };
+  const mutation = kind === "mutated-live-environment" ? 'process.env.PATH="x";process.env.PATH="/different/longer/fixture/path";process.env.DEBUG="fixture";delete process.env.DEBUG;' : "";
+  const argv = [launched, "-e", mutation + 'process.stdout.write("READY");setTimeout(()=>{},10000)'];
+  const environment = { HOME: "/fixture/account", SECRET: "NATIVE_PRIVATE_SENTINEL", PATH: "/original/fixture", PAD: "" };
   const byteLength = () => argv.reduce((n, value) => n + Buffer.byteLength(value) + 1, 0)
     + Object.entries(environment).reduce((n, [key, value]) => n + Buffer.byteLength(`${key}=${value}`) + 1, 0);
   while (byteLength() % 8 !== 1) environment.PAD += "x";
@@ -173,7 +200,23 @@ for (const linked of [false, true]) test(`native bridge measures identity-bound 
     const [ready] = await once(child.stdout, "data");
     assert.equal(ready.toString(), "READY");
     const source = fs.readFileSync(helper, "utf8");
-    const request = { pid: child.pid, uid: process.getuid(), gid: process.getgid(), executable, launchExecutable: launched, argv, environment };
+    const identityRequest = { pid: child.pid, uid: process.getuid(), gid: process.getgid(), executable };
+    const identified = spawnSync("/usr/bin/python3", ["-I", "-S", "-B", "-c", `
+import json, sys
+scope = {"__name__": "passive_home_test"}
+exec(compile(${JSON.stringify(source)}, "authenticated-fixture-source", "exec"), scope)
+print(json.dumps(scope["identify_process"](json.load(sys.stdin))))
+`], { input: JSON.stringify(identityRequest), encoding: "utf8", cwd: "/", env: { PATH: "/usr/bin:/bin" }, timeout: 5000, maxBuffer: 4096 });
+    assert.equal(identified.status, 0, identified.stderr);
+    const generation = JSON.parse(identified.stdout);
+    const identityEntry = spawnSync("/usr/bin/python3", ["-I", "-S", "-B", "-c", source], {
+      input: JSON.stringify({ ...identityRequest, operation: "identify" }), encoding: "utf8", cwd: "/",
+      env: { PATH: "/usr/bin:/bin" }, timeout: 5000, maxBuffer: 4096,
+    });
+    assert.equal(identityEntry.status, 0, identityEntry.stderr);
+    assert.deepEqual(JSON.parse(identityEntry.stdout), generation);
+    const request = { ...identityRequest, launchExecutable: launched, argv, environment,
+      expectedStartSeconds: generation.startSeconds, expectedStartMicroseconds: generation.startMicroseconds };
     const measure = profile => spawnSync("/usr/bin/python3", ["-I", "-S", "-B", "-c", `
 import json, sys
 scope = {"__name__": "passive_home_test"}
@@ -195,6 +238,8 @@ except Exception as error:
     assert.equal(measured.homeContext, "account");
     assert.equal(measured.stableDoubleRead, true);
     assert.ok(Number.isSafeInteger(measured.startSeconds) && measured.startSeconds > 0);
+    assert.equal(measured.startSeconds, generation.startSeconds);
+    assert.equal(measured.startMicroseconds, generation.startMicroseconds);
     const entry = spawnSync("/usr/bin/python3", ["-I", "-S", "-B", "-c", source], {
       input: JSON.stringify(request), encoding: "utf8", cwd: "/", env: { PATH: "/usr/bin:/bin" }, timeout: 5000, maxBuffer: 4096,
     });

@@ -24,7 +24,7 @@ Python3 ctypes and Darwin sysctl/libproc. No new installed dependency.
 - Python is an explicit trusted host prerequisite: fixed `/usr/bin/python3`,
   `-I -S -B -c`, fresh sanitized environment, fixed cwd, bounded I/O/time.
 - KERN_PROCARGS2 is mutable stack evidence, not immutable exec history. Require
-  reviewed cooperative startup without argv/environment rewriting and no empty
+  reviewed cooperative startup without saved argv/environment stack-string rewriting and no empty
   launcher environment entries; never infer these premises from matching reads.
 - Parse exactly argc argv strings, including empty arguments. Require complete
   private expected environment equality, unique HOME=account, explicit extra
@@ -81,10 +81,10 @@ No actual launcher environment has been read; owning provenance remains pending.
   hook with exact file URL data-only source, not Python pathname evaluation.
 - [x] Add fixed transport flags/environment/I/O schema tests; implement private
   transport with generic refusal and no caller-supplied source/proof callbacks.
-- [ ] Add launcher lifecycle tests: privately derived fixed-label PID, account,
+- [x] Add launcher lifecycle tests: privately derived fixed-label PID, account,
   plist, loaded env, executable/argv/start drift; complete samples then fresh idle.
   Factor shared checks while preserving strict public APIs and schemas.
-- [ ] Add owner tests: retain profile/resolution/env/launcher contexts through
+- [x] Add owner tests: retain profile/resolution/env/launcher contexts through
   DB await; fail before DB on incomplete qualification; drain every failure path.
   Implement one zero-input owner. Remove only actually discharged blockers.
 
@@ -99,9 +99,11 @@ No actual launcher environment has been read; owning provenance remains pending.
 
 ## Supporting-slice delivery evidence
 
-The native bridge, fixed transport and authenticated source hook are delivered
-first without a new inspection endpoint. Launcher/default-owner wiring above
-remains unchecked; no blocker is removed by this supporting slice.
+The native bridge, fixed transport and authenticated source hook were delivered
+first without a new inspection endpoint. The default-owner continuation now
+implements the wiring above; its own delivery and real-host gates are tracked in
+`2026-09-16-cutover-default-owner.md`. No real-host blocker is removed by synthetic
+supporting-slice evidence alone.
 
 - Focused native/parser/transport:37/37passed, including actual owned-child
   entry, vanished-child refusal and all sensitive-buffer cleanup fault paths.

@@ -3,6 +3,8 @@ import path from "node:path";
 import { userInfo } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { holdDeploymentCutoverNodePathV1 } from "./baseline-deployment-cutover-node-path-v1.js";
+import { observeDeploymentCutoverProcessFamiliesV1 } from "./baseline-deployment-cutover-process-observation-v1.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 
 const LABELS = ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard"] as const;
@@ -46,7 +48,7 @@ function environment(text: string, name: string): Record<string, string> {
 
 // Diagnostic only: loaded-idle launchers are not a process/zero-owner census.
 // Secret-bearing parser values stay local and are never attached to errors.
-function holdLauncherConfigurationV1() {
+function holdLauncherConfigurationV1(defaultMode = false) {
   if (cleanupUncertain) fail();
   const descriptors: number[] = [], pins = new Map<string, { fd: number; stat: BigIntStats }>();
   let invalid = false;
@@ -57,6 +59,10 @@ function holdLauncherConfigurationV1() {
   let recheck: () => void = fail;
   let census: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusV1> = async () => fail();
   let closed = false;
+  let defaultInputs: undefined | {
+    entries: { label: string; args: string[]; environment: Record<string, string> }[];
+    snapshot: (index: number) => { state: string; activeCount: number; pid?: number };
+  };
   const close = () => {
     if (closed) return;
     closed = true;
@@ -124,25 +130,37 @@ function holdLauncherConfigurationV1() {
         const text = command("/bin/launchctl", ["print", `gui/${uid}/${label}`]);
         if (!text.startsWith(`gui/${uid}/${label} = {\n`) || !text.endsWith("}\n")) fail();
         const state = scalar(text, "state");
-        if ((state !== "not running" && state !== "spawn scheduled") || scalar(text, "active count") !== "0"
-          || /^\tpid = /m.test(text) || scalar(text, "type") !== "LaunchAgent" || scalar(text, "path") !== plistPath
+        const running = defaultMode && state === "running";
+        let pid: number | undefined;
+        if (running) {
+          const rawPid = scalar(text, "pid");
+          if (!/^[1-9][0-9]*$/.test(rawPid)) fail();
+          pid = Number(rawPid);
+          if (!Number.isSafeInteger(pid) || pid <= 1) fail();
+        }
+        if ((!running && state !== "not running" && state !== "spawn scheduled") || scalar(text, "active count") !== (running ? "1" : "0")
+          || (!running && /^\tpid = /m.test(text)) || scalar(text, "type") !== "LaunchAgent" || scalar(text, "path") !== plistPath
           || scalar(text, "program") !== program || !equal(block(text, "arguments"), args)
           || scalar(text, "run interval") !== "60 seconds" || !scalar(text, "properties").split(" | ").includes("runatload")) fail();
         const loaded = environment(text, "environment"), inherited = environment(text, "inherited environment"), defaults = environment(text, "default environment");
         if (!exact(loaded, [...keys, "OSLogRateLimit", "XPC_SERVICE_NAME"]) || loaded.OSLogRateLimit !== "64" || loaded.XPC_SERVICE_NAME !== label
-          || keys.some(key => loaded[key] !== env[key]) || !exact(inherited, ["SETFARM_ENV_DIR", "SSH_AUTH_SOCK"])
-          || inherited.SETFARM_ENV_DIR !== path.join(home, "ai", "setrox", "setfarm", "scripts")
+          || keys.some(key => loaded[key] !== env[key]) || !exact(inherited, defaultMode ? ["SSH_AUTH_SOCK"] : ["SETFARM_ENV_DIR", "SSH_AUTH_SOCK"])
+          || (!defaultMode && inherited.SETFARM_ENV_DIR !== path.join(home, "ai", "setrox", "setfarm", "scripts"))
           || !/^\/var\/run\/com\.apple\.launchd\.[A-Za-z0-9]+\/Listeners$/.test(inherited.SSH_AUTH_SOCK ?? "")
           || !exact(defaults, ["PATH"]) || defaults.PATH !== "/usr/bin:/bin:/usr/sbin:/sbin") fail();
-        return { state, activeCount: 0 as const, loaded, inherited, defaults };
+        return { state, activeCount: running ? 1 : 0, ...(pid === undefined ? {} : { pid }), loaded, inherited, defaults };
       };
       return { label, plistPath, stat, args, parsed, bytes, read, project };
     });
     const before = held.map(item => item.project());
+    if (defaultMode && before.some(item => item.activeCount !== 0 || item.pid !== undefined)) fail();
     for (const item of held) if (!item.read().equals(item.bytes)) fail();
     const after = held.map(item => item.project());
+    if (defaultMode && after.some(item => item.activeCount !== 0 || item.pid !== undefined)) fail();
+    const configuration = (value: typeof before[number]) => ({ loaded: value.loaded, inherited: value.inherited, defaults: value.defaults });
+    const stable = (a: typeof before[number], b: typeof before[number]) => equal(defaultMode ? configuration(a) : a, defaultMode ? configuration(b) : b);
     const launchers = held.map((item, index): Entry => {
-      if (!equal(before[index], after[index]) || !item.read().equals(item.bytes)) fail();
+      if (!stable(before[index]!, after[index]!) || !item.read().equals(item.bytes)) fail();
       const plistIdentity = Object.freeze(Object.fromEntries(FILE_KEYS.map(key => [key, String(item.stat[key])])));
       return Object.freeze({ label: item.label, plistPath: item.plistPath, launchArguments: Object.freeze(item.args), plistIdentity,
         plistBytesHash: digest(item.bytes), configurationHash: hashCanonicalJson({ schema: "setfarm.internal-production-deployment-cutover-launcher-configuration.v1", plistPath: item.plistPath, plist: item.parsed }),
@@ -155,9 +173,31 @@ function holdLauncherConfigurationV1() {
       if (closed || cleanupUncertain) fail();
       checkPins();
       for (const [index, item] of held.entries()) {
-        if (!item.read().equals(item.bytes) || !equal(item.project(), before[index]) || !item.read().equals(item.bytes)) fail();
+        if (!item.read().equals(item.bytes) || !stable(item.project(), before[index]!) || !item.read().equals(item.bytes)) fail();
       }
       checkPins();
+    };
+    if (defaultMode) defaultInputs = {
+      entries: held.map((item, index) => {
+        const projection = before[index]!;
+        const environment: Record<string, string> = Object.create(null);
+        // The only permitted collision is configured PATH overriding default PATH.
+        for (const map of [projection.defaults, projection.inherited, projection.loaded]) {
+          for (const [key, value] of Object.entries(map)) {
+            if (Object.hasOwn(environment, key) && !(map === projection.loaded && key === "PATH")) fail();
+            environment[key] = value;
+          }
+        }
+        return { label: item.label, args: item.args, environment };
+      }),
+      snapshot: index => {
+        recheck();
+        const item = held[index];
+        if (!item) fail();
+        const current = item.project();
+        if (!stable(current, before[index]!) || !item.read().equals(item.bytes)) fail();
+        return { state: current.state, activeCount: current.activeCount, pid: current.pid };
+      },
     };
     census = async () => {
       recheck();
@@ -178,7 +218,169 @@ function holdLauncherConfigurationV1() {
     };
   } catch { invalid = true; }
   if (invalid || !output) { close(); fail(); }
-  return { observation: output, recheck, census, close };
+  return { observation: output, recheck, census, close, defaultInputs };
+}
+
+// Separate, zero-input default-mode holder. Secret-bearing configuration and
+// comparisons stay private; strict diagnostic schemas above remain unchanged.
+export function holdDeploymentCutoverDefaultLauncherV1() {
+  if (arguments.length !== 0 || cleanupUncertain) fail();
+  const resources: { close(): void }[] = [];
+  let closed = false, invalid = false, qualifying = false, qualified = false, censusRunning = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    let uncertain = false;
+    while (resources.length) {
+      try { resources.pop()!.close(); } catch { uncertain = true; cleanupUncertain = true; }
+    }
+    if (uncertain) fail();
+  };
+  try {
+    const accountProjection = () => {
+      const current = userInfo();
+      return { uid: current.uid, gid: current.gid, homedir: current.homedir, username: current.username, shell: current.shell };
+    };
+    const account = accountProjection(), accountBefore = account;
+    const checkAccount = () => {
+      if (!equal(accountProjection(), accountBefore) || process.getuid?.() !== account.uid || process.geteuid?.() !== account.uid
+        || process.getgid?.() !== account.gid || process.getegid?.() !== account.gid) fail();
+    };
+    if (!path.isAbsolute(account.homedir) || path.normalize(account.homedir) !== account.homedir
+      || !account.username || !account.shell || !path.isAbsolute(account.shell)) fail();
+    checkAccount();
+    const temp = () => {
+      const value = command("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"]);
+      if (!/^\/var\/folders\/[A-Za-z0-9_/-]+\/T\/\n$/.test(value) || value.length > 4096
+        || path.normalize(value.slice(0, -1)) !== value.slice(0, -1)) fail();
+      return value.slice(0, -1);
+    };
+    const tempBefore = temp();
+    const configuration = holdLauncherConfigurationV1(true); resources.push(configuration);
+    const inputs = configuration.defaultInputs;
+    if (!inputs) fail();
+    const nodes = inputs.entries.map(entry => {
+      const node = holdDeploymentCutoverNodePathV1(entry.environment.PATH!); resources.push(node); return node;
+    });
+    const optionalEnvironment = { USER: account.username, LOGNAME: account.username, SHELL: account.shell,
+      TMPDIR: tempBefore, XPC_FLAGS: "0x0", __CF_USER_TEXT_ENCODING: `0x${account.uid.toString(16).toUpperCase()}:0:0` };
+    const check = () => {
+      if (closed || invalid || cleanupUncertain) fail();
+      checkAccount();
+      if (temp() !== tempBefore) fail();
+      configuration.recheck(); nodes.forEach(node => node.recheck());
+      checkAccount();
+    };
+    const recheck = () => { try { check(); } catch { invalid = true; fail(); } };
+    const idle = () => {
+      check();
+      for (let index = 0; index < inputs.entries.length; index++) {
+        const current = inputs.snapshot(index);
+        if (current.activeCount !== 0 || current.pid !== undefined) fail();
+      }
+      const processes = observeDeploymentCutoverProcessFamiliesV1();
+      if (processes.families.length !== 0 || processes.listener !== null) fail();
+      for (let index = 0; index < inputs.entries.length; index++) {
+        const current = inputs.snapshot(index);
+        if (current.activeCount !== 0 || current.pid !== undefined) fail();
+      }
+      check();
+      return processes;
+    };
+    const observation = Object.freeze({ schema: "setfarm.internal-production-deployment-cutover-default-launcher.v1",
+      accountHome: account.homedir, uid: account.uid, gid: account.gid,
+      launchers: Object.freeze(configuration.observation.launchers.map((entry, index) => Object.freeze({
+        label: entry.label, plistPath: entry.plistPath, plistIdentity: entry.plistIdentity,
+        launchArguments: entry.launchArguments, node: nodes[index]!.observation,
+      }))) });
+    const qualifyPassiveHome = async () => {
+      try {
+        check();
+        if (qualifying || qualified || censusRunning) fail();
+        qualifying = true;
+        // The outer owner has now acquired absence AND resolved all modules.
+        // Do not adopt a generation born before those held prerequisites: its
+        // startup may already have consumed a since-removed env file or shadow.
+        for (let index = 0; index < inputs.entries.length; index++) {
+          const baseline = inputs.snapshot(index);
+          if (baseline.activeCount !== 0 || baseline.pid !== undefined) fail();
+        }
+        const nativeTransportUrl = new URL("../../scripts/deployment-cutover-passive-home.mjs", import.meta.url).href;
+        const transport = await import(nativeTransportUrl);
+        check();
+        const deadline = performance.now() + 70_000;
+        const samples = new Map<number, Readonly<Record<string, unknown>>>();
+        const settled = new Set<number>();
+        const checkSampled = () => {
+          for (const [index, sample] of samples) {
+            const current = inputs.snapshot(index);
+            if (current.pid === undefined) { settled.add(index); continue; }
+            if (settled.has(index) || current.pid !== sample.pid) fail();
+            const identity = transport.identifyDeploymentCutoverPassiveProcessV1({ pid: current.pid, uid: account.uid,
+              gid: account.gid, executable: nodes[index]!.observation.executablePath });
+            if (["pid", "ppid", "uid", "gid", "startSeconds", "startMicroseconds"].some(key => identity[key] !== sample[key])) fail();
+            const after = inputs.snapshot(index);
+            if (after.pid !== current.pid) fail();
+          }
+        };
+        while (samples.size !== inputs.entries.length) {
+          check(); checkSampled();
+          if (performance.now() >= deadline) fail();
+          for (const [index, entry] of inputs.entries.entries()) {
+            if (samples.has(index)) continue;
+            const snapshot = inputs.snapshot(index);
+            if (snapshot.pid === undefined) continue;
+            const node = nodes[index]!.observation;
+            const request = { pid: snapshot.pid, uid: account.uid, gid: account.gid, executable: node.executablePath };
+            const identity = transport.identifyDeploymentCutoverPassiveProcessV1(request);
+            const samePid = () => {
+              const current = inputs.snapshot(index);
+              if (current.pid !== snapshot.pid || current.state !== "running" || current.activeCount !== 1) fail();
+            };
+            samePid(); check();
+            if (Object.hasOwn(entry.environment, "HOME")) fail();
+            const measured = transport.measureDeploymentCutoverPassiveHomeV1({ ...request,
+              expectedStartSeconds: identity.startSeconds, expectedStartMicroseconds: identity.startMicroseconds,
+              launchExecutable: node.candidatePath, argv: ["node", ...entry.args],
+              environment: { ...entry.environment, HOME: account.homedir }, optionalEnvironment });
+            if (["pid", "ppid", "uid", "gid", "startSeconds", "startMicroseconds"].some(key => measured[key] !== identity[key])) fail();
+            samePid(); check();
+            if (performance.now() >= deadline) fail();
+            samples.set(index, measured);
+          }
+          checkSampled();
+          if (samples.size !== inputs.entries.length) await new Promise(resolve => setTimeout(resolve, 80));
+        }
+        // A sampled retry may still be exiting. Only ordinary no-PID polling is
+        // permitted here; native refusal or a selected PID change never retries.
+        while (true) {
+          check(); checkSampled();
+          if (performance.now() >= deadline) fail();
+          if (inputs.entries.every((_, index) => inputs.snapshot(index).pid === undefined)) break;
+          await new Promise(resolve => setTimeout(resolve, 80));
+        }
+        const processObservation = idle();
+        qualified = true;
+        return Object.freeze({ samples: Object.freeze(inputs.entries.map((entry, index) => Object.freeze({
+          label: entry.label, node: nodes[index]!.observation, measurement: samples.get(index)!,
+        }))), processObservation });
+      } catch { invalid = true; fail(); }
+      finally { qualifying = false; }
+    };
+    const census = async () => {
+      try {
+        if (!qualified || qualifying || censusRunning) fail();
+        censusRunning = true;
+        idle();
+        const result = await configuration.census();
+        idle();
+        return result;
+      } catch { invalid = true; fail(); }
+      finally { censusRunning = false; }
+    };
+    check();
+    return Object.freeze({ observation, qualifyPassiveHome, recheck, census, close });
+  } catch { invalid = true; close(); fail(); }
 }
 
 export function observeDeploymentCutoverLauncherConfigurationV1() {

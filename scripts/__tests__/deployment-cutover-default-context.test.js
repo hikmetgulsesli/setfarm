@@ -1,0 +1,104 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { test } from "node:test";
+
+const owner = new URL("../deployment-cutover-default-context.mjs", import.meta.url);
+function run(fault = "") {
+  assert.ok(fs.existsSync(owner), "default owning composition must exist");
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cutover-default-owner-")));
+  try {
+    fs.mkdirSync(path.join(root, "scripts"));
+    fs.mkdirSync(path.join(root, "dist/internal-production"), { recursive: true });
+    fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
+    fs.writeFileSync(path.join(root, "scripts/deployment-cutover-default-context.mjs"), fs.readFileSync(owner));
+    for (const [file, name, kind] of [
+      ["scripts/build-generation-retention.mjs", "holdSelectedSetfarmDeploymentBuildV1", "selected"],
+      ["scripts/deployment-cutover-retained-profile.mjs", "holdDeploymentCutoverRetainedProfileV1", "retained"],
+      ["dist/internal-production/baseline-deployment-cutover-env-absence-v1.js", "holdDeploymentCutoverDefaultEnvAbsenceV1", "absence"],
+      ["dist/internal-production/baseline-deployment-cutover-launcher-observation-v1.js", "holdDeploymentCutoverDefaultLauncherV1", "launcher"],
+    ]) fs.writeFileSync(path.join(root, file), `export const ${name}=()=>globalThis.hold(${JSON.stringify(kind)});`);
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      import os from 'node:os';import {syncBuiltinESMExports} from 'node:module';
+      const root=${JSON.stringify(root)},fault=${JSON.stringify(fault)},events=[],home=root+'/home';
+      const identity=os.userInfo();os.userInfo=()=>({...identity,homedir:home});syncBuiltinESMExports();
+      const cli={cliLinkPath:home+'/.local/bin/setfarm',checkoutPath:root+'/old',cliLinkObservationHash:'cli'};
+      const observations={selected:{selectedDeploymentObservationHash:'selected',cli,buildSource:{sha:'source'}},
+        retained:{selectedDeploymentObservationHash:'selected',sourceSha:'source',profileHash:'profile'},
+        absence:{cliObservationHash:'cli',selectedCheckoutPath:cli.checkoutPath,currentCheckoutPath:root,
+          candidates:[root+'/old',root,home+'/.openclaw/setfarm'].flatMap(base=>['.env','.env.local'].map(name=>({path:base+'/'+name})))},
+        launcher:{accountHome:home,uid:identity.uid,gid:identity.gid,launchers:[{launchArguments:[cli.cliLinkPath,'spawner','start']},{launchArguments:[cli.cliLinkPath,'dashboard','start','--port','3333']}]}};
+      if(fault==='selected-cross')observations.retained.selectedDeploymentObservationHash='crossed';
+      if(fault==='cli-cross')observations.absence.cliObservationHash='crossed';
+      if(fault==='home-cross')observations.launcher.accountHome=home+'/crossed';
+      if(fault==='root-cross')observations.absence.currentCheckoutPath=root+'/crossed';
+      if(fault==='candidate-cross')observations.absence.candidates[0].path+='.crossed';
+      if(fault==='launcher-cli-cross')observations.launcher.launchers[0].launchArguments[0]+='.crossed';
+      let sampled=false,queried=false,closed=[];
+      globalThis.hold=kind=>{if(fault==='partial-acquire'&&kind==='absence')throw Error('PRIVATE_SENTINEL');events.push('hold:'+kind);return {observation:observations[kind],
+        recheck(){events.push('check:'+kind);if((fault==='sample-drift'&&sampled||fault==='db-drift'&&queried)&&kind==='absence')throw Error('PRIVATE_SENTINEL')},
+        close(){events.push('close:'+kind);closed.push(kind);if(['close-loss','close-retry'].includes(fault)&&kind==='launcher')throw Error('PRIVATE_SENTINEL')},
+        resolveModules(){events.push('resolve');if(fault==='resolution')throw Error('PRIVATE_SENTINEL');return {profileHash:fault==='resolution-cross'?'crossed':'profile',selectedDeploymentObservationHash:'selected',contexts:[{home:'account'},{home:'absent'}]}},
+        async qualifyPassiveHome(){events.push('sample');await Promise.resolve();sampled=true;if(fault==='sample')throw Error('PRIVATE_SENTINEL');return {samples:[],processObservation:{families:[],listener:null}}},
+        async census(){events.push('db');await Promise.resolve();queried=true;if(fault==='db')throw Error('PRIVATE_SENTINEL');return {activeRunCount:fault==='nonzero'?1:fault==='malformed-count'?'0':0,openClaimCount:0,executionAttemptCount:0,activeRuntimeSessionCount:0,activeCompletionOwnerCount:0,unsettledMandatoryEffectCount:0,artifactReservationCount:0,publicationBatchCount:0,artifactPublicationCount:0,terminationOwnerCount:0,findingOwnerCount:0,recoveryOwnerCount:0,operationalDeliveryCount:0,legacyFindingPublicationInventory:{entries:[]}}}
+      }};
+      try{const module=await import(${JSON.stringify(`file://${root}/scripts/deployment-cutover-default-context.mjs`)});
+        if(fault==='concurrent'){
+          const results=await Promise.allSettled([module.observeDeploymentCutoverDefaultContextV1(),module.observeDeploymentCutoverDefaultContextV1()]);
+          process.stdout.write(JSON.stringify({states:results.map(item=>item.status),events,closed}));process.exit(0);
+        }
+        if(fault==='close-retry'){
+          let refusals=0;for(let index=0;index<2;index++)try{await module.observeDeploymentCutoverDefaultContextV1()}catch(error){if(error.message!=='DEPLOYMENT_CUTOVER_DEFAULT_CONTEXT_REFUSED')throw error;refusals++}
+          process.stdout.write(JSON.stringify({refusals,events,closed}));process.exit(0);
+        }
+        const value=await module.observeDeploymentCutoverDefaultContextV1(...(fault==='input'?[{}]:[]));
+        process.stdout.write(JSON.stringify({value,events,closed}));
+      }catch(error){process.stdout.write(JSON.stringify({error:String(error),events,closed}))}
+    `], { encoding: "utf8", env: {}, timeout: 15000 });
+    assert.equal(child.status, 0, child.stderr);
+    return JSON.parse(child.stdout);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+
+test("default owner holds all conjunctions across sample and database awaits", () => {
+  const result = run();
+  assert.equal(result.value?.schema, "setfarm.internal-production-deployment-cutover-default-context.v1", JSON.stringify(result));
+  assert.ok(result.events.indexOf("resolve") < result.events.indexOf("sample"));
+  assert.ok(result.events.indexOf("sample") < result.events.indexOf("db"));
+  for (const kind of ["selected", "retained", "absence", "launcher"]) {
+    assert.ok(result.events.indexOf(`hold:${kind}`) < result.events.indexOf("sample"));
+    assert.ok(result.events.lastIndexOf(`check:${kind}`) > result.events.indexOf("db"));
+    assert.ok(result.events.indexOf(`close:${kind}`) > result.events.indexOf("db"));
+  }
+  assert.equal(result.closed.length, 4);
+  assert.ok(result.value.blockers.includes("controller-ownership-not-acquired"));
+  assert.ok(result.value.blockers.includes("filesystem-helper-phase-zero-owner-not-observed"));
+});
+for (const fault of ["input", "selected-cross", "cli-cross", "home-cross", "root-cross", "candidate-cross", "launcher-cli-cross", "partial-acquire", "resolution", "resolution-cross", "sample", "sample-drift", "db", "db-drift", "close-loss", "malformed-count"]) {
+  test(`default owner ${fault} refuses and drains without secret output`, () => {
+    const result = run(fault);
+    assert.match(result.error, /DEPLOYMENT_CUTOVER_DEFAULT_CONTEXT_REFUSED/);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_SENTINEL/);
+    assert.equal(result.value, undefined);
+    if (!["db", "db-drift", "close-loss", "malformed-count"].includes(fault)) assert.equal(result.events.includes("db"), false);
+    assert.equal(result.closed.length, result.events.filter(event => event.startsWith("hold:")).length);
+  });
+}
+test("default owner reports nonzero census as a blocker, never as zero-owner", () => {
+  const result = run("nonzero");
+  assert.ok(result.value?.blockers.includes("database-nonzero-owner-observed"), JSON.stringify(result));
+});
+test("default owner concurrent call cannot acquire a second set of resources", () => {
+  const result = run("concurrent");
+  assert.deepEqual(result.states, ["fulfilled", "rejected"]);
+  assert.equal(result.closed.length, 4);
+  assert.equal(result.events.filter(event => event === "db").length, 1);
+});
+test("default owner close uncertainty refuses a fresh call before acquiring anything", () => {
+  const result = run("close-retry");
+  assert.equal(result.refusals, 2);
+  assert.equal(result.closed.length, 4);
+  assert.equal(result.events.filter(event => event.startsWith("hold:")).length, 4);
+});

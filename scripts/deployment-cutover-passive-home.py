@@ -1,7 +1,8 @@
 """Private read-only cutover measurement; never a process-control interface.
 
 Parsing is conditional on qualified launcher provenance, no empty environment
-entries and reviewed cooperative startup without argv/environment rewriting.
+entries and reviewed cooperative startup without saved argv/environment stack
+string rewriting. Live getenv replacements are distinct from saved stack bytes.
 KERN_PROCARGS2 is mutable stack evidence, not an immutable exec record.
 """
 
@@ -11,6 +12,7 @@ import sys
 
 
 MAX_BYTES = 1024 * 1024 + 4  # Darwin ARG_MAX plus the procargs2 argc word.
+OPTIONAL_NAMES = {"USER", "LOGNAME", "SHELL", "TMPDIR", "XPC_FLAGS", "__CF_USER_TEXT_ENCODING"}
 
 
 def refuse():
@@ -28,7 +30,8 @@ def qualify_buffer(buffer, length, expected):
     view = memoryview(buffer).cast("B")
     if view.readonly or type(length) is not int or not 8 <= length <= min(len(view), MAX_BYTES):
         refuse()
-    if type(expected) is not dict or set(expected) != {"executable", "argv", "environment"}:
+    required_keys = {"executable", "argv", "environment"}
+    if type(expected) is not dict or set(expected) not in (required_keys, required_keys | {"optionalEnvironment"}):
         refuse()
 
     def encoded(value):
@@ -53,6 +56,11 @@ def qualify_buffer(buffer, length, expected):
         wanted[raw_key] = encoded(value)
     if not wanted.get(b"HOME", b"").startswith(b"/"):
         refuse()
+    optional = expected.get("optionalEnvironment", {})
+    if (type(optional) is not dict or not set(optional).issubset(OPTIONAL_NAMES)
+            or set(optional).intersection(environment) or len(optional) + len(environment) > 128):
+        refuse()
+    allowed = {**wanted, **{encoded(key): encoded(value) for key, value in optional.items()}}
     if struct.unpack_from("=i", view, 0)[0] != len(argv):
         refuse()
 
@@ -99,11 +107,11 @@ def qualify_buffer(buffer, length, expected):
     while position < length and view[position] != 0:
         end = string_end(position)
         key, value_start = key_value(position, end)
-        if key in seen or key not in wanted or not matches(value_start, end, wanted[key]):
+        if key in seen or key not in allowed or not matches(value_start, end, allowed[key]):
             refuse()
         seen.add(key)
         position = end + 1
-    if seen != set(wanted):
+    if not set(wanted).issubset(seen):
         refuse()
     padding = 0
     while position < length and view[position] == 0:
@@ -141,16 +149,13 @@ class BsdInfo(ctypes.Structure):
     _fields_ += [("nice", ctypes.c_int32), ("start_seconds", ctypes.c_uint64), ("start_microseconds", ctypes.c_uint64)]
 
 
-def measure_process(expected):
-    """Internal measurement only; caller separately authenticates label provenance.
-
-    No process-control calls. The expected profile is private comparison input,
-    not a capability or returned proof of launcher ownership.
-    """
+def native_context(expected):
     if sys.platform != "darwin" or type(expected) is not dict or set(expected) != {
-            "pid", "uid", "gid", "executable", "launchExecutable", "argv", "environment"}:
+            "pid", "uid", "gid", "executable"}:
         refuse()
     if any(type(expected[key]) is not int or not 0 <= expected[key] < 2147483647 for key in ("pid", "uid", "gid")) or expected["pid"] <= 1:
+        refuse()
+    if type(expected["executable"]) is not str or not expected["executable"].startswith("/") or "\0" in expected["executable"]:
         refuse()
     if (ctypes.sizeof(ctypes.c_void_p) != 8 or ctypes.sizeof(ctypes.c_size_t) != 8
             or ctypes.sizeof(BsdInfo) != 136 or ctypes.alignment(BsdInfo) != 8):
@@ -168,11 +173,7 @@ def measure_process(expected):
     libc.proc_pidinfo.restype = ctypes.c_int
     libc.proc_pidpath.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
     libc.proc_pidpath.restype = ctypes.c_int
-    buffers = []
     pid = expected["pid"]
-    # proc_pidpath reports the physical executable; saved exec strings preserve
-    # the invoked symlink path. The owner binds both through its held PATH proof.
-    profile = {"executable": expected["launchExecutable"], "argv": expected["argv"], "environment": expected["environment"]}
 
     def identity():
         info = BsdInfo()
@@ -191,6 +192,47 @@ def measure_process(expected):
             refuse()
         return {"pid": pid, "ppid": info.ppid, "uid": info.uid, "gid": info.gid,
                 "startSeconds": info.start_seconds, "startMicroseconds": info.start_microseconds}
+
+    return libc, identity
+
+
+def identify_process(expected):
+    """Private pre-measurement generation observation; never reads environment."""
+    unused_libc, identity = native_context(expected)
+    before, after = identity(), identity()
+    if before != after:
+        refuse()
+    return {"schema": "setfarm.internal-production-passive-process-identity.v1", **before}
+
+
+def measure_process(expected):
+    """Internal measurement only; caller separately authenticates label provenance.
+
+    No process-control calls. The expected profile is private comparison input,
+    not a capability or returned proof of launcher ownership.
+    """
+    required_keys = {
+            "pid", "uid", "gid", "executable", "launchExecutable", "argv", "environment",
+            "expectedStartSeconds", "expectedStartMicroseconds"}
+    if type(expected) is not dict or set(expected) not in (required_keys, required_keys | {"optionalEnvironment"}):
+        refuse()
+    if (type(expected["expectedStartSeconds"]) is not int or not 0 < expected["expectedStartSeconds"] <= 9007199254740991
+            or type(expected["expectedStartMicroseconds"]) is not int or not 0 <= expected["expectedStartMicroseconds"] < 1000000):
+        refuse()
+    libc, read_identity = native_context({key: expected[key] for key in ("pid", "uid", "gid", "executable")})
+    buffers = []
+    pid = expected["pid"]
+    # proc_pidpath reports physical executable; saved exec strings preserve the
+    # invoked path. The owner binds both through held PATH and generation proof.
+    profile = {"executable": expected["launchExecutable"], "argv": expected["argv"], "environment": expected["environment"],
+               "optionalEnvironment": expected.get("optionalEnvironment", {})}
+
+    def identity():
+        value = read_identity()
+        if (value["startSeconds"] != expected["expectedStartSeconds"]
+                or value["startMicroseconds"] != expected["expectedStartMicroseconds"]):
+            refuse()
+        return value
 
     def read_arguments(capacity):
         mib = (ctypes.c_int * 3)(1, 49, pid)
@@ -244,7 +286,15 @@ def main():
         if not 1 <= len(raw) <= 65536:
             refuse()
         request = json.loads(raw, object_pairs_hook=unique_object)
-        result = measure_process(request)
+        if type(request) is not dict:
+            refuse()
+        operation = request.pop("operation", "measure")
+        if operation == "identify":
+            result = identify_process(request)
+        elif operation == "measure":
+            result = measure_process(request)
+        else:
+            refuse()
         sys.stdout.write(json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n")
         return 0
     except Exception:
