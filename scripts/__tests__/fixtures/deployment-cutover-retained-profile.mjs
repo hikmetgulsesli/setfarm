@@ -8,13 +8,13 @@ const sha256 = value => createHash("sha256").update(value).digest("hex");
 export function retainedFixture(body, { genuine = false, nested = false } = {}) {
   let selected, expectedProfile;
   fixture((root, _build, home) => {
-    const observe = (instrument = "") => spawnSync(process.execPath, ["--input-type=module", "-e", `
+    const observe = (instrument = "", expression = "await module.observeDeploymentCutoverRetainedProfileV1()") => spawnSync(process.execPath, ["--input-type=module", "-e", `
       import os from 'node:os';import fs from 'node:fs';import net from 'node:net';import {syncBuiltinESMExports} from 'node:module';
       const identity=os.userInfo();os.userInfo=()=>({...identity,homedir:${JSON.stringify(home)}});
       net.Socket.prototype.connect=()=>{throw Error('UNEXPECTED_CONNECTION')};
       ${instrument}
       syncBuiltinESMExports();const module=await import('./scripts/deployment-cutover-retained-profile.mjs');
-      try{const observation=await module.observeDeploymentCutoverRetainedProfileV1();
+      try{const observation=${expression};
         const frozen=value=>!value||typeof value!=='object'||(Object.isFrozen(value)&&Object.values(value).every(frozen));
         if(!frozen(observation))throw Error('MUTABLE_OBSERVATION');process.stdout.write(JSON.stringify(observation));}
       catch(error){process.stderr.write(error.message);process.exitCode=1;}

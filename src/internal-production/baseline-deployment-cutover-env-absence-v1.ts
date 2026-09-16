@@ -20,10 +20,26 @@ function absent(target: string): boolean {
 // Candidate-only filesystem evidence. Does not establish the retained loader's
 // semantics, loaded process environment, database target, or rollout authority.
 export function observeDeploymentCutoverDefaultEnvAbsenceV1() {
-  if (cleanupUncertain) fail();
+  const held = holdDeploymentCutoverDefaultEnvAbsenceV1();
+  try { return held.observation; } finally { held.close(); }
+}
+
+// Held candidate evidence only; no effective-environment or rollout authority.
+export function holdDeploymentCutoverDefaultEnvAbsenceV1() {
+  if (arguments.length || cleanupUncertain) fail();
   const descriptors: number[] = [], pins = new Map<string, { fd: number; stat: BigIntStats }>();
   const candidates: Array<Readonly<{ path: string; missingAt: string; ancestorPath: string; ancestorIdentity: Readonly<Record<string, string>> }>> = [];
-  let invalid = false;
+  let invalid = false, closed = false;
+  let recheck: () => void = fail;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    while (descriptors.length) {
+      const fd = descriptors.pop()!;
+      try { fs.closeSync(fd); } catch { cleanupUncertain = true; invalid = true; }
+    }
+    if (invalid) fail();
+  };
   let result: Readonly<{
     schema: string; scope: string; selectedCheckoutPath: string; currentCheckoutPath: string; cliObservationHash: string;
     candidates: readonly (typeof candidates)[number][]; ancestors: readonly Readonly<{ path: string; identity: Readonly<Record<string, string>> }>[];
@@ -97,11 +113,15 @@ export function observeDeploymentCutoverDefaultEnvAbsenceV1() {
       blockers: Object.freeze(["runtime-effective-environment-not-authenticated", "controller-ownership-not-acquired"]),
     });
     result = Object.freeze({ ...body, observationHash: hashCanonicalJson(body) });
+    recheck = () => {
+      if (closed || invalid || cleanupUncertain) fail();
+      try {
+        checkAbsences();
+        if (hashCanonicalJson(observeDeploymentCutoverCliLinkV1()) !== hashCanonicalJson(cli)) fail();
+        checkAbsences();
+      } catch { invalid = true; cleanupUncertain = true; fail(); }
+    };
   } catch { invalid = true; }
-  while (descriptors.length) {
-    const fd = descriptors.pop()!;
-    try { fs.closeSync(fd); } catch { cleanupUncertain = true; invalid = true; }
-  }
-  if (invalid || !result) fail();
-  return result;
+  if (invalid || !result) { close(); fail(); }
+  return Object.freeze({ observation: result, recheck, close });
 }

@@ -43,9 +43,9 @@ tree identities, absence boundaries and selected CLI/build binding. It rejects
 after close. Failure poisons the context; cleanup consumes each descriptor once.
 Existing `observeDeploymentCutoverRetainedProfileV1()` retains zero-argument guard.
 
-- [ ] Extend fixture to accept test-owned held exercise text, keeping default
+- [x] Extend fixture to accept test-owned held exercise text, keeping default
   snapshot path unchanged. Expected observation remains independently literal.
-- [ ] RED actual export absent; after acquisition await a promise, then recheck,
+- [x] RED actual export absent; after acquisition await a promise, then recheck,
   close twice, verify observation and assert recheck-after-close refuses.
 
 ```js
@@ -57,11 +57,11 @@ held.close();
 assert.throws(() => held.recheck());
 ```
 
-- [ ] RED physical same-byte replacement after acquire refuses on recheck; direct
+- [x] RED physical same-byte replacement after acquire refuses on recheck; direct
   optional-package appearance and tree membership ABA refuse independently.
-- [ ] Factor existing read/hold/check code without altering inventory rules.
+- [x] Factor existing read/hold/check code without altering inventory rules.
   Return only after successful initial check; snapshot closes in finally.
-- [ ] Verify old physical cases plus new lifecycle cases. Inject close-response
+- [x] Verify old physical cases plus new lifecycle cases. Inject close-response
   loss only at actual descriptor boundary, ensure reused descriptor survives.
 
 ## Task2: retain default env absence pins
@@ -70,22 +70,28 @@ Interface: `holdDeploymentCutoverDefaultEnvAbsenceV1()` returns frozen
 `{ observation, recheck(), close() }`; same lifecycle semantics, no input roots.
 Recheck includes CLI observation equality and absence parent mtime/ctime.
 
-- [ ] RED held export absent, test real temporary candidate trees.
-- [ ] RED create/remove candidate across await refuses even if now absent;
+- [x] RED held export absent, test real temporary candidate trees.
+- [x] RED create/remove candidate across await refuses even if now absent;
   replace held ancestor and change CLI target independently refuse.
-- [ ] Factor current absence observer; preserve its snapshot schema/hash/blockers.
-- [ ] Run the complete env-absence test file and retained profile file, noemit,
+- [x] Factor current absence observer; preserve its snapshot schema/hash/blockers.
+- [x] Run the complete env-absence test file and retained profile file, noemit,
   source contracts, bootstrap closure and exact manifest tests.
 
 ## Task3: delivery qualification
 
-- [ ] Independent read-only review of resource lifetimes and unchanged authority.
-- [ ] Source tests must prove acquired descriptors are closed on failure, no
+- [x] Independent read-only review of resource lifetimes and unchanged authority.
+- [x] Source tests must prove acquired descriptors are closed on failure, no
   double-close under response loss, no valid recheck after close/uncertainty.
 - [ ] Scoped commit and reviewed PR; normal independent clean-main build after
   merge. Do not fetch the old shared repo or call feature-build override flags.
 
 ## Subsequent owning composition (not proven by these APIs)
+
+Verification: profile30/30, env25/25, complete cutover272/272, bootstrap55/55
+plus final retained/env bootstrap10/10, exact manifest18/18, noemit and source
+contracts. Two read-only reviews cleared production changes; corrected one test
+masking gap by witnessing held recheck refusal separately from fresh observation.
+Actual descriptor-drain and held close-response-loss tests passed. No live effects.
 
 The fixed resolution table must cover actual ESM/CJS exports, nearer shadows,
 package-scope manifests, optional root/global candidates and actual launcher Node

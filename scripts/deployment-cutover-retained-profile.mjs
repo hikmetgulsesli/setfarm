@@ -22,9 +22,24 @@ const fail = () => { throw Error("DEPLOYMENT_CUTOVER_RETAINED_PROFILE_INVALID");
 // Inventory identity only: never imports retained JS/native code, and does not
 // establish effective environment, complete module resolution or effect authority.
 export function observeDeploymentCutoverRetainedProfileV1() {
+  if (arguments.length) fail();
+  const held = holdDeploymentCutoverRetainedProfileV1();
+  try { return held.observation; } finally { held.close(); }
+}
+
+// Holds inventory metadata only; selected-build and resolution lifetime proofs
+// remain obligations of the later owning composition. Never an admission token.
+export function holdDeploymentCutoverRetainedProfileV1() {
   if (arguments.length || uncertain) fail();
   const directories = new Map(), files = [], absences = [];
-  let invalid = false, result, total = 0, visitedEntries = 0;
+  let invalid = false, closed = false, result, total = 0, visitedEntries = 0, recheck = fail;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    const pins = [...directories.values()];
+    while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch { uncertain = true; invalid = true; } }
+    if (invalid) fail();
+  };
   try {
     const uid = process.getuid?.(), home = userInfo().homedir;
     if (uid === undefined || !path.isAbsolute(home) || fs.realpathSync(home) !== home || fs.realpathSync(root) !== root) fail();
@@ -142,8 +157,15 @@ export function observeDeploymentCutoverRetainedProfileV1() {
       blockers: ["module-resolution-not-authenticated", "runtime-effective-environment-not-authenticated", "database-zero-owner-not-observed",
         "filesystem-phase-zero-owner-not-observed", "controller-ownership-not-acquired"] };
     result = frozen({ ...body, observationHash: sha(canonical(body)) });
+    recheck = () => {
+      if (closed || invalid || uncertain) fail();
+      try {
+        check();
+        if (canonical(observeSelectedSetfarmDeploymentBuildV1()) !== canonical(selected)) fail();
+        check();
+      } catch { invalid = true; uncertain = true; fail(); }
+    };
   } catch { invalid = true; }
-  const pins = [...directories.values()];
-  while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch { uncertain = true; invalid = true; } }
-  if (invalid || !result) { uncertain = true; fail(); } return result;
+  if (invalid || !result) { uncertain = true; close(); fail(); }
+  return Object.freeze({ observation: result, recheck, close });
 }
