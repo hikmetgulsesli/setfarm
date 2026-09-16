@@ -105,7 +105,7 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
     } catch(error) {
       let retryError = null;
       if (run && ${defaultAction === undefined}) { try { await run(); } catch (retry) { retryError = render(retry,{depth:null}); } }
-      process.stdout.write(JSON.stringify({error:render(error,{depth:null}),retryError,prints,conversions,evidence:evidence()}));
+      process.stdout.write(JSON.stringify({error:render(error,{depth:null}),launcherStage:error.cutoverLauncherStage,cleanupFailed:error.cutoverCleanupFailed,retryError,prints,conversions,evidence:evidence()}));
     }
   `], { encoding: "utf8", env: {}, timeout: 15000 });
   assert.equal(child.status, 0, child.stderr); return JSON.parse(child.stdout);
@@ -157,6 +157,45 @@ test("default launcher binds both passive generations before fresh idle and priv
   assert.equal(result.evidence.nodeCloses, 2);
   assert.equal(result.frozen, true);
   assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL|SocketSentinel|plistBytesHash|configurationHash|loadedStateHash|launcherObservationHash/);
+}));
+
+for (const [fault, stage] of [["identify", "identity"], ["measure", "measure"], ["generation", "measurement-bind"], ["process", "idle"]]) {
+  test(`default launcher finite diagnostic identifies ${fault} refusal without secrets`, () => defaultFixture((home, texts) => {
+    const result = observe(home, texts, `
+      const kind=${JSON.stringify(fault)},measure=globalThis.measure;
+      if(kind==='identify')globalThis.identify=()=>{throw Error('TOKEN_SENTINEL')};
+      if(kind==='measure')globalThis.measure=()=>{throw Error('TOKEN_SENTINEL')};
+      if(kind==='generation')globalThis.measure=request=>({...measure(request),startMicroseconds:999});
+      if(kind==='process')globalThis.processes=()=>({families:[{}],listener:null});
+      evidence=()=>({dbCalls:globalThis.dbCalls,nodeCloses:globalThis.nodeCloses});
+    `, undefined, `await context.qualifyPassiveHome();await context.census();return context.observation;`);
+    assert.equal(result.launcherStage, stage, JSON.stringify(result));
+    assert.equal(result.evidence.dbCalls, 0); assert.equal(result.evidence.nodeCloses, 2);
+    assert.doesNotMatch(JSON.stringify(result), /TOKEN_SENTINEL|PG_SENTINEL/);
+  }));
+}
+
+test("default partial acquisition exposes sanitized cleanup loss before returning a holder", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts, `
+    let calls=0;const node=globalThis.nodeHold;
+    globalThis.nodeHold=(...args)=>{if(++calls===2)throw Error('TOKEN_SENTINEL');const held=node(...args);return {...held,close(){held.close();throw Error('TOKEN_SENTINEL')}}};
+    evidence=()=>({dbCalls:globalThis.dbCalls,nodeCloses:globalThis.nodeCloses});
+  `, undefined, `return context.observation;`);
+  assert.equal(result.cleanupFailed, true, JSON.stringify(result));
+  assert.equal(result.evidence.nodeCloses, 1); assert.equal(result.evidence.dbCalls, 0);
+  assert.doesNotMatch(JSON.stringify(result), /TOKEN_SENTINEL/);
+}));
+
+test("default configuration acquisition retains observed descriptor cleanup loss", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts, `
+    const close=fs.closeSync,spawnCommand=cp.spawnSync;let lost=false;
+    cp.spawnSync=(command,args,options)=>{if(active&&command==='/usr/bin/plutil')throw Error('TOKEN_SENTINEL');return spawnCommand(command,args,options)};
+    fs.closeSync=fd=>{close(fd);if(active&&!lost){lost=true;throw Error('TOKEN_SENTINEL')}};
+    evidence=()=>({lost,dbCalls:globalThis.dbCalls,nodeCloses:globalThis.nodeCloses});
+  `, undefined, `return context.observation;`);
+  assert.equal(result.evidence.lost, true); assert.equal(result.cleanupFailed, true, JSON.stringify(result));
+  assert.equal(result.evidence.nodeCloses, 0); assert.equal(result.evidence.dbCalls, 0);
+  assert.doesNotMatch(JSON.stringify(result), /TOKEN_SENTINEL/);
 }));
 
 for (const fault of ["generation", "parent", "native-refusal", "process-contender", "temp", "account", "pid", "node-second"]) {

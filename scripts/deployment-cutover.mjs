@@ -20,6 +20,25 @@ const passiveSourceUrl = pathToFileURL(path.join(root, "scripts/deployment-cutov
 const directoryKeys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"];
 const fileKeys = [...directoryKeys, "nlink", "size", "mtimeNs", "ctimeNs"];
 const fail = () => { throw Error("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED"); };
+let refusal = { scope: "bootstrap", stage: "entry", launcherStage: null, cleanupFailed: false };
+const stage = value => { refusal = { scope: "bootstrap", stage: value, launcherStage: null, cleanupFailed: false }; };
+function ownerRefusal(error) {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(error, "cutoverRefusal");
+    if (!descriptor || !Object.hasOwn(descriptor, "value")) return null;
+    const value = descriptor.value;
+    if (!value || Object.getPrototypeOf(value) !== Object.prototype) return null;
+    const fields = Object.getOwnPropertyDescriptors(value), keys = Reflect.ownKeys(fields);
+    if (keys.length !== 4 || !["scope", "stage", "launcherStage", "cleanupFailed"].every(key => keys.includes(key) && Object.hasOwn(fields[key], "value"))) return null;
+    const scope = fields.scope.value, phase = fields.stage.value, launcherStage = fields.launcherStage.value, cleanupFailed = fields.cleanupFailed.value;
+    if (scope !== "default-owner" || !["entry", "account", "acquire-selected", "acquire-retained", "acquire-absence", "acquire-launcher", "crossbind",
+      "resolve", "prequalify", "resolution-bind", "qualify", "postqualify", "census", "postcensus", "census-shape", "final-recheck", "cleanup"].includes(phase)
+      || (typeof cleanupFailed !== "boolean" && !(cleanupFailed === null && ["acquire-selected", "acquire-retained", "acquire-absence", "acquire-launcher"].includes(phase)))
+      || (launcherStage !== null && (phase !== "qualify" || !["precheck", "baseline", "transport", "waiting",
+        "sampled-identity", "identity", "pid-recheck", "measure", "measurement-bind", "settling", "idle"].includes(launcherStage)))) return null;
+    return { scope, stage: phase, launcherStage, cleanupFailed };
+  } catch { return null; }
+}
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const canonical = value => value === null || typeof value !== "object" ? JSON.stringify(value)
   : Array.isArray(value) ? `[${value.map(canonical).join(",")}]`
@@ -62,6 +81,7 @@ async function inspect() {
   const pins = [], directories = new Set(), files = new Map(), dependencyEntries = new Map(), executableFiles = new Set();
   let invalid = false, result, totalBytes = 0;
   try {
+    stage("source-authentication");
     const check = () => {
       for (const pin of pins) if (!same(pin.stat, fs.fstatSync(pin.fd, { bigint: true }), directoryKeys)
         || !same(pin.stat, fs.lstatSync(pin.target, { bigint: true }), directoryKeys)) fail();
@@ -138,6 +158,7 @@ async function inspect() {
         check(); return { format: "module", source: Buffer.from(entry.bytes), shortCircuit: true };
       },
     });
+    stage("source-build");
     const verifier = await import("./build-generation-retention.mjs");
     const sourceBuild = verifier.observeCurrentFinalizedSetfarmSourceBuildV1(); check();
     if (sourceBuild.sha !== initial.sha || sourceBuild.treeHash !== initial.treeHash) fail();
@@ -158,6 +179,7 @@ async function inspect() {
     }
     if (canonical(sourceState()) !== canonical(initial) || canonical(verifier.observeCurrentFinalizedSetfarmSourceBuildV1()) !== canonical(sourceBuild)) fail();
     check();
+    stage("dependencies");
     const dependencies = await import("./deployment-cutover-dependencies.mjs");
     const archives = dependencies.readCutoverDependencyArchivesV1();
     for (const dependency of archives.packages) {
@@ -174,12 +196,15 @@ async function inspect() {
       dependencyEntries.set(dependency.name, entry);
     }
     check();
+    stage("controller-source");
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();
     let host, envFiles, helpers, retainedProfile, defaultContext;
     if (process.argv[2] === "inspect-default-context") {
+      stage("default-owner-load");
       const contextModule = await import("./deployment-cutover-default-context.mjs");
-      check(); defaultContext = await contextModule.observeDeploymentCutoverDefaultContextV1(); check();
+      check(); stage("default-context"); defaultContext = await contextModule.observeDeploymentCutoverDefaultContextV1();
+      stage("post-context"); check();
     }
     if (process.argv[2] === "inspect-retained-profile") {
       const profileModule = await import("./deployment-cutover-retained-profile.mjs");
@@ -221,13 +246,25 @@ async function inspect() {
         ...(database ? { database } : {}), blockers };
       host = { ...body, hostObservationHash: hash(canonical(body)) };
     }
-    check(); if (canonical(sourceState()) !== canonical(initial)) fail();
+    stage("final-source"); check(); if (canonical(sourceState()) !== canonical(initial)) fail();
     result = { schema: "setfarm.internal-production-deployment-cutover-bootstrap-observation.v1", sourceBuild, controllerSourceHash: authority.controllerSourceHash,
       ...(host ? { host } : {}), ...(envFiles ? { envFiles } : {}), ...(helpers ? { helpers } : {}), ...(retainedProfile ? { retainedProfile } : {}),
       ...(defaultContext ? { defaultContext } : {}) };
-  } catch { invalid = true; }
-  while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch { invalid = true; } }
+  } catch (error) {
+    // A throwing nested observer may have acquired resources we never received.
+    // Missing sanitized cleanup evidence means unknown, not successful cleanup.
+    const owned = process.argv[2] === "inspect-default-context" && refusal.stage === "default-context" ? ownerRefusal(error) : null;
+    refusal = owned ?? { ...refusal, cleanupFailed: null };
+    invalid = true;
+  }
+  while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch {
+    if (!invalid) stage("cleanup"); invalid = true; refusal = { ...refusal, cleanupFailed: true };
+  } }
   if (invalid || !result) fail(); return result;
 }
 try { process.stdout.write(`${JSON.stringify(await inspect())}\n`); }
-catch { process.stderr.write("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n"); process.exitCode = 1; }
+catch {
+  process.stderr.write("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
+  if (process.argv[2] === "inspect-default-context") process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
+  process.exitCode = 1;
+}

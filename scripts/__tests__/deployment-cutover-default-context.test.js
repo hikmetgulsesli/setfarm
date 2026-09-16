@@ -23,7 +23,7 @@ function run(fault = "") {
     const child = spawnSync(process.execPath, ["--input-type=module", "-e", `
       import os from 'node:os';import {syncBuiltinESMExports} from 'node:module';
       const root=${JSON.stringify(root)},fault=${JSON.stringify(fault)},events=[],home=root+'/home';
-      const identity=os.userInfo();os.userInfo=()=>({...identity,homedir:home});syncBuiltinESMExports();
+      const identity=os.userInfo();os.userInfo=()=>{if(fault==='account')throw Error('PRIVATE_SENTINEL');return {...identity,homedir:home}};syncBuiltinESMExports();
       const cli={cliLinkPath:home+'/.local/bin/setfarm',checkoutPath:root+'/old',cliLinkObservationHash:'cli'};
       const observations={selected:{selectedDeploymentObservationHash:'selected',cli,buildSource:{sha:'source'}},
         retained:{selectedDeploymentObservationHash:'selected',sourceSha:'source',profileHash:'profile'},
@@ -36,12 +36,17 @@ function run(fault = "") {
       if(fault==='root-cross')observations.absence.currentCheckoutPath=root+'/crossed';
       if(fault==='candidate-cross')observations.absence.candidates[0].path+='.crossed';
       if(fault==='launcher-cli-cross')observations.launcher.launchers[0].launchArguments[0]+='.crossed';
-      let sampled=false,queried=false,closed=[];
-      globalThis.hold=kind=>{if(fault==='partial-acquire'&&kind==='absence')throw Error('PRIVATE_SENTINEL');events.push('hold:'+kind);return {observation:observations[kind],
-        recheck(){events.push('check:'+kind);if((fault==='sample-drift'&&sampled||fault==='db-drift'&&queried)&&kind==='absence')throw Error('PRIVATE_SENTINEL')},
-        close(){events.push('close:'+kind);closed.push(kind);if(['close-loss','close-retry'].includes(fault)&&kind==='launcher')throw Error('PRIVATE_SENTINEL')},
+      let sampled=false,queried=false,closed=[],checkCount=0;
+      globalThis.hold=kind=>{if(fault.startsWith('acquire-cleanup-')&&kind==='launcher'){const error=Error('PRIVATE_SENTINEL');Object.defineProperty(error,'cutoverCleanupFailed',
+        fault==='acquire-cleanup-accessor'?{get(){process.stdout.write('PRIVATE_SENTINEL');throw Error('PRIVATE_SENTINEL')}}:{value:['acquire-cleanup-loss','acquire-cleanup-retry'].includes(fault)?true:fault==='acquire-cleanup-false'?false:'PRIVATE_SENTINEL'});throw error}
+        if((fault==='partial-acquire'&&kind==='absence')||fault==='acquire-'+kind)throw Error('PRIVATE_SENTINEL');events.push('hold:'+kind);return {observation:observations[kind],
+        recheck(){events.push('check:'+kind);if(kind==='selected')checkCount++;if((fault==='prequalify'&&checkCount===2||fault==='final-recheck'&&checkCount===5)||(fault==='sample-drift'&&sampled||fault==='db-drift'&&queried)&&kind==='absence')throw Error('PRIVATE_SENTINEL')},
+        close(){events.push('close:'+kind);closed.push(kind);if(['close-loss','close-retry','sample-close-loss'].includes(fault)&&kind==='launcher'||fault==='acquire-cleanup-outer-loss'&&kind==='absence')throw Error('PRIVATE_SENTINEL')},
         resolveModules(){events.push('resolve');if(fault==='resolution')throw Error('PRIVATE_SENTINEL');return {profileHash:fault==='resolution-cross'?'crossed':'profile',selectedDeploymentObservationHash:'selected',contexts:[{home:'account'},{home:'absent'}]}},
-        async qualifyPassiveHome(){events.push('sample');await Promise.resolve();sampled=true;if(fault==='sample')throw Error('PRIVATE_SENTINEL');return {samples:[],processObservation:{families:[],listener:null}}},
+        async qualifyPassiveHome(){events.push('sample');await Promise.resolve();sampled=true;if(['sample','sample-close-loss'].includes(fault))throw Error('PRIVATE_SENTINEL');
+          if(fault.startsWith('launcher-stage-')){const error=Error('PRIVATE_SENTINEL');Object.defineProperty(error,'cutoverLauncherStage',
+            fault==='launcher-stage-accessor'?{get(){process.stdout.write('PRIVATE_SENTINEL');throw Error('PRIVATE_SENTINEL')}}:{value:fault==='launcher-stage-valid'?'measure':'PRIVATE_SENTINEL'});throw error}
+          return {samples:[],processObservation:{families:[],listener:null}}},
         async census(){events.push('db');await Promise.resolve();queried=true;if(fault==='db')throw Error('PRIVATE_SENTINEL');return {activeRunCount:fault==='nonzero'?1:fault==='malformed-count'?'0':0,openClaimCount:0,executionAttemptCount:0,activeRuntimeSessionCount:0,activeCompletionOwnerCount:0,unsettledMandatoryEffectCount:0,artifactReservationCount:0,publicationBatchCount:0,artifactPublicationCount:0,terminationOwnerCount:0,findingOwnerCount:0,recoveryOwnerCount:0,operationalDeliveryCount:0,legacyFindingPublicationInventory:{entries:[]}}}
       }};
       try{const module=await import(${JSON.stringify(`file://${root}/scripts/deployment-cutover-default-context.mjs`)});
@@ -49,13 +54,13 @@ function run(fault = "") {
           const results=await Promise.allSettled([module.observeDeploymentCutoverDefaultContextV1(),module.observeDeploymentCutoverDefaultContextV1()]);
           process.stdout.write(JSON.stringify({states:results.map(item=>item.status),events,closed}));process.exit(0);
         }
-        if(fault==='close-retry'){
-          let refusals=0;for(let index=0;index<2;index++)try{await module.observeDeploymentCutoverDefaultContextV1()}catch(error){if(error.message!=='DEPLOYMENT_CUTOVER_DEFAULT_CONTEXT_REFUSED')throw error;refusals++}
-          process.stdout.write(JSON.stringify({refusals,events,closed}));process.exit(0);
+        if(['close-retry','acquire-cleanup-retry'].includes(fault)){
+          let refusals=0;const diagnostics=[];for(let index=0;index<2;index++)try{await module.observeDeploymentCutoverDefaultContextV1()}catch(error){if(error.message!=='DEPLOYMENT_CUTOVER_DEFAULT_CONTEXT_REFUSED')throw error;refusals++;diagnostics.push(error.cutoverRefusal)}
+          process.stdout.write(JSON.stringify({refusals,diagnostics,events,closed}));process.exit(0);
         }
         const value=await module.observeDeploymentCutoverDefaultContextV1(...(fault==='input'?[{}]:[]));
         process.stdout.write(JSON.stringify({value,events,closed}));
-      }catch(error){process.stdout.write(JSON.stringify({error:String(error),events,closed}))}
+      }catch(error){process.stdout.write(JSON.stringify({error:String(error),diagnostic:error.cutoverRefusal,events,closed}))}
     `], { encoding: "utf8", env: {}, timeout: 15000 });
     assert.equal(child.status, 0, child.stderr);
     return JSON.parse(child.stdout);
@@ -101,4 +106,55 @@ test("default owner close uncertainty refuses a fresh call before acquiring anyt
   assert.equal(result.refusals, 2);
   assert.equal(result.closed.length, 4);
   assert.equal(result.events.filter(event => event.startsWith("hold:")).length, 4);
+  assert.equal(result.diagnostics[1].stage, "entry");
+  assert.equal(result.diagnostics[1].cleanupFailed, true);
+});
+
+for (const [fault, stage] of [["input", "entry"], ["account", "account"], ["acquire-selected", "acquire-selected"], ["acquire-retained", "acquire-retained"],
+  ["acquire-launcher", "acquire-launcher"], ["partial-acquire", "acquire-absence"], ["selected-cross", "crossbind"], ["prequalify", "prequalify"], ["final-recheck", "final-recheck"],
+  ["resolution", "resolve"], ["resolution-cross", "resolution-bind"], ["sample", "qualify"],
+  ["sample-drift", "postqualify"], ["db", "census"], ["db-drift", "postcensus"],
+  ["malformed-count", "census-shape"], ["close-loss", "cleanup"]]) {
+  test(`default owner reports only finite refusal stage for ${fault}`, () => {
+    const result = run(fault);
+    assert.deepEqual(result.diagnostic, { scope: "default-owner", stage, launcherStage: null, cleanupFailed: stage.startsWith("acquire-") ? null : fault === "close-loss" });
+    assert.doesNotMatch(JSON.stringify(result.diagnostic), /PRIVATE_SENTINEL|\/home|stack|cause/);
+  });
+}
+
+test("default owner preserves original refusal when cleanup also fails", () => {
+  const result = run("sample-close-loss");
+  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "qualify", launcherStage: null, cleanupFailed: true });
+  assert.deepEqual(result.closed, ["launcher", "absence", "retained", "selected"]);
+  assert.equal(result.events.includes("db"), false);
+});
+test("default owner propagates nested acquisition cleanup loss before the holder returns", () => {
+  const result = run("acquire-cleanup-loss");
+  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "acquire-launcher", launcherStage: null, cleanupFailed: true });
+  assert.deepEqual(result.closed, ["absence", "retained", "selected"]);
+  assert.equal(result.events.includes("db"), false);
+});
+for (const kind of ["accessor", "false", "unknown"]) test(`default owner cannot certify nested cleanup through ${kind}`, () => {
+  const result = run(`acquire-cleanup-${kind}`);
+  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "acquire-launcher", launcherStage: null, cleanupFailed: null });
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_SENTINEL/);
+});
+test("default owner outer cleanup failure overrides unknown nested cleanup", () => {
+  const result = run("acquire-cleanup-outer-loss");
+  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "acquire-launcher", launcherStage: null, cleanupFailed: true });
+  assert.deepEqual(result.closed, ["absence", "retained", "selected"]);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_SENTINEL/);
+});
+test("default owner retains nested cleanup failure on reentry before reacquiring", () => {
+  const result = run("acquire-cleanup-retry");
+  assert.equal(result.refusals, 2);
+  assert.deepEqual(result.diagnostics.map(value => [value.stage, value.cleanupFailed]), [["acquire-launcher", true], ["entry", true]]);
+  assert.deepEqual(result.closed, ["absence", "retained", "selected"]);
+  assert.equal(result.events.filter(event => event.startsWith("hold:")).length, 3);
+});
+for (const kind of ["valid", "accessor", "unknown"]) test(`default owner sanitizes launcher ${kind} stage`, () => {
+  const result = run(`launcher-stage-${kind}`);
+  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "qualify", launcherStage: kind === "valid" ? "measure" : null, cleanupFailed: false });
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_SENTINEL/);
+  assert.equal(result.events.includes("db"), false);
 });

@@ -19,7 +19,54 @@ test("bootstrap refuses modified default owner before invoking it", () => fixtur
   const result = run(root, ["inspect-default-context", "--json"]);
   assert.equal(result.status, 1);
   assert.equal(result.stdout, "");
-  assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
+  const lines = result.stderr.trimEnd().split("\n");
+  assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
+  assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: "bootstrap", stage: "source-authentication", launcherStage: null, cleanupFailed: null });
+}));
+
+for (const kind of ["valid", "acquire-unknown", "unknown-stage", "extra-field", "accessor", "raw-error", "field-accessor", "symbol-field", "foreign-prototype", "cleanup-type", "unknown-launcher", "crossed-launcher"]) {
+  test(`bootstrap default refusal sanitizes ${kind} diagnostic`, () => fixture(root => {
+    const result = run(root, ["inspect-default-context", "--json"]);
+    assert.equal(result.status, 1); assert.equal(result.stdout, "");
+    const lines = result.stderr.trimEnd().split("\n");
+    assert.equal(lines.length, 2); assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
+    assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: ["valid", "acquire-unknown"].includes(kind) ? "default-owner" : "bootstrap",
+      stage: kind === "valid" ? "qualify" : kind === "acquire-unknown" ? "acquire-launcher" : "default-context", launcherStage: kind === "valid" ? "measure" : null, cleanupFailed: kind === "valid" ? false : null });
+    assert.doesNotMatch(result.stderr, /PRIVATE_SENTINEL|PRIVATE_PATH|SECRET_GETTER/);
+  }, undefined, { prepare(root) {
+    write(root, "scripts/deployment-cutover-default-context.mjs", `export async function observeDeploymentCutoverDefaultContextV1(){
+      const error=Error('PRIVATE_SENTINEL /PRIVATE_PATH');
+      const value={scope:'default-owner',stage:'qualify',launcherStage:'measure',cleanupFailed:false};
+      const kind=${JSON.stringify(kind)};
+      if(kind==='acquire-unknown'){value.stage='acquire-launcher';value.launcherStage=null;value.cleanupFailed=null;}
+      if(kind==='unknown-stage')value.stage='PRIVATE_SENTINEL';
+      if(kind==='extra-field')value.secret='PRIVATE_SENTINEL';
+      if(kind==='field-accessor')Object.defineProperty(value,'stage',{get(){process.stdout.write('SECRET_GETTER');throw Error('SECRET_GETTER')}});
+      if(kind==='symbol-field')value[Symbol('PRIVATE_SENTINEL')]='PRIVATE_SENTINEL';
+      if(kind==='foreign-prototype')Object.setPrototypeOf(value,{secret:'PRIVATE_SENTINEL'});
+      if(kind==='cleanup-type')value.cleanupFailed='PRIVATE_SENTINEL';
+      if(kind==='unknown-launcher')value.launcherStage='PRIVATE_SENTINEL';
+      if(kind==='crossed-launcher')value.stage='census';
+      if(kind==='accessor')Object.defineProperty(error,'cutoverRefusal',{get(){process.stdout.write('SECRET_GETTER');throw Error('SECRET_GETTER')}});
+      else if(kind!=='raw-error')Object.defineProperty(error,'cutoverRefusal',{value});
+      throw error;
+    }`);
+  } }));
+}
+
+test("bootstrap preserves owner stage when its own cleanup also fails", () => fixture(root => {
+  const result = run(root, ["inspect-default-context", "--json"]);
+  assert.equal(result.status, 1); assert.equal(result.stdout, "");
+  assert.deepEqual(JSON.parse(result.stderr.trimEnd().split("\n")[1]), {
+    schema: "setfarm.deployment-cutover-refusal.v1", scope: "default-owner", stage: "qualify", launcherStage: "identity", cleanupFailed: true,
+  });
+  assert.doesNotMatch(result.stderr, /PRIVATE_SENTINEL/);
+}, source => source.replace('try { fs.closeSync(pin.fd); } catch {', 'try { fs.closeSync(pin.fd); throw Error("PRIVATE_SENTINEL"); } catch {'), {
+  prepare(root) {
+    write(root, "scripts/deployment-cutover-default-context.mjs", `export async function observeDeploymentCutoverDefaultContextV1(){
+      const error=Error('PRIVATE_SENTINEL');Object.defineProperty(error,'cutoverRefusal',{value:Object.freeze({scope:'default-owner',stage:'qualify',launcherStage:'identity',cleanupFailed:false})});throw error;
+    }`);
+  },
 }));
 
 test("bootstrap supplies authenticated Python bytes as data without evaluating them", () => fixture((root, expected) => {
