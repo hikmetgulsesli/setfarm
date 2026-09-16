@@ -103,7 +103,7 @@ The native bridge, fixed transport and authenticated source hook are delivered
 first without a new inspection endpoint. Launcher/default-owner wiring above
 remains unchecked; no blocker is removed by this supporting slice.
 
-- Focused native/parser/transport:36/36passed, including actual owned-child
+- Focused native/parser/transport:37/37passed, including actual owned-child
   entry, vanished-child refusal and all sensitive-buffer cleanup fault paths.
 - Affected bootstrap/profile group:92/92passed, including the standard genuine
   integration command. Source manifest18/18passed.
@@ -119,3 +119,9 @@ both `launchExecutable` and physical `executable`; the owner must bind both to
 held Node/PATH evidence. Physical and symlink child tests pass and crossed
 launch/physical paths refuse. The92test broad group preceded this narrow fix;
 focused native/transport and Python-source bootstrap tests cover the final fix.
+
+Cloud review identified native tests incorrectly running on non-Darwin hosts.
+Only the10Darwin API cases now have an explicit platform skip; pure parser and
+transport tests remain enabled. A subprocess emulating Node's platform selector
+proved RED0/10skips then GREEN10/10skips with the positive parser still running.
+This is test-selection evidence, not a claim of a physical Linux suite run.

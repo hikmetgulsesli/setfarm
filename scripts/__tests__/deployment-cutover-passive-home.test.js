@@ -7,6 +7,7 @@ import { once } from "node:events";
 import { test } from "node:test";
 
 const helper = new URL("../deployment-cutover-passive-home.py", import.meta.url);
+const nativeOptions = { skip: process.platform === "darwin" ? false : "Darwin native process APIs required" };
 const expected = { executable: "/fixture/node", argv: ["node", "", "/fixture/cli.js"],
   environment: { HOME: "/fixture/account", PATH: "/usr/bin:/bin", SECRET: "PRIVATE_SENTINEL" } };
 function packed({ argv = expected.argv, environment = Object.entries(expected.environment).map(([k, v]) => `${k}=${v}`),
@@ -90,7 +91,7 @@ for (const [fault, accepted, allocations] of [
   ["none", true, 2], ["short-info", false, 0], ["unterminated-path", false, 0],
   ["length-disagreement", false, 1], ["second-read-failure", false, 2],
   ["start-drift", false, 2], ["credential-drift", false, 1], ["buffer-drift", false, 2],
-]) test(`native bridge ${fault} drains and zeros every sensitive allocation`, () => {
+]) test(`native bridge ${fault} drains and zeros every sensitive allocation`, nativeOptions, () => {
   const source = fs.readFileSync(helper, "utf8");
   const request = { pid: 12345, uid: process.getuid(), gid: process.getgid(), launchExecutable: expected.executable, ...expected };
   const result = spawnSync("/usr/bin/python3", ["-I", "-S", "-B", "-c", `
@@ -156,7 +157,7 @@ print(json.dumps({"accepted": accepted, "allocations": len(saved), "allZero": al
   assert.deepEqual(JSON.parse(result.stdout), { accepted, allocations, allZero: true });
 });
 
-for (const linked of [false, true]) test(`native bridge measures identity-bound owned ${linked ? "symlink" : "physical"} child`, async () => {
+for (const linked of [false, true]) test(`native bridge measures identity-bound owned ${linked ? "symlink" : "physical"} child`, nativeOptions, async () => {
   const executable = fs.realpathSync.native(process.execPath);
   const directory = linked ? fs.mkdtempSync(path.join(os.tmpdir(), "cutover-passive-native-")) : null;
   const launched = directory ? path.join(directory, "node") : executable;

@@ -55,3 +55,13 @@ catch(error){process.stdout.write(error.code==='ERR_UNKNOWN_FILE_EXTENSION'?'REF
   assert.equal(result.stdout, "REFUSED");
   assert.equal(result.stderr, "");
 });
+
+test("non-Darwin test selection skips only native process API cases", () => {
+  const tests = new URL("./deployment-cutover-passive-home.test.js", import.meta.url);
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
+Object.defineProperty(process,'platform',{value:'linux'});await import(${JSON.stringify(tests.href)});
+`], { encoding: "utf8", env: { PATH: "/usr/bin:/bin" }, timeout: 15000, maxBuffer: 65536 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal((result.stdout.match(/# SKIP Darwin native process APIs required/g) ?? []).length, 10);
+  assert.match(result.stdout, /ok [0-9]+ - native buffer qualifies exact private profile and preserves empty argv\n/);
+});
