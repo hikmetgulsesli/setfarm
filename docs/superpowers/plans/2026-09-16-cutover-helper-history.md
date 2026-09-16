@@ -32,6 +32,9 @@ phase zero, effective runtime environment, database zero or controller ownership
   hashes, explicit remaining blockers, observationHash. No history records.
 - Matching `tests/internal-production/baseline-deployment-cutover-helper-observation-v1.test.ts`;
   real fixed-root observers under fixture identity, no caller root API.
+- `tests/internal-production/baseline-restart-authority-retirement-v1.test.ts`:
+  reuse real terminal/live/ambiguous census fixtures through the new wrapper;
+  keep production retirement semantics unchanged.
 - `scripts/deployment-cutover.mjs`: `inspect-helpers --json` explicit mode.
 - `scripts/__tests__/deployment-cutover.test.js` and bootstrap fixture: finalized
   actual retirement static closure, genuine package bytes, absent positive and
@@ -41,8 +44,8 @@ phase zero, effective runtime environment, database zero or controller ownership
 
 ## Task1: wrapper and physical qualification
 
-- [ ] Missing-module RED with an actual absent fixed helper root.
-- [ ] Implement exact acceptance and bracketing:
+- [x] Missing-module RED with an actual absent fixed helper root.
+- [x] Implement exact acceptance and bracketing:
 
 ```typescript
 const coldBefore = retirement.observeInternalProductionColdSpawnerBootstrapJournalCensusV1();
@@ -53,23 +56,28 @@ const coldAfter = retirement.observeInternalProductionColdSpawnerBootstrapJourna
 // helper absent/terminal, registered==terminal, live0, ambiguous0.
 ```
 
-- [ ] Assert no writes, network, process effects or env mutation, and no full
+- [x] Assert no writes, network, process effects or env mutation, and no full
   settlement output. Fixed refusal `DEPLOYMENT_CUTOVER_HELPER_OBSERVATION_INVALID`.
-- [ ] Real partial cold/pre-schema/registry history, unsafe ancestry, absence
+- [x] Real partial cold/pre-schema/registry history, unsafe ancestry, absence
   changes and close failure must refuse and preserve physical evidence.
-- [ ] Reuse narrowly selected existing retirement census regression cases for
+- [x] Reuse narrowly selected existing retirement census regression cases for
   real registered/live/ambiguous/terminal semantics; no broad adjacent DB tests.
 
 ## Task2: compiled authenticated mode
 
-- [ ] Genuine unknown-mode RED before bootstrap changes.
-- [ ] Add inspect-helpers mode, authenticated import, hash-only output, explicit
+- [x] Genuine unknown-mode RED before bootstrap changes.
+- [x] Add inspect-helpers mode, authenticated import, hash-only output, explicit
   filesystem-phase/effective-env/database/controller blockers and final source
   fence. Other inspection modes unchanged.
-- [ ] Test actual absent history and incomplete/tampered compiled input refusal
+- [x] Test actual absent history and incomplete/tampered compiled input refusal
   with sockets forbidden. Static closure must be authenticated before evaluation.
-- [ ] Run focused and invoked cutover, full bootstrap/genuine, noemit/contracts,
-  independent review, scoped PR and normal independent clean-main build.
+- [x] Run focused and invoked cutover, full bootstrap/genuine, noemit/contracts
+  and independent review. Physical11/11, existing real census2/2, invoked
+  cutover266/266, bootstrap/owner/dependencies116/116, manifest18/18 passed.
+  Review caught partial-history fixture ancestry0755 masking record validation;
+  corrected to0700 and exact genuine case1/1 passed separately.
+- [ ] Scoped PR and normal independent clean-main build, then real read-only
+  inspect-helpers observation. No live transition effects in this slice.
 
 ## Remaining after this slice
 

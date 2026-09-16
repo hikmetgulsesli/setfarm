@@ -282,6 +282,10 @@ cold/bootstrap and restart-helper census predicates; bracket their projections
 and return hashes/states/counts only. Keep filesystem-phase, effective-runtime,
 database and controller blockers. This closes a necessary diagnostic gap without
 authorizing helper execution, history cleanup or live rollout effects.
+Extend `baseline-restart-authority-retirement-v1.test.ts` only to reuse its real
+terminal/live/ambiguous fixtures through the wrapper; do not change retirement
+production semantics. Genuine bootstrap qualification covers absent history and
+partial/unsafe/tampered refusals, not all dynamic retained settlement closures.
 
 The current host's inherited launcher environment lacks SETFARM_ENV_DIR. Keep
 the existing exact launcher guard until a default-mode compatibility proof is

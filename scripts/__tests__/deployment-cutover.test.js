@@ -5,6 +5,46 @@ import path from "node:path";
 import { spawnSync, execFileSync } from "node:child_process";
 import { fixture, run, write, git } from "./fixtures/deployment-cutover-bootstrap.mjs";
 
+function helperHistoryFixture(body) {
+  fixture((root, expected, home) => {
+    const baseline = path.join(home, "ai/setrox/data/internal-production-baseline");
+    fs.mkdirSync(baseline, { recursive: true, mode: 0o700 });
+    body(root, path.join(baseline, "restart-authority-retirement-v1"));
+  }, source => source.replace("const closure = ", "import net from 'node:net';net.Socket.prototype.connect=()=>{throw Error('UNEXPECTED_CONNECTION')};syncBuiltinESMExports();const closure = "),
+  { genuine: true, helpers: true });
+}
+
+test("trusted helper inspection authenticates real absent history and retains remaining blockers", () => helperHistoryFixture((root, history) => {
+  const result = run(root, ["inspect-helpers", "--json"]); assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout);
+  assert.equal(observed.helpers.scope, "helper-history-only");
+  assert.equal(observed.helpers.coldState, "absent"); assert.equal(observed.helpers.preSchemaHelperState, "absent");
+  assert.equal(observed.helpers.registeredHelperCount, 0); assert.equal(observed.helpers.terminalHelperCount, 0);
+  assert.deepEqual(observed.helpers.blockers, ["filesystem-phase-zero-owner-not-observed", "runtime-effective-environment-not-authenticated",
+    "database-zero-owner-not-observed", "controller-ownership-not-acquired"]);
+  assert.equal(Object.hasOwn(observed, "host"), false); assert.equal(fs.existsSync(history), false);
+}));
+
+for (const fault of ["partial-history", "unsafe-history", "tampered-observer", "tampered-retirement"]) {
+  test(`trusted helper inspection refuses ${fault} without output or history repair`, () => helperHistoryFixture((root, history) => {
+    if (fault === "partial-history") {
+      fs.mkdirSync(history, { mode: 0o700 });
+      write(history, "pre-schema-helper-journal.json", "PRIVATE_HISTORY_CANARY\n", 0o600);
+    }
+    if (fault === "unsafe-history") fs.mkdirSync(history, { mode: 0o755 });
+    if (fault.startsWith("tampered-")) {
+      const name = fault === "tampered-observer" ? "baseline-deployment-cutover-helper-observation-v1" : "baseline-restart-authority-retirement-v1";
+      fs.appendFileSync(path.join(root, `dist/internal-production/${name}.js`), '\nprocess.stdout.write("UNVERIFIED_HISTORY_EXECUTED");\n');
+    }
+    const result = run(root, ["inspect-helpers", "--json"]);
+    assert.equal(result.status, 1); assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
+    if (fault === "partial-history") assert.equal(fs.readFileSync(path.join(history, "pre-schema-helper-journal.json"), "utf8"), "PRIVATE_HISTORY_CANARY\n");
+    if (fault === "unsafe-history") assert.equal(fs.statSync(history).mode & 0o777, 0o755);
+    if (fault.startsWith("tampered-")) assert.equal(fs.existsSync(history), false);
+  }));
+}
+
 function envAbsenceFixture(body) {
   fixture((root, expected, home) => {
     const old = path.join(home, "ai/setrox/old");
