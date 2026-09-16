@@ -275,6 +275,14 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## Required proof before live effects
 
+Helper-history proof is a separate read-only slice: add
+`baseline-deployment-cutover-helper-observation-v1.ts` and matching physical and
+authenticated bootstrap tests, exposing `inspect-helpers --json`. Reuse unchanged
+cold/bootstrap and restart-helper census predicates; bracket their projections
+and return hashes/states/counts only. Keep filesystem-phase, effective-runtime,
+database and controller blockers. This closes a necessary diagnostic gap without
+authorizing helper execution, history cleanup or live rollout effects.
+
 The current host's inherited launcher environment lacks SETFARM_ENV_DIR. Keep
 the existing exact launcher guard until a default-mode compatibility proof is
 qualified. First add a candidate-only physical observation:
