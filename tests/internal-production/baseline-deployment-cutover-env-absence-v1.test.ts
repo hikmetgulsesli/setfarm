@@ -27,7 +27,7 @@ function fixture(body: (paths: Paths) => void) {
     body({ home, selected, current, runtime, link, module });
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 }
-function observe(paths: Paths, fault = "") {
+function observe(paths: Paths, fault = "", expression = "run()") {
   const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
     import os from 'node:os';import fs from 'node:fs';import net from 'node:net';import {syncBuiltinESMExports}from'node:module';
     const identity=os.userInfo();os.userInfo=()=>({...identity,homedir:${JSON.stringify(paths.home)}});
@@ -42,7 +42,7 @@ function observe(paths: Paths, fault = "") {
     let run;
     try{
       const loaded=await import(${JSON.stringify(pathToFileURL(paths.module).href)});run=loaded.observeDeploymentCutoverDefaultEnvAbsenceV1;active=true;
-      const observation=run();const second=run();
+      const observation=${expression};const second=run();
       const frozen=value=>!value||typeof value!=='object'||(Object.isFrozen(value)&&Object.values(value).every(frozen));
       process.stdout.write(JSON.stringify({observation,frozen:frozen(observation),stable:observation.observationHash===second.observationHash,
         writes,connections,envUnchanged:JSON.stringify(process.env)===envBefore,evidence:inspect()}));
@@ -50,6 +50,51 @@ function observe(paths: Paths, fault = "") {
       process.stdout.write(JSON.stringify({error:error.message,retryError,writes,connections,evidence:inspect()}));}
   `], { encoding: "utf8", env: {}, timeout: 15000 });
   assert.equal(child.status, 0, child.stderr); return JSON.parse(child.stdout);
+}
+
+test("held env absence survives await and refuses recheck after close", () => fixture(paths => {
+  const result = observe(paths, "", `await(async()=>{
+    const held=loaded.holdDeploymentCutoverDefaultEnvAbsenceV1();
+    if(!Object.isFrozen(held))throw Error('MUTABLE_CONTEXT');
+    await Promise.resolve();held.recheck();held.close();held.close();
+    let refused=false;try{held.recheck()}catch{refused=true}
+    if(!refused)throw Error('CLOSED_CONTEXT_ACCEPTED');return held.observation;
+  })()`);
+  assert.equal(result.observation?.candidates.length, 6, JSON.stringify(result));
+  assert.equal(result.stable, true); assert.equal(result.writes, 0); assert.equal(result.connections, 0);
+}));
+
+test("held env absence rejects caller-supplied qualification inputs", () => fixture(paths => {
+  const result = observe(paths, "", `(()=>{
+    let refused=false,held;
+    try{held=loaded.holdDeploymentCutoverDefaultEnvAbsenceV1({accepted:true});}catch{refused=true}
+    finally{if(held)held.close();}
+    if(!refused)throw Error('CALLER_INPUT_ACCEPTED');return run();
+  })()`);
+  assert.equal(result.observation?.candidates.length, 6, JSON.stringify(result));
+}));
+
+for (const change of ["candidate-aba", "ancestor-replacement", "cli-replacement"]) {
+  test(`held env absence refuses ${change} after await`, () => fixture(paths => {
+    const result = observe(paths, `const pending=new Set(),open=fs.openSync,close=fs.closeSync;let opened=0;
+      fs.openSync=(...args)=>{const fd=open(...args);if(active){pending.add(fd);opened++;}return fd;};
+      fs.closeSync=fd=>{close(fd);pending.delete(fd);};`, `await(async()=>{
+      const held=loaded.holdDeploymentCutoverDefaultEnvAbsenceV1();await Promise.resolve();
+      const root=${JSON.stringify(paths.runtime)},link=${JSON.stringify(paths.link)};
+      active=false;
+      try{
+        if(${JSON.stringify(change)}==='candidate-aba'){fs.writeFileSync(root+'/.env','CANARY');fs.unlinkSync(root+'/.env');}
+        else if(${JSON.stringify(change)}==='ancestor-replacement'){fs.renameSync(root,root+'.preserved');fs.mkdirSync(root,{mode:0o755});}
+        else{fs.renameSync(link,link+'.preserved');fs.symlinkSync('different',link);}
+      }finally{active=true;}
+      let recheckRefused=false;inspect=()=>({recheckRefused,remaining:pending.size,opened});
+      try{held.recheck();return held.observation;}catch(error){recheckRefused=true;throw error;}finally{held.close();}
+    })()`);
+    assert.equal(result.error, "DEPLOYMENT_CUTOVER_ENV_ABSENCE_INVALID", JSON.stringify(result));
+    assert.equal(result.evidence.recheckRefused, true);
+    assert.equal(result.evidence.remaining, 0); assert.ok(result.evidence.opened > 0);
+    assert.equal(result.writes, 0); assert.equal(result.connections, 0);
+  }));
 }
 
 test("default env candidate absence is physical, stable, read-only and not runtime authority", () => fixture(paths => {
@@ -160,7 +205,7 @@ for (const change of ["file-appearance", "parent-replacement", "cli-replacement"
   }));
 }
 
-test("uncertain env-directory close consumes its fd once and refuses retry", () => fixture(paths => {
+for (const mode of ["snapshot", "held"]) test(`uncertain env-directory ${mode} close consumes its fd once and refuses retry`, () => fixture(paths => {
   const sentinel = path.join(paths.home, "sentinel"); fs.writeFileSync(sentinel, "preserved descriptor");
   const result = observe(paths, `
     const open=fs.openSync,close=fs.closeSync;let selected=null,failed=false,attempts=0;
@@ -170,7 +215,12 @@ test("uncertain env-directory close consumes its fd once and refuses retry", () 
       return close(fd);
     };
     inspect=()=>({attempts,preserved:selected!==null&&fs.fstatSync(selected).ino===fs.lstatSync(${JSON.stringify(sentinel)}).ino});
-  `);
+  `, mode === "snapshot" ? undefined : `(()=>{
+    const held=loaded.holdDeploymentCutoverDefaultEnvAbsenceV1();
+    try{held.close();}finally{held.close();let refused=false;try{held.recheck()}catch{refused=true}
+      if(!refused)throw Error('CLOSED_CONTEXT_ACCEPTED');}
+    return held.observation;
+  })()`);
   assert.equal(result.error, "DEPLOYMENT_CUTOVER_ENV_ABSENCE_INVALID");
   assert.equal(result.retryError, "DEPLOYMENT_CUTOVER_ENV_ABSENCE_INVALID");
   assert.deepEqual(result.evidence, { attempts: 1, preserved: true });

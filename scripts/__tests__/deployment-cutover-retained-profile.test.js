@@ -6,6 +6,42 @@ import { test } from "node:test";
 import { write } from "./fixtures/deployment-cutover-bootstrap.mjs";
 import { retainedFixture } from "./fixtures/deployment-cutover-retained-profile.mjs";
 
+test("held retained profile survives an await and refuses recheck after consume-once close", () => retainedFixture(({ observe }) => {
+  const result = observe("", `await (async()=>{
+    const held=module.holdDeploymentCutoverRetainedProfileV1();
+    if(!Object.isFrozen(held))throw Error('MUTABLE_CONTEXT');
+    await Promise.resolve();held.recheck();const observation=held.observation;
+    held.close();held.close();let refused=false;try{held.recheck()}catch{refused=true}
+    if(!refused)throw Error('CLOSED_CONTEXT_ACCEPTED');return observation;
+  })()`);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).scope, "retained-startup-byte-inventory-only");
+}));
+
+for (const change of ["same-byte-replacement", "optional-appearance", "tree-aba"]) {
+  test(`held retained profile refuses ${change} after await`, () => retainedFixture(({ selected, observe }) => {
+    const file = path.join(selected, "node_modules/reviewed-fixture/index.js");
+    const optional = path.join(selected, "node_modules/bufferutil.js");
+    const result = observe(`const pending=new Set(),open=fs.openSync,close=fs.closeSync;let opened=0;
+      fs.openSync=(...args)=>{const fd=open(...args);pending.add(fd);opened++;return fd;};
+      fs.closeSync=fd=>{close(fd);pending.delete(fd);};
+      process.on('exit',()=>process.stdout.write(JSON.stringify({remaining:pending.size,opened})));`, `await (async()=>{
+      const held=module.holdDeploymentCutoverRetainedProfileV1();
+      await Promise.resolve();
+      const file=${JSON.stringify(file)},optional=${JSON.stringify(optional)};
+      if(${JSON.stringify(change)}==='same-byte-replacement'){
+        const bytes=fs.readFileSync(file);fs.renameSync(file,file+'.preserved');fs.writeFileSync(file,bytes);
+      }else if(${JSON.stringify(change)}==='optional-appearance'){fs.writeFileSync(optional,'throw Error("CANARY")');}
+      else{fs.writeFileSync(optional,'throw Error("CANARY")');fs.unlinkSync(optional);}
+      try{held.recheck();return held.observation;}finally{held.close();}
+    })()`);
+    assert.equal(result.status, 1, result.stdout);
+    assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_RETAINED_PROFILE_INVALID");
+    const evidence = JSON.parse(result.stdout);
+    assert.equal(evidence.remaining, 0); assert.ok(evidence.opened > 0);
+  }));
+}
+
 test("standard genuine command executes the retained archive qualification", () => {
   const result = spawnSync("npm", ["run", "test:scripts:cutover-genuine"], { cwd: new URL("../../", import.meta.url),
     env: { PATH: process.env.PATH, LANG: "C", LC_ALL: "C", TZ: "UTC" },
@@ -88,8 +124,8 @@ test("retained profile bounds empty-directory fanout before exhausting descripto
   assert.ok(JSON.parse(result.stdout).directories <= 256, result.stdout);
 }));
 
-for (const kind of ["file", "directory"]) {
-  test(`retained profile consumes ${kind} close loss once and refuses reuse`, () => retainedFixture(({ root, selected, observe }) => {
+for (const kind of ["file", "directory"]) for (const mode of ["snapshot", "held"]) {
+  test(`retained profile ${mode} consumes ${kind} close loss once and refuses reuse`, () => retainedFixture(({ root, selected, observe }) => {
     const target = path.join(selected, "node_modules/reviewed-fixture", kind === "file" ? "index.js" : "");
     const sentinel = path.join(root, "package.json");
     const result = observe(`const close=fs.closeSync,inode=fs.statSync(${JSON.stringify(target)}).ino;let selectedFd=null,reused=null,attempts=0;
@@ -98,7 +134,13 @@ for (const kind of ["file", "directory"]) {
         if(fd===selectedFd)attempts++;return close(fd)};
       process.on('exit',()=>{let retryRefused=false;try{module.observeDeploymentCutoverRetainedProfileV1()}catch{retryRefused=true}
         process.stdout.write(JSON.stringify({retryRefused,attempts,reused:reused===selectedFd,
-          preserved:fs.fstatSync(reused).ino===fs.statSync(${JSON.stringify(sentinel)}).ino}));});`);
+          preserved:fs.fstatSync(reused).ino===fs.statSync(${JSON.stringify(sentinel)}).ino}));});`,
+      mode === "snapshot" ? undefined : `(()=>{
+        const held=module.holdDeploymentCutoverRetainedProfileV1();
+        try{held.close();}finally{held.close();let refused=false;try{held.recheck()}catch{refused=true}
+          if(!refused)throw Error('CLOSED_CONTEXT_ACCEPTED');}
+        return held.observation;
+      })()`);
     assert.equal(result.status, 1); assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_RETAINED_PROFILE_INVALID");
     assert.deepEqual(JSON.parse(result.stdout), { retryRefused: true, attempts: 1, reused: true, preserved: true });
   }));
