@@ -52,7 +52,11 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
       `);
       for (const name of ["baseline-deployment-cutover-node-path-v1", "baseline-deployment-cutover-process-observation-v1"])
         source = source.replace(JSON.stringify(`./${name}.js`), JSON.stringify(pathToFileURL(helpers).href));
-      source = source.replace('new URL("../../scripts/deployment-cutover-passive-home.mjs", import.meta.url).href', JSON.stringify(pathToFileURL(helpers).href));
+      const native = path.join(home, "default-native.mjs");
+      fs.writeFileSync(native, `globalThis.allowRunning=true;
+        export const identifyDeploymentCutoverPassiveProcessV1=request=>globalThis.identify(request);
+        export const measureDeploymentCutoverPassiveHomeV1=request=>globalThis.measure(request);`);
+      source = source.replace('new URL("../../scripts/deployment-cutover-passive-home.mjs", import.meta.url).href', JSON.stringify(pathToFileURL(native).href));
     } else {
       for (const name of ["baseline-deployment-cutover-node-path-v1", "baseline-deployment-cutover-process-observation-v1"])
         source = source.replace(JSON.stringify(`./${name}.js`), JSON.stringify(new URL(`../../src/internal-production/${name}.ts`, import.meta.url).href));
@@ -80,7 +84,10 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
         const index = labels.findIndex(label => args[1] === "gui/" + process.getuid() + "/" + label);
         if (index < 0) throw Error("unexpected launcher target");
         prints++; let text=texts[index];
-        if (${defaultAction !== undefined} && !globalThis.idle) text=text.replace('state = not running','state = running').replace('active count = 0','active count = 1').slice(0,-2)+'\\tpid = '+(12345+index)+'\\n}\\n';
+        if (${defaultAction !== undefined} && !globalThis.idle && globalThis.allowRunning
+          && (globalThis.runningIndex===undefined||globalThis.runningIndex===index)
+          && !(globalThis.dashboardFirst&&index===0&&globalThis.samples===0))
+          text=text.replace('state = not running','state = running').replace('active count = 0','active count = 1').slice(0,-2)+'\\tpid = '+(12345+index)+'\\n}\\n';
         return {status:0, signal:null, stdout:Buffer.from(text), stderr:Buffer.alloc(0)};
       }
       if (command === '/usr/bin/getconf') return {status:0,signal:null,stdout:Buffer.from('/var/folders/fixture/T/\\n'),stderr:Buffer.alloc(0)};
@@ -240,6 +247,30 @@ test("default replacement generation after sampling refuses instead of waiting t
   `, undefined, `await context.qualifyPassiveHome();await context.census();return context.observation;`);
   assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/, JSON.stringify(result));
   assert.equal(result.evidence.dbCalls, 0);
+}));
+
+for (const index of [0, 1]) test(`default already-running label ${index} refuses before reading a pre-absence generation`, () => defaultFixture((home, texts) => {
+  const result = observe(home, texts, `globalThis.allowRunning=true;globalThis.runningIndex=${index};evidence=()=>({samples:globalThis.samples,dbCalls:globalThis.dbCalls});`, undefined,
+    `await context.qualifyPassiveHome();await context.census();return context.observation;`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/, JSON.stringify(result));
+  assert.equal(result.evidence.samples, 0);
+  assert.equal(result.evidence.dbCalls, 0);
+}));
+
+test("default pre-resolution generation refuses at qualification even after idle acquisition", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts, `evidence=()=>({samples:globalThis.samples,dbCalls:globalThis.dbCalls});`, undefined,
+    `globalThis.allowRunning=true;await context.qualifyPassiveHome();await context.census();return context.observation;`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/, JSON.stringify(result));
+  assert.equal(result.evidence.samples, 0);
+  assert.equal(result.evidence.dbCalls, 0);
+}));
+
+test("default dashboard-first sampling retains explicit launcher and Node association", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts, `globalThis.dashboardFirst=true;`, undefined, `return await context.qualifyPassiveHome();`);
+  assert.equal(result.observation?.samples.length, 2, JSON.stringify(result));
+  assert.deepEqual(result.observation.samples.map((entry: any) => entry.label), labels);
+  assert.deepEqual(result.observation.samples.map((entry: any) => entry.measurement.pid), [12345, 12346]);
+  assert.ok(result.observation.samples.every((entry: any) => entry.node.executablePath === "/fixture/physical/node"));
 }));
 
 test("database observation privately binds the agreed launcher URL and pre32 census", () => fixture((home, texts) => {

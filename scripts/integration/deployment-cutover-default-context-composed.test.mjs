@@ -9,7 +9,7 @@ const countNames = ["activeRunCount", "openClaimCount", "executionAttemptCount",
   "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
   "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount"];
 
-for (const fault of ["", "sample-refusal", "absence-after-sample"]) test(`authenticated real default composition ${fault || "success"}`, () => {
+for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-after-sample"]) test(`authenticated real default composition ${fault || "success"}`, () => {
   retainedFixture(({ root }) => {
     const result = run(root, ["inspect-default-context", "--json"]);
     if (fault) {
@@ -39,7 +39,7 @@ cp.spawnSync=(executable,args,options)=>{
     const index=labels.findIndex(label=>args[1]==='gui/'+process.getuid()+'/'+label);
     if(index<0||args[0]!=='print')throw Error('UNEXPECTED_LABEL');
     let text=fs.readFileSync(path.join(root,'.setfarm/launcher-'+index),'utf8');
-    if(!fixtureIdle)text=text.replace('state = not running','state = running').replace('active count = 0','active count = 1').slice(0,-2)+'\\tpid = '+(12345+index)+'\\n}\\n';
+    if(!fixtureIdle&&globalThis.fixtureAllowRunning)text=text.replace('state = not running','state = running').replace('active count = 0','active count = 1').slice(0,-2)+'\\tpid = '+(12345+index)+'\\n}\\n';
     return success(text);
   }
   if(executable==='/usr/bin/python3'){
@@ -50,7 +50,13 @@ cp.spawnSync=(executable,args,options)=>{
       ...(measurement?{homeContext:'account',completeEnvironmentValidated:true,stableDoubleRead:true}:{})};
     if(measurement){
       if(request.environment.HOME!==fixtureHome||request.environment.SETFARM_ENV_DIR!==undefined||request.expectedStartSeconds!==1234)throw Error('CROSSED_NATIVE_REQUEST');
-      if(++fixtureSamples===2)setTimeout(()=>{fixtureIdle=true;if(${JSON.stringify(fault)}==='absence-after-sample')fs.writeFileSync(path.join(root,'.env'),'PRIVATE_PASSWORD');},0);
+      if(++fixtureSamples===2)setTimeout(()=>{
+        fixtureIdle=true;
+        if(['absence-after-sample','absence-aba-after-sample'].includes(${JSON.stringify(fault)})){
+          fs.writeFileSync(path.join(root,'.env'),'PRIVATE_PASSWORD');
+          if(${JSON.stringify(fault)}==='absence-aba-after-sample')fs.unlinkSync(path.join(root,'.env'));
+        }
+      },0);
     }
     return success(JSON.stringify(Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0)))+'\\n');
   }
@@ -58,7 +64,8 @@ cp.spawnSync=(executable,args,options)=>{
   if(executable==='/usr/sbin/lsof')return {status:1,signal:null,stdout:Buffer.alloc(0),stderr:Buffer.alloc(0)};
   return actualSpawn(executable,args,options);
 };syncBuiltinESMExports();
-async function inspect() {`), controllerOptions: {
+async function inspect() {`).replace('load(url, context, nextLoad) {',
+      'load(url, context, nextLoad) { if(url.endsWith("/deployment-cutover-passive-home.mjs"))globalThis.fixtureAllowRunning=true;'), controllerOptions: {
     envAbsence: true,
     sourceInstrument: (locator, source) => locator.endsWith("baseline-deployment-cutover-node-path-v1")
       ? `export function holdDeploymentCutoverNodePathV1(){return Object.freeze({observation:Object.freeze({candidatePath:process.execPath,executablePath:process.execPath}),recheck(){},close(){}})}` : source,

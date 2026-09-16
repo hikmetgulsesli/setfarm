@@ -39,6 +39,13 @@ Xcode Python/Darwin measurement. No new installed dependency or native build.
   raw environment, credential or credential-derived hash in returned evidence.
 - Sampled running retries require a subsequent fresh idle/process-zero census.
   Filesystem/helper phase and controller exclusion remain separate blockers.
+- Default holder acquisition requires both fixed labels idle; qualification
+  repeats that baseline after the outer owner resolves and holds every module
+  lookup/absence prerequisite. Only a subsequent naturally scheduled generation
+  may be sampled. Existing initial-stack values cannot exclude an env file or
+  module shadow consumed before those holds. No wall-clock birth inference.
+- Returned samples carry explicit launcher labels, held Node identity and native
+  measurement in fixed launcher order, regardless of observed arrival order.
 - Saved initial stack bytes are not current `getenv`. Reviewed retained startup
   replaces live PATH (`dist/runtime-config.js:83`) and Playwright DEBUG; no
   HOME/PG/root-selector replacement is admitted. Held env-file absence excludes
@@ -137,3 +144,12 @@ Xcode Python/Darwin measurement. No new installed dependency or native build.
   failed child stdout; timeout150s accounts for the three added integration cases.
 - Final noemit34702 and diff checks passed. Independent final owner/composed
   review found no blocking findings. Ready for scoped reviewed PR, not rollout.
+- Pre-merge owner audit found adoption of an already-running generation could
+  predate env/module holds; failing regression reproduced it. Added acquisition
+  and post-resolution idle baselines, one-label negatives and later-generation
+  positive fixtures. Cloud PR135 comment4025053158 separately found unlabeled Map
+  insertion-order samples; dashboard-first RED reproduced it, then explicit
+  label/Node/measurement output fixed the association. Follow-up cutover316/316,
+  noemit/English1561/path891 passed. Composed3/3 plus added transient-file ABA
+  negative1/1 passed; the latter proves failure before DB even after removal.
+  Independent follow-up review found no remaining concrete issue.

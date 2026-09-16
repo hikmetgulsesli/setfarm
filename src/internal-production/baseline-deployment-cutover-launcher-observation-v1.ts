@@ -153,8 +153,10 @@ function holdLauncherConfigurationV1(defaultMode = false) {
       return { label, plistPath, stat, args, parsed, bytes, read, project };
     });
     const before = held.map(item => item.project());
+    if (defaultMode && before.some(item => item.activeCount !== 0 || item.pid !== undefined)) fail();
     for (const item of held) if (!item.read().equals(item.bytes)) fail();
     const after = held.map(item => item.project());
+    if (defaultMode && after.some(item => item.activeCount !== 0 || item.pid !== undefined)) fail();
     const configuration = (value: typeof before[number]) => ({ loaded: value.loaded, inherited: value.inherited, defaults: value.defaults });
     const stable = (a: typeof before[number], b: typeof before[number]) => equal(defaultMode ? configuration(a) : a, defaultMode ? configuration(b) : b);
     const launchers = held.map((item, index): Entry => {
@@ -296,6 +298,13 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
         check();
         if (qualifying || qualified || censusRunning) fail();
         qualifying = true;
+        // The outer owner has now acquired absence AND resolved all modules.
+        // Do not adopt a generation born before those held prerequisites: its
+        // startup may already have consumed a since-removed env file or shadow.
+        for (let index = 0; index < inputs.entries.length; index++) {
+          const baseline = inputs.snapshot(index);
+          if (baseline.activeCount !== 0 || baseline.pid !== undefined) fail();
+        }
         const nativeTransportUrl = new URL("../../scripts/deployment-cutover-passive-home.mjs", import.meta.url).href;
         const transport = await import(nativeTransportUrl);
         check();
@@ -352,7 +361,9 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
         }
         const processObservation = idle();
         qualified = true;
-        return Object.freeze({ samples: Object.freeze([...samples.values()]), processObservation });
+        return Object.freeze({ samples: Object.freeze(inputs.entries.map((entry, index) => Object.freeze({
+          label: entry.label, node: nodes[index]!.observation, measurement: samples.get(index)!,
+        }))), processObservation });
       } catch { invalid = true; fail(); }
       finally { qualifying = false; }
     };
