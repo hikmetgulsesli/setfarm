@@ -275,6 +275,17 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## Required proof before live effects
 
+The current host's inherited launcher environment lacks SETFARM_ENV_DIR. Keep
+the existing exact launcher guard until a default-mode compatibility proof is
+qualified. First add a candidate-only physical observation:
+`baseline-deployment-cutover-env-absence-v1.ts`, matching physical tests, and
+authenticated bootstrap `inspect-envfiles --json` coverage. It derives default
+candidate paths from CLI/current checkout and owner home, pins physical absence,
+and retains effective-runtime/controller blockers. It neither reads credentials
+nor proves old compiled startup semantics; see the September16 default-env
+absence plan. This is a causal prerequisite of the approved preserved transition,
+not permission to restore environment settings or run the stale deployment.
+
 - Clean-main ordinary build and authentic output in the new physical checkout;
   no access to or mutation of old retention stores during that build.
 - Complete temporary integration: old-root service observation, journal before
