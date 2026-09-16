@@ -42,6 +42,11 @@ Normal builds require clean `main == origin/main`, canonical origin, supported
 physical modes and finalized build authority. A separate physical clone is
 preferred over forcing main into two linked worktrees. No direct main commits,
 ref edits to pretend a branch is delivered, dirty-build flags or copied output.
+Deliver through the remote API without fetching into the old deployment's shared
+Git directory. Preserve its actual local origin/main snapshot; the selected-build
+diagnostic reports this local identity, not network-current main. The independent
+new clone must match the genuinely delivered remote main. If old remote-tracking
+refs drift, refuse and reassess; never rewind them to satisfy observation.
 
 ## Mandatory additional safety: cutover admission refusal
 
@@ -154,6 +159,13 @@ not an arbitrary same-user actor deliberately launching a retired executable.
   current finalized source/build observer using the existing plain-JS verifier.
   Read-only, exact current source, full physical brackets; no retained-build or
   maintenance fallback. Existing retention gates remain unchanged.
+  Add a separate builtins-only fixed-CLI selected-deployment observer: authenticate
+  its historical finalized build while retaining the selected checkout's actual
+  newer source identity. Never import old modules or add dynamic imports to the
+  retention closure. The bootstrap cross-checks its full physical CLI projection
+  against the independent compiled CLI observer. Harden the shared regular-file
+  read against size-check/read growth using a bounded buffer and unchanged drift
+  validation; this is necessary for the same preflight's transitive read cap.
 - New `scripts/__tests__/deployment-cutover.test.js`: actual temporary clean Git
   and finalized-output fixtures, immutable authenticated-byte loading, load-time
   replacement markers, unsupported invocation and sanitized failure tests.
@@ -214,8 +226,10 @@ not an arbitrary same-user actor deliberately launching a retired executable.
   broadens this loading boundary. Diagnostic success does not enable live effects.
   `inspect-host --json` additionally composes the existing CLI/launcher/process
   observers with forward/reverse equality checks. Reports mixed-root/starter
-  blockers and explicit missing old-build/DB/ownership proofs; it never publishes
+  blockers and explicit missing DB/ownership proofs; it never publishes
   authority or treats an idle launcher as zero-owner evidence.
+  Selected on-disk build evidence sits inside that bracket and in the host hash.
+  It does not authenticate the dashboard's loaded modules or authorize effects.
 - Reuse reviewed maintenance journal/owner observation primitives only where
   their historical/physical contract fits. Add physical owner-death evidence and
   safe release/recovery semantics before any live cleanup that needs them.

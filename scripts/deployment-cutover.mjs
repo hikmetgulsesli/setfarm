@@ -144,18 +144,20 @@ async function inspect() {
       const cli = cliModule.observeDeploymentCutoverCliLinkV1();
       const launchers = launcherModule.observeDeploymentCutoverLauncherConfigurationV1();
       const processes = processModule.observeDeploymentCutoverProcessFamiliesV1();
+      const selectedDeployment = await verifier.observeSelectedSetfarmDeploymentBuildV1();
+      if (canonical(selectedDeployment.cli) !== canonical(cli)) fail();
       if (canonical(processes) !== canonical(processModule.observeDeploymentCutoverProcessFamiliesV1())
         || canonical(launchers) !== canonical(launcherModule.observeDeploymentCutoverLauncherConfigurationV1())
         || canonical(cli) !== canonical(cliModule.observeDeploymentCutoverCliLinkV1())) fail();
-      // Diagnostics never substitute for old-build, DB or current-owner proof.
-      const blockers = ["old-build-not-authenticated", "database-zero-owner-not-observed", "controller-ownership-not-acquired"];
+      // On-disk build proof never substitutes for DB or current-owner proof.
+      const blockers = ["database-zero-owner-not-observed", "controller-ownership-not-acquired"];
       if (cli.checkoutPath === root) blockers.push("cli-already-selects-new-checkout");
       if (processes.families.some(entry => entry.classification !== "dashboard-daemon")) blockers.push("non-dashboard-process-family");
       const dashboards = processes.families.filter(entry => entry.classification === "dashboard-daemon");
       if (dashboards.length !== 1 || dashboards[0].checkoutPath !== cli.checkoutPath || processes.listener?.pid !== dashboards[0].pid) {
         blockers.push("dashboard-cli-root-disagreement");
       }
-      const body = { schema: "setfarm.internal-production-deployment-cutover-host-observation.v1", newCheckoutPath: root, cli, launchers, processes, blockers };
+      const body = { schema: "setfarm.internal-production-deployment-cutover-host-observation.v1", newCheckoutPath: root, cli, launchers, processes, selectedDeployment, blockers };
       host = { ...body, hostObservationHash: hash(canonical(body)) };
     }
     check(); if (canonical(sourceState()) !== canonical(initial)) fail();

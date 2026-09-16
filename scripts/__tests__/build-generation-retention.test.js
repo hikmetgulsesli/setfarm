@@ -270,6 +270,40 @@ function runModule(root, expression) {
   });
 }
 
+function selectedDeploymentFixture(body) {
+  const root = realpathSync(createFixture()), detached = realpathSync(createFixture());
+  const selectedRoot = join(root, "ai/setrox/old");
+  try {
+    mkdirSync(dirname(selectedRoot), { recursive: true }); renameSync(detached, selectedRoot);
+    git(selectedRoot, ["config", "remote.origin.url", "https://github.com/hikmetgulsesli/setfarm.git"]);
+    const buildHash = writeFinalizedRuntimeDist(selectedRoot), buildSha = git(selectedRoot, ["rev-parse", "HEAD"]);
+    fixtureFile(selectedRoot, "tracked.txt", "new checkout while retaining old finalized dist\n");
+    git(selectedRoot, ["add", "tracked.txt"]); git(selectedRoot, ["commit", "-qm", "new checkout"]);
+    git(selectedRoot, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    for (let ordinal = 1; ordinal <= 8; ordinal++) fixtureFile(selectedRoot, `.setfarm/build-generations-v1/${fixtureBuildId(ordinal)}.dist/retained`, `archive ${ordinal}\n`);
+    mkdirSync(join(root, ".local/bin"), { recursive: true }); symlinkSync(join(selectedRoot, "dist/cli/cli.js"), join(root, ".local/bin/setfarm"));
+    const observe = (instrument = "") => runModule(root, `import os from 'node:os';import fs from 'node:fs';import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
+      const root=${JSON.stringify(root)},selectedRoot=${JSON.stringify(selectedRoot)},identity=os.userInfo();os.userInfo=()=>({...identity,homedir:root});
+      ${instrument}
+      syncBuiltinESMExports();const {observeSelectedSetfarmDeploymentBuildV1:observe}=await import('./scripts/build-generation-retention.mjs');
+      try{process.stdout.write(JSON.stringify(await observe()))}catch(error){process.stderr.write(error.message);process.exitCode=1}`);
+    body({ root, selectedRoot, buildSha, buildHash, checkoutSha: git(selectedRoot, ["rev-parse", "HEAD"]), observe });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    if (existsSync(detached)) rmSync(detached, { recursive: true, force: true });
+  }
+}
+
+function preservedTreeSnapshot(directory) {
+  const result = [];
+  const visit = current => {
+    const stat = lstatSync(current);
+    result.push({ path: current, inode: stat.ino, mode: stat.mode, bytes: stat.isFile() ? readFileSync(current).toString("base64") : null });
+    if (stat.isDirectory()) for (const name of readdirSync(current).sort()) visit(join(current, name));
+  };
+  visit(directory); return result;
+}
+
 function writerExpression(input) {
   return [
     'import { runBuildGenerationWriterRotationV1 } from "./scripts/build-generation-retention.mjs";',
@@ -1287,6 +1321,7 @@ describe("OA18 build-generation retention authority", () => {
       "inspectBuildGenerationRetentionV1",
       "inspectBuildGenerationRotationLedgerV1",
       "observeCurrentFinalizedSetfarmSourceBuildV1",
+      "observeSelectedSetfarmDeploymentBuildV1",
       "planNoReplacePublisherRecoveryV1",
     ]);
     assert.equal(typeof authority.inspectBuildGenerationRotationLedgerV1, "function");
@@ -1346,10 +1381,10 @@ describe("OA18 build-generation retention authority", () => {
       git(root, ["config", "remote.origin.url", "https://github.com/hikmetgulsesli/setfarm.git"]);
       writeFinalizedRuntimeDist(root);
       const result = runModule(root, `import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';
-        const read=fs.readFileSync,file=${JSON.stringify(join(root, "dist/service.js"))},inode=fs.statSync(file).ino;
+        const read=fs.readSync,file=${JSON.stringify(join(root, "dist/service.js"))},inode=fs.statSync(file).ino;
         let hits=0,replaced=false;
-        fs.readFileSync=(target,...args)=>{const bytes=read(target,...args);if(typeof target==='number'&&fs.fstatSync(target).ino===inode&&++hits===2){
-          fs.renameSync(file,file+'.retained');fs.writeFileSync(file,bytes,{mode:0o644});replaced=true;}return bytes};syncBuiltinESMExports();
+        fs.readSync=(target,buffer,offset,...args)=>{const count=read(target,buffer,offset,...args);if(fs.fstatSync(target).ino===inode&&++hits===2){
+          fs.renameSync(file,file+'.retained');fs.writeFileSync(file,buffer.subarray(offset,offset+count),{mode:0o644});replaced=true;}return count};syncBuiltinESMExports();
         const {observeCurrentFinalizedSetfarmSourceBuildV1:observe}=await import('./scripts/build-generation-retention.mjs');
         let refused=false;try{observe()}catch{refused=true}
         process.stdout.write(JSON.stringify({refused,replaced,preserved:fs.existsSync(file+'.retained')}));`);
@@ -1374,6 +1409,114 @@ describe("OA18 build-generation retention authority", () => {
       assert.deepEqual(JSON.parse(result.stdout), { refused: true, retryRefused: true, count: 1, same: true, preserved: true });
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
+
+  it("selected deployment observer separates historical build from newer checkout and preserves eight archives", () => selectedDeploymentFixture(fixture => {
+    const before = ["dist", ".setfarm"].map(name => preservedTreeSnapshot(join(fixture.selectedRoot, name)));
+    const result = fixture.observe(`for(const name of ['writeFileSync','mkdirSync','renameSync','unlinkSync','rmdirSync','chmodSync','fchmodSync','linkSync','fsyncSync'])fs[name]=()=>{throw Error('FORBIDDEN_WRITE:'+name)};`);
+    assert.equal(result.status, 0, result.stderr);
+    const value = JSON.parse(result.stdout);
+    assert.equal(value.buildSource.sha, fixture.buildSha); assert.equal(value.buildSource.buildHash, fixture.buildHash);
+    assert.equal(value.checkoutSource.sha, fixture.checkoutSha); assert.equal(value.checkoutSource.originMainSha, fixture.checkoutSha);
+    assert.notEqual(value.buildSource.sha, value.checkoutSource.sha); assert.equal(value.cli.checkoutPath, fixture.selectedRoot);
+    assert.match(value.selectedDeploymentObservationHash, /^[a-f0-9]{64}$/);
+    assert.deepEqual(["dist", ".setfarm"].map(name => preservedTreeSnapshot(join(fixture.selectedRoot, name))), before);
+    assert.equal(existsSync(join(fixture.root, "ai/setrox/data")), false);
+  }));
+
+  for (const fault of ["missing-history", "output-bytes", "manifest", "terminal-mode", "wrong-origin", "cli-parent-mode", "cli-parent-symlink"]) {
+    it(`selected deployment observer refuses ${fault} and preserves evidence`, () => selectedDeploymentFixture(fixture => {
+      const root = fixture.selectedRoot;
+      if (fault === "missing-history") {
+        const file = join(root, "dist/BUILD_INFO.json"), info = JSON.parse(readFileSync(file));
+        info.sha = "a".repeat(40); info.shortSha = "a".repeat(8); chmodSync(file, 0o644); writeFileSync(file, `${JSON.stringify(info, null, 2)}\n`); chmodSync(file, 0o444);
+      }
+      if (fault === "output-bytes") fixtureFile(root, "dist/service.js", "throw Error('OLD_MODULE_EXECUTED');\n");
+      if (fault === "manifest") {
+        const file = join(root, "dist/PLATFORM_RELEASE_MANIFEST.json"); chmodSync(file, 0o644); writeFileSync(file, '{}\n'); chmodSync(file, 0o444);
+      }
+      if (fault === "terminal-mode") chmodSync(join(root, "dist/BUILD_INFO.json"), 0o644);
+      if (fault === "wrong-origin") git(root, ["config", "remote.origin.url", "https://example.invalid/foreign.git"]);
+      if (fault === "cli-parent-mode") chmodSync(join(fixture.root, ".local/bin"), 0o777);
+      if (fault === "cli-parent-symlink") {
+        renameSync(join(fixture.root, ".local/bin"), join(fixture.root, ".local/preserved-bin"));
+        symlinkSync(join(fixture.root, ".local/preserved-bin"), join(fixture.root, ".local/bin"));
+      }
+      const before = ["dist", ".setfarm"].map(name => preservedTreeSnapshot(join(root, name))), result = fixture.observe();
+      assert.notEqual(result.status, 0); assert.match(result.stderr, /BUILD_GENERATION_AUTHORITY_CORRUPTION/);
+      assert.doesNotMatch(result.stderr, /OLD_MODULE_EXECUTED/);
+      assert.deepEqual(["dist", ".setfarm"].map(name => preservedTreeSnapshot(join(root, name))), before);
+    }));
+  }
+
+  for (const fault of ["cli-replacement", "root-replacement", "same-inode-output"]) {
+    it(`selected deployment observer refuses ${fault} during its bracket`, () => selectedDeploymentFixture(fixture => {
+      const instrument = fault === "same-inode-output" ? `
+        const read=fs.readSync,file=selectedRoot+'/dist/service.js',inode=fs.statSync(file).ino;let hits=0;
+        fs.readSync=(target,...args)=>{const count=read(target,...args);if(fs.fstatSync(target).ino===inode&&++hits===2){
+          fs.writeFileSync(file,Buffer.alloc(count,32));fs.writeFileSync(root+'/changed-marker','changed');}return count};`
+        : `const spawn=cp.spawnSync;let changed=false;cp.spawnSync=(command,args,options)=>{
+          const result=spawn(command,args,options);
+          if(command==='/usr/bin/git'&&options?.cwd===selectedRoot&&!changed){changed=true;
+            ${fault === "cli-replacement" ? "const file=root+'/.local/bin/setfarm';fs.renameSync(file,file+'.preserved');fs.symlinkSync(selectedRoot+'/dist/cli/cli.js',file);"
+              : "fs.renameSync(selectedRoot,selectedRoot+'.preserved');fs.mkdirSync(selectedRoot,{mode:0o755});"}
+            fs.writeFileSync(root+'/changed-marker','changed');}return result};`;
+      const result = fixture.observe(instrument);
+      assert.notEqual(result.status, 0); assert.match(result.stderr, /BUILD_GENERATION_AUTHORITY_CORRUPTION/);
+      assert.equal(existsSync(join(fixture.root, "changed-marker")), true);
+      assert.equal(existsSync(join(fixture.root, "ai/setrox/data")), false);
+      if (fault === "root-replacement") assert.deepEqual(readdirSync(fixture.selectedRoot), []);
+      if (fault === "cli-replacement") assert.equal(existsSync(join(fixture.root, ".local/bin/setfarm.preserved")), true);
+    }));
+  }
+
+  it("selected deployment observer consumes uncertain close once and permanently refuses reuse", () => selectedDeploymentFixture(fixture => {
+    const result = runModule(fixture.root, `import os from 'node:os';import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';
+      const identity=os.userInfo();os.userInfo=()=>({...identity,homedir:${JSON.stringify(fixture.root)}});
+      const close=fs.closeSync,sentinel=${JSON.stringify(join(fixture.root, "tracked.txt"))};let active=false,chosen=null,reused=null,count=0;
+      fs.closeSync=fd=>{if(active&&chosen===null){chosen=fd;count++;close(fd);reused=fs.openSync(sentinel,'r');throw Error('CLOSE_RESPONSE_LOST')}
+        if(fd===chosen)count++;return close(fd)};syncBuiltinESMExports();
+      const {observeSelectedSetfarmDeploymentBuildV1:observe}=await import('./scripts/build-generation-retention.mjs');active=true;
+      let refused=false,retryRefused=false;try{observe()}catch{refused=true}try{observe()}catch{retryRefused=true}
+      process.stdout.write(JSON.stringify({refused,retryRefused,count,same:reused===chosen,preserved:fs.fstatSync(reused).ino===fs.statSync(sentinel).ino}));`);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), { refused: true, retryRefused: true, count: 1, same: true, preserved: true });
+  }));
+
+  it("selected deployment observer bounds bytes read when the CLI grows after its size check", () => selectedDeploymentFixture(fixture => {
+    const result = fixture.observe(`
+      const file=selectedRoot+'/dist/cli/cli.js',inode=fs.statSync(file).ino,stat=fs.fstatSync,readFile=fs.readFileSync,read=fs.readSync;
+      let grew=false,maxRead=0;
+      fs.fstatSync=(fd,...args)=>{const value=stat(fd,...args);if(!grew&&String(value.ino)===String(inode)){
+        grew=true;fs.writeFileSync(file,Buffer.alloc(16*1024*1024+2,32));}return value};
+      fs.readFileSync=(fd,...args)=>{const value=readFile(fd,...args);if(typeof fd==='number'&&String(stat(fd).ino)===String(inode))maxRead=Math.max(maxRead,value.length);return value};
+      fs.readSync=(fd,...args)=>{const count=read(fd,...args);if(String(stat(fd).ino)===String(inode))maxRead=Math.max(maxRead,count);return count};
+      process.on('exit',()=>fs.writeFileSync(root+'/read-size.json',JSON.stringify({grew,maxRead})));
+    `);
+    assert.notEqual(result.status, 0); assert.match(result.stderr, /BUILD_GENERATION_AUTHORITY_CORRUPTION/);
+    const evidence = JSON.parse(readFileSync(join(fixture.root, "read-size.json"), "utf8"));
+    assert.equal(evidence.grew, true); assert.ok(evidence.maxRead <= 16 * 1024 * 1024 + 1, JSON.stringify(evidence));
+  }));
+
+  for (const [kind, content, accepted] of [["empty", "", true], ["exact-cap", "12345678", true], ["over-cap", "123456789", false], ["short-read", "12345678", false]]) {
+    it(`stable regular read preserves ${kind} boundary semantics`, () => {
+      const root = realpathSync(createFixture());
+      try {
+        const modulePath = join(root, "scripts/build-generation-retention.mjs");
+        writeFileSync(modulePath, readFileSync(modulePath, "utf8") + "\nexport {readStableRegular};\n");
+        fixtureFile(root, "read-target", content);
+        const result = runModule(root, `import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';
+          const read=fs.readSync;let reads=0,active=false;fs.readSync=(...args)=>{const count=read(...args);if(!active)return count;reads++;return ${JSON.stringify(kind)}==='short-read'?Math.max(0,count-1):count};
+          syncBuiltinESMExports();const {readStableRegular:observe}=await import('./scripts/build-generation-retention.mjs');
+          active=true;
+          let accepted=false,bytes=null;try{bytes=observe('./read-target',{maxBytes:8}).bytes.toString();accepted=true}catch{}
+          process.stdout.write(JSON.stringify({accepted,bytes,reads}));`);
+        assert.equal(result.status, 0, result.stderr);
+        const value = JSON.parse(result.stdout); assert.equal(value.accepted, accepted);
+        if (accepted) assert.equal(value.bytes, content);
+        if (kind === "over-cap") assert.equal(value.reads, 0);
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    });
+  }
 
   it("OA18 v2 freezes the private schema dispatcher and source boundary", () => {
     const source = readFileSync(join(sourceRoot, "scripts/build-generation-retention.mjs"), "utf8");

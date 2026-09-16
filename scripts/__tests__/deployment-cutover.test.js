@@ -167,7 +167,13 @@ function hostCommandFixture(root, fault, cp, fs, path) {
 function hostFixture(body, fault = "") {
   fixture(root => {
     const oldRoot = path.join(root, "ai/setrox/old");
-    write(root, "ai/setrox/old/dist/cli/cli.js", "export const old = true;\n", 0o755);
+    fs.mkdirSync(path.dirname(oldRoot), { recursive: true, mode: 0o755 });
+    fixture(historicalRoot => {
+      fs.renameSync(historicalRoot, oldRoot);
+      write(oldRoot, "checkout-note.md", "New checkout retains the previous finalized build.\n");
+      git(oldRoot, "add", "checkout-note.md"); git(oldRoot, "commit", "-qm", "new source retains build");
+      git(oldRoot, "update-ref", "refs/remotes/origin/main", "HEAD");
+    });
     fs.mkdirSync(path.join(root, ".local/bin"), { recursive: true, mode: 0o755 });
     fs.symlinkSync(path.join(oldRoot, "dist/cli/cli.js"), path.join(root, ".local/bin/setfarm"));
     for (const [index, label] of ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard"].entries()) {
@@ -190,7 +196,9 @@ test("trusted host inspection joins real diagnostics without publishing authorit
   const host = JSON.parse(result.stdout).host;
   assert.equal(host.cli.checkoutPath, oldRoot); assert.equal(host.newCheckoutPath, root);
   assert.equal(host.launchers.launchers.length, 2); assert.equal(host.processes.listener.pid, 4103);
-  assert.deepEqual(host.blockers, ["old-build-not-authenticated", "database-zero-owner-not-observed", "controller-ownership-not-acquired"]);
+  assert.deepEqual(host.blockers, ["database-zero-owner-not-observed", "controller-ownership-not-acquired"]);
+  assert.deepEqual(host.selectedDeployment.cli, host.cli);
+  assert.notEqual(host.selectedDeployment.buildSource.sha, host.selectedDeployment.checkoutSource.sha);
   assert.match(host.hostObservationHash, /^[a-f0-9]{64}$/);
   assert.equal(fs.lstatSync(link).ino, inode); assert.equal(fs.existsSync(path.join(root, "ai/setrox/data")), false);
   assert.equal(fs.readlinkSync(link), originalTarget); assert.deepEqual(fs.readFileSync(link), targetBytes);
@@ -213,3 +221,13 @@ for (const [fault, blocker] of [["mixed-root", "dashboard-cli-root-disagreement"
     assert.equal(fs.existsSync(path.join(root, "ai/setrox/data")), false);
   }, fault));
 }
+
+test("trusted host inspection refuses a tampered selected build without evaluating it", () => hostFixture((root, oldRoot) => {
+  const target = path.join(oldRoot, "dist/cli/cli.js");
+  fs.writeFileSync(target, `import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(path.join(root, "old-code-executed"))},'bad');\n`);
+  const result = run(root, ["inspect-host", "--json"]);
+  assert.notEqual(result.status, 0); assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
+  assert.equal(fs.existsSync(path.join(root, "old-code-executed")), false);
+  assert.equal(fs.existsSync(path.join(root, "ai/setrox/data")), false);
+}));

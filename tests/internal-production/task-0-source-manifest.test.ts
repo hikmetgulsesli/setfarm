@@ -1070,7 +1070,65 @@ function assertP3Task8StaticAuthorityV1(sources: P3ProductionSourcesV1): void {
     "fixture order must remain guarded32 -> ordinary33 -> A readiness");
 }
 
+const ANCHORED_LEAVES = [
+  ["pure owner-admission parser rejects malformed authority", "source boundary keeps owner-admission PostgreSQL imports lazy", "private fake derives owner-admission projection"],
+  ["pure activation parser rejects malformed status", "source boundary keeps activation PostgreSQL imports lazy", "private fake derives canonical activation status"],
+  ["returns null for an absent prepared operation without creating current-entry state",
+    "declares only zero-input current-entry database composition ports without importing db-pg",
+    "keeps no-environment lifecycle execution test-safe before db-pg import",
+    "exports the zero-input observer from an import-inert module"].map(name => `OA17 zero-input current Setfarm source/build observation ${name}`),
+];
+
+function assertAnchoredLeafSelection(command: string, readSource = (file: string) => readFileSync(`${REPOSITORY_ROOT}${file}`, "utf8")): void {
+  const commands = command.split(" && ");
+  assert.equal(commands.length, 3);
+  commands.forEach((entry, index) => {
+    const parsed = /^env -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL node --import tsx --test --test-name-pattern='([^']+)' (tests\/internal-production\/[^ ]+\.test\.ts)$/.exec(entry);
+    assert.ok(parsed, "anchored invocation must preserve its no-DB boundary");
+    const pattern = new RegExp(parsed[1]);
+    const tree = ts.createSourceFile(parsed[2], readSource(parsed[2]), ts.ScriptTarget.Latest, true);
+    const selected: string[] = [];
+    const walk = (node: ts.Node, suites: string[]): void => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+        && ["describe", "it", "test"].includes(node.expression.text)
+        && node.arguments[0] && ts.isStringLiteral(node.arguments[0])) {
+        const names = [...suites, node.arguments[0].text];
+        const options = node.arguments[1];
+        const disabled = options && ts.isObjectLiteralExpression(options) && options.properties.some(property =>
+          ts.isPropertyAssignment(property) && ["skip", "todo"].includes(property.name.getText(tree).replace(/["']/g, ""))
+          && property.initializer.kind !== ts.SyntaxKind.FalseKeyword);
+        if (disabled) return;
+        if (node.expression.text === "describe") {
+          const callback = node.arguments.find(argument => ts.isArrowFunction(argument) || ts.isFunctionExpression(argument));
+          if (callback) walk(callback, names);
+        } else if (names.some((_, ordinal) => pattern.test(names.slice(0, ordinal + 1).join(" ")))) {
+          selected.push(names.join(" "));
+        }
+        return;
+      }
+      ts.forEachChild(node, child => walk(child, suites));
+    };
+    walk(tree, []);
+    assert.deepEqual(selected.sort(), [...ANCHORED_LEAVES[index]].sort(), `anchored invocation ${index + 1} must select its actual reviewed leaves`);
+  });
+}
+
 describe("Task 0 exact source manifest", () => {
+  it("anchored commands select actual reviewed no-DB leaves and reject selector drift", () => {
+    const command = JSON.parse(readFileSync(`${REPOSITORY_ROOT}package.json`, "utf8")).scripts["test:internal-production:anchored"] as string;
+    assertAnchoredLeafSelection(command);
+    const commands = command.split(" && ");
+    for (const replacement of ["^(pure current-entry parser rejects malformed status)$", ".*", "^OA17 zero-input current Setfarm source/build observation$"]) {
+      const mutated = [...commands];
+      mutated[2] = mutated[2].replace(/--test-name-pattern='[^']+'/, `--test-name-pattern='${replacement}'`);
+      assert.throws(() => assertAnchoredLeafSelection(mutated.join(" && ")));
+    }
+    assert.throws(() => assertAnchoredLeafSelection(command.replace("OA17 zero-input current Setfarm source/build observation ", "")));
+    assert.throws(() => assertAnchoredLeafSelection(command, file => readFileSync(`${REPOSITORY_ROOT}${file}`, "utf8")
+      .replace('it("keeps no-environment lifecycle execution test-safe before db-pg import"', 'it("renamed lifecycle boundary"')));
+    assert.throws(() => assertAnchoredLeafSelection(command, file => readFileSync(`${REPOSITORY_ROOT}${file}`, "utf8")
+      .replace('it("keeps no-environment lifecycle execution test-safe before db-pg import"', 'it.skip("keeps no-environment lifecycle execution test-safe before db-pg import"')));
+  });
   it("freezes P3 as an ordered exact64 subset of frozen145", () => {
     assert.equal(P3_EXACT_SOURCE_PATHS_V1.length, 64);
     assert.doesNotThrow(() => assertExactP3SourcePathsV1(P3_EXACT_SOURCE_PATHS_V1));

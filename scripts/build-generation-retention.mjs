@@ -13,6 +13,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readSync,
   readlinkSync,
   readdirSync,
   realpathSync,
@@ -266,7 +267,9 @@ function readStableRegular(file, { device, mode, linkCounts = [1], maxBytes = MA
     if (!linkCounts.includes(Number(before.nlink))) fail(`${file} has an invalid link count`);
     if (mode !== undefined && modeOf(before) !== mode) fail(`${file} has an invalid mode`);
     if (before.size > BigInt(maxBytes)) fail(`${file} exceeds its byte cap`);
-    const bytes = readFileSync(descriptor);
+    const buffer = Buffer.alloc(Number(before.size) + 1);
+    const count = readSync(descriptor, buffer, 0, buffer.length, 0);
+    const bytes = buffer.subarray(0, count);
     const after = fstatSync(descriptor, { bigint: true });
     const named = lstatSync(file, { bigint: true });
     if (
@@ -1440,6 +1443,11 @@ function isAcceptedPinnedGitPhysicalModeV1(gitMode, physicalMode) {
 
 function observeCurrentRetentionControllerSourcePassV2(root) {
   if (root !== repositoryRootV1() || realpathSync(root) !== root) fail("retention controller repository root is invalid");
+  return observePhysicalSynchronizedSourcePassV1(root);
+}
+
+function observePhysicalSynchronizedSourcePassV1(root) {
+  if (!path.isAbsolute(root) || path.normalize(root) !== root || realpathSync(root) !== root) fail("source repository root is invalid");
   const include = fixedGitResultV2(root, ["config", "--local", "--no-includes", "--name-only", "--get-regexp", "^include"]);
   if (include.error || include.signal !== null || include.status !== 1 || include.stdout.length !== 0 || include.stderr.length !== 0) {
     fail("retention controller local Git includes are forbidden");
@@ -1516,8 +1524,84 @@ let currentFinalizedSourceObservationUncertainV1 = false;
 // Read-only bootstrap primitive. No retained-generation or maintenance IO, and
 // no compiled module is evaluated to establish its own build authority.
 export function observeCurrentFinalizedSetfarmSourceBuildV1() {
+  const observed = observeFinalizedSetfarmSourceBuildAtRootV1(repositoryRootV1(), true);
+  return Object.freeze({ branch: "main", clean: true, ...observed.buildSource, originMainSha: observed.checkoutSource.originMainSha });
+}
+
+let selectedDeploymentObservationUncertainV1 = false;
+
+// Builtins only: the retention import closure must never load compiled modules.
+// Bootstrap independently cross-checks the complete compiled CLI observation.
+export function observeSelectedSetfarmDeploymentBuildV1() {
+  if (selectedDeploymentObservationUncertainV1) fail("selected deployment observation is uncertain");
+  const pins = [], held = new Set();
+  const directoryKeys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"];
+  const fileKeys = [...directoryKeys, "nlink", "size", "mtimeNs", "ctimeNs"];
+  const same = (left, right, keys) => keys.every(key => left[key] === right[key]);
+  const directoryProjection = stat => Object.freeze({ dev: String(stat.dev), ino: String(stat.ino), mode: Number(stat.mode),
+    uid: Number(stat.uid), gid: Number(stat.gid), birthtimeNs: String(stat.birthtimeNs) });
+  const fileProjection = stat => Object.freeze({ ...directoryProjection(stat), nlink: String(stat.nlink), size: String(stat.size),
+    mtimeNs: String(stat.mtimeNs), ctimeNs: String(stat.ctimeNs) });
+  const physicalAlias = value => process.platform === "darwin" && value.startsWith("/var/") ? `/private${value}` : value;
+  let result, invalid = false;
+  try {
+    const home = physicalAlias(CODE_OWNER_HOME_V1), workspace = physicalAlias(CODE_OWNED_WORKSPACE_ROOT_V1), uid = BigInt(process.getuid());
+    const check = () => {
+      for (const pin of pins) if (!same(pin.stat, fstatSync(pin.fd, { bigint: true }), directoryKeys)
+        || !same(pin.stat, lstatSync(pin.target, { bigint: true }), directoryKeys)) fail("selected CLI ancestor changed");
+    };
+    const hold = directory => {
+      const segments = directory.split(path.sep).filter(Boolean); if (segments.length > 128) fail("selected CLI path is too deep");
+      for (let index = 0; index <= segments.length; index++) {
+        const target = path.join(path.parse(directory).root, ...segments.slice(0, index)); if (held.has(target)) continue;
+        check(); const stat = lstatSync(target, { bigint: true });
+        if (!stat.isDirectory() || stat.isSymbolicLink() || ((target === home || target.startsWith(`${home}/`))
+          && (stat.uid !== uid || (stat.mode & 0o022n)))) fail("selected CLI ancestor is invalid");
+        const fd = openSync(target, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+        pins.push({ target, stat, fd }); held.add(target); check();
+      }
+    };
+    const cliLinkPath = path.join(home, ".local", "bin", "setfarm"); hold(path.dirname(cliLinkPath));
+    const link = lstatSync(cliLinkPath, { bigint: true });
+    if (!link.isSymbolicLink() || link.uid !== uid || link.nlink !== 1n || link.size < 1n || link.size > 4096n) fail("selected CLI link is invalid");
+    const raw = readlinkSync(cliLinkPath, { encoding: "buffer" }), rawLinkTarget = strictUtf8V1(raw, "selected CLI target");
+    if (BigInt(raw.length) !== link.size) fail("selected CLI link size changed");
+    const targetPath = physicalAlias(path.resolve(path.dirname(cliLinkPath), rawLinkTarget));
+    if (!targetPath.endsWith("/dist/cli/cli.js")) fail("selected CLI target is invalid");
+    const checkoutPath = path.dirname(path.dirname(path.dirname(targetPath)));
+    if (checkoutPath === workspace || !isWithinLocator(workspace, checkoutPath)) fail("selected CLI checkout escaped workspace");
+    hold(path.dirname(targetPath));
+    const assertLink = () => {
+      check(); if (!same(link, lstatSync(cliLinkPath, { bigint: true }), fileKeys)
+        || !readlinkSync(cliLinkPath, { encoding: "buffer" }).equals(raw) || realpathSync(cliLinkPath) !== targetPath) fail("selected CLI link changed");
+    };
+    assertLink();
+    const target = readStableRegular(targetPath, { device: pins.find(pin => pin.target === workspace).stat.dev, maxBytes: 16 * 1024 * 1024 });
+    if (target.stats.uid !== uid || target.bytes.length === 0 || (target.stats.mode & 0o022n)) fail("selected CLI entry is invalid");
+    assertLink();
+    const observed = observeFinalizedSetfarmSourceBuildAtRootV1(checkoutPath, false);
+    const after = readStableRegular(targetPath, { device: target.stats.dev, maxBytes: 16 * 1024 * 1024 });
+    if (!target.bytes.equals(after.bytes) || !same(target.stats, after.stats, fileKeys)) fail("selected CLI entry changed");
+    assertLink();
+    const cliBody = { schema: "setfarm.internal-production-deployment-cutover-cli-observation.v1", cliLinkPath, rawLinkTarget, targetPath, checkoutPath,
+      linkIdentity: fileProjection(link), targetIdentity: fileProjection(target.stats), targetBytesHash: sha256(target.bytes),
+      ancestors: Object.freeze(pins.map(pin => Object.freeze({ path: pin.target, identity: directoryProjection(pin.stat) }))) };
+    const cli = Object.freeze({ ...cliBody, cliLinkObservationHash: hashCanonicalJsonV1(cliBody) });
+    const body = Object.freeze({ schema: "setfarm.internal-production-selected-deployment-build-observation.v1", cli,
+      checkoutSource: observed.checkoutSource, buildSource: observed.buildSource });
+    result = Object.freeze({ ...body, selectedDeploymentObservationHash: hashCanonicalJsonV1(body) });
+  } catch { invalid = true; }
+  while (pins.length) { const pin = pins.pop(); try { closeSync(pin.fd); } catch { invalid = true; } }
+  if (invalid || !result) {
+    selectedDeploymentObservationUncertainV1 = true;
+    fail("selected deployment source/build observation refused");
+  }
+  return result;
+}
+
+function observeFinalizedSetfarmSourceBuildAtRootV1(root, requireCurrent) {
   if (currentFinalizedSourceObservationUncertainV1) fail("current finalized source observation is uncertain");
-  const root = repositoryRootV1(), pins = [];
+  const pins = [];
   const keys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"];
   const fileKeys = [...keys, "nlink", "size", "mtimeNs", "ctimeNs"];
   const same = (left, right, fields = keys) => fields.every(key => left[key] === right[key]);
@@ -1537,7 +1621,8 @@ export function observeCurrentFinalizedSetfarmSourceBuildV1() {
     const segments = root.split(path.sep).filter(Boolean);
     if (segments.length > 128) fail("current finalized root is too deep");
     for (let index = 0; index <= segments.length; index++) hold(path.join(path.parse(root).root, ...segments.slice(0, index)));
-    const before = observeCurrentRetentionControllerSourcePassV2(root), dist = path.join(root, "dist");
+    const sourcePass = () => requireCurrent ? observeCurrentRetentionControllerSourcePassV2(root) : observePhysicalSynchronizedSourcePassV1(root);
+    const before = sourcePass(), dist = path.join(root, "dist");
     hold(dist); const device = pins.at(-1).stats.dev;
     const inventoryBefore = inventoryBuildGenerationV1(dist), physicalFiles = [];
     for (const entry of inventoryBefore.entries) {
@@ -1551,19 +1636,27 @@ export function observeCurrentFinalizedSetfarmSourceBuildV1() {
       ["schema", "sourceSha", "sourceTreeHash", "entries", "outputTreeHash"], "current finalized output", false);
     const manifest = parseFinalizedJsonV1(readStableRegular(path.join(dist, "PLATFORM_RELEASE_MANIFEST.json"), { device, mode: 0o444 }),
       ["schema", "releaseSha", "branch", "dirty", "stitchConverter"], "current finalized manifest", false);
+    if (!GIT_HASH.test(info.sha)) fail("finalized build source is invalid");
+    const buildSha = requireCurrent ? before.sourceSha : info.sha;
+    const buildTree = requireCurrent ? before.sourceTreeHash
+      : requireFixedGitLineV2(root, ["rev-parse", "--verify", `${buildSha}^{tree}`], "selected finalized build tree");
+    const buildInputSetHash = requireCurrent ? before.buildInputSetHash : historicalGitInputSetV2(root, buildSha, buildTree).buildInputSetHash;
     const stableBuildInfo = { schema: "setfarm.internal-production-stable-setfarm-build-info.v1", sha: info.sha, shortSha: info.shortSha,
       branch: info.branch, dirty: info.dirty, packageVersion: info.packageVersion, displayVersion: info.displayVersion };
-    const expected = Object.freeze({ branch: "main", clean: true, sha: before.sourceSha, treeHash: before.sourceTreeHash,
+    const expected = Object.freeze({ branch: "main", clean: true, sha: buildSha, treeHash: buildTree,
       buildHash: hashCanonicalJsonV1({ schema: "setfarm.internal-production-controller-build.v1", stableBuildInfo,
-        buildInputSetHash: before.buildInputSetHash, outputTreeHash: output.outputTreeHash, releaseManifestHash: hashCanonicalJsonV1(manifest) }),
-      originMainSha: before.originMainSha });
+        buildInputSetHash, outputTreeHash: output.outputTreeHash, releaseManifestHash: hashCanonicalJsonV1(manifest) }),
+      originMainSha: buildSha });
     check();
-    const actual = observeActualSetfarmRuntimeSourceV1(path.join(dist, "cli", "cli.js"), expected);
+    const actual = observeActualSetfarmRuntimeSourceAtRootV1(root, path.join(dist, "cli", "cli.js"), expected);
     if (actual.sha !== expected.sha || actual.treeHash !== expected.treeHash || actual.buildHash !== expected.buildHash) fail("current finalized build is crossed");
     if (canonicalJsonV1(inventoryBuildGenerationV1(dist)) !== canonicalJsonV1(inventoryBefore)
-      || canonicalJsonV1(observeCurrentRetentionControllerSourcePassV2(root)) !== canonicalJsonV1(before)) fail("current finalized source/output changed");
+      || canonicalJsonV1(sourcePass()) !== canonicalJsonV1(before)) fail("current finalized source/output changed");
     for (const file of physicalFiles) if (!same(file.stats, lstatSync(file.target, { bigint: true }), fileKeys)) fail("current finalized output identity changed");
-    check(); result = expected;
+    check(); result = Object.freeze({
+      checkoutSource: Object.freeze({ branch: "main", clean: true, sha: before.sourceSha, treeHash: before.sourceTreeHash, originMainSha: before.originMainSha }),
+      buildSource: actual,
+    });
   } catch { invalid = true; }
   while (pins.length) { const pin = pins.pop(); try { closeSync(pin.fd); } catch { invalid = true; } }
   if (invalid || !result) { currentFinalizedSourceObservationUncertainV1 = true; fail("current finalized source/build observation refused"); }
@@ -2338,7 +2431,10 @@ function historicalBuildInputsV1(root, expectedSourceBuild) {
 }
 
 function observeActualSetfarmRuntimeSourceV1(entrypointRealpath, expectedSourceBuild) {
-  const root = repositoryRootV1();
+  return observeActualSetfarmRuntimeSourceAtRootV1(repositoryRootV1(), entrypointRealpath, expectedSourceBuild);
+}
+
+function observeActualSetfarmRuntimeSourceAtRootV1(root, entrypointRealpath, expectedSourceBuild) {
   const distRoot = realpathSync(path.join(root, "dist"));
   if (!isWithinLocator(distRoot, entrypointRealpath)) fail("Setfarm loaded entrypoint is outside the current finalized dist");
   const historical = historicalBuildInputsV1(root, expectedSourceBuild);
