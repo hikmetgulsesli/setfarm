@@ -73,7 +73,7 @@ noemit0,English1515/path865. Independent review found no material issue.
 and corresponding `tests/internal-production/baseline-deployment-cutover-owner-store-v1.test.ts`.
 
 **Interface:** fixed-root internal `observeDeploymentCutoverOwnerHistoryV1()` and
-`publishDeploymentCutoverOwnerClaimV1(maintenance,claim)` returning only validated
+`publishDeploymentCutoverOwnerClaimV1(maintenance,claim,expectedHistoryHash?)` returning only validated
 physical observations, never effect capabilities. No arbitrary directory input.
 
 - [x] Write physical fixtures for first intent/owner publication, matching replay,
@@ -135,6 +135,18 @@ no dirty-build override or live owner publication was used.
 cutover store/codecs from the controller's authenticated checkout. Reuse existing
 `observeCurrentMaintenanceOwnerV1` and `observeMaintenanceOwnerProcessV1`.
 Opaque capabilities live only in a module-private WeakMap.
+`observeDeploymentCutoverOwnerControllerSourceV1()` returns the code-relative
+source commitment without acquiring an owner or writing the runtime store.
+
+The owner unit is not an executable live controller. Its source commitment is
+domain-separated over the exact clean source/build observation and sorted fixed
+controller/helper file hashes, never simply the build hash. Pin the initial
+physical files before dynamic imports and permanently compare against those
+snapshots. Compiled imports have no source/tsx fallback. A fresh trusted controller
+bootstrap must authenticate this module before loading it; reading a pathname
+after arbitrary cached import does not prove already-loaded bytes. That bootstrap
+and its cached-module/replacement integration tests are mandatory before live
+effects; the owner unit alone must not be advertised as loaded-code authority.
 
 There is exactly one in-process acquisition/workflow owner. Reserve that slot
 before the first await or effect; every further public acquisition while active
@@ -145,7 +157,7 @@ cannot serialize two callers holding the same handle. Retain failed acquisition
 state as uncertain until a fresh authenticated retry, never release via a generic
 finally while asynchronous helpers may still execute.
 
-- [ ] Write real competing child-process fixtures. A loser, forged object,
+- [x] Write real competing child-process fixtures. A loser, forged object,
   transferred serialization, stale tip or crossed physical store must fail:
 
 ```js
@@ -154,16 +166,32 @@ assert.equal(successfulControllerCount, 1);
 assert.equal(serviceEffectCount, 0);
 ```
 
-- [ ] RED then acquire current owner identity with fresh nonce, publish first
+- [x] RED then acquire current owner identity with fresh nonce, publish first
   claim or same-process exact replay, and reobserve winning tip/physical store/
   current process before creating capability. Fresh successor only after the
   previous owner is definitely dead; live/reused/ambiguous identity refuses.
-- [ ] Assert capability before each future side effect and after awaits; assert
+- [ ] Integrate capability before each future side effect and after awaits; assert
   again after external helper completion. A child helper surviving owner death
   requires separate family quiescence before recovery effects.
 - [ ] Exercise crash before/after publication, response loss, live owner conflict,
   PID reuse and reboot observation. Preserve history, invalidate uncertain handles
   and prove no spawner singleton is created. Review and qualify before integration.
+
+Task3 owner-unit evidence: initial4RED missing module; caller mutation across
+await and same-root moved under a replacement baseline reproduced2RED then fixed.
+Input is now detached strictly before the first await. Store observations bind
+the full held ancestor projection, and the owner capability retains it.
+Observation/publication transaction replacement reproduced a further RED; the
+publisher now checks the expected committedHistoryHash under its own held pins
+before writes, including expected absence before mkdir and competing EEXIST.
+Independent review found those fixes complete with no further material finding.
+
+The internal unit includes real live/exited/concurrent owners, transferred/forged
+handles, PID reuse, actual child exit after owner link, inert stages, missing
+compiled observer, ambiguous process and restored-after-drift rejection. The
+private test build observer is explicitly a fixture, not finalized-build proof.
+Full source/bootstrap replacement and live-effect integration are still required.
+Complete cutover181/181,zero skips23500.24275ms; noemit0,English1519/path868.
 
 ## Integration remains mandatory
 

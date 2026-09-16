@@ -150,6 +150,12 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## File map and boundaries
 
+- New `scripts/deployment-cutover-owner.mjs` and
+  `scripts/__tests__/deployment-cutover-owner.test.js`: process-local opaque owner
+  capability, real predecessor-death observations and strict single-acquisition
+  exclusion. Bind full owner-store ancestry and pass the observed committed
+  projection into publisher-held checks. Fresh trusted bootstrap authentication
+  remains required before treating this internal unit as loaded controller code.
 - New `src/internal-production/baseline-deployment-cutover-owner-store-v1.ts`:
   fixed sibling immutable maintenance/owner history, physical pins, no-replace
   publication and durable replay. Retained stages are explicitly classified and

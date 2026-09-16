@@ -23,16 +23,18 @@ function fixed(name: string): boolean {
 }
 type File = { bytes: Buffer; stat: BigIntStats };
 type Observation = Readonly<{ maintenance: DeploymentCutoverMaintenanceIntentV1 | null; claims: readonly DeploymentCutoverOwnerClaimV1[];
-  rootIdentityHash: string | null; pendingStageCount: number; files: readonly Readonly<{ name: string; identityHash: string; bytesHash: string;
+  rootIdentityHash: string | null; ancestorIdentityHash: string; pendingStageCount: number; files: readonly Readonly<{ name: string; identityHash: string; bytesHash: string;
     byteLength: number; kind: "committed" | "inert-stage" | "committed-alias" }>[];
-  ownerHistoryObservationHash: string }>;
+  ownerHistoryObservationHash: string; committedHistoryHash: string }>;
 function observation(maintenance: DeploymentCutoverMaintenanceIntentV1 | null, claims: readonly DeploymentCutoverOwnerClaimV1[], rootIdentityHash: string | null,
-  pendingStageCount: number, files: Map<string, File>): Observation {
+  pendingStageCount: number, files: Map<string, File>, ancestorIdentityHash: string): Observation {
   const body = { schema: "setfarm.internal-production-deployment-cutover-owner-store-observation.v1", maintenance, claims: Object.freeze([...claims]),
-    rootIdentityHash, pendingStageCount, files: Object.freeze([...files].map(([name, file]) => Object.freeze({ name,
+    rootIdentityHash, ancestorIdentityHash, pendingStageCount, files: Object.freeze([...files].map(([name, file]) => Object.freeze({ name,
       identityHash: hashCanonicalJson(identity(file.stat, FILE_KEYS)), bytesHash: digest(file.bytes), byteLength: file.bytes.length,
       kind: fixed(name) ? "committed" as const : file.stat.nlink === 1n ? "inert-stage" as const : "committed-alias" as const }))) };
-  return Object.freeze({ ...body, ownerHistoryObservationHash: hashCanonicalJson(body) });
+  const committedHistoryHash = hashCanonicalJson({ schema: "setfarm.internal-production-deployment-cutover-committed-history.v1",
+    rootIdentityHash, ancestorIdentityHash, maintenance, claims: body.claims, files: body.files.filter(file => file.kind === "committed") });
+  return Object.freeze({ ...body, committedHistoryHash, ownerHistoryObservationHash: hashCanonicalJson(body) });
 }
 function consume<T>(fd: number, body: () => T): T {
   let result: T | undefined, invalid = false;
@@ -42,7 +44,7 @@ function consume<T>(fd: number, body: () => T): T {
   if (invalid) fail(); return result as T;
 }
 type Store = { snapshot: () => { value: Observation; files: Map<string, File> }; publish: (name: string, bytes: Buffer) => void };
-function withStore(create: boolean, body: (store: Store | null) => Observation): Observation {
+function withStore(create: boolean, body: (store: Store | null, ancestorIdentityHash: string) => Observation, expectedHistoryHash?: string): Observation {
   if (cleanupUncertain) fail();
   const pins: { target: string; fd: number; stat: BigIntStats }[] = [];
   let invalid = false, result: Observation | undefined;
@@ -73,13 +75,19 @@ function withStore(create: boolean, body: (store: Store | null) => Observation):
       if (stat.uid !== BigInt(uid) || stat.dev !== device || (stat.mode & 0o022n) !== 0n) fail();
     }
     const baselineFd = pins.at(-1)!.fd, root = path.join(baseline, "deployment-cutover-owner-v1");
+    const ancestorIdentityHash = hashCanonicalJson(pins.map(pin => ({ path: pin.target, identity: identity(pin.stat, DIRECTORY_KEYS) })));
     let missing = false;
     try { fs.lstatSync(root); } catch (error) { if (error instanceof Error && "code" in error && error.code === "ENOENT") missing = true; else throw error; }
     if (missing && !create) {
       checkPins(); try { fs.lstatSync(root); fail(); } catch (error) { if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error; }
-      result = body(null);
+      result = body(null, ancestorIdentityHash);
     } else {
-      if (create && missing) { try { fs.mkdirSync(root, { mode: 0o700 }); } catch (error) { if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error; } }
+      let created = false;
+      if (create && missing) {
+        if (expectedHistoryHash !== undefined && observation(null, [], null, 0, new Map(), ancestorIdentityHash).committedHistoryHash !== expectedHistoryHash) fail();
+        try { fs.mkdirSync(root, { mode: 0o700 }); created = true; }
+        catch (error) { if (expectedHistoryHash !== undefined || !(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error; }
+      }
       const rootStat = hold(root), rootFd = pins.at(-1)!.fd;
       if (rootStat.uid !== BigInt(uid) || rootStat.dev !== device || (rootStat.mode & 0o7777n) !== 0o700n) fail();
       if (create) { fs.fsyncSync(baselineFd); checkPins(); }
@@ -133,8 +141,9 @@ function withStore(create: boolean, body: (store: Store | null) => Observation):
           if (!current || !same(retained.stat, current.stat) || !retained.bytes.equals(current.bytes)) fail();
         }
         for (const name of committed) committedPins.set(name, files.get(name)!);
-        checkPins(); return { files, value: observation(history.maintenance, history.claims, rootIdentityHash, pendingStageCount, files) };
+        checkPins(); return { files, value: observation(history.maintenance, history.claims, rootIdentityHash, pendingStageCount, files, ancestorIdentityHash) };
       };
+      if (expectedHistoryHash !== undefined && !created && snapshot().value.committedHistoryHash !== expectedHistoryHash) fail();
       const publish = (name: string, bytes: Buffer) => {
         if (!fixed(name)) fail();
         const before = snapshot(), existing = before.files.get(name), target = path.join(root, name);
@@ -181,7 +190,7 @@ function withStore(create: boolean, body: (store: Store | null) => Observation):
         });
         const after = snapshot(); if (!after.files.get(name)?.bytes.equals(bytes)) fail();
       };
-      result = body({ snapshot, publish }); checkPins();
+      result = body({ snapshot, publish }, ancestorIdentityHash); checkPins();
     }
   } catch { invalid = true; }
   while (pins.length) { const pin = pins.pop()!; try { fs.closeSync(pin.fd); } catch { cleanupUncertain = true; invalid = true; } }
@@ -190,9 +199,10 @@ function withStore(create: boolean, body: (store: Store | null) => Observation):
 
 // Storage/history only. Neither a read nor a publication grants live ownership.
 export function observeDeploymentCutoverOwnerHistoryV1(): Observation {
-  return withStore(false, store => store ? store.snapshot().value : observation(null, [], null, 0, new Map()));
+  return withStore(false, (store, ancestorIdentityHash) => store ? store.snapshot().value : observation(null, [], null, 0, new Map(), ancestorIdentityHash));
 }
-export function publishDeploymentCutoverOwnerClaimV1(maintenance: unknown, claim: unknown): Observation {
+export function publishDeploymentCutoverOwnerClaimV1(maintenance: unknown, claim: unknown, expectedHistoryHash?: string): Observation {
+  if (expectedHistoryHash !== undefined && (typeof expectedHistoryHash !== "string" || !/^[a-f0-9]{64}$/.test(expectedHistoryHash))) fail();
   const intentBytes = encodeDeploymentCutoverMaintenanceIntentV1(maintenance), claimBytes = encodeDeploymentCutoverOwnerClaimV1(claim);
   const parsed = JSON.parse(claimBytes.toString("utf8")) as DeploymentCutoverOwnerClaimV1;
   if (parsed.maintenanceIntentHash !== parseDeploymentCutoverMaintenanceIntentV1(intentBytes).maintenanceIntentHash) fail();
@@ -207,5 +217,5 @@ export function publishDeploymentCutoverOwnerClaimV1(maintenance: unknown, claim
     const after = store.snapshot().value;
     if (after.claims[parsed.ordinal - 1]?.ownerClaimHash !== parsed.ownerClaimHash) fail();
     return after;
-  });
+  }, expectedHistoryHash);
 }
