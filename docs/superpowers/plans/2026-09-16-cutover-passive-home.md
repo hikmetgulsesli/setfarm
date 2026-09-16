@@ -24,11 +24,13 @@ Python3 ctypes and Darwin sysctl/libproc. No new installed dependency.
 - Python is an explicit trusted host prerequisite: fixed `/usr/bin/python3`,
   `-I -S -B -c`, fresh sanitized environment, fixed cwd, bounded I/O/time.
 - KERN_PROCARGS2 is mutable stack evidence, not immutable exec history. Require
-  reviewed cooperative startup without relevant stack rewriting and no empty
+  reviewed cooperative startup without argv/environment rewriting and no empty
   launcher environment entries; never infer these premises from matching reads.
 - Parse exactly argc argv strings, including empty arguments. Require complete
   private expected environment equality, unique HOME=account, explicit extra
-  NUL padding and a nonempty structurally valid Apple suffix. Reject suffix HOME,
+  NUL boundary and a nonempty structurally valid possibly erased Apple suffix.
+  Trusted system startup may erase Apple strings: consume surviving strings
+  across zero runs within the fixed buffer bound. Reject suffix HOME,
   zero-padding ambiguity, malformed strings, duplicate keys and truncation.
 - Native buffers remain mutable and are zeroed in finally; no raw environment,
   secret-derived hashes or Apple entropy in output/errors.
@@ -45,6 +47,8 @@ Python3 ctypes and Darwin sysctl/libproc. No new installed dependency.
   parser tests, owned-child native measurement and sanitized-refusal checks.
 - `scripts/deployment-cutover-passive-home.mjs`: fixed private transport importing
   authenticated data-only Python source; PID is a locator, never authority.
+- `scripts/__tests__/deployment-cutover-passive-transport.test.js`: fixed launch
+  contract and strict sanitized measurement refusal tests.
 - `scripts/deployment-cutover.mjs`: source closure/data hook and owning invocation.
 - `scripts/deployment-cutover-default-context.mjs`: zero-input held composition.
 - `src/internal-production/baseline-deployment-cutover-launcher-observation-v1.ts`:
@@ -54,23 +58,28 @@ Python3 ctypes and Darwin sysctl/libproc. No new installed dependency.
 
 ## Task1: Binary parser and read-only native bridge
 
-- [ ] Write synthetic success test using exact executable/argv/environment;
+- [x] Write synthetic success test using exact executable/argv/environment;
   run `node --test scripts/__tests__/deployment-cutover-passive-home.test.js`
   and observe missing-helper RED.
-- [ ] Implement `qualify_buffer(buffer, length, expected)` returning no raw data;
+- [x] Implement `qualify_buffer(buffer, length, expected)` returning no raw data;
   consume all bytes under the acceptance rules above. Test empty argv, wrong or
   duplicate HOME, suffix HOME, absent padding/suffix, redaction and truncation.
-- [ ] Add native bridge tests before implementation: private synthetic child,
+- [x] Add native bridge tests before implementation: private synthetic child,
   exact PID/credentials/path and two reads; wrong identity and vanished child
   refuse. Assert fixed error text and no sentinel leakage.
-- [ ] Implement explicit ctypes ABI/signatures and bounded sysctl/libproc calls,
+- [x] Implement explicit ctypes ABI/signatures and bounded sysctl/libproc calls,
   zero native buffers on every exit, compare before/after identity and reads.
+
+Initial15tests pass. Native child exposed Darwin ARG_MAX=1048576 plus4byte argc
+and107erased Apple bytes after the exact environment. Both discoveries were
+fixed with failing tests; independent review qualified the latter refinement.
+No actual launcher environment has been read; owning provenance remains pending.
 
 ## Task2: Authenticate transport and compose existing held lifetimes
 
-- [ ] Add bootstrap tampered/missing Python source RED tests. Extend closure and
+- [x] Add bootstrap tampered/missing Python source RED tests. Extend closure and
   hook with exact file URL data-only source, not Python pathname evaluation.
-- [ ] Add fixed transport flags/environment/I/O schema tests; implement private
+- [x] Add fixed transport flags/environment/I/O schema tests; implement private
   transport with generic refusal and no caller-supplied source/proof callbacks.
 - [ ] Add launcher lifecycle tests: privately derived fixed-label PID, account,
   plist, loaded env, executable/argv/start drift; complete samples then fresh idle.
@@ -81,9 +90,24 @@ Python3 ctypes and Darwin sysctl/libproc. No new installed dependency.
 
 ## Task3: Verify and deliver
 
-- [ ] Independent source/test review, focused regressions, affected bootstrap
+- [x] Independent source/test review, focused regressions, affected bootstrap
   group, TypeScript noemit and source/manifest contracts.
 - [ ] Scoped reviewed PR, independent clean-main normal build; then bounded
   passive real-host sampling only if all parser/provenance requirements hold.
 - [ ] Record actual evidence and remaining controller/phase/journal work. Do not
   claim successful HOME or full project closure from synthetic tests.
+
+## Supporting-slice delivery evidence
+
+The native bridge, fixed transport and authenticated source hook are delivered
+first without a new inspection endpoint. Launcher/default-owner wiring above
+remains unchecked; no blocker is removed by this supporting slice.
+
+- Focused native/parser/transport:35/35passed, including actual owned-child
+  entry, vanished-child refusal and all sensitive-buffer cleanup fault paths.
+- Affected bootstrap/profile group:92/92passed, including the standard genuine
+  integration command. Source manifest18/18passed.
+- TypeScript noemit, English1557files, path888files and diff checks passed.
+- Two independent read-only reviews cleared the helper/authentication seam;
+  an outside-bootstrap import regression was added from review feedback.
+- No target launcher environment, raw secret, service/link/archive or DB effect.
