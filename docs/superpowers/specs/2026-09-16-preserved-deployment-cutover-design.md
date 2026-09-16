@@ -179,6 +179,14 @@ not an arbitrary same-user actor deliberately launching a retired executable.
   composition. Existing strict launcher APIs remain unchanged; no raw environment
   or credential-derived hashes leave the native bridge. See the passive-HOME
   implementation plan for file map, parser constraints and regression gates.
+  The default-owner continuation commits process generation with a separate
+  identity-only native operation before reading environment. Its private finite
+  environment family requires exact configured values and account HOME; optional
+  USER/LOGNAME/SHELL/TMPDIR must match independent account/getconf values. Optional
+  XPC_FLAGS=0x0 and UID-bound CF zero-script/zero-region encoding are explicit
+  supported restrictions, not inferred universal launchd defaults. Unknowns
+  refuse. Both native reads must match including optional presence; actual
+  launcher provenance, generation, Node paths and account state remain held.
 
 - `scripts/deployment-cutover-dependencies.mjs` and its script tests: fixed
   postgres/Zod cache archives authenticated against reviewed lock SRI, bounded
