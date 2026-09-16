@@ -150,6 +150,13 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## File map and boundaries
 
+- New `src/internal-production/baseline-deployment-cutover-owner-store-v1.ts`:
+  fixed sibling immutable maintenance/owner history, physical pins, no-replace
+  publication and durable replay. Retained stages are explicitly classified and
+  never deleted. This is storage evidence, not a current ownership capability.
+- New `tests/internal-production/baseline-deployment-cutover-owner-store-v1.test.ts`:
+  competing processes, inode preservation, crossed histories, targeted write/sync
+  response loss, stage classification and descriptor-reuse fixtures.
 - `tests/internal-production/baseline-service-restart-helper-v1.test.ts`: keep
   positive helper fixtures physically canonical under the isolated runner's
   sanitized temp environment; preserve all production guards and assertions.

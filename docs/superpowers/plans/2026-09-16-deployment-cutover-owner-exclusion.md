@@ -61,7 +61,7 @@ assert.equal(history.claims.length, 2);
 - [x] Test crossed intent, missing/reordered predecessor, malformed owner, changed
   self-pair, noncanonical bytes, proxy/accessor traps and mutable input detachment.
 - [x] Run complete focused records suite, noemit/contracts and independent review.
-- [ ] Checkpoint Task1. These records remain historical, not ownership capability.
+- [x] Checkpoint Task1 at eff1eb72. These records remain historical, not ownership capability.
 
 Task1 evidence: first4RED missing exports, then7 owner tests plus5 maintenance
 tests passed12/12. Complete cutover suite151/151,zero skips14187.681042ms;
@@ -76,7 +76,7 @@ and corresponding `tests/internal-production/baseline-deployment-cutover-owner-s
 `publishDeploymentCutoverOwnerClaimV1(maintenance,claim)` returning only validated
 physical observations, never effect capabilities. No arbitrary directory input.
 
-- [ ] Write physical fixtures for first intent/owner publication, matching replay,
+- [x] Write physical fixtures for first intent/owner publication, matching replay,
   conflicting ordinal and concurrent no-replace contenders. Assert exactly one
   committed ordinal and preserve all foreign evidence:
 
@@ -86,11 +86,11 @@ assert.equal(new Set(winningOwnerPids).size, 1);
 assert.deepEqual(foreignBytesAfter, foreignBytesBefore);
 ```
 
-- [ ] RED then implement held ancestors, owner700/files600, exact names/caps,
+- [x] RED then implement held ancestors, owner700/files600, exact names/caps,
   bounded no-follow reads, staged fsync/readback/no-replace link/directory sync.
   Reuse reviewed publication mechanics, not archive historical grammar. Matching
   replay must fsync file and ancestor directories, not just assume durability.
-- [ ] Fault-inject every publication edge, file/ancestor swaps, short writes,
+- [x] Fault-inject publication/replay edges, file/ancestor swaps, short writes,
   response loss and descriptor reuse. Only committed fixed names contribute to
   history. A bounded, owner600, regular singly-linked staging file with a valid
   stage name is inert non-authority, whether complete or incomplete; preserve it
@@ -105,7 +105,25 @@ assert.deepEqual(foreignBytesAfter, foreignBytesBefore);
   reading. This preserves crash/loser evidence without a partial-write authority
   or a permanent first-loser veto. Uncertain current writes/close/fsync still
   return no new capability; a later fresh attempt must reauthenticate durability.
-- [ ] Review, focused tests/noemit/contracts and checkpoint storage-only unit.
+- [x] Review, focused tests/noemit/contracts and checkpoint storage-only unit.
+
+Task2 implementation retains successful two-link stages as exact committed aliases;
+it never removes stages. Observations hash-bind each file's identity, content hash,
+byte length and classification (committed, inert-stage, committed-alias). Concurrent
+changing inventories can make both contenders refuse; a quiescent fresh retry
+must still complete without removing either contender's evidence.
+
+TDD evidence: five initial missing-module failures; review regressions reproduced
+crossed-maintenance root creation and predecessor replacement before successor
+publication, then passed after pre-I/O binding and transaction-local committed
+identity pins. Missing stage classification reproduced before adding explicit
+observation fields. Focused store suite30/30,zero failures/skips14333.720042ms.
+Seven targeted fault tests cover post-link intent/root sync, owner staging sync,
+owner link response loss/root sync and owner replay file/root/baseline sync.
+Independent final review found no remaining material issue. Complete cutover
+verification passed181/181,zero failures/skips23461.354209ms; noemit0,
+English1517/path866. Normal finalized build remains a clean-main delivery gate;
+no dirty-build override or live owner publication was used.
 
 ## Task3: process-local current owner capability
 

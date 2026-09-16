@@ -67,3 +67,8 @@ Full corrected isolated sequence/startup results remain required.
 
 Startup DB-free TMPDIR-absent recheck passed12/12,zero skips5517.088125ms;
 independent review found no issue in all three physical-root changes.
+
+Final proper isolated reruns at8e42bbf0 passed sequence5/5(4063.714875ms) and
+startup12/12(6109.253958ms),zero failures/skips. Both runner-owned database pairs
+were dropped. Shared log: workspace logs/2026-09-16-restart-sequence-startup-8e42bbf0.log.
+These supersede the full-rerun requirements while preserving the failed logs.
