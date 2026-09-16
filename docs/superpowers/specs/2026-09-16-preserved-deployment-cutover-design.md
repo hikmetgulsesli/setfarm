@@ -261,6 +261,9 @@ not an arbitrary same-user actor deliberately launching a retired executable.
   `inspect-database --json` additionally invokes the held launcher/database
   observation and binds it to the same pre/post host bracket and host hash.
   It retains missing filesystem/helper/phase and controller-ownership blockers.
+  It also reports `runtime-effective-environment-not-authenticated`: the agreed
+  launcher URL under strict default-driver settings is not proof of ordinary
+  runtime database/root equivalence. Env-file inputs remain unauthenticated.
   The other two inspection modes do not connect to the database.
 - Reuse reviewed maintenance journal/owner observation primitives only where
   their historical/physical contract fits. Add physical owner-death evidence and

@@ -41921,7 +41921,6 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       "./baseline-workspace-authority-path-v1.js",
       "../findings/legacy-finding-publication-inventory-v1.js",
       "../findings/legacy-finding-publication-inventory-v1.js",
-      "../findings/finding-publication-v1.js",
       "../product-compiler/canonical-json.js",
       "../db/contract-spine-migration-digests.generated.js",
       "../db/contract-spine-migration-source-integrity.js",

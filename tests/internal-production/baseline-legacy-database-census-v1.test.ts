@@ -9,18 +9,24 @@ import { pathToFileURL } from "node:url";
 test("shared legacy census is import-inert and never adopts an ambient database URL", () => {
   const url = new URL("../../src/internal-production/baseline-legacy-database-census-v1.ts", import.meta.url).href;
   const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
-    import fs from 'node:fs';import net from 'node:net';import {syncBuiltinESMExports} from 'node:module';
-    let writes=0,connections=0;
+    import fs from 'node:fs';import net from 'node:net';import {syncBuiltinESMExports,registerHooks} from 'node:module';
+    let writes=0,connections=0;const dependencyLoads=[];
+    registerHooks({resolve(specifier,context,next){
+      if(specifier==='postgres'||/findings|db-pg|runtime-config|baseline-post-handoff-receipt/.test(specifier))dependencyLoads.push(specifier);
+      return next(specifier,context);
+    }});
     for(const name of ['writeFileSync','mkdirSync','renameSync','unlinkSync','rmdirSync','linkSync','chmodSync','fsyncSync'])fs[name]=()=>{writes++;throw Error('UNEXPECTED_CENSUS_WRITE')};
     net.Socket.prototype.connect=()=>{connections++;throw Error('UNEXPECTED_CENSUS_CONNECTION')};
     syncBuiltinESMExports();
     const module=await import(${JSON.stringify(url)});
+    const importDependencyLoads=[...dependencyLoads];
     let error;try{await module.observeLegacyDatabaseCensusV1(undefined,true)}catch(caught){error=caught.message}
-    process.stdout.write(JSON.stringify({error,writes,connections}));
+    process.stdout.write(JSON.stringify({error,writes,connections,importDependencyLoads,dependencyLoads}));
   `], { encoding: "utf8", timeout: 15000, env: { SETFARM_PG_URL: "postgresql://PRIVATE_AMBIENT_CANARY@127.0.0.1/setfarm" } });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {
     error: "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:legacy zero-owner database is unavailable", writes: 0, connections: 0,
+    importDependencyLoads: [], dependencyLoads: ["postgres", "../findings/finding-publication-v1.js"],
   });
 });
 

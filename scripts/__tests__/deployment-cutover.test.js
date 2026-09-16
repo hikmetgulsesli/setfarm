@@ -207,7 +207,8 @@ test("trusted database inspection executes full pre32 census but retains remaini
   assert.equal(Object.keys(host.database.databaseCensus).length, 14);
   assert.deepEqual(host.database.databaseCensus.legacyFindingPublicationInventory.entries, []);
   assert.deepEqual(host.database.launcherObservation, host.launchers);
-  assert.deepEqual(host.blockers, ["filesystem-helper-phase-zero-owner-not-observed", "controller-ownership-not-acquired"]);
+  assert.deepEqual(host.blockers, ["filesystem-helper-phase-zero-owner-not-observed", "controller-ownership-not-acquired",
+    "runtime-effective-environment-not-authenticated"]);
   assert.equal(host.cli.checkoutPath, oldRoot);
   assert.equal(fs.existsSync(path.join(home, "ai/setrox/data")), false);
   assert.doesNotMatch(result.stdout + result.stderr, /SECRET_SENTINEL/);

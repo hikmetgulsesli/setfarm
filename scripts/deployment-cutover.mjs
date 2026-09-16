@@ -181,6 +181,7 @@ async function inspect() {
         || canonical(cli) !== canonical(cliModule.observeDeploymentCutoverCliLinkV1())) fail();
       // On-disk build proof never substitutes for DB or current-owner proof.
       const blockers = [database ? "filesystem-helper-phase-zero-owner-not-observed" : "database-zero-owner-not-observed", "controller-ownership-not-acquired"];
+      if (database) blockers.push("runtime-effective-environment-not-authenticated");
       if (cli.checkoutPath === root) blockers.push("cli-already-selects-new-checkout");
       if (processes.families.some(entry => entry.classification !== "dashboard-daemon")) blockers.push("non-dashboard-process-family");
       const dashboards = processes.families.filter(entry => entry.classification === "dashboard-daemon");

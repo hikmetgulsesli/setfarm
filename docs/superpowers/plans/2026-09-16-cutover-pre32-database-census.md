@@ -68,7 +68,7 @@ refusal closes it without any query. Driver debug and notices are suppressed.
   observations; aggregate refusal through cleanup; every later catalog owner;
   nonzero claim; all13predicates/malformed counts/integrity violations; two complete
   cold observations. Verify real publication validator remains unmocked.
-- [ ] Explicitly assert transaction/options/query order and one bounded close on
+- [x] Explicitly assert transaction/options/query order and one bounded close on
   success and failure. Add notice/error credential canaries; never print driver
   errors or causes from the external diagnostic. No live database connection.
 
@@ -132,7 +132,7 @@ phase census blocker; retain controller-not-acquired and all process/root blocks
   dependency bytes, executes full pre32 census, then rechecks host commitments.
 - [x] Retain controller-not-acquired and all remaining runtime/helper/phase
   blockers. Database diagnostics alone never grant complete-zero admission.
-- [ ] Run focused transport/launcher/host suites and noemit/contracts, then the
+- [x] Run focused transport/launcher/host suites and noemit/contracts, then the
   affected isolated receipt suite using the authentic runner and owned DB pair.
   Do not use broad test-name patterns that can select adjacent DB reset cases.
 - [ ] Obtain independent review and reviewed PR delivery. Only then consider a
@@ -146,9 +146,30 @@ Bootstrap/owner/genuine gate61/61 passed on identical production code before the
 last three negative fixtures/socket trap; all four final database integration
 cases separately passed with sockets forbidden. Independent leaf, launcher and
 composition reviews found no remaining blocker after the real-driver target
-fixes. Full affected isolated receipt gate and reviewed delivery remain pending.
+fixes. Full affected isolated receipt results and corrective verification follow;
+reviewed delivery remains pending.
 The old selected-build sample precedes the DB await; this diagnostic does not
 claim final old-build stability or loaded-dashboard provenance.
+
+Full isolated receipt run at445f7b6b completed924tests:923passed,1failed,0skipped
+in3195564ms. The sole failure was the exact direct-import contract retaining the
+finding-publication type import moved to the shared leaf. Remove that obsolete
+direct edge only; preserve all other boundary checks and strengthen the shared
+leaf's actual import-inertness probe. Existing full SQL/finding witnesses passed.
+The corrected exact boundary test subsequently passed1/1; the actual module-load
+probe and driver tests passed4/4; invoked cutover236/236 and manifest18/18 passed,
+all with zero skips. No full924-test green rerun is claimed. Receipt/shared-leaf
+production code is unchanged after the full run; correction is its test contract.
+The final complete bootstrap/owner/genuine package passed64/64 with zero skips
+in102175ms, including all four database integration scenarios. Independent review
+found no blocking issue in the corrective diff; noemit/contracts also passed.
+
+Before delivery, the database diagnostic also explicitly retains
+`runtime-effective-environment-not-authenticated`. A genuine bootstrap test
+first failed because that blocker was missing. The diagnostic authenticates the
+launcher-declared URL/default-driver profile, not env-file-derived PG settings
+or SETFARM_DIR. Physically authenticating effective runtime env inputs is a later
+bounded slice; never import runtime-config here or alter launchctl to pass.
 
 Filesystem/helper/phase zero-owner proof, exact controller ownership and durable
 ordinary refusal, immutable intent/completion for each service/link effect,
