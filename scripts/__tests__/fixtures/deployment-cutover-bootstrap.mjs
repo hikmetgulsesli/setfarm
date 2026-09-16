@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { transformSync } from "esbuild";
+import { transformSync, buildSync } from "esbuild";
+import { fileURLToPath } from "node:url";
 import { materialize } from "./deployment-cutover-dependencies.mjs";
 
 const repo = new URL("../../../", import.meta.url);
@@ -18,7 +19,7 @@ export function write(root, locator, bytes, mode = 0o644) {
   const target = path.join(root, locator); fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
   fs.writeFileSync(target, bytes, { mode }); fs.chmodSync(target, mode);
 }
-export function fixture(body, instrument = source => source, { genuine = false } = {}) {
+export function fixture(body, instrument = source => source, { genuine = false, census = false, sourceInstrument = (_locator, source) => source } = {}) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cutover-bootstrap-")));
   const root = path.join(home, "ai/setrox/controller");
   try {
@@ -41,7 +42,15 @@ export function fixture(body, instrument = source => source, { genuine = false }
       "internal-production/baseline-deployment-cutover-cli-observation-v1",
       "internal-production/baseline-deployment-cutover-launcher-observation-v1",
       "internal-production/baseline-deployment-cutover-process-observation-v1"];
-    for (const locator of sources) write(root, `src/${locator}.ts`, fs.readFileSync(new URL(`src/${locator}.ts`, repo)));
+    if (census) {
+      const metadata = buildSync({ absWorkingDir: fileURLToPath(repo), entryPoints: ["src/internal-production/baseline-legacy-database-census-v1.ts"],
+        bundle: true, write: false, metafile: true, packages: "external", platform: "node", format: "esm" }).metafile;
+      for (const input of Object.keys(metadata.inputs)) {
+        assert.match(input, /^src\/.+\.ts$/);
+        const locator = input.slice(4, -3); if (!sources.includes(locator)) sources.push(locator);
+      }
+    }
+    for (const locator of sources) write(root, `src/${locator}.ts`, sourceInstrument(locator, fs.readFileSync(new URL(`src/${locator}.ts`, repo), "utf8")));
     write(root, "src/cli/cli.ts", "export const fixtureCli = true;\n"); sources.push("cli/cli");
     git(root, "init", "-q", "-b", "main"); git(root, "config", "user.name", "Setfarm Fixture");
     git(root, "config", "user.email", "setfarm-fixture@example.invalid"); git(root, "config", "commit.gpgsign", "false");

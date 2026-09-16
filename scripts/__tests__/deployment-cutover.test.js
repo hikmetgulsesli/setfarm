@@ -148,7 +148,7 @@ function hostCommandFixture(root, home, fault, cp, fs, path) {
     throw Error("unexpected host command");
   };
 }
-function hostFixture(body, fault = "") {
+function hostFixture(body, fault = "", options = {}) {
   fixture((root, expected, home) => {
     const oldRoot = path.join(home, "ai/setrox/old");
     fs.mkdirSync(path.dirname(oldRoot), { recursive: true, mode: 0o755 });
@@ -163,12 +163,74 @@ function hostFixture(body, fault = "") {
     for (const [index, label] of ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard"].entries()) {
       const program = path.join(home, ".local/bin/setfarm"), log = path.join(home, ".openclaw/logs", index ? "setfarm-dashboard.watch" : "setfarm-spawner.watch");
       const plist = { Label: label, ProgramArguments: index ? [program, "dashboard", "start", "--port", "3333"] : [program, "spawner", "start"],
-        EnvironmentVariables: { PATH: "/usr/bin:/bin", SETFARM_PG_URL: "PG_SECRET_SENTINEL", ...(index ? { SETFARM_OPERATIONAL_WRITE_TOKEN: "TOKEN_SECRET_SENTINEL" } : {}) },
+        EnvironmentVariables: { PATH: "/usr/bin:/bin", SETFARM_PG_URL: "postgresql://fixture:PG_SECRET_SENTINEL@localhost/setfarm", ...(index ? { SETFARM_OPERATIONAL_WRITE_TOKEN: "TOKEN_SECRET_SENTINEL" } : {}) },
         RunAtLoad: true, StartInterval: 60, StandardOutPath: `${log}.log`, StandardErrorPath: `${log}.err.log` };
       write(home, `Library/LaunchAgents/${label}.plist`, execFileSync("/usr/bin/plutil", ["-convert", "xml1", "-o", "-", "-"], { input: JSON.stringify(plist) }), 0o600);
     }
     body(root, oldRoot, home);
-  }, source => source.replace("const closure = ", `import cp from 'node:child_process';\n(${hostCommandFixture.toString()})(root,fixtureHome,${JSON.stringify(fault)},cp,fs,path);syncBuiltinESMExports();\nconst closure = `));
+  }, source => source.replace("const closure = ", `import cp from 'node:child_process';\n${options.census ? "import net from 'node:net';net.Socket.prototype.connect=()=>{throw Error('UNEXPECTED_DATABASE_CONNECTION')};" : ""}\n(${hostCommandFixture.toString()})(root,fixtureHome,${JSON.stringify(fault)},cp,fs,path);syncBuiltinESMExports();\nconst closure = `), options);
+}
+
+function censusTransport(locator, source) {
+  if (locator !== "internal-production/baseline-legacy-database-census-v1") return source;
+  const marker = 'const postgresModule = await import("postgres");';
+  assert.equal(source.split(marker).length, 2);
+  return source.replace(marker, `
+    const actualPostgres=await import('postgres');
+    const postgresModule={default:(url,options)=>{
+      const sql=actualPostgres.default(url,options),close=sql.end;let calls=0;
+      const tokens=["SET LOCAL statement_timeout = '5s'","SET LOCAL lock_timeout = '1s'","WITH expected_tables",
+        "WITH required_columns","FROM public.finding_sets","FROM public.findings","FROM public.runs"];
+      sql.begin=async(mode,body)=>{
+        if(mode!=='isolation level repeatable read read only')throw Error('WRONG_SNAPSHOT');
+        return body(async strings=>{
+          const query=Array.from(strings).join('?');if(!query.includes(tokens[calls]??'UNEXPECTED_QUERY'))throw Error('WRONG_QUERY_ORDER');calls++;
+          if(calls===3)return [{laterJournalCount:'0',relationCount:'0',functionCount:'0',typeCount:'0',triggerCount:'0'}];
+          if(calls===4)return [{catalogViolationCount:'0',aprbChildViolationCount:'0',ordinaryBatchViolationCount:'0',activeHeaderViolationCount:'0',
+            ownerReservationsRelation:null,ownerAdmissionHeadRelation:null,producerSourceRelation:null,producerActivationRelation:null,producerActivationHeadRelation:null,producerCurrentRelation:null,
+            activeRunCount:'0',openClaimCount:'0',executionAttemptCount:'0',activeRuntimeSessionCount:'0',activeCompletionOwnerCount:'0',unsettledMandatoryEffectCount:'0',
+            artifactReservationCount:'0',publicationBatchCount:'0',artifactPublicationCount:'0',terminationOwnerCount:'0',findingOwnerCount:'0',recoveryOwnerCount:'0',operationalDeliveryCount:'0'}];
+          return [];
+        });
+      };
+      sql.end=async options=>{if(calls!==7||options.timeout!==1)throw Error('INCOMPLETE_CENSUS');return close(options)};
+      return sql;
+    }};
+  `);
+}
+
+test("trusted database inspection executes full pre32 census but retains remaining ownership blockers", () => hostFixture((root, oldRoot, home) => {
+  const result = run(root, ["inspect-database", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const host = JSON.parse(result.stdout).host;
+  assert.equal(host.database.databaseCensus.activeRunCount, 0);
+  assert.equal(Object.keys(host.database.databaseCensus).length, 14);
+  assert.deepEqual(host.database.databaseCensus.legacyFindingPublicationInventory.entries, []);
+  assert.deepEqual(host.database.launcherObservation, host.launchers);
+  assert.deepEqual(host.blockers, ["filesystem-helper-phase-zero-owner-not-observed", "controller-ownership-not-acquired",
+    "runtime-effective-environment-not-authenticated"]);
+  assert.equal(host.cli.checkoutPath, oldRoot);
+  assert.equal(fs.existsSync(path.join(home, "ai/setrox/data")), false);
+  assert.doesNotMatch(result.stdout + result.stderr, /SECRET_SENTINEL/);
+}, "", { genuine: true, census: true, sourceInstrument: censusTransport }));
+
+for (const fault of ["nonzero-owner", "close-secret", "cli-drift-during-census"]) {
+  test(`trusted database inspection refuses ${fault} without output or authority`, () => hostFixture((root, oldRoot, home) => {
+    const result = run(root, ["inspect-database", "--json"]);
+    assert.equal(result.status, 1); assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
+    assert.equal(fs.existsSync(path.join(home, "ai/setrox/data")), false);
+    if (fault === "cli-drift-during-census") assert.equal(fs.existsSync(path.join(home, ".local/bin/setfarm.preserved")), true);
+  }, "", { genuine: true, census: true, sourceInstrument(locator, source) {
+    const transformed = censusTransport(locator, source);
+    if (locator !== "internal-production/baseline-legacy-database-census-v1") return transformed;
+    const marker = fault === "nonzero-owner" ? "activeRunCount:'0'"
+      : fault === "close-secret" ? "return close(options)" : "calls++;";
+    assert.equal(transformed.split(marker).length, 2);
+    return transformed.replace(marker, fault === "nonzero-owner" ? "activeRunCount:'1'"
+      : fault === "close-secret" ? "await close(options);throw Error('PG_SECRET_SENTINEL',{cause:Error('TOKEN_SECRET_SENTINEL')})"
+      : `calls++;if(calls===1){const fs=await import('node:fs'),os=await import('node:os');const link=os.userInfo().homedir+'/.local/bin/setfarm';const target=fs.readlinkSync(link);fs.renameSync(link,link+'.preserved');fs.symlinkSync(target,link)}`);
+  } }));
 }
 
 test("trusted host inspection joins real diagnostics without publishing authority", () => hostFixture((root, oldRoot, home) => {

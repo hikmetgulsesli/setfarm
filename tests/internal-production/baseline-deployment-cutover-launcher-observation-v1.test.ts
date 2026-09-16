@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 const secrets = ["postgresql://fixture:PG_SENTINEL@localhost/fixture", "TOKEN_SENTINEL", "/var/run/com.apple.launchd.SocketSentinel/Listeners"];
 const labels = ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard"];
@@ -30,8 +31,22 @@ function fixture(body: (home: string, texts: string[]) => void): void {
   });
   try { body(home, texts); } finally { fs.rmSync(home, { recursive: true, force: true }); }
 }
-function observe(home: string, texts: string[], fault = ""): any {
-  const url = new URL("../../src/internal-production/baseline-deployment-cutover-launcher-observation-v1.ts", import.meta.url).href;
+function observe(home: string, texts: string[], fault = "", census?: string): any {
+  const originalUrl = new URL("../../src/internal-production/baseline-deployment-cutover-launcher-observation-v1.ts", import.meta.url);
+  let url = originalUrl.href;
+  if (census !== undefined) {
+    let source = fs.readFileSync(originalUrl, "utf8");
+    const marker = 'await import("./baseline-legacy-database-census-v1.js")';
+    assert.equal(source.split(marker).length, 2);
+    const transportFile = path.join(home, "census-transport.mjs");
+    fs.writeFileSync(transportFile, `export async function observeLegacyDatabaseCensusV1(url,cold,profile){${census}}`);
+    source = source.replace(marker, `await import(${JSON.stringify(pathToFileURL(transportFile).href)})`);
+    source = source.replace('"../product-compiler/canonical-json.js"', JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href));
+    fs.writeFileSync(path.join(home, "package.json"), '{"type":"module"}');
+    const file = path.join(home, "launcher-fixture.ts");
+    fs.writeFileSync(file, source);
+    url = pathToFileURL(file).href;
+  }
   const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
     import os from "node:os"; import fs from "node:fs"; import cp from "node:child_process";
     import {inspect as render} from "node:util"; import {syncBuiltinESMExports} from "node:module";
@@ -53,24 +68,134 @@ function observe(home: string, texts: string[], fault = ""): any {
     syncBuiltinESMExports();
     try {
       const module = await import(${JSON.stringify(url)}); active = true;
-      run = module.observeDeploymentCutoverLauncherConfigurationV1;
-      const observation = run();
+      run = module.${census === undefined ? "observeDeploymentCutoverLauncherConfigurationV1" : "observeDeploymentCutoverLauncherDatabaseV1"};
+      const observation = await run();
       const frozen = value => !value || typeof value !== "object" || (Object.isFrozen(value) && Object.values(value).every(frozen));
       process.stdout.write(JSON.stringify({observation,frozen:frozen(observation),prints,conversions,evidence:evidence()}));
     } catch(error) {
       let retryError = null;
-      if (run) { try { run(); } catch (retry) { retryError = render(retry,{depth:null}); } }
+      if (run) { try { await run(); } catch (retry) { retryError = render(retry,{depth:null}); } }
       process.stdout.write(JSON.stringify({error:render(error,{depth:null}),retryError,prints,conversions,evidence:evidence()}));
     }
   `], { encoding: "utf8", env: {}, timeout: 15000 });
   assert.equal(child.status, 0, child.stderr); return JSON.parse(child.stdout);
 }
 
+test("database observation privately binds the agreed launcher URL and pre32 census", () => fixture((home, texts) => {
+  const original = secrets[0]!;
+  const agreed = original.replace(/\/fixture$/, "/setfarm");
+  for (const label of labels) {
+    const file = path.join(home, "Library", "LaunchAgents", `${label}.plist`);
+    fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(original, agreed));
+  }
+  texts = texts.map(text => text.replace(original, agreed));
+  const result = observe(home, texts, "", `
+    if(url!==${JSON.stringify(agreed)} || cold!==true || profile!=='cutover-local')throw Error('WRONG_DATABASE_TARGET');
+    return Object.freeze({activeRunCount:0});
+  `);
+  assert.equal(result.observation?.schema, "setfarm.internal-production-deployment-cutover-launcher-database-observation.v1", JSON.stringify(result));
+  assert.deepEqual(result.observation.databaseCensus, { activeRunCount: 0 });
+  assert.equal(result.observation.launcherObservation.launchers.length, 2);
+  assert.equal(result.frozen, true);
+  for (const secret of [...secrets, agreed]) assert.equal(JSON.stringify(result).includes(secret), false);
+}));
+
 test("launcher observation accepts legitimate partial plist reads", () => fixture((home, texts) => {
   const result = observe(home, texts, `const read=fs.readSync;fs.readSync=(fd,buffer,offset,length,position)=>read(fd,buffer,offset,active?Math.min(length,17):length,position);`);
   assert.equal(result.observation?.launchers.length, 2, JSON.stringify(result));
   assert.equal(result.frozen, true);
 }));
+
+test("async census close response loss consumes descriptors once and poisons retry", () => fixture((home, texts) => {
+  const original = secrets[0]!, agreed = original.replace(/\/fixture$/, "/setfarm");
+  labels.forEach((label, index) => {
+    const file = path.join(home, "Library", "LaunchAgents", `${label}.plist`);
+    fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(original, agreed));
+    texts[index] = texts[index]!.replace(original, agreed);
+  });
+  const sentinel = path.join(home, "sentinel"); fs.writeFileSync(sentinel, "sentinel");
+  const result = observe(home, texts, `
+    const close=fs.closeSync;let consumed=null,sentinelFd=null,attempts=0;
+    globalThis.censusCalls=0;
+    fs.closeSync=fd=>{
+      if(active && consumed===null && fs.fstatSync(fd).isDirectory()){consumed=fd;attempts++;close(fd);sentinelFd=fs.openSync(${JSON.stringify(sentinel)},'r');throw Error('TOKEN_SENTINEL')}
+      if(fd===consumed)attempts++;return close(fd);
+    };
+    evidence=()=>({attempts,reused:sentinelFd===consumed,alive:fs.fstatSync(sentinelFd).isFile(),calls:globalThis.censusCalls});
+  `, `globalThis.censusCalls++;await Promise.resolve();return Object.freeze({activeRunCount:0});`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.match(result.retryError, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.deepEqual(result.evidence, { attempts: 1, reused: true, alive: true, calls: 1 });
+  assert.equal(result.observation, undefined);
+  assert.doesNotMatch(JSON.stringify(result), /TOKEN_SENTINEL|PG_SENTINEL/);
+}));
+
+for (const target of ["crossed", "remote", "query", "fragment", "port", "database", "ambiguous-host"]) {
+  test(`${target} database target refuses before invoking the census`, () => fixture((home, texts) => {
+    const original = secrets[0]!;
+    const agreed = original.replace(/\/fixture$/, "/setfarm");
+    const changed = target === "ambiguous-host" ? "postgresql://u:p@remote.invalid,other.invalid@localhost/setfarm"
+      : target === "remote" ? agreed.replace("localhost", "remote.invalid")
+      : target === "query" ? `${agreed}?host=remote.invalid`
+      : target === "fragment" ? `${agreed}#private`
+      : target === "port" ? agreed.replace("localhost", "localhost:5433")
+      : target === "database" ? original : agreed.replace("PG_SENTINEL", "OTHER_PRIVATE_SENTINEL");
+    labels.forEach((label, index) => {
+      const url = target === "crossed" && index === 0 ? agreed : changed;
+      const file = path.join(home, "Library", "LaunchAgents", `${label}.plist`);
+      fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(original, url.replaceAll("&", "&amp;")));
+      texts[index] = texts[index]!.replace(original, url);
+    });
+    const result = observe(home, texts, `globalThis.censusCalls=0;evidence=()=>({calls:globalThis.censusCalls});`,
+      `globalThis.censusCalls++;throw Error('PRIVATE_CENSUS_CALLED');`);
+    assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+    assert.equal(result.evidence.calls, 0);
+    for (const secret of [...secrets, changed, "OTHER_PRIVATE_SENTINEL"]) assert.equal(JSON.stringify(result).includes(secret), false);
+  }));
+}
+
+test("asynchronous database failure closes held descriptors without exposing credentials", () => fixture((home, texts) => {
+  const original = secrets[0]!, agreed = original.replace(/\/fixture$/, "/setfarm");
+  labels.forEach((label, index) => {
+    const file = path.join(home, "Library", "LaunchAgents", `${label}.plist`);
+    fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(original, agreed));
+    texts[index] = texts[index]!.replace(original, agreed);
+  });
+  const result = observe(home, texts, `
+    const descriptors=new Set(),open=fs.openSync,close=fs.closeSync;
+    fs.openSync=(...args)=>{const fd=open(...args);if(active)descriptors.add(fd);return fd};
+    fs.closeSync=fd=>{close(fd);descriptors.delete(fd)};
+    evidence=()=>({open:descriptors.size});
+  `, `await Promise.resolve();throw Error(${JSON.stringify(agreed)},{cause:Error('TOKEN_SENTINEL')});`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.equal(result.evidence.open, 0);
+  for (const secret of [...secrets, agreed]) assert.equal(JSON.stringify(result).includes(secret), false);
+}));
+
+for (const drift of ["bytes", "file", "parent", "loaded"]) {
+  test(`${drift} drift while awaiting database census refuses the observation`, () => fixture((home, texts) => {
+    const original = secrets[0]!, agreed = original.replace(/\/fixture$/, "/setfarm");
+    labels.forEach((label, index) => {
+      const file = path.join(home, "Library", "LaunchAgents", `${label}.plist`);
+      fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(original, agreed));
+      texts[index] = texts[index]!.replace(original, agreed);
+    });
+    const file = path.join(home, "Library", "LaunchAgents", `${labels[0]}.plist`);
+    const result = observe(home, texts, `
+      let changed=false;globalThis.censusDrift=()=>{
+        if(changed)return;changed=true;
+        const file=${JSON.stringify(file)},kind=${JSON.stringify(drift)},parent=${JSON.stringify(path.dirname(file))};
+        if(kind==='bytes')fs.appendFileSync(file,'\\n');
+        if(kind==='file'){const bytes=fs.readFileSync(file);fs.renameSync(file,file+'.retained');fs.writeFileSync(file,bytes,{mode:0o600})}
+        if(kind==='parent'){fs.renameSync(parent,parent+'.retained');fs.mkdirSync(parent)}
+        if(kind==='loaded')texts[0]=texts[0].replace('not running','spawn scheduled');
+      };evidence=()=>({changed});
+    `, `await Promise.resolve();globalThis.censusDrift();return Object.freeze({activeRunCount:0});`);
+    assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+    assert.equal(result.evidence.changed, true);
+    assert.equal(result.observation, undefined);
+  }));
+}
 
 test("fixed launcher observation commits both unchanged configurations without revealing secrets", () => fixture((home, texts) => {
   const paths = labels.map(label => path.join(home, "Library", "LaunchAgents", `${label}.plist`));

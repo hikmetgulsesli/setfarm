@@ -46,7 +46,7 @@ function environment(text: string, name: string): Record<string, string> {
 
 // Diagnostic only: loaded-idle launchers are not a process/zero-owner census.
 // Secret-bearing parser values stay local and are never attached to errors.
-export function observeDeploymentCutoverLauncherConfigurationV1() {
+function holdLauncherConfigurationV1() {
   if (cleanupUncertain) fail();
   const descriptors: number[] = [], pins = new Map<string, { fd: number; stat: BigIntStats }>();
   let invalid = false;
@@ -54,6 +54,19 @@ export function observeDeploymentCutoverLauncherConfigurationV1() {
     plistIdentity: Readonly<Record<string, string>>; plistBytesHash: string; configurationHash: string;
     state: string; activeCount: 0; loadedStateHash: string }>;
   let output: Readonly<{ schema: string; launchers: readonly Entry[]; launcherObservationHash: string }> | undefined;
+  let recheck: () => void = fail;
+  let census: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusV1> = async () => fail();
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    let uncertain = false;
+    while (descriptors.length) {
+      const fd = descriptors.pop()!;
+      try { fs.closeSync(fd); } catch { cleanupUncertain = true; uncertain = true; }
+    }
+    if (uncertain) fail();
+  };
   try {
     const uid = process.getuid?.(), rawHome = userInfo().homedir;
     const home = process.platform === "darwin" && rawHome.startsWith("/var/") ? `/private${rawHome}` : rawHome;
@@ -138,11 +151,51 @@ export function observeDeploymentCutoverLauncherConfigurationV1() {
     checkPins();
     const body = { schema: "setfarm.internal-production-deployment-cutover-launcher-observation.v1", launchers: Object.freeze(launchers) };
     output = Object.freeze({ ...body, launcherObservationHash: hashCanonicalJson(body) });
+    recheck = () => {
+      if (closed || cleanupUncertain) fail();
+      checkPins();
+      for (const [index, item] of held.entries()) {
+        if (!item.read().equals(item.bytes) || !equal(item.project(), before[index]) || !item.read().equals(item.bytes)) fail();
+      }
+      checkPins();
+    };
+    census = async () => {
+      recheck();
+      const urls = held.map(item => (item.parsed.EnvironmentVariables as Record<string, string>).SETFARM_PG_URL);
+      const raw = urls[0];
+      if (!raw || urls[1] !== raw || Object.keys(process.env).some(key => key.startsWith("PG"))
+        || !/^postgres(?:ql)?:\/\/[^/?#@\s]+@(?:localhost|127\.0\.0\.1)(?::5432)?\/setfarm$/.test(raw)) fail();
+      const parsed = new URL(raw);
+      if (!["postgres:", "postgresql:"].includes(parsed.protocol)
+        || !["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)
+        || (parsed.port !== "" && parsed.port !== "5432") || parsed.pathname !== "/setfarm"
+        || parsed.search !== "" || parsed.hash !== "") fail();
+      const { observeLegacyDatabaseCensusV1 } = await import("./baseline-legacy-database-census-v1.js");
+      recheck();
+      const result = await observeLegacyDatabaseCensusV1(raw, true, "cutover-local");
+      recheck();
+      return result;
+    };
   } catch { invalid = true; }
-  while (descriptors.length) {
-    const fd = descriptors.pop()!;
-    try { fs.closeSync(fd); } catch { cleanupUncertain = true; invalid = true; }
-  }
-  if (invalid || !output) fail();
-  return output;
+  if (invalid || !output) { close(); fail(); }
+  return { observation: output, recheck, census, close };
+}
+
+export function observeDeploymentCutoverLauncherConfigurationV1() {
+  const context = holdLauncherConfigurationV1();
+  try { return context.observation; } finally { context.close(); }
+}
+
+// Credentials and held descriptors never leave this module. This read-only
+// diagnostic does not establish ownership exclusion or permission for effects.
+export async function observeDeploymentCutoverLauncherDatabaseV1() {
+  const context = holdLauncherConfigurationV1();
+  try {
+    const databaseCensus = await context.census();
+    context.recheck();
+    const body = { schema: "setfarm.internal-production-deployment-cutover-launcher-database-observation.v1",
+      launcherObservation: context.observation, databaseCensus };
+    return Object.freeze({ ...body, observationHash: hashCanonicalJson(body) });
+  } catch { fail(); }
+  finally { context.close(); }
 }

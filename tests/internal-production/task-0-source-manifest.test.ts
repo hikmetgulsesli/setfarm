@@ -1475,6 +1475,6 @@ describe("Task 0 exact source manifest", () => {
     assert.match(packageJson.scripts["test:internal-production"], /test:internal-production:pure/);
     assert.match(packageJson.scripts["test:internal-production"], /(?:^| && )npm run test:internal-production:cutover(?: && |$)/);
     assert.equal(packageJson.scripts["test:internal-production:cutover"],
-      "env -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL node --import tsx --test tests/internal-production/baseline-deployment-cutover-*.test.ts tests/internal-production/owner-admission-database-boundary-v1.test.ts");
+      "env -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL node --import tsx --test tests/internal-production/baseline-deployment-cutover-*.test.ts tests/internal-production/owner-admission-database-boundary-v1.test.ts tests/internal-production/baseline-legacy-database-census-v1.test.ts");
   });
 });
