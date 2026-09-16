@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { test } from "node:test";
@@ -90,7 +92,7 @@ for (const [fault, accepted, allocations] of [
   ["start-drift", false, 2], ["credential-drift", false, 1], ["buffer-drift", false, 2],
 ]) test(`native bridge ${fault} drains and zeros every sensitive allocation`, () => {
   const source = fs.readFileSync(helper, "utf8");
-  const request = { pid: 12345, uid: process.getuid(), gid: process.getgid(), ...expected };
+  const request = { pid: 12345, uid: process.getuid(), gid: process.getgid(), launchExecutable: expected.executable, ...expected };
   const result = spawnSync("/usr/bin/python3", ["-I", "-S", "-B", "-c", `
 import base64, ctypes, json, sys
 scope = {"__name__": "passive_home_test"}
@@ -154,20 +156,23 @@ print(json.dumps({"accepted": accepted, "allocations": len(saved), "allZero": al
   assert.deepEqual(JSON.parse(result.stdout), { accepted, allocations, allZero: true });
 });
 
-test("native bridge measures only the identity-bound owned fixture child", async () => {
+for (const linked of [false, true]) test(`native bridge measures identity-bound owned ${linked ? "symlink" : "physical"} child`, async () => {
   const executable = fs.realpathSync.native(process.execPath);
-  const argv = [executable, "-e", 'process.stdout.write("READY");setTimeout(()=>{},10000)'];
+  const directory = linked ? fs.mkdtempSync(path.join(os.tmpdir(), "cutover-passive-native-")) : null;
+  const launched = directory ? path.join(directory, "node") : executable;
+  if (directory) fs.symlinkSync(executable, launched);
+  const argv = [launched, "-e", 'process.stdout.write("READY");setTimeout(()=>{},10000)'];
   const environment = { HOME: "/fixture/account", SECRET: "NATIVE_PRIVATE_SENTINEL", PAD: "" };
   const byteLength = () => argv.reduce((n, value) => n + Buffer.byteLength(value) + 1, 0)
     + Object.entries(environment).reduce((n, [key, value]) => n + Buffer.byteLength(`${key}=${value}`) + 1, 0);
   while (byteLength() % 8 !== 1) environment.PAD += "x";
-  const child = spawn(executable, argv.slice(1), { env: environment, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(launched, argv.slice(1), { env: environment, stdio: ["ignore", "pipe", "pipe"] });
   const exited = once(child, "exit");
   try {
     const [ready] = await once(child.stdout, "data");
     assert.equal(ready.toString(), "READY");
     const source = fs.readFileSync(helper, "utf8");
-    const request = { pid: child.pid, uid: process.getuid(), gid: process.getgid(), executable, argv, environment };
+    const request = { pid: child.pid, uid: process.getuid(), gid: process.getgid(), executable, launchExecutable: launched, argv, environment };
     const measure = profile => spawnSync("/usr/bin/python3", ["-I", "-S", "-B", "-c", `
 import json, sys
 scope = {"__name__": "passive_home_test"}
@@ -196,6 +201,7 @@ except Exception as error:
     assert.equal(entry.stderr, "");
     assert.deepEqual(JSON.parse(entry.stdout), measured);
     for (const crossed of [{ ...request, uid: request.uid + 1 }, { ...request, executable: "/foreign/node" },
+      { ...request, launchExecutable: "/foreign/node" },
       { ...request, argv: [executable, "-e", "foreign"] }]) {
       const refused = measure(crossed);
       assert.equal(refused.status, 0);
@@ -212,5 +218,6 @@ except Exception as error:
     // Only this test-owned child is terminated; never a launcher-derived PID.
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
     await exited;
+    if (directory) fs.rmSync(directory, { recursive: true, force: true });
   }
 });

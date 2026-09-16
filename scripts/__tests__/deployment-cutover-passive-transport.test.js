@@ -5,7 +5,7 @@ import { test } from "node:test";
 
 const transport = new URL("../deployment-cutover-passive-home.mjs", import.meta.url);
 const python = new URL("../deployment-cutover-passive-home.py", import.meta.url);
-const request = { pid: 12345, uid: 501, gid: 20, executable: "/fixture/node", argv: ["node", "cli.js"],
+const request = { pid: 12345, uid: 501, gid: 20, executable: "/fixture/node", launchExecutable: "/fixture/node", argv: ["node", "cli.js"],
   environment: { HOME: "/fixture/account", SECRET: "PRIVATE_SENTINEL" } };
 const measured = { schema: "setfarm.internal-production-passive-home-measurement.v1", pid: 12345, ppid: 1, uid: 501, gid: 20,
   startSeconds: 1234, startMicroseconds: 5678, homeContext: "account", completeEnvironmentValidated: true, stableDoubleRead: true };

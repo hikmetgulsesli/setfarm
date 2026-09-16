@@ -103,7 +103,7 @@ The native bridge, fixed transport and authenticated source hook are delivered
 first without a new inspection endpoint. Launcher/default-owner wiring above
 remains unchecked; no blocker is removed by this supporting slice.
 
-- Focused native/parser/transport:35/35passed, including actual owned-child
+- Focused native/parser/transport:36/36passed, including actual owned-child
   entry, vanished-child refusal and all sensitive-buffer cleanup fault paths.
 - Affected bootstrap/profile group:92/92passed, including the standard genuine
   integration command. Source manifest18/18passed.
@@ -111,3 +111,11 @@ remains unchecked; no blocker is removed by this supporting slice.
 - Two independent read-only reviews cleared the helper/authentication seam;
   an outside-bootstrap import regression was added from review feedback.
 - No target launcher environment, raw secret, service/link/archive or DB effect.
+
+Pre-merge physical regression: launching the owned child through a real symlink
+failed the original single-path comparison. Darwin saves the invoked path while
+proc_pidpath reports the physical executable. The private request now requires
+both `launchExecutable` and physical `executable`; the owner must bind both to
+held Node/PATH evidence. Physical and symlink child tests pass and crossed
+launch/physical paths refuse. The92test broad group preceded this narrow fix;
+focused native/transport and Python-source bootstrap tests cover the final fix.

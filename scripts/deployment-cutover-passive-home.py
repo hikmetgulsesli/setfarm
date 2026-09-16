@@ -148,7 +148,7 @@ def measure_process(expected):
     not a capability or returned proof of launcher ownership.
     """
     if sys.platform != "darwin" or type(expected) is not dict or set(expected) != {
-            "pid", "uid", "gid", "executable", "argv", "environment"}:
+            "pid", "uid", "gid", "executable", "launchExecutable", "argv", "environment"}:
         refuse()
     if any(type(expected[key]) is not int or not 0 <= expected[key] < 2147483647 for key in ("pid", "uid", "gid")) or expected["pid"] <= 1:
         refuse()
@@ -170,7 +170,9 @@ def measure_process(expected):
     libc.proc_pidpath.restype = ctypes.c_int
     buffers = []
     pid = expected["pid"]
-    profile = {key: expected[key] for key in ("executable", "argv", "environment")}
+    # proc_pidpath reports the physical executable; saved exec strings preserve
+    # the invoked symlink path. The owner binds both through its held PATH proof.
+    profile = {"executable": expected["launchExecutable"], "argv": expected["argv"], "environment": expected["environment"]}
 
     def identity():
         info = BsdInfo()
