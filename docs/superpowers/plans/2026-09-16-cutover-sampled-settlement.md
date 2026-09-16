@@ -41,15 +41,15 @@ until a reviewed clean-main host inspection proves it.
 
 ## Execution and verification
 
-- [ ] RED: fixture sets idle synchronously after a monitor identity (only after
+- [x] RED: fixture sets idle synchronously after a monitor identity (only after
   both measurements); expect qualified samples and one private census call.
   Existing monitor rejects at its post-snapshot. Add native-error-to-idle,
   replacement PID and restarted settled generation refusal variants, no DB.
-- [ ] GREEN: set local fixed stages around each monitor operation; after a
+- [x] GREEN: set local fixed stages around each monitor operation; after a
   matching identity, if authenticated after.pid is undefined, mark settled and
   continue; otherwise require exact original PID. No native catch or retry.
-- [ ] Exercise every new finite diagnostic through owner and bootstrap.
-- [ ] Run focused launcher/owner/bootstrap, composed, broad cutover, serial
+- [x] Exercise every new finite diagnostic through owner and bootstrap.
+- [x] Run focused launcher/owner/bootstrap, composed, broad cutover, serial
   genuine, manifest, noemit, English/path and diff checks. No full npm-test claim.
 - [ ] Independent review, scoped PR/cloud review, SHA-bound merge.
 - [ ] Normal separate clean-main build; one fresh sanitized host inspection.
@@ -57,3 +57,14 @@ until a reviewed clean-main host inspection proves it.
 The original approved specification remains
 docs/superpowers/specs/2026-09-16-preserved-deployment-cutover-design.md.
 All unrelated filesystem/helper/phase/controller/journal blockers remain.
+
+## Verification evidence
+
+RED launcher5 and owner/bootstrap10 reproduced finite stage and normal-idle
+failures. Real composed monitor-idle also reproduced sampled-identity rejection
+(17630). GREEN owner52, launcher83, bootstrap diagnostic17 and composed8 passed
+(67689); additional same-PID settled restart regression passed in targeted6.
+Final broad cutover328 passed (54584), including all84 launcher tests. Manifest18,
+noemit, English1565/path892 passed (32219). Final standard serial genuine32/32
+passed in56.6s (73426). Diff check clean. Independent read-only review found no
+production blocker; its requested settled same-PID restart test was added.

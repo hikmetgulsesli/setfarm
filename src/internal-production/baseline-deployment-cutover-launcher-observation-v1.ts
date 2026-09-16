@@ -322,15 +322,24 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
         const samples = new Map<number, Readonly<Record<string, unknown>>>();
         const settled = new Set<number>();
         const checkSampled = () => {
-          const priorStage = stage; stage = "sampled-identity";
+          const priorStage = stage;
           for (const [index, sample] of samples) {
+            stage = "sampled-snapshot";
             const current = inputs.snapshot(index);
             if (current.pid === undefined) { settled.add(index); continue; }
+            stage = "sampled-generation";
             if (settled.has(index) || current.pid !== sample.pid) fail();
+            stage = "sampled-native";
             const identity = transport.identifyDeploymentCutoverPassiveProcessV1({ pid: current.pid, uid: account.uid,
               gid: account.gid, executable: nodes[index]!.observation.executablePath });
+            stage = "sampled-bind";
             if (["pid", "ppid", "uid", "gid", "startSeconds", "startMicroseconds"].some(key => identity[key] !== sample[key])) fail();
+            stage = "sampled-postcheck";
             const after = inputs.snapshot(index);
+            // Successful matching identity may be followed by normal exit. The
+            // authenticated idle transition is identical to the precheck above;
+            // native failure is never reinterpreted as exit or retried.
+            if (after.pid === undefined) { settled.add(index); continue; }
             if (after.pid !== current.pid) fail();
           }
           stage = priorStage;

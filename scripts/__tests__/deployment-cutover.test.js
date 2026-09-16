@@ -24,20 +24,22 @@ test("bootstrap refuses modified default owner before invoking it", () => fixtur
   assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: "bootstrap", stage: "source-authentication", launcherStage: null, cleanupFailed: null });
 }));
 
-for (const kind of ["valid", "acquire-unknown", "unknown-stage", "extra-field", "accessor", "raw-error", "field-accessor", "symbol-field", "foreign-prototype", "cleanup-type", "unknown-launcher", "crossed-launcher"]) {
+for (const kind of ["valid", "acquire-unknown", "unknown-stage", "extra-field", "accessor", "raw-error", "field-accessor", "symbol-field", "foreign-prototype", "cleanup-type", "unknown-launcher", "crossed-launcher", "sampled-snapshot", "sampled-generation", "sampled-native", "sampled-bind", "sampled-postcheck"]) {
   test(`bootstrap default refusal sanitizes ${kind} diagnostic`, () => fixture(root => {
     const result = run(root, ["inspect-default-context", "--json"]);
     assert.equal(result.status, 1); assert.equal(result.stdout, "");
     const lines = result.stderr.trimEnd().split("\n");
     assert.equal(lines.length, 2); assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
-    assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: ["valid", "acquire-unknown"].includes(kind) ? "default-owner" : "bootstrap",
-      stage: kind === "valid" ? "qualify" : kind === "acquire-unknown" ? "acquire-launcher" : "default-context", launcherStage: kind === "valid" ? "measure" : null, cleanupFailed: kind === "valid" ? false : null });
+    const qualified = kind === "valid" || kind.startsWith("sampled-");
+    assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: qualified || kind === "acquire-unknown" ? "default-owner" : "bootstrap",
+      stage: qualified ? "qualify" : kind === "acquire-unknown" ? "acquire-launcher" : "default-context", launcherStage: kind === "valid" ? "measure" : kind.startsWith("sampled-") ? kind : null, cleanupFailed: qualified ? false : null });
     assert.doesNotMatch(result.stderr, /PRIVATE_SENTINEL|PRIVATE_PATH|SECRET_GETTER/);
   }, undefined, { prepare(root) {
     write(root, "scripts/deployment-cutover-default-context.mjs", `export async function observeDeploymentCutoverDefaultContextV1(){
       const error=Error('PRIVATE_SENTINEL /PRIVATE_PATH');
       const value={scope:'default-owner',stage:'qualify',launcherStage:'measure',cleanupFailed:false};
       const kind=${JSON.stringify(kind)};
+      if(kind.startsWith('sampled-'))value.launcherStage=kind;
       if(kind==='acquire-unknown'){value.stage='acquire-launcher';value.launcherStage=null;value.cleanupFailed=null;}
       if(kind==='unknown-stage')value.stage='PRIVATE_SENTINEL';
       if(kind==='extra-field')value.secret='PRIVATE_SENTINEL';

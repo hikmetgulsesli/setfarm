@@ -14,7 +14,7 @@ const fail = diagnostic => {
   if (diagnostic) Object.defineProperty(error, "cutoverRefusal", { value: Object.freeze(diagnostic) });
   throw error;
 };
-const launcherStages = ["precheck", "baseline", "transport", "waiting", "sampled-identity", "identity", "pid-recheck", "measure", "measurement-bind", "settling", "idle"];
+const launcherStages = ["precheck", "baseline", "transport", "waiting", "sampled-identity", "sampled-snapshot", "sampled-generation", "sampled-native", "sampled-bind", "sampled-postcheck", "identity", "pid-recheck", "measure", "measurement-bind", "settling", "idle"];
 function launcherFailureStage(error) {
   try {
     const descriptor = Object.getOwnPropertyDescriptor(error, "cutoverLauncherStage");

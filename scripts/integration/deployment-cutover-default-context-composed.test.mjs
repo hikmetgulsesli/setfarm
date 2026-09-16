@@ -9,10 +9,10 @@ const countNames = ["activeRunCount", "openClaimCount", "executionAttemptCount",
   "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
   "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount"];
 
-for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-after-sample", "acquire-cleanup-loss", "acquire-unknown", "acquire-config-cleanup-loss"]) test(`authenticated real default composition ${fault || "success"}`, () => {
+for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-after-sample", "acquire-cleanup-loss", "acquire-unknown", "acquire-config-cleanup-loss", "monitor-idle"]) test(`authenticated real default composition ${fault || "success"}`, () => {
   retainedFixture(({ root }) => {
     const result = run(root, ["inspect-default-context", "--json"]);
-    if (fault) {
+    if (fault && fault !== "monitor-idle") {
       assert.equal(result.status, 1, result.stdout);
       assert.equal(result.stdout, "");
       const lines = result.stderr.trimEnd().split("\n");
@@ -52,6 +52,7 @@ cp.spawnSync=(executable,args,options)=>{
   }
   if(executable==='/usr/bin/python3'){
     const request=JSON.parse(options.input),measurement=request.operation==='measure';
+    if(!measurement&&fixtureSamples===2&&${JSON.stringify(fault)}==='monitor-idle')fixtureIdle=true;
     if(measurement&&${JSON.stringify(fault)}==='sample-refusal')return {status:1,signal:null,stdout:Buffer.alloc(0),stderr:Buffer.from('PRIVATE_PASSWORD')};
     const value={schema:measurement?'setfarm.internal-production-passive-home-measurement.v1':'setfarm.internal-production-passive-process-identity.v1',
       pid:request.pid,ppid:1,uid:request.uid,gid:request.gid,startSeconds:1234,startMicroseconds:56,
