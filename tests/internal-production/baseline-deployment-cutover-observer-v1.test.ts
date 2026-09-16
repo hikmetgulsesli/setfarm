@@ -81,6 +81,15 @@ test("missing descendant is observed absent without creating any directory", () 
   assert.equal(fs.existsSync(root), false);
 }));
 
+test("intent observer accepts legitimate partial reads without changing publication", () => fixture((home, root) => {
+  publishFixture(root);
+  const file = path.join(root, "intent.json"), inode = fs.lstatSync(file).ino;
+  const result = observe(home, `const read=fs.readSync;fs.readSync=(fd,buffer,offset,length,position)=>read(fd,buffer,offset,observationActive?Math.min(3,length):length,position);`);
+  assert.equal(result.state, "open", JSON.stringify(result));
+  assert.deepEqual(result.intent, JSON.parse(intentBytes.toString()));
+  assert.equal(fs.lstatSync(file).ino, inode); assert.deepEqual(fs.readFileSync(file), intentBytes);
+}));
+
 test("complete physical intent is open and remains byte-identical", () => fixture((home, root) => {
   publishFixture(root);
   assert.equal(observe(home).state, "open");

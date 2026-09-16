@@ -42,6 +42,12 @@ function observe(home: string, fault = "", retryOnFailure = false): any {
   return JSON.parse(child.stdout);
 }
 
+test("CLI observation accepts legitimate partial entry reads", () => fixture(({ home, checkout }) => {
+  const result = observe(home, `const read=fs.readSync;fs.readSync=(fd,buffer,offset,length,position)=>read(fd,buffer,offset,active?Math.min(length,3):length,position);`);
+  assert.equal(result.observation?.checkoutPath, checkout, JSON.stringify(result));
+  assert.equal(result.observation.targetBytesHash, createHash("sha256").update("fixture cli\n").digest("hex"));
+}));
+
 for (const style of ["absolute", "relative"]) {
   test(`${style} fixed CLI observation preserves link and target and returns a stable commitment`, () => fixture(({ home, checkout, target, link }) => {
     if (style === "relative") { fs.unlinkSync(link); fs.symlinkSync(path.relative(path.dirname(link), target), link); }

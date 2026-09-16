@@ -94,7 +94,12 @@ export function publishDeploymentCutoverIntentV1(input: unknown): DeploymentCuto
       const prepared = fs.fstatSync(file, { bigint: true });
       const read = (): void => {
         const buffer = Buffer.alloc(65537);
-        const length = fs.readSync(file, buffer, 0, buffer.length, 0);
+        let length = 0;
+        while (length < buffer.length) {
+          const size = fs.readSync(file, buffer, length, buffer.length - length, length);
+          if (size === 0) break;
+          length += size;
+        }
         if (!buffer.subarray(0, length).equals(bytes)) fail();
       };
       const inventory = (names: string[]): void => {

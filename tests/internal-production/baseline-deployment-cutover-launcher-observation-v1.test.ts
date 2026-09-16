@@ -66,6 +66,12 @@ function observe(home: string, texts: string[], fault = ""): any {
   assert.equal(child.status, 0, child.stderr); return JSON.parse(child.stdout);
 }
 
+test("launcher observation accepts legitimate partial plist reads", () => fixture((home, texts) => {
+  const result = observe(home, texts, `const read=fs.readSync;fs.readSync=(fd,buffer,offset,length,position)=>read(fd,buffer,offset,active?Math.min(length,17):length,position);`);
+  assert.equal(result.observation?.launchers.length, 2, JSON.stringify(result));
+  assert.equal(result.frozen, true);
+}));
+
 test("fixed launcher observation commits both unchanged configurations without revealing secrets", () => fixture((home, texts) => {
   const paths = labels.map(label => path.join(home, "Library", "LaunchAgents", `${label}.plist`));
   const bytes = paths.map(file => fs.readFileSync(file)), inodes = paths.map(file => fs.lstatSync(file).ino);

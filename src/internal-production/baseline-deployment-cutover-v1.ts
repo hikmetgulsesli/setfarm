@@ -83,7 +83,13 @@ export function observeDeploymentCutoverIntentV1(): Observation {
       const before = fs.fstatSync(fd, { bigint: true });
       if (!before.isFile() || before.uid !== BigInt(uid) || before.dev !== device || before.nlink !== 1n
         || (before.mode & 0o7777n) !== 0o600n || before.size === 0n || before.size > 65536n) fail();
-      const buffer = Buffer.alloc(65537), length = fs.readSync(fd, buffer, 0, buffer.length, 0);
+      const buffer = Buffer.alloc(65537);
+      let length = 0;
+      while (length < buffer.length) {
+        const size = fs.readSync(fd, buffer, length, buffer.length - length, length);
+        if (size === 0) break;
+        length += size;
+      }
       if (BigInt(length) !== before.size || !same(before, fs.fstatSync(fd, { bigint: true }), FILE_KEYS)
         || !same(before, fs.lstatSync(target, { bigint: true }), FILE_KEYS)) fail();
       const intent = parseDeploymentCutoverIntentV1(buffer.subarray(0, length));

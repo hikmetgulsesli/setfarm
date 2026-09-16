@@ -85,7 +85,13 @@ export function observeDeploymentCutoverLauncherConfigurationV1() {
       const read = () => {
         checkPins();
         if (!same(stat, fs.fstatSync(fd, { bigint: true }), FILE_KEYS) || !same(stat, fs.lstatSync(plistPath, { bigint: true }), FILE_KEYS)) fail();
-        const buffer = Buffer.alloc(MAX_BYTES + 1), count = fs.readSync(fd, buffer, 0, buffer.length, 0);
+        const buffer = Buffer.alloc(MAX_BYTES + 1);
+        let count = 0;
+        while (count < buffer.length) {
+          const size = fs.readSync(fd, buffer, count, buffer.length - count, count);
+          if (size === 0) break;
+          count += size;
+        }
         if (BigInt(count) !== stat.size || !same(stat, fs.fstatSync(fd, { bigint: true }), FILE_KEYS)
           || !same(stat, fs.lstatSync(plistPath, { bigint: true }), FILE_KEYS)) fail();
         checkPins(); return buffer.subarray(0, count);

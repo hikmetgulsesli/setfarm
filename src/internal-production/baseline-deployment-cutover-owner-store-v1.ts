@@ -103,7 +103,13 @@ function withStore(create: boolean, body: (store: Store | null, ancestorIdentity
           const stat = fs.fstatSync(fd, { bigint: true });
           if (!stat.isFile() || stat.uid !== BigInt(uid) || stat.dev !== device || (stat.mode & 0o7777n) !== 0o600n
             || ![1n, 2n].includes(stat.nlink) || stat.size < 0n || stat.size > BigInt(MAX_BYTES)) fail();
-          const buffer = Buffer.alloc(MAX_BYTES + 1), length = fs.readSync(fd, buffer, 0, buffer.length, 0);
+          const buffer = Buffer.alloc(MAX_BYTES + 1);
+          let length = 0;
+          while (length < buffer.length) {
+            const size = fs.readSync(fd, buffer, length, buffer.length - length, length);
+            if (size === 0) break;
+            length += size;
+          }
           if (BigInt(length) !== stat.size || !same(stat, fs.fstatSync(fd, { bigint: true })) || !same(stat, fs.lstatSync(target, { bigint: true }))) fail();
           checkPins(); return { bytes: buffer.subarray(0, length), stat };
         });
@@ -178,7 +184,13 @@ function withStore(create: boolean, body: (store: Store | null, ancestorIdentity
           const prepared = fs.fstatSync(fd, { bigint: true });
           if (!same(initial, prepared, DIRECTORY_KEYS) || prepared.nlink !== 1n || prepared.size !== BigInt(bytes.length)) fail();
           const verify = (expected: BigIntStats, paths: string[]) => {
-            checkPins(); const buffer = Buffer.alloc(MAX_BYTES + 1), length = fs.readSync(fd, buffer, 0, buffer.length, 0);
+            checkPins(); const buffer = Buffer.alloc(MAX_BYTES + 1);
+            let length = 0;
+            while (length < buffer.length) {
+              const size = fs.readSync(fd, buffer, length, buffer.length - length, length);
+              if (size === 0) break;
+              length += size;
+            }
             if (!buffer.subarray(0, length).equals(bytes) || !same(expected, fs.fstatSync(fd, { bigint: true }))
               || paths.some(file => !same(expected, fs.lstatSync(file, { bigint: true })))) fail();
             checkPins();

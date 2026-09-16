@@ -51,6 +51,17 @@ function run(home: string, input: unknown = intent, fault = "", observeOnly = fa
   return JSON.parse(result.stdout);
 }
 
+test("intent publication accepts legitimate partial staging and replay reads", () => fixture((home, root) => {
+  const hook = `const read=fs.readSync;let partialReads=0;fs.readSync=(fd,buffer,offset,length,position)=>{if(active)partialReads++;return read(fd,buffer,offset,active?Math.min(3,length):length,position)};inspect=()=>({partialReads});`;
+  const first = run(home, intent, hook);
+  assert.equal(first.published?.cutoverIntentHash, intent.cutoverIntentHash, JSON.stringify(first));
+  assert.equal(first.state, "open"); assert.equal(first.ordinaryError, "DEPLOYMENT_CUTOVER_ORDINARY_START_REFUSED");
+  assert.ok(first.evidence.partialReads > 1);
+  const file = path.join(root, "intent.json"), inode = fs.lstatSync(file).ino;
+  assert.equal(run(home, intent, hook).state, "open");
+  assert.equal(fs.lstatSync(file).ino, inode); assert.deepEqual(fs.readFileSync(file), bytes);
+}));
+
 test("publication creates durable refusal and exact finalized replay preserves its inode", () => fixture((home, root) => {
   const first = run(home);
   assert.equal(first.state, "open", JSON.stringify(first));

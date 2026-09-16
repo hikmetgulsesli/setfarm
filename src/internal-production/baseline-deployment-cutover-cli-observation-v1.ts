@@ -86,7 +86,13 @@ export function observeDeploymentCutoverCliLinkV1() {
     descriptors.push(fd);
     if (!same(before, fs.fstatSync(fd, { bigint: true }), FILE_KEYS)) fail();
     assertLink();
-    const buffer = Buffer.alloc(MAX_ENTRY_BYTES + 1), length = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    const buffer = Buffer.alloc(MAX_ENTRY_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const size = fs.readSync(fd, buffer, length, buffer.length - length, length);
+      if (size === 0) break;
+      length += size;
+    }
     if (BigInt(length) !== before.size || !same(before, fs.fstatSync(fd, { bigint: true }), FILE_KEYS)
       || !same(before, fs.lstatSync(targetPath, { bigint: true }), FILE_KEYS)) fail();
     assertLink();

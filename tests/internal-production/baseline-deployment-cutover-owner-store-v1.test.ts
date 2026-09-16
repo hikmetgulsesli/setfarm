@@ -43,6 +43,19 @@ function run(home: string, input: unknown = claim(), fault = "", observeOnly = f
   assert.equal(child.status, 0, child.stderr); return JSON.parse(child.stdout);
 }
 
+for (const seeded of [false, true]) {
+  test(`owner store accepts legitimate partial ${seeded ? "snapshot" : "publication"} reads`, () => fixture((home, root) => {
+    if (seeded) assert.equal(run(home).observation?.claims.length, 1);
+    const file = path.join(root, "owner-0001.json"), inode = seeded ? fs.lstatSync(file).ino : null;
+    const hook = `const read=fs.readSync;let partialReads=0;fs.readSync=(fd,buffer,offset,length,position)=>{if(active)partialReads++;return read(fd,buffer,offset,active?Math.min(3,length):length,position)};evidence=()=>({partialReads});`;
+    const result = run(home, claim(), hook, seeded);
+    assert.equal(result.observation?.claims[0].ownerClaimHash, claim().ownerClaimHash, JSON.stringify(result));
+    assert.ok(result.evidence.partialReads > 1);
+    assert.deepEqual(fs.readFileSync(file), encodeDeploymentCutoverOwnerClaimV1(claim()));
+    if (seeded) assert.equal(fs.lstatSync(file).ino, inode);
+  }));
+}
+
 test("owner store publishes private history and exact replay preserves committed identity", () => fixture((home, root) => {
   const first = run(home);
   assert.equal(first.observation?.claims[0].ownerClaimHash, claim().ownerClaimHash, JSON.stringify(first));
