@@ -130,16 +130,18 @@ function holdLauncherConfigurationV1(defaultMode = false) {
         const text = command("/bin/launchctl", ["print", `gui/${uid}/${label}`]);
         if (!text.startsWith(`gui/${uid}/${label} = {\n`) || !text.endsWith("}\n")) fail();
         const state = scalar(text, "state");
-        const running = defaultMode && state === "running";
+        // xpcproxy is occupied startup, not idle and never a Node sample target.
+        // Only the separate default observer tolerates this natural transition.
+        const occupied = defaultMode && (state === "running" || state === "xpcproxy");
         let pid: number | undefined;
-        if (running) {
+        if (occupied) {
           const rawPid = scalar(text, "pid");
           if (!/^[1-9][0-9]*$/.test(rawPid)) fail();
           pid = Number(rawPid);
           if (!Number.isSafeInteger(pid) || pid <= 1) fail();
         }
-        if ((!running && state !== "not running" && state !== "spawn scheduled") || scalar(text, "active count") !== (running ? "1" : "0")
-          || (!running && /^\tpid = /m.test(text)) || scalar(text, "type") !== "LaunchAgent" || scalar(text, "path") !== plistPath
+        if ((!occupied && state !== "not running" && state !== "spawn scheduled") || scalar(text, "active count") !== (occupied ? "1" : "0")
+          || (!occupied && /^\tpid = /m.test(text)) || scalar(text, "type") !== "LaunchAgent" || scalar(text, "path") !== plistPath
           || scalar(text, "program") !== program || !equal(block(text, "arguments"), args)
           || scalar(text, "run interval") !== "60 seconds" || !scalar(text, "properties").split(" | ").includes("runatload")) fail();
         const loaded = environment(text, "environment"), inherited = environment(text, "inherited environment"), defaults = environment(text, "default environment");
@@ -148,7 +150,7 @@ function holdLauncherConfigurationV1(defaultMode = false) {
           || (!defaultMode && inherited.SETFARM_ENV_DIR !== path.join(home, "ai", "setrox", "setfarm", "scripts"))
           || !/^\/var\/run\/com\.apple\.launchd\.[A-Za-z0-9]+\/Listeners$/.test(inherited.SSH_AUTH_SOCK ?? "")
           || !exact(defaults, ["PATH"]) || defaults.PATH !== "/usr/bin:/bin:/usr/sbin:/sbin") fail();
-        return { state, activeCount: running ? 1 : 0, ...(pid === undefined ? {} : { pid }), loaded, inherited, defaults };
+        return { state, activeCount: occupied ? 1 : 0, ...(pid === undefined ? {} : { pid }), loaded, inherited, defaults };
       };
       return { label, plistPath, stat, args, parsed, bytes, read, project };
     });
@@ -328,7 +330,7 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
             const current = inputs.snapshot(index);
             if (current.pid === undefined) { settled.add(index); continue; }
             stage = "sampled-generation";
-            if (settled.has(index) || current.pid !== sample.pid) fail();
+            if (settled.has(index) || current.pid !== sample.pid || current.state !== "running") fail();
             stage = "sampled-native";
             const identity = transport.identifyDeploymentCutoverPassiveProcessV1({ pid: current.pid, uid: account.uid,
               gid: account.gid, executable: nodes[index]!.observation.executablePath });
@@ -340,7 +342,7 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
             // authenticated idle transition is identical to the precheck above;
             // native failure is never reinterpreted as exit or retried.
             if (after.pid === undefined) { settled.add(index); continue; }
-            if (after.pid !== current.pid) fail();
+            if (after.pid !== current.pid || after.state !== "running") fail();
           }
           stage = priorStage;
         };
@@ -352,7 +354,7 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
             if (samples.has(index)) continue;
             stage = "waiting";
             const snapshot = inputs.snapshot(index);
-            if (snapshot.pid === undefined) continue;
+            if (snapshot.pid === undefined || snapshot.state !== "running") continue;
             const node = nodes[index]!.observation;
             const request = { pid: snapshot.pid, uid: account.uid, gid: account.gid, executable: node.executablePath };
             stage = "identity";

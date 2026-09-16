@@ -159,8 +159,73 @@ test("default launcher binds both passive generations before fresh idle and priv
   assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL|SocketSentinel|plistBytesHash|configurationHash|loadedStateHash|launcherObservationHash/);
 }));
 
+for (const kind of ["startup", "startup-active-zero", "startup-no-pid", "unknown-startup", "startup-baseline", "startup-deadline"]) {
+  test(`default ${kind} is occupied but never eligible for native sampling`, () => defaultFixture((home, texts) => {
+    const result = observe(home, texts, `
+      const kind=${JSON.stringify(kind)},command=cp.spawnSync,identify=globalThis.identify;
+      let starting=true,scheduled=false,startupSnapshots=0,nativeDuringStartup=0;
+      if(kind==='startup-deadline'){let tick=0;performance.now=()=>tick+=40000}
+      cp.spawnSync=(exe,args,options)=>{
+        const value=command(exe,args,options);
+        if(exe==='/bin/launchctl'&&globalThis.allowRunning&&starting){
+          startupSnapshots++;
+          if(!scheduled&&kind!=='startup-deadline'){scheduled=true;setTimeout(()=>{starting=false},0)}
+          let text=value.stdout.toString().replace('state = running','state = '+(kind==='unknown-startup'?'unknown startup':'xpcproxy'));
+          if(kind==='startup-active-zero')text=text.replace('active count = 1','active count = 0');
+          if(kind==='startup-no-pid')text=text.replace(/\\tpid = [0-9]+\\n/,'');
+          return {...value,stdout:Buffer.from(text)};
+        }
+        return value;
+      };
+      globalThis.identify=request=>{if(starting){nativeDuringStartup++;throw Error('TOKEN_SENTINEL')}return identify(request)};
+      evidence=()=>({startupSnapshots,nativeDuringStartup,dbCalls:globalThis.dbCalls,samples:globalThis.samples,nodeCloses:globalThis.nodeCloses});
+    `, undefined, `${kind === "startup-baseline" ? "globalThis.allowRunning=true;" : ""}const qualification=await context.qualifyPassiveHome();await context.census();return qualification;`);
+    assert.ok(result.evidence.startupSnapshots > 0, JSON.stringify(result));
+    assert.equal(result.evidence.nativeDuringStartup, 0); assert.equal(result.evidence.nodeCloses, 2);
+    if (kind === "startup") {
+      assert.equal(result.error, undefined, JSON.stringify(result));
+      assert.equal(result.observation.samples.length, 2); assert.equal(result.evidence.dbCalls, 1);
+    } else {
+      assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+      assert.equal(result.evidence.samples, 0); assert.equal(result.evidence.dbCalls, 0);
+      if (kind === "startup-baseline") assert.equal(result.launcherStage, "baseline");
+      if (kind === "startup-deadline") assert.equal(result.launcherStage, "waiting");
+    }
+    assert.doesNotMatch(JSON.stringify(result), /TOKEN_SENTINEL|PG_SENTINEL/);
+  }));
+}
+
+test("default acquisition does not treat xpcproxy as idle", () => defaultFixture((home, texts) => {
+  texts[0] = texts[0]!.replace('state = not running', 'state = xpcproxy').replace('active count = 0', 'active count = 1').slice(0, -2) + '\tpid = 12345\n}\n';
+  const result = observe(home, texts, `evidence=()=>({samples:globalThis.samples,dbCalls:globalThis.dbCalls});`, undefined, `await context.qualifyPassiveHome();return context.observation;`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.deepEqual(result.evidence, { samples: 0, dbCalls: 0 });
+}));
+
+test("strict launcher observation still rejects xpcproxy", () => fixture((home, texts) => {
+  texts[0] = texts[0]!.replace('state = not running', 'state = xpcproxy').replace('active count = 0', 'active count = 1').slice(0, -2) + '\tpid = 12345\n}\n';
+  const result = observe(home, texts);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+}));
+
+test("sampled startup regression refuses before another native identity call", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts, `
+    const command=cp.spawnSync,identify=globalThis.identify;let identities=0;
+    globalThis.identify=request=>{identities++;return identify(request)};
+    cp.spawnSync=(exe,args,options)=>{
+      const value=command(exe,args,options);
+      if(exe==='/bin/launchctl'&&globalThis.samples===2&&args[1].endsWith('setfarm-spawner'))
+        return {...value,stdout:Buffer.from(value.stdout.toString().replace('state = running','state = xpcproxy'))};
+      return value;
+    };
+    evidence=()=>({identities,samples:globalThis.samples,dbCalls:globalThis.dbCalls});
+  `, undefined, `await context.qualifyPassiveHome();await context.census();return context.observation;`);
+  assert.equal(result.launcherStage, "sampled-generation", JSON.stringify(result));
+  assert.deepEqual(result.evidence, { identities: 2, samples: 2, dbCalls: 0 });
+}));
+
 for (const [transition, expectedStage] of [["idle", null], ["native-error", "sampled-native"],
-  ["identity-mismatch", "sampled-bind"], ["replacement", "sampled-postcheck"], ["malformed-idle", "sampled-postcheck"], ["settled-restart", "sampled-generation"]] as const) {
+  ["identity-mismatch", "sampled-bind"], ["replacement", "sampled-postcheck"], ["malformed-idle", "sampled-postcheck"], ["sampled-startup", "sampled-postcheck"], ["settled-restart", "sampled-generation"]] as const) {
   test(`sampled monitor ${transition} preserves authenticated settlement and refusal boundaries`, () => defaultFixture((home, texts) => {
     const result = observe(home, texts, `
       const transition=${JSON.stringify(transition)},identify=globalThis.identify,command=cp.spawnSync;
@@ -181,6 +246,7 @@ for (const [transition, expectedStage] of [["idle", null], ["native-error", "sam
         if(monitored&&exe==='/bin/launchctl'&&args[1].endsWith('setfarm-spawner')){
           if(transition==='replacement')return {...value,stdout:Buffer.from(value.stdout.toString().replace('pid = 12345','pid = 22345'))};
           if(transition==='malformed-idle')return {...value,stdout:Buffer.from(value.stdout.toString().replace('state = running','state = spawn scheduled'))};
+          if(transition==='sampled-startup')return {...value,stdout:Buffer.from(value.stdout.toString().replace('state = running','state = xpcproxy'))};
         }
         return value;
       };

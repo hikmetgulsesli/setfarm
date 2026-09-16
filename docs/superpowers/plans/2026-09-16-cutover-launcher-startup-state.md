@@ -37,16 +37,28 @@ No service start/stop, signals, links, archives, DB writes or intent publication
 - scripts/integration/deployment-cutover-default-context-composed.test.mjs:
   real authenticated composition sees startup transition before running.
 
-- [ ] RED positive startup lifecycle in launcher and composed graph; assert
+- [x] RED positive startup lifecycle in launcher and composed graph; assert
   no native sampling before running, and later same-generation sample/census.
-- [ ] GREEN parse xpcproxy only with default mode and active1/validPID; unsampled
+- [x] GREEN parse xpcproxy only with default mode and active1/validPID; unsampled
   loop skips non-running, sampled pre/post checks require running or proven idle.
-- [ ] Negative startup active0/missingPID, unknown state, initial occupied,
+- [x] Negative startup active0/missingPID, unknown state, initial occupied,
   sampled xpcproxy and unchanged strict-mode behavior remain refusals/no DB.
-- [ ] Focused tests, broadcutover, serialgenuine, manifest, noemit and contracts.
+- [x] Focused tests, broadcutover, serialgenuine, manifest, noemit and contracts.
 - [ ] Independent/cloud review, SHA-bound merge, separate normal clean-main build.
 - [ ] One fresh sanitized host epoch; qualify or act on new actual evidence.
 
 Spec: docs/superpowers/specs/2026-09-16-preserved-deployment-cutover-design.md.
 All other held absence/source/controller/filesystem/helper/phase/journal gates
 remain. Never equate this parser compatibility with complete host qualification.
+
+## Verification ledger
+
+RED positive launcher and composed88850 reproduced the unsupported state at
+transport recheck. Focused launcher91 and composed9 passed61600. Independent
+review found no invariant defects; added occupied baseline, persistent startup
+deadline and sampled-startup-before-monitor cases. First latter fixture changed
+both labels and correctly hit earlier second-label pid-recheck; narrowed injection
+to the already-sampled first label, proving sampled-generation with no extra
+native calls. Final broadcutover338 (includes launcher94) and serialgenuine33 in
+62.7s passed15950. Manifest18, noemit, English1566/path892 passed33982; final
+noemit/diffcheck40507 passed after all test edits. No full npm-test claim.
