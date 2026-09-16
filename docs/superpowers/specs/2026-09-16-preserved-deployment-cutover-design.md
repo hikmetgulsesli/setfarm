@@ -216,6 +216,17 @@ not an arbitrary same-user actor deliberately launching a retired executable.
   fixed two-launcher read-only physical/configuration bracket without deployment
   root agreement; secret-free durable and transient commitments. Loaded-idle
   launcher state is not an absent-process or zero-owner proof.
+  Its zero-input async database entry retains the same private descriptors and
+  loaded configuration across the full census. Require agreed single-authority
+  loopback/default5432 `/setfarm` credentials, no ambient PG settings, and actual
+  driver-option target agreement. Never expose a credential getter. Every error
+  is sanitized; close uncertainty consumes descriptors once and poisons retry.
+- New `src/internal-production/baseline-legacy-database-census-v1.ts` and test:
+  import-inert extraction of the receipt's complete catalog/APRB/13-count/finding
+  inventory census. Existing receipt wrapper retains its default behavior;
+  cutover uses a strict optional internal profile and pre32 catalog absence.
+  Real driver constructor options are checked before the read-only transaction;
+  debug/notices are suppressed, and bounded connection close remains mandatory.
 - New `tests/internal-production/baseline-deployment-cutover-launcher-observation-v1.test.ts`:
   real plist conversion, config drift, secret containment and close-loss tests.
 - New `src/internal-production/baseline-deployment-cutover-cli-observation-v1.ts`:
@@ -247,6 +258,10 @@ not an arbitrary same-user actor deliberately launching a retired executable.
   authority or treats an idle launcher as zero-owner evidence.
   Selected on-disk build evidence sits inside that bracket and in the host hash.
   It does not authenticate the dashboard's loaded modules or authorize effects.
+  `inspect-database --json` additionally invokes the held launcher/database
+  observation and binds it to the same pre/post host bracket and host hash.
+  It retains missing filesystem/helper/phase and controller-ownership blockers.
+  The other two inspection modes do not connect to the database.
 - Reuse reviewed maintenance journal/owner observation primitives only where
   their historical/physical contract fits. Add physical owner-death evidence and
   safe release/recovery semantics before any live cleanup that needs them.

@@ -15866,6 +15866,11 @@ async function finalizedColdRecoveryControllerFixtureV1(oldPrepareWithoutColdRec
         assert.equal(source.split(anchor).length, 2);
         source = source.replace(anchor, 'import { execFile } from "./cold-recovery-fixture-transport.js";');
       }
+      if (relative === "internal-production/baseline-legacy-database-census-v1.ts") {
+        const sqlAnchor = 'const postgresModule = await import("postgres");';
+        assert.equal(source.split(sqlAnchor).length, 2);
+        source = source.replace(sqlAnchor, legacyDatabaseCensusSqlTransportFixtureV1(JSON.stringify([legacyDatabaseCensusRow()])));
+      }
       if (relative === "internal-production/baseline-post-handoff-receipt-v1.ts") {
         if (oldPrepareWithoutColdRecovery) {
           // Restore the exact pre-6c37dc4a public preparation control edge.
@@ -15886,9 +15891,6 @@ async function finalizedColdRecoveryControllerFixtureV1(oldPrepareWithoutColdRec
         assert.equal(source.split(httpAnchor).length, 2);
         source = source.replace(httpAnchor, 'import { httpRequest } from "./cold-recovery-fixture-transport.js";');
         const sqlAnchor = 'const postgresModule = await import("postgres");';
-        const census = topLevelFunctionRegionV1(source, "observeLegacyDatabaseCensusV1");
-        assert.equal(census.split(sqlAnchor).length, 2);
-        source = source.replace(census, census.replace(sqlAnchor, legacyDatabaseCensusSqlTransportFixtureV1(JSON.stringify([legacyDatabaseCensusRow()]))));
         const database = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleProgressDatabaseTransactionNoWriteV1");
         assert.equal(database.split(sqlAnchor).length, 2);
         const queryRows = phase5cSRowTailPhysicalQueryRowsFixtureV1("database", PHASE5C_S_NONBLOCKED_ROWS_V1[0]!);
@@ -15948,6 +15950,7 @@ async function finalizedColdRecoveryControllerFixtureV1(oldPrepareWithoutColdRec
     };
     for (const relative of [
       "internal-production/baseline-post-handoff-receipt-v1.ts",
+      "internal-production/baseline-legacy-database-census-v1.ts",
       "internal-production/baseline-restart-authority-retirement-v1.ts",
       "internal-production/baseline-spawner-startup-admission-v1.ts",
       "internal-production/baseline-service-restart-helper-v1.ts",
@@ -17206,8 +17209,9 @@ function legacyDatabaseCensusSqlTransportFixtureV1(
 ): string {
   return `const fixtureRows=${rowsExpression};
     const coldQueryOffset=coldBootstrap ? 1 : 0;
-    let queryCalls=0;
+    let queryCalls=0, constructed=false, begun=false, ended=false;
     const fixtureSql=Object.assign(async (strings: readonly string[]) => {
+      if(!constructed || !begun || ended) throw new Error("DATABASE_QUERY_OUTSIDE_SNAPSHOT");
       queryCalls+=1;
       const query=Array.from(strings).join("?");
       if(coldBootstrap && queryCalls===3){
@@ -17253,29 +17257,45 @@ function legacyDatabaseCensusSqlTransportFixtureV1(
       return fixtureRows;
     }, {
       begin: async (mode: unknown, callback: (tx: unknown) => Promise<unknown>) => {
-        if(mode!=="isolation level repeatable read read only") throw new Error("WRONG_DATABASE_SNAPSHOT_MODE");
+        if(!constructed || begun || ended || mode!=="isolation level repeatable read read only") throw new Error("WRONG_DATABASE_SNAPSHOT_MODE");
+        begun=true;
         return callback(fixtureSql);
       },
-      end: async () => {if(queryCalls!==3 && queryCalls!==3+coldQueryOffset && queryCalls!==6+coldQueryOffset) throw new Error("WRONG_DATABASE_QUERY_COUNT");},
+      end: async (options: {timeout?:number}) => {
+        if(ended || options.timeout!==1 || Object.keys(options).length!==1) throw new Error("WRONG_DATABASE_CLOSE");
+        ended=true;
+        if(queryCalls!==3 && queryCalls!==3+coldQueryOffset && queryCalls!==6+coldQueryOffset) throw new Error("WRONG_DATABASE_QUERY_COUNT");
+      },
     });
-    const postgresModule={default:()=>fixtureSql};`;
+    const postgresModule={default:(url:unknown, options:Record<string,unknown>)=>{
+      if(constructed || url!==databaseUrl || options.max!==1 || options.idle_timeout!==1 || options.connect_timeout!==5) throw new Error("WRONG_DATABASE_CONNECTION_OPTIONS");
+      if(options.debug!==false || typeof options.onnotice!=="function") throw new Error("DATABASE_NOTICE_SUPPRESSION_MISSING");
+      options.onnotice({message:"PRIVATE_DATABASE_NOTICE_CANARY"});
+      constructed=true;
+      process.once("beforeExit",()=>{if(!ended)throw new Error("DATABASE_CONNECTION_NOT_CLOSED")});
+      return fixtureSql;
+    }};`;
 }
 
 function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown>[], coldCatalogRows?: readonly Record<string, unknown>[]): string {
   const root = mkdtempSync(path.join(tmpdir(), "setfarm-p4-legacy-census-"));
   let source = readFileSync(observerSource, "utf8");
+  let censusSource = readFileSync(path.join(sourceRoot, "src/internal-production/baseline-legacy-database-census-v1.ts"), "utf8");
   // Execute the actual pure publication validator from its dependency-complete
   // source tree; only the PostgreSQL transport below is a bounded test double.
-  source = source.replace('await import("../findings/finding-publication-v1.js")',
+  assert.equal(censusSource.split('await import("../findings/finding-publication-v1.js")').length, 2);
+  censusSource = censusSource.replace('await import("../findings/finding-publication-v1.js")',
     `await import(${JSON.stringify(pathToFileURL(path.join(sourceRoot, "src/findings/finding-publication-v1.ts")).href)})`);
   source = source.replace(
     "async function observeLegacyDatabaseCensusV1(coldBootstrap = false)",
     "export async function observeLegacyDatabaseCensusV1(coldBootstrap = false)",
   );
-  source = source.replace(
+  assert.equal(censusSource.split('const postgresModule = await import("postgres");').length, 2);
+  censusSource = censusSource.replace(
     'const postgresModule = await import("postgres");',
     legacyDatabaseCensusSqlTransportFixtureV1(undefined, coldCatalogRows),
   );
+  fixtureFile(root, "src/internal-production/baseline-legacy-database-census-v1.ts", censusSource);
   fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
   fixtureFile(
     root,
