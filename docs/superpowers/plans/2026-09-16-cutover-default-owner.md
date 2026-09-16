@@ -39,6 +39,15 @@ Xcode Python/Darwin measurement. No new installed dependency or native build.
   raw environment, credential or credential-derived hash in returned evidence.
 - Sampled running retries require a subsequent fresh idle/process-zero census.
   Filesystem/helper phase and controller exclusion remain separate blockers.
+- Saved initial stack bytes are not current `getenv`. Reviewed retained startup
+  replaces live PATH (`dist/runtime-config.js:83`) and Playwright DEBUG; no
+  HOME/PG/root-selector replacement is admitted. Held env-file absence excludes
+  the runtime-config file-assignment branch. Trusted Node/libsystem behavior
+  preserves initial unowned stack strings during these live replacements.
+  Apple reference: https://github.com/apple-oss-distributions/Libc/blob/main/stdlib/FreeBSD/setenv.c
+  Actual owned-Node mutation regression confirms original-stack measurement after
+  shorter/longer PATH replacement and DEBUG set/delete on this host; this does
+  not turn mutable stack evidence into immutable exec history or exclusion.
 
 ## File map
 
@@ -51,48 +60,80 @@ Xcode Python/Darwin measurement. No new installed dependency or native build.
 - `scripts/deployment-cutover-default-context.mjs`: zero-input owning conjunction.
 - Bootstrap/fixture/test files: authenticate new owner; full composed lifetimes,
   no DB before all qualification and unchanged existing diagnostics.
+- `scripts/integration/deployment-cutover-default-context-composed.test.mjs` and
+  standard serial genuine command: real authenticated owner/selected/profile/
+  resolution/absence/launcher/transport graph; only external OS/Node and DB
+  boundaries substituted. Test artifacts stay inside independently owned fixtures.
 
 ## Task1: Native generation and finite profile
 
-- [ ] Add identity-only failing test with sysctl env reads trapped; implement
+- [x] Add identity-only failing test with sysctl env reads trapped; implement
   `identify_process({pid,uid,gid,executable})` returning only identity fields.
-- [ ] Require `expectedStartSeconds` and `expectedStartMicroseconds` for native
+- [x] Require `expectedStartSeconds` and `expectedStartMicroseconds` for native
   environment measurement; mismatched first identity refuses before sysctl.
   Trap env reads in the stale-generation regression, then test mid-read drift.
-- [ ] Add `optionalEnvironment` exact-value map bounded by the fixed optional
+- [x] Add `optionalEnvironment` exact-value map bounded by the fixed optional
   name list. Require mandatory HOME and full observed membership in the finite
   family. Test wrong optional values, unknown keys and optional presence drift.
-- [ ] Add fixed `identifyDeploymentCutoverPassiveProcessV1(request)` transport;
+- [x] Add fixed `identifyDeploymentCutoverPassiveProcessV1(request)` transport;
   operation-tagged private stdin, exact output schema and scalar checks. Update
   real owned physical/symlink test to identify first, then measure same generation.
-- [ ] Run focused native/transport and authenticated-source bootstrap tests.
+- [x] Run focused native/transport and authenticated-source bootstrap tests.
+  Initial43/43 and Python-source5/5 passed. Later owned mutation case also passed.
 
 ## Task2: Held default launcher
 
-- [ ] Add failing tests for zero-input `holdDeploymentCutoverDefaultLauncherV1()`.
+- [x] Add failing tests for zero-input `holdDeploymentCutoverDefaultLauncherV1()`.
   Interface: `observation`, `qualifyPassiveHome()`, `recheck()`, `census()`, `close()`.
   `census()` refuses until both private samples and fresh idle qualification.
-- [ ] Factor shared physical plist checking without changing strict wrappers.
+- [x] Factor shared physical plist checking without changing strict wrappers.
   Default config accepts only exact current inheritedSSH profile; state may move
   through reviewed idle/running retry transitions without changing configuration.
-- [ ] Bind account uid/gid/home/username/shell and getconf before/after sampling;
+- [x] Bind account uid/gid/home/username/shell and getconf before/after sampling;
   hold each configured PATH's Node identity. Build mandatory/optional maps privately.
-- [ ] Derive PID from fixed labels; identity-only probe, label recheck, generation-
+- [x] Derive PID from fixed labels; identity-only probe, label recheck, generation-
   bound env probe, label recheck. Expected argv comes from reviewed env-node CLI
   invocation. No unexplained native-refusal retry within the same held context.
-- [ ] Test PID/generation/path/argv/config/account/temp drift, one-label-only,
+- [x] Test PID/generation/path/argv/config/account/temp drift, one-label-only,
   native timeout, credential secrecy and complete resource drain.
 
 ## Task3: Owning conjunction and proportional delivery
 
-- [ ] Add failing full-owner tests, then implement zero-input
+- [x] Add failing full-owner tests, then implement zero-input
   `observeDeploymentCutoverDefaultContextV1()`. Hold retained profile/resolution,
   env absence and default launcher together; cross-check CLI/account, qualify
   samples, fresh idle/process-zero, private pre32 census, reverse recheck/drain.
-- [ ] Authenticate owner in bootstrap and expose only completed composed evidence.
+- [x] Authenticate owner in bootstrap and expose only completed composed evidence.
   Test every failed conjunction prevents DB; preserve unresolved phase/controller
   blockers and all existing standalone snapshot behavior.
 - [ ] Independent review, focused native/launcher/full-owner tests, affected
   bootstrap group, noemit/contracts, reviewed scoped PR and clean-main build.
 - [ ] Only then attempt bounded passive host qualification and record actual
   evidence. No full-goal completion or live transition without remaining gates.
+
+## Verification and review ledger
+
+- Native/transport43/43, then actual owned live-PATH/DEBUG replacement regression
+  passed; final combined native/bootstrap/owner119/119 passed (session94505).
+- Launcher68/68 and broader cutover312/312 passed; noemit passed. Independent
+  reviewer found account double-read acquisition race and sampled-PID replacement
+  waiting gap. Failing regressions reproduced both; single account baseline and
+  monitoring of sampled generations fixed them. Re-review found no blockers.
+- Full launcher intermediate65/66 exposed optional `pid:undefined` canonical
+  hashing during initially idle configuration. Omit absent PID; final68/68 passed.
+- Owner final20/20 covers joins, partial acquisition, failed awaits, malformed/
+  nonzero counts, concurrency, reverse drain and sticky close uncertainty.
+- Authenticated composed fixture3/3 passed (session25596), including two failures
+  before DB. Review identified socket-sentinel assertion typo; corrected to the
+  actual fixture sentinel. Standard serial integration gate remains in progress.
+- Source manifest18/18; English1561/path891 passed. New endpoint is observation
+  only. No actual launcher environment read, live service/link/archive effects,
+  or database mutation; PR, clean-main build, host qualification still pending.
+- Final standard serial genuine gate27/27 (85s), retained-profile suite32/32
+  including nested standard command passed9468; corrected secrecy assertion
+  positive passed47498. Prior overlapping retained suite33703 had31/32 and lost
+  its nested child stdout; do not reinterpret it as green. Independent genuine
+  groups must not overlap account-HOME absence pins. Parent assertions now expose
+  failed child stdout; timeout150s accounts for the three added integration cases.
+- Final noemit34702 and diff checks passed. Independent final owner/composed
+  review found no blocking findings. Ready for scoped reviewed PR, not rollout.

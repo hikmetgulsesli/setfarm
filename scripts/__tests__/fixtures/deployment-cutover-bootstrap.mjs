@@ -26,6 +26,7 @@ export function fixture(body, instrument = source => source, { genuine = false, 
   try {
     for (const name of ["deployment-cutover.mjs", "deployment-cutover-owner.mjs", "build-generation-retention.mjs", "build-generation-maintenance-owner-observer.mjs", "build-generation-maintenance-journal.mjs",
       "deployment-cutover-retained-profile.mjs", "deployment-cutover-retained-profile.v1.json",
+      "deployment-cutover-default-context.mjs",
       "deployment-cutover-passive-home.mjs", "deployment-cutover-passive-home.py"]) {
       let source = fs.readFileSync(new URL(`scripts/${name}`, repo), "utf8");
       if (name === "deployment-cutover.mjs") {
@@ -44,6 +45,7 @@ export function fixture(body, instrument = source => source, { genuine = false, 
       "internal-production/baseline-workspace-authority-path-v1", "product-compiler/canonical-json",
       "internal-production/baseline-deployment-cutover-cli-observation-v1",
       "internal-production/baseline-deployment-cutover-launcher-observation-v1",
+      "internal-production/baseline-deployment-cutover-node-path-v1",
       "internal-production/baseline-deployment-cutover-process-observation-v1"];
     if (envAbsence) sources.push("internal-production/baseline-deployment-cutover-env-absence-v1");
     if (helpers) sources.push("internal-production/baseline-deployment-cutover-helper-observation-v1",

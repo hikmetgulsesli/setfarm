@@ -155,6 +155,18 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## File map and boundaries
 
+- `scripts/deployment-cutover-default-context.mjs` is the zero-input owner behind
+  authenticated `inspect-default-context --json`. It cross-binds held selected
+  build/CLI, retained profile/resolution, six default-file absences and both
+  launcher account/Node/process measurements before a private pre32 census.
+  Every context survives both awaits and is rechecked, then drained in reverse
+  order. New evidence excludes credential-derived launcher hashes; strict legacy
+  diagnostic schemas remain unchanged. Successful observation still carries
+  filesystem/helper-phase, controller-ownership and journaled-transition blockers.
+  Initial-stack evidence is not current getenv: known retained startup PATH and
+  DEBUG replacements are supported only under the reviewed trusted Node/libsystem
+  saved-string-storage premise. Actual host qualification remains a separate gate.
+
 - The retained-profile held context's zero-input selected-startup resolver
   qualifies only the fixed reviewed ESM/CJS edge table under HOME-absent and
   account-HOME contexts. It holds nearer lookup boundaries and never evaluates

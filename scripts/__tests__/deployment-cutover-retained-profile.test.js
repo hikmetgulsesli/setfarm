@@ -62,8 +62,10 @@ for (const change of ["same-byte-replacement", "optional-appearance", "tree-aba"
 test("standard genuine command executes the retained archive qualification", () => {
   const result = spawnSync("npm", ["run", "test:scripts:cutover-genuine"], { cwd: new URL("../../", import.meta.url),
     env: { PATH: process.env.PATH, LANG: "C", LC_ALL: "C", TZ: "UTC" },
-    encoding: "utf8", timeout: 90000, maxBuffer: 1024 * 1024 });
-  assert.equal(result.status, 0, result.stderr);
+    // The standard serial gate now also executes three full authenticated-owner
+    // fixtures (~32 seconds); keep a bounded budget for the expanded workload.
+    encoding: "utf8", timeout: 150000, maxBuffer: 1024 * 1024 });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /reviewed retained profile matches all genuine fixed integrity archives without evaluation/);
   assert.match(result.stdout, /held retained profile resolves reviewed ESM\/CJS edges without evaluating throwing targets/);
 });

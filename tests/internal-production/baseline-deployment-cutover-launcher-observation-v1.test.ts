@@ -31,17 +31,32 @@ function fixture(body: (home: string, texts: string[]) => void): void {
   });
   try { body(home, texts); } finally { fs.rmSync(home, { recursive: true, force: true }); }
 }
-function observe(home: string, texts: string[], fault = "", census?: string): any {
+function observe(home: string, texts: string[], fault = "", census?: string, defaultAction?: string): any {
   const originalUrl = new URL("../../src/internal-production/baseline-deployment-cutover-launcher-observation-v1.ts", import.meta.url);
   let url = originalUrl.href;
-  if (census !== undefined) {
+  if (census !== undefined || defaultAction !== undefined) {
     let source = fs.readFileSync(originalUrl, "utf8");
     const marker = 'await import("./baseline-legacy-database-census-v1.js")';
     assert.equal(source.split(marker).length, 2);
     const transportFile = path.join(home, "census-transport.mjs");
-    fs.writeFileSync(transportFile, `export async function observeLegacyDatabaseCensusV1(url,cold,profile){${census}}`);
+    fs.writeFileSync(transportFile, `export async function observeLegacyDatabaseCensusV1(url,cold,profile){${census ?? "globalThis.dbCalls++;return Object.freeze({activeRunCount:0})"}}`);
     source = source.replace(marker, `await import(${JSON.stringify(pathToFileURL(transportFile).href)})`);
     source = source.replace('"../product-compiler/canonical-json.js"', JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href));
+    if (defaultAction !== undefined) {
+      const helpers = path.join(home, "default-helpers.mjs");
+      fs.writeFileSync(helpers, `
+        export const holdDeploymentCutoverNodePathV1=(...args)=>globalThis.nodeHold(...args);
+        export const observeDeploymentCutoverProcessFamiliesV1=()=>globalThis.processes();
+        export const identifyDeploymentCutoverPassiveProcessV1=request=>globalThis.identify(request);
+        export const measureDeploymentCutoverPassiveHomeV1=request=>globalThis.measure(request);
+      `);
+      for (const name of ["baseline-deployment-cutover-node-path-v1", "baseline-deployment-cutover-process-observation-v1"])
+        source = source.replace(JSON.stringify(`./${name}.js`), JSON.stringify(pathToFileURL(helpers).href));
+      source = source.replace('new URL("../../scripts/deployment-cutover-passive-home.mjs", import.meta.url).href', JSON.stringify(pathToFileURL(helpers).href));
+    } else {
+      for (const name of ["baseline-deployment-cutover-node-path-v1", "baseline-deployment-cutover-process-observation-v1"])
+        source = source.replace(JSON.stringify(`./${name}.js`), JSON.stringify(new URL(`../../src/internal-production/${name}.ts`, import.meta.url).href));
+    }
     fs.writeFileSync(path.join(home, "package.json"), '{"type":"module"}');
     const file = path.join(home, "launcher-fixture.ts");
     fs.writeFileSync(file, source);
@@ -53,14 +68,22 @@ function observe(home: string, texts: string[], fault = "", census?: string): an
     const identity = os.userInfo(); os.userInfo = () => ({...identity,homedir:${JSON.stringify(home)}});
     const texts = ${JSON.stringify(texts)}, labels = ${JSON.stringify(labels)};
     let prints = 0, conversions = 0, active = false, run, evidence = () => null;
+    globalThis.dbCalls=0;globalThis.samples=0;globalThis.nodeCloses=0;
+    globalThis.processes=()=>Object.freeze({families:Object.freeze([]),listener:null});
+    globalThis.nodeHold=()=>({observation:Object.freeze({candidatePath:'/fixture/invoked/node',executablePath:'/fixture/physical/node'}),recheck(){},close(){globalThis.nodeCloses++}});
+    globalThis.identify=request=>({...request,schema:'setfarm.internal-production-passive-process-identity.v1',ppid:1,startSeconds:1234,startMicroseconds:56});
+    globalThis.measure=request=>{globalThis.samples++;if(globalThis.samples===2)setTimeout(()=>{globalThis.idle=true},0);return Object.freeze({schema:'setfarm.internal-production-passive-home-measurement.v1',pid:request.pid,ppid:1,uid:request.uid,gid:request.gid,startSeconds:1234,startMicroseconds:56,homeContext:'account',completeEnvironmentValidated:true,stableDoubleRead:true})};
     const spawn = cp.spawnSync;
     cp.spawnSync = (command, args, options) => {
       if (command === "/bin/launchctl") {
         if (args.length !== 2 || args[0] !== "print") throw Error("unexpected launcher command");
         const index = labels.findIndex(label => args[1] === "gui/" + process.getuid() + "/" + label);
         if (index < 0) throw Error("unexpected launcher target");
-        prints++; return {status:0, signal:null, stdout:Buffer.from(texts[index]), stderr:Buffer.alloc(0)};
+        prints++; let text=texts[index];
+        if (${defaultAction !== undefined} && !globalThis.idle) text=text.replace('state = not running','state = running').replace('active count = 0','active count = 1').slice(0,-2)+'\\tpid = '+(12345+index)+'\\n}\\n';
+        return {status:0, signal:null, stdout:Buffer.from(text), stderr:Buffer.alloc(0)};
       }
+      if (command === '/usr/bin/getconf') return {status:0,signal:null,stdout:Buffer.from('/var/folders/fixture/T/\\n'),stderr:Buffer.alloc(0)};
       if (command !== "/usr/bin/plutil" || JSON.stringify(args) !== JSON.stringify(["-convert","json","-o","-","-"])) throw Error("unexpected command");
       conversions++; return spawn(command,args,options);
     };
@@ -68,18 +91,156 @@ function observe(home: string, texts: string[], fault = "", census?: string): an
     syncBuiltinESMExports();
     try {
       const module = await import(${JSON.stringify(url)}); active = true;
-      run = module.${census === undefined ? "observeDeploymentCutoverLauncherConfigurationV1" : "observeDeploymentCutoverLauncherDatabaseV1"};
+      run = ${defaultAction === undefined ? `module.${census === undefined ? "observeDeploymentCutoverLauncherConfigurationV1" : "observeDeploymentCutoverLauncherDatabaseV1"}` : `async()=>{const context=module.holdDeploymentCutoverDefaultLauncherV1();try{${defaultAction}}finally{context.close()}}`};
       const observation = await run();
       const frozen = value => !value || typeof value !== "object" || (Object.isFrozen(value) && Object.values(value).every(frozen));
       process.stdout.write(JSON.stringify({observation,frozen:frozen(observation),prints,conversions,evidence:evidence()}));
     } catch(error) {
       let retryError = null;
-      if (run) { try { await run(); } catch (retry) { retryError = render(retry,{depth:null}); } }
+      if (run && ${defaultAction === undefined}) { try { await run(); } catch (retry) { retryError = render(retry,{depth:null}); } }
       process.stdout.write(JSON.stringify({error:render(error,{depth:null}),retryError,prints,conversions,evidence:evidence()}));
     }
   `], { encoding: "utf8", env: {}, timeout: 15000 });
   assert.equal(child.status, 0, child.stderr); return JSON.parse(child.stdout);
 }
+
+test("default launcher holds configuration without exposing credential-derived commitments and denies early census", () => fixture((home, texts) => {
+  texts = texts.map(text => text.replace(`\t\tSETFARM_ENV_DIR => ${home}/ai/setrox/setfarm/scripts\n`, ""));
+  const result = observe(home, texts, `evidence=()=>({dbCalls:globalThis.dbCalls,nodeCloses:globalThis.nodeCloses});`, undefined,
+    `await context.census();return context.observation;`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.equal(result.evidence.dbCalls, 0);
+  assert.ok(result.evidence.nodeCloses >= 2);
+}));
+
+test("default launcher accepts only zero input", async () => {
+  const module = await import("../../src/internal-production/baseline-deployment-cutover-launcher-observation-v1.js");
+  assert.equal(typeof (module as any).holdDeploymentCutoverDefaultLauncherV1, "function");
+  assert.throws(() => (module as any).holdDeploymentCutoverDefaultLauncherV1({pid:12345}), /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+});
+
+function defaultFixture(body: (home: string, texts: string[]) => void) {
+  fixture((home, texts) => {
+    const agreed = secrets[0]!.replace(/\/fixture$/, "/setfarm");
+    labels.forEach((label, index) => {
+      const file = path.join(home, "Library", "LaunchAgents", `${label}.plist`);
+      fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(secrets[0]!, agreed));
+      texts[index] = texts[index]!.replace(secrets[0]!, agreed)
+        .replace(`\t\tSETFARM_ENV_DIR => ${home}/ai/setrox/setfarm/scripts\n`, "");
+    });
+    body(home, texts);
+  });
+}
+
+test("default launcher binds both passive generations before fresh idle and private census", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts, `
+    const measure=globalThis.measure;globalThis.measure=request=>{
+      if(request.environment.HOME!==${JSON.stringify(home)} || request.launchExecutable!=='/fixture/invoked/node'
+        || request.executable!=='/fixture/physical/node' || request.argv[0]!=='node'
+        || request.expectedStartSeconds!==1234 || request.expectedStartMicroseconds!==56
+        || request.optionalEnvironment.USER!==identity.username || request.optionalEnvironment.TMPDIR!=='/var/folders/fixture/T/'
+        || 'SETFARM_ENV_DIR' in request.environment)throw Error('CROSSED_PROFILE');
+      return measure(request);
+    };
+    evidence=()=>({dbCalls:globalThis.dbCalls,samples:globalThis.samples,nodeCloses:globalThis.nodeCloses});
+  `, undefined, `const qualification=await context.qualifyPassiveHome();const database=await context.census();return Object.freeze({configuration:context.observation,qualification,database});`);
+  assert.equal(result.observation?.configuration.schema, "setfarm.internal-production-deployment-cutover-default-launcher.v1", JSON.stringify(result));
+  assert.equal(result.observation.qualification.samples.length, 2);
+  assert.equal(result.evidence.dbCalls, 1);
+  assert.equal(result.evidence.nodeCloses, 2);
+  assert.equal(result.frozen, true);
+  assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL|SocketSentinel|plistBytesHash|configurationHash|loadedStateHash|launcherObservationHash/);
+}));
+
+for (const fault of ["generation", "parent", "native-refusal", "process-contender", "temp", "account", "pid", "node-second"]) {
+  test(`default ${fault} refusal prevents census and drains held nodes`, () => defaultFixture((home, texts) => {
+    const result = observe(home, texts, `
+      const kind=${JSON.stringify(fault)};let changed=false;
+      const identify=globalThis.identify,measure=globalThis.measure;
+      globalThis.identify=request=>{const value=identify(request);if(kind==='parent')value.ppid=99;return value};
+      globalThis.measure=request=>{
+        if(kind==='native-refusal')throw Error('TOKEN_SENTINEL');
+        const value=measure(request);changed=true;
+        if(kind==='generation')return {...value,startMicroseconds:57};
+        if(kind==='pid')texts[0]=texts[0].replace('state = not running','state = spawn scheduled');
+        return value;
+      };
+      if(kind==='process-contender')globalThis.processes=()=>({families:[{}],listener:null});
+      const info=os.userInfo;os.userInfo=()=>{const value=info();return kind==='account'&&changed?{...value,username:'crossed'}:value};
+      const command=cp.spawnSync;cp.spawnSync=(exe,args,options)=>{
+        const value=command(exe,args,options);
+        if(kind==='temp'&&changed&&exe==='/usr/bin/getconf')return {...value,stdout:Buffer.from('/var/folders/crossed/T/\\n')};
+        return value;
+      };
+      const node=globalThis.nodeHold;let nodeCalls=0;globalThis.nodeHold=(...args)=>{nodeCalls++;if(kind==='node-second'&&nodeCalls===2)throw Error('TOKEN_SENTINEL');return node(...args)};
+      evidence=()=>({dbCalls:globalThis.dbCalls,nodeCloses:globalThis.nodeCloses,nodeCalls});
+    `, undefined, `await context.qualifyPassiveHome();await context.census();return context.observation;`);
+    assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/, JSON.stringify(result));
+    assert.equal(result.evidence.dbCalls, 0);
+    assert.ok(result.evidence.nodeCloses >= (fault === "node-second" ? 1 : 2));
+    assert.doesNotMatch(JSON.stringify(result), /TOKEN_SENTINEL|PG_SENTINEL/);
+  }));
+}
+
+for (const boundary of ["second-sample", "repeat", "concurrent", "deadline", "db-retry-start", "close-loss"]) {
+  test(`default ${boundary} lifecycle refuses without partial success`, () => defaultFixture((home, texts) => {
+    const fault = `
+      const kind=${JSON.stringify(boundary)},measure=globalThis.measure,node=globalThis.nodeHold;
+      globalThis.measure=request=>{if(kind==='second-sample'&&globalThis.samples===1)throw Error('TOKEN_SENTINEL');return measure(request)};
+      if(kind==='deadline'){globalThis.idle=true;let tick=0;performance.now=()=>tick+=40000}
+      globalThis.nodeHold=(...args)=>{const value=node(...args);return {...value,close(){value.close();if(kind==='close-loss')throw Error('TOKEN_SENTINEL')}}};
+      evidence=()=>({dbCalls:globalThis.dbCalls,samples:globalThis.samples,nodeCloses:globalThis.nodeCloses});
+    `;
+    const action = boundary === "concurrent"
+      ? `await Promise.all([context.qualifyPassiveHome(),context.qualifyPassiveHome()]);return context.observation;`
+      : boundary === "repeat"
+        ? `await context.qualifyPassiveHome();await context.qualifyPassiveHome();return context.observation;`
+        : `await context.qualifyPassiveHome();await context.census();return context.observation;`;
+    const result = observe(home, texts, fault,
+      `globalThis.dbCalls++;await Promise.resolve();${boundary === "db-retry-start" ? "globalThis.idle=false;" : ""}return Object.freeze({activeRunCount:0});`, action);
+    assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/, JSON.stringify(result));
+    assert.equal(result.observation, undefined);
+    assert.equal(result.evidence.dbCalls, ["db-retry-start", "close-loss"].includes(boundary) ? 1 : 0);
+    assert.equal(result.evidence.nodeCloses, 2);
+    if (boundary === "second-sample") assert.equal(result.evidence.samples, 1);
+    assert.doesNotMatch(JSON.stringify(result), /TOKEN_SENTINEL|PG_SENTINEL/);
+  }));
+}
+
+test("default failed qualification permanently poisons recheck and census", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts, `globalThis.measure=()=>{throw Error('TOKEN_SENTINEL')};evidence=()=>({dbCalls:globalThis.dbCalls});`, undefined, `
+    let refusals=0;
+    for(const action of [()=>context.qualifyPassiveHome(),()=>context.recheck(),()=>context.census(),()=>context.qualifyPassiveHome()]){
+      try{await action()}catch(error){if(error.message!=='DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID')throw error;refusals++}
+    }
+    return Object.freeze({refusals});
+  `);
+  assert.equal(result.observation?.refusals, 4, JSON.stringify(result));
+  assert.equal(result.evidence.dbCalls, 0);
+}));
+
+test("default account acquisition drift refuses before native observation", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts, `
+    const info=os.userInfo;let calls=0;os.userInfo=()=>{const value=info();return {...value,username:++calls===1?'before':'after'}};
+    evidence=()=>({samples:globalThis.samples,dbCalls:globalThis.dbCalls});
+  `, undefined, `await context.qualifyPassiveHome();return context.observation;`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/, JSON.stringify(result));
+  assert.equal(result.evidence.samples, 0);
+  assert.equal(result.evidence.dbCalls, 0);
+}));
+
+test("default replacement generation after sampling refuses instead of waiting through it", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts, `
+    const command=cp.spawnSync;cp.spawnSync=(exe,args,options)=>{
+      const value=command(exe,args,options);
+      if(exe==='/bin/launchctl'&&globalThis.samples===2&&!globalThis.idle&&args[1].endsWith('setfarm-spawner'))
+        return {...value,stdout:Buffer.from(value.stdout.toString().replace('pid = 12345','pid = 22345'))};
+      return value;
+    };evidence=()=>({dbCalls:globalThis.dbCalls});
+  `, undefined, `await context.qualifyPassiveHome();await context.census();return context.observation;`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/, JSON.stringify(result));
+  assert.equal(result.evidence.dbCalls, 0);
+}));
 
 test("database observation privately binds the agreed launcher URL and pre32 census", () => fixture((home, texts) => {
   const original = secrets[0]!;

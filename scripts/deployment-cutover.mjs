@@ -14,6 +14,7 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const closure = ["scripts/build-generation-maintenance-journal.mjs", "scripts/build-generation-maintenance-owner-observer.mjs",
   "scripts/build-generation-retention.mjs", "scripts/deployment-cutover-owner.mjs", "scripts/deployment-cutover.mjs", "scripts/deployment-cutover-dependencies.mjs",
   "scripts/deployment-cutover-retained-profile.mjs", "scripts/deployment-cutover-retained-profile.v1.json",
+  "scripts/deployment-cutover-default-context.mjs",
   "scripts/deployment-cutover-passive-home.mjs", "scripts/deployment-cutover-passive-home.py"];
 const passiveSourceUrl = pathToFileURL(path.join(root, "scripts/deployment-cutover-passive-home.py")).href;
 const directoryKeys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"];
@@ -54,7 +55,7 @@ function sourceState() {
 }
 async function inspect() {
   if (typeof registerHooks !== "function" || process.execArgv.length || process.argv.length !== 4
-    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile"].includes(process.argv[2]) || process.argv[3] !== "--json"
+    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context"].includes(process.argv[2]) || process.argv[3] !== "--json"
     || pathToFileURL(path.resolve(process.argv[1])).href !== import.meta.url
     || Object.keys(process.env).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key)
       && !(process.platform === "darwin" && key === "__CF_USER_TEXT_ENCODING"))) fail();
@@ -175,7 +176,11 @@ async function inspect() {
     check();
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();
-    let host, envFiles, helpers, retainedProfile;
+    let host, envFiles, helpers, retainedProfile, defaultContext;
+    if (process.argv[2] === "inspect-default-context") {
+      const contextModule = await import("./deployment-cutover-default-context.mjs");
+      check(); defaultContext = await contextModule.observeDeploymentCutoverDefaultContextV1(); check();
+    }
     if (process.argv[2] === "inspect-retained-profile") {
       const profileModule = await import("./deployment-cutover-retained-profile.mjs");
       check(); retainedProfile = profileModule.observeDeploymentCutoverRetainedProfileV1();
@@ -218,7 +223,8 @@ async function inspect() {
     }
     check(); if (canonical(sourceState()) !== canonical(initial)) fail();
     result = { schema: "setfarm.internal-production-deployment-cutover-bootstrap-observation.v1", sourceBuild, controllerSourceHash: authority.controllerSourceHash,
-      ...(host ? { host } : {}), ...(envFiles ? { envFiles } : {}), ...(helpers ? { helpers } : {}), ...(retainedProfile ? { retainedProfile } : {}) };
+      ...(host ? { host } : {}), ...(envFiles ? { envFiles } : {}), ...(helpers ? { helpers } : {}), ...(retainedProfile ? { retainedProfile } : {}),
+      ...(defaultContext ? { defaultContext } : {}) };
   } catch { invalid = true; }
   while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch { invalid = true; } }
   if (invalid || !result) fail(); return result;

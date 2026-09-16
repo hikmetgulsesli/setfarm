@@ -6,6 +6,22 @@ import { spawnSync, execFileSync } from "node:child_process";
 import { fixture, run, write, git } from "./fixtures/deployment-cutover-bootstrap.mjs";
 import { retainedFixture } from "./fixtures/deployment-cutover-retained-profile.mjs";
 
+test("bootstrap invokes authenticated default context without caller-supplied observations", () => fixture(root => {
+  const result = run(root, ["inspect-default-context", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).defaultContext, { fixture: "owned-default-context" });
+}, undefined, { prepare(root) {
+  write(root, "scripts/deployment-cutover-default-context.mjs", `export async function observeDeploymentCutoverDefaultContextV1(){if(arguments.length)throw Error('UNEXPECTED_INPUT');return Object.freeze({fixture:'owned-default-context'})}`);
+} }));
+
+test("bootstrap refuses modified default owner before invoking it", () => fixture(root => {
+  fs.appendFileSync(path.join(root, "scripts/deployment-cutover-default-context.mjs"), "\nthrow Error('PRIVATE_OWNER_CANARY');\n");
+  const result = run(root, ["inspect-default-context", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
+}));
+
 test("bootstrap supplies authenticated Python bytes as data without evaluating them", () => fixture((root, expected) => {
   const result = run(root);
   assert.equal(result.status, 0, result.stderr);
