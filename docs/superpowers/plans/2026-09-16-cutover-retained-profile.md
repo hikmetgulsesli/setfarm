@@ -35,6 +35,11 @@ allowlist. Broader retained inventories grant read/identity evidence only.
 - `scripts/__tests__/deployment-cutover-retained-profile.test.js`: real temporary
   physical trees and actual observer; genuine cache bytes used only in separate
   integration gate. No substituted acceptance results.
+- Matching fixture helper: actual selected-build validators with Git-committed
+  synthetic one/two-package profiles; this fixture does not claim to exercise
+  all ten production installations. The separate genuine archive gate does.
+- `package.json` genuine test command: invoke the new archive test in the standard
+  suite; regression runs that command with a fresh test-runner environment.
 - `scripts/integration/deployment-cutover-retained-profile-genuine.test.mjs`:
   authenticate ten fixed installations and compare committed inventory commitments;
   missing archives refuse, no download or code evaluation.
@@ -44,15 +49,15 @@ allowlist. Broader retained inventories grant read/identity evidence only.
 
 ## Task1: fixed inventory commitments
 
-- [ ] Verify lock-SRI archives for yaml2.9.0, json5 2.2.3, zod4.4.3,
+- [x] Verify lock-SRI archives for yaml2.9.0, json5 2.2.3, zod4.4.3,
   postgres3.4.8, parse5 8.0.1, entities8.0.0, playwright1.60.0,
   playwright-core1.60.0 and fsevents2.3.3, plus the existing nested
   playwright/node_modules/fsevents2.3.2. Compare installed trees without loading
   JS/native members. Missing/extra files or symlinked resolution cannot qualify.
-- [ ] Define canonical per-package inventory of sorted relative regular-file
+- [x] Define canonical per-package inventory of sorted relative regular-file
   locators, byte lengths and SHA256; physical metadata is checked separately.
   Hash the inventory, not concatenated ambiguous strings.
-- [ ] RED missing profile; implement reviewed literal profile with source/output
+- [x] RED missing profile; implement reviewed literal profile with source/output
   tree and ten installation commitments. Genuine archive test must reproduce each
   commitment, not derive expected values through the observer under test.
 
@@ -71,32 +76,39 @@ not an unvalidated ignored subtree. Do not add it to the executable loader.
 
 ## Task2: held physical observation
 
-- [ ] RED unknown generation, modified dependency, extra resolution override,
-  wrong architecture, symlink/mode/device and close-response-loss cases.
-- [ ] Derive selected checkout through existing finalized-build observation.
+- [x] Missing observer RED; physical cases cover unknown generation, modified
+  dependency, local resolution override, wrong architecture, symlink/mode and
+  close-response loss. Resource fanout, optional and empty-nested REDs corrected.
+- [x] Derive selected checkout through existing finalized-build observation.
   Require reviewed generation/output tree. Authenticate owner/device/ancestors,
   actual package manifests and all regular files; bound paths/counts/bytes.
-- [ ] Cover nested node_modules and optional resolution candidates explicitly;
-  fail closed on any unreviewed resolution branch, including bufferutil and
-  utf-8-validate. No caller-supplied roots, manifests or acceptance booleans.
-- [ ] Bracket selected CLI/build and physical identities; failed cleanup poisons
+- [x] Cover inventoried nested node_modules and local optional/sibling candidates;
+  refuse unknown branches inside those trees and local bufferutil/utf-8-validate.
+  Complete ancestor/global Node resolution remains a separate blocker. No
+  caller-supplied roots, manifests or acceptance booleans.
+- [x] Bracket selected CLI/build and physical identities; failed cleanup poisons
   reuse and never recloses a consumed descriptor. Return only frozen profile/hash
   commitments and remaining environment/database/phase/controller blockers.
 
 ## Task3: authenticated integration and delivery
 
-- [ ] Genuine bootstrap RED before explicit mode; authenticate new script/profile
+- [x] Genuine bootstrap RED before explicit mode; authenticate new script/profile
   against source Git bytes before import. Read-only dependencies do not become
   executable loader allowlist entries.
-- [ ] Positive reviewed fixture, crossed compiled/profile/dependency and optional
+- [x] Positive reviewed fixture, crossed compiled/profile/dependency and optional
   resolution negatives; no sockets, child application execution or authority writes.
-- [ ] Focused tests, bootstrap/integration, noemit/contracts, independent/cloud
-  review, scoped PR, independent normal clean-main build and real inspection.
+- [x] Focused tests24/24 including the standard genuine command; actual archive
+  gate4/4; broad bootstrap/owner/dependency/integration124/124, then final retained
+  bootstrap5/5 after nested fix. Cutover266/266, manifest18/18, noemit and contracts.
+  Two independent reviews cleared corrected resource-budget and gate-wiring gaps.
+- [ ] Cloud review, scoped PR, independent normal clean-main build and real
+  read-only inspection. No service/link/archive effects in this slice.
 
 ## Remaining after profile authentication
 
 Compose exact default launcher environment with held six-file absence and reviewed
 runtime/PG/root semantics, including spawner repository override and notification
-constructor. Qualify new startup independently; inventory runtime phase owners.
+constructor. Qualify ancestor/global module resolution and new startup independently;
+inventory runtime phase owners. Current output is byte-inventory evidence only.
 Only then can controller-owned already-absent/no-signal entry and journaled
 service/link transition proceed. No profile success alone authorizes effects.

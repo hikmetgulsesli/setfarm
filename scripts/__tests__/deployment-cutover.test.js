@@ -4,6 +4,27 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync, execFileSync } from "node:child_process";
 import { fixture, run, write, git } from "./fixtures/deployment-cutover-bootstrap.mjs";
+import { retainedFixture } from "./fixtures/deployment-cutover-retained-profile.mjs";
+
+test("trusted retained inspection authenticates selected bytes without granting environment authority", () => retainedFixture(({ root }) => {
+  const result = run(root, ["inspect-retained-profile", "--json"]); assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout);
+  assert.equal(observed.retainedProfile.scope, "retained-startup-byte-inventory-only");
+  assert.ok(observed.retainedProfile.blockers.includes("runtime-effective-environment-not-authenticated"));
+  assert.ok(observed.retainedProfile.blockers.includes("module-resolution-not-authenticated"));
+  assert.equal(Object.hasOwn(observed, "host"), false);
+}, { genuine: true }));
+
+for (const fault of ["profile-bytes", "observer-bytes", "selected-output", "retained-package"]) {
+  test(`trusted retained inspection refuses ${fault} without evaluating retained code`, () => retainedFixture(({ root, selected }) => {
+    if (fault === "profile-bytes") fs.appendFileSync(path.join(root, "scripts/deployment-cutover-retained-profile.v1.json"), " ");
+    if (fault === "observer-bytes") fs.appendFileSync(path.join(root, "scripts/deployment-cutover-retained-profile.mjs"), '\nprocess.stdout.write("UNVERIFIED_PROFILE_EXECUTED");\n');
+    if (fault === "selected-output") fs.appendFileSync(path.join(selected, "dist/cli/cli.js"), '\nprocess.stdout.write("UNVERIFIED_RETAINED_EXECUTED");\n');
+    if (fault === "retained-package") fs.appendFileSync(path.join(selected, "node_modules/reviewed-fixture/index.js"), '\nprocess.stdout.write("UNVERIFIED_PACKAGE_EXECUTED");\n');
+    const result = run(root, ["inspect-retained-profile", "--json"]);
+    assert.equal(result.status, 1); assert.equal(result.stdout, ""); assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
+  }, { genuine: true }));
+}
 
 function helperHistoryFixture(body) {
   fixture((root, expected, home) => {

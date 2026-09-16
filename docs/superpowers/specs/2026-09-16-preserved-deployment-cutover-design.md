@@ -281,8 +281,9 @@ fallback. Bind generation eef9f6c4059daa487a5a367f8f1609b1d1e39142 and output tr
 selected-build observer. Add `scripts/deployment-cutover-retained-profile.mjs`,
 its fixed profile JSON, physical tests and genuine cache-inventory integration
 test. Authenticate ten actual installations of nine package names, including the
-known nested Playwright fsevents2.3.2 and root fsevents2.3.3. Unknown nested or
-optional resolution branches refuse. Package bytes grant identity evidence only;
+known nested Playwright fsevents2.3.2 and root fsevents2.3.3. Unknown inventoried
+nested branches and checked local optional/sibling candidates refuse. Ancestor
+and global Node resolution remain explicitly unqualified. Package bytes grant identity evidence only;
 do not extend the existing two-package executable loader allowlist.
 
 Finite static/native audit found PATH/DEBUG/library-local changes but no reviewed

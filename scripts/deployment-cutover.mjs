@@ -12,7 +12,8 @@ const { registerHooks, isBuiltin } = nodeModule;
 // Diagnostic only: never acquire ownership, publish intent, or operate services.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const closure = ["scripts/build-generation-maintenance-journal.mjs", "scripts/build-generation-maintenance-owner-observer.mjs",
-  "scripts/build-generation-retention.mjs", "scripts/deployment-cutover-owner.mjs", "scripts/deployment-cutover.mjs", "scripts/deployment-cutover-dependencies.mjs"];
+  "scripts/build-generation-retention.mjs", "scripts/deployment-cutover-owner.mjs", "scripts/deployment-cutover.mjs", "scripts/deployment-cutover-dependencies.mjs",
+  "scripts/deployment-cutover-retained-profile.mjs", "scripts/deployment-cutover-retained-profile.v1.json"];
 const directoryKeys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"];
 const fileKeys = [...directoryKeys, "nlink", "size", "mtimeNs", "ctimeNs"];
 const fail = () => { throw Error("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED"); };
@@ -51,7 +52,7 @@ function sourceState() {
 }
 async function inspect() {
   if (typeof registerHooks !== "function" || process.execArgv.length || process.argv.length !== 4
-    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers"].includes(process.argv[2]) || process.argv[3] !== "--json"
+    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile"].includes(process.argv[2]) || process.argv[3] !== "--json"
     || pathToFileURL(path.resolve(process.argv[1])).href !== import.meta.url
     || Object.keys(process.env).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key)
       && !(process.platform === "darwin" && key === "__CF_USER_TEXT_ENCODING"))) fail();
@@ -106,7 +107,7 @@ async function inspect() {
       const tracked = initial.entries.find(entry => entry.locator === locator); if (!tracked) fail();
       const observed = snapshot(locator), declared = tracked.gitMode === "100755" ? 0o755n : 0o644n;
       if ((observed.stat.mode & 0o7777n & ~declared) || !observed.bytes.equals(git(["cat-file", "blob", tracked.gitBlobHash]).stdout)) fail();
-      if (closure.includes(locator)) executableFiles.add(pathToFileURL(observed.target).href);
+      if (closure.includes(locator) && locator.endsWith(".mjs")) executableFiles.add(pathToFileURL(observed.target).href);
     }
     // All non-builtin evaluation uses owned bytes authenticated before import.
     // Native pathname re-reading is deliberately not the source of module bytes.
@@ -163,7 +164,11 @@ async function inspect() {
     check();
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();
-    let host, envFiles, helpers;
+    let host, envFiles, helpers, retainedProfile;
+    if (process.argv[2] === "inspect-retained-profile") {
+      const profileModule = await import("./deployment-cutover-retained-profile.mjs");
+      check(); retainedProfile = profileModule.observeDeploymentCutoverRetainedProfileV1();
+    }
     if (process.argv[2] === "inspect-helpers") {
       const helperModule = await import("../dist/internal-production/baseline-deployment-cutover-helper-observation-v1.js");
       check(); helpers = await helperModule.observeDeploymentCutoverHelperHistoryV1();
@@ -202,7 +207,7 @@ async function inspect() {
     }
     check(); if (canonical(sourceState()) !== canonical(initial)) fail();
     result = { schema: "setfarm.internal-production-deployment-cutover-bootstrap-observation.v1", sourceBuild, controllerSourceHash: authority.controllerSourceHash,
-      ...(host ? { host } : {}), ...(envFiles ? { envFiles } : {}), ...(helpers ? { helpers } : {}) };
+      ...(host ? { host } : {}), ...(envFiles ? { envFiles } : {}), ...(helpers ? { helpers } : {}), ...(retainedProfile ? { retainedProfile } : {}) };
   } catch { invalid = true; }
   while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch { invalid = true; } }
   if (invalid || !result) fail(); return result;
