@@ -275,6 +275,23 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## Required proof before live effects
 
+Retained compatibility is fixed-byte and ARM64-only, never a generic old-runtime
+fallback. Bind generation eef9f6c4059daa487a5a367f8f1609b1d1e39142 and output tree
+2cc9696322bb131070560d122a602b73a560fe9e8d26943404c9078094f27054 through the existing
+selected-build observer. Add `scripts/deployment-cutover-retained-profile.mjs`,
+its fixed profile JSON, physical tests and genuine cache-inventory integration
+test. Authenticate ten actual installations of nine package names, including the
+known nested Playwright fsevents2.3.2 and root fsevents2.3.3. Unknown nested or
+optional resolution branches refuse. Package bytes grant identity evidence only;
+do not extend the existing two-package executable loader allowlist.
+
+Finite static/native audit found PATH/DEBUG/library-local changes but no reviewed
+PG/root mutation in normal import startup. The pinned ARM64 fsevents initializer
+starts an idle thread, not a path watcher. Do not claim import-inert old startup
+or evaluate it to obtain proof. Native qualification assumes trusted Node/macOS
+libraries; implicit launch environment, all six candidate absence boundaries,
+strict DB constructor settings and complete runtime roots remain separate gates.
+
 Helper-history proof is a separate read-only slice: add
 `baseline-deployment-cutover-helper-observation-v1.ts` and matching physical and
 authenticated bootstrap tests, exposing `inspect-helpers --json`. Reuse unchanged
