@@ -212,6 +212,10 @@ not an arbitrary same-user actor deliberately launching a retired executable.
   then load only owned authenticated bytes through a fixed synchronous hook.
   The owner shares the plain-JS source verifier; no eager receipt/package import
   broadens this loading boundary. Diagnostic success does not enable live effects.
+  `inspect-host --json` additionally composes the existing CLI/launcher/process
+  observers with forward/reverse equality checks. Reports mixed-root/starter
+  blockers and explicit missing old-build/DB/ownership proofs; it never publishes
+  authority or treats an idle launcher as zero-owner evidence.
 - Reuse reviewed maintenance journal/owner observation primitives only where
   their historical/physical contract fits. Add physical owner-death evidence and
   safe release/recovery semantics before any live cleanup that needs them.

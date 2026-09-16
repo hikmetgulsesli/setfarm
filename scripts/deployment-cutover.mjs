@@ -50,7 +50,7 @@ function sourceState() {
 }
 async function inspect() {
   if (typeof registerHooks !== "function" || process.execArgv.length || process.argv.length !== 4
-    || process.argv[2] !== "inspect" || process.argv[3] !== "--json"
+    || !["inspect", "inspect-host"].includes(process.argv[2]) || process.argv[3] !== "--json"
     || pathToFileURL(path.resolve(process.argv[1])).href !== import.meta.url
     || Object.keys(process.env).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key)
       && !(process.platform === "darwin" && key === "__CF_USER_TEXT_ENCODING"))) fail();
@@ -135,8 +135,32 @@ async function inspect() {
     check();
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();
+    let host;
+    if (process.argv[2] === "inspect-host") {
+      const cliModule = await import("../dist/internal-production/baseline-deployment-cutover-cli-observation-v1.js");
+      const launcherModule = await import("../dist/internal-production/baseline-deployment-cutover-launcher-observation-v1.js");
+      const processModule = await import("../dist/internal-production/baseline-deployment-cutover-process-observation-v1.js");
+      check();
+      const cli = cliModule.observeDeploymentCutoverCliLinkV1();
+      const launchers = launcherModule.observeDeploymentCutoverLauncherConfigurationV1();
+      const processes = processModule.observeDeploymentCutoverProcessFamiliesV1();
+      if (canonical(processes) !== canonical(processModule.observeDeploymentCutoverProcessFamiliesV1())
+        || canonical(launchers) !== canonical(launcherModule.observeDeploymentCutoverLauncherConfigurationV1())
+        || canonical(cli) !== canonical(cliModule.observeDeploymentCutoverCliLinkV1())) fail();
+      // Diagnostics never substitute for old-build, DB or current-owner proof.
+      const blockers = ["old-build-not-authenticated", "database-zero-owner-not-observed", "controller-ownership-not-acquired"];
+      if (cli.checkoutPath === root) blockers.push("cli-already-selects-new-checkout");
+      if (processes.families.some(entry => entry.classification !== "dashboard-daemon")) blockers.push("non-dashboard-process-family");
+      const dashboards = processes.families.filter(entry => entry.classification === "dashboard-daemon");
+      if (dashboards.length !== 1 || dashboards[0].checkoutPath !== cli.checkoutPath || processes.listener?.pid !== dashboards[0].pid) {
+        blockers.push("dashboard-cli-root-disagreement");
+      }
+      const body = { schema: "setfarm.internal-production-deployment-cutover-host-observation.v1", newCheckoutPath: root, cli, launchers, processes, blockers };
+      host = { ...body, hostObservationHash: hash(canonical(body)) };
+    }
     check(); if (canonical(sourceState()) !== canonical(initial)) fail();
-    result = { schema: "setfarm.internal-production-deployment-cutover-bootstrap-observation.v1", sourceBuild, controllerSourceHash: authority.controllerSourceHash };
+    result = { schema: "setfarm.internal-production-deployment-cutover-bootstrap-observation.v1", sourceBuild, controllerSourceHash: authority.controllerSourceHash,
+      ...(host ? { host } : {}) };
   } catch { invalid = true; }
   while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch { invalid = true; } }
   if (invalid || !result) fail(); return result;
