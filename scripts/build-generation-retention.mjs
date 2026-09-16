@@ -1410,18 +1410,56 @@ function fixedGitResultV2(root, argv) {
   });
 }
 
-function requireFixedGitBlobV2(root, blobHash, purpose) {
-  if (!GIT_HASH.test(blobHash)) fail(`${purpose} object hash is invalid`);
-  const bytes = requireSuccessfulChild(spawnSync("/usr/bin/git", [...GIT_PREFIX_V2, "cat-file", "blob", blobHash], {
-    shell: false,
-    cwd: root,
-    env: GIT_ENV_V2,
-    timeout: RUNTIME_OBSERVER_TIMEOUT_MS_V1,
-    maxBuffer: MAX_FILE_BYTES_V1,
-    stdio: ["ignore", "pipe", "pipe"],
+function requireFixedGitBlobsV2(root, requestedHashes) {
+  const purpose = "loaded Setfarm Git blob batch";
+  if (!Array.isArray(requestedHashes) || requestedHashes.length < 1 || requestedHashes.length > MAX_TREE_ENTRIES_V1
+    || requestedHashes.some(value => typeof value !== "string" || !GIT_HASH.test(value) || value.length !== requestedHashes[0].length)) {
+    fail(`${purpose} object hashes are invalid`);
+  }
+  const hashes = [...new Set(requestedHashes)];
+  const invoke = (mode, batch, maxBuffer) => requireSuccessfulChild(spawnSync("/usr/bin/git", [...GIT_PREFIX_V2, "cat-file", mode], {
+    shell: false, cwd: root, env: GIT_ENV_V2, timeout: RUNTIME_OBSERVER_TIMEOUT_MS_V1,
+    maxBuffer, input: Buffer.from(`${batch.join("\n")}\n`), stdio: ["pipe", "pipe", "pipe"],
   }), purpose);
-  if (bytes.length > MAX_FILE_BYTES_V1) fail(`${purpose} exceeds the file byte cap`);
-  return bytes;
+  // Check sizes before requesting payloads. Each subsequent child is bounded by
+  // one file-sized payload budget plus exact framing, never tree-sized output.
+  const metadata = invoke("--batch-check", hashes, MAX_AUTHORITY_BYTES_V1);
+  const lines = metadata.toString("ascii").split("\n");
+  if (!Buffer.from(lines.join("\n"), "ascii").equals(metadata) || lines.pop() !== "" || lines.length !== hashes.length) fail(`${purpose} metadata framing is invalid`);
+  let total = 0;
+  const sizes = lines.map((line, index) => {
+    const match = /^([0-9a-f]{40}|[0-9a-f]{64}) blob (0|[1-9][0-9]*)$/.exec(line);
+    if (!match || match[1] !== hashes[index]) fail(`${purpose} metadata identity is invalid`);
+    const size = Number(match[2]);
+    if (!Number.isSafeInteger(size) || size > MAX_FILE_BYTES_V1) fail(`${purpose} exceeds the file byte cap`);
+    total += size;
+    if (total > MAX_TOTAL_BYTES_V1) fail(`${purpose} exceeds the total byte cap`);
+    return size;
+  });
+  const blobs = new Map();
+  for (let start = 0; start < hashes.length;) {
+    let end = start, payloadBytes = 0, framingBytes = 0;
+    while (end < hashes.length && payloadBytes + sizes[end] <= MAX_FILE_BYTES_V1) {
+      payloadBytes += sizes[end]; framingBytes += Buffer.byteLength(lines[end]) + 2; end++;
+    }
+    const bytes = invoke("--batch", hashes.slice(start, end), payloadBytes + framingBytes);
+    let offset = 0;
+    for (let index = start; index < end; index++) {
+      const header = Buffer.from(`${lines[index]}\n`);
+      if (!bytes.subarray(offset, offset + header.length).equals(header)) fail(`${purpose} payload header changed`);
+      offset += header.length;
+      const body = bytes.subarray(offset, offset + sizes[index]);
+      offset += sizes[index];
+      if (body.length !== sizes[index] || bytes[offset++] !== 10) fail(`${purpose} payload framing is invalid`);
+      const actual = createHash(hashes[index].length === 40 ? "sha1" : "sha256")
+        .update(`blob ${sizes[index]}\0`).update(body).digest("hex");
+      if (actual !== hashes[index]) fail(`${purpose} payload object hash differs`);
+      blobs.set(hashes[index], Buffer.from(body));
+    }
+    if (offset !== bytes.length) fail(`${purpose} payload has trailing bytes`);
+    start = end;
+  }
+  return blobs;
 }
 
 function requireFixedGitLineV2(root, argv, purpose) {
@@ -2445,13 +2483,12 @@ function historicalGitInputSetV2(root, sourceSha, sourceTreeHash) {
     canonicalRelativeLocator(match[3]);
     return Object.freeze({ locator: match[3], gitMode: match[1], gitBlobHash: match[2] });
   }).sort((left, right) => compareBytes(left.locator, right.locator));
-  const blobs = new Map();
+  const blobs = requireFixedGitBlobsV2(root, entries.map(entry => entry.gitBlobHash));
   let totalBytes = 0;
   let prior = null;
   for (const entry of entries) {
     if (prior !== null && compareBytes(prior, entry.locator) >= 0) fail("loaded Setfarm historical tree has duplicate locators");
     prior = entry.locator;
-    if (!blobs.has(entry.gitBlobHash)) blobs.set(entry.gitBlobHash, requireFixedGitBlobV2(root, entry.gitBlobHash, `loaded Setfarm Git blob ${entry.locator}`));
     totalBytes += blobs.get(entry.gitBlobHash).length;
     if (totalBytes > MAX_TOTAL_BYTES_V1) fail("loaded Setfarm historical blobs exceed the byte cap");
   }
