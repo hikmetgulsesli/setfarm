@@ -1,0 +1,99 @@
+{
+  "schema": "setfarm.internal-production-retained-startup-profile.v1",
+  "platform": "darwin",
+  "arch": "arm64",
+  "sourceSha": "eef9f6c4059daa487a5a367f8f1609b1d1e39142",
+  "outputTreeHash": "2cc9696322bb131070560d122a602b73a560fe9e8d26943404c9078094f27054",
+  "installations": [
+    {
+      "locator": "node_modules/yaml",
+      "name": "yaml",
+      "version": "2.9.0",
+      "integrity": "sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==",
+      "fileCount": 233,
+      "byteLength": 685953,
+      "inventoryHash": "686aded00ccb77b2796c1202375689811360e8b838ce5980cb39f187d82f68a7"
+    },
+    {
+      "locator": "node_modules/json5",
+      "name": "json5",
+      "version": "2.2.3",
+      "integrity": "sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==",
+      "fileCount": 20,
+      "byteLength": 235198,
+      "inventoryHash": "b1a2593dccb8c92abe5dc735c32939b7a680b3851beb6bb64f07e1d571e2af08"
+    },
+    {
+      "locator": "node_modules/zod",
+      "name": "zod",
+      "version": "4.4.3",
+      "integrity": "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==",
+      "fileCount": 718,
+      "byteLength": 4558122,
+      "inventoryHash": "b13968adc50fe78bf25afcd6deee94b95eb9a10facaed4467b3036764451e921"
+    },
+    {
+      "locator": "node_modules/postgres",
+      "name": "postgres",
+      "version": "3.4.8",
+      "integrity": "sha512-d+JFcLM17njZaOLkv6SCev7uoLaBtfK86vMUXhW1Z4glPWh4jozno9APvW/XKFJ3CCxVoC7OL38BqRydtu5nGg==",
+      "fileCount": 37,
+      "byteLength": 299870,
+      "inventoryHash": "f637c4e26b60d71692542661d95f246faacaa84c5271aaba48935eda9e1f4f47"
+    },
+    {
+      "locator": "node_modules/parse5",
+      "name": "parse5",
+      "version": "8.0.1",
+      "integrity": "sha512-z1e/HMG90obSGeidlli3hj7cbocou0/wa5HacvI3ASx34PecNjNQeaHNo5WIZpWofN9kgkqV1q5YvXe3F0FoPw==",
+      "fileCount": 33,
+      "byteLength": 337099,
+      "inventoryHash": "7c23c8595824f84bb82e55454db9a7ad7e5bc10e09b9a0b84a8a9940ab077471"
+    },
+    {
+      "locator": "node_modules/entities",
+      "name": "entities",
+      "version": "8.0.0",
+      "integrity": "sha512-zwfzJecQ/Uej6tusMqwAqU/6KL2XaB2VZ2Jg54Je6ahNBGNH6Ek6g3jjNCF0fG9EWQKGZNddNjU5F1ZQn/sBnA==",
+      "fileCount": 58,
+      "byteLength": 236002,
+      "inventoryHash": "17974fe1aa1bb522fdc76318db035cf69f5b0656edaf71c0a26f57420f8edc7c"
+    },
+    {
+      "locator": "node_modules/playwright",
+      "name": "playwright",
+      "version": "1.60.0",
+      "integrity": "sha512-hheHdokM8cdqCb0lcE3s+zT4t4W+vvjpGxsZlDnikarzx8tSzMebh3UiFtgqwFwnTnjYQcsyMF8ei2mCO/tpeA==",
+      "fileCount": 62,
+      "byteLength": 4912098,
+      "inventoryHash": "fefdf1070f3d2f270167efc4c8e16e7329e7625e0646fde8d111167d81c3b3f0"
+    },
+    {
+      "locator": "node_modules/playwright-core",
+      "name": "playwright-core",
+      "version": "1.60.0",
+      "integrity": "sha512-9bW6zvX/m0lEbgTKJ6YppOKx8H3VOPBMOCFh2irXFOT4BbHgrx5hPjwJYLT40Lu+4qtD36qKc/Hn56StUW57IA==",
+      "fileCount": 106,
+      "byteLength": 12469960,
+      "inventoryHash": "efa0757501a69dc77650a1ed140cca957c16a392b2d9ad857f86211c609645dc"
+    },
+    {
+      "locator": "node_modules/fsevents",
+      "name": "fsevents",
+      "version": "2.3.3",
+      "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
+      "fileCount": 6,
+      "byteLength": 173224,
+      "inventoryHash": "553f8088a5225ddff98250c60236d9a3006cc73f9b712ff743642f5a53d50059"
+    },
+    {
+      "locator": "node_modules/playwright/node_modules/fsevents",
+      "name": "fsevents",
+      "version": "2.3.2",
+      "integrity": "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==",
+      "fileCount": 6,
+      "byteLength": 156422,
+      "inventoryHash": "2926e3e68a5df9a501bbd6e58b1be7215904040705d9b73b1243d831dba8cd3b"
+    }
+  ]
+}
