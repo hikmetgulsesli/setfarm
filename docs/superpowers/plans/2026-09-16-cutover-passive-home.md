@@ -125,3 +125,7 @@ Only the10Darwin API cases now have an explicit platform skip; pure parser and
 transport tests remain enabled. A subprocess emulating Node's platform selector
 proved RED0/10skips then GREEN10/10skips with the positive parser still running.
 This is test-selection evidence, not a claim of a physical Linux suite run.
+The first post-fix aggregate was36/37: the meta-test assumed TAP while Node26
+emitted its default spec reporter. Native selection itself correctly skipped10;
+the meta-test now explicitly selects TAP. Preserve this intermediate failure
+rather than reporting that first aggregate as green.
