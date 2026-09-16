@@ -74,6 +74,14 @@ function run(root, args = ["inspect", "--json"], extraEnv = {}) {
     cwd: root, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", TZ: "UTC", ...extraEnv }, encoding: "utf8", timeout: 30000,
   });
 }
+test("bootstrap without synchronous hooks refuses before source reads instead of failing module instantiation", () => fixture(root => {
+  const result = run(root);
+  assert.equal(result.status, 1); assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
+  assert.equal(fs.existsSync(path.join(root, "ai")), false);
+}, source => source.replace('from "node:module";', 'from "data:text/javascript,export%20%7BisBuiltin%7D%20from%20%27node%3Amodule%27";')
+  .replace('function sourceState() {', 'function sourceState() { process.stdout.write("unexpected-source-read");')));
+
 test("fresh bootstrap authenticates source and finalized output without runtime writes", () => fixture((root, expected) => {
   const result = run(root); assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
   const value = JSON.parse(result.stdout); assert.deepEqual(value.sourceBuild, expected);

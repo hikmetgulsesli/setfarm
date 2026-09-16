@@ -20,6 +20,18 @@ verification, physical temporary Git/build fixtures, strict JSON observations.
 
 ## Constraints and causal scope
 
+- PR125 review4021928589 identifies a supported-runtime linkage failure: a
+  named missing `registerHooks` export bypasses the sanitized refusal. Read the
+  optional API from the module namespace so absence reaches the existing guard.
+  Regression substitutes an ESM boundary with only `isBuiltin`, requires exact
+  refusal and no source reads/runtime writes. No native-loader fallback or engine
+  range change. This is a root fix for the approved safe cutover diagnostic.
+  Qualification: missing-export regression failed with the expected linkage
+  error before the fix; bootstrap/owner suites then passed40/40, zero skips,
+  105855.125708ms. The cutover suite passed208/208, zero skips,28164.39075ms;
+  noemit, English/path contracts and whitespace checks passed. Independent
+  scoped review found no must-fix. No live deployment or database changes.
+
 - Keep old deployment and eight archives unchanged; ports3080/3333/18789 unchanged.
 - No source/tsx fallback, dirty-build override, ledger inspection that repairs
   state, maintenance acquisition, service operation or archive disposal.

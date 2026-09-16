@@ -4,7 +4,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { registerHooks, isBuiltin } from "node:module";
+import * as nodeModule from "node:module";
+const { registerHooks, isBuiltin } = nodeModule;
 
 // Trusted fresh entry: launch with a trusted Node executable and sanitized
 // environment, without preloads. In-entry checks cannot undo prior preload code.

@@ -33,7 +33,7 @@ function classify(row: Row, uid: number) {
   const tokens = row.command.split(/\s+/).map(token => token.replace(/^["']|["']$/g, ""));
   const spawner = tokens.some(token => /(?:^|\/)spawner\.(?:js|ts|mjs|cjs)$/.test(token));
   const dashboard = tokens.some(token => /(?:^|\/)server\/daemon\.(?:js|ts|mjs|cjs)$/.test(token));
-  const cli = tokens.some(token => /(?:^|\/)(?:setfarm(?:\.(?:js|mjs|cjs))?|cli\.(?:js|ts|mjs|cjs))$/.test(token));
+  const cli = tokens.some(token => /(?:^|\/)(?:setfarm(?:\.(?:js|mjs|cjs))?|dist\/cli\/cli\.js|src\/cli\/cli\.ts)$/.test(token));
   const spawnerCli = cli && tokens.includes("spawner"), dashboardCli = cli && tokens.includes("dashboard");
   if (!spawner && !dashboard && !spawnerCli && !dashboardCli) return null;
   if (!/^[A-Za-z+<>]{1,16}$/.test(row.stat) || /[ZE]/.test(row.stat)) fail();

@@ -26,6 +26,13 @@ empty inventory never independently grants zero-owner admission.
 
 ## Interface and constraints
 
+PR125 review4021928595 identifies unrelated generic `cli.js` commands falsely
+blocking the transition. Restrict CLI contenders to the known `dist/cli/cli.js`
+and `src/cli/cli.ts` layouts plus existing `setfarm` aliases, preserving relative
+forms and every checkout root. The mapped source/test files carry negative
+generic-basename cases and positive source/compiled/alias starter matrices.
+No daemon/listener/identity guard changes or ownership authority are introduced.
+
 Return versioned schema, families and listener (null or one exact loopback3333
 listener), plus processObservationHash. Family entries carry uid/pid/ppid/pgid,
 birth identity, commandHash, classification, and only exact recognized executable,

@@ -88,11 +88,24 @@ test("global cutover observation retains old and new daemon families and hides u
   assert.equal(result.frozen, true); assert.equal(result.scans, 2); assert.equal(result.listens, 2);
 });
 
-test("short ordinary CLI starters remain in the global family diagnostic", () => {
-  const result = observe(`const original = rows; rows = () => original()+row(4105,node+" /fixture/new/dist/cli/cli.js spawner start",4100,4100);`);
-  assert.equal(result.observation?.families.length, 4, JSON.stringify(result));
-  assert.equal(result.observation.families[3].classification, "spawner-cli-starter");
-});
+for (const entry of ["/unrelated/cli.js", "cli.ts", "/unrelated/bin/cli.mjs", "/unrelated/cli.cjs"]) {
+  test(`${entry} with dashboard or spawner arguments is not a Setfarm starter`, () => {
+    const result = observe(`const original=rows; rows=()=>original()+row(4105,node+" "+${JSON.stringify(entry)}+" dashboard spawner UNRELATED_SECRET",4100,4100);`);
+    assert.equal(result.observation?.families.length, 3, JSON.stringify(result));
+    assert.equal(JSON.stringify(result).includes("UNRELATED_SECRET"), false);
+  });
+}
+
+for (const entry of ["/fixture/new/dist/cli/cli.js", "dist/cli/cli.js", "./dist/cli/cli.js",
+  "/fixture/old/src/cli/cli.ts", "src/cli/cli.ts", "./src/cli/cli.ts", "setfarm", "/fixture/.local/bin/setfarm"]) {
+  for (const command of ["spawner", "dashboard"]) {
+    test(`${entry} ${command} starter remains in the global family diagnostic`, () => {
+      const result = observe(`const original=rows; rows=()=>original()+row(4105,node+" "+${JSON.stringify(entry)}+" "+${JSON.stringify(command)}+" start",4100,4100);`);
+      assert.equal(result.observation?.families.length, 4, JSON.stringify(result));
+      assert.equal(result.observation.families[3].classification, `${command}-cli-starter`);
+    });
+  }
+}
 
 for (const change of ["late-family", "reused", "missing-observer", "duplicate-pid", "foreign-listener", "wildcard-listener"]) {
   test(`${change} global process bracket refuses`, () => {
