@@ -19,8 +19,9 @@ export function write(root, locator, bytes, mode = 0o644) {
   const target = path.join(root, locator); fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
   fs.writeFileSync(target, bytes, { mode }); fs.chmodSync(target, mode);
 }
-export function fixture(body, instrument = source => source, { genuine = false, census = false, envAbsence = false, helpers = false, prepare = () => {}, sourceInstrument = (_locator, source) => source } = {}) {
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cutover-bootstrap-")));
+export function fixture(body, instrument = source => source, { genuine = false, census = false, envAbsence = false, helpers = false, prepare = () => {}, sourceInstrument = (_locator, source) => source,
+  extraSources = {}, temporaryParent = os.tmpdir() } = {}) {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(temporaryParent, "cutover-bootstrap-")));
   const root = path.join(home, "ai/setrox/controller");
   try {
     for (const name of ["deployment-cutover.mjs", "deployment-cutover-owner.mjs", "build-generation-retention.mjs", "build-generation-maintenance-owner-observer.mjs", "build-generation-maintenance-journal.mjs",
@@ -57,6 +58,10 @@ export function fixture(body, instrument = source => source, { genuine = false, 
     }
     for (const locator of sources) write(root, `src/${locator}.ts`, sourceInstrument(locator, fs.readFileSync(new URL(`src/${locator}.ts`, repo), "utf8")));
     write(root, "src/cli/cli.ts", "export const fixtureCli = true;\n"); sources.push("cli/cli");
+    for (const [locator, source] of Object.entries(extraSources)) {
+      assert.match(locator, /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/);
+      write(root, `src/${locator}.ts`, source); if (!sources.includes(locator)) sources.push(locator);
+    }
     prepare(root, home);
     git(root, "init", "-q", "-b", "main"); git(root, "config", "user.name", "Setfarm Fixture");
     git(root, "config", "user.email", "setfarm-fixture@example.invalid"); git(root, "config", "commit.gpgsign", "false");

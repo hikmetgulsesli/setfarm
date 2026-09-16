@@ -155,6 +155,12 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## File map and boundaries
 
+- The retained-profile held context's zero-input selected-startup resolver
+  qualifies only the fixed reviewed ESM/CJS edge table under HOME-absent and
+  account-HOME contexts. It holds nearer lookup boundaries and never evaluates
+  retained packages. Existing snapshot blockers stay unchanged; the owning
+  launcher still must establish which effective context actually applies.
+
 - `src/internal-production/baseline-deployment-cutover-node-path-v1.ts` and its
   physical tests: held first-PATH Node identity for the default-context owning
   composition. Qualify directory and file symlinks, preceding absences and the
@@ -308,8 +314,11 @@ selected-build observer. Add `scripts/deployment-cutover-retained-profile.mjs`,
 its fixed profile JSON, physical tests and genuine cache-inventory integration
 test. Authenticate ten actual installations of nine package names, including the
 known nested Playwright fsevents2.3.2 and root fsevents2.3.3. Unknown inventoried
-nested branches and checked local optional/sibling candidates refuse. Ancestor
-and global Node resolution remain explicitly unqualified. Package bytes grant identity evidence only;
+nested branches and checked local optional/sibling candidates refuse. The held
+resolver additionally checks ancestor/global lookup boundaries for the fixed
+startup edges under HOME-absent and account-HOME contexts. Actual-launcher and
+all-possible-import resolution authority remain explicitly unqualified.
+Package bytes grant identity evidence only;
 do not extend the existing two-package executable loader allowlist.
 
 Finite static/native audit found PATH/DEBUG/library-local changes but no reviewed

@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { write } from "./fixtures/deployment-cutover-bootstrap.mjs";
 import { retainedFixture } from "./fixtures/deployment-cutover-retained-profile.mjs";
 
+
 for (const locator of ["src/cli/cli.ts", "dist/product-compiler/canonical-json.js"]) {
   test(`held retained consumer rejects identical-byte ${locator} replacement after await`, () => retainedFixture(({ selected, observe }) => {
     fs.mkdirSync(path.join(selected, ".setfarm"), { recursive: true, mode: 0o700 });
@@ -61,9 +62,10 @@ for (const change of ["same-byte-replacement", "optional-appearance", "tree-aba"
 test("standard genuine command executes the retained archive qualification", () => {
   const result = spawnSync("npm", ["run", "test:scripts:cutover-genuine"], { cwd: new URL("../../", import.meta.url),
     env: { PATH: process.env.PATH, LANG: "C", LC_ALL: "C", TZ: "UTC" },
-    encoding: "utf8", timeout: 60000, maxBuffer: 1024 * 1024 });
+    encoding: "utf8", timeout: 90000, maxBuffer: 1024 * 1024 });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /reviewed retained profile matches all genuine fixed integrity archives without evaluation/);
+  assert.match(result.stdout, /held retained profile resolves reviewed ESM\/CJS edges without evaluating throwing targets/);
 });
 
 test("retained profile authenticates real selected build and physical inventory without evaluation", () => retainedFixture(({ observe, expectedProfile }) => {
