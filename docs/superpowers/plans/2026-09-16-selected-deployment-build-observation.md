@@ -45,6 +45,8 @@ ESM, physical temporary Git repositories and compiled CLI observer fixtures.
   fixture, builtins-only selection, historical-build mismatch acceptance,
   file/link/ancestry tampering and read-only preservation assertions.
 - Preserved-deployment spec: describe the selected on-disk evidence boundary.
+- `package.json` and `tests/internal-production/task-0-source-manifest.test.ts`:
+  actual no-DB leaf selection and standard invocation of the cutover regression suite.
 
 ## Task1: selected historical build diagnostic
 
@@ -154,6 +156,15 @@ the command, complete source-manifest18/18 and actual anchored3/3/4passed, zero
 skips. Tests also cover skipped registrations. Independent review found no
 must-fix issue; the adjacent real DB-reset lifecycle test cannot match. This
 restores focused no-DB coverage, not the removed names' implied parser coverage.
+
+PR125 review4021865346 found a second invocation gap: the ten new cutover files
+and pre-DB boundary tests were run directly but omitted from `npm test`. Add the
+invoked `test:internal-production:cutover` script, clearing both PG URLs and
+selecting only those eleven files. The manifest surface regression reproduced
+the missing invocation before repair. Run the actual script before the review
+fix checkpoint; this does not claim a complete repository-wide `npm test` run.
+The actual new suite passed189/189, zero skips,22425.235ms; complete manifest
+passed18/18, zero skips,7635.293708ms. Independent review found no must-fix issue.
 
 - Corrected builtins-only candidate before the common read fix: complete218/218,
   zero skips,638209.884541ms. This does not qualify the later bounded-read change.
