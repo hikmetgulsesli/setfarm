@@ -6282,12 +6282,24 @@ test("P4 retirement invoke bridges held lease to empty helper", () => {
   assert.doesNotMatch(fencePorts, /owner-admission-v1\.js/);
 });
 
+async function installCutoverHelperObserverFixture(root: string, retirementModuleUrl: string) {
+  const source = readFileSync(new URL("../../src/internal-production/baseline-deployment-cutover-helper-observation-v1.ts", import.meta.url), "utf8");
+  const marker = 'await import("./baseline-restart-authority-retirement-v1.js")';
+  assert.equal(source.split(marker).length, 2, "route only the real retirement module to its physical fixture");
+  const file = path.join(root, "cutover-helper-observation.ts");
+  writeFileSync(file, source.replace(marker, `await import(${JSON.stringify(retirementModuleUrl)})`)
+    .replace('"../product-compiler/canonical-json.js"', JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href)));
+  return (await import(pathToFileURL(file).href)).observeDeploymentCutoverHelperHistoryV1 as () => Promise<Readonly<Record<string, unknown>>>;
+}
+
 test("P4 helper census distinguishes stable absence from partial history and absence ABA", async () => {
   const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-p4-helper-absence-"));
   try {
     const modulePath = installRetirementFixture(fixture, readFileSync(sourcePath, "utf8"));
     renameSync(path.join(fixture, "data"), path.join(fixture, "seeded-data"));
-    const isolated = await import(`${pathToFileURL(modulePath).href}?absence=${Date.now()}`);
+    const retirementModuleUrl = `${pathToFileURL(modulePath).href}?absence=${Date.now()}`;
+    const isolated = await import(retirementModuleUrl);
+    const observeCutoverHelpers = await installCutoverHelperObserverFixture(fixture, retirementModuleUrl);
     const observe = () => isolated.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1();
     const initial = await observe();
     assert.equal(initial.preSchemaHelperState, "absent");
@@ -6313,6 +6325,10 @@ test("P4 helper census distinguishes stable absence from partial history and abs
     }
     const legacy = seedPreSchemaHelperClosure(fixture);
     assert.deepEqual(await observe(), legacy, "legacy terminal keeps its original census hash");
+    const cutoverTerminal = await observeCutoverHelpers();
+    assert.equal(cutoverTerminal.preSchemaHelperState, "terminal");
+    assert.equal(cutoverTerminal.helperCensusHash, legacy.censusHash);
+    assert.equal(Object.hasOwn(cutoverTerminal, "settlement"), false);
     const settlementStore = path.join(root, "pre-schema-helper-settlements/sha256");
     const shard = path.join(settlementStore, readdirSync(settlementStore)[0]!);
     for (const target of [path.join(root, "pre-schema-helper-journal.json"), path.join(shard, readdirSync(shard)[0]!)]) {
@@ -6334,7 +6350,9 @@ test("P4 baseline helper registry closes an indeterminate journal without redisp
   try {
     const fixtureModulePath = installRetirementFixture(fixture, readFileSync(sourcePath, "utf8"));
     seedPreSchemaHelperClosure(fixture);
-    const isolated = await import(`${pathToFileURL(fixtureModulePath).href}?registry=${Date.now()}`);
+    const retirementModuleUrl = `${pathToFileURL(fixtureModulePath).href}?registry=${Date.now()}`;
+    const isolated = await import(retirementModuleUrl);
+    const observeCutoverHelpers = await installCutoverHelperObserverFixture(fixture, retirementModuleUrl);
     const lease = await isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
     const authorizationHash = "4".repeat(64);
     const authorizationRef = `setfarm://internal-production/baseline-service-restart-authorization/sha256/${authorizationHash}`;
@@ -6388,6 +6406,7 @@ test("P4 baseline helper registry closes an indeterminate journal without redisp
     const census = await isolated.observeInternalProductionBaselineServiceRestartHelperJournalCensusV1();
     assert.deepEqual(Reflect.ownKeys(census), ["schema", "preSchemaHelperState", "registeredBaselineHelperJournalCount", "terminalBaselineHelperJournalCount", "liveBaselineHelperJournalCount", "ambiguousBaselineHelperJournalCount", "helperJournalRegistryHeadRef", "helperJournalRegistryHeadHash", "retainedHelperJournalSettlementSetHash", "censusHash"]);
     assert.deepEqual([census.registeredBaselineHelperJournalCount, census.terminalBaselineHelperJournalCount, census.liveBaselineHelperJournalCount, census.ambiguousBaselineHelperJournalCount], [1, 1, 0, 1]);
+    await assert.rejects(observeCutoverHelpers(), /DEPLOYMENT_CUTOVER_HELPER_OBSERVATION_INVALID/, "cutover refuses real ambiguous terminal history");
     const terminalHead = await isolated.resolveInternalProductionBaselineServiceRestartHelperRegistryHeadV1({ headRef: census.helperJournalRegistryHeadRef, headHash: census.helperJournalRegistryHeadHash });
     assert.equal(terminalHead.entryKind, "terminal");
     const terminal = await isolated.resolveInternalProductionBaselineServiceRestartHelperRegistryTerminalV1({ terminalRef: terminalHead.entryRef, terminalHash: terminalHead.entryHash });
@@ -6455,6 +6474,7 @@ test("P4 baseline helper registry closes an indeterminate journal without redisp
       [1, 0, 1, 0],
       "registration-only authority is live and can never be observed as an empty helper census",
     );
+    await assert.rejects(observeCutoverHelpers(), /DEPLOYMENT_CUTOVER_HELPER_OBSERVATION_INVALID/, "cutover refuses real live registered helper history");
     writeFileSync(currentHeadPath, completedHeadPairBytes, { mode: 0o600 });
     const registrationStore = path.join(registryRoot, "registrations/sha256");
     const crossedRegistrationCore = { schema: "setfarm.internal-production-baseline-service-restart-helper-registry-registration.v1", registryOrdinal: completedHead.registryOrdinal + 1, predecessorHeadRef: completedHead.headRef, predecessorHeadHash: completedHead.headHash, service: "setfarm-spawner", actionId: "a-restart-service-setfarm-spawner-v1", authorizationRef: `setfarm://internal-production/baseline-service-restart-authorization/sha256/${"6".repeat(64)}`, authorizationHash: "6".repeat(64), operationRef: secondOperationRef, operationHash: secondOperationHash, outboxRef: `setfarm://internal-production/baseline-service-restart-launch-outbox/sha256/${"7".repeat(64)}`, outboxHash: "7".repeat(64) };

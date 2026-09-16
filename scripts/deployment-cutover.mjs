@@ -51,7 +51,7 @@ function sourceState() {
 }
 async function inspect() {
   if (typeof registerHooks !== "function" || process.execArgv.length || process.argv.length !== 4
-    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles"].includes(process.argv[2]) || process.argv[3] !== "--json"
+    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers"].includes(process.argv[2]) || process.argv[3] !== "--json"
     || pathToFileURL(path.resolve(process.argv[1])).href !== import.meta.url
     || Object.keys(process.env).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key)
       && !(process.platform === "darwin" && key === "__CF_USER_TEXT_ENCODING"))) fail();
@@ -163,7 +163,11 @@ async function inspect() {
     check();
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();
-    let host, envFiles;
+    let host, envFiles, helpers;
+    if (process.argv[2] === "inspect-helpers") {
+      const helperModule = await import("../dist/internal-production/baseline-deployment-cutover-helper-observation-v1.js");
+      check(); helpers = await helperModule.observeDeploymentCutoverHelperHistoryV1();
+    }
     if (process.argv[2] === "inspect-envfiles") {
       const envModule = await import("../dist/internal-production/baseline-deployment-cutover-env-absence-v1.js");
       check(); envFiles = envModule.observeDeploymentCutoverDefaultEnvAbsenceV1();
@@ -198,7 +202,7 @@ async function inspect() {
     }
     check(); if (canonical(sourceState()) !== canonical(initial)) fail();
     result = { schema: "setfarm.internal-production-deployment-cutover-bootstrap-observation.v1", sourceBuild, controllerSourceHash: authority.controllerSourceHash,
-      ...(host ? { host } : {}), ...(envFiles ? { envFiles } : {}) };
+      ...(host ? { host } : {}), ...(envFiles ? { envFiles } : {}), ...(helpers ? { helpers } : {}) };
   } catch { invalid = true; }
   while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch { invalid = true; } }
   if (invalid || !result) fail(); return result;
