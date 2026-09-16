@@ -6,6 +6,38 @@ import { spawnSync, execFileSync } from "node:child_process";
 import { fixture, run, write, git } from "./fixtures/deployment-cutover-bootstrap.mjs";
 import { retainedFixture } from "./fixtures/deployment-cutover-retained-profile.mjs";
 
+test("bootstrap supplies authenticated Python bytes as data without evaluating them", () => fixture((root, expected) => {
+  const result = run(root);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).sourceBuild, expected);
+  assert.equal(fs.existsSync(path.join(root, "python-executed")), false);
+}, source => source.replace('const verifier = await import', `const pythonData = await import('./deployment-cutover-passive-home.py');
+  if(pythonData.default !== fs.readFileSync(path.join(root,'scripts/deployment-cutover-passive-home.py'),'utf8'))fail();
+  const verifier = await import`), { prepare(root) {
+  write(root, "scripts/deployment-cutover-passive-home.py", "raise Exception('PYTHON_MUST_NOT_EVALUATE')\n");
+} }));
+
+for (const fault of ["modified", "missing", "foreign-url"]) test(`bootstrap refuses ${fault} Python source data`, () => fixture(root => {
+  if (fault === "modified") fs.appendFileSync(path.join(root, "scripts/deployment-cutover-passive-home.py"), "\nPRIVATE_SENTINEL\n");
+  if (fault === "missing") fs.unlinkSync(path.join(root, "scripts/deployment-cutover-passive-home.py"));
+  const result = run(root);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
+}, source => source.replace('const verifier = await import',
+  `await import(${JSON.stringify(fault === "foreign-url" ? "./foreign.py" : "./deployment-cutover-passive-home.py")});const verifier = await import`)));
+
+test("load-time Python replacement cannot replace the already authenticated data bytes", () => fixture(root => {
+  const result = run(root);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
+  assert.match(fs.readFileSync(path.join(root, "scripts/deployment-cutover-passive-home.py"), "utf8"), /SWAPPED_PYTHON/);
+}, source => source.replace('const source = entry.bytes.toString("utf8");',
+  `fs.writeFileSync(entry.target,'SWAPPED_PYTHON');const source = entry.bytes.toString("utf8");`)
+  .replace('const verifier = await import', `const data=await import('./deployment-cutover-passive-home.py');
+    if(data.default==='SWAPPED_PYTHON')process.stdout.write('SWAPPED_DATA_ACCEPTED');const verifier = await import`)));
+
 test("trusted retained inspection authenticates selected bytes without granting environment authority", () => retainedFixture(({ root }) => {
   const result = run(root, ["inspect-retained-profile", "--json"]); assert.equal(result.status, 0, result.stderr);
   const observed = JSON.parse(result.stdout);

@@ -166,7 +166,19 @@ not an arbitrary same-user actor deliberately launching a retired executable.
   composition. Qualify directory and file symlinks, preceding absences and the
   trusted running executable without executing candidates. This leaf is not
   effective-environment, complete module-resolution or database authority.
-  Implicit launcher HOME remains a separate unresolved proof obligation.
+  Implicit launcher HOME remains a separate unresolved proof obligation. The
+  approved transition's next bounded implementation uses passive observation of
+  existing scheduled retries, never a new launch. A fixed authenticated Python
+  source supplied through the bootstrap data hook preserves native NUL boundaries
+  with trusted isolated Xcode Python and Darwin sysctl/libproc. Accept only a
+  complete unambiguous private environment profile, positive account HOME and
+  bracketed fixed-label process identity; zero-padding ambiguity and unavailable
+  retries refuse. Mutable stack evidence requires reviewed cooperative startup
+  and no empty environment entries, not merely matching reads. Keep samples
+  operation-local and require a separate fresh idle census before private DB
+  composition. Existing strict launcher APIs remain unchanged; no raw environment
+  or credential-derived hashes leave the native bridge. See the passive-HOME
+  implementation plan for file map, parser constraints and regression gates.
 
 - `scripts/deployment-cutover-dependencies.mjs` and its script tests: fixed
   postgres/Zod cache archives authenticated against reviewed lock SRI, bounded

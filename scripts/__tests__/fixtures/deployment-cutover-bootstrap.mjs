@@ -25,7 +25,8 @@ export function fixture(body, instrument = source => source, { genuine = false, 
   const root = path.join(home, "ai/setrox/controller");
   try {
     for (const name of ["deployment-cutover.mjs", "deployment-cutover-owner.mjs", "build-generation-retention.mjs", "build-generation-maintenance-owner-observer.mjs", "build-generation-maintenance-journal.mjs",
-      "deployment-cutover-retained-profile.mjs", "deployment-cutover-retained-profile.v1.json"]) {
+      "deployment-cutover-retained-profile.mjs", "deployment-cutover-retained-profile.v1.json",
+      "deployment-cutover-passive-home.mjs", "deployment-cutover-passive-home.py"]) {
       let source = fs.readFileSync(new URL(`scripts/${name}`, repo), "utf8");
       if (name === "deployment-cutover.mjs") {
         // Keep even an accidental runtime-store call inside this owned fixture.
