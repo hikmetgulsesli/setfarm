@@ -17,13 +17,13 @@ function fixture(body) {
   fs.mkdirSync(path.join(checkout, "dist", "product-compiler"), { recursive: true, mode: 0o700 });
   fs.mkdirSync(path.join(home, "ai", "setrox", "data", "internal-production-baseline"), { recursive: true, mode: 0o700 });
   try {
-    for (const name of ["deployment-cutover-owner.mjs", "build-generation-maintenance-owner-observer.mjs", "build-generation-maintenance-journal.mjs"])
+    for (const name of ["deployment-cutover-owner.mjs", "deployment-cutover.mjs", "build-generation-maintenance-owner-observer.mjs", "build-generation-maintenance-journal.mjs"])
       fs.copyFileSync(new URL(`scripts/${name}`, repo), path.join(checkout, "scripts", name));
     for (const locator of ["internal-production/baseline-deployment-cutover-owner-store-v1", "internal-production/baseline-deployment-cutover-records-v1", "internal-production/baseline-workspace-authority-path-v1", "product-compiler/canonical-json"])
       fs.writeFileSync(path.join(checkout, "dist", `${locator}.js`), transformSync(fs.readFileSync(new URL(`src/${locator}.ts`, repo), "utf8"), { loader: "ts", format: "esm", target: "node22" }).code, { mode: 0o600 });
     fs.writeFileSync(path.join(checkout, "package.json"), '{"type":"module"}', { mode: 0o600 });
-    fs.writeFileSync(path.join(checkout, "dist/internal-production/baseline-post-handoff-receipt-v1.js"), `
-      export function observeCurrentInternalProductionCleanSetfarmSourceBuildV1(){return {branch:'main',clean:true,sha:'a'.repeat(40),treeHash:'b'.repeat(40),buildHash:'c'.repeat(64),originMainSha:'a'.repeat(40)}}`, { mode: 0o600 });
+    fs.writeFileSync(path.join(checkout, "scripts/build-generation-retention.mjs"), `
+      export function observeCurrentFinalizedSetfarmSourceBuildV1(){return {branch:'main',clean:true,sha:'a'.repeat(40),treeHash:'b'.repeat(40),buildHash:'c'.repeat(64),originMainSha:'a'.repeat(40)}}`, { mode: 0o600 });
     body(home, checkout);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 }
@@ -32,8 +32,8 @@ function program(home, checkout, action) {
     import fs from 'node:fs';import os from 'node:os';import {syncBuiltinESMExports} from 'node:module';
     const actual=os.userInfo();os.userInfo=()=>({...actual,homedir:${JSON.stringify(home)}});os.homedir=()=>${JSON.stringify(home)};syncBuiltinESMExports();
     const module=await import(${JSON.stringify(path.join(checkout, "scripts/deployment-cutover-owner.mjs"))});
-    const records=await import(${JSON.stringify(path.join(checkout, "dist/internal-production/baseline-deployment-cutover-records-v1.js"))});
     const source=await module.observeDeploymentCutoverOwnerControllerSourceV1();
+    const records=await import(${JSON.stringify(path.join(checkout, "dist/internal-production/baseline-deployment-cutover-records-v1.js"))});
     const plan={
       oldDeployment:{checkoutPath:'/old',checkoutDirectoryIdentityHash:'a'.repeat(64),sourceSha:'b'.repeat(40),sourceTreeHash:'c'.repeat(40),buildHash:'d'.repeat(64)},
       newDeployment:{checkoutPath:'/new',checkoutDirectoryIdentityHash:'e'.repeat(64),sourceSha:'f'.repeat(40),sourceTreeHash:'1'.repeat(40),buildHash:'2'.repeat(64)},
@@ -202,8 +202,8 @@ test("publication cannot adopt a baseline replaced after the last owner observat
   assert.deepEqual(result, { refused: true, replaced: true, second: false });
 }));
 
-test("missing compiled source authority cannot fall back to source code", () => fixture((home, checkout) => {
-  fs.unlinkSync(path.join(checkout, "dist/internal-production/baseline-post-handoff-receipt-v1.js"));
+test("missing compiled owner records cannot fall back to source code", () => fixture((home, checkout) => {
+  fs.unlinkSync(path.join(checkout, "dist/internal-production/baseline-deployment-cutover-records-v1.js"));
   const child = spawnSync(process.execPath, ["--input-type=module", "-e", program(home, checkout, "")], { encoding: "utf8", env: {}, timeout: 15000 });
   assert.notEqual(child.status, 0); assert.match(child.stderr, /DEPLOYMENT_CUTOVER_OWNER_REFUSED/);
   assert.equal(fs.existsSync(path.join(home, "ai/setrox/data/internal-production-baseline/deployment-cutover-owner-v1")), false);

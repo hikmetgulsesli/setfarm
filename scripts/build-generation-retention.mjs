@@ -1511,6 +1511,65 @@ function observeCurrentRetentionControllerSourceV2(root) {
   return Object.freeze(controllerSource);
 }
 
+let currentFinalizedSourceObservationUncertainV1 = false;
+
+// Read-only bootstrap primitive. No retained-generation or maintenance IO, and
+// no compiled module is evaluated to establish its own build authority.
+export function observeCurrentFinalizedSetfarmSourceBuildV1() {
+  if (currentFinalizedSourceObservationUncertainV1) fail("current finalized source observation is uncertain");
+  const root = repositoryRootV1(), pins = [];
+  const keys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"];
+  const fileKeys = [...keys, "nlink", "size", "mtimeNs", "ctimeNs"];
+  const same = (left, right, fields = keys) => fields.every(key => left[key] === right[key]);
+  let result, invalid = false;
+  try {
+    const check = () => {
+      for (const pin of pins) if (!same(pin.stats, fstatSync(pin.fd, { bigint: true }))
+        || !same(pin.stats, lstatSync(pin.target, { bigint: true }))) fail("current finalized ancestor changed");
+    };
+    const hold = target => {
+      check(); const stats = lstatSync(target, { bigint: true });
+      if (!stats.isDirectory() || stats.isSymbolicLink()) fail("current finalized ancestor is not physical");
+      const fd = openSync(target, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      pins.push({ target, fd, stats }); check();
+      if ((target === root || target.startsWith(`${root}/`)) && (stats.uid !== BigInt(process.getuid()) || (stats.mode & 0o022n))) fail("current finalized directory owner/mode is invalid");
+    };
+    const segments = root.split(path.sep).filter(Boolean);
+    if (segments.length > 128) fail("current finalized root is too deep");
+    for (let index = 0; index <= segments.length; index++) hold(path.join(path.parse(root).root, ...segments.slice(0, index)));
+    const before = observeCurrentRetentionControllerSourcePassV2(root), dist = path.join(root, "dist");
+    hold(dist); const device = pins.at(-1).stats.dev;
+    const inventoryBefore = inventoryBuildGenerationV1(dist), physicalFiles = [];
+    for (const entry of inventoryBefore.entries) {
+      const target = path.join(dist, entry.locator), stats = lstatSync(target, { bigint: true });
+      if (stats.uid !== BigInt(process.getuid()) || stats.dev !== device) fail("current finalized output owner/device is invalid");
+      if (entry.kind === "directory") hold(target); else physicalFiles.push({ target, stats });
+    }
+    const info = parseFinalizedJsonV1(readStableRegular(path.join(dist, "BUILD_INFO.json"), { device, mode: 0o444 }),
+      ["sha", "shortSha", "branch", "dirty", "packageVersion", "displayVersion", "builtAt"], "current finalized BUILD_INFO", true);
+    const output = parseFinalizedJsonV1(readStableRegular(path.join(dist, "PLATFORM_BUILD_OUTPUT_TREE.json"), { device, mode: 0o444 }),
+      ["schema", "sourceSha", "sourceTreeHash", "entries", "outputTreeHash"], "current finalized output", false);
+    const manifest = parseFinalizedJsonV1(readStableRegular(path.join(dist, "PLATFORM_RELEASE_MANIFEST.json"), { device, mode: 0o444 }),
+      ["schema", "releaseSha", "branch", "dirty", "stitchConverter"], "current finalized manifest", false);
+    const stableBuildInfo = { schema: "setfarm.internal-production-stable-setfarm-build-info.v1", sha: info.sha, shortSha: info.shortSha,
+      branch: info.branch, dirty: info.dirty, packageVersion: info.packageVersion, displayVersion: info.displayVersion };
+    const expected = Object.freeze({ branch: "main", clean: true, sha: before.sourceSha, treeHash: before.sourceTreeHash,
+      buildHash: hashCanonicalJsonV1({ schema: "setfarm.internal-production-controller-build.v1", stableBuildInfo,
+        buildInputSetHash: before.buildInputSetHash, outputTreeHash: output.outputTreeHash, releaseManifestHash: hashCanonicalJsonV1(manifest) }),
+      originMainSha: before.originMainSha });
+    check();
+    const actual = observeActualSetfarmRuntimeSourceV1(path.join(dist, "cli", "cli.js"), expected);
+    if (actual.sha !== expected.sha || actual.treeHash !== expected.treeHash || actual.buildHash !== expected.buildHash) fail("current finalized build is crossed");
+    if (canonicalJsonV1(inventoryBuildGenerationV1(dist)) !== canonicalJsonV1(inventoryBefore)
+      || canonicalJsonV1(observeCurrentRetentionControllerSourcePassV2(root)) !== canonicalJsonV1(before)) fail("current finalized source/output changed");
+    for (const file of physicalFiles) if (!same(file.stats, lstatSync(file.target, { bigint: true }), fileKeys)) fail("current finalized output identity changed");
+    check(); result = expected;
+  } catch { invalid = true; }
+  while (pins.length) { const pin = pins.pop(); try { closeSync(pin.fd); } catch { invalid = true; } }
+  if (invalid || !result) { currentFinalizedSourceObservationUncertainV1 = true; fail("current finalized source/build observation refused"); }
+  return result;
+}
+
 function assertRetainedCurrentBuildV1(value) {
   if (
     !value || !hasExactKeys(value, [

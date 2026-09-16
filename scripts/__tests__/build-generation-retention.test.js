@@ -1286,6 +1286,7 @@ describe("OA18 build-generation retention authority", () => {
       "hashCanonicalJsonV1",
       "inspectBuildGenerationRetentionV1",
       "inspectBuildGenerationRotationLedgerV1",
+      "observeCurrentFinalizedSetfarmSourceBuildV1",
       "planNoReplacePublisherRecoveryV1",
     ]);
     assert.equal(typeof authority.inspectBuildGenerationRotationLedgerV1, "function");
@@ -1296,6 +1297,82 @@ describe("OA18 build-generation retention authority", () => {
     assert.equal(typeof authority.planNoReplacePublisherRecoveryV1, "function");
     assert.equal(authority.inspectBuildGenerationRotationLedgerV1.length, 0);
     assert.equal(authority.inspectBuildGenerationRetentionV1.length, 0);
+  });
+
+  it("current finalized source observer verifies a real fixture without writing or executing dist", () => {
+    const root = realpathSync(createFixture());
+    try {
+      git(root, ["config", "remote.origin.url", "https://github.com/hikmetgulsesli/setfarm.git"]);
+      const expectedBuildHash = writeFinalizedRuntimeDist(root);
+      const result = runModule(root, `import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';
+        for(const name of ['writeFileSync','mkdirSync','renameSync','unlinkSync','rmdirSync','chmodSync','fchmodSync','linkSync','fsyncSync'])fs[name]=()=>{throw Error('FORBIDDEN_WRITE:'+name)};
+        syncBuiltinESMExports();const {observeCurrentFinalizedSetfarmSourceBuildV1:observe}=await import('./scripts/build-generation-retention.mjs');
+        process.stdout.write(JSON.stringify(observe()));`);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), { branch: "main", clean: true, sha: git(root, ["rev-parse", "HEAD"]),
+        treeHash: git(root, ["rev-parse", "HEAD^{tree}"]), buildHash: expectedBuildHash, originMainSha: git(root, ["rev-parse", "HEAD"]) });
+      assert.equal(existsSync(join(root, ".setfarm")), false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  for (const fault of ["dirty-source", "stale-build", "output-bytes", "wrong-origin", "terminal-mode", "extra-output", "output-symlink", "output-hardlink", "dist-symlink"]) {
+    it(`current finalized source observer refuses ${fault} without creating retention state`, () => {
+      const root = realpathSync(createFixture());
+      try {
+        git(root, ["config", "remote.origin.url", "https://github.com/hikmetgulsesli/setfarm.git"]);
+        writeFinalizedRuntimeDist(root);
+        if (fault === "dirty-source" || fault === "stale-build") fixtureFile(root, "tracked.txt", "changed\n");
+        if (fault === "stale-build") { git(root, ["add", "tracked.txt"]); git(root, ["commit", "-qm", "new source"]); git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]); }
+        if (fault === "output-bytes") fixtureFile(root, "dist/service.js", "throw Error('UNVERIFIED_OUTPUT_EXECUTED');\n");
+        if (fault === "wrong-origin") git(root, ["config", "remote.origin.url", "https://example.invalid/foreign.git"]);
+        if (fault === "terminal-mode") chmodSync(join(root, "dist/BUILD_INFO.json"), 0o644);
+        if (fault === "extra-output") fixtureFile(root, "dist/unexpected.js", "foreign\n");
+        if (fault === "output-symlink") { renameSync(join(root, "dist/service.js"), join(root, "dist/foreign.js")); symlinkSync(join(root, "dist/foreign.js"), join(root, "dist/service.js")); }
+        if (fault === "output-hardlink") linkSync(join(root, "dist/service.js"), join(root, "dist/extra-link.js"));
+        if (fault === "dist-symlink") { renameSync(join(root, "dist"), join(root, ".git/retained-dist")); symlinkSync(join(root, ".git/retained-dist"), join(root, "dist")); }
+        const result = runModule(root, `import {observeCurrentFinalizedSetfarmSourceBuildV1 as observe} from './scripts/build-generation-retention.mjs';
+          try{observe();process.stdout.write('accepted')}catch(error){process.stdout.write(error.message)}`);
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /BUILD_GENERATION_AUTHORITY_CORRUPTION/);
+        assert.doesNotMatch(result.stdout, /UNVERIFIED_OUTPUT_EXECUTED/);
+        assert.equal(existsSync(join(root, ".setfarm")), false);
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    });
+  }
+
+  it("current finalized source observer rejects same-byte output replacement during verification", () => {
+    const root = realpathSync(createFixture());
+    try {
+      git(root, ["config", "remote.origin.url", "https://github.com/hikmetgulsesli/setfarm.git"]);
+      writeFinalizedRuntimeDist(root);
+      const result = runModule(root, `import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';
+        const read=fs.readFileSync,file=${JSON.stringify(join(root, "dist/service.js"))},inode=fs.statSync(file).ino;
+        let hits=0,replaced=false;
+        fs.readFileSync=(target,...args)=>{const bytes=read(target,...args);if(typeof target==='number'&&fs.fstatSync(target).ino===inode&&++hits===2){
+          fs.renameSync(file,file+'.retained');fs.writeFileSync(file,bytes,{mode:0o644});replaced=true;}return bytes};syncBuiltinESMExports();
+        const {observeCurrentFinalizedSetfarmSourceBuildV1:observe}=await import('./scripts/build-generation-retention.mjs');
+        let refused=false;try{observe()}catch{refused=true}
+        process.stdout.write(JSON.stringify({refused,replaced,preserved:fs.existsSync(file+'.retained')}));`);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), { refused: true, replaced: true, preserved: true });
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("current finalized source observer consumes uncertain close once and refuses reuse", () => {
+    const root = realpathSync(createFixture());
+    try {
+      git(root, ["config", "remote.origin.url", "https://github.com/hikmetgulsesli/setfarm.git"]);
+      writeFinalizedRuntimeDist(root);
+      const result = runModule(root, `import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';
+        const close=fs.closeSync,sentinel=${JSON.stringify(join(root, "tracked.txt"))};let active=false,chosen=null,reused=null,count=0;
+        fs.closeSync=fd=>{if(active&&chosen===null){chosen=fd;count++;close(fd);reused=fs.openSync(sentinel,'r');throw Error('CLOSE_RESPONSE_LOST')}
+          if(fd===chosen)count++;return close(fd)};syncBuiltinESMExports();
+        const {observeCurrentFinalizedSetfarmSourceBuildV1:observe}=await import('./scripts/build-generation-retention.mjs');active=true;
+        let refused=false,retryRefused=false;try{observe()}catch{refused=true}try{observe()}catch{retryRefused=true}
+        process.stdout.write(JSON.stringify({refused,retryRefused,count,same:reused===chosen,preserved:fs.fstatSync(reused).ino===fs.statSync(sentinel).ino}));`);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), { refused: true, retryRefused: true, count: 1, same: true, preserved: true });
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   it("OA18 v2 freezes the private schema dispatcher and source boundary", () => {

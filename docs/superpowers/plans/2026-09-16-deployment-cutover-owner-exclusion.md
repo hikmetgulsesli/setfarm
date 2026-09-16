@@ -193,6 +193,14 @@ private test build observer is explicitly a fixture, not finalized-build proof.
 Full source/bootstrap replacement and live-effect integration are still required.
 Complete cutover181/181,zero skips23500.24275ms; noemit0,English1519/path868.
 
+Task3 checkpoint:6664fd45. Subsequent bootstrap qualification uses the real
+plain-JS finalized source observer, not the eager compiled receipt dependency
+graph. The source closure now binds bootstrap, retention verifier, owner, process
+observer and journal normalizer. Bootstrap12 + owner20 + process-observer15 passed
+47/47,zero skips15720.170125ms; cutover refresh181/181,zero skips21512.481083ms.
+The trusted loading boundary is now tested with actual finalized-output fixtures
+and load-time replacement markers. Live-effect integration remains outstanding.
+
 ## Integration remains mandatory
 
 No live service operations are enabled by these tasks alone. Controller preflight

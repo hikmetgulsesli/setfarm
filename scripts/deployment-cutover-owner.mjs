@@ -7,7 +7,7 @@ import { types } from "node:util";
 // Internal ownership only. A fresh trusted controller bootstrap must authenticate
 // this module before import. This is not a service-effect or loaded-code proof.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const sourceFiles = ["scripts/build-generation-maintenance-journal.mjs", "scripts/build-generation-maintenance-owner-observer.mjs", "scripts/deployment-cutover-owner.mjs"];
+const sourceFiles = ["scripts/build-generation-maintenance-journal.mjs", "scripts/build-generation-maintenance-owner-observer.mjs", "scripts/build-generation-retention.mjs", "scripts/deployment-cutover-owner.mjs", "scripts/deployment-cutover.mjs"];
 const directoryKeys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"];
 const fileKeys = [...directoryKeys, "size", "nlink", "mtimeNs", "ctimeNs"];
 const fail = () => { throw Error("DEPLOYMENT_CUTOVER_OWNER_REFUSED"); };
@@ -64,7 +64,7 @@ function assertSourceFiles() {
 }
 function sourceAuthority(modules) {
   assertSourceFiles();
-  const build = modules.receipt.observeCurrentInternalProductionCleanSetfarmSourceBuildV1();
+  const build = modules.source.observeCurrentFinalizedSetfarmSourceBuildV1();
   if (!build || Object.keys(build).sort().join(",") !== "branch,buildHash,clean,originMainSha,sha,treeHash"
     || build.branch !== "main" || build.clean !== true || !/^[a-f0-9]{40}$/.test(build.sha)
     || !/^[a-f0-9]{40}$/.test(build.treeHash) || !/^[a-f0-9]{64}$/.test(build.buildHash) || build.originMainSha !== build.sha) fail();
@@ -78,14 +78,14 @@ async function load() {
   if (uncertain) fail();
   modulesPromise ??= (async () => {
     assertSourceFiles();
-    const receipt = await import(new URL("../dist/internal-production/baseline-post-handoff-receipt-v1.js", import.meta.url));
-    sourceAuthority({ receipt });
+    const source = await import("./build-generation-retention.mjs");
+    sourceAuthority({ source });
     const records = await import(new URL("../dist/internal-production/baseline-deployment-cutover-records-v1.js", import.meta.url));
-    sourceAuthority({ receipt });
+    sourceAuthority({ source });
     const store = await import(new URL("../dist/internal-production/baseline-deployment-cutover-owner-store-v1.js", import.meta.url));
-    sourceAuthority({ receipt });
+    sourceAuthority({ source });
     const processObserver = await import("./build-generation-maintenance-owner-observer.mjs");
-    const modules = { receipt, records, store, processObserver }; sourceAuthority(modules); return modules;
+    const modules = { source, records, store, processObserver }; sourceAuthority(modules); return modules;
   })().catch(() => { uncertain = true; fail(); });
   return modulesPromise;
 }

@@ -150,6 +150,13 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## File map and boundaries
 
+- `scripts/build-generation-retention.mjs` and its script tests: narrowly exported
+  current finalized source/build observer using the existing plain-JS verifier.
+  Read-only, exact current source, full physical brackets; no retained-build or
+  maintenance fallback. Existing retention gates remain unchanged.
+- New `scripts/__tests__/deployment-cutover.test.js`: actual temporary clean Git
+  and finalized-output fixtures, immutable authenticated-byte loading, load-time
+  replacement markers, unsupported invocation and sanitized failure tests.
 - New `scripts/deployment-cutover-owner.mjs` and
   `scripts/__tests__/deployment-cutover-owner.test.js`: process-local opaque owner
   capability, real predecessor-death observations and strict single-acquisition
@@ -200,6 +207,11 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 - New `scripts/deployment-cutover.mjs`: code-owned journaled preflight/cutover/
   recovery controller with bounded exact process and symlink operations. It must
   not expose arbitrary source roots, commands, target PIDs or secret arguments.
+  Currently only the fresh builtins-first `inspect --json` entry is implemented:
+  authenticate plain scripts against clean canonical Git, verify finalized output,
+  then load only owned authenticated bytes through a fixed synchronous hook.
+  The owner shares the plain-JS source verifier; no eager receipt/package import
+  broadens this loading boundary. Diagnostic success does not enable live effects.
 - Reuse reviewed maintenance journal/owner observation primitives only where
   their historical/physical contract fits. Add physical owner-death evidence and
   safe release/recovery semantics before any live cleanup that needs them.
