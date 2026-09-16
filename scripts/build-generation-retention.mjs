@@ -268,7 +268,12 @@ function readStableRegular(file, { device, mode, linkCounts = [1], maxBytes = MA
     if (mode !== undefined && modeOf(before) !== mode) fail(`${file} has an invalid mode`);
     if (before.size > BigInt(maxBytes)) fail(`${file} exceeds its byte cap`);
     const buffer = Buffer.alloc(Number(before.size) + 1);
-    const count = readSync(descriptor, buffer, 0, buffer.length, 0);
+    let count = 0;
+    while (count < buffer.length) {
+      const size = readSync(descriptor, buffer, count, buffer.length - count, count);
+      if (size === 0) break;
+      count += size;
+    }
     const bytes = buffer.subarray(0, count);
     const after = fstatSync(descriptor, { bigint: true });
     const named = lstatSync(file, { bigint: true });

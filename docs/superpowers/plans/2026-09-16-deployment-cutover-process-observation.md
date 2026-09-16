@@ -33,6 +33,12 @@ forms and every checkout root. The mapped source/test files carry negative
 generic-basename cases and positive source/compiled/alias starter matrices.
 No daemon/listener/identity guard changes or ownership authority are introduced.
 
+Follow-up review4021983541 applies the same causal fix to generic `spawner.js`
+and `server/daemon.js` basenames. Initial contender matching now requires known
+dist/source layouts; exact daemon grammar and listener/identity checks remain.
+Four unrelated daemon negatives reproduced refusal before repair. Full process
+suite46/46passed9991.207625ms; invoked cutover212/212passed25861.88175ms, zero skips.
+
 Return versioned schema, families and listener (null or one exact loopback3333
 listener), plus processObservationHash. Family entries carry uid/pid/ppid/pgid,
 birth identity, commandHash, classification, and only exact recognized executable,

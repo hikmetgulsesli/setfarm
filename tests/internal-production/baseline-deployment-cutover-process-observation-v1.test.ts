@@ -88,7 +88,8 @@ test("global cutover observation retains old and new daemon families and hides u
   assert.equal(result.frozen, true); assert.equal(result.scans, 2); assert.equal(result.listens, 2);
 });
 
-for (const entry of ["/unrelated/cli.js", "cli.ts", "/unrelated/bin/cli.mjs", "/unrelated/cli.cjs"]) {
+for (const entry of ["/unrelated/cli.js", "cli.ts", "/unrelated/bin/cli.mjs", "/unrelated/cli.cjs",
+  "/unrelated/spawner.js", "spawner.ts", "/unrelated/server/daemon.js", "server/daemon.ts"]) {
   test(`${entry} with dashboard or spawner arguments is not a Setfarm starter`, () => {
     const result = observe(`const original=rows; rows=()=>original()+row(4105,node+" "+${JSON.stringify(entry)}+" dashboard spawner UNRELATED_SECRET",4100,4100);`);
     assert.equal(result.observation?.families.length, 3, JSON.stringify(result));

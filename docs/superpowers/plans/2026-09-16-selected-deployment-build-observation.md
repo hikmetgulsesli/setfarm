@@ -127,13 +127,28 @@ Review then reproduced a transitive read-cap gap: `readStableRegular` checked th
 file size and then used unbounded `readFileSync(fd)`. Growth between those actions
 could exceed the declared cap; the selected CLI regression read16777218 bytes
 against its16MiB limit. Fix the common read primitive, not just one caller: allocate
-exactly the accepted initial size plus one byte, perform one bounded `readSync`,
+exactly the accepted initial size plus one byte, perform bounded `readSync` calls,
 retain all existing before/after/path metadata and byte-length comparisons, and
-reject short/grown reads. This also protects the selected observer's historical
+reject premature EOF/grown reads. This also protects the selected observer's historical
 verifier calls. Update the two existing fault-injection hooks to the new read
 boundary without weakening their replacement evidence assertions. Preserve the
 already-running immutable-source full result, then rerun the complete suite on
 the final bounded-read candidate. No live mutation is needed for this root fix.
+
+PR125 review4021983545 refined the same primitive: legal partial regular-file
+reads must accumulate into the fixed initial-size-plus-one buffer until EOF or
+capacity. A three-byte read fixture first failed, then passed with unchanged
+metadata, length and growth checks. The extra EOF call exposed two test hooks
+counting calls instead of positive reads; explicit same-byte replacement and
+same-inode/same-length drift assertions reproduced those fixture faults before
+correcting their positive-read counters. The8focused tests passed4293.185125ms.
+The production-candidate full suite was already running on the identical loop;
+its result and the strengthened focused fixtures must be reported separately.
+The full unchanged production-loop candidate completed224/224, zero skips,
+658610.608708ms. Independently reviewed8focused checks qualify the strengthened
+fixtures; the full run did not use those final fixture assertions. No second
+full run is needed solely for the two test-hook improvements. Noemit, version,
+English/path, migration digests and12Mission Control artifacts also passed.
 
 ## Qualification evidence
 

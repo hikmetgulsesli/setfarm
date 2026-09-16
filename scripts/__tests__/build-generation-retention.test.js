@@ -1383,13 +1383,13 @@ describe("OA18 build-generation retention authority", () => {
       const result = runModule(root, `import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';
         const read=fs.readSync,file=${JSON.stringify(join(root, "dist/service.js"))},inode=fs.statSync(file).ino;
         let hits=0,replaced=false;
-        fs.readSync=(target,buffer,offset,...args)=>{const count=read(target,buffer,offset,...args);if(fs.fstatSync(target).ino===inode&&++hits===2){
+        fs.readSync=(target,buffer,offset,...args)=>{const count=read(target,buffer,offset,...args);if(count>0&&fs.fstatSync(target).ino===inode&&++hits===2){
           fs.renameSync(file,file+'.retained');fs.writeFileSync(file,buffer.subarray(offset,offset+count),{mode:0o644});replaced=true;}return count};syncBuiltinESMExports();
         const {observeCurrentFinalizedSetfarmSourceBuildV1:observe}=await import('./scripts/build-generation-retention.mjs');
         let refused=false;try{observe()}catch{refused=true}
-        process.stdout.write(JSON.stringify({refused,replaced,preserved:fs.existsSync(file+'.retained')}));`);
+        process.stdout.write(JSON.stringify({refused,replaced,preserved:fs.existsSync(file+'.retained'),sameBytes:fs.readFileSync(file).equals(fs.readFileSync(file+'.retained'))}));`);
       assert.equal(result.status, 0, result.stderr);
-      assert.deepEqual(JSON.parse(result.stdout), { refused: true, replaced: true, preserved: true });
+      assert.deepEqual(JSON.parse(result.stdout), { refused: true, replaced: true, preserved: true, sameBytes: true });
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
@@ -1450,9 +1450,10 @@ describe("OA18 build-generation retention authority", () => {
 
   for (const fault of ["cli-replacement", "root-replacement", "same-inode-output"]) {
     it(`selected deployment observer refuses ${fault} during its bracket`, () => selectedDeploymentFixture(fixture => {
+      const originalStat = lstatSync(join(fixture.selectedRoot, "dist/service.js"));
       const instrument = fault === "same-inode-output" ? `
         const read=fs.readSync,file=selectedRoot+'/dist/service.js',inode=fs.statSync(file).ino;let hits=0;
-        fs.readSync=(target,...args)=>{const count=read(target,...args);if(fs.fstatSync(target).ino===inode&&++hits===2){
+        fs.readSync=(target,...args)=>{const count=read(target,...args);if(count>0&&fs.fstatSync(target).ino===inode&&++hits===2){
           fs.writeFileSync(file,Buffer.alloc(count,32));fs.writeFileSync(root+'/changed-marker','changed');}return count};`
         : `const spawn=cp.spawnSync;let changed=false;cp.spawnSync=(command,args,options)=>{
           const result=spawn(command,args,options);
@@ -1466,6 +1467,10 @@ describe("OA18 build-generation retention authority", () => {
       assert.equal(existsSync(join(fixture.root, "ai/setrox/data")), false);
       if (fault === "root-replacement") assert.deepEqual(readdirSync(fixture.selectedRoot), []);
       if (fault === "cli-replacement") assert.equal(existsSync(join(fixture.root, ".local/bin/setfarm.preserved")), true);
+      if (fault === "same-inode-output") {
+        const after = lstatSync(join(fixture.selectedRoot, "dist/service.js"));
+        assert.equal(after.ino, originalStat.ino); assert.equal(after.size, originalStat.size);
+      }
     }));
   }
 
@@ -1497,7 +1502,7 @@ describe("OA18 build-generation retention authority", () => {
     assert.equal(evidence.grew, true); assert.ok(evidence.maxRead <= 16 * 1024 * 1024 + 1, JSON.stringify(evidence));
   }));
 
-  for (const [kind, content, accepted] of [["empty", "", true], ["exact-cap", "12345678", true], ["over-cap", "123456789", false], ["short-read", "12345678", false]]) {
+  for (const [kind, content, accepted] of [["empty", "", true], ["exact-cap", "12345678", true], ["over-cap", "123456789", false], ["short-read", "12345678", false], ["partial-read", "12345678", true]]) {
     it(`stable regular read preserves ${kind} boundary semantics`, () => {
       const root = realpathSync(createFixture());
       try {
@@ -1505,7 +1510,9 @@ describe("OA18 build-generation retention authority", () => {
         writeFileSync(modulePath, readFileSync(modulePath, "utf8") + "\nexport {readStableRegular};\n");
         fixtureFile(root, "read-target", content);
         const result = runModule(root, `import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';
-          const read=fs.readSync;let reads=0,active=false;fs.readSync=(...args)=>{const count=read(...args);if(!active)return count;reads++;return ${JSON.stringify(kind)}==='short-read'?Math.max(0,count-1):count};
+          const read=fs.readSync;let reads=0,active=false;fs.readSync=(fd,buffer,offset,length,position)=>{
+            const count=read(fd,buffer,offset,active&&${JSON.stringify(kind)}==='partial-read'?Math.min(3,length):length,position);
+            if(!active)return count;reads++;return ${JSON.stringify(kind)}==='short-read'?Math.max(0,count-1):count};
           syncBuiltinESMExports();const {readStableRegular:observe}=await import('./scripts/build-generation-retention.mjs');
           active=true;
           let accepted=false,bytes=null;try{bytes=observe('./read-target',{maxBytes:8}).bytes.toString();accepted=true}catch{}
