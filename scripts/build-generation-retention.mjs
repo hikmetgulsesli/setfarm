@@ -1451,7 +1451,7 @@ function observeCurrentRetentionControllerSourcePassV2(root) {
   return observePhysicalSynchronizedSourcePassV1(root);
 }
 
-function observePhysicalSynchronizedSourcePassV1(root) {
+function observePhysicalSynchronizedSourcePassV1(root, retainInput) {
   if (!path.isAbsolute(root) || path.normalize(root) !== root || realpathSync(root) !== root) fail("source repository root is invalid");
   const include = fixedGitResultV2(root, ["config", "--local", "--no-includes", "--name-only", "--get-regexp", "^include"]);
   if (include.error || include.signal !== null || include.status !== 1 || include.stdout.length !== 0 || include.stderr.length !== 0) {
@@ -1487,6 +1487,7 @@ function observePhysicalSynchronizedSourcePassV1(root) {
     ) {
       fail(`retention controller live input differs from Git: ${entry.locator}`);
     }
+    if (retainInput) retainInput(target, observed.stats);
     liveInputPhysicalProjection.push(Object.freeze({
       locator: entry.locator,
       physicalMode,
@@ -1538,7 +1539,12 @@ let selectedDeploymentObservationUncertainV1 = false;
 // Builtins only: the retention import closure must never load compiled modules.
 // Bootstrap independently cross-checks the complete compiled CLI observation.
 export function observeSelectedSetfarmDeploymentBuildV1() {
-  if (selectedDeploymentObservationUncertainV1) fail("selected deployment observation is uncertain");
+  const context = holdSelectedSetfarmDeploymentBuildV1();
+  try { return context.observation; } finally { context.close(); }
+}
+
+export function holdSelectedSetfarmDeploymentBuildV1() {
+  if (arguments.length || selectedDeploymentObservationUncertainV1) fail("selected deployment observation is uncertain");
   const pins = [], held = new Set();
   const directoryKeys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"];
   const fileKeys = [...directoryKeys, "nlink", "size", "mtimeNs", "ctimeNs"];
@@ -1548,7 +1554,14 @@ export function observeSelectedSetfarmDeploymentBuildV1() {
   const fileProjection = stat => Object.freeze({ ...directoryProjection(stat), nlink: String(stat.nlink), size: String(stat.size),
     mtimeNs: String(stat.mtimeNs), ctimeNs: String(stat.ctimeNs) });
   const physicalAlias = value => process.platform === "darwin" && value.startsWith("/var/") ? `/private${value}` : value;
-  let result, invalid = false;
+  let result, invalid = false, closed = false, finalized, recheck;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    try { finalized?.close(); } catch { invalid = true; }
+    while (pins.length) { const pin = pins.pop(); try { closeSync(pin.fd); } catch { invalid = true; } }
+    if (invalid) { selectedDeploymentObservationUncertainV1 = true; fail("selected deployment source/build observation refused"); }
+  };
   try {
     const home = physicalAlias(CODE_OWNER_HOME_V1), workspace = physicalAlias(CODE_OWNED_WORKSPACE_ROOT_V1), uid = BigInt(process.getuid());
     const check = () => {
@@ -1584,7 +1597,8 @@ export function observeSelectedSetfarmDeploymentBuildV1() {
     const target = readStableRegular(targetPath, { device: pins.find(pin => pin.target === workspace).stat.dev, maxBytes: 16 * 1024 * 1024 });
     if (target.stats.uid !== uid || target.bytes.length === 0 || (target.stats.mode & 0o022n)) fail("selected CLI entry is invalid");
     assertLink();
-    const observed = observeFinalizedSetfarmSourceBuildAtRootV1(checkoutPath, false);
+    finalized = holdFinalizedSetfarmSourceBuildAtRootV1(checkoutPath, false);
+    const observed = finalized.observation;
     const after = readStableRegular(targetPath, { device: target.stats.dev, maxBytes: 16 * 1024 * 1024 });
     if (!target.bytes.equals(after.bytes) || !same(target.stats, after.stats, fileKeys)) fail("selected CLI entry changed");
     assertLink();
@@ -1595,45 +1609,93 @@ export function observeSelectedSetfarmDeploymentBuildV1() {
     const body = Object.freeze({ schema: "setfarm.internal-production-selected-deployment-build-observation.v1", cli,
       checkoutSource: observed.checkoutSource, buildSource: observed.buildSource });
     result = Object.freeze({ ...body, selectedDeploymentObservationHash: hashCanonicalJsonV1(body) });
+    recheck = () => {
+      if (closed || invalid || selectedDeploymentObservationUncertainV1) fail("selected deployment observation is uncertain");
+      try {
+        assertLink();
+        if (!same(target.stats, lstatSync(targetPath, { bigint: true }), fileKeys)) fail("selected CLI entry changed");
+        finalized.recheck();
+        if (!same(target.stats, lstatSync(targetPath, { bigint: true }), fileKeys)) fail("selected CLI entry changed");
+        assertLink();
+      } catch { invalid = true; selectedDeploymentObservationUncertainV1 = true; fail("selected deployment source/build observation refused"); }
+    };
   } catch { invalid = true; }
-  while (pins.length) { const pin = pins.pop(); try { closeSync(pin.fd); } catch { invalid = true; } }
   if (invalid || !result) {
     selectedDeploymentObservationUncertainV1 = true;
+    close();
     fail("selected deployment source/build observation refused");
   }
-  return result;
+  return Object.freeze({ observation: result, recheck, close });
 }
 
 function observeFinalizedSetfarmSourceBuildAtRootV1(root, requireCurrent) {
+  const context = holdFinalizedSetfarmSourceBuildAtRootV1(root, requireCurrent);
+  try { return context.observation; } finally { context.close(); }
+}
+
+function holdFinalizedSetfarmSourceBuildAtRootV1(root, requireCurrent) {
   if (currentFinalizedSourceObservationUncertainV1) fail("current finalized source observation is uncertain");
-  const pins = [];
+  const pins = [], directories = new Map(), regularFiles = new Map();
   const keys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"];
   const fileKeys = [...keys, "nlink", "size", "mtimeNs", "ctimeNs"];
   const same = (left, right, fields = keys) => fields.every(key => left[key] === right[key]);
-  let result, invalid = false;
+  const treeKeys = [...keys, "mtimeNs", "ctimeNs"];
+  let result, invalid = false, closed = false, recheck;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    while (pins.length) { const pin = pins.pop(); try { closeSync(pin.fd); } catch { invalid = true; } }
+    if (invalid) { currentFinalizedSourceObservationUncertainV1 = true; fail("current finalized source/build observation refused"); }
+  };
   try {
-    const check = () => {
-      for (const pin of pins) if (!same(pin.stats, fstatSync(pin.fd, { bigint: true }))
-        || !same(pin.stats, lstatSync(pin.target, { bigint: true }))) fail("current finalized ancestor changed");
+    const checkDirectories = () => {
+      for (const pin of directories.values()) if (!same(pin.stats, fstatSync(pin.fd, { bigint: true }), pin.tree ? treeKeys : keys)
+        || !same(pin.stats, lstatSync(pin.target, { bigint: true }), pin.tree ? treeKeys : keys)) fail("current finalized ancestor changed");
     };
-    const hold = target => {
-      check(); const stats = lstatSync(target, { bigint: true });
+    const check = () => {
+      checkDirectories();
+      for (const pin of regularFiles.values()) if (!same(pin.stats, fstatSync(pin.fd, { bigint: true }), fileKeys)
+        || !same(pin.stats, lstatSync(pin.target, { bigint: true }), fileKeys)) fail("current finalized file changed");
+    };
+    const budget = () => { if (pins.length >= 4096) fail("current finalized descriptor budget exceeded"); };
+    const hold = (target, tree = false) => {
+      if (directories.has(target)) { if (tree) directories.get(target).tree = true; return; }
+      checkDirectories(); const stats = lstatSync(target, { bigint: true });
       if (!stats.isDirectory() || stats.isSymbolicLink()) fail("current finalized ancestor is not physical");
+      budget();
       const fd = openSync(target, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-      pins.push({ target, fd, stats }); check();
+      const pin = { target, fd, stats, tree }; pins.push(pin); directories.set(target, pin); checkDirectories();
       if ((target === root || target.startsWith(`${root}/`)) && (stats.uid !== BigInt(process.getuid()) || (stats.mode & 0o022n))) fail("current finalized directory owner/mode is invalid");
+    };
+    const retainFile = (target, stats) => {
+      const segments = path.dirname(target).split(path.sep).filter(Boolean);
+      if (segments.length > 128) fail("current finalized file path is too deep");
+      for (let index = 0; index <= segments.length; index++) {
+        const parent = path.join(path.parse(root).root, ...segments.slice(0, index));
+        hold(parent, parent === root || parent.startsWith(`${root}/`));
+      }
+      if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n) fail("current finalized file is invalid");
+      let pin = regularFiles.get(target);
+      if (!pin) {
+        budget();
+        const fd = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        pin = { target, fd, stats }; pins.push(pin); regularFiles.set(target, pin);
+      }
+      if (!same(pin.stats, stats, fileKeys) || !same(pin.stats, fstatSync(pin.fd, { bigint: true }), fileKeys)
+        || !same(pin.stats, lstatSync(target, { bigint: true }), fileKeys)) fail("current finalized file changed");
     };
     const segments = root.split(path.sep).filter(Boolean);
     if (segments.length > 128) fail("current finalized root is too deep");
     for (let index = 0; index <= segments.length; index++) hold(path.join(path.parse(root).root, ...segments.slice(0, index)));
-    const sourcePass = () => requireCurrent ? observeCurrentRetentionControllerSourcePassV2(root) : observePhysicalSynchronizedSourcePassV1(root);
+    if (requireCurrent && (root !== repositoryRootV1() || realpathSync(root) !== root)) fail("retention controller repository root is invalid");
+    const sourcePass = () => observePhysicalSynchronizedSourcePassV1(root, retainFile);
     const before = sourcePass(), dist = path.join(root, "dist");
     hold(dist); const device = pins.at(-1).stats.dev;
     const inventoryBefore = inventoryBuildGenerationV1(dist), physicalFiles = [];
     for (const entry of inventoryBefore.entries) {
       const target = path.join(dist, entry.locator), stats = lstatSync(target, { bigint: true });
       if (stats.uid !== BigInt(process.getuid()) || stats.dev !== device) fail("current finalized output owner/device is invalid");
-      if (entry.kind === "directory") hold(target); else physicalFiles.push({ target, stats });
+      if (entry.kind === "directory") hold(target, true); else { retainFile(target, stats); physicalFiles.push({ target, stats }); }
     }
     const info = parseFinalizedJsonV1(readStableRegular(path.join(dist, "BUILD_INFO.json"), { device, mode: 0o444 }),
       ["sha", "shortSha", "branch", "dirty", "packageVersion", "displayVersion", "builtAt"], "current finalized BUILD_INFO", true);
@@ -1662,10 +1724,18 @@ function observeFinalizedSetfarmSourceBuildAtRootV1(root, requireCurrent) {
       checkoutSource: Object.freeze({ branch: "main", clean: true, sha: before.sourceSha, treeHash: before.sourceTreeHash, originMainSha: before.originMainSha }),
       buildSource: actual,
     });
+    recheck = () => {
+      if (closed || invalid || currentFinalizedSourceObservationUncertainV1) fail("current finalized source observation is uncertain");
+      try {
+        check();
+        if (canonicalJsonV1(inventoryBuildGenerationV1(dist)) !== canonicalJsonV1(inventoryBefore)
+          || canonicalJsonV1(sourcePass()) !== canonicalJsonV1(before)) fail("current finalized source/output changed");
+        check();
+      } catch { invalid = true; currentFinalizedSourceObservationUncertainV1 = true; fail("current finalized source/build observation refused"); }
+    };
   } catch { invalid = true; }
-  while (pins.length) { const pin = pins.pop(); try { closeSync(pin.fd); } catch { invalid = true; } }
-  if (invalid || !result) { currentFinalizedSourceObservationUncertainV1 = true; fail("current finalized source/build observation refused"); }
-  return result;
+  if (invalid || !result) { currentFinalizedSourceObservationUncertainV1 = true; close(); fail("current finalized source/build observation refused"); }
+  return Object.freeze({ observation: result, recheck, close });
 }
 
 function assertRetainedCurrentBuildV1(value) {

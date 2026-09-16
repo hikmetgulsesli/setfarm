@@ -6,6 +6,22 @@ import { test } from "node:test";
 import { write } from "./fixtures/deployment-cutover-bootstrap.mjs";
 import { retainedFixture } from "./fixtures/deployment-cutover-retained-profile.mjs";
 
+for (const locator of ["src/cli/cli.ts", "dist/product-compiler/canonical-json.js"]) {
+  test(`held retained consumer rejects identical-byte ${locator} replacement after await`, () => retainedFixture(({ selected, observe }) => {
+    fs.mkdirSync(path.join(selected, ".setfarm"), { recursive: true, mode: 0o700 });
+    const file = path.join(selected, locator), saved = path.join(selected, ".setfarm/preserved-file");
+    const result = observe("", `await(async()=>{
+      const held=module.holdDeploymentCutoverRetainedProfileV1();await Promise.resolve();
+      const file=${JSON.stringify(file)},bytes=fs.readFileSync(file);
+      fs.renameSync(file,${JSON.stringify(saved)});fs.writeFileSync(file,bytes);
+      let refused=false;try{held.recheck()}catch{refused=true}finally{try{held.close()}catch{}}
+      return Object.freeze({refused});
+    })()`);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), { refused: true });
+  }));
+}
+
 test("held retained profile survives an await and refuses recheck after consume-once close", () => retainedFixture(({ observe }) => {
   const result = observe("", `await (async()=>{
     const held=module.holdDeploymentCutoverRetainedProfileV1();
@@ -128,12 +144,13 @@ for (const kind of ["file", "directory"]) for (const mode of ["snapshot", "held"
   test(`retained profile ${mode} consumes ${kind} close loss once and refuses reuse`, () => retainedFixture(({ root, selected, observe }) => {
     const target = path.join(selected, "node_modules/reviewed-fixture", kind === "file" ? "index.js" : "");
     const sentinel = path.join(root, "package.json");
-    const result = observe(`const close=fs.closeSync,inode=fs.statSync(${JSON.stringify(target)}).ino;let selectedFd=null,reused=null,attempts=0;
-      fs.closeSync=fd=>{if(selectedFd===null&&fs.fstatSync(fd).ino===inode){selectedFd=fd;attempts++;close(fd);
+    const result = observe(`const close=fs.closeSync,open=fs.openSync,pending=new Set(),inode=fs.statSync(${JSON.stringify(target)}).ino;let selectedFd=null,reused=null,attempts=0;
+      fs.openSync=(...args)=>{const fd=open(...args);pending.add(fd);return fd;};
+      fs.closeSync=fd=>{if(selectedFd===null&&fs.fstatSync(fd).ino===inode){selectedFd=fd;attempts++;close(fd);pending.delete(fd);
         reused=fs.openSync(${JSON.stringify(sentinel)},'r');throw Error('PRIVATE_CLOSE_LOSS');}
-        if(fd===selectedFd)attempts++;return close(fd)};
+        if(fd===selectedFd)attempts++;close(fd);pending.delete(fd);};
       process.on('exit',()=>{let retryRefused=false;try{module.observeDeploymentCutoverRetainedProfileV1()}catch{retryRefused=true}
-        process.stdout.write(JSON.stringify({retryRefused,attempts,reused:reused===selectedFd,
+        process.stdout.write(JSON.stringify({retryRefused,attempts,reused:reused===selectedFd,drained:pending.size===1&&pending.has(reused),
           preserved:fs.fstatSync(reused).ino===fs.statSync(${JSON.stringify(sentinel)}).ino}));});`,
       mode === "snapshot" ? undefined : `(()=>{
         const held=module.holdDeploymentCutoverRetainedProfileV1();
@@ -142,7 +159,7 @@ for (const kind of ["file", "directory"]) for (const mode of ["snapshot", "held"
         return held.observation;
       })()`);
     assert.equal(result.status, 1); assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_RETAINED_PROFILE_INVALID");
-    assert.deepEqual(JSON.parse(result.stdout), { retryRefused: true, attempts: 1, reused: true, preserved: true });
+    assert.deepEqual(JSON.parse(result.stdout), { retryRefused: true, attempts: 1, reused: true, drained: true, preserved: true });
   }));
 }
 
