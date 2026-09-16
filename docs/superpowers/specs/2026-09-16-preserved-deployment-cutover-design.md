@@ -286,6 +286,14 @@ Selected finalized source/CLI and mode-correct Node resolution must additionally
 remain bound across the complete owning composition before environment/DB target
 blockers may be discharged.
 
+The selected-build held primitive must retain original CLI link/target, source
+parents/files and finalized output parents/files through caller awaits, with an
+explicit descriptor budget and consume-once cleanup. Preserve the existing
+source-pass physical hash wire format; retain full metadata privately instead.
+The retained inventory consumer must own that selected context, not compose fresh
+public snapshots whose hashes omit private physical metadata. See September16
+held-selected-build plan. This supporting change grants no environment admission.
+
 Retained compatibility is fixed-byte and ARM64-only, never a generic old-runtime
 fallback. Bind generation eef9f6c4059daa487a5a367f8f1609b1d1e39142 and output tree
 2cc9696322bb131070560d122a602b73a560fe9e8d26943404c9078094f27054 through the existing
