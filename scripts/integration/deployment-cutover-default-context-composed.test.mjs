@@ -9,10 +9,10 @@ const countNames = ["activeRunCount", "openClaimCount", "executionAttemptCount",
   "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
   "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount"];
 
-for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-after-sample", "acquire-cleanup-loss", "acquire-unknown", "acquire-config-cleanup-loss", "monitor-idle"]) test(`authenticated real default composition ${fault || "success"}`, () => {
+for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-after-sample", "acquire-cleanup-loss", "acquire-unknown", "acquire-config-cleanup-loss", "monitor-idle", "startup-state"]) test(`authenticated real default composition ${fault || "success"}`, () => {
   retainedFixture(({ root }) => {
     const result = run(root, ["inspect-default-context", "--json"]);
-    if (fault && fault !== "monitor-idle") {
+    if (fault && !["monitor-idle", "startup-state"].includes(fault)) {
       assert.equal(result.status, 1, result.stdout);
       assert.equal(result.stdout, "");
       const lines = result.stderr.trimEnd().split("\n");
@@ -37,6 +37,7 @@ for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-
 import cp from 'node:child_process';
 const actualSpawn=cp.spawnSync, labels=['com.setrox.setfarm-spawner','com.setrox.setfarm-dashboard'];
 let fixtureSamples=0,fixtureIdle=false;
+let fixtureStarting=${JSON.stringify(fault)}==='startup-state',fixtureStartingScheduled=false;
 const actualClose=fs.closeSync;let fixtureConfigCloseLoss=false;
 fs.closeSync=fd=>{actualClose(fd);if(fixtureConfigCloseLoss){fixtureConfigCloseLoss=false;throw Error('PRIVATE_PASSWORD')}};
 cp.spawnSync=(executable,args,options)=>{
@@ -48,9 +49,14 @@ cp.spawnSync=(executable,args,options)=>{
     if(index<0||args[0]!=='print')throw Error('UNEXPECTED_LABEL');
     let text=fs.readFileSync(path.join(root,'.setfarm/launcher-'+index),'utf8');
     if(!fixtureIdle&&globalThis.fixtureAllowRunning)text=text.replace('state = not running','state = running').replace('active count = 0','active count = 1').slice(0,-2)+'\\tpid = '+(12345+index)+'\\n}\\n';
+    if(globalThis.fixtureAllowRunning&&fixtureStarting){
+      text=text.replace('state = running','state = xpcproxy');
+      if(!fixtureStartingScheduled){fixtureStartingScheduled=true;setTimeout(()=>{fixtureStarting=false},0)}
+    }
     return success(text);
   }
   if(executable==='/usr/bin/python3'){
+    if(fixtureStarting)throw Error('NATIVE_DURING_STARTUP');
     const request=JSON.parse(options.input),measurement=request.operation==='measure';
     if(!measurement&&fixtureSamples===2&&${JSON.stringify(fault)}==='monitor-idle')fixtureIdle=true;
     if(measurement&&${JSON.stringify(fault)}==='sample-refusal')return {status:1,signal:null,stdout:Buffer.alloc(0),stderr:Buffer.from('PRIVATE_PASSWORD')};
