@@ -155,6 +155,13 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## File map and boundaries
 
+- `src/internal-production/baseline-deployment-cutover-node-path-v1.ts` and its
+  physical tests: held first-PATH Node identity for the default-context owning
+  composition. Qualify directory and file symlinks, preceding absences and the
+  trusted running executable without executing candidates. This leaf is not
+  effective-environment, complete module-resolution or database authority.
+  Implicit launcher HOME remains a separate unresolved proof obligation.
+
 - `scripts/deployment-cutover-dependencies.mjs` and its script tests: fixed
   postgres/Zod cache archives authenticated against reviewed lock SRI, bounded
   single-member gzip and regular USTAR decoding, physical read-only brackets.
