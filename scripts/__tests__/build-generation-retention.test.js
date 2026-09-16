@@ -1644,10 +1644,10 @@ describe("OA18 build-generation retention authority", () => {
       '"-c", "core.fsmonitor=false"',
     ]) assert.equal(source.includes(field), true, field);
     assert.match(source, /function gitBytes\(root, args, purpose\) \{\n  return requireSuccessfulChild\(fixedGitResultV2\(root, args\), purpose\);\n\}/);
-    assert.match(source, /function requireFixedGitBlobV2\(root, blobHash, purpose\) \{/);
-    assert.match(source, /maxBuffer: MAX_FILE_BYTES_V1,/);
-    assert.match(source, /requireFixedGitBlobV2\(root, entry\.gitBlobHash, `loaded Setfarm Git blob \$\{entry\.locator\}`\)/);
-    assert.equal(/export\s+(?:async\s+)?function\s+requireFixedGitBlobV2\(/.test(source), false);
+    assert.match(source, /function requireFixedGitBlobsV2\(root, requestedHashes\) \{/);
+    assert.match(source, /payloadBytes \+ sizes\[end\] <= MAX_FILE_BYTES_V1/);
+    assert.match(source, /requireFixedGitBlobsV2\(root, entries\.map\(entry => entry\.gitBlobHash\)\)/);
+    assert.equal(/export\s+(?:async\s+)?function\s+requireFixedGitBlobsV2\(/.test(source), false);
     assert.equal(source.includes("process.env"), false);
     assert.equal(source.includes("rmSync("), false);
     assert.equal(source.includes('from "./write-build-info.mjs"'), false);
