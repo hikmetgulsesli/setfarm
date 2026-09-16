@@ -3,7 +3,7 @@ import path from "node:path";
 import { userInfo } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { observeSelectedSetfarmDeploymentBuildV1 } from "./build-generation-retention.mjs";
+import { holdSelectedSetfarmDeploymentBuildV1 } from "./build-generation-retention.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const directoryKeys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"];
@@ -27,17 +27,18 @@ export function observeDeploymentCutoverRetainedProfileV1() {
   try { return held.observation; } finally { held.close(); }
 }
 
-// Holds inventory metadata only; selected-build and resolution lifetime proofs
-// remain obligations of the later owning composition. Never an admission token.
+// Holds inventory and selected-build identities; complete resolution and effective
+// environment remain obligations of the owning composition. Never admission.
 export function holdDeploymentCutoverRetainedProfileV1() {
   if (arguments.length || uncertain) fail();
   const directories = new Map(), files = [], absences = [];
-  let invalid = false, closed = false, result, total = 0, visitedEntries = 0, recheck = fail;
+  let invalid = false, closed = false, result, selectedContext, total = 0, visitedEntries = 0, recheck = fail;
   const close = () => {
     if (closed) return;
     closed = true;
     const pins = [...directories.values()];
     while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch { uncertain = true; invalid = true; } }
+    try { selectedContext?.close(); } catch { uncertain = true; invalid = true; }
     if (invalid) fail();
   };
   try {
@@ -99,7 +100,7 @@ export function holdDeploymentCutoverRetainedProfileV1() {
         || !Number.isSafeInteger(entry.byteLength) || entry.byteLength < 1 || entry.byteLength > 32 * 1024 * 1024) fail();
       locators.add(entry.locator);
     }
-    check(); const selected = observeSelectedSetfarmDeploymentBuildV1(); check();
+    check(); selectedContext = holdSelectedSetfarmDeploymentBuildV1(); const selected = selectedContext.observation; check();
     if (selected.buildSource.sha !== profile.sourceSha) fail();
     const selectedRoot = selected.cli.checkoutPath; hold(selectedRoot);
     if (directories.get(selectedRoot).stat.dev !== device) fail();
@@ -149,8 +150,7 @@ export function holdDeploymentCutoverRetainedProfileV1() {
       try { fs.lstatSync(target); fail(); } catch (error) { if (error.code !== "ENOENT") throw error; }
       absences.push(target);
     }
-    check(); const after = observeSelectedSetfarmDeploymentBuildV1(); check();
-    if (canonical(after) !== canonical(selected)) fail();
+    check(); selectedContext.recheck(); check();
     const body = { schema: "setfarm.internal-production-retained-startup-profile-observation.v1", scope: "retained-startup-byte-inventory-only",
       sourceSha: profile.sourceSha, outputTreeHash: profile.outputTreeHash, profileHash: sha(profileBytes),
       selectedDeploymentObservationHash: selected.selectedDeploymentObservationHash, installations,
@@ -161,7 +161,7 @@ export function holdDeploymentCutoverRetainedProfileV1() {
       if (closed || invalid || uncertain) fail();
       try {
         check();
-        if (canonical(observeSelectedSetfarmDeploymentBuildV1()) !== canonical(selected)) fail();
+        selectedContext.recheck();
         check();
       } catch { invalid = true; uncertain = true; fail(); }
     };

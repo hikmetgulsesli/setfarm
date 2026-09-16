@@ -37,7 +37,7 @@ New public interface: `holdSelectedSetfarmDeploymentBuildV1()` returns frozen
 Private `holdFinalizedSetfarmSourceBuildAtRootV1(root, requireCurrent)` owns source
 and output pins; existing current snapshot wraps and closes it.
 
-- [ ] RED missing held export using selectedDeploymentFixture with unchanged
+- [x] RED missing held export using selectedDeploymentFixture with unchanged
   historical/newer checkout expectations and eight preserved archives.
 
 ```js
@@ -49,33 +49,39 @@ held.close(); held.close();
 assert.throws(() => held.recheck());
 ```
 
-- [ ] RED source/output same-byte replacement, same-inode modify/restore, source
+- [x] RED source/output same-byte replacement, same-inode modify/restore, source
   parent replacement and CLI-link replacement after acquire. Witness refusal at
   held.recheck, not a fresh wrapper or failed close.
-- [ ] Keep original source-file stats via private source-pass collection without
+- [x] Keep original source-file stats via private source-pass collection without
   altering the existing physical-input-set hash contract. Pin parents and regular
   files, compare full dev/ino/uid/gid/mode/birthtime/nlink/size/mtime/ctime against
   descriptor and current path. Retain output inventory and file metadata likewise.
-- [ ] Recheck original pins before and after unchanged source/Git predicates and
+- [x] Recheck original pins before and after unchanged source/Git predicates and
   output inventory validation. Preserve historical build versus checkout split.
-- [ ] Enforce budget before opens; any cleanup failure poisons all dependent
+- [x] Enforce budget before opens; any cleanup failure poisons all dependent
   contexts and drains remaining handles. Closed handles reject recheck.
-- [ ] Focused selected/current/source physical tests and close-response-loss/FD
+- [x] Focused selected/current/source physical tests and close-response-loss/FD
   drain cases; unchanged snapshot hashes and zero runtime writes remain proven.
 
 ## Task2: actual retained consumer
 
-- [ ] RED consumer source/output replacement after acquire despite unchanged
+- [x] RED consumer source/output replacement after acquire despite unchanged
   public build hash. Use real selected fixture and canary modules never imported.
-- [ ] Replace three independent selected snapshots with one held acquisition and
+- [x] Replace three independent selected snapshots with one held acquisition and
   its rechecks. Owned selected context closes in every profile failure/success
   cleanup; one failing cleanup cannot prevent other resources from draining.
-- [ ] Run retained physical/genuine gate, retention focused gate, bootstrap
+- [x] Run retained physical/genuine gate, retention focused gate, bootstrap
   touched modes, manifest, noemit, contracts and diff check; independent review.
 - [ ] Scoped reviewed PR and normal independent clean-main build. Preserve old
   checkout HEAD/originmain, old output and all eight archives throughout.
 
 ## Explicit remaining obligations
+
+Verification: full retention234/234; retained physical plus complete bootstrap
+87/87; final nested close-loss drain4/4; exact manifest18/18; noemit and English/
+path contracts. Two independent read-only reviews found no blocking issues.
+The 4096 cap bounds retained descriptors in the inner finalized context; outer
+CLI and transient read descriptors additionally contribute to process peak.
 
 This closes selected-file lifetime, not module resolution or implicit launch
 environment. The owning default context still needs actual Node identity,

@@ -282,11 +282,11 @@ function selectedDeploymentFixture(body) {
     git(selectedRoot, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
     for (let ordinal = 1; ordinal <= 8; ordinal++) fixtureFile(selectedRoot, `.setfarm/build-generations-v1/${fixtureBuildId(ordinal)}.dist/retained`, `archive ${ordinal}\n`);
     mkdirSync(join(root, ".local/bin"), { recursive: true }); symlinkSync(join(selectedRoot, "dist/cli/cli.js"), join(root, ".local/bin/setfarm"));
-    const observe = (instrument = "") => runModule(root, `import os from 'node:os';import fs from 'node:fs';import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
+    const observe = (instrument = "", expression = "await observe()") => runModule(root, `import os from 'node:os';import fs from 'node:fs';import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
       const root=${JSON.stringify(root)},selectedRoot=${JSON.stringify(selectedRoot)},identity=os.userInfo();os.userInfo=()=>({...identity,homedir:root});
       ${instrument}
-      syncBuiltinESMExports();const {observeSelectedSetfarmDeploymentBuildV1:observe}=await import('./scripts/build-generation-retention.mjs');
-      try{process.stdout.write(JSON.stringify(await observe()))}catch(error){process.stderr.write(error.message);process.exitCode=1}`);
+      syncBuiltinESMExports();const module=await import('./scripts/build-generation-retention.mjs');const observe=module.observeSelectedSetfarmDeploymentBuildV1;
+      try{process.stdout.write(JSON.stringify(${expression}))}catch(error){process.stderr.write(error.message);process.exitCode=1}`);
     body({ root, selectedRoot, buildSha, buildHash, checkoutSha: git(selectedRoot, ["rev-parse", "HEAD"]), observe });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -1318,6 +1318,7 @@ describe("OA18 build-generation retention authority", () => {
       "canonicalJsonV1",
       "classifyBuildGenerationRetentionPublisherRecordV1",
       "hashCanonicalJsonV1",
+      "holdSelectedSetfarmDeploymentBuildV1",
       "inspectBuildGenerationRetentionV1",
       "inspectBuildGenerationRotationLedgerV1",
       "observeCurrentFinalizedSetfarmSourceBuildV1",
@@ -1409,6 +1410,85 @@ describe("OA18 build-generation retention authority", () => {
       assert.deepEqual(JSON.parse(result.stdout), { refused: true, retryRefused: true, count: 1, same: true, preserved: true });
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
+
+  it("held selected deployment survives await and closes once without changing snapshot evidence", () => selectedDeploymentFixture(fixture => {
+    const before = preservedTreeSnapshot(join(fixture.selectedRoot, ".setfarm"));
+    const result = fixture.observe("", `await(async()=>{
+      const held=module.holdSelectedSetfarmDeploymentBuildV1();
+      if(!Object.isFrozen(held))throw Error('MUTABLE_CONTEXT');
+      await Promise.resolve();held.recheck();held.close();held.close();
+      let refused=false;try{held.recheck()}catch{refused=true}
+      if(!refused)throw Error('CLOSED_CONTEXT_ACCEPTED');return held.observation;
+    })()`);
+    assert.equal(result.status, 0, result.stderr);
+    const value = JSON.parse(result.stdout);
+    assert.equal(value.buildSource.sha, fixture.buildSha); assert.equal(value.checkoutSource.sha, fixture.checkoutSha);
+    assert.deepEqual(value, JSON.parse(fixture.observe().stdout));
+    assert.deepEqual(preservedTreeSnapshot(join(fixture.selectedRoot, ".setfarm")), before);
+  }));
+
+  it("held selected deployment bounds live descriptors before a large tracked input set exhausts resources", () => selectedDeploymentFixture(fixture => {
+    for (let index = 0; index < 4100; index++) fixtureFile(fixture.selectedRoot, `src/budget/${String(index).padStart(4, "0")}.txt`, "bounded input\n");
+    git(fixture.selectedRoot, ["add", "src/budget"]); git(fixture.selectedRoot, ["commit", "-qm", "large source input fixture"]);
+    git(fixture.selectedRoot, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    const result = fixture.observe(`const pending=new Set(),open=fs.openSync,close=fs.closeSync;let peak=0;
+      fs.openSync=(...args)=>{const fd=open(...args);pending.add(fd);peak=Math.max(peak,pending.size);return fd;};
+      fs.closeSync=fd=>{close(fd);pending.delete(fd);};
+      process.on('exit',()=>process.stdout.write(JSON.stringify({peak,remaining:pending.size})));`,
+      `(()=>{const held=module.holdSelectedSetfarmDeploymentBuildV1();try{return held.observation}finally{held.close()}})()`);
+    assert.equal(result.status, 1, result.stdout); assert.match(result.stderr, /BUILD_GENERATION_AUTHORITY_CORRUPTION/);
+    const evidence = JSON.parse(result.stdout);
+    assert.ok(evidence.peak > 4000 && evidence.peak <= 4128, result.stdout);
+    assert.equal(evidence.remaining, 0);
+  }));
+
+  for (const kind of ["file", "directory"]) {
+    it(`held selected deployment consumes ${kind} close loss without closing a reused descriptor`, () => selectedDeploymentFixture(fixture => {
+      const result = fixture.observe(`const close=fs.closeSync,sentinel=root+'/tracked.txt';let armed=false,chosen=null,reused=null,attempts=0;
+        fs.closeSync=fd=>{if(armed&&chosen===null&&fs.fstatSync(fd).${kind === "file" ? "isFile" : "isDirectory"}()){
+          chosen=fd;attempts++;close(fd);reused=fs.openSync(sentinel,'r');throw Error('PRIVATE_CLOSE_LOSS');}
+          if(fd===chosen)attempts++;return close(fd);};`, `(()=>{
+        const held=module.holdSelectedSetfarmDeploymentBuildV1();armed=true;
+        let closeRefused=false,recheckRefused=false,retryRefused=false;
+        try{held.close()}catch{closeRefused=true}held.close();
+        try{held.recheck()}catch{recheckRefused=true}try{module.holdSelectedSetfarmDeploymentBuildV1()}catch{retryRefused=true}
+        return{closeRefused,recheckRefused,retryRefused,attempts,reused:reused===chosen,
+          preserved:fs.fstatSync(reused).ino===fs.statSync(sentinel).ino};
+      })()`);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), { closeRefused: true, recheckRefused: true, retryRefused: true,
+        attempts: 1, reused: true, preserved: true });
+    }));
+  }
+
+  for (const fault of ["source-replacement", "source-aba", "output-replacement", "output-aba", "source-parent", "cli-link"]) {
+    it(`held selected deployment refuses ${fault} after await and drains descriptors`, () => selectedDeploymentFixture(fixture => {
+      const result = fixture.observe(`const pending=new Set(),open=fs.openSync,close=fs.closeSync;let tracking=false,opened=0;
+        fs.openSync=(...args)=>{const fd=open(...args);if(tracking){pending.add(fd);opened++;}return fd;};
+        fs.closeSync=fd=>{close(fd);pending.delete(fd);};`, `await(async()=>{
+        tracking=true;const held=module.holdSelectedSetfarmDeploymentBuildV1();await Promise.resolve();
+        const fault=${JSON.stringify(fault)},file=selectedRoot+(fault.startsWith('source')?'/src/service.ts':'/dist/service.js');
+        if(fault.endsWith('replacement')){
+          const bytes=fs.readFileSync(file);fs.renameSync(file,selectedRoot+'/.setfarm/preserved-file');fs.writeFileSync(file,bytes);
+        }else if(fault.endsWith('aba')){
+          const bytes=fs.readFileSync(file),changed=Buffer.from(bytes);changed[0]^=1;fs.writeFileSync(file,changed);fs.writeFileSync(file,bytes);
+        }else if(fault==='source-parent'){
+          fs.renameSync(selectedRoot+'/src',selectedRoot+'/.setfarm/preserved-src');
+          fs.cpSync(selectedRoot+'/.setfarm/preserved-src',selectedRoot+'/src',{recursive:true});
+        }else{
+          const link=root+'/.local/bin/setfarm',target=fs.readlinkSync(link);fs.renameSync(link,link+'.preserved');fs.symlinkSync(target,link);
+        }
+        let refused=false,retryRefused=false;
+        try{held.recheck()}catch{refused=true}finally{try{held.close()}catch{}}
+        try{module.holdSelectedSetfarmDeploymentBuildV1()}catch{retryRefused=true}
+        return{refused,retryRefused,remaining:pending.size,opened};
+      })()`);
+      assert.equal(result.status, 0, result.stderr);
+      const value = JSON.parse(result.stdout);
+      assert.equal(value.refused, true, result.stdout); assert.equal(value.retryRefused, true, result.stdout);
+      assert.equal(value.remaining, 0, result.stdout); assert.ok(value.opened > 0);
+    }));
+  }
 
   it("selected deployment observer separates historical build from newer checkout and preserves eight archives", () => selectedDeploymentFixture(fixture => {
     const before = ["dist", ".setfarm"].map(name => preservedTreeSnapshot(join(fixture.selectedRoot, name)));
