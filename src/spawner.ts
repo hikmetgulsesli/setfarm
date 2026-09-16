@@ -4,6 +4,7 @@
  * and immediately spawns agent sessions via openclaw CLI.
  */
 import { runtimeConfig } from "./runtime-config.js";
+import { assertOrdinarySpawnerDeploymentCutoverAdmissionV1 } from "./internal-production/baseline-deployment-cutover-v1.js";
 import { acquireInternalProductionDirectSpawnerChildStartupContextV1, consumeInternalProductionColdSpawnerPidResidueV1, observeInternalProductionColdSpawnerBootstrapJournalCensusV1, publishInternalProductionColdSpawnerBootstrapClaimV1, resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1, resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
 import postgres from "postgres";
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
@@ -758,6 +759,7 @@ function publishSpawnerPidFileV1(): void {
 
 function reclaimDeadSpawnerStartupFileV1(file: string, retainedAuthority?: () => void): "removed" | "alive" {
   const assertAuthority = retainedAuthority ?? (() => {
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     if (observeInternalProductionColdSpawnerBootstrapJournalCensusV1().state !== "absent") throw Error("COLD_BOOTSTRAP_NOT_ABSENT");
   });
   assertAuthority();
@@ -10918,6 +10920,7 @@ export async function claimInternalProductionBaselineSpawnerStartupAdmissionV1(
   if (!input.admission || typeof input.admission !== "object") throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_CAPABILITY_INVALID");
   const capability = task12StartupAdmissionCapabilitiesV1.get(input.admission);
   if (!capability || capability.startupAdmissionHash !== input.admission.admissionHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_CAPABILITY_INVALID");
+  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   const admission = await resolveInternalProductionBaselineSpawnerStartupAdmissionV1({ startupAdmissionRef: `${TASK12_STARTUP_ADMISSION_PREFIX_V1}${input.admission.admissionHash}`, startupAdmissionHash: input.admission.admissionHash });
   if (task12HashV1(input.admission) !== task12HashV1(admission)) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_ADMISSION_CLONE_INVALID");
   const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
@@ -10925,6 +10928,7 @@ export async function claimInternalProductionBaselineSpawnerStartupAdmissionV1(
   if (census.spawner.pid !== process.pid || census.spawner.loadedSourceSha !== admission.expectedSetfarmSha || census.spawner.loadedBuildHash !== admission.expectedSpawnerBuildHash || census.spawner.processIdentityHash === admission.beforeGenerationHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_PROCESS_INVALID");
   const claimBody = { schema: "setfarm.internal-production-baseline-spawner-startup-claim.v1", startupAdmissionRef: `${TASK12_STARTUP_ADMISSION_PREFIX_V1}${admission.admissionHash}`, startupAdmissionHash: admission.admissionHash, operationId: admission.operationId, currentGenerationHash: census.spawner.processIdentityHash, pid: census.spawner.pid, processStartTimeEpochMs: census.spawner.processStartTimeEpochMs, processIdentityHash: census.spawner.processIdentityHash };
   const startupClaimHash = task12HashV1(claimBody);
+  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   task12WriteNoReplaceV1(path.join(TASK12_STARTUP_ADMISSION_ROOT_V1, "claims/by-admission/sha256", admission.admissionHash.slice(0, 2), admission.admissionHash, "startup-claim.json"), { ...claimBody, startupClaimHash });
   return Object.freeze({ operationId: admission.operationId, currentGenerationHash: census.spawner.processIdentityHash, startupClaimHash });
 }
@@ -10934,6 +10938,7 @@ export async function awaitInternalProductionBaselineSpawnerRestartAuthorityV1(
 ): Promise<Readonly<{ receiptRef: string; receiptHash: string }>> {
   task12ExactInputV1(input, ["admission", "startupClaimHash"], "INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_CLAIM_CAPABILITY_INVALID");
   if (!task12StartupAdmissionCapabilitiesV1.has(input.admission) || !TASK12_SHA256_V1.test(input.startupClaimHash)) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_CLAIM_CAPABILITY_INVALID");
+  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   const admission = await resolveInternalProductionBaselineSpawnerStartupAdmissionV1({ startupAdmissionRef: `${TASK12_STARTUP_ADMISSION_PREFIX_V1}${input.admission.admissionHash}`, startupAdmissionHash: input.admission.admissionHash });
   const claim = await resolveInternalProductionBaselineSpawnerStartupClaimV1({ startupAdmissionRef: `${TASK12_STARTUP_ADMISSION_PREFIX_V1}${admission.admissionHash}`, startupAdmissionHash: admission.admissionHash });
   if (claim.startupClaimHash !== input.startupClaimHash || claim.pid !== process.pid) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_STARTUP_CLAIM_INVALID");
@@ -10952,6 +10957,7 @@ export async function awaitInternalProductionBaselineSpawnerRestartAuthorityV1(
     throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_RESTART_AUTHORITY_WAIT_EXHAUSTED");
   }
   const bootstrap = await import("./internal-production/baseline-service-restart-sequence-v1.js");
+  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   await bootstrap.executeOrRecoverInternalProductionBaselineSpawnerBootstrapRestartV1({ operationRef: admission.bootstrapOperationRef, operationHash: admission.bootstrapOperationHash });
   const authority = task12ReadV1(path.join(TASK12_BOOTSTRAP_RESTART_ROOT_V1, "by-operation/sha256", admission.bootstrapOperationHash.slice(0, 2), admission.bootstrapOperationHash, "restart-authority.pair.json"));
   if (typeof authority.receiptRef !== "string" || typeof authority.receiptHash !== "string" || !TASK12_SHA256_V1.test(authority.receiptHash)) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_RESTART_AUTHORITY_INVALID");
@@ -11116,6 +11122,7 @@ async function reclaimPostRecoveryOrdinaryStartupFilesV1(admission: Awaited<Retu
       const current = await observeOrdinarySpawnerColdRecoveryAdmissionV1();
       if (current === null || current.witnessHash !== admission.witnessHash) throw Error("SPAWNER_NORMAL_RECLAIM_ADMISSION_CHANGED");
       const assertAuthority = () => {
+        assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
         if (task12CanonicalV1(receipt.observeCurrentInternalProductionCleanSetfarmSourceBuildV1()) !== task12CanonicalV1(source)) throw Error("SPAWNER_NORMAL_RECLAIM_SOURCE_CHANGED");
         assertPins(); terminal.assertStable();
         if (task12CanonicalV1(observeInternalProductionColdSpawnerBootstrapJournalCensusV1()) !== task12CanonicalV1(cold)
@@ -11150,29 +11157,42 @@ async function main() {
   // Refusal-only preflight preserves any already-visible unsettled evidence.
   if (await runInternalProductionDirectSpawnerStartupV1()) return;
   if (await runInternalProductionColdSpawnerStartupV1()) return;
+  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   const coldRecoveryAdmission = await observeOrdinarySpawnerColdRecoveryAdmissionV1();
+  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   await reclaimPostRecoveryOrdinaryStartupFilesV1(coldRecoveryAdmission);
+  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   acquireSpawnerSingletonLock();
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
   publishSpawnerPidFileV1();
+  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   await assertOrdinarySpawnerColdRecoveryAdmissionV1(coldRecoveryAdmission);
+  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   const activeStartupAdmission = await resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1();
+  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   if (activeStartupAdmission) {
     const startupClaim = await claimInternalProductionBaselineSpawnerStartupAdmissionV1({ admission: activeStartupAdmission });
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     await awaitInternalProductionBaselineSpawnerRestartAuthorityV1({ admission: activeStartupAdmission, startupClaimHash: startupClaim.startupClaimHash });
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     if (activeStartupAdmission.bootstrapOperationRef !== null && activeStartupAdmission.bootstrapOperationHash !== null) {
       const operationPair = { operationRef: activeStartupAdmission.bootstrapOperationRef, operationHash: activeStartupAdmission.bootstrapOperationHash };
       const runtime = await import("./execution/runtime-completion.js");
+      assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
       const released = await runtime.recoverAndReleaseInternalProductionBaselineCompletionOwnerBootstrapTargetV1(operationPair);
+      assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
       if (released.state !== "owner_released") throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_BOOTSTRAP_OWNER_NOT_RELEASED");
       const sequenceModule = await import("./internal-production/baseline-service-restart-sequence-v1.js");
+      assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
       const sequencePair = await sequenceModule.finalizeInternalProductionBaselineSpawnerBootstrapRestartSequenceV1(operationPair);
+      assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
       const sequence = await sequenceModule.resolveInternalProductionBaselineSpawnerBootstrapRestartSequenceV1(sequencePair);
       const completed = await runtime.observeInternalProductionBaselineCompletionOwnerBootstrapLifecycleV1(operationPair);
       if (sequence.operationRef !== operationPair.operationRef || sequence.operationHash !== operationPair.operationHash || completed.state !== "completed" || completed.sequenceRef !== sequencePair.sequenceRef || completed.sequenceHash !== sequencePair.sequenceHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_BOOTSTRAP_SEQUENCE_INCOMPLETE");
     }
   }
   const startupAdmission = await import("./internal-production/baseline-spawner-startup-admission-v1.js");
+  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   const startupGate = await enforceInternalProductionPreSchemaSpawnerStartupGateV1({
     startupAdmission,
     loadReceiptAuthority: () => import("./internal-production/baseline-post-handoff-receipt-v1.js"),
@@ -11186,6 +11206,7 @@ async function main() {
     },
   });
   if (startupGate === "sealed") return;
+  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   initializeAgentRuntimeV1();
   try { fs.mkdirSync(AGENT_SAFE_CWD, { recursive: true }); } catch { /* best-effort */ }
   try { fs.mkdirSync(TRANSCRIPT_ROOT, { recursive: true }); } catch { /* best-effort */ }

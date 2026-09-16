@@ -5,7 +5,7 @@ import path from "node:path";
 
 const CODE_OWNER_HOME_V1 = userInfo().homedir;
 const CODE_OWNED_WORKSPACE_ROOT_V1 = path.join(CODE_OWNER_HOME_V1, "ai", "setrox");
-const pendingWorkspaceAcquisitionCleanupV1 = new Set<() => void>();
+let workspaceCleanupUncertainV1 = false;
 
 // Source/build identity belongs to the executing checkout. Runtime authority
 // belongs to this single code-owned workspace, including from linked worktrees.
@@ -17,8 +17,7 @@ export function authenticateInternalProductionBaselineWorkspaceAnchorV1(): Reado
   assertStable: () => void;
   close: () => void;
 }> {
-  if (pendingWorkspaceAcquisitionCleanupV1.size > 0) {
-    for (const close of pendingWorkspaceAcquisitionCleanupV1) { try { close(); } catch { /* Retain every unfinished acquisition. */ } }
+  if (workspaceCleanupUncertainV1) {
     throw new Error("INTERNAL_PRODUCTION_BASELINE_WORKSPACE_ANCESTOR_IDENTITY_INVALID");
   }
   // Darwin's system /var presentation is the same explicitly supported alias
@@ -39,12 +38,14 @@ export function authenticateInternalProductionBaselineWorkspaceAnchorV1(): Reado
   const close = (): void => {
     if (closed) return;
     closing = true;
+    const errors: unknown[] = [];
     while (held.length > 0) {
-      closeSync(held[held.length - 1]!.descriptor);
-      held.pop();
+      const entry = held.pop()!;
+      try { closeSync(entry.descriptor); }
+      catch (error) { workspaceCleanupUncertainV1 = true; errors.push(error); }
     }
     closed = true;
-    pendingWorkspaceAcquisitionCleanupV1.delete(close);
+    if (errors.length > 0) throw new AggregateError(errors, "INTERNAL_PRODUCTION_BASELINE_WORKSPACE_ANCESTOR_IDENTITY_INVALID: cleanup uncertain");
   };
   const assertStable = (): void => {
     if (closed || closing) fail();
@@ -67,10 +68,7 @@ export function authenticateInternalProductionBaselineWorkspaceAnchorV1(): Reado
     return Object.freeze({ assertStable, close });
   } catch (error) {
     try { close(); }
-    catch {
-      pendingWorkspaceAcquisitionCleanupV1.add(close);
-      try { close(); } catch { /* Failed acquisition never abandons its cleanup owner. */ }
-    }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], "INTERNAL_PRODUCTION_BASELINE_WORKSPACE_ANCESTOR_IDENTITY_INVALID: acquisition cleanup uncertain"); }
     throw error;
   }
 }
