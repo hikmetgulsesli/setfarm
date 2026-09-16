@@ -82,27 +82,40 @@ for (const component of candidateComponents) {
 recheckAllBoundaries();
 ```
 
-- [ ] Add a genuine six-absence fixture; missing export/file must fail first.
-- [ ] Implement descriptor-held physical ancestors and ENOENT-only boundaries;
+- [x] Add a genuine six-absence fixture; missing export/file must fail first.
+- [x] Implement descriptor-held physical ancestors and ENOENT-only boundaries;
   compare path and fd identities, owner/mode/device, CLI before/after, then close
   each descriptor once. Uncertain close poisons fresh calls; fixed secret-free
   failure `DEPLOYMENT_CUTOVER_ENV_ABSENCE_INVALID`.
-- [ ] Test each candidate present, dangling symlink, missing home-parent, bad
+- [x] Test each candidate present, dangling symlink, missing home-parent, bad
   owner/mode, ancestor symlink/replacement, candidate appearance, CLI replacement,
   ambiguous error, and close-response-loss/reused descriptor. Preserve evidence.
-- [ ] Assert stable frozen output/hash, no writes/network, no env mutation and
+- [x] Assert stable frozen output/hash, no writes/network, no env mutation and
   explicit candidate-only scope/remaining blockers. No broad test-only exports.
 
 ## Task2: authenticated diagnostic composition
 
-- [ ] Genuine bootstrap test first expects inspect-envfiles output and blockers;
+- [x] Genuine bootstrap test first expects inspect-envfiles output and blockers;
   current argument validation must reject it RED before implementation.
-- [ ] Add only the explicit mode, dynamically load the authenticated observer,
+- [x] Add only the explicit mode, dynamically load the authenticated observer,
   include observation under envFiles, retain final source/output fencing.
-- [ ] Present file, crossed CLI and tampered compiled observer refuse with no
+- [x] Present file, crossed CLI and tampered compiled observer refuse with no
   output/effects. Existing inspect/inspect-host/inspect-database behavior unchanged.
 - [ ] Run cutover, script/genuine, noemit and manifest/contracts; independent
   review and reviewed PR. Normal build only on delivered independent clean main.
+
+## Local Evidence
+
+Physical observer missing-module RED, then19/19GREEN (2089ms). Includes each
+candidate present with zero content reads, parent/CLI replacement, nearest
+missing directory, ambiguous error, foreign owner, same-inode timestamp-only
+drift and consume-once descriptor reuse. Actual bootstrap unknown-mode RED,
+then5/5GREEN (25156ms) with genuine dependency loading and sockets forbidden.
+Invoked cutover255/255 (6678ms), manifest18/18, noemit and English1538/path878
+passed. Two independent read-only reviews found no blocking code issue; requested
+negative and timestamp-only coverage was added and passed. Complete bootstrap,
+owner and genuine-dependency package passed69/69 in128321ms, zero skips.
+Reviewed delivery and normal clean-main build remain pending.
 
 ## Deferred Proofs, Not Implicitly Completed
 

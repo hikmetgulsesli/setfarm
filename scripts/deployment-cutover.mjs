@@ -51,7 +51,7 @@ function sourceState() {
 }
 async function inspect() {
   if (typeof registerHooks !== "function" || process.execArgv.length || process.argv.length !== 4
-    || !["inspect", "inspect-host", "inspect-database"].includes(process.argv[2]) || process.argv[3] !== "--json"
+    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles"].includes(process.argv[2]) || process.argv[3] !== "--json"
     || pathToFileURL(path.resolve(process.argv[1])).href !== import.meta.url
     || Object.keys(process.env).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key)
       && !(process.platform === "darwin" && key === "__CF_USER_TEXT_ENCODING"))) fail();
@@ -163,7 +163,11 @@ async function inspect() {
     check();
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();
-    let host;
+    let host, envFiles;
+    if (process.argv[2] === "inspect-envfiles") {
+      const envModule = await import("../dist/internal-production/baseline-deployment-cutover-env-absence-v1.js");
+      check(); envFiles = envModule.observeDeploymentCutoverDefaultEnvAbsenceV1();
+    }
     if (["inspect-host", "inspect-database"].includes(process.argv[2])) {
       const cliModule = await import("../dist/internal-production/baseline-deployment-cutover-cli-observation-v1.js");
       const launcherModule = await import("../dist/internal-production/baseline-deployment-cutover-launcher-observation-v1.js");
@@ -194,7 +198,7 @@ async function inspect() {
     }
     check(); if (canonical(sourceState()) !== canonical(initial)) fail();
     result = { schema: "setfarm.internal-production-deployment-cutover-bootstrap-observation.v1", sourceBuild, controllerSourceHash: authority.controllerSourceHash,
-      ...(host ? { host } : {}) };
+      ...(host ? { host } : {}), ...(envFiles ? { envFiles } : {}) };
   } catch { invalid = true; }
   while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch { invalid = true; } }
   if (invalid || !result) fail(); return result;
