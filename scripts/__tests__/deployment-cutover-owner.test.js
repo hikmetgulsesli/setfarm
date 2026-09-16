@@ -17,7 +17,7 @@ function fixture(body) {
   fs.mkdirSync(path.join(checkout, "dist", "product-compiler"), { recursive: true, mode: 0o700 });
   fs.mkdirSync(path.join(home, "ai", "setrox", "data", "internal-production-baseline"), { recursive: true, mode: 0o700 });
   try {
-    for (const name of ["deployment-cutover-owner.mjs", "deployment-cutover.mjs", "build-generation-maintenance-owner-observer.mjs", "build-generation-maintenance-journal.mjs"])
+    for (const name of ["deployment-cutover-owner.mjs", "deployment-cutover.mjs", "deployment-cutover-dependencies.mjs", "build-generation-maintenance-owner-observer.mjs", "build-generation-maintenance-journal.mjs"])
       fs.copyFileSync(new URL(`scripts/${name}`, repo), path.join(checkout, "scripts", name));
     for (const locator of ["internal-production/baseline-deployment-cutover-owner-store-v1", "internal-production/baseline-deployment-cutover-records-v1", "internal-production/baseline-workspace-authority-path-v1", "product-compiler/canonical-json"])
       fs.writeFileSync(path.join(checkout, "dist", `${locator}.js`), transformSync(fs.readFileSync(new URL(`src/${locator}.ts`, repo), "utf8"), { loader: "ts", format: "esm", target: "node22" }).code, { mode: 0o600 });
@@ -47,6 +47,13 @@ function run(home, checkout, action) {
   const child = spawnSync(process.execPath, ["--input-type=module", "-e", program(home, checkout, action)], { encoding: "utf8", env: {}, timeout: 15000 });
   assert.equal(child.status, 0, child.stderr); return JSON.parse(child.stdout);
 }
+test("owner controller source accepts legitimate partial source reads", () => fixture((home, checkout) => {
+  const body = program(home, checkout, 'process.stdout.write(JSON.stringify({hash:source.controllerSourceHash}));')
+    .replace('const module=await import', 'const read=fs.readSync;fs.readSync=(fd,buffer,offset,length,position)=>read(fd,buffer,offset,Math.min(length,127),position);const module=await import');
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", body], { encoding: "utf8", env: {}, timeout: 15000 });
+  assert.equal(result.status, 0, result.stderr); assert.match(JSON.parse(result.stdout).hash, /^[a-f0-9]{64}$/);
+}));
+
 test("real current owner gets one opaque local capability without a spawner lock", () => fixture((home, checkout) => {
   const result = run(home, checkout, `const cap=await module.acquireDeploymentCutoverOwnerV1(maintenance);
     module.assertDeploymentCutoverOwnerV1(cap);let forged=false,second=false;

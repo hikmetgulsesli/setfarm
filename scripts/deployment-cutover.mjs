@@ -12,7 +12,7 @@ const { registerHooks, isBuiltin } = nodeModule;
 // Diagnostic only: never acquire ownership, publish intent, or operate services.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const closure = ["scripts/build-generation-maintenance-journal.mjs", "scripts/build-generation-maintenance-owner-observer.mjs",
-  "scripts/build-generation-retention.mjs", "scripts/deployment-cutover-owner.mjs", "scripts/deployment-cutover.mjs"];
+  "scripts/build-generation-retention.mjs", "scripts/deployment-cutover-owner.mjs", "scripts/deployment-cutover.mjs", "scripts/deployment-cutover-dependencies.mjs"];
 const directoryKeys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"];
 const fileKeys = [...directoryKeys, "nlink", "size", "mtimeNs", "ctimeNs"];
 const fail = () => { throw Error("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED"); };
@@ -55,7 +55,7 @@ async function inspect() {
     || pathToFileURL(path.resolve(process.argv[1])).href !== import.meta.url
     || Object.keys(process.env).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key)
       && !(process.platform === "darwin" && key === "__CF_USER_TEXT_ENCODING"))) fail();
-  const pins = [], directories = new Set(), files = new Map();
+  const pins = [], directories = new Set(), files = new Map(), dependencyEntries = new Map(), executableFiles = new Set();
   let invalid = false, result, totalBytes = 0;
   try {
     const check = () => {
@@ -87,7 +87,13 @@ async function inspect() {
         const stat = fs.fstatSync(fd, { bigint: true });
         if (!stat.isFile() || stat.uid !== BigInt(process.getuid()) || stat.dev !== device || (stat.mode & 0o022n)
           || stat.nlink !== 1n || stat.size < 1n || stat.size > 33554432n) fail();
-        const buffer = Buffer.alloc(Number(stat.size) + 1), count = fs.readSync(fd, buffer, 0, buffer.length, 0);
+        const buffer = Buffer.alloc(Number(stat.size) + 1);
+        let count = 0;
+        while (count < buffer.length) {
+          const size = fs.readSync(fd, buffer, count, buffer.length - count, count);
+          if (size === 0) break;
+          count += size;
+        }
         if (BigInt(count) !== stat.size || !same(stat, fs.fstatSync(fd, { bigint: true }), fileKeys)
           || !same(stat, fs.lstatSync(target, { bigint: true }), fileKeys)) fail();
         totalBytes += count; if (totalBytes > 536870912) fail();
@@ -96,22 +102,26 @@ async function inspect() {
       files.set(url, entry); check(); return entry;
     };
     const initial = sourceState();
-    for (const locator of closure) {
+    for (const locator of [...closure, "package-lock.json"]) {
       const tracked = initial.entries.find(entry => entry.locator === locator); if (!tracked) fail();
       const observed = snapshot(locator), declared = tracked.gitMode === "100755" ? 0o755n : 0o644n;
       if ((observed.stat.mode & 0o7777n & ~declared) || !observed.bytes.equals(git(["cat-file", "blob", tracked.gitBlobHash]).stdout)) fail();
+      if (closure.includes(locator)) executableFiles.add(pathToFileURL(observed.target).href);
     }
     // All non-builtin evaluation uses owned bytes authenticated before import.
     // Native pathname re-reading is deliberately not the source of module bytes.
     registerHooks({
       resolve(specifier, context, nextResolve) {
-        if (!isBuiltin(specifier) && !specifier.startsWith("./") && !specifier.startsWith("../") && !specifier.startsWith("file:")) fail();
-        const resolved = nextResolve(specifier, context);
-        if (!isBuiltin(resolved.url) && !files.has(resolved.url)) fail(); return resolved;
+        if (isBuiltin(specifier)) return nextResolve(specifier, context);
+        if (dependencyEntries.has(specifier)) return { url: dependencyEntries.get(specifier), shortCircuit: true };
+        if (!specifier.startsWith("./") && !specifier.startsWith("../") && !specifier.startsWith("file:")) fail();
+        const resolved = new URL(specifier, context.parentURL);
+        if (resolved.search || resolved.hash || !executableFiles.has(resolved.href)) fail();
+        return { url: resolved.href, shortCircuit: true };
       },
       load(url, context, nextLoad) {
         if (isBuiltin(url)) return nextLoad(url, context);
-        const entry = files.get(url); if (!entry || !/\.(?:mjs|js)$/.test(entry.locator)) fail();
+        const entry = files.get(url); if (!entry || !executableFiles.has(url)) fail();
         check(); return { format: "module", source: Buffer.from(entry.bytes), shortCircuit: true };
       },
     });
@@ -131,8 +141,25 @@ async function inspect() {
       if (!entry.locator.startsWith("dist/")) fail();
       const observed = snapshot(entry.locator);
       if (hash(observed.bytes) !== entry.sha256 || observed.bytes.length !== entry.byteLength || Number(observed.stat.mode & 0o7777n) !== entry.mode) fail();
+      if (/\.(?:mjs|js)$/.test(entry.locator)) executableFiles.add(pathToFileURL(observed.target).href);
     }
     if (canonical(sourceState()) !== canonical(initial) || canonical(verifier.observeCurrentFinalizedSetfarmSourceBuildV1()) !== canonical(sourceBuild)) fail();
+    check();
+    const dependencies = await import("./deployment-cutover-dependencies.mjs");
+    const archives = dependencies.readCutoverDependencyArchivesV1();
+    for (const dependency of archives.packages) {
+      for (const member of dependency.members) {
+        const observed = snapshot(member.locator);
+        if (!observed.bytes.equals(member.bytes)) fail();
+        // Postgres also ships CommonJS .js files in cjs/src; byte identity is
+        // necessary but does not grant those members ESM execution authority.
+        if (/^node_modules\/postgres\/src\/.*\.js$/.test(member.locator)
+          || /^node_modules\/zod\/.*\.js$/.test(member.locator)) executableFiles.add(pathToFileURL(observed.target).href);
+      }
+      const entry = pathToFileURL(path.join(root, dependency.entryLocator)).href;
+      if (!executableFiles.has(entry)) fail();
+      dependencyEntries.set(dependency.name, entry);
+    }
     check();
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();

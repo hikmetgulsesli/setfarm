@@ -67,14 +67,26 @@ evidence selects the strict format; it does not waive future authentication.
 
 - Create `scripts/deployment-cutover-dependencies.mjs`: bounded archive decoding
   and the fixed package contract. No module evaluation or external commands.
-- Create `scripts/__tests__/deployment-cutover-dependencies.test.js`: real package
-  archive positives and small malformed archive fixtures.
+- Create `scripts/__tests__/deployment-cutover-dependencies.test.js`: portable
+  fixed archive positives and small malformed archive fixtures.
+- Create `scripts/__tests__/fixtures/deployment-cutover-dependencies.mjs`: tiny
+  literal archives and independently fixed SRIs; private helper copies replace
+  only the two reviewed integrity values. Production remains unchanged.
+- Create `scripts/integration/deployment-cutover-dependencies-genuine.test.mjs`:
+  mandatory Mac mini checkpoint using the unmodified helper and real cache.
 - Modify `scripts/deployment-cutover.mjs`: authenticate helper/lockfile before
   use, pin/cache-check installed files, fixed resolution and immutable loading.
 - Modify `scripts/deployment-cutover-owner.mjs` and its tests: include helper in
   the committed script closure; no owner semantics change.
 - Modify bootstrap tests: authenticated harmless postgres/Zod operations and
   cache/installed-file/resolution substitution failures, no DB connection.
+- Create `scripts/__tests__/fixtures/deployment-cutover-bootstrap.mjs`: shared
+  Git/finalized-output fixture with separate physical home and checkout; portable
+  package defaults, explicit genuine integration option. Host fixtures keep
+  service/CLI paths under home and source/build paths under checkout.
+- Create `scripts/integration/deployment-cutover-loader-genuine.test.mjs`: real
+  postgres/Zod import with socket connection disabled and real CommonJS-subtree
+  refusal. This gate is mandatory and cannot skip missing prerequisites.
 - Update spec File Map with the dependency boundary.
 
 ## Task1: bounded archive verification
@@ -85,28 +97,69 @@ and package entry mappings. It must compare lockfile identity/bytes before/after
 the bootstrap separately authenticates that lockfile against Git before invoking.
 This helper is not a process ownership, database or deployment capability.
 
-- [ ] Write positive fixtures with fixed genuine archives and matching lock;
-  assert literal entry mappings and known package operation after trusted loading.
+- [x] Write positive fixtures with fixed genuine archives and matching lock;
+  assert literal entry mappings. Known package execution belongs to Task2's
+  trusted-loader integration, not this archive-only primitive.
   Missing helper is RED; no dynamic package hash may define its own expected SRI.
-- [ ] Implement fixed contract and bounded physical reads, then strict decompression
+- [x] Implement fixed contract and bounded physical reads, then strict decompression
   and member parsing. Pure internal decoder tests use independently built tar
   fixtures; production export remains zero-argument and rejects unsupported inputs.
-- [ ] Cover corruption/missing cache, wrong lock/version/SRI, gzip expansion cap,
+- [x] Cover corruption/missing cache, wrong lock/version/SRI, gzip expansion cap,
   malformed numeric/checksum/length, duplicates/traversal, links/extensions and
   trailing payload. Assert zero writes and sanitized errors.
 
+Task1 qualification:44/44tests, zero skips,1494.830417ms; noemit, English1527files,
+path872files and whitespace checks passed. Missing-helper RED preceded the first
+nine cases. Two file/parent path collisions reproduced RED before adding rejection
+in both archive orders. Physical tests cover bounded growth, same-inode lock drift,
+ancestor replacement preserving descendant/file identities, actual reused file and
+directory descriptors, single close consumption and sticky refusal. Independent
+review found no material implementation issue and improved the ancestor fixture.
+These files are not integrated into the bootstrap or a database connection yet.
+
+Portability review separated the44-case unit matrix from the genuine archive
+gate. Standard unit tests now use two tiny literal USTAR/gzip packages and fixed
+independently generated SRIs, not the host npm cache or self-derived expectations.
+The explicit genuine gate requires the two actual reviewed archives, fails if
+absent, and cannot skip/download. Both gates are required for this checkpoint;
+unit green alone cannot qualify real package compatibility. Combined45/45passed,
+zero skips,1158.0865ms; independent read-only review found no must-fix.
+
+```sh
+node --test scripts/__tests__/deployment-cutover-dependencies.test.js
+node --test scripts/integration/deployment-cutover-dependencies-genuine.test.mjs
+```
+
 ## Task2: loader integration
 
-- [ ] Make a fresh bootstrap fixture load harmless `zod.string().parse('ok')` and
+- [x] Make a fresh bootstrap fixture load harmless `zod.string().parse('ok')` and
   `typeof postgres` through fixed authenticated mappings; require failure before
   integration. Never open a database connection in these package-loading tests.
-- [ ] Extend the helper closure and authenticate lock Git bytes. Hold all installed
+- [x] Extend the helper closure and authenticate lock Git bytes. Hold all installed
   directory/file pins, compare each member against tar bytes, install fixed bare
   resolution and retain the existing owned-byte load hook.
-- [ ] Test installed bytes/mode/symlink/ancestor drift, changed package metadata,
+- [x] Test installed bytes/mode/symlink/ancestor drift, changed package metadata,
   unknown package/subpath/CommonJS requests and load-time replacement markers.
-- [ ] Run archive and bootstrap/owner suites, noemit/contracts and independent
+- [x] Run archive and bootstrap/owner suites, noemit/contracts and independent
   review. No live effect or package download is authorized by this diagnostic.
+
+Separate authenticated inventory from execution permission: postgres includes
+CommonJS `.js` files under `cjs/src`. All archive members are compared, but only
+`postgres/src/**/*.js` and Zod's reviewed ESM `.js` tree enter the executable map.
+All10Zod package scopes declare type module. A genuine CommonJS-subtree regression
+first reached the forbidden load hook, then refused after the allowlist split.
+Both snapshot readers also reproduced legal partial-read refusal before adopting
+the same bounded accumulation algorithm as the shared retention primitive.
+No native package main/exports lookup, CommonJS fallback or cache repair is added.
+
+Task2 local qualification: final bootstrap/owner56/56, zero skips,156441.741ms;
+archive plus genuine integration48/48, zero skips,19731.951708ms; noemit and
+English1531/path876 contracts passed. Independent scoped review approved the
+execution allowlist, load-boundary witness and bounded reads, with no must-fix.
+This qualifies only dependency loading; no DB census, ownership or live cutover
+completion is claimed. Following full local qualification and independent review,
+deliver this prerequisite as a separate commit in PR125 with explicit scope
+update, alongside the same-root partial-read closure; do not claim DB integration.
 
 ## Remaining after this prerequisite
 

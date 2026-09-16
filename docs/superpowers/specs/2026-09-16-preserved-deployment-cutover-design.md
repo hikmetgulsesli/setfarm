@@ -155,6 +155,23 @@ not an arbitrary same-user actor deliberately launching a retired executable.
 
 ## File map and boundaries
 
+- `scripts/deployment-cutover-dependencies.mjs` and its script tests: fixed
+  postgres/Zod cache archives authenticated against reviewed lock SRI, bounded
+  single-member gzip and regular USTAR decoding, physical read-only brackets.
+  Returns owned member bytes, not execution or DB authority. Bootstrap integration
+  authenticates helper/lock Git bytes and compares installed package members
+  before exposing only fixed package entries through its owned-byte loader.
+  A separate execution allowlist excludes postgres CommonJS `.js` members;
+  authenticated inventory membership alone never grants execution authority.
+- `scripts/__tests__/fixtures/deployment-cutover-dependencies.mjs`: portable
+  literal archive/SRI fixtures, with only private copied-helper integrity
+  substitution. `scripts/integration/deployment-cutover-dependencies-genuine.test.mjs`
+  separately qualifies the unmodified helper against real fixed cache packages;
+  missing archives fail, never skip or download. Both gates are required.
+- `scripts/__tests__/fixtures/deployment-cutover-bootstrap.mjs` and
+  `scripts/integration/deployment-cutover-loader-genuine.test.mjs`: physical
+  home/checkout separation, portable fixture defaults, genuine package loading
+  with socket connections blocked and CommonJS rejection before evaluation.
 - `scripts/build-generation-retention.mjs` and its script tests: narrowly exported
   current finalized source/build observer using the existing plain-JS verifier.
   Read-only, exact current source, full physical brackets; no retained-build or

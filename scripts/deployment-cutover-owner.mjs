@@ -7,7 +7,7 @@ import { types } from "node:util";
 // Internal ownership only. A fresh trusted controller bootstrap must authenticate
 // this module before import. This is not a service-effect or loaded-code proof.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const sourceFiles = ["scripts/build-generation-maintenance-journal.mjs", "scripts/build-generation-maintenance-owner-observer.mjs", "scripts/build-generation-retention.mjs", "scripts/deployment-cutover-owner.mjs", "scripts/deployment-cutover.mjs"];
+const sourceFiles = ["scripts/build-generation-maintenance-journal.mjs", "scripts/build-generation-maintenance-owner-observer.mjs", "scripts/build-generation-retention.mjs", "scripts/deployment-cutover-owner.mjs", "scripts/deployment-cutover.mjs", "scripts/deployment-cutover-dependencies.mjs"];
 const directoryKeys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"];
 const fileKeys = [...directoryKeys, "size", "nlink", "mtimeNs", "ctimeNs"];
 const fail = () => { throw Error("DEPLOYMENT_CUTOVER_OWNER_REFUSED"); };
@@ -44,7 +44,13 @@ function sourceSnapshot() {
       try {
         const stat = fs.fstatSync(fd, { bigint: true });
         if (!stat.isFile() || stat.uid !== BigInt(process.getuid()) || (stat.mode & 0o022n) || stat.nlink !== 1n || stat.size < 1n || stat.size > 1048576n) fail();
-        const bytes = Buffer.alloc(1048577), count = fs.readSync(fd, bytes, 0, bytes.length, 0);
+        const bytes = Buffer.alloc(1048577);
+        let count = 0;
+        while (count < bytes.length) {
+          const size = fs.readSync(fd, bytes, count, bytes.length - count, count);
+          if (size === 0) break;
+          count += size;
+        }
         if (BigInt(count) !== stat.size || !same(stat, fs.fstatSync(fd, { bigint: true }), fileKeys)
           || !same(stat, fs.lstatSync(target, { bigint: true }), fileKeys)) fail();
         files.push({ locator, sha256: hash(bytes.subarray(0, count)), identity: Object.fromEntries(fileKeys.map(key => [key, String(stat[key])])) });
