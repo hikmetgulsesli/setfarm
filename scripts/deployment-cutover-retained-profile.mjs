@@ -3,6 +3,7 @@ import path from "node:path";
 import { userInfo } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { holdSelectedSetfarmDeploymentBuildV1 } from "./build-generation-retention.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -17,6 +18,16 @@ const canonical = value => value === null || typeof value !== "object" ? JSON.st
 const frozen = value => { if (value && typeof value === "object") { Object.values(value).forEach(frozen); Object.freeze(value); } return value; };
 let uncertain = false;
 const fail = () => { throw Error("DEPLOYMENT_CUTOVER_RETAINED_PROFILE_INVALID"); };
+const resolverSource = `
+import fs from 'node:fs';import {createRequire} from 'node:module';import {pathToFileURL,fileURLToPath} from 'node:url';
+const input=JSON.parse(fs.readFileSync(0,'utf8'));
+const output=input.edges.map(([mode,parent,specifier])=>{
+  const url=pathToFileURL(parent),require=createRequire(url);
+  if(input.phase==='paths')return require.resolve.paths(specifier);
+  try{return mode==='esm'?fileURLToPath(import.meta.resolve(specifier,url.href)):require.resolve(specifier)}
+  catch(error){if((mode==='cjs'&&error.code==='MODULE_NOT_FOUND')||(mode==='esm'&&error.code==='ERR_MODULE_NOT_FOUND'))return null;throw Error('RESOLUTION_FAILED')}
+});process.stdout.write(JSON.stringify(output));
+`;
 
 // The authenticated bootstrap must bind this script/profile to Git before use.
 // Inventory identity only: never imports retained JS/native code, and does not
@@ -32,7 +43,7 @@ export function observeDeploymentCutoverRetainedProfileV1() {
 export function holdDeploymentCutoverRetainedProfileV1() {
   if (arguments.length || uncertain) fail();
   const directories = new Map(), files = [], absences = [];
-  let invalid = false, closed = false, result, selectedContext, total = 0, visitedEntries = 0, recheck = fail;
+  let invalid = false, closed = false, result, selectedContext, total = 0, visitedEntries = 0, recheck = fail, resolveModules = fail;
   const close = () => {
     if (closed) return;
     closed = true;
@@ -165,7 +176,87 @@ export function holdDeploymentCutoverRetainedProfileV1() {
         check();
       } catch { invalid = true; uncertain = true; fail(); }
     };
+    let resolved = false;
+    resolveModules = function () {
+      if (arguments.length || resolved || closed || invalid || uncertain) fail();
+      resolved = true;
+      try {
+        recheck();
+        const edges = profile.startupResolution, authenticated = new Set([
+          ...files.map(file => path.relative(selectedRoot, file.target)), ...output.entries.map(entry => entry.locator),
+        ]), seen = new Set();
+        const locator = value => typeof value === "string" && !path.isAbsolute(value) && path.posix.normalize(value) === value
+          && value.split("/").every(part => /^[A-Za-z0-9._-]+$/.test(part) && part !== "." && part !== "..");
+        if (!Array.isArray(edges) || !edges.length || edges.length > 64) fail();
+        for (const edge of edges) {
+          if (!Array.isArray(edge) || edge.length !== 4) fail();
+          const [mode, parent, specifier, target] = edge;
+          if (!["esm", "cjs"].includes(mode) || !locator(parent) || !authenticated.has(parent)
+            || typeof specifier !== "string" || !/^[a-z][a-z0-9-]*(?:\/[A-Za-z0-9._-]+)*$/.test(specifier)
+            || specifier.split("/").some(part => part === "." || part === "..")
+            || (target === null ? mode !== "cjs" : !locator(target) || !authenticated.has(target)
+              || ![...locators].some(item => target.startsWith(`${item}/`) && path.basename(item) === specifier.split("/")[0]))) fail();
+          const key = JSON.stringify(edge.slice(0, 3)); if (seen.has(key)) fail(); seen.add(key);
+        }
+        const absentCandidate = target => {
+          if (!path.isAbsolute(target) || path.normalize(target) !== target) fail();
+          const parts = target.split(path.sep).filter(Boolean); if (parts.length > 128) fail();
+          let parent = path.parse(target).root; hold(parent);
+          for (let index = 0; index < parts.length; index++) {
+            const current = path.join(parent, parts[index]);
+            let stat;
+            try { stat = fs.lstatSync(current, { bigint: true }); }
+            catch (error) {
+              if (error.code !== "ENOENT") throw error;
+              hold(parent, true); if (!absences.includes(current)) absences.push(current); check(); return;
+            }
+            if (index === parts.length - 1 || !stat.isDirectory() || stat.isSymbolicLink()) fail();
+            hold(current); parent = current;
+          }
+          fail();
+        };
+        const childEdges = edges.map(([mode, parent, specifier]) => [mode, path.join(selectedRoot, parent), specifier]);
+        const run = (phase, accountHome) => {
+          check();
+          const input = JSON.stringify({ phase, edges: childEdges }); if (Buffer.byteLength(input) > 1024 * 1024) fail();
+          const child = spawnSync(process.execPath, ["--experimental-import-meta-resolve", "--input-type=module", "-e", resolverSource], {
+            input, encoding: "utf8", cwd: selectedRoot, shell: false, timeout: 5000, maxBuffer: 1024 * 1024,
+            env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", ...(accountHome ? { HOME: home } : {}) },
+          });
+          check();
+          if (child.error || child.signal || child.status !== 0 || child.stderr !== "" || typeof child.stdout !== "string") fail();
+          const value = JSON.parse(child.stdout); if (!Array.isArray(value) || value.length !== edges.length) fail(); return value;
+        };
+        const searches = [run("paths", false), run("paths", true)];
+        for (const context of searches) for (const [index, search] of context.entries()) {
+          if (!Array.isArray(search) || search.length > 128 || !search.length) fail();
+          const [, , specifier, target] = edges[index], name = specifier.split("/")[0];
+          const installation = target === null ? null : [...locators].sort((a, b) => b.length - a.length).find(item => target.startsWith(`${item}/`));
+          const stop = installation === null ? null : path.dirname(path.join(selectedRoot, installation));
+          let found = stop === null;
+          for (const directory of search) {
+            if (typeof directory !== "string" || !path.isAbsolute(directory) || path.normalize(directory) !== directory) fail();
+            if (directory === stop) { found = true; break; }
+            for (const extension of ["", ".js", ".json", ".node"]) absentCandidate(path.join(directory, `${name}${extension}`));
+          }
+          if (!found) fail();
+        }
+        const contexts = [false, true].map(accountHome => {
+          const targets = run("resolve", accountHome);
+          for (const [index, target] of targets.entries()) {
+            const expected = edges[index][3];
+            if (target !== (expected === null ? null : path.join(selectedRoot, expected))) fail();
+          }
+          return { home: accountHome ? "account" : "absent", targets: edges.map(edge => edge[3]) };
+        });
+        recheck();
+        const body = { schema: "setfarm.internal-production-retained-startup-resolution-observation.v1",
+          scope: "reviewed-selected-startup-resolution-only", profileHash: result.profileHash,
+          selectedDeploymentObservationHash: result.selectedDeploymentObservationHash, contexts };
+        return frozen({ ...body, observationHash: sha(canonical(body)) });
+      } catch { invalid = true; uncertain = true; fail(); }
+    };
   } catch { invalid = true; }
   if (invalid || !result) { uncertain = true; close(); fail(); }
-  return Object.freeze({ observation: result, recheck, close });
+  return Object.freeze({ observation: result, recheck, resolveModules, close });
 }
