@@ -9,7 +9,18 @@ import { holdDeploymentCutoverDefaultLauncherV1 } from "../dist/internal-product
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const physical = value => process.platform === "darwin" && value.startsWith("/var/") ? `/private${value}` : value;
 const freeze = value => { if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
-const fail = () => { throw Error("DEPLOYMENT_CUTOVER_DEFAULT_CONTEXT_REFUSED"); };
+const fail = diagnostic => {
+  const error = Error("DEPLOYMENT_CUTOVER_DEFAULT_CONTEXT_REFUSED");
+  if (diagnostic) Object.defineProperty(error, "cutoverRefusal", { value: Object.freeze(diagnostic) });
+  throw error;
+};
+const launcherStages = ["precheck", "baseline", "transport", "waiting", "sampled-identity", "identity", "pid-recheck", "measure", "measurement-bind", "settling", "idle"];
+function launcherFailureStage(error) {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(error, "cutoverLauncherStage");
+    return descriptor && Object.hasOwn(descriptor, "value") && launcherStages.includes(descriptor.value) ? descriptor.value : null;
+  } catch { return null; }
+}
 const counts = ["activeRunCount", "openClaimCount", "executionAttemptCount", "activeRuntimeSessionCount", "activeCompletionOwnerCount",
   "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
   "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount"];
@@ -20,17 +31,17 @@ let occupied = false, uncertain = false;
 // Reviewed retained startup may replace live PATH/DEBUG; the trusted Node/libc
 // prerequisite preserves saved initial stack strings and HOME/PG/root selectors.
 export async function observeDeploymentCutoverDefaultContextV1() {
-  if (arguments.length || occupied || uncertain) fail();
+  if (arguments.length || occupied || uncertain) fail({ scope: "default-owner", stage: "entry", launcherStage: null, cleanupFailed: false });
   occupied = true;
   const contexts = [];
-  let invalid = false, result;
+  let invalid = false, result, stage = "account", launcherStage = null, cleanupFailed = false;
   try {
     const account = userInfo();
     const hold = context => { contexts.push(context); return context; };
-    const selected = hold(holdSelectedSetfarmDeploymentBuildV1());
-    const retained = hold(holdDeploymentCutoverRetainedProfileV1());
-    const absence = hold(holdDeploymentCutoverDefaultEnvAbsenceV1());
-    const launcher = hold(holdDeploymentCutoverDefaultLauncherV1());
+    stage = "acquire-selected"; const selected = hold(holdSelectedSetfarmDeploymentBuildV1());
+    stage = "acquire-retained"; const retained = hold(holdDeploymentCutoverRetainedProfileV1());
+    stage = "acquire-absence"; const absence = hold(holdDeploymentCutoverDefaultEnvAbsenceV1());
+    stage = "acquire-launcher"; const launcher = hold(holdDeploymentCutoverDefaultLauncherV1());
     const check = () => {
       const current = userInfo();
       if (["uid", "gid", "homedir", "username", "shell"].some(key => current[key] !== account[key])) fail();
@@ -48,17 +59,19 @@ export async function observeDeploymentCutoverDefaultContextV1() {
         .flatMap(base => [path.join(base, ".env"), path.join(base, ".env.local")]).sort();
       if (JSON.stringify(env.candidates.map(entry => entry.path).sort()) !== JSON.stringify(candidates)) fail();
     };
-    check();
-    const resolution = retained.resolveModules();
-    check();
+    stage = "crossbind"; check();
+    stage = "resolve"; const resolution = retained.resolveModules();
+    stage = "prequalify"; check();
+    stage = "resolution-bind";
     if (resolution.profileHash !== retained.observation.profileHash
       || resolution.selectedDeploymentObservationHash !== selected.observation.selectedDeploymentObservationHash
       || resolution.contexts.length !== 2 || resolution.contexts.filter(context => context.home === "account").length !== 1
       || resolution.contexts.filter(context => context.home === "absent").length !== 1) fail();
-    const passiveQualification = await launcher.qualifyPassiveHome();
-    check();
-    const databaseCensus = await launcher.census();
-    check();
+    stage = "qualify"; const passiveQualification = await launcher.qualifyPassiveHome();
+    stage = "postqualify"; check();
+    stage = "census"; const databaseCensus = await launcher.census();
+    stage = "postcensus"; check();
+    stage = "census-shape";
     if (counts.some(key => !Number.isSafeInteger(databaseCensus[key]) || databaseCensus[key] < 0)) fail();
     const blockers = ["filesystem-helper-phase-zero-owner-not-observed", "controller-ownership-not-acquired", "journaled-transition-not-performed"];
     if (counts.some(key => databaseCensus[key] !== 0)) blockers.unshift("database-nonzero-owner-observed");
@@ -66,12 +79,12 @@ export async function observeDeploymentCutoverDefaultContextV1() {
       scope: "passive-default-context-observation-only", newCheckoutPath: root,
       selectedDeployment: selected.observation, retainedProfile: retained.observation, resolution,
       defaultEnvAbsence: absence.observation, launcher: launcher.observation, passiveQualification, databaseCensus, blockers });
-    check();
-  } catch { invalid = true; }
+    stage = "final-recheck"; check();
+  } catch (error) { invalid = true; if (stage === "qualify") launcherStage = launcherFailureStage(error); }
   while (contexts.length) {
-    try { contexts.pop().close(); } catch { invalid = true; uncertain = true; }
+    try { contexts.pop().close(); } catch { if (!invalid) stage = "cleanup"; invalid = true; uncertain = true; cleanupFailed = true; }
   }
   occupied = false;
-  if (invalid || !result) fail();
+  if (invalid || !result) fail({ scope: "default-owner", stage, launcherStage, cleanupFailed });
   return result;
 }

@@ -294,6 +294,7 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
         launchArguments: entry.launchArguments, node: nodes[index]!.observation,
       }))) });
     const qualifyPassiveHome = async () => {
+      let stage = "precheck";
       try {
         check();
         if (qualifying || qualified || censusRunning) fail();
@@ -301,10 +302,12 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
         // The outer owner has now acquired absence AND resolved all modules.
         // Do not adopt a generation born before those held prerequisites: its
         // startup may already have consumed a since-removed env file or shadow.
+        stage = "baseline";
         for (let index = 0; index < inputs.entries.length; index++) {
           const baseline = inputs.snapshot(index);
           if (baseline.activeCount !== 0 || baseline.pid !== undefined) fail();
         }
+        stage = "transport";
         const nativeTransportUrl = new URL("../../scripts/deployment-cutover-passive-home.mjs", import.meta.url).href;
         const transport = await import(nativeTransportUrl);
         check();
@@ -312,6 +315,7 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
         const samples = new Map<number, Readonly<Record<string, unknown>>>();
         const settled = new Set<number>();
         const checkSampled = () => {
+          const priorStage = stage; stage = "sampled-identity";
           for (const [index, sample] of samples) {
             const current = inputs.snapshot(index);
             if (current.pid === undefined) { settled.add(index); continue; }
@@ -322,27 +326,34 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
             const after = inputs.snapshot(index);
             if (after.pid !== current.pid) fail();
           }
+          stage = priorStage;
         };
         while (samples.size !== inputs.entries.length) {
+          stage = "waiting";
           check(); checkSampled();
           if (performance.now() >= deadline) fail();
           for (const [index, entry] of inputs.entries.entries()) {
             if (samples.has(index)) continue;
+            stage = "waiting";
             const snapshot = inputs.snapshot(index);
             if (snapshot.pid === undefined) continue;
             const node = nodes[index]!.observation;
             const request = { pid: snapshot.pid, uid: account.uid, gid: account.gid, executable: node.executablePath };
+            stage = "identity";
             const identity = transport.identifyDeploymentCutoverPassiveProcessV1(request);
             const samePid = () => {
+              stage = "pid-recheck";
               const current = inputs.snapshot(index);
               if (current.pid !== snapshot.pid || current.state !== "running" || current.activeCount !== 1) fail();
             };
             samePid(); check();
             if (Object.hasOwn(entry.environment, "HOME")) fail();
+            stage = "measure";
             const measured = transport.measureDeploymentCutoverPassiveHomeV1({ ...request,
               expectedStartSeconds: identity.startSeconds, expectedStartMicroseconds: identity.startMicroseconds,
               launchExecutable: node.candidatePath, argv: ["node", ...entry.args],
               environment: { ...entry.environment, HOME: account.homedir }, optionalEnvironment });
+            stage = "measurement-bind";
             if (["pid", "ppid", "uid", "gid", "startSeconds", "startMicroseconds"].some(key => measured[key] !== identity[key])) fail();
             samePid(); check();
             if (performance.now() >= deadline) fail();
@@ -354,17 +365,24 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
         // A sampled retry may still be exiting. Only ordinary no-PID polling is
         // permitted here; native refusal or a selected PID change never retries.
         while (true) {
+          stage = "settling";
           check(); checkSampled();
           if (performance.now() >= deadline) fail();
           if (inputs.entries.every((_, index) => inputs.snapshot(index).pid === undefined)) break;
           await new Promise(resolve => setTimeout(resolve, 80));
         }
+        stage = "idle";
         const processObservation = idle();
         qualified = true;
         return Object.freeze({ samples: Object.freeze(inputs.entries.map((entry, index) => Object.freeze({
           label: entry.label, node: nodes[index]!.observation, measurement: samples.get(index)!,
         }))), processObservation });
-      } catch { invalid = true; fail(); }
+      } catch {
+        invalid = true;
+        const error = Error("DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID");
+        Object.defineProperty(error, "cutoverLauncherStage", { value: stage });
+        throw error;
+      }
       finally { qualifying = false; }
     };
     const census = async () => {
