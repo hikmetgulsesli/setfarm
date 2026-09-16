@@ -48,8 +48,13 @@ export function openMaintenanceOwnerJournalV1(directory) {
       const before = fs.fstatSync(fd, { bigint: true });
       if (!before.isFile() || before.uid !== BigInt(process.getuid()) || before.dev !== parents[0].stat.dev
         || (before.mode & 0o7777n) !== 0o600n || ![1n, 2n].includes(before.nlink) || before.size > BigInt(MAX_BYTES)) fail();
-      const buffer = Buffer.alloc(MAX_BYTES + 1);
-      const length = fs.readSync(fd, buffer, 0, buffer.length, 0);
+      const buffer = Buffer.alloc(Number(before.size) + 1);
+      let length = 0;
+      while (length < buffer.length) {
+        const count = fs.readSync(fd, buffer, length, buffer.length - length, length);
+        if (count === 0) break;
+        length += count;
+      }
       if (BigInt(length) !== before.size || !same(before, fs.fstatSync(fd, { bigint: true }))
         || !same(before, fs.lstatSync(file, { bigint: true }))) fail();
       assertParents();

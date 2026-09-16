@@ -32,6 +32,21 @@ test("invalid pre-journaled nonce refuses before creating files", () => fixture(
   assert.throws(() => lstatSync(path.join(root, "spawner.lock")), { code: "ENOENT" });
 }));
 
+test("publishes and rechecks a reservation through legal partial reads", () => fixture(root => {
+  const moduleUrl = new URL("../build-generation-controller-reservation.mjs", import.meta.url).href;
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import fs from "node:fs";
+    import { publishControllerPidReservationV1 } from ${JSON.stringify(moduleUrl)};
+    const read = fs.readSync;
+    fs.readSync = (fd, buffer, offset, length, position) => read(fd, buffer, offset, Math.min(2, length), position);
+    const held = publishControllerPidReservationV1(${JSON.stringify(root)});
+    try { held.assertStable(); } finally { held.close(); }
+    process.stdout.write(String(process.pid));
+  `], { encoding: "utf8", timeout: 5000, env: {} });
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(readFileSync(path.join(root, "spawner.lock"), "utf8"), `${child.stdout}\n`);
+}));
+
 test("uses the journaled nonce and preserves an existing staging attempt", () => fixture(root => {
   const nonce = "10000000-0000-4000-8000-000000000001";
   const staging = path.join(root, `.spawner-maintenance-${nonce}.tmp`);

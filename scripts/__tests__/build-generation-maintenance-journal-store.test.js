@@ -42,6 +42,25 @@ test("different intent and competing successor cannot overwrite committed bytes"
   assert.ok(readFileSync(path.join(root, "owner-0002.json")).equals(encode(second)));
 }));
 
+test("publishes and replays maintenance history through legal partial reads", () => fixture(root => {
+  const moduleUrl = new URL("../build-generation-maintenance-journal-store.mjs", import.meta.url).href;
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import fs from "node:fs";
+    import { openMaintenanceOwnerJournalV1 } from ${JSON.stringify(moduleUrl)};
+    const read = fs.readSync;
+    fs.readSync = (fd, buffer, offset, length, position) => read(fd, buffer, offset, Math.min(7, length), position);
+    const store = openMaintenanceOwnerJournalV1(${JSON.stringify(root)});
+    store.publishIntent(${JSON.stringify(intent)});
+    store.publishOwnerClaim(${JSON.stringify(first)});
+    store.publishOwnerClaim(${JSON.stringify(first)});
+    process.stdout.write(JSON.stringify(store.read()));
+  `], { encoding: "utf8", timeout: 5000, env: {} });
+  assert.equal(child.status, 0, child.stderr);
+  assert.deepEqual(JSON.parse(child.stdout), { intent, claims: [first], pendingPublicationCount: 0 });
+  assert.ok(readFileSync(path.join(root, "intent.json")).equals(encode(intent)));
+  assert.ok(readFileSync(path.join(root, "owner-0001.json")).equals(encode(first)));
+}));
+
 test("partial temporary confers no authority and does not get erased on retry", () => fixture(root => {
   const temp = path.join(root, ".intent.json.10000000-0000-4000-8000-000000000001.tmp");
   writeFileSync(temp, '{"schema":', { mode: 0o600 });

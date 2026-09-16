@@ -63,7 +63,13 @@ export function publishControllerPidReservationV1(directory, reservationNonce = 
         && same(stat, expected, fileFields);
       if (!valid(fs.fstatSync(descriptor, { bigint: true })) || !valid(fs.lstatSync(file, { bigint: true }))) fail("RESERVATION_CHANGED");
       const observed = Buffer.alloc(bytes.length + 1);
-      if (fs.readSync(descriptor, observed, 0, observed.length, 0) !== bytes.length || !observed.subarray(0, bytes.length).equals(bytes)) fail("RESERVATION_CHANGED");
+      let length = 0;
+      while (length < observed.length) {
+        const count = fs.readSync(descriptor, observed, length, observed.length - length, length);
+        if (count === 0) break;
+        length += count;
+      }
+      if (length !== bytes.length || !observed.subarray(0, bytes.length).equals(bytes)) fail("RESERVATION_CHANGED");
       if (!valid(fs.fstatSync(descriptor, { bigint: true })) || !valid(fs.lstatSync(file, { bigint: true }))) fail("RESERVATION_CHANGED");
       assertParents(parents);
     };

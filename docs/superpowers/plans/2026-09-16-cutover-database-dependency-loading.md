@@ -163,6 +163,22 @@ update, alongside the same-root partial-read closure; do not claim DB integratio
 
 ## Remaining after this prerequisite
 
+### PR125 final review closure
+
+Review at12e3474 identified two prerequisite gaps: the genuine archive/loader
+gates were not invoked by the standard suite, and the maintenance journal and
+controller reservation still assumed a single regular-file read was complete.
+These are causally required by the same preserved-deployment objective.
+
+File Map addition: `package.json` chains `test:scripts:cutover-genuine` from
+`test:scripts`; `scripts/build-generation-maintenance-journal-store.mjs` and
+`scripts/build-generation-controller-reservation.mjs` accumulate positioned reads
+within initial-size-plus-one bounds, retaining all identity and byte checks.
+Their matching `scripts/__tests__` files exercise real publication and replay
+with legal short reads. Both regressions failed before the repair; the complete
+two suites passed24/24 and the invoked genuine command passed3/3, zero skips.
+No download, live DB connection, owner admission or service transition occurs.
+
 Extract/reuse the complete pre32 read-only census without weakening the existing
 receipt protocol; authenticate credentials privately from the fixed launcher;
 retain filesystem/helper/phase checks, owner-fenced ordinary refusal, exact
