@@ -277,6 +277,56 @@ test("a non-Git project parent never hides its present worktree child", async ()
   }
 });
 
+test("a workflow without its agents discovery parent refuses instead of claiming complete coverage", async () => {
+  const testHome = fixture();
+  try {
+    mkdirSync(path.join(testHome.ownerHomeRoot, ".openclaw", "workspaces", "workflows", "workflow-1"));
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("an origin-less retained Git worktree is visible but unresolved", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.workspaceRoot, "setfarm");
+    initRepo(primary);
+    const linked = path.join(testHome.workspaceRoot, ".worktrees", "local-linked");
+    mkdirSync(path.dirname(linked));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "local-linked", linked]);
+    const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(result.status, "unresolved");
+    assert.deepEqual(result.entries.map((entry) => [entry.root, entry.kind]), [[linked, "unresolved"]]);
+    assert.deepEqual(result.blockers, [{ root: linked, reason: "untrusted-code-git" }]);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("a deployment primary names each absent prunable linked root as a blocker", async () => {
+  const testHome = fixture();
+  try {
+    const clone = path.join(testHome.workspaceRoot, "deployments", "local-clone");
+    mkdirSync(clone, { recursive: true });
+    initRepo(clone, "https://github.com/hikmetgulsesli/setfarm.git");
+    const stale = path.join(testHome.ownerHomeRoot, "stale-deployment-linked");
+    git(["-C", clone, "worktree", "add", "-q", "-b", "stale-linked", stale]);
+    rmSync(stale, { recursive: true });
+    const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(result.status, "unresolved");
+    assert.ok(result.blockers.some((item) => item.root === stale && item.reason === "prunable-git-worktree"));
+  } finally {
+    testHome.close();
+  }
+});
+
 test("prunable worktree metadata blocks qualification instead of being ignored", async () => {
   const testHome = fixture();
   try {

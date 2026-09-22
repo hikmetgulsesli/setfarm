@@ -261,10 +261,10 @@ function primaryWorktreeRoots(held: HeldDirectories, root: string): GitWorktreeL
 
 function observeGitCandidate(held: HeldDirectories, root: string, base: string, zone: Zone,
   scope: Scope): Readonly<{ kind: CandidateKind; gitPrimaryRoot: string | null; dirty: boolean | null;
-    listedRoots: readonly string[]; reason: string | null }> {
+    listedRoots: readonly string[]; prunableRoots: readonly string[]; reason: string | null }> {
   const marker = path.join(root, ".git");
   if (isMissing(marker)) return { kind: "unresolved", gitPrimaryRoot: null, dirty: null,
-    listedRoots: [], reason: "non-git-child" };
+    listedRoots: [], prunableRoots: [], reason: "non-git-child" };
   const markerStat = lstatSync(marker, { bigint: true });
   if (markerStat.isSymbolicLink()) fail();
   if (!markerStat.isFile() && !markerStat.isDirectory()) fail();
@@ -295,13 +295,13 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
   };
     const top = line(git(["rev-parse", "--show-toplevel"]));
     if (top !== root) return { kind: "unresolved", gitPrimaryRoot: null, dirty: null,
-      listedRoots: [], reason: "git-top-level-mismatch" };
+      listedRoots: [], prunableRoots: [], reason: "git-top-level-mismatch" };
     const listing = gitWorktreeRoots(git(["worktree", "list", "--porcelain", "-z"]));
     const listedRoots = listing.roots;
     const primary = listedRoots[0]!;
     if (!listedRoots.includes(root)) fail();
     if (listing.prunableRoots.length > 0) return { kind: "unresolved", gitPrimaryRoot: primary,
-      dirty: null, listedRoots, reason: "prunable-git-list" };
+      dirty: null, listedRoots, prunableRoots: listing.prunableRoots, reason: "prunable-git-list" };
     for (const listedRoot of listedRoots) held.hold(listedRoot);
     const gitdir = normalizedGitPath(line(git(["rev-parse", "--git-dir"])), root);
     const commonDir = normalizedGitPath(line(git(["rev-parse", "--git-common-dir"])), root);
@@ -309,15 +309,16 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
     if (commonDir !== path.join(primary, ".git")
       || (root === primary ? markerStat.isFile() || gitdir !== marker : !markerStat.isFile() || gitdir !== gitdirFromMarker)) fail();
     if (zone === "retained-zone") {
-      const origin = line(git(["config", "--local", "--get", "remote.origin.url"]));
+      const origin = line(git(["config", "--local", "--default=__origin_missing__", "--get", "remote.origin.url"]));
       if (!["https://github.com/hikmetgulsesli/setfarm.git", "https://github.com/hikmetgulsesli/mission-control.git"].includes(origin)) {
-        return { kind: "unresolved", gitPrimaryRoot: primary, dirty: null, listedRoots, reason: "untrusted-code-git" };
+        return { kind: "unresolved", gitPrimaryRoot: primary, dirty: null, listedRoots,
+          prunableRoots: [], reason: "untrusted-code-git" };
       }
       const fixedPrimaries = [path.join(scope.workspaceRoot, "setfarm"), path.join(scope.workspaceRoot, "mission-control")];
       const retainedPrimaryZone = [path.join(scope.workspaceRoot, ".worktrees"),
         path.join(scope.workspaceRoot, "deployments")].some((retainedBase) => primary.startsWith(`${retainedBase}/`));
       if (!fixedPrimaries.includes(primary) && !retainedPrimaryZone) {
-        return { kind: "unresolved", gitPrimaryRoot: primary, dirty: null, listedRoots,
+        return { kind: "unresolved", gitPrimaryRoot: primary, dirty: null, listedRoots, prunableRoots: [],
           reason: "retained-primary-mismatch" };
       }
     }
@@ -326,13 +327,13 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
       const expectedProject = base.startsWith(`${projectBase}/`) ? path.dirname(base) : null;
       if ((expectedProject !== null && primary !== expectedProject)
         || (expectedProject === null && !primary.startsWith(`${projectBase}/`))) {
-        return { kind: "unresolved", gitPrimaryRoot: primary, dirty: null, listedRoots,
+        return { kind: "unresolved", gitPrimaryRoot: primary, dirty: null, listedRoots, prunableRoots: [],
           reason: "runtime-primary-mismatch" };
       }
     }
     const dirty = git(["status", "--porcelain=v2", "--untracked-files=all"]).length !== 0;
     return { kind: root === primary ? "primary-git" : "linked-git", gitPrimaryRoot: primary,
-      dirty, listedRoots, reason: null };
+      dirty, listedRoots, prunableRoots: [], reason: null };
   } finally {
     if (markerDescriptor !== null) {
       try { closeSync(markerDescriptor); }
@@ -373,7 +374,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     for (const workflow of children(held, path.join(ownerHomeRoot, ".openclaw", "workspaces", "workflows"), incidentalFiles)) {
       addBase(path.join(workflow, "story-worktrees"), "runtime-zone");
       const agents = path.join(workflow, "agents");
-      if (isMissing(agents)) { absentBases.push(agents); continue; }
+      if (isMissing(agents)) fail();
       for (const agent of children(held, agents, incidentalFiles)) addBase(path.join(agent, "story-worktrees"), "runtime-zone");
     }
 
@@ -401,8 +402,11 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
         const git = observeGitCandidate(held, root, base, zone, scope);
         const referencingPids = referencePids(held, root);
         if (git.reason !== null) blockers.push(Object.freeze({ root, reason: git.reason }));
+        for (const prunableRoot of git.prunableRoots) blockers.push(Object.freeze({ root: prunableRoot,
+          reason: "prunable-git-worktree" }));
         if (git.listedRoots.length > 0) listedGroups.push(git.listedRoots);
-        firstByRoot.set(root, Object.freeze({ base, zone, listedHash: hashCanonicalJson(git.listedRoots), reason: git.reason }));
+        firstByRoot.set(root, Object.freeze({ base, zone,
+          listedHash: hashCanonicalJson({ roots: git.listedRoots, prunableRoots: git.prunableRoots }), reason: git.reason }));
         entries.push(Object.freeze({ root, zone, kind: git.kind, dev: String(stat.dev), ino: String(stat.ino),
           birthtimeNs: String(stat.birthtimeNs), gitPrimaryRoot: git.gitPrimaryRoot, dirty: git.dirty,
           sourceBuildProvenance: "unverified" as const,
@@ -430,7 +434,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
       const freshPids = referencePids(held, entry.root);
       if (fresh.kind !== entry.kind || fresh.gitPrimaryRoot !== entry.gitPrimaryRoot
         || fresh.dirty !== entry.dirty || fresh.reason !== first.reason
-        || hashCanonicalJson(fresh.listedRoots) !== first.listedHash
+        || hashCanonicalJson({ roots: fresh.listedRoots, prunableRoots: fresh.prunableRoots }) !== first.listedHash
         || hashCanonicalJson(freshPids) !== hashCanonicalJson(entry.referencingPids)) fail();
     }
     const ordered = Object.freeze(entries.sort((left, right) => compareRoot(left.root, right.root)));
