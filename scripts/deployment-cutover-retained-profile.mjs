@@ -43,14 +43,14 @@ export function observeDeploymentCutoverRetainedProfileV1() {
 export function holdDeploymentCutoverRetainedProfileV1() {
   if (arguments.length || uncertain) fail();
   const directories = new Map(), files = [], absences = [];
-  let invalid = false, closed = false, result, selectedContext, total = 0, visitedEntries = 0, recheck = fail, resolveModules = fail;
+  let invalid = false, closed = false, cleanupFailed = false, result, selectedContext, total = 0, visitedEntries = 0, recheck = fail, resolveModules = fail;
   const close = () => {
     if (closed) return;
     closed = true;
     const pins = [...directories.values()];
-    while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch { uncertain = true; invalid = true; } }
-    try { selectedContext?.close(); } catch { uncertain = true; invalid = true; }
-    if (invalid) fail();
+    while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch { uncertain = true; invalid = true; cleanupFailed = true; } }
+    try { selectedContext?.close(); } catch { uncertain = true; invalid = true; cleanupFailed = true; }
+    if (cleanupFailed) fail();
   };
   try {
     const uid = process.getuid?.(), home = userInfo().homedir;

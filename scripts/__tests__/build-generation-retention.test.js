@@ -1478,14 +1478,15 @@ describe("OA18 build-generation retention authority", () => {
         }else{
           const link=root+'/.local/bin/setfarm',target=fs.readlinkSync(link);fs.renameSync(link,link+'.preserved');fs.symlinkSync(target,link);
         }
-        let refused=false,retryRefused=false;
-        try{held.recheck()}catch{refused=true}finally{try{held.close()}catch{}}
+        let refused=false,closeRefused=false,retryRefused=false;
+        try{held.recheck()}catch{refused=true}finally{try{held.close()}catch{closeRefused=true}}
         try{module.holdSelectedSetfarmDeploymentBuildV1()}catch{retryRefused=true}
-        return{refused,retryRefused,remaining:pending.size,opened};
+        return{refused,closeRefused,retryRefused,remaining:pending.size,opened};
       })()`);
       assert.equal(result.status, 0, result.stderr);
       const value = JSON.parse(result.stdout);
       assert.equal(value.refused, true, result.stdout); assert.equal(value.retryRefused, true, result.stdout);
+      assert.equal(value.closeRefused, false, result.stdout);
       assert.equal(value.remaining, 0, result.stdout); assert.ok(value.opened > 0);
     }));
   }

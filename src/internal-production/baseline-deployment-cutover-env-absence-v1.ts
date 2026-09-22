@@ -10,7 +10,7 @@ const ABSENCE_KEYS = [...DIRECTORY_KEYS, "mtimeNs", "ctimeNs"] as const;
 const same = (left: BigIntStats, right: BigIntStats, keys: readonly (keyof BigIntStats)[]) => keys.every(key => left[key] === right[key]);
 const physical = (value: string) => process.platform === "darwin" && value.startsWith("/var/") ? `/private${value}` : value;
 const identity = (stat: BigIntStats, keys: readonly (keyof BigIntStats)[]) => Object.freeze(Object.fromEntries(keys.map(key => [key, String(stat[key])])));
-let cleanupUncertain = false;
+let observationUncertain = false, cleanupUncertain = false;
 function fail(): never { throw Error("DEPLOYMENT_CUTOVER_ENV_ABSENCE_INVALID"); }
 function absent(target: string): boolean {
   try { fs.lstatSync(target, { bigint: true }); return false; }
@@ -26,19 +26,19 @@ export function observeDeploymentCutoverDefaultEnvAbsenceV1() {
 
 // Held candidate evidence only; no effective-environment or rollout authority.
 export function holdDeploymentCutoverDefaultEnvAbsenceV1() {
-  if (arguments.length || cleanupUncertain) fail();
+  if (arguments.length || observationUncertain || cleanupUncertain) fail();
   const descriptors: number[] = [], pins = new Map<string, { fd: number; stat: BigIntStats }>();
   const candidates: Array<Readonly<{ path: string; missingAt: string; ancestorPath: string; ancestorIdentity: Readonly<Record<string, string>> }>> = [];
-  let invalid = false, closed = false;
+  let invalid = false, closed = false, closeFailed = false;
   let recheck: () => void = fail;
   const close = () => {
     if (closed) return;
     closed = true;
     while (descriptors.length) {
       const fd = descriptors.pop()!;
-      try { fs.closeSync(fd); } catch { cleanupUncertain = true; invalid = true; }
+      try { fs.closeSync(fd); } catch { cleanupUncertain = true; closeFailed = true; invalid = true; }
     }
-    if (invalid) fail();
+    if (closeFailed) fail();
   };
   let result: Readonly<{
     schema: string; scope: string; selectedCheckoutPath: string; currentCheckoutPath: string; cliObservationHash: string;
@@ -119,7 +119,7 @@ export function holdDeploymentCutoverDefaultEnvAbsenceV1() {
         checkAbsences();
         if (hashCanonicalJson(observeDeploymentCutoverCliLinkV1()) !== hashCanonicalJson(cli)) fail();
         checkAbsences();
-      } catch { invalid = true; cleanupUncertain = true; fail(); }
+      } catch { invalid = true; observationUncertain = true; fail(); }
     };
   } catch { invalid = true; }
   if (invalid || !result) { close(); fail(); }

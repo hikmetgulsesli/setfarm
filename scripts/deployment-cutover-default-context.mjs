@@ -38,10 +38,10 @@ let occupied = false, uncertain = false;
 // Reviewed retained startup may replace live PATH/DEBUG; the trusted Node/libc
 // prerequisite preserves saved initial stack strings and HOME/PG/root selectors.
 export async function observeDeploymentCutoverDefaultContextV1() {
-  if (arguments.length || occupied || uncertain) fail({ scope: "default-owner", stage: "entry", launcherStage: null, cleanupFailed: uncertain });
+  if (arguments.length || occupied || uncertain) fail({ scope: "default-owner", stage: "entry", ownerContext: null, launcherStage: null, cleanupFailed: uncertain });
   occupied = true;
   const contexts = [];
-  let invalid = false, result, stage = "account", launcherStage = null, cleanupFailed = false;
+  let invalid = false, result, stage = "account", ownerContext = null, launcherStage = null, cleanupFailed = false;
   try {
     const account = userInfo();
     const hold = context => { contexts.push(context); return context; };
@@ -50,9 +50,14 @@ export async function observeDeploymentCutoverDefaultContextV1() {
     stage = "acquire-absence"; const absence = hold(holdDeploymentCutoverDefaultEnvAbsenceV1());
     stage = "acquire-launcher"; const launcher = hold(holdDeploymentCutoverDefaultLauncherV1());
     const check = () => {
+      ownerContext = "account";
       const current = userInfo();
       if (["uid", "gid", "homedir", "username", "shell"].some(key => current[key] !== account[key])) fail();
-      for (const context of contexts) context.recheck();
+      for (const [index, context] of contexts.entries()) {
+        ownerContext = ["selected", "retained", "absence", "launcher"][index];
+        context.recheck();
+      }
+      ownerContext = "bind";
       const build = selected.observation, env = absence.observation, profile = retained.observation, launch = launcher.observation;
       const cli = build.cli;
       if (profile.selectedDeploymentObservationHash !== build.selectedDeploymentObservationHash
@@ -65,6 +70,7 @@ export async function observeDeploymentCutoverDefaultContextV1() {
       const candidates = [cli.checkoutPath, root, path.join(physical(account.homedir), ".openclaw", "setfarm")]
         .flatMap(base => [path.join(base, ".env"), path.join(base, ".env.local")]).sort();
       if (JSON.stringify(env.candidates.map(entry => entry.path).sort()) !== JSON.stringify(candidates)) fail();
+      ownerContext = null;
     };
     stage = "crossbind"; check();
     stage = "resolve"; const resolution = retained.resolveModules();
@@ -95,9 +101,9 @@ export async function observeDeploymentCutoverDefaultContextV1() {
     if (cleanupFailed === true) uncertain = true;
   }
   while (contexts.length) {
-    try { contexts.pop().close(); } catch { if (!invalid) stage = "cleanup"; invalid = true; uncertain = true; cleanupFailed = true; }
+    try { contexts.pop().close(); } catch { if (!invalid) { stage = "cleanup"; ownerContext = null; } invalid = true; uncertain = true; cleanupFailed = true; }
   }
   occupied = false;
-  if (invalid || !result) fail({ scope: "default-owner", stage, launcherStage, cleanupFailed });
+  if (invalid || !result) fail({ scope: "default-owner", stage, ownerContext, launcherStage, cleanupFailed });
   return result;
 }

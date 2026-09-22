@@ -41,8 +41,7 @@ for (const change of ["same-byte-replacement", "optional-appearance", "tree-aba"
     const optional = path.join(selected, "node_modules/bufferutil.js");
     const result = observe(`const pending=new Set(),open=fs.openSync,close=fs.closeSync;let opened=0;
       fs.openSync=(...args)=>{const fd=open(...args);pending.add(fd);opened++;return fd;};
-      fs.closeSync=fd=>{close(fd);pending.delete(fd);};
-      process.on('exit',()=>process.stdout.write(JSON.stringify({remaining:pending.size,opened})));`, `await (async()=>{
+      fs.closeSync=fd=>{close(fd);pending.delete(fd);};`, `await (async()=>{
       const held=module.holdDeploymentCutoverRetainedProfileV1();
       await Promise.resolve();
       const file=${JSON.stringify(file)},optional=${JSON.stringify(optional)};
@@ -50,11 +49,16 @@ for (const change of ["same-byte-replacement", "optional-appearance", "tree-aba"
         const bytes=fs.readFileSync(file);fs.renameSync(file,file+'.preserved');fs.writeFileSync(file,bytes);
       }else if(${JSON.stringify(change)}==='optional-appearance'){fs.writeFileSync(optional,'throw Error("CANARY")');}
       else{fs.writeFileSync(optional,'throw Error("CANARY")');fs.unlinkSync(optional);}
-      try{held.recheck();return held.observation;}finally{held.close();}
+      let recheckRefused=false,closeRefused=false,retryRefused=false;
+      try{held.recheck();}catch{recheckRefused=true;}
+      try{held.close();}catch{closeRefused=true;}
+      try{module.holdDeploymentCutoverRetainedProfileV1();}catch{retryRefused=true;}
+      return Object.freeze({recheckRefused,closeRefused,retryRefused,remaining:pending.size,opened});
     })()`);
-    assert.equal(result.status, 1, result.stdout);
-    assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_RETAINED_PROFILE_INVALID");
+    assert.equal(result.status, 0, result.stderr);
     const evidence = JSON.parse(result.stdout);
+    assert.equal(evidence.recheckRefused, true); assert.equal(evidence.closeRefused, false);
+    assert.equal(evidence.retryRefused, true);
     assert.equal(evidence.remaining, 0); assert.ok(evidence.opened > 0);
   }));
 }
