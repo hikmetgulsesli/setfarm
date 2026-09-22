@@ -363,7 +363,10 @@ test("forged origin cannot turn an unrelated primary into retained code", async 
       ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
     });
     assert.equal(result.status, "unresolved");
-    assert.deepEqual(result.blockers, [{ root: linked, reason: "retained-primary-mismatch" }]);
+    assert.deepEqual(result.blockers, [
+      { root: linked, reason: "retained-primary-mismatch" },
+      { root: roguePrimary, reason: "listed-outside-scope" },
+    ]);
   } finally {
     testHome.close();
   }

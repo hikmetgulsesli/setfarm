@@ -415,8 +415,10 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     }
     const present = new Set(entries.map((entry) => entry.root));
     for (const group of listedGroups) {
-      for (const listedRoot of group.slice(1)) {
-        if (!present.has(listedRoot)) blockers.push(Object.freeze({ root: listedRoot, reason: "listed-outside-scope" }));
+      for (const listedRoot of group) {
+        if (!present.has(listedRoot) && !parentGitLists.has(listedRoot)) {
+          blockers.push(Object.freeze({ root: listedRoot, reason: "listed-outside-scope" }));
+        }
       }
     }
     held.assertStable();
