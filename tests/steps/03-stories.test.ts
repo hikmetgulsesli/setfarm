@@ -74,6 +74,8 @@ describe("03-stories step module", () => {
       "utf8",
     );
     const stepOps = readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf8");
+    const spawner = readFileSync(path.join(process.cwd(), "src/spawner.ts"), "utf8");
+    const completion = readFileSync(path.join(process.cwd(), "src/execution/runtime-completion.ts"), "utf8");
     assert.match(preclaim, /protocol !== "v3" && process\.env\.SETFARM_DISABLE_AUTO_STORIES/);
     assert.match(preclaim, /disposition: "compiler_completion" as const/);
     assert.doesNotMatch(preclaim, /await failStep\(/);
@@ -84,7 +86,33 @@ describe("03-stories step module", () => {
       stepOps,
       /step\.step_id === "stories"\s*&& typeof _stepModule\.preClaim !== "function"/,
     );
-    assert.match(stepOps, /releaseReservedRuntimeSessionInTransaction/);
+    const handoffStart = stepOps.indexOf("if (compilerCompletionOutput !== undefined)");
+    const handoffEnd = stepOps.indexOf("compilerCompletionOutput,", handoffStart);
+    assert.ok(handoffStart > 0 && handoffEnd > handoffStart);
+    const compilerHandoff = stepOps.slice(handoffStart, handoffEnd);
+    assert.match(compilerHandoff, /runtimeSessionId: singleStepRuntime\.sessionId/);
+    assert.match(compilerHandoff, /runtimeOwnerInstanceId: singleStepRuntime\.ownerInstanceId/);
+    const noAgentStart = spawner.indexOf("if (claim.compilerCompletionOutput !== undefined) {");
+    const noAgentEnd = spawner.indexOf("if (claim.storyId && spawnCwd === AGENT_SAFE_CWD)", noAgentStart);
+    assert.ok(noAgentStart > 0 && noAgentEnd > noAgentStart);
+    const noAgentBranch = spawner.slice(noAgentStart, noAgentEnd);
+    assert.match(noAgentBranch, /publishRuntimeCompletionProposal\(/);
+    assert.match(noAgentBranch, /if \(!publication\.managed\)/);
+    assert.doesNotMatch(noAgentBranch, /spawnAgent\(|spawnSync\(|spawn\(/);
+    assert.match(noAgentBranch, /\}\s*return;\s*\}\s*$/);
+    const processorStart = spawner.indexOf("async function runRuntimeCompletionProcessor(");
+    const processor = spawner.slice(processorStart);
+    const drainAt = processor.indexOf("await drainDurableRuntimeSession(session, { requestId: owned.requestId })");
+    const ownerAt = processor.indexOf("await executeRuntimeCompletionOwner(processing)");
+    assert.ok(processorStart > 0 && drainAt > 0 && ownerAt > drainAt);
+    assert.match(processor.slice(drainAt, ownerAt), /RUNTIME_COMPLETION_SESSION_RELEASED_BEFORE_CLAIM_TERMINAL/);
+    const acceptStart = completion.indexOf("async acceptAndRelease(input:");
+    const acceptEnd = completion.indexOf("async preemptForRunTermination(input:", acceptStart);
+    assert.ok(acceptStart > 0 && acceptEnd > acceptStart);
+    const accept = completion.slice(acceptStart, acceptEnd);
+    const releaseAt = accept.indexOf("await releaseDrainedRuntimeSessionInTransaction(transaction, {");
+    const acceptedAt = accept.indexOf("SET state = 'accepted'");
+    assert.ok(releaseAt > 0 && acceptedAt > releaseAt);
     const compilerReturn = stepOps.indexOf("compilerCompletionOutput,");
     const promptResolution = stepOps.indexOf("let resolvedInput = resolveTemplate(", compilerReturn);
     assert.ok(compilerReturn > 0 && promptResolution > compilerReturn);
