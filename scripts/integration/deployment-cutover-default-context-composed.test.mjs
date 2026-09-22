@@ -9,17 +9,20 @@ const countNames = ["activeRunCount", "openClaimCount", "executionAttemptCount",
   "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
   "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount"];
 
-for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-after-sample", "acquire-cleanup-loss", "acquire-unknown", "acquire-config-cleanup-loss", "monitor-idle", "startup-state"]) test(`authenticated real default composition ${fault || "success"}`, () => {
+for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-after-sample", "acquire-cleanup-loss", "acquire-unknown", "acquire-config-cleanup-loss",
+  "monitor-idle", "monitor-absence-idle", "monitor-absence-same", "monitor-absence-replacement", "monitor-absence-startup", "monitor-error", "monitor-malformed", "startup-state"]) test(`authenticated real default composition ${fault || "success"}`, () => {
   retainedFixture(({ root }) => {
     const result = run(root, ["inspect-default-context", "--json"]);
-    if (fault && !["monitor-idle", "startup-state"].includes(fault)) {
+    if (fault && !["monitor-idle", "monitor-absence-idle", "startup-state"].includes(fault)) {
       assert.equal(result.status, 1, result.stdout);
       assert.equal(result.stdout, "");
       const lines = result.stderr.trimEnd().split("\n");
       assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
       assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: "default-owner",
-        stage: fault.startsWith("acquire-") ? "acquire-launcher" : fault === "sample-refusal" ? "qualify" : "postqualify", launcherStage: fault === "sample-refusal" ? "measure" : null,
-        cleanupFailed: fault === "acquire-unknown" ? null : fault !== "sample-refusal" });
+        stage: fault.startsWith("acquire-") ? "acquire-launcher" : (fault === "sample-refusal" || fault.startsWith("monitor-")) ? "qualify" : "postqualify",
+        launcherStage: fault === "sample-refusal" ? "measure" : ["monitor-error", "monitor-malformed"].includes(fault) ? "sampled-native"
+          : fault.startsWith("monitor-absence-") ? "sampled-postcheck" : null,
+        cleanupFailed: fault === "acquire-unknown" ? null : fault !== "sample-refusal" && !fault.startsWith("monitor-") });
       assert.doesNotMatch(result.stderr, /PRIVATE_(?:TOKEN|PASSWORD)|PRIVATESOCKET/);
       assert.equal(fs.existsSync(path.join(root, ".setfarm/census-called")), false);
     } else {
@@ -38,6 +41,7 @@ import cp from 'node:child_process';
 const actualSpawn=cp.spawnSync, labels=['com.setrox.setfarm-spawner','com.setrox.setfarm-dashboard'];
 let fixtureSamples=0,fixtureIdle=false;
 let fixtureStarting=${JSON.stringify(fault)}==='startup-state',fixtureStartingScheduled=false;
+let fixtureMonitorReplacement=false,fixtureMonitorStartup=false;
 const actualClose=fs.closeSync;let fixtureConfigCloseLoss=false;
 fs.closeSync=fd=>{actualClose(fd);if(fixtureConfigCloseLoss){fixtureConfigCloseLoss=false;throw Error('PRIVATE_PASSWORD')}};
 cp.spawnSync=(executable,args,options)=>{
@@ -49,6 +53,8 @@ cp.spawnSync=(executable,args,options)=>{
     if(index<0||args[0]!=='print')throw Error('UNEXPECTED_LABEL');
     let text=fs.readFileSync(path.join(root,'.setfarm/launcher-'+index),'utf8');
     if(!fixtureIdle&&globalThis.fixtureAllowRunning)text=text.replace('state = not running','state = running').replace('active count = 0','active count = 1').slice(0,-2)+'\\tpid = '+(12345+index)+'\\n}\\n';
+    if(fixtureMonitorReplacement&&index===0)text=text.replace('pid = 12345','pid = 22345');
+    if(fixtureMonitorStartup&&index===0)text=text.replace('state = running','state = xpcproxy');
     if(globalThis.fixtureAllowRunning&&fixtureStarting){
       text=text.replace('state = running','state = xpcproxy');
       if(!fixtureStartingScheduled){fixtureStartingScheduled=true;setTimeout(()=>{fixtureStarting=false},0)}
@@ -57,12 +63,22 @@ cp.spawnSync=(executable,args,options)=>{
   }
   if(executable==='/usr/bin/python3'){
     if(fixtureStarting)throw Error('NATIVE_DURING_STARTUP');
-    const request=JSON.parse(options.input),measurement=request.operation==='measure';
-    if(!measurement&&fixtureSamples===2&&${JSON.stringify(fault)}==='monitor-idle')fixtureIdle=true;
+    const request=JSON.parse(options.input),measurement=request.operation==='measure',monitor=request.operation==='monitor';
+    if(monitor&&(request.expectedParentPid!==1||request.expectedStartSeconds!==1234||request.expectedStartMicroseconds!==56))throw Error('CROSSED_MONITOR_REQUEST');
+    if(monitor&&fixtureSamples===2&&${JSON.stringify(fault)}==='monitor-idle')fixtureIdle=true;
+    if(monitor&&fixtureSamples===2&&${JSON.stringify(fault)}==='monitor-error')return {status:1,signal:null,stdout:Buffer.alloc(0),stderr:Buffer.from('PRIVATE_PASSWORD')};
     if(measurement&&${JSON.stringify(fault)}==='sample-refusal')return {status:1,signal:null,stdout:Buffer.alloc(0),stderr:Buffer.from('PRIVATE_PASSWORD')};
-    const value={schema:measurement?'setfarm.internal-production-passive-home-measurement.v1':'setfarm.internal-production-passive-process-identity.v1',
+    let value={schema:measurement?'setfarm.internal-production-passive-home-measurement.v1':'setfarm.internal-production-passive-process-identity.v1',
       pid:request.pid,ppid:1,uid:request.uid,gid:request.gid,startSeconds:1234,startMicroseconds:56,
       ...(measurement?{homeContext:'account',completeEnvironmentValidated:true,stableDoubleRead:true}:{})};
+    if(monitor&&fixtureSamples===2&&${JSON.stringify(fault)}.startsWith('monitor-absence-')){
+      if(${JSON.stringify(fault)}==='monitor-absence-idle')fixtureIdle=true;
+      if(${JSON.stringify(fault)}==='monitor-absence-replacement')fixtureMonitorReplacement=true;
+      if(${JSON.stringify(fault)}==='monitor-absence-startup')fixtureMonitorStartup=true;
+      value={schema:'setfarm.internal-production-passive-process-absence.v1',pid:request.pid,evidence:'proc-pidinfo-esrch'};
+    }
+    if(monitor&&fixtureSamples===2&&${JSON.stringify(fault)}==='monitor-malformed')
+      value={schema:'setfarm.internal-production-passive-process-absence.v1',pid:request.pid,evidence:'proc-pidinfo-esrch',extra:true};
     if(measurement){
       if(request.environment.HOME!==fixtureHome||request.environment.SETFARM_ENV_DIR!==undefined||request.expectedStartSeconds!==1234)throw Error('CROSSED_NATIVE_REQUEST');
       if(++fixtureSamples===2)setTimeout(()=>{

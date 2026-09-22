@@ -7,6 +7,7 @@ KERN_PROCARGS2 is mutable stack evidence, not an immutable exec record.
 """
 
 import ctypes
+import errno
 import struct
 import sys
 
@@ -149,7 +150,11 @@ class BsdInfo(ctypes.Structure):
     _fields_ += [("nice", ctypes.c_int32), ("start_seconds", ctypes.c_uint64), ("start_microseconds", ctypes.c_uint64)]
 
 
-def native_context(expected):
+class _ProcessLookupAbsent(ValueError):
+    pass
+
+
+def native_context(expected, monitor_identity=None):
     if sys.platform != "darwin" or type(expected) is not dict or set(expected) != {
             "pid", "uid", "gid", "executable"}:
         refuse()
@@ -177,12 +182,19 @@ def native_context(expected):
 
     def identity():
         info = BsdInfo()
-        if libc.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info)) != ctypes.sizeof(info):
+        ctypes.set_errno(0)
+        count = libc.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info))
+        observed_errno = ctypes.get_errno()
+        if monitor_identity is not None and count == 0 and observed_errno == errno.ESRCH:
+            raise _ProcessLookupAbsent()
+        if count != ctypes.sizeof(info):
             refuse()
         if (info.pid != pid or info.status not in (2, 3) or info.start_seconds == 0
                 or info.start_microseconds >= 1000000
                 or any(getattr(info, key) != expected["uid"] for key in ("uid", "ruid", "svuid"))
                 or any(getattr(info, key) != expected["gid"] for key in ("gid", "rgid", "svgid"))):
+            refuse()
+        if monitor_identity is not None and (info.ppid, info.start_seconds, info.start_microseconds) != monitor_identity:
             refuse()
         target = (ctypes.c_ubyte * 4096)()
         size = libc.proc_pidpath(pid, target, len(target))
@@ -200,6 +212,27 @@ def identify_process(expected):
     """Private pre-measurement generation observation; never reads environment."""
     unused_libc, identity = native_context(expected)
     before, after = identity(), identity()
+    if before != after:
+        refuse()
+    return {"schema": "setfarm.internal-production-passive-process-identity.v1", **before}
+
+
+def monitor_process(expected):
+    """Sampled-only PID lookup; absence does not identify a dead generation."""
+    if type(expected) is not dict or set(expected) != {
+            "pid", "uid", "gid", "executable", "expectedParentPid", "expectedStartSeconds", "expectedStartMicroseconds"}:
+        refuse()
+    if (type(expected["expectedParentPid"]) is not int or not 0 <= expected["expectedParentPid"] < 2147483647
+            or type(expected["expectedStartSeconds"]) is not int or not 0 < expected["expectedStartSeconds"] <= 9007199254740991
+            or type(expected["expectedStartMicroseconds"]) is not int or not 0 <= expected["expectedStartMicroseconds"] < 1000000):
+        refuse()
+    unused_libc, identity = native_context(
+        {key: expected[key] for key in ("pid", "uid", "gid", "executable")},
+        (expected["expectedParentPid"], expected["expectedStartSeconds"], expected["expectedStartMicroseconds"]))
+    try:
+        before, after = identity(), identity()
+    except _ProcessLookupAbsent:
+        return {"schema": "setfarm.internal-production-passive-process-absence.v1", "pid": expected["pid"], "evidence": "proc-pidinfo-esrch"}
     if before != after:
         refuse()
     return {"schema": "setfarm.internal-production-passive-process-identity.v1", **before}
@@ -291,6 +324,8 @@ def main():
         operation = request.pop("operation", "measure")
         if operation == "identify":
             result = identify_process(request)
+        elif operation == "monitor":
+            result = monitor_process(request)
         elif operation == "measure":
             result = measure_process(request)
         else:

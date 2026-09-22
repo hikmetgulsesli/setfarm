@@ -182,6 +182,97 @@ print(json.dumps({"accepted": accepted, "allocations": len(saved), "allZero": al
   assert.deepEqual(JSON.parse(result.stdout), { accepted, allocations, allZero: true });
 });
 
+for (const [fault, outcome] of [["present", "present"], ["absent-first", "absent"], ["absent-second", "absent"],
+  ["denied", "refused"], ["stale-errno", "refused"], ["short-esrch", "refused"], ["negative-esrch", "refused"],
+  ["zero-noerrno", "refused"], ["generation-then-absent", "refused"], ["parent-then-absent", "refused"],
+  ["credential-then-absent", "refused"], ["path-esrch", "refused"], ["identify-absent", "refused"], ["measure-absent", "refused"]]) {
+  test(`sampled native monitor ${fault} distinguishes lookup absence without environment reads`, nativeOptions, () => {
+    const source = fs.readFileSync(helper, "utf8");
+    const result = spawnSync("/usr/bin/python3", ["-I", "-S", "-B", "-c", `
+import ctypes, errno, json
+scope = {"__name__": "passive_home_test"}
+exec(compile(${JSON.stringify(source)}, "authenticated-fixture-source", "exec"), scope)
+fault = ${JSON.stringify(fault)}
+expected = {"pid":12345,"uid":501,"gid":20,"executable":"/fixture/node","expectedParentPid":1,"expectedStartSeconds":1234,"expectedStartMicroseconds":5678}
+counts = {"info":0,"path":0,"env":0}
+class Call:
+    def __init__(self, fn): self.fn = fn
+    def __call__(self, *args): return self.fn(*args)
+class Library: pass
+library = Library()
+def info(pid, flavor, arg, pointer, size):
+    counts["info"] += 1
+    assert flavor == 3 and arg == 0 and size == 136
+    if fault in ("absent-first", "identify-absent", "measure-absent") or (fault.endswith("then-absent") and counts["info"] == 2) or (fault == "absent-second" and counts["info"] == 2):
+        ctypes.set_errno(errno.ESRCH); return 0
+    if fault == "denied": ctypes.set_errno(errno.EPERM); return 0
+    if fault in ("stale-errno", "zero-noerrno"): return 0
+    if fault == "short-esrch": ctypes.set_errno(errno.ESRCH); return 135
+    if fault == "negative-esrch": ctypes.set_errno(errno.ESRCH); return -1
+    value = ctypes.cast(pointer, ctypes.POINTER(scope["BsdInfo"])).contents
+    value.pid, value.ppid, value.status = pid, 1, 2
+    for key in ("uid", "ruid", "svuid"): setattr(value, key, 501)
+    for key in ("gid", "rgid", "svgid"): setattr(value, key, 20)
+    value.start_seconds, value.start_microseconds = 1234, 5678
+    if fault == "generation-then-absent": value.start_seconds += 1
+    if fault == "parent-then-absent": value.ppid += 1
+    if fault == "credential-then-absent": value.uid += 1
+    return 136
+def executable(pid, target, size):
+    counts["path"] += 1
+    if fault == "path-esrch": ctypes.set_errno(errno.ESRCH); return 0
+    raw = expected["executable"].encode(); ctypes.memmove(target, raw, len(raw)); return len(raw)
+def forbidden(*args): counts["env"] += 1; raise ValueError("ENV_MUST_NOT_BE_READ")
+library.proc_pidinfo, library.proc_pidpath, library.sysctl = Call(info), Call(executable), Call(forbidden)
+ctypes.CDLL = lambda *args, **kwargs: library
+if fault == "stale-errno": ctypes.set_errno(errno.ESRCH)
+value = None
+try:
+    if fault == "identify-absent": value = scope["identify_process"]({key:expected[key] for key in ("pid","uid","gid","executable")})
+    elif fault == "measure-absent":
+        request = {key:expected[key] for key in expected if key != "expectedParentPid"}
+        request.update({"launchExecutable":"/fixture/node","argv":["node"],"environment":{"HOME":"/fixture"}})
+        value = scope["measure_process"](request)
+    else:
+        monitor = scope.get("monitor_process")
+        if monitor is not None: value = monitor(expected)
+except ValueError: pass
+print(json.dumps({"value":value,"counts":counts}))
+`], { encoding: "utf8", env: { PATH: "/usr/bin:/bin" }, cwd: "/", timeout: 5000, maxBuffer: 4096 });
+    assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+    const observed = JSON.parse(result.stdout);
+    assert.equal(observed.counts.env, 0);
+    const want = outcome === "absent" ? { schema: "setfarm.internal-production-passive-process-absence.v1", pid: 12345, evidence: "proc-pidinfo-esrch" }
+      : outcome === "present" ? { schema: "setfarm.internal-production-passive-process-identity.v1", pid: 12345, ppid: 1, uid: 501, gid: 20, startSeconds: 1234, startMicroseconds: 5678 } : null;
+    assert.deepEqual(observed.value, want);
+    if (fault.endsWith("then-absent")) assert.deepEqual(observed.counts, { info: 1, path: 0, env: 0 });
+    if (outcome === "absent") assert.equal(observed.counts.info, fault === "absent-first" ? 1 : 2);
+  });
+}
+
+test("sampled native entry distinguishes an owned child after its observed exit", nativeOptions, async () => {
+  const source = fs.readFileSync(helper, "utf8"), executable = fs.realpathSync.native(process.execPath);
+  const child = spawn(executable, ["-e", 'process.stdout.write("ready\\n");setTimeout(()=>{},10000)'], { env: {}, stdio: ["ignore", "pipe", "pipe"] });
+  const invoke = request => spawnSync("/usr/bin/python3", ["-I", "-S", "-B", "-c", source], {
+    input: JSON.stringify(request), encoding: "utf8", cwd: "/", env: { PATH: "/usr/bin:/bin" }, timeout: 2000, maxBuffer: 4096,
+  });
+  let exited = false;
+  try {
+    await once(child.stdout, "data");
+    const request = { pid: child.pid, uid: process.getuid(), gid: process.getgid(), executable };
+    const first = invoke({ ...request, operation: "identify" }); assert.equal(first.status, 0, first.stderr);
+    const identity = JSON.parse(first.stdout), monitor = { ...request, operation: "monitor", expectedParentPid: identity.ppid,
+      expectedStartSeconds: identity.startSeconds, expectedStartMicroseconds: identity.startMicroseconds };
+    const live = invoke(monitor); assert.equal(live.status, 0, live.stderr); assert.deepEqual(JSON.parse(live.stdout), identity);
+    const exit = once(child, "exit"); child.kill("SIGTERM"); await exit; exited = true;
+    const gone = invoke(monitor); assert.equal(gone.status, 0, gone.stderr); assert.equal(gone.stderr, "");
+    assert.deepEqual(JSON.parse(gone.stdout), { schema: "setfarm.internal-production-passive-process-absence.v1", pid: child.pid, evidence: "proc-pidinfo-esrch" });
+    assert.equal(invoke({ ...request, operation: "identify" }).status, 1);
+  } finally {
+    if (!exited) { const exit = once(child, "exit"); child.kill("SIGTERM"); await exit; }
+  }
+});
+
 for (const kind of ["physical", "symlink", "mutated-live-environment"]) test(`native bridge measures identity-bound owned ${kind} child`, nativeOptions, async () => {
   const linked = kind === "symlink";
   const executable = fs.realpathSync.native(process.execPath);
