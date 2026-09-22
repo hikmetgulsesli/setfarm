@@ -1,0 +1,28 @@
+# Held positive-worktree physical catalog V2
+
+Status: diagnostic-only continuation of the approved positive physical-plus-PostgreSQL ownership direction. The merged pure partition (#146) is not a host observer or cutover authority.
+
+## Current evidence and safety boundary
+
+The historical V1 observer requires several absent fixed bases and treats all managed children as Git non-primary worktrees/owners. The host instead has retained linked development worktrees, independent deployment primary clones, two non-Git workspace data directories containing current-entry records, and a non-Git VectorGate project child containing supervisor artifacts. The VectorGate parent also lists prunable Git worktrees with absent paths. Names, record shapes, age and `git -C child rev-parse` (which can climb to a parent repository) do not authenticate any of these unknown directories. Keep every directory visible. Do not delete, move, prune, repair, or relabel it as retained without positive provenance.
+
+## This slice
+
+Add an import-inert, read-only V2 held physical catalog with a fixed code-owned host-scope wrapper and a separately labeled fixture-scope diagnostic core. The owner home, code-owned workspace, projects root and OpenClaw workflow root are mandatory anchors: if any is absent or unsafe, refuse rather than synthesize an empty census. The scope includes existing/absent workspace `.worktrees`, Setfarm and Mission Control `.worktrees`, deployment clones, OpenClaw scratch/workflow story-worktree bases, and every project `.worktrees` base. Only optional leaf bases beneath authenticated present parents may be recorded absent, with their held parent; an absent parent that prevents enumerating descendants refuses. Every present child is recorded, including unresolved non-Git directories; non-directory/symlink children refuse. Bound the base/child counts.
+
+Pin all ancestors, bases, and children with `O_DIRECTORY|O_NOFOLLOW`; compare `lstat` and `fstat` device, inode, birth, mode, UID, ctime and mtime before, after, around every path-based external command, and across an awaited read-only callback. Pin each direct `.git` marker no-follow and authenticate its Git directory/common-dir reference before treating command output as Git identity. A rename-away/replace/restore during a command must be detected through held parent/child change metadata; if command-to-inode binding is uncertain, refuse. Close exactly once; failed close poisons later acquisitions. An unstable/missing/symlinked path refuses. No cleanup or path mutation is permitted. Capture deterministic open-file/cwd reference PIDs using the same fail-closed `lsof +D` semantics as V1. `lsof +D` does not prove absence of argv-only, descendant or orphan processes; a future authority stage must compose the global ps/cwd family and listener census independently.
+
+Authenticate Git children with a direct `.git` marker, exact `git rev-parse --show-toplevel === candidate`, authenticated primary/common-dir linkage, and exact membership in a complete non-prunable `git worktree list --porcelain -z`. An allowed Setfarm/Mission Control remote origin corroborates retained-zone identity but cannot substitute for the physical Git link or source/build provenance. A code-zone primary clone may have `candidate === primary`; a linked worktree must authenticate its membership in the primary list. Runtime-zone entries must resolve to the containing generated project primary. Every Git-listed worktree outside the enumerated managed scope is either explicitly authenticated as a retained code primary/deployment checkout or an unresolved blocker; absent/prunable listed paths always block. Unknown/non-Git entries remain visible as `unresolved`, not `retained-artifact`; any unresolved entry makes the catalog non-qualifying. A separate future provenance contract may recognize genuine retained artifacts.
+
+The catalog records all observed entries, absent bases, process references, and blockers. It may produce Stage-1-shaped physical entries only when every candidate has authenticated provenance and the before/after bracket is identical; otherwise it produces no projection input. It never reads PostgreSQL, calls the V2 partition, changes historical V1 code, or grants complete-zero/cold/cutover authority. The callback is for future read-only DB bracketing, not a caller-supplied zero-owner assertion.
+
+## Refusal and verification
+
+Test real temporary Git primary/linked worktrees and real directories. Verify a retained linked checkout and a retained primary clone remain visible, a runtime Git worktree stays a runtime candidate, and unknown non-Git directories block qualification without disappearing. Verify parent-Git traversal is not mistaken for child Git, prunable Git metadata refuses, missing optional bases remain explicit, directory/symlink/identity ABA and process-reference drift refuse, and held descriptors close/poison correctly. Preserve #146 pure contract and historical V1. Run focused tests, TypeScript, relevant existing held physical tests, independent read-only review, reviewed PR, and independent clean-main build. A real host read-only catalog should report the existing unknowns; it must not claim zero owners.
+
+## File map
+
+- `src/internal-production/baseline-positive-worktree-physical-catalog-v2.ts`: held read-only discovery and authenticated diagnostic catalog.
+- `tests/internal-production/baseline-positive-worktree-physical-catalog-v2.test.ts`: real temp filesystem/Git cases and fault matrix.
+- `package.json`: register focused tests in the default test chain.
+- `docs/superpowers/plans/2026-09-23-held-positive-worktree-physical-catalog-v2.md`: TDD and delivery sequence.
