@@ -33,10 +33,10 @@ function ownerRefusal(error) {
     const scope = fields.scope.value, phase = fields.stage.value, ownerContext = fields.ownerContext.value,
       launcherStage = fields.launcherStage.value, cleanupFailed = fields.cleanupFailed.value;
     const checking = ["crossbind", "prequalify", "postqualify", "postcensus", "final-recheck"].includes(phase);
-    if (scope !== "default-owner" || !["entry", "account", "acquire-selected", "acquire-retained", "acquire-absence", "acquire-launcher", "acquire-helper", "crossbind",
+    if (scope !== "default-owner" || !["entry", "account", "acquire-selected", "acquire-retained", "acquire-absence", "acquire-launcher", "acquire-helper", "acquire-phase", "crossbind",
       "resolve", "prequalify", "resolution-bind", "qualify", "postqualify", "census", "postcensus", "census-shape", "final-recheck", "cleanup"].includes(phase)
-      || (checking ? !["account", "selected", "retained", "absence", "launcher", "helper", "bind"].includes(ownerContext) : ownerContext !== null)
-      || (typeof cleanupFailed !== "boolean" && !(cleanupFailed === null && ["acquire-selected", "acquire-retained", "acquire-absence", "acquire-launcher", "acquire-helper"].includes(phase)))
+      || (checking ? !["account", "selected", "retained", "absence", "launcher", "helper", "phase", "bind"].includes(ownerContext) : ownerContext !== null)
+      || (typeof cleanupFailed !== "boolean" && !(cleanupFailed === null && ["acquire-selected", "acquire-retained", "acquire-absence", "acquire-launcher", "acquire-helper", "acquire-phase"].includes(phase)))
       || (launcherStage !== null && (phase !== "qualify" || !["precheck", "baseline", "transport", "waiting",
         "sampled-identity", "sampled-snapshot", "sampled-generation", "sampled-native", "sampled-bind", "sampled-postcheck",
         "identity", "pid-recheck", "measure", "measurement-bind", "settling", "idle"].includes(launcherStage)))) return null;

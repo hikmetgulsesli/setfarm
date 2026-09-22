@@ -24,16 +24,16 @@ test("bootstrap refuses modified default owner before invoking it", () => fixtur
   assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: "bootstrap", stage: "source-authentication", ownerContext: null, launcherStage: null, cleanupFailed: null });
 }));
 
-for (const kind of ["valid", "valid-context", "helper-context", "helper-acquire", "acquire-unknown", "unknown-stage", "unknown-context", "crossed-context", "extra-field", "accessor", "raw-error", "field-accessor", "context-accessor", "symbol-field", "foreign-prototype", "cleanup-type", "unknown-launcher", "crossed-launcher", "sampled-snapshot", "sampled-generation", "sampled-native", "sampled-bind", "sampled-postcheck"]) {
+for (const kind of ["valid", "valid-context", "helper-context", "helper-acquire", "phase-context", "phase-acquire", "acquire-unknown", "unknown-stage", "unknown-context", "crossed-context", "extra-field", "accessor", "raw-error", "field-accessor", "context-accessor", "symbol-field", "foreign-prototype", "cleanup-type", "unknown-launcher", "crossed-launcher", "sampled-snapshot", "sampled-generation", "sampled-native", "sampled-bind", "sampled-postcheck"]) {
   test(`bootstrap default refusal sanitizes ${kind} diagnostic`, () => fixture(root => {
     const result = run(root, ["inspect-default-context", "--json"]);
     assert.equal(result.status, 1); assert.equal(result.stdout, "");
     const lines = result.stderr.trimEnd().split("\n");
     assert.equal(lines.length, 2); assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
-    const qualified = ["valid", "valid-context", "helper-context"].includes(kind) || kind.startsWith("sampled-");
-    assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: qualified || ["acquire-unknown", "helper-acquire"].includes(kind) ? "default-owner" : "bootstrap",
-      stage: kind === "helper-acquire" ? "acquire-helper" : ["valid-context", "helper-context"].includes(kind) ? "postqualify" : qualified ? "qualify" : kind === "acquire-unknown" ? "acquire-launcher" : "default-context",
-      ownerContext: kind === "helper-context" ? "helper" : kind === "valid-context" ? "absence" : null,
+    const qualified = ["valid", "valid-context", "helper-context", "phase-context"].includes(kind) || kind.startsWith("sampled-");
+    assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: qualified || ["acquire-unknown", "helper-acquire", "phase-acquire"].includes(kind) ? "default-owner" : "bootstrap",
+      stage: kind === "phase-acquire" ? "acquire-phase" : kind === "helper-acquire" ? "acquire-helper" : ["valid-context", "helper-context", "phase-context"].includes(kind) ? "postqualify" : qualified ? "qualify" : kind === "acquire-unknown" ? "acquire-launcher" : "default-context",
+      ownerContext: kind === "phase-context" ? "phase" : kind === "helper-context" ? "helper" : kind === "valid-context" ? "absence" : null,
       launcherStage: kind === "valid" ? "measure" : kind.startsWith("sampled-") ? kind : null, cleanupFailed: qualified ? false : null });
     assert.doesNotMatch(result.stderr, /PRIVATE_SENTINEL|PRIVATE_PATH|SECRET_GETTER/);
   }, undefined, { prepare(root) {
@@ -45,6 +45,8 @@ for (const kind of ["valid", "valid-context", "helper-context", "helper-acquire"
       if(kind==='valid-context'){value.stage='postqualify';value.ownerContext='absence';value.launcherStage=null;}
       if(kind==='helper-context'){value.stage='postqualify';value.ownerContext='helper';value.launcherStage=null;}
       if(kind==='helper-acquire'){value.stage='acquire-helper';value.launcherStage=null;value.cleanupFailed=null;}
+      if(kind==='phase-context'){value.stage='postqualify';value.ownerContext='phase';value.launcherStage=null;}
+      if(kind==='phase-acquire'){value.stage='acquire-phase';value.launcherStage=null;value.cleanupFailed=null;}
       if(kind==='acquire-unknown'){value.stage='acquire-launcher';value.launcherStage=null;value.cleanupFailed=null;}
       if(kind==='unknown-stage')value.stage='PRIVATE_SENTINEL';
       if(kind==='unknown-context')value.ownerContext='PRIVATE_SENTINEL';

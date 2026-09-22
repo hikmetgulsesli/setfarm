@@ -20,13 +20,16 @@ function run(fault = "") {
       ["dist/internal-production/baseline-deployment-cutover-env-absence-v1.js", "holdDeploymentCutoverDefaultEnvAbsenceV1", "absence"],
       ["dist/internal-production/baseline-deployment-cutover-launcher-observation-v1.js", "holdDeploymentCutoverDefaultLauncherV1", "launcher"],
       ["dist/internal-production/baseline-deployment-cutover-helper-observation-v1.js", "holdDeploymentCutoverAbsentHelperHistoryV1", "helper"],
+      ["dist/internal-production/baseline-deployment-cutover-phase-observation-v1.js", "holdDeploymentCutoverPhaseClosedPreflightV1", "phase"],
     ]) fs.writeFileSync(path.join(root, file), `export const ${name}=()=>globalThis.hold(${JSON.stringify(kind)});`);
     const child = spawnSync(process.execPath, ["--input-type=module", "-e", `
       import os from 'node:os';import {syncBuiltinESMExports} from 'node:module';
       const root=${JSON.stringify(root)},fault=${JSON.stringify(fault)},events=[],home=root+'/home';
       const identity=os.userInfo();os.userInfo=()=>{if(fault==='account')throw Error('PRIVATE_SENTINEL');return {...identity,homedir:home}};syncBuiltinESMExports();
       const cli={cliLinkPath:home+'/.local/bin/setfarm',checkoutPath:root+'/old',cliLinkObservationHash:'cli'};
-      const observations={helper:{accountHome:home,accountUid:identity.uid,accountGid:identity.gid},selected:{selectedDeploymentObservationHash:'selected',cli,buildSource:{sha:'source'}},
+      const observations={phase:{accountHome:home,accountUid:identity.uid,accountGid:identity.gid,
+        currentCheckoutPath:root,selectedCheckoutPath:cli.checkoutPath,cliObservationHash:'cli',runtimeAuthorityRoot:home+'/.openclaw/setfarm/internal-production'},
+        helper:{accountHome:home,accountUid:identity.uid,accountGid:identity.gid},selected:{selectedDeploymentObservationHash:'selected',cli,buildSource:{sha:'source'}},
         retained:{selectedDeploymentObservationHash:'selected',sourceSha:'source',profileHash:'profile'},
         absence:{cliObservationHash:'cli',selectedCheckoutPath:cli.checkoutPath,currentCheckoutPath:root,
           candidates:[root+'/old',root,home+'/.openclaw/setfarm'].flatMap(base=>['.env','.env.local'].map(name=>({path:base+'/'+name})))},
@@ -35,6 +38,7 @@ function run(fault = "") {
       if(fault==='cli-cross')observations.absence.cliObservationHash='crossed';
       if(fault==='home-cross')observations.launcher.accountHome=home+'/crossed';
       if(fault==='helper-home-cross')observations.helper.accountHome=home+'/crossed';
+      if(fault==='phase-root-cross')observations.phase.runtimeAuthorityRoot=home+'/.openclaw/crossed';
       if(fault==='root-cross')observations.absence.currentCheckoutPath=root+'/crossed';
       if(fault==='candidate-cross')observations.absence.candidates[0].path+='.crossed';
       if(fault==='launcher-cli-cross')observations.launcher.launchers[0].launchArguments[0]+='.crossed';
@@ -42,7 +46,7 @@ function run(fault = "") {
       globalThis.hold=kind=>{if(fault.startsWith('acquire-cleanup-')&&kind==='launcher'){const error=Error('PRIVATE_SENTINEL');Object.defineProperty(error,'cutoverCleanupFailed',
         fault==='acquire-cleanup-accessor'?{get(){process.stdout.write('PRIVATE_SENTINEL');throw Error('PRIVATE_SENTINEL')}}:{value:['acquire-cleanup-loss','acquire-cleanup-retry'].includes(fault)?true:fault==='acquire-cleanup-false'?false:'PRIVATE_SENTINEL'});throw error}
         if((fault==='partial-acquire'&&kind==='absence')||fault==='acquire-'+kind)throw Error('PRIVATE_SENTINEL');events.push('hold:'+kind);return {observation:observations[kind],
-        recheck(){events.push('check:'+kind);if(kind==='selected')checkCount++;if((fault==='prequalify'&&checkCount===2||fault==='final-recheck'&&checkCount===5)||(fault==='sample-drift'&&sampled||fault==='db-drift'&&queried)&&kind==='absence'||fault==='helper-drift'&&sampled&&kind==='helper')throw Error('PRIVATE_SENTINEL')},
+        recheck(){events.push('check:'+kind);if(kind==='selected')checkCount++;if((fault==='prequalify'&&checkCount===2||fault==='final-recheck'&&checkCount===5)||(fault==='sample-drift'&&sampled||fault==='db-drift'&&queried)&&kind==='absence'||fault==='helper-drift'&&sampled&&kind==='helper'||fault==='phase-drift'&&sampled&&kind==='phase')throw Error('PRIVATE_SENTINEL')},
         close(){events.push('close:'+kind);closed.push(kind);if(['close-loss','close-retry','sample-close-loss'].includes(fault)&&kind==='launcher'||fault==='acquire-cleanup-outer-loss'&&kind==='absence')throw Error('PRIVATE_SENTINEL')},
         resolveModules(){events.push('resolve');if(fault==='resolution')throw Error('PRIVATE_SENTINEL');return {profileHash:fault==='resolution-cross'?'crossed':'profile',selectedDeploymentObservationHash:'selected',contexts:[{home:'account'},{home:'absent'}]}},
         async qualifyPassiveHome(){events.push('sample');await Promise.resolve();sampled=true;if(['sample','sample-close-loss'].includes(fault))throw Error('PRIVATE_SENTINEL');
@@ -74,15 +78,23 @@ test("default owner holds all conjunctions across sample and database awaits", (
   assert.equal(result.value?.schema, "setfarm.internal-production-deployment-cutover-default-context.v1", JSON.stringify(result));
   assert.ok(result.events.indexOf("resolve") < result.events.indexOf("sample"));
   assert.ok(result.events.indexOf("sample") < result.events.indexOf("db"));
-  for (const kind of ["selected", "retained", "absence", "launcher", "helper"]) {
+  for (const kind of ["selected", "retained", "absence", "launcher", "helper", "phase"]) {
     assert.ok(result.events.indexOf(`hold:${kind}`) < result.events.indexOf("sample"));
     assert.ok(result.events.lastIndexOf(`check:${kind}`) > result.events.indexOf("db"));
     assert.ok(result.events.indexOf(`close:${kind}`) > result.events.indexOf("db"));
   }
-  assert.equal(result.closed.length, 5);
+  assert.equal(result.closed.length, 6);
   assert.ok(result.value.blockers.includes("controller-ownership-not-acquired"));
   assert.ok(result.value.blockers.includes("filesystem-helper-phase-zero-owner-not-observed"));
 });
+for (const [fault, stage, ownerContext] of [["phase-root-cross", "crossbind", "bind"], ["phase-drift", "postqualify", "phase"], ["acquire-phase", "acquire-phase", null]]) {
+  test(`phase owner ${fault} refuses before database census`, () => {
+    const result = run(fault);
+    assert.equal(result.value, undefined);
+    assert.deepEqual(result.diagnostic, { scope: "default-owner", stage, ownerContext, launcherStage: null, cleanupFailed: fault === "acquire-phase" ? null : false });
+    assert.equal(result.events.includes("db"), false);
+  });
+}
 for (const [fault, stage, ownerContext] of [["helper-home-cross", "crossbind", "bind"], ["helper-drift", "postqualify", "helper"], ["acquire-helper", "acquire-helper", null]]) {
   test(`helper owner ${fault} refuses before database census`, () => {
     const result = run(fault);
@@ -108,14 +120,14 @@ test("default owner reports nonzero census as a blocker, never as zero-owner", (
 test("default owner concurrent call cannot acquire a second set of resources", () => {
   const result = run("concurrent");
   assert.deepEqual(result.states, ["fulfilled", "rejected"]);
-  assert.equal(result.closed.length, 5);
+  assert.equal(result.closed.length, 6);
   assert.equal(result.events.filter(event => event === "db").length, 1);
 });
 test("default owner close uncertainty refuses a fresh call before acquiring anything", () => {
   const result = run("close-retry");
   assert.equal(result.refusals, 2);
-  assert.equal(result.closed.length, 5);
-  assert.equal(result.events.filter(event => event.startsWith("hold:")).length, 5);
+  assert.equal(result.closed.length, 6);
+  assert.equal(result.events.filter(event => event.startsWith("hold:")).length, 6);
   assert.equal(result.diagnostics[1].stage, "entry");
   assert.equal(result.diagnostics[1].cleanupFailed, true);
   assert.equal(result.diagnostics[1].ownerContext, null);
@@ -136,7 +148,7 @@ for (const [fault, stage, ownerContext = null] of [["input", "entry"], ["account
 test("default owner preserves original refusal when cleanup also fails", () => {
   const result = run("sample-close-loss");
   assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "qualify", ownerContext: null, launcherStage: null, cleanupFailed: true });
-  assert.deepEqual(result.closed, ["helper", "launcher", "absence", "retained", "selected"]);
+  assert.deepEqual(result.closed, ["phase", "helper", "launcher", "absence", "retained", "selected"]);
   assert.equal(result.events.includes("db"), false);
 });
 test("default owner propagates nested acquisition cleanup loss before the holder returns", () => {

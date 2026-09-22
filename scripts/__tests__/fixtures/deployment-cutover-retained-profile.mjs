@@ -14,7 +14,7 @@ export function resolutionFixtureParent() {
   return suiteParent ??= fs.realpathSync(fs.mkdtempSync(path.join(userInfo().homedir, ".cutover-retained-suite-")));
 }
 after(() => { if (suiteParent) fs.rmSync(suiteParent, { recursive: true, force: true }); });
-export function retainedFixture(body, { genuine = false, nested = false, conditional = false, nearerShadow = false, resolution = false,
+export function retainedFixture(body, { genuine = false, nested = false, conditional = false, nearerShadow = false, resolution = false, phaseClosure = false,
   bootstrapInstrument = source => source, controllerOptions = {} } = {}) {
   const temporaryParent = resolution ? resolutionFixtureParent() : undefined;
   let selected, expectedProfile;
@@ -67,7 +67,7 @@ export function retainedFixture(body, { genuine = false, nested = false, conditi
       }
       write(root, "scripts/deployment-cutover-retained-profile.v1.json", JSON.stringify(expectedProfile));
       write(root, "scripts/deployment-cutover-retained-profile.mjs", fs.readFileSync(new URL("../../deployment-cutover-retained-profile.mjs", import.meta.url)));
-    }, undefined, { temporaryParent });
+    }, undefined, { temporaryParent, extraSources: phaseClosure ? { "internal-production/baseline-post-handoff-receipt-v1": "export const inertReceipt = true;\n" } : {} });
     controllerOptions.prepare?.(root, home);
   } });
 }

@@ -9,7 +9,7 @@ const countNames = ["activeRunCount", "openClaimCount", "executionAttemptCount",
   "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
   "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount"];
 
-for (const fault of ["", "sample-refusal", "helper-after-sample", "helper-aba-after-sample", "absence-after-sample", "absence-aba-after-sample", "acquire-cleanup-loss", "acquire-unknown", "acquire-config-cleanup-loss",
+for (const fault of ["", "sample-refusal", "helper-after-sample", "helper-aba-after-sample", "absence-after-sample", "absence-aba-after-sample", "phase-after-sample", "phase-aba-after-sample", "acquire-cleanup-loss", "acquire-unknown", "acquire-config-cleanup-loss",
   "monitor-idle", "monitor-absence-idle", "monitor-absence-same", "monitor-absence-replacement", "monitor-absence-startup", "monitor-error", "monitor-malformed", "startup-state"]) test(`authenticated real default composition ${fault || "success"}`, () => {
   retainedFixture(({ root }) => {
     const result = run(root, ["inspect-default-context", "--json"]);
@@ -20,7 +20,7 @@ for (const fault of ["", "sample-refusal", "helper-after-sample", "helper-aba-af
       assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
       assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: "default-owner",
         stage: fault.startsWith("acquire-") ? "acquire-launcher" : (fault === "sample-refusal" || fault.startsWith("monitor-")) ? "qualify" : "postqualify",
-        ownerContext: fault.startsWith("helper-") ? "helper" : fault.startsWith("absence-") ? "absence" : null,
+        ownerContext: fault.startsWith("helper-") ? "helper" : fault.startsWith("absence-") ? "absence" : fault.startsWith("phase-") ? "phase" : null,
         launcherStage: fault === "sample-refusal" ? "measure" : ["monitor-error", "monitor-malformed"].includes(fault) ? "sampled-native"
           : fault.startsWith("monitor-absence-") ? "sampled-postcheck" : null,
         cleanupFailed: fault === "acquire-unknown" ? null : ["acquire-cleanup-loss", "acquire-config-cleanup-loss"].includes(fault) });
@@ -34,11 +34,12 @@ for (const fault of ["", "sample-refusal", "helper-after-sample", "helper-aba-af
       assert.equal(context.resolution.contexts.length, 2);
       assert.equal(context.databaseCensus.activeRunCount, 0);
       assert.equal(context.helperHistory.coldState, "absent");
+      assert.equal(context.phaseClosure.scope, "phase-closure-only");
       assert.ok(context.blockers.includes("controller-ownership-not-acquired"));
       assert.equal(fs.existsSync(path.join(root, ".setfarm/census-called")), true);
       assert.doesNotMatch(result.stdout, /PRIVATE_(?:TOKEN|PASSWORD)|PRIVATESOCKET/);
     }
-  }, { resolution: true, bootstrapInstrument: source => source.replace('async function inspect() {', `
+  }, { resolution: true, phaseClosure: true, bootstrapInstrument: source => source.replace('async function inspect() {', `
 import cp from 'node:child_process';
 const actualSpawn=cp.spawnSync, labels=['com.setrox.setfarm-spawner','com.setrox.setfarm-dashboard'];
 let fixtureSamples=0,fixtureIdle=false;
@@ -94,6 +95,11 @@ cp.spawnSync=(executable,args,options)=>{
           fs.writeFileSync(path.join(root,'.env'),'PRIVATE_PASSWORD');
           if(${JSON.stringify(fault)}==='absence-aba-after-sample')fs.unlinkSync(path.join(root,'.env'));
         }
+        if(['phase-after-sample','phase-aba-after-sample'].includes(${JSON.stringify(fault)})){
+          const futureProducer=path.join(root,'src/internal-production/golden-matrix-runner.ts');
+          fs.writeFileSync(futureProducer,'export const futureProducer = true;\\n');
+          if(${JSON.stringify(fault)}==='phase-aba-after-sample')fs.unlinkSync(futureProducer);
+        }
       },0);
     }
     return success(JSON.stringify(Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0)))+'\\n');
@@ -104,12 +110,12 @@ cp.spawnSync=(executable,args,options)=>{
 };syncBuiltinESMExports();
 async function inspect() {`).replace('load(url, context, nextLoad) {',
       'load(url, context, nextLoad) { if(url.endsWith("/deployment-cutover-passive-home.mjs"))globalThis.fixtureAllowRunning=true;'), controllerOptions: {
-    envAbsence: true, helpers: true,
+    envAbsence: true, helpers: true, phaseClosure: true,
     sourceInstrument: (locator, source) => locator.endsWith("baseline-deployment-cutover-node-path-v1")
       ? `let holds=0;export function holdDeploymentCutoverNodePathV1(){
         const fault=${JSON.stringify(fault)};if(fault==='acquire-unknown'||(fault==='acquire-cleanup-loss'&&++holds===2))throw Error('PRIVATE_PASSWORD');
         return Object.freeze({observation:Object.freeze({candidatePath:process.execPath,executablePath:process.execPath}),recheck(){},close(){if(fault==='acquire-cleanup-loss')throw Error('PRIVATE_PASSWORD')}})}` : source,
-    extraSources: { "internal-production/baseline-legacy-database-census-v1": `
+    extraSources: { "internal-production/baseline-post-handoff-receipt-v1": "export const inertReceipt = true;\n", "internal-production/baseline-legacy-database-census-v1": `
       import fs from 'node:fs';import path from 'node:path';import {fileURLToPath} from 'node:url';
       export async function observeLegacyDatabaseCensusV1(url,cold,profile){
         if(url!=='postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm'||cold!==true||profile!=='cutover-local')throw Error('CROSSED_DB');
