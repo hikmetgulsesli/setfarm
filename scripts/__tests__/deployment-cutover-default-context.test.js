@@ -108,40 +108,41 @@ test("default owner close uncertainty refuses a fresh call before acquiring anyt
   assert.equal(result.events.filter(event => event.startsWith("hold:")).length, 4);
   assert.equal(result.diagnostics[1].stage, "entry");
   assert.equal(result.diagnostics[1].cleanupFailed, true);
+  assert.equal(result.diagnostics[1].ownerContext, null);
 });
 
-for (const [fault, stage] of [["input", "entry"], ["account", "account"], ["acquire-selected", "acquire-selected"], ["acquire-retained", "acquire-retained"],
-  ["acquire-launcher", "acquire-launcher"], ["partial-acquire", "acquire-absence"], ["selected-cross", "crossbind"], ["prequalify", "prequalify"], ["final-recheck", "final-recheck"],
+for (const [fault, stage, ownerContext = null] of [["input", "entry"], ["account", "account"], ["acquire-selected", "acquire-selected"], ["acquire-retained", "acquire-retained"],
+  ["acquire-launcher", "acquire-launcher"], ["partial-acquire", "acquire-absence"], ["selected-cross", "crossbind", "bind"], ["prequalify", "prequalify", "selected"], ["final-recheck", "final-recheck", "selected"],
   ["resolution", "resolve"], ["resolution-cross", "resolution-bind"], ["sample", "qualify"],
-  ["sample-drift", "postqualify"], ["db", "census"], ["db-drift", "postcensus"],
+  ["sample-drift", "postqualify", "absence"], ["db", "census"], ["db-drift", "postcensus", "absence"],
   ["malformed-count", "census-shape"], ["close-loss", "cleanup"]]) {
   test(`default owner reports only finite refusal stage for ${fault}`, () => {
     const result = run(fault);
-    assert.deepEqual(result.diagnostic, { scope: "default-owner", stage, launcherStage: null, cleanupFailed: stage.startsWith("acquire-") ? null : fault === "close-loss" });
+    assert.deepEqual(result.diagnostic, { scope: "default-owner", stage, ownerContext, launcherStage: null, cleanupFailed: stage.startsWith("acquire-") ? null : fault === "close-loss" });
     assert.doesNotMatch(JSON.stringify(result.diagnostic), /PRIVATE_SENTINEL|\/home|stack|cause/);
   });
 }
 
 test("default owner preserves original refusal when cleanup also fails", () => {
   const result = run("sample-close-loss");
-  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "qualify", launcherStage: null, cleanupFailed: true });
+  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "qualify", ownerContext: null, launcherStage: null, cleanupFailed: true });
   assert.deepEqual(result.closed, ["launcher", "absence", "retained", "selected"]);
   assert.equal(result.events.includes("db"), false);
 });
 test("default owner propagates nested acquisition cleanup loss before the holder returns", () => {
   const result = run("acquire-cleanup-loss");
-  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "acquire-launcher", launcherStage: null, cleanupFailed: true });
+  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "acquire-launcher", ownerContext: null, launcherStage: null, cleanupFailed: true });
   assert.deepEqual(result.closed, ["absence", "retained", "selected"]);
   assert.equal(result.events.includes("db"), false);
 });
 for (const kind of ["accessor", "false", "unknown"]) test(`default owner cannot certify nested cleanup through ${kind}`, () => {
   const result = run(`acquire-cleanup-${kind}`);
-  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "acquire-launcher", launcherStage: null, cleanupFailed: null });
+  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "acquire-launcher", ownerContext: null, launcherStage: null, cleanupFailed: null });
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE_SENTINEL/);
 });
 test("default owner outer cleanup failure overrides unknown nested cleanup", () => {
   const result = run("acquire-cleanup-outer-loss");
-  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "acquire-launcher", launcherStage: null, cleanupFailed: true });
+  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "acquire-launcher", ownerContext: null, launcherStage: null, cleanupFailed: true });
   assert.deepEqual(result.closed, ["absence", "retained", "selected"]);
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE_SENTINEL/);
 });
@@ -154,7 +155,7 @@ test("default owner retains nested cleanup failure on reentry before reacquiring
 });
 for (const kind of ["valid", "accessor", "unknown", "sampled-snapshot", "sampled-generation", "sampled-native", "sampled-bind", "sampled-postcheck"]) test(`default owner sanitizes launcher ${kind} stage`, () => {
   const result = run(`launcher-stage-${kind}`);
-  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "qualify", launcherStage: kind === "valid" ? "measure" : kind.startsWith("sampled-") ? kind : null, cleanupFailed: false });
+  assert.deepEqual(result.diagnostic, { scope: "default-owner", stage: "qualify", ownerContext: null, launcherStage: kind === "valid" ? "measure" : kind.startsWith("sampled-") ? kind : null, cleanupFailed: false });
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE_SENTINEL/);
   assert.equal(result.events.includes("db"), false);
 });

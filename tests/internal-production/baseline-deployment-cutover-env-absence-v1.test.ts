@@ -87,11 +87,16 @@ for (const change of ["candidate-aba", "ancestor-replacement", "cli-replacement"
         else if(${JSON.stringify(change)}==='ancestor-replacement'){fs.renameSync(root,root+'.preserved');fs.mkdirSync(root,{mode:0o755});}
         else{fs.renameSync(link,link+'.preserved');fs.symlinkSync('different',link);}
       }finally{active=true;}
-      let recheckRefused=false;inspect=()=>({recheckRefused,remaining:pending.size,opened});
-      try{held.recheck();return held.observation;}catch(error){recheckRefused=true;throw error;}finally{held.close();}
+      let recheckRefused=false,closeRefused=false,recheckError;
+      try{held.recheck();}catch(error){recheckRefused=true;recheckError=error;}
+      try{held.close();}catch{closeRefused=true;}
+      inspect=()=>({recheckRefused,closeRefused,remaining:pending.size,opened});
+      if(recheckError)throw recheckError;return held.observation;
     })()`);
     assert.equal(result.error, "DEPLOYMENT_CUTOVER_ENV_ABSENCE_INVALID", JSON.stringify(result));
+    assert.equal(result.retryError, "DEPLOYMENT_CUTOVER_ENV_ABSENCE_INVALID");
     assert.equal(result.evidence.recheckRefused, true);
+    assert.equal(result.evidence.closeRefused, false);
     assert.equal(result.evidence.remaining, 0); assert.ok(result.evidence.opened > 0);
     assert.equal(result.writes, 0); assert.equal(result.connections, 0);
   }));

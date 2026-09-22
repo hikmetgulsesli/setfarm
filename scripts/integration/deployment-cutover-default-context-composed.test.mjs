@@ -20,9 +20,10 @@ for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-
       assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
       assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: "default-owner",
         stage: fault.startsWith("acquire-") ? "acquire-launcher" : (fault === "sample-refusal" || fault.startsWith("monitor-")) ? "qualify" : "postqualify",
+        ownerContext: fault.startsWith("absence-") ? "absence" : null,
         launcherStage: fault === "sample-refusal" ? "measure" : ["monitor-error", "monitor-malformed"].includes(fault) ? "sampled-native"
           : fault.startsWith("monitor-absence-") ? "sampled-postcheck" : null,
-        cleanupFailed: fault === "acquire-unknown" ? null : fault !== "sample-refusal" && !fault.startsWith("monitor-") });
+        cleanupFailed: fault === "acquire-unknown" ? null : ["acquire-cleanup-loss", "acquire-config-cleanup-loss"].includes(fault) });
       assert.doesNotMatch(result.stderr, /PRIVATE_(?:TOKEN|PASSWORD)|PRIVATESOCKET/);
       assert.equal(fs.existsSync(path.join(root, ".setfarm/census-called")), false);
     } else {

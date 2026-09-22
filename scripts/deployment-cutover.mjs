@@ -20,8 +20,8 @@ const passiveSourceUrl = pathToFileURL(path.join(root, "scripts/deployment-cutov
 const directoryKeys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"];
 const fileKeys = [...directoryKeys, "nlink", "size", "mtimeNs", "ctimeNs"];
 const fail = () => { throw Error("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED"); };
-let refusal = { scope: "bootstrap", stage: "entry", launcherStage: null, cleanupFailed: false };
-const stage = value => { refusal = { scope: "bootstrap", stage: value, launcherStage: null, cleanupFailed: false }; };
+let refusal = { scope: "bootstrap", stage: "entry", ownerContext: null, launcherStage: null, cleanupFailed: false };
+const stage = value => { refusal = { scope: "bootstrap", stage: value, ownerContext: null, launcherStage: null, cleanupFailed: false }; };
 function ownerRefusal(error) {
   try {
     const descriptor = Object.getOwnPropertyDescriptor(error, "cutoverRefusal");
@@ -29,15 +29,18 @@ function ownerRefusal(error) {
     const value = descriptor.value;
     if (!value || Object.getPrototypeOf(value) !== Object.prototype) return null;
     const fields = Object.getOwnPropertyDescriptors(value), keys = Reflect.ownKeys(fields);
-    if (keys.length !== 4 || !["scope", "stage", "launcherStage", "cleanupFailed"].every(key => keys.includes(key) && Object.hasOwn(fields[key], "value"))) return null;
-    const scope = fields.scope.value, phase = fields.stage.value, launcherStage = fields.launcherStage.value, cleanupFailed = fields.cleanupFailed.value;
+    if (keys.length !== 5 || !["scope", "stage", "ownerContext", "launcherStage", "cleanupFailed"].every(key => keys.includes(key) && Object.hasOwn(fields[key], "value"))) return null;
+    const scope = fields.scope.value, phase = fields.stage.value, ownerContext = fields.ownerContext.value,
+      launcherStage = fields.launcherStage.value, cleanupFailed = fields.cleanupFailed.value;
+    const checking = ["crossbind", "prequalify", "postqualify", "postcensus", "final-recheck"].includes(phase);
     if (scope !== "default-owner" || !["entry", "account", "acquire-selected", "acquire-retained", "acquire-absence", "acquire-launcher", "crossbind",
       "resolve", "prequalify", "resolution-bind", "qualify", "postqualify", "census", "postcensus", "census-shape", "final-recheck", "cleanup"].includes(phase)
+      || (checking ? !["account", "selected", "retained", "absence", "launcher", "bind"].includes(ownerContext) : ownerContext !== null)
       || (typeof cleanupFailed !== "boolean" && !(cleanupFailed === null && ["acquire-selected", "acquire-retained", "acquire-absence", "acquire-launcher"].includes(phase)))
       || (launcherStage !== null && (phase !== "qualify" || !["precheck", "baseline", "transport", "waiting",
         "sampled-identity", "sampled-snapshot", "sampled-generation", "sampled-native", "sampled-bind", "sampled-postcheck",
         "identity", "pid-recheck", "measure", "measurement-bind", "settling", "idle"].includes(launcherStage)))) return null;
-    return { scope, stage: phase, launcherStage, cleanupFailed };
+    return { scope, stage: phase, ownerContext, launcherStage, cleanupFailed };
   } catch { return null; }
 }
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");

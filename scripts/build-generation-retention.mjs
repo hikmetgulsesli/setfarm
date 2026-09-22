@@ -1592,13 +1592,13 @@ export function holdSelectedSetfarmDeploymentBuildV1() {
   const fileProjection = stat => Object.freeze({ ...directoryProjection(stat), nlink: String(stat.nlink), size: String(stat.size),
     mtimeNs: String(stat.mtimeNs), ctimeNs: String(stat.ctimeNs) });
   const physicalAlias = value => process.platform === "darwin" && value.startsWith("/var/") ? `/private${value}` : value;
-  let result, invalid = false, closed = false, finalized, recheck;
+  let result, invalid = false, closed = false, cleanupFailed = false, finalized, recheck;
   const close = () => {
     if (closed) return;
     closed = true;
-    try { finalized?.close(); } catch { invalid = true; }
-    while (pins.length) { const pin = pins.pop(); try { closeSync(pin.fd); } catch { invalid = true; } }
-    if (invalid) { selectedDeploymentObservationUncertainV1 = true; fail("selected deployment source/build observation refused"); }
+    try { finalized?.close(); } catch { invalid = true; cleanupFailed = true; }
+    while (pins.length) { const pin = pins.pop(); try { closeSync(pin.fd); } catch { invalid = true; cleanupFailed = true; } }
+    if (cleanupFailed) { selectedDeploymentObservationUncertainV1 = true; fail("selected deployment source/build observation refused"); }
   };
   try {
     const home = physicalAlias(CODE_OWNER_HOME_V1), workspace = physicalAlias(CODE_OWNED_WORKSPACE_ROOT_V1), uid = BigInt(process.getuid());
@@ -1678,12 +1678,12 @@ function holdFinalizedSetfarmSourceBuildAtRootV1(root, requireCurrent) {
   const fileKeys = [...keys, "nlink", "size", "mtimeNs", "ctimeNs"];
   const same = (left, right, fields = keys) => fields.every(key => left[key] === right[key]);
   const treeKeys = [...keys, "mtimeNs", "ctimeNs"];
-  let result, invalid = false, closed = false, recheck;
+  let result, invalid = false, closed = false, cleanupFailed = false, recheck;
   const close = () => {
     if (closed) return;
     closed = true;
-    while (pins.length) { const pin = pins.pop(); try { closeSync(pin.fd); } catch { invalid = true; } }
-    if (invalid) { currentFinalizedSourceObservationUncertainV1 = true; fail("current finalized source/build observation refused"); }
+    while (pins.length) { const pin = pins.pop(); try { closeSync(pin.fd); } catch { invalid = true; cleanupFailed = true; } }
+    if (cleanupFailed) { currentFinalizedSourceObservationUncertainV1 = true; fail("current finalized source/build observation refused"); }
   };
   try {
     const checkDirectories = () => {
