@@ -31,4 +31,4 @@
 
 1. Independent read-only review against spec, file map and test evidence; fix Important/Critical findings with RED/GREEN.
 2. Conventional commits, scoped branch push, PR, exact-head GitGuardian/cloud review and inline findings, SHA-conditioned merge.
-3. Fast-forward independent clean-main clone and run normal build. Run only the read-only host catalog; expect visible unresolved paths and no cutover authority. Preserve selected dist/CLI physical identity. Report remaining blockers honestly.
+3. Fast-forward independent clean-main clone and run normal build. Run only the read-only host catalog; report either visible unresolved paths or a fail-closed refusal, never cutover authority. Current read-only host evidence shows `/Users/setrox/.openclaw/workspaces/workflows/developer/agents` absent; that missing discovery parent is expected to refuse until independently resolved. Do not create or remove it to make the probe pass. Preserve selected dist/CLI physical identity and report remaining blockers honestly.
