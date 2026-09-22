@@ -9,7 +9,7 @@ const countNames = ["activeRunCount", "openClaimCount", "executionAttemptCount",
   "unsettledMandatoryEffectCount", "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
   "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount"];
 
-for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-after-sample", "acquire-cleanup-loss", "acquire-unknown", "acquire-config-cleanup-loss",
+for (const fault of ["", "sample-refusal", "helper-after-sample", "helper-aba-after-sample", "absence-after-sample", "absence-aba-after-sample", "acquire-cleanup-loss", "acquire-unknown", "acquire-config-cleanup-loss",
   "monitor-idle", "monitor-absence-idle", "monitor-absence-same", "monitor-absence-replacement", "monitor-absence-startup", "monitor-error", "monitor-malformed", "startup-state"]) test(`authenticated real default composition ${fault || "success"}`, () => {
   retainedFixture(({ root }) => {
     const result = run(root, ["inspect-default-context", "--json"]);
@@ -20,7 +20,7 @@ for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-
       assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
       assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: "default-owner",
         stage: fault.startsWith("acquire-") ? "acquire-launcher" : (fault === "sample-refusal" || fault.startsWith("monitor-")) ? "qualify" : "postqualify",
-        ownerContext: fault.startsWith("absence-") ? "absence" : null,
+        ownerContext: fault.startsWith("helper-") ? "helper" : fault.startsWith("absence-") ? "absence" : null,
         launcherStage: fault === "sample-refusal" ? "measure" : ["monitor-error", "monitor-malformed"].includes(fault) ? "sampled-native"
           : fault.startsWith("monitor-absence-") ? "sampled-postcheck" : null,
         cleanupFailed: fault === "acquire-unknown" ? null : ["acquire-cleanup-loss", "acquire-config-cleanup-loss"].includes(fault) });
@@ -33,6 +33,7 @@ for (const fault of ["", "sample-refusal", "absence-after-sample", "absence-aba-
       assert.equal(context.passiveQualification.samples.length, 2);
       assert.equal(context.resolution.contexts.length, 2);
       assert.equal(context.databaseCensus.activeRunCount, 0);
+      assert.equal(context.helperHistory.coldState, "absent");
       assert.ok(context.blockers.includes("controller-ownership-not-acquired"));
       assert.equal(fs.existsSync(path.join(root, ".setfarm/census-called")), true);
       assert.doesNotMatch(result.stdout, /PRIVATE_(?:TOKEN|PASSWORD)|PRIVATESOCKET/);
@@ -84,6 +85,11 @@ cp.spawnSync=(executable,args,options)=>{
       if(request.environment.HOME!==fixtureHome||request.environment.SETFARM_ENV_DIR!==undefined||request.expectedStartSeconds!==1234)throw Error('CROSSED_NATIVE_REQUEST');
       if(++fixtureSamples===2)setTimeout(()=>{
         fixtureIdle=true;
+        if(${JSON.stringify(fault)}.startsWith('helper-')){
+          const helperRoot=path.join(fixtureHome,'ai/setrox/data/internal-production-baseline/restart-authority-retirement-v1');
+          fs.mkdirSync(helperRoot,{mode:0o700});
+          if(${JSON.stringify(fault)}==='helper-aba-after-sample')fs.rmdirSync(helperRoot);
+        }
         if(['absence-after-sample','absence-aba-after-sample'].includes(${JSON.stringify(fault)})){
           fs.writeFileSync(path.join(root,'.env'),'PRIVATE_PASSWORD');
           if(${JSON.stringify(fault)}==='absence-aba-after-sample')fs.unlinkSync(path.join(root,'.env'));
@@ -98,7 +104,7 @@ cp.spawnSync=(executable,args,options)=>{
 };syncBuiltinESMExports();
 async function inspect() {`).replace('load(url, context, nextLoad) {',
       'load(url, context, nextLoad) { if(url.endsWith("/deployment-cutover-passive-home.mjs"))globalThis.fixtureAllowRunning=true;'), controllerOptions: {
-    envAbsence: true,
+    envAbsence: true, helpers: true,
     sourceInstrument: (locator, source) => locator.endsWith("baseline-deployment-cutover-node-path-v1")
       ? `let holds=0;export function holdDeploymentCutoverNodePathV1(){
         const fault=${JSON.stringify(fault)};if(fault==='acquire-unknown'||(fault==='acquire-cleanup-loss'&&++holds===2))throw Error('PRIVATE_PASSWORD');
@@ -111,6 +117,7 @@ async function inspect() {`).replace('load(url, context, nextLoad) {',
         return Object.freeze(${JSON.stringify({ ...Object.fromEntries(countNames.map(name => [name, 0])), legacyFindingPublicationInventory: { entries: [] } })});
       }` },
     prepare(root, home) {
+      fs.mkdirSync(path.join(home, "ai/setrox/data/internal-production-baseline"), { recursive: true, mode: 0o700 });
       const labels = ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard"];
       labels.forEach((label, index) => {
         const program = path.join(home, ".local/bin/setfarm"), args = index ? [program, "dashboard", "start", "--port", "3333"] : [program, "spawner", "start"];
