@@ -120,6 +120,26 @@ test("a primary-project DB owner alone keeps the partition occupied", () => {
   assert.equal(result.ownedWorktreeCount, 0);
 });
 
+test("the projection commits the exact validated DB owner row set, not only caller snapshot hash", () => {
+  const first = boundInput();
+  const second = structuredClone(first);
+  second.database.activeOwners[0]!.ownerKey = "attempt:8";
+  const firstProjection = projectPositiveWorktreeOwnersV2(first);
+  const secondProjection = projectPositiveWorktreeOwnersV2(second);
+  assert.notEqual(firstProjection.projectionHash, secondProjection.projectionHash);
+  assert.notEqual(firstProjection.activeOwnerSetHash, secondProjection.activeOwnerSetHash);
+});
+
+test("the projection commits the complete trusted-primary declaration", () => {
+  const first = boundInput();
+  const second = boundInput();
+  second.retainedGitPrimaries = ["/code/unused"] as never;
+  const firstProjection = projectPositiveWorktreeOwnersV2(first);
+  const secondProjection = projectPositiveWorktreeOwnersV2(second);
+  assert.notEqual(firstProjection.projectionHash, secondProjection.projectionHash);
+  assert.notEqual(firstProjection.retainedGitPrimariesHash, secondProjection.retainedGitPrimariesHash);
+});
+
 const invalidBoundCases: [string, (input: any) => void][] = [
   ["physical inode ABA between passes", (input) => { input.physicalAfter[0].ino = "999"; }],
   ["birth identity ABA between passes", (input) => { input.physicalAfter[0].birthtimeNs = "999"; }],
@@ -193,4 +213,12 @@ test("refuses proxy and accessor inputs without evaluating accessors", () => {
   Object.defineProperty(input, "physicalAfter", { enumerable: true, get() { invoked = true; throw Error("accessor evaluated"); } });
   assert.throws(() => projectPositiveWorktreeOwnersV2(input), /^Error: INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PARTITION_INVALID$/);
   assert.equal(invoked, false);
+});
+
+test("revoked array proxies fail with the stable invalid-input error", () => {
+  const input = boundInput() as any;
+  const { proxy, revoke } = Proxy.revocable([], {});
+  revoke();
+  input.physicalBefore = proxy;
+  assert.throws(() => projectPositiveWorktreeOwnersV2(input), /^Error: INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PARTITION_INVALID$/);
 });

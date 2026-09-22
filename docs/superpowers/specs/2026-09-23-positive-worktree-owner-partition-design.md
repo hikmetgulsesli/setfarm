@@ -22,6 +22,8 @@ The identity hash is the canonical SHA-256 of `{schema:'setfarm.internal-product
 
 The result lists every physical entry exactly once as `retained-code`, `retained-artifact`, or `bound-execution`, with its original identity and process references. Only `bound-execution` contributes to `ownedWorktreeCount`; only its dirty entries contribute to `dirtyOwnedWorktreeCount`. Primary-project DB owners are reported separately and keep the partition occupied. The result is `zero-candidate` only when there are no bound execution entries, no primary-project owners, and no process references. This is diagnostic and does **not** imply complete zero-owner admission.
 
+The result commits `activeOwnerSetHash` over the exact validated active-owner rows and `retainedGitPrimariesHash` over the complete trusted-primary declaration, as well as the caller's `databaseSnapshotHash`. A changed owner key or declared primary must change the projection hash even if a caller reuses the same claimed snapshot hash. None of these hashes alone proves the future adapters' authenticity or completeness obligations.
+
 Refuse malformed, duplicate, reordered, unnormalized or crossed data; two roots with one physical identity; runtime entries without exactly one active DB binding; active DB entries with no matching runtime root; an active binding to a retained-code entry; wrong identity hashes; or any retained-code/artifact process reference. The physical adapter, not this pure leaf, must refuse symlinks and unsafe directory identities. No unknown entry is dropped or counted as harmless by default. An active runtime entry is occupied even if its process list is empty. The join does not infer owner death or clean up an orphan.
 
 ## Later stages (not implemented by Stage 1)

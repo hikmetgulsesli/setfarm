@@ -42,7 +42,7 @@ function exact(value: unknown, keys: readonly string[]): Record<string, unknown>
 }
 
 function array(value: unknown): readonly unknown[] {
-  if (!Array.isArray(value) || types.isProxy(value) || Object.getPrototypeOf(value) !== Array.prototype
+  if (types.isProxy(value) || !Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype
     || value.length > MAX_ENTRIES) fail();
   const descriptors = Object.getOwnPropertyDescriptors(value);
   const actual = Reflect.ownKeys(descriptors);
@@ -172,6 +172,7 @@ export function projectPositiveWorktreeOwnersV2(value: unknown) {
   const state = ownedWorktreeCount === 0 && primaryProjectOwnerCount === 0 ? "zero-candidate" : "occupied";
   const body = { schema: SCHEMA, state, inventory: Object.freeze(inventory), ownedWorktreeCount,
     dirtyOwnedWorktreeCount, primaryProjectOwnerCount, physicalWitnessHash: hashCanonicalJson(physicalBefore),
-    databaseSnapshotHash } as const;
+    databaseSnapshotHash, activeOwnerSetHash: hashCanonicalJson(activeOwners),
+    retainedGitPrimariesHash: hashCanonicalJson(retainedGitPrimaries) } as const;
   return Object.freeze({ ...body, projectionHash: hashCanonicalJson(body) });
 }
