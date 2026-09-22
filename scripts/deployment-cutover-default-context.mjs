@@ -6,6 +6,7 @@ import { holdDeploymentCutoverRetainedProfileV1 } from "./deployment-cutover-ret
 import { holdDeploymentCutoverDefaultEnvAbsenceV1 } from "../dist/internal-production/baseline-deployment-cutover-env-absence-v1.js";
 import { holdDeploymentCutoverDefaultLauncherV1 } from "../dist/internal-production/baseline-deployment-cutover-launcher-observation-v1.js";
 import { holdDeploymentCutoverAbsentHelperHistoryV1 } from "../dist/internal-production/baseline-deployment-cutover-helper-observation-v1.js";
+import { holdDeploymentCutoverPhaseClosedPreflightV1 } from "../dist/internal-production/baseline-deployment-cutover-phase-observation-v1.js";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const physical = value => process.platform === "darwin" && value.startsWith("/var/") ? `/private${value}` : value;
@@ -51,12 +52,13 @@ export async function observeDeploymentCutoverDefaultContextV1() {
     stage = "acquire-absence"; const absence = hold(holdDeploymentCutoverDefaultEnvAbsenceV1());
     stage = "acquire-launcher"; const launcher = hold(holdDeploymentCutoverDefaultLauncherV1());
     stage = "acquire-helper"; const helper = hold(await holdDeploymentCutoverAbsentHelperHistoryV1());
+    stage = "acquire-phase"; const phase = hold(holdDeploymentCutoverPhaseClosedPreflightV1());
     const check = () => {
       ownerContext = "account";
       const current = userInfo();
       if (["uid", "gid", "homedir", "username", "shell"].some(key => current[key] !== account[key])) fail();
       for (const [index, context] of contexts.entries()) {
-        ownerContext = ["selected", "retained", "absence", "launcher", "helper"][index];
+        ownerContext = ["selected", "retained", "absence", "launcher", "helper", "phase"][index];
         context.recheck();
       }
       ownerContext = "bind";
@@ -69,6 +71,12 @@ export async function observeDeploymentCutoverDefaultContextV1() {
         || launch.uid !== account.uid || launch.gid !== account.gid
         || helper.observation.accountHome !== account.homedir
         || helper.observation.accountUid !== account.uid || helper.observation.accountGid !== account.gid
+        || phase.observation.accountHome !== account.homedir
+        || phase.observation.accountUid !== account.uid || phase.observation.accountGid !== account.gid
+        || phase.observation.currentCheckoutPath !== root
+        || phase.observation.selectedCheckoutPath !== cli.checkoutPath
+        || phase.observation.cliObservationHash !== cli.cliLinkObservationHash
+        || phase.observation.runtimeAuthorityRoot !== path.join(physical(account.homedir), ".openclaw", "setfarm", "internal-production")
         || cli.cliLinkPath !== path.join(physical(account.homedir), ".local", "bin", "setfarm")
         || launch.launchers.length !== 2 || launch.launchers.some(entry => entry.launchArguments[0] !== cli.cliLinkPath)) fail();
       const candidates = [cli.checkoutPath, root, path.join(physical(account.homedir), ".openclaw", "setfarm")]
@@ -95,7 +103,8 @@ export async function observeDeploymentCutoverDefaultContextV1() {
     result = freeze({ schema: "setfarm.internal-production-deployment-cutover-default-context.v1",
       scope: "passive-default-context-observation-only", newCheckoutPath: root,
       selectedDeployment: selected.observation, retainedProfile: retained.observation, resolution,
-      defaultEnvAbsence: absence.observation, launcher: launcher.observation, helperHistory: helper.observation, passiveQualification, databaseCensus, blockers });
+      defaultEnvAbsence: absence.observation, launcher: launcher.observation, helperHistory: helper.observation,
+      phaseClosure: phase.observation, passiveQualification, databaseCensus, blockers });
     stage = "final-recheck"; check();
   } catch (error) {
     invalid = true;

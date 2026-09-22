@@ -19,7 +19,7 @@ export function write(root, locator, bytes, mode = 0o644) {
   const target = path.join(root, locator); fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
   fs.writeFileSync(target, bytes, { mode }); fs.chmodSync(target, mode);
 }
-export function fixture(body, instrument = source => source, { genuine = false, census = false, envAbsence = false, helpers = false, prepare = () => {}, sourceInstrument = (_locator, source) => source,
+export function fixture(body, instrument = source => source, { genuine = false, census = false, envAbsence = false, helpers = false, phaseClosure = false, prepare = () => {}, sourceInstrument = (_locator, source) => source,
   extraSources = {}, temporaryParent = os.tmpdir() } = {}) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(temporaryParent, "cutover-bootstrap-")));
   const root = path.join(home, "ai/setrox/controller");
@@ -51,6 +51,7 @@ export function fixture(body, instrument = source => source, { genuine = false, 
     if (helpers) sources.push("internal-production/baseline-deployment-cutover-helper-observation-v1",
       "internal-production/baseline-restart-authority-retirement-v1", "internal-production/baseline-spawner-launch-environment-v1",
       "findings/legacy-finding-publication-inventory-v1");
+    if (phaseClosure) sources.push("internal-production/baseline-deployment-cutover-phase-observation-v1");
     if (census) {
       const metadata = buildSync({ absWorkingDir: fileURLToPath(repo), entryPoints: ["src/internal-production/baseline-legacy-database-census-v1.ts"],
         bundle: true, write: false, metafile: true, packages: "external", platform: "node", format: "esm" }).metafile;
