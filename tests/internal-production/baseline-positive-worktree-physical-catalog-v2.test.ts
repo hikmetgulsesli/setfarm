@@ -127,6 +127,51 @@ test("a locked-worktree annotation change across the bracket refuses", async () 
   }
 });
 
+test("a missing locked worktree path remains a named blocker beside a present sibling", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.workspaceRoot, "setfarm");
+    initRepo(primary, "https://github.com/hikmetgulsesli/setfarm.git");
+    const base = path.join(testHome.workspaceRoot, ".worktrees");
+    mkdirSync(base);
+    const present = path.join(base, "present");
+    const missing = path.join(base, "missing-locked");
+    git(["-C", primary, "worktree", "add", "-q", "-b", "present", present]);
+    git(["-C", primary, "worktree", "add", "-q", "-b", "missing-locked", missing]);
+    git(["-C", primary, "worktree", "lock", "--reason", "fixture reason", missing]);
+    rmSync(missing, { recursive: true });
+    const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(result.status, "unresolved");
+    assert.ok(result.entries.some((entry) => entry.root === present));
+    assert.ok(result.blockers.some((item) => item.root === missing && item.reason === "absent-locked-git-worktree"));
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async () => { mkdirSync(missing); }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("Git-valid punctuation in a branch name does not hide a present worktree", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.workspaceRoot, "setfarm");
+    initRepo(primary, "https://github.com/hikmetgulsesli/setfarm.git");
+    const linked = path.join(testHome.workspaceRoot, ".worktrees", "punctuation-linked");
+    mkdirSync(path.dirname(linked));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "feature+foo", linked]);
+    const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(result.status, "complete");
+    assert.deepEqual(result.entries.map((entry) => [entry.root, entry.kind]), [[linked, "linked-git"]]);
+  } finally {
+    testHome.close();
+  }
+});
+
 test("refuses external file-holder PID drift across the awaited bracket", async () => {
   const testHome = fixture();
   let child: ReturnType<typeof spawn> | null = null;

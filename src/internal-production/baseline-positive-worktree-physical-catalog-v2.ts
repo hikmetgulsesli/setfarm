@@ -146,7 +146,8 @@ function children(held: HeldDirectories, root: string, incidentalFiles?: string[
 
 function command(held: HeldDirectories, executable: string, args: readonly string[]): Buffer {
   held.assertStable();
-  const result = spawnSync(executable, [...args], { env: COMMAND_ENV, shell: false, encoding: "buffer",
+  const result = spawnSync(executable, [...args], { env: COMMAND_ENV, cwd: held.observerCommandCwd(),
+    shell: false, encoding: "buffer",
     timeout: 10_000, maxBuffer: COMMAND_CAP, stdio: ["ignore", "pipe", "pipe"] });
   held.assertStable();
   const stdout = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? "");
@@ -216,7 +217,7 @@ function normalizedGitPath(value: string, base: string): string {
 type GitWorktreeListing = Readonly<{ roots: readonly string[]; prunableRoots: readonly string[];
   locked: readonly Readonly<{ root: string; reason: string | null }>[] }>;
 
-function gitWorktreeRoots(bytes: Buffer): GitWorktreeListing {
+function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer): GitWorktreeListing {
   const value = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   if (!value.endsWith("\0") || value.includes("\r")) fail();
   const records = value.slice(0, -1).split("\0\0");
@@ -228,9 +229,14 @@ function gitWorktreeRoots(bytes: Buffer): GitWorktreeListing {
     const fields = record.split("\0").filter(Boolean);
     if (![3, 4].includes(fields.length) || !fields[0]?.startsWith("worktree ")
       || !/^HEAD [a-f0-9]{40}$/.test(fields[1]!)
-      || !(fields[2] === "detached" || fields[2] === "bare" || /^branch refs\/heads\/[A-Za-z0-9._/-]+$/.test(fields[2]!))
+      || !(fields[2] === "detached" || fields[2] === "bare" || fields[2]?.startsWith("branch refs/heads/"))
       || (fields.length === 4 && !/^prunable [^\r\n\0]+$/.test(fields[3]!)
         && !/^locked(?: [^\r\n\0]+)?$/.test(fields[3]!))) fail();
+    if (fields[2]!.startsWith("branch ")) {
+      const ref = fields[2]!.slice("branch ".length);
+      if (Buffer.byteLength(ref) > 1024
+        || command(held, "/usr/bin/git", [...GIT_PREFIX, "check-ref-format", ref]).length !== 0) fail();
+    }
     const rawRoot = fields[0]!.slice("worktree ".length);
     if (!path.posix.isAbsolute(rawRoot) || path.posix.normalize(rawRoot) !== rawRoot) fail();
     const root = normalizedGitPath(rawRoot, "/");
@@ -262,7 +268,8 @@ function primaryWorktreeRoots(held: HeldDirectories, root: string): GitWorktreeL
   held.hold(marker);
   const top = line(command(held, "/usr/bin/git", [...GIT_PREFIX, "-C", root, "rev-parse", "--show-toplevel"]));
   if (top !== root) fail();
-  const roots = gitWorktreeRoots(command(held, "/usr/bin/git", [...GIT_PREFIX, "-C", root, "worktree", "list", "--porcelain", "-z"]));
+  const roots = gitWorktreeRoots(held, command(held, "/usr/bin/git", [...GIT_PREFIX, "-C", root,
+    "worktree", "list", "--porcelain", "-z"]));
   if (roots.roots[0] !== root) fail();
   return roots;
 }
@@ -305,13 +312,17 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
     const top = line(git(["rev-parse", "--show-toplevel"]));
     if (top !== root) return { kind: "unresolved", gitPrimaryRoot: null, dirty: null,
       listedRoots: [], prunableRoots: [], locked: [], reason: "git-top-level-mismatch" };
-    const listing = gitWorktreeRoots(git(["worktree", "list", "--porcelain", "-z"]));
+    const listing = gitWorktreeRoots(held, git(["worktree", "list", "--porcelain", "-z"]));
     const listedRoots = listing.roots;
     const primary = listedRoots[0]!;
     if (!listedRoots.includes(root)) fail();
     if (listing.prunableRoots.length > 0) return { kind: "unresolved", gitPrimaryRoot: primary,
       dirty: null, listedRoots, prunableRoots: listing.prunableRoots, locked: listing.locked,
       reason: "prunable-git-list" };
+    if (listing.locked.some((entry) => isMissing(entry.root))) {
+      return { kind: "unresolved", gitPrimaryRoot: primary, dirty: null, listedRoots,
+        prunableRoots: [], locked: listing.locked, reason: "absent-locked-git-list" };
+    }
     for (const listedRoot of listedRoots) held.hold(listedRoot);
     const gitdir = normalizedGitPath(line(git(["rev-parse", "--git-dir"])), root);
     const commonDir = normalizedGitPath(line(git(["rev-parse", "--git-common-dir"])), root);
@@ -396,12 +407,17 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     const firstByRoot = new Map<string, Readonly<{ base: string; zone: Zone; listedHash: string; reason: string | null }>>();
     const parentGitLists = new Map<string, string>();
     const nonGitParents: string[] = [];
+    const absentLockedRoots = new Set<string>();
     for (const parent of [path.join(workspaceRoot, "setfarm"), path.join(workspaceRoot, "mission-control"), ...projectRoots]) {
       const listing = primaryWorktreeRoots(held, parent);
       if (listing !== null) {
         parentGitLists.set(parent, hashCanonicalJson(listing));
         listedGroups.push(listing.roots);
         for (const root of listing.prunableRoots) blockers.push(Object.freeze({ root, reason: "prunable-git-worktree" }));
+        for (const entry of listing.locked) if (isMissing(entry.root)) {
+          absentLockedRoots.add(entry.root);
+          blockers.push(Object.freeze({ root: entry.root, reason: "absent-locked-git-worktree" }));
+        }
       } else if (bases.has(path.join(parent, ".worktrees"))) {
         nonGitParents.push(parent);
         blockers.push(Object.freeze({ root: parent, reason: "non-git-parent" }));
@@ -416,6 +432,10 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
         if (git.reason !== null) blockers.push(Object.freeze({ root, reason: git.reason }));
         for (const prunableRoot of git.prunableRoots) blockers.push(Object.freeze({ root: prunableRoot,
           reason: "prunable-git-worktree" }));
+        for (const entry of git.locked) if (isMissing(entry.root)) {
+          absentLockedRoots.add(entry.root);
+          blockers.push(Object.freeze({ root: entry.root, reason: "absent-locked-git-worktree" }));
+        }
         if (git.listedRoots.length > 0) listedGroups.push(git.listedRoots);
         firstByRoot.set(root, Object.freeze({ base, zone,
           listedHash: hashCanonicalJson({ roots: git.listedRoots, prunableRoots: git.prunableRoots,
@@ -429,7 +449,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     const present = new Set(entries.map((entry) => entry.root));
     for (const group of listedGroups) {
       for (const listedRoot of group) {
-        if (!present.has(listedRoot) && !parentGitLists.has(listedRoot)) {
+        if (!present.has(listedRoot) && !parentGitLists.has(listedRoot) && !absentLockedRoots.has(listedRoot)) {
           blockers.push(Object.freeze({ root: listedRoot, reason: "listed-outside-scope" }));
         }
       }
@@ -438,6 +458,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     await betweenPasses();
     held.assertStable();
     for (const root of absentBases) if (!isMissing(root)) fail();
+    for (const root of absentLockedRoots) if (!isMissing(root)) fail();
     for (const [parent, firstHash] of parentGitLists) {
       const fresh = primaryWorktreeRoots(held, parent);
       if (fresh === null || hashCanonicalJson(fresh) !== firstHash) fail();
