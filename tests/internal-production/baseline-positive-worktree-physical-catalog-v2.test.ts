@@ -86,6 +86,47 @@ test("a direct linked Setfarm checkout is retained and remains visible without b
   }
 });
 
+test("a locked linked Git worktree remains present and topology-visible", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.workspaceRoot, "setfarm");
+    initRepo(primary, "https://github.com/hikmetgulsesli/setfarm.git");
+    const linked = path.join(testHome.workspaceRoot, ".worktrees", "locked-linked");
+    mkdirSync(path.dirname(linked));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "locked-linked", linked]);
+    git(["-C", primary, "worktree", "lock", "--reason", "fixture reason", linked]);
+    const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(result.status, "complete");
+    assert.deepEqual(result.entries.map((entry) => [entry.root, entry.kind]), [[linked, "linked-git"]]);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("a locked-worktree annotation change across the bracket refuses", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.workspaceRoot, "setfarm");
+    initRepo(primary, "https://github.com/hikmetgulsesli/setfarm.git");
+    const linked = path.join(testHome.workspaceRoot, ".worktrees", "locked-linked");
+    mkdirSync(path.dirname(linked));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "locked-linked", linked]);
+    git(["-C", primary, "worktree", "lock", linked]);
+    const locked = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(locked.status, "complete");
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async () => { git(["-C", primary, "worktree", "unlock", linked]); }),
+    /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+  } finally {
+    testHome.close();
+  }
+});
+
 test("refuses external file-holder PID drift across the awaited bracket", async () => {
   const testHome = fixture();
   let child: ReturnType<typeof spawn> | null = null;
