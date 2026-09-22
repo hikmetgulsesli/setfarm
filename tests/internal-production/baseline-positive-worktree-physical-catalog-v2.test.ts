@@ -172,6 +172,48 @@ test("Git-valid punctuation in a branch name does not hide a present worktree", 
   }
 });
 
+test("a Git-valid custom symbolic-ref namespace remains topology-visible", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.workspaceRoot, "setfarm");
+    initRepo(primary, "https://github.com/hikmetgulsesli/setfarm.git");
+    const linked = path.join(testHome.workspaceRoot, ".worktrees", "custom-ref-linked");
+    mkdirSync(path.dirname(linked));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "custom-ref", linked]);
+    git(["-C", linked, "update-ref", "refs/custom/foo", "HEAD"]);
+    git(["-C", linked, "symbolic-ref", "HEAD", "refs/custom/foo"]);
+    const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(result.status, "complete");
+    assert.deepEqual(result.entries.map((entry) => [entry.root, entry.kind]), [[linked, "linked-git"]]);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("a SHA-256 Git repository uses its own HEAD object-id width", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.ownerHomeRoot, "projects", "story-sha256");
+    mkdirSync(primary);
+    git(["init", "-q", "--object-format=sha256", primary]);
+    git(["-C", primary, "config", "user.name", "Fixture"]);
+    git(["-C", primary, "config", "user.email", "fixture@example.invalid"]);
+    git(["-C", primary, "commit", "-q", "--allow-empty", "-m", "initial"]);
+    const linked = path.join(primary, ".worktrees", "runtime-sha256");
+    mkdirSync(path.dirname(linked));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-sha256", linked]);
+    const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(result.status, "complete");
+    assert.deepEqual(result.entries.map((entry) => [entry.root, entry.kind]), [[linked, "linked-git"]]);
+  } finally {
+    testHome.close();
+  }
+});
+
 test("refuses external file-holder PID drift across the awaited bracket", async () => {
   const testHome = fixture();
   let child: ReturnType<typeof spawn> | null = null;
@@ -549,6 +591,35 @@ test("a discovery-parent regular file is visible without becoming a worktree", a
     assert.deepEqual(result.incidentalFiles, [incidental]);
     assert.deepEqual(result.entries, []);
     assert.equal(result.status, "complete");
+  } finally {
+    testHome.close();
+  }
+});
+
+test("an incidental discovery file mutation across the bracket refuses", async () => {
+  const testHome = fixture();
+  try {
+    const incidental = path.join(testHome.ownerHomeRoot, "projects", ".DS_Store");
+    writeFileSync(incidental, "before");
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async () => { writeFileSync(incidental, "after!"); }),
+    /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("an oversized incidental-file census refuses before unbounded descriptor acquisition", async () => {
+  const testHome = fixture();
+  try {
+    const projects = path.join(testHome.ownerHomeRoot, "projects");
+    for (let index = 0; index < 257; index += 1) {
+      writeFileSync(path.join(projects, `incidental-${index}`), "fixture");
+    }
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
   } finally {
     testHome.close();
   }

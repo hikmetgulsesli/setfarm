@@ -13,6 +13,7 @@ const SCHEMA = "setfarm.internal-production-positive-worktree-physical-catalog.v
 const MAX_BASES = 1_024;
 const MAX_DISCOVERY_CHILDREN = 1_024;
 const MAX_ENTRIES = 256;
+const MAX_INCIDENTAL_FILES = 256;
 const NAME = /^[A-Za-z0-9._-]+$/;
 const COMMAND_CAP = 1_048_576;
 const COMMAND_ENV = Object.freeze({ PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C",
@@ -24,6 +25,7 @@ let cleanupUncertain = false;
 type Scope = Readonly<{ ownerHomeRoot: string; workspaceRoot: string }>;
 type Zone = "retained-zone" | "runtime-zone";
 type Held = { root: string; descriptor: number; first: BigIntStats; compareMutation: boolean };
+type HeldFile = { root: string; descriptor: number; first: BigIntStats };
 
 function fail(): never { throw Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID"); }
 
@@ -64,6 +66,7 @@ function compareRoot(left: string, right: string): number {
 
 class HeldDirectories {
   private readonly entries: Held[] = [];
+  private readonly files: HeldFile[] = [];
   private readonly byRoot = new Map<string, Held>();
   private closed = false;
 
@@ -95,11 +98,25 @@ class HeldDirectories {
     return this.byRoot.get(target)!.first;
   }
 
+  holdFile(target: string): void {
+    if (this.closed || cleanupUncertain || this.files.length >= MAX_INCIDENTAL_FILES) fail();
+    this.hold(path.dirname(target));
+    const first = lstatSync(target, { bigint: true });
+    if (!first.isFile() || first.isSymbolicLink()) fail();
+    const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+    this.files.push({ root: target, descriptor, first });
+    this.assertStable();
+  }
+
   assertStable(): void {
     if (this.closed || cleanupUncertain) fail();
     for (const entry of this.entries) {
       if (!same(entry.first, fstatSync(entry.descriptor, { bigint: true }), entry.compareMutation)
         || !same(entry.first, lstatSync(entry.root, { bigint: true }), entry.compareMutation)) fail();
+    }
+    for (const entry of this.files) {
+      if (!sameFile(entry.first, fstatSync(entry.descriptor, { bigint: true }))
+        || !sameFile(entry.first, lstatSync(entry.root, { bigint: true }))) fail();
     }
   }
 
@@ -107,6 +124,10 @@ class HeldDirectories {
     if (this.closed) return;
     this.closed = true;
     const errors: unknown[] = [];
+    while (this.files.length > 0) {
+      try { closeSync(this.files.pop()!.descriptor); }
+      catch (error) { cleanupUncertain = true; errors.push(error); }
+    }
     while (this.entries.length > 0) {
       try { closeSync(this.entries.pop()!.descriptor); }
       catch (error) { cleanupUncertain = true; errors.push(error); }
@@ -134,6 +155,7 @@ function children(held: HeldDirectories, root: string, incidentalFiles?: string[
     const observed = lstatSync(child, { bigint: true });
     if (observed.isSymbolicLink()) fail();
     if (observed.isFile() && incidentalFiles !== undefined) {
+      held.holdFile(child);
       incidentalFiles.push(child);
       continue;
     }
@@ -217,7 +239,7 @@ function normalizedGitPath(value: string, base: string): string {
 type GitWorktreeListing = Readonly<{ roots: readonly string[]; prunableRoots: readonly string[];
   locked: readonly Readonly<{ root: string; reason: string | null }>[] }>;
 
-function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer): GitWorktreeListing {
+function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer, oidWidth: 40 | 64): GitWorktreeListing {
   const value = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   if (!value.endsWith("\0") || value.includes("\r")) fail();
   const records = value.slice(0, -1).split("\0\0");
@@ -228,8 +250,9 @@ function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer): GitWorktreeList
   for (const record of records) {
     const fields = record.split("\0").filter(Boolean);
     if (![3, 4].includes(fields.length) || !fields[0]?.startsWith("worktree ")
-      || !/^HEAD [a-f0-9]{40}$/.test(fields[1]!)
-      || !(fields[2] === "detached" || fields[2] === "bare" || fields[2]?.startsWith("branch refs/heads/"))
+      || !fields[1]?.startsWith("HEAD ") || fields[1].length !== oidWidth + 5
+      || !/^[a-f0-9]+$/.test(fields[1].slice(5))
+      || !(fields[2] === "detached" || fields[2] === "bare" || fields[2]?.startsWith("branch "))
       || (fields.length === 4 && !/^prunable [^\r\n\0]+$/.test(fields[3]!)
         && !/^locked(?: [^\r\n\0]+)?$/.test(fields[3]!))) fail();
     if (fields[2]!.startsWith("branch ")) {
@@ -254,6 +277,12 @@ function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer): GitWorktreeList
     locked: Object.freeze(locked) });
 }
 
+function objectIdWidth(format: string): 40 | 64 {
+  if (format === "sha1") return 40;
+  if (format === "sha256") return 64;
+  fail();
+}
+
 type CandidateKind = "unresolved" | "linked-git" | "primary-git";
 type Candidate = Readonly<{ root: string; zone: Zone; kind: CandidateKind; dev: string; ino: string;
   birthtimeNs: string; gitPrimaryRoot: string | null; dirty: boolean | null;
@@ -268,8 +297,10 @@ function primaryWorktreeRoots(held: HeldDirectories, root: string): GitWorktreeL
   held.hold(marker);
   const top = line(command(held, "/usr/bin/git", [...GIT_PREFIX, "-C", root, "rev-parse", "--show-toplevel"]));
   if (top !== root) fail();
+  const width = objectIdWidth(line(command(held, "/usr/bin/git", [...GIT_PREFIX, "-C", root,
+    "rev-parse", "--show-object-format=storage"])));
   const roots = gitWorktreeRoots(held, command(held, "/usr/bin/git", [...GIT_PREFIX, "-C", root,
-    "worktree", "list", "--porcelain", "-z"]));
+    "worktree", "list", "--porcelain", "-z"]), width);
   if (roots.roots[0] !== root) fail();
   return roots;
 }
@@ -312,7 +343,8 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
     const top = line(git(["rev-parse", "--show-toplevel"]));
     if (top !== root) return { kind: "unresolved", gitPrimaryRoot: null, dirty: null,
       listedRoots: [], prunableRoots: [], locked: [], reason: "git-top-level-mismatch" };
-    const listing = gitWorktreeRoots(held, git(["worktree", "list", "--porcelain", "-z"]));
+    const width = objectIdWidth(line(git(["rev-parse", "--show-object-format=storage"])));
+    const listing = gitWorktreeRoots(held, git(["worktree", "list", "--porcelain", "-z"]), width);
     const listedRoots = listing.roots;
     const primary = listedRoots[0]!;
     if (!listedRoots.includes(root)) fail();
