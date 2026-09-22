@@ -31,6 +31,7 @@ const OWNER_BACKED_TESTS = new Set([
   "runtime-session-repository.test.ts",
   "story-publication.integration.test.ts",
   "terminal-claim-runtime-reconciler.test.ts",
+  "v3-deploy-receipt-repository.test.ts",
   "v3-deploy-refusal.integration.test.ts",
   "v3-downstream-evidence-publication.test.ts",
   "v3-downstream-recovery-transition.test.ts",

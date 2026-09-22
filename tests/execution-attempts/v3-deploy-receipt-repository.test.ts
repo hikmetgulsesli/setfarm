@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 
+import type { PgTransactionSql } from "../../src/db-pg.js";
 import { createAcceptedCandidateV1 } from "../../src/evidence/accepted-candidate-v1.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+} from "../../src/execution/claim-runtime-publication.js";
 import {
   createV3DeployReceiptRepository,
   V3DeployReceiptRepositoryError,
@@ -234,13 +239,23 @@ describe("v3 deploy receipt ledger", () => {
        ) VALUES ($1, $2, 'deploy', 'deployer', 11, '', '', 'running')`,
       [stepDbId, runId],
     );
-    const claims = await database.sql.unsafe<Array<{ id: number }>>(
-      `INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-       VALUES ($1, 'deploy', NULL, 'deployer', NOW())
-       RETURNING id::integer AS id`,
-      [runId],
-    );
-    const claimId = claims[0]!.id;
+    const claimId = await database.sql.begin(async (transaction) => {
+      const ids = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+        SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+      `;
+      const birth = await prepareInternalProductionClaimBirthV1(
+        transaction as PgTransactionSql,
+        "a-claim-single-runtime-v1",
+        ids,
+      );
+      return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+        runId,
+        workflowStepId: "deploy",
+        storyId: null,
+        claimAgentId: "deployer",
+        claimedAt: new Date(),
+      });
+    }) as number;
     const envelope = ClaimEnvelopeV1Schema.parse({
       schema: "setfarm.claim-envelope.v1",
       protocol: "v3",
