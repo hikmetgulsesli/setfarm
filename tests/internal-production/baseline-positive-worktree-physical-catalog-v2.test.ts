@@ -105,6 +105,47 @@ test("a locked linked Git worktree remains present and topology-visible", async 
   }
 });
 
+test("a multiline locked reason remains a valid NUL-delimited Git annotation", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.workspaceRoot, "setfarm");
+    initRepo(primary, "https://github.com/hikmetgulsesli/setfarm.git");
+    const linked = path.join(testHome.workspaceRoot, ".worktrees", "multiline-locked");
+    mkdirSync(path.dirname(linked));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "multiline-locked", linked]);
+    git(["-C", primary, "worktree", "lock", "--reason", "line1\nline2\rline3", linked]);
+    const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(result.status, "complete");
+    assert.deepEqual(result.entries.map((entry) => [entry.root, entry.kind]), [[linked, "linked-git"]]);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("a managed linked checkout with a bare primary remains visible and unresolved", async () => {
+  const testHome = fixture();
+  try {
+    const source = path.join(testHome.ownerHomeRoot, "source-repo");
+    mkdirSync(source);
+    initRepo(source);
+    const bare = path.join(testHome.ownerHomeRoot, "bare-primary.git");
+    git(["clone", "-q", "--bare", source, bare]);
+    const linked = path.join(testHome.workspaceRoot, ".worktrees", "bare-linked");
+    mkdirSync(path.dirname(linked));
+    git(["--git-dir", bare, "worktree", "add", "-q", "-b", "bare-linked", linked]);
+    const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(result.status, "unresolved");
+    assert.ok(result.entries.some((entry) => entry.root === linked && entry.kind === "unresolved"));
+    assert.ok(result.blockers.some((item) => item.root === bare && item.reason === "listed-outside-scope"));
+  } finally {
+    testHome.close();
+  }
+});
+
 test("a locked-worktree annotation change across the bracket refuses", async () => {
   const testHome = fixture();
   try {

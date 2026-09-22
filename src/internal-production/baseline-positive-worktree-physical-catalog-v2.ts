@@ -237,25 +237,30 @@ function normalizedGitPath(value: string, base: string): string {
 }
 
 type GitWorktreeListing = Readonly<{ roots: readonly string[]; prunableRoots: readonly string[];
-  locked: readonly Readonly<{ root: string; reason: string | null }>[] }>;
+  locked: readonly Readonly<{ root: string; reason: string | null }>[]; barePrimaryRoot: string | null }>;
 
 function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer, oidWidth: 40 | 64): GitWorktreeListing {
   const value = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  if (!value.endsWith("\0") || value.includes("\r")) fail();
+  if (!value.endsWith("\0")) fail();
   const records = value.slice(0, -1).split("\0\0");
   const roots: string[] = [];
   const prunableRoots: string[] = [];
   const locked: Array<Readonly<{ root: string; reason: string | null }>> = [];
   const seen = new Set<string>();
+  let barePrimaryRoot: string | null = null;
   for (const record of records) {
     const fields = record.split("\0").filter(Boolean);
-    if (![3, 4].includes(fields.length) || !fields[0]?.startsWith("worktree ")
-      || !fields[1]?.startsWith("HEAD ") || fields[1].length !== oidWidth + 5
-      || !/^[a-f0-9]+$/.test(fields[1].slice(5))
-      || !(fields[2] === "detached" || fields[2] === "bare" || fields[2]?.startsWith("branch "))
-      || (fields.length === 4 && !/^prunable [^\r\n\0]+$/.test(fields[3]!)
-        && !/^locked(?: [^\r\n\0]+)?$/.test(fields[3]!))) fail();
-    if (fields[2]!.startsWith("branch ")) {
+    const bareRecord = fields.length === 2 && fields[1] === "bare";
+    const annotation = fields[3];
+    const prunableRecord = annotation === "prunable" || annotation?.startsWith("prunable ") === true;
+    const lockedRecord = annotation === "locked" || annotation?.startsWith("locked ") === true;
+    if (!fields[0]?.startsWith("worktree ") || (bareRecord && (seen.size !== 0 || barePrimaryRoot !== null))
+      || (!bareRecord && (![3, 4].includes(fields.length)
+        || !fields[1]?.startsWith("HEAD ") || fields[1].length !== oidWidth + 5
+        || !/^[a-f0-9]+$/.test(fields[1].slice(5))
+        || !(fields[2] === "detached" || fields[2]?.startsWith("branch "))
+        || (fields.length === 4 && !prunableRecord && !lockedRecord)))) fail();
+    if (!bareRecord && fields[2]!.startsWith("branch ")) {
       const ref = fields[2]!.slice("branch ".length);
       if (Buffer.byteLength(ref) > 1024
         || command(held, "/usr/bin/git", [...GIT_PREFIX, "check-ref-format", ref]).length !== 0) fail();
@@ -265,16 +270,19 @@ function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer, oidWidth: 40 | 6
     const root = normalizedGitPath(rawRoot, "/");
     if (seen.has(root)) fail();
     seen.add(root);
-    if (fields.length === 4 && fields[3]!.startsWith("prunable ")) prunableRoots.push(root);
+    if (bareRecord) {
+      barePrimaryRoot = root;
+      roots.push(root);
+    } else if (prunableRecord) prunableRoots.push(root);
     else {
       roots.push(root);
-      if (fields.length === 4) locked.push(Object.freeze({ root,
-        reason: fields[3] === "locked" ? null : fields[3]!.slice("locked ".length) }));
+      if (lockedRecord) locked.push(Object.freeze({ root,
+        reason: annotation === "locked" ? null : annotation!.slice("locked ".length) }));
     }
   }
   if (roots.length === 0 || seen.size > MAX_ENTRIES) fail();
   return Object.freeze({ roots: Object.freeze(roots), prunableRoots: Object.freeze(prunableRoots),
-    locked: Object.freeze(locked) });
+    locked: Object.freeze(locked), barePrimaryRoot });
 }
 
 function objectIdWidth(format: string): 40 | 64 {
@@ -308,10 +316,11 @@ function primaryWorktreeRoots(held: HeldDirectories, root: string): GitWorktreeL
 function observeGitCandidate(held: HeldDirectories, root: string, base: string, zone: Zone,
   scope: Scope): Readonly<{ kind: CandidateKind; gitPrimaryRoot: string | null; dirty: boolean | null;
     listedRoots: readonly string[]; prunableRoots: readonly string[];
-    locked: readonly Readonly<{ root: string; reason: string | null }>[]; reason: string | null }> {
+    locked: readonly Readonly<{ root: string; reason: string | null }>[];
+    barePrimaryRoot: string | null; reason: string | null }> {
   const marker = path.join(root, ".git");
   if (isMissing(marker)) return { kind: "unresolved", gitPrimaryRoot: null, dirty: null,
-    listedRoots: [], prunableRoots: [], locked: [], reason: "non-git-child" };
+    listedRoots: [], prunableRoots: [], locked: [], barePrimaryRoot: null, reason: "non-git-child" };
   const markerStat = lstatSync(marker, { bigint: true });
   if (markerStat.isSymbolicLink()) fail();
   if (!markerStat.isFile() && !markerStat.isDirectory()) fail();
@@ -342,18 +351,23 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
   };
     const top = line(git(["rev-parse", "--show-toplevel"]));
     if (top !== root) return { kind: "unresolved", gitPrimaryRoot: null, dirty: null,
-      listedRoots: [], prunableRoots: [], locked: [], reason: "git-top-level-mismatch" };
+      listedRoots: [], prunableRoots: [], locked: [], barePrimaryRoot: null, reason: "git-top-level-mismatch" };
     const width = objectIdWidth(line(git(["rev-parse", "--show-object-format=storage"])));
     const listing = gitWorktreeRoots(held, git(["worktree", "list", "--porcelain", "-z"]), width);
     const listedRoots = listing.roots;
     const primary = listedRoots[0]!;
     if (!listedRoots.includes(root)) fail();
+    if (listing.barePrimaryRoot !== null) return { kind: "unresolved", gitPrimaryRoot: primary,
+      dirty: null, listedRoots, prunableRoots: listing.prunableRoots, locked: listing.locked,
+      barePrimaryRoot: listing.barePrimaryRoot, reason: "bare-git-primary" };
     if (listing.prunableRoots.length > 0) return { kind: "unresolved", gitPrimaryRoot: primary,
       dirty: null, listedRoots, prunableRoots: listing.prunableRoots, locked: listing.locked,
+      barePrimaryRoot: null,
       reason: "prunable-git-list" };
     if (listing.locked.some((entry) => isMissing(entry.root))) {
       return { kind: "unresolved", gitPrimaryRoot: primary, dirty: null, listedRoots,
-        prunableRoots: [], locked: listing.locked, reason: "absent-locked-git-list" };
+        prunableRoots: [], locked: listing.locked, barePrimaryRoot: null,
+        reason: "absent-locked-git-list" };
     }
     for (const listedRoot of listedRoots) held.hold(listedRoot);
     const gitdir = normalizedGitPath(line(git(["rev-parse", "--git-dir"])), root);
@@ -365,14 +379,14 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
       const origin = line(git(["config", "--local", "--default=__origin_missing__", "--get", "remote.origin.url"]));
       if (!["https://github.com/hikmetgulsesli/setfarm.git", "https://github.com/hikmetgulsesli/mission-control.git"].includes(origin)) {
         return { kind: "unresolved", gitPrimaryRoot: primary, dirty: null, listedRoots,
-          prunableRoots: [], locked: listing.locked, reason: "untrusted-code-git" };
+          prunableRoots: [], locked: listing.locked, barePrimaryRoot: null, reason: "untrusted-code-git" };
       }
       const fixedPrimaries = [path.join(scope.workspaceRoot, "setfarm"), path.join(scope.workspaceRoot, "mission-control")];
       const retainedPrimaryZone = [path.join(scope.workspaceRoot, ".worktrees"),
         path.join(scope.workspaceRoot, "deployments")].some((retainedBase) => primary.startsWith(`${retainedBase}/`));
       if (!fixedPrimaries.includes(primary) && !retainedPrimaryZone) {
         return { kind: "unresolved", gitPrimaryRoot: primary, dirty: null, listedRoots,
-          prunableRoots: [], locked: listing.locked,
+          prunableRoots: [], locked: listing.locked, barePrimaryRoot: null,
           reason: "retained-primary-mismatch" };
       }
     }
@@ -382,13 +396,13 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
       if ((expectedProject !== null && primary !== expectedProject)
         || (expectedProject === null && !primary.startsWith(`${projectBase}/`))) {
         return { kind: "unresolved", gitPrimaryRoot: primary, dirty: null, listedRoots,
-          prunableRoots: [], locked: listing.locked,
+          prunableRoots: [], locked: listing.locked, barePrimaryRoot: null,
           reason: "runtime-primary-mismatch" };
       }
     }
     const dirty = git(["status", "--porcelain=v2", "--untracked-files=all"]).length !== 0;
     return { kind: root === primary ? "primary-git" : "linked-git", gitPrimaryRoot: primary,
-      dirty, listedRoots, prunableRoots: [], locked: listing.locked, reason: null };
+      dirty, listedRoots, prunableRoots: [], locked: listing.locked, barePrimaryRoot: null, reason: null };
   } finally {
     if (markerDescriptor !== null) {
       try { closeSync(markerDescriptor); }
@@ -471,7 +485,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
         if (git.listedRoots.length > 0) listedGroups.push(git.listedRoots);
         firstByRoot.set(root, Object.freeze({ base, zone,
           listedHash: hashCanonicalJson({ roots: git.listedRoots, prunableRoots: git.prunableRoots,
-            locked: git.locked }), reason: git.reason }));
+            locked: git.locked, barePrimaryRoot: git.barePrimaryRoot }), reason: git.reason }));
         entries.push(Object.freeze({ root, zone, kind: git.kind, dev: String(stat.dev), ino: String(stat.ino),
           birthtimeNs: String(stat.birthtimeNs), gitPrimaryRoot: git.gitPrimaryRoot, dirty: git.dirty,
           sourceBuildProvenance: "unverified" as const,
@@ -503,7 +517,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
       if (fresh.kind !== entry.kind || fresh.gitPrimaryRoot !== entry.gitPrimaryRoot
         || fresh.dirty !== entry.dirty || fresh.reason !== first.reason
         || hashCanonicalJson({ roots: fresh.listedRoots, prunableRoots: fresh.prunableRoots,
-          locked: fresh.locked }) !== first.listedHash
+          locked: fresh.locked, barePrimaryRoot: fresh.barePrimaryRoot }) !== first.listedHash
         || hashCanonicalJson(freshPids) !== hashCanonicalJson(entry.referencingPids)) fail();
     }
     const ordered = Object.freeze(entries.sort((left, right) => compareRoot(left.root, right.root)));
