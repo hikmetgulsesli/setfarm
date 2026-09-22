@@ -36,6 +36,7 @@ Refuse malformed, duplicate, reordered, unnormalized or crossed data; two roots 
 
 - `src/internal-production/baseline-positive-worktree-owner-partition-v2.ts`: pure exact-shape validator, canonical identity/join and frozen diagnostic partition. No filesystem, DB or live authority.
 - `tests/internal-production/baseline-positive-worktree-owner-partition-v2.test.ts`: literal expected outcomes for retained code/artifacts, matched runtime owner, primary-project owner and adversarial mismatch/ABA/crossed evidence.
+- `package.json`: include the pure V2 regression file in the default `npm test` chain.
 - `docs/superpowers/plans/2026-09-23-positive-worktree-owner-partition.md`: TDD and delivery gates.
 
 Run focused RED/GREEN tests, `npx tsc --noEmit`, source/path contracts and independent review. A reviewed PR and clean-main build are required before any host observation. Stage 1 must leave the current three default-context blockers unchanged.

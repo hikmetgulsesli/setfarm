@@ -22,6 +22,7 @@
 
 - Create `src/internal-production/baseline-positive-worktree-owner-partition-v2.ts`: pure strict input validator, deterministic identity hash, one-to-one partition and frozen diagnostic output.
 - Create `tests/internal-production/baseline-positive-worktree-owner-partition-v2.test.ts`: real leaf tests with independent literal expected classification/counts and adversarial malformed/crossed evidence.
+- Update `package.json`: register the pure V2 test file in `test:internal-production:pure`, which is called by `npm test`.
 - This plan and its spec document the staged authority boundary. No existing source is modified.
 
 ### Task 1: Visible retained and exact bound execution partition
