@@ -4,7 +4,7 @@
 
 **Goal:** Prove which managed host directories are present, physically stable, Git-authenticated, or unresolved without reinterpreting V1 or granting cutover authority.
 
-**Architecture:** A fixed host-scope wrapper feeds a held descriptor catalog core. Two physical passes bracket a callback reserved for a later repeatable-read DB observer. Unknown entries are visible blockers, never dropped or relabeled as retained. Only a complete catalog can yield Stage-1 physical data; the current host is expected to refuse because of actual unknowns.
+**Architecture:** A fixed host-scope wrapper feeds a held descriptor catalog core. Two physical passes bracket a callback reserved for a later repeatable-read DB observer. Unknown entries are visible blockers, never dropped or relabeled as retained. `complete` means diagnostic coverage only; this slice yields no Stage-1 physical input because source/build and PostgreSQL provenance are not yet linked. The current host is expected to report actual unknowns.
 
 **Spec:** `docs/superpowers/specs/2026-09-23-held-positive-worktree-physical-catalog-v2.md`
 
@@ -23,8 +23,8 @@
 
 ## Task 2 — Git and process authenticity, stable bracket
 
-1. RED: add prunable/extra/forged Git listing, wrong origin, symlink, non-directory child, process-reference drift, inode/birth replacement during callback, rename-away/replace/restore during an external command, failed close and post-close reuse cases. Test no silent skip of unknown entries.
-2. GREEN: sealed Git/lsof commands with bounded output, held-path rechecks around every command, direct no-follow `.git` marker and common-dir authentication, exact top-level/primary/list checks and fail-closed process-reference parser; twice observe under held descriptors across awaited callback; poison acquisition after uncertain close. Do not write Git metadata or prune.
+1. RED: add prunable/extra/forged Git listing, wrong origin, symlink, non-directory child, real positive process-reference capture/drift, inode/birth replacement during callback, failed close and post-close reuse cases. Test no silent skip of unknown entries or non-Git project parents. A deterministic rename-away/replace/restore inside an external command and Git-list swap remain follow-up fault-injection cases; held-path mutation metadata and two-pass comparisons are implemented but those exact interleavings are not proven by this slice.
+2. GREEN: sealed Git/lsof commands with bounded output, explicit safe cwd, `core.fsmonitor=false`, held-path rechecks around every command, direct no-follow `.git` marker and common-dir authentication, exact top-level/primary/list checks and fail-closed process-reference parser; twice observe under held descriptors across awaited callback; poison acquisition after uncertain close. Do not write Git metadata or prune. Label all Git classifications topology-only with source/build provenance unverified.
 3. Verify focused suite, `npm run test:internal-production:pure`, existing held phase tests, `git diff --check`, and no V1 diff.
 
 ## Task 3 — delivery and host evidence

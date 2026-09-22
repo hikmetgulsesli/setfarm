@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -84,7 +86,31 @@ test("a direct linked Setfarm checkout is retained and remains visible without b
   }
 });
 
-test("refuses ambiguous lsof status with output instead of inventing process absence", async () => {
+test("refuses external file-holder PID drift across the awaited bracket", async () => {
+  const testHome = fixture();
+  let child: ReturnType<typeof spawn> | null = null;
+  try {
+    const unknown = path.join(testHome.workspaceRoot, ".worktrees", "data");
+    mkdirSync(unknown, { recursive: true });
+    const heldFile = path.join(unknown, "held.txt");
+    writeFileSync(heldFile, "fixture");
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async () => {
+      child = spawn(process.execPath, ["-e", "require('node:fs').openSync(process.argv[1], 'r'); process.stdout.write('READY\\n'); setInterval(() => {}, 1000)", heldFile],
+        { stdio: ["ignore", "pipe", "pipe"] });
+      await once(child.stdout!, "data");
+    }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGTERM");
+      await once(child, "exit");
+    }
+    testHome.close();
+  }
+});
+
+test("records a real external file holder PID without admitting it as absence", async () => {
   const testHome = fixture();
   let child: ReturnType<typeof spawn> | null = null;
   try {
@@ -95,14 +121,34 @@ test("refuses ambiguous lsof status with output instead of inventing process abs
     child = spawn(process.execPath, ["-e", "require('node:fs').openSync(process.argv[1], 'r'); process.stdout.write('READY\\n'); setInterval(() => {}, 1000)", heldFile],
       { stdio: ["ignore", "pipe", "pipe"] });
     await once(child.stdout!, "data");
-    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+    const observed = await observeHeldPositiveWorktreePhysicalCatalogV2({
       ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
-    }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+    });
+    assert.equal(observed.status, "unresolved");
+    assert.deepEqual(observed.entries[0]?.referencingPids, [child.pid]);
   } finally {
     if (child && child.exitCode === null && child.signalCode === null) {
       child.kill("SIGTERM");
       await once(child, "exit");
     }
+    testHome.close();
+  }
+});
+
+test("lsof observer child does not count its own cwd as an external reference", async () => {
+  const testHome = fixture();
+  const originalCwd = process.cwd();
+  try {
+    const unknown = path.join(testHome.workspaceRoot, ".worktrees", "data");
+    mkdirSync(unknown, { recursive: true });
+    process.chdir(unknown);
+    const observed = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(observed.status, "unresolved");
+    assert.deepEqual(observed.entries[0]?.referencingPids, []);
+  } finally {
+    process.chdir(originalCwd);
     testHome.close();
   }
 });
@@ -123,6 +169,30 @@ test("generated project linked worktree remains a runtime candidate without a re
     assert.deepEqual(result.entries.map((entry) => [entry.root, entry.zone, entry.kind, entry.gitPrimaryRoot]), [
       [runtime, "runtime-zone", "linked-git", primary],
     ]);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("read-only Git status never executes a repository-local fsmonitor command", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.ownerHomeRoot, "projects", "story");
+    mkdirSync(primary);
+    initRepo(primary);
+    const runtime = path.join(primary, ".worktrees", "story-1");
+    mkdirSync(path.dirname(runtime));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-1", runtime]);
+    const touched = path.join(testHome.ownerHomeRoot, "fsmonitor-was-run");
+    const hook = path.join(testHome.ownerHomeRoot, "fsmonitor-hook");
+    writeFileSync(hook, `#!/bin/sh\nprintf ran > '${touched}'\n`);
+    chmodSync(hook, 0o700);
+    git(["-C", runtime, "config", "core.fsmonitor", hook]);
+    const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(result.status, "complete");
+    assert.equal(existsSync(touched), false);
   } finally {
     testHome.close();
   }
@@ -162,6 +232,7 @@ test("an independent Setfarm deployment primary clone remains retained and visib
     assert.deepEqual(result.entries.map((entry) => [entry.root, entry.zone, entry.kind, entry.gitPrimaryRoot]), [
       [clone, "retained-zone", "primary-git", clone],
     ]);
+    assert.equal(result.entries[0]?.sourceBuildProvenance, "unverified");
   } finally {
     testHome.close();
   }
@@ -181,6 +252,26 @@ test("parent Git traversal cannot authenticate a non-Git project child", async (
     });
     assert.equal(result.status, "unresolved");
     assert.deepEqual(result.blockers, [{ root: orphan, reason: "non-git-child" }]);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("a non-Git project parent never hides its present worktree child", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.ownerHomeRoot, "projects", "story");
+    const orphan = path.join(primary, ".worktrees", "orphan");
+    mkdirSync(orphan, { recursive: true });
+    const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(result.status, "unresolved");
+    assert.deepEqual(result.entries.map((entry) => [entry.root, entry.kind]), [[orphan, "unresolved"]]);
+    assert.deepEqual(result.blockers, [
+      { root: primary, reason: "non-git-parent" },
+      { root: orphan, reason: "non-git-child" },
+    ]);
   } finally {
     testHome.close();
   }
@@ -322,4 +413,29 @@ test("a discovery-parent regular file is visible without becoming a worktree", a
   } finally {
     testHome.close();
   }
+});
+
+test("a failed descriptor close poisons later catalog acquisition", async () => {
+  const testHome = fixture();
+  const originalClose = fs.closeSync;
+  let injected = false;
+  try {
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async () => {
+      fs.closeSync = (fd) => {
+        if (!injected) { injected = true; throw Error("injected-close-failure"); }
+        originalClose(fd);
+      };
+      syncBuiltinESMExports();
+    }), /cleanup uncertain/);
+    assert.equal(injected, true);
+  } finally {
+    fs.closeSync = originalClose;
+    syncBuiltinESMExports();
+    testHome.close();
+  }
+  await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+    ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+  }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
 });

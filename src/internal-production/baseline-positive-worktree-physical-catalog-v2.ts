@@ -18,6 +18,7 @@ const COMMAND_CAP = 1_048_576;
 const COMMAND_ENV = Object.freeze({ PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C",
   GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_NO_REPLACE_OBJECTS: "1",
   GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" });
+const GIT_PREFIX = Object.freeze(["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]);
 let cleanupUncertain = false;
 
 type Scope = Readonly<{ ownerHomeRoot: string; workspaceRoot: string }>;
@@ -66,7 +67,13 @@ class HeldDirectories {
   private readonly byRoot = new Map<string, Held>();
   private closed = false;
 
-  constructor(private readonly ownerHomeRoot: string) {}
+  constructor(private readonly ownerHomeRoot: string, private readonly workspaceRoot: string) {}
+
+  observerCommandCwd(): string {
+    if (!this.byRoot.has(this.workspaceRoot)) fail();
+    this.assertStable();
+    return this.workspaceRoot;
+  }
 
   hold(target: string): BigIntStats {
     if (this.closed || cleanupUncertain) fail();
@@ -148,18 +155,22 @@ function command(held: HeldDirectories, executable: string, args: readonly strin
   return stdout;
 }
 
-function referencePids(held: HeldDirectories, root: string): readonly number[] {
+function lsofObservation(held: HeldDirectories, root: string, excludeObserver: boolean): Readonly<{ status: number; stdout: Buffer }> {
   held.assertStable();
-  const result = spawnSync("/usr/sbin/lsof", ["-nP", "-F0", "-p", `^${process.pid}`, "+D", root], {
-    env: COMMAND_ENV, shell: false, encoding: "buffer", timeout: 10_000,
+  const args = ["-nP", "-F0", ...(excludeObserver ? ["-p", `^${process.pid}`] : []), "+D", root];
+  const result = spawnSync("/usr/sbin/lsof", args, {
+    env: COMMAND_ENV, cwd: held.observerCommandCwd(), shell: false, encoding: "buffer", timeout: 10_000,
     maxBuffer: COMMAND_CAP, stdio: ["ignore", "pipe", "pipe"],
   });
   held.assertStable();
   const stdout = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? "");
   const stderr = Buffer.isBuffer(result.stderr) ? result.stderr : Buffer.from(result.stderr ?? "");
   if (result.error || result.signal || ![0, 1].includes(result.status ?? -1) || stderr.length !== 0
-    || stdout.length > COMMAND_CAP || (result.status === 1 && stdout.length !== 0)) fail();
-  if (result.status === 1) return Object.freeze([]);
+    || stdout.length > COMMAND_CAP) fail();
+  return Object.freeze({ status: result.status!, stdout });
+}
+
+function parseLsofPids(stdout: Buffer): readonly number[] {
   const value = new TextDecoder("utf-8", { fatal: true }).decode(stdout);
   if (value.includes("\r") || !value.endsWith("\0\n")) fail();
   const fields = value.split("\0").map((field) => field.replace(/^\n+/, "")).filter(Boolean);
@@ -176,6 +187,17 @@ function referencePids(held: HeldDirectories, root: string): readonly number[] {
   }
   if (pids.size === 0) fail();
   return Object.freeze([...pids].sort((left, right) => left - right));
+}
+
+function referencePids(held: HeldDirectories, root: string): readonly number[] {
+  const inclusive = lsofObservation(held, root, false);
+  if (inclusive.status === 0) return Object.freeze(parseLsofPids(inclusive.stdout).filter((pid) => pid !== process.pid));
+  if (inclusive.stdout.length === 0) return Object.freeze([]);
+  const onlyObserver = parseLsofPids(inclusive.stdout);
+  if (onlyObserver.length !== 1 || onlyObserver[0] !== process.pid) fail();
+  const excluded = lsofObservation(held, root, true);
+  if (excluded.status !== 1 || excluded.stdout.length !== 0) fail();
+  return Object.freeze([]);
 }
 
 function line(bytes: Buffer): string {
@@ -221,6 +243,7 @@ function gitWorktreeRoots(bytes: Buffer): GitWorktreeListing {
 type CandidateKind = "unresolved" | "linked-git" | "primary-git";
 type Candidate = Readonly<{ root: string; zone: Zone; kind: CandidateKind; dev: string; ino: string;
   birthtimeNs: string; gitPrimaryRoot: string | null; dirty: boolean | null;
+  sourceBuildProvenance: "unverified";
   referencingPids: readonly number[] }>;
 
 function primaryWorktreeRoots(held: HeldDirectories, root: string): GitWorktreeListing | null {
@@ -229,9 +252,9 @@ function primaryWorktreeRoots(held: HeldDirectories, root: string): GitWorktreeL
   const observed = lstatSync(marker, { bigint: true });
   if (!observed.isDirectory() || observed.isSymbolicLink()) fail();
   held.hold(marker);
-  const top = line(command(held, "/usr/bin/git", ["-C", root, "rev-parse", "--show-toplevel"]));
+  const top = line(command(held, "/usr/bin/git", [...GIT_PREFIX, "-C", root, "rev-parse", "--show-toplevel"]));
   if (top !== root) fail();
-  const roots = gitWorktreeRoots(command(held, "/usr/bin/git", ["-C", root, "worktree", "list", "--porcelain", "-z"]));
+  const roots = gitWorktreeRoots(command(held, "/usr/bin/git", [...GIT_PREFIX, "-C", root, "worktree", "list", "--porcelain", "-z"]));
   if (roots.roots[0] !== root) fail();
   return roots;
 }
@@ -266,7 +289,7 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
   };
   const git = (args: string[]): Buffer => {
     checkMarker();
-    const bytes = command(held, "/usr/bin/git", ["-C", root, ...args]);
+    const bytes = command(held, "/usr/bin/git", [...GIT_PREFIX, "-C", root, ...args]);
     checkMarker();
     return bytes;
   };
@@ -324,7 +347,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
 ) {
   const scope = captureScope(rawScope);
   if (cleanupUncertain || typeof betweenPasses !== "function") fail();
-  const held = new HeldDirectories(scope.ownerHomeRoot);
+  const held = new HeldDirectories(scope.ownerHomeRoot, scope.workspaceRoot);
   try {
     const { ownerHomeRoot, workspaceRoot } = scope;
     for (const mandatory of [ownerHomeRoot, workspaceRoot, path.join(workspaceRoot, "setfarm"),
@@ -359,13 +382,17 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     const listedGroups: Array<readonly string[]> = [];
     const firstByRoot = new Map<string, Readonly<{ base: string; zone: Zone; listedHash: string; reason: string | null }>>();
     const parentGitLists = new Map<string, string>();
+    const nonGitParents: string[] = [];
     for (const parent of [path.join(workspaceRoot, "setfarm"), path.join(workspaceRoot, "mission-control"), ...projectRoots]) {
       const listing = primaryWorktreeRoots(held, parent);
       if (listing !== null) {
         parentGitLists.set(parent, hashCanonicalJson(listing));
         listedGroups.push(listing.roots);
         for (const root of listing.prunableRoots) blockers.push(Object.freeze({ root, reason: "prunable-git-worktree" }));
-      } else if (bases.has(path.join(parent, ".worktrees"))) fail();
+      } else if (bases.has(path.join(parent, ".worktrees"))) {
+        nonGitParents.push(parent);
+        blockers.push(Object.freeze({ root: parent, reason: "non-git-parent" }));
+      }
     }
     for (const [base, zone] of bases) {
       for (const root of children(held, base)) {
@@ -378,6 +405,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
         firstByRoot.set(root, Object.freeze({ base, zone, listedHash: hashCanonicalJson(git.listedRoots), reason: git.reason }));
         entries.push(Object.freeze({ root, zone, kind: git.kind, dev: String(stat.dev), ino: String(stat.ino),
           birthtimeNs: String(stat.birthtimeNs), gitPrimaryRoot: git.gitPrimaryRoot, dirty: git.dirty,
+          sourceBuildProvenance: "unverified" as const,
           referencingPids }));
       }
     }
@@ -395,6 +423,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
       const fresh = primaryWorktreeRoots(held, parent);
       if (fresh === null || hashCanonicalJson(fresh) !== firstHash) fail();
     }
+    for (const parent of nonGitParents) if (!isMissing(path.join(parent, ".git"))) fail();
     for (const entry of entries) {
       const first = firstByRoot.get(entry.root)!;
       const fresh = observeGitCandidate(held, entry.root, first.base, first.zone, scope);
