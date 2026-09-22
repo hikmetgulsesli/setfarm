@@ -332,12 +332,23 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
             stage = "sampled-generation";
             if (settled.has(index) || current.pid !== sample.pid || current.state !== "running") fail();
             stage = "sampled-native";
-            const identity = transport.identifyDeploymentCutoverPassiveProcessV1({ pid: current.pid, uid: account.uid,
-              gid: account.gid, executable: nodes[index]!.observation.executablePath });
+            const identity = transport.monitorDeploymentCutoverPassiveProcessV1({ pid: current.pid, uid: account.uid,
+              gid: account.gid, executable: nodes[index]!.observation.executablePath,
+              expectedParentPid: sample.ppid, expectedStartSeconds: sample.startSeconds,
+              expectedStartMicroseconds: sample.startMicroseconds });
             stage = "sampled-bind";
-            if (["pid", "ppid", "uid", "gid", "startSeconds", "startMicroseconds"].some(key => identity[key] !== sample[key])) fail();
+            const absent = exact(identity, ["schema", "pid", "evidence"])
+              && identity.schema === "setfarm.internal-production-passive-process-absence.v1"
+              && identity.pid === sample.pid && identity.evidence === "proc-pidinfo-esrch";
+            if (!absent && (!exact(identity, ["schema", "pid", "ppid", "uid", "gid", "startSeconds", "startMicroseconds"])
+              || identity.schema !== "setfarm.internal-production-passive-process-identity.v1"
+              || ["pid", "ppid", "uid", "gid", "startSeconds", "startMicroseconds"].some(key => identity[key] !== sample[key]))) fail();
             stage = "sampled-postcheck";
             const after = inputs.snapshot(index);
+            if (absent) {
+              if (after.state !== "not running" || after.activeCount !== 0 || after.pid !== undefined) fail();
+              settled.add(index); continue;
+            }
             // Successful matching identity may be followed by normal exit. The
             // authenticated idle transition is identical to the precheck above;
             // native failure is never reinterpreted as exit or retried.

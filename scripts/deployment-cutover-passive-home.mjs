@@ -3,6 +3,7 @@ import source from "./deployment-cutover-passive-home.py";
 
 const fail = () => { throw Error("DEPLOYMENT_CUTOVER_PASSIVE_HOME_REFUSED"); };
 const identityKeys = ["schema", "pid", "ppid", "uid", "gid", "startSeconds", "startMicroseconds"];
+const absenceKeys = ["schema", "pid", "evidence"];
 const integer = value => Number.isSafeInteger(value) && value >= 0;
 
 // Internal transport, not launcher authority. The zero-input owner must derive
@@ -16,6 +17,11 @@ export function measureDeploymentCutoverPassiveHomeV1(request) {
 export function identifyDeploymentCutoverPassiveProcessV1(request) {
   if (arguments.length !== 1) fail();
   return invoke(request, "identify");
+}
+
+export function monitorDeploymentCutoverPassiveProcessV1(request) {
+  if (arguments.length !== 1) fail();
+  return invoke(request, "monitor");
 }
 
 function invoke(request, operation) {
@@ -32,11 +38,17 @@ function invoke(request, operation) {
     if (result.error || result.signal || result.status !== 0 || !Buffer.isBuffer(result.stdout)
       || !Buffer.isBuffer(result.stderr) || result.stderr.length || result.stdout.length > 4096) fail();
     const raw = result.stdout.toString("utf8"), value = JSON.parse(raw);
-    const keys = operation === "identify" ? identityKeys : [...identityKeys, "homeContext", "completeEnvironmentValidated", "stableDoubleRead"];
+    const absence = operation === "monitor" && value?.schema === "setfarm.internal-production-passive-process-absence.v1";
+    const keys = absence ? absenceKeys : operation === "measure"
+      ? [...identityKeys, "homeContext", "completeEnvironmentValidated", "stableDoubleRead"] : identityKeys;
     if (!Buffer.from(raw).equals(result.stdout) || !value || typeof value !== "object" || Array.isArray(value)
-      || Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))
-      || value.schema !== (operation === "identify" ? "setfarm.internal-production-passive-process-identity.v1" : "setfarm.internal-production-passive-home-measurement.v1")
+      || Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) fail();
+    if (absence) {
+      if (!integer(value.pid) || value.pid <= 1 || value.pid !== request.pid || value.evidence !== "proc-pidinfo-esrch") fail();
+    } else if (value.schema !== (operation === "measure" ? "setfarm.internal-production-passive-home-measurement.v1" : "setfarm.internal-production-passive-process-identity.v1")
       || (operation === "measure" && (value.homeContext !== "account" || value.completeEnvironmentValidated !== true || value.stableDoubleRead !== true
+        || value.startSeconds !== request.expectedStartSeconds || value.startMicroseconds !== request.expectedStartMicroseconds))
+      || (operation === "monitor" && (value.ppid !== request.expectedParentPid
         || value.startSeconds !== request.expectedStartSeconds || value.startMicroseconds !== request.expectedStartMicroseconds))
       || ["pid", "ppid", "uid", "gid", "startSeconds", "startMicroseconds"].some(key => !integer(value[key]))
       || value.pid <= 1 || value.startSeconds === 0 || value.startMicroseconds >= 1000000

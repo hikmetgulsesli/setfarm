@@ -60,12 +60,12 @@ tests and does not solve the race; retain the fixed system interpreter.
 - Existing bootstrap fixture/source inventories remain authenticated; no new
   caller-provided source, PID, environment or execution authority.
 
-- [ ] RED native first/second lookup ESRCH, successful identity and owned exit;
+- [x] RED native first/second lookup ESRCH, successful identity and owned exit;
   reject stale errno, short+ESRCH, EPERM, mismatch then disappearance and pathfail.
-- [ ] RED launcher typed absence→idle; reject later occupied/replaced label,
+- [x] RED launcher typed absence→idle; reject later occupied/replaced label,
   malformed/crossed wire, generic errors; initial identify/measure still strict.
-- [ ] GREEN minimal native/transport/monitor implementation with no native retry.
-- [ ] Focused native/launcher/composed, broadcutover, serialgenuine, manifest,
+- [x] GREEN minimal native/transport/monitor implementation with no native retry.
+- [x] Focused native/launcher/composed, broadcutover, serialgenuine, manifest,
   noemit, English/path and diff checks; independent implementation review.
 - [ ] Reviewed PR, exact-head cloud review, SHA-bound merge and separate normal
   clean-main build. One fresh sanitized host inspection; act on actual evidence.
@@ -73,3 +73,17 @@ tests and does not solve the race; retain the fixed system interpreter.
 Spec: docs/superpowers/specs/2026-09-16-preserved-deployment-cutover-design.md.
 No service/link/archive/DB mutation. All unrelated controller/filesystem/helper/
 phase/journal blockers remain. No full-goal or host-qualification claim.
+
+## Local verification evidence
+
+Fresh TDD evidence on the seven-file working diff: native45/45; transport RED
+15pass/16fail before the monitor export, then hardened transport39/39; owner RED
+87pass/11fail before sampled monitor ownership, then owner98/98; authenticated
+composed15/15 including typed absence→idle and same/replacement/startup/error/
+malformed refusals. Broad internal-production cutover passed342/342. Standard
+serial genuine passed39/39 in82.9s. Exact source manifest18/18, TypeScript noemit,
+English1567, paths892, Mission Control contracts12, migration digests and diff
+whitespace checks passed. Authenticated source inventories required no membership
+change because the implementation reuses their existing files. Independent
+read-only implementation review found no findings. PR/merge/build/host evidence
+is not yet claimed.

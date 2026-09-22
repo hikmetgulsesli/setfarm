@@ -48,6 +48,7 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
         export const holdDeploymentCutoverNodePathV1=(...args)=>globalThis.nodeHold(...args);
         export const observeDeploymentCutoverProcessFamiliesV1=()=>globalThis.processes();
         export const identifyDeploymentCutoverPassiveProcessV1=request=>globalThis.identify(request);
+        export const monitorDeploymentCutoverPassiveProcessV1=request=>globalThis.monitor(request);
         export const measureDeploymentCutoverPassiveHomeV1=request=>globalThis.measure(request);
       `);
       for (const name of ["baseline-deployment-cutover-node-path-v1", "baseline-deployment-cutover-process-observation-v1"])
@@ -55,6 +56,7 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
       const native = path.join(home, "default-native.mjs");
       fs.writeFileSync(native, `globalThis.allowRunning=true;
         export const identifyDeploymentCutoverPassiveProcessV1=request=>globalThis.identify(request);
+        export const monitorDeploymentCutoverPassiveProcessV1=request=>globalThis.monitor(request);
         export const measureDeploymentCutoverPassiveHomeV1=request=>globalThis.measure(request);`);
       source = source.replace('new URL("../../scripts/deployment-cutover-passive-home.mjs", import.meta.url).href', JSON.stringify(pathToFileURL(native).href));
     } else {
@@ -75,7 +77,14 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
     globalThis.dbCalls=0;globalThis.samples=0;globalThis.nodeCloses=0;
     globalThis.processes=()=>Object.freeze({families:Object.freeze([]),listener:null});
     globalThis.nodeHold=()=>({observation:Object.freeze({candidatePath:'/fixture/invoked/node',executablePath:'/fixture/physical/node'}),recheck(){},close(){globalThis.nodeCloses++}});
-    globalThis.identify=request=>({...request,schema:'setfarm.internal-production-passive-process-identity.v1',ppid:1,startSeconds:1234,startMicroseconds:56});
+    globalThis.identify=request=>({schema:'setfarm.internal-production-passive-process-identity.v1',pid:request.pid,ppid:1,
+      uid:request.uid,gid:request.gid,startSeconds:1234,startMicroseconds:56});
+    globalThis.monitor=request=>{
+      const keys=['executable','expectedParentPid','expectedStartMicroseconds','expectedStartSeconds','gid','pid','uid'];
+      if(JSON.stringify(Object.keys(request).sort())!==JSON.stringify(keys)||request.executable!=='/fixture/physical/node'
+        ||request.expectedParentPid!==1||request.expectedStartSeconds!==1234||request.expectedStartMicroseconds!==56)throw Error('CROSSED_MONITOR_REQUEST');
+      return globalThis.identify({pid:request.pid,uid:request.uid,gid:request.gid,executable:request.executable});
+    };
     globalThis.measure=request=>{globalThis.samples++;if(globalThis.samples===2)setTimeout(()=>{globalThis.idle=true},0);return Object.freeze({schema:'setfarm.internal-production-passive-home-measurement.v1',pid:request.pid,ppid:1,uid:request.uid,gid:request.gid,startSeconds:1234,startMicroseconds:56,homeContext:'account',completeEnvironmentValidated:true,stableDoubleRead:true})};
     const spawn = cp.spawnSync;
     cp.spawnSync = (command, args, options) => {
@@ -224,29 +233,33 @@ test("sampled startup regression refuses before another native identity call", (
   assert.deepEqual(result.evidence, { identities: 2, samples: 2, dbCalls: 0 });
 }));
 
-for (const [transition, expectedStage] of [["idle", null], ["native-error", "sampled-native"],
-  ["identity-mismatch", "sampled-bind"], ["replacement", "sampled-postcheck"], ["malformed-idle", "sampled-postcheck"], ["sampled-startup", "sampled-postcheck"], ["settled-restart", "sampled-generation"]] as const) {
+for (const [transition, expectedStage] of [["identity-idle", null], ["native-error", "sampled-native"],
+  ["identity-mismatch", "sampled-bind"], ["identity-replacement", "sampled-postcheck"], ["malformed-idle", "sampled-postcheck"],
+  ["absence-idle", null], ["absence-same", "sampled-postcheck"], ["absence-replacement", "sampled-postcheck"],
+  ["absence-startup", "sampled-postcheck"], ["absence-malformed", "sampled-bind"], ["settled-restart", "sampled-generation"]] as const) {
   test(`sampled monitor ${transition} preserves authenticated settlement and refusal boundaries`, () => defaultFixture((home, texts) => {
     const result = observe(home, texts, `
-      const transition=${JSON.stringify(transition)},identify=globalThis.identify,command=cp.spawnSync;
+      const transition=${JSON.stringify(transition)},monitor=globalThis.monitor,command=cp.spawnSync;
       let monitored=false;
-      globalThis.identify=request=>{
-        const value=identify(request);
+      globalThis.monitor=request=>{
+        const value=monitor(request);
         if(globalThis.samples===2){
           monitored=true;
           if(transition==='settled-restart')globalThis.runningIndex=request.pid===12345?1:undefined;
-          if(transition==='idle'||transition==='native-error'||transition==='identity-mismatch')globalThis.idle=true;
+          if(transition==='identity-idle'||transition==='native-error'||transition==='identity-mismatch'||transition==='absence-idle')globalThis.idle=true;
           if(transition==='native-error')throw Error('TOKEN_SENTINEL');
           if(transition==='identity-mismatch')return {...value,startMicroseconds:57};
+          if(transition.startsWith('absence-'))return {schema:'setfarm.internal-production-passive-process-absence.v1',pid:request.pid,
+            evidence:'proc-pidinfo-esrch',...(transition==='absence-malformed'?{extra:true}:{})};
         }
         return value;
       };
       cp.spawnSync=(exe,args,options)=>{
         const value=command(exe,args,options);
         if(monitored&&exe==='/bin/launchctl'&&args[1].endsWith('setfarm-spawner')){
-          if(transition==='replacement')return {...value,stdout:Buffer.from(value.stdout.toString().replace('pid = 12345','pid = 22345'))};
+          if(transition==='identity-replacement'||transition==='absence-replacement')return {...value,stdout:Buffer.from(value.stdout.toString().replace('pid = 12345','pid = 22345'))};
           if(transition==='malformed-idle')return {...value,stdout:Buffer.from(value.stdout.toString().replace('state = running','state = spawn scheduled'))};
-          if(transition==='sampled-startup')return {...value,stdout:Buffer.from(value.stdout.toString().replace('state = running','state = xpcproxy'))};
+          if(transition==='absence-startup')return {...value,stdout:Buffer.from(value.stdout.toString().replace('state = running','state = xpcproxy'))};
         }
         return value;
       };
