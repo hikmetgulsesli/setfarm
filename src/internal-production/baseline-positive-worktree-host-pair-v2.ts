@@ -83,14 +83,25 @@ export async function observePositiveWorktreeHostPairWithPortsV2(
   let databaseSnapshot: ActiveOwnerRowSnapshotV2 | null = null;
   let phase = 0;
   let attempts = 0;
-  const physicalCatalog = await observePhysical(async () => {
+  let callbackPromise: Promise<void> | null = null;
+  const physicalCatalog = await observePhysical(() => {
     attempts += 1;
-    if (phase !== 0) fail();
+    if (phase !== 0) {
+      const rejected = Promise.reject(new Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_HOST_PAIR_INVALID"));
+      void rejected.catch(() => undefined);
+      return rejected;
+    }
     phase = 1;
-    databaseSnapshot = await observeDatabase();
-    phase = 2;
+    callbackPromise = Promise.resolve().then(observeDatabase).then((snapshot) => {
+      databaseSnapshot = snapshot;
+      phase = 2;
+    });
+    // A faulty fixture observer may return without awaiting this callback.
+    // Keep its eventual rejection handled while still refusing the early return.
+    void callbackPromise.catch(() => undefined);
+    return callbackPromise;
   });
-  if (attempts !== 1 || phase !== 2 || databaseSnapshot === null) fail();
+  if (attempts !== 1 || callbackPromise === null || phase !== 2 || databaseSnapshot === null) fail();
   const physicalEvidence = validPhysicalCatalog(physicalCatalog);
   const databaseEvidence = validDatabaseSnapshot(databaseSnapshot);
   const body = { schema: SCHEMA, authority: "diagnostic-only" as const,

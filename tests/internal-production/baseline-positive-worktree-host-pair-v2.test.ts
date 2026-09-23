@@ -127,6 +127,17 @@ test("missing callback and early physical return refuse rather than pairing late
   release!(database());
 });
 
+test("late database rejection after early physical return is handled, not orphaned", async () => {
+  let rejectLate: ((reason: Error) => void) | undefined;
+  const late = new Promise<ReturnType<typeof database>>((_resolve, reject) => { rejectLate = reject; });
+  await assert.rejects(observePositiveWorktreeHostPairWithPortsV2(async (betweenPasses) => {
+    void betweenPasses();
+    return catalog("/missing");
+  }, async () => late), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_HOST_PAIR_INVALID/);
+  rejectLate!(new Error("late-database-loss"));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+});
+
 test("malformed producer labels and observer errors never become empty evidence", async () => {
   const physical = catalog("/missing");
   await assert.rejects(observePositiveWorktreeHostPairWithPortsV2(async (betweenPasses) => {
