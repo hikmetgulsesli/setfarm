@@ -29,6 +29,13 @@ type HeldFile = { root: string; descriptor: number; first: BigIntStats };
 
 function fail(): never { throw Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID"); }
 
+function drift(kind: "directory-descriptor" | "directory-path" | "file-descriptor" | "file-path",
+  root: string): never {
+  throw Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID", {
+    cause: Object.freeze({ kind, root }),
+  });
+}
+
 function captureScope(value: unknown): Scope {
   if (value === null || typeof value !== "object" || types.isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype) fail();
   const descriptors = Object.getOwnPropertyDescriptors(value);
@@ -111,12 +118,16 @@ class HeldDirectories {
   assertStable(): void {
     if (this.closed || cleanupUncertain) fail();
     for (const entry of this.entries) {
-      if (!same(entry.first, fstatSync(entry.descriptor, { bigint: true }), entry.compareMutation)
-        || !same(entry.first, lstatSync(entry.root, { bigint: true }), entry.compareMutation)) fail();
+      if (!same(entry.first, fstatSync(entry.descriptor, { bigint: true }), entry.compareMutation))
+        drift("directory-descriptor", entry.root);
+      if (!same(entry.first, lstatSync(entry.root, { bigint: true }), entry.compareMutation))
+        drift("directory-path", entry.root);
     }
     for (const entry of this.files) {
-      if (!sameFile(entry.first, fstatSync(entry.descriptor, { bigint: true }))
-        || !sameFile(entry.first, lstatSync(entry.root, { bigint: true }))) fail();
+      if (!sameFile(entry.first, fstatSync(entry.descriptor, { bigint: true })))
+        drift("file-descriptor", entry.root);
+      if (!sameFile(entry.first, lstatSync(entry.root, { bigint: true })))
+        drift("file-path", entry.root);
     }
   }
 

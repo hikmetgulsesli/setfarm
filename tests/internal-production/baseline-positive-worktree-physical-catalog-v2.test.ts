@@ -712,6 +712,47 @@ test("an incidental discovery file mutation across the bracket refuses", async (
   }
 });
 
+test("held directory mutation reports exact local drift provenance while still refusing", async () => {
+  const testHome = fixture();
+  try {
+    const projects = path.join(testHome.ownerHomeRoot, "projects");
+    const stable = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(stable.status, "complete");
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async () => { writeFileSync(path.join(projects, "new-file"), "fixture"); }), (error: unknown) => {
+      assert.equal((error as Error).message, "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID");
+      const inner = (error as Error & { cause: Error & { cause: unknown } }).cause;
+      assert.deepEqual(inner.cause, { kind: "directory-descriptor", root: projects });
+      assert.equal(Object.isFrozen(inner.cause), true);
+      return true;
+    });
+  } finally {
+    testHome.close();
+  }
+});
+
+test("held incidental-file mutation reports its path while still refusing", async () => {
+  const testHome = fixture();
+  try {
+    const incidental = path.join(testHome.ownerHomeRoot, "projects", ".DS_Store");
+    writeFileSync(incidental, "before");
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async () => { writeFileSync(incidental, "after!"); }), (error: unknown) => {
+      assert.equal((error as Error).message, "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID");
+      const inner = (error as Error & { cause: Error & { cause: unknown } }).cause;
+      assert.deepEqual(inner.cause, { kind: "file-descriptor", root: incidental });
+      assert.equal(Object.isFrozen(inner.cause), true);
+      return true;
+    });
+  } finally {
+    testHome.close();
+  }
+});
+
 test("an oversized incidental-file census refuses before unbounded descriptor acquisition", async () => {
   const testHome = fixture();
   try {
