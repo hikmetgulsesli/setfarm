@@ -30,7 +30,7 @@
 - Produce `observePositiveWorktreeHostPairWithPortsV2(observePhysical, observeDatabase)` where `observePhysical` accepts one awaited `betweenPasses: () => Promise<void>` callback and returns the current catalog type, while `observeDatabase` returns the current active-row snapshot type.
 - Produce a frozen `{ schema, authority, physicalIdentityProvenance, physicalCatalog, databaseSnapshot, pairHash }` response. The nested producer objects stay unchanged.
 
-- [ ] Write a literal complete catalog fixture with one `prunable-git-worktree` blocker and a literal complete empty DB snapshot fixture. Fake physical first/second phases around `await betweenPasses()`; assert the event sequence `physical-first, database, physical-second`, exact schema/labels, unchanged blocker and rows, one database call, frozen outer response, 64-hex hash, and a changed hash when a blocker changes. Name the break: DB read outside the held callback or discarded unresolved evidence.
+- [ ] Write a literal complete catalog fixture with one `prunable-git-worktree` blocker and a literal complete empty DB snapshot fixture. Compute each producer hash over its full fixed fixture body. Fake physical first/second phases around `await betweenPasses()`; assert the event sequence `physical-first, database, physical-second`, exact schema/labels, unchanged blocker and rows, one database call, frozen outer response, 64-hex hash, and a changed pair hash when a blocker **and its catalog hash** change together. Name the break: DB read outside the held callback or discarded unresolved evidence.
   ```ts
   const events: string[] = [];
   const pair = await observePositiveWorktreeHostPairWithPortsV2(async (betweenPasses) => {
@@ -53,15 +53,15 @@
 - Modify: `src/internal-production/baseline-positive-worktree-host-pair-v2.ts`
 
 **Interfaces:**
-- Produce `observeCodeOwnedPositiveWorktreeHostPairV2()` with zero inputs. It calls `observeHeldPositiveWorktreePhysicalCatalogV2({ ownerHomeRoot: userInfo().homedir, workspaceRoot: resolveInternalProductionBaselineWorkspaceRootV1() }, betweenPasses)` and calls `observeCodeOwnedPositiveWorktreeActiveRowSnapshotV2()` only from that callback.
+- Produce `observeCodeOwnedPositiveWorktreeHostPairV2()` with zero inputs. It dynamically imports `../db-pg.js` before physical acquisition, then calls `observeHeldPositiveWorktreePhysicalCatalogV2({ ownerHomeRoot: userInfo().homedir, workspaceRoot: resolveInternalProductionBaselineWorkspaceRootV1() }, betweenPasses)` and calls the imported `observeCodeOwnedPositiveWorktreeActiveRowSnapshotV2()` only from that callback. Do not statically import `db-pg.ts` in this pure fixture module because its `runtime-config.ts` import loads `.env` at module evaluation.
 
-- [ ] Add tests that reject no callback, two callbacks, a callback invoked but not awaited, malformed catalog schema/hash, malformed DB authority/hash, physical failure, and DB failure. Each refusal must reject without returning a pair or substituting empty evidence. A fixture observer is justified because real Git/lsof/PostgreSQL are external and the existing producer suites test their own behavior.
+- [ ] Add tests that reject no callback, two callbacks, an observer resolving before the callback settles, malformed catalog schema/hash, malformed DB authority/hash, a valid-format wrong producer hash, mutable nested evidence/post-return mutation, physical failure, and DB failure. Each refusal must reject without returning a pair or substituting empty evidence. Recompute both producer hashes from their complete bodies and require recursively frozen plain data; do not accept hash format alone. A fixture observer is justified because real Git/lsof/PostgreSQL are external and the existing producer suites test their own behavior. The fixture can detect early return, not an `await` keyword; the production catalog explicitly awaits the callback.
   ```ts
   await assert.rejects(observePositiveWorktreeHostPairWithPortsV2(async () => catalog,
     async () => database), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_HOST_PAIR_INVALID/);
   ```
 - [ ] Run the focused test; verify RED for each missing guard, then add the minimal guard and verify GREEN.
-- [ ] Add the zero-input production wrapper using only the existing code-owned producers. Do not introduce caller scope, SQL, or zero assertions.
+- [ ] Add the zero-input production wrapper using only the existing code-owned producers. Add an import-inertness test for the pure fixture module and verify the DB dynamic import completes before physical acquisition. Do not introduce caller scope, SQL, or zero assertions.
 - [ ] Run focused, `npm run test:internal-production:pure`, `npm run test:internal-production:cutover`, `npx tsc --noEmit`, contract checks, and `git diff --check`. Request independent read-only code review and fix every Critical/Important finding with RED→GREEN evidence.
 - [ ] Commit conventionally, push the scoped branch, open PR, inspect exact-head GitGuardian and cloud review, and SHA-condition squash merge. Do not delete any worktree.
 - [ ] Fast-forward the independent clean-main deployment clone and run normal `npm run build`; fast-forward only the selected source checkout while preserving historical dist/CLI identity. Run one read-only host pair probe. Report unresolved blockers or metadata drift without a cutover claim.
