@@ -108,6 +108,11 @@ import {
 } from "./internal-production/owner-admission-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "./product-compiler/canonical-json.js";
 import {
+  normalizeActiveOwnerRowPgResultV2,
+  observePositiveWorktreeActiveRowSnapshotWithTransactionV2,
+  type ActiveOwnerRowSnapshotV2,
+} from "./internal-production/baseline-positive-worktree-active-row-snapshot-v2.js";
+import {
   validateCurrentInternalProductionOwnerAdmissionHeadV1,
   validateOwnerAdmissionAncestryToGenesisV1,
   validateOwnerAdmissionMigrationApplicationV1,
@@ -238,6 +243,13 @@ function getSql(): SetfarmSqlV1 {
 }
 
 export { getSql };
+
+/** Read-only row evidence only: never grants physical ownership or cutover authority. */
+export async function observeCodeOwnedPositiveWorktreeActiveRowSnapshotV2(): Promise<ActiveOwnerRowSnapshotV2> {
+  return observePositiveWorktreeActiveRowSnapshotWithTransactionV2((mode, operation) =>
+    getSql().begin(mode, async (sql) => operation(async (statement) =>
+      normalizeActiveOwnerRowPgResultV2(await sql.unsafe<Record<string, unknown>[]>(statement)))));
+}
 
 type OwnerProducerSourceRowV1 = Readonly<{
   source_build_authority_ref: string;
