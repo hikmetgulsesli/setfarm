@@ -1,4 +1,5 @@
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { types } from "node:util";
 
 // Diagnostic only. PostgreSQL path text is not physical identity or cutover authority.
 const SCHEMA = "setfarm.internal-production-positive-worktree-active-rows.v2";
@@ -22,6 +23,30 @@ export type ActiveOwnerRowBeginV2 = (mode: typeof MODE,
   operation: (query: ActiveOwnerRowQueryV2) => Promise<ActiveOwnerRowSnapshotV2>) => Promise<ActiveOwnerRowSnapshotV2>;
 
 function fail(): never { throw new Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_ACTIVE_ROW_SNAPSHOT_INVALID"); }
+
+// postgres.js returns Result extends Array with non-row metadata. Strip only the
+// container metadata at the DB boundary; the strict row/array parser remains below.
+export function normalizeActiveOwnerRowPgResultV2(
+  result: readonly Record<string, unknown>[],
+): readonly Record<string, unknown>[] {
+  if (!Array.isArray(result) || types.isProxy(result) || result.length > MAX_ROWS + 1
+    || Object.getPrototypeOf(Object.getPrototypeOf(result)) !== Array.prototype) fail();
+  const descriptors = Object.getOwnPropertyDescriptors(result);
+  const metadata = ["count", "state", "command", "columns", "statement"];
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.length !== result.length + metadata.length + 1) fail();
+  for (const key of metadata) {
+    const descriptor = descriptors[key];
+    if (!descriptor || descriptor.enumerable || !('value' in descriptor)) fail();
+  }
+  const rows: Record<string, unknown>[] = [];
+  for (let index = 0; index < result.length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) fail();
+    rows.push(descriptor.value as Record<string, unknown>);
+  }
+  return rows;
+}
 
 const COUNTS_SQL = `SELECT
   (SELECT COUNT(*)::text FROM public.runs WHERE status IN ('running','resuming','cancelling','failing')) AS "runCount",
@@ -63,31 +88,110 @@ function decimal(value: unknown): number {
   return parsed;
 }
 
+function exact(value: unknown, keys: readonly string[]): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || types.isProxy(value)
+    || Object.getPrototypeOf(value) !== Object.prototype) fail();
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const actual = Reflect.ownKeys(descriptors);
+  if (actual.length !== keys.length || actual.some((key) => typeof key !== "string" || !keys.includes(key)
+    || !descriptors[key]!.enumerable || !("value" in descriptors[key]!))) fail();
+  return Object.fromEntries(keys.map((key) => [key, descriptors[key]!.value as unknown]));
+}
+
+function text(value: unknown, maxBytes: number, allowEmpty = false): string {
+  if (typeof value !== "string" || (!allowEmpty && value.length === 0) || value.includes("\0")
+    || Buffer.byteLength(value) > maxBytes || Buffer.from(value, "utf8").toString("utf8") !== value) fail();
+  return value;
+}
+
+function optionalText(value: unknown, maxBytes: number, allowEmpty = false): string | null {
+  return value === null ? null : text(value, maxBytes, allowEmpty);
+}
+
+function claimId(value: unknown, optional = false): string | null {
+  if (value === null && optional) return null;
+  if (typeof value !== "string" || !/^[1-9][0-9]{0,19}$/.test(value)
+    || BigInt(value) > 9_223_372_036_854_775_807n) fail();
+  return value;
+}
+
+function array(value: unknown, expected: number): readonly unknown[] {
+  if (types.isProxy(value) || !Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype
+    || value.length !== expected || value.length > MAX_ROWS) fail();
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.length !== expected + 1 || keys.some((key) => {
+    if (key === "length") return false;
+    if (typeof key !== "string" || !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= expected) return true;
+    return !descriptors[key]!.enumerable || !("value" in descriptors[key]!);
+  })) fail();
+  return Array.from({ length: expected }, (_, index) => descriptors[String(index)]!.value as unknown);
+}
+
 function counts(value: unknown): ActiveOwnerRowSnapshotV2["counts"] {
-  if (!Array.isArray(value) || value.length !== 1 || value[0] === null || typeof value[0] !== "object") fail();
-  const row = value[0] as Record<string, unknown>;
   const keys = ["runCount", "claimCount", "attemptCount", "sessionCount",
     "oversizedRunCount", "oversizedClaimCount", "oversizedAttemptCount", "oversizedSessionCount"];
-  if (Object.keys(row).length !== keys.length || keys.some((key) => !Object.hasOwn(row, key))) fail();
+  const row = exact(array(value, 1)[0], keys);
   const parsed = Object.fromEntries(keys.map((key) => [key, decimal(row[key])])) as Record<string, number>;
   if (keys.slice(4).some((key) => parsed[key] !== 0) || keys.slice(0, 4).some((key) => parsed[key]! > MAX_ROWS)) fail();
   return Object.freeze({ runCount: parsed.runCount!, claimCount: parsed.claimCount!,
     attemptCount: parsed.attemptCount!, sessionCount: parsed.sessionCount! });
 }
 
-function emptyRows(value: unknown, expected: number): readonly Readonly<Record<string, unknown>>[] {
-  if (!Array.isArray(value) || value.length !== expected || value.length > MAX_ROWS || expected !== 0) fail();
-  return Object.freeze([]);
+type RowKind = "run" | "claim" | "attempt" | "session";
+
+function parsedRow(value: unknown, kind: RowKind): Readonly<Record<string, unknown>> {
+  if (kind === "run") {
+    const row = exact(value, ["runId", "status"]);
+    const status = text(row.status, 256);
+    if (!["running", "resuming", "cancelling", "failing"].includes(status)) fail();
+    return Object.freeze({ runId: text(row.runId, 256), status });
+  }
+  if (kind === "claim") {
+    const row = exact(value, ["claimId", "runId", "stepId", "storyId", "agentId"]);
+    return Object.freeze({ claimId: claimId(row.claimId), runId: text(row.runId, 256),
+      stepId: text(row.stepId, 256), storyId: optionalText(row.storyId, 256, true),
+      agentId: text(row.agentId, 256) });
+  }
+  if (kind === "attempt") {
+    const row = exact(value, ["attemptId", "runId", "stepId", "storyId", "claimId", "worktreeRoot", "disposition"]);
+    const disposition = text(row.disposition, 256);
+    if (disposition !== "claimed" && disposition !== "running") fail();
+    return Object.freeze({ attemptId: text(row.attemptId, 256), runId: text(row.runId, 256),
+      stepId: text(row.stepId, 256), storyId: text(row.storyId, 256, true),
+      claimId: claimId(row.claimId, true), worktreeRoot: optionalText(row.worktreeRoot, 2048, true),
+      disposition });
+  }
+  const row = exact(value, ["sessionId", "runId", "claimId", "attemptId", "worktreeRoot", "state", "ownerInstanceId"]);
+  const state = text(row.state, 256);
+  if (!["reserved", "starting", "running", "drain_requested", "drained"].includes(state)) fail();
+  return Object.freeze({ sessionId: text(row.sessionId, 256), runId: text(row.runId, 256),
+    claimId: claimId(row.claimId), attemptId: optionalText(row.attemptId, 256),
+    worktreeRoot: optionalText(row.worktreeRoot, 2048, true), state,
+    ownerInstanceId: text(row.ownerInstanceId, 256) });
+}
+
+function rows(value: unknown, expected: number, kind: RowKind): readonly Readonly<Record<string, unknown>>[] {
+  const result = array(value, expected).map((row) => parsedRow(row, kind));
+  for (let index = 1; index < result.length; index += 1) {
+    const key = kind === "run" ? "runId" : kind === "claim" ? "claimId"
+      : kind === "attempt" ? "attemptId" : "sessionId";
+    const previous = result[index - 1]![key] as string;
+    const current = result[index]![key] as string;
+    if (kind === "claim" ? BigInt(previous) >= BigInt(current)
+      : Buffer.compare(Buffer.from(previous, "utf8"), Buffer.from(current, "utf8")) >= 0) fail();
+  }
+  return Object.freeze(result);
 }
 
 export async function observePositiveWorktreeActiveRowSnapshotInTransactionV2(
   query: ActiveOwnerRowQueryV2,
 ): Promise<ActiveOwnerRowSnapshotV2> {
   const observedCounts = counts(await query(COUNTS_SQL));
-  const activeRuns = emptyRows(await query(RUNS_SQL), observedCounts.runCount);
-  const openClaims = emptyRows(await query(CLAIMS_SQL), observedCounts.claimCount);
-  const activeAttempts = emptyRows(await query(ATTEMPTS_SQL), observedCounts.attemptCount);
-  const activeSessions = emptyRows(await query(SESSIONS_SQL), observedCounts.sessionCount);
+  const activeRuns = rows(await query(RUNS_SQL), observedCounts.runCount, "run");
+  const openClaims = rows(await query(CLAIMS_SQL), observedCounts.claimCount, "claim");
+  const activeAttempts = rows(await query(ATTEMPTS_SQL), observedCounts.attemptCount, "attempt");
+  const activeSessions = rows(await query(SESSIONS_SQL), observedCounts.sessionCount, "session");
   const body = { schema: SCHEMA, authority: "diagnostic-only" as const,
     physicalIdentityProvenance: "unverified" as const,
     activeRuns, openClaims, activeAttempts, activeSessions, counts: observedCounts } as const;

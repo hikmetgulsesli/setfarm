@@ -8,6 +8,8 @@ Choose a bounded, read-only active-row snapshot before schema migration or physi
 
 The observer has one zero-input code-owned entry point in `db-pg.ts`, backed by Setfarm's existing lazy PostgreSQL connection. It begins exactly one `REPEATABLE READ READ ONLY` transaction, reads all four active row sets independently, and returns a frozen canonical diagnostic object and SHA-256 hash. A fixture-only transaction seam in a small internal-production module tests the real validation/query logic; neither entry point calls the V2 owner projector or any cutover/launch/DB-write code.
 
+The production adapter converts each postgres.js `Result extends Array` container to a plain array before the strict parser. This removes driver metadata (`count`, `state`, `command`, `columns`, `statement`) without altering row objects. A production-shaped result fixture covers this boundary; the parser still rejects sparse arrays, unexpected fields, and malformed rows.
+
 ## Row sets
 
 - Active `public.runs`: `status IN ('running','resuming','cancelling','failing')`; select `id`, `status`.

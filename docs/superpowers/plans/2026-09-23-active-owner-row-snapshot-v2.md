@@ -16,6 +16,7 @@
 - All SQL tables are explicitly `public` qualified. A first same-snapshot aggregate query counts active rows and oversized selected text fields before any raw row SELECT.
 - Maximum 256 rows per set; each row query uses `LIMIT 257`. Scalar text response limit 256 bytes, nullable worktree path limit 2,048 bytes. No latency-bound claim.
 - Verify `COLLATE "C"` text order with `Buffer.compare` on UTF-8, BIGINT claim IDs with canonical decimal strings and `BigInt` comparison.
+- Normalize postgres.js `Result extends Array` metadata only at the DB adapter boundary; retain strict plain-array and exact-row validation. Independent review found that passing raw `Result` would refuse every real query despite passing plain-array fixtures.
 - Output is always `authority: "diagnostic-only"`, `physicalIdentityProvenance: "unverified"`; neither empty rows nor nullable worktree paths grant owner or cutover authority.
 
 ---
@@ -82,6 +83,7 @@
 
 - [ ] Extend the Task 1 transaction-seam test so the fake `begin` is called exactly once and a rejected transaction propagates as refusal. Keep SQL port mocking only at the external PostgreSQL boundary.
 - [ ] Add the minimal `db-pg.ts` wrapper that passes `getSql()` into the tested read-only transaction helper and adapts `sql.unsafe(statement)` to its row-query seam. Do not create a new connection or query path.
+- [ ] Cover a postgres.js-shaped `Result` container, preflight count 256 with a 257-row raw response, exact predicates/aliases, and every selected-field byte preflight. These close independent review gaps that could otherwise produce false or unobservable row evidence.
 - [ ] Run focused/pure/cutover tests, TypeScript, migration/path/English checks as applicable, and diff checks. Request independent read-only code review; reproduce any Important/Critical finding RED before fixing it.
 - [ ] Commit conventionally, push one scoped branch, open PR, inspect exact-head GitGuardian/cloud review, and SHA-condition the squash merge. Do not delete worktrees.
 - [ ] Fast-forward the independent clean-main deployment clone and run normal `npm run build`; fast-forward only the selected source checkout while preserving selected dist/CLI physical identity. Run a read-only host DB probe only if an existing credential context is available, and report any connection refusal or unresolved rows without cutover claims.
