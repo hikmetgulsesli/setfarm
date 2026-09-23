@@ -5,6 +5,7 @@ import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import childProcess from "node:child_process";
 import { once } from "node:events";
 import { test } from "node:test";
 
@@ -318,6 +319,39 @@ test("lsof observer child does not count its own cwd as an external reference", 
     assert.deepEqual(observed.entries[0]?.referencingPids, []);
   } finally {
     process.chdir(originalCwd);
+    testHome.close();
+  }
+});
+
+test("status-1 lsof output naming another PID refuses with exact root evidence", async () => {
+  const testHome = fixture();
+  const originalSpawn = childProcess.spawnSync;
+  const otherPid = 999_999;
+  try {
+    const unknown = path.join(testHome.workspaceRoot, ".worktrees", "data");
+    mkdirSync(unknown, { recursive: true });
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async () => {
+      childProcess.spawnSync = ((file: string, args: readonly string[], options: unknown) => {
+        if (file === "/usr/sbin/lsof" && args.includes(unknown)) return {
+          status: 1, stdout: Buffer.from(`p${process.pid}\0\np${otherPid}\0\n`),
+          stderr: Buffer.alloc(0), signal: null, error: undefined,
+        };
+        return Reflect.apply(originalSpawn, childProcess, [file, args, options]);
+      }) as unknown as typeof spawnSync;
+      syncBuiltinESMExports();
+    }), (error: unknown) => {
+      assert.equal((error as Error).message, "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID");
+      const inner = (error as Error & { cause: Error & { cause: unknown } }).cause;
+      assert.deepEqual(inner.cause, { kind: "lsof-status1-nonobserver-pids", root: unknown,
+        observedPids: [process.pid, otherPid].sort((a, b) => a - b) });
+      assert.equal(Object.isFrozen(inner.cause), true);
+      return true;
+    });
+  } finally {
+    childProcess.spawnSync = originalSpawn;
+    syncBuiltinESMExports();
     testHome.close();
   }
 });
@@ -707,6 +741,47 @@ test("an incidental discovery file mutation across the bracket refuses", async (
       ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
     }, async () => { writeFileSync(incidental, "after!"); }),
     /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("held directory mutation reports exact local drift provenance while still refusing", async () => {
+  const testHome = fixture();
+  try {
+    const projects = path.join(testHome.ownerHomeRoot, "projects");
+    const stable = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(stable.status, "complete");
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async () => { writeFileSync(path.join(projects, "new-file"), "fixture"); }), (error: unknown) => {
+      assert.equal((error as Error).message, "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID");
+      const inner = (error as Error & { cause: Error & { cause: unknown } }).cause;
+      assert.deepEqual(inner.cause, { kind: "directory-descriptor", root: projects });
+      assert.equal(Object.isFrozen(inner.cause), true);
+      return true;
+    });
+  } finally {
+    testHome.close();
+  }
+});
+
+test("held incidental-file mutation reports its path while still refusing", async () => {
+  const testHome = fixture();
+  try {
+    const incidental = path.join(testHome.ownerHomeRoot, "projects", ".DS_Store");
+    writeFileSync(incidental, "before");
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async () => { writeFileSync(incidental, "after!"); }), (error: unknown) => {
+      assert.equal((error as Error).message, "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID");
+      const inner = (error as Error & { cause: Error & { cause: unknown } }).cause;
+      assert.deepEqual(inner.cause, { kind: "file-descriptor", root: incidental });
+      assert.equal(Object.isFrozen(inner.cause), true);
+      return true;
+    });
   } finally {
     testHome.close();
   }
