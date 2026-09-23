@@ -438,17 +438,19 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
       path.join(workspaceRoot, "mission-control", ".worktrees"), path.join(workspaceRoot, "deployments")]) addBase(root, "retained-zone");
     addBase(path.join(ownerHomeRoot, ".openclaw", "workspace", "agent-scratch", "story-worktrees"), "runtime-zone");
     const incidentalFiles: string[] = [];
+    const absentAgentsParents: string[] = [];
     const projectRoots = children(held, path.join(ownerHomeRoot, "projects"), incidentalFiles);
     for (const project of projectRoots) addBase(path.join(project, ".worktrees"), "runtime-zone");
     for (const workflow of children(held, path.join(ownerHomeRoot, ".openclaw", "workspaces", "workflows"), incidentalFiles)) {
       addBase(path.join(workflow, "story-worktrees"), "runtime-zone");
       const agents = path.join(workflow, "agents");
-      if (isMissing(agents)) fail();
+      if (isMissing(agents)) { absentAgentsParents.push(agents); continue; }
       for (const agent of children(held, agents, incidentalFiles)) addBase(path.join(agent, "story-worktrees"), "runtime-zone");
     }
 
     const entries: Candidate[] = [];
-    const blockers: Array<Readonly<{ root: string; reason: string }>> = [];
+    const blockers: Array<Readonly<{ root: string; reason: string }>> = absentAgentsParents.map((root) =>
+      Object.freeze({ root, reason: "absent-workflow-agents-discovery-parent" }));
     const listedGroups: Array<readonly string[]> = [];
     const firstByRoot = new Map<string, Readonly<{ base: string; zone: Zone; listedHash: string; reason: string | null }>>();
     const parentGitLists = new Map<string, string>();
@@ -504,6 +506,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     await betweenPasses();
     held.assertStable();
     for (const root of absentBases) if (!isMissing(root)) fail();
+    for (const root of absentAgentsParents) if (!isMissing(root)) fail();
     for (const root of absentLockedRoots) if (!isMissing(root)) fail();
     for (const [parent, firstHash] of parentGitLists) {
       const fresh = primaryWorktreeRoots(held, parent);
