@@ -446,13 +446,74 @@ test("a non-Git project parent never hides its present worktree child", async ()
   }
 });
 
-test("a workflow without its agents discovery parent refuses instead of claiming complete coverage", async () => {
+test("a workflow without its agents discovery parent stays unresolved beside visible worktrees", async () => {
   const testHome = fixture();
   try {
-    mkdirSync(path.join(testHome.ownerHomeRoot, ".openclaw", "workspaces", "workflows", "workflow-1"));
+    const workflow = path.join(testHome.ownerHomeRoot, ".openclaw", "workspaces", "workflows", "workflow-1");
+    const agents = path.join(workflow, "agents");
+    const unknown = path.join(testHome.workspaceRoot, ".worktrees", "data");
+    mkdirSync(workflow);
+    mkdirSync(unknown, { recursive: true });
+    const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(result.status, "unresolved");
+    assert.ok(result.entries.some((entry) => entry.root === unknown && entry.kind === "unresolved"));
+    assert.ok(result.blockers.some((item) => item.root === agents
+      && item.reason === "absent-workflow-agents-discovery-parent"));
+    assert.equal(result.absentBases.includes(agents), false);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("a stable missing agents parent alone cannot qualify the catalog", async () => {
+  const testHome = fixture();
+  try {
+    const workflow = path.join(testHome.ownerHomeRoot, ".openclaw", "workspaces", "workflows", "workflow-1");
+    const agents = path.join(workflow, "agents");
+    mkdirSync(workflow);
+    const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(result.status, "unresolved");
+    assert.deepEqual(result.entries, []);
+    assert.deepEqual(result.blockers, [{ root: agents, reason: "absent-workflow-agents-discovery-parent" }]);
+    mkdirSync(agents);
+    const present = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    });
+    assert.equal(present.status, "complete");
+    assert.notEqual(result.catalogHash, present.catalogHash);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("an absent workflow agents parent appearing during the bracket refuses", async () => {
+  const testHome = fixture();
+  try {
+    const workflow = path.join(testHome.ownerHomeRoot, ".openclaw", "workspaces", "workflows", "workflow-1");
+    const agents = path.join(workflow, "agents");
+    mkdirSync(workflow);
     await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
       ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
-    }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+    }, async () => { mkdirSync(agents); }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("an absent workflow agents parent create-remove ABA refuses", async () => {
+  const testHome = fixture();
+  try {
+    const workflow = path.join(testHome.ownerHomeRoot, ".openclaw", "workspaces", "workflows", "workflow-1");
+    const agents = path.join(workflow, "agents");
+    mkdirSync(workflow);
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async () => { mkdirSync(agents); rmSync(agents, { recursive: true }); }),
+    /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
   } finally {
     testHome.close();
   }
