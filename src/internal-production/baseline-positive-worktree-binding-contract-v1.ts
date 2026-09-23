@@ -49,6 +49,16 @@ function gitOid(value: unknown): string {
 
 function identityText(value: unknown): string { return boundedText(value, 256); }
 
+function attemptId(value: unknown): string {
+  if (typeof value !== "string" || !/^ATT_[A-Za-z0-9-]{16,160}$/.test(value)) fail();
+  return value;
+}
+
+function sessionId(value: unknown): string {
+  if (typeof value !== "string" || !/^RTS_[A-Za-z0-9-]{16,160}$/.test(value)) fail();
+  return value;
+}
+
 function claimId(value: unknown): string {
   if (typeof value !== "string" || !/^[1-9][0-9]{0,18}$/.test(value)
     || BigInt(value) > 9_223_372_036_854_775_807n) fail();
@@ -65,12 +75,12 @@ function attempt(value: unknown) {
     "worktreeRoot", "sourceSha", "sourceTreeHash", "disposition"]);
   if (!Number.isSafeInteger(row.generation) || (row.generation as number) <= 0
     || (row.disposition !== "claimed" && row.disposition !== "running")) fail();
-  const attemptId = identityText(row.attemptId);
+  const parsedAttemptId = attemptId(row.attemptId);
   const generation = row.generation as number;
   const fenceToken = sha256(row.fenceToken);
   return Object.freeze({ runId: identityText(row.runId), claimId: claimId(row.claimId),
-    attemptId, generation,
-    fenceTokenHash: hashCanonicalJson({ schema: FENCE_SCHEMA, attemptId, generation, fenceToken }),
+    attemptId: parsedAttemptId, generation,
+    fenceTokenHash: hashCanonicalJson({ schema: FENCE_SCHEMA, attemptId: parsedAttemptId, generation, fenceToken }),
     worktreeRoot: root(row.worktreeRoot),
     sourceSha: gitOid(row.sourceSha), sourceTreeHash: gitOid(row.sourceTreeHash),
     disposition: row.disposition as "claimed" | "running" });
@@ -81,7 +91,7 @@ function session(value: unknown) {
     "worktreeRoot", "state"]);
   if (!["reserved", "starting", "running", "drain_requested", "drained"].includes(row.state as string)) fail();
   return Object.freeze({ runId: identityText(row.runId), claimId: claimId(row.claimId),
-    attemptId: identityText(row.attemptId), sessionId: identityText(row.sessionId),
+    attemptId: attemptId(row.attemptId), sessionId: sessionId(row.sessionId),
     ownerInstanceId: identityText(row.ownerInstanceId), worktreeRoot: root(row.worktreeRoot),
     state: row.state as "reserved" | "starting" | "running" | "drain_requested" | "drained" });
 }
@@ -99,8 +109,8 @@ function receipt(value: unknown) {
   if (row.schema !== RECEIPT_SCHEMA || !Number.isSafeInteger(row.generation)
     || (row.generation as number) <= 0) fail();
   const body = Object.freeze({ schema: RECEIPT_SCHEMA, runId: identityText(row.runId),
-    claimId: claimId(row.claimId), attemptId: identityText(row.attemptId),
-    sessionId: identityText(row.sessionId), ownerInstanceId: identityText(row.ownerInstanceId),
+    claimId: claimId(row.claimId), attemptId: attemptId(row.attemptId),
+    sessionId: sessionId(row.sessionId), ownerInstanceId: identityText(row.ownerInstanceId),
     generation: row.generation as number, fenceTokenHash: sha256(row.fenceTokenHash),
     root: root(row.root), physicalIdentityHash: sha256(row.physicalIdentityHash),
     sourceSha: gitOid(row.sourceSha), sourceTreeHash: gitOid(row.sourceTreeHash) });

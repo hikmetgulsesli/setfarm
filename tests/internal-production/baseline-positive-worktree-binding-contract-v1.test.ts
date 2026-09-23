@@ -11,14 +11,14 @@ const SHA = "a".repeat(40);
 const TREE = "b".repeat(40);
 const FENCE = "c".repeat(64);
 
-function fixture() {
+function fixture(attemptId = "ATT_1234567890abcdef", sessionId = "RTS_1234567890abcdef") {
   const physical = { root: "/runtime/story-worktrees/us-1", dev: "1", ino: "2",
     birthtimeNs: "3", gitPrimaryRoot: "/runtime/project" };
-  const attempt = { runId: "run-1", claimId: "7", attemptId: "ATT_1", generation: 1,
+  const attempt = { runId: "run-1", claimId: "7", attemptId, generation: 1,
     fenceToken: FENCE, worktreeRoot: physical.root, sourceSha: SHA,
     sourceTreeHash: TREE, disposition: "running" };
-  const session = { runId: "run-1", claimId: "7", attemptId: "ATT_1",
-    sessionId: "RTS_1", ownerInstanceId: "owner-1", worktreeRoot: physical.root,
+  const session = { runId: "run-1", claimId: "7", attemptId,
+    sessionId, ownerInstanceId: "owner-1", worktreeRoot: physical.root,
     state: "running" };
   const physicalIdentityHash = hashCanonicalJson({ schema: IDENTITY_SCHEMA, ...physical });
   const fenceTokenHash = hashCanonicalJson({ schema: FENCE_SCHEMA, attemptId: attempt.attemptId,
@@ -97,4 +97,12 @@ test("shape and exotic-object refusals", () => {
   const malformed = fixture();
   malformed.receipt.physicalIdentityHash = "a".repeat(64);
   assert.throws(() => projectPositiveWorktreeBindingCandidateV1(malformed), /BINDING_CONTRACT_INVALID/);
+});
+
+test("self-consistent receipts cannot bless noncanonical attempt or session IDs", () => {
+  for (const input of [fixture("ATT_short"), fixture(undefined, "RTS_short"),
+    fixture("ATT_1234567890abcdef!"), fixture(undefined, "RTS_1234567890abcdef!")]) {
+    assert.throws(() => projectPositiveWorktreeBindingCandidateV1(input),
+      /^Error: INTERNAL_PRODUCTION_POSITIVE_WORKTREE_BINDING_CONTRACT_INVALID$/);
+  }
 });
