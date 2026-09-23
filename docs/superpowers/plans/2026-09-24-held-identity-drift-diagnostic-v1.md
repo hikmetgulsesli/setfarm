@@ -11,6 +11,7 @@
 - [x] Add directory and incidental-file mutation fixtures asserting unchanged outer invalid error and exact frozen inner `{kind,root}` cause. Run focused RED.
 - [x] Split the existing `assertStable` compound comparisons only enough to label descriptor versus pathname drift; keep every `same`/`sameFile` predicate and throw on the same mismatch. Run focused GREEN and stable fixture regression.
 - [x] Run pure, cutover, TypeScript, contracts, `git diff --check`, and independent read-only code review. Fix any Important/Critical finding using RED/GREEN.
+- [x] Add the newly observed status-1/nonobserver-PID root/PID cause fixture RED; preserve rejection and make it GREEN. Rerun focused, pure/cutover, TypeScript, contracts, diff check, and read-only re-review before updating PR head.
 
 ## Delivery and host diagnosis
 

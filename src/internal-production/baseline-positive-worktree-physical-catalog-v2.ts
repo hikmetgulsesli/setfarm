@@ -228,7 +228,11 @@ function referencePids(held: HeldDirectories, root: string): readonly number[] {
   if (inclusive.status === 0) return Object.freeze(parseLsofPids(inclusive.stdout).filter((pid) => pid !== process.pid));
   if (inclusive.stdout.length === 0) return Object.freeze([]);
   const onlyObserver = parseLsofPids(inclusive.stdout);
-  if (onlyObserver.length !== 1 || onlyObserver[0] !== process.pid) fail();
+  if (onlyObserver.length !== 1 || onlyObserver[0] !== process.pid) {
+    throw Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID", {
+      cause: Object.freeze({ kind: "lsof-status1-nonobserver-pids", root, observedPids: onlyObserver }),
+    });
+  }
   const excluded = lsofObservation(held, root, true);
   if (excluded.status !== 1 || excluded.stdout.length !== 0) fail();
   return Object.freeze([]);
