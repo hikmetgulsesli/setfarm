@@ -1,5 +1,6 @@
 import type { LegacyFindingPublicationInventoryV1 } from "../findings/legacy-finding-publication-inventory-v1.js";
 import type { FindingPublicationParentRowV1, FindingPublicationChildRowV1 } from "../findings/finding-publication-v1.js";
+import type { ActiveOwnerRowSnapshotV2 } from "./baseline-positive-worktree-active-row-snapshot-v2.js";
 
 // Import-inert shared read-only primitive. Callers supply their privately held
 // URL and must independently fence source, credentials, runtime and ownership.
@@ -74,13 +75,18 @@ async function requireColdPre32CatalogAbsenceV1(connection: import("postgres").S
     || keys.some((key) => rows[0]![key] !== "0")) currentEntryFail("cold bootstrap migration32/33 catalog or journal is not absent");
 }
 
-export async function observeLegacyDatabaseCensusV1(databaseUrl: string | undefined, coldBootstrap = false, profile?: "cutover-local"): Promise<Readonly<{
+type LegacyDatabaseCensusV1 = Readonly<{
   activeRunCount: number; openClaimCount: number; executionAttemptCount: number;
   activeRuntimeSessionCount: number; activeCompletionOwnerCount: number; unsettledMandatoryEffectCount: number;
   artifactReservationCount: number; publicationBatchCount: number; artifactPublicationCount: number;
   terminationOwnerCount: number; findingOwnerCount: number; recoveryOwnerCount: number; operationalDeliveryCount: number;
   legacyFindingPublicationInventory: LegacyFindingPublicationInventoryV1;
-}>> {
+}>;
+
+async function observeLegacyDatabaseCensusWithContinuationV1<T>(
+  databaseUrl: string | undefined, coldBootstrap: boolean, profile: "cutover-local" | undefined,
+  afterCensus: (connection: import("postgres").Sql, census: LegacyDatabaseCensusV1) => Promise<T>,
+): Promise<T> {
   const postgresModule = await import("postgres");
   const { observeLegacyFindingPublicationInventoryV1 } = await import("../findings/finding-publication-v1.js");
   if (!databaseUrl) currentEntryFail("legacy zero-owner database is unavailable");
@@ -281,9 +287,44 @@ export async function observeLegacyDatabaseCensusV1(databaseUrl: string | undefi
         operationalDeliveryCount: parseCount("operationalDeliveryCount"),
       });
       for (const [key, count] of Object.entries(observed)) if (count !== 0) currentEntryFail(`${key} is nonzero`);
-      return recursivelyFreeze({ ...observed, legacyFindingPublicationInventory });
-    });
+      return afterCensus(connection, recursivelyFreeze({ ...observed, legacyFindingPublicationInventory }));
+    }) as T;
   } finally {
     await sql.end({ timeout: 1 });
   }
+}
+
+export async function observeLegacyDatabaseCensusV1(
+  databaseUrl: string | undefined, coldBootstrap = false, profile?: "cutover-local",
+): Promise<LegacyDatabaseCensusV1> {
+  return observeLegacyDatabaseCensusWithContinuationV1(databaseUrl, coldBootstrap, profile,
+    async (_connection, census) => census);
+}
+
+export async function observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4(
+  databaseUrl: string | undefined,
+): Promise<Readonly<{
+  schema: "setfarm.internal-production-pre32-active-owner-snapshot.v4";
+  authority: "diagnostic-only";
+  legacyCensus: LegacyDatabaseCensusV1;
+  activeRows: ActiveOwnerRowSnapshotV2;
+  snapshotHash: string;
+}>> {
+  return observeLegacyDatabaseCensusWithContinuationV1(databaseUrl, true, "cutover-local",
+    async (connection, legacyCensus) => {
+      const { observePositiveWorktreeActiveRowSnapshotInTransactionV2, normalizeActiveOwnerRowPgResultV2 } =
+        await import("./baseline-positive-worktree-active-row-snapshot-v2.js");
+      const { hashCanonicalJson } = await import("../product-compiler/canonical-json.js");
+      const activeRows = await observePositiveWorktreeActiveRowSnapshotInTransactionV2(async (statement) =>
+        normalizeActiveOwnerRowPgResultV2(await connection.unsafe(statement)));
+      if (legacyCensus.activeRunCount !== activeRows.counts.runCount
+        || legacyCensus.openClaimCount !== activeRows.counts.claimCount
+        || legacyCensus.executionAttemptCount !== activeRows.counts.attemptCount
+        || legacyCensus.activeRuntimeSessionCount !== activeRows.counts.sessionCount) {
+        currentEntryFail("legacy and active-row counts disagree within one transaction");
+      }
+      const body = { schema: "setfarm.internal-production-pre32-active-owner-snapshot.v4" as const,
+        authority: "diagnostic-only" as const, legacyCensus, activeRows };
+      return Object.freeze({ ...body, snapshotHash: hashCanonicalJson(body) });
+    });
 }
