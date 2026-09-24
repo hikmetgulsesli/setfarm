@@ -87,6 +87,71 @@ test("a direct linked Setfarm checkout is retained and remains visible without b
   }
 });
 
+test("transient linked Git-admin index lock is an unresolved physical blocker, not an owner", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.workspaceRoot, "setfarm");
+    initRepo(primary, "https://github.com/hikmetgulsesli/setfarm.git");
+    const linked = path.join(testHome.workspaceRoot, ".worktrees", "setfarm-linked");
+    mkdirSync(path.dirname(linked), { recursive: true });
+    git(["-C", primary, "worktree", "add", "-q", "-b", "fixture-linked", linked]);
+    const admin = path.resolve(linked, git(["-C", linked, "rev-parse", "--git-dir"]));
+    const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async () => {
+      const lock = path.join(admin, "index.lock");
+      writeFileSync(lock, "transient fixture lock");
+      rmSync(lock);
+    });
+    assert.equal(result.status, "unresolved");
+    assert.deepEqual(result.blockers, [{ root: linked, reason: "git-admin-entry-churn" }]);
+    assert.deepEqual(result.entries.map((entry) => [entry.root, entry.kind, entry.dirty]), [
+      [linked, "linked-git", false],
+    ]);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("linked Git-admin mode change remains a refusal despite transient-churn classification", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.workspaceRoot, "setfarm");
+    initRepo(primary, "https://github.com/hikmetgulsesli/setfarm.git");
+    const linked = path.join(testHome.workspaceRoot, ".worktrees", "setfarm-linked");
+    mkdirSync(path.dirname(linked), { recursive: true });
+    git(["-C", primary, "worktree", "add", "-q", "-b", "fixture-linked", linked]);
+    const admin = path.resolve(linked, git(["-C", linked, "rev-parse", "--git-dir"]));
+    const mode = fs.statSync(admin).mode & 0o777;
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async () => { chmodSync(admin, mode === 0o700 ? 0o755 : 0o700); }),
+    /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+  } finally {
+    testHome.close();
+  }
+});
+
+test("linked Git-admin directory replacement remains a refusal", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.workspaceRoot, "setfarm");
+    initRepo(primary, "https://github.com/hikmetgulsesli/setfarm.git");
+    const linked = path.join(testHome.workspaceRoot, ".worktrees", "setfarm-linked");
+    mkdirSync(path.dirname(linked), { recursive: true });
+    git(["-C", primary, "worktree", "add", "-q", "-b", "fixture-linked", linked]);
+    const admin = path.resolve(linked, git(["-C", linked, "rev-parse", "--git-dir"]));
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async () => {
+      renameSync(admin, `${admin}-moved`);
+      mkdirSync(admin);
+    }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+  } finally {
+    testHome.close();
+  }
+});
+
 test("a locked linked Git worktree remains present and topology-visible", async () => {
   const testHome = fixture();
   try {

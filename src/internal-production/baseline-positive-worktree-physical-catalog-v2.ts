@@ -24,7 +24,8 @@ let cleanupUncertain = false;
 
 type Scope = Readonly<{ ownerHomeRoot: string; workspaceRoot: string }>;
 type Zone = "retained-zone" | "runtime-zone";
-type Held = { root: string; descriptor: number; first: BigIntStats; compareMutation: boolean };
+type Held = { root: string; descriptor: number; first: BigIntStats; compareMutation: boolean;
+  gitAdminCandidateRoot: string | null };
 type HeldFile = { root: string; descriptor: number; first: BigIntStats };
 
 function fail(): never { throw Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID"); }
@@ -75,6 +76,7 @@ class HeldDirectories {
   private readonly entries: Held[] = [];
   private readonly files: HeldFile[] = [];
   private readonly byRoot = new Map<string, Held>();
+  private readonly churnedGitAdminCandidates = new Set<string>();
   private closed = false;
 
   constructor(private readonly ownerHomeRoot: string, private readonly workspaceRoot: string) {}
@@ -85,8 +87,11 @@ class HeldDirectories {
     return this.workspaceRoot;
   }
 
-  hold(target: string): BigIntStats {
+  hold(target: string, gitAdminCandidateRoot: string | null = null): BigIntStats {
     if (this.closed || cleanupUncertain) fail();
+    if (gitAdminCandidateRoot !== null && (!this.byRoot.has(gitAdminCandidateRoot)
+      || path.basename(path.dirname(target)) !== "worktrees"
+      || path.basename(path.dirname(path.dirname(target))) !== ".git")) fail();
     const segments = target.split(path.sep).filter(Boolean);
     if (segments.length > 128) fail();
     for (let index = 0; index <= segments.length; index += 1) {
@@ -96,13 +101,19 @@ class HeldDirectories {
       if (!first.isDirectory() || first.isSymbolicLink()) fail();
       const descriptor = openSync(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
       const entry = { root, descriptor, first,
-        compareMutation: root === this.ownerHomeRoot || root.startsWith(`${this.ownerHomeRoot}/`) };
+        compareMutation: root === this.ownerHomeRoot || root.startsWith(`${this.ownerHomeRoot}/`),
+        gitAdminCandidateRoot: root === target ? gitAdminCandidateRoot : null };
       this.entries.push(entry);
       this.byRoot.set(root, entry);
-      if (!same(first, fstatSync(descriptor, { bigint: true }), entry.compareMutation)) fail();
+      if (!same(first, fstatSync(descriptor, { bigint: true }), entry.compareMutation && entry.gitAdminCandidateRoot === null)) fail();
+    }
+    const held = this.byRoot.get(target)!;
+    if (gitAdminCandidateRoot !== null) {
+      if (held.gitAdminCandidateRoot !== null && held.gitAdminCandidateRoot !== gitAdminCandidateRoot) fail();
+      held.gitAdminCandidateRoot = gitAdminCandidateRoot;
     }
     this.assertStable();
-    return this.byRoot.get(target)!.first;
+    return held.first;
   }
 
   holdFile(target: string): void {
@@ -118,10 +129,15 @@ class HeldDirectories {
   assertStable(): void {
     if (this.closed || cleanupUncertain) fail();
     for (const entry of this.entries) {
-      if (!same(entry.first, fstatSync(entry.descriptor, { bigint: true }), entry.compareMutation))
+      const descriptor = fstatSync(entry.descriptor, { bigint: true });
+      if (!same(entry.first, descriptor, entry.compareMutation && entry.gitAdminCandidateRoot === null))
         drift("directory-descriptor", entry.root);
-      if (!same(entry.first, lstatSync(entry.root, { bigint: true }), entry.compareMutation))
+      const current = lstatSync(entry.root, { bigint: true });
+      if (!same(entry.first, current, entry.compareMutation && entry.gitAdminCandidateRoot === null))
         drift("directory-path", entry.root);
+      if (entry.gitAdminCandidateRoot !== null && (descriptor.ctimeNs !== entry.first.ctimeNs
+        || descriptor.mtimeNs !== entry.first.mtimeNs || current.ctimeNs !== entry.first.ctimeNs
+        || current.mtimeNs !== entry.first.mtimeNs)) this.churnedGitAdminCandidates.add(entry.gitAdminCandidateRoot);
     }
     for (const entry of this.files) {
       if (!sameFile(entry.first, fstatSync(entry.descriptor, { bigint: true })))
@@ -129,6 +145,11 @@ class HeldDirectories {
       if (!sameFile(entry.first, lstatSync(entry.root, { bigint: true })))
         drift("file-path", entry.root);
     }
+  }
+
+  gitAdminChurnCandidateRoots(): readonly string[] {
+    this.assertStable();
+    return Object.freeze([...this.churnedGitAdminCandidates].sort(compareRoot));
   }
 
   close(): void {
@@ -351,7 +372,10 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
     const match = /^gitdir: ([^\r\n]+)\n$/.exec(new TextDecoder("utf-8", { fatal: true }).decode(markerBytes));
     if (!match) fail();
     gitdirFromMarker = normalizedGitPath(match[1]!, root);
-    held.hold(gitdirFromMarker);
+    // A bare primary uses <primary>.git/worktrees/<name>, not a regular
+    // primary's .git/worktrees/<name>; it remains on the strict drift path.
+    held.hold(gitdirFromMarker,
+      path.basename(path.dirname(path.dirname(gitdirFromMarker))) === ".git" ? root : null);
   }
   const checkMarker = (): void => {
     if (!sameFile(markerStat, lstatSync(marker, { bigint: true })) && markerStat.isFile()) fail();
@@ -538,6 +562,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
           locked: fresh.locked, barePrimaryRoot: fresh.barePrimaryRoot }) !== first.listedHash
         || hashCanonicalJson(freshPids) !== hashCanonicalJson(entry.referencingPids)) fail();
     }
+    for (const root of held.gitAdminChurnCandidateRoots()) blockers.push(Object.freeze({ root, reason: "git-admin-entry-churn" }));
     const ordered = Object.freeze(entries.sort((left, right) => compareRoot(left.root, right.root)));
     const orderedBlockers = Object.freeze(blockers.sort((left, right) => compareRoot(left.root, right.root)));
     const body = { schema: SCHEMA, status: orderedBlockers.length === 0 ? "complete" as const : "unresolved" as const,
