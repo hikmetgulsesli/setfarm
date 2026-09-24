@@ -6,6 +6,87 @@ import { spawnSync, execFileSync } from "node:child_process";
 import { fixture, run, write, git } from "./fixtures/deployment-cutover-bootstrap.mjs";
 import { retainedFixture } from "./fixtures/deployment-cutover-retained-profile.mjs";
 
+const pre32Source = kind => `import fs from 'node:fs';import path from 'node:path';
+  import {createHash} from 'node:crypto';
+  const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value)
+    :Array.isArray(value)?'['+value.map(canonical).join(',')+']'
+    :'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
+  export async function observeCodeOwnedPositiveWorktreePre32HostPairV4(){
+    if(arguments.length)throw Error('UNEXPECTED_INPUT');
+    const kind=${JSON.stringify(kind)};
+    if(kind==='transport-import'){
+      const transport=await import('../../scripts/deployment-cutover-passive-home.mjs');
+      if(typeof transport.monitorDeploymentCutoverPassiveProcessV1!=='function')throw Error('TRANSPORT_MISSING');
+    }
+    const marker=path.join(process.cwd(),'.setfarm','pre32-called');
+    fs.mkdirSync(path.dirname(marker),{recursive:true});fs.appendFileSync(marker,'x');
+    if(kind==='error')throw Error('PRIVATE_DATABASE_PASSWORD');
+    const body={schema:'setfarm.internal-production-pre32-physical-database-pair.v4',
+      authority:kind==='self-consistent-cutover'?'cutover':'diagnostic-only',physicalIdentityProvenance:'unverified',
+      heldPair:Object.freeze({fixture:'held'}),pre32Database:Object.freeze({fixture:'one-transaction'})};
+    const pairHash=createHash('sha256').update(canonical(body)).digest('hex');
+    return Object.freeze({...body,...(kind==='malformed'?{authority:'cutover'}:{}),pairHash});
+  }`;
+const pre32Sources = kind => ({ "internal-production/baseline-positive-worktree-host-pair-v2": pre32Source(kind) });
+
+test("bootstrap invokes the authenticated pre32 diagnostic exactly once without caller input", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-host-pair", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout);
+  assert.equal(observed.pre32HostPair.schema, "setfarm.internal-production-pre32-physical-database-pair.v4");
+  assert.equal(observed.pre32HostPair.authority, "diagnostic-only");
+  assert.equal(observed.pre32HostPair.physicalIdentityProvenance, "unverified");
+  assert.deepEqual(observed.pre32HostPair.heldPair, { fixture: "held" });
+  assert.deepEqual(observed.pre32HostPair.pre32Database, { fixture: "one-transaction" });
+  assert.equal(fs.readFileSync(path.join(root, ".setfarm/pre32-called"), "utf8"), "x");
+  const other = run(root, ["inspect", "--json"]);
+  assert.equal(other.status, 0, other.stderr);
+  assert.equal(Object.hasOwn(JSON.parse(other.stdout), "pre32HostPair"), false);
+}, undefined, { extraSources: pre32Sources("valid") }));
+
+test("pre32 bootstrap provides the authenticated Python data-only loader to the diagnostic", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-host-pair", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).pre32HostPair.authority, "diagnostic-only");
+}, undefined, { extraSources: pre32Sources("transport-import") }));
+
+for (const args of [["inspect-pre32-host-pair"], ["inspect-pre32-host-pair", "--json", "extra"]]) {
+  test(`pre32 bootstrap refuses unexpected argv ${args.length}`, () => fixture(root => {
+    const result = run(root, args);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-called")), false);
+  }, undefined, { extraSources: pre32Sources("valid") }));
+}
+
+for (const kind of ["malformed", "self-consistent-cutover", "error"]) test(`pre32 bootstrap sanitizes ${kind} result`, () => fixture(root => {
+  const result = run(root, ["inspect-pre32-host-pair", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  const lines = result.stderr.trimEnd().split("\n");
+  assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
+  assert.equal(JSON.parse(lines[1]).stage, "pre32-host-pair");
+  assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+}, undefined, { extraSources: pre32Sources(kind) }));
+
+for (const target of ["source", "output"]) test(`pre32 bootstrap refuses ${target} tamper before invocation`, () => fixture(root => {
+  const file = target === "source" ? "src/internal-production/baseline-positive-worktree-host-pair-v2.ts"
+    : "dist/internal-production/baseline-positive-worktree-host-pair-v2.js";
+  fs.appendFileSync(path.join(root, file), "\nthrow Error('PRIVATE_DATABASE_PASSWORD');\n");
+  const result = run(root, ["inspect-pre32-host-pair", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-called")), false);
+  assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+}, undefined, { extraSources: pre32Sources("valid") }));
+
+test("pre32 bootstrap refuses ambient preload selector before invocation", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-host-pair", "--json"], { NODE_OPTIONS: "" });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-called")), false);
+}, undefined, { extraSources: pre32Sources("valid") }));
+
 test("bootstrap invokes authenticated default context without caller-supplied observations", () => fixture(root => {
   const result = run(root, ["inspect-default-context", "--json"]);
   assert.equal(result.status, 0, result.stderr);

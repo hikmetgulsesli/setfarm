@@ -78,7 +78,7 @@ function sourceState() {
 }
 async function inspect() {
   if (typeof registerHooks !== "function" || process.execArgv.length || process.argv.length !== 4
-    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context"].includes(process.argv[2]) || process.argv[3] !== "--json"
+    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair"].includes(process.argv[2]) || process.argv[3] !== "--json"
     || pathToFileURL(path.resolve(process.argv[1])).href !== import.meta.url
     || Object.keys(process.env).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key)
       && !(process.platform === "darwin" && key === "__CF_USER_TEXT_ENCODING"))) fail();
@@ -203,12 +203,34 @@ async function inspect() {
     stage("controller-source");
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();
-    let host, envFiles, helpers, retainedProfile, defaultContext;
+    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair;
     if (process.argv[2] === "inspect-default-context") {
       stage("default-owner-load");
       const contextModule = await import("./deployment-cutover-default-context.mjs");
       check(); stage("default-context"); defaultContext = await contextModule.observeDeploymentCutoverDefaultContextV1();
       stage("post-context"); check();
+    }
+    if (process.argv[2] === "inspect-pre32-host-pair") {
+      stage("pre32-host-pair-load");
+      const pairModule = await import("../dist/internal-production/baseline-positive-worktree-host-pair-v2.js");
+      check(); stage("pre32-host-pair");
+      const observed = await pairModule.observeCodeOwnedPositiveWorktreePre32HostPairV4();
+      const descriptors = observed && Object.getOwnPropertyDescriptors(observed);
+      const keys = descriptors && Reflect.ownKeys(descriptors);
+      const expected = ["schema", "authority", "physicalIdentityProvenance", "heldPair", "pre32Database", "pairHash"];
+      if (!Object.isFrozen(observed) || !keys || keys.length !== expected.length
+        || keys.some(key => typeof key !== "string" || !expected.includes(key)
+          || !descriptors[key].enumerable || !Object.hasOwn(descriptors[key], "value"))) fail();
+      const fields = Object.fromEntries(expected.map(key => [key, descriptors[key].value]));
+      if (fields.schema !== "setfarm.internal-production-pre32-physical-database-pair.v4"
+        || fields.authority !== "diagnostic-only" || fields.physicalIdentityProvenance !== "unverified"
+        || !Object.isFrozen(fields.heldPair) || !Object.isFrozen(fields.pre32Database)
+        || typeof fields.pairHash !== "string" || !/^[a-f0-9]{64}$/.test(fields.pairHash)
+        || hash(canonical({ schema: fields.schema, authority: fields.authority,
+          physicalIdentityProvenance: fields.physicalIdentityProvenance,
+          heldPair: fields.heldPair, pre32Database: fields.pre32Database })) !== fields.pairHash) fail();
+      pre32HostPair = observed;
+      stage("post-pre32-host-pair"); check();
     }
     if (process.argv[2] === "inspect-retained-profile") {
       const profileModule = await import("./deployment-cutover-retained-profile.mjs");
@@ -253,7 +275,7 @@ async function inspect() {
     stage("final-source"); check(); if (canonical(sourceState()) !== canonical(initial)) fail();
     result = { schema: "setfarm.internal-production-deployment-cutover-bootstrap-observation.v1", sourceBuild, controllerSourceHash: authority.controllerSourceHash,
       ...(host ? { host } : {}), ...(envFiles ? { envFiles } : {}), ...(helpers ? { helpers } : {}), ...(retainedProfile ? { retainedProfile } : {}),
-      ...(defaultContext ? { defaultContext } : {}) };
+      ...(defaultContext ? { defaultContext } : {}), ...(pre32HostPair ? { pre32HostPair } : {}) };
   } catch (error) {
     // A throwing nested observer may have acquired resources we never received.
     // Missing sanitized cleanup evidence means unknown, not successful cleanup.
@@ -269,6 +291,6 @@ async function inspect() {
 try { process.stdout.write(`${JSON.stringify(await inspect())}\n`); }
 catch {
   process.stderr.write("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
-  if (process.argv[2] === "inspect-default-context") process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
+  if (["inspect-default-context", "inspect-pre32-host-pair"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
   process.exitCode = 1;
 }
