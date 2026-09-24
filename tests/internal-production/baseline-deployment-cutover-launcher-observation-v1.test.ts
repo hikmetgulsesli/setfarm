@@ -39,7 +39,14 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
     const marker = 'await import("./baseline-legacy-database-census-v1.js")';
     assert.equal(source.split(marker).length, 2);
     const transportFile = path.join(home, "census-transport.mjs");
-    fs.writeFileSync(transportFile, `export async function observeLegacyDatabaseCensusV1(url,cold,profile){${census ?? "globalThis.dbCalls++;return Object.freeze({activeRunCount:0})"}}`);
+    fs.writeFileSync(transportFile, `export async function observeLegacyDatabaseCensusV1(url,cold,profile){${census ?? "globalThis.dbCalls++;return Object.freeze({activeRunCount:0})"}}
+      export async function observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4(url){
+        globalThis.combinedCalls++;
+        if(url!=='postgresql://fixture:PG_SENTINEL@localhost/setfarm')throw Error('WRONG_COMBINED_URL');
+        await Promise.resolve();globalThis.combinedDrift?.();
+        if(globalThis.combinedFailure)throw Error('PG_SENTINEL_PRIVATE_DATABASE_FAILURE');
+        return Object.freeze({schema:'fixture-combined-v4'});
+      }`);
     source = source.replace(marker, `await import(${JSON.stringify(pathToFileURL(transportFile).href)})`);
     source = source.replace('"../product-compiler/canonical-json.js"', JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href));
     if (defaultAction !== undefined) {
@@ -74,7 +81,7 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
     const identity = os.userInfo(); os.userInfo = () => ({...identity,homedir:${JSON.stringify(home)}});
     const texts = ${JSON.stringify(texts)}, labels = ${JSON.stringify(labels)};
     let prints = 0, conversions = 0, active = false, run, evidence = () => null;
-    globalThis.dbCalls=0;globalThis.samples=0;globalThis.nodeCloses=0;
+    globalThis.dbCalls=0;globalThis.combinedCalls=0;globalThis.samples=0;globalThis.nodeCloses=0;
     globalThis.processes=()=>Object.freeze({families:Object.freeze([]),listener:null});
     globalThis.nodeHold=()=>({observation:Object.freeze({candidatePath:'/fixture/invoked/node',executablePath:'/fixture/physical/node'}),recheck(){},close(){globalThis.nodeCloses++}});
     globalThis.identify=request=>({schema:'setfarm.internal-production-passive-process-identity.v1',pid:request.pid,ppid:1,
@@ -127,6 +134,85 @@ test("default launcher holds configuration without exposing credential-derived c
   assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
   assert.equal(result.evidence.dbCalls, 0);
   assert.ok(result.evidence.nodeCloses >= 2);
+}));
+
+test("combined census is unavailable before qualification and does not expose the private URL", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts,
+    `evidence=()=>({combinedCalls:globalThis.combinedCalls,nodeCloses:globalThis.nodeCloses});`,
+    undefined, `await context.censusAndActiveRows();return context.observation;`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.equal(result.evidence.combinedCalls, 0);
+  assert.equal(result.evidence.nodeCloses, 2);
+  assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL/);
+}));
+
+test("qualified combined census uses both held launcher URLs once and closes", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts,
+    `evidence=()=>({combinedCalls:globalThis.combinedCalls,dbCalls:globalThis.dbCalls,
+      nodeCloses:globalThis.nodeCloses});`, undefined,
+    `await context.qualifyPassiveHome();const combined=await context.censusAndActiveRows();
+      return Object.freeze({combined,configuration:context.observation});`);
+  assert.equal(result.observation?.combined.schema, "fixture-combined-v4", JSON.stringify(result));
+  assert.deepEqual(result.evidence, { combinedCalls: 1, dbCalls: 0, nodeCloses: 2 });
+  assert.equal(result.frozen, true);
+  assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL|SocketSentinel/);
+}));
+
+test("combined census rejects a crossed launcher URL before a database call", () => defaultFixture((home, texts) => {
+  const file = path.join(home, "Library", "LaunchAgents", `${labels[1]}.plist`);
+  fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("PG_SENTINEL", "CROSSED_PRIVATE_SENTINEL"));
+  texts[1] = texts[1]!.replace("PG_SENTINEL", "CROSSED_PRIVATE_SENTINEL");
+  const result = observe(home, texts,
+    `evidence=()=>({combinedCalls:globalThis.combinedCalls,nodeCloses:globalThis.nodeCloses});`,
+    undefined, `await context.qualifyPassiveHome();await context.censusAndActiveRows();return context.observation;`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.deepEqual(result.evidence, { combinedCalls: 0, nodeCloses: 2 });
+  assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|CROSSED_PRIVATE_SENTINEL/);
+}));
+
+test("combined census rejects a held plist drift after the database response", () => defaultFixture((home, texts) => {
+  const file = path.join(home, "Library", "LaunchAgents", `${labels[0]}.plist`);
+  const result = observe(home, texts,
+    `globalThis.combinedDrift=()=>fs.appendFileSync(${JSON.stringify(file)},'\\n');
+      evidence=()=>({combinedCalls:globalThis.combinedCalls,nodeCloses:globalThis.nodeCloses});`,
+    undefined, `await context.qualifyPassiveHome();await context.censusAndActiveRows();return context.observation;`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.deepEqual(result.evidence, { combinedCalls: 1, nodeCloses: 2 });
+  assert.equal(result.observation, undefined);
+  assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL/);
+}));
+
+test("combined census rejects an ambient PG option before the database call", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts,
+    `evidence=()=>({combinedCalls:globalThis.combinedCalls,nodeCloses:globalThis.nodeCloses});`,
+    undefined, `await context.qualifyPassiveHome();process.env.PGPORT='6543';
+      await context.censusAndActiveRows();return context.observation;`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.deepEqual(result.evidence, { combinedCalls: 0, nodeCloses: 2 });
+  assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL/);
+}));
+
+test("combined database failure is sanitized and drains held launcher resources", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts,
+    `globalThis.combinedFailure=true;
+      evidence=()=>({combinedCalls:globalThis.combinedCalls,nodeCloses:globalThis.nodeCloses});`,
+    undefined, `await context.qualifyPassiveHome();await context.censusAndActiveRows();return context.observation;`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.deepEqual(result.evidence, { combinedCalls: 1, nodeCloses: 2 });
+  assert.equal(result.observation, undefined);
+  assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|PRIVATE_DATABASE_FAILURE/);
+}));
+
+test("legacy and combined census calls cannot overlap on one held launcher", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts,
+    `evidence=()=>({combinedCalls:globalThis.combinedCalls,dbCalls:globalThis.dbCalls,
+      nodeCloses:globalThis.nodeCloses});`, undefined,
+    `await context.qualifyPassiveHome();
+      const results=await Promise.allSettled([context.census(),context.censusAndActiveRows()]);
+      return Object.freeze({statuses:Object.freeze(results.map(item=>item.status))});`);
+  assert.deepEqual(result.observation?.statuses, ["rejected", "rejected"]);
+  assert.deepEqual(result.evidence, { combinedCalls: 0, dbCalls: 1, nodeCloses: 2 });
+  assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL/);
 }));
 
 test("default launcher accepts only zero input", async () => {

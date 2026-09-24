@@ -58,6 +58,7 @@ function holdLauncherConfigurationV1(defaultMode = false) {
   let output: Readonly<{ schema: string; launchers: readonly Entry[]; launcherObservationHash: string }> | undefined;
   let recheck: () => void = fail;
   let census: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusV1> = async () => fail();
+  let censusAndActiveRows: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4> = async () => fail();
   let closed = false;
   let defaultInputs: undefined | {
     entries: { label: string; args: string[]; environment: Record<string, string> }[];
@@ -201,7 +202,7 @@ function holdLauncherConfigurationV1(defaultMode = false) {
         return { state: current.state, activeCount: current.activeCount, pid: current.pid };
       },
     };
-    census = async () => {
+    const agreedDatabaseUrl = () => {
       recheck();
       const urls = held.map(item => (item.parsed.EnvironmentVariables as Record<string, string>).SETFARM_PG_URL);
       const raw = urls[0];
@@ -212,15 +213,23 @@ function holdLauncherConfigurationV1(defaultMode = false) {
         || !["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)
         || (parsed.port !== "" && parsed.port !== "5432") || parsed.pathname !== "/setfarm"
         || parsed.search !== "" || parsed.hash !== "") fail();
-      const { observeLegacyDatabaseCensusV1 } = await import("./baseline-legacy-database-census-v1.js");
+      return raw;
+    };
+    const observeDatabase = async <T>(observe: (module: typeof import("./baseline-legacy-database-census-v1.js"),
+      raw: string) => Promise<T>): Promise<T> => {
+      const raw = agreedDatabaseUrl();
+      const module = await import("./baseline-legacy-database-census-v1.js");
       recheck();
-      const result = await observeLegacyDatabaseCensusV1(raw, true, "cutover-local");
+      const result = await observe(module, raw);
       recheck();
       return result;
     };
+    census = () => observeDatabase((module, raw) => module.observeLegacyDatabaseCensusV1(raw, true, "cutover-local"));
+    censusAndActiveRows = () => observeDatabase((module, raw) =>
+      module.observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4(raw));
   } catch { invalid = true; }
   if (invalid || !output) { close(); fail(); }
-  return { observation: output, recheck, census, close, defaultInputs };
+  return { observation: output, recheck, census, censusAndActiveRows, close, defaultInputs };
 }
 
 // Separate, zero-input default-mode holder. Secret-bearing configuration and
@@ -412,19 +421,21 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
       }
       finally { qualifying = false; }
     };
-    const census = async () => {
+    const observeQualifiedDatabase = async <T>(observe: () => Promise<T>): Promise<T> => {
       try {
         if (!qualified || qualifying || censusRunning) fail();
         censusRunning = true;
         idle();
-        const result = await configuration.census();
+        const result = await observe();
         idle();
         return result;
       } catch { invalid = true; defaultLauncherFailure(); }
       finally { censusRunning = false; }
     };
+    const census = () => observeQualifiedDatabase(configuration.census);
+    const censusAndActiveRows = () => observeQualifiedDatabase(configuration.censusAndActiveRows);
     check();
-    return Object.freeze({ observation, qualifyPassiveHome, recheck, census, close });
+    return Object.freeze({ observation, qualifyPassiveHome, recheck, census, censusAndActiveRows, close });
   } catch { invalid = true; close(); defaultLauncherFailure(); }
 }
 
