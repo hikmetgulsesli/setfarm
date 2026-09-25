@@ -21,20 +21,23 @@ test("shared legacy census is import-inert and never adopts an ambient database 
     syncBuiltinESMExports();
     const module=await import(${JSON.stringify(url)});
     const importDependencyLoads=[...dependencyLoads];
-    let error,combinedError,quarantineError;
+    let error,combinedError,quarantineError,bindingError;
     try{await module.observeLegacyDatabaseCensusV1(undefined,true)}catch(caught){error=caught.message}
     try{await module.observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4(undefined)}catch(caught){combinedError=caught.message}
     try{await module.observeLegacyDatabaseCensusAndActiveRowsWithQuarantineV5(undefined)}catch(caught){quarantineError=caught.message}
-    process.stdout.write(JSON.stringify({error,combinedError,quarantineError,writes,connections,importDependencyLoads,dependencyLoads}));
+    try{await module.observeLegacyDatabaseCensusAndBindingRowsV6(undefined)}catch(caught){bindingError=caught.message}
+    process.stdout.write(JSON.stringify({error,combinedError,quarantineError,bindingError,writes,connections,importDependencyLoads,dependencyLoads}));
   `], { encoding: "utf8", timeout: 15000, env: { SETFARM_PG_URL: "postgresql://PRIVATE_AMBIENT_CANARY@127.0.0.1/setfarm" } });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {
     error: "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:legacy zero-owner database is unavailable",
     combinedError: "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:legacy zero-owner database is unavailable",
     quarantineError: "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:legacy zero-owner database is unavailable",
+    bindingError: "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:legacy zero-owner database is unavailable",
     writes: 0, connections: 0,
     importDependencyLoads: [], dependencyLoads: ["postgres", "../findings/finding-publication-v1.js",
-      "postgres", "../findings/finding-publication-v1.js", "postgres", "../findings/finding-publication-v1.js"],
+      "postgres", "../findings/finding-publication-v1.js", "postgres", "../findings/finding-publication-v1.js",
+      "postgres", "../findings/finding-publication-v1.js"],
   });
 });
 
@@ -134,7 +137,21 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
         class Result extends Array {}
         tx.unsafe=async statement=>{
           let label,rows=[];
-          if(statement.includes('oversizedRunCount')){
+          if(globalThis.probe.queries.includes('quarantined-runtimes')){
+            if(globalThis.probe.scenario==='binding-query-failure')throw Error('BINDING_QUERY_FAILURE');
+            if(statement.includes('"oversizedSessionCount"')){
+              label='binding-counts';rows=[{attemptCount:['binding-count-mismatch','binding-cross-count'].includes(globalThis.probe.scenario)?'1':'0',
+                sessionCount:'0',oversizedAttemptCount:'0',oversizedSessionCount:'0'}]
+            }else if(statement.includes('fence_token AS "fenceToken"')){
+              label='binding-attempts';
+              if(globalThis.probe.scenario==='binding-cross-count')rows=[{attemptId:'attempt-1',runId:'run-1',
+                claimId:null,generation:1,fenceToken:'a'.repeat(64),sourceSha:'b'.repeat(40),
+                sourceTreeHash:'c'.repeat(40),worktreeRoot:null,disposition:'running'}]
+            }
+            else if(statement.includes('FROM public.runtime_sessions'))label='binding-sessions';
+            else throw Error('UNEXPECTED_BINDING_QUERY');
+          }
+          else if(statement.includes('oversizedRunCount')){
             label='active-counts';rows=[{runCount:globalThis.probe.scenario==='malformed-active'?'01'
               :['count-mismatch','malformed-active-row'].includes(globalThis.probe.scenario)?'1':'0',
               claimCount:'0',attemptCount:'0',sessionCount:'0',
@@ -168,6 +185,8 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
           const result=new Result(...rows);
           for(const key of ['count','state','command','columns','statement'])
             Object.defineProperty(result,key,{value:null,enumerable:false});
+          if(globalThis.probe.scenario==='binding-extra-metadata'&&label==='binding-counts')
+            Object.defineProperty(result,'extra',{value:'PRIVATE_SENTINEL'});
           if(globalThis.probe.scenario==='quarantine-index-accessor'&&label==='quarantined-runtimes')
             Object.defineProperty(result,'0',{enumerable:true,get(){throw Error('PRIVATE_SENTINEL')}});
           return result
@@ -187,6 +206,8 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
       `await import(${JSON.stringify(new URL("../../src/findings/finding-publication-v1.ts", import.meta.url).href)})`)
       .replaceAll('await import("./baseline-positive-worktree-active-row-snapshot-v2.js")',
         `await import(${JSON.stringify(new URL("../../src/internal-production/baseline-positive-worktree-active-row-snapshot-v2.ts", import.meta.url).href)})`)
+      .replaceAll('await import("./baseline-positive-worktree-binding-rows-v1.js")',
+        `await import(${JSON.stringify(new URL("../../src/internal-production/baseline-positive-worktree-binding-rows-v1.ts", import.meta.url).href)})`)
       .replaceAll('await import("../product-compiler/canonical-json.js")',
         `await import(${JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href)})`);
     fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
@@ -200,6 +221,9 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
       let snapshot,error;
       try{snapshot=globalThis.probe.scenario==='legacy-only'
         ?await module.observeLegacyDatabaseCensusV1('postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm',true,'cutover-local')
+        :process.env.FAKE_V6==='1'
+          ?await module.observeLegacyDatabaseCensusAndBindingRowsV6(
+            'postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm')
         :process.env.FAKE_V5==='1'
           ?await module.observeLegacyDatabaseCensusAndActiveRowsWithQuarantineV5(
             'postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm')
@@ -280,6 +304,34 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
         assert.deepEqual(v5Body, { schema: "setfarm.internal-production-pre32-active-owner-snapshot.v5",
           authority: "diagnostic-only", legacyCensus: body.legacyCensus,
           activeRows: body.activeRows, quarantinedRuntimeSessionCount: expectedCount }, scenario);
+      }
+    }
+    for (const [scenario, expectedError] of [
+      ["success", undefined],
+      ["binding-count-mismatch", "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_BINDING_ROWS_INVALID"],
+      ["binding-cross-count", "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:active and binding-row counts disagree within one transaction"],
+      ["binding-extra-metadata", "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_ACTIVE_ROW_SNAPSHOT_INVALID"],
+      ["binding-query-failure", "BINDING_QUERY_FAILURE"],
+    ] as const) {
+      const v6Result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
+        { encoding: "utf8", timeout: 15000, env: { FAKE_V6: "1", FAKE_SCENARIO: scenario } });
+      assert.equal(v6Result.status, 0, `${scenario}: ${v6Result.stderr}`);
+      const v6 = JSON.parse(v6Result.stdout);
+      assert.equal(v6.error, expectedError, scenario);
+      assert.deepEqual(v6.modes, ["isolation level repeatable read read only"], scenario);
+      assert.deepEqual(v6.closes, [{ timeout: 1 }], scenario);
+      assert.equal(v6.connections, 0, scenario);
+      if (expectedError) assert.equal(v6.snapshot, undefined, scenario);
+      else {
+        assert.deepEqual(v6.queries, [...observed.queries, "quarantined-runtimes", "binding-counts",
+          "binding-attempts", "binding-sessions"]);
+        const { snapshotHash: v6Hash, ...v6Body } = v6.snapshot;
+        assert.equal(v6Hash, hashCanonicalJson(v6Body));
+        assert.equal(v6Body.schema, "setfarm.internal-production-pre32-active-binding-snapshot.v6");
+        assert.equal(v6Body.authority, "diagnostic-only");
+        assert.deepEqual(v6Body.activeRows.counts, body.activeRows.counts);
+        assert.deepEqual(v6Body.bindingRows.counts, { attemptCount: 0, sessionCount: 0 });
+        assert.equal(v6Body.bindingRows.authority, "diagnostic-only");
       }
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
