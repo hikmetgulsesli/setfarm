@@ -84,9 +84,27 @@ type LegacyDatabaseCensusV1 = Readonly<{
   legacyFindingPublicationInventory: LegacyFindingPublicationInventoryV1;
 }>;
 
+// Conservative pre-32 owner and reservation write surface. A locked census is
+// diagnostic only; this list is not a substitute for producer/process fencing.
+const PRE32_OWNER_WRITE_TABLES_V1 = Object.freeze([
+  "artifact_capacity", "artifact_publication_batch_items", "artifact_publication_batch_plan_items",
+  "artifact_publication_batch_plans", "artifact_publication_batches", "artifact_publication_reservations",
+  "artifact_store_authorities",
+  "claim_log", "execution_attempts", "finding_sets", "findings", "operational_event_deliveries",
+  "operational_outbox", "platform_release_store_records_v3", "product_compilation_attempts", "product_packets",
+  "recovery_cases", "recovery_dispatch_deliveries", "recovery_revision_dispatches", "run_termination_requests",
+  "runs", "runtime_completion_effects", "runtime_completion_requests", "runtime_sessions",
+  "semantic_artifacts", "setfarm_schema_migrations", "steps", "stories",
+  "v3_canary_admission_claims", "v3_preparation_authorities_v2",
+  "v3_preparation_authority_attempts_v2", "v3_preparation_authority_claims_v2",
+  "v3_preparation_blocks", "v3_preparation_story_state", "v3_story_claim_runtime_binding_cutovers_v1",
+  "v3_story_claim_runtime_bindings_v1",
+] as const);
+
 async function observeLegacyDatabaseCensusWithContinuationV1<T>(
   databaseUrl: string | undefined, coldBootstrap: boolean, profile: "cutover-local" | undefined,
   afterCensus: (connection: import("postgres").Sql, census: LegacyDatabaseCensusV1) => Promise<T>,
+  heldShareLocks = false,
 ): Promise<T> {
   const postgresModule = await import("postgres");
   const { observeLegacyFindingPublicationInventoryV1 } = await import("../findings/finding-publication-v1.js");
@@ -109,10 +127,24 @@ async function observeLegacyDatabaseCensusWithContinuationV1<T>(
       || sql.options.user !== decodeURIComponent(cutoverTarget.username))) {
       currentEntryFail("cutover database target is ambiguous");
     }
-    return await sql.begin("isolation level repeatable read read only", async (tx) => {
+    return await sql.begin(heldShareLocks
+      ? "isolation level read committed read only" : "isolation level repeatable read read only", async (tx) => {
       const connection = tx as unknown as typeof sql;
       await connection`SET LOCAL statement_timeout = '5s'`;
       await connection`SET LOCAL lock_timeout = '1s'`;
+      if (heldShareLocks) {
+        if (!coldBootstrap || profile !== "cutover-local") currentEntryFail("pre32 SHARE-lock profile is invalid");
+        for (const table of PRE32_OWNER_WRITE_TABLES_V1) {
+          await connection.unsafe(`LOCK TABLE public.${table} IN SHARE MODE`);
+        }
+        const journal = await connection<Array<{ version: number; state: string }>>`
+          SELECT version,state FROM public.setfarm_schema_migrations WHERE version >= 26 ORDER BY version
+        `;
+        if (journal.length !== 6 || journal.some((row, index) => !isPlainRecord(row)
+          || !hasExactKeys(row, ["version", "state"]) || row.version !== index + 26 || row.state !== "applied")) {
+          currentEntryFail("pre32 SHARE-lock census requires applied migration-26-through-31 tail");
+        }
+      }
       if (coldBootstrap) await requireColdPre32CatalogAbsenceV1(connection);
       const rows = await connection<Array<Record<string, unknown>>>`
         WITH required_columns(table_name,column_name,type_name,required_not_null) AS (
@@ -300,6 +332,32 @@ export async function observeLegacyDatabaseCensusV1(
 ): Promise<LegacyDatabaseCensusV1> {
   return observeLegacyDatabaseCensusWithContinuationV1(databaseUrl, coldBootstrap, profile,
     async (_connection, census) => census);
+}
+
+/** Fixed-table diagnostic only; neither a complete owner census nor a durable fence. */
+export async function observeLegacyDatabaseCensusWithPre32ShareLocksV1(
+  databaseUrl: string | undefined,
+): Promise<Readonly<{
+  schema: "setfarm.internal-production-pre32-locked-database-census.v1";
+  authority: "diagnostic-only";
+  tableLockScope: "fixed-pre32-legacy-superset";
+  journalIdentity: "tail-ordinal-state-only";
+  lockState: "released-at-return";
+  legacyCensus: LegacyDatabaseCensusV1;
+}>> {
+  if (!databaseUrl) currentEntryFail("legacy zero-owner database is unavailable");
+  try {
+    return await observeLegacyDatabaseCensusWithContinuationV1(databaseUrl, true, "cutover-local",
+      async (_connection, legacyCensus) => Object.freeze({
+        schema: "setfarm.internal-production-pre32-locked-database-census.v1" as const,
+        authority: "diagnostic-only" as const,
+        tableLockScope: "fixed-pre32-legacy-superset" as const,
+        journalIdentity: "tail-ordinal-state-only" as const,
+        lockState: "released-at-return" as const, legacyCensus,
+      }), true);
+  } catch {
+    currentEntryFail("pre32 fixed-table lock census failed");
+  }
 }
 
 export async function observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4(
