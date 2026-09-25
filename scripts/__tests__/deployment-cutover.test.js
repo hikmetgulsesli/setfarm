@@ -48,6 +48,13 @@ const pre32Source = kind => `import fs from 'node:fs';import path from 'node:pat
       heldPair:Object.freeze({fixture:'held'}),pre32Database:Object.freeze({fixture:'one-transaction'})};
     const pairHash=createHash('sha256').update(canonical(body)).digest('hex');
     return Object.freeze({...body,...(kind==='malformed'?{authority:'cutover'}:{}),pairHash});
+  }
+  export async function observeCodeOwnedPositiveWorktreePre32HostPairV5(){
+    if(arguments.length)throw Error('UNEXPECTED_INPUT');
+    const v4=await observeCodeOwnedPositiveWorktreePre32HostPairV4();
+    const {pairHash,...old}=v4;
+    const body={...old,schema:'setfarm.internal-production-pre32-physical-database-pair.v5'};
+    return Object.freeze({...body,pairHash:createHash('sha256').update(canonical(body)).digest('hex')});
   }`;
 const pre32Sources = kind => ({ "internal-production/baseline-positive-worktree-host-pair-v2": pre32Source(kind) });
 
@@ -64,6 +71,48 @@ test("bootstrap invokes the authenticated pre32 diagnostic exactly once without 
   const other = run(root, ["inspect", "--json"]);
   assert.equal(other.status, 0, other.stderr);
   assert.equal(Object.hasOwn(JSON.parse(other.stdout), "pre32HostPair"), false);
+}, undefined, { extraSources: pre32Sources("valid") }));
+
+test("bootstrap exposes a separate authenticated V5 held diagnostic without changing V4", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-host-pair-v5", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout);
+  assert.equal(observed.pre32HostPairV5.schema, "setfarm.internal-production-pre32-physical-database-pair.v5");
+  assert.equal(observed.pre32HostPairV5.authority, "diagnostic-only");
+  assert.equal(observed.pre32HostPairV5.physicalIdentityProvenance, "unverified");
+  assert.equal(Object.hasOwn(observed, "pre32HostPair"), false);
+  assert.equal(fs.readFileSync(path.join(root, ".setfarm/pre32-called"), "utf8"), "x");
+}, undefined, { extraSources: pre32Sources("valid") }));
+
+test("V5 bootstrap refuses malformed diagnostic without leaking private cause", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-host-pair-v5", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  const lines = result.stderr.trimEnd().split("\n");
+  assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
+  assert.equal(JSON.parse(lines[1]).pre32FailurePhase, "unknown");
+  assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+}, undefined, { extraSources: pre32Sources("malformed") }));
+
+test("V5 bootstrap preserves a finite failure phase without leaking private cause", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-host-pair-v5", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  const lines = result.stderr.trimEnd().split("\n");
+  assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1",
+    scope: "bootstrap", stage: "pre32-host-pair", ownerContext: null, launcherStage: null,
+    cleanupFailed: null, pre32FailurePhase: "database-callback" });
+  assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+}, undefined, { extraSources: pre32Sources("database-phase") }));
+
+test("V5 bootstrap refuses modified authenticated source before invoking diagnostic", () => fixture(root => {
+  fs.appendFileSync(path.join(root, "src/internal-production/baseline-positive-worktree-host-pair-v2.ts"),
+    "\nthrow Error('PRIVATE_DATABASE_PASSWORD');\n");
+  const result = run(root, ["inspect-pre32-host-pair-v5", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-called")), false);
+  assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
 }, undefined, { extraSources: pre32Sources("valid") }));
 
 test("pre32 bootstrap provides the authenticated Python data-only loader to the diagnostic", () => fixture(root => {
