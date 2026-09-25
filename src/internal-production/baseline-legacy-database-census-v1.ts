@@ -1,6 +1,7 @@
 import type { LegacyFindingPublicationInventoryV1 } from "../findings/legacy-finding-publication-inventory-v1.js";
 import type { FindingPublicationParentRowV1, FindingPublicationChildRowV1 } from "../findings/finding-publication-v1.js";
 import type { ActiveOwnerRowSnapshotV2 } from "./baseline-positive-worktree-active-row-snapshot-v2.js";
+import { types } from "node:util";
 
 // Import-inert shared read-only primitive. Callers supply their privately held
 // URL and must independently fence source, credentials, runtime and ownership.
@@ -325,6 +326,54 @@ export async function observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTrans
       }
       const body = { schema: "setfarm.internal-production-pre32-active-owner-snapshot.v4" as const,
         authority: "diagnostic-only" as const, legacyCensus, activeRows };
+      return Object.freeze({ ...body, snapshotHash: hashCanonicalJson(body) });
+    });
+}
+
+/** Diagnostic only: quarantined runtimes are excluded from the legacy active count. */
+export async function observeLegacyDatabaseCensusAndActiveRowsWithQuarantineV5(
+  databaseUrl: string | undefined,
+): Promise<Readonly<{
+  schema: "setfarm.internal-production-pre32-active-owner-snapshot.v5";
+  authority: "diagnostic-only";
+  legacyCensus: LegacyDatabaseCensusV1;
+  activeRows: ActiveOwnerRowSnapshotV2;
+  quarantinedRuntimeSessionCount: number;
+  snapshotHash: string;
+}>> {
+  return observeLegacyDatabaseCensusWithContinuationV1(databaseUrl, true, "cutover-local",
+    async (connection, legacyCensus) => {
+      const { observePositiveWorktreeActiveRowSnapshotInTransactionV2, normalizeActiveOwnerRowPgResultV2 } =
+        await import("./baseline-positive-worktree-active-row-snapshot-v2.js");
+      const { hashCanonicalJson } = await import("../product-compiler/canonical-json.js");
+      const activeRows = await observePositiveWorktreeActiveRowSnapshotInTransactionV2(async (statement) =>
+        normalizeActiveOwnerRowPgResultV2(await connection.unsafe(statement)));
+      if (legacyCensus.activeRunCount !== activeRows.counts.runCount
+        || legacyCensus.openClaimCount !== activeRows.counts.claimCount
+        || legacyCensus.executionAttemptCount !== activeRows.counts.attemptCount
+        || legacyCensus.activeRuntimeSessionCount !== activeRows.counts.sessionCount) {
+        currentEntryFail("legacy and active-row counts disagree within one transaction");
+      }
+      const result = await connection.unsafe(`SELECT COUNT(*)::text AS "quarantinedRuntimeSessionCount"
+        FROM public.runtime_sessions WHERE state = 'quarantined'`);
+      let rows: readonly Record<string, unknown>[];
+      try { rows = normalizeActiveOwnerRowPgResultV2(result); }
+      catch { currentEntryFail("quarantined runtime census invalid"); }
+      const row = rows[0];
+      if (rows.length !== 1 || row === null || typeof row !== "object" || types.isProxy(row)
+        || Object.getPrototypeOf(row) !== Object.prototype) {
+        currentEntryFail("quarantined runtime census invalid");
+      }
+      const fields = Object.getOwnPropertyDescriptors(row);
+      const keys = Reflect.ownKeys(fields);
+      const field = fields.quarantinedRuntimeSessionCount;
+      if (keys.length !== 1 || keys[0] !== "quarantinedRuntimeSessionCount" || !field
+        || !field.enumerable || !("value" in field) || typeof field.value !== "string"
+        || !/^(0|[1-9][0-9]*)$/.test(field.value)) currentEntryFail("quarantined runtime census invalid");
+      const quarantinedRuntimeSessionCount = Number(field.value);
+      if (!Number.isSafeInteger(quarantinedRuntimeSessionCount)) currentEntryFail("quarantined runtime census invalid");
+      const body = { schema: "setfarm.internal-production-pre32-active-owner-snapshot.v5" as const,
+        authority: "diagnostic-only" as const, legacyCensus, activeRows, quarantinedRuntimeSessionCount };
       return Object.freeze({ ...body, snapshotHash: hashCanonicalJson(body) });
     });
 }
