@@ -19,6 +19,8 @@ type Pre32SnapshotV5 = Awaited<ReturnType<typeof import("./baseline-legacy-datab
 type DatabaseObserverV5 = () => Promise<Pre32SnapshotV5>;
 type Pre32SnapshotV6 = Awaited<ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndBindingRowsV6>>;
 type DatabaseObserverV6 = () => Promise<Pre32SnapshotV6>;
+type ActiveBindingSnapshotV1 = Awaited<ReturnType<typeof import("./baseline-positive-worktree-active-binding-snapshot-v1.js").observePositiveWorktreeActiveBindingSnapshotInTransactionV1>>;
+type ActiveBindingObserverV1 = () => Promise<ActiveBindingSnapshotV1>;
 
 function fail(): never { throw new Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_HOST_PAIR_INVALID"); }
 
@@ -186,6 +188,62 @@ function validPre32SnapshotV6(value: unknown): Pre32SnapshotV6 {
   } catch { failPre32(); }
 }
 
+function failActiveBinding(): never {
+  throw new Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_ACTIVE_BINDING_HOST_PAIR_INVALID");
+}
+
+function validActiveBindingSnapshotV1(value: unknown): ActiveBindingSnapshotV1 {
+  try {
+    const row = exact(value, ["schema", "authority", "physicalIdentityProvenance", "activeRows",
+      "bindingRows", "snapshotHash"]);
+    if (row.schema !== "setfarm.internal-production-positive-worktree-active-binding-snapshot.v1"
+      || row.authority !== "diagnostic-only" || row.physicalIdentityProvenance !== "unverified") failActiveBinding();
+    const activeRows = validDatabaseSnapshot(row.activeRows);
+    const activeCounts = exact(activeRows.counts, ["runCount", "claimCount", "attemptCount", "sessionCount"]);
+    for (const [name, count] of Object.entries(activeCounts)) {
+      if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0 || count > 256) failActiveBinding();
+      const list = name === "runCount" ? activeRows.activeRuns : name === "claimCount" ? activeRows.openClaims
+        : name === "attemptCount" ? activeRows.activeAttempts : activeRows.activeSessions;
+      if (!Array.isArray(list) || list.length !== count) failActiveBinding();
+    }
+    const binding = exact(row.bindingRows, ["schema", "authority", "physicalIdentityProvenance",
+      "activeAttempts", "activeSessions", "counts", "snapshotHash"]);
+    const counts = exact(binding.counts, ["attemptCount", "sessionCount"]);
+    if (binding.schema !== "setfarm.internal-production-positive-worktree-binding-rows.v1"
+      || binding.authority !== "diagnostic-only" || binding.physicalIdentityProvenance !== "unverified"
+      || counts.attemptCount !== activeCounts.attemptCount || counts.sessionCount !== activeCounts.sessionCount
+      || !Array.isArray(binding.activeAttempts) || binding.activeAttempts.length !== counts.attemptCount
+      || !Array.isArray(binding.activeSessions) || binding.activeSessions.length !== counts.sessionCount) failActiveBinding();
+    for (let index = 0; index < binding.activeAttempts.length; index += 1) {
+      const observed = exact(binding.activeAttempts[index], ["attemptId", "runId", "claimId", "generation",
+        "fenceTokenHash", "sourceSha", "sourceTreeHash", "worktreeRoot", "disposition"]);
+      const active = exact(activeRows.activeAttempts[index], ["attemptId", "runId", "stepId", "storyId",
+        "claimId", "worktreeRoot", "disposition"]);
+      if (typeof observed.generation !== "number" || !Number.isSafeInteger(observed.generation) || observed.generation < 1
+        || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(String(observed.sourceSha))
+        || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(String(observed.sourceTreeHash))
+        || !/^[a-f0-9]{64}$/.test(String(observed.fenceTokenHash))
+        || (["attemptId", "runId", "claimId", "worktreeRoot", "disposition"] as const)
+          .some(key => observed[key] !== active[key])) failActiveBinding();
+    }
+    for (let index = 0; index < binding.activeSessions.length; index += 1) {
+      const observed = exact(binding.activeSessions[index], ["sessionId", "runId", "claimId", "attemptId",
+        "ownerInstanceId", "worktreeRoot", "state"]);
+      const active = exact(activeRows.activeSessions[index], ["sessionId", "runId", "claimId", "attemptId",
+        "ownerInstanceId", "worktreeRoot", "state"]);
+      if ((["sessionId", "runId", "claimId", "attemptId", "ownerInstanceId", "worktreeRoot", "state"] as const)
+        .some(key => observed[key] !== active[key])) failActiveBinding();
+    }
+    if (hashCanonicalJson({ schema: binding.schema, authority: binding.authority,
+      physicalIdentityProvenance: binding.physicalIdentityProvenance, activeAttempts: binding.activeAttempts,
+      activeSessions: binding.activeSessions, counts: binding.counts }) !== sha256(binding.snapshotHash)
+      || hashCanonicalJson({ schema: row.schema, authority: row.authority,
+        physicalIdentityProvenance: row.physicalIdentityProvenance, activeRows: row.activeRows,
+        bindingRows: row.bindingRows }) !== sha256(row.snapshotHash)) failActiveBinding();
+    return value as ActiveBindingSnapshotV1;
+  } catch { failActiveBinding(); }
+}
+
 function failPre32(): never {
   throw new Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID");
 }
@@ -318,6 +376,25 @@ export async function observePositiveWorktreePre32HostPairWithPortsV6(
   const body = { schema: "setfarm.internal-production-pre32-physical-database-pair.v6" as const,
     authority: "diagnostic-only" as const, physicalIdentityProvenance: "unverified" as const,
     heldPair, pre32Database };
+  return Object.freeze({ ...body, pairHash: hashCanonicalJson(body) });
+}
+
+/** Non-pre32 positive rows remain diagnostic and preserve every physical blocker. */
+export async function observePositiveWorktreeActiveBindingHostPairWithPortsV1(
+  observePhysical: PhysicalObserverV2,
+  observeDatabase: ActiveBindingObserverV1,
+) {
+  let complete: ActiveBindingSnapshotV1 | null = null;
+  const heldPair = await observePositiveWorktreeHostPairWithPortsV2(observePhysical, async () => {
+    const observed = validActiveBindingSnapshotV1(await observeDatabase());
+    complete = observed;
+    return observed.activeRows;
+  });
+  const activeBindingDatabase = complete as ActiveBindingSnapshotV1 | null;
+  if (activeBindingDatabase === null || heldPair.databaseSnapshot !== activeBindingDatabase.activeRows) failActiveBinding();
+  const body = { schema: "setfarm.internal-production-active-binding-physical-database-pair.v1" as const,
+    authority: "diagnostic-only" as const, physicalIdentityProvenance: "unverified" as const,
+    heldPair, activeBindingDatabase };
   return Object.freeze({ ...body, pairHash: hashCanonicalJson(body) });
 }
 
@@ -464,5 +541,58 @@ export async function observeCodeOwnedPositiveWorktreePre32HostPairV6() {
   catch { failure = pre32PhaseFailure("launcher-cleanup"); }
   if (failure) throw failure;
   if (result === undefined) throw pre32PhaseFailure("pair-validation");
+  return result;
+}
+
+function activeBindingPhaseFailure(phase: Pre32PairPhase, physicalPoint: PhysicalFailurePoint | null = null): Error {
+  const error = new Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_ACTIVE_BINDING_HOST_PAIR_INVALID");
+  Object.defineProperty(error, "activeBindingPairPhase", { value: phase });
+  if (physicalPoint !== null && (phase === "physical-first-pass" || phase === "physical-second-pass"))
+    Object.defineProperty(error, "activeBindingPhysicalPoint", { value: physicalPoint });
+  return Object.freeze(error);
+}
+
+/** Zero-input, non-pre32 diagnostic. The launcher privately holds the agreed DB URL. */
+export async function observeCodeOwnedPositiveWorktreeActiveBindingHostPairV1() {
+  if (arguments.length !== 0) failActiveBinding();
+  type Launcher = ReturnType<typeof import("./baseline-deployment-cutover-launcher-observation-v1.js").holdDeploymentCutoverDefaultLauncherV1>;
+  let phase: Pre32PairPhase = "launcher-load";
+  let launcher: Launcher | undefined;
+  let result: Awaited<ReturnType<typeof observePositiveWorktreeActiveBindingHostPairWithPortsV1>> | undefined;
+  let failure: Error | null = null;
+  let physicalPoint: PhysicalFailurePoint | null = null;
+  try {
+    const { holdDeploymentCutoverDefaultLauncherV1 } = await import("./baseline-deployment-cutover-launcher-observation-v1.js");
+    phase = "launcher-acquire";
+    launcher = holdDeploymentCutoverDefaultLauncherV1();
+    phase = "passive-qualification";
+    await launcher.qualifyPassiveHome();
+    phase = "pre-physical-recheck";
+    launcher.recheck();
+    const ownerHomeRoot = userInfo().homedir;
+    const workspaceRoot = resolveInternalProductionBaselineWorkspaceRootV1();
+    phase = "physical-first-pass";
+    result = await observePositiveWorktreeActiveBindingHostPairWithPortsV1(
+      async betweenPasses => {
+        let physical: PhysicalCatalogV2;
+        try {
+          physical = await observeHeldPositiveWorktreePhysicalCatalogV2({ ownerHomeRoot, workspaceRoot }, async () => {
+            phase = "database-callback";
+            await betweenPasses();
+            phase = "physical-second-pass";
+          });
+        } catch (error) { physicalPoint = validPhysicalFailurePoint(error, phase); throw error; }
+        phase = "pair-validation";
+        return physical;
+      },
+      launcher.activeBindingSnapshot,
+    );
+    phase = "post-pair-recheck";
+    launcher.recheck();
+  } catch { failure = activeBindingPhaseFailure(phase, physicalPoint); }
+  try { launcher?.close(); }
+  catch { failure = activeBindingPhaseFailure("launcher-cleanup"); }
+  if (failure) throw failure;
+  if (result === undefined) throw activeBindingPhaseFailure("pair-validation");
   return result;
 }

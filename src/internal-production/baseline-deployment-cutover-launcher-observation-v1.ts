@@ -61,6 +61,7 @@ function holdLauncherConfigurationV1(defaultMode = false) {
   let censusAndActiveRows: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4> = async () => fail();
   let censusAndActiveRowsWithQuarantine: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndActiveRowsWithQuarantineV5> = async () => fail();
   let censusAndBindingRows: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndBindingRowsV6> = async () => fail();
+  let activeBindingSnapshot: () => ReturnType<typeof import("./baseline-positive-worktree-active-binding-cutover-database-v1.js").observePositiveWorktreeActiveBindingCutoverDatabaseV1> = async () => fail();
   let closed = false;
   let defaultInputs: undefined | {
     entries: { label: string; args: string[]; environment: Record<string, string> }[];
@@ -233,10 +234,18 @@ function holdLauncherConfigurationV1(defaultMode = false) {
       module.observeLegacyDatabaseCensusAndActiveRowsWithQuarantineV5(raw));
     censusAndBindingRows = () => observeDatabase((module, raw) =>
       module.observeLegacyDatabaseCensusAndBindingRowsV6(raw));
+    activeBindingSnapshot = async () => {
+      const raw = agreedDatabaseUrl();
+      const module = await import("./baseline-positive-worktree-active-binding-cutover-database-v1.js");
+      recheck();
+      const result = await module.observePositiveWorktreeActiveBindingCutoverDatabaseV1(raw);
+      recheck();
+      return result;
+    };
   } catch { invalid = true; }
   if (invalid || !output) { close(); fail(); }
   return { observation: output, recheck, census, censusAndActiveRows, censusAndActiveRowsWithQuarantine,
-    censusAndBindingRows, close, defaultInputs };
+    censusAndBindingRows, activeBindingSnapshot, close, defaultInputs };
 }
 
 // Separate, zero-input default-mode holder. Secret-bearing configuration and
@@ -443,9 +452,10 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
     const censusAndActiveRows = () => observeQualifiedDatabase(configuration.censusAndActiveRows);
     const censusAndActiveRowsWithQuarantine = () => observeQualifiedDatabase(configuration.censusAndActiveRowsWithQuarantine);
     const censusAndBindingRows = () => observeQualifiedDatabase(configuration.censusAndBindingRows);
+    const activeBindingSnapshot = () => observeQualifiedDatabase(configuration.activeBindingSnapshot);
     check();
     return Object.freeze({ observation, qualifyPassiveHome, recheck, census, censusAndActiveRows,
-      censusAndActiveRowsWithQuarantine, censusAndBindingRows, close });
+      censusAndActiveRowsWithQuarantine, censusAndBindingRows, activeBindingSnapshot, close });
   } catch { invalid = true; close(); defaultLauncherFailure(); }
 }
 
