@@ -72,6 +72,75 @@ const pre32Source = kind => `import fs from 'node:fs';import path from 'node:pat
     return Object.freeze({...body,pairHash:createHash('sha256').update(canonical(body)).digest('hex')});
   }`;
 const pre32Sources = kind => ({ "internal-production/baseline-positive-worktree-host-pair-v2": pre32Source(kind) });
+const pre32AnnotationSource = kind => `import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
+  const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value)
+    :Array.isArray(value)?'['+value.map(canonical).join(',')+']'
+    :'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
+  const hash=value=>createHash('sha256').update(canonical(value)).digest('hex');
+  export async function observeCodeOwnedPositiveWorktreePre32AbsenceAnnotationV1(){
+    if(arguments.length)throw Error('UNEXPECTED_INPUT');
+    const marker=path.join(process.cwd(),'.setfarm','pre32-annotation-called');
+    fs.mkdirSync(path.dirname(marker),{recursive:true});fs.appendFileSync(marker,'x');
+    const kind=${JSON.stringify(kind)};if(kind==='error')throw Error('PRIVATE_DATABASE_PASSWORD');
+    const heldPair=Object.freeze({schema:'setfarm.internal-production-positive-worktree-host-pair.v2',
+      pairHash:'a'.repeat(64),physicalCatalog:Object.freeze({catalogHash:'b'.repeat(64),blockers:Object.freeze([])})});
+    const pairBody={schema:'setfarm.internal-production-pre32-physical-database-pair.v6',
+      authority:'diagnostic-only',physicalIdentityProvenance:'unverified',heldPair,
+      pre32Database:Object.freeze({fixture:'one-transaction'})};
+    const sourcePair=Object.freeze({...pairBody,pairHash:hash(pairBody)});
+    const witnessBody={schema:'setfarm.internal-production-prunable-absence-witness.v3',
+      authority:'diagnostic-only',temporalScope:'v2-bracketed-two-pass',hostPair:heldPair,
+      sourcePairHash:kind==='crossed-witness'?'d'.repeat(64):heldPair.pairHash,
+      sourceCatalogHash:heldPair.physicalCatalog.catalogHash,witnesses:Object.freeze([]),
+      unwitnessedPrunableCount:0};
+    const witness=Object.freeze({...witnessBody,witnessHash:hash(witnessBody)});
+    const body={schema:'setfarm.internal-production-pre32-absent-git-record-annotation.v1',
+      authority:kind==='cutover'?'cutover':'diagnostic-only',physicalIdentityProvenance:'unverified',
+      sourcePair,witness,witnessedBlockers:Object.freeze([]),remainingBlockers:Object.freeze([])};
+    return Object.freeze({...body,annotationHash:hash(body)});
+  }`;
+const pre32AnnotationSources = kind => ({
+  "internal-production/baseline-positive-worktree-pre32-absence-annotation-v1": pre32AnnotationSource(kind),
+});
+
+test("bootstrap exposes an authenticated V6 absent-record annotation without cutover authority", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-absence-annotation-v1", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout);
+  assert.equal(observed.pre32AbsenceAnnotationV1.schema,
+    "setfarm.internal-production-pre32-absent-git-record-annotation.v1");
+  assert.equal(observed.pre32AbsenceAnnotationV1.authority, "diagnostic-only");
+  assert.equal(observed.pre32AbsenceAnnotationV1.witnessedBlockers.length, 0);
+  assert.equal(Object.hasOwn(observed, "pre32HostPairV6"), false);
+  assert.equal(fs.readFileSync(path.join(root, ".setfarm/pre32-annotation-called"), "utf8"), "x");
+}, undefined, { extraSources: pre32AnnotationSources("valid") }));
+
+for (const kind of ["error", "cutover", "crossed-witness"]) {
+  test(`pre32 annotation bootstrap refuses ${kind} without leaking private cause`, () => fixture(root => {
+    const result = run(root, ["inspect-pre32-absence-annotation-v1", "--json"]);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /^DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n/);
+    assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+  }, undefined, { extraSources: pre32AnnotationSources(kind) }));
+}
+
+test("pre32 annotation bootstrap rejects extra argv before observer invocation", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-absence-annotation-v1", "--json", "extra"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-annotation-called")), false);
+}, undefined, { extraSources: pre32AnnotationSources("valid") }));
+
+test("pre32 annotation bootstrap rejects source tampering before observer invocation", () => fixture(root => {
+  fs.appendFileSync(path.join(root, "src/internal-production/baseline-positive-worktree-pre32-absence-annotation-v1.ts"),
+    "\nthrow Error('PRIVATE_DATABASE_PASSWORD');\n");
+  const result = run(root, ["inspect-pre32-absence-annotation-v1", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-annotation-called")), false);
+  assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+}, undefined, { extraSources: pre32AnnotationSources("valid") }));
 
 test("bootstrap invokes the authenticated pre32 diagnostic exactly once without caller input", () => fixture(root => {
   const result = run(root, ["inspect-pre32-host-pair", "--json"]);
