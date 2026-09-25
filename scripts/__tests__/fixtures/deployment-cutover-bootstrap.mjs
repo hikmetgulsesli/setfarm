@@ -42,6 +42,7 @@ export function fixture(body, instrument = source => source, { genuine = false, 
     materialize(root, home, { genuine, installed: true });
     write(root, "scripts/stitch-to-jsx.mjs", "export const fixtureConverter = true;\n");
     const sources = ["internal-production/baseline-deployment-cutover-records-v1", "internal-production/baseline-deployment-cutover-owner-store-v1",
+      "internal-production/baseline-deployment-cutover-publication-v1", "internal-production/baseline-deployment-cutover-v1",
       "internal-production/baseline-workspace-authority-path-v1", "product-compiler/canonical-json",
       "internal-production/baseline-deployment-cutover-cli-observation-v1",
       "internal-production/baseline-deployment-cutover-launcher-observation-v1",

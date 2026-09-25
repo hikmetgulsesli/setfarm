@@ -19,7 +19,7 @@ function fixture(body) {
   try {
     for (const name of ["deployment-cutover-owner.mjs", "deployment-cutover.mjs", "deployment-cutover-dependencies.mjs", "build-generation-maintenance-owner-observer.mjs", "build-generation-maintenance-journal.mjs"])
       fs.copyFileSync(new URL(`scripts/${name}`, repo), path.join(checkout, "scripts", name));
-    for (const locator of ["internal-production/baseline-deployment-cutover-owner-store-v1", "internal-production/baseline-deployment-cutover-records-v1", "internal-production/baseline-workspace-authority-path-v1", "product-compiler/canonical-json"])
+    for (const locator of ["internal-production/baseline-deployment-cutover-owner-store-v1", "internal-production/baseline-deployment-cutover-records-v1", "internal-production/baseline-deployment-cutover-publication-v1", "internal-production/baseline-deployment-cutover-v1", "internal-production/baseline-workspace-authority-path-v1", "product-compiler/canonical-json"])
       fs.writeFileSync(path.join(checkout, "dist", `${locator}.js`), transformSync(fs.readFileSync(new URL(`src/${locator}.ts`, repo), "utf8"), { loader: "ts", format: "esm", target: "node22" }).code, { mode: 0o600 });
     fs.writeFileSync(path.join(checkout, "package.json"), '{"type":"module"}', { mode: 0o600 });
     fs.writeFileSync(path.join(checkout, "scripts/build-generation-retention.mjs"), `
@@ -47,6 +47,18 @@ function run(home, checkout, action) {
   const child = spawnSync(process.execPath, ["--input-type=module", "-e", program(home, checkout, action)], { encoding: "utf8", env: {}, timeout: 15000 });
   assert.equal(child.status, 0, child.stderr); return JSON.parse(child.stdout);
 }
+function freshOrdinaryStartResult(home, checkout) {
+  const observer = path.join(checkout, "dist/internal-production/baseline-deployment-cutover-v1.js");
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import os from 'node:os';import {syncBuiltinESMExports} from 'node:module';
+    const actual=os.userInfo();os.userInfo=()=>({...actual,homedir:${JSON.stringify(home)}});syncBuiltinESMExports();
+    const observer=await import(${JSON.stringify(observer)});
+    try{observer.assertOrdinarySpawnerDeploymentCutoverAdmissionV1();process.stdout.write('admitted')}
+    catch(error){process.stdout.write(error.message)}
+  `], { encoding: "utf8", env: {}, timeout: 15000 });
+  assert.equal(child.status, 0, child.stderr);
+  return child.stdout;
+}
 test("owner controller source accepts legitimate partial source reads", () => fixture((home, checkout) => {
   const body = program(home, checkout, 'process.stdout.write(JSON.stringify({hash:source.controllerSourceHash}));')
     .replace('const module=await import', 'const read=fs.readSync;fs.readSync=(fd,buffer,offset,length,position)=>read(fd,buffer,offset,Math.min(length,127),position);const module=await import');
@@ -62,6 +74,43 @@ test("real current owner gets one opaque local capability without a spawner lock
     process.stdout.write(JSON.stringify({forged,second,keys:Object.keys(cap),pid:process.pid,claim:JSON.parse(fs.readFileSync(root+'/owner-0001.json')),lock:fs.existsSync(${JSON.stringify(path.join(home, ".openclaw/setfarm/spawner.lock"))})}));`);
   assert.equal(result.forged, true); assert.equal(result.second, true); assert.deepEqual(result.keys, []);
   assert.equal(result.claim.owner.pid, result.pid); assert.equal(result.lock, false);
+}));
+
+test("current owner publishes only its matching durable intent and fresh ordinary startup refuses", () => fixture((home, checkout) => {
+  const result = run(home, checkout, `const cap=await module.acquireDeploymentCutoverOwnerV1(maintenance);
+    const intent=records.createDeploymentCutoverIntentV1({...plan,maintenanceIntentHash:maintenance.maintenanceIntentHash});
+    const published=module.publishDeploymentCutoverIntentWithOwnerV1(cap,intent);
+    process.stdout.write(JSON.stringify({publishedHash:published.cutoverIntentHash,expectedHash:intent.cutoverIntentHash,
+      expectedBytes:records.encodeDeploymentCutoverIntentV1(intent).toString('base64')}));`);
+  assert.equal(result.publishedHash, result.expectedHash);
+  const intentPath = path.join(home, "ai/setrox/data/internal-production-baseline/deployment-cutover-v1/intent.json");
+  const onDisk = fs.readFileSync(intentPath);
+  assert.deepEqual(onDisk, Buffer.from(result.expectedBytes, "base64"));
+  assert.equal(freshOrdinaryStartResult(home, checkout), "DEPLOYMENT_CUTOVER_ORDINARY_START_REFUSED");
+}));
+
+test("forged owner and crossed maintenance plan cannot publish an intent", () => fixture((home, checkout) => {
+  const result = run(home, checkout, `const cap=await module.acquireDeploymentCutoverOwnerV1(maintenance);
+    const intent=records.createDeploymentCutoverIntentV1({...plan,maintenanceIntentHash:maintenance.maintenanceIntentHash});
+    let forged=false,crossed=false;
+    try{module.publishDeploymentCutoverIntentWithOwnerV1({...cap},intent)}catch{forged=true}
+    const wrong=records.createDeploymentCutoverIntentV1({...plan,cliLinkObservationHash:'9'.repeat(64),maintenanceIntentHash:maintenance.maintenanceIntentHash});
+    try{module.publishDeploymentCutoverIntentWithOwnerV1(cap,wrong)}catch{crossed=true}
+    process.stdout.write(JSON.stringify({forged,crossed,exists:fs.existsSync(${JSON.stringify(path.join(home, "ai/setrox/data/internal-production-baseline/deployment-cutover-v1"))})}));`);
+  assert.deepEqual(result, { forged: true, crossed: true, exists: false });
+}));
+
+test("owner replacement during publication never returns success or removes durable refusal", () => fixture((home, checkout) => {
+  const result = run(home, checkout, `const cap=await module.acquireDeploymentCutoverOwnerV1(maintenance);
+    const intent=records.createDeploymentCutoverIntentV1({...plan,maintenanceIntentHash:maintenance.maintenanceIntentHash});
+    const ownerRoot=root,retained=root+'.retained',link=fs.linkSync;let replaced=false;
+    fs.linkSync=(from,to)=>{const value=link(from,to);if(to.endsWith('/deployment-cutover-v1/intent.json')&&!replaced){
+      replaced=true;fs.renameSync(ownerRoot,retained);fs.mkdirSync(ownerRoot,{mode:0o700});
+    }return value};
+    let refused=false;try{module.publishDeploymentCutoverIntentWithOwnerV1(cap,intent)}catch{refused=true}
+    process.stdout.write(JSON.stringify({refused,replaced,intentExists:fs.existsSync(${JSON.stringify(path.join(home, "ai/setrox/data/internal-production-baseline/deployment-cutover-v1/intent.json"))})}));`);
+  assert.deepEqual(result, { refused: true, replaced: true, intentExists: true });
+  assert.equal(freshOrdinaryStartResult(home, checkout), "DEPLOYMENT_CUTOVER_ORDINARY_START_REFUSED");
 }));
 test("overlapping public acquisitions cannot mint two handles", () => fixture((home, checkout) => {
   const result = run(home, checkout, `const results=await Promise.allSettled([module.acquireDeploymentCutoverOwnerV1(maintenance),module.acquireDeploymentCutoverOwnerV1(maintenance)]);
