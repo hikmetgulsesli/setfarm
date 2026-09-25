@@ -59,10 +59,25 @@ function pre32FailurePhase(error) {
     return allowed.includes(phase.value) ? phase.value : "unknown";
   } catch { return "unknown"; }
 }
-function pre32PhysicalPoint(error, phase) {
+function activeBindingFailurePhase(error) {
+  try {
+    if (types.isProxy(error) || Object.getPrototypeOf(error) !== Error.prototype || !Object.isFrozen(error)) return "unknown";
+    const descriptors = Object.getOwnPropertyDescriptors(error), keys = Reflect.ownKeys(descriptors);
+    if (keys.some(key => typeof key !== "string" || !["stack", "message", "activeBindingPairPhase", "activeBindingPhysicalPoint"].includes(key))) return "unknown";
+    const message = descriptors.message, phase = descriptors.activeBindingPairPhase;
+    if (!message || !Object.hasOwn(message, "value")
+      || message.value !== "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_ACTIVE_BINDING_HOST_PAIR_INVALID"
+      || !phase || !Object.hasOwn(phase, "value") || phase.enumerable || phase.configurable || phase.writable) return "unknown";
+    const allowed = ["launcher-load", "launcher-acquire", "passive-qualification", "pre-physical-recheck",
+      "physical-first-pass", "database-callback", "physical-second-pass", "pair-validation",
+      "post-pair-recheck", "launcher-cleanup"];
+    return allowed.includes(phase.value) ? phase.value : "unknown";
+  } catch { return "unknown"; }
+}
+function pre32PhysicalPoint(error, phase, field = "pre32PhysicalPoint") {
   if (phase !== "physical-first-pass" && phase !== "physical-second-pass") return null;
   try {
-    const descriptor = Object.getOwnPropertyDescriptor(error, "pre32PhysicalPoint");
+    const descriptor = Object.getOwnPropertyDescriptor(error, field);
     if (!descriptor || !Object.hasOwn(descriptor, "value")
       || descriptor.enumerable || descriptor.configurable || descriptor.writable) return null;
     const point = descriptor.value;
@@ -120,7 +135,7 @@ function sourceState() {
 }
 async function inspect() {
   if (typeof registerHooks !== "function" || process.execArgv.length || process.argv.length !== 4
-    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6"].includes(process.argv[2]) || process.argv[3] !== "--json"
+    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-active-binding-host-pair-v1"].includes(process.argv[2]) || process.argv[3] !== "--json"
     || pathToFileURL(path.resolve(process.argv[1])).href !== import.meta.url
     || Object.keys(process.env).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key)
       && !(process.platform === "darwin" && key === "__CF_USER_TEXT_ENCODING"))) fail();
@@ -245,7 +260,7 @@ async function inspect() {
     stage("controller-source");
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();
-    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair, pre32HostPairV5, pre32HostPairV6;
+    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair, pre32HostPairV5, pre32HostPairV6, activeBindingHostPairV1;
     if (process.argv[2] === "inspect-default-context") {
       stage("default-owner-load");
       const contextModule = await import("./deployment-cutover-default-context.mjs");
@@ -281,6 +296,28 @@ async function inspect() {
       else if (v5) pre32HostPairV5 = observed;
       else pre32HostPair = observed;
       stage("post-pre32-host-pair"); check();
+    }
+    if (process.argv[2] === "inspect-active-binding-host-pair-v1") {
+      stage("active-binding-host-pair-load");
+      const pairModule = await import("../dist/internal-production/baseline-positive-worktree-host-pair-v2.js");
+      check(); stage("active-binding-host-pair");
+      const observed = await pairModule.observeCodeOwnedPositiveWorktreeActiveBindingHostPairV1();
+      const descriptors = observed && Object.getOwnPropertyDescriptors(observed);
+      const keys = descriptors && Reflect.ownKeys(descriptors);
+      const expected = ["schema", "authority", "physicalIdentityProvenance", "heldPair", "activeBindingDatabase", "pairHash"];
+      if (!Object.isFrozen(observed) || !keys || keys.length !== expected.length
+        || keys.some(key => typeof key !== "string" || !expected.includes(key)
+          || !descriptors[key].enumerable || !Object.hasOwn(descriptors[key], "value"))) fail();
+      const fields = Object.fromEntries(expected.map(key => [key, descriptors[key].value]));
+      if (fields.schema !== "setfarm.internal-production-active-binding-physical-database-pair.v1"
+        || fields.authority !== "diagnostic-only" || fields.physicalIdentityProvenance !== "unverified"
+        || !Object.isFrozen(fields.heldPair) || !Object.isFrozen(fields.activeBindingDatabase)
+        || typeof fields.pairHash !== "string" || !/^[a-f0-9]{64}$/.test(fields.pairHash)
+        || hash(canonical({ schema: fields.schema, authority: fields.authority,
+          physicalIdentityProvenance: fields.physicalIdentityProvenance,
+          heldPair: fields.heldPair, activeBindingDatabase: fields.activeBindingDatabase })) !== fields.pairHash) fail();
+      activeBindingHostPairV1 = observed;
+      stage("post-active-binding-host-pair"); check();
     }
     if (process.argv[2] === "inspect-retained-profile") {
       const profileModule = await import("./deployment-cutover-retained-profile.mjs");
@@ -326,16 +363,22 @@ async function inspect() {
     result = { schema: "setfarm.internal-production-deployment-cutover-bootstrap-observation.v1", sourceBuild, controllerSourceHash: authority.controllerSourceHash,
       ...(host ? { host } : {}), ...(envFiles ? { envFiles } : {}), ...(helpers ? { helpers } : {}), ...(retainedProfile ? { retainedProfile } : {}),
       ...(defaultContext ? { defaultContext } : {}), ...(pre32HostPair ? { pre32HostPair } : {}),
-      ...(pre32HostPairV5 ? { pre32HostPairV5 } : {}), ...(pre32HostPairV6 ? { pre32HostPairV6 } : {}) };
+      ...(pre32HostPairV5 ? { pre32HostPairV5 } : {}), ...(pre32HostPairV6 ? { pre32HostPairV6 } : {}),
+      ...(activeBindingHostPairV1 ? { activeBindingHostPairV1 } : {}) };
   } catch (error) {
     // A throwing nested observer may have acquired resources we never received.
     // Missing sanitized cleanup evidence means unknown, not successful cleanup.
     const owned = process.argv[2] === "inspect-default-context" && refusal.stage === "default-context" ? ownerRefusal(error) : null;
     const pre32 = ["inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6"].includes(process.argv[2]) && refusal.stage === "pre32-host-pair";
+    const activeBinding = process.argv[2] === "inspect-active-binding-host-pair-v1" && refusal.stage === "active-binding-host-pair";
     const phase = pre32 ? pre32FailurePhase(error) : null;
     const point = pre32 ? pre32PhysicalPoint(error, phase) : null;
+    const activePhase = activeBinding ? activeBindingFailurePhase(error) : null;
+    const activePoint = activeBinding ? pre32PhysicalPoint(error, activePhase, "activeBindingPhysicalPoint") : null;
     refusal = owned ?? { ...refusal, cleanupFailed: null,
-      ...(pre32 ? { pre32FailurePhase: phase, ...(point ? { pre32PhysicalPoint: point } : {}) } : {}) };
+      ...(pre32 ? { pre32FailurePhase: phase, ...(point ? { pre32PhysicalPoint: point } : {}) } : {}),
+      ...(activeBinding ? { activeBindingFailurePhase: activePhase,
+        ...(activePoint ? { activeBindingPhysicalPoint: activePoint } : {}) } : {}) };
     invalid = true;
   }
   while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch {
@@ -346,6 +389,6 @@ async function inspect() {
 try { process.stdout.write(`${JSON.stringify(await inspect())}\n`); }
 catch {
   process.stderr.write("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
-  if (["inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
+  if (["inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-active-binding-host-pair-v1"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
   process.exitCode = 1;
 }
