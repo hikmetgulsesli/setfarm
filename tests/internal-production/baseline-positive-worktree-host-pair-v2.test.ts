@@ -9,7 +9,8 @@ import { pathToFileURL } from "node:url";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { createLegacyFindingPublicationInventoryValueV1 } from "../../src/findings/legacy-finding-publication-inventory-v1.js";
 import { observePositiveWorktreeHostPairWithPortsV2,
-  observePositiveWorktreePre32HostPairWithPortsV4 } from "../../src/internal-production/baseline-positive-worktree-host-pair-v2.js";
+  observePositiveWorktreePre32HostPairWithPortsV4,
+  observePositiveWorktreePre32HostPairWithPortsV5 } from "../../src/internal-production/baseline-positive-worktree-host-pair-v2.js";
 
 function catalog(blockedRoot: string) {
   const body = Object.freeze({
@@ -48,6 +49,78 @@ function pre32(activeRows = database()) {
     authority: "diagnostic-only" as const, legacyCensus, activeRows });
   return Object.freeze({ ...body, snapshotHash: hashCanonicalJson(body) });
 }
+
+function pre32V5(quarantinedRuntimeSessionCount = 0) {
+  const v4 = pre32();
+  const body = Object.freeze({ schema: "setfarm.internal-production-pre32-active-owner-snapshot.v5" as const,
+    authority: "diagnostic-only" as const, legacyCensus: v4.legacyCensus,
+    activeRows: v4.activeRows, quarantinedRuntimeSessionCount });
+  return Object.freeze({ ...body, snapshotHash: hashCanonicalJson(body) });
+}
+
+test("V5 holds quarantined runtime evidence inside both physical passes without clearing blockers", async () => {
+  const events: string[] = [];
+  const physical = catalog("/retained/prunable");
+  const combined = pre32V5(2);
+  let calls = 0;
+  const result = await observePositiveWorktreePre32HostPairWithPortsV5(async (betweenPasses) => {
+    events.push("physical-first");
+    await betweenPasses();
+    events.push("physical-second");
+    return physical;
+  }, async () => { calls += 1; events.push("database"); return combined; });
+  assert.deepEqual(events, ["physical-first", "database", "physical-second"]);
+  assert.equal(calls, 1);
+  assert.equal(result.schema, "setfarm.internal-production-pre32-physical-database-pair.v5");
+  assert.equal(result.authority, "diagnostic-only");
+  assert.equal(result.physicalIdentityProvenance, "unverified");
+  assert.equal(result.heldPair.physicalCatalog, physical);
+  assert.equal(result.pre32Database, combined);
+  assert.equal(result.heldPair.databaseSnapshot, combined.activeRows);
+  const { pairHash, ...body } = result;
+  assert.equal(pairHash, hashCanonicalJson(body));
+  assert.equal(Object.isFrozen(result), true);
+});
+
+test("V5 refuses a hash-consistent malformed quarantine count", async () => {
+  const physical = async (betweenPasses: () => Promise<void>) => {
+    await betweenPasses(); return catalog("/retained/prunable");
+  };
+  for (const count of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(observePositiveWorktreePre32HostPairWithPortsV5(physical,
+      async () => pre32V5(count)), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID/);
+  }
+});
+
+test("V5 refuses crossed, mutable and extra database evidence without losing physical blockers", async () => {
+  const physical = async (betweenPasses: () => Promise<void>) => {
+    await betweenPasses(); return catalog("/retained/prunable");
+  };
+  const valid = pre32V5(2);
+  const invalid: unknown[] = [
+    Object.freeze({ ...valid, snapshotHash: "a".repeat(64) }),
+    Object.freeze({ ...valid, extra: true }),
+    Object.freeze({ ...valid, authority: "cutover" }),
+    { ...valid },
+    new Proxy(valid, {}),
+  ];
+  const changedLegacy = Object.freeze({ ...valid.legacyCensus, activeRuntimeSessionCount: 1 });
+  const crossedBody = Object.freeze({ schema: valid.schema, authority: valid.authority,
+    legacyCensus: changedLegacy, activeRows: valid.activeRows,
+    quarantinedRuntimeSessionCount: valid.quarantinedRuntimeSessionCount });
+  invalid.push(Object.freeze({ ...crossedBody, snapshotHash: hashCanonicalJson(crossedBody) }));
+  for (const value of invalid) {
+    await assert.rejects(observePositiveWorktreePre32HostPairWithPortsV5(physical,
+      async () => value as ReturnType<typeof pre32V5>),
+    /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID/);
+  }
+  let calls = 0;
+  await assert.rejects(observePositiveWorktreePre32HostPairWithPortsV5(async () => catalog("/retained/prunable"),
+    async () => { calls += 1; return valid; }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_HOST_PAIR_INVALID/);
+  assert.equal(calls, 0);
+  await assert.rejects(observePositiveWorktreePre32HostPairWithPortsV5(physical,
+    async () => { throw Error("DB_LOST"); }), /DB_LOST/);
+});
 
 test("V4 pairs the complete pre32 snapshot inside one held physical callback without filtering blockers", async () => {
   const events: string[] = [];
@@ -164,6 +237,8 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
           if(process.env.FAKE_POSTCHECK_FAILURE==='1'&&globalThis.events.filter(x=>x==='recheck').length===2)throw Error('PRIVATE_POSTCHECK')},
         censusAndActiveRows:async()=>{globalThis.events.push('database');
           if(process.env.FAKE_DATABASE_FAILURE==='1')throw Error('PRIVATE_DATABASE_PASSWORD');return globalThis.combined},
+        censusAndActiveRowsWithQuarantine:async()=>{globalThis.events.push('database');
+          if(process.env.FAKE_DATABASE_FAILURE==='1')throw Error('PRIVATE_DATABASE_PASSWORD');return globalThis.combinedV5},
         close:()=>{globalThis.events.push('close');if(process.env.FAKE_CLOSE_FAILURE==='1')throw Error('PRIVATE_CLOSE')}};
     }`);
     for (const [specifier, replacement] of [
@@ -183,9 +258,12 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
       const freeze=value=>{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value)}return value};
       globalThis.catalog=freeze(${JSON.stringify(catalog("/retained/prunable"))});
       globalThis.combined=freeze(${JSON.stringify(pre32())});
+      globalThis.combinedV5=freeze(${JSON.stringify(pre32V5(2))});
       const module=await import(${JSON.stringify(pathToFileURL(file).href)});
       let result,error,phase,hasCause,physicalPoint;
-      try{result=await module.observeCodeOwnedPositiveWorktreePre32HostPairV4()}catch(caught){
+      try{result=await (process.env.FAKE_V5==='1'
+        ?module.observeCodeOwnedPositiveWorktreePre32HostPairV5()
+        :module.observeCodeOwnedPositiveWorktreePre32HostPairV4())}catch(caught){
         error=caught.message;phase=Object.getOwnPropertyDescriptor(caught,'pre32PairPhase')?.value;
         hasCause=Object.hasOwn(caught,'cause');physicalPoint=Object.getOwnPropertyDescriptor(caught,'pre32PhysicalPoint')?.value}
       process.stdout.write(JSON.stringify({schema:result?.schema,blockers:result?.heldPair.physicalCatalog.blockers,
@@ -198,6 +276,20 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
       blockers: [{ root: "/retained/prunable", reason: "prunable-git-worktree" }],
       events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "physical-second",
         "recheck", "close"] });
+    const v5 = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
+      { encoding: "utf8", timeout: 15000, env: { FAKE_V5: "1" } });
+    assert.equal(v5.status, 0, v5.stderr);
+    assert.deepEqual(JSON.parse(v5.stdout), { schema: "setfarm.internal-production-pre32-physical-database-pair.v5",
+      blockers: [{ root: "/retained/prunable", reason: "prunable-git-worktree" }],
+      events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "physical-second",
+        "recheck", "close"] });
+    const v5Refused = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
+      { encoding: "utf8", timeout: 15000, env: { FAKE_V5: "1", FAKE_DATABASE_FAILURE: "1" } });
+    assert.equal(v5Refused.status, 0, v5Refused.stderr);
+    assert.deepEqual(JSON.parse(v5Refused.stdout), { error: "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID",
+      phase: "database-callback", hasCause: false,
+      events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "close"] });
+    assert.doesNotMatch(v5Refused.stdout, /PRIVATE_/);
     const refused = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
       { encoding: "utf8", timeout: 15000, env: { FAKE_PHYSICAL_FAILURE: "1" } });
     assert.equal(refused.status, 0, refused.stderr);

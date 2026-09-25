@@ -15,6 +15,8 @@ type PhysicalObserverV2 = (betweenPasses: () => Promise<void>) => Promise<Physic
 type DatabaseObserverV2 = () => Promise<ActiveOwnerRowSnapshotV2>;
 type Pre32SnapshotV4 = Awaited<ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4>>;
 type DatabaseObserverV4 = () => Promise<Pre32SnapshotV4>;
+type Pre32SnapshotV5 = Awaited<ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndActiveRowsWithQuarantineV5>>;
+type DatabaseObserverV5 = () => Promise<Pre32SnapshotV5>;
 
 function fail(): never { throw new Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_HOST_PAIR_INVALID"); }
 
@@ -102,6 +104,37 @@ function validPre32SnapshotV4(value: unknown): Pre32SnapshotV4 {
     if (hashCanonicalJson({ schema: row.schema, authority: row.authority,
       legacyCensus: row.legacyCensus, activeRows: row.activeRows }) !== snapshotHash) failPre32();
     return value as Pre32SnapshotV4;
+  } catch { failPre32(); }
+}
+
+function validPre32SnapshotV5(value: unknown): Pre32SnapshotV5 {
+  try {
+    const row = exact(value, ["schema", "authority", "legacyCensus", "activeRows",
+      "quarantinedRuntimeSessionCount", "snapshotHash"]);
+    if (row.schema !== "setfarm.internal-production-pre32-active-owner-snapshot.v5"
+      || row.authority !== "diagnostic-only"
+      || typeof row.quarantinedRuntimeSessionCount !== "number"
+      || !Number.isSafeInteger(row.quarantinedRuntimeSessionCount)
+      || row.quarantinedRuntimeSessionCount < 0) failPre32();
+    const census = exact(row.legacyCensus, ["activeRunCount", "openClaimCount", "executionAttemptCount",
+      "activeRuntimeSessionCount", "activeCompletionOwnerCount", "unsettledMandatoryEffectCount",
+      "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
+      "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount",
+      "legacyFindingPublicationInventory"]);
+    for (const [key, count] of Object.entries(census)) {
+      if (key !== "legacyFindingPublicationInventory" && count !== 0) failPre32();
+    }
+    validateLegacyFindingPublicationInventoryV1(census.legacyFindingPublicationInventory);
+    const activeRows = validDatabaseSnapshot(row.activeRows);
+    if (activeRows.counts.runCount !== census.activeRunCount
+      || activeRows.counts.claimCount !== census.openClaimCount
+      || activeRows.counts.attemptCount !== census.executionAttemptCount
+      || activeRows.counts.sessionCount !== census.activeRuntimeSessionCount) failPre32();
+    const snapshotHash = sha256(row.snapshotHash);
+    if (hashCanonicalJson({ schema: row.schema, authority: row.authority,
+      legacyCensus: row.legacyCensus, activeRows: row.activeRows,
+      quarantinedRuntimeSessionCount: row.quarantinedRuntimeSessionCount }) !== snapshotHash) failPre32();
+    return value as Pre32SnapshotV5;
   } catch { failPre32(); }
 }
 
@@ -204,6 +237,24 @@ export async function observePositiveWorktreePre32HostPairWithPortsV4(
   return Object.freeze({ ...body, pairHash: hashCanonicalJson(body) });
 }
 
+export async function observePositiveWorktreePre32HostPairWithPortsV5(
+  observePhysical: PhysicalObserverV2,
+  observeDatabase: DatabaseObserverV5,
+) {
+  let complete: Pre32SnapshotV5 | null = null;
+  const heldPair = await observePositiveWorktreeHostPairWithPortsV2(observePhysical, async () => {
+    const result = validPre32SnapshotV5(await observeDatabase());
+    complete = result;
+    return result.activeRows;
+  });
+  const pre32Database = complete as Pre32SnapshotV5 | null;
+  if (pre32Database === null || heldPair.databaseSnapshot !== pre32Database.activeRows) failPre32();
+  const body = { schema: "setfarm.internal-production-pre32-physical-database-pair.v5" as const,
+    authority: "diagnostic-only" as const, physicalIdentityProvenance: "unverified" as const,
+    heldPair, pre32Database };
+  return Object.freeze({ ...body, pairHash: hashCanonicalJson(body) });
+}
+
 /** Zero-input diagnostic observer. Import DB configuration before physical acquisition. */
 export async function observeCodeOwnedPositiveWorktreeHostPairV2() {
   const ownerHomeRoot = userInfo().homedir;
@@ -249,6 +300,51 @@ export async function observeCodeOwnedPositiveWorktreePre32HostPairV4() {
         return physical;
       },
       launcher.censusAndActiveRows,
+    );
+    phase = "post-pair-recheck";
+    launcher.recheck();
+  } catch { failure = pre32PhaseFailure(phase, physicalPoint); }
+  try { launcher?.close(); }
+  catch { failure = pre32PhaseFailure("launcher-cleanup"); }
+  if (failure) throw failure;
+  if (result === undefined) throw pre32PhaseFailure("pair-validation");
+  return result;
+}
+
+/** Diagnostic only: V5 adds quarantined runtime evidence inside the held physical interval. */
+export async function observeCodeOwnedPositiveWorktreePre32HostPairV5() {
+  if (arguments.length !== 0) failPre32();
+  type Launcher = ReturnType<typeof import("./baseline-deployment-cutover-launcher-observation-v1.js").holdDeploymentCutoverDefaultLauncherV1>;
+  let phase: Pre32PairPhase = "launcher-load";
+  let launcher: Launcher | undefined;
+  let result: Awaited<ReturnType<typeof observePositiveWorktreePre32HostPairWithPortsV5>> | undefined;
+  let failure: Error | null = null;
+  let physicalPoint: PhysicalFailurePoint | null = null;
+  try {
+    const { holdDeploymentCutoverDefaultLauncherV1 } = await import("./baseline-deployment-cutover-launcher-observation-v1.js");
+    phase = "launcher-acquire";
+    launcher = holdDeploymentCutoverDefaultLauncherV1();
+    phase = "passive-qualification";
+    await launcher.qualifyPassiveHome();
+    phase = "pre-physical-recheck";
+    launcher.recheck();
+    const ownerHomeRoot = userInfo().homedir;
+    const workspaceRoot = resolveInternalProductionBaselineWorkspaceRootV1();
+    phase = "physical-first-pass";
+    result = await observePositiveWorktreePre32HostPairWithPortsV5(
+      async (betweenPasses) => {
+        let physical: PhysicalCatalogV2;
+        try {
+          physical = await observeHeldPositiveWorktreePhysicalCatalogV2({ ownerHomeRoot, workspaceRoot }, async () => {
+            phase = "database-callback";
+            await betweenPasses();
+            phase = "physical-second-pass";
+          });
+        } catch (error) { physicalPoint = validPhysicalFailurePoint(error, phase); throw error; }
+        phase = "pair-validation";
+        return physical;
+      },
+      launcher.censusAndActiveRowsWithQuarantine,
     );
     phase = "post-pair-recheck";
     launcher.recheck();
