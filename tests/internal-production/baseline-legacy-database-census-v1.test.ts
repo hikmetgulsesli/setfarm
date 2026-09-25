@@ -21,18 +21,20 @@ test("shared legacy census is import-inert and never adopts an ambient database 
     syncBuiltinESMExports();
     const module=await import(${JSON.stringify(url)});
     const importDependencyLoads=[...dependencyLoads];
-    let error,combinedError;
+    let error,combinedError,quarantineError;
     try{await module.observeLegacyDatabaseCensusV1(undefined,true)}catch(caught){error=caught.message}
     try{await module.observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4(undefined)}catch(caught){combinedError=caught.message}
-    process.stdout.write(JSON.stringify({error,combinedError,writes,connections,importDependencyLoads,dependencyLoads}));
+    try{await module.observeLegacyDatabaseCensusAndActiveRowsWithQuarantineV5(undefined)}catch(caught){quarantineError=caught.message}
+    process.stdout.write(JSON.stringify({error,combinedError,quarantineError,writes,connections,importDependencyLoads,dependencyLoads}));
   `], { encoding: "utf8", timeout: 15000, env: { SETFARM_PG_URL: "postgresql://PRIVATE_AMBIENT_CANARY@127.0.0.1/setfarm" } });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {
     error: "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:legacy zero-owner database is unavailable",
     combinedError: "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:legacy zero-owner database is unavailable",
+    quarantineError: "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:legacy zero-owner database is unavailable",
     writes: 0, connections: 0,
     importDependencyLoads: [], dependencyLoads: ["postgres", "../findings/finding-publication-v1.js",
-      "postgres", "../findings/finding-publication-v1.js"],
+      "postgres", "../findings/finding-publication-v1.js", "postgres", "../findings/finding-publication-v1.js"],
   });
 });
 
@@ -145,11 +147,29 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
           else if(statement.startsWith('SELECT id::text AS "claimId"'))label='open-claims';
           else if(statement.startsWith('SELECT attempt_id AS "attemptId"'))label='active-attempts';
           else if(statement.startsWith('SELECT session_id AS "sessionId"'))label='active-sessions';
+          else if(statement.includes('"quarantinedRuntimeSessionCount"')){
+            label='quarantined-runtimes';
+            if(globalThis.probe.scenario==='quarantine-query-failure')throw Error('QUARANTINE_QUERY_FAILURE');
+            if(globalThis.probe.scenario!=='quarantine-missing')rows=[{
+              quarantinedRuntimeSessionCount:globalThis.probe.scenario==='quarantine-positive'?'2'
+                :globalThis.probe.scenario==='quarantine-malformed'?'01'
+                :globalThis.probe.scenario==='quarantine-overflow'?'9007199254740992'
+                :globalThis.probe.scenario==='quarantine-negative'?'-1':'0',
+              ...(globalThis.probe.scenario==='quarantine-extra'?{extra:'PRIVATE_SENTINEL'}:{})}];
+            if(globalThis.probe.scenario==='quarantine-duplicate')rows.push({...rows[0]});
+            if(globalThis.probe.scenario==='quarantine-accessor')
+              Object.defineProperty(rows[0],'quarantinedRuntimeSessionCount',
+                {enumerable:true,get(){throw Error('PRIVATE_SENTINEL')}});
+            if(globalThis.probe.scenario==='quarantine-proxy')
+              rows[0]=new Proxy(rows[0],{get(){throw Error('PRIVATE_SENTINEL')}});
+          }
           else throw Error('UNEXPECTED_UNSAFE_QUERY');
           globalThis.probe.queries.push(label);
           const result=new Result(...rows);
           for(const key of ['count','state','command','columns','statement'])
             Object.defineProperty(result,key,{value:null,enumerable:false});
+          if(globalThis.probe.scenario==='quarantine-index-accessor'&&label==='quarantined-runtimes')
+            Object.defineProperty(result,'0',{enumerable:true,get(){throw Error('PRIVATE_SENTINEL')}});
           return result
         };
         return {options:{host:['localhost'],port:[5432],database:'setfarm',user:'fixture'},
@@ -165,9 +185,9 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
       }};
     `).replace('await import("../findings/finding-publication-v1.js")',
       `await import(${JSON.stringify(new URL("../../src/findings/finding-publication-v1.ts", import.meta.url).href)})`)
-      .replace('await import("./baseline-positive-worktree-active-row-snapshot-v2.js")',
+      .replaceAll('await import("./baseline-positive-worktree-active-row-snapshot-v2.js")',
         `await import(${JSON.stringify(new URL("../../src/internal-production/baseline-positive-worktree-active-row-snapshot-v2.ts", import.meta.url).href)})`)
-      .replace('await import("../product-compiler/canonical-json.js")',
+      .replaceAll('await import("../product-compiler/canonical-json.js")',
         `await import(${JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href)})`);
     fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
     const file = path.join(root, "census.ts"); fs.writeFileSync(file, source);
@@ -180,9 +200,12 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
       let snapshot,error;
       try{snapshot=globalThis.probe.scenario==='legacy-only'
         ?await module.observeLegacyDatabaseCensusV1('postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm',true,'cutover-local')
-        :await module.observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4(
-          'postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm')}catch(caught){error=caught.message}
-      process.stdout.write(JSON.stringify({snapshot,error,...globalThis.probe}));
+        :process.env.FAKE_V5==='1'
+          ?await module.observeLegacyDatabaseCensusAndActiveRowsWithQuarantineV5(
+            'postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm')
+          :await module.observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4(
+            'postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm')}catch(caught){error=caught.message}
+      process.stdout.write(JSON.stringify({snapshot,error,frozen:snapshot&&Object.isFrozen(snapshot),...globalThis.probe}));
     `;
     const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
       { encoding: "utf8", timeout: 15000, env: {} });
@@ -226,5 +249,38 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
     assert.equal(legacy.error, undefined);
     assert.deepEqual(legacy.snapshot, body.legacyCensus);
     assert.deepEqual(legacy.queries, observed.queries.slice(0, 7));
+    for (const [scenario, expectedCount, expectedError] of [
+      ["success", 0, undefined],
+      ["quarantine-positive", 2, undefined],
+      ["quarantine-malformed", undefined, "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:quarantined runtime census invalid"],
+      ["quarantine-overflow", undefined, "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:quarantined runtime census invalid"],
+      ["quarantine-negative", undefined, "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:quarantined runtime census invalid"],
+      ["quarantine-extra", undefined, "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:quarantined runtime census invalid"],
+      ["quarantine-missing", undefined, "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:quarantined runtime census invalid"],
+      ["quarantine-duplicate", undefined, "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:quarantined runtime census invalid"],
+      ["quarantine-accessor", undefined, "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:quarantined runtime census invalid"],
+      ["quarantine-index-accessor", undefined, "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:quarantined runtime census invalid"],
+      ["quarantine-proxy", undefined, "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:quarantined runtime census invalid"],
+      ["quarantine-query-failure", undefined, "QUARANTINE_QUERY_FAILURE"],
+    ] as const) {
+      const v5Result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
+        { encoding: "utf8", timeout: 15000, env: { FAKE_V5: "1", FAKE_SCENARIO: scenario } });
+      assert.equal(v5Result.status, 0, `${scenario}: ${v5Result.stderr}`);
+      const v5 = JSON.parse(v5Result.stdout);
+      assert.equal(v5.error, expectedError, scenario);
+      assert.deepEqual(v5.modes, ["isolation level repeatable read read only"], scenario);
+      assert.deepEqual(v5.closes, [{ timeout: 1 }], scenario);
+      assert.deepEqual(v5.queries, scenario === "quarantine-query-failure" ? observed.queries
+        : [...observed.queries, "quarantined-runtimes"], scenario);
+      if (expectedError) assert.equal(v5.snapshot, undefined, scenario);
+      else {
+        const { snapshotHash: v5Hash, ...v5Body } = v5.snapshot;
+        assert.equal(v5.frozen, true, scenario);
+        assert.equal(v5Hash, hashCanonicalJson(v5Body), scenario);
+        assert.deepEqual(v5Body, { schema: "setfarm.internal-production-pre32-active-owner-snapshot.v5",
+          authority: "diagnostic-only", legacyCensus: body.legacyCensus,
+          activeRows: body.activeRows, quarantinedRuntimeSessionCount: expectedCount }, scenario);
+      }
+    }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
