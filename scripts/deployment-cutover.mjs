@@ -135,7 +135,7 @@ function sourceState() {
 }
 async function inspect() {
   if (typeof registerHooks !== "function" || process.execArgv.length || process.argv.length !== 4
-    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-active-binding-host-pair-v1"].includes(process.argv[2]) || process.argv[3] !== "--json"
+    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-absence-annotation-v1", "inspect-active-binding-host-pair-v1"].includes(process.argv[2]) || process.argv[3] !== "--json"
     || pathToFileURL(path.resolve(process.argv[1])).href !== import.meta.url
     || Object.keys(process.env).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key)
       && !(process.platform === "darwin" && key === "__CF_USER_TEXT_ENCODING"))) fail();
@@ -260,7 +260,7 @@ async function inspect() {
     stage("controller-source");
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();
-    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair, pre32HostPairV5, pre32HostPairV6, activeBindingHostPairV1;
+    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair, pre32HostPairV5, pre32HostPairV6, pre32AbsenceAnnotationV1, activeBindingHostPairV1;
     if (process.argv[2] === "inspect-default-context") {
       stage("default-owner-load");
       const contextModule = await import("./deployment-cutover-default-context.mjs");
@@ -319,6 +319,60 @@ async function inspect() {
       activeBindingHostPairV1 = observed;
       stage("post-active-binding-host-pair"); check();
     }
+    if (process.argv[2] === "inspect-pre32-absence-annotation-v1") {
+      stage("pre32-absence-annotation-load");
+      const annotationModule = await import("../dist/internal-production/baseline-positive-worktree-pre32-absence-annotation-v1.js");
+      check(); stage("pre32-absence-annotation");
+      const observed = await annotationModule.observeCodeOwnedPositiveWorktreePre32AbsenceAnnotationV1();
+      const descriptors = observed && Object.getOwnPropertyDescriptors(observed);
+      const keys = descriptors && Reflect.ownKeys(descriptors);
+      const expected = ["schema", "authority", "physicalIdentityProvenance", "sourcePair", "witness",
+        "witnessedBlockers", "remainingBlockers", "annotationHash"];
+      if (!Object.isFrozen(observed) || !keys || keys.length !== expected.length
+        || keys.some(key => typeof key !== "string" || !expected.includes(key)
+          || !descriptors[key].enumerable || !Object.hasOwn(descriptors[key], "value"))) fail();
+      const fields = Object.fromEntries(expected.map(key => [key, descriptors[key].value]));
+      const pair = fields.sourcePair, witness = fields.witness;
+      if (fields.schema !== "setfarm.internal-production-pre32-absent-git-record-annotation.v1"
+        || fields.authority !== "diagnostic-only" || fields.physicalIdentityProvenance !== "unverified"
+        || !Object.isFrozen(pair) || pair.schema !== "setfarm.internal-production-pre32-physical-database-pair.v6"
+        || pair.authority !== "diagnostic-only" || pair.physicalIdentityProvenance !== "unverified"
+        || !Object.isFrozen(pair.heldPair) || !Object.isFrozen(pair.pre32Database)
+        || typeof pair.pairHash !== "string" || !/^[a-f0-9]{64}$/.test(pair.pairHash)
+        || hash(canonical({ schema: pair.schema, authority: pair.authority,
+          physicalIdentityProvenance: pair.physicalIdentityProvenance,
+          heldPair: pair.heldPair, pre32Database: pair.pre32Database })) !== pair.pairHash
+        || !Object.isFrozen(witness) || witness.schema !== "setfarm.internal-production-prunable-absence-witness.v3"
+        || witness.authority !== "diagnostic-only" || witness.temporalScope !== "v2-bracketed-two-pass"
+        || witness.hostPair !== pair.heldPair
+        || witness.sourcePairHash !== pair.heldPair.pairHash
+        || witness.sourceCatalogHash !== pair.heldPair.physicalCatalog.catalogHash
+        || !Array.isArray(witness.witnesses) || !Object.isFrozen(witness.witnesses)
+        || typeof witness.witnessHash !== "string" || !/^[a-f0-9]{64}$/.test(witness.witnessHash)
+        || hash(canonical({ schema: witness.schema, authority: witness.authority,
+          temporalScope: witness.temporalScope, sourcePairHash: witness.sourcePairHash,
+          sourceCatalogHash: witness.sourceCatalogHash, hostPair: witness.hostPair,
+          witnesses: witness.witnesses, unwitnessedPrunableCount: witness.unwitnessedPrunableCount })) !== witness.witnessHash
+        || !Object.isFrozen(fields.witnessedBlockers) || !Array.isArray(fields.witnessedBlockers)
+        || !Object.isFrozen(fields.remainingBlockers) || !Array.isArray(fields.remainingBlockers)
+        || typeof fields.annotationHash !== "string" || !/^[a-f0-9]{64}$/.test(fields.annotationHash)
+        || hash(canonical({ schema: fields.schema, authority: fields.authority,
+          physicalIdentityProvenance: fields.physicalIdentityProvenance,
+          sourcePair: pair, witness, witnessedBlockers: fields.witnessedBlockers,
+          remainingBlockers: fields.remainingBlockers })) !== fields.annotationHash) fail();
+      const original = pair.heldPair.physicalCatalog.blockers;
+      const roots = new Set(witness.witnesses.map(entry => entry.root));
+      if (!Array.isArray(original) || !Object.isFrozen(original) || roots.size !== witness.witnesses.length
+        || fields.witnessedBlockers.length + fields.remainingBlockers.length !== original.length) fail();
+      let witnessedIndex = 0, remainingIndex = 0;
+      for (const blocker of original) {
+        if (blocker.reason === "prunable-git-worktree" && roots.has(blocker.root)) {
+          if (fields.witnessedBlockers[witnessedIndex++] !== blocker) fail();
+        } else if (fields.remainingBlockers[remainingIndex++] !== blocker) fail();
+      }
+      pre32AbsenceAnnotationV1 = observed;
+      stage("post-pre32-absence-annotation"); check();
+    }
     if (process.argv[2] === "inspect-retained-profile") {
       const profileModule = await import("./deployment-cutover-retained-profile.mjs");
       check(); retainedProfile = profileModule.observeDeploymentCutoverRetainedProfileV1();
@@ -364,12 +418,14 @@ async function inspect() {
       ...(host ? { host } : {}), ...(envFiles ? { envFiles } : {}), ...(helpers ? { helpers } : {}), ...(retainedProfile ? { retainedProfile } : {}),
       ...(defaultContext ? { defaultContext } : {}), ...(pre32HostPair ? { pre32HostPair } : {}),
       ...(pre32HostPairV5 ? { pre32HostPairV5 } : {}), ...(pre32HostPairV6 ? { pre32HostPairV6 } : {}),
+      ...(pre32AbsenceAnnotationV1 ? { pre32AbsenceAnnotationV1 } : {}),
       ...(activeBindingHostPairV1 ? { activeBindingHostPairV1 } : {}) };
   } catch (error) {
     // A throwing nested observer may have acquired resources we never received.
     // Missing sanitized cleanup evidence means unknown, not successful cleanup.
     const owned = process.argv[2] === "inspect-default-context" && refusal.stage === "default-context" ? ownerRefusal(error) : null;
-    const pre32 = ["inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6"].includes(process.argv[2]) && refusal.stage === "pre32-host-pair";
+    const pre32 = (["inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6"].includes(process.argv[2]) && refusal.stage === "pre32-host-pair")
+      || (process.argv[2] === "inspect-pre32-absence-annotation-v1" && refusal.stage === "pre32-absence-annotation");
     const activeBinding = process.argv[2] === "inspect-active-binding-host-pair-v1" && refusal.stage === "active-binding-host-pair";
     const phase = pre32 ? pre32FailurePhase(error) : null;
     const point = pre32 ? pre32PhysicalPoint(error, phase) : null;
@@ -389,6 +445,6 @@ async function inspect() {
 try { process.stdout.write(`${JSON.stringify(await inspect())}\n`); }
 catch {
   process.stderr.write("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
-  if (["inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-active-binding-host-pair-v1"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
+  if (["inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-absence-annotation-v1", "inspect-active-binding-host-pair-v1"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
   process.exitCode = 1;
 }
