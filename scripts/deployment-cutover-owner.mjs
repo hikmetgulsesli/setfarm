@@ -90,8 +90,12 @@ async function load() {
     sourceAuthority({ source });
     const store = await import(new URL("../dist/internal-production/baseline-deployment-cutover-owner-store-v1.js", import.meta.url));
     sourceAuthority({ source });
+    const publication = await import(new URL("../dist/internal-production/baseline-deployment-cutover-publication-v1.js", import.meta.url));
+    sourceAuthority({ source });
+    const observation = await import(new URL("../dist/internal-production/baseline-deployment-cutover-v1.js", import.meta.url));
+    sourceAuthority({ source });
     const processObserver = await import("./build-generation-maintenance-owner-observer.mjs");
-    const modules = { source, records, store, processObserver }; sourceAuthority(modules); return modules;
+    const modules = { source, records, store, publication, observation, processObserver }; sourceAuthority(modules); return modules;
   })().catch(() => { uncertain = true; fail(); });
   return modulesPromise;
 }
@@ -130,7 +134,7 @@ export async function acquireDeploymentCutoverOwnerV1(maintenance) {
     const published = store.publishDeploymentCutoverOwnerClaimV1(intent, claim, before.committedHistoryHash);
     if (published.claims.at(-1)?.ownerClaimHash !== claim.ownerClaimHash) fail();
     const capability = Object.freeze(Object.create(null));
-    handles.set(capability, { modules, claim, projection: committed(published), valid: true });
+    handles.set(capability, { modules, claim, maintenance: intent, projection: committed(published), valid: true });
     assertDeploymentCutoverOwnerV1(capability); return capability;
   } catch { uncertain = true; fail(); }
 }
@@ -144,4 +148,28 @@ export function assertDeploymentCutoverOwnerV1(capability) {
     if (committed(held.modules.store.observeDeploymentCutoverOwnerHistoryV1()) !== held.projection) fail();
     sourceAuthority(held.modules);
   } catch { held.valid = false; uncertain = true; fail(); }
+}
+
+// A durable refusal can be published only by this process's current owner.
+// This is not a DB admission fence, service-effect permission or zero-owner proof.
+export function publishDeploymentCutoverIntentWithOwnerV1(capability, cutoverIntent) {
+  assertDeploymentCutoverOwnerV1(capability);
+  const held = handles.get(capability);
+  const { records, publication, observation } = held.modules;
+  const intent = records.parseDeploymentCutoverIntentV1(records.encodeDeploymentCutoverIntentV1(cutoverIntent));
+  records.assertDeploymentCutoverMaintenanceRelationV1({ cutover: intent, maintenance: held.maintenance,
+    controllerSourceHash: sourceAuthority(held.modules).controllerSourceHash });
+  assertDeploymentCutoverOwnerV1(capability);
+  try {
+    publication.publishDeploymentCutoverIntentV1(intent);
+    assertDeploymentCutoverOwnerV1(capability);
+    const observed = observation.observeDeploymentCutoverIntentV1();
+    if (observed.state !== "open" || !records.encodeDeploymentCutoverIntentV1(observed.intent).equals(records.encodeDeploymentCutoverIntentV1(intent))) fail();
+    assertDeploymentCutoverOwnerV1(capability);
+    return observed.intent;
+  } catch {
+    held.valid = false;
+    uncertain = true;
+    fail();
+  }
 }
