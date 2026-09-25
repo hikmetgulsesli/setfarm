@@ -111,9 +111,44 @@ function failPre32(): never {
 type Pre32PairPhase = "launcher-load" | "launcher-acquire" | "passive-qualification"
   | "pre-physical-recheck" | "physical-first-pass" | "database-callback"
   | "physical-second-pass" | "pair-validation" | "post-pair-recheck" | "launcher-cleanup";
-function pre32PhaseFailure(phase: Pre32PairPhase): Error {
+type PhysicalFailurePoint = Readonly<{ schema: "setfarm.internal-production-positive-worktree-physical-refusal-point.v1";
+  operation: string; candidateOrdinal: number | null }>;
+function validPhysicalFailurePoint(error: unknown, phase: Pre32PairPhase): PhysicalFailurePoint | null {
+  try {
+    if (phase !== "physical-first-pass" && phase !== "physical-second-pass") return null;
+    if (error === null || typeof error !== "object" || types.isProxy(error)
+      || Object.getPrototypeOf(error) !== Error.prototype || !Object.isFrozen(error)) return null;
+    const message = Object.getOwnPropertyDescriptor(error, "message");
+    const descriptor = Object.getOwnPropertyDescriptor(error, "physicalFailurePoint");
+    if (!message || !Object.hasOwn(message, "value")
+      || message.value !== "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID"
+      || !descriptor || !Object.hasOwn(descriptor, "value")
+      || descriptor.enumerable || descriptor.configurable || descriptor.writable) return null;
+    const point = descriptor.value;
+    if (point === null || typeof point !== "object" || types.isProxy(point)
+      || Object.getPrototypeOf(point) !== Object.prototype || !Object.isFrozen(point)) return null;
+    const fields = Object.getOwnPropertyDescriptors(point), keys = Reflect.ownKeys(fields);
+    if (keys.length !== 3 || keys.some(key => typeof key !== "string"
+      || !["schema", "operation", "candidateOrdinal"].includes(key)
+      || !fields[key]!.enumerable || !Object.hasOwn(fields[key]!, "value"))) return null;
+    const operation = fields.operation!.value, ordinal = fields.candidateOrdinal!.value;
+    const candidate = ["candidate-git", "candidate-lsof", "candidate-record", "candidate-recheck-git", "candidate-recheck-lsof",
+      "candidate-recheck-compare"].includes(operation);
+    const firstPass = ["scope-hold", "base-discovery", "parent-git", "candidate-git", "candidate-lsof",
+      "candidate-record", "first-pass-recheck"];
+    const secondPass = ["post-database-stability", "parent-recheck", "candidate-recheck-git",
+      "candidate-recheck-lsof", "candidate-recheck-compare", "result"];
+    if (fields.schema!.value !== "setfarm.internal-production-positive-worktree-physical-refusal-point.v1"
+      || !(phase === "physical-first-pass" ? firstPass : secondPass).includes(operation)
+      || (candidate ? !Number.isInteger(ordinal) || ordinal < 0 || ordinal >= 256 : ordinal !== null)) return null;
+    return point as PhysicalFailurePoint;
+  } catch { return null; }
+}
+function pre32PhaseFailure(phase: Pre32PairPhase, physicalPoint: PhysicalFailurePoint | null = null): Error {
   const error = new Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID");
   Object.defineProperty(error, "pre32PairPhase", { value: phase });
+  if (physicalPoint !== null && (phase === "physical-first-pass" || phase === "physical-second-pass"))
+    Object.defineProperty(error, "pre32PhysicalPoint", { value: physicalPoint });
   return Object.freeze(error);
 }
 
@@ -188,6 +223,7 @@ export async function observeCodeOwnedPositiveWorktreePre32HostPairV4() {
   let launcher: Launcher | undefined;
   let result: Awaited<ReturnType<typeof observePositiveWorktreePre32HostPairWithPortsV4>> | undefined;
   let failure: Error | null = null;
+  let physicalPoint: PhysicalFailurePoint | null = null;
   try {
     const { holdDeploymentCutoverDefaultLauncherV1 } = await import("./baseline-deployment-cutover-launcher-observation-v1.js");
     phase = "launcher-acquire";
@@ -201,11 +237,14 @@ export async function observeCodeOwnedPositiveWorktreePre32HostPairV4() {
     phase = "physical-first-pass";
     result = await observePositiveWorktreePre32HostPairWithPortsV4(
       async (betweenPasses) => {
-        const physical = await observeHeldPositiveWorktreePhysicalCatalogV2({ ownerHomeRoot, workspaceRoot }, async () => {
-          phase = "database-callback";
-          await betweenPasses();
-          phase = "physical-second-pass";
-        });
+        let physical: PhysicalCatalogV2;
+        try {
+          physical = await observeHeldPositiveWorktreePhysicalCatalogV2({ ownerHomeRoot, workspaceRoot }, async () => {
+            phase = "database-callback";
+            await betweenPasses();
+            phase = "physical-second-pass";
+          });
+        } catch (error) { physicalPoint = validPhysicalFailurePoint(error, phase); throw error; }
         phase = "pair-validation";
         return physical;
       },
@@ -213,7 +252,7 @@ export async function observeCodeOwnedPositiveWorktreePre32HostPairV4() {
     );
     phase = "post-pair-recheck";
     launcher.recheck();
-  } catch { failure = pre32PhaseFailure(phase); }
+  } catch { failure = pre32PhaseFailure(phase, physicalPoint); }
   try { launcher?.close(); }
   catch { failure = pre32PhaseFailure("launcher-cleanup"); }
   if (failure) throw failure;

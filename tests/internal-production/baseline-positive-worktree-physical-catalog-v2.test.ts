@@ -408,10 +408,46 @@ test("status-1 lsof output naming another PID refuses with exact root evidence",
       syncBuiltinESMExports();
     }), (error: unknown) => {
       assert.equal((error as Error).message, "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID");
+      assert.deepEqual(Object.getOwnPropertyDescriptor(error, "physicalFailurePoint")?.value, {
+        schema: "setfarm.internal-production-positive-worktree-physical-refusal-point.v1",
+        operation: "candidate-recheck-lsof", candidateOrdinal: 0,
+      });
       const inner = (error as Error & { cause: Error & { cause: unknown } }).cause;
       assert.deepEqual(inner.cause, { kind: "lsof-status1-nonobserver-pids", root: unknown,
         observedPids: [process.pid, otherPid].sort((a, b) => a - b) });
       assert.equal(Object.isFrozen(inner.cause), true);
+      return true;
+    });
+  } finally {
+    childProcess.spawnSync = originalSpawn;
+    syncBuiltinESMExports();
+    testHome.close();
+  }
+});
+
+test("first-pass lsof refusal reports only finite candidate operation and ordinal", async () => {
+  const testHome = fixture();
+  const originalSpawn = childProcess.spawnSync;
+  try {
+    const unknown = path.join(testHome.workspaceRoot, ".worktrees", "data");
+    mkdirSync(unknown, { recursive: true });
+    childProcess.spawnSync = ((file: string, args: readonly string[], options: unknown) => {
+      if (file === "/usr/sbin/lsof" && args.includes(unknown)) return {
+        status: 1, stdout: Buffer.from(`p${process.pid}\0\np999999\0\n`),
+        stderr: Buffer.alloc(0), signal: null, error: undefined,
+      };
+      return Reflect.apply(originalSpawn, childProcess, [file, args, options]);
+    }) as unknown as typeof spawnSync;
+    syncBuiltinESMExports();
+    await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }), (error: unknown) => {
+      const descriptor = Object.getOwnPropertyDescriptor(error, "physicalFailurePoint");
+      assert.deepEqual(descriptor?.value, { schema: "setfarm.internal-production-positive-worktree-physical-refusal-point.v1",
+        operation: "candidate-lsof", candidateOrdinal: 0 });
+      assert.equal(descriptor?.enumerable, false);
+      assert.equal(Object.isFrozen(descriptor?.value), true);
+      assert.equal(JSON.stringify(descriptor?.value).includes(unknown), false);
       return true;
     });
   } finally {
@@ -480,7 +516,14 @@ test("detects Git dirty-state drift across the awaited bracket", async () => {
     await assert.rejects(observeHeldPositiveWorktreePhysicalCatalogV2({
       ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
     }, async () => { writeFileSync(path.join(linked, "tracked.txt"), "after"); }),
-    /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+    (error: unknown) => {
+      assert.equal((error as Error).message, "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID");
+      assert.deepEqual(Object.getOwnPropertyDescriptor(error, "physicalFailurePoint")?.value, {
+        schema: "setfarm.internal-production-positive-worktree-physical-refusal-point.v1",
+        operation: "candidate-recheck-compare", candidateOrdinal: 0,
+      });
+      return true;
+    });
   } finally {
     testHome.close();
   }
@@ -823,6 +866,10 @@ test("held directory mutation reports exact local drift provenance while still r
       ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
     }, async () => { writeFileSync(path.join(projects, "new-file"), "fixture"); }), (error: unknown) => {
       assert.equal((error as Error).message, "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID");
+      assert.deepEqual(Object.getOwnPropertyDescriptor(error, "physicalFailurePoint")?.value, {
+        schema: "setfarm.internal-production-positive-worktree-physical-refusal-point.v1",
+        operation: "post-database-stability", candidateOrdinal: null,
+      });
       const inner = (error as Error & { cause: Error & { cause: unknown } }).cause;
       assert.deepEqual(inner.cause, { kind: "directory-descriptor", root: projects });
       assert.equal(Object.isFrozen(inner.cause), true);

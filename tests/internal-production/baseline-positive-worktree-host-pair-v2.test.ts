@@ -142,7 +142,16 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
       if(process.env.FAKE_FIRST_FAILURE==='1')throw Error('PRIVATE_PHYSICAL_FIRST');
       try{await callback()}catch{throw Error('PHYSICAL_WRAPPED_DB')}
       globalThis.events.push('physical-second');
-      if(process.env.FAKE_PHYSICAL_FAILURE==='1')throw Error('PHYSICAL_DRIFT');
+      if(process.env.FAKE_PHYSICAL_FAILURE==='1'){
+        if(process.env.FAKE_PHYSICAL_POINT==='1'||process.env.FAKE_BAD_POINT==='1'||process.env.FAKE_CROSSED_POINT==='1'){
+          const error=Error('INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID');
+          const point=Object.freeze({schema:'setfarm.internal-production-positive-worktree-physical-refusal-point.v1',
+            operation:process.env.FAKE_CROSSED_POINT==='1'?'candidate-lsof':'candidate-recheck-lsof',
+            candidateOrdinal:process.env.FAKE_BAD_POINT==='1'?999:3});
+          Object.defineProperty(error,'physicalFailurePoint',{value:point});throw Object.freeze(error);
+        }
+        throw Error('PHYSICAL_DRIFT');
+      }
       if(process.env.FAKE_PAIR_FAILURE==='1')return Object.freeze({...globalThis.catalog,catalogHash:'a'.repeat(64)});
       return globalThis.catalog;
     }`);
@@ -175,12 +184,12 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
       globalThis.catalog=freeze(${JSON.stringify(catalog("/retained/prunable"))});
       globalThis.combined=freeze(${JSON.stringify(pre32())});
       const module=await import(${JSON.stringify(pathToFileURL(file).href)});
-      let result,error,phase,hasCause;
+      let result,error,phase,hasCause,physicalPoint;
       try{result=await module.observeCodeOwnedPositiveWorktreePre32HostPairV4()}catch(caught){
         error=caught.message;phase=Object.getOwnPropertyDescriptor(caught,'pre32PairPhase')?.value;
-        hasCause=Object.hasOwn(caught,'cause')}
+        hasCause=Object.hasOwn(caught,'cause');physicalPoint=Object.getOwnPropertyDescriptor(caught,'pre32PhysicalPoint')?.value}
       process.stdout.write(JSON.stringify({schema:result?.schema,blockers:result?.heldPair.physicalCatalog.blockers,
-        error,phase,hasCause,events:globalThis.events}));
+        error,phase,hasCause,physicalPoint,events:globalThis.events}));
     `;
     const success = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
       { encoding: "utf8", timeout: 15000, env: {} });
@@ -195,6 +204,21 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
     assert.deepEqual(JSON.parse(refused.stdout), { error: "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID",
       phase: "physical-second-pass", hasCause: false,
       events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "physical-second", "close"] });
+    for (const [env, expectedPoint] of [
+      [{ FAKE_PHYSICAL_FAILURE: "1", FAKE_PHYSICAL_POINT: "1" }, {
+        schema: "setfarm.internal-production-positive-worktree-physical-refusal-point.v1",
+        operation: "candidate-recheck-lsof", candidateOrdinal: 3,
+      }],
+      [{ FAKE_PHYSICAL_FAILURE: "1", FAKE_BAD_POINT: "1" }, undefined],
+      [{ FAKE_PHYSICAL_FAILURE: "1", FAKE_CROSSED_POINT: "1" }, undefined],
+    ] as const) {
+      const observed = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
+        { encoding: "utf8", timeout: 15000, env });
+      assert.equal(observed.status, 0, observed.stderr);
+      assert.deepEqual(JSON.parse(observed.stdout), { error: "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID",
+        phase: "physical-second-pass", hasCause: false, ...(expectedPoint ? { physicalPoint: expectedPoint } : {}),
+        events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "physical-second", "close"] });
+    }
     for (const [env, phase, events] of [
       [{ FAKE_QUALIFY_FAILURE: "1" }, "passive-qualification", ["launcher-acquire", "qualified", "close"]],
       [{ FAKE_FIRST_FAILURE: "1" }, "physical-first-pass", ["launcher-acquire", "qualified", "recheck", "physical-first", "close"]],

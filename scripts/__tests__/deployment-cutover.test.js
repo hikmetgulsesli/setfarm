@@ -21,6 +21,16 @@ const pre32Source = kind => `import fs from 'node:fs';import path from 'node:pat
     const marker=path.join(process.cwd(),'.setfarm','pre32-called');
     fs.mkdirSync(path.dirname(marker),{recursive:true});fs.appendFileSync(marker,'x');
     if(kind==='error')throw Error('PRIVATE_DATABASE_PASSWORD');
+    if(['point-phase','bad-point-phase','crossed-point-phase','crossed-first-point','proxy-point-phase','accessor-point-phase'].includes(kind)){
+      const error=Error('INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID');
+      Object.defineProperty(error,'pre32PairPhase',{value:kind==='crossed-point-phase'?'database-callback':'physical-first-pass'});
+      const point=Object.freeze({schema:'setfarm.internal-production-positive-worktree-physical-refusal-point.v1',
+        operation:kind==='crossed-first-point'?'candidate-recheck-compare':'candidate-lsof',
+        candidateOrdinal:kind==='bad-point-phase'?999:7});
+      if(kind==='accessor-point-phase')Object.defineProperty(error,'pre32PhysicalPoint',{get(){throw Error('PRIVATE_DATABASE_PASSWORD')}});
+      else Object.defineProperty(error,'pre32PhysicalPoint',{value:kind==='proxy-point-phase'?new Proxy(point,{}):point});
+      throw Object.freeze(error);
+    }
     const phases={'database-phase':'database-callback','physical-phase':'physical-second-pass',
       'cleanup-phase':'launcher-cleanup','spoofed-phase':'outside-contract','proxy-phase':'database-callback'};
     if(phases[kind]){
@@ -92,6 +102,26 @@ for (const [kind, expected] of [["database-phase", "database-callback"], ["physi
   assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: "bootstrap",
     stage: "pre32-host-pair", ownerContext: null, launcherStage: null, cleanupFailed: null,
     pre32FailurePhase: expected });
+  assert.equal(lines.length, 2);
+  assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+}, undefined, { extraSources: pre32Sources(kind) }));
+
+for (const [kind, phase, expectedPoint] of [
+  ["point-phase", "physical-first-pass", { schema: "setfarm.internal-production-positive-worktree-physical-refusal-point.v1",
+    operation: "candidate-lsof", candidateOrdinal: 7 }],
+  ["bad-point-phase", "physical-first-pass", undefined],
+  ["crossed-point-phase", "database-callback", undefined],
+  ["crossed-first-point", "physical-first-pass", undefined],
+  ["proxy-point-phase", "physical-first-pass", undefined],
+  ["accessor-point-phase", "physical-first-pass", undefined],
+]) test(`pre32 bootstrap publishes only validated physical point from ${kind}`, () => fixture(root => {
+  const result = run(root, ["inspect-pre32-host-pair", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  const lines = result.stderr.trimEnd().split("\n");
+  assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: "bootstrap",
+    stage: "pre32-host-pair", ownerContext: null, launcherStage: null, cleanupFailed: null,
+    pre32FailurePhase: phase, ...(expectedPoint ? { pre32PhysicalPoint: expectedPoint } : {}) });
   assert.equal(lines.length, 2);
   assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
 }, undefined, { extraSources: pre32Sources(kind) }));
