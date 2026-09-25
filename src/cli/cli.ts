@@ -10,6 +10,7 @@ import { readRecentLogs } from "../lib/logger.js";
 import { emitEvent, getRecentEvents, getRunEvents, type SetfarmEvent } from "../installer/events.js";
 import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/daemonctl.js";
 import { startSpawner, stopSpawner, getSpawnerStatus, isSpawnerRunning } from "../server/spawnerctl.js";
+import { assertOrdinarySpawnerDeploymentCutoverAdmissionV1 } from "../internal-production/baseline-deployment-cutover-v1.js";
 import {
   claimStep,
   completeStep,
@@ -360,6 +361,7 @@ async function main() {
   }
 
   if (group === "update") {
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     const force = args.includes("--force");
     const repoRoot = join(__dirname, "..", "..");
 
@@ -420,6 +422,7 @@ async function main() {
   }
 
   if (group === "uninstall" && (!args[1] || args[1] === "--force")) {
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     if (!process.stdin.isTTY && !args.includes("--force")) {
       process.stderr.write("Error: 'uninstall' is blocked in non-interactive (agent) sessions.\nUse --force from a terminal to override.\n");
       process.exit(1);
@@ -447,6 +450,7 @@ async function main() {
   }
 
   if (group === "install" && !args[1]) {
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     const workflows = await listBundledWorkflows();
     if (workflows.length === 0) { console.log("No bundled workflows found."); return; }
 
@@ -474,6 +478,7 @@ async function main() {
       console.log("\nDashboard already running.");
     }
 
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     if (!isSpawnerRunning().running) {
       try {
         const result = await startSpawner();
@@ -546,6 +551,7 @@ async function main() {
     }
 
     if (sub === "restart") {
+      assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
       stopSpawner();
       await new Promise((resolve) => setTimeout(resolve, 1000));
       const result = await startSpawner();
@@ -919,6 +925,7 @@ async function main() {
   if (!target) { printUsage(); process.exit(1); }
 
   if (action === "install") {
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     const result = await installWorkflow({ workflowId: target });
     process.stdout.write(`Installed workflow: ${result.workflowId}\nAgent crons will start when a run begins.\n`);
     process.stdout.write(`\nStart with: setfarm workflow run ${result.workflowId} "your task"\n`);
@@ -926,6 +933,7 @@ async function main() {
   }
 
   if (action === "uninstall") {
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     if (!process.stdin.isTTY && !args.includes("--force")) {
       process.stderr.write("Error: 'workflow uninstall' is blocked in non-interactive (agent) sessions.\nUse --force from a terminal to override.\n");
       process.exit(1);
@@ -982,6 +990,7 @@ async function main() {
   }
 
   if (action === "resume") {
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     if (!target) { process.stderr.write("Missing run-id.\n"); printUsage(); process.exit(1); }
     const operationalArguments = parseOperationalActionArguments(args);
     const runId = await resolveRunOperationalActionTarget(getSql(), target);
@@ -1022,6 +1031,7 @@ async function main() {
   }
 
   if (action === "ensure-crons") {
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     const { loadWorkflowSpec } = await import("../installer/workflow-spec.js");
     const { resolveWorkflowDir } = await import("../installer/paths.js");
     const { setupAgentCrons, removeAgentCrons, gatewayAgentCronsEnabled } = await import("../installer/agent-cron.js");
@@ -1041,6 +1051,7 @@ async function main() {
   }
 
   if (action === "run") {
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     let notifyUrl: string | undefined;
     let forceQuota = false;
     const extractedProtocol = extractProtocolArgument(args.slice(3));
@@ -1117,6 +1128,7 @@ async function main() {
       ...(releaseAdmission ? { releaseAdmission } : {}),
     });
 
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     if (process.env.SETFARM_DISABLE_SPAWNER_AUTOSTART !== "1" && !isSpawnerRunning().running) {
       try {
         const result = await startSpawner();

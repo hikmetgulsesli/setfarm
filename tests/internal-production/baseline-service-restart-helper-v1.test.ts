@@ -62,8 +62,11 @@ test("watcher start adopts a real detached daemon and cannot prove predecessor r
     const logExpression = 'path.join(os.homedir(), ".openclaw", "setfarm", "spawner.log")';
     assert.equal(controller.split(pidExpression).length, 2); assert.equal(controller.split(logExpression).length, 2);
     mkdirSync(path.join(fixture, "src/server"), { recursive: true });
+    mkdirSync(path.join(fixture, "src/internal-production"), { recursive: true });
     writeFileSync(path.join(fixture, "src/server/spawnerctl.ts"), controller.replace(pidExpression, JSON.stringify(path.join(fixture, "spawner.pid"))).replace(logExpression, JSON.stringify(path.join(fixture, "spawner.log"))));
     writeFileSync(path.join(fixture, "src/runtime-config.ts"), 'export function loadRuntimeEnv(){throw new Error("WATCHER_MUST_ONLY_ADOPT_EXISTING");}\n');
+    writeFileSync(path.join(fixture, "src/internal-production/baseline-deployment-cutover-v1.ts"),
+      'export function assertOrdinarySpawnerDeploymentCutoverAdmissionV1(){}\n');
     writeFileSync(path.join(fixture, "package.json"), '{"type":"module"}\n');
     writeFileSync(path.join(fixture, "spawner.pid"), String(pid));
     const actual = await import(pathToFileURL(path.join(fixture, "src/server/spawnerctl.ts")).href);

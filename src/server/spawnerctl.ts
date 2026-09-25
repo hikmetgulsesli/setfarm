@@ -4,6 +4,7 @@ import os from "node:os";
 import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { loadRuntimeEnv } from "../runtime-config.js";
+import { assertOrdinarySpawnerDeploymentCutoverAdmissionV1 } from "../internal-production/baseline-deployment-cutover-v1.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -80,6 +81,7 @@ export function isSpawnerRunning(): { running: true; pid: number } | { running: 
 }
 
 export async function startSpawner(): Promise<{ pid: number; logFile: string }> {
+  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   const status = isSpawnerRunning();
   if (status.running) {
     return { pid: status.pid, logFile: getSpawnerLogFile() };
