@@ -138,17 +138,24 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
     const launcher = path.join(root, "launcher.mjs");
     fs.writeFileSync(physical, `export async function observeHeldPositiveWorktreePhysicalCatalogV2(scope,callback){
       if(!scope.ownerHomeRoot||!scope.workspaceRoot)throw Error('SCOPE_MISSING');
-      globalThis.events.push('physical-first');await callback();globalThis.events.push('physical-second');
+      globalThis.events.push('physical-first');
+      if(process.env.FAKE_FIRST_FAILURE==='1')throw Error('PRIVATE_PHYSICAL_FIRST');
+      try{await callback()}catch{throw Error('PHYSICAL_WRAPPED_DB')}
+      globalThis.events.push('physical-second');
       if(process.env.FAKE_PHYSICAL_FAILURE==='1')throw Error('PHYSICAL_DRIFT');
+      if(process.env.FAKE_PAIR_FAILURE==='1')return Object.freeze({...globalThis.catalog,catalogHash:'a'.repeat(64)});
       return globalThis.catalog;
     }`);
     fs.writeFileSync(workspace, `export const resolveInternalProductionBaselineWorkspaceRootV1=()=>'/fixture/ai/setrox';`);
     fs.writeFileSync(launcher, `export function holdDeploymentCutoverDefaultLauncherV1(){
       globalThis.events.push('launcher-acquire');
-      return {qualifyPassiveHome:async()=>{globalThis.events.push('qualified')},
-        recheck:()=>{globalThis.events.push('recheck')},
-        censusAndActiveRows:async()=>{globalThis.events.push('database');return globalThis.combined},
-        close:()=>{globalThis.events.push('close')}};
+      return {qualifyPassiveHome:async()=>{globalThis.events.push('qualified');
+          if(process.env.FAKE_QUALIFY_FAILURE==='1')throw Error('PRIVATE_QUALIFY')},
+        recheck:()=>{globalThis.events.push('recheck');
+          if(process.env.FAKE_POSTCHECK_FAILURE==='1'&&globalThis.events.filter(x=>x==='recheck').length===2)throw Error('PRIVATE_POSTCHECK')},
+        censusAndActiveRows:async()=>{globalThis.events.push('database');
+          if(process.env.FAKE_DATABASE_FAILURE==='1')throw Error('PRIVATE_DATABASE_PASSWORD');return globalThis.combined},
+        close:()=>{globalThis.events.push('close');if(process.env.FAKE_CLOSE_FAILURE==='1')throw Error('PRIVATE_CLOSE')}};
     }`);
     for (const [specifier, replacement] of [
       ["../product-compiler/canonical-json.js", new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href],
@@ -158,7 +165,7 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
       ["./baseline-deployment-cutover-launcher-observation-v1.js", pathToFileURL(launcher).href],
     ]) {
       assert.ok(source.includes(specifier), specifier);
-      source = source.replace(specifier, replacement);
+      source = source.replaceAll(specifier, replacement);
     }
     fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
     const file = path.join(root, "host-pair.ts"); fs.writeFileSync(file, source);
@@ -168,10 +175,12 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
       globalThis.catalog=freeze(${JSON.stringify(catalog("/retained/prunable"))});
       globalThis.combined=freeze(${JSON.stringify(pre32())});
       const module=await import(${JSON.stringify(pathToFileURL(file).href)});
-      let result,error;
-      try{result=await module.observeCodeOwnedPositiveWorktreePre32HostPairV4()}catch(caught){error=caught.message}
+      let result,error,phase,hasCause;
+      try{result=await module.observeCodeOwnedPositiveWorktreePre32HostPairV4()}catch(caught){
+        error=caught.message;phase=Object.getOwnPropertyDescriptor(caught,'pre32PairPhase')?.value;
+        hasCause=Object.hasOwn(caught,'cause')}
       process.stdout.write(JSON.stringify({schema:result?.schema,blockers:result?.heldPair.physicalCatalog.blockers,
-        error,events:globalThis.events}));
+        error,phase,hasCause,events:globalThis.events}));
     `;
     const success = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
       { encoding: "utf8", timeout: 15000, env: {} });
@@ -183,8 +192,24 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
     const refused = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
       { encoding: "utf8", timeout: 15000, env: { FAKE_PHYSICAL_FAILURE: "1" } });
     assert.equal(refused.status, 0, refused.stderr);
-    assert.deepEqual(JSON.parse(refused.stdout), { error: "PHYSICAL_DRIFT",
+    assert.deepEqual(JSON.parse(refused.stdout), { error: "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID",
+      phase: "physical-second-pass", hasCause: false,
       events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "physical-second", "close"] });
+    for (const [env, phase, events] of [
+      [{ FAKE_QUALIFY_FAILURE: "1" }, "passive-qualification", ["launcher-acquire", "qualified", "close"]],
+      [{ FAKE_FIRST_FAILURE: "1" }, "physical-first-pass", ["launcher-acquire", "qualified", "recheck", "physical-first", "close"]],
+      [{ FAKE_DATABASE_FAILURE: "1" }, "database-callback", ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "close"]],
+      [{ FAKE_PAIR_FAILURE: "1" }, "pair-validation", ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "physical-second", "close"]],
+      [{ FAKE_POSTCHECK_FAILURE: "1" }, "post-pair-recheck", ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "physical-second", "recheck", "close"]],
+      [{ FAKE_PHYSICAL_FAILURE: "1", FAKE_CLOSE_FAILURE: "1" }, "launcher-cleanup", ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "physical-second", "close"]],
+    ] as const) {
+      const observed = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
+        { encoding: "utf8", timeout: 15000, env });
+      assert.equal(observed.status, 0, observed.stderr);
+      assert.deepEqual(JSON.parse(observed.stdout), { error: "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID",
+        phase, hasCause: false, events });
+      assert.doesNotMatch(observed.stdout, /PRIVATE_/);
+    }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -108,6 +108,14 @@ function validPre32SnapshotV4(value: unknown): Pre32SnapshotV4 {
 function failPre32(): never {
   throw new Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID");
 }
+type Pre32PairPhase = "launcher-load" | "launcher-acquire" | "passive-qualification"
+  | "pre-physical-recheck" | "physical-first-pass" | "database-callback"
+  | "physical-second-pass" | "pair-validation" | "post-pair-recheck" | "launcher-cleanup";
+function pre32PhaseFailure(phase: Pre32PairPhase): Error {
+  const error = new Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID");
+  Object.defineProperty(error, "pre32PairPhase", { value: phase });
+  return Object.freeze(error);
+}
 
 export async function observePositiveWorktreeHostPairWithPortsV2(
   observePhysical: PhysicalObserverV2,
@@ -175,20 +183,40 @@ export async function observeCodeOwnedPositiveWorktreeHostPairV2() {
 /** Diagnostic only: fixed launcher credentials remain private through the held physical callback. */
 export async function observeCodeOwnedPositiveWorktreePre32HostPairV4() {
   if (arguments.length !== 0) failPre32();
-  const { holdDeploymentCutoverDefaultLauncherV1 } = await import("./baseline-deployment-cutover-launcher-observation-v1.js");
-  const launcher = holdDeploymentCutoverDefaultLauncherV1();
+  type Launcher = ReturnType<typeof import("./baseline-deployment-cutover-launcher-observation-v1.js").holdDeploymentCutoverDefaultLauncherV1>;
+  let phase: Pre32PairPhase = "launcher-load";
+  let launcher: Launcher | undefined;
+  let result: Awaited<ReturnType<typeof observePositiveWorktreePre32HostPairWithPortsV4>> | undefined;
+  let failure: Error | null = null;
   try {
+    const { holdDeploymentCutoverDefaultLauncherV1 } = await import("./baseline-deployment-cutover-launcher-observation-v1.js");
+    phase = "launcher-acquire";
+    launcher = holdDeploymentCutoverDefaultLauncherV1();
+    phase = "passive-qualification";
     await launcher.qualifyPassiveHome();
+    phase = "pre-physical-recheck";
     launcher.recheck();
     const ownerHomeRoot = userInfo().homedir;
     const workspaceRoot = resolveInternalProductionBaselineWorkspaceRootV1();
-    const result = await observePositiveWorktreePre32HostPairWithPortsV4(
-      (betweenPasses) => observeHeldPositiveWorktreePhysicalCatalogV2({ ownerHomeRoot, workspaceRoot }, betweenPasses),
+    phase = "physical-first-pass";
+    result = await observePositiveWorktreePre32HostPairWithPortsV4(
+      async (betweenPasses) => {
+        const physical = await observeHeldPositiveWorktreePhysicalCatalogV2({ ownerHomeRoot, workspaceRoot }, async () => {
+          phase = "database-callback";
+          await betweenPasses();
+          phase = "physical-second-pass";
+        });
+        phase = "pair-validation";
+        return physical;
+      },
       launcher.censusAndActiveRows,
     );
+    phase = "post-pair-recheck";
     launcher.recheck();
-    return result;
-  } finally {
-    launcher.close();
-  }
+  } catch { failure = pre32PhaseFailure(phase); }
+  try { launcher?.close(); }
+  catch { failure = pre32PhaseFailure("launcher-cleanup"); }
+  if (failure) throw failure;
+  if (result === undefined) throw pre32PhaseFailure("pair-validation");
+  return result;
 }

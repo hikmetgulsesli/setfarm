@@ -21,6 +21,18 @@ const pre32Source = kind => `import fs from 'node:fs';import path from 'node:pat
     const marker=path.join(process.cwd(),'.setfarm','pre32-called');
     fs.mkdirSync(path.dirname(marker),{recursive:true});fs.appendFileSync(marker,'x');
     if(kind==='error')throw Error('PRIVATE_DATABASE_PASSWORD');
+    const phases={'database-phase':'database-callback','physical-phase':'physical-second-pass',
+      'cleanup-phase':'launcher-cleanup','spoofed-phase':'outside-contract','proxy-phase':'database-callback'};
+    if(phases[kind]){
+      const error=Error('INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID');
+      Object.defineProperty(error,'pre32PairPhase',{value:phases[kind]});Object.freeze(error);
+      throw kind==='proxy-phase'?new Proxy(error,{}):error;
+    }
+    if(kind==='accessor-phase'){
+      const error=Error('INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID');
+      Object.defineProperty(error,'pre32PairPhase',{get(){throw Error('PRIVATE_DATABASE_PASSWORD')}});
+      throw error;
+    }
     const body={schema:'setfarm.internal-production-pre32-physical-database-pair.v4',
       authority:kind==='self-consistent-cutover'?'cutover':'diagnostic-only',physicalIdentityProvenance:'unverified',
       heldPair:Object.freeze({fixture:'held'}),pre32Database:Object.freeze({fixture:'one-transaction'})};
@@ -66,6 +78,21 @@ for (const kind of ["malformed", "self-consistent-cutover", "error"]) test(`pre3
   const lines = result.stderr.trimEnd().split("\n");
   assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
   assert.equal(JSON.parse(lines[1]).stage, "pre32-host-pair");
+  assert.equal(JSON.parse(lines[1]).pre32FailurePhase, "unknown");
+  assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+}, undefined, { extraSources: pre32Sources(kind) }));
+
+for (const [kind, expected] of [["database-phase", "database-callback"], ["physical-phase", "physical-second-pass"],
+  ["cleanup-phase", "launcher-cleanup"], ["spoofed-phase", "unknown"], ["proxy-phase", "unknown"],
+  ["accessor-phase", "unknown"]]) test(`pre32 bootstrap publishes only finite ${expected} refusal from ${kind}`, () => fixture(root => {
+  const result = run(root, ["inspect-pre32-host-pair", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  const lines = result.stderr.trimEnd().split("\n");
+  assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1", scope: "bootstrap",
+    stage: "pre32-host-pair", ownerContext: null, launcherStage: null, cleanupFailed: null,
+    pre32FailurePhase: expected });
+  assert.equal(lines.length, 2);
   assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
 }, undefined, { extraSources: pre32Sources(kind) }));
 
