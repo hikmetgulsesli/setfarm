@@ -60,6 +60,7 @@ function holdLauncherConfigurationV1(defaultMode = false) {
   let census: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusV1> = async () => fail();
   let censusAndActiveRows: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4> = async () => fail();
   let censusAndActiveRowsWithQuarantine: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndActiveRowsWithQuarantineV5> = async () => fail();
+  let censusAndBindingRows: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndBindingRowsV6> = async () => fail();
   let closed = false;
   let defaultInputs: undefined | {
     entries: { label: string; args: string[]; environment: Record<string, string> }[];
@@ -230,9 +231,12 @@ function holdLauncherConfigurationV1(defaultMode = false) {
       module.observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4(raw));
     censusAndActiveRowsWithQuarantine = () => observeDatabase((module, raw) =>
       module.observeLegacyDatabaseCensusAndActiveRowsWithQuarantineV5(raw));
+    censusAndBindingRows = () => observeDatabase((module, raw) =>
+      module.observeLegacyDatabaseCensusAndBindingRowsV6(raw));
   } catch { invalid = true; }
   if (invalid || !output) { close(); fail(); }
-  return { observation: output, recheck, census, censusAndActiveRows, censusAndActiveRowsWithQuarantine, close, defaultInputs };
+  return { observation: output, recheck, census, censusAndActiveRows, censusAndActiveRowsWithQuarantine,
+    censusAndBindingRows, close, defaultInputs };
 }
 
 // Separate, zero-input default-mode holder. Secret-bearing configuration and
@@ -438,9 +442,10 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
     const census = () => observeQualifiedDatabase(configuration.census);
     const censusAndActiveRows = () => observeQualifiedDatabase(configuration.censusAndActiveRows);
     const censusAndActiveRowsWithQuarantine = () => observeQualifiedDatabase(configuration.censusAndActiveRowsWithQuarantine);
+    const censusAndBindingRows = () => observeQualifiedDatabase(configuration.censusAndBindingRows);
     check();
     return Object.freeze({ observation, qualifyPassiveHome, recheck, census, censusAndActiveRows,
-      censusAndActiveRowsWithQuarantine, close });
+      censusAndActiveRowsWithQuarantine, censusAndBindingRows, close });
   } catch { invalid = true; close(); defaultLauncherFailure(); }
 }
 

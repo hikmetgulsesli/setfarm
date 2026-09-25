@@ -17,6 +17,8 @@ type Pre32SnapshotV4 = Awaited<ReturnType<typeof import("./baseline-legacy-datab
 type DatabaseObserverV4 = () => Promise<Pre32SnapshotV4>;
 type Pre32SnapshotV5 = Awaited<ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndActiveRowsWithQuarantineV5>>;
 type DatabaseObserverV5 = () => Promise<Pre32SnapshotV5>;
+type Pre32SnapshotV6 = Awaited<ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndBindingRowsV6>>;
+type DatabaseObserverV6 = () => Promise<Pre32SnapshotV6>;
 
 function fail(): never { throw new Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_HOST_PAIR_INVALID"); }
 
@@ -138,6 +140,52 @@ function validPre32SnapshotV5(value: unknown): Pre32SnapshotV5 {
   } catch { failPre32(); }
 }
 
+function validPre32SnapshotV6(value: unknown): Pre32SnapshotV6 {
+  try {
+    const row = exact(value, ["schema", "authority", "legacyCensus", "activeRows", "bindingRows",
+      "quarantinedRuntimeSessionCount", "snapshotHash"]);
+    if (row.schema !== "setfarm.internal-production-pre32-active-binding-snapshot.v6"
+      || row.authority !== "diagnostic-only" || typeof row.quarantinedRuntimeSessionCount !== "number"
+      || !Number.isSafeInteger(row.quarantinedRuntimeSessionCount)
+      || row.quarantinedRuntimeSessionCount < 0) failPre32();
+    const census = exact(row.legacyCensus, ["activeRunCount", "openClaimCount", "executionAttemptCount",
+      "activeRuntimeSessionCount", "activeCompletionOwnerCount", "unsettledMandatoryEffectCount",
+      "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
+      "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount",
+      "legacyFindingPublicationInventory"]);
+    for (const [key, count] of Object.entries(census)) {
+      if (key !== "legacyFindingPublicationInventory" && count !== 0) failPre32();
+    }
+    validateLegacyFindingPublicationInventoryV1(census.legacyFindingPublicationInventory);
+    const activeRows = validDatabaseSnapshot(row.activeRows);
+    if (activeRows.counts.runCount !== census.activeRunCount
+      || activeRows.counts.claimCount !== census.openClaimCount
+      || activeRows.counts.attemptCount !== census.executionAttemptCount
+      || activeRows.counts.sessionCount !== census.activeRuntimeSessionCount
+      || !Array.isArray(activeRows.activeRuns) || activeRows.activeRuns.length !== activeRows.counts.runCount
+      || !Array.isArray(activeRows.openClaims) || activeRows.openClaims.length !== activeRows.counts.claimCount
+      || !Array.isArray(activeRows.activeAttempts) || activeRows.activeAttempts.length !== activeRows.counts.attemptCount
+      || !Array.isArray(activeRows.activeSessions) || activeRows.activeSessions.length !== activeRows.counts.sessionCount) failPre32();
+    const binding = exact(row.bindingRows, ["schema", "authority", "physicalIdentityProvenance",
+      "activeAttempts", "activeSessions", "counts", "snapshotHash"]);
+    const counts = exact(binding.counts, ["attemptCount", "sessionCount"]);
+    if (binding.schema !== "setfarm.internal-production-positive-worktree-binding-rows.v1"
+      || binding.authority !== "diagnostic-only" || binding.physicalIdentityProvenance !== "unverified"
+      || counts.attemptCount !== activeRows.counts.attemptCount
+      || counts.sessionCount !== activeRows.counts.sessionCount
+      || !Array.isArray(binding.activeAttempts) || binding.activeAttempts.length !== counts.attemptCount
+      || !Array.isArray(binding.activeSessions) || binding.activeSessions.length !== counts.sessionCount) failPre32();
+    if (hashCanonicalJson({ schema: binding.schema, authority: binding.authority,
+      physicalIdentityProvenance: binding.physicalIdentityProvenance,
+      activeAttempts: binding.activeAttempts, activeSessions: binding.activeSessions,
+      counts: binding.counts }) !== sha256(binding.snapshotHash)) failPre32();
+    if (hashCanonicalJson({ schema: row.schema, authority: row.authority,
+      legacyCensus: row.legacyCensus, activeRows: row.activeRows, bindingRows: row.bindingRows,
+      quarantinedRuntimeSessionCount: row.quarantinedRuntimeSessionCount }) !== sha256(row.snapshotHash)) failPre32();
+    return value as Pre32SnapshotV6;
+  } catch { failPre32(); }
+}
+
 function failPre32(): never {
   throw new Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID");
 }
@@ -255,6 +303,24 @@ export async function observePositiveWorktreePre32HostPairWithPortsV5(
   return Object.freeze({ ...body, pairHash: hashCanonicalJson(body) });
 }
 
+export async function observePositiveWorktreePre32HostPairWithPortsV6(
+  observePhysical: PhysicalObserverV2,
+  observeDatabase: DatabaseObserverV6,
+) {
+  let complete: Pre32SnapshotV6 | null = null;
+  const heldPair = await observePositiveWorktreeHostPairWithPortsV2(observePhysical, async () => {
+    const result = validPre32SnapshotV6(await observeDatabase());
+    complete = result;
+    return result.activeRows;
+  });
+  const pre32Database = complete as Pre32SnapshotV6 | null;
+  if (pre32Database === null || heldPair.databaseSnapshot !== pre32Database.activeRows) failPre32();
+  const body = { schema: "setfarm.internal-production-pre32-physical-database-pair.v6" as const,
+    authority: "diagnostic-only" as const, physicalIdentityProvenance: "unverified" as const,
+    heldPair, pre32Database };
+  return Object.freeze({ ...body, pairHash: hashCanonicalJson(body) });
+}
+
 /** Zero-input diagnostic observer. Import DB configuration before physical acquisition. */
 export async function observeCodeOwnedPositiveWorktreeHostPairV2() {
   const ownerHomeRoot = userInfo().homedir;
@@ -345,6 +411,51 @@ export async function observeCodeOwnedPositiveWorktreePre32HostPairV5() {
         return physical;
       },
       launcher.censusAndActiveRowsWithQuarantine,
+    );
+    phase = "post-pair-recheck";
+    launcher.recheck();
+  } catch { failure = pre32PhaseFailure(phase, physicalPoint); }
+  try { launcher?.close(); }
+  catch { failure = pre32PhaseFailure("launcher-cleanup"); }
+  if (failure) throw failure;
+  if (result === undefined) throw pre32PhaseFailure("pair-validation");
+  return result;
+}
+
+/** Diagnostic only: V6 holds same-transaction binding rows inside both physical passes. */
+export async function observeCodeOwnedPositiveWorktreePre32HostPairV6() {
+  if (arguments.length !== 0) failPre32();
+  type Launcher = ReturnType<typeof import("./baseline-deployment-cutover-launcher-observation-v1.js").holdDeploymentCutoverDefaultLauncherV1>;
+  let phase: Pre32PairPhase = "launcher-load";
+  let launcher: Launcher | undefined;
+  let result: Awaited<ReturnType<typeof observePositiveWorktreePre32HostPairWithPortsV6>> | undefined;
+  let failure: Error | null = null;
+  let physicalPoint: PhysicalFailurePoint | null = null;
+  try {
+    const { holdDeploymentCutoverDefaultLauncherV1 } = await import("./baseline-deployment-cutover-launcher-observation-v1.js");
+    phase = "launcher-acquire";
+    launcher = holdDeploymentCutoverDefaultLauncherV1();
+    phase = "passive-qualification";
+    await launcher.qualifyPassiveHome();
+    phase = "pre-physical-recheck";
+    launcher.recheck();
+    const ownerHomeRoot = userInfo().homedir;
+    const workspaceRoot = resolveInternalProductionBaselineWorkspaceRootV1();
+    phase = "physical-first-pass";
+    result = await observePositiveWorktreePre32HostPairWithPortsV6(
+      async (betweenPasses) => {
+        let physical: PhysicalCatalogV2;
+        try {
+          physical = await observeHeldPositiveWorktreePhysicalCatalogV2({ ownerHomeRoot, workspaceRoot }, async () => {
+            phase = "database-callback";
+            await betweenPasses();
+            phase = "physical-second-pass";
+          });
+        } catch (error) { physicalPoint = validPhysicalFailurePoint(error, phase); throw error; }
+        phase = "pair-validation";
+        return physical;
+      },
+      launcher.censusAndBindingRows,
     );
     phase = "post-pair-recheck";
     launcher.recheck();

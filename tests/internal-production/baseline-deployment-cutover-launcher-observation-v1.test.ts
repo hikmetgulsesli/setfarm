@@ -53,6 +53,13 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
         await Promise.resolve();globalThis.combinedDrift?.();
         if(globalThis.combinedFailure)throw Error('PG_SENTINEL_PRIVATE_DATABASE_FAILURE');
         return Object.freeze({schema:'fixture-combined-v5',quarantinedRuntimeSessionCount:2});
+      }
+      export async function observeLegacyDatabaseCensusAndBindingRowsV6(url){
+        globalThis.v6Calls++;
+        if(url!=='postgresql://fixture:PG_SENTINEL@localhost/setfarm')throw Error('WRONG_V6_URL');
+        await Promise.resolve();globalThis.combinedDrift?.();
+        if(globalThis.combinedFailure)throw Error('PG_SENTINEL_PRIVATE_DATABASE_FAILURE');
+        return Object.freeze({schema:'fixture-combined-v6',quarantinedRuntimeSessionCount:2});
       }`);
     source = source.replace(marker, `await import(${JSON.stringify(pathToFileURL(transportFile).href)})`);
     source = source.replace('"../product-compiler/canonical-json.js"', JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href));
@@ -88,7 +95,7 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
     const identity = os.userInfo(); os.userInfo = () => ({...identity,homedir:${JSON.stringify(home)}});
     const texts = ${JSON.stringify(texts)}, labels = ${JSON.stringify(labels)};
     let prints = 0, conversions = 0, active = false, run, evidence = () => null;
-    globalThis.dbCalls=0;globalThis.combinedCalls=0;globalThis.v5Calls=0;globalThis.samples=0;globalThis.nodeCloses=0;
+    globalThis.dbCalls=0;globalThis.combinedCalls=0;globalThis.v5Calls=0;globalThis.v6Calls=0;globalThis.samples=0;globalThis.nodeCloses=0;
     globalThis.processes=()=>Object.freeze({families:Object.freeze([]),listener:null});
     globalThis.nodeHold=()=>({observation:Object.freeze({candidatePath:'/fixture/invoked/node',executablePath:'/fixture/physical/node'}),recheck(){},close(){globalThis.nodeCloses++}});
     globalThis.identify=request=>({schema:'setfarm.internal-production-passive-process-identity.v1',pid:request.pid,ppid:1,
@@ -179,6 +186,23 @@ test("held V5 quarantine census requires qualification, uses one private URL and
   assert.equal(qualified.observation?.combined.schema, "fixture-combined-v5", JSON.stringify(qualified));
   assert.equal(qualified.observation?.combined.quarantinedRuntimeSessionCount, 2);
   assert.deepEqual(qualified.evidence, { v5Calls: 1, combinedCalls: 0, nodeCloses: 2 });
+  assert.equal(qualified.frozen, true);
+  assert.doesNotMatch(JSON.stringify({ early, qualified }), /PG_SENTINEL|TOKEN_SENTINEL|SocketSentinel/);
+}));
+
+test("held V6 binding census requires qualification, uses one private URL and closes", () => defaultFixture((home, texts) => {
+  const early = observe(home, texts,
+    `evidence=()=>({v6Calls:globalThis.v6Calls,nodeCloses:globalThis.nodeCloses});`,
+    undefined, `await context.censusAndBindingRows();return context.observation;`);
+  assert.match(early.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.deepEqual(early.evidence, { v6Calls: 0, nodeCloses: 2 });
+  const qualified = observe(home, texts,
+    `evidence=()=>({v6Calls:globalThis.v6Calls,v5Calls:globalThis.v5Calls,
+      nodeCloses:globalThis.nodeCloses});`, undefined,
+    `await context.qualifyPassiveHome();const combined=await context.censusAndBindingRows();
+      return Object.freeze({combined,configuration:context.observation});`);
+  assert.equal(qualified.observation?.combined.schema, "fixture-combined-v6", JSON.stringify(qualified));
+  assert.deepEqual(qualified.evidence, { v6Calls: 1, v5Calls: 0, nodeCloses: 2 });
   assert.equal(qualified.frozen, true);
   assert.doesNotMatch(JSON.stringify({ early, qualified }), /PG_SENTINEL|TOKEN_SENTINEL|SocketSentinel/);
 }));

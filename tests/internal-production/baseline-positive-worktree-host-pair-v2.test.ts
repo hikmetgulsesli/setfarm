@@ -10,7 +10,8 @@ import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js"
 import { createLegacyFindingPublicationInventoryValueV1 } from "../../src/findings/legacy-finding-publication-inventory-v1.js";
 import { observePositiveWorktreeHostPairWithPortsV2,
   observePositiveWorktreePre32HostPairWithPortsV4,
-  observePositiveWorktreePre32HostPairWithPortsV5 } from "../../src/internal-production/baseline-positive-worktree-host-pair-v2.js";
+  observePositiveWorktreePre32HostPairWithPortsV5,
+  observePositiveWorktreePre32HostPairWithPortsV6 } from "../../src/internal-production/baseline-positive-worktree-host-pair-v2.js";
 
 function catalog(blockedRoot: string) {
   const body = Object.freeze({
@@ -57,6 +58,58 @@ function pre32V5(quarantinedRuntimeSessionCount = 0) {
     activeRows: v4.activeRows, quarantinedRuntimeSessionCount });
   return Object.freeze({ ...body, snapshotHash: hashCanonicalJson(body) });
 }
+
+function pre32V6() {
+  const v5 = pre32V5();
+  const bindingBody = Object.freeze({ schema: "setfarm.internal-production-positive-worktree-binding-rows.v1" as const,
+    authority: "diagnostic-only" as const, physicalIdentityProvenance: "unverified" as const,
+    activeAttempts: Object.freeze([]), activeSessions: Object.freeze([]),
+    counts: Object.freeze({ attemptCount: 0, sessionCount: 0 }) });
+  const bindingRows = Object.freeze({ ...bindingBody, snapshotHash: hashCanonicalJson(bindingBody) });
+  const body = Object.freeze({ schema: "setfarm.internal-production-pre32-active-binding-snapshot.v6" as const,
+    authority: "diagnostic-only" as const, legacyCensus: v5.legacyCensus, activeRows: v5.activeRows,
+    bindingRows, quarantinedRuntimeSessionCount: 0 });
+  return Object.freeze({ ...body, snapshotHash: hashCanonicalJson(body) });
+}
+
+test("V6 pairs strict binding rows inside the held physical callback without clearing blockers", async () => {
+  const events: string[] = [];
+  const combined = pre32V6();
+  const physical = catalog("/retained/prunable");
+  const result = await observePositiveWorktreePre32HostPairWithPortsV6(async (betweenPasses) => {
+    events.push("physical-first"); await betweenPasses(); events.push("physical-second"); return physical;
+  }, async () => { events.push("database"); return combined; });
+  assert.deepEqual(events, ["physical-first", "database", "physical-second"]);
+  assert.equal(result.schema, "setfarm.internal-production-pre32-physical-database-pair.v6");
+  assert.equal(result.authority, "diagnostic-only");
+  assert.equal(result.physicalIdentityProvenance, "unverified");
+  assert.equal(result.heldPair.physicalCatalog, physical);
+  assert.equal(result.pre32Database, combined);
+  const { pairHash, ...body } = result;
+  assert.equal(pairHash, hashCanonicalJson(body));
+});
+
+test("V6 rejects self-consistent forged nested binding evidence", async () => {
+  const physical = async (betweenPasses: () => Promise<void>) => {
+    await betweenPasses(); return catalog("/retained/prunable");
+  };
+  const valid = pre32V6();
+  const badBodies = [
+    { ...valid.bindingRows, extra: "forged" },
+    { ...valid.bindingRows, counts: Object.freeze({ attemptCount: 1, sessionCount: 0 }) },
+    { ...valid.bindingRows, physicalIdentityProvenance: "verified" },
+  ];
+  for (const bad of badBodies) {
+    const { snapshotHash: _old, ...bindingBody } = bad;
+    const bindingRows = Object.freeze({ ...bindingBody, snapshotHash: hashCanonicalJson(bindingBody) });
+    const body = Object.freeze({ schema: valid.schema, authority: valid.authority,
+      legacyCensus: valid.legacyCensus, activeRows: valid.activeRows, bindingRows,
+      quarantinedRuntimeSessionCount: valid.quarantinedRuntimeSessionCount });
+    const forged = Object.freeze({ ...body, snapshotHash: hashCanonicalJson(body) });
+    await assert.rejects(observePositiveWorktreePre32HostPairWithPortsV6(physical,
+      async () => forged as typeof valid), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID/);
+  }
+});
 
 test("V5 holds quarantined runtime evidence inside both physical passes without clearing blockers", async () => {
   const events: string[] = [];
@@ -239,6 +292,8 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
           if(process.env.FAKE_DATABASE_FAILURE==='1')throw Error('PRIVATE_DATABASE_PASSWORD');return globalThis.combined},
         censusAndActiveRowsWithQuarantine:async()=>{globalThis.events.push('database');
           if(process.env.FAKE_DATABASE_FAILURE==='1')throw Error('PRIVATE_DATABASE_PASSWORD');return globalThis.combinedV5},
+        censusAndBindingRows:async()=>{globalThis.events.push('database');
+          if(process.env.FAKE_DATABASE_FAILURE==='1')throw Error('PRIVATE_DATABASE_PASSWORD');return globalThis.combinedV6},
         close:()=>{globalThis.events.push('close');if(process.env.FAKE_CLOSE_FAILURE==='1')throw Error('PRIVATE_CLOSE')}};
     }`);
     for (const [specifier, replacement] of [
@@ -259,11 +314,14 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
       globalThis.catalog=freeze(${JSON.stringify(catalog("/retained/prunable"))});
       globalThis.combined=freeze(${JSON.stringify(pre32())});
       globalThis.combinedV5=freeze(${JSON.stringify(pre32V5(2))});
+      globalThis.combinedV6=freeze(${JSON.stringify(pre32V6())});
       const module=await import(${JSON.stringify(pathToFileURL(file).href)});
       let result,error,phase,hasCause,physicalPoint;
-      try{result=await (process.env.FAKE_V5==='1'
-        ?module.observeCodeOwnedPositiveWorktreePre32HostPairV5()
-        :module.observeCodeOwnedPositiveWorktreePre32HostPairV4())}catch(caught){
+      try{result=await (process.env.FAKE_V6==='1'
+        ?module.observeCodeOwnedPositiveWorktreePre32HostPairV6()
+        :process.env.FAKE_V5==='1'
+          ?module.observeCodeOwnedPositiveWorktreePre32HostPairV5()
+          :module.observeCodeOwnedPositiveWorktreePre32HostPairV4())}catch(caught){
         error=caught.message;phase=Object.getOwnPropertyDescriptor(caught,'pre32PairPhase')?.value;
         hasCause=Object.hasOwn(caught,'cause');physicalPoint=Object.getOwnPropertyDescriptor(caught,'pre32PhysicalPoint')?.value}
       process.stdout.write(JSON.stringify({schema:result?.schema,blockers:result?.heldPair.physicalCatalog.blockers,
@@ -283,6 +341,20 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
       blockers: [{ root: "/retained/prunable", reason: "prunable-git-worktree" }],
       events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "physical-second",
         "recheck", "close"] });
+    const v6 = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
+      { encoding: "utf8", timeout: 15000, env: { FAKE_V6: "1" } });
+    assert.equal(v6.status, 0, v6.stderr);
+    assert.deepEqual(JSON.parse(v6.stdout), { schema: "setfarm.internal-production-pre32-physical-database-pair.v6",
+      blockers: [{ root: "/retained/prunable", reason: "prunable-git-worktree" }],
+      events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "physical-second",
+        "recheck", "close"] });
+    const v6Refused = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
+      { encoding: "utf8", timeout: 15000, env: { FAKE_V6: "1", FAKE_DATABASE_FAILURE: "1" } });
+    assert.equal(v6Refused.status, 0, v6Refused.stderr);
+    assert.deepEqual(JSON.parse(v6Refused.stdout), { error: "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID",
+      phase: "database-callback", hasCause: false,
+      events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "close"] });
+    assert.doesNotMatch(v6Refused.stdout, /PRIVATE_/);
     const v5Refused = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
       { encoding: "utf8", timeout: 15000, env: { FAKE_V5: "1", FAKE_DATABASE_FAILURE: "1" } });
     assert.equal(v5Refused.status, 0, v5Refused.stderr);
