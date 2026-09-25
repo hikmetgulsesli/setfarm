@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { types } from "node:util";
 import * as nodeModule from "node:module";
 const { registerHooks, isBuiltin } = nodeModule;
 
@@ -42,6 +43,21 @@ function ownerRefusal(error) {
         "identity", "pid-recheck", "measure", "measurement-bind", "settling", "idle"].includes(launcherStage)))) return null;
     return { scope, stage: phase, ownerContext, launcherStage, cleanupFailed };
   } catch { return null; }
+}
+function pre32FailurePhase(error) {
+  try {
+    if (types.isProxy(error) || Object.getPrototypeOf(error) !== Error.prototype || !Object.isFrozen(error)) return "unknown";
+    const descriptors = Object.getOwnPropertyDescriptors(error), keys = Reflect.ownKeys(descriptors);
+    if (keys.some(key => typeof key !== "string" || !["stack", "message", "pre32PairPhase"].includes(key))) return "unknown";
+    const message = descriptors.message, phase = descriptors.pre32PairPhase;
+    if (!message || !Object.hasOwn(message, "value")
+      || message.value !== "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID"
+      || !phase || !Object.hasOwn(phase, "value") || phase.enumerable || phase.configurable || phase.writable) return "unknown";
+    const allowed = ["launcher-load", "launcher-acquire", "passive-qualification", "pre-physical-recheck",
+      "physical-first-pass", "database-callback", "physical-second-pass", "pair-validation",
+      "post-pair-recheck", "launcher-cleanup"];
+    return allowed.includes(phase.value) ? phase.value : "unknown";
+  } catch { return "unknown"; }
 }
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const canonical = value => value === null || typeof value !== "object" ? JSON.stringify(value)
@@ -280,7 +296,9 @@ async function inspect() {
     // A throwing nested observer may have acquired resources we never received.
     // Missing sanitized cleanup evidence means unknown, not successful cleanup.
     const owned = process.argv[2] === "inspect-default-context" && refusal.stage === "default-context" ? ownerRefusal(error) : null;
-    refusal = owned ?? { ...refusal, cleanupFailed: null };
+    refusal = owned ?? { ...refusal, cleanupFailed: null,
+      ...(process.argv[2] === "inspect-pre32-host-pair" && refusal.stage === "pre32-host-pair"
+        ? { pre32FailurePhase: pre32FailurePhase(error) } : {}) };
     invalid = true;
   }
   while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch {
