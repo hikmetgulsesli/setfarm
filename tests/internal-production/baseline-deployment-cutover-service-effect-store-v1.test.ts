@@ -144,7 +144,7 @@ test("conflicting committed bytes and stale observation hash cannot replace a fi
   assert.equal(fs.existsSync(path.join(root, "completion-0001.json")), false);
 }));
 
-for (const fault of ["unknown-name", "root-mode", "root-symlink", "parent-mode", "parent-symlink", "crossed-alias", "foreign-link", "malformed-fixed"] as const) {
+for (const fault of ["unknown-name", "root-mode", "root-symlink", "parent-mode", "parent-symlink", "crossed-alias", "alias-missing", "foreign-link", "malformed-fixed"] as const) {
   test(`${fault} refuses observation without repairing or deleting physical evidence`, () => fixture((home, root) => {
     assert.equal(runActions(home, ["intent1"]).error, undefined);
     const fixed = path.join(root, "intent-0001.json"), outside = path.join(home, "outside");
@@ -156,6 +156,10 @@ for (const fault of ["unknown-name", "root-mode", "root-symlink", "parent-mode",
     if (fault === "crossed-alias") {
       const alias = fs.readdirSync(root).find(name => name.startsWith(".intent-0001.json."))!;
       fs.renameSync(path.join(root, alias), path.join(root, alias.replace("intent-0001", "intent-0002")));
+    }
+    if (fault === "alias-missing") {
+      const alias = fs.readdirSync(root).find(name => name.startsWith(".intent-0001.json."))!;
+      fs.unlinkSync(path.join(root, alias));
     }
     if (fault === "foreign-link") fs.linkSync(fixed, outside);
     if (fault === "malformed-fixed") fs.writeFileSync(fixed, "{}\n");
@@ -177,6 +181,16 @@ test("inert partial stage is visible but permanently blocks new publication", ()
   assert.match(runActions(home, ["intent1"]).error, /DEPLOYMENT_CUTOVER_SERVICE_EFFECT_STORE_INVALID/);
   assert.deepEqual(fs.readFileSync(stage), Buffer.from("partial"));
   assert.equal(fs.existsSync(path.join(root, "intent-0001.json")), false);
+}));
+
+test("a directly written fixed record is not accepted as a published history", () => fixture((home, root) => {
+  fs.mkdirSync(root, { mode: 0o700 });
+  const fixed = path.join(root, "intent-0001.json");
+  fs.writeFileSync(fixed, encodeDeploymentCutoverServiceEffectIntentV1(first), { mode: 0o600 });
+  const bytes = fs.readFileSync(fixed), inode = fs.lstatSync(fixed).ino;
+  assert.match(run(home, "observe").error, /DEPLOYMENT_CUTOVER_SERVICE_EFFECT_STORE_INVALID/);
+  assert.deepEqual(fs.readFileSync(fixed), bytes);
+  assert.equal(fs.lstatSync(fixed).ino, inode);
 }));
 
 test("excess inert stages refuse observation without deleting any stage", () => fixture((home, root) => {

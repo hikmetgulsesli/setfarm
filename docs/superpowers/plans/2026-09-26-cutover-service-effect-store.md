@@ -20,7 +20,7 @@
 
 - [x] RED failed for missing module; absent store observes without creation and a fixed prefix reconstructs pure history.
 - [x] Implement pinned ancestry/root, bounded exact inventory and physical metadata checks.
-- [x] Tamper tests cover unknown name, root/parent symlink or mode, foreign link, crossed alias, malformed bytes, missing predecessor and competing first intents.
+- [x] Tamper tests cover unknown name, root/parent symlink or mode, foreign link, crossed/missing alias, direct fixed-only file, malformed bytes, missing predecessor and competing first intents.
 
 ### Task 2: RED/GREEN durable publication
 
@@ -30,7 +30,7 @@
 
 ### Task 3: Review and delivery
 
-- [x] Focused 23/23, TypeScript, cutover 421/421, pure 151/151, source manifest 18/18 and source contract checks passed.
+- [x] Codex PR #173 review identified an important fixed-only provenance gap. RED direct-fixed/deleted-alias tests failed; requiring one matching nlink-two alias made focused 25/25 and TypeScript pass. Re-run cutover and contracts on the revised head before merge. Earlier head passed cutover 421/421, pure 151/151, source manifest 18/18 and source contract checks.
 - [ ] Rerun genuine serial integration alone before merge. Its concurrent attempt failed two resolution tests while the clean-main full suite occupied the host; do not weaken its guard.
 - [x] Independent read-only diff review found no Critical/Important issue; same-UID path-swap limitation is explicitly documented.
 - [ ] Commit scoped branch, reviewed PR, clean-main fast-forward/build, selected old-dist preservation and no-write host check; update cutover ledger.

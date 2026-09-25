@@ -148,7 +148,9 @@ function withStore(create: boolean, body: (store: Store | null, ancestorIdentity
         for (const name of FILE_ORDER) {
           const file = files.get(name); if (!file) continue;
           const aliases = stages.filter(stage => stage.file.stat.dev === file.stat.dev && stage.file.stat.ino === file.stat.ino);
-          if (file.stat.nlink === 2n ? aliases.length !== 1 || aliases[0]!.target !== name : aliases.length !== 0) fail();
+          // This store never removes stages: a fixed-only file has no durable
+          // evidence that it passed through the exclusive no-replace publisher.
+          if (file.stat.nlink !== 2n || aliases.length !== 1 || aliases[0]!.target !== name) fail();
         }
         const value = observation(files, rootIdentityHash, ancestorIdentityHash);
         if (value.pendingStageCount > 8 || JSON.stringify(names) !== JSON.stringify(fs.readdirSync(root).sort())) fail();
