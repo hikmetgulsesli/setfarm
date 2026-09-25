@@ -24,6 +24,10 @@ let cleanupUncertain = false;
 
 type Scope = Readonly<{ ownerHomeRoot: string; workspaceRoot: string }>;
 type Zone = "retained-zone" | "runtime-zone";
+type PhysicalFailureOperation = "scope-hold" | "base-discovery" | "parent-git" | "candidate-git"
+  | "candidate-lsof" | "candidate-record" | "first-pass-recheck" | "between-passes" | "post-database-stability"
+  | "parent-recheck" | "candidate-recheck-git" | "candidate-recheck-lsof"
+  | "candidate-recheck-compare" | "result";
 type Held = { root: string; descriptor: number; first: BigIntStats; compareMutation: boolean;
   gitAdminCandidateRoot: string | null };
 type HeldFile = { root: string; descriptor: number; first: BigIntStats };
@@ -457,6 +461,8 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
   const scope = captureScope(rawScope);
   if (cleanupUncertain || typeof betweenPasses !== "function") fail();
   const held = new HeldDirectories(scope.ownerHomeRoot, scope.workspaceRoot);
+  let operation: PhysicalFailureOperation = "scope-hold";
+  let candidateOrdinal: number | null = null;
   try {
     const { ownerHomeRoot, workspaceRoot } = scope;
     for (const mandatory of [ownerHomeRoot, workspaceRoot, path.join(workspaceRoot, "setfarm"),
@@ -464,6 +470,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
       path.join(ownerHomeRoot, ".openclaw", "workspace", "agent-scratch"),
       path.join(ownerHomeRoot, ".openclaw", "workspaces", "workflows")]) held.hold(mandatory);
 
+    operation = "base-discovery";
     const bases = new Map<string, Zone>();
     const absentBases: string[] = [];
     const addBase = (root: string, zone: Zone): void => {
@@ -495,6 +502,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     const parentGitLists = new Map<string, string>();
     const nonGitParents: string[] = [];
     const absentLockedRoots = new Set<string>();
+    operation = "parent-git";
     for (const parent of [path.join(workspaceRoot, "setfarm"), path.join(workspaceRoot, "mission-control"), ...projectRoots]) {
       const listing = primaryWorktreeRoots(held, parent);
       if (listing !== null) {
@@ -511,11 +519,19 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
       }
     }
     for (const [base, zone] of bases) {
+      operation = "base-discovery";
+      candidateOrdinal = null;
       for (const root of children(held, base)) {
+        operation = "base-discovery";
+        candidateOrdinal = null;
         if (entries.length >= MAX_ENTRIES) fail();
+        candidateOrdinal = entries.length;
+        operation = "candidate-git";
         const stat = held.hold(root);
         const git = observeGitCandidate(held, root, base, zone, scope);
+        operation = "candidate-lsof";
         const referencingPids = referencePids(held, root);
+        operation = "candidate-record";
         if (git.reason !== null) blockers.push(Object.freeze({ root, reason: git.reason }));
         for (const prunableRoot of git.prunableRoots) blockers.push(Object.freeze({ root: prunableRoot,
           reason: "prunable-git-worktree" }));
@@ -533,6 +549,8 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
           referencingPids }));
       }
     }
+    candidateOrdinal = null;
+    operation = "first-pass-recheck";
     const present = new Set(entries.map((entry) => entry.root));
     for (const group of listedGroups) {
       for (const listedRoot of group) {
@@ -542,26 +560,35 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
       }
     }
     held.assertStable();
+    operation = "between-passes";
     await betweenPasses();
+    operation = "post-database-stability";
     held.assertStable();
     for (const root of absentBases) if (!isMissing(root)) fail();
     for (const root of absentAgentsParents) if (!isMissing(root)) fail();
     for (const root of absentLockedRoots) if (!isMissing(root)) fail();
+    operation = "parent-recheck";
     for (const [parent, firstHash] of parentGitLists) {
       const fresh = primaryWorktreeRoots(held, parent);
       if (fresh === null || hashCanonicalJson(fresh) !== firstHash) fail();
     }
     for (const parent of nonGitParents) if (!isMissing(path.join(parent, ".git"))) fail();
-    for (const entry of entries) {
+    for (const [index, entry] of entries.entries()) {
+      candidateOrdinal = index;
+      operation = "candidate-recheck-git";
       const first = firstByRoot.get(entry.root)!;
       const fresh = observeGitCandidate(held, entry.root, first.base, first.zone, scope);
+      operation = "candidate-recheck-lsof";
       const freshPids = referencePids(held, entry.root);
+      operation = "candidate-recheck-compare";
       if (fresh.kind !== entry.kind || fresh.gitPrimaryRoot !== entry.gitPrimaryRoot
         || fresh.dirty !== entry.dirty || fresh.reason !== first.reason
         || hashCanonicalJson({ roots: fresh.listedRoots, prunableRoots: fresh.prunableRoots,
           locked: fresh.locked, barePrimaryRoot: fresh.barePrimaryRoot }) !== first.listedHash
         || hashCanonicalJson(freshPids) !== hashCanonicalJson(entry.referencingPids)) fail();
     }
+    candidateOrdinal = null;
+    operation = "result";
     for (const root of held.gitAdminChurnCandidateRoots()) blockers.push(Object.freeze({ root, reason: "git-admin-entry-churn" }));
     const ordered = Object.freeze(entries.sort((left, right) => compareRoot(left.root, right.root)));
     const orderedBlockers = Object.freeze(blockers.sort((left, right) => compareRoot(left.root, right.root)));
@@ -572,7 +599,11 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     return Object.freeze({ ...body, catalogHash: hashCanonicalJson(body) });
   } catch (error) {
     if (error instanceof AggregateError) throw error;
-    throw Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID", { cause: error });
+    const point = Object.freeze({ schema: "setfarm.internal-production-positive-worktree-physical-refusal-point.v1",
+      operation, candidateOrdinal });
+    const failure = Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID", { cause: error });
+    Object.defineProperty(failure, "physicalFailurePoint", { value: point });
+    throw Object.freeze(failure);
   } finally {
     held.close();
   }

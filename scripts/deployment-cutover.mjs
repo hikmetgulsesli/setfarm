@@ -48,7 +48,7 @@ function pre32FailurePhase(error) {
   try {
     if (types.isProxy(error) || Object.getPrototypeOf(error) !== Error.prototype || !Object.isFrozen(error)) return "unknown";
     const descriptors = Object.getOwnPropertyDescriptors(error), keys = Reflect.ownKeys(descriptors);
-    if (keys.some(key => typeof key !== "string" || !["stack", "message", "pre32PairPhase"].includes(key))) return "unknown";
+    if (keys.some(key => typeof key !== "string" || !["stack", "message", "pre32PairPhase", "pre32PhysicalPoint"].includes(key))) return "unknown";
     const message = descriptors.message, phase = descriptors.pre32PairPhase;
     if (!message || !Object.hasOwn(message, "value")
       || message.value !== "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID"
@@ -58,6 +58,32 @@ function pre32FailurePhase(error) {
       "post-pair-recheck", "launcher-cleanup"];
     return allowed.includes(phase.value) ? phase.value : "unknown";
   } catch { return "unknown"; }
+}
+function pre32PhysicalPoint(error, phase) {
+  if (phase !== "physical-first-pass" && phase !== "physical-second-pass") return null;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(error, "pre32PhysicalPoint");
+    if (!descriptor || !Object.hasOwn(descriptor, "value")
+      || descriptor.enumerable || descriptor.configurable || descriptor.writable) return null;
+    const point = descriptor.value;
+    if (point === null || typeof point !== "object" || types.isProxy(point)
+      || Object.getPrototypeOf(point) !== Object.prototype || !Object.isFrozen(point)) return null;
+    const fields = Object.getOwnPropertyDescriptors(point), keys = Reflect.ownKeys(fields);
+    if (keys.length !== 3 || keys.some(key => typeof key !== "string"
+      || !["schema", "operation", "candidateOrdinal"].includes(key)
+      || !fields[key].enumerable || !Object.hasOwn(fields[key], "value"))) return null;
+    const operation = fields.operation.value, ordinal = fields.candidateOrdinal.value;
+    const candidate = ["candidate-git", "candidate-lsof", "candidate-record", "candidate-recheck-git",
+      "candidate-recheck-lsof", "candidate-recheck-compare"].includes(operation);
+    const firstPass = ["scope-hold", "base-discovery", "parent-git", "candidate-git", "candidate-lsof",
+      "candidate-record", "first-pass-recheck"];
+    const secondPass = ["post-database-stability", "parent-recheck", "candidate-recheck-git",
+      "candidate-recheck-lsof", "candidate-recheck-compare", "result"];
+    if (fields.schema.value !== "setfarm.internal-production-positive-worktree-physical-refusal-point.v1"
+      || !(phase === "physical-first-pass" ? firstPass : secondPass).includes(operation)
+      || (candidate ? !Number.isInteger(ordinal) || ordinal < 0 || ordinal >= 256 : ordinal !== null)) return null;
+    return point;
+  } catch { return null; }
 }
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const canonical = value => value === null || typeof value !== "object" ? JSON.stringify(value)
@@ -296,9 +322,11 @@ async function inspect() {
     // A throwing nested observer may have acquired resources we never received.
     // Missing sanitized cleanup evidence means unknown, not successful cleanup.
     const owned = process.argv[2] === "inspect-default-context" && refusal.stage === "default-context" ? ownerRefusal(error) : null;
+    const pre32 = process.argv[2] === "inspect-pre32-host-pair" && refusal.stage === "pre32-host-pair";
+    const phase = pre32 ? pre32FailurePhase(error) : null;
+    const point = pre32 ? pre32PhysicalPoint(error, phase) : null;
     refusal = owned ?? { ...refusal, cleanupFailed: null,
-      ...(process.argv[2] === "inspect-pre32-host-pair" && refusal.stage === "pre32-host-pair"
-        ? { pre32FailurePhase: pre32FailurePhase(error) } : {}) };
+      ...(pre32 ? { pre32FailurePhase: phase, ...(point ? { pre32PhysicalPoint: point } : {}) } : {}) };
     invalid = true;
   }
   while (pins.length) { const pin = pins.pop(); try { fs.closeSync(pin.fd); } catch {
