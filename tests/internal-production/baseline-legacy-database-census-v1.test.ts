@@ -7,6 +7,121 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 
+test("pre32 fixed-table lock entry refuses an absent private database URL before connection", () => {
+  const url = new URL("../../src/internal-production/baseline-legacy-database-census-v1.ts", import.meta.url).href;
+  const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+    import net from 'node:net';import{syncBuiltinESMExports}from'node:module';
+    let connections=0;net.Socket.prototype.connect=()=>{connections++;throw Error('UNEXPECTED_CONNECTION')};syncBuiltinESMExports();
+    const module=await import(${JSON.stringify(url)});let error;
+    try{await module.observeLegacyDatabaseCensusWithPre32ShareLocksV1(undefined)}catch(caught){error=caught.message}
+    process.stdout.write(JSON.stringify({error,connections}));
+  `], { encoding: "utf8", timeout: 15000, env: {} });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    error: "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:legacy zero-owner database is unavailable",
+    connections: 0,
+  });
+});
+
+test("pre32 SHARE-lock diagnostic locks its fixed table set before journal and legacy count reads", () => {
+  // Mutation caught: moving any lock after the first census read, omitting a
+  // listed owner table, or retaining the old repeatable-read transaction mode.
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pre32-writer-locks-")));
+  try {
+    let source = fs.readFileSync(new URL("../../src/internal-production/baseline-legacy-database-census-v1.ts", import.meta.url), "utf8");
+    const marker = 'const postgresModule = await import("postgres");';
+    assert.equal(source.split(marker).length, 2);
+    source = source.replace(marker, `const postgresModule={default:()=>{
+      const tx=async strings=>{
+        const sql=strings.join('');
+        if(sql.startsWith('SET LOCAL')){globalThis.probe.queries.push('set-local');return []}
+        if(sql.includes('FROM public.setfarm_schema_migrations')&&sql.includes('ORDER BY version')){
+          globalThis.probe.queries.push('journal-head');
+          return [26,27,28,29,30,31,...(process.env.FAKE_SCENARIO==='future-head'?[32]:[])]
+            .map(version=>({version,state:'applied'}))
+        }
+        if(sql.includes('WITH expected_tables(name)')){
+          globalThis.probe.queries.push('cold-catalog');
+          return [{laterJournalCount:'0',relationCount:'0',functionCount:'0',typeCount:'0',triggerCount:'0'}]
+        }
+        if(sql.includes('WITH required_columns(')){
+          globalThis.probe.queries.push('legacy-aggregate');
+          return [{catalogViolationCount:'0',aprbChildViolationCount:'0',ordinaryBatchViolationCount:'0',
+            activeHeaderViolationCount:'0',ownerReservationsRelation:null,ownerAdmissionHeadRelation:null,
+            producerSourceRelation:null,producerActivationRelation:null,producerActivationHeadRelation:null,
+            producerCurrentRelation:null,activeRunCount:'0',openClaimCount:'0',executionAttemptCount:'0',
+            activeRuntimeSessionCount:'0',activeCompletionOwnerCount:'0',unsettledMandatoryEffectCount:'0',
+            artifactReservationCount:'0',publicationBatchCount:'0',artifactPublicationCount:'0',
+            terminationOwnerCount:'0',findingOwnerCount:'0',recoveryOwnerCount:'0',operationalDeliveryCount:'0'}]
+        }
+        if(sql.includes('FROM public.finding_sets ORDER BY'))return [];
+        if(sql.includes('FROM public.findings ORDER BY'))return [];
+        if(sql.includes('FROM public.runs')&&sql.includes('finding_sets'))return [];
+        throw Error('UNEXPECTED_TAGGED_QUERY');
+      };
+      tx.unsafe=async sql=>{
+        globalThis.probe.queries.push(sql);
+        if(process.env.FAKE_SCENARIO==='lock-failure'&&sql==='LOCK TABLE public.claim_log IN SHARE MODE')
+          throw Error('PRIVATE_DATABASE_DETAIL');
+        return []
+      };
+      return {options:{host:['localhost'],port:[5432],database:'setfarm',user:'fixture'},
+        begin:async(mode,operation)=>{globalThis.probe.mode=mode;return operation(tx)},
+        end:async options=>{globalThis.probe.close=options}};
+    }};`).replace('await import("../findings/finding-publication-v1.js")',
+      `await import(${JSON.stringify(new URL("../../src/findings/finding-publication-v1.ts", import.meta.url).href)})`);
+    fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
+    const file = path.join(root, "census.ts"); fs.writeFileSync(file, source);
+    const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      globalThis.probe={queries:[]};const module=await import(${JSON.stringify(pathToFileURL(file).href)});
+      let snapshot,error;try{snapshot=await module.observeLegacyDatabaseCensusWithPre32ShareLocksV1(
+        'postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm')}catch(caught){error=caught.message}
+      process.stdout.write(JSON.stringify({snapshot,error,...globalThis.probe}));
+    `], { encoding: "utf8", timeout: 15000, env: {} });
+    assert.equal(result.status, 0, result.stderr);
+    const observed = JSON.parse(result.stdout);
+    assert.equal(observed.error, undefined);
+    assert.equal(observed.mode, "isolation level read committed read only");
+    assert.deepEqual(observed.close, { timeout: 1 });
+    assert.equal(observed.snapshot.authority, "diagnostic-only");
+    assert.equal(observed.snapshot.tableLockScope, "fixed-pre32-legacy-superset");
+    assert.equal(observed.snapshot.journalIdentity, "tail-ordinal-state-only");
+    assert.equal(observed.snapshot.lockState, "released-at-return");
+    const locked = observed.queries.filter((query: string) => query.startsWith("LOCK TABLE "));
+    const expected = [
+      "artifact_capacity", "artifact_publication_batch_items", "artifact_publication_batch_plan_items",
+      "artifact_publication_batch_plans", "artifact_publication_batches", "artifact_publication_reservations",
+      "artifact_store_authorities",
+      "claim_log", "execution_attempts", "finding_sets", "findings", "operational_event_deliveries",
+      "operational_outbox", "platform_release_store_records_v3", "product_compilation_attempts", "product_packets",
+      "recovery_cases", "recovery_dispatch_deliveries", "recovery_revision_dispatches", "run_termination_requests",
+      "runs", "runtime_completion_effects", "runtime_completion_requests", "runtime_sessions",
+      "semantic_artifacts", "setfarm_schema_migrations", "steps", "stories",
+      "v3_canary_admission_claims", "v3_preparation_authorities_v2",
+      "v3_preparation_authority_attempts_v2", "v3_preparation_authority_claims_v2",
+      "v3_preparation_blocks", "v3_preparation_story_state", "v3_story_claim_runtime_binding_cutovers_v1",
+      "v3_story_claim_runtime_bindings_v1",
+    ].map(table => `LOCK TABLE public.${table} IN SHARE MODE`);
+    assert.deepEqual(locked, expected);
+    assert.ok(observed.queries.indexOf(locked.at(-1)) < observed.queries.indexOf("journal-head"));
+    assert.ok(observed.queries.indexOf("journal-head") < observed.queries.indexOf("cold-catalog"));
+    assert.ok(observed.queries.indexOf("cold-catalog") < observed.queries.indexOf("legacy-aggregate"));
+    for (const scenario of ["lock-failure", "future-head"]) {
+      const refused = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+        globalThis.probe={queries:[]};const module=await import(${JSON.stringify(pathToFileURL(file).href)});
+        let error;try{await module.observeLegacyDatabaseCensusWithPre32ShareLocksV1(
+          'postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm')}catch(caught){error=caught.message}
+        process.stdout.write(JSON.stringify({error,...globalThis.probe}));
+      `], { encoding: "utf8", timeout: 15000, env: { FAKE_SCENARIO: scenario } });
+      assert.equal(refused.status, 0, `${scenario}: ${refused.stderr}`);
+      const output = JSON.parse(refused.stdout);
+      assert.equal(output.error, "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:pre32 fixed-table lock census failed", scenario);
+      assert.ok(!output.queries.includes("cold-catalog"), scenario);
+      assert.ok(!refused.stdout.includes("PRIVATE_DATABASE_DETAIL"), scenario);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("shared legacy census is import-inert and never adopts an ambient database URL", () => {
   const url = new URL("../../src/internal-production/baseline-legacy-database-census-v1.ts", import.meta.url).href;
   const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
