@@ -216,6 +216,27 @@ test("Task6A V2 extracted startup prefix refuses before existing ordinary admiss
   assert.deepEqual(calls, ["direct", "cold", "preflight", "ordinary"]);
 });
 
+test("Task6A V2 ongoing spawn rechecks before its first ordinary effect", async () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const spawn = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "spawnAgentNow");
+  assert.ok(spawn?.body);
+  const first = spawn.body.statements[0]?.getText(tree);
+  assert.equal(first, "await assertTask6aPreSchemaOrdinaryStartupV2();");
+  const run = new Function("preflight", "effect", `return (async () => {
+    const assertTask6aPreSchemaOrdinaryStartupV2 = preflight;
+    ${first}
+    effect();
+  })();`) as (preflight: () => Promise<void>, effect: () => void) => Promise<void>;
+  const effects: string[] = [];
+  await assert.rejects(run(async () => { throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED"); },
+    () => effects.push("effect")), /TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED/);
+  assert.deepEqual(effects, []);
+  await run(async () => { effects.push("preflight"); }, () => effects.push("effect"));
+  assert.deepEqual(effects, ["preflight", "effect"]);
+});
+
 test("Task6A V2 journal inspector is a read-only transaction and requires exact attestation and all 33 rows", async () => {
   const source = readFileSync(path.join(sourceRoot, "db/contract-spine-migrations.ts"), "utf8");
   const tree = ts.createSourceFile("contract-spine-migrations.ts", source, ts.ScriptTarget.Latest, true);

@@ -7560,6 +7560,7 @@ function ensureClaimScopeParentDirs(workdir: string, claimSummary: Record<string
 }
 
 async function spawnAgentNow(agentId: string, wfId: string, role: string): Promise<void> {
+  await assertTask6aPreSchemaOrdinaryStartupV2();
   const key = `${wfId}:${role}:${agentId}`;
   if (activeProcesses.has(key) || claimingSpawns.has(key) || hasTrackedClaimRuntime((active) => `${active.wfId}:${active.role}:${active.agentId}` === key)) {
     console.log(`[spawner] Already running/claiming: ${key}, skip`);
