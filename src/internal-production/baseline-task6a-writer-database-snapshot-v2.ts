@@ -92,7 +92,7 @@ export async function observeTask6aWriterDatabaseSnapshotV2(databaseUrl: string 
       || !/^postgres(?:ql)?:\/\/[^/?#@\s]+@(?:localhost|127\.0\.0\.1)(?::5432)?\/setfarm$/.test(databaseUrl)) fail();
     const target = new URL(databaseUrl);
     const username = decodeURIComponent(target.username);
-    if (!["postgres:", "postgresql:"].includes(target.protocol) || !target.password || !/^[a-z][a-z0-9_]{0,62}$/.test(username)
+    if (!["postgres:", "postgresql:"].includes(target.protocol) || !/^[a-z][a-z0-9_]{0,62}$/.test(username)
       || !["localhost", "127.0.0.1"].includes(target.hostname)
       || (target.port !== "" && target.port !== "5432") || target.pathname !== "/setfarm"
       || target.search !== "" || target.hash !== "") fail();

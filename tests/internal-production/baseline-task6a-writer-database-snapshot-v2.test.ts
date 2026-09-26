@@ -82,7 +82,7 @@ test("adapter import is inert, and absent or ambient URL refuses before driver l
   assert.deepEqual(JSON.parse(result.stdout), { error: ERROR, connections: 0, importLoads: [], loads: [] });
 });
 
-for (const scenario of ["ambient-pg", "remote-host", "other-port", "query", "fragment", "multiple-host", "wrong-database", "empty-password"]) {
+for (const scenario of ["ambient-pg", "remote-host", "other-port", "query", "fragment", "multiple-host", "wrong-database", "empty-user"]) {
   test(`adapter refuses ${scenario} before driver load`, () => {
     const input = scenario === "remote-host" ? "postgresql://fixture:PRIVATE_PASSWORD@remote.invalid/setfarm"
       : scenario === "other-port" ? "postgresql://fixture:PRIVATE_PASSWORD@localhost:5433/setfarm"
@@ -90,7 +90,7 @@ for (const scenario of ["ambient-pg", "remote-host", "other-port", "query", "fra
           : scenario === "fragment" ? `${localUrl}#x`
             : scenario === "multiple-host" ? "postgresql://fixture:PRIVATE_PASSWORD@localhost,remote.invalid/setfarm"
               : scenario === "wrong-database" ? "postgresql://fixture:PRIVATE_PASSWORD@localhost/other"
-                : scenario === "empty-password" ? "postgresql://fixture@localhost/setfarm" : localUrl;
+                : scenario === "empty-user" ? "postgresql://:PRIVATE_PASSWORD@localhost/setfarm" : localUrl;
     const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
       import{registerHooks}from'node:module';let loads=0;
       registerHooks({resolve(specifier,context,next){if(specifier==='postgres')loads++;return next(specifier,context)}});
@@ -128,10 +128,10 @@ test("adapter uses one bounded read-only transaction and closes on every driver 
     const file = path.join(root, "observer.ts"); fs.writeFileSync(file, source);
     const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
       const module=await import(${JSON.stringify(pathToFileURL(file).href)});
-      const run=async flags=>{globalThis.probe={row:${JSON.stringify(row())},...flags,url:null,options:null,modes:[],locals:[],statements:[],closes:[]};let output,error;
-        try{const snapshot=await module.observeTask6aWriterDatabaseSnapshotV2(${JSON.stringify(localUrl)});output={authority:snapshot.authority,sessionRole:snapshot.database.sessionRole}}
+      const run=async (flags,url=${JSON.stringify(localUrl)})=>{globalThis.probe={row:${JSON.stringify(row())},...flags,url:null,options:null,modes:[],locals:[],statements:[],closes:[]};let output,error;
+        try{const snapshot=await module.observeTask6aWriterDatabaseSnapshotV2(url);output={authority:snapshot.authority,sessionRole:snapshot.database.sessionRole}}
         catch(caught){error=caught.message};const {probe}=globalThis;return{output,error,modes:probe.modes,locals:probe.locals,queries:probe.statements.length,closes:probe.closes,url:probe.url,target:probe.options}};
-      process.stdout.write(JSON.stringify({success:await run({}),failure:await run({failure:true}),
+      process.stdout.write(JSON.stringify({success:await run({}),passwordlessLocal:await run({},'postgresql://fixture@localhost:5432/setfarm'),failure:await run({failure:true}),
         wrongTarget:await run({wrongTarget:true}),wrongRole:await run({row:{...${JSON.stringify(row())},sessionRole:'setrox',effectiveRole:'setrox'}}),
         closeFailure:await run({closeFailure:true}),hungBegin:await run({hangBegin:true})}));
     `], { encoding: "utf8", timeout: 20000, env: {} });
@@ -146,6 +146,8 @@ test("adapter uses one bounded read-only transaction and closes on every driver 
       assert.equal(entry.target.connect_timeout, 5);
     }
     assert.deepEqual(observed.success.output, { authority: "diagnostic-only", sessionRole: "fixture" });
+    assert.deepEqual(observed.passwordlessLocal.output, { authority: "diagnostic-only", sessionRole: "fixture" });
+    assert.equal(observed.passwordlessLocal.queries, 1);
     assert.equal(observed.success.queries, 1);
     assert.equal(observed.failure.error, ERROR);
     assert.equal(observed.wrongRole.error, ERROR);
