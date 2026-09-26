@@ -117,7 +117,7 @@ it("P4 guarded stage uses held savepoint without changing v32 digest", async () 
     [sha256(migrationSource), sha256(guardedSource), sha256(generatedDigests)],
     [
       "1f5b1f1c9d54051b674ad883c1b1e5998df6f3e5b5f77fe6d7f960337b6b4ff6",
-      "00ebd7073d7fce8f68acbf7054db179403e9ccb44df4b8c15df145dcf81f52a5",
+      "79116ca2831d17e6b4d19359abc34df1088576811246d75dfc853612a044da42",
       "d61009aebe3a1cca347a4a6132fa39e35855514b697f8132b3fc81ae506e3e95",
     ],
   );
