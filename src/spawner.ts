@@ -1403,6 +1403,8 @@ const activeProcesses = new Map<string, ActiveProcess>();
 const drainingProcesses = new Map<string, ActiveProcess>();
 const queuedSpawns = new Set<string>();
 const claimingSpawns = new Set<string>();
+const task6aV2RetainedPostClaimRuntimes = new Map<string, Readonly<{ claimId: number; ownerInstanceId: string }>>();
+let task6aV2UnboundPostClaimRefusals = 0;
 const inFlightSpawnPromises = new Set<Promise<void>>();
 const agentCooldownUntil = new Map<string, number>();
 let runtimeUsageLimitCooldownUntil = 0;
@@ -7565,6 +7567,39 @@ function ensureClaimScopeParentDirs(workdir: string, claimSummary: Record<string
   return [...created].sort();
 }
 
+function retainTask6aV2PostClaimRuntimeIfExact(
+  claim: Awaited<ReturnType<typeof claimStep>>,
+  intent: RuntimeClaimIntentV1,
+): boolean {
+  const claimId = claim.claimId;
+  if (!claim.found
+    || claim.runtimeSessionId !== intent.sessionId
+    || claim.runtimeOwnerInstanceId !== intent.ownerInstanceId
+    || typeof claimId !== "number"
+    || !Number.isSafeInteger(claimId)
+    || claimId <= 0) return false;
+  task6aV2RetainedPostClaimRuntimes.set(intent.sessionId, {
+    claimId,
+    ownerInstanceId: intent.ownerInstanceId,
+  });
+  return true;
+}
+
+function matchesTask6aV2RetainedPostClaimRuntimeForShutdown(
+  session: ClaimRuntimeSession,
+  retained: Readonly<{ claimId: number; ownerInstanceId: string }> | undefined,
+): boolean {
+  return retained !== undefined
+    && retained.claimId === session.claimId
+    && retained.ownerInstanceId === session.ownerInstanceId
+    && session.state === "reserved"
+    && session.pid === undefined
+    && session.processStartedAt === undefined
+    && session.processGroupId === undefined
+    && session.processIdentity === undefined
+    && session.startedAt === undefined;
+}
+
 async function spawnAgentNow(agentId: string, wfId: string, role: string): Promise<void> {
   await assertTask6aPreSchemaOrdinaryStartupV2();
   const key = `${wfId}:${role}:${agentId}`;
@@ -7657,6 +7692,20 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   if (!claim.found) {
     claimingSpawns.delete(key);
     console.log("[spawner] No claimable work for " + fullAgentId + ", skip spawn");
+    return;
+  }
+  try {
+    await assertTask6aPreSchemaOrdinaryStartupV2();
+  } catch {
+    if (!retainTask6aV2PostClaimRuntimeIfExact(claim, runtimeIntent)) task6aV2UnboundPostClaimRefusals++;
+    claimingSpawns.delete(key);
+    console.warn("[spawner] Task6A V2 post-claim refused; claim left unchanged for inspection");
+    return;
+  }
+  if (shuttingDown) {
+    if (!retainTask6aV2PostClaimRuntimeIfExact(claim, runtimeIntent)) task6aV2UnboundPostClaimRefusals++;
+    claimingSpawns.delete(key);
+    console.warn("[spawner] Shutdown after claim; claim left unchanged for inspection");
     return;
   }
   let postClaimOwnershipTransferred = false;
@@ -8328,7 +8377,7 @@ async function requeueStaleRunningClaimFromPreviousSpawner(row: {
 }
 
 type RuntimeReleaseResult =
-  | Readonly<{ status: "completed" | "released" | "already_terminal" | "drained_for_termination"; runtimeSessionId: string; claimId: number }>
+  | Readonly<{ status: "completed" | "released" | "already_terminal" | "drained_for_termination" | "retained_for_recovery"; runtimeSessionId: string; claimId: number }>
   | Readonly<{ status: "quarantined"; runtimeSessionId: string; claimId: number; diagnostic: string }>;
 
 async function releaseActiveProcessForShutdown(active: ActiveProcess): Promise<RuntimeReleaseResult> {
@@ -11303,6 +11352,19 @@ async function main() {
       });
       for (const session of remaining) {
         if (tracked.has(session.sessionId) || session.state === "released") continue;
+        if (matchesTask6aV2RetainedPostClaimRuntimeForShutdown(
+          session,
+          task6aV2RetainedPostClaimRuntimes.get(session.sessionId),
+        )) {
+          const openClaim = await pgGet<{ id: string }>(
+            "SELECT id::text AS id FROM claim_log WHERE id = $1 AND run_id = $2 AND outcome IS NULL LIMIT 1",
+            [session.claimId, session.runId],
+          );
+          if (openClaim?.id === String(session.claimId)) {
+            results.push({ status: "retained_for_recovery", runtimeSessionId: session.sessionId, claimId: session.claimId });
+            continue;
+          }
+        }
         if (session.state === "drained") {
           const handoff = await pgGet<{ request_id: string | null }>(
             `SELECT COALESCE(
@@ -11351,12 +11413,15 @@ async function main() {
       }
 
       const failed = results.filter((result) => result.status === "quarantined");
+      const retained = results.filter((result) => result.status === "retained_for_recovery");
       await runRecoveryCoordinator.close();
       await pgClose();
       releaseSpawnerSingletonLock();
-      const exitCode = failed.length > 0 ? 1 : 0;
+      const exitCode = failed.length > 0 || retained.length > 0
+        || task6aV2UnboundPostClaimRefusals > 0
+        || task6aV2RetainedPostClaimRuntimes.size !== retained.length ? 1 : 0;
       process.exitCode = exitCode;
-      console.log(`[spawner] Shutdown complete: ${results.length - failed.length} released/completed, ${failed.length} quarantined, exit=${exitCode}`);
+      console.log(`[spawner] Shutdown complete: ${results.length - failed.length - retained.length} released/completed, ${retained.length} retained, ${task6aV2UnboundPostClaimRefusals} unbound post-claim refusals, ${failed.length} quarantined, exit=${exitCode}`);
       return exitCode;
     })().catch(async (error) => {
       console.error(`[spawner] Shutdown failed closed: ${String(error).slice(0, 1_000)}`);

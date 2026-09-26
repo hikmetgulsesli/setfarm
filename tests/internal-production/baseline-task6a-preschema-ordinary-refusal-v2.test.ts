@@ -375,6 +375,187 @@ test("Task6A V2 prespawn rechecks after every awaited continuation before effect
   }
 });
 
+test("Task6A V2 found claim refuses after claimStep without a release write", async () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const spawn = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "spawnAgentNow");
+  assert.ok(spawn?.body);
+  const statements = spawn.body.statements;
+  const claimIndex = statements.findIndex((node) => ts.isTryStatement(node)
+    && node.tryBlock.getText(tree).includes("claim = await claimStep("));
+  assert.ok(claimIndex >= 0);
+  const noWork = statements[claimIndex + 1];
+  assert.ok(noWork && ts.isIfStatement(noWork));
+  assert.equal(noWork.expression.getText(tree), "!claim.found");
+  const refusal = statements[claimIndex + 2];
+  assert.ok(refusal && ts.isTryStatement(refusal));
+  assert.equal(refusal.tryBlock.statements[0]?.getText(tree), "await assertTask6aPreSchemaOrdinaryStartupV2();");
+  assert.ok(refusal.catchClause?.block.getText(tree).includes("retainTask6aV2PostClaimRuntimeIfExact(claim, runtimeIntent)"));
+  assert.ok(refusal.catchClause?.block.getText(tree).includes("claimingSpawns.delete(key)"));
+  assert.ok(refusal.catchClause?.block.getText(tree).includes("return;"));
+  assert.doesNotMatch(refusal.getText(tree), /releaseUntransferredPostClaimOwnership|quarantine|unlinkSync/);
+  const shutdown = statements[claimIndex + 3];
+  assert.ok(shutdown && ts.isIfStatement(shutdown));
+  assert.equal(shutdown.expression.getText(tree), "shuttingDown");
+  assert.match(shutdown.thenStatement.getText(tree), /retainTask6aV2PostClaimRuntimeIfExact\(claim, runtimeIntent\)/);
+  assert.match(shutdown.thenStatement.getText(tree), /claimingSpawns\.delete\(key\)/);
+  assert.match(shutdown.thenStatement.getText(tree), /return;/);
+  assert.doesNotMatch(shutdown.getText(tree), /releaseUntransferredPostClaimOwnership|quarantine|unlinkSync/);
+  assert.match(statements[claimIndex + 4]?.getText(tree) || "", /^let postClaimOwnershipTransferred = false;/);
+
+  const run = new Function("preflight", "effect", "deletes", "warnings", "retained", "unbound", "exact", `return (async () => {
+    const claim = { found: true };
+    const runtimeIntent = { sessionId: "RTS_exact", ownerInstanceId: "owner" };
+    const key = "wf:role:agent";
+    let shuttingDown = false;
+    let task6aV2UnboundPostClaimRefusals = 0;
+    const claimingSpawns = { delete: (value) => deletes.push(value) };
+    const console = { warn: (value) => warnings.push(value) };
+    const retainTask6aV2PostClaimRuntimeIfExact = () => { retained.push("sampled"); return exact; };
+    const assertTask6aPreSchemaOrdinaryStartupV2 = () => preflight(() => { shuttingDown = true; });
+    try {
+      ${refusal.getText(tree)}
+      ${shutdown.getText(tree)}
+      effect();
+    } finally { unbound.push(task6aV2UnboundPostClaimRefusals); }
+  })();`) as (preflight: (shutdown: () => void) => Promise<void>, effect: () => void,
+      deletes: string[], warnings: string[], retained: string[], unbound: number[], exact: boolean) => Promise<void>;
+  const effects: string[] = [];
+  const deletes: string[] = [];
+  const warnings: string[] = [];
+  const retained: string[] = [];
+  const unbound: number[] = [];
+  await run(async () => { throw Error("PRIVATE_CAUSE_SHOULD_NOT_BE_LOGGED"); },
+    () => effects.push("postclaim"), deletes, warnings, retained, unbound, true);
+  assert.deepEqual(effects, []);
+  assert.deepEqual(deletes.splice(0), ["wf:role:agent"]);
+  assert.deepEqual(warnings.splice(0), ["[spawner] Task6A V2 post-claim refused; claim left unchanged for inspection"]);
+  assert.deepEqual(retained.splice(0), ["sampled"]);
+  assert.deepEqual(unbound.splice(0), [0]);
+  await run(async (shutdownNow) => { shutdownNow(); },
+    () => effects.push("postclaim"), deletes, warnings, retained, unbound, true);
+  assert.deepEqual(effects, []);
+  assert.deepEqual(deletes.splice(0), ["wf:role:agent"]);
+  assert.deepEqual(warnings.splice(0), ["[spawner] Shutdown after claim; claim left unchanged for inspection"]);
+  assert.deepEqual(retained.splice(0), ["sampled"]);
+  assert.deepEqual(unbound.splice(0), [0]);
+  let releasePreflight!: () => void;
+  let signalEntered!: () => void;
+  let beginShutdown!: () => void;
+  const entered = new Promise<void>((resolve) => { signalEntered = resolve; });
+  const heldPreflight = new Promise<void>((resolve) => { releasePreflight = resolve; });
+  const pending = run(async (shutdownNow) => {
+    beginShutdown = shutdownNow;
+    signalEntered();
+    await heldPreflight;
+  }, () => effects.push("postclaim"), deletes, warnings, retained, unbound, true);
+  await entered;
+  beginShutdown();
+  releasePreflight();
+  await pending;
+  assert.deepEqual(effects, []);
+  assert.deepEqual(deletes.splice(0), ["wf:role:agent"]);
+  assert.deepEqual(retained.splice(0), ["sampled"]);
+  assert.deepEqual(unbound.splice(0), [0]);
+  assert.deepEqual(warnings.splice(0), ["[spawner] Shutdown after claim; claim left unchanged for inspection"]);
+  await run(async () => {}, () => effects.push("postclaim"), deletes, warnings, retained, unbound, true);
+  assert.deepEqual(effects, ["postclaim"]);
+  assert.deepEqual(deletes, []);
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(retained, []);
+  assert.deepEqual(unbound.splice(0), [0]);
+  await run(async () => { throw Error("refused"); }, () => effects.push("postclaim"),
+    deletes, warnings, retained, unbound, false);
+  assert.deepEqual(effects, ["postclaim"]);
+  assert.deepEqual(unbound, [1], "legacy no-runtime refusal must make shutdown nonzero");
+});
+
+test("Task6A V2 shutdown retains only an exact process-free reserved post-claim runtime", async () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const register = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "retainTask6aV2PostClaimRuntimeIfExact");
+  const matches = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "matchesTask6aV2RetainedPostClaimRuntimeForShutdown");
+  assert.ok(register?.body && matches?.body);
+  const map = new Map<string, { claimId: number; ownerInstanceId: string }>();
+  const registerJs = ts.transpileModule(register.getText(tree), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const makeRegister = new Function("retainedMap", `
+    const task6aV2RetainedPostClaimRuntimes = retainedMap;
+    ${registerJs}
+    return retainTask6aV2PostClaimRuntimeIfExact;
+  `) as (retainedMap: typeof map) => (claim: Record<string, unknown>, intent: Record<string, unknown>) => boolean;
+  const registerRuntime = makeRegister(map);
+  const intent = { sessionId: "RTS_exact", ownerInstanceId: "owner" };
+  assert.equal(registerRuntime({ found: true, claimId: 7 }, intent), false);
+  assert.equal(map.size, 0, "legacy found claim without runtime must not gain a shutdown exemption");
+  assert.equal(registerRuntime({ found: true, claimId: 7, runtimeSessionId: "RTS_wrong", runtimeOwnerInstanceId: "owner" }, intent), false);
+  assert.equal(map.size, 0);
+  assert.equal(registerRuntime({ found: true, claimId: 7, runtimeSessionId: "RTS_exact", runtimeOwnerInstanceId: "other" }, intent), false);
+  assert.equal(map.size, 0);
+  assert.equal(registerRuntime({ found: true, claimId: 7, runtimeSessionId: "RTS_exact", runtimeOwnerInstanceId: "owner" }, intent), true);
+  assert.deepEqual(map.get("RTS_exact"), { claimId: 7, ownerInstanceId: "owner" });
+
+  const matchesJs = ts.transpileModule(matches.getText(tree), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const match = new Function(`${matchesJs}\nreturn matchesTask6aV2RetainedPostClaimRuntimeForShutdown;`)() as
+    (session: Record<string, unknown>, retained: Record<string, unknown> | undefined) => boolean;
+  const session = { sessionId: "RTS_exact", claimId: 7, ownerInstanceId: "owner", state: "reserved" };
+  assert.equal(match(session, map.get("RTS_exact")), true);
+  for (const crossed of [
+    { ...session, claimId: 8 }, { ...session, ownerInstanceId: "other" },
+    { ...session, state: "starting" }, { ...session, pid: 123 },
+    { ...session, processIdentity: { pid: 123 } }, { ...session, processGroupId: 123 },
+    { ...session, processStartedAt: new Date().toISOString() },
+    { ...session, startedAt: new Date().toISOString() },
+  ]) assert.equal(match(crossed, map.get("RTS_exact")), false);
+  assert.equal(match(session, undefined), false);
+
+  const shutdownLoop = source.slice(source.indexOf("for (const session of remaining) {"),
+    source.indexOf("const failed = results.filter", source.indexOf("for (const session of remaining) {")));
+  const exact = shutdownLoop.indexOf("matchesTask6aV2RetainedPostClaimRuntimeForShutdown(");
+  const openClaim = shutdownLoop.indexOf("FROM claim_log", exact);
+  const retained = shutdownLoop.indexOf('status: "retained_for_recovery"', openClaim);
+  const quarantine = shutdownLoop.indexOf("runtimeSessions.quarantine(");
+  assert.ok(exact >= 0 && openClaim > exact && retained > openClaim && quarantine > retained);
+  assert.match(shutdownLoop.slice(openClaim, retained), /outcome IS NULL/);
+  const loopJs = ts.transpileModule(`async function runLoop() { ${shutdownLoop} }`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const runShutdownLoop = new Function("remaining", "retainedMap", "claimIsOpen", "writes", `
+    const tracked = new Map();
+    const results = [];
+    const SPAWNER_INSTANCE_ID = "owner";
+    const task6aV2RetainedPostClaimRuntimes = retainedMap;
+    const runtimeSessions = { quarantine: async (value) => { writes.push(value); } };
+    const pgGet = async (sql, params) => sql.includes("FROM claim_log") && claimIsOpen
+      ? { id: String(params[0]) } : null;
+    ${matchesJs}
+    ${loopJs}
+    return (async () => { await runLoop(); return results; })();
+  `) as (sessions: Record<string, unknown>[], retainedMap: typeof map,
+      claimIsOpen: boolean, writes: Record<string, unknown>[]) => Promise<Array<{ status: string }>>;
+  const writes: Record<string, unknown>[] = [];
+  assert.deepEqual((await runShutdownLoop([session], map, true, writes)).map((item) => item.status),
+    ["retained_for_recovery"]);
+  assert.deepEqual(writes, []);
+  assert.deepEqual((await runShutdownLoop([session], map, false, writes)).map((item) => item.status),
+    ["quarantined"]);
+  assert.equal(writes.splice(0).length, 1);
+  assert.deepEqual((await runShutdownLoop([{ ...session, state: "starting" }], map, true, writes)).map((item) => item.status),
+    ["quarantined"]);
+  assert.equal(writes.splice(0).length, 1);
+  assert.deepEqual((await runShutdownLoop([session], new Map(), true, writes)).map((item) => item.status),
+    ["quarantined"]);
+  assert.equal(writes.splice(0).length, 1);
+  assert.match(source, /task6aV2UnboundPostClaimRefusals > 0/);
+  assert.match(source, /task6aV2RetainedPostClaimRuntimes\.size !== retained\.length/);
+});
+
 test("Task6A V2 poller rechecks before its first ordinary effect", async () => {
   const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
   const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
