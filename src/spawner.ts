@@ -10077,6 +10077,7 @@ async function reconcileTerminalShadowAttempts(runtimeQuiesced = false): Promise
 async function pollForPendingWork() {
   if (shuttingDown) return;
   try {
+    await assertTask6aPreSchemaOrdinaryStartupV2();
     await processRunTerminationRequests();
     await processRuntimeCompletionRequests();
     await reconcileTerminalShadowAttempts();
