@@ -6,6 +6,72 @@ import { spawnSync, execFileSync } from "node:child_process";
 import { fixture, run, write, git } from "./fixtures/deployment-cutover-bootstrap.mjs";
 import { retainedFixture } from "./fixtures/deployment-cutover-retained-profile.mjs";
 
+const task6aCatalogSource = kind => `import {createHash} from 'node:crypto';
+  const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value)
+    :Array.isArray(value)?'['+value.map(canonical).join(',')+']'
+    :'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
+  const sealed=(body,key)=>Object.freeze({...body,[key]:createHash('sha256').update(canonical(body)).digest('hex')});
+  export async function observeCodeOwnedTask6aWriterCatalogHostV2(){
+    if(arguments.length)throw Error('UNEXPECTED_INPUT');
+    const kind=${JSON.stringify(kind)};if(kind==='error')throw Error('PRIVATE_DATABASE_PASSWORD');
+    const mission=sealed({schema:'setfarm.internal-production-task6a-mission-control-launcher.v2',
+      authority:'diagnostic-only',cutoverAdmission:'not-granted',physicalIdentityProvenance:'unverified',
+      label:'com.setrox.mission-control',state:'running',activeCount:1,databaseRole:'fixture'},'observationHash');
+    const writer=sealed({schema:'setfarm.internal-production-task6a-writer-database-snapshot.v2',
+      authority:'diagnostic-only',temporalScope:'catalog-snapshot-and-live-session-sample',
+      cutoverAdmission:'not-granted',physicalIdentityProvenance:'unverified',
+      database:Object.freeze({databaseName:'setfarm',databaseOwnerRole:'fixture',sessionRole:'fixture',
+        effectiveRole:'fixture',login:kind==='malformed-writer-flag'?'true':true,superuser:true,bypassRls:true,createRole:true,
+        createDatabase:true,otherSessionCount:1})},'snapshotHash');
+    const pair=sealed({schema:'setfarm.internal-production-pre32-physical-database-pair.v7',
+      authority:'diagnostic-only',physicalIdentityProvenance:'unverified',heldPair:Object.freeze({fixture:'held'}),
+      pre32Database:Object.freeze({schema:'setfarm.internal-production-pre32-active-binding-snapshot.v7'})},'pairHash');
+    const old=sealed({schema:'setfarm.internal-production-task6a-three-launcher-host.v2',
+      authority:'diagnostic-only',cutoverAdmission:'not-granted',physicalIdentityProvenance:'unverified',
+      temporalScope:'held-physical-two-pass-sequential-database-samples',roleAgreement:true,
+      missionControlLauncher:mission,pre32HostPairV7:pair,writerDatabaseSnapshotV2:writer},'diagnosticHash');
+    const names=['directMembership','directInherit','directSet','directAdmin','schema','ownedSchema',
+      'relation','ownedRelation','sequence','ownedSequence','routine','ownedRoutine',
+      'securityDefinerRoutine','selectedExplicitAclRow','defaultAcl','ownedDefaultAcl'];
+    const counts=Object.freeze(Object.fromEntries(names.map(name=>[name,0])));
+    const catalog=sealed({schema:'setfarm.internal-production-task6a-writer-catalog-topology.v2',
+      authority:'diagnostic-only',cutoverAdmission:'not-granted',physicalIdentityProvenance:'unverified',
+      temporalScope:'catalog-transaction-snapshot',membershipScope:'direct-only-non-transitive',
+      catalogScope:'coarse-selected-catalog-row-counts-not-permission-proof',databaseName:'setfarm',
+      sessionRole:kind==='crossed-role'?'other':'fixture',serverVersion:170010,counts},'topologyHash');
+    const body={schema:'setfarm.internal-production-task6a-writer-catalog-host.v2',
+      authority:kind==='self-consistent-cutover'?'cutover':'diagnostic-only',
+      cutoverAdmission:'not-granted',physicalIdentityProvenance:'unverified',
+      temporalScope:'held-physical-two-pass-sequential-catalog-sample',threeLauncherHostV2:old,
+      writerCatalogTopologyV2:catalog};
+    const result=sealed(body,'diagnosticHash');
+    return kind==='tampered-hash'?Object.freeze({...result,diagnosticHash:'0'.repeat(64)}):result;
+  }`;
+const task6aCatalogSources = kind => ({ "internal-production/baseline-task6a-writer-catalog-host-v2": task6aCatalogSource(kind) });
+
+test("bootstrap publishes only an authenticated no-write Task6A writer catalog diagnostic", () => fixture(root => {
+  const result = run(root, ["inspect-task6a-writer-catalog-host-v2", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout).task6aWriterCatalogHostV2;
+  assert.equal(observed.authority, "diagnostic-only");
+  assert.equal(observed.cutoverAdmission, "not-granted");
+  assert.equal(observed.writerCatalogTopologyV2.counts.selectedExplicitAclRow, 0);
+  assert.doesNotMatch(result.stdout, /PRIVATE_DATABASE_PASSWORD/);
+}, source => source, { extraSources: task6aCatalogSources("valid") }));
+
+for (const kind of ["tampered-hash", "self-consistent-cutover", "crossed-role", "malformed-writer-flag", "error"]) {
+  test(`bootstrap refuses Task6A writer catalog ${kind} without leaking private cause`, () => fixture(root => {
+    const result = run(root, ["inspect-task6a-writer-catalog-host-v2", "--json"]);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    const lines = result.stderr.trimEnd().split("\n");
+    assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
+    assert.equal(JSON.parse(lines[1]).stage, "task6a-writer-catalog-host");
+    assert.equal(lines.length, 2);
+    assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+  }, source => source, { extraSources: task6aCatalogSources(kind) }));
+}
+
 const pre32Source = kind => `import fs from 'node:fs';import path from 'node:path';
   import {createHash} from 'node:crypto';
   const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value)

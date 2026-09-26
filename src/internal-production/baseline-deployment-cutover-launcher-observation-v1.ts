@@ -471,10 +471,24 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
         if (roleAfter !== roleBefore || snapshot.database.sessionRole !== roleBefore) fail();
         return snapshot;
       });
+    const observeTask6aWriterCatalogTopologyV2 = (missionControl: ReturnType<typeof import("./baseline-task6a-mission-control-launcher-hold-v2.js").holdTask6aMissionControlLauncherV2>) =>
+      observeQualifiedDatabase(async () => {
+        if (!missionControl || typeof missionControl !== "object" || inputs.entries.length !== 2) fail();
+        const { assertHeldTask6aMissionControlSameDatabaseUrlV2 } = await import("./baseline-task6a-mission-control-launcher-hold-v2.js");
+        const url = inputs.entries[0]?.environment.SETFARM_PG_URL;
+        if (typeof url !== "string" || !url || inputs.entries[1]?.environment.SETFARM_PG_URL !== url) fail();
+        const roleBefore = assertHeldTask6aMissionControlSameDatabaseUrlV2(missionControl, url);
+        if (typeof roleBefore !== "string") fail();
+        const { observeTask6aWriterCatalogTopologyV2 } = await import("./baseline-task6a-writer-catalog-topology-v2.js");
+        const topology = await observeTask6aWriterCatalogTopologyV2(url);
+        const roleAfter = assertHeldTask6aMissionControlSameDatabaseUrlV2(missionControl, url);
+        if (roleAfter !== roleBefore || topology.sessionRole !== roleBefore) fail();
+        return topology;
+      });
     check();
     return Object.freeze({ observation, qualifyPassiveHome, recheck, census, censusAndActiveRows,
       censusAndActiveRowsWithQuarantine, censusAndBindingRows, censusAndBindingRowsV7,
-      activeBindingSnapshot, observeTask6aWriterDatabaseSnapshotV2, close });
+      activeBindingSnapshot, observeTask6aWriterDatabaseSnapshotV2, observeTask6aWriterCatalogTopologyV2, close });
   } catch { invalid = true; close(); defaultLauncherFailure(); }
 }
 

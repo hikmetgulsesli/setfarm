@@ -105,13 +105,22 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
       }`);
       source = source.replace('await import("./baseline-task6a-writer-database-snapshot-v2.js")',
         `await import(${JSON.stringify(pathToFileURL(writer).href)})`);
+      const catalog = path.join(home, "writer-catalog.mjs");
+      fs.writeFileSync(catalog, `export async function observeTask6aWriterCatalogTopologyV2(url){
+        globalThis.catalogCalls++;
+        if(url!=='postgresql://fixture:PG_SENTINEL@localhost/setfarm')throw Error('WRONG_CATALOG_URL');
+        globalThis.catalogDrift?.();await Promise.resolve();
+        return Object.freeze({schema:'fixture-catalog-v2',sessionRole:'fixture'});
+      }`);
+      source = source.replace('await import("./baseline-task6a-writer-catalog-topology-v2.js")',
+        `await import(${JSON.stringify(pathToFileURL(catalog).href)})`);
       const mission = path.join(home, "mission-holder.mjs");
       fs.writeFileSync(mission, `export function assertHeldTask6aMissionControlSameDatabaseUrlV2(holder,url){
         if(holder?.testBrand!==true)throw Error('FORGED_HOLDER');
         if(url!=='postgresql://fixture:PG_SENTINEL@localhost/setfarm')throw Error('WRONG_MC_URL');
         return 'fixture';
       }`);
-      source = source.replace('await import("./baseline-task6a-mission-control-launcher-hold-v2.js")',
+      source = source.replaceAll('await import("./baseline-task6a-mission-control-launcher-hold-v2.js")',
         `await import(${JSON.stringify(pathToFileURL(mission).href)})`);
     } else {
       for (const name of ["baseline-deployment-cutover-node-path-v1", "baseline-deployment-cutover-process-observation-v1"])
@@ -128,7 +137,7 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
     const identity = os.userInfo(); os.userInfo = () => ({...identity,homedir:${JSON.stringify(home)}});
     const texts = ${JSON.stringify(texts)}, labels = ${JSON.stringify(labels)};
     let prints = 0, conversions = 0, active = false, run, evidence = () => null;
-    globalThis.dbCalls=0;globalThis.combinedCalls=0;globalThis.v5Calls=0;globalThis.v6Calls=0;globalThis.v7Calls=0;globalThis.activeBindingCalls=0;globalThis.writerCalls=0;globalThis.samples=0;globalThis.nodeCloses=0;
+    globalThis.dbCalls=0;globalThis.combinedCalls=0;globalThis.v5Calls=0;globalThis.v6Calls=0;globalThis.v7Calls=0;globalThis.activeBindingCalls=0;globalThis.writerCalls=0;globalThis.catalogCalls=0;globalThis.samples=0;globalThis.nodeCloses=0;
     globalThis.processes=()=>Object.freeze({families:Object.freeze([]),listener:null});
     globalThis.nodeHold=()=>({observation:Object.freeze({candidatePath:'/fixture/invoked/node',executablePath:'/fixture/physical/node'}),recheck(){},close(){globalThis.nodeCloses++}});
     globalThis.identify=request=>({schema:'setfarm.internal-production-passive-process-identity.v1',pid:request.pid,ppid:1,
@@ -232,6 +241,30 @@ test("V2 writer method refuses forged Mission Control holder before reading the 
   assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
   assert.deepEqual(result.evidence, { writerCalls: 0, nodeCloses: 2 });
   assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL/);
+}));
+
+test("qualified V2 catalog sample keeps URL private and checks all holders", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts,
+    `evidence=()=>({catalogCalls:globalThis.catalogCalls,nodeCloses:globalThis.nodeCloses});`, undefined,
+    `await context.qualifyPassiveHome();
+      const catalog=await context.observeTask6aWriterCatalogTopologyV2(Object.freeze({testBrand:true}));
+      return Object.freeze({catalog,configuration:context.observation});`);
+  assert.equal(result.observation?.catalog.schema, "fixture-catalog-v2", JSON.stringify(result));
+  assert.deepEqual(result.evidence, { catalogCalls: 1, nodeCloses: 2 });
+  assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL/);
+}));
+
+test("V2 catalog sample refuses forged Mission Control holder and launcher drift", () => defaultFixture((home, texts) => {
+  const forged = observe(home, texts,
+    `evidence=()=>({catalogCalls:globalThis.catalogCalls});`, undefined,
+    `await context.qualifyPassiveHome();await context.observeTask6aWriterCatalogTopologyV2(Object.freeze({testBrand:false}));`);
+  assert.match(forged.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.equal(forged.evidence.catalogCalls, 0);
+  const drift = observe(home, texts,
+    `globalThis.catalogDrift=()=>{globalThis.idle=false};evidence=()=>({catalogCalls:globalThis.catalogCalls});`, undefined,
+    `await context.qualifyPassiveHome();await context.observeTask6aWriterCatalogTopologyV2(Object.freeze({testBrand:true}));`);
+  assert.match(drift.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.equal(drift.evidence.catalogCalls, 1);
 }));
 
 test("held V5 quarantine census requires qualification, uses one private URL and closes", () => defaultFixture((home, texts) => {
