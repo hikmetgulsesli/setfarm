@@ -355,6 +355,40 @@ test("Task6A V2 direct CLI claim refuses before claim effects or output", async 
   assert.deepEqual(calls, ["preflight", "claim"]);
 });
 
+test("Task6A V2 direct CLI peek refuses before recovery effects or output", async () => {
+  const source = readFileSync(path.join(sourceRoot, "cli/cli.ts"), "utf8");
+  const tree = ts.createSourceFile("cli.ts", source, ts.ScriptTarget.Latest, true);
+  const main = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "main");
+  assert.ok(main?.body);
+  const step = main.body.statements.find((node): node is ts.IfStatement =>
+    ts.isIfStatement(node) && node.expression.getText(tree) === 'group === "step"');
+  assert.ok(step && ts.isBlock(step.thenStatement));
+  const peek = step.thenStatement.statements.find((node): node is ts.IfStatement =>
+    ts.isIfStatement(node) && node.expression.getText(tree) === 'action === "peek"');
+  assert.ok(peek && ts.isBlock(peek.thenStatement));
+  const statements = peek.thenStatement.statements;
+  assert.equal(statements[3]?.getText(tree), "await assertTask6aPreSchemaOrdinaryStartupV2();");
+  assert.equal(statements[4]?.getText(tree), "const result = await peekStep(target, callerAgent);");
+  assert.equal(statements[5]?.getText(tree), 'process.stdout.write(result + "\\n");');
+  const run = new Function("check", "peekEffect", `return (async () => {
+    const assertTask6aPreSchemaOrdinaryStartupV2 = check;
+    const peekStep = peekEffect;
+    const target = "agent";
+    const callerAgent = undefined;
+    ${statements[3]!.getText(tree)}
+    ${statements[4]!.getText(tree)}
+    return result;
+  })();`) as (check: () => Promise<void>, peekEffect: () => Promise<string>) => Promise<string>;
+  const calls: string[] = [];
+  await assert.rejects(run(async () => { calls.push("preflight"); throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED"); },
+    async () => { calls.push("peek"); return "NO_WORK"; }), /TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED/);
+  assert.deepEqual(calls.splice(0), ["preflight"]);
+  assert.equal(await run(async () => { calls.push("preflight"); },
+    async () => { calls.push("peek"); return "NO_WORK"; }), "NO_WORK");
+  assert.deepEqual(calls, ["preflight", "peek"]);
+});
+
 test("Task6A V2 journal inspector is a read-only transaction and requires exact attestation and all 33 rows", async () => {
   const source = readFileSync(path.join(sourceRoot, "db/contract-spine-migrations.ts"), "utf8");
   const tree = ts.createSourceFile("contract-spine-migrations.ts", source, ts.ScriptTarget.Latest, true);
