@@ -225,7 +225,7 @@ test("Task6A V2 journal inspector is a read-only transaction and requires exact 
   const js = ts.transpileModule(functions[0]!.getText(tree).replace(/^export /, ""), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText;
-  const expected = Array.from({ length: 33 }, (_, index) => ({ version: index + 1,
+  const expected = Array.from({ length: 34 }, (_, index) => ({ version: index + 1,
     name: `migration-${index + 1}`, migrationClass: index === 31 ? "guarded" : "automatic",
     checksum: "a".repeat(64), state: "applied" }));
   const run = async (attestation: string, rows: readonly unknown[]) => {
@@ -245,10 +245,15 @@ test("Task6A V2 journal inspector is a read-only transaction and requires exact 
     assert.ok(statements.some((statement) => statement.includes("statement_timeout")));
     return result.state;
   };
-  assert.equal(await run("present", expected), "through33-journal-applied");
-  assert.equal(await run("absent", expected), "not-through33", "all rows without exact attestation must not pass");
+  assert.equal(await run("present", expected.slice(0, 33)), "through33-journal-applied",
+    "a future migration definition must not strand a database whose journal is already through 33");
+  assert.equal(await run("present", expected), "through33-journal-applied",
+    "a later correctly applied migration must retain the through-33 fact");
+  assert.equal(await run("absent", expected.slice(0, 33)), "not-through33", "all rows without exact attestation must not pass");
   assert.equal(await run("present", expected.slice(0, 31)), "not-through33");
   assert.equal(await run("present", [...expected, expected[0]]), "not-through33");
   assert.equal(await run("present", expected.map((row, index) => index === 32 ? { ...row, checksum: "b".repeat(64) } : row)), "not-through33");
+  assert.equal(await run("present", expected.map((row, index) => index === 33 ? { ...row, checksum: "b".repeat(64) } : row)), "not-through33",
+    "a present post-33 row must still match its known definition");
   assert.equal(await run("present", expected.map((row, index) => index === 31 ? { ...row, state: "adopted" } : row)), "not-through33");
 });

@@ -16541,9 +16541,13 @@ export async function inspectContractSpineThrough33JournalReadOnlyV2(sql: Sql): 
     await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
     const attestation = await detectMigrationAttestationShape(transaction);
     const journal = await completeJournalRows(transaction);
-    const complete = attestation === "present" && journal.length === completeMigrations.length
-      && completeMigrations.every((migration, index) => {
-        const row = journal[index];
+    const through33 = completeMigrations.slice(0, 33);
+    const complete = attestation === "present" && through33.length === 33
+      && through33.every((migration, index) => migration.version === index + 1)
+      && journal.length >= 33 && journal.length <= completeMigrations.length
+      && journal.every((row, index) => {
+        const migration = completeMigrations[index];
+        if (!migration) return false;
         return row?.version === migration.version && row.name === migration.name
           && row.checksum === checksum(migration)
           && (migration.migrationClass === "guarded" ? row.state === "applied"
