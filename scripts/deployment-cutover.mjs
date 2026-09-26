@@ -159,7 +159,7 @@ function sourceState() {
 }
 async function inspect() {
   if (typeof registerHooks !== "function" || process.execArgv.length || process.argv.length !== 4
-    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1", "inspect-task6a-three-launcher-host-v2", "inspect-task6a-writer-catalog-host-v2"].includes(process.argv[2]) || process.argv[3] !== "--json"
+    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3", "inspect-pre32-physical-inventory-coverage-v1", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1", "inspect-task6a-three-launcher-host-v2", "inspect-task6a-writer-catalog-host-v2"].includes(process.argv[2]) || process.argv[3] !== "--json"
     || pathToFileURL(path.resolve(process.argv[1])).href !== import.meta.url
     || Object.keys(process.env).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key)
       && !(process.platform === "darwin" && key === "__CF_USER_TEXT_ENCODING"))) fail();
@@ -284,7 +284,7 @@ async function inspect() {
     stage("controller-source");
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();
-    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair, pre32HostPairV5, pre32HostPairV6, pre32HostPairV7, pre32AbsenceAnnotationV1, pre32AbsenceAnnotationV2, pre32ResidualAbsenceAnnotationV3, activeBindingHostPairV1, heldBindingCandidatesV1, task6aThreeLauncherHostV2, task6aWriterCatalogHostV2;
+    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair, pre32HostPairV5, pre32HostPairV6, pre32HostPairV7, pre32AbsenceAnnotationV1, pre32AbsenceAnnotationV2, pre32ResidualAbsenceAnnotationV3, pre32PhysicalInventoryCoverageV1, activeBindingHostPairV1, heldBindingCandidatesV1, task6aThreeLauncherHostV2, task6aWriterCatalogHostV2;
     if (process.argv[2] === "inspect-default-context") {
       stage("default-owner-load");
       const contextModule = await import("./deployment-cutover-default-context.mjs");
@@ -574,23 +574,38 @@ async function inspect() {
       pre32AbsenceAnnotationV1 = observed;
       stage("post-pre32-absence-annotation"); check();
     }
-    if (["inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3"].includes(process.argv[2])) {
-      const v3 = process.argv[2] === "inspect-pre32-residual-absence-annotation-v3";
+    if (["inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3", "inspect-pre32-physical-inventory-coverage-v1"].includes(process.argv[2])) {
+      const coverageV1 = process.argv[2] === "inspect-pre32-physical-inventory-coverage-v1";
+      const v3 = coverageV1 || process.argv[2] === "inspect-pre32-residual-absence-annotation-v3";
       stage("pre32-absence-annotation-load");
-      const annotationModule = await import(v3
-        ? "../dist/internal-production/baseline-positive-worktree-pre32-residual-absence-annotation-v3.js"
+      const annotationModule = await import(coverageV1
+        ? "../dist/internal-production/baseline-positive-worktree-pre32-physical-inventory-coverage-v1.js"
+        : v3 ? "../dist/internal-production/baseline-positive-worktree-pre32-residual-absence-annotation-v3.js"
         : "../dist/internal-production/baseline-positive-worktree-pre32-absence-annotation-v2.js");
       check(); stage("pre32-absence-annotation");
-      const result = v3
-        ? await annotationModule.observeCodeOwnedPositiveWorktreePre32ResidualAbsenceAnnotationV3()
+      const result = coverageV1
+        ? await annotationModule.observeCodeOwnedPositiveWorktreePre32PhysicalInventoryCoverageV1()
+        : v3 ? await annotationModule.observeCodeOwnedPositiveWorktreePre32ResidualAbsenceAnnotationV3()
         : await annotationModule.observeCodeOwnedPositiveWorktreePre32AbsenceAnnotationV2();
+      let coverage;
+      if (coverageV1) {
+        const expectedCoverage = ["schema", "authority", "physicalIdentityProvenance", "temporalScope",
+          "sourceAnnotation", "retainedGitTopologyRoots", "unresolvedPresentRoots", "coverageHash"];
+        const descriptors = result && !types.isProxy(result) && Object.getOwnPropertyDescriptors(result);
+        const keys = descriptors && Reflect.ownKeys(descriptors);
+        if (!plainFrozenTree(result) || !keys || keys.length !== expectedCoverage.length
+          || keys.some(key => typeof key !== "string" || !expectedCoverage.includes(key)
+            || !descriptors[key].enumerable || !Object.hasOwn(descriptors[key], "value"))) fail();
+        coverage = Object.fromEntries(expectedCoverage.map(key => [key, descriptors[key].value]));
+      }
+      const v3Result = coverageV1 ? coverage.sourceAnnotation : result;
       let wrapper;
       if (v3) {
         const expectedWrapper = ["schema", "authority", "physicalIdentityProvenance", "temporalScope",
           "sourceAnnotation", "boundedAbsenceBlockers", "otherResidualBlockers", "annotationHash"];
-        const wrapperDescriptors = result && !types.isProxy(result) && Object.getOwnPropertyDescriptors(result);
+        const wrapperDescriptors = v3Result && !types.isProxy(v3Result) && Object.getOwnPropertyDescriptors(v3Result);
         const wrapperKeys = wrapperDescriptors && Reflect.ownKeys(wrapperDescriptors);
-        if (!Object.isFrozen(result) || Object.getPrototypeOf(result) !== Object.prototype
+        if (!Object.isFrozen(v3Result) || Object.getPrototypeOf(v3Result) !== Object.prototype
           || !wrapperKeys || wrapperKeys.length !== expectedWrapper.length
           || wrapperKeys.some(key => typeof key !== "string" || !expectedWrapper.includes(key)
             || !wrapperDescriptors[key].enumerable || !Object.hasOwn(wrapperDescriptors[key], "value"))) fail();
@@ -812,7 +827,7 @@ async function inspect() {
           return { home: match[1], suffix: match[2] };
         };
         const name = "[A-Za-z0-9._-]+";
-        const retained = new RegExp(`^/ai/setrox/(?:(?:\\.worktrees|setfarm/\\.worktrees|mission-control/\\.worktrees|deployments)/${name})$`);
+        const retainedZonePattern = new RegExp(`^/ai/setrox/(?:(?:\\.worktrees|setfarm/\\.worktrees|mission-control/\\.worktrees|deployments)/${name})$`);
         const runtime = new RegExp(`^(?:/projects/${name}/\\.worktrees/${name}|/\\.openclaw/workspace/agent-scratch/story-worktrees/${name}|/\\.openclaw/workspaces/workflows/${name}/(?:story-worktrees/${name}|agents/${name}/story-worktrees/${name}))$`);
         const workflowAgents = new RegExp(`^/\\.openclaw/workspaces/workflows/${name}/agents$`);
         const expectedBounded = [], expectedOther = [], candidates = new Set();
@@ -826,7 +841,7 @@ async function inspect() {
             const entry = entries.get(blocker.root), physical = homeSuffix(blocker.root);
             if (ownerHome !== null && ownerHome !== physical.home) fail();
             ownerHome = physical.home;
-            const zone = retained.test(physical.suffix) ? "retained-zone"
+            const zone = retainedZonePattern.test(physical.suffix) ? "retained-zone"
               : runtime.test(physical.suffix) ? "runtime-zone" : null;
             if (!entry || entry.kind !== "unresolved" || entry.gitPrimaryRoot !== null
               || entry.dirty !== null || entry.sourceBuildProvenance !== "unverified"
@@ -853,8 +868,70 @@ async function inspect() {
         if (bounded.length !== expectedBounded.length || other.length !== expectedOther.length
           || bounded.some((blocker, index) => blocker !== expectedBounded[index])
           || other.some((blocker, index) => blocker !== expectedOther[index])) fail();
-        if (!plainFrozenTree(result)) fail();
-        pre32ResidualAbsenceAnnotationV3 = result;
+        if (!plainFrozenTree(v3Result)) fail();
+        if (coverageV1) {
+          const retained = coverage.retainedGitTopologyRoots;
+          const unresolved = coverage.unresolvedPresentRoots;
+          if (coverage.schema !== "setfarm.internal-production-pre32-physical-inventory-coverage.v1"
+            || coverage.authority !== "diagnostic-only"
+            || coverage.physicalIdentityProvenance !== "unverified"
+            || coverage.temporalScope !== "v7-held-two-pass"
+            || coverage.sourceAnnotation !== v3Result
+            || !Array.isArray(retained) || !Object.isFrozen(retained)
+            || !Array.isArray(unresolved) || !Object.isFrozen(unresolved)
+            || retained.length + unresolved.length !== catalog.entries.length
+            || catalog.entries.length > 256
+            || typeof coverage.coverageHash !== "string"
+            || !/^[a-f0-9]{64}$/.test(coverage.coverageHash)
+            || hash(canonical({ schema: coverage.schema, authority: coverage.authority,
+              physicalIdentityProvenance: coverage.physicalIdentityProvenance,
+              temporalScope: coverage.temporalScope, sourceAnnotation: v3Result,
+              retainedGitTopologyRoots: retained,
+              unresolvedPresentRoots: unresolved })) !== coverage.coverageHash) fail();
+          const blockedRoots = new Set(catalog.blockers.map(blocker => blocker.root));
+          let retainedIndex = 0, unresolvedIndex = 0;
+          for (const entry of catalog.entries) {
+            const physical = homeSuffix(entry.root);
+            const expectedZone = retainedZonePattern.test(physical.suffix) ? "retained-zone"
+              : runtime.test(physical.suffix) ? "runtime-zone" : null;
+            const workspace = `${physical.home}/ai/setrox`;
+            const validRetainedPrimary = entry.zone !== "retained-zone" || entry.kind === "unresolved"
+              || [ `${workspace}/setfarm`, `${workspace}/mission-control` ].includes(entry.gitPrimaryRoot)
+              || [ `${workspace}/.worktrees/`, `${workspace}/deployments/` ]
+                .some(prefix => typeof entry.gitPrimaryRoot === "string" && entry.gitPrimaryRoot.startsWith(prefix));
+            const validPrimary = entry.gitPrimaryRoot === null
+              || (validRoot(entry.gitPrimaryRoot)
+                && path.posix.normalize(entry.gitPrimaryRoot) === entry.gitPrimaryRoot
+                && !entry.gitPrimaryRoot.split("/").slice(1).some(part => part === "." || part === ".."));
+            const validGit = entry.kind === "unresolved" ? entry.dirty === null
+              : ["linked-git", "primary-git"].includes(entry.kind)
+                && entry.gitPrimaryRoot !== null && typeof entry.dirty === "boolean"
+                && (entry.kind === "primary-git"
+                  ? entry.gitPrimaryRoot === entry.root : entry.gitPrimaryRoot !== entry.root);
+            if (!exactFrozen(entry, ["root", "zone", "kind", "dev", "ino", "birthtimeNs",
+              "gitPrimaryRoot", "dirty", "sourceBuildProvenance", "referencingPids"])
+              || !validRoot(entry.root)
+              || entry.zone !== expectedZone
+              || ![entry.dev, entry.ino, entry.birthtimeNs].every(value =>
+                typeof value === "string" && /^[1-9][0-9]*$/.test(value))
+              || !validPrimary || !validGit || !validRetainedPrimary
+              || entry.sourceBuildProvenance !== "unverified"
+              || !Array.isArray(entry.referencingPids) || !Object.isFrozen(entry.referencingPids)) fail();
+            let previousPid = 0;
+            for (const pid of entry.referencingPids) {
+              if (!Number.isSafeInteger(pid) || pid <= previousPid) fail();
+              previousPid = pid;
+            }
+            const topologyOnly = entry.zone === "retained-zone"
+              && ["linked-git", "primary-git"].includes(entry.kind)
+              && entry.gitPrimaryRoot !== null && entry.referencingPids.length === 0
+              && !blockedRoots.has(entry.root);
+            if ((topologyOnly ? retained[retainedIndex++] : unresolved[unresolvedIndex++])
+              !== entry.root) fail();
+          }
+          if (retainedIndex !== retained.length || unresolvedIndex !== unresolved.length) fail();
+          pre32PhysicalInventoryCoverageV1 = result;
+        } else pre32ResidualAbsenceAnnotationV3 = v3Result;
       } else pre32AbsenceAnnotationV2 = observed;
       stage("post-pre32-absence-annotation"); check();
     }
@@ -907,6 +984,7 @@ async function inspect() {
       ...(pre32AbsenceAnnotationV1 ? { pre32AbsenceAnnotationV1 } : {}),
       ...(pre32AbsenceAnnotationV2 ? { pre32AbsenceAnnotationV2 } : {}),
       ...(pre32ResidualAbsenceAnnotationV3 ? { pre32ResidualAbsenceAnnotationV3 } : {}),
+      ...(pre32PhysicalInventoryCoverageV1 ? { pre32PhysicalInventoryCoverageV1 } : {}),
       ...(activeBindingHostPairV1 ? { activeBindingHostPairV1 } : {}),
       ...(heldBindingCandidatesV1 ? { heldBindingCandidatesV1 } : {}),
       ...(task6aThreeLauncherHostV2 ? { task6aThreeLauncherHostV2 } : {}),
@@ -916,7 +994,7 @@ async function inspect() {
     // Missing sanitized cleanup evidence means unknown, not successful cleanup.
     const owned = process.argv[2] === "inspect-default-context" && refusal.stage === "default-context" ? ownerRefusal(error) : null;
     const pre32 = (["inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7"].includes(process.argv[2]) && refusal.stage === "pre32-host-pair")
-      || (["inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3"].includes(process.argv[2]) && refusal.stage === "pre32-absence-annotation");
+      || (["inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3", "inspect-pre32-physical-inventory-coverage-v1"].includes(process.argv[2]) && refusal.stage === "pre32-absence-annotation");
     const activeBinding = ["inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1"].includes(process.argv[2])
       && refusal.stage === "active-binding-host-pair";
     const phase = pre32 ? pre32FailurePhase(error) : null;
@@ -937,6 +1015,6 @@ async function inspect() {
 try { process.stdout.write(`${JSON.stringify(await inspect())}\n`); }
 catch {
   process.stderr.write("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
-  if (["inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1", "inspect-task6a-three-launcher-host-v2", "inspect-task6a-writer-catalog-host-v2"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
+  if (["inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3", "inspect-pre32-physical-inventory-coverage-v1", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1", "inspect-task6a-three-launcher-host-v2", "inspect-task6a-writer-catalog-host-v2"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
   process.exitCode = 1;
 }

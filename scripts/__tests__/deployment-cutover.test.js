@@ -214,7 +214,10 @@ const pre32AnnotationV2Source = kind => `import fs from 'node:fs';import path fr
     const base=path.join(process.cwd(),'runtime','story-worktrees');
     const root=base+'/a';
     const nonGitRoot=path.posix.join('/','home','fixture-user','ai','setrox','.worktrees','data');
-    const residual=['bounded','pid-residual','unsorted-residual','duplicate-residual'].includes(kind);
+    const residual=['bounded','pid-residual','unsorted-residual','duplicate-residual','coverage',
+      'coverage-crossed-zone','coverage-bad-stat','coverage-bad-dirty','coverage-bad-primary',
+      'coverage-foreign-primary','coverage-same-home-foreign-primary',
+      'coverage-extra-entry-field'].includes(kind);
     const blockers=[Object.freeze({root,reason:'prunable-git-worktree'}),
       ...(residual?[Object.freeze({root:nonGitRoot,reason:'non-git-child'})]:[])].sort((a,b)=>
         Buffer.compare(Buffer.from(a.root),Buffer.from(b.root)));
@@ -223,11 +226,33 @@ const pre32AnnotationV2Source = kind => `import fs from 'node:fs';import path fr
       const index=blockers.findIndex(row=>row.reason==='non-git-child');
       blockers.splice(index,0,blockers[index]);
     }
-    const catalogBody={schema:'setfarm.internal-production-positive-worktree-physical-catalog.v2',
-      status:'unresolved',observerPidExcluded:1234,entries:Object.freeze(residual?[Object.freeze({
+    const entries=residual?[Object.freeze({
         root:nonGitRoot,zone:'retained-zone',kind:'unresolved',dev:'1',ino:'2',birthtimeNs:'3',
         gitPrimaryRoot:null,dirty:null,sourceBuildProvenance:'unverified',
-        referencingPids:Object.freeze(kind==='pid-residual'?[4321]:[])})]:[]),
+        referencingPids:Object.freeze(kind==='pid-residual'?[4321]:[])})]:[];
+    const retainedCoverageRoot=path.posix.join('/','home','fixture-user','ai','setrox','.worktrees','dev');
+    const runtimeCoverageRoot=path.posix.join('/','home','fixture-user','projects','app','.worktrees','story-001');
+    if(kind.startsWith('coverage'))entries.push(Object.freeze({
+      root:kind==='coverage-crossed-zone'?runtimeCoverageRoot:retainedCoverageRoot,
+      zone:'retained-zone',kind:'linked-git',dev:kind==='coverage-bad-stat'?'0':'1',
+      ino:kind==='coverage-bad-stat'?'x':'3',birthtimeNs:'3',
+      gitPrimaryRoot:kind==='coverage-bad-primary'
+        ?path.posix.join('/','home','fixture-user','ai','setrox','setfarm')+'/../setfarm'
+        :kind==='coverage-foreign-primary'
+          ?path.posix.join('/','home','other','projects','foreign')
+        :kind==='coverage-same-home-foreign-primary'
+          ?path.posix.join('/','home','fixture-user','projects','foreign')
+        :path.posix.join('/','home','fixture-user','ai','setrox','setfarm'),
+      dirty:kind==='coverage-bad-dirty'?'false':true,
+      sourceBuildProvenance:'unverified',referencingPids:Object.freeze([]),
+      ...(kind==='coverage-extra-entry-field'?{owner:true}:{})}),
+      ...(kind==='coverage-crossed-zone'?[]:[Object.freeze({root:runtimeCoverageRoot,
+      zone:'runtime-zone',kind:'linked-git',dev:'1',ino:'4',birthtimeNs:'3',
+      gitPrimaryRoot:path.posix.join('/','home','fixture-user','projects','app'),dirty:false,
+      sourceBuildProvenance:'unverified',referencingPids:Object.freeze([])})]));
+    entries.sort((a,b)=>Buffer.compare(Buffer.from(a.root),Buffer.from(b.root)));
+    const catalogBody={schema:'setfarm.internal-production-positive-worktree-physical-catalog.v2',
+      status:'unresolved',observerPidExcluded:1234,entries:Object.freeze(entries),
       absentBases:Object.freeze(kind==='forged-absence'?[]:[base]),incidentalFiles:Object.freeze([]),
       blockers:Object.freeze(blockers)};
     const physicalCatalog=Object.freeze({...catalogBody,
@@ -379,6 +404,98 @@ test("V3 bootstrap rejects source tampering before observer invocation", () => f
   assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-v3-called")), false);
   assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
 }, undefined, { extraSources: pre32ResidualV3Sources("valid") }));
+
+const pre32CoverageV1Source = kind => `import {createHash} from 'node:crypto';
+  import {observeCodeOwnedPositiveWorktreePre32ResidualAbsenceAnnotationV3} from './baseline-positive-worktree-pre32-residual-absence-annotation-v3.js';
+  const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value)
+    :Array.isArray(value)?'['+value.map(canonical).join(',')+']'
+    :'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
+  const hash=value=>createHash('sha256').update(canonical(value)).digest('hex');
+  export async function observeCodeOwnedPositiveWorktreePre32PhysicalInventoryCoverageV1(){
+    if(arguments.length)throw Error('UNEXPECTED_INPUT');
+    const kind=${JSON.stringify(kind)};
+    if(kind==='error')throw Error('PRIVATE_DATABASE_PASSWORD');
+    const sourceAnnotation=await observeCodeOwnedPositiveWorktreePre32ResidualAbsenceAnnotationV3();
+    const entries=sourceAnnotation.sourceAnnotation.sourcePair.heldPair.physicalCatalog.entries;
+    const retained=Object.freeze(entries.filter(row=>row.zone==='retained-zone'
+      && row.kind==='linked-git').map(row=>row.root));
+    const unresolved=Object.freeze(entries.filter(row=>row.zone!=='retained-zone'
+      || row.kind!=='linked-git').map(row=>row.root));
+    const body={schema:'setfarm.internal-production-pre32-physical-inventory-coverage.v1',
+      authority:kind==='cutover'?'cutover':'diagnostic-only',
+      physicalIdentityProvenance:'unverified',
+      temporalScope:kind==='wrong-temporal'?'continuous':'v7-held-two-pass',sourceAnnotation,
+      retainedGitTopologyRoots:kind==='wrong-partition'?Object.freeze([...retained,...unresolved]):retained,
+      unresolvedPresentRoots:kind==='proxy-array'?new Proxy(unresolved,{})
+        :kind==='array-tojson'?Object.freeze(Object.assign([...unresolved],{toJSON(){return ['/forged']}}))
+        :unresolved,
+      ...(kind==='extra-field'?{zeroOwner:true}:{})};
+    const result={...body,coverageHash:kind==='wrong-hash'?'a'.repeat(64):hash(body)};
+    return Object.freeze(result);
+  }`;
+const pre32CoverageV1Sources = (kind, nestedKind = "coverage") => ({
+  ...pre32ResidualV3Sources("bounded", nestedKind),
+  "internal-production/baseline-positive-worktree-pre32-physical-inventory-coverage-v1": pre32CoverageV1Source(kind),
+});
+
+test("bootstrap exposes distinct V1 physical coverage with nonempty topology and no owner grant", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-physical-inventory-coverage-v1", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout);
+  const coverage = observed.pre32PhysicalInventoryCoverageV1;
+  assert.equal(coverage.schema, "setfarm.internal-production-pre32-physical-inventory-coverage.v1");
+  assert.equal(coverage.authority, "diagnostic-only");
+  assert.equal(coverage.physicalIdentityProvenance, "unverified");
+  assert.equal(coverage.temporalScope, "v7-held-two-pass");
+  assert.deepEqual(coverage.retainedGitTopologyRoots,
+    [path.posix.join("/", "home", "fixture-user", "ai", "setrox", ".worktrees", "dev")]);
+  assert.equal(coverage.unresolvedPresentRoots.length, 2);
+  assert.equal(coverage.sourceAnnotation.sourceAnnotation.sourcePair.heldPair.physicalCatalog.entries.length, 3);
+  assert.equal(Object.hasOwn(observed, "pre32ResidualAbsenceAnnotationV3"), false);
+  assert.equal(Object.hasOwn(coverage, "zeroOwner"), false);
+  assert.equal(fs.readFileSync(path.join(root, ".setfarm/pre32-v3-called"), "utf8"), "x");
+}, undefined, { extraSources: pre32CoverageV1Sources("valid") }));
+
+for (const [kind, nestedKind] of [["error", "coverage"], ["cutover", "coverage"],
+  ["wrong-temporal", "coverage"], ["wrong-hash", "coverage"], ["wrong-partition", "coverage"],
+  ["proxy-array", "coverage"], ["array-tojson", "coverage"], ["extra-field", "coverage"],
+  ["valid", "wrong-journal"]]) {
+  test(`V1 coverage bootstrap refuses ${kind}/${nestedKind} without private cause`, () => fixture(root => {
+    const result = run(root, ["inspect-pre32-physical-inventory-coverage-v1", "--json"]);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /^DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n/);
+    assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+  }, undefined, { extraSources: pre32CoverageV1Sources(kind, nestedKind) }));
+}
+
+for (const nestedKind of ["coverage-crossed-zone", "coverage-bad-stat", "coverage-bad-dirty",
+  "coverage-bad-primary", "coverage-foreign-primary", "coverage-same-home-foreign-primary",
+  "coverage-extra-entry-field"]) {
+  test(`V1 coverage bootstrap refuses self-hashed physical entry ${nestedKind}`, () => fixture(root => {
+    const result = run(root, ["inspect-pre32-physical-inventory-coverage-v1", "--json"]);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /^DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n/);
+  }, undefined, { extraSources: pre32CoverageV1Sources("valid", nestedKind) }));
+}
+
+test("V1 coverage bootstrap rejects extra argv before the observer", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-physical-inventory-coverage-v1", "--json", "extra"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-v3-called")), false);
+}, undefined, { extraSources: pre32CoverageV1Sources("valid") }));
+
+test("V1 coverage bootstrap rejects source tampering before the observer", () => fixture(root => {
+  fs.appendFileSync(path.join(root, "src/internal-production/baseline-positive-worktree-pre32-physical-inventory-coverage-v1.ts"),
+    "\nthrow Error('PRIVATE_DATABASE_PASSWORD');\n");
+  const result = run(root, ["inspect-pre32-physical-inventory-coverage-v1", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-v3-called")), false);
+  assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+}, undefined, { extraSources: pre32CoverageV1Sources("valid") }));
 
 test("bootstrap exposes exact-journal V7 absent-record annotation without authority", () => fixture(root => {
   const result = run(root, ["inspect-pre32-absence-annotation-v2", "--json"]);
