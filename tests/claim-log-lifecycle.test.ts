@@ -134,6 +134,7 @@ function loadStepPendingPrivateModule(input: Readonly<{
   recoverPair?: (locator: unknown) => Promise<unknown>;
   pgGet?: (query: string, parameters: readonly unknown[]) => Promise<unknown>;
   spawnAgent?: (...parameters: unknown[]) => unknown;
+  preflight?: () => Promise<void>;
   errors?: string[];
 }> = {}): StepPendingPrivateModuleV1 {
   const source = handleStepPendingSource();
@@ -153,6 +154,7 @@ function loadStepPendingPrivateModule(input: Readonly<{
     "resolveWorkflowDir",
     "resolveAgentId",
     "spawnAgent",
+    "assertTask6aPreSchemaOrdinaryStartupV2",
     "console",
     "shuttingDown",
     `${javascript}\nreturn { handleStepPending, listenForStepPending };`,
@@ -185,6 +187,7 @@ function loadStepPendingPrivateModule(input: Readonly<{
     (workflowId: string) => `/fixtures/${workflowId}`,
     () => ["feature-dev_developer"],
     input.spawnAgent ?? (() => undefined),
+    input.preflight ?? (async () => undefined),
     {
       error: (...parameters: unknown[]) => errors.push(parameters.map(String).join(" ")),
       log: () => undefined,
@@ -424,7 +427,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.doesNotMatch(source, /beginOrAdoptInternalProductionOwnerReservationV1/);
     assert.doesNotMatch(source, /bindInternalProductionOwnerReservationV1/);
     assert.doesNotMatch(source, /internal_production_owner_reservations_v1/);
-    assert.match(source, /void handleStepPending\(parsed\)\.catch\(logStepPendingRejection\)/);
+    assert.match(source, /dispatchTask6aV2OrdinaryListener\("step_pending", message, handleStepPending\)/);
     assert.match(source, /\[redacted-ref\]/);
     assert.match(source, /\[redacted-sha256\]/);
   });
@@ -587,6 +590,32 @@ describe("single-step claim_log lifecycle", () => {
     assert.doesNotMatch(errors.join("\n"), /setfarm:\/\//);
     assert.match(errors[0], /\[redacted-ref\]/);
     assert.match(errors[1], /SyntaxError/);
+  });
+
+  it("private step_pending listener refuses Task6A V2 before owner reads or spawn", async () => {
+    const effects: string[] = [];
+    const errors: string[] = [];
+    let listener: ((message: string) => void) | undefined;
+    const module = loadStepPendingPrivateModule({
+      errors,
+      preflight: async () => { throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED"); },
+      resolvePair: async () => { effects.push("resolve"); return null; },
+      recoverPair: async () => { effects.push("recover"); return null; },
+      pgGet: async () => { effects.push("read"); return null; },
+      spawnAgent: () => effects.push("spawn"),
+    });
+    await module.listenForStepPending({
+      async listen(channel, handler) {
+        assert.equal(channel, "step_pending");
+        listener = handler;
+      },
+    });
+    assert.ok(listener);
+    listener(JSON.stringify({ agentId: "feature-dev_developer", runId: "run-owner", stepId: "implement" }));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(effects, []);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0]!, /TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED/);
   });
 
   it("records single-step handoff before claim-side gates and closes no-spawn exits", () => {

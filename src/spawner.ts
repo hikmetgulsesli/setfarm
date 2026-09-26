@@ -9430,24 +9430,37 @@ async function handleStepPending(payload: {
   } catch (err) { console.error(`[spawner] step handler: ${String(err)}`); }
 }
 
-function logStepPendingRejection(error: unknown): void {
+type Task6aV2OrdinaryListenerChannel = "step_pending" | "story_pending" | "run_termination_requested" | "runtime_completion_requested";
+
+function logOrdinaryListenerRejection(channel: Task6aV2OrdinaryListenerChannel, error: unknown): void {
   const diagnostic = String(error)
     .replace(/setfarm:\/\/[^\s]+/g, "[redacted-ref]")
     .replace(/\b[0-9a-f]{64}\b/gi, "[redacted-sha256]")
     .slice(0, 300);
-  console.error(`[spawner] step_pending rejected: ${diagnostic}`);
+  console.error(`[spawner] ${channel} rejected: ${diagnostic}`);
+}
+
+function logStepPendingRejection(error: unknown): void {
+  logOrdinaryListenerRejection("step_pending", error);
+}
+
+function dispatchTask6aV2OrdinaryListener<T>(
+  channel: Task6aV2OrdinaryListenerChannel,
+  message: string,
+  handler: (payload: T) => Promise<void>,
+): void {
+  void (async () => {
+    const payload = JSON.parse(message) as T;
+    await assertTask6aPreSchemaOrdinaryStartupV2();
+    await handler(payload);
+  })().catch((error) => logOrdinaryListenerRejection(channel, error));
 }
 
 async function listenForStepPending(listener: Readonly<{
   listen(channel: string, handler: (message: string) => void): Promise<unknown>;
 }>): Promise<void> {
   await listener.listen("step_pending", (message) => {
-    try {
-      const parsed = JSON.parse(message);
-      void handleStepPending(parsed).catch(logStepPendingRejection);
-    } catch (error) {
-      logStepPendingRejection(error);
-    }
+    dispatchTask6aV2OrdinaryListener("step_pending", message, handleStepPending);
   });
 }
 
@@ -11347,27 +11360,19 @@ async function main() {
 
   await listenForStepPending(listener);
   await listener.listen("story_pending", (msg) => {
-    try { handleStoryPending(JSON.parse(msg)); } catch {}
+    dispatchTask6aV2OrdinaryListener("story_pending", msg, handleStoryPending);
   });
   await listener.listen("run_termination_requested", (msg) => {
-    try {
-      const payload = JSON.parse(msg);
-      if (payload?.terminationRequestId) {
-        void processRunTerminationRequests(String(payload.terminationRequestId));
-      } else {
-        void processRunTerminationRequests();
-      }
-    } catch {}
+    dispatchTask6aV2OrdinaryListener("run_termination_requested", msg,
+      (payload: { terminationRequestId?: unknown } | null) => payload?.terminationRequestId
+        ? processRunTerminationRequests(String(payload.terminationRequestId))
+        : processRunTerminationRequests());
   });
   await listener.listen("runtime_completion_requested", (msg) => {
-    try {
-      const payload = JSON.parse(msg);
-      if (payload?.completionRequestId) {
-        void processRuntimeCompletionRequests(String(payload.completionRequestId));
-      } else {
-        void processRuntimeCompletionRequests();
-      }
-    } catch {}
+    dispatchTask6aV2OrdinaryListener("runtime_completion_requested", msg,
+      (payload: { completionRequestId?: unknown } | null) => payload?.completionRequestId
+        ? processRuntimeCompletionRequests(String(payload.completionRequestId))
+        : processRuntimeCompletionRequests());
   });
 
   console.log("[spawner] Listening for step_pending, story_pending, run_termination_requested, and runtime_completion_requested events");
