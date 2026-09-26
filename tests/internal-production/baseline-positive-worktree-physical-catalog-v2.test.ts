@@ -73,14 +73,32 @@ test("a direct linked Setfarm checkout is retained and remains visible without b
     const linked = path.join(testHome.workspaceRoot, ".worktrees", "setfarm-linked");
     mkdirSync(path.dirname(linked), { recursive: true });
     git(["-C", primary, "worktree", "add", "-q", "-b", "fixture-linked", linked]);
+    const expected = fs.lstatSync(linked, { bigint: true });
+    let callbackCount = 0;
     const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
       ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async (firstPass: readonly Readonly<{ root: string; kind: string; gitPrimaryRoot: string | null;
+      dev: string; ino: string; birthtimeNs: string; sourceBuildProvenance: string;
+      referencingPids: readonly number[] }>[]) => {
+      callbackCount += 1;
+      assert.ok(firstPass, "held first-pass candidate view missing");
+      assert.equal(Object.isFrozen(firstPass), true);
+      assert.equal(firstPass.length, 1);
+      assert.equal(Object.isFrozen(firstPass[0]), true);
+      assert.equal(Object.isFrozen(firstPass[0]!.referencingPids), true);
+      assert.equal(firstPass[0]!.sourceBuildProvenance, "unverified");
+      assert.deepEqual([firstPass[0]!.root, firstPass[0]!.kind, firstPass[0]!.gitPrimaryRoot],
+        [linked, "linked-git", primary]);
+      assert.deepEqual([firstPass[0]!.dev, firstPass[0]!.ino, firstPass[0]!.birthtimeNs],
+        [String(expected.dev), String(expected.ino), String(expected.birthtimeNs)]);
     });
+    assert.equal(callbackCount, 1);
     assert.equal(result.status, "complete");
     assert.deepEqual(result.blockers, []);
     assert.deepEqual(result.entries.map((entry) => [entry.root, entry.zone, entry.kind, entry.gitPrimaryRoot]), [
       [linked, "retained-zone", "linked-git", primary],
     ]);
+    assert.equal(result.entries[0]!.ino, String(expected.ino));
     assert.equal(result.entries[0]?.dirty, false);
   } finally {
     testHome.close();
@@ -98,7 +116,9 @@ test("transient linked Git-admin index lock is an unresolved physical blocker, n
     const admin = path.resolve(linked, git(["-C", linked, "rev-parse", "--git-dir"]));
     const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
       ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
-    }, async () => {
+    }, async (firstPass: readonly Readonly<{ root: string; kind: string }>[]) => {
+      assert.ok(firstPass, "held first-pass candidate view missing");
+      assert.deepEqual(firstPass.map((entry) => [entry.root, entry.kind]), [[linked, "linked-git"]]);
       const lock = path.join(admin, "index.lock");
       writeFileSync(lock, "transient fixture lock");
       rmSync(lock);

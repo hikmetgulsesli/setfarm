@@ -456,7 +456,7 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
 
 export async function observeHeldPositiveWorktreePhysicalCatalogV2(
   rawScope: unknown,
-  betweenPasses: () => Promise<void> = async () => undefined,
+  betweenPasses: (firstPass: readonly Candidate[]) => Promise<void> = async () => undefined,
 ) {
   const scope = captureScope(rawScope);
   if (cleanupUncertain || typeof betweenPasses !== "function") fail();
@@ -561,7 +561,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     }
     held.assertStable();
     operation = "between-passes";
-    await betweenPasses();
+    await betweenPasses(Object.freeze([...entries]));
     operation = "post-database-stability";
     held.assertStable();
     for (const root of absentBases) if (!isMissing(root)) fail();

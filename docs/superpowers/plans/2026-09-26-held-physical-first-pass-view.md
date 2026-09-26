@@ -29,7 +29,7 @@
 - Consumes: the existing `Candidate` array and `HeldDirectories.assertStable()` at the `between-passes` boundary.
 - Produces: `betweenPasses: (firstPass: readonly Candidate[]) => Promise<void>`; the array and candidates are immutable, and the final V2 catalog is unchanged.
 
-- [ ] **Step 1: Write RED behavior tests.** Extend the real linked Git fixture with an independent filesystem expectation and assert the callback view before final return:
+- [x] **Step 1: Write RED behavior tests.** Extend the real linked Git fixture with an independent filesystem expectation and assert the callback view before final return:
 
   ```ts
   const expected = lstatSync(linked, { bigint: true });
@@ -46,8 +46,8 @@
   ```
 
   In the existing transient Git-admin churn fixture, assert the callback sees a linked candidate while the final catalog still reports `git-admin-entry-churn`.
-- [ ] **Step 2: Verify RED.** Run `node --import tsx --test tests/internal-production/baseline-positive-worktree-physical-catalog-v2.test.ts`; the new callback-view assertion must fail because the callback currently receives `undefined`, while existing fixture setup succeeds.
-- [ ] **Step 3: Implement minimal GREEN.** Change the callback type and invoke it immediately after the existing first-pass stability check:
+- [x] **Step 2: Verify RED.** Run `node --import tsx --test tests/internal-production/baseline-positive-worktree-physical-catalog-v2.test.ts`; the new callback-view assertion must fail because the callback currently receives `undefined`, while existing fixture setup succeeds.
+- [x] **Step 3: Implement minimal GREEN.** Change the callback type and invoke it immediately after the existing first-pass stability check:
 
   ```ts
   betweenPasses: (firstPass: readonly Candidate[]) => Promise<void> = async () => undefined,
@@ -56,5 +56,5 @@
   ```
 
   Do not alter final sorting/hash or recheck order.
-- [ ] **Step 4: Verify GREEN and invariants.** Run the focused file, `npm run test:internal-production:pure`, `npx tsc -p tsconfig.json --noEmit`, and `git diff --check`. Confirm no new authority fields or production call sites.
+- [x] **Step 4: Verify GREEN and invariants.** Run the focused file, `npm run test:internal-production:pure`, `npx tsc -p tsconfig.json --noEmit`, and `git diff --check`. Confirm no new authority fields or production call sites.
 - [ ] **Step 5: Review and deliver.** Obtain independent read-only diff review; commit only the source, test, spec, and plan. Push a scoped branch, open a PR, address exact-head bot comments, and merge only after reviewed checks pass. On separate clean main, run normal guarded build and a no-write authenticated host annotation in a quiescent window. Preserve the old selected dist/link and report any host refusal as refusal.
