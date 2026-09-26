@@ -4,6 +4,7 @@ import { types } from "node:util";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { validateLegacyFindingPublicationInventoryV1 } from "../findings/legacy-finding-publication-inventory-v1.js";
 import type { ActiveOwnerRowSnapshotV2 } from "./baseline-positive-worktree-active-row-snapshot-v2.js";
+import { projectHeldPositiveWorktreeBindingCandidatesV1 } from "./baseline-positive-worktree-held-binding-candidates-v1.js";
 import { observeHeldPositiveWorktreePhysicalCatalogV2 } from "./baseline-positive-worktree-physical-catalog-v2.js";
 import { resolveInternalProductionBaselineWorkspaceRootV1 } from "./baseline-workspace-authority-path-v1.js";
 
@@ -12,6 +13,8 @@ const SCHEMA = "setfarm.internal-production-positive-worktree-host-pair.v2";
 
 type PhysicalCatalogV2 = Awaited<ReturnType<typeof observeHeldPositiveWorktreePhysicalCatalogV2>>;
 type PhysicalObserverV2 = (betweenPasses: () => Promise<void>) => Promise<PhysicalCatalogV2>;
+type PhysicalEntryV2 = PhysicalCatalogV2["entries"][number];
+type PhysicalObserverWithFirstPassV2 = (betweenPasses: (firstPass: readonly PhysicalEntryV2[]) => Promise<void>) => Promise<PhysicalCatalogV2>;
 type DatabaseObserverV2 = () => Promise<ActiveOwnerRowSnapshotV2>;
 type Pre32SnapshotV4 = Awaited<ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4>>;
 type DatabaseObserverV4 = () => Promise<Pre32SnapshotV4>;
@@ -437,6 +440,33 @@ export async function observePositiveWorktreeActiveBindingHostPairWithPortsV1(
   return Object.freeze({ ...body, pairHash: hashCanonicalJson(body) });
 }
 
+/** Diagnostic-only held relation; a joined candidate is never an authenticated owner. */
+export async function observePositiveWorktreeHeldBindingCandidatesWithPortsV1(
+  observePhysical: PhysicalObserverWithFirstPassV2,
+  observeDatabase: ActiveBindingObserverV1,
+) {
+  let firstPass: readonly PhysicalEntryV2[] | null = null;
+  const heldActiveBindingPair = await observePositiveWorktreeActiveBindingHostPairWithPortsV1(
+    betweenPasses => observePhysical(async view => {
+      if (firstPass !== null) throw new Error("INTERNAL_PRODUCTION_HELD_BINDING_CANDIDATES_INVALID");
+      firstPass = view;
+      await betweenPasses();
+    }), observeDatabase);
+  const heldFirstPass = firstPass as readonly PhysicalEntryV2[] | null;
+  if (heldFirstPass === null) throw new Error("INTERNAL_PRODUCTION_HELD_BINDING_CANDIDATES_INVALID");
+  const joinedCandidates = projectHeldPositiveWorktreeBindingCandidatesV1(heldFirstPass,
+    heldActiveBindingPair.activeBindingDatabase.bindingRows);
+  const orderedFirst = [...heldFirstPass].sort((left, right) =>
+    Buffer.compare(Buffer.from(left.root), Buffer.from(right.root)));
+  if (hashCanonicalJson(orderedFirst) !== hashCanonicalJson(heldActiveBindingPair.heldPair.physicalCatalog.entries)) {
+    throw new Error("INTERNAL_PRODUCTION_HELD_BINDING_CANDIDATES_INVALID");
+  }
+  const body = { schema: "setfarm.internal-production-held-binding-physical-database-pair.v1" as const,
+    authority: "diagnostic-only" as const, physicalIdentityProvenance: "unverified" as const,
+    heldActiveBindingPair, joinedCandidates };
+  return Object.freeze({ ...body, pairHash: hashCanonicalJson(body) });
+}
+
 /** Zero-input diagnostic observer. Import DB configuration before physical acquisition. */
 export async function observeCodeOwnedPositiveWorktreeHostPairV2() {
   const ownerHomeRoot = userInfo().homedir;
@@ -663,6 +693,51 @@ export async function observeCodeOwnedPositiveWorktreeActiveBindingHostPairV1() 
           physical = await observeHeldPositiveWorktreePhysicalCatalogV2({ ownerHomeRoot, workspaceRoot }, async () => {
             phase = "database-callback";
             await betweenPasses();
+            phase = "physical-second-pass";
+          });
+        } catch (error) { physicalPoint = validPhysicalFailurePoint(error, phase); throw error; }
+        phase = "pair-validation";
+        return physical;
+      },
+      launcher.activeBindingSnapshot,
+    );
+    phase = "post-pair-recheck";
+    launcher.recheck();
+  } catch { failure = activeBindingPhaseFailure(phase, physicalPoint); }
+  try { launcher?.close(); }
+  catch { failure = activeBindingPhaseFailure("launcher-cleanup"); }
+  if (failure) throw failure;
+  if (result === undefined) throw activeBindingPhaseFailure("pair-validation");
+  return result;
+}
+
+/** Zero-input diagnostic: capture first-pass physical roots while the private DB URL is held. */
+export async function observeCodeOwnedPositiveWorktreeHeldBindingCandidatesV1() {
+  if (arguments.length !== 0) failActiveBinding();
+  type Launcher = ReturnType<typeof import("./baseline-deployment-cutover-launcher-observation-v1.js").holdDeploymentCutoverDefaultLauncherV1>;
+  let phase: Pre32PairPhase = "launcher-load";
+  let launcher: Launcher | undefined;
+  let result: Awaited<ReturnType<typeof observePositiveWorktreeHeldBindingCandidatesWithPortsV1>> | undefined;
+  let failure: Error | null = null;
+  let physicalPoint: PhysicalFailurePoint | null = null;
+  try {
+    const { holdDeploymentCutoverDefaultLauncherV1 } = await import("./baseline-deployment-cutover-launcher-observation-v1.js");
+    phase = "launcher-acquire";
+    launcher = holdDeploymentCutoverDefaultLauncherV1();
+    phase = "passive-qualification";
+    await launcher.qualifyPassiveHome();
+    phase = "pre-physical-recheck";
+    launcher.recheck();
+    const ownerHomeRoot = userInfo().homedir;
+    const workspaceRoot = resolveInternalProductionBaselineWorkspaceRootV1();
+    phase = "physical-first-pass";
+    result = await observePositiveWorktreeHeldBindingCandidatesWithPortsV1(
+      async betweenPasses => {
+        let physical: PhysicalCatalogV2;
+        try {
+          physical = await observeHeldPositiveWorktreePhysicalCatalogV2({ ownerHomeRoot, workspaceRoot }, async firstPass => {
+            phase = "database-callback";
+            await betweenPasses(firstPass);
             phase = "physical-second-pass";
           });
         } catch (error) { physicalPoint = validPhysicalFailurePoint(error, phase); throw error; }

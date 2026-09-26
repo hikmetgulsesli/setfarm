@@ -10,6 +10,7 @@ import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js"
 import { createLegacyFindingPublicationInventoryValueV1 } from "../../src/findings/legacy-finding-publication-inventory-v1.js";
 import { observePositiveWorktreeHostPairWithPortsV2,
   observePositiveWorktreeActiveBindingHostPairWithPortsV1,
+  observePositiveWorktreeHeldBindingCandidatesWithPortsV1,
   observePositiveWorktreePre32HostPairWithPortsV4,
   observePositiveWorktreePre32HostPairWithPortsV5,
   observePositiveWorktreePre32HostPairWithPortsV6,
@@ -115,6 +116,49 @@ function activeBinding() {
     activeRows, bindingRows });
   return Object.freeze({ ...body, snapshotHash: hashCanonicalJson(body) });
 }
+
+function heldCandidateEntry() {
+  return Object.freeze({ root: "/runtime/story-worktrees/us-1", zone: "runtime-zone" as const,
+    kind: "linked-git" as const, dev: "7", ino: "11", birthtimeNs: "123",
+    gitPrimaryRoot: "/runtime/project", dirty: true,
+    sourceBuildProvenance: "unverified" as const, referencingPids: Object.freeze([1234]) });
+}
+
+function catalogWithEntries(entries: readonly ReturnType<typeof heldCandidateEntry>[]) {
+  const old = catalog("/retained/prunable");
+  const body = Object.freeze({ schema: old.schema, status: old.status,
+    observerPidExcluded: old.observerPidExcluded, entries: Object.freeze([...entries]),
+    absentBases: old.absentBases, incidentalFiles: old.incidentalFiles, blockers: old.blockers });
+  return Object.freeze({ ...body, catalogHash: hashCanonicalJson(body) });
+}
+
+test("held candidate pair joins frozen first-pass runtime identity with active binding rows", async () => {
+  const events: string[] = [];
+  const entries = Object.freeze([heldCandidateEntry()]);
+  const physical = catalogWithEntries(entries), combined = activeBinding();
+  const result = await observePositiveWorktreeHeldBindingCandidatesWithPortsV1(async betweenPasses => {
+    events.push("physical-first"); await betweenPasses(entries);
+    events.push("physical-second"); return physical;
+  }, async () => { events.push("database"); return combined; });
+  assert.deepEqual(events, ["physical-first", "database", "physical-second"]);
+  assert.equal(result.schema, "setfarm.internal-production-held-binding-physical-database-pair.v1");
+  assert.equal(result.authority, "diagnostic-only");
+  assert.equal(result.physicalIdentityProvenance, "unverified");
+  assert.equal(result.heldActiveBindingPair.activeBindingDatabase, combined);
+  assert.deepEqual(result.heldActiveBindingPair.heldPair.physicalCatalog.blockers, physical.blockers);
+  assert.equal(result.joinedCandidates.candidates.length, 1);
+  assert.equal(result.joinedCandidates.receiptStatus, "required-unpublished");
+  const { pairHash, ...body } = result;
+  assert.equal(pairHash, hashCanonicalJson(body));
+});
+
+test("held candidate pair refuses a final catalog that differs from its first pass", async () => {
+  const first = Object.freeze([heldCandidateEntry()]);
+  const final = catalogWithEntries(Object.freeze([Object.freeze({ ...first[0]!, ino: "12" })]));
+  await assert.rejects(observePositiveWorktreeHeldBindingCandidatesWithPortsV1(async betweenPasses => {
+    await betweenPasses(first); return final;
+  }, activeBinding), /INTERNAL_PRODUCTION_HELD_BINDING_CANDIDATES_INVALID/);
+});
 
 test("positive active binding rows stay diagnostic inside one held physical callback", async () => {
   const events: string[] = [];
@@ -405,7 +449,7 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
       if(!scope.ownerHomeRoot||!scope.workspaceRoot)throw Error('SCOPE_MISSING');
       globalThis.events.push('physical-first');
       if(process.env.FAKE_FIRST_FAILURE==='1')throw Error('PRIVATE_PHYSICAL_FIRST');
-      try{await callback()}catch{throw Error('PHYSICAL_WRAPPED_DB')}
+      try{await callback(Object.freeze([]))}catch{throw Error('PHYSICAL_WRAPPED_DB')}
       globalThis.events.push('physical-second');
       if(process.env.FAKE_PHYSICAL_FAILURE==='1'){
         if(process.env.FAKE_PHYSICAL_POINT==='1'||process.env.FAKE_BAD_POINT==='1'||process.env.FAKE_CROSSED_POINT==='1'){
@@ -442,6 +486,7 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
     for (const [specifier, replacement] of [
       ["../product-compiler/canonical-json.js", new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href],
       ["../findings/legacy-finding-publication-inventory-v1.js", new URL("../../src/findings/legacy-finding-publication-inventory-v1.ts", import.meta.url).href],
+      ["./baseline-positive-worktree-held-binding-candidates-v1.js", new URL("../../src/internal-production/baseline-positive-worktree-held-binding-candidates-v1.ts", import.meta.url).href],
       ["./baseline-positive-worktree-physical-catalog-v2.js", pathToFileURL(physical).href],
       ["./baseline-workspace-authority-path-v1.js", pathToFileURL(workspace).href],
       ["./baseline-deployment-cutover-launcher-observation-v1.js", pathToFileURL(launcher).href],
@@ -462,7 +507,9 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
       globalThis.combinedActive=freeze(${JSON.stringify(activeBinding())});
       const module=await import(${JSON.stringify(pathToFileURL(file).href)});
       let result,error,phase,hasCause,physicalPoint;
-      try{result=await (process.env.FAKE_ACTIVE==='1'
+      try{result=await (process.env.FAKE_HELD==='1'
+        ?module.observeCodeOwnedPositiveWorktreeHeldBindingCandidatesV1()
+        :process.env.FAKE_ACTIVE==='1'
         ?module.observeCodeOwnedPositiveWorktreeActiveBindingHostPairV1()
         :process.env.FAKE_V6==='1'
         ?module.observeCodeOwnedPositiveWorktreePre32HostPairV6()
@@ -471,9 +518,9 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
         :process.env.FAKE_V5==='1'
           ?module.observeCodeOwnedPositiveWorktreePre32HostPairV5()
           :module.observeCodeOwnedPositiveWorktreePre32HostPairV4())}catch(caught){
-        error=caught.message;phase=Object.getOwnPropertyDescriptor(caught,process.env.FAKE_ACTIVE==='1'?'activeBindingPairPhase':'pre32PairPhase')?.value;
-        hasCause=Object.hasOwn(caught,'cause');physicalPoint=Object.getOwnPropertyDescriptor(caught,process.env.FAKE_ACTIVE==='1'?'activeBindingPhysicalPoint':'pre32PhysicalPoint')?.value}
-      process.stdout.write(JSON.stringify({schema:result?.schema,blockers:result?.heldPair.physicalCatalog.blockers,
+        error=caught.message;phase=Object.getOwnPropertyDescriptor(caught,process.env.FAKE_ACTIVE==='1'||process.env.FAKE_HELD==='1'?'activeBindingPairPhase':'pre32PairPhase')?.value;
+        hasCause=Object.hasOwn(caught,'cause');physicalPoint=Object.getOwnPropertyDescriptor(caught,process.env.FAKE_ACTIVE==='1'||process.env.FAKE_HELD==='1'?'activeBindingPhysicalPoint':'pre32PhysicalPoint')?.value}
+      process.stdout.write(JSON.stringify({schema:result?.schema,blockers:(result?.heldActiveBindingPair?.heldPair??result?.heldPair)?.physicalCatalog.blockers,
         error,phase,hasCause,physicalPoint,events:globalThis.events}));
     `;
     const success = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
@@ -511,6 +558,20 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
       blockers: [{ root: "/retained/prunable", reason: "prunable-git-worktree" }],
       events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "physical-second",
         "recheck", "close"] });
+    const held = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
+      { encoding: "utf8", timeout: 15000, env: { FAKE_HELD: "1" } });
+    assert.equal(held.status, 0, held.stderr);
+    assert.deepEqual(JSON.parse(held.stdout), { schema: "setfarm.internal-production-held-binding-physical-database-pair.v1",
+      blockers: [{ root: "/retained/prunable", reason: "prunable-git-worktree" }],
+      events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "physical-second",
+        "recheck", "close"] });
+    const heldRefused = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
+      { encoding: "utf8", timeout: 15000, env: { FAKE_HELD: "1", FAKE_DATABASE_FAILURE: "1" } });
+    assert.equal(heldRefused.status, 0, heldRefused.stderr);
+    assert.deepEqual(JSON.parse(heldRefused.stdout), { error: "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_ACTIVE_BINDING_HOST_PAIR_INVALID",
+      phase: "database-callback", hasCause: false,
+      events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "close"] });
+    assert.doesNotMatch(heldRefused.stdout, /PRIVATE_/);
     const activeRefused = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
       { encoding: "utf8", timeout: 15000, env: { FAKE_ACTIVE: "1", FAKE_DATABASE_FAILURE: "1" } });
     assert.equal(activeRefused.status, 0, activeRefused.stderr);
