@@ -11,14 +11,14 @@ Pin only `test:scripts` to `--test-concurrency=1`, preserving every test and the
 ## File Map
 
 - `package.json`: exact `test:scripts` runner option.
-- `scripts/__tests__/test-scripts-runner-contract.test.js`: RED/GREEN package-script contract.
+- `scripts/__tests__/test-scripts-runner-contract.test.js`: behavioral RED/GREEN runner probe using two real test files contending for an exclusive temporary lock.
 - `docs/superpowers/plans/2026-09-26-script-fixture-concurrency.md`: evidence, scope and verification record.
 
 ## TDD and delivery
 
-- [x] Add a test that rejects the current parallel script-file runner and requires the serial option without dropping the genuine suite. RED failed on the old script string.
-- [ ] Make the one-line package script change; focused test is GREEN 1/1. Build and complete serial script suite next.
-- [ ] Run full `npm test` against a separate isolated PostgreSQL administrator on port 55432, with no concurrent temp-heavy test run; then normal clean-branch build and review.
+- [x] Add a real two-file test-runner probe; it failed with `EEXIST` on the parallel command and passed 1/1 after restoring the serial option. The genuine integration command remains in the package script.
+- [ ] Complete the serial script suite with no concurrent temp-heavy test run.
+- [ ] Verify TypeScript and contracts on the branch, then review. The normal build refuses a feature branch because `HEAD` must equal `origin/main`; do not bypass it. Run normal build and full `npm test` against the separate isolated PostgreSQL administrator on port 55432 after reviewed merge to clean main.
 - [ ] Deliver a reviewed PR, clean-main build in the preserved deployment clone and a no-write host check. Preserve all historical worktrees, old selected dist and CLI link.
 
-The first full-suite attempt in this new worktree was stopped at the initial CLI group because `dist/cli/cli.js` was not built. It is not counted as a suite result; commit the scoped source first so the normal clean-worktree build guard can run, then retry.
+The first full-suite attempt in this new worktree was stopped at the initial CLI group because `dist/cli/cli.js` was not built. It is not counted as a suite result. A feature-worktree build then correctly refused because `HEAD` did not equal `origin/main`; no runtime or build guard was bypassed. The pre-merge script suite can run without that `dist`; full-suite evidence belongs to the reviewed clean-main build.
