@@ -8,9 +8,12 @@
    existing extracted step-listener test factory. Retain the poller's existing
    rejection logger via a thin shared-logger adapter. Observe GREEN. Preserve
    callback registration order and existing recovery semantics.
-4. Run focused/pure/cutover/related tests, TypeScript and source contracts;
+4. Address exact-head shutdown-race review with RED for shutdown beginning
+   while preflight is pending, then recheck `shuttingDown` after await and
+   before handler invocation. Re-run tests and obtain exact-head re-review.
+5. Run focused/pure/cutover/related tests, TypeScript and source contracts;
    obtain independent read-only review. Treat unavailable isolated PostgreSQL
    credentials as unrun.
-5. Commit/push scoped PR, merge only exact reviewed head, then build clean
+6. Commit/push scoped PR, merge only exact reviewed head, then build clean
    main and run sanitized no-write host diagnostic. Record remaining direct,
    in-flight, OpenClaw and continuous writer-fence gaps.

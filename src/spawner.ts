@@ -9452,6 +9452,7 @@ function dispatchTask6aV2OrdinaryListener<T>(
   void (async () => {
     const payload = JSON.parse(message) as T;
     await assertTask6aPreSchemaOrdinaryStartupV2();
+    if (shuttingDown) return;
     await handler(payload);
   })().catch((error) => logOrdinaryListenerRejection(channel, error));
 }

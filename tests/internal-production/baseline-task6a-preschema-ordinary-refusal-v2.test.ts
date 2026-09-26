@@ -414,15 +414,17 @@ test("Task6A V2 listener dispatcher refuses before handlers and catches async er
   const dispatcher = tree.statements.find((node): node is ts.FunctionDeclaration =>
     ts.isFunctionDeclaration(node) && node.name?.text === "dispatchTask6aV2OrdinaryListener");
   assert.ok(dispatcher?.body);
+  assert.match(dispatcher.body.getText(tree), /await assertTask6aPreSchemaOrdinaryStartupV2\(\);\s*if \(shuttingDown\) return;\s*await handler\(payload\)/);
   const js = ts.transpileModule(dispatcher.getText(tree), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText;
   const makeDispatcher = new Function("check", "record", `
-    const assertTask6aPreSchemaOrdinaryStartupV2 = check;
+    let shuttingDown = false;
+    const assertTask6aPreSchemaOrdinaryStartupV2 = () => check(() => { shuttingDown = true; });
     const logOrdinaryListenerRejection = record;
     ${js}
     return dispatchTask6aV2OrdinaryListener;
-  `) as (check: () => Promise<void>, record: (channel: string, error: unknown) => void) =>
+  `) as (check: (shutdown: () => void) => Promise<void>, record: (channel: string, error: unknown) => void) =>
     (channel: string, message: string, handler: (payload: unknown) => Promise<void>) => void;
   const calls: string[] = [];
   const errors: string[] = [];
@@ -438,6 +440,21 @@ test("Task6A V2 listener dispatcher refuses before handlers and catches async er
     async (payload) => { calls.push(`handler:${(payload as { id: number }).id}`); });
   await settle();
   assert.deepEqual(calls.splice(0), ["preflight", "handler:1"]);
+  assert.deepEqual(errors, []);
+  let beginShutdown!: () => void;
+  let releasePreflight!: () => void;
+  makeDispatcher(async (shutdown) => {
+    calls.push("preflight");
+    beginShutdown = shutdown;
+    await new Promise<void>((resolve) => { releasePreflight = resolve; });
+  }, (channel, error) => errors.push(`${channel}:${String(error)}`))("run_termination_requested", "{}",
+    async () => { calls.push("handler"); });
+  await settle();
+  assert.deepEqual(calls, ["preflight"]);
+  beginShutdown();
+  releasePreflight();
+  await settle();
+  assert.deepEqual(calls.splice(0), ["preflight"]);
   assert.deepEqual(errors, []);
   makeDispatcher(async () => { calls.push("preflight"); },
     (channel, error) => errors.push(`${channel}:${String(error)}`))("run_termination_requested", "{",
