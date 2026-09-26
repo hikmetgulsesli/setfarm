@@ -9,8 +9,8 @@ const currentHostShaped = {
   databaseOwnerRole: "setrox",
   controllerRole: "postgres",
   runtimeRole: {
-    name: "setrox", login: true, superuser: true, bypassRls: false,
-    createRole: false, createDatabase: false, activeSessionCount: 1,
+    name: "setrox", login: true, superuser: true, bypassRls: true,
+    createRole: true, createDatabase: true, activeSessionCount: 1,
   },
   launcherRoles: [
     { label: "com.setrox.setfarm-spawner", role: "setrox" },
@@ -19,6 +19,18 @@ const currentHostShaped = {
   ],
 };
 
+function leastPrivilegeShaped() {
+  const value = structuredClone(currentHostShaped);
+  value.runtimeRole.name = "setfarm_runtime";
+  value.runtimeRole.superuser = false;
+  value.runtimeRole.bypassRls = false;
+  value.runtimeRole.createRole = false;
+  value.runtimeRole.createDatabase = false;
+  value.runtimeRole.activeSessionCount = 0;
+  for (const launcher of value.launcherRoles) launcher.role = "setfarm_runtime";
+  return value;
+}
+
 test("current superuser writer topology is blocked without granting cutover admission", () => {
   const result = projectTask6aWriterTopologyPreflightV2(currentHostShaped);
   assert.equal(result.schema, "setfarm.internal-production-task6a-writer-topology-preflight.v2");
@@ -26,7 +38,13 @@ test("current superuser writer topology is blocked without granting cutover admi
   assert.equal(result.evidenceProvenance, "caller-supplied");
   assert.equal(result.cutoverAdmission, "not-granted");
   assert.equal(result.status, "blocked");
-  assert.deepEqual(result.blockers, ["runtime-database-owner", "runtime-session-present", "runtime-superuser"]);
+  assert.deepEqual(Object.keys(result), ["schema", "authority", "evidenceProvenance",
+    "cutoverAdmission", "status", "blockers", "sourceSnapshotHash", "topologyHash"]);
+  assert.deepEqual(result.blockers, [
+    "runtime-bypass-rls", "runtime-can-create-database", "runtime-can-create-role",
+    "runtime-database-owner", "runtime-session-present", "runtime-superuser",
+  ]);
+  assert.match(result.sourceSnapshotHash, /^[a-f0-9]{64}$/);
   assert.match(result.topologyHash, /^[a-f0-9]{64}$/);
   assert.ok(Object.isFrozen(result));
   assert.ok(Object.isFrozen(result.blockers));
@@ -34,13 +52,7 @@ test("current superuser writer topology is blocked without granting cutover admi
 });
 
 test("least-privilege-shaped caller evidence remains unverified rather than ready", () => {
-  const input = structuredClone(currentHostShaped);
-  input.databaseOwnerRole = "setrox";
-  input.runtimeRole.name = "setfarm_runtime";
-  input.runtimeRole.superuser = false;
-  input.runtimeRole.activeSessionCount = 0;
-  for (const launcher of input.launcherRoles) launcher.role = "setfarm_runtime";
-  const result = projectTask6aWriterTopologyPreflightV2(input);
+  const result = projectTask6aWriterTopologyPreflightV2(leastPrivilegeShaped());
   assert.equal(result.status, "unverified");
   assert.deepEqual(result.blockers, []);
   assert.equal(result.cutoverAdmission, "not-granted");
@@ -49,29 +61,27 @@ test("least-privilege-shaped caller evidence remains unverified rather than read
 });
 
 test("topology hash changes when a validated role identity changes", () => {
-  const first = structuredClone(currentHostShaped);
-  first.runtimeRole.name = "setfarm_runtime";
-  first.runtimeRole.superuser = false;
-  first.runtimeRole.activeSessionCount = 0;
-  for (const launcher of first.launcherRoles) launcher.role = "setfarm_runtime";
+  const first = leastPrivilegeShaped();
   const second = structuredClone(first);
   second.controllerRole = "another_admin";
-  assert.notEqual(projectTask6aWriterTopologyPreflightV2(first).topologyHash,
-    projectTask6aWriterTopologyPreflightV2(second).topologyHash);
+  const left = projectTask6aWriterTopologyPreflightV2(first);
+  const right = projectTask6aWriterTopologyPreflightV2(second);
+  assert.notEqual(left.sourceSnapshotHash, right.sourceSnapshotHash);
+  assert.notEqual(left.topologyHash, right.topologyHash);
 });
 
 for (const [name, mutate, expected] of [
   ["launcher role mismatch", (value: any) => { value.launcherRoles[1].role = "other_runtime"; }, "launcher-role-mismatch"],
-  ["same controller role", (value: any) => { value.controllerRole = "setrox"; }, "runtime-matches-controller"],
+  ["same controller role", (value: any) => { value.controllerRole = "setfarm_runtime"; }, "runtime-matches-controller"],
   ["RLS bypass", (value: any) => { value.runtimeRole.bypassRls = true; }, "runtime-bypass-rls"],
   ["role creation", (value: any) => { value.runtimeRole.createRole = true; }, "runtime-can-create-role"],
   ["database creation", (value: any) => { value.runtimeRole.createDatabase = true; }, "runtime-can-create-database"],
   ["login absence", (value: any) => { value.runtimeRole.login = false; }, "runtime-no-login"],
 ] as const) {
   test(`${name} is a writer-fence blocker`, () => {
-    const value = structuredClone(currentHostShaped);
+    const value = leastPrivilegeShaped();
     mutate(value);
-    assert.ok(projectTask6aWriterTopologyPreflightV2(value).blockers.includes(expected));
+    assert.deepEqual(projectTask6aWriterTopologyPreflightV2(value).blockers, [expected]);
   });
 }
 

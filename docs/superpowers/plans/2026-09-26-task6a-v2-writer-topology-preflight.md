@@ -32,14 +32,14 @@
 
 **Interfaces:** Export `projectTask6aWriterTopologyPreflightV2(input: unknown)`. Input exact keys: `schema,databaseName,databaseOwnerRole,controllerRole,runtimeRole,launcherRoles`. Runtime role exact keys: `name,login,superuser,bypassRls,createRole,createDatabase,activeSessionCount`. Launcher row exact keys: `label,role`; three rows appear in fixed order `com.setrox.setfarm-spawner`, `com.setrox.setfarm-dashboard`, `com.setrox.mission-control`. Input schema is `setfarm.internal-production-task6a-writer-topology-input.v2`. Result exact fields are `schema,authority,evidenceProvenance,cutoverAdmission,status,blockers,sourceSnapshotHash,topologyHash`; sourceSnapshotHash binds the normalized validated input and topologyHash hashes the prior result fields. Role grammar: `^[a-z][a-z0-9_]{0,62}$`.
 
-- [x] **Step 1: Write RED tests.** Use the current-host-shaped literal `setrox` fixture (`superuser:true`, database owner `setrox`, all three launchers `setrox`, one active session) and assert exact sorted blockers. Use a separate least-privilege-shaped fixture and assert only `status:"unverified"`, `cutoverAdmission:"not-granted"`, `evidenceProvenance:"caller-supplied"`. Assert frozen output, no URL/token/secret field, and SHA-256 shape; later assert a changed validated role identity changes the topology hash. The production changes caught are falsely treating a superuser as fenced or promoting a caller-shaped safe profile to authority.
+- [x] **Step 1: Write RED tests.** Use the current-host-shaped literal `setrox` fixture (`superuser:true`, `bypassRls:true`, `createRole:true`, `createDatabase:true`, database owner `setrox`, all three launchers `setrox`, one active session) and assert exact sorted blockers. Use a separate least-privilege-shaped fixture and assert only `status:"unverified"`, `cutoverAdmission:"not-granted"`, `evidenceProvenance:"caller-supplied"`. Assert frozen output, no URL/token/secret field, and SHA-256 shape; later assert a changed validated role identity changes the topology hash. The production changes caught are falsely treating a superuser as fenced or promoting a caller-shaped safe profile to authority.
 
 ```ts
 const current = {
   schema: "setfarm.internal-production-task6a-writer-topology-input.v2",
   databaseName: "setfarm", databaseOwnerRole: "setrox", controllerRole: "postgres",
-  runtimeRole: { name: "setrox", login: true, superuser: true, bypassRls: false,
-    createRole: false, createDatabase: false, activeSessionCount: 1 },
+  runtimeRole: { name: "setrox", login: true, superuser: true, bypassRls: true,
+    createRole: true, createDatabase: true, activeSessionCount: 1 },
   launcherRoles: [
     { label: "com.setrox.setfarm-spawner", role: "setrox" },
     { label: "com.setrox.setfarm-dashboard", role: "setrox" },
@@ -47,7 +47,8 @@ const current = {
   ],
 };
 assert.deepEqual(projectTask6aWriterTopologyPreflightV2(current).blockers,
-  ["runtime-database-owner", "runtime-session-present", "runtime-superuser"]);
+  ["runtime-bypass-rls", "runtime-can-create-database", "runtime-can-create-role",
+    "runtime-database-owner", "runtime-session-present", "runtime-superuser"]);
 ```
 
 - [x] **Step 2: Run RED.** `env -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL node --import tsx --test tests/internal-production/baseline-task6a-writer-topology-preflight-v2.test.ts`. Expected failure: new source export/module missing, not a fixture error.
@@ -69,7 +70,7 @@ assert.deepEqual(projectTask6aWriterTopologyPreflightV2(current).blockers,
 
 **Files:** This plan and external `logs/2026-09-25-cutover-status.md` evidence ledger.
 
-- [ ] Request independent read-only review against the spec and `origin/main..HEAD`, including false-authority and malformed-input paths; resolve Critical/Important findings with RED/GREEN.
+- [x] Request independent read-only review against the spec and `origin/main..HEAD`, including false-authority and malformed-input paths; resolve Critical/Important findings with RED/GREEN.
 - [ ] Freshly verify focused/pure/migration tests, TypeScript/source contracts and diff; stage scoped files and make a conventional commit.
 - [ ] Push the branch; open a PR against `main`; inspect exact-head checks, review comments, GitGuardian/Codex/Copilot/Gemini state without claiming an unseen review; merge only reviewed exact head under branch protection.
 - [ ] Fast-forward a separate clean-main deployment clone and run its normal guarded build. Do not delete retained build generations or alter the selected historical dist/link.
@@ -84,3 +85,4 @@ Every spec requirement in this slice maps to Task 1 or 2, and delivery evidence 
 - Initial RED: missing V2 source module, exit 1. Initial GREEN: focused 2/2, exit 0.
 - Adversarial RED: focused 4/20 pass, 16/20 fail for missing hash binding, blocker branches and strict input validation. GREEN: focused 20/20, exit 0.
 - Pure suite 195/195, cutover suite 424/424, Task 0 source manifest 18/18, migration source digests 15/15, TypeScript no-emit and version/English/path contracts all exited 0. `git diff --check` exited 0. These runs preceded Task 3 independent review and any final commit. Full `npm test` requires the absent isolated PostgreSQL admin URL; the changed leaf has no database I/O and these are the scoped pure/cutover/migration/source checks.
+- Independent read-only review found an Important mismatch between the host-shaped fixture and actual PostgreSQL role flags. Root corrected the fixture and plan to all six observed blockers and moved each privilege-branch test to a false-flag baseline; focused 20/20, pure 195/195 and TypeScript no-emit passed again. Read-only re-review found no remaining Critical/Important issue. The reviewer did not execute tests.
