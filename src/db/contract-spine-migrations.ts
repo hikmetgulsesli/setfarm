@@ -20974,3 +20974,45 @@ export async function verifyContractSpineMigrations(
     throw error;
   }
 }
+
+/** Canonical pre-32 identities only; never a migration or cutover authority. */
+export function contractSpinePre32SourceJournalIdentitiesV1(): readonly Readonly<{
+  version: number; name: string; checksum: string;
+}>[] {
+  return Object.freeze(migrations.filter(candidate => candidate.version <= 31)
+    .map(candidate => Object.freeze({
+      version: candidate.version, name: candidate.name, checksum: checksum(candidate),
+    })));
+}
+
+/** Verify the source journal within the caller's already-held read-only transaction. */
+export async function verifyHeldPre32ContractSpineJournalIdentityV1(
+  query: (statement: string, parameters: readonly number[]) => Promise<readonly unknown[]>,
+): Promise<void> {
+  const rows = await query(
+    `SELECT version, name, checksum, state
+       FROM public.setfarm_schema_migrations
+      WHERE version <= $1
+      ORDER BY version`,
+    [31],
+  );
+  const expected = contractSpinePre32SourceJournalIdentitiesV1();
+  const matches = rows.length === 31 && expected.length === 31
+    && rows.every((row, index) => {
+      if (row === null || typeof row !== "object" || Array.isArray(row)
+        || Object.getPrototypeOf(row) !== Object.prototype) return false;
+      const actual = row as Record<string, unknown>;
+      const keys = Object.keys(actual);
+      const source = expected[index]!;
+      return keys.length === 4 && ["version", "name", "checksum", "state"].every(key => Object.hasOwn(actual, key))
+        && actual.version === index + 1 && actual.version === source.version
+        && actual.name === source.name && actual.checksum === source.checksum
+        && (actual.state === "applied" || actual.state === "adopted");
+    });
+  if (!matches) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_CHECKSUM_MISMATCH",
+      "Held pre32 migration journal identity differs from source",
+    );
+  }
+}

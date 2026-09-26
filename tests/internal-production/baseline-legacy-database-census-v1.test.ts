@@ -14,11 +14,13 @@ test("pre32 fixed-table lock entry refuses an absent private database URL before
     let connections=0;net.Socket.prototype.connect=()=>{connections++;throw Error('UNEXPECTED_CONNECTION')};syncBuiltinESMExports();
     const module=await import(${JSON.stringify(url)});let error;
     try{await module.observeLegacyDatabaseCensusWithPre32ShareLocksV1(undefined)}catch(caught){error=caught.message}
-    process.stdout.write(JSON.stringify({error,connections}));
+    let v2Error;try{await module.observeLegacyDatabaseCensusWithPre32ShareLocksV2(undefined)}catch(caught){v2Error=caught.message}
+    process.stdout.write(JSON.stringify({error,v2Error,connections}));
   `], { encoding: "utf8", timeout: 15000, env: {} });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {
     error: "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:legacy zero-owner database is unavailable",
+    v2Error: "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:legacy zero-owner database is unavailable",
     connections: 0,
   });
 });
@@ -70,6 +72,16 @@ test("pre32 SHARE-lock diagnostic locks its fixed table set before journal and l
         end:async options=>{globalThis.probe.close=options}};
     }};`).replace('await import("../findings/finding-publication-v1.js")',
       `await import(${JSON.stringify(new URL("../../src/findings/finding-publication-v1.ts", import.meta.url).href)})`);
+    source = source.replace('await import("../db/contract-spine-migrations.js")', `await Promise.resolve({
+      get verifyHeldPre32ContractSpineJournalIdentityV1(){
+        globalThis.probe.queries.push('verifier-loaded');
+        return async query=>{
+          globalThis.probe.queries.push('full-journal-identity');
+          await query('SELECT version, name, checksum, state FROM public.setfarm_schema_migrations WHERE version <= $1 ORDER BY version',[31]);
+          if(process.env.FAKE_SCENARIO==='identity-failure')throw Error('PRIVATE_JOURNAL_DETAIL');
+        }
+      }
+    })`);
     fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
     const file = path.join(root, "census.ts"); fs.writeFileSync(file, source);
     const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
@@ -106,6 +118,45 @@ test("pre32 SHARE-lock diagnostic locks its fixed table set before journal and l
     assert.ok(observed.queries.indexOf(locked.at(-1)) < observed.queries.indexOf("journal-head"));
     assert.ok(observed.queries.indexOf("journal-head") < observed.queries.indexOf("cold-catalog"));
     assert.ok(observed.queries.indexOf("cold-catalog") < observed.queries.indexOf("legacy-aggregate"));
+    const v2 = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      globalThis.probe={queries:[]};const module=await import(${JSON.stringify(pathToFileURL(file).href)});
+      let snapshot,error;try{snapshot=await module.observeLegacyDatabaseCensusWithPre32ShareLocksV2(
+        'postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm')}catch(caught){error=caught.message}
+      process.stdout.write(JSON.stringify({snapshot,error,...globalThis.probe}));
+    `], { encoding: "utf8", timeout: 15000, env: {} });
+    assert.equal(v2.status, 0, v2.stderr);
+    const exact = JSON.parse(v2.stdout);
+    assert.equal(exact.error, undefined, v2.stdout);
+    assert.equal(exact.mode, "isolation level read committed read only");
+    assert.equal(exact.snapshot.schema, "setfarm.internal-production-pre32-locked-database-census.v2");
+    assert.equal(exact.snapshot.authority, "diagnostic-only");
+    assert.equal(exact.snapshot.journalIdentity, "source-ordinal-name-checksum-state-1-through-31");
+    assert.equal(exact.snapshot.lockState, "released-at-return");
+    assert.ok(exact.queries.indexOf("verifier-loaded") < exact.queries.indexOf("set-local"));
+    const fullIdentity = exact.queries.indexOf("full-journal-identity");
+    assert.ok(fullIdentity > exact.queries.indexOf(locked.at(-1)));
+    assert.ok(fullIdentity < exact.queries.indexOf("journal-head"));
+    assert.ok(exact.queries.indexOf("journal-head") < exact.queries.indexOf("cold-catalog"));
+    const v2Refused = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      globalThis.probe={queries:[]};const module=await import(${JSON.stringify(pathToFileURL(file).href)});
+      let error;try{await module.observeLegacyDatabaseCensusWithPre32ShareLocksV2(
+        'postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm')}catch(caught){error=caught.message}
+      process.stdout.write(JSON.stringify({error,...globalThis.probe}));
+    `], { encoding: "utf8", timeout: 15000, env: { FAKE_SCENARIO: "identity-failure" } });
+    assert.equal(v2Refused.status, 0, v2Refused.stderr);
+    const identityFailure = JSON.parse(v2Refused.stdout);
+    assert.equal(identityFailure.error, "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:pre32 fixed-table lock census failed");
+    assert.ok(!identityFailure.queries.includes("cold-catalog"));
+    assert.ok(!v2Refused.stdout.includes("PRIVATE_JOURNAL_DETAIL"));
+    const v2Future = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      globalThis.probe={queries:[]};const module=await import(${JSON.stringify(pathToFileURL(file).href)});
+      let error;try{await module.observeLegacyDatabaseCensusWithPre32ShareLocksV2(
+        'postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm')}catch(caught){error=caught.message}
+      process.stdout.write(JSON.stringify({error,...globalThis.probe}));
+    `], { encoding: "utf8", timeout: 15000, env: { FAKE_SCENARIO: "future-head" } });
+    assert.equal(v2Future.status, 0, v2Future.stderr);
+    assert.equal(JSON.parse(v2Future.stdout).error,
+      "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:pre32 fixed-table lock census failed");
     for (const scenario of ["lock-failure", "future-head"]) {
       const refused = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
         globalThis.probe={queries:[]};const module=await import(${JSON.stringify(pathToFileURL(file).href)});

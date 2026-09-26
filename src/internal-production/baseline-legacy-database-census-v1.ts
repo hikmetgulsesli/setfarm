@@ -105,6 +105,7 @@ async function observeLegacyDatabaseCensusWithContinuationV1<T>(
   databaseUrl: string | undefined, coldBootstrap: boolean, profile: "cutover-local" | undefined,
   afterCensus: (connection: import("postgres").Sql, census: LegacyDatabaseCensusV1) => Promise<T>,
   heldShareLocks = false,
+  exactPre32JournalIdentity = false,
 ): Promise<T> {
   const postgresModule = await import("postgres");
   const { observeLegacyFindingPublicationInventoryV1 } = await import("../findings/finding-publication-v1.js");
@@ -127,6 +128,9 @@ async function observeLegacyDatabaseCensusWithContinuationV1<T>(
       || sql.options.user !== decodeURIComponent(cutoverTarget.username))) {
       currentEntryFail("cutover database target is ambiguous");
     }
+    const verifyHeldJournalIdentity = exactPre32JournalIdentity
+      ? (await import("../db/contract-spine-migrations.js")).verifyHeldPre32ContractSpineJournalIdentityV1
+      : null;
     return await sql.begin(heldShareLocks
       ? "isolation level read committed read only" : "isolation level repeatable read read only", async (tx) => {
       const connection = tx as unknown as typeof sql;
@@ -136,6 +140,10 @@ async function observeLegacyDatabaseCensusWithContinuationV1<T>(
         if (!coldBootstrap || profile !== "cutover-local") currentEntryFail("pre32 SHARE-lock profile is invalid");
         for (const table of PRE32_OWNER_WRITE_TABLES_V1) {
           await connection.unsafe(`LOCK TABLE public.${table} IN SHARE MODE`);
+        }
+        if (verifyHeldJournalIdentity) {
+          await verifyHeldJournalIdentity(async (statement, parameters) =>
+            connection.unsafe(statement, [...parameters]));
         }
         const journal = await connection<Array<{ version: number; state: string }>>`
           SELECT version,state FROM public.setfarm_schema_migrations WHERE version >= 26 ORDER BY version
@@ -355,6 +363,32 @@ export async function observeLegacyDatabaseCensusWithPre32ShareLocksV1(
         journalIdentity: "tail-ordinal-state-only" as const,
         lockState: "released-at-return" as const, legacyCensus,
       }), true);
+  } catch {
+    currentEntryFail("pre32 fixed-table lock census failed");
+  }
+}
+
+/** Exact-source pre32 journal diagnostic; still neither a complete owner census nor a durable fence. */
+export async function observeLegacyDatabaseCensusWithPre32ShareLocksV2(
+  databaseUrl: string | undefined,
+): Promise<Readonly<{
+  schema: "setfarm.internal-production-pre32-locked-database-census.v2";
+  authority: "diagnostic-only";
+  tableLockScope: "fixed-pre32-legacy-superset";
+  journalIdentity: "source-ordinal-name-checksum-state-1-through-31";
+  lockState: "released-at-return";
+  legacyCensus: LegacyDatabaseCensusV1;
+}>> {
+  if (!databaseUrl) currentEntryFail("legacy zero-owner database is unavailable");
+  try {
+    return await observeLegacyDatabaseCensusWithContinuationV1(databaseUrl, true, "cutover-local",
+      async (_connection, legacyCensus) => Object.freeze({
+        schema: "setfarm.internal-production-pre32-locked-database-census.v2" as const,
+        authority: "diagnostic-only" as const,
+        tableLockScope: "fixed-pre32-legacy-superset" as const,
+        journalIdentity: "source-ordinal-name-checksum-state-1-through-31" as const,
+        lockState: "released-at-return" as const, legacyCensus,
+      }), true, true);
   } catch {
     currentEntryFail("pre32 fixed-table lock census failed");
   }
