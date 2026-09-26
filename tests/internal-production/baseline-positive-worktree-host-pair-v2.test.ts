@@ -12,7 +12,8 @@ import { observePositiveWorktreeHostPairWithPortsV2,
   observePositiveWorktreeActiveBindingHostPairWithPortsV1,
   observePositiveWorktreePre32HostPairWithPortsV4,
   observePositiveWorktreePre32HostPairWithPortsV5,
-  observePositiveWorktreePre32HostPairWithPortsV6 } from "../../src/internal-production/baseline-positive-worktree-host-pair-v2.js";
+  observePositiveWorktreePre32HostPairWithPortsV6,
+  observePositiveWorktreePre32HostPairWithPortsV7 } from "../../src/internal-production/baseline-positive-worktree-host-pair-v2.js";
 
 function catalog(blockedRoot: string) {
   const body = Object.freeze({
@@ -70,6 +71,17 @@ function pre32V6() {
   const body = Object.freeze({ schema: "setfarm.internal-production-pre32-active-binding-snapshot.v6" as const,
     authority: "diagnostic-only" as const, legacyCensus: v5.legacyCensus, activeRows: v5.activeRows,
     bindingRows, quarantinedRuntimeSessionCount: 0 });
+  return Object.freeze({ ...body, snapshotHash: hashCanonicalJson(body) });
+}
+
+function pre32V7() {
+  const v6 = pre32V6();
+  const body = Object.freeze({ schema: "setfarm.internal-production-pre32-active-binding-snapshot.v7" as const,
+    authority: "diagnostic-only" as const, tableLockScope: "fixed-pre32-legacy-superset" as const,
+    journalIdentity: "source-ordinal-name-checksum-state-1-through-31" as const,
+    lockState: "released-at-return" as const,
+    legacyCensus: v6.legacyCensus, activeRows: v6.activeRows,
+    bindingRows: v6.bindingRows, quarantinedRuntimeSessionCount: 0 });
   return Object.freeze({ ...body, snapshotHash: hashCanonicalJson(body) });
 }
 
@@ -180,6 +192,40 @@ test("V6 pairs strict binding rows inside the held physical callback without cle
   assert.equal(result.pre32Database, combined);
   const { pairHash, ...body } = result;
   assert.equal(pairHash, hashCanonicalJson(body));
+});
+
+test("V7 binds held full-journal and binding snapshot without clearing physical blockers", async () => {
+  const events: string[] = [];
+  const combined = pre32V7(), physical = catalog("/retained/prunable");
+  const pair = await observePositiveWorktreePre32HostPairWithPortsV7(async betweenPasses => {
+    events.push("physical-first"); await betweenPasses(); events.push("physical-second"); return physical;
+  }, async () => { events.push("database"); return combined; });
+  assert.deepEqual(events, ["physical-first", "database", "physical-second"]);
+  assert.equal(pair.schema, "setfarm.internal-production-pre32-physical-database-pair.v7");
+  assert.equal(pair.authority, "diagnostic-only");
+  assert.equal(pair.physicalIdentityProvenance, "unverified");
+  assert.equal(pair.heldPair.physicalCatalog, physical);
+  assert.equal(pair.pre32Database, combined);
+  const { pairHash, ...body } = pair;
+  assert.equal(pairHash, hashCanonicalJson(body));
+});
+
+test("V7 refuses a self-rehashed wrong journal label or stale binding hash", async () => {
+  const physical = async (betweenPasses: () => Promise<void>) => {
+    await betweenPasses(); return catalog("/retained/prunable");
+  };
+  const valid = pre32V7();
+  for (const change of [
+    { journalIdentity: "tail-ordinal-state-only" },
+    { tableLockScope: "none" },
+    { lockState: "held-at-return" },
+    { bindingRows: Object.freeze({ ...valid.bindingRows, snapshotHash: "a".repeat(64) }) },
+  ]) {
+    const { snapshotHash: _old, ...body } = Object.freeze({ ...valid, ...change });
+    const forged = Object.freeze({ ...body, snapshotHash: hashCanonicalJson(body) });
+    await assert.rejects(observePositiveWorktreePre32HostPairWithPortsV7(physical,
+      async () => forged as typeof valid), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID/);
+  }
 });
 
 test("V6 rejects self-consistent forged nested binding evidence", async () => {
@@ -387,6 +433,8 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
           if(process.env.FAKE_DATABASE_FAILURE==='1')throw Error('PRIVATE_DATABASE_PASSWORD');return globalThis.combinedV5},
         censusAndBindingRows:async()=>{globalThis.events.push('database');
           if(process.env.FAKE_DATABASE_FAILURE==='1')throw Error('PRIVATE_DATABASE_PASSWORD');return globalThis.combinedV6},
+        censusAndBindingRowsV7:async()=>{globalThis.events.push('database');
+          if(process.env.FAKE_DATABASE_FAILURE==='1')throw Error('PRIVATE_DATABASE_PASSWORD');return globalThis.combinedV7},
         activeBindingSnapshot:async()=>{globalThis.events.push('database');
           if(process.env.FAKE_DATABASE_FAILURE==='1')throw Error('PRIVATE_DATABASE_PASSWORD');return globalThis.combinedActive},
         close:()=>{globalThis.events.push('close');if(process.env.FAKE_CLOSE_FAILURE==='1')throw Error('PRIVATE_CLOSE')}};
@@ -410,6 +458,7 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
       globalThis.combined=freeze(${JSON.stringify(pre32())});
       globalThis.combinedV5=freeze(${JSON.stringify(pre32V5(2))});
       globalThis.combinedV6=freeze(${JSON.stringify(pre32V6())});
+      globalThis.combinedV7=freeze(${JSON.stringify(pre32V7())});
       globalThis.combinedActive=freeze(${JSON.stringify(activeBinding())});
       const module=await import(${JSON.stringify(pathToFileURL(file).href)});
       let result,error,phase,hasCause,physicalPoint;
@@ -417,6 +466,8 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
         ?module.observeCodeOwnedPositiveWorktreeActiveBindingHostPairV1()
         :process.env.FAKE_V6==='1'
         ?module.observeCodeOwnedPositiveWorktreePre32HostPairV6()
+        :process.env.FAKE_V7==='1'
+        ?module.observeCodeOwnedPositiveWorktreePre32HostPairV7()
         :process.env.FAKE_V5==='1'
           ?module.observeCodeOwnedPositiveWorktreePre32HostPairV5()
           :module.observeCodeOwnedPositiveWorktreePre32HostPairV4())}catch(caught){
@@ -446,6 +497,13 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
       blockers: [{ root: "/retained/prunable", reason: "prunable-git-worktree" }],
       events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "physical-second",
         "recheck", "close"] });
+    const v7 = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
+      { encoding: "utf8", timeout: 15000, env: { FAKE_V7: "1" } });
+    assert.equal(v7.status, 0, v7.stderr);
+    assert.deepEqual(JSON.parse(v7.stdout), { schema: "setfarm.internal-production-pre32-physical-database-pair.v7",
+      blockers: [{ root: "/retained/prunable", reason: "prunable-git-worktree" }],
+      events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "physical-second",
+        "recheck", "close"] });
     const active = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
       { encoding: "utf8", timeout: 15000, env: { FAKE_ACTIVE: "1" } });
     assert.equal(active.status, 0, active.stderr);
@@ -467,6 +525,13 @@ test("zero-input V4 composition keeps the launcher held and closes on physical r
       phase: "database-callback", hasCause: false,
       events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "close"] });
     assert.doesNotMatch(v6Refused.stdout, /PRIVATE_/);
+    const v7Refused = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
+      { encoding: "utf8", timeout: 15000, env: { FAKE_V7: "1", FAKE_DATABASE_FAILURE: "1" } });
+    assert.equal(v7Refused.status, 0, v7Refused.stderr);
+    assert.deepEqual(JSON.parse(v7Refused.stdout), { error: "INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PRE32_HOST_PAIR_INVALID",
+      phase: "database-callback", hasCause: false,
+      events: ["launcher-acquire", "qualified", "recheck", "physical-first", "database", "close"] });
+    assert.doesNotMatch(v7Refused.stdout, /PRIVATE_/);
     const v5Refused = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
       { encoding: "utf8", timeout: 15000, env: { FAKE_V5: "1", FAKE_DATABASE_FAILURE: "1" } });
     assert.equal(v5Refused.status, 0, v5Refused.stderr);

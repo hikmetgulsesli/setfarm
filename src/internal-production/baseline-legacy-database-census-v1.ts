@@ -535,3 +535,79 @@ export async function observeLegacyDatabaseCensusAndBindingRowsV6(
       return Object.freeze({ ...body, snapshotHash: hashCanonicalJson(body) });
     });
 }
+
+/** Diagnostic only: one held pre32 journal, census, active-row and binding-row transaction. */
+export async function observeLegacyDatabaseCensusAndBindingRowsV7(
+  databaseUrl: string | undefined,
+): Promise<Readonly<{
+  schema: "setfarm.internal-production-pre32-active-binding-snapshot.v7";
+  authority: "diagnostic-only";
+  tableLockScope: "fixed-pre32-legacy-superset";
+  journalIdentity: "source-ordinal-name-checksum-state-1-through-31";
+  lockState: "released-at-return";
+  legacyCensus: LegacyDatabaseCensusV1;
+  activeRows: ActiveOwnerRowSnapshotV2;
+  bindingRows: Awaited<ReturnType<typeof import("./baseline-positive-worktree-binding-rows-v1.js").observePositiveWorktreeBindingRowsInTransactionV1>>;
+  quarantinedRuntimeSessionCount: number;
+  snapshotHash: string;
+}>> {
+  if (!databaseUrl) currentEntryFail("legacy zero-owner database is unavailable");
+  try {
+    // Source/module initialization must finish before the 36 writer-excluding locks.
+    const [{ observePositiveWorktreeActiveRowSnapshotInTransactionV2, normalizeActiveOwnerRowPgResultV2 },
+      { observePositiveWorktreeBindingRowsInTransactionV1 }, { hashCanonicalJson }] = await Promise.all([
+      import("./baseline-positive-worktree-active-row-snapshot-v2.js"),
+      import("./baseline-positive-worktree-binding-rows-v1.js"),
+      import("../product-compiler/canonical-json.js"),
+    ]);
+    return await observeLegacyDatabaseCensusWithContinuationV1(databaseUrl, true, "cutover-local",
+      async (connection, legacyCensus) => {
+        const query = async (statement: string) => normalizeActiveOwnerRowPgResultV2(await connection.unsafe(statement));
+        const activeRows = await observePositiveWorktreeActiveRowSnapshotInTransactionV2(query);
+        if (legacyCensus.activeRunCount !== activeRows.counts.runCount
+          || legacyCensus.openClaimCount !== activeRows.counts.claimCount
+          || legacyCensus.executionAttemptCount !== activeRows.counts.attemptCount
+          || legacyCensus.activeRuntimeSessionCount !== activeRows.counts.sessionCount) {
+          currentEntryFail("legacy and active-row counts disagree within one transaction");
+        }
+        const quarantine = await query(`SELECT COUNT(*)::text AS "quarantinedRuntimeSessionCount"
+          FROM public.runtime_sessions WHERE state = 'quarantined'`);
+        const row = quarantine[0];
+        if (quarantine.length !== 1 || row === null || typeof row !== "object" || types.isProxy(row)
+          || Object.getPrototypeOf(row) !== Object.prototype) currentEntryFail("quarantined runtime census invalid");
+        const fields = Object.getOwnPropertyDescriptors(row);
+        const keys = Reflect.ownKeys(fields);
+        const field = fields.quarantinedRuntimeSessionCount;
+        if (keys.length !== 1 || keys[0] !== "quarantinedRuntimeSessionCount" || !field
+          || !field.enumerable || !("value" in field) || typeof field.value !== "string"
+          || !/^(0|[1-9][0-9]*)$/.test(field.value)) currentEntryFail("quarantined runtime census invalid");
+        const quarantinedRuntimeSessionCount = Number(field.value);
+        if (!Number.isSafeInteger(quarantinedRuntimeSessionCount)) currentEntryFail("quarantined runtime census invalid");
+        const bindingRows = await observePositiveWorktreeBindingRowsInTransactionV1(query);
+        if (bindingRows.counts.attemptCount !== activeRows.counts.attemptCount
+          || bindingRows.counts.sessionCount !== activeRows.counts.sessionCount) {
+          currentEntryFail("active and binding-row counts disagree within one transaction");
+        }
+        for (let index = 0; index < activeRows.activeAttempts.length; index += 1) {
+          const active = activeRows.activeAttempts[index]!, binding = bindingRows.activeAttempts[index]!;
+          if ((["attemptId", "runId", "claimId", "worktreeRoot", "disposition"] as const)
+            .some(key => active[key] !== binding[key])) {
+            currentEntryFail("active and binding attempt identities disagree within one transaction");
+          }
+        }
+        for (let index = 0; index < activeRows.activeSessions.length; index += 1) {
+          const active = activeRows.activeSessions[index]!, binding = bindingRows.activeSessions[index]!;
+          if ((["sessionId", "runId", "claimId", "attemptId", "ownerInstanceId", "worktreeRoot", "state"] as const)
+            .some(key => active[key] !== binding[key])) {
+            currentEntryFail("active and binding session identities disagree within one transaction");
+          }
+        }
+        const body = { schema: "setfarm.internal-production-pre32-active-binding-snapshot.v7" as const,
+          authority: "diagnostic-only" as const, tableLockScope: "fixed-pre32-legacy-superset" as const,
+          journalIdentity: "source-ordinal-name-checksum-state-1-through-31" as const,
+          lockState: "released-at-return" as const, legacyCensus, activeRows, bindingRows,
+          quarantinedRuntimeSessionCount };
+        return Object.freeze({ ...body, snapshotHash: hashCanonicalJson(body) });
+      }, true, true);
+  } catch { currentEntryFail("pre32 held journal binding snapshot failed"); }
+}

@@ -63,6 +63,18 @@ const pre32Source = kind => `import fs from 'node:fs';import path from 'node:pat
     const body={...old,schema:'setfarm.internal-production-pre32-physical-database-pair.v6'};
     return Object.freeze({...body,pairHash:createHash('sha256').update(canonical(body)).digest('hex')});
   }
+  export async function observeCodeOwnedPositiveWorktreePre32HostPairV7(){
+    if(arguments.length)throw Error('UNEXPECTED_INPUT');
+    const kind=${JSON.stringify(kind)};
+    const v6=await observeCodeOwnedPositiveWorktreePre32HostPairV6();
+    const {pairHash,...old}=v6;
+    const body={...old,schema:'setfarm.internal-production-pre32-physical-database-pair.v7',
+      pre32Database:Object.freeze({schema:'setfarm.internal-production-pre32-active-binding-snapshot.v7',
+        authority:'diagnostic-only',tableLockScope:'fixed-pre32-legacy-superset',
+        journalIdentity:kind==='wrong-journal-label'?'tail-ordinal-state-only'
+          :'source-ordinal-name-checksum-state-1-through-31',lockState:'released-at-return'})};
+    return Object.freeze({...body,pairHash:createHash('sha256').update(canonical(body)).digest('hex')});
+  }
   export async function observeCodeOwnedPositiveWorktreeActiveBindingHostPairV1(){
     if(arguments.length)throw Error('UNEXPECTED_INPUT');
     const v6=await observeCodeOwnedPositiveWorktreePre32HostPairV6();
@@ -178,6 +190,44 @@ test("bootstrap exposes a separate authenticated V6 held diagnostic without chan
   assert.equal(Object.hasOwn(observed, "pre32HostPair"), false);
   assert.equal(Object.hasOwn(observed, "pre32HostPairV5"), false);
   assert.equal(fs.readFileSync(path.join(root, ".setfarm/pre32-called"), "utf8"), "x");
+}, undefined, { extraSources: pre32Sources("valid") }));
+
+test("bootstrap exposes a separate authenticated V7 held-journal diagnostic", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-host-pair-v7", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout);
+  assert.equal(observed.pre32HostPairV7.schema, "setfarm.internal-production-pre32-physical-database-pair.v7");
+  assert.equal(observed.pre32HostPairV7.authority, "diagnostic-only");
+  assert.equal(observed.pre32HostPairV7.physicalIdentityProvenance, "unverified");
+  for (const key of ["pre32HostPair", "pre32HostPairV5", "pre32HostPairV6"])
+    assert.equal(Object.hasOwn(observed, key), false);
+  assert.equal(fs.readFileSync(path.join(root, ".setfarm/pre32-called"), "utf8"), "x");
+}, undefined, { extraSources: pre32Sources("valid") }));
+
+test("V7 bootstrap sanitizes database failure and preserves finite phase", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-host-pair-v7", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  const lines = result.stderr.trimEnd().split("\n");
+  assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
+  assert.deepEqual(JSON.parse(lines[1]), { schema: "setfarm.deployment-cutover-refusal.v1",
+    scope: "bootstrap", stage: "pre32-host-pair", ownerContext: null, launcherStage: null,
+    cleanupFailed: null, pre32FailurePhase: "database-callback" });
+  assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+}, undefined, { extraSources: pre32Sources("database-phase") }));
+
+test("V7 bootstrap refuses a self-consistent wrong journal label", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-host-pair-v7", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr.split("\n")[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
+}, undefined, { extraSources: pre32Sources("wrong-journal-label") }));
+
+test("V7 bootstrap rejects extra argv before observer invocation", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-host-pair-v7", "--json", "extra"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-called")), false);
 }, undefined, { extraSources: pre32Sources("valid") }));
 
 test("bootstrap exposes a distinct authenticated positive active-binding diagnostic", () => fixture(root => {
