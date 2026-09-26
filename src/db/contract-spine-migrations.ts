@@ -16529,6 +16529,31 @@ export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpi
   }) as Promise<ContractSpineMigrationPlan>;
 }
 
+/** Narrow pre-startup journal inspection. Does not invoke migration detect/verify hooks. */
+export async function inspectContractSpineThrough33JournalReadOnlyV2(sql: Sql): Promise<Readonly<{
+  schema: "setfarm.contract-spine-through33-journal-read-only.v2";
+  state: "through33-journal-applied" | "not-through33";
+}>> {
+  return sql.begin("isolation level repeatable read read only", async (transaction) => {
+    await transaction.unsafe("SELECT set_config('lock_timeout', '1000ms', true)");
+    await transaction.unsafe("SELECT set_config('statement_timeout', '5000ms', true)");
+    await transaction.unsafe("SELECT set_config('idle_in_transaction_session_timeout', '5000ms', true)");
+    await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
+    const attestation = await detectMigrationAttestationShape(transaction);
+    const journal = await completeJournalRows(transaction);
+    const complete = attestation === "present" && journal.length === completeMigrations.length
+      && completeMigrations.every((migration, index) => {
+        const row = journal[index];
+        return row?.version === migration.version && row.name === migration.name
+          && row.checksum === checksum(migration)
+          && (migration.migrationClass === "guarded" ? row.state === "applied"
+            : row.state === "applied" || row.state === "adopted");
+      });
+    return Object.freeze({ schema: "setfarm.contract-spine-through33-journal-read-only.v2" as const,
+      state: complete ? "through33-journal-applied" as const : "not-through33" as const });
+  });
+}
+
 function isLockTimeout(error: unknown): boolean {
   return error instanceof Error
     && "code" in error
