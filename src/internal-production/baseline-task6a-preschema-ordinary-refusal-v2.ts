@@ -1,5 +1,6 @@
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { types } from "node:util";
 
 import { canonicalJsonBytes, hashCanonicalJson } from "../product-compiler/canonical-json.js";
@@ -195,8 +196,66 @@ export function classifyTask6aPreSchemaOrdinaryStartupV2(operation: unknown, jou
   fail();
 }
 
+/** Only an external checkout with a stably absent fixed workspace is out of Task6A scope. */
+function ordinaryCheckoutWithoutFixedWorkspaceV2(): boolean {
+  if (cleanupUncertain) fail();
+  const root = resolveInternalProductionBaselineWorkspaceRootV1();
+  const anchoredRoot = process.platform === "darwin" && root.startsWith("/var/") ? `/private${root}` : root;
+  const modulePath = fileURLToPath(import.meta.url);
+  const inside = (base: string): boolean => {
+    const relative = path.relative(base, modulePath);
+    return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  };
+  if (inside(root) || inside(anchoredRoot)) return false;
+  const ai = path.dirname(anchoredRoot);
+  const home = path.dirname(ai);
+  const volumeRoot = path.parse(anchoredRoot).root;
+  const segments = path.relative(volumeRoot, anchoredRoot).split(path.sep);
+  const paths = [volumeRoot, ...segments.map((_, index) => path.join(volumeRoot, ...segments.slice(0, index + 1)))];
+  const uid = process.getuid?.();
+  if (uid === undefined) fail();
+  const held: Array<{ target: string; stat: BigIntStats; fd: number }> = [];
+  let absent = false;
+  let primary: unknown;
+  const stable = (): void => {
+    for (const item of held) {
+      if (!same(item.stat, fs.fstatSync(item.fd, { bigint: true }), DIRECTORY_KEYS)
+        || !same(item.stat, fs.lstatSync(item.target, { bigint: true }), DIRECTORY_KEYS)) fail();
+    }
+  };
+  try {
+    for (const current of paths) {
+      stable();
+      let stat: BigIntStats;
+      try { stat = fs.lstatSync(current, { bigint: true }); }
+      catch (error) {
+        if (!missing(error) || (current !== ai && current !== anchoredRoot)) throw error;
+        stable();
+        try { fs.lstatSync(current, { bigint: true }); fail(); }
+        catch (again) { if (!missing(again)) throw again; }
+        stable();
+        absent = true;
+        break;
+      }
+      if (!stat.isDirectory() || stat.isSymbolicLink()
+        || ([home, ai, anchoredRoot].includes(current) && stat.uid !== BigInt(uid))) fail();
+      const fd = fs.openSync(current, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+      held.push({ target: current, stat, fd });
+      stable();
+    }
+    stable();
+  } catch (error) { primary = error; }
+  finally {
+    for (const item of held.reverse()) try { fs.closeSync(item.fd); }
+    catch (error) { cleanupUncertain = true; primary ??= error; }
+  }
+  if (primary) fail();
+  return absent;
+}
+
 /** Additional sampled refusal before the existing ordinary startup gates. */
 export async function assertTask6aPreSchemaOrdinaryStartupV2(): Promise<void> {
+  if (ordinaryCheckoutWithoutFixedWorkspaceV2()) return;
   const before = observeTask6aFixedCurrentEntryOperationPresenceV2();
   if (before.state === "absent") return;
   try {

@@ -87,6 +87,87 @@ function observeAtFakeHome(home: string) {
   });
 }
 
+function preflightAtFakeHome(home: string) {
+  const modulePath = path.join(sourceRoot, "internal-production/baseline-task6a-preschema-ordinary-refusal-v2.ts");
+  const code = `
+    import os from "node:os";
+    import { syncBuiltinESMExports } from "node:module";
+    const original = os.userInfo();
+    os.userInfo = () => ({ ...original, homedir: ${JSON.stringify(home)} });
+    syncBuiltinESMExports();
+    const module = await import(${JSON.stringify(modulePath)});
+    try { await module.assertTask6aPreSchemaOrdinaryStartupV2(); console.log("EXISTING_GATES"); }
+    catch (error) { console.error(error instanceof Error ? error.message : "INVALID"); process.exitCode = 1; }
+  `;
+  return spawnSync(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", code], {
+    cwd: path.resolve(sourceRoot, ".."), encoding: "utf8", env: { ...process.env, SETFARM_PG_URL: undefined },
+  });
+}
+
+test("Task6A V2 ordinary preflight leaves a noncanonical installation with no fixed workspace to existing gates", () => {
+  const home = mkdtempSync(path.join(tmpdir(), "task6a-ordinary-home-"));
+  try {
+    const result = preflightAtFakeHome(home);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "EXISTING_GATES\n");
+    const ai = path.join(home, "ai");
+    symlinkSync("missing-target", ai);
+    const linkedParent = preflightAtFakeHome(home);
+    assert.equal(linkedParent.status, 1);
+    assert.equal(linkedParent.stderr, "TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED\n");
+    rmSync(ai);
+    mkdirSync(ai, { mode: 0o700 });
+    const missingRoot = preflightAtFakeHome(home);
+    assert.equal(missingRoot.status, 0, missingRoot.stderr);
+    const root = path.join(ai, "setrox");
+    symlinkSync("missing-target", root);
+    const linkedRoot = preflightAtFakeHome(home);
+    assert.equal(linkedRoot.status, 1);
+    assert.equal(linkedRoot.stderr, "TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED\n");
+    rmSync(root);
+    writeFileSync(root, "not-a-directory");
+    const fileRoot = preflightAtFakeHome(home);
+    assert.equal(fileRoot.status, 1);
+    rmSync(root);
+    const store = path.join(root, "data/internal-production-baseline/current-entry-v1");
+    mkdirSync(store, { recursive: true, mode: 0o700 });
+    writeFileSync(path.join(store, "current-entry-operation.json"), operationBytes(), { mode: 0o600 });
+    const presentOperation = preflightAtFakeHome(home);
+    assert.equal(presentOperation.status, 1);
+    assert.equal(presentOperation.stderr, "TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED\n");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("Task6A V2 canonical checkout never treats a missing fixed workspace as out of scope", () => {
+  const source = readFileSync(path.join(sourceRoot, "internal-production/baseline-task6a-preschema-ordinary-refusal-v2.ts"), "utf8");
+  const tree = ts.createSourceFile("baseline-task6a-preschema-ordinary-refusal-v2.ts", source, ts.ScriptTarget.Latest, true);
+  const helper = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "ordinaryCheckoutWithoutFixedWorkspaceV2");
+  assert.ok(helper);
+  const js = ts.transpileModule(helper.getText(tree).replace("import.meta.url", "sourceUrl"), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const root = path.join(tmpdir(), "canonical-task6a-checkout", "ai", "setrox");
+  const run = new Function("resolveInternalProductionBaselineWorkspaceRootV1", "path", "fileURLToPath", "sourceUrl",
+    `const cleanupUncertain = false;\n${js}\nreturn ordinaryCheckoutWithoutFixedWorkspaceV2();`) as
+    (root: () => string, paths: typeof path, sourcePath: () => string, url: string) => boolean;
+  assert.equal(run(() => root, path, () => path.join(root, "dist/internal-production/baseline-task6a-preschema-ordinary-refusal-v2.js"), "file:///canonical"), false);
+  if (process.platform === "darwin") {
+    const lexicalAlias = "/var/folders/task6a-home/ai/setrox";
+    const physicalAlias = `/private${lexicalAlias}`;
+    assert.equal(run(() => lexicalAlias, path, () => path.join(physicalAlias, "dist/internal-production/baseline-task6a-preschema-ordinary-refusal-v2.js"), "file:///canonical-alias"), false);
+  }
+});
+
+test("Task6A V2 ordinary workspace absence cannot bypass uncertain cleanup", () => {
+  const source = readFileSync(path.join(sourceRoot, "internal-production/baseline-task6a-preschema-ordinary-refusal-v2.ts"), "utf8");
+  const tree = ts.createSourceFile("baseline-task6a-preschema-ordinary-refusal-v2.ts", source, ts.ScriptTarget.Latest, true);
+  const helper = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "ordinaryCheckoutWithoutFixedWorkspaceV2");
+  assert.ok(helper?.body);
+  assert.equal(helper.body.statements[0]?.getText(tree), "if (cleanupUncertain) fail();");
+});
+
 test("Task6A V2 fixed-operation probe is no-write and refuses malformed or symlinked records", () => {
   const home = mkdtempSync(path.join(tmpdir(), "task6a-preschema-home-"));
   try {
