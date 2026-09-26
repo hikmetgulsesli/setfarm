@@ -21,6 +21,12 @@ state exists at these two boundaries. Do not alter the terminal inline
 security branch, which may already have completed a claim before returning
 true; it needs a separate authority-safe protocol.
 
+If the reserved-runtime lookup rejects, capture the rejection without
+unwinding, run the V2/shutdown sample first, and only rethrow when it permits
+ordinary handling. Otherwise the outer `finally` would write before seeing a
+newly present fixed operation. Test both rejected-lookup/refusal and
+rejected-lookup/permit cases.
+
 These are sampled checks. Prior handoff/transcript effects, an in-flight
 inline gate or `markStarting`, and a fixed operation appearing after the final
 sample remain outside their guarantee. No continuous writer fence, positive
@@ -32,7 +38,7 @@ ownership, Task6A admission or cutover authority is granted.
   explicit refusal flag suppressing the outer post-claim release `finally`.
 - `tests/internal-production/baseline-task6a-preschema-ordinary-refusal-v2.test.ts`:
   RED/GREEN AST/extracted refusal, permit, shutdown-interleaving and
-  no-release ordering tests.
+  rejected-lookup/no-release ordering tests.
 - `docs/superpowers/plans/2026-09-26-task6a-v2-postclaim-async-refusal.md`:
   scoped delivery steps.
 

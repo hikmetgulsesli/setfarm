@@ -570,13 +570,15 @@ test("Task6A V2 ordinary post-claim awaits refuse without finalizer release writ
     && node.getText(tree).includes("await completeInlineSecurityGateIfApplicable("));
   assert.ok(inlineIndex >= 0, "inline selector must be awaited before ordinary effects");
   assert.match(body[inlineIndex + 1]?.getText(tree) || "", /^if \(inlineSecurityCompleted\)/);
-  const findIndex = body.findIndex((node) => ts.isVariableStatement(node)
-    && node.getText(tree).includes("await runtimeSessions.findById(runtimeSessionId)"));
+  const findIndex = body.findIndex((node) => ts.isTryStatement(node)
+    && node.tryBlock.getText(tree).includes("await runtimeSessions.findById(runtimeSessionId)"));
   assert.ok(findIndex >= 0);
-  assert.match(body[findIndex + 3]?.getText(tree) || "", /^let startingRuntimeSession:/);
+  assert.match(body[findIndex + 3]?.getText(tree) || "", /^if \(!runtimeLookupSettled\.ok\) throw runtimeLookupSettled\.error;/);
+  assert.match(body[findIndex + 4]?.getText(tree) || "", /^const reservedRuntimeSession = runtimeLookupSettled\.session;/);
+  assert.match(body[findIndex + 5]?.getText(tree) || "", /^let startingRuntimeSession:/);
   for (const { name, index, next } of [
     { name: "inline", index: inlineIndex + 1, next: /^const prompt = buildPreclaimedPrompt\(/ },
-    { name: "runtime", index: findIndex, next: /^let startingRuntimeSession:/ },
+    { name: "runtime", index: findIndex, next: /^if \(!runtimeLookupSettled\.ok\) throw runtimeLookupSettled\.error;/ },
   ]) {
     const refusal = body[index + 1];
     const shutdown = body[index + 2];
@@ -620,6 +622,68 @@ test("Task6A V2 ordinary post-claim awaits refuse without finalizer release writ
     assert.deepEqual(retained, [], name);
   }
   assert.match(outer.finallyBlock.getText(tree), /if \(!postClaimOwnershipTransferred && !postClaimRefusedV2\)/);
+});
+
+test("Task6A V2 rejected runtime lookup still samples refusal before release", async () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const spawn = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "spawnAgentNow");
+  assert.ok(spawn?.body);
+  const outer = spawn.body.statements.find((node): node is ts.TryStatement => ts.isTryStatement(node)
+    && Boolean(node.finallyBlock?.getText(tree).includes("releaseUntransferredPostClaimOwnership(claim")));
+  assert.ok(outer?.finallyBlock);
+  const statements = outer.tryBlock.statements;
+  const lookupIndex = statements.findIndex((node) => ts.isTryStatement(node)
+    && node.tryBlock.getText(tree).includes("await runtimeSessions.findById(runtimeSessionId)"));
+  assert.ok(lookupIndex >= 0, "lookup rejection must be captured before the V2 sample");
+  const declaration = statements[lookupIndex - 1]?.getText(tree);
+  const lookup = statements[lookupIndex]?.getText(tree);
+  const refusal = statements[lookupIndex + 1]?.getText(tree);
+  const shutdown = statements[lookupIndex + 2]?.getText(tree);
+  const rethrow = statements[lookupIndex + 3]?.getText(tree);
+  assert.match(declaration || "", /^let runtimeLookupSettled:/);
+  assert.match(lookup || "", /runtimeLookupSettled = \{ ok: false, error \}/);
+  assert.match(refusal || "", /await assertTask6aPreSchemaOrdinaryStartupV2\(\)/);
+  assert.match(shutdown || "", /^if \(shuttingDown\)/);
+  assert.match(rethrow || "", /^if \(!runtimeLookupSettled\.ok\) throw runtimeLookupSettled\.error;/);
+  const continuationJs = ts.transpileModule(`async function continuation() {
+    ${declaration}
+    ${lookup}
+    ${refusal}
+    ${shutdown}
+    ${rethrow}
+  }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+  const run = new Function("lookup", "preflight", "retained", "releases", `return (async () => {
+    let shuttingDown = false;
+    let postClaimOwnershipTransferred = false;
+    let postClaimRefusedV2 = false;
+    let task6aV2UnboundPostClaimRefusals = 0;
+    const claim = { found: true };
+    const runtimeIntent = {};
+    const runtimeSessionId = "RTS_exact";
+    const runtimeSessions = { findById: lookup };
+    const console = { warn: () => {} };
+    const retainTask6aV2PostClaimRuntimeIfExact = () => { retained.push("retain"); return true; };
+    const assertTask6aPreSchemaOrdinaryStartupV2 = preflight;
+    ${continuationJs}
+    try {
+      await continuation();
+    } finally {
+      if (!postClaimOwnershipTransferred && !postClaimRefusedV2) releases.push("release");
+    }
+  })();`) as (lookup: () => Promise<unknown>, preflight: () => Promise<void>,
+      retained: string[], releases: string[]) => Promise<void>;
+  const retained: string[] = [];
+  const releases: string[] = [];
+  await run(async () => { throw Error("LOOKUP_FAILURE"); },
+    async () => { throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED"); }, retained, releases);
+  assert.deepEqual(retained.splice(0), ["retain"]);
+  assert.deepEqual(releases, []);
+  await assert.rejects(run(async () => { throw Error("LOOKUP_FAILURE"); },
+    async () => {}, retained, releases), /LOOKUP_FAILURE/);
+  assert.deepEqual(retained, []);
+  assert.deepEqual(releases, ["release"]);
 });
 
 test("Task6A V2 poller rechecks before its first ordinary effect", async () => {

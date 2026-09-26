@@ -5,6 +5,8 @@
    plus outer-finally suppression, including held-check/shutdown timing.
 3. Insert existing V2 no-write samples and shutdown rechecks at both
    boundaries, preserving the terminal security branch and permitted flow.
+   Codex P1 refinement: capture a rejected runtime lookup, resample refusal,
+   and only then propagate the rejection on a permitted path.
 4. Run focused, pure/cutover, relevant spawner, TypeScript/source contracts
    and independent read-only review; fix important findings with RED tests.
 5. Deliver scoped PR, review exact head, SHA-condition merge, preserved

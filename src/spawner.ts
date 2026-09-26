@@ -7985,7 +7985,14 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   const shouldInstallImplementGitWrapper = role === "developer" && Boolean(claim.storyId);
   const pathPrefix = shouldInstallImplementGitWrapper ? installImplementGitWrapper(spawnCwd, transcriptPath) : undefined;
   const runtimeSessions = createRuntimeSessionRepository(getSql());
-  const reservedRuntimeSession = await runtimeSessions.findById(runtimeSessionId);
+  let runtimeLookupSettled:
+    | { ok: true; session: ClaimRuntimeSession | undefined }
+    | { ok: false; error: unknown };
+  try {
+    runtimeLookupSettled = { ok: true, session: await runtimeSessions.findById(runtimeSessionId) };
+  } catch (error) {
+    runtimeLookupSettled = { ok: false, error };
+  }
   try {
     await assertTask6aPreSchemaOrdinaryStartupV2();
   } catch {
@@ -8000,6 +8007,8 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     console.warn("[spawner] Shutdown before runtime start; claim left unchanged for inspection");
     return;
   }
+  if (!runtimeLookupSettled.ok) throw runtimeLookupSettled.error;
+  const reservedRuntimeSession = runtimeLookupSettled.session;
   let startingRuntimeSession: ClaimRuntimeSession | undefined;
   try {
     startingRuntimeSession = await runtimeSessions.markStarting({
