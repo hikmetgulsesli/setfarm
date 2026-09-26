@@ -808,7 +808,15 @@ export function createRuntimeSessionRepository(sql: Sql) {
           input.ownerInstanceId,
         );
         await assertBoundRecoveryLeaseLiveInTransaction(transaction, current, input.recoveryFence);
-        if (current.state === "starting") return mapRuntimeSession(current);
+        if (current.state === "starting") {
+          if ((input.sessionKey !== undefined && input.sessionKey !== current.session_key)
+            || (input.worktree !== undefined && input.worktree !== current.worktree)
+            || (input.runtimePath !== undefined && input.runtimePath !== current.runtime_path)
+            || (input.transcriptPath !== undefined && input.transcriptPath !== current.transcript_path)) {
+            throw new Error("RUNTIME_SESSION_START_IDENTITY_MISMATCH");
+          }
+          return mapRuntimeSession(current);
+        }
         if (current.state !== "reserved") throw new Error(`RUNTIME_SESSION_START_STATE_INVALID:${current.state}`);
         const now = await readDatabaseWallClock(
           transaction,
