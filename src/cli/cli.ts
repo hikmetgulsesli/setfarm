@@ -11,6 +11,7 @@ import { emitEvent, getRecentEvents, getRunEvents, type SetfarmEvent } from "../
 import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/daemonctl.js";
 import { startSpawner, stopSpawner, getSpawnerStatus, isSpawnerRunning } from "../server/spawnerctl.js";
 import { assertOrdinarySpawnerDeploymentCutoverAdmissionV1 } from "../internal-production/baseline-deployment-cutover-v1.js";
+import { assertTask6aPreSchemaOrdinaryStartupV2 } from "../internal-production/baseline-task6a-preschema-ordinary-refusal-v2.js";
 import {
   claimStep,
   completeStep,
@@ -668,6 +669,7 @@ async function main() {
       if (!target) { process.stderr.write("Missing agent-id.\n"); process.exit(1); }
       const callerIdx = args.indexOf("--caller");
       const callerAgent = callerIdx !== -1 ? args[callerIdx + 1] : undefined;
+      await assertTask6aPreSchemaOrdinaryStartupV2();
       const result = await claimStep(target, callerAgent);
       if (!result.found) {
         process.stdout.write("NO_WORK\n");

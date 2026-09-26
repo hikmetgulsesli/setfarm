@@ -237,6 +237,43 @@ test("Task6A V2 ongoing spawn rechecks before its first ordinary effect", async 
   assert.deepEqual(effects, ["preflight", "effect"]);
 });
 
+test("Task6A V2 direct CLI claim refuses before claim effects or output", async () => {
+  const source = readFileSync(path.join(sourceRoot, "cli/cli.ts"), "utf8");
+  const tree = ts.createSourceFile("cli.ts", source, ts.ScriptTarget.Latest, true);
+  const main = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "main");
+  assert.ok(main?.body);
+  const step = main.body.statements.find((node): node is ts.IfStatement =>
+    ts.isIfStatement(node) && node.expression.getText(tree) === 'group === "step"');
+  assert.ok(step && ts.isBlock(step.thenStatement));
+  const claim = step.thenStatement.statements.find((node): node is ts.IfStatement =>
+    ts.isIfStatement(node) && node.expression.getText(tree) === 'action === "claim"');
+  assert.ok(claim && ts.isBlock(claim.thenStatement));
+  const statements = claim.thenStatement.statements;
+  const preflight = "await assertTask6aPreSchemaOrdinaryStartupV2();";
+  const claimCall = "const result = await claimStep(target, callerAgent);";
+  assert.equal(statements[3]?.getText(tree), preflight);
+  assert.equal(statements[4]?.getText(tree), claimCall);
+  assert.ok(statements.slice(5).some((node) => node.getText(tree).includes('process.stdout.write("NO_WORK\\n")')));
+  assert.ok(statements.slice(5).some((node) => node.getText(tree).includes("process.stdout.write(JSON.stringify(")));
+  const run = new Function("check", "claim", `return (async () => {
+    const assertTask6aPreSchemaOrdinaryStartupV2 = check;
+    const claimStep = claim;
+    const target = "agent";
+    const callerAgent = undefined;
+    ${statements[3]!.getText(tree)}
+    ${statements[4]!.getText(tree)}
+    return result;
+  })();`) as (check: () => Promise<void>, claim: () => Promise<unknown>) => Promise<unknown>;
+  const calls: string[] = [];
+  await assert.rejects(run(async () => { calls.push("preflight"); throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED"); },
+    async () => { calls.push("claim"); return { found: false }; }), /TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED/);
+  assert.deepEqual(calls.splice(0), ["preflight"]);
+  assert.deepEqual(await run(async () => { calls.push("preflight"); },
+    async () => { calls.push("claim"); return { found: false }; }), { found: false });
+  assert.deepEqual(calls, ["preflight", "claim"]);
+});
+
 test("Task6A V2 journal inspector is a read-only transaction and requires exact attestation and all 33 rows", async () => {
   const source = readFileSync(path.join(sourceRoot, "db/contract-spine-migrations.ts"), "utf8");
   const tree = ts.createSourceFile("contract-spine-migrations.ts", source, ts.ScriptTarget.Latest, true);
