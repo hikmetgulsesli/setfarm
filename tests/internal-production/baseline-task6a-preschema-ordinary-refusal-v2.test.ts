@@ -344,6 +344,70 @@ test("Task6A V2 poller rechecks before its first ordinary effect", async () => {
   assert.deepEqual(calls, ["preflight", "termination"]);
 });
 
+test("Task6A V2 claim maintenance propagates refusal before effects and rechecks after await", async () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const maintenance = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "runClaimMaintenance");
+  assert.ok(maintenance?.body);
+  const statements = maintenance.body.statements;
+  assert.equal(statements[0]?.getText(tree), "if (shuttingDown || claimMaintenanceInFlight) return;");
+  assert.equal(statements[1]?.getText(tree), "await assertTask6aPreSchemaOrdinaryStartupV2();");
+  assert.equal(statements[2]?.getText(tree), "if (shuttingDown || claimMaintenanceInFlight) return;");
+  assert.equal(statements[3]?.getText(tree), "claimMaintenanceInFlight = true;");
+  const guarded = statements[4];
+  assert.ok(guarded && ts.isTryStatement(guarded));
+  assert.equal(guarded.tryBlock.statements[0]?.getText(tree), "await reapFinishedClaims();");
+  const run = new Function("check", "effect", "state", `return (async () => {
+    let shuttingDown = state.shuttingDown;
+    let claimMaintenanceInFlight = state.inFlight;
+    const assertTask6aPreSchemaOrdinaryStartupV2 = async () => check(() => { shuttingDown = true; }, () => { claimMaintenanceInFlight = true; });
+    ${statements.slice(0, 4).map((node) => node.getText(tree)).join("\n")}
+    effect();
+  })();`) as (check: (shutdown: () => void, claim: () => void) => Promise<void>,
+    effect: () => void, state: { shuttingDown: boolean; inFlight: boolean }) => Promise<void>;
+  const calls: string[] = [];
+  await assert.rejects(run(async () => { calls.push("preflight"); throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED"); },
+    () => calls.push("effect"), { shuttingDown: false, inFlight: false }), /TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED/);
+  assert.deepEqual(calls.splice(0), ["preflight"]);
+  await run(async (shutdown) => { calls.push("preflight"); shutdown(); },
+    () => calls.push("effect"), { shuttingDown: false, inFlight: false });
+  assert.deepEqual(calls.splice(0), ["preflight"]);
+  await run(async (_shutdown, claim) => { calls.push("preflight"); claim(); },
+    () => calls.push("effect"), { shuttingDown: false, inFlight: false });
+  assert.deepEqual(calls.splice(0), ["preflight"]);
+  await run(async () => { calls.push("preflight"); },
+    () => calls.push("effect"), { shuttingDown: false, inFlight: false });
+  assert.deepEqual(calls, ["preflight", "effect"]);
+});
+
+test("Task6A V2 detached maintenance timer handles a propagated refusal", async () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const main = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "main");
+  assert.ok(main?.body);
+  const timer = main.body.statements.find((node) => node.getText(tree).includes("void runClaimMaintenance()"));
+  assert.ok(timer);
+  assert.match(timer.getText(tree), /void runClaimMaintenance\(\)\.catch\(/);
+  const run = new Function("maintenance", "warning", `return async () => {
+    const intervalHandles = [];
+    const POLL_INTERVAL_MS = 10_000;
+    let callback;
+    const setInterval = (fn) => { callback = fn; return 1; };
+    const runClaimMaintenance = maintenance;
+    const console = { warn: warning };
+    ${timer.getText(tree)}
+    callback();
+    await new Promise((resolve) => setImmediate(resolve));
+  };`) as (maintenance: () => Promise<void>, warning: (message: string) => void) => () => Promise<void>;
+  const warnings: string[] = [];
+  await run(async () => { throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED"); },
+    (message) => warnings.push(message))();
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED/);
+});
+
 test("Task6A V2 direct CLI claim refuses before claim effects or output", async () => {
   const source = readFileSync(path.join(sourceRoot, "cli/cli.ts"), "utf8");
   const tree = ts.createSourceFile("cli.ts", source, ts.ScriptTarget.Latest, true);
