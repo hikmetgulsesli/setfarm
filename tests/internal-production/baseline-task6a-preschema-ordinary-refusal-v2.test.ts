@@ -318,6 +318,32 @@ test("Task6A V2 ongoing spawn rechecks before its first ordinary effect", async 
   assert.deepEqual(effects, ["preflight", "effect"]);
 });
 
+test("Task6A V2 poller rechecks before its first ordinary effect", async () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const poll = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "pollForPendingWork");
+  assert.ok(poll?.body);
+  assert.equal(poll.body.statements[0]?.getText(tree), "if (shuttingDown) return;");
+  const guarded = poll.body.statements[1];
+  assert.ok(guarded && ts.isTryStatement(guarded));
+  const statements = guarded.tryBlock.statements;
+  assert.equal(statements[0]?.getText(tree), "await assertTask6aPreSchemaOrdinaryStartupV2();");
+  assert.equal(statements[1]?.getText(tree), "await processRunTerminationRequests();");
+  const run = new Function("preflight", "effect", `return (async () => {
+    const assertTask6aPreSchemaOrdinaryStartupV2 = preflight;
+    const processRunTerminationRequests = effect;
+    ${statements[0]!.getText(tree)}
+    ${statements[1]!.getText(tree)}
+  })();`) as (preflight: () => Promise<void>, effect: () => Promise<void>) => Promise<void>;
+  const calls: string[] = [];
+  await assert.rejects(run(async () => { calls.push("preflight"); throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED"); },
+    async () => { calls.push("termination"); }), /TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED/);
+  assert.deepEqual(calls.splice(0), ["preflight"]);
+  await run(async () => { calls.push("preflight"); }, async () => { calls.push("termination"); });
+  assert.deepEqual(calls, ["preflight", "termination"]);
+});
+
 test("Task6A V2 direct CLI claim refuses before claim effects or output", async () => {
   const source = readFileSync(path.join(sourceRoot, "cli/cli.ts"), "utf8");
   const tree = ts.createSourceFile("cli.ts", source, ts.ScriptTarget.Latest, true);
