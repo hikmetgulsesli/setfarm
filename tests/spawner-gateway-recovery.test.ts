@@ -812,7 +812,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /cleanupStaleSetfarmOpenClawTaskRecords\("startup"\)/);
     assert.match(source, /cleanupStaleSetfarmOpenClawTaskRecords\("prespawn"\)/);
     assert.match(source, /const result = cleanupStaleSetfarmOpenClawTaskRecords\("interval"\)/);
-    assert.match(source, /void restartGatewayAfterOpenClawCleanup\("interval",\s*result\)/);
+    assert.match(source, /await restartGatewayAfterOpenClawCleanup\("interval",\s*result\)/);
     assert.match(source, /process\.platform === "darwin"/);
     assert.match(source, /command: OPENCLAW_CLI,\s*args: \["gateway", "restart"\]/);
     assert.match(source, /restarting \$\{restartCommand\.label\} after stale OpenClaw cleanup/);
