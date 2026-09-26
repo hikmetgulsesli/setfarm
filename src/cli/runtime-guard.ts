@@ -44,7 +44,9 @@ const SETFARM_REPO_DIR = process.env.SETFARM_REPO_DIR || defaultRepoDir();
 const SETFARM_REPO_LABEL = SETFARM_REPO_DIR;
 
 function git(args: string[]): string {
-  return execFileSync("git", args, {
+  // This background guard reads Git state on every CLI launch. A default
+  // status may refresh the index and mutate a retained worktree's Git admin.
+  return execFileSync("git", ["--no-optional-locks", ...args], {
     cwd: SETFARM_REPO_DIR,
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf-8",
