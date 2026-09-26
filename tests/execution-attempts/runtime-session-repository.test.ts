@@ -731,6 +731,45 @@ async function seedAttemptBoundRecoveryRuntime(
 }
 
 describe("durable runtime session ownership", () => {
+  it("refuses crossed supplied identity on a starting retry without mutating the locked row", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-runtime-start-retry-identity";
+      const { stepDbId, storyDbId, claimId } = await seedStory(database, runId);
+      const sessions = createRuntimeSessionRepository(database.sql);
+      const reserved = await sessions.reserve({
+        sessionId: "RTS_runtime-start-retry-0001", runId, stepDbId,
+        workflowStepId: "implement", storyDbId, storyId: "US-001", claimId,
+        claimAgentId: "feature-dev_developer", runtimeAgentId: "prism",
+        runtimeKind: "openclaw_session", ownerInstanceId: "spawner-retry",
+        worktree: "/runtime/reserved",
+      });
+      const identity = { sessionId: reserved.sessionId, ownerInstanceId: reserved.ownerInstanceId,
+        sessionKey: "exact-session-key", worktree: "/runtime/story-worktrees/us-001",
+        runtimePath: "/runtime/agent-us-001", transcriptPath: "/runtime/us-001.jsonl" };
+      const starting = await sessions.markStarting(identity);
+      assert.equal(starting.state, "starting");
+      assert.equal((await sessions.markStarting(identity)).stateVersion, starting.stateVersion);
+      const crossed = [
+        { sessionKey: "crossed-session-key" },
+        { worktree: "/runtime/story-worktrees/us-002" },
+        { runtimePath: "/runtime/agent-us-002" },
+        { transcriptPath: "/runtime/us-002.jsonl" },
+      ];
+      for (const variant of crossed) {
+        await assert.rejects(sessions.markStarting({ ...identity, ...variant }),
+          /RUNTIME_SESSION_START_IDENTITY_MISMATCH/);
+        assert.deepEqual(await sessions.findById(reserved.sessionId), starting);
+      }
+      const legacyReplay = await sessions.markStarting({
+        sessionId: reserved.sessionId, ownerInstanceId: reserved.ownerInstanceId,
+      });
+      assert.deepEqual(legacyReplay, starting);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("serializes pre-attempt expiry with compound failure in both constructible lock orders", async () => {
     for (const ordering of ["expiry-first", "termination-first"] as const) {
       const database = await createIsolatedTestDatabase();
