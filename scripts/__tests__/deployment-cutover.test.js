@@ -135,6 +135,120 @@ const pre32AnnotationSources = kind => ({
   "internal-production/baseline-positive-worktree-pre32-absence-annotation-v1": pre32AnnotationSource(kind),
 });
 
+const pre32AnnotationV2Source = kind => `import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
+  const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value)
+    :Array.isArray(value)?'['+value.map(canonical).join(',')+']'
+    :'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
+  const hash=value=>createHash('sha256').update(canonical(value)).digest('hex');
+  export async function observeCodeOwnedPositiveWorktreePre32AbsenceAnnotationV2(){
+    if(arguments.length)throw Error('UNEXPECTED_INPUT');
+    const marker=path.join(process.cwd(),'.setfarm','pre32-v7-annotation-called');
+    fs.mkdirSync(path.dirname(marker),{recursive:true});fs.appendFileSync(marker,'x');
+    const kind=${JSON.stringify(kind)};if(kind==='error')throw Error('PRIVATE_DATABASE_PASSWORD');
+    const base=path.join(process.cwd(),'runtime','story-worktrees');
+    const root=base+'/a';
+    const catalogBody={schema:'setfarm.internal-production-positive-worktree-physical-catalog.v2',
+      status:'unresolved',observerPidExcluded:1234,entries:Object.freeze([]),
+      absentBases:Object.freeze(kind==='forged-absence'?[]:[base]),incidentalFiles:Object.freeze([]),
+      blockers:Object.freeze([Object.freeze({root,reason:'prunable-git-worktree'})])};
+    const physicalCatalog=Object.freeze({...catalogBody,
+      catalogHash:kind==='wrong-catalog-hash'?'b'.repeat(64):hash(catalogBody)});
+    const activeBody={schema:'setfarm.internal-production-positive-worktree-active-rows.v2',
+      authority:'diagnostic-only',physicalIdentityProvenance:'unverified',activeRuns:Object.freeze([]),
+      openClaims:Object.freeze([]),activeAttempts:Object.freeze([]),activeSessions:Object.freeze([]),
+      counts:Object.freeze({runCount:0,claimCount:0,attemptCount:0,sessionCount:0})};
+    const activeRows=Object.freeze({...activeBody,
+      snapshotHash:kind==='wrong-active-hash'?'e'.repeat(64):hash(activeBody)});
+    const heldBody={schema:'setfarm.internal-production-positive-worktree-host-pair.v2',
+      authority:'diagnostic-only',physicalIdentityProvenance:'unverified',physicalCatalog,
+      databaseSnapshot:activeRows};
+    const heldPair=Object.freeze({...heldBody,pairHash:kind==='wrong-held-hash'?'a'.repeat(64):hash(heldBody)});
+    const inventoryBody={schema:'setfarm.legacy-finding-publication-inventory.v1',entries:Object.freeze([])};
+    const legacyFindingPublicationInventory=Object.freeze({...inventoryBody,inventoryHash:hash(inventoryBody)});
+    const legacyCensus=Object.freeze({activeRunCount:0,openClaimCount:0,executionAttemptCount:0,
+      activeRuntimeSessionCount:0,activeCompletionOwnerCount:0,unsettledMandatoryEffectCount:0,
+      artifactReservationCount:0,publicationBatchCount:0,artifactPublicationCount:0,
+      terminationOwnerCount:0,findingOwnerCount:0,recoveryOwnerCount:0,operationalDeliveryCount:0,
+      ...(kind==='missing-census'?{}:{legacyFindingPublicationInventory})});
+    const bindingBody={schema:'setfarm.internal-production-positive-worktree-binding-rows.v1',
+      authority:kind==='binding-cutover'?'cutover':'diagnostic-only',
+      physicalIdentityProvenance:'unverified',activeAttempts:Object.freeze([]),
+      activeSessions:Object.freeze([]),counts:Object.freeze({attemptCount:kind==='wrong-binding-count'?1:0,
+        sessionCount:0})};
+    const bindingRows=Object.freeze({...bindingBody,
+      snapshotHash:kind==='wrong-binding-hash'?'f'.repeat(64):hash(bindingBody)});
+    const databaseBody={schema:'setfarm.internal-production-pre32-active-binding-snapshot.v7',
+      authority:kind==='nested-cutover'?'cutover':'diagnostic-only',tableLockScope:'fixed-pre32-legacy-superset',
+      journalIdentity:kind==='wrong-journal'?'unknown':'source-ordinal-name-checksum-state-1-through-31',
+      lockState:kind==='wrong-lock'?'held-after-return':'released-at-return',
+      legacyCensus,activeRows:kind==='crossed-active'?Object.freeze({...activeRows}):activeRows,
+      bindingRows,quarantinedRuntimeSessionCount:0,
+      ...(kind==='extra-db-field'?{cutoverReady:true}:{})};
+    const pre32Database=Object.freeze({...databaseBody,snapshotHash:hash(databaseBody)});
+    const pairBody={schema:'setfarm.internal-production-pre32-physical-database-pair.v7',
+      authority:'diagnostic-only',physicalIdentityProvenance:'unverified',heldPair,pre32Database};
+    const sourcePair=Object.freeze({...pairBody,pairHash:kind==='wrong-pair-hash'?'c'.repeat(64):hash(pairBody)});
+    const witnessBody={schema:'setfarm.internal-production-prunable-absence-witness.v3',
+      authority:'diagnostic-only',temporalScope:'v2-bracketed-two-pass',hostPair:heldPair,
+      sourcePairHash:heldPair.pairHash,sourceCatalogHash:heldPair.physicalCatalog.catalogHash,
+      witnesses:Object.freeze([Object.freeze({root,absentBase:base}),
+        ...(kind==='extra-witness'?[Object.freeze({root:base+'/z',absentBase:base})]:[])]),
+      unwitnessedPrunableCount:0};
+    const witness=Object.freeze({...witnessBody,witnessHash:hash(witnessBody)});
+    const body={schema:'setfarm.internal-production-pre32-absent-git-record-annotation.v2',
+      authority:kind==='cutover'?'cutover':'diagnostic-only',physicalIdentityProvenance:'unverified',
+      sourcePair,witness,witnessedBlockers:Object.freeze([physicalCatalog.blockers[0]]),
+      remainingBlockers:Object.freeze([])};
+    return Object.freeze({...body,annotationHash:hash(body)});
+  }`;
+const pre32AnnotationV2Sources = kind => ({
+  "internal-production/baseline-positive-worktree-pre32-absence-annotation-v2": pre32AnnotationV2Source(kind),
+});
+
+test("bootstrap exposes exact-journal V7 absent-record annotation without authority", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-absence-annotation-v2", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout);
+  assert.equal(observed.pre32AbsenceAnnotationV2.schema,
+    "setfarm.internal-production-pre32-absent-git-record-annotation.v2");
+  assert.equal(observed.pre32AbsenceAnnotationV2.sourcePair.pre32Database.journalIdentity,
+    "source-ordinal-name-checksum-state-1-through-31");
+  assert.equal(observed.pre32AbsenceAnnotationV2.authority, "diagnostic-only");
+  assert.equal(Object.hasOwn(observed, "pre32HostPairV7"), false);
+  assert.equal(fs.readFileSync(path.join(root, ".setfarm/pre32-v7-annotation-called"), "utf8"), "x");
+}, undefined, { extraSources: pre32AnnotationV2Sources("valid") }));
+
+for (const kind of ["error", "cutover", "wrong-journal", "wrong-pair-hash",
+  "wrong-catalog-hash", "wrong-active-hash", "wrong-held-hash", "crossed-active",
+  "forged-absence", "extra-witness", "nested-cutover", "wrong-lock",
+  "wrong-binding-hash", "binding-cutover", "wrong-binding-count", "missing-census",
+  "extra-db-field"]) {
+  test(`V7 annotation bootstrap refuses ${kind} without private cause`, () => fixture(root => {
+    const result = run(root, ["inspect-pre32-absence-annotation-v2", "--json"]);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /^DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n/);
+    assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+  }, undefined, { extraSources: pre32AnnotationV2Sources(kind) }));
+}
+
+test("V7 annotation bootstrap rejects extra argv before observer invocation", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-absence-annotation-v2", "--json", "extra"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-v7-annotation-called")), false);
+}, undefined, { extraSources: pre32AnnotationV2Sources("valid") }));
+
+test("V7 annotation bootstrap rejects source tampering before observer invocation", () => fixture(root => {
+  fs.appendFileSync(path.join(root, "src/internal-production/baseline-positive-worktree-pre32-absence-annotation-v2.ts"),
+    "\nthrow Error('PRIVATE_DATABASE_PASSWORD');\n");
+  const result = run(root, ["inspect-pre32-absence-annotation-v2", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-v7-annotation-called")), false);
+  assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+}, undefined, { extraSources: pre32AnnotationV2Sources("valid") }));
+
 test("bootstrap exposes an authenticated V6 absent-record annotation without cutover authority", () => fixture(root => {
   const result = run(root, ["inspect-pre32-absence-annotation-v1", "--json"]);
   assert.equal(result.status, 0, result.stderr);
