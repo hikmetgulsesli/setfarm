@@ -99,20 +99,28 @@ export async function observeTask6aWriterDatabaseSnapshotV2(databaseUrl: string 
     const postgresModule = await import("postgres");
     sql = postgresModule.default(databaseUrl, {
       max: 1, idle_timeout: 1, connect_timeout: 5, debug: false, onnotice: () => {},
+      connection: { statement_timeout: 5000, lock_timeout: 1000, idle_in_transaction_session_timeout: 5000 },
     });
     if (sql.options.host.length !== 1 || sql.options.host[0] !== target.hostname
       || sql.options.port.length !== 1 || sql.options.port[0] !== 5432
       || sql.options.database !== "setfarm" || sql.options.user !== username) fail();
-    return await sql.begin("isolation level repeatable read read only", async tx => {
-      const connection = tx as unknown as typeof sql;
-      if (!connection) fail();
-      await connection`SET LOCAL statement_timeout = '5s'`;
-      await connection`SET LOCAL lock_timeout = '1s'`;
-      const snapshot = await projectTask6aWriterDatabaseSnapshotInTransactionV2(async statement =>
-        Array.from(await connection.unsafe(statement)));
-      if (snapshot.database.sessionRole !== username) fail();
-      return snapshot;
-    });
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([sql.begin("isolation level repeatable read read only", async tx => {
+        const connection = tx as unknown as typeof sql;
+        if (!connection) fail();
+        await connection`SET LOCAL statement_timeout = '5s'`;
+        await connection`SET LOCAL lock_timeout = '1s'`;
+        const snapshot = await projectTask6aWriterDatabaseSnapshotInTransactionV2(async statement =>
+          Array.from(await connection.unsafe(statement)));
+        if (snapshot.database.sessionRole !== username) fail();
+        return snapshot;
+      }), new Promise<never>((_, reject) => {
+        deadline = setTimeout(() => reject(new Error("TRANSACTION_DEADLINE")), 7500);
+      })]);
+    } finally {
+      if (deadline) clearTimeout(deadline);
+    }
   } catch { fail(); }
   finally {
     if (sql) {

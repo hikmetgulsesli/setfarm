@@ -28,10 +28,8 @@ test("projector makes one fixed, all-state, exact-database/session-role query an
   });
   assert.equal(statements.length, 1);
   const sql = statements[0]!;
-  for (const fragment of ["pg_database", "pg_roles", "pg_stat_activity", "session_user", "current_user",
-    "pg_backend_pid()", "a.datid = d.oid", "a.usesysid = session_role.oid", "a.pid <> pg_backend_pid()"])
-    assert.ok(sql.includes(fragment), fragment);
-  assert.doesNotMatch(sql, /a\.state\s*=|state\s+IN\s*\(/i);
+  assert.equal(sql.replace(/\s+/g, " ").trim(),
+    'SELECT d.datname AS "databaseName", database_owner.rolname AS "databaseOwnerRole", session_role.rolname AS "sessionRole", current_user AS "effectiveRole", session_role.rolcanlogin AS "login", session_role.rolsuper AS "superuser", session_role.rolbypassrls AS "bypassRls", session_role.rolcreaterole AS "createRole", session_role.rolcreatedb AS "createDatabase", (SELECT count(*)::text FROM pg_stat_activity AS a WHERE a.datid = d.oid AND a.usesysid = session_role.oid AND a.pid <> pg_backend_pid()) AS "otherSessionCountText" FROM pg_database AS d JOIN pg_roles AS database_owner ON database_owner.oid = d.datdba JOIN pg_roles AS session_role ON session_role.rolname = session_user WHERE d.datname = current_database()');
   assert.equal(snapshot.authority, "diagnostic-only");
   assert.equal(snapshot.temporalScope, "catalog-snapshot-and-live-session-sample");
   assert.equal(snapshot.cutoverAdmission, "not-granted");
@@ -117,6 +115,7 @@ test("adapter uses one bounded read-only transaction and closes on every driver 
         globalThis.probe.url=url;globalThis.probe.options=options;
         return {options:{host:[globalThis.probe.wrongTarget?'remote.invalid':'localhost'],port:[5432],database:'setfarm',user:'fixture'},
           begin:async(mode,operation)=>{globalThis.probe.modes.push(mode);
+            if(globalThis.probe.hangBegin)return new Promise(()=>{});
             const tx=(strings)=>{globalThis.probe.locals.push(strings[0]);return []};
             tx.unsafe=async statement=>{globalThis.probe.statements.push(statement);
               if(globalThis.probe.failure)throw Error('PRIVATE_QUERY_PASSWORD');
@@ -134,8 +133,8 @@ test("adapter uses one bounded read-only transaction and closes on every driver 
         catch(caught){error=caught.message};const {probe}=globalThis;return{output,error,modes:probe.modes,locals:probe.locals,queries:probe.statements.length,closes:probe.closes,url:probe.url,target:probe.options}};
       process.stdout.write(JSON.stringify({success:await run({}),failure:await run({failure:true}),
         wrongTarget:await run({wrongTarget:true}),wrongRole:await run({row:{...${JSON.stringify(row())},sessionRole:'setrox',effectiveRole:'setrox'}}),
-        closeFailure:await run({closeFailure:true})}));
-    `], { encoding: "utf8", timeout: 15000, env: {} });
+        closeFailure:await run({closeFailure:true}),hungBegin:await run({hangBegin:true})}));
+    `], { encoding: "utf8", timeout: 20000, env: {} });
     assert.equal(result.status, 0, result.stderr);
     const observed = JSON.parse(result.stdout);
     for (const entry of [observed.success, observed.failure, observed.wrongRole, observed.closeFailure]) {
@@ -154,6 +153,11 @@ test("adapter uses one bounded read-only transaction and closes on every driver 
     assert.deepEqual(observed.wrongTarget.modes, []);
     assert.deepEqual(observed.wrongTarget.closes, [{ timeout: 1 }]);
     assert.equal(observed.closeFailure.error, ERROR);
+    assert.equal(observed.hungBegin.error, ERROR);
+    assert.deepEqual(observed.hungBegin.modes, ["isolation level repeatable read read only"]);
+    assert.deepEqual(observed.hungBegin.closes, [{ timeout: 1 }]);
+    assert.equal(observed.hungBegin.target.connection.statement_timeout, 5000);
+    assert.equal(observed.hungBegin.target.connection.lock_timeout, 1000);
     assert.equal(result.stdout.includes("PRIVATE_QUERY_PASSWORD"), false);
     assert.equal(result.stdout.includes("PRIVATE_CLOSE_PASSWORD"), false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
