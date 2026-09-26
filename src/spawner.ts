@@ -7572,7 +7572,10 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     console.log(`[spawner] Already running/claiming: ${key}, skip`);
     return;
   }
-  if (await shouldDeferBackgroundWorkflow(wfId)) {
+  const deferBackgroundWorkflow = await shouldDeferBackgroundWorkflow(wfId);
+  await assertTask6aPreSchemaOrdinaryStartupV2();
+  if (shuttingDown) return;
+  if (deferBackgroundWorkflow) {
     console.log(`[spawner] Deferring background workflow ${wfId}/${role}; foreground run is active`);
     queuedSpawns.add(key);
     setTimeout(() => {
@@ -7585,12 +7588,16 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     ? cleanupStaleSetfarmOpenClawTaskRecords("prespawn")
     : { sessions: 0, tasks: 0 };
   if (AGENT_RUNTIME === "openclaw" && !OPENCLAW_AGENT_LOCAL) await restartGatewayAfterOpenClawCleanup("prespawn", openClawCleanup);
+  await assertTask6aPreSchemaOrdinaryStartupV2();
+  if (shuttingDown) return;
   if (trackedRuntimeCount() >= MAX_CONCURRENT) {
     console.log(`[spawner] At capacity (${trackedRuntimeCount()}/${MAX_CONCURRENT}), skip ${agentId}`);
     return;
   }
   if (AGENT_RUNTIME === "openclaw" && !OPENCLAW_AGENT_LOCAL) {
     const gatewayReadiness = await getGatewayReadiness();
+    await assertTask6aPreSchemaOrdinaryStartupV2();
+    if (shuttingDown) return;
     if (!gatewayReadiness.ready) {
       maybeRestartGatewayForReadiness(gatewayReadiness.reason, key);
       console.warn(`[spawner] Gateway not ready (${gatewayReadiness.reason}; ${GATEWAY_READY_URL}); delaying ${key} for ${gatewayReadiness.retryAfterMs}ms`);

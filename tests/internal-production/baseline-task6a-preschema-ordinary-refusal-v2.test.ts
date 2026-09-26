@@ -318,6 +318,63 @@ test("Task6A V2 ongoing spawn rechecks before its first ordinary effect", async 
   assert.deepEqual(effects, ["preflight", "effect"]);
 });
 
+test("Task6A V2 prespawn rechecks after every awaited continuation before effects", async () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const spawn = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "spawnAgentNow");
+  assert.ok(spawn?.body);
+  const statements = spawn.body.statements;
+  const deferIndex = statements.findIndex((node) => ts.isVariableStatement(node)
+    && node.getText(tree).includes("await shouldDeferBackgroundWorkflow(wfId)"));
+  assert.ok(deferIndex >= 0, "background query must be an awaited statement before its effectful branch");
+  const restartIndex = statements.findIndex((node) => ts.isIfStatement(node)
+    && node.getText(tree).includes('await restartGatewayAfterOpenClawCleanup("prespawn", openClawCleanup)'));
+  assert.ok(restartIndex >= 0);
+  const restart = statements[restartIndex]!;
+  assert.ok(ts.isIfStatement(restart));
+  const runtime = statements.find((node): node is ts.IfStatement => ts.isIfStatement(node)
+    && node.getText(tree).includes("const gatewayReadiness = await getGatewayReadiness()"));
+  assert.ok(runtime && ts.isBlock(runtime.thenStatement));
+  const readinessStatements = runtime.thenStatement.statements;
+  const readinessIndex = readinessStatements.findIndex((node) => ts.isVariableStatement(node)
+    && node.getText(tree).includes("await getGatewayReadiness()"));
+  assert.ok(readinessIndex >= 0);
+
+  const boundaries: ReadonlyArray<{ name: string; body: ts.NodeArray<ts.Statement>; index: number; next: RegExp }> = [
+    { name: "background", body: statements, index: deferIndex, next: /if \(deferBackgroundWorkflow\)/ },
+    { name: "restart", body: statements, index: restartIndex, next: /if \(trackedRuntimeCount\(\) >= MAX_CONCURRENT\)/ },
+    { name: "readiness", body: readinessStatements, index: readinessIndex, next: /if \(!gatewayReadiness\.ready\)/ },
+  ];
+  for (const { name, body, index, next } of boundaries) {
+    const guard = body[index + 1]?.getText(tree);
+    const shutdown = body[index + 2]?.getText(tree);
+    assert.equal(guard, "await assertTask6aPreSchemaOrdinaryStartupV2();", `${name} guard`);
+    assert.equal(shutdown, "if (shuttingDown) return;", `${name} shutdown`);
+    assert.match(body[index + 3]?.getText(tree) || "", next, `${name} effect ordering`);
+    const run = new Function("wait", "preflight", "effect", `return (async () => {
+      let shuttingDown = false;
+      const assertTask6aPreSchemaOrdinaryStartupV2 = () => preflight(() => { shuttingDown = true; });
+      await wait();
+      ${guard}
+      ${shutdown}
+      effect();
+    })();`) as (wait: () => Promise<void>, preflight: (shutdown: () => void) => Promise<void>,
+      effect: () => void) => Promise<void>;
+    const calls: string[] = [];
+    await assert.rejects(run(async () => { calls.push("await"); },
+      async () => { calls.push("guard"); throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED"); },
+      () => calls.push("effect")), /TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED/);
+    assert.deepEqual(calls.splice(0), ["await", "guard"], name);
+    await run(async () => { calls.push("await"); },
+      async (shutdownNow) => { calls.push("guard"); shutdownNow(); }, () => calls.push("effect"));
+    assert.deepEqual(calls.splice(0), ["await", "guard"], name);
+    await run(async () => { calls.push("await"); },
+      async () => { calls.push("guard"); }, () => calls.push("effect"));
+    assert.deepEqual(calls, ["await", "guard", "effect"], name);
+  }
+});
+
 test("Task6A V2 poller rechecks before its first ordinary effect", async () => {
   const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
   const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
