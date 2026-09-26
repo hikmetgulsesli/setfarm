@@ -5,6 +5,7 @@
  */
 import { runtimeConfig } from "./runtime-config.js";
 import { assertOrdinarySpawnerDeploymentCutoverAdmissionV1 } from "./internal-production/baseline-deployment-cutover-v1.js";
+import { assertTask6aPreSchemaOrdinaryStartupV2 } from "./internal-production/baseline-task6a-preschema-ordinary-refusal-v2.js";
 import { acquireInternalProductionDirectSpawnerChildStartupContextV1, consumeInternalProductionColdSpawnerPidResidueV1, observeInternalProductionColdSpawnerBootstrapJournalCensusV1, publishInternalProductionColdSpawnerBootstrapClaimV1, resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1, resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
 import postgres from "postgres";
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
@@ -11157,6 +11158,7 @@ async function main() {
   // Refusal-only preflight preserves any already-visible unsettled evidence.
   if (await runInternalProductionDirectSpawnerStartupV1()) return;
   if (await runInternalProductionColdSpawnerStartupV1()) return;
+  await assertTask6aPreSchemaOrdinaryStartupV2();
   assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   const coldRecoveryAdmission = await observeOrdinarySpawnerColdRecoveryAdmissionV1();
   assertOrdinarySpawnerDeploymentCutoverAdmissionV1();

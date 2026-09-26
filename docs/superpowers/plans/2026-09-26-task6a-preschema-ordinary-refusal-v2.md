@@ -1,0 +1,9 @@
+# Task6A pre-schema ordinary-spawner refusal V2 plan
+
+1. Preserve all dirty and retained worktrees. Work only from clean main in an isolated branch. Record root statuses and the current read-only host truth.
+2. RED: test a fixed-operation probe with exact canonical bytes and file/ancestor identity, no filesystem write, malformed-record and symlink refusal, and a pure classifier that distinguishes an absent operation from an operation-bound not-through33 journal and exact through33 journal. The probe itself also fails closed on observed identity drift and uncertain descriptor cleanup; those fault-injection branches remain outside this focused fixture.
+3. GREEN: implement the smallest import-inert probe and zero-input preflight. Do not call V1 broad observers or grant a positive capability. Add the preflight at the first ordinary `spawner.ts` seam after direct/cold child checks.
+4. Test the actual source-extracted startup prefix with fake decisions: a refusing preflight stops before the existing ordinary gate; passing and direct/cold paths retain their order. Assert all later ordinary effects follow this seam in source. Test the read-only journal inspector's exact 1–33 prefix, future migration-34 definition, later rows and negative branches with fake transaction ports, plus its negative path against the local read-only database. Run focused, pure, script/cutover, TypeScript, manifest and contract checks. Obtain independent read-only review and fix findings.
+5. Deliver one reviewed PR, clean-main guarded build and authenticated no-write host proof. Do not switch selected old service/CLI, mutate live DB roles/grants or apply migrations.
+
+This is causally needed because the V1 startup gate is after several ordinary effects. It remains a sampled refusal, not continuous admission. Positive DB/OS writer exclusion, physical ownership, V2 effect rechecks and operator selection remain separately required.
