@@ -67,7 +67,7 @@ function urlRole(raw: unknown): string {
 export function holdTask6aMissionControlLauncherV2() {
   if (arguments.length !== 0 || cleanupUncertain) fail();
   const descriptors: number[] = [];
-  let closed = false;
+  let closed = false, invalid = false;
   const close = () => {
     if (closed) return;
     closed = true;
@@ -175,15 +175,15 @@ export function holdTask6aMissionControlLauncherV2() {
     if (after.pid !== before.pid || !read().equals(bytes)) fail();
     const recheck = () => {
       try {
-        if (closed || cleanupUncertain || userInfo().homedir !== account.homedir
+        if (closed || invalid || cleanupUncertain || userInfo().homedir !== account.homedir
           || process.getuid?.() !== uid || process.geteuid?.() !== uid || !read().equals(bytes)) fail();
         const current = project();
         if (current.pid !== before.pid || !read().equals(bytes)) fail();
-      } catch { fail(); }
+      } catch { invalid = true; fail(); }
     };
     const assertSameDatabaseUrl = (raw: string) => {
       recheck();
-      if (raw !== databaseUrl) fail();
+      if (raw !== databaseUrl) { invalid = true; fail(); }
       recheck();
       return databaseRole;
     };

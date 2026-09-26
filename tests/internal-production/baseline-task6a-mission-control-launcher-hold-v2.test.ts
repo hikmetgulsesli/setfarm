@@ -149,3 +149,23 @@ for (const [name, action] of [
     assert.equal(result.otherError, ERROR);
   });
 }
+
+test("a failed recheck irreversibly invalidates the held interval after loaded state returns", () => {
+  const result = fixture({ action: `
+    const original=launchctl;
+    launchctl=launchctl.replace('pid = 12345','pid = 12346');
+    let firstFailed=false;try{held.recheck()}catch{firstFailed=true}
+    if(!firstFailed)throw Error('FIRST_RECHECK_DID_NOT_FAIL');
+    launchctl=original;held.recheck();
+  ` });
+  assert.equal(result.otherError, ERROR);
+});
+
+test("a failed private URL agreement irreversibly invalidates the holder", () => {
+  const result = fixture({ action: `
+    let firstFailed=false;try{held.assertSameDatabaseUrl('postgresql://fixture:OTHER_SECRET@localhost:5432/setfarm')}catch{firstFailed=true}
+    if(!firstFailed)throw Error('FIRST_AGREEMENT_DID_NOT_FAIL');
+    held.assertSameDatabaseUrl(${JSON.stringify("postgresql://fixture:PRIVATE_PASSWORD_ONE@localhost:5432/setfarm")});
+  ` });
+  assert.equal(result.otherError, ERROR);
+});
