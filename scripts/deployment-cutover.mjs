@@ -135,7 +135,7 @@ function sourceState() {
 }
 async function inspect() {
   if (typeof registerHooks !== "function" || process.execArgv.length || process.argv.length !== 4
-    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1"].includes(process.argv[2]) || process.argv[3] !== "--json"
+    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1"].includes(process.argv[2]) || process.argv[3] !== "--json"
     || pathToFileURL(path.resolve(process.argv[1])).href !== import.meta.url
     || Object.keys(process.env).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key)
       && !(process.platform === "darwin" && key === "__CF_USER_TEXT_ENCODING"))) fail();
@@ -260,7 +260,7 @@ async function inspect() {
     stage("controller-source");
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();
-    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair, pre32HostPairV5, pre32HostPairV6, pre32HostPairV7, pre32AbsenceAnnotationV1, activeBindingHostPairV1, heldBindingCandidatesV1;
+    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair, pre32HostPairV5, pre32HostPairV6, pre32HostPairV7, pre32AbsenceAnnotationV1, pre32AbsenceAnnotationV2, activeBindingHostPairV1, heldBindingCandidatesV1;
     if (process.argv[2] === "inspect-default-context") {
       stage("default-owner-load");
       const contextModule = await import("./deployment-cutover-default-context.mjs");
@@ -425,6 +425,195 @@ async function inspect() {
       pre32AbsenceAnnotationV1 = observed;
       stage("post-pre32-absence-annotation"); check();
     }
+    if (process.argv[2] === "inspect-pre32-absence-annotation-v2") {
+      stage("pre32-absence-annotation-load");
+      const annotationModule = await import("../dist/internal-production/baseline-positive-worktree-pre32-absence-annotation-v2.js");
+      check(); stage("pre32-absence-annotation");
+      const observed = await annotationModule.observeCodeOwnedPositiveWorktreePre32AbsenceAnnotationV2();
+      const descriptors = observed && Object.getOwnPropertyDescriptors(observed);
+      const keys = descriptors && Reflect.ownKeys(descriptors);
+      const expected = ["schema", "authority", "physicalIdentityProvenance", "sourcePair", "witness",
+        "witnessedBlockers", "remainingBlockers", "annotationHash"];
+      if (!Object.isFrozen(observed) || !keys || keys.length !== expected.length
+        || keys.some(key => typeof key !== "string" || !expected.includes(key)
+          || !descriptors[key].enumerable || !Object.hasOwn(descriptors[key], "value"))) fail();
+      const fields = Object.fromEntries(expected.map(key => [key, descriptors[key].value]));
+      const pair = fields.sourcePair, witness = fields.witness, database = pair?.pre32Database;
+      if (fields.schema !== "setfarm.internal-production-pre32-absent-git-record-annotation.v2"
+        || fields.authority !== "diagnostic-only" || fields.physicalIdentityProvenance !== "unverified"
+        || !Object.isFrozen(pair) || pair.schema !== "setfarm.internal-production-pre32-physical-database-pair.v7"
+        || pair.authority !== "diagnostic-only" || pair.physicalIdentityProvenance !== "unverified"
+        || !Object.isFrozen(pair.heldPair) || !Object.isFrozen(database)
+        || database.schema !== "setfarm.internal-production-pre32-active-binding-snapshot.v7"
+        || database.authority !== "diagnostic-only"
+        || database.tableLockScope !== "fixed-pre32-legacy-superset"
+        || database.journalIdentity !== "source-ordinal-name-checksum-state-1-through-31"
+        || database.lockState !== "released-at-return"
+        || typeof database.snapshotHash !== "string" || !/^[a-f0-9]{64}$/.test(database.snapshotHash)
+        || hash(canonical({ schema: database.schema, authority: database.authority,
+          tableLockScope: database.tableLockScope, journalIdentity: database.journalIdentity,
+          lockState: database.lockState, legacyCensus: database.legacyCensus,
+          activeRows: database.activeRows, bindingRows: database.bindingRows,
+          quarantinedRuntimeSessionCount: database.quarantinedRuntimeSessionCount })) !== database.snapshotHash
+        || typeof pair.pairHash !== "string" || !/^[a-f0-9]{64}$/.test(pair.pairHash)
+        || hash(canonical({ schema: pair.schema, authority: pair.authority,
+          physicalIdentityProvenance: pair.physicalIdentityProvenance,
+          heldPair: pair.heldPair, pre32Database: database })) !== pair.pairHash
+        || !Object.isFrozen(witness) || witness.schema !== "setfarm.internal-production-prunable-absence-witness.v3"
+        || witness.authority !== "diagnostic-only" || witness.temporalScope !== "v2-bracketed-two-pass"
+        || witness.hostPair !== pair.heldPair || witness.sourcePairHash !== pair.heldPair.pairHash
+        || witness.sourceCatalogHash !== pair.heldPair.physicalCatalog.catalogHash
+        || !Array.isArray(witness.witnesses) || !Object.isFrozen(witness.witnesses)
+        || typeof witness.witnessHash !== "string" || !/^[a-f0-9]{64}$/.test(witness.witnessHash)
+        || hash(canonical({ schema: witness.schema, authority: witness.authority,
+          temporalScope: witness.temporalScope, sourcePairHash: witness.sourcePairHash,
+          sourceCatalogHash: witness.sourceCatalogHash, hostPair: witness.hostPair,
+          witnesses: witness.witnesses, unwitnessedPrunableCount: witness.unwitnessedPrunableCount })) !== witness.witnessHash
+        || !Object.isFrozen(fields.witnessedBlockers) || !Array.isArray(fields.witnessedBlockers)
+        || !Object.isFrozen(fields.remainingBlockers) || !Array.isArray(fields.remainingBlockers)
+        || typeof fields.annotationHash !== "string" || !/^[a-f0-9]{64}$/.test(fields.annotationHash)
+        || hash(canonical({ schema: fields.schema, authority: fields.authority,
+          physicalIdentityProvenance: fields.physicalIdentityProvenance,
+          sourcePair: pair, witness, witnessedBlockers: fields.witnessedBlockers,
+          remainingBlockers: fields.remainingBlockers })) !== fields.annotationHash) fail();
+      const exactFrozen = (value, expectedKeys) => {
+        if (!value || typeof value !== "object" || types.isProxy(value)
+          || Object.getPrototypeOf(value) !== Object.prototype || !Object.isFrozen(value)) return false;
+        const descriptors = Object.getOwnPropertyDescriptors(value), keys = Reflect.ownKeys(descriptors);
+        return keys.length === expectedKeys.length && keys.every(key => typeof key === "string"
+          && expectedKeys.includes(key) && descriptors[key].enumerable
+          && Object.hasOwn(descriptors[key], "value"));
+      };
+      const census = database.legacyCensus, binding = database.bindingRows;
+      const censusCounts = ["activeRunCount", "openClaimCount", "executionAttemptCount",
+        "activeRuntimeSessionCount", "activeCompletionOwnerCount", "unsettledMandatoryEffectCount",
+        "artifactReservationCount", "publicationBatchCount", "artifactPublicationCount",
+        "terminationOwnerCount", "findingOwnerCount", "recoveryOwnerCount", "operationalDeliveryCount"];
+      const inventory = census?.legacyFindingPublicationInventory;
+      const bindingCounts = binding?.counts, activeCounts = database.activeRows?.counts;
+      if (!exactFrozen(database, ["schema", "authority", "tableLockScope", "journalIdentity",
+        "lockState", "legacyCensus", "activeRows", "bindingRows",
+        "quarantinedRuntimeSessionCount", "snapshotHash"])
+        || !exactFrozen(census, [...censusCounts, "legacyFindingPublicationInventory"])
+        || censusCounts.some(key => census[key] !== 0)
+        || !exactFrozen(inventory, ["schema", "entries", "inventoryHash"])
+        || inventory.schema !== "setfarm.legacy-finding-publication-inventory.v1"
+        || !Array.isArray(inventory.entries) || !Object.isFrozen(inventory.entries)
+        || inventory.entries.length > 4096
+        || typeof inventory.inventoryHash !== "string" || !/^[a-f0-9]{64}$/.test(inventory.inventoryHash)
+        || hash(canonical({ schema: inventory.schema, entries: inventory.entries })) !== inventory.inventoryHash
+        || !exactFrozen(binding, ["schema", "authority", "physicalIdentityProvenance",
+          "activeAttempts", "activeSessions", "counts", "snapshotHash"])
+        || binding.schema !== "setfarm.internal-production-positive-worktree-binding-rows.v1"
+        || binding.authority !== "diagnostic-only" || binding.physicalIdentityProvenance !== "unverified"
+        || !Array.isArray(binding.activeAttempts) || !Object.isFrozen(binding.activeAttempts)
+        || !Array.isArray(binding.activeSessions) || !Object.isFrozen(binding.activeSessions)
+        || !exactFrozen(bindingCounts, ["attemptCount", "sessionCount"])
+        || !exactFrozen(activeCounts, ["runCount", "claimCount", "attemptCount", "sessionCount"])
+        || Object.values(activeCounts).some(count => count !== 0)
+        || bindingCounts.attemptCount !== 0 || bindingCounts.sessionCount !== 0
+        || binding.activeAttempts.length !== 0 || binding.activeSessions.length !== 0
+        || typeof binding.snapshotHash !== "string" || !/^[a-f0-9]{64}$/.test(binding.snapshotHash)
+        || hash(canonical({ schema: binding.schema, authority: binding.authority,
+          physicalIdentityProvenance: binding.physicalIdentityProvenance,
+          activeAttempts: binding.activeAttempts, activeSessions: binding.activeSessions,
+          counts: bindingCounts })) !== binding.snapshotHash
+        || !Number.isSafeInteger(database.quarantinedRuntimeSessionCount)
+        || database.quarantinedRuntimeSessionCount < 0
+        || !exactFrozen(witness, ["schema", "authority", "temporalScope", "sourcePairHash",
+          "sourceCatalogHash", "hostPair", "witnesses", "unwitnessedPrunableCount", "witnessHash"])) fail();
+      let priorFinding = "";
+      const runStatuses = new Map();
+      for (const entry of inventory.entries) {
+        if (!exactFrozen(entry, ["findingSetHash", "publicationHash", "runId", "terminalRunStatus"])
+          || typeof entry.findingSetHash !== "string" || !/^[a-f0-9]{64}$/.test(entry.findingSetHash)
+          || typeof entry.publicationHash !== "string" || !/^[a-f0-9]{64}$/.test(entry.publicationHash)
+          || entry.findingSetHash <= priorFinding || typeof entry.runId !== "string"
+          || entry.runId.length < 1 || entry.runId.length > 500
+          || !["completed", "failed", "cancelled"].includes(entry.terminalRunStatus)
+          || (runStatuses.has(entry.runId) && runStatuses.get(entry.runId) !== entry.terminalRunStatus)) fail();
+        priorFinding = entry.findingSetHash;
+        runStatuses.set(entry.runId, entry.terminalRunStatus);
+      }
+      const held = pair.heldPair, catalog = held.physicalCatalog, active = held.databaseSnapshot;
+      if (!exactFrozen(pair, ["schema", "authority", "physicalIdentityProvenance", "heldPair", "pre32Database", "pairHash"])
+        || !exactFrozen(held, ["schema", "authority", "physicalIdentityProvenance", "physicalCatalog", "databaseSnapshot", "pairHash"])
+        || held.schema !== "setfarm.internal-production-positive-worktree-host-pair.v2"
+        || held.authority !== "diagnostic-only" || held.physicalIdentityProvenance !== "unverified"
+        || !exactFrozen(catalog, ["schema", "status", "observerPidExcluded", "entries", "absentBases",
+          "incidentalFiles", "blockers", "catalogHash"])
+        || catalog.schema !== "setfarm.internal-production-positive-worktree-physical-catalog.v2"
+        || !["complete", "unresolved"].includes(catalog.status)
+        || !Array.isArray(catalog.entries) || !Object.isFrozen(catalog.entries)
+        || !Array.isArray(catalog.absentBases) || !Object.isFrozen(catalog.absentBases)
+        || !Array.isArray(catalog.incidentalFiles) || !Object.isFrozen(catalog.incidentalFiles)
+        || !Array.isArray(catalog.blockers) || !Object.isFrozen(catalog.blockers)
+        || typeof catalog.catalogHash !== "string" || !/^[a-f0-9]{64}$/.test(catalog.catalogHash)
+        || hash(canonical({ schema: catalog.schema, status: catalog.status,
+          observerPidExcluded: catalog.observerPidExcluded, entries: catalog.entries,
+          absentBases: catalog.absentBases, incidentalFiles: catalog.incidentalFiles,
+          blockers: catalog.blockers })) !== catalog.catalogHash
+        || !exactFrozen(active, ["schema", "authority", "physicalIdentityProvenance", "activeRuns",
+          "openClaims", "activeAttempts", "activeSessions", "counts", "snapshotHash"])
+        || active.schema !== "setfarm.internal-production-positive-worktree-active-rows.v2"
+        || active.authority !== "diagnostic-only" || active.physicalIdentityProvenance !== "unverified"
+        || !Array.isArray(active.activeRuns) || !Object.isFrozen(active.activeRuns) || active.activeRuns.length !== 0
+        || !Array.isArray(active.openClaims) || !Object.isFrozen(active.openClaims) || active.openClaims.length !== 0
+        || !Array.isArray(active.activeAttempts) || !Object.isFrozen(active.activeAttempts) || active.activeAttempts.length !== 0
+        || !Array.isArray(active.activeSessions) || !Object.isFrozen(active.activeSessions) || active.activeSessions.length !== 0
+        || typeof active.snapshotHash !== "string" || !/^[a-f0-9]{64}$/.test(active.snapshotHash)
+        || hash(canonical({ schema: active.schema, authority: active.authority,
+          physicalIdentityProvenance: active.physicalIdentityProvenance,
+          activeRuns: active.activeRuns, openClaims: active.openClaims,
+          activeAttempts: active.activeAttempts, activeSessions: active.activeSessions,
+          counts: active.counts })) !== active.snapshotHash
+        || database.activeRows !== active
+        || typeof held.pairHash !== "string" || !/^[a-f0-9]{64}$/.test(held.pairHash)
+        || hash(canonical({ schema: held.schema, authority: held.authority,
+          physicalIdentityProvenance: held.physicalIdentityProvenance,
+          physicalCatalog: catalog, databaseSnapshot: active })) !== held.pairHash) fail();
+      const validRoot = value => typeof value === "string" && value !== "/" && !value.includes("\0")
+        && path.posix.isAbsolute(value) && path.posix.normalize(value) === value
+        && Buffer.byteLength(value) <= 4096;
+      if (catalog.absentBases.length > 1024 || catalog.blockers.length > 1024) fail();
+      const absent = new Set();
+      for (const base of catalog.absentBases) {
+        if (!validRoot(base) || absent.has(base)) fail();
+        absent.add(base);
+      }
+      const expectedRoots = new Set();
+      let unwitnessed = 0;
+      for (const blocker of catalog.blockers) {
+        if (!exactFrozen(blocker, ["root", "reason"]) || !validRoot(blocker.root)
+          || typeof blocker.reason !== "string" || blocker.reason.length === 0
+          || Buffer.byteLength(blocker.reason) > 128) fail();
+        if (blocker.reason !== "prunable-git-worktree") continue;
+        if (absent.has(path.posix.dirname(blocker.root))) expectedRoots.add(blocker.root);
+        else unwitnessed += 1;
+      }
+      const witnessed = witness.witnesses;
+      if (witnessed.length !== expectedRoots.size || witness.unwitnessedPrunableCount !== unwitnessed) fail();
+      let previousRoot = null;
+      for (const entry of witnessed) {
+        if (!exactFrozen(entry, ["root", "absentBase"]) || !validRoot(entry.root)
+          || !validRoot(entry.absentBase) || entry.absentBase !== path.posix.dirname(entry.root)
+          || !absent.has(entry.absentBase) || !expectedRoots.has(entry.root)
+          || (previousRoot !== null && Buffer.compare(Buffer.from(previousRoot), Buffer.from(entry.root)) >= 0)) fail();
+        previousRoot = entry.root;
+      }
+      const original = catalog.blockers;
+      const roots = new Set(witnessed.map(entry => entry.root));
+      if (roots.size !== witnessed.length
+        || fields.witnessedBlockers.length + fields.remainingBlockers.length !== original.length) fail();
+      let witnessedIndex = 0, remainingIndex = 0;
+      for (const blocker of original) {
+        if (blocker.reason === "prunable-git-worktree" && roots.has(blocker.root)) {
+          if (fields.witnessedBlockers[witnessedIndex++] !== blocker) fail();
+        } else if (fields.remainingBlockers[remainingIndex++] !== blocker) fail();
+      }
+      pre32AbsenceAnnotationV2 = observed;
+      stage("post-pre32-absence-annotation"); check();
+    }
     if (process.argv[2] === "inspect-retained-profile") {
       const profileModule = await import("./deployment-cutover-retained-profile.mjs");
       check(); retainedProfile = profileModule.observeDeploymentCutoverRetainedProfileV1();
@@ -472,6 +661,7 @@ async function inspect() {
       ...(pre32HostPairV5 ? { pre32HostPairV5 } : {}), ...(pre32HostPairV6 ? { pre32HostPairV6 } : {}),
       ...(pre32HostPairV7 ? { pre32HostPairV7 } : {}),
       ...(pre32AbsenceAnnotationV1 ? { pre32AbsenceAnnotationV1 } : {}),
+      ...(pre32AbsenceAnnotationV2 ? { pre32AbsenceAnnotationV2 } : {}),
       ...(activeBindingHostPairV1 ? { activeBindingHostPairV1 } : {}),
       ...(heldBindingCandidatesV1 ? { heldBindingCandidatesV1 } : {}) };
   } catch (error) {
@@ -479,7 +669,7 @@ async function inspect() {
     // Missing sanitized cleanup evidence means unknown, not successful cleanup.
     const owned = process.argv[2] === "inspect-default-context" && refusal.stage === "default-context" ? ownerRefusal(error) : null;
     const pre32 = (["inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7"].includes(process.argv[2]) && refusal.stage === "pre32-host-pair")
-      || (process.argv[2] === "inspect-pre32-absence-annotation-v1" && refusal.stage === "pre32-absence-annotation");
+      || (["inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2"].includes(process.argv[2]) && refusal.stage === "pre32-absence-annotation");
     const activeBinding = ["inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1"].includes(process.argv[2])
       && refusal.stage === "active-binding-host-pair";
     const phase = pre32 ? pre32FailurePhase(error) : null;
@@ -500,6 +690,6 @@ async function inspect() {
 try { process.stdout.write(`${JSON.stringify(await inspect())}\n`); }
 catch {
   process.stderr.write("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
-  if (["inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
+  if (["inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
   process.exitCode = 1;
 }
