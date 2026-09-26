@@ -4215,7 +4215,11 @@ async function restartGatewayAfterOpenClawCleanup(context: string, result: OpenC
     });
   });
   gatewayRestartInFlight = false;
-  if (restarted) cleanupStaleSetfarmOpenClawTaskRecords(`${context}-post-gateway-restart`);
+  if (restarted) {
+    await assertTask6aPreSchemaOrdinaryStartupV2();
+    if (shuttingDown) return restarted;
+    cleanupStaleSetfarmOpenClawTaskRecords(`${context}-post-gateway-restart`);
+  }
   return restarted;
 }
 
@@ -11385,8 +11389,14 @@ async function main() {
   }, Math.min(POLL_INTERVAL_MS, 10_000)));
   if (AGENT_RUNTIME === "openclaw") {
     intervalHandles.push(setInterval(() => {
-      const result = cleanupStaleSetfarmOpenClawTaskRecords("interval");
-      void restartGatewayAfterOpenClawCleanup("interval", result);
+      void (async () => {
+        await assertTask6aPreSchemaOrdinaryStartupV2();
+        if (shuttingDown) return;
+        const result = cleanupStaleSetfarmOpenClawTaskRecords("interval");
+        await restartGatewayAfterOpenClawCleanup("interval", result);
+      })().catch((error) => {
+        console.warn(`[spawner] OpenClaw stale sweep refused: ${String(error).slice(0, 300)}`);
+      });
     }, OPENCLAW_STALE_TASK_SWEEP_MS));
   }
   await pollForPendingWork();

@@ -493,6 +493,105 @@ test("Task6A V2 all four LISTEN callbacks use the guarded dispatcher", () => {
   }
 });
 
+test("Task6A V2 OpenClaw timer refuses before cleanup and handles detached rejection", async () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const main = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "main");
+  assert.ok(main?.body);
+  const interval = main.body.statements.find((node) => node.getText(tree).includes("OPENCLAW_STALE_TASK_SWEEP_MS"));
+  assert.ok(interval);
+  let callback: ts.ArrowFunction | undefined;
+  const findCallback = (node: ts.Node) => {
+    if (!callback && ts.isArrowFunction(node)) callback = node;
+    else ts.forEachChild(node, findCallback);
+  };
+  findCallback(interval);
+  assert.ok(callback);
+  const body = callback.getText(tree);
+  const preflight = body.indexOf("await assertTask6aPreSchemaOrdinaryStartupV2()");
+  const shutdown = body.indexOf("if (shuttingDown) return;");
+  const cleanup = body.indexOf('cleanupStaleSetfarmOpenClawTaskRecords("interval")');
+  const restart = body.indexOf('await restartGatewayAfterOpenClawCleanup("interval", result)');
+  assert.ok(preflight >= 0 && shutdown > preflight && cleanup > shutdown && restart > cleanup);
+  assert.match(body, /\.catch\(\(error\) =>/);
+  const js = ts.transpileModule(`const callback = ${body};`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const makeCallback = new Function("check", "cleanupEffect", "restartEffect", "warning", `
+    let shuttingDown = false;
+    const assertTask6aPreSchemaOrdinaryStartupV2 = () => check(() => { shuttingDown = true; });
+    const cleanupStaleSetfarmOpenClawTaskRecords = cleanupEffect;
+    const restartGatewayAfterOpenClawCleanup = restartEffect;
+    const console = { warn: warning };
+    ${js}
+    return callback;
+  `) as (check: (shutdown: () => void) => Promise<void>, cleanup: () => unknown,
+    restart: () => Promise<void>, warning: (message: string) => void) => () => void;
+  const effects: string[] = [];
+  const warnings: string[] = [];
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  makeCallback(async () => { effects.push("preflight"); throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED"); },
+    () => { effects.push("cleanup"); return { sessions: 0, tasks: 0 }; },
+    async () => { effects.push("restart"); }, (message) => warnings.push(message))();
+  await settle();
+  assert.deepEqual(effects.splice(0), ["preflight"]);
+  assert.match(warnings.splice(0)[0]!, /TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED/);
+  makeCallback(async () => { effects.push("preflight"); },
+    () => { effects.push("cleanup"); return { sessions: 0, tasks: 0 }; },
+    async () => { effects.push("restart"); }, (message) => warnings.push(message))();
+  await settle();
+  assert.deepEqual(effects.splice(0), ["preflight", "cleanup", "restart"]);
+  assert.deepEqual(warnings, []);
+  makeCallback(async () => { effects.push("preflight"); },
+    () => { effects.push("cleanup"); return { sessions: 1, tasks: 0 }; },
+    async () => { effects.push("restart"); throw Error("RESTART_REJECTED"); },
+    (message) => warnings.push(message))();
+  await settle();
+  assert.deepEqual(effects.splice(0), ["preflight", "cleanup", "restart"]);
+  assert.match(warnings.splice(0)[0]!, /RESTART_REJECTED/);
+  makeCallback(async (shutdown) => { effects.push("preflight"); shutdown(); },
+    () => { effects.push("cleanup"); return { sessions: 0, tasks: 0 }; },
+    async () => { effects.push("restart"); }, (message) => warnings.push(message))();
+  await settle();
+  assert.deepEqual(effects, ["preflight"]);
+  assert.deepEqual(warnings, []);
+});
+
+test("Task6A V2 post-restart OpenClaw resweep rechecks after its awaited restart", async () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const restart = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "restartGatewayAfterOpenClawCleanup");
+  assert.ok(restart?.body);
+  const resweep = restart.body.statements.find((node): node is ts.IfStatement =>
+    ts.isIfStatement(node) && node.expression.getText(tree) === "restarted");
+  assert.ok(resweep && ts.isBlock(resweep.thenStatement));
+  assert.equal(resweep.thenStatement.statements[0]?.getText(tree), "await assertTask6aPreSchemaOrdinaryStartupV2();");
+  assert.equal(resweep.thenStatement.statements[1]?.getText(tree), "if (shuttingDown) return restarted;");
+  assert.equal(resweep.thenStatement.statements[2]?.getText(tree),
+    "cleanupStaleSetfarmOpenClawTaskRecords(`${context}-post-gateway-restart`);");
+  const run = new Function("check", "cleanup", `return (async () => {
+    let shuttingDown = false;
+    const restarted = true;
+    const context = "interval";
+    const assertTask6aPreSchemaOrdinaryStartupV2 = () => check(() => { shuttingDown = true; });
+    const cleanupStaleSetfarmOpenClawTaskRecords = cleanup;
+    ${resweep.getText(tree)}
+    return restarted;
+  })();`) as (check: (shutdown: () => void) => Promise<void>, cleanup: (context: string) => void) => Promise<boolean>;
+  const effects: string[] = [];
+  await assert.rejects(run(async () => { effects.push("preflight"); throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED"); },
+    () => effects.push("resweep")), /TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED/);
+  assert.deepEqual(effects.splice(0), ["preflight"]);
+  assert.equal(await run(async (shutdown) => { effects.push("preflight"); shutdown(); },
+    () => effects.push("resweep")), true);
+  assert.deepEqual(effects.splice(0), ["preflight"]);
+  assert.equal(await run(async () => { effects.push("preflight"); },
+    (context) => effects.push(`resweep:${context}`)), true);
+  assert.deepEqual(effects, ["preflight", "resweep:interval-post-gateway-restart"]);
+});
+
 test("Task6A V2 direct CLI claim refuses before claim effects or output", async () => {
   const source = readFileSync(path.join(sourceRoot, "cli/cli.ts"), "utf8");
   const tree = ts.createSourceFile("cli.ts", source, ts.ScriptTarget.Latest, true);
