@@ -147,10 +147,23 @@ const pre32AnnotationV2Source = kind => `import fs from 'node:fs';import path fr
     const kind=${JSON.stringify(kind)};if(kind==='error')throw Error('PRIVATE_DATABASE_PASSWORD');
     const base=path.join(process.cwd(),'runtime','story-worktrees');
     const root=base+'/a';
+    const nonGitRoot=path.posix.join('/','home','fixture-user','ai','setrox','.worktrees','data');
+    const residual=['bounded','pid-residual','unsorted-residual','duplicate-residual'].includes(kind);
+    const blockers=[Object.freeze({root,reason:'prunable-git-worktree'}),
+      ...(residual?[Object.freeze({root:nonGitRoot,reason:'non-git-child'})]:[])].sort((a,b)=>
+        Buffer.compare(Buffer.from(a.root),Buffer.from(b.root)));
+    if(kind==='unsorted-residual')blockers.reverse();
+    if(kind==='duplicate-residual'){
+      const index=blockers.findIndex(row=>row.reason==='non-git-child');
+      blockers.splice(index,0,blockers[index]);
+    }
     const catalogBody={schema:'setfarm.internal-production-positive-worktree-physical-catalog.v2',
-      status:'unresolved',observerPidExcluded:1234,entries:Object.freeze([]),
+      status:'unresolved',observerPidExcluded:1234,entries:Object.freeze(residual?[Object.freeze({
+        root:nonGitRoot,zone:'retained-zone',kind:'unresolved',dev:'1',ino:'2',birthtimeNs:'3',
+        gitPrimaryRoot:null,dirty:null,sourceBuildProvenance:'unverified',
+        referencingPids:Object.freeze(kind==='pid-residual'?[4321]:[])})]:[]),
       absentBases:Object.freeze(kind==='forged-absence'?[]:[base]),incidentalFiles:Object.freeze([]),
-      blockers:Object.freeze([Object.freeze({root,reason:'prunable-git-worktree'})])};
+      blockers:Object.freeze(blockers)};
     const physicalCatalog=Object.freeze({...catalogBody,
       catalogHash:kind==='wrong-catalog-hash'?'b'.repeat(64):hash(catalogBody)});
     const activeBody={schema:'setfarm.internal-production-positive-worktree-active-rows.v2',
@@ -197,13 +210,109 @@ const pre32AnnotationV2Source = kind => `import fs from 'node:fs';import path fr
     const witness=Object.freeze({...witnessBody,witnessHash:hash(witnessBody)});
     const body={schema:'setfarm.internal-production-pre32-absent-git-record-annotation.v2',
       authority:kind==='cutover'?'cutover':'diagnostic-only',physicalIdentityProvenance:'unverified',
-      sourcePair,witness,witnessedBlockers:Object.freeze([physicalCatalog.blockers[0]]),
-      remainingBlockers:Object.freeze([])};
+      sourcePair,witness,witnessedBlockers:Object.freeze(blockers.filter(row=>row.reason==='prunable-git-worktree')),
+      remainingBlockers:Object.freeze(blockers.filter(row=>row.reason==='non-git-child'))};
     return Object.freeze({...body,annotationHash:hash(body)});
   }`;
 const pre32AnnotationV2Sources = kind => ({
   "internal-production/baseline-positive-worktree-pre32-absence-annotation-v2": pre32AnnotationV2Source(kind),
 });
+
+const pre32ResidualV3Source = kind => `import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
+  import {observeCodeOwnedPositiveWorktreePre32AbsenceAnnotationV2} from './baseline-positive-worktree-pre32-absence-annotation-v2.js';
+  const canonical=value=>value===null||typeof value!=='object'?JSON.stringify(value)
+    :Array.isArray(value)?'['+value.map(canonical).join(',')+']'
+    :'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical(value[key])).join(',')+'}';
+  const hash=value=>createHash('sha256').update(canonical(value)).digest('hex');
+  export async function observeCodeOwnedPositiveWorktreePre32ResidualAbsenceAnnotationV3(){
+    if(arguments.length)throw Error('UNEXPECTED_INPUT');
+    const marker=path.join(process.cwd(),'.setfarm','pre32-v3-called');
+    fs.mkdirSync(path.dirname(marker),{recursive:true});fs.appendFileSync(marker,'x');
+    const kind=${JSON.stringify(kind)};if(kind==='error')throw Error('PRIVATE_DATABASE_PASSWORD');
+    const sourceAnnotation=await observeCodeOwnedPositiveWorktreePre32AbsenceAnnotationV2();
+    const bounded=kind==='proxy-array'?new Proxy(Object.freeze([]),{get(target,key,receiver){
+      if(key==='toJSON')return ()=>[{root:'/forged',reason:'non-git-child'}];
+      return Reflect.get(target,key,receiver)}})
+      :kind==='array-tojson'?Object.freeze(Object.assign([],{
+        toJSON(){return [{root:'/forged',reason:'non-git-child'}]}}))
+      :Object.freeze(kind==='forged-bounded'?[sourceAnnotation.witnessedBlockers[0]]
+        :['bounded','forged-pid-bounded','unsorted-residual','duplicate-residual'].includes(kind)
+          ?[...sourceAnnotation.remainingBlockers]:[]);
+    const body={schema:'setfarm.internal-production-pre32-residual-absence-annotation.v3',
+      authority:kind==='cutover'?'cutover':'diagnostic-only',physicalIdentityProvenance:'unverified',
+      temporalScope:kind==='wrong-temporal'?'continuous':'v7-held-two-pass',sourceAnnotation,
+      boundedAbsenceBlockers:bounded,
+      otherResidualBlockers:Object.freeze(kind==='pid-residual'?[...sourceAnnotation.remainingBlockers]:[]),
+      ...(kind==='extra-field'?{zeroOwner:true}:{})};
+    const result={...body,annotationHash:kind==='wrong-hash'?'a'.repeat(64):hash(body)};
+    if(kind==='prototype-forgery')Object.setPrototypeOf(result,{toJSON(){return {...result,authority:'cutover'}}});
+    return Object.freeze(result);
+  }`;
+const pre32ResidualV3Sources = (kind, nestedKind = "valid") => ({
+  ...pre32AnnotationV2Sources(nestedKind),
+  "internal-production/baseline-positive-worktree-pre32-residual-absence-annotation-v3": pre32ResidualV3Source(kind),
+});
+
+test("bootstrap exposes authenticated V3 bounded absence without ownership authority", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-residual-absence-annotation-v3", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout);
+  const annotation = observed.pre32ResidualAbsenceAnnotationV3;
+  assert.equal(annotation.schema, "setfarm.internal-production-pre32-residual-absence-annotation.v3");
+  assert.equal(annotation.authority, "diagnostic-only");
+  assert.equal(annotation.physicalIdentityProvenance, "unverified");
+  assert.equal(annotation.temporalScope, "v7-held-two-pass");
+  assert.equal(annotation.sourceAnnotation.sourcePair.pre32Database.journalIdentity,
+    "source-ordinal-name-checksum-state-1-through-31");
+  assert.equal(annotation.sourceAnnotation.witnessedBlockers.length, 1);
+  assert.deepEqual(annotation.boundedAbsenceBlockers, []);
+  assert.deepEqual(annotation.otherResidualBlockers, []);
+  assert.equal(Object.hasOwn(observed, "pre32AbsenceAnnotationV2"), false);
+  assert.equal(fs.readFileSync(path.join(root, ".setfarm/pre32-v3-called"), "utf8"), "x");
+}, undefined, { extraSources: pre32ResidualV3Sources("valid") }));
+
+for (const [kind, expectedBounded, expectedOther] of [["bounded", 1, 0], ["pid-residual", 0, 1]]) {
+  test(`V3 bootstrap preserves ${kind} partition by blocker identity`, () => fixture(root => {
+    const result = run(root, ["inspect-pre32-residual-absence-annotation-v3", "--json"]);
+    assert.equal(result.status, 0, result.stderr);
+    const annotation = JSON.parse(result.stdout).pre32ResidualAbsenceAnnotationV3;
+    assert.equal(annotation.boundedAbsenceBlockers.length, expectedBounded);
+    assert.equal(annotation.otherResidualBlockers.length, expectedOther);
+    assert.equal(annotation.sourceAnnotation.sourcePair.heldPair.physicalCatalog.blockers.length, 2);
+  }, undefined, { extraSources: pre32ResidualV3Sources(kind, kind) }));
+}
+
+for (const [kind, nestedKind] of [["error", "valid"], ["cutover", "valid"],
+  ["wrong-temporal", "valid"], ["wrong-hash", "valid"], ["extra-field", "valid"],
+  ["prototype-forgery", "valid"], ["proxy-array", "valid"], ["array-tojson", "valid"],
+  ["forged-bounded", "valid"], ["forged-pid-bounded", "pid-residual"],
+  ["unsorted-residual", "unsorted-residual"], ["duplicate-residual", "duplicate-residual"],
+  ["valid", "wrong-journal"], ["valid", "crossed-active"]]) {
+  test(`V3 bootstrap refuses ${kind}/${nestedKind} without private cause`, () => fixture(root => {
+    const result = run(root, ["inspect-pre32-residual-absence-annotation-v3", "--json"]);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /^DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n/);
+    assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+  }, undefined, { extraSources: pre32ResidualV3Sources(kind, nestedKind) }));
+}
+
+test("V3 bootstrap rejects extra argv before observer invocation", () => fixture(root => {
+  const result = run(root, ["inspect-pre32-residual-absence-annotation-v3", "--json", "extra"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-v3-called")), false);
+}, undefined, { extraSources: pre32ResidualV3Sources("valid") }));
+
+test("V3 bootstrap rejects source tampering before observer invocation", () => fixture(root => {
+  fs.appendFileSync(path.join(root, "src/internal-production/baseline-positive-worktree-pre32-residual-absence-annotation-v3.ts"),
+    "\nthrow Error('PRIVATE_DATABASE_PASSWORD');\n");
+  const result = run(root, ["inspect-pre32-residual-absence-annotation-v3", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-v3-called")), false);
+  assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+}, undefined, { extraSources: pre32ResidualV3Sources("valid") }));
 
 test("bootstrap exposes exact-journal V7 absent-record annotation without authority", () => fixture(root => {
   const result = run(root, ["inspect-pre32-absence-annotation-v2", "--json"]);
