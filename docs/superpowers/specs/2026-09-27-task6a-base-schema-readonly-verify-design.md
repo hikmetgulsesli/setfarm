@@ -19,16 +19,24 @@ review.
 
 ## Contract
 
-`pgMigrate({ baseSchemaMode: "verify" })` must reject incompatible options,
-never call `ensureDatabaseExists`, and never execute CREATE, ALTER, DROP,
-TRUNCATE, GRANT, REVOKE or data mutations. It uses the target database only,
-starts a bounded repeatable-read read-only transaction, verifies the current
-contract spine and the ordinary base schema's required tables, columns,
-defaults, constraints, indexes and sequence using PostgreSQL catalogs, then
-checks duplicate open claim invariants. `_schemaReady` becomes true only after
-all verifications succeed. A missing database, missing/drifted catalog item,
-incomplete journal, or SQL error refuses without repair. The public result is
-void; errors expose no credentials or catalog text.
+`pgMigrate({ baseSchemaMode: "verify" })` must reject incompatible options
+and concurrent migration, never call `ensureDatabaseExists`, and never execute
+CREATE, ALTER, DROP, TRUNCATE, GRANT, REVOKE or data mutations. It uses the
+target database only. The existing `verifyContractSpineMigrations()` cannot be
+reused as a least-privilege read-only verifier: it opens its own transaction
+and takes a SHARE table lock requiring more than SELECT on the journal. A
+separately reviewed, bounded current-head journal/catalog verification path
+must use only read privileges. The base schema verifier then checks required
+tables, columns, defaults, constraints, indexes and sequence in a bounded
+repeatable-read read-only transaction. The two checks are sequential samples,
+not one atomic snapshot or continuous fence. Within the base schema, required
+definitions must be exact while extra contract-spine columns/objects remain
+permitted. Duplicate open claim invariants are checked without repair.
+`_schemaReady` becomes true only after all checks succeed; subsequent automatic
+`pgQuery`/`pgGet` calls must not silently enter default migration. A missing
+database, missing/drifted catalog item, incomplete journal, concurrent mode,
+or SQL error refuses without repair. The public result is void; errors expose
+no credentials or catalog text.
 
 The opt-in verifier must be complete for the ordinary `pgMigrate()` DDL
 surface at current main. It must not substitute a generic `to_regclass`
@@ -38,14 +46,16 @@ inventory. Migration application remains an explicit separate operation.
 
 ## Verification
 
-Use an isolated PostgreSQL 17 cluster, not the live `setfarm` database. RED
-integration: after ordinary fixture migration, a role without database/schema
-CREATE runs opt-in verification successfully and leaves a before/after schema
-fingerprint unchanged; intercepted SQL confirms read-only transaction and no
+Use a dedicated PostgreSQL 17 cluster with a verified distinct data directory,
+port and authentication, not merely a uniquely named database on the live
+local cluster. RED integration: after ordinary fixture migration, a role
+without database/schema CREATE and without journal MAINTAIN runs opt-in
+verification successfully and leaves a before/after schema fingerprint
+unchanged; intercepted SQL confirms read-only base transaction and no
 maintenance-database connection. Missing sequence, column/default, index,
 constraint, table and contract journal each refuse without repair. A missing
-target database refuses without creating it. Existing default migration tests
-remain green, proving no implicit runtime switch. No password appears in
+target database and concurrent migration also refuse. Existing default
+migration tests remain green, proving no implicit runtime switch. No password appears in
 source, Git history, logs or test output. This is not a continuous writer
 fence, cutover admission, or permission grant by itself.
 
@@ -54,6 +64,8 @@ fence, cutover admission, or permission grant by itself.
 - `src/db-pg.ts`: explicit opt-in branch and state handling only.
 - `src/db/base-schema-readonly-verifier-v1.ts`: focused bounded catalog
   verifier; no migration/DDL methods.
+- A current-head contract-spine read-only verifier in a separate file or a
+  narrowly exported existing module path, with no SHARE/stronger table lock.
 - `tests/execution-attempts/migrations.test.ts`: real isolated-database
   positive/negative regression tests at the public `pgMigrate()` boundary.
 - `tests/internal-production/task-0-source-manifest.test.ts` and the package
