@@ -485,10 +485,25 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
         if (roleAfter !== roleBefore || topology.sessionRole !== roleBefore) fail();
         return topology;
       });
+    const observeTask6aPrivateCatalogInventoryV3 = (missionControl: ReturnType<typeof import("./baseline-task6a-mission-control-launcher-hold-v2.js").holdTask6aMissionControlLauncherV2>) =>
+      observeQualifiedDatabase(async () => {
+        if (!missionControl || typeof missionControl !== "object" || inputs.entries.length !== 2) fail();
+        const { assertHeldTask6aMissionControlSameDatabaseUrlV2 } = await import("./baseline-task6a-mission-control-launcher-hold-v2.js");
+        const url = inputs.entries[0]?.environment.SETFARM_PG_URL;
+        if (typeof url !== "string" || !url || inputs.entries[1]?.environment.SETFARM_PG_URL !== url) fail();
+        const roleBefore = assertHeldTask6aMissionControlSameDatabaseUrlV2(missionControl, url);
+        if (typeof roleBefore !== "string" || decodeURIComponent(new URL(url).username) !== roleBefore) fail();
+        const { observeTask6aPrivateCatalogInventoryV3: observePrivateV3 } = await import("./baseline-task6a-private-catalog-inventory-v3.js");
+        const inventory = await observePrivateV3(url);
+        const roleAfter = assertHeldTask6aMissionControlSameDatabaseUrlV2(missionControl, url);
+        if (roleAfter !== roleBefore) fail();
+        return inventory;
+      });
     check();
     return Object.freeze({ observation, qualifyPassiveHome, recheck, census, censusAndActiveRows,
       censusAndActiveRowsWithQuarantine, censusAndBindingRows, censusAndBindingRowsV7,
-      activeBindingSnapshot, observeTask6aWriterDatabaseSnapshotV2, observeTask6aWriterCatalogTopologyV2, close });
+      activeBindingSnapshot, observeTask6aWriterDatabaseSnapshotV2, observeTask6aWriterCatalogTopologyV2,
+      observeTask6aPrivateCatalogInventoryV3, close });
   } catch { invalid = true; close(); defaultLauncherFailure(); }
 }
 
