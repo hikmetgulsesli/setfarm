@@ -7709,6 +7709,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     return;
   }
   let postClaimOwnershipTransferred = false;
+  let postClaimRefusedV2 = false;
   let postClaimFailure: unknown;
   let preTransferChild: ReturnType<typeof spawn> | undefined;
   let preTransferOutFd: number | undefined;
@@ -7849,11 +7850,26 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   }
 
   // capture agent stdout/stderr to a transcript file for post-hoc diagnosis.
-  if (await completeInlineSecurityGateIfApplicable({ role, agentId, wfId, key, claim, claimEnvelope, repo: spawnCwd, transcriptPath })) {
+  const inlineSecurityCompleted = await completeInlineSecurityGateIfApplicable({ role, agentId, wfId, key, claim, claimEnvelope, repo: spawnCwd, transcriptPath });
+  if (inlineSecurityCompleted) {
     if (claim.claimId) {
       await releaseReservedRuntimeForClaimIfPresent(claim.claimId, "Inline security gate completed without runtime spawn");
     }
     claimingSpawns.delete(key);
+    return;
+  }
+  try {
+    await assertTask6aPreSchemaOrdinaryStartupV2();
+  } catch {
+    postClaimRefusedV2 = true;
+    if (!retainTask6aV2PostClaimRuntimeIfExact(claim, runtimeIntent)) task6aV2UnboundPostClaimRefusals++;
+    console.warn("[spawner] Task6A V2 ordinary post-claim continuation refused; claim left unchanged for inspection");
+    return;
+  }
+  if (shuttingDown) {
+    postClaimRefusedV2 = true;
+    if (!retainTask6aV2PostClaimRuntimeIfExact(claim, runtimeIntent)) task6aV2UnboundPostClaimRefusals++;
+    console.warn("[spawner] Shutdown at ordinary post-claim continuation; claim left unchanged for inspection");
     return;
   }
 
@@ -7970,6 +7986,20 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   const pathPrefix = shouldInstallImplementGitWrapper ? installImplementGitWrapper(spawnCwd, transcriptPath) : undefined;
   const runtimeSessions = createRuntimeSessionRepository(getSql());
   const reservedRuntimeSession = await runtimeSessions.findById(runtimeSessionId);
+  try {
+    await assertTask6aPreSchemaOrdinaryStartupV2();
+  } catch {
+    postClaimRefusedV2 = true;
+    if (!retainTask6aV2PostClaimRuntimeIfExact(claim, runtimeIntent)) task6aV2UnboundPostClaimRefusals++;
+    console.warn("[spawner] Task6A V2 runtime-start continuation refused; claim left unchanged for inspection");
+    return;
+  }
+  if (shuttingDown) {
+    postClaimRefusedV2 = true;
+    if (!retainTask6aV2PostClaimRuntimeIfExact(claim, runtimeIntent)) task6aV2UnboundPostClaimRefusals++;
+    console.warn("[spawner] Shutdown before runtime start; claim left unchanged for inspection");
+    return;
+  }
   let startingRuntimeSession: ClaimRuntimeSession | undefined;
   try {
     startingRuntimeSession = await runtimeSessions.markStarting({
@@ -8214,7 +8244,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     console.warn(`[spawner] POST_CLAIM_PRE_TRANSFER_FAILED:${fullAgentId}:${String(error).slice(0, 500)}`);
   } finally {
     claimingSpawns.delete(key);
-    if (!postClaimOwnershipTransferred) {
+    if (!postClaimOwnershipTransferred && !postClaimRefusedV2) {
       if (preTransferChild && activeProcesses.get(key)?.child === preTransferChild) {
         activeProcesses.delete(key);
       }
