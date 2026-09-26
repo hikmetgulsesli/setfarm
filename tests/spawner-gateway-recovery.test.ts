@@ -2148,7 +2148,8 @@ describe("spawner gateway recovery wiring", () => {
       source.indexOf("async function requeueUntrackedRunningSingleStepClaims"),
       source.indexOf("async function runClaimMaintenance"),
     ), /UPDATE claim_log SET outcome = 'infra_retry'/);
-    assert.match(source, /setInterval\(\(\) => \{ void runClaimMaintenance\(\); \}, Math\.min\(POLL_INTERVAL_MS, 10_000\)\)/);
+    assert.match(source, /setInterval\(\(\) => \{\s+void runClaimMaintenance\(\)\.catch\(/);
+    assert.match(source, /\}, Math\.min\(POLL_INTERVAL_MS, 10_000\)\)/);
   });
 
   it("retries running loop story claims that are no longer tracked by the spawner", () => {

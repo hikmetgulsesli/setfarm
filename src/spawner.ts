@@ -6922,6 +6922,8 @@ async function reconcileTerminalClaimRuntimeOwnership(): Promise<void> {
 
 async function runClaimMaintenance(): Promise<void> {
   if (shuttingDown || claimMaintenanceInFlight) return;
+  await assertTask6aPreSchemaOrdinaryStartupV2();
+  if (shuttingDown || claimMaintenanceInFlight) return;
   claimMaintenanceInFlight = true;
   try {
     await reapFinishedClaims();
@@ -11370,7 +11372,11 @@ async function main() {
 
   console.log("[spawner] Listening for step_pending, story_pending, run_termination_requested, and runtime_completion_requested events");
   intervalHandles.push(setInterval(pollForPendingWork, POLL_INTERVAL_MS));
-  intervalHandles.push(setInterval(() => { void runClaimMaintenance(); }, Math.min(POLL_INTERVAL_MS, 10_000)));
+  intervalHandles.push(setInterval(() => {
+    void runClaimMaintenance().catch((error) => {
+      console.warn(`[spawner] claim maintenance entry refused: ${String(error).slice(0, 300)}`);
+    });
+  }, Math.min(POLL_INTERVAL_MS, 10_000)));
   if (AGENT_RUNTIME === "openclaw") {
     intervalHandles.push(setInterval(() => {
       const result = cleanupStaleSetfarmOpenClawTaskRecords("interval");
