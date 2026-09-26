@@ -107,6 +107,14 @@ test("holder rejects nonzero input before accessing the OS", () => {
   assert.deepEqual(JSON.parse(child.stdout), { error: ERROR });
 });
 
+test("module comparator accepts only its genuine live opaque holder", () => {
+  const accepted = fixture({ action: `role=module.assertHeldTask6aMissionControlSameDatabaseUrlV2(held,${JSON.stringify("postgresql://fixture:PRIVATE_PASSWORD_ONE@localhost:5432/setfarm")});` });
+  assert.equal(accepted.role, "fixture");
+  const forged = fixture({ action: `module.assertHeldTask6aMissionControlSameDatabaseUrlV2({assertSameDatabaseUrl(){throw Error('OTHER_SECRET')}},${JSON.stringify("postgresql://fixture:PRIVATE_PASSWORD_ONE@localhost:5432/setfarm")});` });
+  assert.equal(forged.otherError, ERROR);
+  assert.doesNotMatch(JSON.stringify(forged), /OTHER_SECRET/);
+});
+
 for (const plistFault of ["extra-env", "remote-url", "empty-token", "not-keepalive", "world-readable"] as const) {
   test(`holder rejects ${plistFault} plist`, () => {
     const result = fixture({ plistFault });
