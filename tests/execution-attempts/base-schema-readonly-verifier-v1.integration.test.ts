@@ -14,11 +14,12 @@ async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
   const rows = await sql<Array<{ fingerprint: string }>>`
     SELECT md5(jsonb_build_object(
       'relations', (SELECT jsonb_agg(jsonb_build_array(c.relname, c.relkind,
-        c.relpersistence) ORDER BY c.relname)
+        c.relpersistence, c.relrowsecurity, c.relforcerowsecurity) ORDER BY c.relname)
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public'),
       'columns', (SELECT jsonb_agg(jsonb_build_array(c.relname, a.attname,
         format_type(a.atttypid, a.atttypmod), a.attnotnull,
+        a.attcollation::text, a.attidentity, a.attgenerated,
         pg_get_expr(d.adbin, d.adrelid)) ORDER BY c.relname, a.attname)
         FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
         JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -102,6 +103,8 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
 
     const drifts = [
       ["missing table", "DROP TABLE public.medic_checks"],
+      ["wrong collation", "ALTER TABLE public.rules ALTER COLUMN title TYPE text COLLATE \"C\""],
+      ["row level security", "ALTER TABLE public.runs ENABLE ROW LEVEL SECURITY"],
       ["missing column", "ALTER TABLE public.steps DROP COLUMN started_at"],
       ["dropped then readded column", "ALTER TABLE public.steps DROP COLUMN started_at; ALTER TABLE public.steps ADD COLUMN started_at TIMESTAMPTZ"],
       ["wrong type", "ALTER TABLE public.rules ALTER COLUMN title TYPE varchar(10)"],

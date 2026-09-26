@@ -160,7 +160,8 @@ const EXPECTED_BASE_SEQUENCES_V1 = Object.freeze([
 ] as const);
 
 const TABLE_SQL_V1 = `SELECT c.relname AS name, c.relkind AS kind,
-  c.relpersistence AS persistence, c.relispartition AS partitioned
+  c.relpersistence AS persistence, c.relispartition AS partitioned,
+  c.relrowsecurity AS "rowSecurity", c.relforcerowsecurity AS "forceRowSecurity"
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
  WHERE n.nspname = 'public'
    AND c.relname IN ('claim_log', 'medic_checks', 'rules',
@@ -172,7 +173,10 @@ const COLUMN_SQL_V1 = `SELECT c.relname AS "table", a.attname AS "column",
   a.atttypmod AS typmod, a.attnotnull AS "notNull",
   pg_get_expr(d.adbin, d.adrelid) AS "default",
   a.attisdropped AS dropped, a.attidentity AS identity,
-  a.attgenerated AS generated
+  a.attgenerated AS generated,
+  CASE WHEN a.attcollation = 0 THEN 'none'
+       WHEN a.attcollation = 'pg_catalog."default"'::regcollation THEN 'default'
+       ELSE 'custom' END AS collation
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0
   LEFT JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
@@ -260,6 +264,8 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         kind: string;
         persistence: string;
         partitioned: boolean;
+        rowSecurity: boolean;
+        forceRowSecurity: boolean;
       }>>(TABLE_SQL_V1);
       if (
         tables.length !== REQUIRED_BASE_TABLES_V1.length
@@ -267,7 +273,9 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
           table.name !== REQUIRED_BASE_TABLES_V1[index]
           || table.kind !== "r"
           || table.persistence !== "p"
-          || table.partitioned !== false)
+          || table.partitioned !== false
+          || table.rowSecurity !== false
+          || table.forceRowSecurity !== false)
       ) mismatch();
       const columns = await transaction.unsafe<Array<{
         table: string;
@@ -279,6 +287,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         dropped: boolean;
         identity: string;
         generated: string;
+        collation: string;
       }>>(COLUMN_SQL_V1);
       if (columns.length > 1024) mismatch();
       const byName = new Map<string, typeof columns[number]>();
@@ -293,7 +302,8 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         if (!actual || actual.type !== expected[2]
           || actual.typmod !== expected[3]
           || actual.notNull !== expected[4]
-          || actual.default !== expected[5]) mismatch();
+          || actual.default !== expected[5]
+          || actual.collation !== (expected[2] === "text" ? "default" : "none")) mismatch();
       }
       const indexes = await transaction.unsafe<Array<{
         table: string;

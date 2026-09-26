@@ -27,7 +27,7 @@ does not include connection URLs, credentials or full private catalog text.
 
 The source manifest covers seven required public ordinary tables (`runs`,
 `steps`, `stories`, `claim_log`, `rules`, `medic_checks`, `run_observations`),
-their required base columns with exact type/typmod/nullability/default or
+their required base columns with exact type/typmod/nullability/default/collation or
 absent default, seven named primary keys, three named run foreign keys,
 twelve named ordinary indexes, and two required sequences. The explicit
 `runs_run_number_seq` remains standalone; the implicit `claim_log_id_seq`
@@ -40,7 +40,8 @@ rejected until a separately reviewed recovery resolves it.
 
 Use `pg_class`, `pg_namespace`, `pg_attribute`, `pg_attrdef`, `pg_constraint`,
 `pg_index`, `pg_am`, `pg_sequence`, and `pg_depend`, not privilege-filtered
-`information_schema`. Reject relkind, partitioning, persistence, dropped
+`information_schema`. Reject relkind, partitioning, persistence, RLS enablement,
+forced RLS, dropped
 columns, identity/generated-column drift, invalid/not-ready indexes, unexpected index expressions or INCLUDE
 keys, wrong predicate, FK action, deferrability, validation or ownership
 dependency. Compare PostgreSQL 17 deparsed defaults/predicates against frozen
@@ -56,7 +57,8 @@ distinct restricted LOGIN with no database/schema CREATE and no journal
 MAINTAIN. Owner fixture setup and mutations may occur only in isolated
 databases; the restricted verifier leaves a before/after catalog fingerprint
 unchanged. Negative cases cover missing table/column/default/constraint/index/
-sequence, wrong column type or nullability, and role-denied access. Fixed
+sequence, wrong column type, nullability or collation, enabled RLS, and
+role-denied access. Fixed
 transaction mode and bounded timeouts are unit-tested; full existing migration
 tests, semantic digest check, typecheck and independent review remain gates.
 
