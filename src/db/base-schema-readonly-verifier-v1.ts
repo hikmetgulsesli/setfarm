@@ -154,6 +154,15 @@ const EXPECTED_BASE_CONSTRAINTS_V1 = Object.freeze([
   ["stories_run_id_fkey", "stories", "f", "FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE"],
 ] as const);
 
+const EXPECTED_BASE_FK_TRIGGER_GROUPS_V1 = Object.freeze([
+  ["run_observations_run_id_fkey", "run_observations"],
+  ["run_observations_run_id_fkey", "runs"],
+  ["steps_run_id_fkey", "runs"],
+  ["steps_run_id_fkey", "steps"],
+  ["stories_run_id_fkey", "runs"],
+  ["stories_run_id_fkey", "stories"],
+] as const);
+
 const EXPECTED_BASE_SEQUENCES_V1 = Object.freeze([
   ["claim_log_id_seq", "claim_log", "id", "a"],
   ["runs_run_number_seq", null, null, null],
@@ -223,6 +232,22 @@ const CONSTRAINT_SQL_V1 = `SELECT c.relname AS "table", co.conname AS name,
      'run_observations_run_id_fkey', 'steps_run_id_fkey', 'stories_run_id_fkey')
  ORDER BY co.conname COLLATE "C"
  LIMIT 11`;
+
+const FK_TRIGGER_SQL_V1 = `SELECT co.conname AS name,
+  tn.nspname AS "triggerSchema", tc.relname AS "triggerTable",
+  count(*)::integer AS "triggerCount",
+  bool_and(t.tgenabled = 'O' AND t.tgisinternal) AS enabled
+  FROM pg_constraint co JOIN pg_class c ON c.oid = co.conrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  JOIN pg_trigger t ON t.tgconstraint = co.oid
+  JOIN pg_class tc ON tc.oid = t.tgrelid
+  JOIN pg_namespace tn ON tn.oid = tc.relnamespace
+ WHERE n.nspname = 'public' AND co.contype = 'f'
+   AND co.conname IN ('run_observations_run_id_fkey',
+     'steps_run_id_fkey', 'stories_run_id_fkey')
+ GROUP BY co.conname, tn.nspname, tc.relname
+ ORDER BY co.conname COLLATE "C", tc.relname COLLATE "C"
+ LIMIT 7`;
 
 const SEQUENCE_SQL_V1 = `SELECT c.relname AS name, c.relkind AS kind,
   c.relpersistence AS persistence, s.seqtypid::regtype::text AS type,
@@ -360,6 +385,21 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
             || !actual.validated || actual.deferrable || actual.deferred
             || !actual.local || actual.inheritCount !== 0
             || !actual.noInherit || actual.parentOid !== "0";
+        })) mismatch();
+      const fkTriggers = await transaction.unsafe<Array<{
+        name: string;
+        triggerSchema: string;
+        triggerTable: string;
+        triggerCount: number;
+        enabled: boolean;
+      }>>(FK_TRIGGER_SQL_V1);
+      if (fkTriggers.length !== EXPECTED_BASE_FK_TRIGGER_GROUPS_V1.length
+        || fkTriggers.some((actual, index) => {
+          const expected = EXPECTED_BASE_FK_TRIGGER_GROUPS_V1[index]!;
+          return actual.name !== expected[0]
+            || actual.triggerSchema !== "public"
+            || actual.triggerTable !== expected[1]
+            || actual.triggerCount !== 2 || !actual.enabled;
         })) mismatch();
       const sequences = await transaction.unsafe<Array<{
         name: string;

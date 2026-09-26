@@ -34,6 +34,12 @@ async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
         FROM pg_constraint x JOIN pg_class c ON c.oid = x.conrelid
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public'),
+      'triggers', (SELECT jsonb_agg(jsonb_build_array(c.relname, t.tgname,
+        t.tgenabled, t.tgisinternal, t.tgconstraint::text)
+        ORDER BY c.relname, t.tgname)
+        FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'),
       'indexes', (SELECT jsonb_agg(jsonb_build_array(ic.relname,
         pg_get_indexdef(i.indexrelid)) ORDER BY ic.relname)
         FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid
@@ -107,6 +113,8 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
 
     const drifts = [
       ["missing table", "DROP TABLE public.medic_checks"],
+      ["disabled referencing FK triggers", "ALTER TABLE public.steps DISABLE TRIGGER ALL"],
+      ["disabled referenced FK triggers", "ALTER TABLE public.runs DISABLE TRIGGER ALL"],
       ["inherited child table", "CREATE TABLE public.shadow_runs () INHERITS (public.runs)"],
       ["wrong collation", "ALTER TABLE public.rules ALTER COLUMN title TYPE text COLLATE \"C\""],
       ["row level security", "ALTER TABLE public.runs ENABLE ROW LEVEL SECURITY"],

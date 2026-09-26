@@ -29,7 +29,8 @@ The source manifest covers seven required public ordinary tables (`runs`,
 `steps`, `stories`, `claim_log`, `rules`, `medic_checks`, `run_observations`),
 their required base columns with exact type/typmod/nullability/default/collation or
 absent default, seven named primary keys, three named run foreign keys,
-twelve named ordinary indexes, and two required sequences. The explicit
+twelve named ordinary indexes, three FKs' enabled internal enforcement-trigger
+groups on both sides, and two required sequences. The explicit
 `runs_run_number_seq` remains standalone; the implicit `claim_log_id_seq`
 is owned by `claim_log.id`. Sequence parameters and default dependencies
 matter; mutable sequence values do not. Required table definitions are exact
@@ -39,11 +40,11 @@ but additional contract-spine columns, constraints and indexes are allowed.
 rejected until a separately reviewed recovery resolves it.
 
 Use `pg_class`, `pg_namespace`, `pg_attribute`, `pg_attrdef`, `pg_constraint`,
-`pg_index`, `pg_am`, `pg_sequence`, and `pg_depend`, not privilege-filtered
+`pg_index`, `pg_am`, `pg_trigger`, `pg_sequence`, and `pg_depend`, not privilege-filtered
 `information_schema`. Reject relkind, partitioning, persistence, inheritance
 edges in either direction, RLS enablement, forced RLS, dropped
 columns, identity/generated-column drift, invalid/not-ready indexes, unexpected index expressions or INCLUDE
-keys, wrong predicate, FK action, deferrability, validation or ownership
+keys, wrong predicate, FK action, disabled enforcement triggers, deferrability, validation or ownership
 dependency. Compare PostgreSQL 17 deparsed defaults/predicates against frozen
 reviewed source-derived literals under a fixed `search_path`; do not generate
 expected values from the target catalog at verification time.
@@ -58,7 +59,7 @@ MAINTAIN. Owner fixture setup and mutations may occur only in isolated
 databases; the restricted verifier leaves a before/after catalog fingerprint
 unchanged. Negative cases cover missing table/column/default/constraint/index/
 sequence, wrong column type, nullability or collation, enabled RLS,
-inherited child tables, and
+inherited child tables, disabled FK triggers on either side, and
 role-denied access. Fixed
 transaction mode and bounded timeouts are unit-tested; full existing migration
 tests, semantic digest check, typecheck and independent review remain gates.
