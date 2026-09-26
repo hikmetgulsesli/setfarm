@@ -135,7 +135,7 @@ function sourceState() {
 }
 async function inspect() {
   if (typeof registerHooks !== "function" || process.execArgv.length || process.argv.length !== 4
-    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-absence-annotation-v1", "inspect-active-binding-host-pair-v1"].includes(process.argv[2]) || process.argv[3] !== "--json"
+    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-active-binding-host-pair-v1"].includes(process.argv[2]) || process.argv[3] !== "--json"
     || pathToFileURL(path.resolve(process.argv[1])).href !== import.meta.url
     || Object.keys(process.env).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key)
       && !(process.platform === "darwin" && key === "__CF_USER_TEXT_ENCODING"))) fail();
@@ -260,20 +260,22 @@ async function inspect() {
     stage("controller-source");
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();
-    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair, pre32HostPairV5, pre32HostPairV6, pre32AbsenceAnnotationV1, activeBindingHostPairV1;
+    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair, pre32HostPairV5, pre32HostPairV6, pre32HostPairV7, pre32AbsenceAnnotationV1, activeBindingHostPairV1;
     if (process.argv[2] === "inspect-default-context") {
       stage("default-owner-load");
       const contextModule = await import("./deployment-cutover-default-context.mjs");
       check(); stage("default-context"); defaultContext = await contextModule.observeDeploymentCutoverDefaultContextV1();
       stage("post-context"); check();
     }
-    if (["inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6"].includes(process.argv[2])) {
+    if (["inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7"].includes(process.argv[2])) {
       const v5 = process.argv[2] === "inspect-pre32-host-pair-v5";
       const v6 = process.argv[2] === "inspect-pre32-host-pair-v6";
+      const v7 = process.argv[2] === "inspect-pre32-host-pair-v7";
       stage("pre32-host-pair-load");
       const pairModule = await import("../dist/internal-production/baseline-positive-worktree-host-pair-v2.js");
       check(); stage("pre32-host-pair");
-      const observed = v6 ? await pairModule.observeCodeOwnedPositiveWorktreePre32HostPairV6()
+      const observed = v7 ? await pairModule.observeCodeOwnedPositiveWorktreePre32HostPairV7()
+        : v6 ? await pairModule.observeCodeOwnedPositiveWorktreePre32HostPairV6()
         : v5 ? await pairModule.observeCodeOwnedPositiveWorktreePre32HostPairV5()
           : await pairModule.observeCodeOwnedPositiveWorktreePre32HostPairV4();
       const descriptors = observed && Object.getOwnPropertyDescriptors(observed);
@@ -283,16 +285,23 @@ async function inspect() {
         || keys.some(key => typeof key !== "string" || !expected.includes(key)
           || !descriptors[key].enumerable || !Object.hasOwn(descriptors[key], "value"))) fail();
       const fields = Object.fromEntries(expected.map(key => [key, descriptors[key].value]));
-      if (fields.schema !== (v6 ? "setfarm.internal-production-pre32-physical-database-pair.v6"
+      if (fields.schema !== (v7 ? "setfarm.internal-production-pre32-physical-database-pair.v7"
+        : v6 ? "setfarm.internal-production-pre32-physical-database-pair.v6"
         : v5 ? "setfarm.internal-production-pre32-physical-database-pair.v5"
           : "setfarm.internal-production-pre32-physical-database-pair.v4")
         || fields.authority !== "diagnostic-only" || fields.physicalIdentityProvenance !== "unverified"
         || !Object.isFrozen(fields.heldPair) || !Object.isFrozen(fields.pre32Database)
+        || (v7 && (fields.pre32Database.schema !== "setfarm.internal-production-pre32-active-binding-snapshot.v7"
+          || fields.pre32Database.authority !== "diagnostic-only"
+          || fields.pre32Database.tableLockScope !== "fixed-pre32-legacy-superset"
+          || fields.pre32Database.journalIdentity !== "source-ordinal-name-checksum-state-1-through-31"
+          || fields.pre32Database.lockState !== "released-at-return"))
         || typeof fields.pairHash !== "string" || !/^[a-f0-9]{64}$/.test(fields.pairHash)
         || hash(canonical({ schema: fields.schema, authority: fields.authority,
           physicalIdentityProvenance: fields.physicalIdentityProvenance,
           heldPair: fields.heldPair, pre32Database: fields.pre32Database })) !== fields.pairHash) fail();
-      if (v6) pre32HostPairV6 = observed;
+      if (v7) pre32HostPairV7 = observed;
+      else if (v6) pre32HostPairV6 = observed;
       else if (v5) pre32HostPairV5 = observed;
       else pre32HostPair = observed;
       stage("post-pre32-host-pair"); check();
@@ -418,13 +427,14 @@ async function inspect() {
       ...(host ? { host } : {}), ...(envFiles ? { envFiles } : {}), ...(helpers ? { helpers } : {}), ...(retainedProfile ? { retainedProfile } : {}),
       ...(defaultContext ? { defaultContext } : {}), ...(pre32HostPair ? { pre32HostPair } : {}),
       ...(pre32HostPairV5 ? { pre32HostPairV5 } : {}), ...(pre32HostPairV6 ? { pre32HostPairV6 } : {}),
+      ...(pre32HostPairV7 ? { pre32HostPairV7 } : {}),
       ...(pre32AbsenceAnnotationV1 ? { pre32AbsenceAnnotationV1 } : {}),
       ...(activeBindingHostPairV1 ? { activeBindingHostPairV1 } : {}) };
   } catch (error) {
     // A throwing nested observer may have acquired resources we never received.
     // Missing sanitized cleanup evidence means unknown, not successful cleanup.
     const owned = process.argv[2] === "inspect-default-context" && refusal.stage === "default-context" ? ownerRefusal(error) : null;
-    const pre32 = (["inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6"].includes(process.argv[2]) && refusal.stage === "pre32-host-pair")
+    const pre32 = (["inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7"].includes(process.argv[2]) && refusal.stage === "pre32-host-pair")
       || (process.argv[2] === "inspect-pre32-absence-annotation-v1" && refusal.stage === "pre32-absence-annotation");
     const activeBinding = process.argv[2] === "inspect-active-binding-host-pair-v1" && refusal.stage === "active-binding-host-pair";
     const phase = pre32 ? pre32FailurePhase(error) : null;
@@ -445,6 +455,6 @@ async function inspect() {
 try { process.stdout.write(`${JSON.stringify(await inspect())}\n`); }
 catch {
   process.stderr.write("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
-  if (["inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-absence-annotation-v1", "inspect-active-binding-host-pair-v1"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
+  if (["inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-active-binding-host-pair-v1"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
   process.exitCode = 1;
 }

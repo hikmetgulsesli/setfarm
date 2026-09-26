@@ -278,6 +278,11 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
         const tx=async strings=>{
           const statement=strings.join('');
           if(statement.startsWith('SET LOCAL')){globalThis.probe.queries.push('set-local');return []}
+          if(statement.includes('FROM public.setfarm_schema_migrations')&&statement.includes('version >= 26')){
+            globalThis.probe.queries.push('journal-tail');
+            return [26,27,28,29,30,31,...(globalThis.probe.scenario==='future-head'?[32]:[])]
+              .map(version=>({version,state:'applied'}))
+          }
           if(statement.includes('WITH expected_tables(name)')){
             globalThis.probe.queries.push('cold-catalog');
             return [{laterJournalCount:'0',relationCount:'0',functionCount:'0',typeCount:'0',triggerCount:'0'}]
@@ -303,6 +308,12 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
         class Result extends Array {}
         tx.unsafe=async statement=>{
           let label,rows=[];
+          if(statement.startsWith('LOCK TABLE ')){
+            globalThis.probe.queries.push(statement);
+            if(globalThis.probe.scenario==='lock-failure'&&statement.includes('public.claim_log'))
+              throw Error('PRIVATE_LOCK_DETAIL');
+            return []
+          }
           if(globalThis.probe.queries.includes('quarantined-runtimes')){
             if(globalThis.probe.scenario==='binding-query-failure')throw Error('BINDING_QUERY_FAILURE');
             if(statement.includes('"oversizedSessionCount"')){
@@ -375,7 +386,22 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
       .replaceAll('await import("./baseline-positive-worktree-binding-rows-v1.js")',
         `await import(${JSON.stringify(new URL("../../src/internal-production/baseline-positive-worktree-binding-rows-v1.ts", import.meta.url).href)})`)
       .replaceAll('await import("../product-compiler/canonical-json.js")',
-        `await import(${JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href)})`);
+        `await import(${JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href)})`)
+      .replaceAll('import("./baseline-positive-worktree-active-row-snapshot-v2.js")',
+        `import(${JSON.stringify(new URL("../../src/internal-production/baseline-positive-worktree-active-row-snapshot-v2.ts", import.meta.url).href)})`)
+      .replaceAll('import("./baseline-positive-worktree-binding-rows-v1.js")',
+        `import(${JSON.stringify(new URL("../../src/internal-production/baseline-positive-worktree-binding-rows-v1.ts", import.meta.url).href)})`)
+      .replaceAll('import("../product-compiler/canonical-json.js")',
+        `import(${JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href)})`)
+      .replace('await import("../db/contract-spine-migrations.js")', `await Promise.resolve({
+        get verifyHeldPre32ContractSpineJournalIdentityV1(){
+          globalThis.probe.queries.push('journal-module-loaded');
+          return async query=>{
+            globalThis.probe.queries.push('journal-identity');
+            if(globalThis.probe.scenario==='journal-identity-failure')throw Error('PRIVATE_JOURNAL_DETAIL');
+          }
+        }
+      })`);
     fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
     const file = path.join(root, "census.ts"); fs.writeFileSync(file, source);
     const script = `
@@ -389,6 +415,9 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
         ?await module.observeLegacyDatabaseCensusV1('postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm',true,'cutover-local')
         :process.env.FAKE_V6==='1'
           ?await module.observeLegacyDatabaseCensusAndBindingRowsV6(
+            'postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm')
+        :process.env.FAKE_V7==='1'
+          ?await module.observeLegacyDatabaseCensusAndBindingRowsV7(
             'postgresql://fixture:PRIVATE_PASSWORD@localhost/setfarm')
         :process.env.FAKE_V5==='1'
           ?await module.observeLegacyDatabaseCensusAndActiveRowsWithQuarantineV5(
@@ -498,6 +527,38 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
         assert.deepEqual(v6Body.activeRows.counts, body.activeRows.counts);
         assert.deepEqual(v6Body.bindingRows.counts, { attemptCount: 0, sessionCount: 0 });
         assert.equal(v6Body.bindingRows.authority, "diagnostic-only");
+      }
+    }
+    for (const scenario of ["success", "journal-identity-failure", "future-head", "lock-failure"] as const) {
+      const v7Result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script],
+        { encoding: "utf8", timeout: 15000, env: { FAKE_V7: "1", FAKE_SCENARIO: scenario } });
+      assert.equal(v7Result.status, 0, `${scenario}: ${v7Result.stderr}`);
+      const v7 = JSON.parse(v7Result.stdout);
+      assert.deepEqual(v7.modes, ["isolation level read committed read only"], scenario);
+      assert.deepEqual(v7.closes, [{ timeout: 1 }], scenario);
+      assert.equal(v7.connections, 0, scenario);
+      const firstLock = v7.queries.findIndex((entry: string) => entry.startsWith("LOCK TABLE "));
+      const finalLock = v7.queries.lastIndexOf("LOCK TABLE public.v3_story_claim_runtime_bindings_v1 IN SHARE MODE");
+      assert.ok(firstLock >= 0 && (scenario === "lock-failure" || finalLock > firstLock), scenario);
+      assert.ok(v7.queries.indexOf("journal-module-loaded") < firstLock, scenario);
+      if (scenario === "success") {
+        assert.equal(v7.error, undefined, v7Result.stdout);
+        assert.ok(finalLock < v7.queries.indexOf("journal-identity"));
+        assert.ok(v7.queries.indexOf("journal-identity") < v7.queries.indexOf("journal-tail"));
+        assert.ok(v7.queries.indexOf("journal-tail") < v7.queries.indexOf("cold-catalog"));
+        const { snapshotHash, ...v7Body } = v7.snapshot;
+        assert.equal(snapshotHash, hashCanonicalJson(v7Body));
+        assert.equal(v7Body.schema, "setfarm.internal-production-pre32-active-binding-snapshot.v7");
+        assert.equal(v7Body.authority, "diagnostic-only");
+        assert.equal(v7Body.journalIdentity, "source-ordinal-name-checksum-state-1-through-31");
+        assert.equal(v7Body.tableLockScope, "fixed-pre32-legacy-superset");
+        assert.equal(v7Body.lockState, "released-at-return");
+        assert.deepEqual(v7Body.bindingRows.counts, { attemptCount: 0, sessionCount: 0 });
+      } else {
+        assert.equal(v7.error, "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:pre32 held journal binding snapshot failed", scenario);
+        assert.equal(v7.snapshot, undefined, scenario);
+        assert.ok(!v7.queries.includes("cold-catalog"), scenario);
+        assert.ok(!v7Result.stdout.includes("PRIVATE_"), scenario);
       }
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }

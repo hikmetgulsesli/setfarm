@@ -19,6 +19,8 @@ type Pre32SnapshotV5 = Awaited<ReturnType<typeof import("./baseline-legacy-datab
 type DatabaseObserverV5 = () => Promise<Pre32SnapshotV5>;
 type Pre32SnapshotV6 = Awaited<ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndBindingRowsV6>>;
 type DatabaseObserverV6 = () => Promise<Pre32SnapshotV6>;
+type Pre32SnapshotV7 = Awaited<ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndBindingRowsV7>>;
+type DatabaseObserverV7 = () => Promise<Pre32SnapshotV7>;
 type ActiveBindingSnapshotV1 = Awaited<ReturnType<typeof import("./baseline-positive-worktree-active-binding-snapshot-v1.js").observePositiveWorktreeActiveBindingSnapshotInTransactionV1>>;
 type ActiveBindingObserverV1 = () => Promise<ActiveBindingSnapshotV1>;
 
@@ -185,6 +187,25 @@ function validPre32SnapshotV6(value: unknown): Pre32SnapshotV6 {
       legacyCensus: row.legacyCensus, activeRows: row.activeRows, bindingRows: row.bindingRows,
       quarantinedRuntimeSessionCount: row.quarantinedRuntimeSessionCount }) !== sha256(row.snapshotHash)) failPre32();
     return value as Pre32SnapshotV6;
+  } catch { failPre32(); }
+}
+
+function validPre32SnapshotV7(value: unknown): Pre32SnapshotV7 {
+  try {
+    const row = exact(value, ["schema", "authority", "tableLockScope", "journalIdentity", "lockState",
+      "legacyCensus", "activeRows", "bindingRows", "quarantinedRuntimeSessionCount", "snapshotHash"]);
+    if (row.schema !== "setfarm.internal-production-pre32-active-binding-snapshot.v7"
+      || row.authority !== "diagnostic-only"
+      || row.tableLockScope !== "fixed-pre32-legacy-superset"
+      || row.journalIdentity !== "source-ordinal-name-checksum-state-1-through-31"
+      || row.lockState !== "released-at-return") failPre32();
+    const v6Body = Object.freeze({ schema: "setfarm.internal-production-pre32-active-binding-snapshot.v6" as const,
+      authority: row.authority, legacyCensus: row.legacyCensus, activeRows: row.activeRows,
+      bindingRows: row.bindingRows, quarantinedRuntimeSessionCount: row.quarantinedRuntimeSessionCount });
+    validPre32SnapshotV6(Object.freeze({ ...v6Body, snapshotHash: hashCanonicalJson(v6Body) }));
+    const { snapshotHash: _hash, ...body } = row;
+    if (hashCanonicalJson(body) !== sha256(row.snapshotHash)) failPre32();
+    return value as Pre32SnapshotV7;
   } catch { failPre32(); }
 }
 
@@ -379,6 +400,24 @@ export async function observePositiveWorktreePre32HostPairWithPortsV6(
   return Object.freeze({ ...body, pairHash: hashCanonicalJson(body) });
 }
 
+export async function observePositiveWorktreePre32HostPairWithPortsV7(
+  observePhysical: PhysicalObserverV2,
+  observeDatabase: DatabaseObserverV7,
+) {
+  let complete: Pre32SnapshotV7 | null = null;
+  const heldPair = await observePositiveWorktreeHostPairWithPortsV2(observePhysical, async () => {
+    const result = validPre32SnapshotV7(await observeDatabase());
+    complete = result;
+    return result.activeRows;
+  });
+  const pre32Database = complete as Pre32SnapshotV7 | null;
+  if (pre32Database === null || heldPair.databaseSnapshot !== pre32Database.activeRows) failPre32();
+  const body = { schema: "setfarm.internal-production-pre32-physical-database-pair.v7" as const,
+    authority: "diagnostic-only" as const, physicalIdentityProvenance: "unverified" as const,
+    heldPair, pre32Database };
+  return Object.freeze({ ...body, pairHash: hashCanonicalJson(body) });
+}
+
 /** Non-pre32 positive rows remain diagnostic and preserve every physical blocker. */
 export async function observePositiveWorktreeActiveBindingHostPairWithPortsV1(
   observePhysical: PhysicalObserverV2,
@@ -533,6 +572,51 @@ export async function observeCodeOwnedPositiveWorktreePre32HostPairV6() {
         return physical;
       },
       launcher.censusAndBindingRows,
+    );
+    phase = "post-pair-recheck";
+    launcher.recheck();
+  } catch { failure = pre32PhaseFailure(phase, physicalPoint); }
+  try { launcher?.close(); }
+  catch { failure = pre32PhaseFailure("launcher-cleanup"); }
+  if (failure) throw failure;
+  if (result === undefined) throw pre32PhaseFailure("pair-validation");
+  return result;
+}
+
+/** Diagnostic only: V7 binds the exact held pre32 journal and binding rows inside both physical passes. */
+export async function observeCodeOwnedPositiveWorktreePre32HostPairV7() {
+  if (arguments.length !== 0) failPre32();
+  type Launcher = ReturnType<typeof import("./baseline-deployment-cutover-launcher-observation-v1.js").holdDeploymentCutoverDefaultLauncherV1>;
+  let phase: Pre32PairPhase = "launcher-load";
+  let launcher: Launcher | undefined;
+  let result: Awaited<ReturnType<typeof observePositiveWorktreePre32HostPairWithPortsV7>> | undefined;
+  let failure: Error | null = null;
+  let physicalPoint: PhysicalFailurePoint | null = null;
+  try {
+    const { holdDeploymentCutoverDefaultLauncherV1 } = await import("./baseline-deployment-cutover-launcher-observation-v1.js");
+    phase = "launcher-acquire";
+    launcher = holdDeploymentCutoverDefaultLauncherV1();
+    phase = "passive-qualification";
+    await launcher.qualifyPassiveHome();
+    phase = "pre-physical-recheck";
+    launcher.recheck();
+    const ownerHomeRoot = userInfo().homedir;
+    const workspaceRoot = resolveInternalProductionBaselineWorkspaceRootV1();
+    phase = "physical-first-pass";
+    result = await observePositiveWorktreePre32HostPairWithPortsV7(
+      async (betweenPasses) => {
+        let physical: PhysicalCatalogV2;
+        try {
+          physical = await observeHeldPositiveWorktreePhysicalCatalogV2({ ownerHomeRoot, workspaceRoot }, async () => {
+            phase = "database-callback";
+            await betweenPasses();
+            phase = "physical-second-pass";
+          });
+        } catch (error) { physicalPoint = validPhysicalFailurePoint(error, phase); throw error; }
+        phase = "pair-validation";
+        return physical;
+      },
+      launcher.censusAndBindingRowsV7,
     );
     phase = "post-pair-recheck";
     launcher.recheck();
