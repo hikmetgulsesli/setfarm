@@ -6,6 +6,7 @@ import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 // A pure comparison only. No supplied receipt authenticates its own producer.
 const SCHEMA = "setfarm.internal-production-positive-worktree-binding-candidate.v1";
 const RECEIPT_SCHEMA = "setfarm.internal-production-positive-worktree-binding-receipt.v1";
+const RECEIPT_CANDIDATE_SCHEMA = "setfarm.internal-production-positive-worktree-receipt-candidate.v1";
 const IDENTITY_SCHEMA = "setfarm.internal-production-positive-worktree-identity.v2";
 const FENCE_SCHEMA = "setfarm.internal-production-positive-worktree-fence-commitment.v1";
 const NAME = /^[A-Za-z0-9._-]+$/;
@@ -138,4 +139,26 @@ export function projectPositiveWorktreeBindingCandidateV1(value: unknown) {
     physicalIdentityProvenance: "unverified" as const, status: "consistent-candidate" as const,
     attempt: a, session: s, physical: p, receipt: r };
   return Object.freeze({ ...body, projectionHash: hashCanonicalJson(body) });
+}
+
+// Canonical bytes for a future producer to publish, not evidence that any producer did so.
+export function derivePositiveWorktreeBindingReceiptCandidateV1(value: unknown) {
+  const input = exact(value, ["attempt", "session", "physical"]);
+  const a = attempt(input.attempt);
+  const s = session(input.session);
+  const p = physical(input.physical);
+  const physicalIdentityHash = hashCanonicalJson({ schema: IDENTITY_SCHEMA, root: p.root,
+    dev: p.dev, ino: p.ino, birthtimeNs: p.birthtimeNs, gitPrimaryRoot: p.gitPrimaryRoot });
+  const receiptBody = Object.freeze({ schema: RECEIPT_SCHEMA, runId: a.runId, claimId: a.claimId,
+    attemptId: a.attemptId, sessionId: s.sessionId, ownerInstanceId: s.ownerInstanceId,
+    generation: a.generation, fenceTokenHash: a.fenceTokenHash, root: p.root,
+    physicalIdentityHash, sourceSha: a.sourceSha, sourceTreeHash: a.sourceTreeHash });
+  const r = receipt({ ...receiptBody, receiptHash: hashCanonicalJson(receiptBody) });
+  projectPositiveWorktreeBindingCandidateV1({ attempt: input.attempt, session: input.session,
+    physical: input.physical, receipt: r });
+  const body = Object.freeze({ schema: RECEIPT_CANDIDATE_SCHEMA,
+    authority: "diagnostic-only" as const, physicalIdentityProvenance: "unverified" as const,
+    producerAuthentication: "unverified" as const, receiptStatus: "required-unpublished" as const,
+    receipt: r });
+  return Object.freeze({ ...body, candidateHash: hashCanonicalJson(body) });
 }

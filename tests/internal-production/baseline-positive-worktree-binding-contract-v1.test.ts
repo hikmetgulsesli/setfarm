@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
-import { projectPositiveWorktreeBindingCandidateV1 } from "../../src/internal-production/baseline-positive-worktree-binding-contract-v1.js";
+import { derivePositiveWorktreeBindingReceiptCandidateV1, projectPositiveWorktreeBindingCandidateV1 } from "../../src/internal-production/baseline-positive-worktree-binding-contract-v1.js";
 
 const RECEIPT_SCHEMA = "setfarm.internal-production-positive-worktree-binding-receipt.v1";
 const IDENTITY_SCHEMA = "setfarm.internal-production-positive-worktree-identity.v2";
@@ -104,5 +104,82 @@ test("self-consistent receipts cannot bless noncanonical attempt or session IDs"
     fixture("ATT_1234567890abcdef!"), fixture(undefined, "RTS_1234567890abcdef!")]) {
     assert.throws(() => projectPositiveWorktreeBindingCandidateV1(input),
       /^Error: INTERNAL_PRODUCTION_POSITIVE_WORKTREE_BINDING_CONTRACT_INVALID$/);
+  }
+});
+
+function candidateInput() {
+  const { attempt, session, physical } = fixture();
+  return { attempt, session, physical };
+}
+
+test("receipt candidate has canonical exact wire and round-trips without producer authority", () => {
+  const input = candidateInput();
+  const result = derivePositiveWorktreeBindingReceiptCandidateV1(input);
+  const expected = fixture().receipt;
+  const body = { schema: "setfarm.internal-production-positive-worktree-receipt-candidate.v1",
+    authority: "diagnostic-only", physicalIdentityProvenance: "unverified",
+    producerAuthentication: "unverified", receiptStatus: "required-unpublished",
+    receipt: expected };
+  assert.deepEqual(result, { ...body, candidateHash: hashCanonicalJson(body) });
+  assert.deepEqual(Object.keys(result), [...Object.keys(body), "candidateHash"]);
+  assert.deepEqual(Object.keys(result.receipt), Object.keys(expected));
+  assert(Object.isFrozen(result));
+  assert(Object.isFrozen(result.receipt));
+  assert.equal(projectPositiveWorktreeBindingCandidateV1({ ...input, receipt: result.receipt }).status,
+    "consistent-candidate");
+  assert(!JSON.stringify(result).includes(FENCE));
+  assert(!JSON.stringify(result).includes("fenceToken\""));
+});
+
+test("receipt candidate refuses crossed or malformed inputs rather than fabricating evidence", () => {
+  const variants: Array<[string, (input: ReturnType<typeof candidateInput>) => void]> = [
+    ["crossed run", (input) => { input.session.runId = "run-2"; }],
+    ["crossed claim", (input) => { input.session.claimId = "8"; }],
+    ["crossed attempt", (input) => { input.session.attemptId = "ATT_2222222222222222"; }],
+    ["crossed root", (input) => { input.physical.root = "/runtime/story-worktrees/us-2"; }],
+    ["inactive attempt", (input) => { input.attempt.disposition = "succeeded"; }],
+    ["inactive session", (input) => { input.session.state = "released"; }],
+    ["invalid attempt ID", (input) => { input.attempt.attemptId = "ATT_short"; }],
+    ["invalid session ID", (input) => { input.session.sessionId = "RTS_short"; }],
+    ["noncanonical root", (input) => { input.physical.root = "/runtime/../elsewhere"; }],
+    ["invalid physical ID", (input) => { input.physical.ino = "0"; }],
+  ];
+  for (const [name, mutate] of variants) {
+    const input = candidateInput();
+    mutate(input);
+    assert.throws(() => derivePositiveWorktreeBindingReceiptCandidateV1(input),
+      /^Error: INTERNAL_PRODUCTION_POSITIVE_WORKTREE_BINDING_CONTRACT_INVALID$/, name);
+  }
+  const extra = { ...candidateInput(), receipt: fixture().receipt };
+  assert.throws(() => derivePositiveWorktreeBindingReceiptCandidateV1(extra), /BINDING_CONTRACT_INVALID/);
+  const accessor = candidateInput();
+  Object.defineProperty(accessor.attempt, "fenceToken", { get: () => FENCE, enumerable: true });
+  assert.throws(() => derivePositiveWorktreeBindingReceiptCandidateV1(accessor), /BINDING_CONTRACT_INVALID/);
+  assert.throws(() => derivePositiveWorktreeBindingReceiptCandidateV1(new Proxy(candidateInput(), {})),
+    /BINDING_CONTRACT_INVALID/);
+});
+
+test("receipt candidate binds every generation, fence, source, physical and owner change", () => {
+  const baseline = derivePositiveWorktreeBindingReceiptCandidateV1(candidateInput());
+  const variants: Array<[string, (input: ReturnType<typeof candidateInput>) => void]> = [
+    ["generation", (input) => { input.attempt.generation = 2; }],
+    ["fence", (input) => { input.attempt.fenceToken = "d".repeat(64); }],
+    ["source SHA", (input) => { input.attempt.sourceSha = "c".repeat(40); }],
+    ["source tree", (input) => { input.attempt.sourceTreeHash = "c".repeat(40); }],
+    ["device", (input) => { input.physical.dev = "9"; }],
+    ["inode", (input) => { input.physical.ino = "9"; }],
+    ["birthtime", (input) => { input.physical.birthtimeNs = "9"; }],
+    ["primary root", (input) => { input.physical.gitPrimaryRoot = "/runtime/other"; }],
+    ["owner", (input) => { input.session.ownerInstanceId = "owner-2"; }],
+    ["session", (input) => { input.session.sessionId = "RTS_2222222222222222"; }],
+  ];
+  for (const [name, mutate] of variants) {
+    const input = candidateInput();
+    mutate(input);
+    const changed = derivePositiveWorktreeBindingReceiptCandidateV1(input);
+    assert.notEqual(changed.receipt.receiptHash, baseline.receipt.receiptHash, name);
+    assert.notEqual(changed.candidateHash, baseline.candidateHash, name);
+    assert.equal(projectPositiveWorktreeBindingCandidateV1({ ...input, receipt: changed.receipt }).status,
+      "consistent-candidate", name);
   }
 });
