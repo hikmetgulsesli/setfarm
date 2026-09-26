@@ -457,10 +457,24 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
     const censusAndBindingRows = () => observeQualifiedDatabase(configuration.censusAndBindingRows);
     const censusAndBindingRowsV7 = () => observeQualifiedDatabase(configuration.censusAndBindingRowsV7);
     const activeBindingSnapshot = () => observeQualifiedDatabase(configuration.activeBindingSnapshot);
+    const observeTask6aWriterDatabaseSnapshotV2 = (missionControl: ReturnType<typeof import("./baseline-task6a-mission-control-launcher-hold-v2.js").holdTask6aMissionControlLauncherV2>) =>
+      observeQualifiedDatabase(async () => {
+        if (!missionControl || typeof missionControl !== "object" || inputs.entries.length !== 2) fail();
+        const { assertHeldTask6aMissionControlSameDatabaseUrlV2 } = await import("./baseline-task6a-mission-control-launcher-hold-v2.js");
+        const url = inputs.entries[0]?.environment.SETFARM_PG_URL;
+        if (typeof url !== "string" || !url || inputs.entries[1]?.environment.SETFARM_PG_URL !== url) fail();
+        const roleBefore = assertHeldTask6aMissionControlSameDatabaseUrlV2(missionControl, url);
+        if (typeof roleBefore !== "string") fail();
+        const { observeTask6aWriterDatabaseSnapshotV2 } = await import("./baseline-task6a-writer-database-snapshot-v2.js");
+        const snapshot = await observeTask6aWriterDatabaseSnapshotV2(url);
+        const roleAfter = assertHeldTask6aMissionControlSameDatabaseUrlV2(missionControl, url);
+        if (roleAfter !== roleBefore || snapshot.database.sessionRole !== roleBefore) fail();
+        return snapshot;
+      });
     check();
     return Object.freeze({ observation, qualifyPassiveHome, recheck, census, censusAndActiveRows,
       censusAndActiveRowsWithQuarantine, censusAndBindingRows, censusAndBindingRowsV7,
-      activeBindingSnapshot, close });
+      activeBindingSnapshot, observeTask6aWriterDatabaseSnapshotV2, close });
   } catch { invalid = true; close(); defaultLauncherFailure(); }
 }
 

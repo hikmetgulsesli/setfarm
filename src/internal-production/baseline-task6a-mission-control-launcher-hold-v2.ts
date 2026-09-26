@@ -12,6 +12,7 @@ const FILE_KEYS = [...DIRECTORY_KEYS, "size", "nlink", "mtimeNs", "ctimeNs"] as 
 const ENV_KEYS = ["CLI_PATH", "MC_HOST", "MC_INTERNAL_URL", "MC_PORT", "PATH", "PROJECTS_DIR", "PROJECTS_JSON",
   "SETFARM_DIR", "SETFARM_OPERATIONAL_WRITE_TOKEN", "SETFARM_PG_URL", "SETFARM_REPO_DIR", "SETFARM_URL"] as const;
 let cleanupUncertain = false;
+const heldCapabilities = new WeakSet<object>();
 
 function fail(): never { throw Error("INTERNAL_PRODUCTION_TASK6A_MISSION_CONTROL_LAUNCHER_INVALID"); }
 function same(a: BigIntStats, b: BigIntStats, keys: readonly (keyof BigIntStats)[]) {
@@ -68,9 +69,11 @@ export function holdTask6aMissionControlLauncherV2() {
   if (arguments.length !== 0 || cleanupUncertain) fail();
   const descriptors: number[] = [];
   let closed = false, invalid = false;
+  let capability: object | undefined;
   const close = () => {
     if (closed) return;
     closed = true;
+    if (capability) heldCapabilities.delete(capability);
     let uncertain = false;
     while (descriptors.length) {
       try { fs.closeSync(descriptors.pop()!); } catch { uncertain = true; cleanupUncertain = true; }
@@ -194,9 +197,20 @@ export function holdTask6aMissionControlLauncherV2() {
       label: LABEL, state: "running" as const, activeCount: 1 as const, databaseRole,
     });
     const observation = Object.freeze({ ...body, observationHash: hashCanonicalJson(body) });
-    return Object.freeze({ observation, recheck, assertSameDatabaseUrl, close });
+    const held = Object.freeze({ observation, recheck, assertSameDatabaseUrl, close });
+    capability = held;
+    heldCapabilities.add(held);
+    return held;
   } catch {
     try { close(); } catch { /* cleanupUncertain remains fail-closed */ }
     fail();
   }
+}
+
+// A structural lookalike cannot receive the private Setfarm URL. The genuine
+// held object is checked before its method is read or any comparison is made.
+export function assertHeldTask6aMissionControlSameDatabaseUrlV2(held: unknown, raw: string): string {
+  if (arguments.length !== 2 || held === null || typeof held !== "object"
+    || !heldCapabilities.has(held) || typeof raw !== "string") fail();
+  return (held as ReturnType<typeof holdTask6aMissionControlLauncherV2>).assertSameDatabaseUrl(raw);
 }

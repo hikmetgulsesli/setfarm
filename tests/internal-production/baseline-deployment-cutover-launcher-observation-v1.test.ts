@@ -96,6 +96,23 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
         export const monitorDeploymentCutoverPassiveProcessV1=request=>globalThis.monitor(request);
         export const measureDeploymentCutoverPassiveHomeV1=request=>globalThis.measure(request);`);
       source = source.replace('new URL("../../scripts/deployment-cutover-passive-home.mjs", import.meta.url).href', JSON.stringify(pathToFileURL(native).href));
+      const writer = path.join(home, "writer-snapshot.mjs");
+      fs.writeFileSync(writer, `export async function observeTask6aWriterDatabaseSnapshotV2(url){
+        globalThis.writerCalls++;
+        if(url!=='postgresql://fixture:PG_SENTINEL@localhost/setfarm')throw Error('WRONG_WRITER_URL');
+        globalThis.writerDrift?.();await Promise.resolve();
+        return Object.freeze({schema:'fixture-writer-v2',database:Object.freeze({sessionRole:'fixture'})});
+      }`);
+      source = source.replace('await import("./baseline-task6a-writer-database-snapshot-v2.js")',
+        `await import(${JSON.stringify(pathToFileURL(writer).href)})`);
+      const mission = path.join(home, "mission-holder.mjs");
+      fs.writeFileSync(mission, `export function assertHeldTask6aMissionControlSameDatabaseUrlV2(holder,url){
+        if(holder?.testBrand!==true)throw Error('FORGED_HOLDER');
+        if(url!=='postgresql://fixture:PG_SENTINEL@localhost/setfarm')throw Error('WRONG_MC_URL');
+        return 'fixture';
+      }`);
+      source = source.replace('await import("./baseline-task6a-mission-control-launcher-hold-v2.js")',
+        `await import(${JSON.stringify(pathToFileURL(mission).href)})`);
     } else {
       for (const name of ["baseline-deployment-cutover-node-path-v1", "baseline-deployment-cutover-process-observation-v1"])
         source = source.replace(JSON.stringify(`./${name}.js`), JSON.stringify(new URL(`../../src/internal-production/${name}.ts`, import.meta.url).href));
@@ -111,7 +128,7 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
     const identity = os.userInfo(); os.userInfo = () => ({...identity,homedir:${JSON.stringify(home)}});
     const texts = ${JSON.stringify(texts)}, labels = ${JSON.stringify(labels)};
     let prints = 0, conversions = 0, active = false, run, evidence = () => null;
-    globalThis.dbCalls=0;globalThis.combinedCalls=0;globalThis.v5Calls=0;globalThis.v6Calls=0;globalThis.v7Calls=0;globalThis.activeBindingCalls=0;globalThis.samples=0;globalThis.nodeCloses=0;
+    globalThis.dbCalls=0;globalThis.combinedCalls=0;globalThis.v5Calls=0;globalThis.v6Calls=0;globalThis.v7Calls=0;globalThis.activeBindingCalls=0;globalThis.writerCalls=0;globalThis.samples=0;globalThis.nodeCloses=0;
     globalThis.processes=()=>Object.freeze({families:Object.freeze([]),listener:null});
     globalThis.nodeHold=()=>({observation:Object.freeze({candidatePath:'/fixture/invoked/node',executablePath:'/fixture/physical/node'}),recheck(){},close(){globalThis.nodeCloses++}});
     globalThis.identify=request=>({schema:'setfarm.internal-production-passive-process-identity.v1',pid:request.pid,ppid:1,
@@ -186,6 +203,35 @@ test("qualified combined census uses both held launcher URLs once and closes", (
   assert.deepEqual(result.evidence, { combinedCalls: 1, dbCalls: 0, nodeCloses: 2 });
   assert.equal(result.frozen, true);
   assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL|SocketSentinel/);
+}));
+
+test("qualified V2 writer sample keeps URL private and checks both idle launchers before and after", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts,
+    `evidence=()=>({writerCalls:globalThis.writerCalls,nodeCloses:globalThis.nodeCloses});`, undefined,
+    `await context.qualifyPassiveHome();
+      const writer=await context.observeTask6aWriterDatabaseSnapshotV2(Object.freeze({testBrand:true}));
+      return Object.freeze({writer,configuration:context.observation});`);
+  assert.equal(result.observation?.writer.schema, "fixture-writer-v2", JSON.stringify(result));
+  assert.deepEqual(result.evidence, { writerCalls: 1, nodeCloses: 2 });
+  assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL/);
+}));
+
+test("V2 writer sample invalidates holder when a launcher starts during database observation", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts,
+    `globalThis.writerDrift=()=>{globalThis.idle=false};
+      evidence=()=>({writerCalls:globalThis.writerCalls,nodeCloses:globalThis.nodeCloses});`, undefined,
+    `await context.qualifyPassiveHome();await context.observeTask6aWriterDatabaseSnapshotV2(Object.freeze({testBrand:true}));`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.deepEqual(result.evidence, { writerCalls: 1, nodeCloses: 2 });
+}));
+
+test("V2 writer method refuses forged Mission Control holder before reading the private URL", () => defaultFixture((home, texts) => {
+  const result = observe(home, texts,
+    `evidence=()=>({writerCalls:globalThis.writerCalls,nodeCloses:globalThis.nodeCloses});`, undefined,
+    `await context.qualifyPassiveHome();await context.observeTask6aWriterDatabaseSnapshotV2(Object.freeze({testBrand:false}));`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.deepEqual(result.evidence, { writerCalls: 0, nodeCloses: 2 });
+  assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL/);
 }));
 
 test("held V5 quarantine census requires qualification, uses one private URL and closes", () => defaultFixture((home, texts) => {

@@ -159,7 +159,7 @@ function sourceState() {
 }
 async function inspect() {
   if (typeof registerHooks !== "function" || process.execArgv.length || process.argv.length !== 4
-    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1"].includes(process.argv[2]) || process.argv[3] !== "--json"
+    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1", "inspect-task6a-three-launcher-host-v2"].includes(process.argv[2]) || process.argv[3] !== "--json"
     || pathToFileURL(path.resolve(process.argv[1])).href !== import.meta.url
     || Object.keys(process.env).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key)
       && !(process.platform === "darwin" && key === "__CF_USER_TEXT_ENCODING"))) fail();
@@ -284,7 +284,7 @@ async function inspect() {
     stage("controller-source");
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();
-    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair, pre32HostPairV5, pre32HostPairV6, pre32HostPairV7, pre32AbsenceAnnotationV1, pre32AbsenceAnnotationV2, pre32ResidualAbsenceAnnotationV3, activeBindingHostPairV1, heldBindingCandidatesV1;
+    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair, pre32HostPairV5, pre32HostPairV6, pre32HostPairV7, pre32AbsenceAnnotationV1, pre32AbsenceAnnotationV2, pre32ResidualAbsenceAnnotationV3, activeBindingHostPairV1, heldBindingCandidatesV1, task6aThreeLauncherHostV2;
     if (process.argv[2] === "inspect-default-context") {
       stage("default-owner-load");
       const contextModule = await import("./deployment-cutover-default-context.mjs");
@@ -329,6 +329,54 @@ async function inspect() {
       else if (v5) pre32HostPairV5 = observed;
       else pre32HostPair = observed;
       stage("post-pre32-host-pair"); check();
+    }
+    if (process.argv[2] === "inspect-task6a-three-launcher-host-v2") {
+      stage("task6a-three-launcher-host-load");
+      const hostModule = await import("../dist/internal-production/baseline-task6a-three-launcher-host-v2.js");
+      check(); stage("task6a-three-launcher-host");
+      const observed = await hostModule.observeCodeOwnedTask6aThreeLauncherHostV2();
+      const exactPublic = (value, keys) => {
+        if (!plainFrozenTree(value)) fail();
+        const descriptors = Object.getOwnPropertyDescriptors(value), actual = Reflect.ownKeys(descriptors);
+        if (actual.length !== keys.length || actual.some(key => typeof key !== "string" || !keys.includes(key)
+          || !descriptors[key].enumerable || !Object.hasOwn(descriptors[key], "value"))) fail();
+        return Object.fromEntries(keys.map(key => [key, descriptors[key].value]));
+      };
+      const hashPublic = (value, fields, key) => {
+        const row = exactPublic(value, [...fields, key]);
+        if (typeof row[key] !== "string" || !/^[a-f0-9]{64}$/.test(row[key])
+          || hash(canonical(Object.fromEntries(fields.map(field => [field, row[field]])))) !== row[key]) fail();
+        return row;
+      };
+      const fields = ["schema", "authority", "cutoverAdmission", "physicalIdentityProvenance",
+        "temporalScope", "roleAgreement", "missionControlLauncher", "pre32HostPairV7", "writerDatabaseSnapshotV2"];
+      const row = hashPublic(observed, fields, "diagnosticHash");
+      const mc = hashPublic(row.missionControlLauncher,
+        ["schema", "authority", "cutoverAdmission", "physicalIdentityProvenance", "label", "state", "activeCount", "databaseRole"], "observationHash");
+      const pair = hashPublic(row.pre32HostPairV7,
+        ["schema", "authority", "physicalIdentityProvenance", "heldPair", "pre32Database"], "pairHash");
+      const writer = hashPublic(row.writerDatabaseSnapshotV2,
+        ["schema", "authority", "temporalScope", "cutoverAdmission", "physicalIdentityProvenance", "database"], "snapshotHash");
+      const database = exactPublic(writer.database, ["databaseName", "databaseOwnerRole", "sessionRole", "effectiveRole",
+        "login", "superuser", "bypassRls", "createRole", "createDatabase", "otherSessionCount"]);
+      if (row.schema !== "setfarm.internal-production-task6a-three-launcher-host.v2"
+        || row.authority !== "diagnostic-only" || row.cutoverAdmission !== "not-granted"
+        || row.physicalIdentityProvenance !== "unverified"
+        || row.temporalScope !== "held-physical-two-pass-sequential-database-samples" || row.roleAgreement !== true
+        || mc.schema !== "setfarm.internal-production-task6a-mission-control-launcher.v2"
+        || mc.authority !== "diagnostic-only" || mc.cutoverAdmission !== "not-granted"
+        || mc.physicalIdentityProvenance !== "unverified" || mc.label !== "com.setrox.mission-control"
+        || mc.state !== "running" || mc.activeCount !== 1
+        || pair.schema !== "setfarm.internal-production-pre32-physical-database-pair.v7"
+        || pair.authority !== "diagnostic-only" || pair.physicalIdentityProvenance !== "unverified"
+        || pair.pre32Database.schema !== "setfarm.internal-production-pre32-active-binding-snapshot.v7"
+        || writer.schema !== "setfarm.internal-production-task6a-writer-database-snapshot.v2"
+        || writer.authority !== "diagnostic-only" || writer.temporalScope !== "catalog-snapshot-and-live-session-sample"
+        || writer.cutoverAdmission !== "not-granted" || writer.physicalIdentityProvenance !== "unverified"
+        || database.databaseName !== "setfarm" || database.sessionRole !== database.effectiveRole
+        || database.sessionRole !== mc.databaseRole) fail();
+      task6aThreeLauncherHostV2 = observed;
+      stage("post-task6a-three-launcher-host"); check();
     }
     if (process.argv[2] === "inspect-active-binding-host-pair-v1") {
       stage("active-binding-host-pair-load");
@@ -783,7 +831,8 @@ async function inspect() {
       ...(pre32AbsenceAnnotationV2 ? { pre32AbsenceAnnotationV2 } : {}),
       ...(pre32ResidualAbsenceAnnotationV3 ? { pre32ResidualAbsenceAnnotationV3 } : {}),
       ...(activeBindingHostPairV1 ? { activeBindingHostPairV1 } : {}),
-      ...(heldBindingCandidatesV1 ? { heldBindingCandidatesV1 } : {}) };
+      ...(heldBindingCandidatesV1 ? { heldBindingCandidatesV1 } : {}),
+      ...(task6aThreeLauncherHostV2 ? { task6aThreeLauncherHostV2 } : {}) };
   } catch (error) {
     // A throwing nested observer may have acquired resources we never received.
     // Missing sanitized cleanup evidence means unknown, not successful cleanup.
@@ -810,6 +859,6 @@ async function inspect() {
 try { process.stdout.write(`${JSON.stringify(await inspect())}\n`); }
 catch {
   process.stderr.write("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
-  if (["inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
+  if (["inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1", "inspect-task6a-three-launcher-host-v2"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
   process.exitCode = 1;
 }
