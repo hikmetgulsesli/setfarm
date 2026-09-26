@@ -159,7 +159,7 @@ function sourceState() {
 }
 async function inspect() {
   if (typeof registerHooks !== "function" || process.execArgv.length || process.argv.length !== 4
-    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1", "inspect-task6a-three-launcher-host-v2"].includes(process.argv[2]) || process.argv[3] !== "--json"
+    || !["inspect", "inspect-host", "inspect-database", "inspect-envfiles", "inspect-helpers", "inspect-retained-profile", "inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1", "inspect-task6a-three-launcher-host-v2", "inspect-task6a-writer-catalog-host-v2"].includes(process.argv[2]) || process.argv[3] !== "--json"
     || pathToFileURL(path.resolve(process.argv[1])).href !== import.meta.url
     || Object.keys(process.env).some(key => !["PATH", "LANG", "LC_ALL", "TZ"].includes(key)
       && !(process.platform === "darwin" && key === "__CF_USER_TEXT_ENCODING"))) fail();
@@ -284,7 +284,7 @@ async function inspect() {
     stage("controller-source");
     const owner = await import("./deployment-cutover-owner.mjs");
     const authority = await owner.observeDeploymentCutoverOwnerControllerSourceV1();
-    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair, pre32HostPairV5, pre32HostPairV6, pre32HostPairV7, pre32AbsenceAnnotationV1, pre32AbsenceAnnotationV2, pre32ResidualAbsenceAnnotationV3, activeBindingHostPairV1, heldBindingCandidatesV1, task6aThreeLauncherHostV2;
+    let host, envFiles, helpers, retainedProfile, defaultContext, pre32HostPair, pre32HostPairV5, pre32HostPairV6, pre32HostPairV7, pre32AbsenceAnnotationV1, pre32AbsenceAnnotationV2, pre32ResidualAbsenceAnnotationV3, activeBindingHostPairV1, heldBindingCandidatesV1, task6aThreeLauncherHostV2, task6aWriterCatalogHostV2;
     if (process.argv[2] === "inspect-default-context") {
       stage("default-owner-load");
       const contextModule = await import("./deployment-cutover-default-context.mjs");
@@ -377,6 +377,83 @@ async function inspect() {
         || database.sessionRole !== mc.databaseRole) fail();
       task6aThreeLauncherHostV2 = observed;
       stage("post-task6a-three-launcher-host"); check();
+    }
+    if (process.argv[2] === "inspect-task6a-writer-catalog-host-v2") {
+      stage("task6a-writer-catalog-host-load");
+      const hostModule = await import("../dist/internal-production/baseline-task6a-writer-catalog-host-v2.js");
+      check(); stage("task6a-writer-catalog-host");
+      const observed = await hostModule.observeCodeOwnedTask6aWriterCatalogHostV2();
+      const exactPublic = (value, keys) => {
+        if (!plainFrozenTree(value)) fail();
+        const descriptors = Object.getOwnPropertyDescriptors(value), actual = Reflect.ownKeys(descriptors);
+        if (actual.length !== keys.length || actual.some(key => typeof key !== "string" || !keys.includes(key)
+          || !descriptors[key].enumerable || !Object.hasOwn(descriptors[key], "value"))) fail();
+        return Object.fromEntries(keys.map(key => [key, descriptors[key].value]));
+      };
+      const hashPublic = (value, fields, key) => {
+        const row = exactPublic(value, [...fields, key]);
+        if (typeof row[key] !== "string" || !/^[a-f0-9]{64}$/.test(row[key])
+          || hash(canonical(Object.fromEntries(fields.map(field => [field, row[field]])))) !== row[key]) fail();
+        return row;
+      };
+      const row = hashPublic(observed, ["schema", "authority", "cutoverAdmission", "physicalIdentityProvenance",
+        "temporalScope", "threeLauncherHostV2", "writerCatalogTopologyV2"], "diagnosticHash");
+      const old = hashPublic(row.threeLauncherHostV2,
+        ["schema", "authority", "cutoverAdmission", "physicalIdentityProvenance", "temporalScope",
+          "roleAgreement", "missionControlLauncher", "pre32HostPairV7", "writerDatabaseSnapshotV2"], "diagnosticHash");
+      const mission = hashPublic(old.missionControlLauncher,
+        ["schema", "authority", "cutoverAdmission", "physicalIdentityProvenance", "label", "state", "activeCount", "databaseRole"], "observationHash");
+      const writer = hashPublic(old.writerDatabaseSnapshotV2,
+        ["schema", "authority", "temporalScope", "cutoverAdmission", "physicalIdentityProvenance", "database"], "snapshotHash");
+      const database = exactPublic(writer.database, ["databaseName", "databaseOwnerRole", "sessionRole", "effectiveRole",
+        "login", "superuser", "bypassRls", "createRole", "createDatabase", "otherSessionCount"]);
+      const pair = hashPublic(old.pre32HostPairV7,
+        ["schema", "authority", "physicalIdentityProvenance", "heldPair", "pre32Database"], "pairHash");
+      const catalog = hashPublic(row.writerCatalogTopologyV2,
+        ["schema", "authority", "cutoverAdmission", "physicalIdentityProvenance", "temporalScope",
+          "membershipScope", "catalogScope", "databaseName", "sessionRole", "serverVersion", "counts"], "topologyHash");
+      const countNames = ["directMembership", "directInherit", "directSet", "directAdmin", "schema", "ownedSchema",
+        "relation", "ownedRelation", "sequence", "ownedSequence", "routine", "ownedRoutine",
+        "securityDefinerRoutine", "selectedExplicitAclRow", "defaultAcl", "ownedDefaultAcl"];
+      const counts = exactPublic(catalog.counts, countNames);
+      if (row.schema !== "setfarm.internal-production-task6a-writer-catalog-host.v2"
+        || row.authority !== "diagnostic-only" || row.cutoverAdmission !== "not-granted"
+        || row.physicalIdentityProvenance !== "unverified"
+        || row.temporalScope !== "held-physical-two-pass-sequential-catalog-sample"
+        || old.schema !== "setfarm.internal-production-task6a-three-launcher-host.v2"
+        || old.authority !== "diagnostic-only" || old.cutoverAdmission !== "not-granted"
+        || old.physicalIdentityProvenance !== "unverified"
+        || old.temporalScope !== "held-physical-two-pass-sequential-database-samples" || old.roleAgreement !== true
+        || mission.schema !== "setfarm.internal-production-task6a-mission-control-launcher.v2"
+        || mission.authority !== "diagnostic-only" || mission.cutoverAdmission !== "not-granted"
+        || mission.physicalIdentityProvenance !== "unverified" || mission.label !== "com.setrox.mission-control"
+        || mission.state !== "running" || mission.activeCount !== 1
+        || pair.schema !== "setfarm.internal-production-pre32-physical-database-pair.v7"
+        || pair.authority !== "diagnostic-only" || pair.physicalIdentityProvenance !== "unverified"
+        || pair.pre32Database.schema !== "setfarm.internal-production-pre32-active-binding-snapshot.v7"
+        || writer.schema !== "setfarm.internal-production-task6a-writer-database-snapshot.v2"
+        || writer.authority !== "diagnostic-only" || writer.temporalScope !== "catalog-snapshot-and-live-session-sample"
+        || writer.cutoverAdmission !== "not-granted" || writer.physicalIdentityProvenance !== "unverified"
+        || database.databaseName !== "setfarm" || database.sessionRole !== database.effectiveRole
+        || ["databaseOwnerRole", "sessionRole", "effectiveRole"].some(key =>
+          typeof database[key] !== "string" || !/^[a-z][a-z0-9_]{0,62}$/.test(database[key]))
+        || ["login", "superuser", "bypassRls", "createRole", "createDatabase"].some(key => typeof database[key] !== "boolean")
+        || !Number.isSafeInteger(database.otherSessionCount) || database.otherSessionCount < 0
+        || catalog.schema !== "setfarm.internal-production-task6a-writer-catalog-topology.v2"
+        || catalog.authority !== "diagnostic-only" || catalog.cutoverAdmission !== "not-granted"
+        || catalog.physicalIdentityProvenance !== "unverified" || catalog.temporalScope !== "catalog-transaction-snapshot"
+        || catalog.membershipScope !== "direct-only-non-transitive"
+        || catalog.catalogScope !== "coarse-selected-catalog-row-counts-not-permission-proof"
+        || catalog.databaseName !== "setfarm" || catalog.sessionRole !== database.sessionRole
+        || catalog.sessionRole !== mission.databaseRole
+        || !Number.isSafeInteger(catalog.serverVersion) || catalog.serverVersion < 160000 || catalog.serverVersion >= 200000
+        || Object.values(counts).some(value => !Number.isSafeInteger(value) || value < 0)) fail();
+      for (const [subset, total] of [["directInherit", "directMembership"], ["directSet", "directMembership"],
+        ["directAdmin", "directMembership"], ["ownedSchema", "schema"], ["ownedRelation", "relation"],
+        ["sequence", "relation"], ["ownedSequence", "sequence"], ["ownedRoutine", "routine"],
+        ["securityDefinerRoutine", "routine"], ["ownedDefaultAcl", "defaultAcl"]]) if (counts[subset] > counts[total]) fail();
+      task6aWriterCatalogHostV2 = observed;
+      stage("post-task6a-writer-catalog-host"); check();
     }
     if (process.argv[2] === "inspect-active-binding-host-pair-v1") {
       stage("active-binding-host-pair-load");
@@ -832,7 +909,8 @@ async function inspect() {
       ...(pre32ResidualAbsenceAnnotationV3 ? { pre32ResidualAbsenceAnnotationV3 } : {}),
       ...(activeBindingHostPairV1 ? { activeBindingHostPairV1 } : {}),
       ...(heldBindingCandidatesV1 ? { heldBindingCandidatesV1 } : {}),
-      ...(task6aThreeLauncherHostV2 ? { task6aThreeLauncherHostV2 } : {}) };
+      ...(task6aThreeLauncherHostV2 ? { task6aThreeLauncherHostV2 } : {}),
+      ...(task6aWriterCatalogHostV2 ? { task6aWriterCatalogHostV2 } : {}) };
   } catch (error) {
     // A throwing nested observer may have acquired resources we never received.
     // Missing sanitized cleanup evidence means unknown, not successful cleanup.
@@ -859,6 +937,6 @@ async function inspect() {
 try { process.stdout.write(`${JSON.stringify(await inspect())}\n`); }
 catch {
   process.stderr.write("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
-  if (["inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1", "inspect-task6a-three-launcher-host-v2"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
+  if (["inspect-default-context", "inspect-pre32-host-pair", "inspect-pre32-host-pair-v5", "inspect-pre32-host-pair-v6", "inspect-pre32-host-pair-v7", "inspect-pre32-absence-annotation-v1", "inspect-pre32-absence-annotation-v2", "inspect-pre32-residual-absence-annotation-v3", "inspect-active-binding-host-pair-v1", "inspect-held-binding-candidates-v1", "inspect-task6a-three-launcher-host-v2", "inspect-task6a-writer-catalog-host-v2"].includes(process.argv[2])) process.stderr.write(`${JSON.stringify({ schema: "setfarm.deployment-cutover-refusal.v1", ...refusal })}\n`);
   process.exitCode = 1;
 }
