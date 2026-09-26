@@ -556,6 +556,136 @@ test("Task6A V2 shutdown retains only an exact process-free reserved post-claim 
   assert.match(source, /task6aV2RetainedPostClaimRuntimes\.size !== retained\.length/);
 });
 
+test("Task6A V2 ordinary post-claim awaits refuse without finalizer release writes", async () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const spawn = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "spawnAgentNow");
+  assert.ok(spawn?.body);
+  const outer = spawn.body.statements.find((node): node is ts.TryStatement => ts.isTryStatement(node)
+    && Boolean(node.finallyBlock?.getText(tree).includes("releaseUntransferredPostClaimOwnership(claim")));
+  assert.ok(outer?.finallyBlock);
+  const body = outer.tryBlock.statements;
+  const inlineIndex = body.findIndex((node) => ts.isVariableStatement(node)
+    && node.getText(tree).includes("await completeInlineSecurityGateIfApplicable("));
+  assert.ok(inlineIndex >= 0, "inline selector must be awaited before ordinary effects");
+  assert.match(body[inlineIndex + 1]?.getText(tree) || "", /^if \(inlineSecurityCompleted\)/);
+  const findIndex = body.findIndex((node) => ts.isTryStatement(node)
+    && node.tryBlock.getText(tree).includes("await runtimeSessions.findById(runtimeSessionId)"));
+  assert.ok(findIndex >= 0);
+  assert.match(body[findIndex + 3]?.getText(tree) || "", /^if \(!runtimeLookupSettled\.ok\) throw runtimeLookupSettled\.error;/);
+  assert.match(body[findIndex + 4]?.getText(tree) || "", /^const reservedRuntimeSession = runtimeLookupSettled\.session;/);
+  assert.match(body[findIndex + 5]?.getText(tree) || "", /^let startingRuntimeSession:/);
+  for (const { name, index, next } of [
+    { name: "inline", index: inlineIndex + 1, next: /^const prompt = buildPreclaimedPrompt\(/ },
+    { name: "runtime", index: findIndex, next: /^if \(!runtimeLookupSettled\.ok\) throw runtimeLookupSettled\.error;/ },
+  ]) {
+    const refusal = body[index + 1];
+    const shutdown = body[index + 2];
+    assert.ok(refusal && ts.isTryStatement(refusal), `${name} V2 sample`);
+    assert.equal(refusal.tryBlock.statements[0]?.getText(tree), "await assertTask6aPreSchemaOrdinaryStartupV2();");
+    assert.match(refusal.catchClause?.block.getText(tree) || "", /postClaimRefusedV2 = true/);
+    assert.match(refusal.catchClause?.block.getText(tree) || "", /retainTask6aV2PostClaimRuntimeIfExact\(claim, runtimeIntent\)/);
+    assert.doesNotMatch(refusal.getText(tree), /releaseUntransferredPostClaimOwnership|quarantine|unlinkSync/);
+    assert.ok(shutdown && ts.isIfStatement(shutdown));
+    assert.equal(shutdown.expression.getText(tree), "shuttingDown");
+    assert.match(shutdown.thenStatement.getText(tree), /postClaimRefusedV2 = true/);
+    assert.match(body[index + 3]?.getText(tree) || "", next);
+
+    const run = new Function("preflight", "effect", "retained", `return (async () => {
+      let shuttingDown = false;
+      let postClaimRefusedV2 = false;
+      let task6aV2UnboundPostClaimRefusals = 0;
+      const claim = { found: true };
+      const runtimeIntent = {};
+      const key = "key";
+      const claimingSpawns = { delete: () => {} };
+      const console = { warn: () => {} };
+      const retainTask6aV2PostClaimRuntimeIfExact = () => { retained.push("retain"); return true; };
+      const assertTask6aPreSchemaOrdinaryStartupV2 = () => preflight(() => { shuttingDown = true; });
+      ${refusal.getText(tree)}
+      ${shutdown.getText(tree)}
+      effect();
+      return postClaimRefusedV2;
+    })();`) as (preflight: (shutdown: () => void) => Promise<void>, effect: () => void,
+      retained: string[]) => Promise<boolean | undefined>;
+    const effects: string[] = [];
+    const retained: string[] = [];
+    assert.equal(await run(async () => { throw Error("refused"); }, () => effects.push("effect"), retained), undefined);
+    assert.deepEqual(effects, [], name);
+    assert.deepEqual(retained.splice(0), ["retain"], name);
+    assert.equal(await run(async (shutdownNow) => { shutdownNow(); }, () => effects.push("effect"), retained), undefined);
+    assert.deepEqual(effects, [], name);
+    assert.deepEqual(retained.splice(0), ["retain"], name);
+    assert.equal(await run(async () => {}, () => effects.push("effect"), retained), false);
+    assert.deepEqual(effects, ["effect"], name);
+    assert.deepEqual(retained, [], name);
+  }
+  assert.match(outer.finallyBlock.getText(tree), /if \(!postClaimOwnershipTransferred && !postClaimRefusedV2\)/);
+});
+
+test("Task6A V2 rejected runtime lookup still samples refusal before release", async () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const spawn = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "spawnAgentNow");
+  assert.ok(spawn?.body);
+  const outer = spawn.body.statements.find((node): node is ts.TryStatement => ts.isTryStatement(node)
+    && Boolean(node.finallyBlock?.getText(tree).includes("releaseUntransferredPostClaimOwnership(claim")));
+  assert.ok(outer?.finallyBlock);
+  const statements = outer.tryBlock.statements;
+  const lookupIndex = statements.findIndex((node) => ts.isTryStatement(node)
+    && node.tryBlock.getText(tree).includes("await runtimeSessions.findById(runtimeSessionId)"));
+  assert.ok(lookupIndex >= 0, "lookup rejection must be captured before the V2 sample");
+  const declaration = statements[lookupIndex - 1]?.getText(tree);
+  const lookup = statements[lookupIndex]?.getText(tree);
+  const refusal = statements[lookupIndex + 1]?.getText(tree);
+  const shutdown = statements[lookupIndex + 2]?.getText(tree);
+  const rethrow = statements[lookupIndex + 3]?.getText(tree);
+  assert.match(declaration || "", /^let runtimeLookupSettled:/);
+  assert.match(lookup || "", /runtimeLookupSettled = \{ ok: false, error \}/);
+  assert.match(refusal || "", /await assertTask6aPreSchemaOrdinaryStartupV2\(\)/);
+  assert.match(shutdown || "", /^if \(shuttingDown\)/);
+  assert.match(rethrow || "", /^if \(!runtimeLookupSettled\.ok\) throw runtimeLookupSettled\.error;/);
+  const continuationJs = ts.transpileModule(`async function continuation() {
+    ${declaration}
+    ${lookup}
+    ${refusal}
+    ${shutdown}
+    ${rethrow}
+  }`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+  const run = new Function("lookup", "preflight", "retained", "releases", `return (async () => {
+    let shuttingDown = false;
+    let postClaimOwnershipTransferred = false;
+    let postClaimRefusedV2 = false;
+    let task6aV2UnboundPostClaimRefusals = 0;
+    const claim = { found: true };
+    const runtimeIntent = {};
+    const runtimeSessionId = "RTS_exact";
+    const runtimeSessions = { findById: lookup };
+    const console = { warn: () => {} };
+    const retainTask6aV2PostClaimRuntimeIfExact = () => { retained.push("retain"); return true; };
+    const assertTask6aPreSchemaOrdinaryStartupV2 = preflight;
+    ${continuationJs}
+    try {
+      await continuation();
+    } finally {
+      if (!postClaimOwnershipTransferred && !postClaimRefusedV2) releases.push("release");
+    }
+  })();`) as (lookup: () => Promise<unknown>, preflight: () => Promise<void>,
+      retained: string[], releases: string[]) => Promise<void>;
+  const retained: string[] = [];
+  const releases: string[] = [];
+  await run(async () => { throw Error("LOOKUP_FAILURE"); },
+    async () => { throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED"); }, retained, releases);
+  assert.deepEqual(retained.splice(0), ["retain"]);
+  assert.deepEqual(releases, []);
+  await assert.rejects(run(async () => { throw Error("LOOKUP_FAILURE"); },
+    async () => {}, retained, releases), /LOOKUP_FAILURE/);
+  assert.deepEqual(retained, []);
+  assert.deepEqual(releases, ["release"]);
+});
+
 test("Task6A V2 poller rechecks before its first ordinary effect", async () => {
   const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
   const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
