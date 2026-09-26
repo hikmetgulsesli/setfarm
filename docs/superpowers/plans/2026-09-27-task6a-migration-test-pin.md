@@ -42,7 +42,7 @@ In the three-element expected hash array in `tests/execution-attempts/migrations
 
 Keep the migration-32 source and generated-digest literals unchanged.
 
-- [ ] **Step 3: Verify GREEN and scope.**
+- [x] **Step 3: Verify GREEN and scope.**
 
 The isolated test runner requires a clean tracked source projection, so commit
 the reviewed one-literal edit and documentation before its GREEN run. Run the

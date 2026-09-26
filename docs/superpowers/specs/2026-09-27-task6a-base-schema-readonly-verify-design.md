@@ -26,7 +26,16 @@ target database only. The existing `verifyContractSpineMigrations()` cannot be
 reused as a least-privilege read-only verifier: it opens its own transaction
 and takes a SHARE table lock requiring more than SELECT on the journal. A
 separately reviewed, bounded current-head journal/catalog verification path
-must use only read privileges. The base schema verifier then checks required
+must use only read privileges. Existing migration detect/verify hooks also
+contain owner-relative checks (`current_user`) and private-table reads that
+cannot simply run under a distinct SELECT-only role without changing ACLs.
+The new path must use role-neutral `pg_catalog` projections, compare stored
+object owners to independently held expected identities, and explicitly state
+which data invariants remain outside that role's visibility. A privileged,
+code-owned current-head verification under a continuous writer fence
+immediately before the transition must cover those invariants; the restricted
+startup path cannot be called equivalent to the full verifier until
+independent review proves parity. The base schema verifier then checks required
 tables, columns, defaults, constraints, indexes and sequence in a bounded
 repeatable-read read-only transaction. The two checks are sequential samples,
 not one atomic snapshot or continuous fence. Within the base schema, required
@@ -55,8 +64,10 @@ unchanged; intercepted SQL confirms read-only base transaction and no
 maintenance-database connection. Missing sequence, column/default, index,
 constraint, table and contract journal each refuse without repair. A missing
 target database and concurrent migration also refuse. Existing default
-migration tests remain green, proving no implicit runtime switch. No password appears in
-source, Git history, logs or test output. This is not a continuous writer
+migration tests remain green, proving no implicit runtime switch. A distinct
+restricted login must exercise the checks; do not use the object-owner login
+as a substitute. No password appears in source, Git history, logs or test
+output. This is not a continuous writer
 fence, cutover admission, or permission grant by itself.
 
 ## File Map
@@ -74,7 +85,8 @@ fence, cutover admission, or permission grant by itself.
 
 ## Transition boundary
 
-Only after this opt-in path and an isolated role/OS writer-denial rehearsal
-pass may a separately reviewed PR change the runtime startup call site. Live
-credential, role, service and selected-build transition still requires the
+Only after this opt-in path, a current-head verification parity review, and an
+isolated role/OS writer-denial rehearsal pass may a separately reviewed PR
+change the runtime startup call site. Live credential, role, service and
+selected-build transition still requires the
 ordered evidence in `logs/2026-09-26-task6a-live-writer-fence-plan.md`.
