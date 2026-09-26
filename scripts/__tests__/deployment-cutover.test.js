@@ -82,6 +82,26 @@ const pre32Source = kind => `import fs from 'node:fs';import path from 'node:pat
       authority:v6.authority,physicalIdentityProvenance:v6.physicalIdentityProvenance,
       heldPair:v6.heldPair,activeBindingDatabase:Object.freeze({fixture:'active-binding'})};
     return Object.freeze({...body,pairHash:createHash('sha256').update(canonical(body)).digest('hex')});
+  }
+  export async function observeCodeOwnedPositiveWorktreeHeldBindingCandidatesV1(){
+    if(arguments.length)throw Error('UNEXPECTED_INPUT');
+    const kind=${JSON.stringify(kind)};
+    if(kind==='held-candidate-error'){
+      const error=Error('INTERNAL_PRODUCTION_POSITIVE_WORKTREE_ACTIVE_BINDING_HOST_PAIR_INVALID');
+      Object.defineProperty(error,'activeBindingPairPhase',{value:'database-callback'});
+      throw Object.freeze(error);
+    }
+    const pair=await observeCodeOwnedPositiveWorktreeActiveBindingHostPairV1();
+    const joinedBody={schema:'setfarm.internal-production-held-binding-candidates.v1',
+      authority:'diagnostic-only',physicalIdentityProvenance:'unverified',
+      receiptStatus:kind==='wrong-receipt-label'?'verified':'required-unpublished',
+      candidates:Object.freeze([]),unresolvedAttemptIds:Object.freeze([]),unresolvedSessionIds:Object.freeze([])};
+    const joinedCandidates=Object.freeze({...joinedBody,
+      projectionHash:createHash('sha256').update(canonical(joinedBody)).digest('hex')});
+    const body={schema:'setfarm.internal-production-held-binding-physical-database-pair.v1',
+      authority:'diagnostic-only',physicalIdentityProvenance:'unverified',
+      heldActiveBindingPair:pair,joinedCandidates};
+    return Object.freeze({...body,pairHash:createHash('sha256').update(canonical(body)).digest('hex')});
   }`;
 const pre32Sources = kind => ({ "internal-production/baseline-positive-worktree-host-pair-v2": pre32Source(kind) });
 const pre32AnnotationSource = kind => `import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
@@ -225,6 +245,39 @@ test("V7 bootstrap refuses a self-consistent wrong journal label", () => fixture
 
 test("V7 bootstrap rejects extra argv before observer invocation", () => fixture(root => {
   const result = run(root, ["inspect-pre32-host-pair-v7", "--json", "extra"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-called")), false);
+}, undefined, { extraSources: pre32Sources("valid") }));
+
+test("bootstrap exposes separate diagnostic held binding candidates", () => fixture(root => {
+  const result = run(root, ["inspect-held-binding-candidates-v1", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout);
+  assert.equal(observed.heldBindingCandidatesV1.schema,
+    "setfarm.internal-production-held-binding-physical-database-pair.v1");
+  assert.equal(observed.heldBindingCandidatesV1.authority, "diagnostic-only");
+  assert.equal(observed.heldBindingCandidatesV1.joinedCandidates.receiptStatus, "required-unpublished");
+  assert.equal(Object.hasOwn(observed, "activeBindingHostPairV1"), false);
+}, undefined, { extraSources: pre32Sources("valid") }));
+
+test("held candidate bootstrap refuses self-consistent forged receipt authority", () => fixture(root => {
+  const result = run(root, ["inspect-held-binding-candidates-v1", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr.split("\n")[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
+}, undefined, { extraSources: pre32Sources("wrong-receipt-label") }));
+
+test("held candidate bootstrap sanitizes observer failure with finite phase", () => fixture(root => {
+  const result = run(root, ["inspect-held-binding-candidates-v1", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /"activeBindingFailurePhase":"database-callback"/);
+  assert.doesNotMatch(result.stderr, /PRIVATE_DATABASE_PASSWORD/);
+}, undefined, { extraSources: pre32Sources("held-candidate-error") }));
+
+test("held candidate bootstrap rejects extra argv before observer invocation", () => fixture(root => {
+  const result = run(root, ["inspect-held-binding-candidates-v1", "--json", "extra"]);
   assert.equal(result.status, 1);
   assert.equal(result.stdout, "");
   assert.equal(fs.existsSync(path.join(root, ".setfarm/pre32-called")), false);
