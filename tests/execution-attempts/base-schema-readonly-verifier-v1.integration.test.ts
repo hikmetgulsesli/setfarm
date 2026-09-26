@@ -17,6 +17,10 @@ async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
         c.relpersistence, c.relrowsecurity, c.relforcerowsecurity) ORDER BY c.relname)
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public'),
+      'inheritance', (SELECT jsonb_agg(jsonb_build_array(child.relname,
+        parent.relname) ORDER BY child.relname, parent.relname)
+        FROM pg_inherits h JOIN pg_class child ON child.oid = h.inhrelid
+        JOIN pg_class parent ON parent.oid = h.inhparent),
       'columns', (SELECT jsonb_agg(jsonb_build_array(c.relname, a.attname,
         format_type(a.atttypid, a.atttypmod), a.attnotnull,
         a.attcollation::text, a.attidentity, a.attgenerated,
@@ -103,6 +107,7 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
 
     const drifts = [
       ["missing table", "DROP TABLE public.medic_checks"],
+      ["inherited child table", "CREATE TABLE public.shadow_runs () INHERITS (public.runs)"],
       ["wrong collation", "ALTER TABLE public.rules ALTER COLUMN title TYPE text COLLATE \"C\""],
       ["row level security", "ALTER TABLE public.runs ENABLE ROW LEVEL SECURITY"],
       ["missing column", "ALTER TABLE public.steps DROP COLUMN started_at"],

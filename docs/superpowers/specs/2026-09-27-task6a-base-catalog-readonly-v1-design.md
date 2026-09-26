@@ -40,8 +40,8 @@ rejected until a separately reviewed recovery resolves it.
 
 Use `pg_class`, `pg_namespace`, `pg_attribute`, `pg_attrdef`, `pg_constraint`,
 `pg_index`, `pg_am`, `pg_sequence`, and `pg_depend`, not privilege-filtered
-`information_schema`. Reject relkind, partitioning, persistence, RLS enablement,
-forced RLS, dropped
+`information_schema`. Reject relkind, partitioning, persistence, inheritance
+edges in either direction, RLS enablement, forced RLS, dropped
 columns, identity/generated-column drift, invalid/not-ready indexes, unexpected index expressions or INCLUDE
 keys, wrong predicate, FK action, deferrability, validation or ownership
 dependency. Compare PostgreSQL 17 deparsed defaults/predicates against frozen
@@ -57,7 +57,8 @@ distinct restricted LOGIN with no database/schema CREATE and no journal
 MAINTAIN. Owner fixture setup and mutations may occur only in isolated
 databases; the restricted verifier leaves a before/after catalog fingerprint
 unchanged. Negative cases cover missing table/column/default/constraint/index/
-sequence, wrong column type, nullability or collation, enabled RLS, and
+sequence, wrong column type, nullability or collation, enabled RLS,
+inherited child tables, and
 role-denied access. Fixed
 transaction mode and bounded timeouts are unit-tested; full existing migration
 tests, semantic digest check, typecheck and independent review remain gates.

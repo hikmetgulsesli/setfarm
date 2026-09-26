@@ -161,7 +161,9 @@ const EXPECTED_BASE_SEQUENCES_V1 = Object.freeze([
 
 const TABLE_SQL_V1 = `SELECT c.relname AS name, c.relkind AS kind,
   c.relpersistence AS persistence, c.relispartition AS partitioned,
-  c.relrowsecurity AS "rowSecurity", c.relforcerowsecurity AS "forceRowSecurity"
+  c.relrowsecurity AS "rowSecurity", c.relforcerowsecurity AS "forceRowSecurity",
+  EXISTS (SELECT 1 FROM pg_inherits h
+    WHERE h.inhrelid = c.oid OR h.inhparent = c.oid) AS "hasInheritance"
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
  WHERE n.nspname = 'public'
    AND c.relname IN ('claim_log', 'medic_checks', 'rules',
@@ -266,6 +268,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         partitioned: boolean;
         rowSecurity: boolean;
         forceRowSecurity: boolean;
+        hasInheritance: boolean;
       }>>(TABLE_SQL_V1);
       if (
         tables.length !== REQUIRED_BASE_TABLES_V1.length
@@ -275,7 +278,8 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
           || table.persistence !== "p"
           || table.partitioned !== false
           || table.rowSecurity !== false
-          || table.forceRowSecurity !== false)
+          || table.forceRowSecurity !== false
+          || table.hasInheritance !== false)
       ) mismatch();
       const columns = await transaction.unsafe<Array<{
         table: string;
