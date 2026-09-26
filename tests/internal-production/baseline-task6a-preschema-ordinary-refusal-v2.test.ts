@@ -408,6 +408,91 @@ test("Task6A V2 detached maintenance timer handles a propagated refusal", async 
   assert.match(warnings[0]!, /TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED/);
 });
 
+test("Task6A V2 listener dispatcher refuses before handlers and catches async errors", async () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const dispatcher = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "dispatchTask6aV2OrdinaryListener");
+  assert.ok(dispatcher?.body);
+  assert.match(dispatcher.body.getText(tree), /await assertTask6aPreSchemaOrdinaryStartupV2\(\);\s*if \(shuttingDown\) return;\s*await handler\(payload\)/);
+  const js = ts.transpileModule(dispatcher.getText(tree), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const makeDispatcher = new Function("check", "record", `
+    let shuttingDown = false;
+    const assertTask6aPreSchemaOrdinaryStartupV2 = () => check(() => { shuttingDown = true; });
+    const logOrdinaryListenerRejection = record;
+    ${js}
+    return dispatchTask6aV2OrdinaryListener;
+  `) as (check: (shutdown: () => void) => Promise<void>, record: (channel: string, error: unknown) => void) =>
+    (channel: string, message: string, handler: (payload: unknown) => Promise<void>) => void;
+  const calls: string[] = [];
+  const errors: string[] = [];
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  makeDispatcher(async () => { calls.push("preflight"); throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED"); },
+    (channel, error) => errors.push(`${channel}:${String(error)}`))("step_pending", "{}",
+    async () => { calls.push("handler"); });
+  await settle();
+  assert.deepEqual(calls.splice(0), ["preflight"]);
+  assert.match(errors.splice(0)[0]!, /^step_pending:Error: TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED$/);
+  makeDispatcher(async () => { calls.push("preflight"); },
+    (channel, error) => errors.push(`${channel}:${String(error)}`))("story_pending", '{"id":1}',
+    async (payload) => { calls.push(`handler:${(payload as { id: number }).id}`); });
+  await settle();
+  assert.deepEqual(calls.splice(0), ["preflight", "handler:1"]);
+  assert.deepEqual(errors, []);
+  let beginShutdown!: () => void;
+  let releasePreflight!: () => void;
+  makeDispatcher(async (shutdown) => {
+    calls.push("preflight");
+    beginShutdown = shutdown;
+    await new Promise<void>((resolve) => { releasePreflight = resolve; });
+  }, (channel, error) => errors.push(`${channel}:${String(error)}`))("run_termination_requested", "{}",
+    async () => { calls.push("handler"); });
+  await settle();
+  assert.deepEqual(calls, ["preflight"]);
+  beginShutdown();
+  releasePreflight();
+  await settle();
+  assert.deepEqual(calls.splice(0), ["preflight"]);
+  assert.deepEqual(errors, []);
+  makeDispatcher(async () => { calls.push("preflight"); },
+    (channel, error) => errors.push(`${channel}:${String(error)}`))("run_termination_requested", "{",
+    async () => { calls.push("handler"); });
+  await settle();
+  assert.deepEqual(calls, []);
+  assert.match(errors.splice(0)[0]!, /^run_termination_requested:SyntaxError:/);
+  makeDispatcher(async () => { calls.push("preflight"); },
+    (channel, error) => errors.push(`${channel}:${String(error)}`))("runtime_completion_requested", "{}",
+    async () => { calls.push("handler"); throw Error("PROCESSOR_REJECTED"); });
+  await settle();
+  assert.deepEqual(calls, ["preflight", "handler"]);
+  assert.match(errors[0]!, /^runtime_completion_requested:Error: PROCESSOR_REJECTED$/);
+});
+
+test("Task6A V2 all four LISTEN callbacks use the guarded dispatcher", () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const step = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "listenForStepPending");
+  const main = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "main");
+  assert.ok(step?.body && main?.body);
+  assert.match(step.body.getText(tree), /dispatchTask6aV2OrdinaryListener\("step_pending", message, handleStepPending\)/);
+  for (const [channel, handler] of [
+    ["story_pending", "handleStoryPending"],
+    ["run_termination_requested", "processRunTerminationRequests"],
+    ["runtime_completion_requested", "processRuntimeCompletionRequests"],
+  ]) {
+    const registration = main.body.statements.find((node) =>
+      node.getText(tree).startsWith(`await listener.listen("${channel}",`));
+    assert.ok(registration, channel);
+    const body = registration.getText(tree);
+    assert.ok(body.includes(`dispatchTask6aV2OrdinaryListener("${channel}", msg,`), channel);
+    assert.ok(body.includes(handler), `${channel} must dispatch its original handler`);
+  }
+});
+
 test("Task6A V2 direct CLI claim refuses before claim effects or output", async () => {
   const source = readFileSync(path.join(sourceRoot, "cli/cli.ts"), "utf8");
   const tree = ts.createSourceFile("cli.ts", source, ts.ScriptTarget.Latest, true);
