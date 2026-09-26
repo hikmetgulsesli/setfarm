@@ -22,3 +22,5 @@ Pin only `test:scripts` to `--test-concurrency=1`, preserving every test and the
 - [ ] Deliver a reviewed PR, clean-main build in the preserved deployment clone and a no-write host check. Preserve all historical worktrees, old selected dist and CLI link.
 
 The first full-suite attempt in this new worktree was stopped at the initial CLI group because `dist/cli/cli.js` was not built. It is not counted as a suite result. A feature-worktree build then correctly refused because `HEAD` did not equal `origin/main`; no runtime or build guard was bypassed. The pre-merge script suite can run without that `dist`; full-suite evidence belongs to the reviewed clean-main build.
+
+Codex's first PR review found that the probe launched `/bin/zsh`, which is absent in Linux environments. The probe now invokes the current Node executable directly with the configured test-runner arguments. The revised probe again failed with `EEXIST` under the prior parallel option and passed 1/1 with serial execution; no shell is needed.

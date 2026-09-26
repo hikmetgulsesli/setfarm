@@ -10,7 +10,9 @@ test("test:scripts runs filesystem fixtures one test file at a time", () => {
   const [unitRunner, genuineRunner, extra] = packageJson.scripts["test:scripts"].split(" && ");
   assert.equal(genuineRunner, "npm run test:scripts:cutover-genuine");
   assert.equal(extra, undefined);
-  assert.match(unitRunner, /scripts\/__tests__\/\*\.test\.js/);
+  const args = unitRunner.split(" ");
+  assert.equal(args.shift(), "node");
+  assert.equal(args.pop(), "scripts/__tests__/*.test.js");
 
   const directory = mkdtempSync(join(tmpdir(), "setfarm-script-runner-contract-"));
   try {
@@ -26,8 +28,7 @@ test("holds the exclusive fixture", async () => {
     const second = join(directory, "second.test.mjs");
     writeFileSync(first, fixture, { mode: 0o600 });
     writeFileSync(second, fixture, { mode: 0o600 });
-    const command = unitRunner.replace("scripts/__tests__/*.test.js", `${first} ${second}`);
-    const result = spawnSync("/bin/zsh", ["-c", command], {
+    const result = spawnSync(process.execPath, [...args, first, second], {
       encoding: "utf8",
       env: { PATH: process.env.PATH ?? "", SETFARM_SERIAL_PROBE_LOCK: join(directory, "exclusive.lock") },
       timeout: 10000,
