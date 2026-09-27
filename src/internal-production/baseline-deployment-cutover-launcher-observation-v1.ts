@@ -499,11 +499,33 @@ export function holdDeploymentCutoverDefaultLauncherV1() {
         if (roleAfter !== roleBefore) fail();
         return inventory;
       });
+    const observeTask6aHeldReceiptCandidateV1 = (missionControl: ReturnType<typeof import("./baseline-task6a-mission-control-launcher-hold-v2.js").holdTask6aMissionControlLauncherV2>,
+      worktreeRoot: string) => observeQualifiedDatabase(async () => {
+      if (!missionControl || typeof missionControl !== "object" || typeof worktreeRoot !== "string"
+        || inputs.entries.length !== 2) fail();
+      const { assertHeldTask6aMissionControlSameDatabaseUrlV2 } = await import("./baseline-task6a-mission-control-launcher-hold-v2.js");
+      const url = inputs.entries[0]?.environment.SETFARM_PG_URL;
+      if (typeof url !== "string" || !url || inputs.entries[1]?.environment.SETFARM_PG_URL !== url) fail();
+      const roleBefore = assertHeldTask6aMissionControlSameDatabaseUrlV2(missionControl, url);
+      if (typeof roleBefore !== "string" || decodeURIComponent(new URL(url).username) !== roleBefore) fail();
+      const { resolveInternalProductionBaselineWorkspaceRootV1 } = await import("./baseline-workspace-authority-path-v1.js");
+      const workspaceRoot = resolveInternalProductionBaselineWorkspaceRootV1();
+      if (workspaceRoot !== path.join(account.homedir, "ai", "setrox")) fail();
+      const { observeScopedHeldDiagnosticPositiveWorktreeReceiptCandidateV1 } = await import("./baseline-positive-worktree-receipt-host-composer-v1.js");
+      const candidate = await observeScopedHeldDiagnosticPositiveWorktreeReceiptCandidateV1(
+        Object.freeze({ ownerHomeRoot: account.homedir, workspaceRoot }), url, worktreeRoot);
+      const roleAfter = assertHeldTask6aMissionControlSameDatabaseUrlV2(missionControl, url);
+      if (roleAfter !== roleBefore || candidate.authority !== "diagnostic-only"
+        || candidate.receiptStatus !== "required-unpublished"
+        || candidate.physicalIdentityProvenance !== "unverified"
+        || candidate.producerAuthentication !== "unverified") fail();
+      return candidate;
+    });
     check();
     return Object.freeze({ observation, qualifyPassiveHome, recheck, census, censusAndActiveRows,
       censusAndActiveRowsWithQuarantine, censusAndBindingRows, censusAndBindingRowsV7,
       activeBindingSnapshot, observeTask6aWriterDatabaseSnapshotV2, observeTask6aWriterCatalogTopologyV2,
-      observeTask6aPrivateCatalogInventoryV3, close });
+      observeTask6aPrivateCatalogInventoryV3, observeTask6aHeldReceiptCandidateV1, close });
   } catch { invalid = true; close(); defaultLauncherFailure(); }
 }
 
