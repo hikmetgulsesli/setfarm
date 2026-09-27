@@ -17,6 +17,10 @@ import { appendPrivateDiagnosticPositiveWorktreeReceiptJournalV1,
 import { appendPrivateDiagnosticReservationReceiptLinkV1,
   PRIVATE_POSITIVE_WORKTREE_RESERVATION_RECEIPT_LINK_V1_STATEMENTS } from
   "../../src/internal-production/baseline-positive-worktree-reservation-receipt-link-contract-v1.js";
+import { PRIVATE_POSITIVE_WORKTREE_RECOVERY_PRECREATE_RESERVATION_V1_STATEMENTS } from
+  "../../src/internal-production/baseline-positive-worktree-recovery-precreate-reservation-contract-v1.js";
+import { observePrivatePendingPositiveWorktreeReservationsV1 } from
+  "../../src/internal-production/baseline-positive-worktree-private-pending-reservation-census-v1.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 import { requireTask6aPrivateLoopbackHostname } from "./task6a-private-cluster-loopback.js";
 
@@ -59,6 +63,9 @@ test("private reservation–receipt link correlates an exact V3 story claim with
       SELECT max(version)::integer AS version FROM public.setfarm_schema_migrations`;
     assert.equal(maximum[0]?.version, 33);
     for (const statement of PRIVATE_POSITIVE_WORKTREE_PRECREATE_RESERVATION_V1_STATEMENTS) {
+      await database.sql.unsafe(statement);
+    }
+    for (const statement of PRIVATE_POSITIVE_WORKTREE_RECOVERY_PRECREATE_RESERVATION_V1_STATEMENTS) {
       await database.sql.unsafe(statement);
     }
     for (const statement of PRIVATE_POSITIVE_WORKTREE_RECEIPT_JOURNAL_V1_STATEMENTS) {
@@ -203,6 +210,10 @@ test("private reservation–receipt link correlates an exact V3 story claim with
     const pending = await database.sql.unsafe<Array<{ count: number }>>(
       `SELECT count(*)::integer AS count FROM public.internal_production_positive_worktree_precreate_reservations_v1`);
     assert.equal(pending[0]?.count, 2, "a link does not settle either pending reservation");
+    const census = await observePrivatePendingPositiveWorktreeReservationsV1(database.sql);
+    assert.equal(census.disposition, "pending");
+    assert.deepEqual(census.counts, { ordinary: 2, recovery: 0, total: 2 },
+      "the linked ordinary reservation remains unresolved in the both-table census");
     await assert.rejects(database.sql.unsafe(`UPDATE ${LINK} SET root = root`),
       (error: unknown) => error !== null && typeof error === "object"
         && "code" in error && error.code === "42501");

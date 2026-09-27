@@ -17,6 +17,10 @@ import { appendPrivateDiagnosticPositiveWorktreeReceiptJournalV1,
 import { appendPrivateDiagnosticRecoveryReservationReceiptLinkV1,
   PRIVATE_POSITIVE_WORKTREE_RECOVERY_RESERVATION_RECEIPT_LINK_V1_STATEMENTS } from
   "../../src/internal-production/baseline-positive-worktree-recovery-reservation-receipt-link-contract-v1.js";
+import { PRIVATE_POSITIVE_WORKTREE_PRECREATE_RESERVATION_V1_STATEMENTS } from
+  "../../src/internal-production/baseline-positive-worktree-precreate-reservation-contract-v1.js";
+import { observePrivatePendingPositiveWorktreeReservationsV1 } from
+  "../../src/internal-production/baseline-positive-worktree-private-pending-reservation-census-v1.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import { createRecoveryCaseV1 } from "../../src/recovery/recovery-case.js";
 import { createRecoveryCaseRevisionV1 } from "../../src/recovery/recovery-delivery.js";
@@ -77,6 +81,9 @@ test(`private ${dispatchClass} recovery link ${scenario === "normal"
       SELECT max(version)::integer AS version FROM public.setfarm_schema_migrations`;
     assert.equal(maximum[0]?.version, 33);
     for (const statement of PRIVATE_POSITIVE_WORKTREE_RECOVERY_PRECREATE_RESERVATION_V1_STATEMENTS) {
+      await database.sql.unsafe(statement);
+    }
+    for (const statement of PRIVATE_POSITIVE_WORKTREE_PRECREATE_RESERVATION_V1_STATEMENTS) {
       await database.sql.unsafe(statement);
     }
 
@@ -628,6 +635,10 @@ stage = "reservation-before-claim";
       `SELECT count(*)::integer AS count FROM
         public.internal_production_positive_worktree_recovery_precreate_reservations_v1`);
     assert.equal(pending[0]?.count, 1, "a diagnostic link cannot settle the pending reservation");
+    const census = await observePrivatePendingPositiveWorktreeReservationsV1(database.sql);
+    assert.equal(census.disposition, "pending");
+    assert.deepEqual(census.counts, { ordinary: 0, recovery: 1, total: 1 },
+      "the linked recovery reservation remains unresolved in the both-table census");
 
     stage = "stale-retry-refusal";
     await database.sql`UPDATE public.recovery_dispatch_deliveries
