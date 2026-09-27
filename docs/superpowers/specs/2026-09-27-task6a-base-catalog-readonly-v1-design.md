@@ -35,6 +35,10 @@ groups on both sides, and two required sequences. The explicit
 is owned by `claim_log.id`. Sequence parameters and default dependencies
 matter; mutable sequence values do not. Required table definitions are exact
 but additional contract-spine columns, constraints and indexes are allowed.
+The restricted login must not be a member of any required base table, index,
+or sequence owner role; denied schema CREATE alone does not deny owner DDL.
+Required ordinary base tables must have no rewrite rules, since an INSERT
+`DO INSTEAD NOTHING` rule would change runtime writes without changing columns.
 `claim_log.run_id` deliberately has no base foreign key. A canonical
 `runs.run_number` is NOT NULL; a legacy nullable fallback is intentionally
 rejected until a separately reviewed recovery resolves it.
@@ -79,6 +83,11 @@ This slice is not a production startup switch. Later PRs must independently
 add the role-neutral contract journal/catalog check, resolve its parity with
 owner-relative full verification, wire the opt-in `pgMigrate` mode, and prove
 isolated DB/OS writer-denial before any live role/service/build transition.
+This required-member verifier deliberately does not certify the absence or
+semantics of additional user triggers, constraints or indexes
+introduced by later migrations. That exact-extra surface belongs to the
+current-head contract-spine check; accepting this standalone result alone as
+runtime admission would be unsafe.
 
 ## File map
 

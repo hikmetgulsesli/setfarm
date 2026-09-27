@@ -14,7 +14,8 @@ async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
   const rows = await sql<Array<{ fingerprint: string }>>`
     SELECT md5(jsonb_build_object(
       'relations', (SELECT jsonb_agg(jsonb_build_array(c.relname, c.relkind,
-        c.relpersistence, c.relrowsecurity, c.relforcerowsecurity) ORDER BY c.relname)
+        c.relpersistence, c.relrowsecurity, c.relforcerowsecurity,
+        c.relowner::text) ORDER BY c.relname)
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public'),
       'inheritance', (SELECT jsonb_agg(jsonb_build_array(child.relname,
@@ -38,6 +39,12 @@ async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
         t.tgenabled, t.tgisinternal, t.tgconstraint::text)
         ORDER BY c.relname, t.tgname)
         FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'),
+      'rules', (SELECT jsonb_agg(jsonb_build_array(c.relname, r.rulename,
+        r.ev_type, r.is_instead, r.ev_enabled, pg_get_ruledef(r.oid))
+        ORDER BY c.relname, r.rulename)
+        FROM pg_rewrite r JOIN pg_class c ON c.oid = r.ev_class
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public'),
       'indexes', (SELECT jsonb_agg(jsonb_build_array(ic.relname,
@@ -124,6 +131,9 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
 
     const drifts = [
       ["missing table", "DROP TABLE public.medic_checks"],
+      ["runtime role owns base table", `ALTER TABLE public.rules OWNER TO "${role}"`],
+      ["runtime role owns base sequence", `ALTER SEQUENCE public.runs_run_number_seq OWNER TO "${role}"`],
+      ["write-suppressing rewrite rule", "CREATE RULE suppress_run_insert AS ON INSERT TO public.runs DO INSTEAD NOTHING"],
       ["disabled referencing FK triggers", "ALTER TABLE public.steps DISABLE TRIGGER ALL"],
       ["disabled referenced FK triggers", "ALTER TABLE public.runs DISABLE TRIGGER ALL"],
       ["inherited child table", "CREATE TABLE public.shadow_runs () INHERITS (public.runs)"],

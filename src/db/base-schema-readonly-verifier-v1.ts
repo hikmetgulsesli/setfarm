@@ -171,8 +171,11 @@ const EXPECTED_BASE_SEQUENCES_V1 = Object.freeze([
 const TABLE_SQL_V1 = `SELECT c.relname AS name, c.relkind AS kind,
   c.relpersistence AS persistence, c.relispartition AS partitioned,
   c.relrowsecurity AS "rowSecurity", c.relforcerowsecurity AS "forceRowSecurity",
+  pg_catalog.pg_has_role(session_user, c.relowner, 'MEMBER') AS "ownerReachable",
   EXISTS (SELECT 1 FROM pg_catalog.pg_inherits h
-    WHERE h.inhrelid = c.oid OR h.inhparent = c.oid) AS "hasInheritance"
+    WHERE h.inhrelid = c.oid OR h.inhparent = c.oid) AS "hasInheritance",
+  EXISTS (SELECT 1 FROM pg_catalog.pg_rewrite r
+    WHERE r.ev_class = c.oid) AS "hasRewriteRules"
   FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
  WHERE n.nspname = 'public'
    AND c.relname IN ('claim_log', 'medic_checks', 'rules',
@@ -203,7 +206,8 @@ const INDEX_SQL_V1 = `SELECT tc.relname AS "table", ic.relname AS name,
   i.indisunique AS unique, i.indisprimary AS "primary",
   i.indnkeyatts AS "keyCount", i.indnatts AS "totalCount",
   i.indexprs IS NOT NULL AS "hasExpression", am.amname AS method,
-  ic.relkind AS kind, ic.relpersistence AS persistence
+  ic.relkind AS kind, ic.relpersistence AS persistence,
+  pg_catalog.pg_has_role(session_user, ic.relowner, 'MEMBER') AS "ownerReachable"
   FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class ic ON ic.oid = i.indexrelid
   JOIN pg_catalog.pg_class tc ON tc.oid = i.indrelid
   JOIN pg_catalog.pg_namespace n ON n.oid = ic.relnamespace
@@ -255,7 +259,8 @@ const SEQUENCE_SQL_V1 = `SELECT c.relname AS name, c.relkind AS kind,
   s.seqmin::text AS min, s.seqmax::text AS max, s.seqcache::text AS cache,
   s.seqcycle AS cycle, own.relname AS "ownerTable",
   att.attname AS "ownerColumn", dep.deptype AS "dependencyType",
-  ownn.nspname AS "ownerSchema"
+  ownn.nspname AS "ownerSchema",
+  pg_catalog.pg_has_role(session_user, c.relowner, 'MEMBER') AS "ownerReachable"
   FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
   JOIN pg_catalog.pg_sequence s ON s.seqrelid = c.oid
   LEFT JOIN pg_catalog.pg_depend dep ON dep.classid = 'pg_catalog.pg_class'::regclass
@@ -296,6 +301,8 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         rowSecurity: boolean;
         forceRowSecurity: boolean;
         hasInheritance: boolean;
+        hasRewriteRules: boolean;
+        ownerReachable: boolean;
       }>>(TABLE_SQL_V1);
       if (
         tables.length !== REQUIRED_BASE_TABLES_V1.length
@@ -306,7 +313,9 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
           || table.partitioned !== false
           || table.rowSecurity !== false
           || table.forceRowSecurity !== false
-          || table.hasInheritance !== false)
+          || table.hasInheritance !== false
+          || table.hasRewriteRules !== false
+          || table.ownerReachable !== false)
       ) mismatch();
       const columns = await transaction.unsafe<Array<{
         table: string;
@@ -351,6 +360,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         method: string;
         kind: string;
         persistence: string;
+        ownerReachable: boolean;
       }>>(INDEX_SQL_V1);
       if (indexes.length !== EXPECTED_BASE_INDEXES_V1.length
         || indexes.some((actual, index) => {
@@ -362,7 +372,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
             || !actual.valid || !actual.ready || !actual.live || actual.primary
             || actual.keyCount !== actual.totalCount || actual.hasExpression
             || actual.method !== "btree" || actual.kind !== "i"
-            || actual.persistence !== "p";
+            || actual.persistence !== "p" || actual.ownerReachable;
         })) mismatch();
       const constraints = await transaction.unsafe<Array<{
         table: string;
@@ -418,6 +428,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         ownerColumn: string | null;
         dependencyType: string | null;
         ownerSchema: string | null;
+        ownerReachable: boolean;
       }>>(SEQUENCE_SQL_V1);
       if (sequences.length !== EXPECTED_BASE_SEQUENCES_V1.length
         || sequences.some((actual, index) => {
@@ -427,6 +438,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
             || actual.ownerColumn !== expected[2]
             || actual.dependencyType !== expected[3]
             || actual.ownerSchema !== (expected[1] === null ? null : "public")
+            || actual.ownerReachable
             || actual.kind !== "S" || actual.persistence !== "p"
             || actual.type !== "bigint" || actual.start !== "1"
             || actual.increment !== "1" || actual.min !== "1"
