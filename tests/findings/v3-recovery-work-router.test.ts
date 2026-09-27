@@ -273,10 +273,10 @@ describe("v3 recovery work router", () => {
     const completed = await deliveries.completeDelivery({
       dispatchId: fixture.dispatch.dispatchId,
       revisionId: fixture.revision.revisionId,
-      state: "failed",
+      state: "blocked",
       terminalResult: { reasonCode: "revised_supervisor_fixture" },
     });
-    assert.equal(completed?.state, "failed");
+    assert.equal(completed?.state, "blocked");
     const revisedFindings = createFindingSetV1({
       runId: fixture.runId,
       storyId: fixture.storyId,
