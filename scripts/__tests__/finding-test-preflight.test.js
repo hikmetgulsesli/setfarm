@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   isOwnerBackedFindingSourceV1,
+  classifyFindingTestV1,
   verifyFindingPrivateClusterTargetV1,
   verifyFindingPrivateClusterIdentityV1,
 } from "../finding-test-preflight.mjs";
@@ -13,6 +14,21 @@ const observed = Object.freeze({
   data_directory: dataDirectory,
   port: "55437",
   socket_directories: "/tmp/setfarm-task6a-pg.enUGt1",
+});
+
+test("unclassified findings files fail closed before any test process starts", () => {
+  const pure = new Set(["contracts.test.ts"]);
+  const owner = new Set(["repository.test.ts"]);
+  assert.equal(classifyFindingTestV1("contracts.test.ts", "import assert from 'node:assert/strict';", pure, owner), "pure");
+  assert.equal(classifyFindingTestV1("repository.test.ts", "", pure, owner), "owner");
+  assert.throws(
+    () => classifyFindingTestV1("new-indirect-database.test.ts", "import './helper.js';", pure, owner),
+    /^Error: FINDING_TEST_UNCLASSIFIED:new-indirect-database.test.ts$/,
+  );
+  assert.throws(
+    () => classifyFindingTestV1("contracts.test.ts", 'import "../execution-attempts/test-database.js";', pure, owner),
+    /^Error: FINDING_PURE_TEST_DATABASE_FIXTURE:contracts.test.ts$/,
+  );
 });
 
 test("all findings test-database imports require an owner-backed fixture", () => {

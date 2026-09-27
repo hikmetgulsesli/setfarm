@@ -12,6 +12,15 @@ export function isOwnerBackedFindingSourceV1(source) {
     || source.includes("../execution-attempts/test-database.ts");
 }
 
+export function classifyFindingTestV1(file, source, pureTests, ownerTests) {
+  if (ownerTests.has(file)) return "owner";
+  if (!pureTests.has(file)) throw new Error(`FINDING_TEST_UNCLASSIFIED:${file}`);
+  if (isOwnerBackedFindingSourceV1(source)) {
+    throw new Error(`FINDING_PURE_TEST_DATABASE_FIXTURE:${file}`);
+  }
+  return "pure";
+}
+
 export function verifyFindingPrivateClusterTargetV1(adminUrl, expectedDataDirectory) {
   if (typeof adminUrl !== "string" || typeof expectedDataDirectory !== "string") refuse();
   if (!/^\/tmp\/setfarm-task6a-pg\.[A-Za-z0-9]+\/data$/.test(expectedDataDirectory)) refuse();

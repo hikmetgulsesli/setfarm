@@ -31,7 +31,9 @@ fall back to the ambient live `SETFARM_PG_URL`.
 
 Read-only review found two safety refinements. Classify any direct import of
 the isolated database fixture module as owner-backed, including its migration
-factory. Before an owner-backed child starts, require the explicitly named
+factory. Independently reviewed indirect imports can defeat source-pattern
+detection, so explicitly allowlist the eight pure files as well and refuse
+every new unclassified findings test before any child starts. Before an owner-backed child starts, require the explicitly named
 private Task6A cluster and verify its actual PostgreSQL data directory, port,
 and socket directory through a read-only query. A mere localhost admin URL is
 not sufficient because it could point to the live local database.

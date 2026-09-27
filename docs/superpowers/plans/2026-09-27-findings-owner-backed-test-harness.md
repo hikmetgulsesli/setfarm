@@ -21,7 +21,7 @@
 ## File map
 
 - Create `scripts/run-finding-tests.ts`: deterministic discovery, pure/owner-backed partition, serial P3 invocation and child-exit propagation.
-- Create `scripts/finding-test-preflight.mjs` and `scripts/__tests__/finding-test-preflight.test.js`: classify all direct database-fixture imports and prove exact private-cluster preflight/refusal.
+- Create `scripts/finding-test-preflight.mjs` and `scripts/__tests__/finding-test-preflight.test.js`: reject unclassified files and misplaced direct database-fixture imports; prove exact private-cluster preflight/refusal.
 - Modify `package.json`: route `test:findings` through that runner only.
 - Modify `tests/findings/recovery-delivery-repository.test.ts`: replace the obsolete manual-claim success expectation with exact fail-closed no-residue assertions.
 - Modify `tests/findings/repository.test.ts`: point the cold pre32 catalog source extraction at its current import-inert census module and extract only its actual dependencies; production implementation stays unchanged.
@@ -66,7 +66,8 @@
 
 - [x] **Step 1: Confirm RED.** Read-only review identified that migration-only fixture imports escaped the allowlist check, while any localhost admin URL (including live port 5432) could be accepted. The new behavior tests initially failed on missing classifier/preflight functions.
 - [x] **Step 2: Implement and prove local GREEN.** Test direct fixture-module import classification and exact private PostgreSQL directory/port/socket identity; `node --test` passed 2/2. A wrong-directory integration attempt refused before any P3 database clone.
-- [ ] **Step 3: Verify positive preflight.** Execute the focused owner-backed file using the actual private-cluster identity.
+- [x] **Step 3: Verify positive preflight.** The focused owner-backed file reached the P3 clone on the actual private cluster; the first run reached 7/9 cases and exposed a separate runtime-session fixture collision.
+- [ ] **Step 4: Close the indirect-import gap.** Independent review found that an unknown file with an indirect DB helper could be misclassified as pure. A new RED unit test first failed on missing classification API; add an explicit eight-file pure allowlist and refuse unclassified files before any test process starts, then require GREEN.
 
 ### Task 2c: Restore canonical GitHub review recovery fixture
 

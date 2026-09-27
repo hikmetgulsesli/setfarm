@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
 import {
-  isOwnerBackedFindingSourceV1,
+  classifyFindingTestV1,
   verifyFindingPrivateClusterTargetV1,
   verifyFindingPrivateClusterIdentityV1,
 } from "./finding-test-preflight.mjs";
@@ -28,6 +28,16 @@ const OWNER_BACKED_TESTS = new Set([
   "v3-recovery-coordinator.test.ts",
   "v3-recovery-lifecycle-reconciler.test.ts",
   "v3-recovery-work-router.test.ts",
+]);
+const PURE_TESTS = new Set([
+  "contracts.test.ts",
+  "evidence-finding-set.test.ts",
+  "github-review-ingestion.test.ts",
+  "github-review-resolution-evidence.test.ts",
+  "github-review-source.test.ts",
+  "v3-downstream-evidence-router.test.ts",
+  "v3-github-review-router.test.ts",
+  "v3-github-review-step-routing.test.ts",
 ]);
 
 function run(args: string[]): void {
@@ -50,11 +60,16 @@ const discovered = readdirSync(TEST_ROOT, { withFileTypes: true })
 for (const file of OWNER_BACKED_TESTS) {
   if (!discovered.includes(file)) throw new Error(`FINDING_OWNER_TEST_MISSING:${file}`);
 }
+for (const file of PURE_TESTS) {
+  if (!discovered.includes(file)) throw new Error(`FINDING_PURE_TEST_MISSING:${file}`);
+}
 for (const file of discovered) {
-  if (
-    isOwnerBackedFindingSourceV1(readFileSync(path.join(TEST_ROOT, file), "utf8"))
-    && !OWNER_BACKED_TESTS.has(file)
-  ) throw new Error(`FINDING_OWNER_TEST_UNREGISTERED:${file}`);
+  classifyFindingTestV1(
+    file,
+    readFileSync(path.join(TEST_ROOT, file), "utf8"),
+    PURE_TESTS,
+    OWNER_BACKED_TESTS,
+  );
 }
 
 const requested = process.argv.slice(2).map((locator) => {
@@ -63,7 +78,7 @@ const requested = process.argv.slice(2).map((locator) => {
   return normalized;
 });
 const selected = requested.length === 0 ? discovered : [...new Set(requested)].sort();
-const pure = selected.filter((file) => !OWNER_BACKED_TESTS.has(file));
+const pure = selected.filter((file) => PURE_TESTS.has(file));
 const ownerBacked = selected.filter((file) => OWNER_BACKED_TESTS.has(file));
 
 async function assertPrivateClusterBeforeOwnerTests(): Promise<void> {
