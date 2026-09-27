@@ -26,7 +26,8 @@ test("base catalog verification refuses an empty catalog in a bounded read-only 
   assert.ok(statements.some((statement) => statement.includes("lock_timeout")));
   assert.ok(statements.some((statement) => statement.includes("statement_timeout")));
   assert.ok(statements.some((statement) => statement.includes("idle_in_transaction_session_timeout")));
-  assert.ok(statements.some((statement) => statement.includes("search_path")));
+  assert.equal(statements[0],
+    "SELECT pg_catalog.set_config('search_path', 'pg_catalog, public, pg_temp', true)");
   assert.ok(statements.some((statement) => statement.includes("pg_class")));
   assert.ok(statements.every((statement) => !/\b(?:CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE)\b/i.test(statement)));
 });
@@ -47,7 +48,7 @@ test("base catalog verification refuses required tables with no required columns
     begin: async (_mode: string, operation: (transaction: unknown) => Promise<void>) => operation({
       unsafe: async (statement: string) => statement.includes("has_database_privilege")
         ? [{ database: true, schema: true }]
-        : statement.includes("FROM pg_class c JOIN pg_namespace n")
+        : statement.includes("FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n")
           ? requiredTables.map((name) => ({ name, kind: "r", persistence: "p",
             partitioned: false, rowSecurity: false, forceRowSecurity: false,
             hasInheritance: false }))

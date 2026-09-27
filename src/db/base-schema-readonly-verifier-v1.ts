@@ -171,9 +171,9 @@ const EXPECTED_BASE_SEQUENCES_V1 = Object.freeze([
 const TABLE_SQL_V1 = `SELECT c.relname AS name, c.relkind AS kind,
   c.relpersistence AS persistence, c.relispartition AS partitioned,
   c.relrowsecurity AS "rowSecurity", c.relforcerowsecurity AS "forceRowSecurity",
-  EXISTS (SELECT 1 FROM pg_inherits h
+  EXISTS (SELECT 1 FROM pg_catalog.pg_inherits h
     WHERE h.inhrelid = c.oid OR h.inhparent = c.oid) AS "hasInheritance"
-  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
  WHERE n.nspname = 'public'
    AND c.relname IN ('claim_log', 'medic_checks', 'rules',
      'run_observations', 'runs', 'steps', 'stories')
@@ -188,9 +188,9 @@ const COLUMN_SQL_V1 = `SELECT c.relname AS "table", a.attname AS "column",
   CASE WHEN a.attcollation = 0 THEN 'none'
        WHEN a.attcollation = 'pg_catalog."default"'::regcollation THEN 'default'
        ELSE 'custom' END AS collation
-  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-  JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0
-  LEFT JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
+  FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0
+  LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
  WHERE n.nspname = 'public'
    AND c.relname IN ('claim_log', 'medic_checks', 'rules',
      'run_observations', 'runs', 'steps', 'stories')
@@ -204,10 +204,10 @@ const INDEX_SQL_V1 = `SELECT tc.relname AS "table", ic.relname AS name,
   i.indnkeyatts AS "keyCount", i.indnatts AS "totalCount",
   i.indexprs IS NOT NULL AS "hasExpression", am.amname AS method,
   ic.relkind AS kind, ic.relpersistence AS persistence
-  FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid
-  JOIN pg_class tc ON tc.oid = i.indrelid
-  JOIN pg_namespace n ON n.oid = ic.relnamespace
-  JOIN pg_am am ON am.oid = ic.relam
+  FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class ic ON ic.oid = i.indexrelid
+  JOIN pg_catalog.pg_class tc ON tc.oid = i.indrelid
+  JOIN pg_catalog.pg_namespace n ON n.oid = ic.relnamespace
+  JOIN pg_catalog.pg_am am ON am.oid = ic.relam
  WHERE n.nspname = 'public'
    AND ic.relname IN ('idx_runs_run_number_unique', 'idx_steps_run_status',
      'idx_stories_run_status', 'idx_stories_active_story_id_unique',
@@ -224,8 +224,8 @@ const CONSTRAINT_SQL_V1 = `SELECT c.relname AS "table", co.conname AS name,
   co.condeferred AS deferred, co.conislocal AS local,
   co.coninhcount AS "inheritCount", co.connoinherit AS "noInherit",
   co.conparentid::text AS "parentOid"
-  FROM pg_constraint co JOIN pg_class c ON c.oid = co.conrelid
-  JOIN pg_namespace n ON n.oid = c.relnamespace
+  FROM pg_catalog.pg_constraint co JOIN pg_catalog.pg_class c ON c.oid = co.conrelid
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
  WHERE n.nspname = 'public'
    AND co.conname IN ('claim_log_pkey', 'medic_checks_pkey', 'rules_pkey',
      'run_observations_pkey', 'runs_pkey', 'steps_pkey', 'stories_pkey',
@@ -237,11 +237,11 @@ const FK_TRIGGER_SQL_V1 = `SELECT co.conname AS name,
   tn.nspname AS "triggerSchema", tc.relname AS "triggerTable",
   count(*)::integer AS "triggerCount",
   bool_and(t.tgenabled = 'O' AND t.tgisinternal) AS enabled
-  FROM pg_constraint co JOIN pg_class c ON c.oid = co.conrelid
-  JOIN pg_namespace n ON n.oid = c.relnamespace
-  JOIN pg_trigger t ON t.tgconstraint = co.oid
-  JOIN pg_class tc ON tc.oid = t.tgrelid
-  JOIN pg_namespace tn ON tn.oid = tc.relnamespace
+  FROM pg_catalog.pg_constraint co JOIN pg_catalog.pg_class c ON c.oid = co.conrelid
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  JOIN pg_catalog.pg_trigger t ON t.tgconstraint = co.oid
+  JOIN pg_catalog.pg_class tc ON tc.oid = t.tgrelid
+  JOIN pg_catalog.pg_namespace tn ON tn.oid = tc.relnamespace
  WHERE n.nspname = 'public' AND co.contype = 'f'
    AND co.conname IN ('run_observations_run_id_fkey',
      'steps_run_id_fkey', 'stories_run_id_fkey')
@@ -254,14 +254,16 @@ const SEQUENCE_SQL_V1 = `SELECT c.relname AS name, c.relkind AS kind,
   s.seqstart::text AS start, s.seqincrement::text AS increment,
   s.seqmin::text AS min, s.seqmax::text AS max, s.seqcache::text AS cache,
   s.seqcycle AS cycle, own.relname AS "ownerTable",
-  att.attname AS "ownerColumn", dep.deptype AS "dependencyType"
-  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-  JOIN pg_sequence s ON s.seqrelid = c.oid
-  LEFT JOIN pg_depend dep ON dep.classid = 'pg_class'::regclass
-    AND dep.objid = c.oid AND dep.refclassid = 'pg_class'::regclass
+  att.attname AS "ownerColumn", dep.deptype AS "dependencyType",
+  ownn.nspname AS "ownerSchema"
+  FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  JOIN pg_catalog.pg_sequence s ON s.seqrelid = c.oid
+  LEFT JOIN pg_catalog.pg_depend dep ON dep.classid = 'pg_catalog.pg_class'::regclass
+    AND dep.objid = c.oid AND dep.refclassid = 'pg_catalog.pg_class'::regclass
     AND dep.deptype IN ('a', 'i')
-  LEFT JOIN pg_class own ON own.oid = dep.refobjid
-  LEFT JOIN pg_attribute att ON att.attrelid = own.oid
+  LEFT JOIN pg_catalog.pg_class own ON own.oid = dep.refobjid
+  LEFT JOIN pg_catalog.pg_namespace ownn ON ownn.oid = own.relnamespace
+  LEFT JOIN pg_catalog.pg_attribute att ON att.attrelid = own.oid
     AND att.attnum = dep.refobjsubid
  WHERE n.nspname = 'public'
    AND c.relname IN ('claim_log_id_seq', 'runs_run_number_seq')
@@ -278,10 +280,10 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
 ): Promise<void> {
   try {
     await sql.begin("isolation level repeatable read read only", async (transaction) => {
-      await transaction.unsafe("SELECT set_config('lock_timeout', '1000ms', true)");
-      await transaction.unsafe("SELECT set_config('statement_timeout', '5000ms', true)");
-      await transaction.unsafe("SELECT set_config('idle_in_transaction_session_timeout', '5000ms', true)");
-      await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
+      await transaction.unsafe("SELECT pg_catalog.set_config('search_path', 'pg_catalog, public, pg_temp', true)");
+      await transaction.unsafe("SELECT pg_catalog.set_config('lock_timeout', '1000ms', true)");
+      await transaction.unsafe("SELECT pg_catalog.set_config('statement_timeout', '5000ms', true)");
+      await transaction.unsafe("SELECT pg_catalog.set_config('idle_in_transaction_session_timeout', '5000ms', true)");
       const access = await transaction.unsafe<Array<{ database: boolean; schema: boolean }>>(
         "SELECT has_database_privilege(current_user, current_database(), 'CONNECT') AS database, has_schema_privilege(current_user, 'public', 'USAGE') AS schema",
       );
@@ -415,6 +417,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         ownerTable: string | null;
         ownerColumn: string | null;
         dependencyType: string | null;
+        ownerSchema: string | null;
       }>>(SEQUENCE_SQL_V1);
       if (sequences.length !== EXPECTED_BASE_SEQUENCES_V1.length
         || sequences.some((actual, index) => {
@@ -423,6 +426,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
             || actual.ownerTable !== expected[1]
             || actual.ownerColumn !== expected[2]
             || actual.dependencyType !== expected[3]
+            || actual.ownerSchema !== (expected[1] === null ? null : "public")
             || actual.kind !== "S" || actual.persistence !== "p"
             || actual.type !== "bigint" || actual.start !== "1"
             || actual.increment !== "1" || actual.min !== "1"

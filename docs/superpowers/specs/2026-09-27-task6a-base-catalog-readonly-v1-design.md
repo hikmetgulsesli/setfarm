@@ -48,6 +48,15 @@ keys, wrong predicate, FK action, disabled enforcement triggers, deferrability, 
 dependency. Compare PostgreSQL 17 deparsed defaults/predicates against frozen
 reviewed source-derived literals under a fixed `search_path`; do not generate
 expected values from the target catalog at verification time.
+Use `pg_catalog.set_config` as the first transaction statement to set the
+transaction-local search path to `pg_catalog, public, pg_temp`, then set bounded
+timeouts through qualified calls. A caller-supplied connection may enter with
+`public` ahead of `pg_catalog` and a same-signature spoof function. Then
+qualify every catalog relation and regclass constant with `pg_catalog` so a
+reused session's `pg_temp` objects cannot shadow catalog reads or deparse names.
+Sequence ownership must
+also point to the `public` owner table schema, even though ordinary PostgreSQL
+DDL already requires same-schema `OWNED BY`.
 
 ## Verification and delivery boundary
 
@@ -60,7 +69,9 @@ databases; the restricted verifier leaves a before/after catalog fingerprint
 unchanged. Negative cases cover missing table/column/default/constraint/index/
 sequence, wrong column type, nullability or collation, enabled RLS,
 inherited child tables, disabled FK triggers on either side, and
-role-denied access. Fixed
+role-denied access. Same-session public function and temporary catalog-name
+shadows must not
+turn an ordinary fixture into a mismatch. Fixed
 transaction mode and bounded timeouts are unit-tested; full existing migration
 tests, semantic digest check, typecheck and independent review remain gates.
 

@@ -110,6 +110,17 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
     await verifyOrdinaryBaseSchemaCatalogReadOnlyV1(restricted);
     const after = await schemaFingerprint(database.sql);
     assert.equal(after, before);
+    await database.sql.unsafe(`CREATE FUNCTION public.set_config(text, text, boolean)
+      RETURNS text LANGUAGE SQL AS $$ SELECT $2 $$`);
+    await database.sql.unsafe(`CREATE FUNCTION public.format_type(oid, integer)
+      RETURNS text LANGUAGE SQL AS $$ SELECT 'spoof'::text $$`);
+    await restricted.unsafe("SET search_path TO public, pg_catalog");
+    await verifyOrdinaryBaseSchemaCatalogReadOnlyV1(restricted);
+    await restricted.unsafe("CREATE TEMP TABLE pg_class (spoof integer)");
+    await restricted.unsafe("CREATE TEMP TABLE pg_namespace (spoof integer)");
+    await restricted.unsafe("CREATE TEMP TABLE runs (spoof integer)");
+    await verifyOrdinaryBaseSchemaCatalogReadOnlyV1(restricted);
+    assert.equal(await schemaFingerprint(database.sql), before);
 
     const drifts = [
       ["missing table", "DROP TABLE public.medic_checks"],
