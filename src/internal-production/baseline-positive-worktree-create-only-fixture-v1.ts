@@ -79,6 +79,7 @@ function gitRaw(cwd: string, ...args: string[]): string {
       GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_ATTR_NOSYSTEM: "1",
       GIT_NO_REPLACE_OBJECTS: "1",
+      GIT_NO_LAZY_FETCH: "1",
     },
   });
 }

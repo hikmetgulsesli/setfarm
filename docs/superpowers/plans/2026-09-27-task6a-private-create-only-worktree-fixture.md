@@ -21,11 +21,13 @@ continuous DB/OS writer fence, owner promotion, or admission authority.
 - Before writing, prove the source commit and its tree in that repository,
   primary Git directory identity, exact one-file fixture tree, absent private
   attributes, target-parent identity, target absence and no existing target
-  registration. Run Git with inherited Git configuration and replacement
-  objects disabled, plus hooks, fsmonitor and global attributes disabled.
+  registration. Run Git with inherited Git configuration, replacement objects
+  and promisor lazy fetch disabled, plus hooks, fsmonitor and global attributes
+  disabled.
   Otherwise a local `refs/replace/<source-SHA>` can make Git verify and check
-  out replacement content while reporting the original SHA. No directory
-  creation or cleanup occurs in the helper before the one Git add.
+  out replacement content while reporting the original SHA, or a missing
+  promisor object can execute `remote.<name>.uploadpack` before the helper
+  refuses. No directory creation or cleanup occurs before the one Git add.
 - Perform only `git worktree add --detach <exact-root> <full-SHA>`. Never
   fetch, prune, stash, reset, clean, remove, reuse, switch branches, prepare
   assets or fall back to another root/commit.
@@ -37,7 +39,7 @@ continuous DB/OS writer fence, owner promotion, or admission authority.
 - Test a successful pinned creation, occupied directory/file/symlink, parent
   alias, wrong source/tree, stale target registration, dirty primary repo
   preservation, disabled hook/attribute rejection, replacement-object alias
-  refusal,
+  and promisor lazy-fetch refusal,
   and post-add fault refusal without cleanup.
 
 ## File Map

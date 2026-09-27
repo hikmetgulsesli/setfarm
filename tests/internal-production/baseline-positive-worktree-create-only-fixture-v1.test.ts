@@ -91,6 +91,34 @@ test("private create-only fixture refuses a replacement ref for the pinned commi
   assert.equal(fs.existsSync(root), false);
 });
 
+test("private create-only fixture does not lazy-fetch a missing promisor commit", (t) => {
+  const { tmp, repo, root, input } = fixture(t);
+  const donor = path.join(tmp, "donor");
+  git(tmp, "clone", "-q", repo, donor);
+  git(donor, "config", "user.name", "Task6A Fixture");
+  git(donor, "config", "user.email", "task6a-fixture@example.invalid");
+  git(donor, "commit", "--allow-empty", "-qm", "remote-only source");
+  const remoteSha = git(donor, "rev-parse", "HEAD");
+  const marker = path.join(tmp, "unexpected-fetch");
+  const uploadPack = path.join(tmp, "upload-pack");
+  fs.writeFileSync(uploadPack, `#!/bin/sh\nprintf 'unexpected fetch\\n' > '${marker}'\nexec git-upload-pack "$@"\n`);
+  fs.chmodSync(uploadPack, 0o700);
+  git(repo, "config", "core.repositoryformatversion", "1");
+  git(repo, "config", "extensions.partialClone", "origin");
+  git(repo, "config", "remote.origin.promisor", "true");
+  git(repo, "config", "remote.origin.url", donor);
+  git(repo, "config", "remote.origin.uploadpack", uploadPack);
+  assert.throws(() => createPrivateDiagnosticPinnedWorktreeV1(
+    { ...input, sourceSha: remoteSha }), REFUSED);
+  assert.equal(fs.existsSync(marker), false);
+  assert.equal(fs.existsSync(root), false);
+  assert.equal(execFileSync("git", ["rev-parse", "--verify", `${remoteSha}^{commit}`], {
+    cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000,
+    env: { ...process.env, GIT_NO_LAZY_FETCH: "0" },
+  }).trim(), remoteSha);
+  assert.equal(fs.readFileSync(marker, "utf8"), "unexpected fetch\n");
+});
+
 test("private create-only fixture refuses a symlinked target parent", (t) => {
   const { repo, parent, root, input } = fixture(t);
   fs.renameSync(parent, path.join(path.dirname(parent), "real-worktrees"));
