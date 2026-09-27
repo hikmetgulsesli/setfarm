@@ -53,6 +53,9 @@ They remain untyped ordinary tables (`reloftype=0`), with no new dependency
 on an independently mutable composite type.
 Required tables and their TOAST relations remain in the source-created
 default tablespace; moving either to separately managed storage is drift.
+Required explicit and primary-key supporting indexes also remain in the
+default tablespace. Primary-key supporting indexes retain unset storage
+options; their constraint definition does not expose either property.
 Required base columns must have neither fast-default `atthasmissing` nor
 `attmissingval`; a later-added column can otherwise expose stale logical
 values after its visible default is removed.
@@ -61,6 +64,11 @@ columns retain `PLAIN`, so a large value cannot be refused by a later
 `SET STORAGE PLAIN` drift.
 Required columns also retain the unset source compression attribute; an
 explicit per-column method would override the deployment default.
+Compare source-stable required-column relative order so renaming equally
+shaped fields cannot exchange their meaning. Do not require absolute physical
+attribute numbers or the relative positions of columns added by historical
+`ALTER` fallbacks in `runs`, `steps`, `stories`, or `run_observations`:
+historical upgraded tables can legitimately differ from fresh CREATE layout.
 Required explicit indexes remain standalone and immediate; adopting one as a
 deferred unique constraint must not silently postpone uniqueness enforcement.
 An added foreign key may reference a required unique index without owning it;

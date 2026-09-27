@@ -126,6 +126,18 @@ const EXPECTED_BASE_COLUMNS_V1 = Object.freeze([
   ["stories", "updated_at", "timestamp with time zone", -1, true, "now()"],
 ] as const);
 
+// Compare source-stable relative ordinals, not raw attnum. Spine and historical
+// ADD COLUMN paths can leave harmless gaps or move later members of several tables.
+const EXPECTED_BASE_COLUMN_ORDER_V1 = Object.freeze({
+  claim_log: "id run_id step_id story_id agent_id claimed_at outcome abandoned_at duration_ms diagnostic",
+  medic_checks: "id checked_at issues_found actions_taken summary details",
+  rules: "id title content category project_type source severity applies_to enabled readonly sort_order created_at updated_at",
+  run_observations: "id run_id step_id story_id agent_id phase check_id label status summary evidence file_paths github metadata started_at completed_at created_at updated_at",
+  runs: "id workflow_id task status context notify_url created_at updated_at",
+  steps: "id run_id step_id agent_id step_index input_template expects status output retry_count max_retries created_at updated_at",
+  stories: "id run_id story_index story_id title description acceptance_criteria status output retry_count max_retries created_at updated_at",
+} as const);
+
 const EXPECTED_BASE_INDEXES_V1 = Object.freeze([
   ["idx_claim_log_open_single_unique", "claim_log", "CREATE UNIQUE INDEX idx_claim_log_open_single_unique ON public.claim_log USING btree (run_id, step_id) WHERE ((outcome IS NULL) AND (story_id IS NULL))"],
   ["idx_claim_log_open_story_unique", "claim_log", "CREATE UNIQUE INDEX idx_claim_log_open_story_unique ON public.claim_log USING btree (run_id, step_id, story_id) WHERE ((outcome IS NULL) AND (story_id IS NOT NULL))"],
@@ -191,6 +203,7 @@ const TABLE_SQL_V1 = `SELECT c.relname AS name, c.relkind AS kind,
  ORDER BY c.relname COLLATE "C"`;
 
 const COLUMN_SQL_V1 = `SELECT c.relname AS "table", a.attname AS "column",
+  a.attnum AS ordinal,
   format_type(a.atttypid, a.atttypmod) AS "type",
   a.atttypmod AS typmod, a.attnotnull AS "notNull",
   pg_get_expr(d.adbin, d.adrelid) AS "default",
@@ -223,6 +236,7 @@ const INDEX_SQL_V1 = `SELECT tc.relname AS "table", ic.relname AS name,
   i.indnkeyatts AS "keyCount", i.indnatts AS "totalCount",
   i.indexprs IS NOT NULL AS "hasExpression", am.amname AS method,
   ic.relkind AS kind, ic.relpersistence AS persistence,
+  ic.reltablespace = 0 AS "defaultTablespace",
   pg_catalog.pg_has_role(session_user, ic.relowner, 'MEMBER') AS "ownerReachable"
   FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class ic ON ic.oid = i.indexrelid
   JOIN pg_catalog.pg_class tc ON tc.oid = i.indrelid
@@ -243,8 +257,11 @@ const CONSTRAINT_SQL_V1 = `SELECT c.relname AS "table", co.conname AS name,
   co.convalidated AS validated, co.condeferrable AS deferrable,
   co.condeferred AS deferred, co.conislocal AS local,
   co.coninhcount AS "inheritCount", co.connoinherit AS "noInherit",
+  CASE WHEN co.contype = 'p' THEN ic.reltablespace = 0 ELSE true END AS "defaultIndexTablespace",
+  CASE WHEN co.contype = 'p' THEN ic.reloptions IS NULL ELSE true END AS "defaultIndexOptions",
   co.conparentid::text AS "parentOid"
  FROM pg_catalog.pg_constraint co JOIN pg_catalog.pg_class c ON c.oid = co.conrelid
+  LEFT JOIN pg_catalog.pg_class ic ON ic.oid = co.conindid
   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
  WHERE n.nspname = 'public'
    AND (c.relname, co.conname) IN (
@@ -352,6 +369,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
       const columns = await transaction.unsafe<Array<{
         table: string;
         column: string;
+        ordinal: number;
         type: string;
         typmod: number;
         notNull: boolean;
@@ -384,6 +402,16 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
           || !actual.defaultCompression
           || actual.collation !== (expected[2] === "text" ? "default" : "none")) mismatch();
       }
+      for (const table of REQUIRED_BASE_TABLES_V1) {
+        const expectedOrder = EXPECTED_BASE_COLUMN_ORDER_V1[table].split(" ");
+        const stableNames = new Set(expectedOrder);
+        const actualOrder = columns.filter((column) => column.table === table
+          && stableNames.has(column.column))
+          .sort((left, right) => left.ordinal - right.ordinal)
+          .map((column) => column.column);
+        if (actualOrder.length !== expectedOrder.length
+          || actualOrder.some((name, index) => name !== expectedOrder[index])) mismatch();
+      }
       const indexes = await transaction.unsafe<Array<{
         table: string;
         name: string;
@@ -401,6 +429,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         method: string;
         kind: string;
         persistence: string;
+        defaultTablespace: boolean;
         ownerReachable: boolean;
       }>>(INDEX_SQL_V1);
       if (indexes.length !== EXPECTED_BASE_INDEXES_V1.length
@@ -414,7 +443,8 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
             || !actual.immediate || actual.constraintOwned
             || actual.keyCount !== actual.totalCount || actual.hasExpression
             || actual.method !== "btree" || actual.kind !== "i"
-            || actual.persistence !== "p" || actual.ownerReachable;
+            || actual.persistence !== "p" || !actual.defaultTablespace
+            || actual.ownerReachable;
         })) mismatch();
       const constraints = await transaction.unsafe<Array<{
         table: string;
@@ -427,6 +457,8 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         local: boolean;
         inheritCount: number;
         noInherit: boolean;
+        defaultIndexTablespace: boolean;
+        defaultIndexOptions: boolean;
         parentOid: string;
       }>>(CONSTRAINT_SQL_V1);
       if (constraints.length !== EXPECTED_BASE_CONSTRAINTS_V1.length
@@ -438,7 +470,8 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
             || actual.definition !== expected[3]
             || !actual.validated || actual.deferrable || actual.deferred
             || !actual.local || actual.inheritCount !== 0
-            || !actual.noInherit || actual.parentOid !== "0";
+            || !actual.noInherit || actual.parentOid !== "0"
+            || !actual.defaultIndexTablespace || !actual.defaultIndexOptions;
         })) mismatch();
       const fkTriggers = await transaction.unsafe<Array<{
         name: string;

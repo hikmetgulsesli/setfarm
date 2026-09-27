@@ -26,7 +26,7 @@ async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
         parent.relname) ORDER BY child.relname, parent.relname)
         FROM pg_inherits h JOIN pg_class child ON child.oid = h.inhrelid
         JOIN pg_class parent ON parent.oid = h.inhparent),
-      'columns', (SELECT jsonb_agg(jsonb_build_array(c.relname, a.attname,
+      'columns', (SELECT jsonb_agg(jsonb_build_array(c.relname, a.attname, a.attnum,
         format_type(a.atttypid, a.atttypmod), a.attnotnull,
         a.attcollation::text, a.attidentity, a.attgenerated,
         a.atthasmissing, a.attmissingval::text, a.attstorage,
@@ -54,7 +54,7 @@ async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public'),
       'indexes', (SELECT jsonb_agg(jsonb_build_array(ic.relname,
-        pg_get_indexdef(i.indexrelid), i.indimmediate,
+        pg_get_indexdef(i.indexrelid), ic.reltablespace::text, ic.reloptions, i.indimmediate,
         EXISTS (SELECT 1 FROM pg_constraint co WHERE co.conindid=i.indexrelid
           AND co.contype IN ('p', 'u', 'x')))
         ORDER BY ic.relname)
@@ -170,10 +170,14 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
       ["inherited child table", "CREATE TABLE public.shadow_runs () INHERITS (public.runs)"],
       ["typed base table", `CREATE TYPE public.task6a_runs_row_type AS (${typeColumns[0].definition}); ALTER TABLE public.runs OF public.task6a_runs_row_type`],
       ["non-source tablespace", `ALTER TABLE public.medic_checks SET TABLESPACE "${tablespace}"`],
+      ["non-source explicit index tablespace", `ALTER INDEX public.idx_steps_run_status SET TABLESPACE "${tablespace}"`],
+      ["non-source primary-key index tablespace", `ALTER INDEX public.rules_pkey SET TABLESPACE "${tablespace}"`],
+      ["non-source primary-key index options", "ALTER INDEX public.rules_pkey SET (fillfactor = 80)"],
       ["non-source table access method", "CREATE ACCESS METHOD task6a_alt_heap TYPE TABLE HANDLER heap_tableam_handler; ALTER TABLE public.runs SET ACCESS METHOD task6a_alt_heap"],
       ["non-source table options", "ALTER TABLE public.runs SET (autovacuum_enabled = false)"],
       ["non-source TOAST options", "ALTER TABLE public.runs SET (toast.autovacuum_enabled = false)"],
       ["wrong collation", "ALTER TABLE public.rules ALTER COLUMN title TYPE text COLLATE \"C\""],
+      ["swapped same-shape column ordinals", "ALTER TABLE public.rules RENAME COLUMN title TO old_title; ALTER TABLE public.rules RENAME COLUMN content TO title; ALTER TABLE public.rules RENAME COLUMN old_title TO content"],
       ["explicit text compression", "ALTER TABLE public.rules ALTER COLUMN content SET COMPRESSION pglz"],
       ["non-source text storage", "ALTER TABLE public.rules ALTER COLUMN content SET STORAGE PLAIN"],
       ["stale fast-default missing value", "ALTER TABLE public.stories RENAME COLUMN output TO old_output; ALTER TABLE public.stories ADD COLUMN output text DEFAULT 'forged'; ALTER TABLE public.stories ALTER COLUMN output DROP DEFAULT"],
@@ -244,6 +248,9 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
     const cleanupFailures: string[] = [];
     try { await restricted?.end({ timeout: 5 }); } catch { cleanupFailures.push("restricted_connection"); }
     try { await database?.cleanup(); } catch { cleanupFailures.push("fixture_database"); }
+    try {
+      if (privateClusterVerified) await admin.unsafe("DROP ACCESS METHOD IF EXISTS task6a_alt_heap");
+    } catch { cleanupFailures.push("private_access_method"); }
     let tablespaceDropped = false;
     try {
       if (tablespaceDirectory) {

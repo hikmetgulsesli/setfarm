@@ -17,6 +17,7 @@
 - No source-derived expected value may be read from the target catalog at verification time; no generic presence-only checks.
 - No startup call site or `pgMigrate()` change in this slice; no direct-main commit, force push, build-guard bypass, secret logging, or worktree deletion.
 - The structural required-member verifier rejects all rewrite rules on required base tables, but cannot attest to arbitrary extra user triggers, constraints or indexes while allowing legitimate contract-spine additions. A separate exact-extra current-head verifier remains mandatory before any runtime admission.
+- Reviewer-found index-storage and column-ordinal gaps are in scope for this same base-catalog verifier: enforce default tablespace on required explicit/PK indexes and source-stable base-column relative order, while allowing historically appended fallback members in `runs`, `steps`, `stories`, and `run_observations`. The mutation tests must fail before the verifier fix and pass afterward.
 - Root is the only writer; read-only independent review and exact-head PR checks precede delivery.
 
 ## File map
