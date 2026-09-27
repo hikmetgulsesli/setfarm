@@ -23,6 +23,7 @@
 - Create `scripts/run-finding-tests.ts`: deterministic discovery, pure/owner-backed partition, serial P3 invocation and child-exit propagation.
 - Modify `package.json`: route `test:findings` through that runner only.
 - Modify `tests/findings/recovery-delivery-repository.test.ts`: replace the obsolete manual-claim success expectation with exact fail-closed no-residue assertions.
+- Modify `tests/findings/repository.test.ts`: point the cold pre32 catalog source extraction at its current import-inert census module and extract only its actual dependencies; production implementation stays unchanged.
 - Create `scripts/__tests__/run-finding-tests.test.js` only if a focused source/partition regression is needed beyond the executable `test:findings` gate.
 
 ---
@@ -46,6 +47,16 @@
 - [x] **Step 1: Confirm RED.** Under the committed P3 runner, the manual `INSERT INTO claim_log` case failed with `RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND` while four sibling cases passed.
 - [x] **Step 2: Align the expectation.** The manual claim is now a negative fixture asserting exact rejection, zero attempt rows, no delivery attempt ID, and retained `leased` state. Modern canonical success tests remain unchanged.
 - [ ] **Step 3: Run GREEN.** Run this file in one P3 invocation, then run the full findings command. Investigate and fix any different failure with its own RED evidence.
+
+### Task 2a: Align the moved cold pre32 catalog test
+
+**Files:** Modify `tests/findings/repository.test.ts`.
+
+**Interfaces:** The existing source-extraction test still invokes the private `requireColdPre32CatalogAbsenceV1` function against synthetic rows and an isolated migration-31 database.
+
+- [x] **Step 1: Confirm RED.** Full P3 findings run passed the other 15 repository assertions but failed before catalog assertions because the function no longer resides in `baseline-post-handoff-receipt-v1.ts`.
+- [x] **Step 2: Update only the source locator.** Extract `requireColdPre32CatalogAbsenceV1`, `isPlainRecord`, `hasExactKeys`, and `currentEntryFail` from `baseline-legacy-database-census-v1.ts`; do not export or alter the production function.
+- [ ] **Step 3: Run GREEN.** Require the focused repository file and full findings suite to pass with no skipped owner-backed cases on the private cluster.
 
 ### Task 3: Review and deliver
 

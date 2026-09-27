@@ -195,8 +195,8 @@ it("legacy schema31 census authenticates terminal published findings without mut
 });
 
 it("cold pre32 catalog rejects unjournaled relations and orphan routines or triggers without writes", async () => {
-  const source = readFileSync(path.join(process.cwd(), "src/internal-production/baseline-post-handoff-receipt-v1.ts"), "utf8");
-  const regions = ["requireColdPre32CatalogAbsenceV1", "isPlainRecord", "hasExactKeys", "canonicalComparable", "compareBytes", "currentEntryFail"].map((name) => {
+  const source = readFileSync(path.join(process.cwd(), "src/internal-production/baseline-legacy-database-census-v1.ts"), "utf8");
+  const regions = ["requireColdPre32CatalogAbsenceV1", "isPlainRecord", "hasExactKeys", "currentEntryFail"].map((name) => {
     const match = new RegExp(`^(?:export )?(?:async )?function ${name}\\(`, "m").exec(source);
     assert.ok(match, `${name} is the actual private implementation`);
     const tail = source.slice(match.index + match[0].length);
