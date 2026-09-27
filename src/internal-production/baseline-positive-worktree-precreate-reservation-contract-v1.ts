@@ -30,6 +30,7 @@ export const PRIVATE_POSITIVE_WORKTREE_PRECREATE_RESERVATION_V1_STATEMENTS = Obj
     canonical_body text NOT NULL CHECK (octet_length(canonical_body) BETWEEN 1 AND 4096),
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT task6a_private_precreate_dispatch_v1 UNIQUE (run_id, story_db_id, dispatch_key),
+    CONSTRAINT task6a_private_precreate_logical_story_v1 UNIQUE (run_id, story_id),
     CONSTRAINT task6a_private_precreate_story_identity_v1
       FOREIGN KEY (story_db_id, run_id, story_id)
       REFERENCES public.stories(id, run_id, story_id)

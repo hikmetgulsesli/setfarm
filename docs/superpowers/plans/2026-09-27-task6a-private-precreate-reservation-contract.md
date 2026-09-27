@@ -19,9 +19,10 @@ writer fence or authorize use of the legacy worktree helper.
 
 - Reserve exact run, story database ID and story ID, dispatch key, owner
   instance, absolute target root, source commit and tree before creation.
-- Canonical body SHA-256 is the reservation identity. A unique root and unique
-  story ID and run/story/dispatch key prevent competing pending reservations,
-  even if both dispatch key and root differ. A committed row is
+- Canonical body SHA-256 is the reservation identity. A unique root, database
+  story row, logical `(run_id, story_id)` and run/story/dispatch key prevent
+  competing pending reservations even when multiple failed database rows carry
+  the same logical story ID and both dispatch key and root differ. A committed row is
   insert-once, immutable, and remains pending after a crash; retry succeeds
   only when every field is identical. This fixture intentionally has no
   settlement transition, so another dispatch for that story stays denied;

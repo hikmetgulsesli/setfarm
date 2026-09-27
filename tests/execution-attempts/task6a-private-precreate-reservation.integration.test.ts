@@ -136,6 +136,20 @@ test("private pre-create reservation persists immutably while the physical targe
       `SELECT count(*)::integer AS count FROM ${TABLE}`);
     assert.equal(stable[0]?.count, 1);
 
+    stage = "duplicate-logical-story-refusal";
+    const failedStoryDbId = `failed-story-${suffix}`;
+    await database.sql`INSERT INTO public.stories (
+      id, run_id, story_index, story_id, title, status)
+      VALUES (${failedStoryDbId}, ${runId}, 2, 'story-1',
+        'separate failed row with the same logical story ID', 'failed')`;
+    await assert.rejects(appendPrivateDiagnosticPrecreateReservationV1(database.sql,
+      { ...input, storyDbId: failedStoryDbId,
+        dispatchKey: `failed-${suffix}`,
+        root: `/tmp/projects/${suffix}/.worktrees/failed-story-1` }), REFUSED);
+    const afterDuplicate = await database.sql.unsafe<Array<{ count: number }>>(
+      `SELECT count(*)::integer AS count FROM ${TABLE}`);
+    assert.equal(afterDuplicate[0]?.count, 1);
+
     stage = "terminal-run-and-immutability";
     await database.sql`UPDATE public.stories SET status = 'completed' WHERE id = ${storyDbId}`;
     await assert.rejects(appendPrivateDiagnosticPrecreateReservationV1(database.sql,
