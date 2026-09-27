@@ -21,9 +21,11 @@
 ## File map
 
 - Create `scripts/run-finding-tests.ts`: deterministic discovery, pure/owner-backed partition, serial P3 invocation and child-exit propagation.
+- Create `scripts/finding-test-preflight.mjs` and `scripts/__tests__/finding-test-preflight.test.js`: classify all direct database-fixture imports and prove exact private-cluster preflight/refusal.
 - Modify `package.json`: route `test:findings` through that runner only.
 - Modify `tests/findings/recovery-delivery-repository.test.ts`: replace the obsolete manual-claim success expectation with exact fail-closed no-residue assertions.
 - Modify `tests/findings/repository.test.ts`: point the cold pre32 catalog source extraction at its current import-inert census module and extract only its actual dependencies; production implementation stays unchanged.
+- Modify `tests/findings/v3-github-review-authorization.integration.test.ts`: replace obsolete manually inserted repair claim with genuine compiler story admission and canonical recovery claim/runtime publication.
 - Create `scripts/__tests__/run-finding-tests.test.js` only if a focused source/partition regression is needed beyond the executable `test:findings` gate.
 
 ---
@@ -57,6 +59,22 @@
 - [x] **Step 1: Confirm RED.** Full P3 findings run passed the other 15 repository assertions but failed before catalog assertions because the function no longer resides in `baseline-post-handoff-receipt-v1.ts`.
 - [x] **Step 2: Update only the source locator.** Extract `requireColdPre32CatalogAbsenceV1`, `isPlainRecord`, `hasExactKeys`, and `currentEntryFail` from `baseline-legacy-database-census-v1.ts`; do not export or alter the production function.
 - [ ] **Step 3: Run GREEN.** Require the focused repository file and full findings suite to pass with no skipped owner-backed cases on the private cluster.
+
+### Task 2b: Enforce private-cluster identity before owner-backed tests
+
+**Files:** Create `scripts/finding-test-preflight.mjs` and `scripts/__tests__/finding-test-preflight.test.js`; modify `scripts/run-finding-tests.ts`.
+
+- [x] **Step 1: Confirm RED.** Read-only review identified that migration-only fixture imports escaped the allowlist check, while any localhost admin URL (including live port 5432) could be accepted. The new behavior tests initially failed on missing classifier/preflight functions.
+- [x] **Step 2: Implement and prove local GREEN.** Test direct fixture-module import classification and exact private PostgreSQL directory/port/socket identity; `node --test` passed 2/2. A wrong-directory integration attempt refused before any P3 database clone.
+- [ ] **Step 3: Verify positive preflight.** Execute the focused owner-backed file using the actual private-cluster identity.
+
+### Task 2c: Restore canonical GitHub review recovery fixture
+
+**Files:** Modify `tests/findings/v3-github-review-authorization.integration.test.ts`.
+
+- [x] **Step 1: Confirm RED.** Under P3, the first six cases passed and three resolution-success cases failed at `RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND` from manually inserted repair claims.
+- [x] **Step 2: Use actual authorities.** Seed canonical compiler story admission, keep the selected story's immutable fields, and acquire/publish a bounded recovery claim/runtime before reserving the repair attempt.
+- [ ] **Step 3: Run GREEN.** Require all GitHub review authorization cases to pass under the private P3 fixture, then run the remaining full findings suite.
 
 ### Task 3: Review and deliver
 

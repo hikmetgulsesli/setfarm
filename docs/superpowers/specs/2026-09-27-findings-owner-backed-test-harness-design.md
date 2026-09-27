@@ -29,12 +29,25 @@ run each owner-backed file through `scripts/run-isolated-postgres-tests.ts`
 with `--test-concurrency=1`. It must preserve nonzero child exits and never
 fall back to the ambient live `SETFARM_PG_URL`.
 
+Read-only review found two safety refinements. Classify any direct import of
+the isolated database fixture module as owner-backed, including its migration
+factory. Before an owner-backed child starts, require the explicitly named
+private Task6A cluster and verify its actual PostgreSQL data directory, port,
+and socket directory through a read-only query. A mere localhost admin URL is
+not sufficient because it could point to the live local database.
+
 The legacy delivery test must assert that a manually inserted recovery claim
 without canonical publication cannot reserve an attempt or advance its leased
 delivery. Canonical success and duplicate reservation remain covered by the
 current recovery claim/attempt integration tests. No runtime source,
 PostgreSQL privilege, migration, admission, live service, or selected CLI is
 changed.
+
+The GitHub review authorization integration fixture also predates the
+canonical recovery-publication fence. Preserve its success-path coverage by
+seeding genuine compiler story admission, then acquire the recovery handoff
+and publish the loop claim/runtime through the production API. Do not insert
+a repair claim by hand or forge its publication.
 
 ## Verification and boundary
 

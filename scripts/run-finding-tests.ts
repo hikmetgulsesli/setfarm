@@ -5,6 +5,14 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import postgres from "postgres";
+
+import {
+  isOwnerBackedFindingSourceV1,
+  verifyFindingPrivateClusterTargetV1,
+  verifyFindingPrivateClusterIdentityV1,
+} from "./finding-test-preflight.mjs";
+
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const TEST_ROOT = path.join(ROOT, "tests/findings");
 const TEST_PREFIX = "tests/findings/";
@@ -44,7 +52,7 @@ for (const file of OWNER_BACKED_TESTS) {
 }
 for (const file of discovered) {
   if (
-    readFileSync(path.join(TEST_ROOT, file), "utf8").includes("createIsolatedTestDatabase")
+    isOwnerBackedFindingSourceV1(readFileSync(path.join(TEST_ROOT, file), "utf8"))
     && !OWNER_BACKED_TESTS.has(file)
   ) throw new Error(`FINDING_OWNER_TEST_UNREGISTERED:${file}`);
 }
@@ -58,13 +66,36 @@ const selected = requested.length === 0 ? discovered : [...new Set(requested)].s
 const pure = selected.filter((file) => !OWNER_BACKED_TESTS.has(file));
 const ownerBacked = selected.filter((file) => OWNER_BACKED_TESTS.has(file));
 
+async function assertPrivateClusterBeforeOwnerTests(): Promise<void> {
+  const adminUrl = process.env.SETFARM_TEST_PG_ADMIN_URL;
+  const expectedDataDirectory = process.env.SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY;
+  verifyFindingPrivateClusterTargetV1(adminUrl, expectedDataDirectory);
+  const admin = postgres(adminUrl!, { max: 1, connect_timeout: 5, idle_timeout: 1 });
+  try {
+    const rows = await admin<Array<{
+      data_directory: string;
+      port: string;
+      socket_directories: string;
+    }>>`
+      SELECT current_setting('data_directory') AS data_directory,
+        current_setting('port') AS port,
+        current_setting('unix_socket_directories') AS socket_directories
+    `;
+    if (rows.length !== 1) throw new Error("FINDING_OWNER_TEST_PRIVATE_CLUSTER_UNVERIFIED");
+    verifyFindingPrivateClusterIdentityV1(adminUrl, expectedDataDirectory, rows[0]);
+  } catch {
+    throw new Error("FINDING_OWNER_TEST_PRIVATE_CLUSTER_UNVERIFIED");
+  } finally {
+    await admin.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
+if (ownerBacked.length > 0) await assertPrivateClusterBeforeOwnerTests();
+
 if (pure.length > 0) {
   run(["--import", "tsx", "--test", ...pure.map((file) => `${TEST_PREFIX}${file}`)]);
 }
 for (const file of ownerBacked) {
-  if (!process.env.SETFARM_TEST_PG_ADMIN_URL) {
-    throw new Error("FINDING_OWNER_TEST_ADMIN_URL_REQUIRED");
-  }
   run([
     "--import",
     "tsx",
