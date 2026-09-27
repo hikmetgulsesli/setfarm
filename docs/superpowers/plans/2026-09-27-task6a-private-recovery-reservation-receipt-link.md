@@ -43,6 +43,9 @@ block cutover.
   one immutable link with canonical-body hash and parent FKs; only byte-
   identical retry can adopt a conflict. Shared-field FKs and direct SQL rows
   are not complete producer-authenticity evidence.
+- Match attempt role to the real V3 dispatch class: `developer` for product
+  implementation and `supervisor` for supervisor repair. A synthetic
+  `implementer` role is not a production recovery handoff.
 
 ## RED/GREEN and verification
 
@@ -53,7 +56,8 @@ diagnostic, not a physical proof. The fixture commits its publication after
 the receipt to test absent-publication refusal; this is not a production
 lifecycle claim. Test missing publication, crossed input hashes, token
 rotation, expired delivery and attempt, mutable current-case drift,
-claim/session/slice drift, rollback,
+claim/session/slice/role drift for both supported recovery dispatch classes,
+rollback,
 immutable DML, identical retry and continued pending-row presence. A separate
 fixture is still needed for forged immutable publication bytes/hash and
 crossed publication identity; do not claim those adversarial cases passed.

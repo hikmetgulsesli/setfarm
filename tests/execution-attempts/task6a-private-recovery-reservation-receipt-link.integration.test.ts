@@ -31,7 +31,8 @@ const expectedDataDirectory = process.env.SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY;
 const REFUSED = /TASK6A_PRIVATE_RECOVERY_RESERVATION_RECEIPT_LINK_REFUSED/;
 const LINK = "public.internal_production_positive_worktree_recovery_reservation_receipt_links_v1";
 
-test("private recovery link requires the exact committed lease/publication/receipt chain", {
+for (const dispatchClass of ["product_implementation", "supervisor_repair"] as const) {
+test(`private ${dispatchClass} recovery link requires the exact committed lease/publication/receipt chain`, {
   skip: expectedDataDirectory ? false : "requires an explicitly identified private PostgreSQL 17 cluster",
 }, async () => {
   assert.equal(process.env.SETFARM_PG_URL, undefined);
@@ -118,7 +119,8 @@ test("private recovery link requires the exact committed lease/publication/recei
       runId, storyId, findingSetHash: findingSet.findingSetHash,
       findingIds: findingSet.findings.map((finding) => finding.findingId),
       packetHash: findingSet.packetHash, sliceHash: findingSet.sliceHash,
-      sourceRevision: findingSet.sourceRevision, owner: "implement",
+      sourceRevision: findingSet.sourceRevision,
+      owner: dispatchClass === "product_implementation" ? "implement" : "supervisor",
       expectedDelta: { kind: "source_change", invariantRefs: ["INV_RECOVERY_LEASE"],
         requiredPaths: ["src/App.tsx"] }, allowedPaths: ["src/App.tsx"],
       evidencePlan: ["EVID_RECOVERY_LEASE"], priorAttemptRefs: [],
@@ -181,7 +183,7 @@ test("private recovery link requires the exact committed lease/publication/recei
       recoveryCaseId: recoveryCase.recoveryCaseId,
       revisionId: revision.revisionId,
       expectedStateVersion: recoveryCase.stateVersion,
-      dispatchClass: "product_implementation",
+      dispatchClass,
     }, { now: new Date() });
     assert.equal(authorized.status, "authorized");
     if (authorized.status !== "authorized") throw new Error("expected authorization");
@@ -217,11 +219,12 @@ stage = "reservation-before-claim";
       packet_hash, slice_hash, finding_set_hash, dedupe_key
     ) VALUES (
       ${attemptId}, ${runId}, 'implement', ${storyId}, 'agent', 1, ${fenceToken},
-      'product_implementation', 'private-report', ${sourceSha}, ${sourceTreeHash},
-      'implementer', NOW(), NOW() + INTERVAL '1 hour', NOW(), 'claimed',
+      ${dispatchClass}, 'private-report', ${sourceSha}, ${sourceTreeHash},
+      ${dispatchClass === "product_implementation" ? "developer" : "supervisor"},
+      NOW(), NOW() + INTERVAL '1 hour', NOW(), 'claimed',
       ${claimId}, ${root}, ${handoff.dispatchId}, ${handoff.revisionId},
       ${handoff.directive.packetHash}, ${sliceHash}, ${handoff.directive.findingSetHash},
-      ${"e".repeat(64)}
+      ${dispatchClass === "product_implementation" ? "e".repeat(64) : null}
     )`;
     await database.sql`INSERT INTO public.runtime_sessions (
       session_id, run_id, step_db_id, workflow_step_id, claim_id, attempt_id,
@@ -276,6 +279,14 @@ stage = "reservation-before-claim";
     ]) await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
       database.sql, crossed), REFUSED);
     stage = "stale-chain-refusal";
+    await database.sql`UPDATE public.execution_attempts
+      SET role = ${dispatchClass === "product_implementation" ? "supervisor" : "developer"}
+      WHERE attempt_id = ${attemptId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "recovery role must match dispatch class");
+    await database.sql`UPDATE public.execution_attempts
+      SET role = ${dispatchClass === "product_implementation" ? "developer" : "supervisor"}
+      WHERE attempt_id = ${attemptId}`;
     await database.sql`UPDATE public.recovery_cases
       SET expected_delta = ${JSON.stringify({ kind: "source_change",
         invariantRefs: ["INV_CROSSED_CASE"], requiredPaths: ["src/App.tsx"] })}::text::jsonb
@@ -367,6 +378,7 @@ stage = "reservation-before-claim";
   } finally {
     const cleanupFailures: string[] = [];
     try { await database?.cleanup(); } catch { cleanupFailures.push("fixture_database"); }
+    delete process.env.SETFARM_PG_URL;
     try { await admin.end({ timeout: 5 }); } catch { cleanupFailures.push("admin_connection"); }
     if (cleanupFailures.length > 0) {
       const cleanupError = new Error(`TASK6A_PRIVATE_RECOVERY_LINK_CLEANUP_FAILED:${cleanupFailures.join(",")}`);
@@ -375,3 +387,4 @@ stage = "reservation-before-claim";
     }
   }
 });
+}

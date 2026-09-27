@@ -309,7 +309,9 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           AND st.status = 'running' AND c.id = $4::bigint
           AND c.step_id = 'implement' AND c.outcome IS NULL
           AND c.abandoned_at IS NULL
-          AND a.agent_id = c.agent_id AND a.role = 'implementer'
+          AND a.agent_id = c.agent_id
+          AND a.role = CASE WHEN $9 = 'product_implementation'
+            THEN 'developer' ELSE 'supervisor' END
           AND a.attempt_id = $5 AND a.generation = $6
           AND a.recovery_dispatch_id = $7
           AND a.recovery_case_revision_id = $8
