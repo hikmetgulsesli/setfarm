@@ -38,6 +38,14 @@ block cutover.
 - Require delivery attempt/claim binding to the receipt, state
   `attempt_reserved` or `running`, attempt count exactly one, current lease
   token equal to the handoff and current expiry after fresh PostgreSQL time.
+  A real model-backed recovery may compile a new execution slice whose hash
+  differs from the directive's contract slice. For that case require the
+  caller-supplied exact envelope, canonical hash equal to delivery and attempt,
+  its indexed publication metadata, and an embedded recovery directive equal
+  to the immutable handoff. Matching drift in both delivery and attempt
+  without this evidence must not substitute an alternate slice. The private
+  link remains diagnostic: a direct SQL artifact index row is not a producer
+  authentication proof.
   Compare the live delivery and dispatch authorization timestamps inside
   PostgreSQL, and require a non-null delivery start equal to the bound
   attempt's lease acquisition and between session creation and delivery lease
@@ -63,8 +71,9 @@ block cutover.
   must match the claim agent, and immutable publication bound time must equal
   claim/story birth and precede runtime creation. The V3 binding bound time
   must also equal claim birth. Insert
-  one immutable link with canonical-body hash and parent FKs; only byte-
-  identical retry can adopt a conflict. Shared-field FKs and direct SQL rows
+  one immutable link with canonical-body hash, the exact execution-slice hash,
+  and parent FKs; only byte-identical retry can adopt a conflict. A later
+  attempt/delivery slice change cannot reuse the same link. Shared-field FKs and direct SQL rows
   are not complete producer-authenticity evidence.
 - Match attempt role to the real V3 dispatch class: `developer` for product
   implementation and `supervisor` for supervisor repair. A synthetic
@@ -88,6 +97,9 @@ attempt lease expiration during a delayed link insert, with a nontransactional
 private sequence proving the delay trigger ran before rollback,
 base-schema run-packet immutability, story claimant/birth drift,
 claim/session/slice/role drift
+including simultaneous attempt/delivery slice drift without an envelope, and
+positive distinct, indexed, directive-bound execution-slice insertion and
+refusal to adopt an immutable link after changing that slice
 for both supported recovery dispatch classes,
 rollback,
 immutable DML, identical retry and continued pending-row presence. A separate

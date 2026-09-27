@@ -7,6 +7,8 @@ import { test } from "node:test";
 import postgres from "postgres";
 
 import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { ImplementationSliceV1Schema } from "../../src/product-compiler/schemas/implementation-slice-v1.js";
+import { buildMinimalValidContracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
 import { derivePositiveWorktreeBindingReceiptCandidateV1 } from
   "../../src/internal-production/baseline-positive-worktree-binding-contract-v1.js";
 import { appendPrivateDiagnosticPositiveWorktreeReceiptJournalV1,
@@ -34,10 +36,13 @@ const RESERVATION_SCHEMA = "setfarm.internal-production-positive-worktree-privat
 const TOKEN_SCHEMA = "setfarm.internal-production-positive-worktree-recovery-lease-token-commitment.v1";
 
 for (const dispatchClass of ["product_implementation", "supervisor_repair"] as const) {
-for (const scenario of ["normal", "malformed-finding", "malformed-reservation", "malformed-receipt"] as const) {
+for (const scenario of ["normal", "execution-envelope", "malformed-finding",
+  "malformed-reservation", "malformed-receipt"] as const) {
 const malformedFindingIds = scenario === "malformed-finding";
 test(`private ${dispatchClass} recovery link ${scenario === "normal"
-  ? "requires the exact committed lease/publication/receipt chain" : `refuses ${scenario}`}`, {
+  ? "requires the exact committed lease/publication/receipt chain"
+  : scenario === "execution-envelope" ? "binds a distinct execution envelope"
+    : `refuses ${scenario}`}`, {
   skip: expectedDataDirectory ? false : "requires an explicitly identified private PostgreSQL 17 cluster",
 }, async () => {
   assert.equal(process.env.SETFARM_PG_URL, undefined);
@@ -317,7 +322,7 @@ stage = "reservation-before-claim";
       ${hashCanonicalJson(handoff)},
       (SELECT claimed_at FROM public.claim_log WHERE id = ${claimId})
     )`;
-    if (scenario !== "normal") {
+    if (scenario !== "normal" && scenario !== "execution-envelope") {
       stage = `malformed-parent-or-finding:${scenario}`;
       await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
         REFUSED, "a malformed immutable parent/finding row cannot be linked");
@@ -474,11 +479,62 @@ stage = "reservation-before-claim";
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact), REFUSED);
     await database.sql`UPDATE public.recovery_dispatch_deliveries
       SET execution_slice_hash = ${sliceHash} WHERE dispatch_id = ${handoff.dispatchId}`;
+    const crossedSliceHash = "a".repeat(64);
+    await database.sql`UPDATE public.execution_attempts
+      SET slice_hash = ${crossedSliceHash} WHERE attempt_id = ${attemptId}`;
+    await database.sql`UPDATE public.recovery_dispatch_deliveries
+      SET execution_slice_hash = ${crossedSliceHash} WHERE dispatch_id = ${handoff.dispatchId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "matching attempt and delivery drift must not replace the directive slice");
+    await database.sql`UPDATE public.execution_attempts
+      SET slice_hash = ${sliceHash} WHERE attempt_id = ${attemptId}`;
+    await database.sql`UPDATE public.recovery_dispatch_deliveries
+      SET execution_slice_hash = ${sliceHash} WHERE dispatch_id = ${handoff.dispatchId}`;
     await database.sql`UPDATE public.recovery_dispatch_deliveries
       SET lease_expires_at = NOW() - INTERVAL '1 second' WHERE dispatch_id = ${handoff.dispatchId}`;
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact), REFUSED);
     await database.sql`UPDATE public.recovery_dispatch_deliveries
       SET lease_expires_at = NOW() + INTERVAL '5 minutes' WHERE dispatch_id = ${handoff.dispatchId}`;
+
+    const baseSlice = buildMinimalValidContracts().implementationSlice;
+    const executionSlice = ImplementationSliceV1Schema.parse({
+      ...baseSlice, packetHash: handoff.directive.packetHash,
+      sourceRevision: { baseSha: sourceSha, treeHash: sourceTreeHash },
+      contract: { ...baseSlice.contract, actions: baseSlice.contract.actions.map((action) => ({
+        ...action, evidenceScenario: action.evidenceScenario ?? { prerequisiteSteps: [] },
+      })) },
+      recovery: { schema: "setfarm.implementation-recovery-directive.v1",
+        recoveryCaseRevisionId: handoff.revisionId,
+        recoveryDispatchId: handoff.dispatchId, dispatchClass,
+        findingSetHash: handoff.directive.findingSetHash,
+        findingIds: handoff.directive.findingIds,
+        contractSliceHash: handoff.directive.contractSliceHash,
+        sourceRevision: { baseSha: sourceSha, treeHash: sourceTreeHash },
+        expectedDelta: handoff.directive.expectedDelta,
+        allowedPaths: handoff.directive.allowedPaths,
+        ...(handoff.directive.evidencePlanArtifactHash
+          ? { evidencePlanArtifactHash: handoff.directive.evidencePlanArtifactHash } : {}) },
+    });
+    const executionEnvelope = { schema: "setfarm.semantic-artifact-envelope.v1",
+      artifactType: "setfarm.implementation-slice.v1",
+      producer: { pass: "task6a-recovery-link-fixture", codeSha: sourceSha,
+        toolVersions: { setfarm: "test" } }, payload: executionSlice };
+    const executionSliceHash = hashCanonicalJson(executionEnvelope);
+    assert.notEqual(executionSliceHash, sliceHash);
+    await database.sql`INSERT INTO public.semantic_artifacts (
+      artifact_hash, artifact_type, byte_length, producer_metadata
+    ) VALUES (${executionSliceHash}, ${executionEnvelope.artifactType},
+      ${Buffer.byteLength(canonicalJsonStringify(executionEnvelope), "utf8")},
+      ${JSON.stringify(executionEnvelope.producer)}::text::jsonb)`;
+    if (scenario === "execution-envelope") {
+      await database.sql`UPDATE public.execution_attempts
+        SET slice_hash = ${executionSliceHash} WHERE attempt_id = ${attemptId}`;
+      await database.sql`UPDATE public.recovery_dispatch_deliveries
+        SET execution_slice_hash = ${executionSliceHash} WHERE dispatch_id = ${handoff.dispatchId}`;
+      await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+        REFUSED, "a distinct execution slice requires its exact indexed envelope");
+    }
+    const linkEnvelope = scenario === "execution-envelope" ? executionEnvelope : undefined;
 
     stage = "rollback-before-commit";
     await database.sql.unsafe(`CREATE FUNCTION public.task6a_private_recovery_link_crash_probe_v1()
@@ -488,7 +544,8 @@ stage = "reservation-before-claim";
     await database.sql.unsafe(`CREATE TRIGGER task6a_private_recovery_link_crash_probe_v1
       AFTER INSERT ON ${LINK} FOR EACH ROW
       EXECUTE FUNCTION public.task6a_private_recovery_link_crash_probe_v1()`);
-    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact), REFUSED);
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
+      database.sql, exact, linkEnvelope), REFUSED);
     await database.sql.unsafe(`DROP TRIGGER task6a_private_recovery_link_crash_probe_v1 ON ${LINK}`);
     await database.sql.unsafe(`DROP FUNCTION public.task6a_private_recovery_link_crash_probe_v1()`);
     assert.equal((await database.sql.unsafe<Array<{ count: number }>>(
@@ -509,7 +566,8 @@ stage = "reservation-before-claim";
     await database.sql`UPDATE public.execution_attempts
       SET lease_expires_at = clock_timestamp() + INTERVAL '2 seconds'
       WHERE attempt_id = ${attemptId}`;
-    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
+      database.sql, exact, linkEnvelope),
       REFUSED, "attempt lease may expire while the link insert waits");
     const delayProbe = await database.sql.unsafe<Array<{ lastValue: string;
       isCalled: boolean }>>(`SELECT last_value::text AS "lastValue", is_called AS "isCalled"
@@ -528,14 +586,34 @@ stage = "reservation-before-claim";
       WHERE attempt_id = ${attemptId}`;
 
     stage = "insert-and-identical-retry";
-    const first = await appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact);
+    const first = await appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
+      database.sql, exact, linkEnvelope);
     assert.equal(first.authority, "diagnostic-only");
     assert.equal(first.disposition, "inserted");
-    assert.deepEqual(await appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+    assert.deepEqual(await appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
+      database.sql, exact, linkEnvelope),
       { ...first, disposition: "identical-retry" });
-    const rows = await database.sql.unsafe<Array<{ canonicalBody: string; count: number }>>(
-      `SELECT canonical_body AS "canonicalBody", count(*) OVER ()::integer AS count FROM ${LINK}`);
+    const changedSliceHash = scenario === "execution-envelope" ? sliceHash : executionSliceHash;
+    await database.sql`UPDATE public.execution_attempts
+      SET slice_hash = ${changedSliceHash} WHERE attempt_id = ${attemptId}`;
+    await database.sql`UPDATE public.recovery_dispatch_deliveries
+      SET execution_slice_hash = ${changedSliceHash} WHERE dispatch_id = ${handoff.dispatchId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
+      database.sql, exact, scenario === "execution-envelope" ? undefined : executionEnvelope),
+      REFUSED, "an existing link cannot adopt a changed execution slice");
+    const originalSliceHash = scenario === "execution-envelope" ? executionSliceHash : sliceHash;
+    await database.sql`UPDATE public.execution_attempts
+      SET slice_hash = ${originalSliceHash} WHERE attempt_id = ${attemptId}`;
+    await database.sql`UPDATE public.recovery_dispatch_deliveries
+      SET execution_slice_hash = ${originalSliceHash} WHERE dispatch_id = ${handoff.dispatchId}`;
+    const rows = await database.sql.unsafe<Array<{ canonicalBody: string;
+      executionSliceHash: string; count: number }>>(
+      `SELECT canonical_body AS "canonicalBody",
+        execution_slice_hash AS "executionSliceHash",
+        count(*) OVER ()::integer AS count FROM ${LINK}`);
     assert.equal(rows[0]?.count, 1);
+    assert.equal(rows[0]?.executionSliceHash, originalSliceHash);
+    assert.equal(JSON.parse(rows[0]!.canonicalBody).executionSliceHash, originalSliceHash);
     assert.equal(rows[0]?.canonicalBody.includes(handoff.lease.leaseToken), false);
     assert.equal(rows[0]?.canonicalBody.includes(fenceToken), false);
     await assert.rejects(database.sql.unsafe(`UPDATE ${LINK} SET root = root`),
@@ -555,7 +633,8 @@ stage = "reservation-before-claim";
     await database.sql`UPDATE public.recovery_dispatch_deliveries
       SET lease_token = ${randomBytes(32).toString("hex")}
       WHERE dispatch_id = ${handoff.dispatchId}`;
-    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact), REFUSED);
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
+      database.sql, exact, linkEnvelope), REFUSED);
     const stable = await database.sql.unsafe<Array<{ count: number }>>(
       `SELECT count(*)::integer AS count FROM ${LINK}`);
     assert.equal(stable[0]?.count, 1);

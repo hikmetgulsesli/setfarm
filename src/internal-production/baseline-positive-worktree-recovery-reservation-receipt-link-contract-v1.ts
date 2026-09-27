@@ -4,7 +4,9 @@ import type postgres from "postgres";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { FindingSetV1Schema } from "../findings/finding-set.js";
+import { SemanticArtifactEnvelopeV1Schema } from "../product-compiler/artifact-envelope.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { ImplementationSliceV1Schema } from "../product-compiler/schemas/implementation-slice-v1.js";
 import { V3RecoveryClaimHandoffV1Schema } from "../recovery/v3-recovery-claim-authority.js";
 import { lockV3RecoveryRunMutationAuthorityInTransaction } from
   "../recovery/v3-recovery-run-mutation-authority.js";
@@ -42,6 +44,7 @@ export const PRIVATE_POSITIVE_WORKTREE_RECOVERY_RESERVATION_RECEIPT_LINK_V1_STAT
     root text NOT NULL,
     source_sha text NOT NULL,
     source_tree_hash text NOT NULL,
+    execution_slice_hash text NOT NULL CHECK (execution_slice_hash ~ '^[a-f0-9]{64}$'),
     lease_token_hash text NOT NULL CHECK (lease_token_hash ~ '^[a-f0-9]{64}$'),
     publication_hash text NOT NULL CHECK (publication_hash ~ '^[a-f0-9]{64}$'),
     physical_identity_hash text NOT NULL CHECK (physical_identity_hash ~ '^[a-f0-9]{64}$'),
@@ -73,7 +76,7 @@ type LinkRow = Readonly<{ linkHash: string; reservationHash: string;
   receiptHash: string; dispatchId: string; runId: string; storyDbId: string;
   storyId: string; claimId: string; attemptId: string; sessionId: string;
   generation: number; ownerInstanceId: string; root: string; sourceSha: string;
-  sourceTreeHash: string; leaseTokenHash: string; publicationHash: string;
+  sourceTreeHash: string; executionSliceHash: string; leaseTokenHash: string; publicationHash: string;
   physicalIdentityHash: string; fenceTokenHash: string; canonicalBody: string }>;
 
 function project(input: unknown): Readonly<{ reservationHash: string; receiptHash: string }> {
@@ -93,7 +96,7 @@ function project(input: unknown): Readonly<{ reservationHash: string; receiptHas
 }
 
 export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
-  sql: postgres.Sql, input: unknown,
+  sql: postgres.Sql, input: unknown, executionSliceEnvelope?: unknown,
 ): Promise<Readonly<{ schema: typeof SCHEMA; authority: "diagnostic-only";
   disposition: "inserted" | "identical-retry"; linkHash: string }>> {
   try {
@@ -163,6 +166,7 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
         || delivery.attemptCount !== 1 || delivery.claimId === null
         || delivery.attemptId === null || delivery.leaseToken === null
         || delivery.executionSliceHash === null) fail();
+      const executionSliceHash: string = delivery.executionSliceHash ?? fail();
       const cases = await tx.unsafe<Array<{ currentRevisionId: string; status: string;
         owner: string; packetHash: string; expectedDelta: unknown;
         allowedPaths: unknown; evidencePlan: unknown }>>(`SELECT
@@ -324,6 +328,47 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           leaseToken: handoff.lease.leaseToken }) !== reservation.leaseTokenHash
         || !Number.isFinite(publication.boundAt.getTime())
         || Date.parse(handoff.lease.expiresAt) <= publication.boundAt.getTime()) fail();
+      if (delivery.executionSliceHash !== dispatch.contractSliceHash
+        || executionSliceEnvelope !== undefined) {
+        const envelope = SemanticArtifactEnvelopeV1Schema.parse(executionSliceEnvelope);
+        const slice = ImplementationSliceV1Schema.parse(envelope.payload);
+        const expectedRecovery = { schema: "setfarm.implementation-recovery-directive.v1",
+          recoveryCaseRevisionId: handoff.revisionId,
+          recoveryDispatchId: handoff.dispatchId,
+          dispatchClass: handoff.dispatchClass,
+          findingSetHash: handoff.directive.findingSetHash,
+          findingIds: handoff.directive.findingIds,
+          contractSliceHash: handoff.directive.contractSliceHash,
+          sourceRevision: { baseSha: reservation.sourceSha,
+            treeHash: reservation.sourceTreeHash },
+          expectedDelta: handoff.directive.expectedDelta,
+          allowedPaths: handoff.directive.allowedPaths,
+          ...(handoff.directive.evidencePlanArtifactHash
+            ? { evidencePlanArtifactHash: handoff.directive.evidencePlanArtifactHash } : {}) };
+        const envelopeBytes = canonicalJsonStringify(envelope);
+        if (envelope.artifactType !== "setfarm.implementation-slice.v1"
+          || Buffer.byteLength(envelopeBytes, "utf8") > 32_000_000
+          || hashCanonicalJson(envelope) !== delivery.executionSliceHash
+          || canonicalJsonStringify(envelope.payload) !== canonicalJsonStringify(slice)
+          || slice.packetHash !== dispatch.packetHash
+          || slice.storyId !== reservation.storyId
+          || slice.sourceRevision.baseSha !== reservation.sourceSha
+          || slice.sourceRevision.treeHash !== reservation.sourceTreeHash
+          || !slice.recovery
+          || canonicalJsonStringify(slice.recovery)
+            !== canonicalJsonStringify(expectedRecovery)) fail();
+        const artifacts = await tx.unsafe<Array<{ artifactType: string;
+          byteLength: string; producerMetadata: unknown }>>(`SELECT
+          artifact_type AS "artifactType", byte_length::text AS "byteLength",
+          producer_metadata AS "producerMetadata"
+          FROM public.semantic_artifacts WHERE artifact_hash = $1 FOR KEY SHARE`,
+        [delivery.executionSliceHash]);
+        if (artifacts.length !== 1
+          || artifacts[0]?.artifactType !== envelope.artifactType
+          || artifacts[0]?.byteLength !== String(Buffer.byteLength(envelopeBytes, "utf8"))
+          || canonicalJsonStringify(artifacts[0]?.producerMetadata)
+            !== canonicalJsonStringify(envelope.producer)) fail();
+      }
       const now = await readDatabaseWallClock(tx,
         "TASK6A_PRIVATE_RECOVERY_LINK_DATABASE_TIME_UNAVAILABLE");
       if (publication.boundAt.getTime() > now.getTime()) fail();
@@ -456,6 +501,7 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
         sessionId: receipt.sessionId, generation: receipt.generation,
         ownerInstanceId: reservation.ownerInstanceId, root: reservation.root,
         sourceSha: reservation.sourceSha, sourceTreeHash: reservation.sourceTreeHash,
+        executionSliceHash,
         leaseTokenHash: reservation.leaseTokenHash,
         publicationHash: publication.handoffHash,
         physicalIdentityHash: receipt.physicalIdentityHash,
@@ -470,15 +516,15 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
         link_hash, reservation_hash, receipt_hash, dispatch_id, run_id,
         story_db_id, story_id, claim_id, attempt_id, session_id, generation,
         owner_instance_id, root, source_sha, source_tree_hash,
-        lease_token_hash, publication_hash, physical_identity_hash,
-        fence_token_hash, canonical_body
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::bigint,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+        execution_slice_hash, lease_token_hash, publication_hash,
+        physical_identity_hash, fence_token_hash, canonical_body
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::bigint,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
       ON CONFLICT DO NOTHING RETURNING link_hash`, [linkHash, reservationHash,
       receiptHash, reservation.dispatchId, reservation.runId,
       reservation.storyDbId, reservation.storyId, receipt.claimId,
       receipt.attemptId, receipt.sessionId, receipt.generation,
       reservation.ownerInstanceId, reservation.root, reservation.sourceSha,
-      reservation.sourceTreeHash, reservation.leaseTokenHash,
+      reservation.sourceTreeHash, executionSliceHash, reservation.leaseTokenHash,
       publication.handoffHash, receipt.physicalIdentityHash,
       receipt.fenceTokenHash, canonicalBody]);
       if (inserted.length === 1) {
@@ -495,6 +541,7 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
         session_id AS "sessionId", generation,
         owner_instance_id AS "ownerInstanceId", root,
         source_sha AS "sourceSha", source_tree_hash AS "sourceTreeHash",
+        execution_slice_hash AS "executionSliceHash",
         lease_token_hash AS "leaseTokenHash", publication_hash AS "publicationHash",
         physical_identity_hash AS "physicalIdentityHash",
         fence_token_hash AS "fenceTokenHash", canonical_body AS "canonicalBody"
