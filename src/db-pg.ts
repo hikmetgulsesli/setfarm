@@ -6207,7 +6207,7 @@ export async function pgMigrate(options: PgMigrationOptions = {}): Promise<void>
 
 export async function pgNextRunNumber(): Promise<number> {
   const row = await pgGet<{ next: number }>(
-    "SELECT nextval('runs_run_number_seq'::regclass) AS next",
+    "SELECT nextval('runs_run_number_seq'::regclass)::integer AS next",
   );
   return row?.next ?? 1;
 }
