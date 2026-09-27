@@ -21,7 +21,7 @@ review.
 
 ## Contract
 
-`pgMigrate({ baseSchemaMode: "verify" })` must reject incompatible options
+`pgMigrate({ baseSchemaMode: "verify", expectedSchemaOwner })` must reject incompatible options
 and concurrent migration, never call `ensureDatabaseExists`, and never execute
 CREATE, ALTER, DROP, TRUNCATE, GRANT, REVOKE or data mutations. It uses the
 target database only. The existing `verifyContractSpineMigrations()` cannot be
@@ -32,7 +32,8 @@ must use only read privileges. Existing migration detect/verify hooks also
 contain owner-relative checks (`current_user`) and private-table reads that
 cannot simply run under a distinct SELECT-only role without changing ACLs.
 The new path must use role-neutral `pg_catalog` projections, compare stored
-object owners to independently held expected identities, and explicitly state
+object owners to an independently held expected role identity supplied by the
+code-owned caller, and explicitly state
 which data invariants remain outside that role's visibility. A privileged,
 code-owned current-head verification under a continuous writer fence
 immediately before the transition must cover those invariants; the restricted
@@ -46,6 +47,12 @@ permitted. Duplicate open claim invariants are not visible to the restricted
 SELECT-on-journal-only login. They remain a privileged, code-owned
 pre-transition obligation under the continuous writer fence, not an implied
 assertion of this opt-in path.
+The expected owner is mandatory, cannot be the verifier login or a role it can
+inherit, and must match every `pg_class` object in `public`, including tables,
+indexes, sequences, views and standalone composite types, before readiness.
+It is not learned from the target database's object owners;
+a future live caller must hold it independently. Extra foreign-owned public
+objects refuse rather than receive an implicit exemption.
 `_schemaReady` becomes true only after all checks succeed; subsequent automatic
 `pgQuery`/`pgGet` calls must not silently enter default migration. A missing
 database, missing/drifted catalog item, incomplete journal, concurrent mode,

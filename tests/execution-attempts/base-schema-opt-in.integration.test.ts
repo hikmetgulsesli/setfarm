@@ -61,8 +61,10 @@ test("pgMigrate opt-in verifies an isolated database with a restricted login and
   let database: TestDatabase | undefined;
   let restrictedDb: typeof import("../../src/db-pg.js") | undefined;
   const role = `task6a_optin_${randomBytes(6).toString("hex")}`;
+  const foreignOwner = `task6a_foreign_${randomBytes(6).toString("hex")}`;
   const password = randomBytes(24).toString("hex");
   let roleCreated = false;
+  let foreignOwnerCreated = false;
   let stage = "private-cluster-preflight";
   let testFailure: unknown;
   try {
@@ -78,6 +80,9 @@ test("pgMigrate opt-in verifies an isolated database with a restricted login and
 
     stage = "create-isolated-fixture";
     database = await createIsolatedTestDatabase();
+    const ownerRows = await database.sql<Array<{ owner: string }>>`SELECT current_user AS owner`;
+    const expectedSchemaOwner = ownerRows[0]?.owner;
+    assert.match(expectedSchemaOwner ?? "", /^[a-z_][a-z0-9_]{0,62}$/);
     stage = "create-restricted-role";
     const existingRole = await admin<Array<{ exists: boolean }>>`
       SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = ${role}) AS exists
@@ -120,9 +125,9 @@ test("pgMigrate opt-in verifies an isolated database with a restricted login and
       database_create: false, schema_create: false, journal_maintain: false });
 
     stage = "public-opt-in-verification";
-    const first = restrictedDb.pgMigrate({ baseSchemaMode: "verify" })
+    const first = restrictedDb.pgMigrate({ baseSchemaMode: "verify", expectedSchemaOwner })
       .then(() => null, (error: unknown) => error);
-    const second = restrictedDb.pgMigrate({ baseSchemaMode: "verify" })
+    const second = restrictedDb.pgMigrate({ baseSchemaMode: "verify", expectedSchemaOwner })
       .then(() => null, (error: unknown) => error);
     const [firstError, secondError] = await Promise.all([first, second]);
     assert.match(String(secondError), /SETFARM_BASE_SCHEMA_VERIFY_CONCURRENT/);
@@ -133,17 +138,44 @@ test("pgMigrate opt-in verifies an isolated database with a restricted login and
     assert.equal(verifiedQuery[0]?.value, 1);
     await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify", contractSpineMode: "apply" }),
       /SETFARM_BASE_SCHEMA_VERIFY_MODE_INVALID/);
+    await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify" }),
+      /SETFARM_BASE_SCHEMA_VERIFY_MODE_INVALID/);
     await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "repair" } as never),
       /SETFARM_BASE_SCHEMA_VERIFY_MODE_INVALID/);
-    await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify", unknown: true } as never),
+    await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify", expectedSchemaOwner, unknown: true } as never),
       /SETFARM_BASE_SCHEMA_VERIFY_MODE_INVALID/);
 
-    stage = "base-catalog-drift";
+    stage = "foreign-object-owner";
     await restrictedDb.pgClose();
+    await admin.unsafe(`CREATE ROLE "${foreignOwner}" NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
+    foreignOwnerCreated = true;
+    restrictedDb.pgConfigureIsolatedTestDatabase(restrictedUrl.toString());
+    await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify", expectedSchemaOwner: foreignOwner }),
+      /SETFARM_BASE_SCHEMA_VERIFY_REFUSED/);
+    await restrictedDb.pgClose();
+    await database.sql.unsafe("CREATE TYPE public.task6a_foreign_composite AS (flag boolean)");
+    await database.sql.unsafe(`ALTER TYPE public.task6a_foreign_composite OWNER TO "${foreignOwner}"`);
+    restrictedDb.pgConfigureIsolatedTestDatabase(restrictedUrl.toString());
+    await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify", expectedSchemaOwner }),
+      /SETFARM_BASE_SCHEMA_VERIFY_REFUSED/);
+    await restrictedDb.pgClose();
+    await database.sql.unsafe("DROP TYPE public.task6a_foreign_composite");
+    await database.sql.unsafe(`ALTER TABLE public.runs OWNER TO "${foreignOwner}"`);
+    const foreignOwnerBefore = await schemaFingerprint(database.sql);
+    restrictedDb.pgConfigureIsolatedTestDatabase(restrictedUrl.toString());
+    await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify", expectedSchemaOwner }),
+      /SETFARM_BASE_SCHEMA_VERIFY_REFUSED/);
+    assert.equal(await schemaFingerprint(database.sql), foreignOwnerBefore);
+    await restrictedDb.pgClose();
+    await database.reset();
+    await database.sql.unsafe(`GRANT USAGE ON SCHEMA public TO "${role}"`);
+    await database.sql.unsafe(`GRANT SELECT ON public.setfarm_schema_migrations TO "${role}"`);
+
+    stage = "base-catalog-drift";
     await database.sql.unsafe("DROP INDEX public.idx_steps_run_status");
     const driftBefore = await schemaFingerprint(database.sql);
     restrictedDb.pgConfigureIsolatedTestDatabase(restrictedUrl.toString());
-    await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify" }),
+    await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify", expectedSchemaOwner }),
       /SETFARM_BASE_SCHEMA_VERIFY_REFUSED/);
     assert.equal(await schemaFingerprint(database.sql), driftBefore);
     await assert.rejects(restrictedDb.pgQuery("SELECT 1"),
@@ -163,7 +195,7 @@ test("pgMigrate opt-in verifies an isolated database with a restricted login and
     `;
     const journalSchemaBefore = await schemaFingerprint(database.sql);
     restrictedDb.pgConfigureIsolatedTestDatabase(restrictedUrl.toString());
-    await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify" }),
+    await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify", expectedSchemaOwner }),
       /SETFARM_BASE_SCHEMA_VERIFY_REFUSED/);
     assert.equal(await schemaFingerprint(database.sql), journalSchemaBefore);
     const journalAfter = await database.sql<Array<{ count: string }>>`
@@ -181,7 +213,7 @@ test("pgMigrate opt-in verifies an isolated database with a restricted login and
     `;
     assert.equal(beforeMissing[0]?.exists, false);
     restrictedDb.pgConfigureIsolatedTestDatabase(missingUrl.toString());
-    await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify" }),
+    await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify", expectedSchemaOwner }),
       /SETFARM_BASE_SCHEMA_VERIFY_REFUSED/);
     const afterMissing = await admin<Array<{ exists: boolean }>>`
       SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_database WHERE datname = ${missingDatabase}) AS exists
@@ -198,6 +230,9 @@ test("pgMigrate opt-in verifies an isolated database with a restricted login and
     try {
       if (roleCreated) await admin.unsafe(`DROP ROLE IF EXISTS "${role}"`);
     } catch { cleanupFailures.push("private_role"); }
+    try {
+      if (foreignOwnerCreated) await admin.unsafe(`DROP ROLE IF EXISTS "${foreignOwner}"`);
+    } catch { cleanupFailures.push("foreign_owner_role"); }
     try { await admin.end({ timeout: 5 }); } catch { cleanupFailures.push("admin_connection"); }
     if (cleanupFailures.length > 0) {
       const cleanupError = new Error(`TASK6A_OPTIN_TEST_CLEANUP_FAILED:${cleanupFailures.join(",")}`);
