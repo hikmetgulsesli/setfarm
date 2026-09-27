@@ -47,7 +47,7 @@ function permissionDenied(error: unknown): boolean {
     && "code" in error && error.code === "42501";
 }
 
-test("private Task6A rehearsal denies the old login's direct run and claim inserts after privilege transition", {
+test("private Task6A rehearsal denies the old login's linked run, claim, attempt, and session inserts", {
   skip: expectedDataDirectory ? false : "requires an explicitly identified private PostgreSQL cluster",
 }, async () => {
   assert.equal(process.env.SETFARM_PG_URL, undefined);
@@ -105,8 +105,10 @@ test("private Task6A rehearsal denies the old login's direct run and claim inser
     await admin.unsafe(`GRANT CONNECT ON DATABASE "${database.database}" TO "${oldLogin}"`);
     await database.sql.unsafe(`ALTER TABLE public.runs OWNER TO "${owner}"`);
     await database.sql.unsafe(`ALTER TABLE public.claim_log OWNER TO "${owner}"`);
+    await database.sql.unsafe(`ALTER TABLE public.execution_attempts OWNER TO "${owner}"`);
+    await database.sql.unsafe(`ALTER TABLE public.runtime_sessions OWNER TO "${owner}"`);
     await database.sql.unsafe(`GRANT USAGE ON SCHEMA public TO "${oldLogin}"`);
-    await database.sql.unsafe(`GRANT INSERT ON public.runs, public.claim_log TO "${oldLogin}"`);
+    await database.sql.unsafe(`GRANT INSERT ON public.runs, public.claim_log, public.execution_attempts, public.runtime_sessions TO "${oldLogin}"`);
 
     const oldUrl = new URL(database.url);
     oldUrl.username = oldLogin;
@@ -135,17 +137,35 @@ test("private Task6A rehearsal denies the old login's direct run and claim inser
       ownerLogin: false, ownerMember: false, ownerSet: false, ownerAdmin: false });
 
     const runId = `task6a-private-fence-${suffix}`;
+    const attemptId = `task6a-private-attempt-${suffix}`;
+    const sessionId = `task6a-private-session-${suffix}`;
     const rollbackMarker = new Error("TASK6A_PRIVATE_PROBE_ROLLBACK");
     await assert.rejects(oldSql.begin(async (tx) => {
       await tx`INSERT INTO public.runs (id, run_number, workflow_id, task, status, context)
         VALUES (${runId}, 999999, 'workflow', 'private fence probe', 'running', '{}')`;
       await tx`INSERT INTO public.claim_log (id, run_id, step_id, agent_id)
         VALUES (999999, ${runId}, 'step', 'agent')`;
+      await tx`INSERT INTO public.execution_attempts (
+        attempt_id, run_id, step_id, generation, fence_token, attempt_class,
+        compilation_report_hash, source_before_sha, source_before_tree_hash,
+        role, lease_acquired_at, lease_expires_at, heartbeat_at, disposition, claim_id
+      ) VALUES (
+        ${attemptId}, ${runId}, 'step', 1, 'private-fence', 'evidence_only',
+        'private-report', 'before-sha', 'before-tree', 'implementer',
+        NOW(), NOW() + INTERVAL '1 hour', NOW(), 'claimed', 999999
+      )`;
+      await tx`INSERT INTO public.runtime_sessions (
+        session_id, run_id, step_db_id, workflow_step_id, claim_id, attempt_id,
+        claim_agent_id, runtime_agent_id, runtime_kind, state, owner_instance_id, heartbeat_at
+      ) VALUES (
+        ${sessionId}, ${runId}, 'step-db', 'step', 999999, ${attemptId},
+        'agent', 'agent', 'external_session', 'reserved', 'private-owner', NOW()
+      )`;
       throw rollbackMarker;
     }), (error: unknown) => error === rollbackMarker);
 
     stage = "post-transition-denial";
-    await database.sql.unsafe(`REVOKE INSERT ON public.runs, public.claim_log FROM "${oldLogin}"`);
+    await database.sql.unsafe(`REVOKE INSERT ON public.runs, public.claim_log, public.execution_attempts, public.runtime_sessions FROM "${oldLogin}"`);
     await assert.rejects(oldSql.begin(async (tx) => {
       await tx`INSERT INTO public.runs (id, run_number, workflow_id, task, status, context)
         VALUES (${runId}, 999999, 'workflow', 'private fence probe', 'running', '{}')`;
@@ -156,11 +176,42 @@ test("private Task6A rehearsal denies the old login's direct run and claim inser
         VALUES (999999, ${runId}, 'step', 'agent')`;
       throw rollbackMarker;
     }), permissionDenied);
-    const after = await database.sql<Array<{ runCount: string; claimCount: string }>>`
+    await database.sql`INSERT INTO public.runs (id, run_number, workflow_id, task, status, context)
+      VALUES (${runId}, 999999, 'workflow', 'private fence parent', 'running', '{}')`;
+    await database.sql`INSERT INTO public.claim_log (id, run_id, step_id, agent_id)
+      VALUES (999999, ${runId}, 'step', 'agent')`;
+    await assert.rejects(oldSql.begin(async (tx) => {
+      await tx`INSERT INTO public.execution_attempts (
+        attempt_id, run_id, step_id, generation, fence_token, attempt_class,
+        compilation_report_hash, source_before_sha, source_before_tree_hash,
+        role, lease_acquired_at, lease_expires_at, heartbeat_at, disposition, claim_id
+      ) VALUES (
+        ${attemptId}, ${runId}, 'step', 1, 'private-fence', 'evidence_only',
+        'private-report', 'before-sha', 'before-tree', 'implementer',
+        NOW(), NOW() + INTERVAL '1 hour', NOW(), 'claimed', 999999
+      )`;
+      throw rollbackMarker;
+    }), permissionDenied);
+    await assert.rejects(oldSql.begin(async (tx) => {
+      await tx`INSERT INTO public.runtime_sessions (
+        session_id, run_id, step_db_id, workflow_step_id, claim_id, attempt_id,
+        claim_agent_id, runtime_agent_id, runtime_kind, state, owner_instance_id, heartbeat_at
+      ) VALUES (
+        ${sessionId}, ${runId}, 'step-db', 'step', 999999, NULL,
+        'agent', 'agent', 'external_session', 'reserved', 'private-owner', NOW()
+      )`;
+      throw rollbackMarker;
+    }), permissionDenied);
+    await database.sql`DELETE FROM public.claim_log WHERE id = 999999 AND run_id = ${runId}`;
+    await database.sql`DELETE FROM public.runs WHERE id = ${runId}`;
+    const after = await database.sql<Array<{ runCount: string; claimCount: string;
+      attemptCount: string; sessionCount: string }>>`
       SELECT (SELECT count(*)::text FROM public.runs WHERE id = ${runId}) AS "runCount",
-        (SELECT count(*)::text FROM public.claim_log WHERE run_id = ${runId}) AS "claimCount"
+        (SELECT count(*)::text FROM public.claim_log WHERE run_id = ${runId}) AS "claimCount",
+        (SELECT count(*)::text FROM public.execution_attempts WHERE attempt_id = ${attemptId}) AS "attemptCount",
+        (SELECT count(*)::text FROM public.runtime_sessions WHERE session_id = ${sessionId}) AS "sessionCount"
     `;
-    assert.deepEqual(after[0], { runCount: "0", claimCount: "0" });
+    assert.deepEqual(after[0], { runCount: "0", claimCount: "0", attemptCount: "0", sessionCount: "0" });
   } catch (error) {
     testFailure = error;
     process.stderr.write(`[task6a-private-old-writer-test] failed at ${stage}\n`);
