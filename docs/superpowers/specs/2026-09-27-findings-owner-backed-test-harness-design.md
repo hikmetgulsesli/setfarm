@@ -88,6 +88,11 @@ fail closed. This reads authoritative ledger rows without mutating case history.
 Publication must also require current revision run/story to equal delivery
 run/story; a matching packet or finding set alone is insufficient.
 
+The separate GitHub review-resolution lane still has an opening-case foreign
+key and source/finding checks. A revised review-resolution contract would need
+its own migration-backed design and regression proof; this patch does not
+remove those guards or claim that lane is cutover-qualified.
+
 ## Verification and boundary
 
 The observed full-suite failure is RED. Run the findings command on the

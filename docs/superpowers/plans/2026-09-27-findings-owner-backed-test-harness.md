@@ -54,7 +54,7 @@
 
 - [x] **Step 1: Confirm RED.** Under the committed P3 runner, the manual `INSERT INTO claim_log` case failed with `RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND` while four sibling cases passed.
 - [x] **Step 2: Align the expectation.** The manual claim is now a negative fixture asserting exact rejection, zero attempt rows, no delivery attempt ID, and retained `leased` state. Modern canonical success tests remain unchanged.
-- [ ] **Step 3: Run GREEN.** Run this file in one P3 invocation, then run the full findings command. Investigate and fix any different failure with its own RED evidence.
+- [x] **Step 3: Run GREEN.** The delivery file passed 5/5 under P3; the final full findings command exited zero on the explicit private cluster.
 
 ### Task 2a: Align the moved cold pre32 catalog test
 
@@ -64,7 +64,7 @@
 
 - [x] **Step 1: Confirm RED.** Full P3 findings run passed the other 15 repository assertions but failed before catalog assertions because the function no longer resides in `baseline-post-handoff-receipt-v1.ts`.
 - [x] **Step 2: Update only the source locator.** Extract `requireColdPre32CatalogAbsenceV1`, `isPlainRecord`, `hasExactKeys`, and `currentEntryFail` from `baseline-legacy-database-census-v1.ts`; do not export or alter the production function.
-- [ ] **Step 3: Run GREEN.** Require the focused repository file and full findings suite to pass with no skipped owner-backed cases on the private cluster.
+- [x] **Step 3: Run GREEN.** Repository passed 16/16 plus the cold catalog cases; every owner-backed findings file passed in the final private-cluster run. Lifecycle's three shards covered all 29 selected cases.
 
 ### Task 2b: Enforce private-cluster identity before owner-backed tests
 
@@ -73,7 +73,7 @@
 - [x] **Step 1: Confirm RED.** Read-only review identified that migration-only fixture imports escaped the allowlist check, while any localhost admin URL (including live port 5432) could be accepted. The new behavior tests initially failed on missing classifier/preflight functions.
 - [x] **Step 2: Implement and prove local GREEN.** Test direct fixture-module import classification and exact private PostgreSQL directory/port/socket identity; `node --test` passed 2/2. A wrong-directory integration attempt refused before any P3 database clone.
 - [x] **Step 3: Verify positive preflight.** The focused owner-backed file reached the P3 clone on the actual private cluster; the first run reached 7/9 cases and exposed a separate runtime-session fixture collision.
-- [ ] **Step 4: Close the indirect-import gap.** Independent review found that an unknown file with an indirect DB helper could be misclassified as pure. A new RED unit test first failed on missing classification API; add an explicit eight-file pure allowlist and refuse unclassified files before any test process starts, then require GREEN.
+- [x] **Step 4: Close the indirect-import gap.** The explicit eight-file pure allowlist refuses unclassified files before any test starts; the preflight tests and full scripts suite passed.
 
 ### Task 2c: Restore canonical GitHub review recovery fixture
 
@@ -81,7 +81,7 @@
 
 - [x] **Step 1: Confirm RED.** Under P3, the first six cases passed and three resolution-success cases failed at `RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND` from manually inserted repair claims.
 - [x] **Step 2: Use actual authorities.** Seed canonical compiler story admission, keep the selected story's immutable fields, and acquire/publish a bounded recovery claim/runtime before reserving the repair attempt.
-- [ ] **Step 3: Run GREEN.** First P3 run passed 7/9, including the canonical success case, and exposed a second fixture issue: three test runs reused the same global runtime session ID because the canonical story ID is stable. Bind the session ID to the run ID; rerun all cases, then the remaining full findings suite.
+- [x] **Step 3: Run GREEN.** Runtime session IDs are run-bound; GitHub review authorization passed 9/9 in the final findings run.
 
 ### Task 2d: Preserve attempt-bound recovery-lease replay coverage
 
@@ -89,7 +89,7 @@
 
 - [x] **Step 1: Confirm RED.** Full findings passed 5/6 claim-authority cases; the lone attempt-bound case manually inserted a claim and failed at `RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND`.
 - [x] **Step 2: Use actual authorities.** Only that case seeds canonical compiler story admission and publishes its acquired recovery lease through `publishLoopClaimRuntime` before attempt reservation.
-- [ ] **Step 3: Run GREEN.** The first focused P3 rerun passed the old five cases and reached the new publication, then refused the test's obsolete arbitrary slice (`RECOVERY_DELIVERY_SLICE_AUTHORITY_MISMATCH`). Bind reservation to the handoff's contract slice, rerun the case, then the remaining findings files and complete suite.
+- [x] **Step 3: Run GREEN.** Reservation uses the handoff's exact contract slice; recovery claim authority passed 6/6 in the final findings run.
 
 ### Task 2e: Restore coordinator fixture authority
 
@@ -97,7 +97,7 @@
 
 - [x] **Step 1: Confirm RED.** P3 coordinator passed 5/8; terminal settlement refused a manually inserted ownerless claim (`INTERNAL_PRODUCTION_CLAIM_OWNER_UNAVAILABLE`), and two model recovery cases refused manually inserted unpublished claims (`RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND`).
 - [x] **Step 2: Model authentic births.** Reuse production claim owner-birth APIs and canonical compiler admission; publish model recovery runtime/claim with a typed execution-slice envelope and release the never-spawned runtime after terminal attempt. Leave evidence-only delivery non-model.
-- [ ] **Step 3: Run GREEN.** First P3 rerun found one shared strict-input mismatch: the local `canonical` fixture property was passed to `V3RecoveryCoordinatorInputSchema` and refused in six cases. Moving it to a run-keyed test-only map restored five passing cases. Remaining RED: two model cases used invalid underscore-rich runtime session IDs, and terminal settlement correctly refused an ownerless workflow-run birth. Use a schema-valid deterministic session ID and the production owner-reservation begin/bind APIs, then rerun.
+- [x] **Step 3: Run GREEN.** Test-only canonical metadata is separate from strict coordinator input; session IDs are schema-valid and workflow-run birth uses production reservation/bind APIs. Coordinator passed 9/9 in the final findings run.
 
 ### Task 2f: Authenticate bounded revision-2 identity
 
@@ -105,7 +105,7 @@
 
 - [x] **Step 1: Confirm RED.** The authenticated coordinator integration reaches a real product failure, advances to a different source/slice/finding revision 2, then the supervisor claim fails at `V3_RECOVERY_AUTHORITY_IDENTITY_MISMATCH` solely because the frozen case tuple is compared to the current revision. Independent read-only reviews confirmed the dedupe/FK contract requires the case opening tuple to stay frozen.
 - [x] **Step 2: Implement the smallest root fix.** Exact case-to-opening-revision identity and current revision-to-dispatch/delivery/finding-set identity now replace stale equality in model and non-model gates. The legacy revision-1 rehydration remains supported by raw-column opening comparison. A current revision's run/story must match the delivery before evidence publication. Refresh migration-33's declared helper digest rather than bypassing source integrity.
-- [ ] **Step 3: Prove GREEN and refusal.** The original coordinator P3 file passed 8/8 (including bounded revision-2 supervisor). A later direct opening-revision tamper attempt was rejected by PostgreSQL's `ARTIFACT_IDENTITY_IMMUTABLE` trigger before claim authority; assert that exact database refusal and retained row. The revised router passed 8/8 after its pre-attempt terminal fixture used valid `blocked` state. Read-only review then exposed that revised evidence-only source ownership cannot use the opening `prior_attempt_refs`; add an exact parent-delivery/attempt positive and wrong-source negative before the final full findings suite.
+- [x] **Step 3: Prove GREEN and refusal.** The coordinator passed 9/9, including revised supervisor, opening-row immutability, revised evidence-only parent-attempt ownership, and wrong-source refusal. The router passed 8/8 including revision 2; lifecycle covered 29/29 effective cases across three shards. The full findings command exited zero on the private cluster.
 
 ### Task 3: Review and deliver
 
@@ -113,6 +113,6 @@
 
 **Interfaces:** One internal read-only selector export for direct integration verification; the existing revision-2 route must become usable without weakening exact owner and current-chain checks.
 
-- [ ] **Step 1: Verify.** Run findings on the private cluster, script tests, relevant recovery/attempt focused tests, `npx tsc --noEmit`, source manifest/digest checks and `git diff --check`. Build only after committing to a clean worktree.
+- [x] **Step 1: Verify.** Full findings, 886 script plus 43 genuine cutover tests, focused execution-attempts (1+9+4), TypeScript, 18 source-manifest tests, migration digest, and diff checks passed. Branch build remains reserved for clean-main delivery per the repository guard.
 - [ ] **Step 2: Review and PR.** Obtain independent read-only review, fix findings test-first, commit conventionally, push this branch, wait for GitGuardian and exact-head Codex review, then merge by verified SHA.
 - [ ] **Step 3: Clean-main evidence.** Fast-forward the preserved deployment worktree, run an ordinary clean-main build and focused merged-main findings test on the private cluster; recheck old selected CLI identity and HTTP 3080/3333/18789 without service mutation.
