@@ -28,6 +28,7 @@ async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
         format_type(a.atttypid, a.atttypmod), a.attnotnull,
         a.attcollation::text, a.attidentity, a.attgenerated,
         a.atthasmissing, a.attmissingval::text, a.attstorage,
+        a.attcompression::text,
         pg_get_expr(d.adbin, d.adrelid)) ORDER BY c.relname, a.attname)
         FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
         JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -128,6 +129,11 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
     await verifyOrdinaryBaseSchemaCatalogReadOnlyV1(restricted);
     assert.equal(await schemaFingerprint(database.sql), extraFkBefore);
     await database.sql.unsafe("DROP TABLE public.task6a_extra_fk");
+    await database.sql.unsafe("CREATE TABLE public.task6a_extra_collision (run_id text, CONSTRAINT steps_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.runs(id))");
+    const collisionBefore = await schemaFingerprint(database.sql);
+    await verifyOrdinaryBaseSchemaCatalogReadOnlyV1(restricted);
+    assert.equal(await schemaFingerprint(database.sql), collisionBefore);
+    await database.sql.unsafe("DROP TABLE public.task6a_extra_collision");
     await database.sql.unsafe(`CREATE FUNCTION public.set_config(text, text, boolean)
       RETURNS text LANGUAGE SQL AS $$ SELECT $2 $$`);
     await database.sql.unsafe(`CREATE FUNCTION public.format_type(oid, integer)
@@ -152,6 +158,7 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
       ["non-source table options", "ALTER TABLE public.runs SET (autovacuum_enabled = false)"],
       ["non-source TOAST options", "ALTER TABLE public.runs SET (toast.autovacuum_enabled = false)"],
       ["wrong collation", "ALTER TABLE public.rules ALTER COLUMN title TYPE text COLLATE \"C\""],
+      ["explicit text compression", "ALTER TABLE public.rules ALTER COLUMN content SET COMPRESSION pglz"],
       ["non-source text storage", "ALTER TABLE public.rules ALTER COLUMN content SET STORAGE PLAIN"],
       ["stale fast-default missing value", "ALTER TABLE public.stories RENAME COLUMN output TO old_output; ALTER TABLE public.stories ADD COLUMN output text DEFAULT 'forged'; ALTER TABLE public.stories ALTER COLUMN output DROP DEFAULT"],
       ["row level security", "ALTER TABLE public.runs ENABLE ROW LEVEL SECURITY"],

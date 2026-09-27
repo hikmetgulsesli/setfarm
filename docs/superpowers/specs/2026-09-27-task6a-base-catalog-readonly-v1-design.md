@@ -53,10 +53,14 @@ values after its visible default is removed.
 Required text columns retain source-created `EXTENDED` storage; fixed-size
 columns retain `PLAIN`, so a large value cannot be refused by a later
 `SET STORAGE PLAIN` drift.
+Required columns also retain the unset source compression attribute; an
+explicit per-column method would override the deployment default.
 Required explicit indexes remain standalone and immediate; adopting one as a
 deferred unique constraint must not silently postpone uniqueness enforcement.
 An added foreign key may reference a required unique index without owning it;
 only primary, unique or exclusion constraint ownership is refused here.
+Constraint catalog reads identify each required constraint by both table and
+name, since unrelated tables may legally reuse a constraint name.
 Before any live admission, audit the target catalog read-only: a historical
 column created by an ordinary ALTER fallback may legitimately carry a fast
 default and will fail this strict check until separately reviewed recovery.

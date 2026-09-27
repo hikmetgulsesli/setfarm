@@ -195,6 +195,7 @@ const COLUMN_SQL_V1 = `SELECT c.relname AS "table", a.attname AS "column",
   a.atthasmissing AS "hasMissing",
   a.attmissingval IS NOT NULL AS "missingPresent",
   a.attstorage AS storage,
+  a.attcompression = ''::pg_catalog."char" AS "defaultCompression",
   CASE WHEN a.attcollation = 0 THEN 'none'
        WHEN a.attcollation = 'pg_catalog."default"'::regcollation THEN 'default'
        ELSE 'custom' END AS collation
@@ -239,12 +240,15 @@ const CONSTRAINT_SQL_V1 = `SELECT c.relname AS "table", co.conname AS name,
   co.condeferred AS deferred, co.conislocal AS local,
   co.coninhcount AS "inheritCount", co.connoinherit AS "noInherit",
   co.conparentid::text AS "parentOid"
-  FROM pg_catalog.pg_constraint co JOIN pg_catalog.pg_class c ON c.oid = co.conrelid
+ FROM pg_catalog.pg_constraint co JOIN pg_catalog.pg_class c ON c.oid = co.conrelid
   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
  WHERE n.nspname = 'public'
-   AND co.conname IN ('claim_log_pkey', 'medic_checks_pkey', 'rules_pkey',
-     'run_observations_pkey', 'runs_pkey', 'steps_pkey', 'stories_pkey',
-     'run_observations_run_id_fkey', 'steps_run_id_fkey', 'stories_run_id_fkey')
+   AND (c.relname, co.conname) IN (
+     ('claim_log', 'claim_log_pkey'), ('medic_checks', 'medic_checks_pkey'),
+     ('rules', 'rules_pkey'), ('run_observations', 'run_observations_pkey'),
+     ('runs', 'runs_pkey'), ('steps', 'steps_pkey'), ('stories', 'stories_pkey'),
+     ('run_observations', 'run_observations_run_id_fkey'),
+     ('steps', 'steps_run_id_fkey'), ('stories', 'stories_run_id_fkey'))
  ORDER BY co.conname COLLATE "C"
  LIMIT 11`;
 
@@ -258,8 +262,9 @@ const FK_TRIGGER_SQL_V1 = `SELECT co.conname AS name,
   JOIN pg_catalog.pg_class tc ON tc.oid = t.tgrelid
   JOIN pg_catalog.pg_namespace tn ON tn.oid = tc.relnamespace
  WHERE n.nspname = 'public' AND co.contype = 'f'
-   AND co.conname IN ('run_observations_run_id_fkey',
-     'steps_run_id_fkey', 'stories_run_id_fkey')
+   AND (c.relname, co.conname) IN (
+     ('run_observations', 'run_observations_run_id_fkey'),
+     ('steps', 'steps_run_id_fkey'), ('stories', 'stories_run_id_fkey'))
  GROUP BY co.conname, tn.nspname, tc.relname
  ORDER BY co.conname COLLATE "C", tc.relname COLLATE "C"
  LIMIT 7`;
@@ -346,6 +351,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         hasMissing: boolean;
         missingPresent: boolean;
         storage: string;
+        defaultCompression: boolean;
         collation: string;
       }>>(COLUMN_SQL_V1);
       if (columns.length > 1024) mismatch();
@@ -364,6 +370,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
           || actual.default !== expected[5]
           || actual.hasMissing || actual.missingPresent
           || actual.storage !== (expected[2] === "text" ? "x" : "p")
+          || !actual.defaultCompression
           || actual.collation !== (expected[2] === "text" ? "default" : "none")) mismatch();
       }
       const indexes = await transaction.unsafe<Array<{
