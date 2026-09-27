@@ -1,0 +1,48 @@
+# Findings owner-backed test harness design
+
+## Decision and evidence
+
+Clean main `f18aa8cb` builds, but its full `npm test` run fails in the
+`test:findings` stage. Direct `node --test tests/findings/*.test.ts` creates
+ordinary isolated databases with no activated owner-producer manifest, while
+finding/recovery writers now require that authority. The repeated
+`INTERNAL_PRODUCTION_OWNER_PRODUCER_IMPLEMENTATION_UNAVAILABLE` failures are
+one fixture-origin cascade, not permission to relax the production guard.
+Under the existing P3 projection runner, four of five tests in
+`recovery-delivery-repository.test.ts` pass. The remaining test manually
+inserts a claim without the now-required canonical recovery claim publication;
+its `RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND` refusal is correct.
+
+Two approaches were considered. Adding a fake activation or a forged
+publication to the ordinary fixture would manufacture authority and weaken
+the test's meaning. Running each owner-backed file through the existing P3
+projected fixture preserves the production contract and isolates its database.
+Choose the latter. Keep pure findings tests outside P3; execute owner-backed
+files serially because the P3 runner authenticates exactly one test file and
+the helpers use process-scoped database selection.
+
+## Contract
+
+The `test:findings` command must discover all findings `.test.ts` files,
+reject a stale owner-backed allowlist, run pure files with `node --test`, and
+run each owner-backed file through `scripts/run-isolated-postgres-tests.ts`
+with `--test-concurrency=1`. It must preserve nonzero child exits and never
+fall back to the ambient live `SETFARM_PG_URL`.
+
+The legacy delivery test must assert that a manually inserted recovery claim
+without canonical publication cannot reserve an attempt or advance its leased
+delivery. Canonical success and duplicate reservation remain covered by the
+current recovery claim/attempt integration tests. No runtime source,
+PostgreSQL privilege, migration, admission, live service, or selected CLI is
+changed.
+
+## Verification and boundary
+
+The observed full-suite failure is RED. Run the findings command on the
+explicit private PostgreSQL 17 cluster after the change; require zero skips
+for owner-backed cases, then run affected pure/script tests, source manifest,
+TypeScript and diff checks. If another independent fixture failure appears,
+record its source and add a focused test repair; do not hide or skip it.
+Deliver only after read-only review and exact-head PR checks. A clean-main
+build and host HTTP check remain required, but this test-only slice is not
+Task6A cutover admission or live rollout.
