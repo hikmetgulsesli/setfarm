@@ -4,7 +4,7 @@
 
 **Goal:** Restore truthful clean-main findings-suite verification without weakening owner-production or recovery-claim guards.
 
-**Architecture:** Route the ten findings files that create isolated databases through the existing authenticated P3 projection runner, one file per invocation. Keep the eight pure files on the lightweight runner; align one legacy manual-claim test with the current fail-closed reservation boundary.
+**Architecture:** Route the ten findings files that create isolated databases through the existing authenticated P3 projection runner, one file per invocation. Keep the eight pure files on the lightweight runner; align one legacy manual-claim test with the current fail-closed reservation boundary. The authenticated coordinator regression also requires the narrow revision-2 root fix: anchor immutable case identity to revision 1 while authenticating mutable current identity through the current revision and dispatch chain.
 
 **Tech Stack:** Node 26, TypeScript, `node:test`, PostgreSQL 17.
 
@@ -28,6 +28,8 @@
 - Modify `tests/findings/v3-github-review-authorization.integration.test.ts`: replace obsolete manually inserted repair claim with genuine compiler story admission and canonical recovery claim/runtime publication.
 - Modify `tests/findings/v3-recovery-claim-authority.test.ts`: authenticate the attempt-bound reissue case through canonical story admission and claim/runtime publication while leaving the other lease cases unchanged.
 - Modify `tests/findings/v3-recovery-coordinator.test.ts`: give initial claims and runs genuine owner births and model recovery attempts canonical story proof, claim/runtime publication, execution-slice authority, and no-spawn runtime release.
+- Modify `src/recovery/v3-recovery-claim-authority.ts`, `src/execution/attempt-repository.ts`, `src/recovery/v3-recovery-work-router.ts`, `src/recovery/v3-recovery-lifecycle-reconciler.ts`, `src/recovery/v3-evidence-only-worker.ts`, `src/recovery/v3-evidence-only-publication.ts`, and `src/recovery/recovery-delivery-repository.ts`: anchor the immutable case tuple to revision 1 and preserve the exact current revision/dispatch/delivery/finding-set chain.
+- Modify `src/recovery/v3-evidence-only-runtime.ts` only if the revision-2 non-model proof confirms its original/current source comparison blocks the same bounded flow; physical source ownership must remain exact.
 - Create `scripts/__tests__/run-finding-tests.test.js` only if a focused source/partition regression is needed beyond the executable `test:findings` gate.
 
 ---
@@ -95,11 +97,19 @@
 - [x] **Step 2: Model authentic births.** Reuse production claim owner-birth APIs and canonical compiler admission; publish model recovery runtime/claim with a typed execution-slice envelope and release the never-spawned runtime after terminal attempt. Leave evidence-only delivery non-model.
 - [ ] **Step 3: Run GREEN.** First P3 rerun found one shared strict-input mismatch: the local `canonical` fixture property was passed to `V3RecoveryCoordinatorInputSchema` and refused in six cases. Moving it to a run-keyed test-only map restored five passing cases. Remaining RED: two model cases used invalid underscore-rich runtime session IDs, and terminal settlement correctly refused an ownerless workflow-run birth. Use a schema-valid deterministic session ID and the production owner-reservation begin/bind APIs, then rerun.
 
+### Task 2f: Authenticate bounded revision-2 identity
+
+**Files:** The seven production gate files listed in the File Map, plus focused coordinator and claim/attempt/worker tests.
+
+- [x] **Step 1: Confirm RED.** The authenticated coordinator integration reaches a real product failure, advances to a different source/slice/finding revision 2, then the supervisor claim fails at `V3_RECOVERY_AUTHORITY_IDENTITY_MISMATCH` solely because the frozen case tuple is compared to the current revision. Independent read-only reviews confirmed the dedupe/FK contract requires the case opening tuple to stay frozen.
+- [ ] **Step 2: Implement the smallest root fix.** Require exact case-to-opening-revision identity and exact current revision-to-dispatch/delivery/finding-set identity in every causally affected gate. Preserve supported legacy revision-1 rehydration and fail closed on a missing/tampered opening row.
+- [ ] **Step 3: Prove GREEN and refusal.** Rerun the coordinator regression on the private P3 cluster, focused initial-chain negative tests, and a revision-2 negative/tamper test before the full findings suite.
+
 ### Task 3: Review and deliver
 
 **Files:** The scoped files above plus the spec/plan.
 
-**Interfaces:** No production export or runtime behavior changes.
+**Interfaces:** No new production export; the existing revision-2 route must become usable without weakening exact owner and current-chain checks.
 
 - [ ] **Step 1: Verify.** Run findings on the private cluster, script tests, relevant recovery/attempt focused tests, `npx tsc --noEmit`, source manifest/digest checks and `git diff --check`. Build only after committing to a clean worktree.
 - [ ] **Step 2: Review and PR.** Obtain independent read-only review, fix findings test-first, commit conventionally, push this branch, wait for GitGuardian and exact-head Codex review, then merge by verified SHA.

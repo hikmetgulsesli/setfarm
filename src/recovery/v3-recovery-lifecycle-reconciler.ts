@@ -429,17 +429,26 @@ async function loadExactChain(
         AND run_row.status IN ('running', 'resuming')
         AND recovery_case.status IN ('open', 'repairing', 'evidencing')
         AND recovery_case.current_revision_id = revision.revision_id
+        AND EXISTS (
+          SELECT 1 FROM recovery_case_revisions opening_revision
+           WHERE opening_revision.recovery_case_id = recovery_case.recovery_case_id
+             AND opening_revision.revision_number = 1
+             AND opening_revision.parent_revision_id IS NULL
+             AND opening_revision.run_id = recovery_case.run_id
+             AND opening_revision.story_id = recovery_case.story_id
+             AND opening_revision.packet_hash = recovery_case.packet_hash
+             AND opening_revision.finding_set_hash = recovery_case.finding_set_hash
+             AND opening_revision.finding_ids = recovery_case.finding_ids
+             AND opening_revision.contract_slice_hash = recovery_case.slice_hash
+             AND opening_revision.source_sha = recovery_case.source_sha
+             AND opening_revision.source_tree_hash = recovery_case.source_tree_hash
+        )
         AND revision.run_id = delivery.run_id
         AND revision.story_id = delivery.story_id
         AND recovery_case.run_id = delivery.run_id
         AND recovery_case.story_id = delivery.story_id
-        AND recovery_case.finding_set_hash = revision.finding_set_hash
         AND recovery_case.packet_hash = revision.packet_hash
-        AND recovery_case.slice_hash = revision.contract_slice_hash
-        AND recovery_case.source_sha = revision.source_sha
-        AND recovery_case.source_tree_hash = revision.source_tree_hash
         AND recovery_case.owner = revision.owner
-        AND recovery_case.finding_ids = revision.finding_ids
         AND recovery_case.expected_delta = revision.expected_delta
         AND recovery_case.allowed_paths = revision.allowed_paths
         AND recovery_case.evidence_plan = revision.evidence_plan

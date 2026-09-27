@@ -41,7 +41,7 @@ not sufficient because it could point to the live local database.
 The legacy delivery test must assert that a manually inserted recovery claim
 without canonical publication cannot reserve an attempt or advance its leased
 delivery. Canonical success and duplicate reservation remain covered by the
-current recovery claim/attempt integration tests. No runtime source,
+current recovery claim/attempt integration tests. No
 PostgreSQL privilege, migration, admission, live service, or selected CLI is
 changed.
 
@@ -67,13 +67,25 @@ state before testing the next dispatch. Keep evidence-only dispatch on its
 non-model path. This retains terminal-settlement and bounded-repair coverage
 without manufacturing a migration-33 publication.
 
+The authenticated coordinator fixture exposed a separate production defect:
+a bounded repair advances a case to revision 2 with a new source, slice, and
+finding set, but claim, attempt, routing, reconciliation, and publication
+predicates compare these current values against the case's immutable opening
+tuple. The case ID, dedupe key, and historical foreign keys require that tuple
+to remain frozen. The narrow systemic fix anchors it to revision 1, then
+binds the current revision to dispatch, delivery, finding set, and run. It
+must reject missing or tampered opening identity and retain every current-chain
+equality guard. The opening anchor compares frozen columns directly so the
+supported legacy revision-1 rehydration remains valid.
+
 ## Verification and boundary
 
 The observed full-suite failure is RED. Run the findings command on the
 explicit private PostgreSQL 17 cluster after the change; require zero skips
 for owner-backed cases, then run affected pure/script tests, source manifest,
-TypeScript and diff checks. If another independent fixture failure appears,
+TypeScript and diff checks. The revision-2 coordinator RED must become GREEN,
+and the existing initial-chain refusals must stay GREEN. If another independent fixture failure appears,
 record its source and add a focused test repair; do not hide or skip it.
 Deliver only after read-only review and exact-head PR checks. A clean-main
-build and host HTTP check remain required, but this test-only slice is not
+build and host HTTP check remain required, but this scope is not
 Task6A cutover admission or live rollout.
