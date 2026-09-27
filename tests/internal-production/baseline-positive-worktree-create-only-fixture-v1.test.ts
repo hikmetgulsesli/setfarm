@@ -37,9 +37,12 @@ test("private create-only fixture pins detached source and leaves a dirty primar
   fs.writeFileSync(path.join(repo, "untracked-preserved.txt"), "do not stash\n");
   const before = git(repo, "status", "--porcelain");
   const result = createPrivateDiagnosticPinnedWorktreeV1(input);
+  const stat = fs.lstatSync(root, { bigint: true });
   assert.deepEqual(result, { schema: "setfarm.internal-production-positive-worktree-private-create-only.v1",
     authority: "diagnostic-only", reservationHash: input.reservationHash,
-    root, sourceSha: input.sourceSha, sourceTreeHash: input.sourceTreeHash });
+    root, sourceSha: input.sourceSha, sourceTreeHash: input.sourceTreeHash,
+    physical: { root, dev: String(stat.dev), ino: String(stat.ino),
+      birthtimeNs: String(stat.birthtimeNs), gitPrimaryRoot: repo } });
   assert.equal(git(root, "rev-parse", "HEAD"), input.sourceSha);
   assert.equal(git(root, "rev-parse", "HEAD^{tree}"), input.sourceTreeHash);
   assert.equal(git(root, "branch", "--show-current"), "");

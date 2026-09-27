@@ -23,6 +23,8 @@ import { observePrivatePendingPositiveWorktreeReservationsV1 } from
   "../../src/internal-production/baseline-positive-worktree-private-pending-reservation-census-v1.js";
 import { createPrivateDiagnosticRecoveryReservedWorktreeV1 } from
   "../../src/internal-production/baseline-positive-worktree-private-recovery-reserved-create-v1.js";
+import { PRIVATE_POSITIVE_WORKTREE_RECOVERY_CREATE_RECEIPT_V1_STATEMENTS } from
+  "../../src/internal-production/baseline-positive-worktree-private-recovery-create-receipt-v1.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 import { requireTask6aPrivateLoopbackHostname } from "./task6a-private-cluster-loopback.js";
 
@@ -82,6 +84,9 @@ async function withFixture(operation: (fixture: Readonly<{ database: TestDatabas
       await database.sql.unsafe(statement);
     }
     for (const statement of PRIVATE_POSITIVE_WORKTREE_RECOVERY_PRECREATE_RESERVATION_V1_STATEMENTS) {
+      await database.sql.unsafe(statement);
+    }
+    for (const statement of PRIVATE_POSITIVE_WORKTREE_RECOVERY_CREATE_RECEIPT_V1_STATEMENTS) {
       await database.sql.unsafe(statement);
     }
 
@@ -221,6 +226,8 @@ test("private recovery reservation derives a pinned disposable Git create withou
 }, async () => withFixture(async ({ database, repo, root, reservationHash, sourceSha, sourceTreeHash }) => {
   const before = await observePrivatePendingPositiveWorktreeReservationsV1(database.sql);
   assert.deepEqual(before.counts, { ordinary: 0, recovery: 1, total: 1 });
+  const receiptTable = "public.internal_production_positive_worktree_recovery_create_receipts_v1";
+  assert.equal((await database.sql.unsafe(`SELECT receipt_hash FROM ${receiptTable}`)).length, 0);
   assert.equal(fs.existsSync(root), false);
   await assert.rejects(createPrivateDiagnosticRecoveryReservedWorktreeV1(database.sql, {
     reservationHash: "a".repeat(64), repo,
@@ -239,6 +246,45 @@ test("private recovery reservation derives a pinned disposable Git create withou
   assert.equal(git(root, "rev-parse", "HEAD"), sourceSha);
   assert.equal(git(root, "rev-parse", "HEAD^{tree}"), sourceTreeHash);
   assert.equal(git(root, "branch", "--show-current"), "");
+  const receipts = await database.sql.unsafe<Array<{ receiptHash: string; canonicalBody: string;
+    reservationHash: string; root: string; sourceSha: string; sourceTreeHash: string;
+    gitPrimaryRoot: string; physicalDev: string; physicalIno: string;
+    physicalBirthtimeNs: string; physicalIdentityHash: string }>>(`SELECT
+      receipt_hash AS "receiptHash", canonical_body AS "canonicalBody",
+      reservation_hash AS "reservationHash", root,
+      source_sha AS "sourceSha", source_tree_hash AS "sourceTreeHash",
+      git_primary_root AS "gitPrimaryRoot", physical_dev AS "physicalDev",
+      physical_ino AS "physicalIno", physical_birthtime_ns AS "physicalBirthtimeNs",
+      physical_identity_hash AS "physicalIdentityHash"
+      FROM ${receiptTable}`);
+  assert.equal(receipts.length, 1, "one durable create receipt is committed before return");
+  const receipt = receipts[0]!;
+  assert.equal(created.receiptHash, receipt.receiptHash);
+  const stat = fs.lstatSync(root, { bigint: true });
+  const physical = { root, dev: String(stat.dev), ino: String(stat.ino),
+    birthtimeNs: String(stat.birthtimeNs), gitPrimaryRoot: repo };
+  assert.equal(receipt.reservationHash, reservationHash);
+  assert.equal(receipt.root, root);
+  assert.equal(receipt.sourceSha, sourceSha);
+  assert.equal(receipt.sourceTreeHash, sourceTreeHash);
+  assert.equal(receipt.gitPrimaryRoot, repo);
+  assert.deepEqual([receipt.physicalDev, receipt.physicalIno, receipt.physicalBirthtimeNs],
+    [physical.dev, physical.ino, physical.birthtimeNs]);
+  assert.equal(receipt.physicalIdentityHash, hashCanonicalJson({
+    schema: "setfarm.internal-production-positive-worktree-identity.v2", ...physical }));
+  const body = JSON.parse(receipt.canonicalBody) as Record<string, unknown>;
+  assert.equal(canonicalJsonStringify(body), receipt.canonicalBody);
+  assert.equal(hashCanonicalJson(body), receipt.receiptHash);
+  assert.deepEqual(body.physical, physical);
+  assert.equal(body.physicalIdentityHash, receipt.physicalIdentityHash);
+  await assert.rejects(database.sql.unsafe(`UPDATE ${receiptTable}
+    SET physical_ino = '1' WHERE receipt_hash = $1`, [receipt.receiptHash]),
+  /TASK6A_PRIVATE_RECOVERY_CREATE_RECEIPT_IMMUTABLE/);
+  await assert.rejects(database.sql.unsafe(`DELETE FROM ${receiptTable}
+    WHERE receipt_hash = $1`, [receipt.receiptHash]),
+  /TASK6A_PRIVATE_RECOVERY_CREATE_RECEIPT_IMMUTABLE/);
+  await assert.rejects(database.sql.unsafe(`TRUNCATE ${receiptTable}`),
+  /TASK6A_PRIVATE_RECOVERY_CREATE_RECEIPT_IMMUTABLE/);
   const inode = fs.lstatSync(root).ino;
   await assert.rejects(createPrivateDiagnosticRecoveryReservedWorktreeV1(database.sql, {
     reservationHash, repo,
@@ -381,6 +427,8 @@ for (const scenario of ["expired", "rotated", "active-claim", "execution-slice-r
     else assert.equal(fs.existsSync(root), false);
     assert.deepEqual((await observePrivatePendingPositiveWorktreeReservationsV1(database.sql)).counts,
       { ordinary: 0, recovery: 1, total: 1 });
+    assert.equal((await database.sql.unsafe(`SELECT receipt_hash FROM
+      public.internal_production_positive_worktree_recovery_create_receipts_v1`)).length, 0);
   }));
 }
 
@@ -468,4 +516,83 @@ test("a lease expiring during Git add leaves a visible pending one-shot root", {
   assert.equal(fs.lstatSync(root).ino, inode);
   assert.deepEqual((await observePrivatePendingPositiveWorktreeReservationsV1(database.sql)).counts,
     { ordinary: 0, recovery: 1, total: 1 });
+  assert.equal((await database.sql.unsafe(`SELECT receipt_hash FROM
+    public.internal_production_positive_worktree_recovery_create_receipts_v1`)).length, 0);
+}));
+
+test("receipt insert failure after Git add leaves the root visible but no durable create claim", {
+  skip: expectedDataDirectory ? false : "requires an explicitly identified private PostgreSQL 17 cluster",
+}, async () => withFixture(async ({ database, repo, root, reservationHash }) => {
+  const table = "public.internal_production_positive_worktree_recovery_create_receipts_v1";
+  await database.sql.unsafe(`CREATE FUNCTION public.task6a_test_reject_create_receipt_v1() RETURNS trigger
+    LANGUAGE plpgsql AS $$ BEGIN
+      RAISE EXCEPTION 'TASK6A_TEST_RECEIPT_INSERT_FAILURE';
+    END $$`);
+  await database.sql.unsafe(`CREATE TRIGGER task6a_test_reject_create_receipt_v1
+    BEFORE INSERT ON ${table} FOR EACH ROW
+    EXECUTE FUNCTION public.task6a_test_reject_create_receipt_v1()`);
+  await assert.rejects(createPrivateDiagnosticRecoveryReservedWorktreeV1(database.sql, {
+    reservationHash, repo,
+  }), REFUSED);
+  assert.equal(fs.lstatSync(root).isDirectory(), true);
+  assert.ok(git(repo, "worktree", "list", "--porcelain").includes(root));
+  assert.equal((await database.sql.unsafe(`SELECT receipt_hash FROM ${table}`)).length, 0);
+  assert.deepEqual((await observePrivatePendingPositiveWorktreeReservationsV1(database.sql)).counts,
+    { ordinary: 0, recovery: 1, total: 1 });
+  const inode = fs.lstatSync(root).ino;
+  await assert.rejects(createPrivateDiagnosticRecoveryReservedWorktreeV1(database.sql, {
+    reservationHash, repo,
+  }), REFUSED);
+  assert.equal(fs.lstatSync(root).ino, inode);
+  assert.equal((await database.sql.unsafe(`SELECT receipt_hash FROM ${table}`)).length, 0);
+}));
+
+test("a root replaced after Git add cannot receive the created inode's receipt", {
+  skip: expectedDataDirectory ? false : "requires an explicitly identified private PostgreSQL 17 cluster",
+}, async () => withFixture(async ({ database, repo, root, reservationHash }) => {
+  const original = `${root}-original`;
+  let replaced = false;
+  const intercepted = new Proxy(database.sql as any, {
+    get(target, property) {
+      if (property === "begin") return (mode: string, callback: (tx: any) => Promise<unknown>) =>
+        target.begin(mode, (tx: any) => callback(new Proxy(tx, {
+          get(transaction, key) {
+            if (key !== "unsafe") return Reflect.get(transaction, key);
+            return (query: string, parameters?: unknown[]) => {
+              if (!replaced && fs.existsSync(root)
+                && query.includes("FROM public.recovery_dispatch_deliveries")) {
+                fs.renameSync(root, original);
+                fs.mkdirSync(root);
+                replaced = true;
+              }
+              return transaction.unsafe(query, parameters);
+            };
+          },
+        })));
+      return Reflect.get(target, property);
+    },
+  }) as postgres.Sql;
+  await assert.rejects(createPrivateDiagnosticRecoveryReservedWorktreeV1(intercepted, {
+    reservationHash, repo,
+  }), REFUSED);
+  assert.equal(replaced, true, "interception must occur after the Git add");
+  assert.equal(fs.lstatSync(original).isDirectory(), true);
+  assert.equal(fs.lstatSync(root).isDirectory(), true);
+  assert.notEqual(fs.lstatSync(original).ino, fs.lstatSync(root).ino);
+  assert.equal((await database.sql.unsafe(`SELECT receipt_hash FROM
+    public.internal_production_positive_worktree_recovery_create_receipts_v1`)).length, 0);
+  assert.deepEqual((await observePrivatePendingPositiveWorktreeReservationsV1(database.sql)).counts,
+    { ordinary: 0, recovery: 1, total: 1 });
+}));
+
+test("missing private create-receipt table refuses before Git add", {
+  skip: expectedDataDirectory ? false : "requires an explicitly identified private PostgreSQL 17 cluster",
+}, async () => withFixture(async ({ database, repo, root, reservationHash }) => {
+  await database.sql.unsafe(`DROP TABLE
+    public.internal_production_positive_worktree_recovery_create_receipts_v1`);
+  await assert.rejects(createPrivateDiagnosticRecoveryReservedWorktreeV1(database.sql, {
+    reservationHash, repo,
+  }), REFUSED);
+  assert.equal(fs.existsSync(root), false);
+  assert.equal(git(repo, "worktree", "list", "--porcelain").includes(root), false);
 }));
