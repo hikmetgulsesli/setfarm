@@ -4,7 +4,14 @@ import { after, before, describe, it } from "node:test";
 import { createEvidenceBundleV2, computeObservationRef } from "../../src/evidence/evidence-bundle-v2.js";
 import { compileEvidencePlanV1 } from "../../src/evidence/evidence-plan-v1.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import type { PgTransactionSql } from "../../src/db-pg.js";
 import { acquireClaimMutationAuthorityInTransaction } from "../../src/execution/claim-mutation-authority.js";
+import {
+  insertAndBindInternalProductionClaimBirthV1,
+  prepareInternalProductionClaimBirthV1,
+  publishLoopClaimRuntime,
+} from "../../src/execution/claim-runtime-publication.js";
+import { releaseReservedRuntimeSessionInTransaction } from "../../src/execution/runtime-session-repository.js";
 import {
   createRunTerminationRepository,
   requestRunTermination,
@@ -14,6 +21,7 @@ import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js"
 import { ImplementationSliceV1Schema, type ImplementationSliceV1 } from "../../src/product-compiler/schemas/implementation-slice-v1.js";
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
+import { createV3RecoveryClaimAuthority } from "../../src/recovery/v3-recovery-claim-authority.js";
 import type { RecoveryCaseRevisionV1, RecoveryRevisionDispatchV1 } from "../../src/recovery/recovery-delivery.js";
 import {
   V3RecoveryCoordinatorInputSchema,
@@ -22,6 +30,7 @@ import {
   createV3RecoveryCoordinator,
 } from "../../src/recovery/v3-recovery-coordinator.js";
 import { buildMinimalValidContracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
+import { seedCanonicalCompilerStoryAdmissionFixture } from "../execution-attempts/helpers/compiler-story-english-admission-fixture.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
 
 const COMPILATION_REPORT = "9".repeat(64);
@@ -190,12 +199,23 @@ function findingSetFor(bundle: ReturnType<typeof evidenceBundle>["bundle"], slic
 }
 
 async function claim(database: TestDatabase, runId: string, agentId: string): Promise<number> {
-  const rows = await database.sql<Array<{ id: number }>>`
-    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-    VALUES (${runId}, 'implement', 'US-001', ${agentId})
-    RETURNING id::integer AS id
-  `;
-  return rows[0]!.id;
+  return database.sql.begin(async (transaction) => {
+    const identities = await transaction.unsafe<Array<{ id: unknown }>>(
+      "SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id",
+    );
+    const birth = await prepareInternalProductionClaimBirthV1(
+      transaction as PgTransactionSql,
+      "a-claim-loop-runtime-v1",
+      identities,
+    );
+    return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+      runId,
+      workflowStepId: "implement",
+      storyId: "US-001",
+      claimAgentId: agentId,
+      claimedAt: new Date(),
+    });
+  });
 }
 
 async function initialInput(input: Readonly<{
@@ -208,22 +228,16 @@ async function initialInput(input: Readonly<{
 }>) {
   const slice = baseSlice();
   const releaseSha = "d".repeat(40);
-  const releaseAdmissionHash = await input.database.seedV3ReleaseGoAdmission(releaseSha);
-  await input.database.sql`
-    INSERT INTO runs (
-      id, workflow_id, task, status, protocol, protocol_version,
-      compiler_release_sha, packet_hash, activation_preflight_hash,
-      release_admission_hash
-    ) VALUES (
-      ${input.runId}, 'feature-dev', 'recovery coordinator test', 'running',
-      'v3', 1, ${releaseSha}, ${slice.packetHash}, ${"e".repeat(64)},
-      ${releaseAdmissionHash}
-    )
-  `;
+  const canonical = await seedCanonicalCompilerStoryAdmissionFixture(input.database, {
+    runId: input.runId,
+    releaseSha,
+    packetHash: slice.packetHash,
+  });
+  const story = canonical.stories.find((candidate) => candidate.storyId === slice.storyId);
+  assert.ok(story);
   await input.database.sql.unsafe(
-    `INSERT INTO stories (id, run_id, story_index, story_id, title, status)
-     VALUES ($1, $2, 1, $3, 'Recovery coordinator story', 'running')`,
-    [`${input.runId}-story`, input.runId, slice.storyId],
+    "UPDATE stories SET status = 'running' WHERE id = $1 AND run_id = $2",
+    [story.id, input.runId],
   );
   const exactSliceHash = sliceHash(`${input.runId}:initial`);
   const plan = compileEvidencePlanV1({ slice, sliceHash: exactSliceHash });
@@ -279,7 +293,7 @@ async function initialInput(input: Readonly<{
   assert.equal(completed.status, "completed");
   await input.database.sql`UPDATE claim_log SET outcome = 'completed' WHERE id = ${claimId}`;
   await input.database.sql`
-    UPDATE stories SET status = 'failed' WHERE id = ${`${input.runId}-story`}
+    UPDATE stories SET status = 'failed' WHERE id = ${story.id}
   `;
   return {
     kind: "initial_evidence" as const,
@@ -290,6 +304,7 @@ async function initialInput(input: Readonly<{
     evidenceBundle: evidence.bundle,
     findingSet: findingSetFor(evidence.bundle, slice),
     failureClass: input.failureClass,
+    canonical,
   };
 }
 
@@ -302,16 +317,26 @@ async function recoveryInput(input: Readonly<{
   failureClass?: "product" | "infrastructure";
   semanticSalt: string;
   candidateSeed: string;
+  canonical?: Awaited<ReturnType<typeof seedCanonicalCompilerStoryAdmissionFixture>>;
 }>) {
   const deliveries = createRecoveryDeliveryRepository(input.database.sql);
-  const leased = await deliveries.leaseNext({
+  const modelHandoff = input.dispatch.dispatchClass === "evidence_only"
+    ? undefined
+    : await createV3RecoveryClaimAuthority(input.database.sql).acquireRecoveryClaim({
+        ownerInstanceId: `${input.dispatch.dispatchClass}-worker`,
+        runId: input.runId,
+        storyId: input.dispatch.storyId,
+        leaseMs: 60_000,
+      }, { now: new Date("2026-07-13T10:10:00.000Z") });
+  const evidenceLease = modelHandoff ? undefined : await deliveries.leaseNext({
     ownerInstanceId: `${input.dispatch.dispatchClass}-worker`,
     runId: input.runId,
     storyId: input.dispatch.storyId,
     leaseMs: 60_000,
   }, { now: new Date("2026-07-13T10:10:00.000Z") });
-  assert.ok(leased);
-  assert.equal(leased.dispatchId, input.dispatch.dispatchId);
+  const lease = modelHandoff?.lease ?? evidenceLease;
+  assert.ok(lease);
+  assert.equal(modelHandoff?.dispatchId ?? evidenceLease?.dispatchId, input.dispatch.dispatchId);
   const base = baseSlice();
   const slice = ImplementationSliceV1Schema.parse({
     ...base,
@@ -346,13 +371,53 @@ async function recoveryInput(input: Readonly<{
           },
         }),
   });
-  const exactSliceHash = input.dispatch.dispatchClass === "evidence_only"
-    ? input.dispatch.contractSliceHash
-    : sliceHash(`${input.runId}:${input.dispatch.dispatchId}:${input.productVerdict}`);
+  const recoveryExecutionSliceEnvelope = modelHandoff ? {
+    schema: "setfarm.semantic-artifact-envelope.v1" as const,
+    artifactType: "setfarm.implementation-slice.v1",
+    producer: {
+      pass: "v3-recovery-coordinator-test",
+      codeSha: "d".repeat(40),
+      toolVersions: { setfarm: "test" },
+    },
+    payload: slice,
+  } : undefined;
+  const exactSliceHash = recoveryExecutionSliceEnvelope
+    ? hashCanonicalJson(recoveryExecutionSliceEnvelope)
+    : input.dispatch.contractSliceHash;
   const plan = compileEvidencePlanV1({ slice, sliceHash: exactSliceHash });
   const exactPlanArtifactHash = planArtifactHash(plan);
   const agentId = `${input.dispatch.dispatchClass}-agent`;
-  const claimId = await claim(input.database, input.runId, agentId);
+  let runtime: Readonly<{ sessionId: string; ownerInstanceId: string }> | undefined;
+  let claimId: number;
+  if (modelHandoff) {
+    assert.ok(input.canonical);
+    const story = input.canonical.stories.find((candidate) => candidate.storyId === slice.storyId);
+    assert.ok(story);
+    const publication = await publishLoopClaimRuntime(input.database.sql, {
+      runId: input.runId,
+      stepDbId: input.canonical.implementStepDbId,
+      workflowStepId: "implement",
+      storyDbId: story.id,
+      storyId: story.storyId,
+      claimAgentId: agentId,
+      parallelLimit: 1,
+      recoveryHandoff: modelHandoff,
+      storyAdmissionProof: input.canonical.storyAdmissionProof,
+      runtimeIntent: {
+        schema: "setfarm.runtime-claim-intent.v1",
+        sessionId: `RTS_coordinator-${input.runId}-${input.dispatch.dispatchId}`,
+        runtimeAgentId: agentId,
+        runtimeKind: "local_process",
+        ownerInstanceId: modelHandoff.lease.ownerInstanceId,
+      },
+      now: new Date("2026-07-13T10:10:00.500Z"),
+    });
+    assert.ok(publication?.runtime);
+    claimId = publication.claimId;
+    runtime = publication.runtime;
+  } else {
+    claimId = await claim(input.database, input.runId, agentId);
+  }
   const attemptRepository = createAttemptRepository(input.database.sql);
   const reserved = await attemptRepository.reserve({
     claimId,
@@ -363,13 +428,14 @@ async function recoveryInput(input: Readonly<{
     packetHash: slice.packetHash,
     compilationReportHash: COMPILATION_REPORT,
     sliceHash: exactSliceHash,
+    ...(recoveryExecutionSliceEnvelope ? { recoveryExecutionSliceEnvelope } : {}),
     sourceBefore: input.dispatch.sourceRevision,
     findingSetHash: input.dispatch.findingSetHash,
     recoveryCaseRevisionId: input.revision.revisionId,
     recoveryDispatchId: input.dispatch.dispatchId,
     recoveryDeliveryLease: {
-      ownerInstanceId: leased.ownerInstanceId!,
-      leaseToken: leased.leaseToken!,
+      ownerInstanceId: lease.ownerInstanceId!,
+      leaseToken: lease.leaseToken!,
     },
     role: input.dispatch.dispatchClass === "supervisor_repair" ? "supervisor" : "developer",
     agentId,
@@ -420,6 +486,18 @@ async function recoveryInput(input: Readonly<{
   });
   assert.equal(completed.status, "completed");
   await input.database.sql`UPDATE claim_log SET outcome = 'completed' WHERE id = ${claimId}`;
+  if (runtime) {
+    await input.database.sql.begin((transaction) => releaseReservedRuntimeSessionInTransaction(transaction, {
+      sessionId: runtime.sessionId,
+      claimId,
+      ownerInstanceId: runtime.ownerInstanceId,
+      diagnostic: "coordinator test model runtime never spawned",
+    }));
+    await input.database.sql.unsafe(
+      "UPDATE stories SET status = 'failed' WHERE run_id = $1 AND story_id = $2",
+      [input.runId, slice.storyId],
+    );
+  }
   return {
     kind: "recovery_evidence" as const,
     recoveryCaseId: input.dispatch.recoveryCaseId,
@@ -680,6 +758,7 @@ describe("V3 recovery coordinator", () => {
       runId: "run-v3-coordinator-bounded",
       dispatch: product.dispatch,
       revision: product.revision,
+      canonical: initial.canonical,
       productVerdict: "fail",
       failureClass: "product",
       semanticSalt: "bounded-product-failure",
@@ -731,6 +810,7 @@ describe("V3 recovery coordinator", () => {
       runId: "run-v3-coordinator-bounded",
       dispatch: supervisor.dispatch,
       revision: supervisor.revision,
+      canonical: initial.canonical,
       productVerdict: "fail",
       failureClass: "product",
       semanticSalt: "bounded-supervisor-failure",
@@ -779,6 +859,7 @@ describe("V3 recovery coordinator", () => {
       runId: "run-v3-coordinator-resolve",
       dispatch: product.dispatch,
       revision: product.revision,
+      canonical: initial.canonical,
       productVerdict: "pass",
       semanticSalt: "resolve-pass",
       candidateSeed: "7",

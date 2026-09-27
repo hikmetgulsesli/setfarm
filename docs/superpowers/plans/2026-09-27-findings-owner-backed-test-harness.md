@@ -27,6 +27,7 @@
 - Modify `tests/findings/repository.test.ts`: point the cold pre32 catalog source extraction at its current import-inert census module and extract only its actual dependencies; production implementation stays unchanged.
 - Modify `tests/findings/v3-github-review-authorization.integration.test.ts`: replace obsolete manually inserted repair claim with genuine compiler story admission and canonical recovery claim/runtime publication.
 - Modify `tests/findings/v3-recovery-claim-authority.test.ts`: authenticate the attempt-bound reissue case through canonical story admission and claim/runtime publication while leaving the other lease cases unchanged.
+- Modify `tests/findings/v3-recovery-coordinator.test.ts`: give initial claims genuine owner births and model recovery attempts canonical story proof, claim/runtime publication, execution-slice authority, and no-spawn runtime release.
 - Create `scripts/__tests__/run-finding-tests.test.js` only if a focused source/partition regression is needed beyond the executable `test:findings` gate.
 
 ---
@@ -85,6 +86,14 @@
 - [x] **Step 1: Confirm RED.** Full findings passed 5/6 claim-authority cases; the lone attempt-bound case manually inserted a claim and failed at `RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND`.
 - [x] **Step 2: Use actual authorities.** Only that case seeds canonical compiler story admission and publishes its acquired recovery lease through `publishLoopClaimRuntime` before attempt reservation.
 - [ ] **Step 3: Run GREEN.** The first focused P3 rerun passed the old five cases and reached the new publication, then refused the test's obsolete arbitrary slice (`RECOVERY_DELIVERY_SLICE_AUTHORITY_MISMATCH`). Bind reservation to the handoff's contract slice, rerun the case, then the remaining findings files and complete suite.
+
+### Task 2e: Restore coordinator fixture authority
+
+**Files:** Modify `tests/findings/v3-recovery-coordinator.test.ts`.
+
+- [x] **Step 1: Confirm RED.** P3 coordinator passed 5/8; terminal settlement refused a manually inserted ownerless claim (`INTERNAL_PRODUCTION_CLAIM_OWNER_UNAVAILABLE`), and two model recovery cases refused manually inserted unpublished claims (`RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND`).
+- [x] **Step 2: Model authentic births.** Reuse production claim owner-birth APIs and canonical compiler admission; publish model recovery runtime/claim with a typed execution-slice envelope and release the never-spawned runtime after terminal attempt. Leave evidence-only delivery non-model.
+- [ ] **Step 3: Run GREEN.** Rerun focused coordinator on the private P3 cluster, correct any newly exposed fixture mismatch without weakening guards, then rerun all findings.
 
 ### Task 3: Review and deliver
 

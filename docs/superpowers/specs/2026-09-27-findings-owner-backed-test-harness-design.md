@@ -56,6 +56,16 @@ attempt-bound lease replay case must use a genuine compiler story admission and
 canonical runtime publication before reserving the attempt. Keep its other
 five lease/termination cases minimal and unchanged.
 
+The coordinator integration fixture contains a second shared stale path.
+Give its initial claim the actual internal-production owner birth and seed
+canonical `US-001` story admission. For model recovery, acquire a V3 recovery
+handoff, publish the loop claim/runtime, and reserve with the authenticated
+execution-slice envelope. Complete the attempt, close the never-spawned
+reserved runtime with its no-spawn evidence, and restore the failed story
+state before testing the next dispatch. Keep evidence-only dispatch on its
+non-model path. This retains terminal-settlement and bounded-repair coverage
+without manufacturing a migration-33 publication.
+
 ## Verification and boundary
 
 The observed full-suite failure is RED. Run the findings command on the
