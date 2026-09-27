@@ -32,7 +32,9 @@ const REFUSED = /TASK6A_PRIVATE_RECOVERY_RESERVATION_RECEIPT_LINK_REFUSED/;
 const LINK = "public.internal_production_positive_worktree_recovery_reservation_receipt_links_v1";
 
 for (const dispatchClass of ["product_implementation", "supervisor_repair"] as const) {
-test(`private ${dispatchClass} recovery link requires the exact committed lease/publication/receipt chain`, {
+for (const malformedFindingIds of [false, true]) {
+test(`private ${dispatchClass} recovery link ${malformedFindingIds
+  ? "refuses malformed authoritative finding IDs" : "requires the exact committed lease/publication/receipt chain"}`, {
   skip: expectedDataDirectory ? false : "requires an explicitly identified private PostgreSQL 17 cluster",
 }, async () => {
   assert.equal(process.env.SETFARM_PG_URL, undefined);
@@ -113,7 +115,8 @@ test(`private ${dispatchClass} recovery link requires the exact committed lease/
     ) VALUES (${findingSet.findingSetHash}, ${findingSet.findingSetId},
       ${runId}, ${storyId}, ${findingSet.packetHash}, ${findingSet.sliceHash},
       ${sourceSha}, ${sourceTreeHash},
-      ${JSON.stringify(findingSet.findings.map((finding) => finding.findingId))}::text::jsonb,
+      ${JSON.stringify(malformedFindingIds ? ["crossed-finding-id"]
+        : findingSet.findings.map((finding) => finding.findingId))}::text::jsonb,
       ${JSON.stringify(findingSet)}::text::jsonb)`;
     const draft = {
       runId, storyId, findingSetHash: findingSet.findingSetHash,
@@ -281,6 +284,12 @@ stage = "reservation-before-claim";
       ${hashCanonicalJson(handoff)},
       (SELECT claimed_at FROM public.claim_log WHERE id = ${claimId})
     )`;
+    if (malformedFindingIds) {
+      stage = "malformed-authoritative-finding-row";
+      await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+        REFUSED, "the authoritative finding IDs must match the recovery revision");
+      return;
+    }
     for (const crossed of [
       { ...exact, reservationHash: "f".repeat(64) },
       { ...exact, receiptHash: "e".repeat(64) },
@@ -453,8 +462,11 @@ stage = "reservation-before-claim";
       `SELECT count(*)::integer AS count FROM ${LINK}`))[0]?.count, 0);
 
     stage = "lease-expired-during-link-insert";
+    await database.sql.unsafe(`CREATE SEQUENCE public.task6a_private_recovery_link_delay_probe_seq_v1
+      START WITH 1`);
     await database.sql.unsafe(`CREATE FUNCTION public.task6a_private_recovery_link_delay_probe_v1()
       RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        PERFORM nextval('public.task6a_private_recovery_link_delay_probe_seq_v1');
         PERFORM pg_sleep(2.2);
         RETURN NEW;
       END $$`);
@@ -466,8 +478,16 @@ stage = "reservation-before-claim";
       WHERE attempt_id = ${attemptId}`;
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
       REFUSED, "attempt lease may expire while the link insert waits");
+    const delayProbe = await database.sql.unsafe<Array<{ lastValue: string;
+      isCalled: boolean }>>(`SELECT last_value::text AS "lastValue", is_called AS "isCalled"
+        FROM public.task6a_private_recovery_link_delay_probe_seq_v1`);
+    assert.equal(delayProbe.length, 1);
+    assert.equal(delayProbe[0]?.lastValue, "1");
+    assert.equal(delayProbe[0]?.isCalled, true,
+      "the insert trigger must run before the lease-expiry refusal");
     await database.sql.unsafe(`DROP TRIGGER task6a_private_recovery_link_delay_probe_v1 ON ${LINK}`);
     await database.sql.unsafe(`DROP FUNCTION public.task6a_private_recovery_link_delay_probe_v1()`);
+    await database.sql.unsafe(`DROP SEQUENCE public.task6a_private_recovery_link_delay_probe_seq_v1`);
     assert.equal((await database.sql.unsafe<Array<{ count: number }>>(
       `SELECT count(*)::integer AS count FROM ${LINK}`))[0]?.count, 0);
     await database.sql`UPDATE public.execution_attempts
@@ -523,4 +543,5 @@ stage = "reservation-before-claim";
     }
   }
 });
+}
 }

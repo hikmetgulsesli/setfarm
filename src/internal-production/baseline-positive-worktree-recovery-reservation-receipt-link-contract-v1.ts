@@ -3,6 +3,7 @@ import { types } from "node:util";
 import type postgres from "postgres";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
+import { FindingSetV1Schema } from "../findings/finding-set.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { V3RecoveryClaimHandoffV1Schema } from "../recovery/v3-recovery-claim-authority.js";
 import { lockV3RecoveryRunMutationAuthorityInTransaction } from
@@ -236,6 +237,32 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
         || canonicalJsonStringify(dispatch.findingIds) !== canonicalJsonStringify(revision.findingIds)
         || canonicalJsonStringify(dispatch.evidencePlan) !== canonicalJsonStringify(revision.evidencePlan)
         || dispatch.evidencePlanArtifactHash !== revision.evidencePlanArtifactHash) fail();
+      const findings = await tx.unsafe<Array<{ runId: string; storyId: string;
+        packetHash: string; sliceHash: string; sourceSha: string;
+        sourceTreeHash: string; findingIds: unknown; payload: unknown }>>(`SELECT
+        run_id AS "runId", story_id AS "storyId", packet_hash AS "packetHash",
+        slice_hash AS "sliceHash", source_sha AS "sourceSha",
+        source_tree_hash AS "sourceTreeHash", finding_ids AS "findingIds", payload
+        FROM public.finding_sets WHERE finding_set_hash = $1 FOR KEY SHARE`,
+      [revision.findingSetHash]);
+      if (findings.length !== 1) fail();
+      const finding = findings[0]!;
+      const findingPayload = FindingSetV1Schema.parse(finding.payload);
+      if (finding.runId !== reservation.runId || finding.storyId !== reservation.storyId
+        || finding.packetHash !== revision.packetHash
+        || finding.sliceHash !== revision.contractSliceHash
+        || finding.sourceSha !== revision.sourceSha
+        || finding.sourceTreeHash !== revision.sourceTreeHash
+        || canonicalJsonStringify(finding.findingIds) !== canonicalJsonStringify(revision.findingIds)
+        || findingPayload.findingSetHash !== revision.findingSetHash
+        || findingPayload.runId !== reservation.runId
+        || findingPayload.storyId !== reservation.storyId
+        || findingPayload.packetHash !== revision.packetHash
+        || findingPayload.sliceHash !== revision.contractSliceHash
+        || findingPayload.sourceRevision.sha !== revision.sourceSha
+        || findingPayload.sourceRevision.treeHash !== revision.sourceTreeHash
+        || canonicalJsonStringify(findingPayload.findings.map((item) => item.findingId))
+          !== canonicalJsonStringify(revision.findingIds)) fail();
       const publications = await tx.unsafe<Array<{ claimId: string;
         runtimeSessionId: string; runId: string; stepDbId: string;
         workflowStepId: string; storyDbId: string; storyId: string;
@@ -332,6 +359,7 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           AND b.story_db_id = st.id AND b.story_id = st.story_id
           AND b.story_index = st.story_index
           AND b.story_claim_generation = st.claim_generation
+          AND b.bound_at = c.claimed_at
         WHERE st.id = $1 AND st.run_id = $2 AND st.story_id = $3
           AND st.status = 'running' AND c.id = $4::bigint
           AND st.claimed_by = c.agent_id

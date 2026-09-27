@@ -23,7 +23,7 @@ block cutover.
 - Input is only the exact recovery reservation and receipt hashes. Derive all
   other identities from committed rows. Lock the canonical V3 story advisory
   key, active run/termination authority, exact delivery, recovery case,
-  revision, dispatch, publication, story/claim/attempt/session/V3 binding and
+  revision, dispatch, finding set, publication, story/claim/attempt/session/V3 binding and
   the receipt inside one owned SERIALIZABLE transaction. Read and recheck the
   immutable reservation parent without an early row lock, preserving the
   delivery-first canonical lock order. Refuse any absent,
@@ -46,7 +46,10 @@ block cutover.
   Both supported implementation recovery dispatches require current case
   status `repairing`; `open` and evidence-only `evidencing` refuse.
   Match the case's immutable opening-revision packet, finding set/IDs, slice
-  and source identity before accepting its current revision. Match live
+  and source identity before accepting its current revision. Lock the
+  authoritative finding-set row after dispatch, validate its parsed payload,
+  and match row/payload run, story, packet, slice, source and finding IDs to
+  the current revision. Match live
   delivery/runtime states as a pair: reserved delivery with reserved,
   starting or running session, or running delivery with running session.
   A legitimate same-token renewal may change expiry, so never require the
@@ -56,7 +59,8 @@ block cutover.
   earlier than its creation, live run packet hash, fence
   hash, source SHA/tree, root, generation and owner identity. Story claimant
   must match the claim agent, and immutable publication bound time must equal
-  claim/story birth and precede runtime creation. Insert
+  claim/story birth and precede runtime creation. The V3 binding bound time
+  must also equal claim birth. Insert
   one immutable link with canonical-body hash and parent FKs; only byte-
   identical retry can adopt a conflict. Shared-field FKs and direct SQL rows
   are not complete producer-authenticity evidence.
@@ -73,17 +77,21 @@ diagnostic, not a physical proof. The fixture commits its publication after
 the receipt to test absent-publication refusal; this is not a production
 lifecycle claim. Test missing publication, crossed input hashes, token
 rotation, expired delivery and attempt, mutable current-case/status/step
-drift, crossed case opening identity, invalid delivery/runtime state pair,
+drift, crossed case opening identity, malformed historical finding IDs,
+invalid delivery/runtime state pair,
 pre-creation runtime heartbeat, non-loop claim step,
 changed delivery authorization, absent, shifted or pre-session delivery start,
-attempt lease expiration during a delayed link insert,
+attempt lease expiration during a delayed link insert, with a nontransactional
+private sequence proving the delay trigger ran before rollback,
 base-schema run-packet immutability, story claimant/birth drift,
 claim/session/slice/role drift
 for both supported recovery dispatch classes,
 rollback,
 immutable DML, identical retry and continued pending-row presence. A separate
 fixture is still needed for forged immutable publication bytes/hash and
-crossed publication identity; do not claim those adversarial cases passed.
+crossed publication identity. The V3 binding insert trigger enforces its
+bound-time equality and prevents mutable DML, so no in-place crossed-time
+fixture is claimed; the link rechecks it for historical/direct-import rows.
 Observe RED before implementation. Run
 focused PG17, TypeScript, pure/cutover/manifest, migration digests and
 independent read-only review. Branch build must fail at clean-main guard;
