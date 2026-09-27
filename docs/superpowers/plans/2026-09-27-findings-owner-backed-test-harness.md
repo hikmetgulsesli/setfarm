@@ -93,7 +93,7 @@
 
 - [x] **Step 1: Confirm RED.** P3 coordinator passed 5/8; terminal settlement refused a manually inserted ownerless claim (`INTERNAL_PRODUCTION_CLAIM_OWNER_UNAVAILABLE`), and two model recovery cases refused manually inserted unpublished claims (`RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND`).
 - [x] **Step 2: Model authentic births.** Reuse production claim owner-birth APIs and canonical compiler admission; publish model recovery runtime/claim with a typed execution-slice envelope and release the never-spawned runtime after terminal attempt. Leave evidence-only delivery non-model.
-- [ ] **Step 3: Run GREEN.** Rerun focused coordinator on the private P3 cluster, correct any newly exposed fixture mismatch without weakening guards, then rerun all findings.
+- [ ] **Step 3: Run GREEN.** First P3 rerun found one shared strict-input mismatch: the local `canonical` fixture property was passed to `V3RecoveryCoordinatorInputSchema` and refused in six cases. Keep admission metadata in a run-keyed test-only map, not in the coordinator input. Rerun focused coordinator, correct any further fixture mismatch without weakening guards, then rerun all findings.
 
 ### Task 3: Review and deliver
 

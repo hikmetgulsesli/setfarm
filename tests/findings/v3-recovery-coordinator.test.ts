@@ -34,6 +34,10 @@ import { seedCanonicalCompilerStoryAdmissionFixture } from "../execution-attempt
 import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
 
 const COMPILATION_REPORT = "9".repeat(64);
+const canonicalAdmissionByRunId = new Map<
+  string,
+  Awaited<ReturnType<typeof seedCanonicalCompilerStoryAdmissionFixture>>
+>();
 
 function source(seed: string): { sha: string; treeHash: string } {
   return { sha: seed.repeat(40), treeHash: seed.toUpperCase().charCodeAt(0).toString(16).slice(-1).repeat(40) };
@@ -233,6 +237,7 @@ async function initialInput(input: Readonly<{
     releaseSha,
     packetHash: slice.packetHash,
   });
+  canonicalAdmissionByRunId.set(input.runId, canonical);
   const story = canonical.stories.find((candidate) => candidate.storyId === slice.storyId);
   assert.ok(story);
   await input.database.sql.unsafe(
@@ -304,7 +309,6 @@ async function initialInput(input: Readonly<{
     evidenceBundle: evidence.bundle,
     findingSet: findingSetFor(evidence.bundle, slice),
     failureClass: input.failureClass,
-    canonical,
   };
 }
 
@@ -317,7 +321,6 @@ async function recoveryInput(input: Readonly<{
   failureClass?: "product" | "infrastructure";
   semanticSalt: string;
   candidateSeed: string;
-  canonical?: Awaited<ReturnType<typeof seedCanonicalCompilerStoryAdmissionFixture>>;
 }>) {
   const deliveries = createRecoveryDeliveryRepository(input.database.sql);
   const modelHandoff = input.dispatch.dispatchClass === "evidence_only"
@@ -390,19 +393,20 @@ async function recoveryInput(input: Readonly<{
   let runtime: Readonly<{ sessionId: string; ownerInstanceId: string }> | undefined;
   let claimId: number;
   if (modelHandoff) {
-    assert.ok(input.canonical);
-    const story = input.canonical.stories.find((candidate) => candidate.storyId === slice.storyId);
+    const canonical = canonicalAdmissionByRunId.get(input.runId);
+    assert.ok(canonical);
+    const story = canonical.stories.find((candidate) => candidate.storyId === slice.storyId);
     assert.ok(story);
     const publication = await publishLoopClaimRuntime(input.database.sql, {
       runId: input.runId,
-      stepDbId: input.canonical.implementStepDbId,
+      stepDbId: canonical.implementStepDbId,
       workflowStepId: "implement",
       storyDbId: story.id,
       storyId: story.storyId,
       claimAgentId: agentId,
       parallelLimit: 1,
       recoveryHandoff: modelHandoff,
-      storyAdmissionProof: input.canonical.storyAdmissionProof,
+      storyAdmissionProof: canonical.storyAdmissionProof,
       runtimeIntent: {
         schema: "setfarm.runtime-claim-intent.v1",
         sessionId: `RTS_coordinator-${input.runId}-${input.dispatch.dispatchId}`,
@@ -534,7 +538,10 @@ describe("V3 recovery coordinator", () => {
     database = await createIsolatedTestDatabase();
   });
 
-  after(async () => database.cleanup());
+  after(async () => {
+    canonicalAdmissionByRunId.clear();
+    await database.cleanup();
+  });
 
   it("ignores volatile artifact identity on semantic replay but changes for a typed outcome delta", () => {
     const slice = baseSlice();
@@ -758,7 +765,6 @@ describe("V3 recovery coordinator", () => {
       runId: "run-v3-coordinator-bounded",
       dispatch: product.dispatch,
       revision: product.revision,
-      canonical: initial.canonical,
       productVerdict: "fail",
       failureClass: "product",
       semanticSalt: "bounded-product-failure",
@@ -810,7 +816,6 @@ describe("V3 recovery coordinator", () => {
       runId: "run-v3-coordinator-bounded",
       dispatch: supervisor.dispatch,
       revision: supervisor.revision,
-      canonical: initial.canonical,
       productVerdict: "fail",
       failureClass: "product",
       semanticSalt: "bounded-supervisor-failure",
@@ -859,7 +864,6 @@ describe("V3 recovery coordinator", () => {
       runId: "run-v3-coordinator-resolve",
       dispatch: product.dispatch,
       revision: product.revision,
-      canonical: initial.canonical,
       productVerdict: "pass",
       semanticSalt: "resolve-pass",
       candidateSeed: "7",
