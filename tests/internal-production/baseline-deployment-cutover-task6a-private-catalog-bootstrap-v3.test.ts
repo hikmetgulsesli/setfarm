@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
 const script = new URL("../../scripts/deployment-cutover.mjs", import.meta.url);
@@ -16,13 +18,19 @@ test("private catalog host bootstrap has a distinct authenticated no-write verb 
   assert.doesNotMatch(source, /JSON\.stringify\([^)]*(?:objects|memberships|aclText)/);
 });
 
-test("private catalog verb refuses a feature worktree before loading or observing host", () => {
-  const child = spawnSync(process.execPath, [script.pathname, "inspect-task6a-private-catalog-host-v3", "--json"],
-    { encoding: "utf8", timeout: 15000, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
-  assert.equal(child.status, 1);
-  assert.equal(child.stdout, "");
-  const lines = child.stderr.trimEnd().split("\n");
-  assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
-  assert.equal(JSON.parse(lines[1]!).stage, "source-authentication");
-  assert.equal(lines.length, 2);
+test("private catalog verb refuses a noncanonical script copy before observing host", () => {
+  const fixture = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "setfarm-cutover-untrusted-"));
+  try {
+    const copy = path.join(fixture, "scripts", "deployment-cutover.mjs");
+    fs.mkdirSync(path.dirname(copy));
+    fs.copyFileSync(script, copy);
+    const child = spawnSync(process.execPath, [copy, "inspect-task6a-private-catalog-host-v3", "--json"],
+      { encoding: "utf8", timeout: 15000, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+    assert.equal(child.status, 1);
+    assert.equal(child.stdout, "");
+    const lines = child.stderr.trimEnd().split("\n");
+    assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
+    assert.equal(JSON.parse(lines[1]!).stage, "source-authentication");
+    assert.equal(lines.length, 2);
+  } finally { fs.rmSync(fixture, { recursive: true, force: true }); }
 });
