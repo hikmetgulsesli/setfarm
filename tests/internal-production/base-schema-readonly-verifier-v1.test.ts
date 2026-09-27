@@ -60,6 +60,8 @@ test("base catalog verification refuses required tables with no required columns
             accessMethod: "heap",
             tableOptions: null, toastOptions: null,
             replicaIdentity: "d",
+            ordinaryUntyped: true,
+            defaultTablespace: true, defaultToastTablespace: true,
             partitioned: false, rowSecurity: false, forceRowSecurity: false,
             hasInheritance: false, hasRewriteRules: false, ownerReachable: false }))
           : [],

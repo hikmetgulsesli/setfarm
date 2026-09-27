@@ -49,6 +49,10 @@ Both required table and associated TOAST `reloptions` must be unset; source
 DDL does not opt out of automatic maintenance or set storage parameters.
 Required tables retain the source-created default replica identity, so
 logical decoding of updates/deletes is not silently altered.
+They remain untyped ordinary tables (`reloftype=0`), with no new dependency
+on an independently mutable composite type.
+Required tables and their TOAST relations remain in the source-created
+default tablespace; moving either to separately managed storage is drift.
 Required base columns must have neither fast-default `atthasmissing` nor
 `attmissingval`; a later-added column can otherwise expose stale logical
 values after its visible default is removed.
@@ -122,12 +126,15 @@ runtime admission would be unsafe.
   bounded catalog reads and fail-closed comparison; no DDL or application path.
 - `tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts`:
   real isolated-database restricted-role positive/negative verification and
-  no-write fingerprints. It runs only with an explicit private-cluster
-`data_directory` preflight; generic P3 projection strips that environment.
-The explicit `npm run test:base-schema-catalog:isolated` command is the gated
-path for this case. It requires `SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY` and a
-matching `SETFARM_TEST_PG_ADMIN_URL`; without the former, the integration case
-skips and cannot be counted as a passing restricted-role gate.
+  no-write fingerprints. Its alternate tablespace fixture is created only
+  after private-cluster identity preflight and dropped by exact random name
+  even if creation acknowledgement is lost. It runs only with an explicit
+  private-cluster `data_directory` preflight; generic P3 projection strips
+  that environment. The explicit `npm run test:base-schema-catalog:isolated`
+  command is the gated path for this case. It requires
+  `SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY` and a matching
+  `SETFARM_TEST_PG_ADMIN_URL`; without the former, the integration case skips
+  and cannot be counted as a passing restricted-role gate.
 - `tests/internal-production/base-schema-readonly-verifier-v1.test.ts`: pure
   SQL/transaction/error redaction and exact manifest-shape tests; included in
   the ordinary `test:internal-production:pure` command.

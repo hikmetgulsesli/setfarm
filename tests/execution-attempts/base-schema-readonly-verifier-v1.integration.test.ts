@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
+import { mkdtempSync, rmdirSync } from "node:fs";
 import { test } from "node:test";
 import path from "node:path";
 
@@ -16,7 +17,8 @@ async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
       'relations', (SELECT jsonb_agg(jsonb_build_array(c.relname, c.relkind,
         c.relpersistence, c.relrowsecurity, c.relforcerowsecurity,
         c.relowner::text, c.relam::text, c.reloptions, c.relreplident,
-        toast.reloptions) ORDER BY c.relname)
+        c.reloftype::text, c.reltablespace::text,
+        toast.reltablespace::text, toast.reloptions) ORDER BY c.relname)
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         LEFT JOIN pg_class toast ON toast.oid = c.reltoastrelid
         WHERE n.nspname = 'public'),
@@ -80,7 +82,9 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
   let database: TestDatabase | undefined;
   let restricted: postgres.Sql | undefined;
   const role = `task6a_base_v1_${randomBytes(6).toString("hex")}`;
-  let roleCreated = false;
+  const tablespace = `task6a_base_space_${randomBytes(6).toString("hex")}`;
+  let privateClusterVerified = false;
+  let tablespaceDirectory: string | undefined;
   let testFailure: unknown;
   try {
     const identity = await admin<Array<{
@@ -97,10 +101,10 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
     const socketDirectory = path.dirname(expectedDataDirectory!);
     assert.ok(identity[0]?.socket_directories.split(",").map((value) => value.trim())
       .includes(socketDirectory));
+    privateClusterVerified = true;
 
     database = await createIsolatedTestDatabase();
     await admin.unsafe(`CREATE ROLE "${role}" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
-    roleCreated = true;
     await admin.unsafe(`GRANT CONNECT ON DATABASE "${database.database}" TO "${role}"`);
     await database.sql.unsafe(`GRANT USAGE ON SCHEMA public TO "${role}"`);
     restricted = postgres({ host: socketDirectory, port: Number(parsed.port),
@@ -146,6 +150,16 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
     await verifyOrdinaryBaseSchemaCatalogReadOnlyV1(restricted);
     assert.equal(await schemaFingerprint(database.sql), before);
 
+    const typeColumns = await database.sql<Array<{ definition: string }>>`
+      SELECT string_agg(format('%I %s', a.attname,
+        pg_catalog.format_type(a.atttypid, a.atttypmod)), ', ' ORDER BY a.attnum)
+        AS definition
+      FROM pg_catalog.pg_attribute a
+      WHERE a.attrelid = 'public.runs'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+    `;
+    assert.ok(typeColumns[0]?.definition);
+    tablespaceDirectory = mkdtempSync(path.join(socketDirectory, "tablespace-"));
+    await admin.unsafe(`CREATE TABLESPACE "${tablespace}" LOCATION '${tablespaceDirectory}'`);
     const drifts = [
       ["missing table", "DROP TABLE public.medic_checks"],
       ["runtime role owns base table", `ALTER TABLE public.rules OWNER TO "${role}"`],
@@ -154,6 +168,8 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
       ["disabled referencing FK triggers", "ALTER TABLE public.steps DISABLE TRIGGER ALL"],
       ["disabled referenced FK triggers", "ALTER TABLE public.runs DISABLE TRIGGER ALL"],
       ["inherited child table", "CREATE TABLE public.shadow_runs () INHERITS (public.runs)"],
+      ["typed base table", `CREATE TYPE public.task6a_runs_row_type AS (${typeColumns[0].definition}); ALTER TABLE public.runs OF public.task6a_runs_row_type`],
+      ["non-source tablespace", `ALTER TABLE public.medic_checks SET TABLESPACE "${tablespace}"`],
       ["non-source table access method", "CREATE ACCESS METHOD task6a_alt_heap TYPE TABLE HANDLER heap_tableam_handler; ALTER TABLE public.runs SET ACCESS METHOD task6a_alt_heap"],
       ["non-source table options", "ALTER TABLE public.runs SET (autovacuum_enabled = false)"],
       ["non-source TOAST options", "ALTER TABLE public.runs SET (toast.autovacuum_enabled = false)"],
@@ -225,15 +241,30 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
     testFailure = error;
     throw error;
   } finally {
-    const cleanupFailures: unknown[] = [];
-    try { await restricted?.end({ timeout: 5 }); } catch (error) { cleanupFailures.push(error); }
-    try { await database?.cleanup(); } catch (error) { cleanupFailures.push(error); }
+    const cleanupFailures: string[] = [];
+    try { await restricted?.end({ timeout: 5 }); } catch { cleanupFailures.push("restricted_connection"); }
+    try { await database?.cleanup(); } catch { cleanupFailures.push("fixture_database"); }
+    let tablespaceDropped = false;
     try {
-      if (roleCreated) await admin.unsafe(`DROP ROLE "${role}"`);
-    } catch (error) { cleanupFailures.push(error); }
-    try { await admin.end({ timeout: 5 }); } catch (error) { cleanupFailures.push(error); }
-    if (testFailure === undefined && cleanupFailures.length > 0) {
-      throw new AggregateError(cleanupFailures, "ISOLATED_BASE_CATALOG_TEST_CLEANUP_FAILED");
+      if (tablespaceDirectory) {
+        await admin.unsafe(`DROP TABLESPACE IF EXISTS "${tablespace}"`);
+        tablespaceDropped = true;
+      }
+    } catch { cleanupFailures.push("private_tablespace"); }
+    try {
+      if (tablespaceDirectory && tablespaceDropped) rmdirSync(tablespaceDirectory);
+    } catch { cleanupFailures.push("private_tablespace_directory"); }
+    try {
+      if (privateClusterVerified) await admin.unsafe(`DROP ROLE IF EXISTS "${role}"`);
+    } catch { cleanupFailures.push("private_role"); }
+    try { await admin.end({ timeout: 5 }); } catch { cleanupFailures.push("admin_connection"); }
+    if (cleanupFailures.length > 0) {
+      const cleanupError = new Error(`ISOLATED_BASE_CATALOG_TEST_CLEANUP_FAILED:${cleanupFailures.join(",")}`);
+      if (testFailure !== undefined) {
+        throw new AggregateError([testFailure, cleanupError],
+          "ISOLATED_BASE_CATALOG_TEST_AND_CLEANUP_FAILED");
+      }
+      throw cleanupError;
     }
   }
 });
