@@ -277,7 +277,8 @@ function normalizedGitPath(value: string, base: string): string {
 }
 
 type GitWorktreeListing = Readonly<{ roots: readonly string[]; prunableRoots: readonly string[];
-  locked: readonly Readonly<{ root: string; reason: string | null }>[]; barePrimaryRoot: string | null }>;
+  locked: readonly Readonly<{ root: string; reason: string | null }>[]; barePrimaryRoot: string | null;
+  headOids: readonly Readonly<{ root: string; oid: string }>[] }>;
 
 function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer, oidWidth: 40 | 64): GitWorktreeListing {
   const value = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -286,6 +287,7 @@ function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer, oidWidth: 40 | 6
   const roots: string[] = [];
   const prunableRoots: string[] = [];
   const locked: Array<Readonly<{ root: string; reason: string | null }>> = [];
+  const headOids: Array<Readonly<{ root: string; oid: string }>> = [];
   const seen = new Set<string>();
   let barePrimaryRoot: string | null = null;
   for (const record of records) {
@@ -310,6 +312,7 @@ function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer, oidWidth: 40 | 6
     const root = normalizedGitPath(rawRoot, "/");
     if (seen.has(root)) fail();
     seen.add(root);
+    if (!bareRecord) headOids.push(Object.freeze({ root, oid: fields[1]!.slice(5) }));
     if (bareRecord) {
       barePrimaryRoot = root;
       roots.push(root);
@@ -322,7 +325,7 @@ function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer, oidWidth: 40 | 6
   }
   if (roots.length === 0 || seen.size > MAX_ENTRIES) fail();
   return Object.freeze({ roots: Object.freeze(roots), prunableRoots: Object.freeze(prunableRoots),
-    locked: Object.freeze(locked), barePrimaryRoot });
+    locked: Object.freeze(locked), barePrimaryRoot, headOids: Object.freeze(headOids) });
 }
 
 function objectIdWidth(format: string): 40 | 64 {
@@ -364,7 +367,7 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
   scope: Scope): Readonly<{ kind: CandidateKind; gitPrimaryRoot: string | null; dirty: boolean | null;
     listedRoots: readonly string[]; prunableRoots: readonly string[];
     locked: readonly Readonly<{ root: string; reason: string | null }>[];
-    barePrimaryRoot: string | null; reason: string | null }> {
+    barePrimaryRoot: string | null; reason: string | null; headOid?: string }> {
   const marker = path.join(root, ".git");
   if (isMissing(marker)) return { kind: "unresolved", gitPrimaryRoot: null, dirty: null,
     listedRoots: [], prunableRoots: [], locked: [], barePrimaryRoot: null, reason: "non-git-child" };
@@ -419,6 +422,8 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
         prunableRoots: [], locked: listing.locked, barePrimaryRoot: null,
         reason: "absent-locked-git-list" };
     }
+    const headOid = listing.headOids.find((entry) => entry.root === root)?.oid;
+    if (!headOid) fail();
     for (const listedRoot of listedRoots) held.hold(listedRoot);
     const gitdir = normalizedGitPath(line(git(["rev-parse", "--git-dir"])), root);
     const commonDir = normalizedGitPath(line(git(["rev-parse", "--git-common-dir"])), root);
@@ -452,7 +457,8 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
     }
     const dirty = git(["status", "--porcelain=v2", "--untracked-files=all"]).length !== 0;
     return { kind: root === primary ? "primary-git" : "linked-git", gitPrimaryRoot: primary,
-      dirty, listedRoots, prunableRoots: [], locked: listing.locked, barePrimaryRoot: null, reason: null };
+      dirty, listedRoots, prunableRoots: [], locked: listing.locked, barePrimaryRoot: null,
+      reason: null, headOid };
   } finally {
     if (markerDescriptor !== null) {
       try { closeSync(markerDescriptor); }
@@ -506,7 +512,8 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     const blockers: Array<Readonly<{ root: string; reason: string }>> = absentAgentsParents.map((root) =>
       Object.freeze({ root, reason: "absent-workflow-agents-discovery-parent" }));
     const listedGroups: Array<readonly string[]> = [];
-    const firstByRoot = new Map<string, Readonly<{ base: string; zone: Zone; listedHash: string; reason: string | null }>>();
+    const firstByRoot = new Map<string, Readonly<{ base: string; zone: Zone; listedHash: string;
+      reason: string | null; headOid: string | null }>>();
     const parentGitLists = new Map<string, string>();
     const nonGitParents: string[] = [];
     const absentLockedRoots = new Set<string>();
@@ -550,7 +557,8 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
         if (git.listedRoots.length > 0) listedGroups.push(git.listedRoots);
         firstByRoot.set(root, Object.freeze({ base, zone,
           listedHash: hashCanonicalJson({ roots: git.listedRoots, prunableRoots: git.prunableRoots,
-            locked: git.locked, barePrimaryRoot: git.barePrimaryRoot }), reason: git.reason }));
+            locked: git.locked, barePrimaryRoot: git.barePrimaryRoot }), reason: git.reason,
+          headOid: git.headOid ?? null }));
         entries.push(Object.freeze({ root, zone, kind: git.kind, dev: String(stat.dev), ino: String(stat.ino),
           birthtimeNs: String(stat.birthtimeNs), gitPrimaryRoot: git.gitPrimaryRoot, dirty: git.dirty,
           sourceBuildProvenance: "unverified" as const,
@@ -593,6 +601,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
         const fresh = observeGitCandidate(held, root, first.base, first.zone, scope);
         if (fresh.kind !== entry.kind || fresh.gitPrimaryRoot !== entry.gitPrimaryRoot
           || fresh.dirty !== entry.dirty || fresh.reason !== first.reason
+          || (fresh.headOid ?? null) !== first.headOid
           || hashCanonicalJson({ roots: fresh.listedRoots, prunableRoots: fresh.prunableRoots,
             locked: fresh.locked, barePrimaryRoot: fresh.barePrimaryRoot }) !== first.listedHash
           || held.gitAdminChurnCandidateRoots().includes(root)) fail();
@@ -611,7 +620,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
         const repeatedSha = git(["rev-parse", "--verify", "HEAD^{commit}"]);
         if (sourceSha.length !== width || sourceTreeHash.length !== width
           || !/^[a-f0-9]+$/.test(sourceSha) || !/^[a-f0-9]+$/.test(sourceTreeHash)
-          || repeatedSha !== sourceSha) fail();
+          || repeatedSha !== sourceSha || sourceSha !== first.headOid) fail();
         checkPhysical();
         return Object.freeze({ root, gitPrimaryRoot: entry.gitPrimaryRoot!, sourceSha, sourceTreeHash });
       };
@@ -654,6 +663,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
       operation = "candidate-recheck-compare";
       if (fresh.kind !== entry.kind || fresh.gitPrimaryRoot !== entry.gitPrimaryRoot
         || fresh.dirty !== entry.dirty || fresh.reason !== first.reason
+        || (fresh.headOid ?? null) !== first.headOid
         || hashCanonicalJson({ roots: fresh.listedRoots, prunableRoots: fresh.prunableRoots,
           locked: fresh.locked, barePrimaryRoot: fresh.barePrimaryRoot }) !== first.listedHash
         || hashCanonicalJson(freshPids) !== hashCanonicalJson(entry.referencingPids)) fail();

@@ -713,6 +713,122 @@ test("held source tree is derived from the captured commit, not a second HEAD", 
   }
 });
 
+test("held source refuses a same-tree linked HEAD change after its last SHA read", async () => {
+  const testHome = fixture();
+  const originalSpawn = childProcess.spawnSync;
+  try {
+    const primary = path.join(testHome.ownerHomeRoot, "projects", "story");
+    mkdirSync(primary);
+    initRepo(primary);
+    const originalHead = git(["-C", primary, "rev-parse", "HEAD"]);
+    git(["-C", primary, "commit", "-q", "--allow-empty", "-m", "same-tree successor"]);
+    const successorHead = git(["-C", primary, "rev-parse", "HEAD"]);
+    assert.equal(git(["-C", primary, "rev-parse", `${originalHead}^{tree}`]),
+      git(["-C", primary, "rev-parse", `${successorHead}^{tree}`]));
+    const runtime = path.join(primary, ".worktrees", "story-1");
+    mkdirSync(path.dirname(runtime));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-1", runtime, originalHead]);
+    let commitReads = 0;
+    let advanced = false;
+    await assert.rejects(observeWithHeldRuntimeCandidate({ ownerHomeRoot: testHome.ownerHomeRoot,
+      workspaceRoot: testHome.workspaceRoot }, async (_entries, withHeld) => {
+      await withHeld(runtime, async (_physical, _recheckPhysical, observeSource) => {
+        childProcess.spawnSync = ((file: string, args: readonly string[], options: unknown) => {
+          const result = Reflect.apply(originalSpawn, childProcess, [file, args, options]);
+          if (file === "/usr/bin/git" && args.includes(runtime) && args.includes("HEAD^{commit}")) {
+            commitReads += 1;
+            if (commitReads === 2) {
+              const update = Reflect.apply(originalSpawn, childProcess, ["/usr/bin/git",
+                ["-C", primary, "update-ref", "refs/heads/runtime-1", successorHead], options]);
+              assert.equal(update.status, 0);
+              advanced = true;
+            }
+          }
+          return result;
+        }) as unknown as typeof spawnSync;
+        syncBuiltinESMExports();
+        await observeSource();
+      });
+    }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+    assert.equal(advanced, true);
+    assert.equal(git(["-C", runtime, "rev-parse", "HEAD"]), successorHead);
+  } finally {
+    childProcess.spawnSync = originalSpawn;
+    syncBuiltinESMExports();
+    testHome.close();
+  }
+});
+
+test("catalog second pass refuses a same-tree linked HEAD change after the held callback", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.ownerHomeRoot, "projects", "story");
+    mkdirSync(primary);
+    initRepo(primary);
+    const originalHead = git(["-C", primary, "rev-parse", "HEAD"]);
+    git(["-C", primary, "commit", "-q", "--allow-empty", "-m", "same-tree successor"]);
+    const successorHead = git(["-C", primary, "rev-parse", "HEAD"]);
+    const runtime = path.join(primary, ".worktrees", "story-1");
+    mkdirSync(path.dirname(runtime));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-1", runtime, originalHead]);
+    await assert.rejects(observeWithHeldRuntimeCandidate({ ownerHomeRoot: testHome.ownerHomeRoot,
+      workspaceRoot: testHome.workspaceRoot }, async (_entries, withHeld) => {
+      await withHeld(runtime, async (_physical, _recheckPhysical, observeSource) => {
+        assert.equal((await observeSource()).sourceSha, originalHead);
+      });
+      git(["-C", primary, "update-ref", "refs/heads/runtime-1", successorHead]);
+    }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+  } finally { testHome.close(); }
+});
+
+test("held source rejects a transient A-B-A ref around both source SHA reads", async () => {
+  const testHome = fixture();
+  const originalSpawn = childProcess.spawnSync;
+  try {
+    const primary = path.join(testHome.ownerHomeRoot, "projects", "story");
+    mkdirSync(primary);
+    initRepo(primary);
+    const originalHead = git(["-C", primary, "rev-parse", "HEAD"]);
+    git(["-C", primary, "commit", "-q", "--allow-empty", "-m", "same-tree successor"]);
+    const successorHead = git(["-C", primary, "rev-parse", "HEAD"]);
+    const runtime = path.join(primary, ".worktrees", "story-1");
+    mkdirSync(path.dirname(runtime));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-1", runtime, originalHead]);
+    let commitReads = 0;
+    await assert.rejects(observeWithHeldRuntimeCandidate({ ownerHomeRoot: testHome.ownerHomeRoot,
+      workspaceRoot: testHome.workspaceRoot }, async (_entries, withHeld) => {
+      await withHeld(runtime, async (_physical, _recheckPhysical, observeSource) => {
+        childProcess.spawnSync = ((file: string, args: readonly string[], options: unknown) => {
+          if (file === "/usr/bin/git" && args.includes(runtime) && args.includes("HEAD^{commit}")) {
+            commitReads += 1;
+            if (commitReads === 1) {
+              const update = Reflect.apply(originalSpawn, childProcess, ["/usr/bin/git",
+                ["-C", primary, "update-ref", "refs/heads/runtime-1", successorHead], options]);
+              assert.equal(update.status, 0);
+            }
+            const result = Reflect.apply(originalSpawn, childProcess, [file, args, options]);
+            if (commitReads === 2) {
+              const update = Reflect.apply(originalSpawn, childProcess, ["/usr/bin/git",
+                ["-C", primary, "update-ref", "refs/heads/runtime-1", originalHead], options]);
+              assert.equal(update.status, 0);
+            }
+            return result;
+          }
+          return Reflect.apply(originalSpawn, childProcess, [file, args, options]);
+        }) as unknown as typeof spawnSync;
+        syncBuiltinESMExports();
+        await observeSource();
+      });
+    }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+    assert.equal(commitReads, 2);
+    assert.equal(git(["-C", runtime, "rev-parse", "HEAD"]), originalHead);
+  } finally {
+    childProcess.spawnSync = originalSpawn;
+    syncBuiltinESMExports();
+    testHome.close();
+  }
+});
+
 test("read-only Git status never executes a repository-local fsmonitor command", async () => {
   const testHome = fixture();
   try {

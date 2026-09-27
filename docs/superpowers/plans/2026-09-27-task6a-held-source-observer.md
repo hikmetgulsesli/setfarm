@@ -16,7 +16,13 @@ physical interval, without granting owner or publication authority.
   HEAD drift. Resolve the tree from the captured commit, not from a second
   HEAD lookup, so a temporary A→B→A ref change cannot cross the pair. Late,
   repeated, retained, missing, or changed
-  physical/Git state continues to refuse. This observes the committed base,
+  physical/Git state continues to refuse. Codex review found that a same-tree
+  linked branch update through the primary repo was still invisible to the
+  prior catalog comparison. Preserve each Git-listed HEAD OID in the held
+  listing and compare it in both the callback recheck and catalog second pass.
+  Independent rereview then found an A→B→A window around both source reads;
+  require their matching SHA to equal the first held HEAD OID as well.
+  This observes the committed base,
   not uncommitted worktree contents or a verified build.
 - `tests/internal-production/baseline-positive-worktree-physical-catalog-v2.test.ts`:
   start RED with a real linked runtime Git fixture. Prove the exact frozen
@@ -24,7 +30,10 @@ physical interval, without granting owner or publication authority.
   source callback cannot be used after the hold, and HEAD/Git-admin churn
   refuses instead of producing a trustworthy source observation. Inject a
   crossed tree lookup to reproduce the A/B pair bug RED before the pinned
-  commit-tree resolution turns it GREEN.
+  commit-tree resolution turns it GREEN. Reproduce a same-tree linked HEAD
+  update after the source SHA read RED, then require held and second-pass
+  rejection GREEN. Reproduce a source-read-only A→B→A ref window RED and bind
+  to the first held HEAD identity GREEN.
 
 Keep the catalog and receipt candidate diagnostic-only. No DB writes,
 credentials, owner admission, live service change or cutover gate change.
