@@ -18,6 +18,8 @@ const RECEIPTS = "public.internal_production_positive_worktree_receipt_journal_v
 const LINKS = "public.internal_production_positive_worktree_recovery_reservation_receipt_links_v1";
 const PUBLICATIONS = "public.internal_production_v3_recovery_claim_publications_v1";
 const SCHEMA = "setfarm.internal-production-positive-worktree-private-recovery-reservation-receipt-link.v1";
+const RESERVATION_SCHEMA = "setfarm.internal-production-positive-worktree-private-recovery-precreate-reservation.v1";
+const RECEIPT_SCHEMA = "setfarm.internal-production-positive-worktree-binding-receipt.v1";
 const TOKEN_SCHEMA = "setfarm.internal-production-positive-worktree-recovery-lease-token-commitment.v1";
 const FENCE_SCHEMA = "setfarm.internal-production-positive-worktree-fence-commitment.v1";
 const REFUSED = "TASK6A_PRIVATE_RECOVERY_RESERVATION_RECEIPT_LINK_REFUSED";
@@ -62,11 +64,11 @@ export const PRIVATE_POSITIVE_WORKTREE_RECOVERY_RESERVATION_RECEIPT_LINK_V1_STAT
 type Reservation = Readonly<{ reservationHash: string; runId: string;
   storyDbId: string; storyId: string; dispatchId: string; recoveryCaseId: string;
   revisionId: string; ownerInstanceId: string; root: string; sourceSha: string;
-  sourceTreeHash: string; leaseTokenHash: string }>;
+  sourceTreeHash: string; leaseTokenHash: string; canonicalBody: string }>;
 type Receipt = Readonly<{ receiptHash: string; runId: string; claimId: string;
   attemptId: string; sessionId: string; generation: number; ownerInstanceId: string;
   root: string; sourceSha: string; sourceTreeHash: string;
-  physicalIdentityHash: string; fenceTokenHash: string }>;
+  physicalIdentityHash: string; fenceTokenHash: string; canonicalBody: string }>;
 type LinkRow = Readonly<{ linkHash: string; reservationHash: string;
   receiptHash: string; dispatchId: string; runId: string; storyDbId: string;
   storyId: string; claimId: string; attemptId: string; sessionId: string;
@@ -122,11 +124,20 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
         dispatch_id AS "dispatchId", recovery_case_id AS "recoveryCaseId",
         revision_id AS "revisionId", owner_instance_id AS "ownerInstanceId",
         root, source_sha AS "sourceSha", source_tree_hash AS "sourceTreeHash",
-        lease_token_hash AS "leaseTokenHash"
+        lease_token_hash AS "leaseTokenHash", canonical_body AS "canonicalBody"
         FROM ${RESERVATIONS} WHERE reservation_hash = $1`, [reservationHash]);
       if (reservations.length !== 1) fail();
       const reservation = reservations[0]!;
       if (reservation.runId !== heads[0]!.runId || reservation.storyId !== heads[0]!.storyId) fail();
+      const reservationBody = { schema: RESERVATION_SCHEMA, runId: reservation.runId,
+        storyDbId: reservation.storyDbId, storyId: reservation.storyId,
+        dispatchId: reservation.dispatchId, recoveryCaseId: reservation.recoveryCaseId,
+        revisionId: reservation.revisionId, ownerInstanceId: reservation.ownerInstanceId,
+        root: reservation.root, sourceSha: reservation.sourceSha,
+        sourceTreeHash: reservation.sourceTreeHash,
+        leaseTokenHash: reservation.leaseTokenHash };
+      if (canonicalJsonStringify(reservationBody) !== reservation.canonicalBody
+        || hashCanonicalJson(reservationBody) !== reservation.reservationHash) fail();
       const deliveries = await tx.unsafe<Array<{ recoveryCaseId: string;
         revisionId: string; runId: string; storyId: string; state: string;
         ownerInstanceId: string | null; leaseToken: string | null;
@@ -325,10 +336,18 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
         owner_instance_id AS "ownerInstanceId", root,
         source_sha AS "sourceSha", source_tree_hash AS "sourceTreeHash",
         physical_identity_hash AS "physicalIdentityHash",
-        fence_token_hash AS "fenceTokenHash"
+        fence_token_hash AS "fenceTokenHash", canonical_body AS "canonicalBody"
         FROM ${RECEIPTS} WHERE receipt_hash = $1 FOR UPDATE`, [receiptHash]);
       if (receipts.length !== 1) fail();
       const receipt = receipts[0]!;
+      const receiptBody = { schema: RECEIPT_SCHEMA, runId: receipt.runId,
+        claimId: receipt.claimId, attemptId: receipt.attemptId,
+        sessionId: receipt.sessionId, ownerInstanceId: receipt.ownerInstanceId,
+        generation: receipt.generation, fenceTokenHash: receipt.fenceTokenHash,
+        root: receipt.root, physicalIdentityHash: receipt.physicalIdentityHash,
+        sourceSha: receipt.sourceSha, sourceTreeHash: receipt.sourceTreeHash };
+      if (canonicalJsonStringify(receiptBody) !== receipt.canonicalBody
+        || hashCanonicalJson(receiptBody) !== receipt.receiptHash) fail();
       if (receipt.runId !== reservation.runId
         || receipt.claimId !== publication.claimId
         || receipt.attemptId !== delivery.attemptId

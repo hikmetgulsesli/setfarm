@@ -26,7 +26,9 @@ block cutover.
   revision, dispatch, finding set, publication, story/claim/attempt/session/V3 binding and
   the receipt inside one owned SERIALIZABLE transaction. Read and recheck the
   immutable reservation parent without an early row lock, preserving the
-  delivery-first canonical lock order. Refuse any absent,
+  delivery-first canonical lock order. Reconstruct both parent canonical
+  bodies from every projected column and require exact bytes/hash; a direct
+  row whose sibling columns disagree with its body is not linkable. Refuse any absent,
   duplicate, crossed, terminal or drifted chain.
 - Parse the stored publication handoff through the exact V3 schema, require
   byte-canonical JSON and its SHA-256 hash, and compare its full revision
@@ -78,6 +80,7 @@ the receipt to test absent-publication refusal; this is not a production
 lifecycle claim. Test missing publication, crossed input hashes, token
 rotation, expired delivery and attempt, mutable current-case/status/step
 drift, crossed case opening identity, malformed historical finding IDs,
+forged reservation or receipt canonical-body/column divergence,
 invalid delivery/runtime state pair,
 pre-creation runtime heartbeat, non-loop claim step,
 changed delivery authorization, absent, shifted or pre-session delivery start,

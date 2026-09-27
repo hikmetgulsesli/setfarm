@@ -30,11 +30,14 @@ import { requireTask6aPrivateLoopbackHostname } from "./task6a-private-cluster-l
 const expectedDataDirectory = process.env.SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY;
 const REFUSED = /TASK6A_PRIVATE_RECOVERY_RESERVATION_RECEIPT_LINK_REFUSED/;
 const LINK = "public.internal_production_positive_worktree_recovery_reservation_receipt_links_v1";
+const RESERVATION_SCHEMA = "setfarm.internal-production-positive-worktree-private-recovery-precreate-reservation.v1";
+const TOKEN_SCHEMA = "setfarm.internal-production-positive-worktree-recovery-lease-token-commitment.v1";
 
 for (const dispatchClass of ["product_implementation", "supervisor_repair"] as const) {
-for (const malformedFindingIds of [false, true]) {
-test(`private ${dispatchClass} recovery link ${malformedFindingIds
-  ? "refuses malformed authoritative finding IDs" : "requires the exact committed lease/publication/receipt chain"}`, {
+for (const scenario of ["normal", "malformed-finding", "malformed-reservation", "malformed-receipt"] as const) {
+const malformedFindingIds = scenario === "malformed-finding";
+test(`private ${dispatchClass} recovery link ${scenario === "normal"
+  ? "requires the exact committed lease/publication/receipt chain" : `refuses ${scenario}`}`, {
   skip: expectedDataDirectory ? false : "requires an explicitly identified private PostgreSQL 17 cluster",
 }, async () => {
   assert.equal(process.env.SETFARM_PG_URL, undefined);
@@ -200,7 +203,24 @@ test(`private ${dispatchClass} recovery link ${malformedFindingIds
       sourceSha, sourceTreeHash };
     assert.equal(fs.existsSync(root), false);
 stage = "reservation-before-claim";
-    const reservation = await appendPrivateDiagnosticRecoveryPrecreateReservationV1(database.sql, input);
+    const reservation = scenario === "malformed-reservation" ? await (async () => {
+      const leaseTokenHash = hashCanonicalJson({ schema: TOKEN_SCHEMA,
+        dispatchId: handoff.dispatchId, leaseToken: handoff.lease.leaseToken });
+      const body = { schema: RESERVATION_SCHEMA, runId, storyDbId, storyId,
+        dispatchId: handoff.dispatchId, recoveryCaseId: handoff.recoveryCaseId,
+        revisionId: handoff.revisionId, ownerInstanceId, root: `${root}-forged`,
+        sourceSha, sourceTreeHash, leaseTokenHash };
+      const reservationHash = hashCanonicalJson(body);
+      await database.sql`INSERT INTO public.internal_production_positive_worktree_recovery_precreate_reservations_v1 (
+        reservation_hash, run_id, story_db_id, story_id, dispatch_id,
+        recovery_case_id, revision_id, owner_instance_id, root, source_sha,
+        source_tree_hash, lease_token_hash, canonical_body
+      ) VALUES (${reservationHash}, ${runId}, ${storyDbId}, ${storyId},
+        ${handoff.dispatchId}, ${handoff.recoveryCaseId}, ${handoff.revisionId},
+        ${ownerInstanceId}, ${root}, ${sourceSha}, ${sourceTreeHash},
+        ${leaseTokenHash}, ${canonicalJsonStringify(body)})`;
+      return { reservationHash };
+    })() : await appendPrivateDiagnosticRecoveryPrecreateReservationV1(database.sql, input);
     const claimId = 999988;
     const attemptId = `ATT_${randomBytes(8).toString("hex")}`;
     const sessionId = `RTS_${randomBytes(8).toString("hex")}`;
@@ -266,9 +286,22 @@ stage = "reservation-before-claim";
     const physical = { root, dev: "11", ino: "22", birthtimeNs: "33",
       gitPrimaryRoot: `/tmp/projects/${suffix}` };
     const receipt = derivePositiveWorktreeBindingReceiptCandidateV1({ attempt, session, physical }).receipt;
-    await appendPrivateDiagnosticPositiveWorktreeReceiptJournalV1(database.sql,
-      { attempt, session, physical, receipt });
-    const exact = { reservationHash: reservation.reservationHash, receiptHash: receipt.receiptHash };
+    const receiptHash = scenario === "malformed-receipt" ? await (async () => {
+      const { receiptHash: _ignored, ...body } = receipt;
+      const forgedBody = { ...body, root: `${root}-forged` };
+      const forgedHash = hashCanonicalJson(forgedBody);
+      await database.sql`INSERT INTO public.internal_production_positive_worktree_receipt_journal_v1 (
+        receipt_hash, run_id, claim_id, attempt_id, session_id, owner_instance_id,
+        generation, root, physical_identity_hash, fence_token_hash, source_sha,
+        source_tree_hash, canonical_body
+      ) VALUES (${forgedHash}, ${runId}, ${claimId}, ${attemptId}, ${sessionId},
+        ${ownerInstanceId}, 1, ${root}, ${receipt.physicalIdentityHash},
+        ${receipt.fenceTokenHash}, ${sourceSha}, ${sourceTreeHash},
+        ${canonicalJsonStringify(forgedBody)})`;
+      return forgedHash;
+    })() : (await appendPrivateDiagnosticPositiveWorktreeReceiptJournalV1(database.sql,
+      { attempt, session, physical, receipt })).receiptHash;
+    const exact = { reservationHash: reservation.reservationHash, receiptHash };
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
       REFUSED, "the immutable V3 publication is mandatory");
 
@@ -284,10 +317,10 @@ stage = "reservation-before-claim";
       ${hashCanonicalJson(handoff)},
       (SELECT claimed_at FROM public.claim_log WHERE id = ${claimId})
     )`;
-    if (malformedFindingIds) {
-      stage = "malformed-authoritative-finding-row";
+    if (scenario !== "normal") {
+      stage = `malformed-parent-or-finding:${scenario}`;
       await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
-        REFUSED, "the authoritative finding IDs must match the recovery revision");
+        REFUSED, "a malformed immutable parent/finding row cannot be linked");
       return;
     }
     for (const crossed of [
