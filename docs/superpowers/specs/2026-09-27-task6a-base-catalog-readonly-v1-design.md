@@ -39,6 +39,12 @@ The restricted login must not be a member of any required base table, index,
 or sequence owner role; denied schema CREATE alone does not deny owner DDL.
 Required ordinary base tables must have no rewrite rules, since an INSERT
 `DO INSTEAD NOTHING` rule would change runtime writes without changing columns.
+Required base columns must have neither fast-default `atthasmissing` nor
+`attmissingval`; a later-added column can otherwise expose stale logical
+values after its visible default is removed.
+Before any live admission, audit the target catalog read-only: a historical
+column created by an ordinary ALTER fallback may legitimately carry a fast
+default and will fail this strict check until separately reviewed recovery.
 `claim_log.run_id` deliberately has no base foreign key. A canonical
 `runs.run_number` is NOT NULL; a legacy nullable fallback is intentionally
 rejected until a separately reviewed recovery resolves it.

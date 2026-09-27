@@ -25,6 +25,7 @@ async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
       'columns', (SELECT jsonb_agg(jsonb_build_array(c.relname, a.attname,
         format_type(a.atttypid, a.atttypmod), a.attnotnull,
         a.attcollation::text, a.attidentity, a.attgenerated,
+        a.atthasmissing, a.attmissingval::text,
         pg_get_expr(d.adbin, d.adrelid)) ORDER BY c.relname, a.attname)
         FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
         JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -138,6 +139,7 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
       ["disabled referenced FK triggers", "ALTER TABLE public.runs DISABLE TRIGGER ALL"],
       ["inherited child table", "CREATE TABLE public.shadow_runs () INHERITS (public.runs)"],
       ["wrong collation", "ALTER TABLE public.rules ALTER COLUMN title TYPE text COLLATE \"C\""],
+      ["stale fast-default missing value", "ALTER TABLE public.stories RENAME COLUMN output TO old_output; ALTER TABLE public.stories ADD COLUMN output text DEFAULT 'forged'; ALTER TABLE public.stories ALTER COLUMN output DROP DEFAULT"],
       ["row level security", "ALTER TABLE public.runs ENABLE ROW LEVEL SECURITY"],
       ["missing column", "ALTER TABLE public.steps DROP COLUMN started_at"],
       ["dropped then readded column", "ALTER TABLE public.steps DROP COLUMN started_at; ALTER TABLE public.steps ADD COLUMN started_at TIMESTAMPTZ"],

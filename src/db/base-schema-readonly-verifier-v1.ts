@@ -188,6 +188,8 @@ const COLUMN_SQL_V1 = `SELECT c.relname AS "table", a.attname AS "column",
   pg_get_expr(d.adbin, d.adrelid) AS "default",
   a.attisdropped AS dropped, a.attidentity AS identity,
   a.attgenerated AS generated,
+  a.atthasmissing AS "hasMissing",
+  a.attmissingval IS NOT NULL AS "missingPresent",
   CASE WHEN a.attcollation = 0 THEN 'none'
        WHEN a.attcollation = 'pg_catalog."default"'::regcollation THEN 'default'
        ELSE 'custom' END AS collation
@@ -327,6 +329,8 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         dropped: boolean;
         identity: string;
         generated: string;
+        hasMissing: boolean;
+        missingPresent: boolean;
         collation: string;
       }>>(COLUMN_SQL_V1);
       if (columns.length > 1024) mismatch();
@@ -343,6 +347,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
           || actual.typmod !== expected[3]
           || actual.notNull !== expected[4]
           || actual.default !== expected[5]
+          || actual.hasMissing || actual.missingPresent
           || actual.collation !== (expected[2] === "text" ? "default" : "none")) mismatch();
       }
       const indexes = await transaction.unsafe<Array<{
