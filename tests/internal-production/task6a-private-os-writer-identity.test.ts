@@ -129,7 +129,9 @@ test("private Task6A fixture denies new old-UID paths under a distinct successor
     assert.equal(exactRoot().uid, BigInt(runnerUid));
     assert.equal(fs.existsSync(denied), false);
     assert.equal(fs.lstatSync(created, { bigint: true }).uid, BigInt(successorUid));
-    assert.equal(fs.readFileSync(before, "utf8"), "probe\n");
+    const oldArtifact = fs.lstatSync(before, { bigint: true });
+    assert.equal(oldArtifact.uid, BigInt(oldUid));
+    assert.equal(oldArtifact.size, 6n);
   } catch (error) {
     failure = error;
     throw error;

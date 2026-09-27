@@ -40,7 +40,9 @@ First run an opt-in test with the second ownership transition absent: the
 old-UID write must succeed and the expected denial fail (RED). Add only the
 fixture ownership transfer, then prove old direct write and privilege escalation
 denied, successor write succeeds, cleanup exact, and default invocation
-skips. Run TypeScript, source manifest/digest, independent read-only review,
+skips. Validate the old artifact by owner and size, without a cross-UID read
+that would fail under `umask 077`; prove that umask RED/GREEN. Run TypeScript,
+source manifest/digest, independent read-only review,
 exact-head PR review, then clean-main build and merged-main opt-in fixture.
 
 ## File Map
