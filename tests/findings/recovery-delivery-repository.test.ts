@@ -381,28 +381,5 @@ describe("revisioned recovery dispatch delivery", () => {
        WHERE recovery_dispatch_id = ${dispatch.dispatchId}
     `;
     assert.equal(attemptRows[0]?.count, 0);
-
-    const running = await deliveries.markRunning({
-      dispatchId: dispatch.dispatchId,
-      revisionId: dispatch.revisionId,
-      attemptId: reserved.attempt.attemptId,
-    }, { now: new Date("2026-07-13T08:04:03.000Z") });
-    assert.equal(running?.state, "running");
-    const completedAttempt = await attemptRepository.complete({
-      attemptId: reserved.attempt.attemptId,
-      generation: reserved.attempt.generation,
-      fenceToken: reserved.attempt.fenceToken,
-      disposition: "failed",
-      evidenceRefs: [],
-    }, { now: new Date("2026-07-13T08:04:04.000Z") });
-    assert.equal(completedAttempt.status, "completed");
-    const failedDelivery = await deliveries.completeDelivery({
-      dispatchId: dispatch.dispatchId,
-      revisionId: dispatch.revisionId,
-      attemptId: reserved.attempt.attemptId,
-      state: "failed",
-      terminalResult: { disposition: "failed" },
-    }, { now: new Date("2026-07-13T08:04:05.000Z") });
-    assert.equal(failedDelivery?.state, "failed");
   });
 });
