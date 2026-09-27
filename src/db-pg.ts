@@ -15,6 +15,7 @@ import {
   applyContractSpineMigrationsIfNeeded,
   auditAuthorityV3ContractSpineThroughMigration31V1,
   auditCurrentContractSpineAuthorityLedgersAtV31Data,
+  contractSpineMigrationLockKey,
   inspectPendingBootstrapMainClaimHandoffGuardedSuccessorV1,
   V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY,
   verifyV3RecoveryClaimRuntimePublicationV1,
@@ -5353,15 +5354,18 @@ export async function resolveInternalProductionOwnerReservationCloseInTransactio
   return OWNER_ADMISSION_REPOSITORY_V1.resolveClose(sql, input);
 }
 
-export async function lockInternalProductionWorkflowRunInsertionFenceV1(
+async function lockInternalProductionV31InsertionFenceV1(
   sql: InternalProductionPgTransactionSql,
+  holdJournalRow: boolean,
 ): Promise<void> {
-  const rows = await sql<Array<{ version: number; name: string; checksum: string; state: string }>>`
-    SELECT version,name,checksum,state
-      FROM public.setfarm_schema_migrations
-     WHERE version = 31
-     FOR UPDATE
-  `;
+  // This exclusive transaction lock serializes run births with each other and
+  // with contract-spine apply/rollback paths without granting journal UPDATE.
+  await sql`SELECT pg_advisory_xact_lock(${contractSpineMigrationLockKey})`;
+  const rows = await sql.unsafe<Array<{ version: number; name: string; checksum: string; state: string }>>(
+    `SELECT version,name,checksum,state
+       FROM public.setfarm_schema_migrations
+      WHERE version = 31${holdJournalRow ? " FOR UPDATE" : ""}`,
+  );
   const row = rows[0];
   if (rows.length !== 1 || !row) {
     throw new Error("RUN_PERSISTENCE_MIGRATION_31_FENCE_UNAVAILABLE");
@@ -5372,6 +5376,12 @@ export async function lockInternalProductionWorkflowRunInsertionFenceV1(
     || row.checksum !== RUN_PERSISTENCE_MIGRATION_31_FENCE_V1.checksum
     || row.state !== "applied"
   ) throw new Error("RUN_PERSISTENCE_MIGRATION_31_FENCE_DRIFT");
+}
+
+export async function lockInternalProductionWorkflowRunInsertionFenceV1(
+  sql: InternalProductionPgTransactionSql,
+): Promise<void> {
+  await lockInternalProductionV31InsertionFenceV1(sql, false);
 }
 
 // SETFARM_P4_MIGRATION_32_TRANSACTION_V1:BEGIN
@@ -5493,8 +5503,9 @@ Promise<InternalProductionCurrentEntryMigration32TransactionV1> {
       await transaction.unsafe("SELECT set_config('lock_timeout', '5000ms', true)");
       await transaction.unsafe("SELECT set_config('statement_timeout', '30000ms', true)");
       await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
-      await lockInternalProductionWorkflowRunInsertionFenceV1(
+      await lockInternalProductionV31InsertionFenceV1(
         transaction as unknown as InternalProductionPgTransactionSql,
+        true,
       );
       state.transaction = transaction;
       readySettled = true;

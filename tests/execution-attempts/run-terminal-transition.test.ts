@@ -9,6 +9,7 @@ import type postgres from "postgres";
 
 import {
   applyContractSpineMigrations,
+  contractSpineMigrationLockKey,
   planContractSpineMigrations,
   readContractSpineMigrationAttestation,
   rollbackArtifactPublicationBatchLedgerToV22,
@@ -3909,12 +3910,7 @@ export const p4PairClose=createInternalProductionSourceRunLaunchTargetReservatio
           const pidRows = await transaction<Array<{ pid: number }>>`
             SELECT pg_backend_pid()::integer AS pid
           `;
-          await transaction`
-            SELECT version
-              FROM public.setfarm_schema_migrations
-             WHERE version=31
-             FOR UPDATE
-          `;
+          await transaction`SELECT pg_advisory_xact_lock(${contractSpineMigrationLockKey})`;
           reportFenceHeld(pidRows[0]!.pid);
           await fenceRelease;
         });

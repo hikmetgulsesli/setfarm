@@ -1866,7 +1866,7 @@ test("P4 transaction handle locks exact v31 and hides tentative result", async (
             return input.rows ?? [{
               version: 31,
               name: "031_operational_failure_cause_authority_v3",
-              checksum: "expected-v31-checksum",
+              checksum: v31Checksum,
               state: "applied",
             }];
           }
@@ -1931,6 +1931,10 @@ test("P4 transaction handle locks exact v31 and hides tentative result", async (
   assert.deepEqual(Reflect.ownKeys(handle), ["schema"]);
   assert.equal(handle.schema, "setfarm.internal-production-current-entry-migration-32-transaction.v1");
   assert.ok(Object.isFrozen(handle));
+  const advisoryLockIndex = held.events.findIndex((query) => query.includes("pg_advisory_xact_lock"));
+  const journalRowLockIndex = held.events.findIndex((query) => /WHERE version = 31 FOR UPDATE$/.test(query));
+  assert.ok(advisoryLockIndex >= 0 && journalRowLockIndex > advisoryLockIndex,
+    "migration32 opener holds the shared advisory fence before the exact V31 row lock");
 
   assert.equal(
     await api.stageInternalProductionCurrentEntryMigration32InTransactionV1(
