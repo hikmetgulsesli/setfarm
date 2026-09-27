@@ -53,8 +53,8 @@ function project(input: unknown): Input {
   return Object.freeze({ reservationHash, repo, root, sourceSha, sourceTreeHash });
 }
 
-function realDirectory(target: string): fs.Stats {
-  const stat = fs.lstatSync(target);
+function realDirectory(target: string): fs.BigIntStats {
+  const stat = fs.lstatSync(target, { bigint: true });
   if (!stat.isDirectory() || stat.isSymbolicLink()
     || fs.realpathSync(target) !== target) fail();
   return stat;
@@ -107,6 +107,8 @@ export function createPrivateDiagnosticPinnedWorktreeV1(
   root: string;
   sourceSha: string;
   sourceTreeHash: string;
+  physical: Readonly<{ root: string; dev: string; ino: string;
+    birthtimeNs: string; gitPrimaryRoot: string }>;
 }> {
   try {
     if (fixtureFault !== undefined && fixtureFault !== "after-add") fail();
@@ -151,8 +153,18 @@ export function createPrivateDiagnosticPinnedWorktreeV1(
       || !fs.lstatSync(path.join(fixed.root, "tracked.txt")).isFile()
       || fs.readFileSync(path.join(fixed.root, "tracked.txt"), "utf8") !== "pinned source\n"
       || registeredRoots(fixed.repo).filter((root) => root === fixed.root).length !== 1) fail();
+    const finalRootStat = realDirectory(fixed.root);
+    if (rootStat.dev <= 0n || rootStat.ino <= 0n || rootStat.birthtimeNs <= 0n
+      || finalRootStat.dev !== rootStat.dev || finalRootStat.ino !== rootStat.ino
+      || finalRootStat.birthtimeNs !== rootStat.birthtimeNs) fail();
+    const physical = Object.freeze({ root: fixed.root, dev: String(rootStat.dev),
+      ino: String(rootStat.ino), birthtimeNs: String(rootStat.birthtimeNs),
+      gitPrimaryRoot: fixed.repo });
+    if ([physical.dev, physical.ino, physical.birthtimeNs].some((value) =>
+      !/^[1-9][0-9]{0,19}$/.test(value))) fail();
     return Object.freeze({ schema: SCHEMA, authority: "diagnostic-only",
       reservationHash: fixed.reservationHash, root: fixed.root,
-      sourceSha: fixed.sourceSha, sourceTreeHash: fixed.sourceTreeHash });
+      sourceSha: fixed.sourceSha, sourceTreeHash: fixed.sourceTreeHash,
+      physical });
   } catch { return fail(); }
 }

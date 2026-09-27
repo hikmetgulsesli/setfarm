@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { types } from "node:util";
 import type postgres from "postgres";
@@ -12,13 +13,18 @@ import { lockV3RecoveryRunMutationAuthorityInTransaction } from
   "../recovery/v3-recovery-run-mutation-authority.js";
 import { createPrivateDiagnosticPinnedWorktreeV1 } from
   "./baseline-positive-worktree-create-only-fixture-v1.js";
+import { PRIVATE_POSITIVE_WORKTREE_RECOVERY_CREATE_RECEIPT_V1_TABLE as RECEIPTS } from
+  "./baseline-positive-worktree-private-recovery-create-receipt-v1.js";
 
 // One-shot, disposable-Git diagnostic. A database rollback cannot undo Git;
 // any partial root stays visible and its immutable reservation stays pending.
 // Direct SQL parents are not producer proof. This neither fences old OS/DB
-// writers nor publishes a receipt, settles a reservation, or grants an owner.
+// writers, settles a reservation, or grants an owner. The new receipt records
+// only a sampled physical identity, not authenticated producer provenance.
 const SCHEMA = "setfarm.internal-production-positive-worktree-private-recovery-reserved-create.v1";
 const RESERVATION_SCHEMA = "setfarm.internal-production-positive-worktree-private-recovery-precreate-reservation.v1";
+const RECEIPT_SCHEMA = "setfarm.internal-production-positive-worktree-private-recovery-create-receipt.v1";
+const IDENTITY_SCHEMA = "setfarm.internal-production-positive-worktree-identity.v2";
 const TOKEN_SCHEMA = "setfarm.internal-production-positive-worktree-recovery-lease-token-commitment.v1";
 const RECOVERY = "public.internal_production_positive_worktree_recovery_precreate_reservations_v1";
 const ORDINARY = "public.internal_production_positive_worktree_precreate_reservations_v1";
@@ -67,6 +73,18 @@ function timestamp(value: unknown): string {
   return value.toISOString();
 }
 
+function physical(root: string, gitPrimaryRoot: string): Readonly<{ root: string;
+  dev: string; ino: string; birthtimeNs: string; gitPrimaryRoot: string }> {
+  const stat = fs.lstatSync(root, { bigint: true });
+  if (!stat.isDirectory() || stat.isSymbolicLink()
+    || fs.realpathSync(root) !== root
+    || stat.dev <= 0n || stat.ino <= 0n || stat.birthtimeNs <= 0n) fail();
+  const dev = String(stat.dev), ino = String(stat.ino);
+  const birthtimeNs = String(stat.birthtimeNs);
+  if ([dev, ino, birthtimeNs].some((value) => !/^[1-9][0-9]{0,19}$/.test(value))) fail();
+  return Object.freeze({ root, dev, ino, birthtimeNs, gitPrimaryRoot });
+}
+
 function validateReservation(row: Reservation, requestedHash: string): void {
   if (row.reservationHash !== requestedHash
     || !/^RDISP_[a-f0-9]{64}$/.test(row.dispatchId)
@@ -112,7 +130,7 @@ function validateDelivery(delivery: Delivery | undefined, row: Reservation,
 export async function createPrivateDiagnosticRecoveryReservedWorktreeV1(
   sql: postgres.Sql, rawInput: unknown,
 ): Promise<Readonly<{ schema: typeof SCHEMA; authority: "diagnostic-only";
-  disposition: "created"; reservationHash: string }>> {
+  disposition: "created"; reservationHash: string; receiptHash: string }>> {
   try {
     const fixed = input(rawInput);
     return await sql.begin("isolation level serializable", async (tx) => {
@@ -350,6 +368,13 @@ export async function createPrivateDiagnosticRecoveryReservedWorktreeV1(
       const competing = await tx.unsafe(`SELECT reservation_hash FROM ${ORDINARY}
         WHERE root = $1 LIMIT 1`, [row.root]);
       if (competing.length !== 0) fail();
+      // A missing receipt table or a pre-existing private claim refuses
+      // before the irreversible Git add. This is not a table-level writer
+      // fence; concurrent direct SQL can still force rollback after add.
+      const priorReceipts = await tx.unsafe(`SELECT receipt_hash FROM ${RECEIPTS}
+        WHERE reservation_hash = $1 OR root = $2 LIMIT 1`,
+      [row.reservationHash, row.root]);
+      if (priorReceipts.length !== 0) fail();
       validateDelivery(delivery, row, await readDatabaseWallClock(tx, REFUSED));
 
       const created = createPrivateDiagnosticPinnedWorktreeV1({
@@ -360,6 +385,11 @@ export async function createPrivateDiagnosticRecoveryReservedWorktreeV1(
         || created.reservationHash !== row.reservationHash
         || created.root !== row.root || created.sourceSha !== row.sourceSha
         || created.sourceTreeHash !== row.sourceTreeHash) fail();
+      // The fixture captured this inode immediately after Git add. Never
+      // let later SQL round trips turn a replacement directory into the
+      // physical subject of its create receipt.
+      const createdPhysical = canonicalJsonStringify(created.physical);
+      if (canonicalJsonStringify(physical(row.root, fixed.repo)) !== createdPhysical) fail();
       const after = await tx.unsafe<Array<Delivery>>(`SELECT
         recovery_case_id AS "recoveryCaseId", revision_id AS "revisionId",
         run_id AS "runId", story_id AS "storyId", state,
@@ -374,8 +404,42 @@ export async function createPrivateDiagnosticRecoveryReservedWorktreeV1(
         || after[0]?.leaseExpiresAt?.getTime() !== delivery.leaseExpiresAt?.getTime()
         || after[0]?.authorizedAt?.getTime() !== delivery.authorizedAt?.getTime()) fail();
       validateDelivery(after[0], row, await readDatabaseWallClock(tx, REFUSED));
+      const firstPhysical = physical(row.root, fixed.repo);
+      if (canonicalJsonStringify(firstPhysical) !== createdPhysical) fail();
+      const physicalIdentityHash = hashCanonicalJson({ schema: IDENTITY_SCHEMA,
+        ...firstPhysical });
+      const body = { schema: RECEIPT_SCHEMA,
+        reservationHash: row.reservationHash,
+        runId: row.runId, storyDbId: row.storyDbId, storyId: row.storyId,
+        dispatchId: row.dispatchId, recoveryCaseId: row.recoveryCaseId,
+        revisionId: row.revisionId, ownerInstanceId: row.ownerInstanceId,
+        leaseTokenHash: row.leaseTokenHash,
+        root: row.root, sourceSha: row.sourceSha,
+        sourceTreeHash: row.sourceTreeHash, gitPrimaryRoot: fixed.repo,
+        physical: firstPhysical, physicalIdentityHash };
+      const receiptHash = hashCanonicalJson(body);
+      const canonicalBody = canonicalJsonStringify(body);
+      const inserted = await tx.unsafe<Array<{ receiptHash: string }>>(`INSERT INTO ${RECEIPTS} (
+        receipt_hash, reservation_hash, run_id, story_db_id, story_id,
+        dispatch_id, recovery_case_id, revision_id, owner_instance_id,
+        lease_token_hash, root, source_sha, source_tree_hash,
+        git_primary_root, physical_dev, physical_ino, physical_birthtime_ns,
+        physical_identity_hash, canonical_body
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+        $14, $15, $16, $17, $18, $19)
+      RETURNING receipt_hash AS "receiptHash"`, [receiptHash, row.reservationHash,
+        row.runId, row.storyDbId, row.storyId, row.dispatchId, row.recoveryCaseId,
+        row.revisionId, row.ownerInstanceId, row.leaseTokenHash, row.root,
+        row.sourceSha, row.sourceTreeHash, fixed.repo, firstPhysical.dev,
+        firstPhysical.ino, firstPhysical.birthtimeNs, physicalIdentityHash,
+        canonicalBody]);
+      if (inserted.length !== 1 || inserted[0]?.receiptHash !== receiptHash
+        || canonicalJsonStringify(physical(row.root, fixed.repo))
+          !== createdPhysical) fail();
+      validateDelivery(after[0], row, await readDatabaseWallClock(tx, REFUSED));
       return Object.freeze({ schema: SCHEMA, authority: "diagnostic-only" as const,
-        disposition: "created" as const, reservationHash: row.reservationHash });
+        disposition: "created" as const, reservationHash: row.reservationHash,
+        receiptHash });
     });
   } catch { return fail(); }
 }
