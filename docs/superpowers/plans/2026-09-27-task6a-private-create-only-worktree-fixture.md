@@ -21,9 +21,11 @@ continuous DB/OS writer fence, owner promotion, or admission authority.
 - Before writing, prove the source commit and its tree in that repository,
   primary Git directory identity, exact one-file fixture tree, absent private
   attributes, target-parent identity, target absence and no existing target
-  registration. Run Git with inherited Git configuration removed and hooks,
-  fsmonitor and global attributes disabled. No directory creation or cleanup
-  occurs in the helper before the one Git add.
+  registration. Run Git with inherited Git configuration and replacement
+  objects disabled, plus hooks, fsmonitor and global attributes disabled.
+  Otherwise a local `refs/replace/<source-SHA>` can make Git verify and check
+  out replacement content while reporting the original SHA. No directory
+  creation or cleanup occurs in the helper before the one Git add.
 - Perform only `git worktree add --detach <exact-root> <full-SHA>`. Never
   fetch, prune, stash, reset, clean, remove, reuse, switch branches, prepare
   assets or fall back to another root/commit.
@@ -34,8 +36,9 @@ continuous DB/OS writer fence, owner promotion, or admission authority.
   only a diagnostic observation, not an owner or release capability.
 - Test a successful pinned creation, occupied directory/file/symlink, parent
   alias, wrong source/tree, stale target registration, dirty primary repo
-  preservation, disabled hook/attribute rejection, and post-add fault refusal
-  without cleanup.
+  preservation, disabled hook/attribute rejection, replacement-object alias
+  refusal,
+  and post-add fault refusal without cleanup.
 
 ## File Map
 

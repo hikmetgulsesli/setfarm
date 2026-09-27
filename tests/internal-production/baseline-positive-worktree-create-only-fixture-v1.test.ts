@@ -75,6 +75,22 @@ test("private create-only fixture refuses source and tree drift before Git workt
   assert.equal(git(repo, "worktree", "list", "--porcelain").includes(root), false);
 });
 
+test("private create-only fixture refuses a replacement ref for the pinned commit", (t) => {
+  const { repo, root, input } = fixture(t);
+  fs.writeFileSync(path.join(repo, "tracked.txt"), "different source\n");
+  git(repo, "add", "tracked.txt");
+  git(repo, "commit", "-qm", "different source");
+  const replacedSha = git(repo, "rev-parse", "HEAD");
+  git(repo, "replace", replacedSha, input.sourceSha);
+  assert.equal(git(repo, "rev-parse", `${replacedSha}^{tree}`), input.sourceTreeHash);
+  assert.notEqual(execFileSync("git", ["rev-parse", `${replacedSha}^{tree}`], {
+    cwd: repo, encoding: "utf8", env: { ...process.env, GIT_NO_REPLACE_OBJECTS: "1" },
+  }).trim(), input.sourceTreeHash);
+  assert.throws(() => createPrivateDiagnosticPinnedWorktreeV1(
+    { ...input, sourceSha: replacedSha }), REFUSED);
+  assert.equal(fs.existsSync(root), false);
+});
+
 test("private create-only fixture refuses a symlinked target parent", (t) => {
   const { repo, parent, root, input } = fixture(t);
   fs.renameSync(parent, path.join(path.dirname(parent), "real-worktrees"));
