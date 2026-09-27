@@ -5,6 +5,7 @@ import {
   getContractSpineCurrentHeadJournalIdentitiesV1,
   V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY,
 } from "../../src/db/contract-spine-migrations.js";
+import { verifyContractSpineCurrentHeadJournalReadOnlyV1 } from "../../src/db/contract-spine-readonly-verifier-v1.js";
 
 test("current-head source identities expose only frozen data for versions 1 through 33", () => {
   const identities = getContractSpineCurrentHeadJournalIdentitiesV1();
@@ -24,4 +25,34 @@ test("current-head source identities expose only frozen data for versions 1 thro
     checksum: V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY.checksum,
     migrationClass: "automatic",
   });
+});
+
+test("current-head journal refuses an empty catalog after bounded read-only setup", async () => {
+  const statements: string[] = [];
+  const sql = {
+    begin: async (mode: string, operation: (transaction: unknown) => Promise<void>) => {
+      assert.equal(mode, "isolation level repeatable read read only");
+      return operation({ unsafe: async (statement: string) => {
+        statements.push(statement);
+        return [];
+      } });
+    },
+  };
+  await assert.rejects(verifyContractSpineCurrentHeadJournalReadOnlyV1(sql as never),
+    /SETFARM_CURRENT_HEAD_JOURNAL_CATALOG_MISMATCH_V1/);
+  assert.equal(statements[0],
+    "SELECT pg_catalog.set_config('search_path', 'pg_catalog, public, pg_temp', true)");
+  assert.ok(statements.some((statement) => statement.includes("lock_timeout")));
+  assert.ok(statements.some((statement) => statement.includes("statement_timeout")));
+  assert.ok(statements.some((statement) => statement.includes("idle_in_transaction_session_timeout")));
+  assert.ok(statements.every((statement) => statement.trimStart().startsWith("SELECT")));
+  assert.ok(statements.every((statement) => !/pg_advisory|LOCK TABLE|FOR UPDATE/i.test(statement)));
+});
+
+test("current-head journal reduces driver errors to a fixed private-data-free code", async () => {
+  const sql = { begin: async () => { throw new Error("postgresql://secret@example.invalid/private"); } };
+  await assert.rejects(verifyContractSpineCurrentHeadJournalReadOnlyV1(sql as never),
+    (error: unknown) => error instanceof Error
+      && error.message === "SETFARM_CURRENT_HEAD_JOURNAL_CATALOG_MISMATCH_V1"
+      && !String(error).includes("secret"));
 });

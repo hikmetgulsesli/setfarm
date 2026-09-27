@@ -22,6 +22,7 @@
 ## File map
 
 - Modify `src/db/contract-spine-migrations.ts`: export a frozen, narrow source-derived identity list from `completeMigrations` only.
+- Modify `tests/execution-attempts/migrations.test.ts`: advance the whole-file source hash pin for this reviewed outside-region export; retain the semantic digest and adjacent re-export assertions.
 - Create `src/db/contract-spine-readonly-verifier-v1.ts`: one transaction and exact journal/catalog check, no effect hooks.
 - Create `tests/internal-production/contract-spine-readonly-verifier-v1.test.ts`: source identities, fake transaction SQL safety, fixed error.
 - Create `tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts`: real private-cluster restricted-role positive and drift cases.
@@ -32,7 +33,7 @@
 ### Task 1: Source-bound current-head identity
 
 **Files:**
-- Modify: `src/db/contract-spine-migrations.ts` after the outer `migration-v33-blocked-successor-planner:END` marker and before the next semantic region.
+- Modify: `src/db/contract-spine-migrations.ts` after the existing re-export and planner function, outside the outer `migration-v33-blocked-successor-planner` region and without breaking the re-export adjacency contract.
 - Test: `tests/internal-production/contract-spine-readonly-verifier-v1.test.ts`.
 
 **Interfaces:**
@@ -41,7 +42,7 @@
 
 - [ ] **Step 1: Write RED source test.** Import the named getter; assert 33 frozen, contiguous version rows, version-32 class `guarded`, version-33 source identity matching the existing `V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY`; assert no SQL connection argument or effect hook is returned.
 - [ ] **Step 2: Run RED.** `env -u SETFARM_PG_URL node --import tsx --test tests/internal-production/contract-spine-readonly-verifier-v1.test.ts` must fail because the getter is missing, not because of a test syntax error.
-- [ ] **Step 3: Implement the getter.** Freeze each literal projection `{version, name, checksum: checksum(migration), migrationClass}` from `completeMigrations`; freeze the returned array; assert exactly versions 1–33 before returning. Do not export migration objects or hook references.
+- [ ] **Step 3: Implement the getter.** Freeze each literal projection `{version, name, checksum: checksum(migration), migrationClass}` from `completeMigrations`; freeze the returned array; assert exactly versions 1–33 before returning. Do not export migration objects or hook references. Advance only the reviewed whole-file hash pin; preserve historical semantic-region digests.
 - [ ] **Step 4: Run GREEN and commit.** Run the focused pure test, `npm run check:migration-digests`, `./node_modules/.bin/tsc --noEmit`, `git diff --check`; commit the exact source/test files conventionally.
 
 ### Task 2: Standalone read-only journal/catalog verifier
@@ -63,13 +64,14 @@
 
 **Files:**
 - Create: `tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts`.
+- Modify: `tests/execution-attempts/migrations.test.ts` for the source whole-file hash pin.
 - Modify: `tests/internal-production/contract-spine-readonly-verifier-v1.test.ts` and `package.json` only for required normal-suite registration.
 
 **Interfaces:**
 - Consumes: Task-2 exported verifier and existing `createIsolatedTestDatabase()` fixture.
 - Produces: real private-cluster evidence of exact journal/catalog verification under a distinct SELECT-only login with unchanged before/after catalog fingerprint.
 
-- [ ] **Step 1: Write RED integration mutations.** Preflight admin `data_directory`, port and socket against explicit private-cluster environment. Create one random no-password LOGIN with `CONNECT` on fixture DB, `USAGE` on `public`, `SELECT` on only `setfarm_schema_migrations`; assert no CREATE/MAINTAIN/owner membership. Against a fully migrated fixture, the positive verifier must succeed without schema fingerprint change. Then reset isolated fixture per case and require refusal for missing/extra/edited row, wrong v32 state, revoked SELECT, missing column, altered constraint/index, rewrite rule, user trigger and incoming FK. Guard exact test-owned database/role cleanup in `finally` and propagate cleanup failures.
+- [ ] **Step 1: Write RED integration mutations.** Preflight admin `data_directory`, port and socket against explicit private-cluster environment. Create one random no-password LOGIN with `CONNECT` on fixture DB, `USAGE` on `public`, `SELECT` on only `setfarm_schema_migrations`; assert no CREATE/MAINTAIN/owner membership. Against a fully migrated fixture, the positive verifier must succeed without schema fingerprint change. Then reset isolated fixture per case and require refusal for missing/extra/edited row, wrong v32 state, revoked SELECT, missing column, altered constraint/index, rewrite rule, user trigger and incoming FK. Include a NOINHERIT login with SET-able and then ADMIN-only journal-writer membership: directly effective INSERT is false but the verifier must reject both latent paths. Preflight exact random role names as unused before CREATE and make them cleanup-eligible before issuing CREATE so an ambiguous committed CREATE is cleaned; do not remove a duplicate name owned elsewhere. Guard exact test-owned database/role cleanup in `finally` and propagate cleanup failures.
 - [ ] **Step 2: Run RED in the private cluster.** Use explicit `SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY` and `SETFARM_TEST_PG_ADMIN_URL`, never ambient live `SETFARM_PG_URL`; the first absent invariant must be accepted or positive fail for the expected missing code, not an environment typo.
 - [ ] **Step 3: GREEN, verify and review.** Complete only the catalog checks demonstrated by RED; run private-cluster integration (zero skip), existing migration suite, pure suite, source manifest, digest, TypeScript and diff checks. Obtain read-only independent review, push the scoped PR, require GitGuardian and exact-head Codex review with no unresolved major finding, then SHA-condition squash merge. Fast-forward preserved deployment worktree, run guarded clean-main build and focused merged-main isolated test. Recheck selected old CLI hash/inode and HTTP 3080/3333/18789 without changing selected services.
 

@@ -16517,6 +16517,18 @@ async function planContractSpineMigrationsOnConnection(
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-blocked-successor-planner:END
 export { verifyV3RecoveryClaimRuntimePublicationV1 };
 
+export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpineMigrationPlan> {
+  return sql.begin(async (transaction) => {
+    await transaction.unsafe(
+      "SELECT set_config('search_path', 'public', true)",
+    );
+    return reconcileCurrentOwnerAdmissionHeadMigrationPlanV1(
+      transaction,
+      await planContractSpineMigrationsOnConnection(transaction),
+    );
+  }) as Promise<ContractSpineMigrationPlan>;
+}
+
 /** Source-owned identities only; does not expose migration effect hooks. */
 export function getContractSpineCurrentHeadJournalIdentitiesV1(): readonly Readonly<{
   version: number;
@@ -16534,18 +16546,6 @@ export function getContractSpineCurrentHeadJournalIdentitiesV1(): readonly Reado
     checksum: checksum(migration),
     migrationClass: migration.migrationClass,
   })));
-}
-
-export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpineMigrationPlan> {
-  return sql.begin(async (transaction) => {
-    await transaction.unsafe(
-      "SELECT set_config('search_path', 'public', true)",
-    );
-    return reconcileCurrentOwnerAdmissionHeadMigrationPlanV1(
-      transaction,
-      await planContractSpineMigrationsOnConnection(transaction),
-    );
-  }) as Promise<ContractSpineMigrationPlan>;
 }
 
 /** Narrow pre-startup journal inspection. Does not invoke migration detect/verify hooks. */

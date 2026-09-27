@@ -49,6 +49,11 @@ or operators in required CHECK constraints. The restricted login must have
 SELECT on the journal but no journal MAINTAIN, database/schema CREATE or
 ownership membership. Catalog queries are schema-qualified and resistant to
 same-signature `public` functions and temporary catalog-name shadows.
+The login must have no membership in another role: a NOINHERIT membership
+can conceal a journal-writer grant from immediately effective privilege
+checks, while SET permits switching roles and ADMIN permits self-granting
+SET. This is an explicit fail-closed rehearsal restriction, not a runtime
+grant or role change.
 
 This certifies only the current-head journal and its own catalog, not the
 objects or private data supposedly installed by migrations 1–33. In
@@ -74,6 +79,9 @@ SQL. Distinct private-cluster roles and databases are removed in a guarded
 `finally`; cleanup failures fail the test. Existing migration tests,
 semantic digest check, TypeScript and internal-production pure/manifest gates
 remain mandatory before PR review and delivery.
+An isolated NOINHERIT login with a SET-able or ADMIN-only journal-writer
+membership must also be rejected even though its directly effective journal
+write privilege is false.
 
 ## File map
 
