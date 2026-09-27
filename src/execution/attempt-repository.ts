@@ -356,6 +356,18 @@ async function lockAndAssertRecoveryClaimPublicationForAttemptBirth(
         AND delivery.story_id = publication.story_id
        JOIN recovery_cases recovery_case
          ON recovery_case.recovery_case_id = publication.recovery_case_id
+       JOIN recovery_case_revisions opening_revision
+         ON opening_revision.recovery_case_id = recovery_case.recovery_case_id
+        AND opening_revision.revision_number = 1
+        AND opening_revision.parent_revision_id IS NULL
+        AND opening_revision.run_id = recovery_case.run_id
+        AND opening_revision.story_id = recovery_case.story_id
+        AND opening_revision.packet_hash = recovery_case.packet_hash
+        AND opening_revision.finding_set_hash = recovery_case.finding_set_hash
+        AND opening_revision.finding_ids = recovery_case.finding_ids
+        AND opening_revision.contract_slice_hash = recovery_case.slice_hash
+        AND opening_revision.source_sha = recovery_case.source_sha
+        AND opening_revision.source_tree_hash = recovery_case.source_tree_hash
        JOIN recovery_case_revisions revision
          ON revision.revision_id = publication.revision_id
         AND revision.recovery_case_id = publication.recovery_case_id
@@ -484,11 +496,6 @@ async function lockAndAssertRecoveryClaimPublicationForAttemptBirth(
     || row.current_revision_id !== reservation.recoveryCaseRevisionId
     || row.case_owner !== row.revision_owner
     || row.case_packet_hash !== row.revision_packet_hash
-    || row.case_slice_hash !== row.revision_contract_slice_hash
-    || row.case_source_sha !== row.revision_source_sha
-    || row.case_source_tree_hash !== row.revision_source_tree_hash
-    || row.case_finding_set_hash !== row.revision_finding_set_hash
-    || !sameCanonical(row.case_finding_ids, row.revision_finding_ids)
     || !sameCanonical(row.case_expected_delta, row.revision_expected_delta)
     || !sameCanonical(row.case_allowed_paths, row.revision_allowed_paths)
     || !sameCanonical(row.case_evidence_plan, row.revision_evidence_plan)

@@ -3,7 +3,7 @@ import { after, before, describe, it } from "node:test";
 
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
-import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
+import { createRecoveryDeliveryRepository, recoveryDeliveryDecisionRef } from "../../src/recovery/recovery-delivery-repository.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import { createV3RecoveryClaimAuthority } from "../../src/recovery/v3-recovery-claim-authority.js";
 import { createV3RecoveryWorkRouter } from "../../src/recovery/v3-recovery-work-router.js";
@@ -261,6 +261,73 @@ describe("v3 recovery work router", () => {
       owner_instance_id: null,
       attempt_count: 0,
     }]);
+  });
+
+  it("routes a revised supervisor chain without rewriting the case opening identity", async () => {
+    const fixture = await setup({
+      workflowId: "workflow-router-revised-supervisor",
+      dispatchClass: "product_implementation",
+      stepStatus: "running",
+    });
+    const deliveries = createRecoveryDeliveryRepository(database.sql);
+    const completed = await deliveries.completeDelivery({
+      dispatchId: fixture.dispatch.dispatchId,
+      revisionId: fixture.revision.revisionId,
+      state: "blocked",
+      terminalResult: { reasonCode: "revised_supervisor_fixture" },
+    });
+    assert.equal(completed?.state, "blocked");
+    const revisedFindings = createFindingSetV1({
+      runId: fixture.runId,
+      storyId: fixture.storyId,
+      packetHash: PACKET_HASH,
+      sliceHash: "f".repeat(64),
+      sourceRevision: { sha: "4".repeat(40), treeHash: "5".repeat(40) },
+      findings: [{
+        origin: "runtime",
+        classification: "structured",
+        invariantRef: "INV_SAVE_RELOAD",
+        sourceLocators: [{ path: "src/App.tsx", contentHash: "6".repeat(64) }],
+        observedEvidenceRefs: [EVIDENCE_HASH],
+        expectedPredicateRef: "EVID_SAVE_RELOAD",
+        status: "open",
+      }],
+    });
+    await createFindingRecoveryRepository(database.sql).putFindingSet(revisedFindings);
+    const advanced = await deliveries.advanceRevision({
+      recoveryCaseId: fixture.recoveryCase.recoveryCaseId,
+      expectedStateVersion: fixture.recoveryCase.stateVersion + 1,
+      parentRevisionId: fixture.revision.revisionId,
+      findingSetHash: revisedFindings.findingSetHash,
+      owner: "supervisor",
+      expectedDelta: {
+        kind: "source_change",
+        invariantRefs: ["INV_SAVE_RELOAD"],
+        requiredPaths: ["src/App.tsx"],
+      },
+      allowedPaths: ["src/App.tsx"],
+      evidencePlan: ["EVID_SAVE_RELOAD"],
+      decisionRef: recoveryDeliveryDecisionRef({ reason: "revised source still fails" }),
+    });
+    assert.equal(advanced.status, "advanced");
+    if (advanced.status !== "advanced") throw new Error("expected revision advance");
+    const authorized = await deliveries.authorizeCurrentRevision({
+      recoveryCaseId: fixture.recoveryCase.recoveryCaseId,
+      revisionId: advanced.revision.revisionId,
+      expectedStateVersion: advanced.stateVersion,
+      dispatchClass: "supervisor_repair",
+    });
+    assert.equal(authorized.status, "authorized");
+    if (authorized.status !== "authorized") throw new Error("expected revised authorization");
+    const work = await createV3RecoveryWorkRouter(database.sql).acquireNext({
+      workflowId: fixture.workflowId,
+      dispatchClass: "supervisor_repair",
+      ownerInstanceId: "router-revised-supervisor-worker",
+    });
+    assert.ok(work);
+    assert.equal(work.handoff.dispatchId, authorized.dispatch.dispatchId);
+    assert.equal(work.handoff.directive.findingSetHash, revisedFindings.findingSetHash);
+    assert.equal(work.handoff.directive.sourceRevision.sha, revisedFindings.sourceRevision.sha);
   });
 
   it("never exposes evidence-only or caller-mismatched model work", async () => {

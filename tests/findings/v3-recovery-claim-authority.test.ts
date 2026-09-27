@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import { publishLoopClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
 import { requestRunTermination } from "../../src/execution/run-termination.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
@@ -12,6 +13,7 @@ import {
   V3RecoveryClaimHandoffV1Schema,
   createV3RecoveryClaimAuthority,
 } from "../../src/recovery/v3-recovery-claim-authority.js";
+import { seedCanonicalCompilerStoryAdmissionFixture } from "../execution-attempts/helpers/compiler-story-english-admission-fixture.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
 
 const PACKET_HASH = "a".repeat(64);
@@ -92,25 +94,40 @@ describe("v3 recovery-first claim authority", () => {
 
   async function setup(
     dispatchClass: "product_implementation" | "supervisor_repair" | "evidence_only" = "product_implementation",
+    withCanonicalStoryAdmission = false,
   ) {
     sequence += 1;
     const runId = `run-v3-claim-authority-${sequence}`;
-    const storyId = `US-AUTH-${sequence}`;
     const releaseSha = "3".repeat(40);
-    const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
-    await database.sql.unsafe(
-      `INSERT INTO runs (
-         id, workflow_id, task, status, protocol, protocol_version,
-         compiler_release_sha, packet_hash, activation_preflight_hash,
-         release_admission_hash
-       ) VALUES ($1, 'feature-dev', 'authority test', 'running', 'v3', 1, $2, $3, $4, $5)`,
-      [runId, releaseSha, PACKET_HASH, "e".repeat(64), releaseAdmissionHash],
-    );
-    await database.sql.unsafe(
-      `INSERT INTO stories (id, run_id, story_index, story_id, title, status)
-       VALUES ($1, $2, 1, $3, 'Recovery authority story', 'failed')`,
-      [`${runId}-story`, runId, storyId],
-    );
+    const canonical = withCanonicalStoryAdmission
+      ? await seedCanonicalCompilerStoryAdmissionFixture(database, {
+          runId,
+          releaseSha,
+          packetHash: PACKET_HASH,
+        })
+      : undefined;
+    const storyId = canonical?.stories[0]?.storyId ?? `US-AUTH-${sequence}`;
+    if (canonical) {
+      await database.sql.unsafe(
+        "UPDATE stories SET status = 'failed' WHERE id = $1 AND run_id = $2",
+        [canonical.stories[0]!.id, runId],
+      );
+    } else {
+      const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
+      await database.sql.unsafe(
+        `INSERT INTO runs (
+           id, workflow_id, task, status, protocol, protocol_version,
+           compiler_release_sha, packet_hash, activation_preflight_hash,
+           release_admission_hash
+         ) VALUES ($1, 'feature-dev', 'authority test', 'running', 'v3', 1, $2, $3, $4, $5)`,
+        [runId, releaseSha, PACKET_HASH, "e".repeat(64), releaseAdmissionHash],
+      );
+      await database.sql.unsafe(
+        `INSERT INTO stories (id, run_id, story_index, story_id, title, status)
+         VALUES ($1, $2, 1, $3, 'Recovery authority story', 'failed')`,
+        [`${runId}-story`, runId, storyId],
+      );
+    }
     const findingSet = finding(runId, storyId);
     const findings = createFindingRecoveryRepository(database.sql);
     await findings.putFindingSet(findingSet);
@@ -131,6 +148,7 @@ describe("v3 recovery-first claim authority", () => {
     return {
       runId,
       storyId,
+      canonical,
       findingSet,
       recoveryCase: opened.recoveryCase,
       revision,
@@ -276,7 +294,8 @@ describe("v3 recovery-first claim authority", () => {
   });
 
   it("allows only the same owner and exact attempt to reissue an attempt-bound claim", async () => {
-    const fixture = await setup();
+    const fixture = await setup("product_implementation", true);
+    assert.ok(fixture.canonical);
     const authority = createV3RecoveryClaimAuthority(database.sql);
     const leased = await authority.acquireRecoveryClaim({
       runId: fixture.runId,
@@ -284,12 +303,27 @@ describe("v3 recovery-first claim authority", () => {
       ownerInstanceId: "attempt-owner",
       leaseMs: 60_000,
     }, { now: new Date("2026-07-13T09:03:00.000Z") });
-    const claimRows = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-      VALUES (${fixture.runId}, 'implement', ${fixture.storyId}, 'recovery-agent')
-      RETURNING id::integer AS id
-    `;
-    const claimId = claimRows[0]!.id;
+    const publication = await publishLoopClaimRuntime(database.sql, {
+      runId: fixture.runId,
+      stepDbId: fixture.canonical.implementStepDbId,
+      workflowStepId: "implement",
+      storyDbId: fixture.canonical.stories[0]!.id,
+      storyId: fixture.storyId,
+      claimAgentId: "recovery-agent",
+      parallelLimit: 1,
+      recoveryHandoff: leased,
+      storyAdmissionProof: fixture.canonical.storyAdmissionProof,
+      runtimeIntent: {
+        schema: "setfarm.runtime-claim-intent.v1",
+        sessionId: `RTS_claim-authority-${fixture.runId}`,
+        runtimeAgentId: "recovery-agent",
+        runtimeKind: "local_process",
+        ownerInstanceId: leased.lease.ownerInstanceId,
+      },
+      now: new Date("2026-07-13T09:03:00.500Z"),
+    });
+    assert.ok(publication?.runtime);
+    const claimId = publication.claimId;
     const reserved = await createAttemptRepository(database.sql).reserve({
       claimId,
       runId: fixture.runId,
@@ -298,7 +332,7 @@ describe("v3 recovery-first claim authority", () => {
       attemptClass: "product_implementation",
       packetHash: leased.directive.packetHash,
       compilationReportHash: "f".repeat(64),
-      sliceHash: "9".repeat(64),
+      sliceHash: leased.directive.contractSliceHash,
       sourceBefore: leased.directive.sourceRevision,
       findingSetHash: leased.directive.findingSetHash,
       recoveryCaseRevisionId: leased.revisionId,

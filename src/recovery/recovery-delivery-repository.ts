@@ -710,6 +710,11 @@ async function transitionExactDownstreamStoryForDispatch(
     return;
   }
   const authority = downstream.authority;
+  const openingRevision = await one<RevisionRow>(
+    transaction,
+    "SELECT * FROM recovery_case_revisions WHERE recovery_case_id = $1 AND revision_number = 1 FOR KEY SHARE",
+    [currentCase.recovery_case_id],
+  );
   const rows = await transaction.unsafe<DownstreamAuthorizationRow[]>(
     `SELECT run_row.status AS run_status,
             run_row.protocol AS run_protocol,
@@ -782,10 +787,16 @@ async function transitionExactDownstreamStoryForDispatch(
     || revision.recoveryCaseId !== currentCase.recovery_case_id
     || revision.revisionId !== currentCase.current_revision_id
     || revision.packetHash !== currentCase.packet_hash
-    || revision.contractSliceHash !== currentCase.slice_hash
-    || revision.sourceRevision.sha !== currentCase.source_sha
-    || revision.sourceRevision.treeHash !== currentCase.source_tree_hash
-    || revision.findingSetHash !== currentCase.finding_set_hash
+    || !openingRevision
+    || openingRevision.parent_revision_id !== null
+    || openingRevision.run_id !== currentCase.run_id
+    || openingRevision.story_id !== currentCase.story_id
+    || openingRevision.packet_hash !== currentCase.packet_hash
+    || openingRevision.finding_set_hash !== currentCase.finding_set_hash
+    || !sameSemanticValue(openingRevision.finding_ids, currentCase.finding_ids)
+    || openingRevision.contract_slice_hash !== currentCase.slice_hash
+    || openingRevision.source_sha !== currentCase.source_sha
+    || openingRevision.source_tree_hash !== currentCase.source_tree_hash
     || row.run_protocol !== "v3"
     || !["running", "resuming"].includes(row.run_status)
     || row.run_packet_hash !== authority.packetHash

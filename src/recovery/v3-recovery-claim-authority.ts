@@ -474,6 +474,11 @@ async function loadExactChain(
     "SELECT * FROM recovery_case_revisions WHERE revision_id = $1 FOR KEY SHARE",
     [deliveryRow.revision_id],
   );
+  const openingRevisionRow = await one<RevisionRow>(
+    sql,
+    "SELECT * FROM recovery_case_revisions WHERE recovery_case_id = $1 AND revision_number = 1 FOR KEY SHARE",
+    [deliveryRow.recovery_case_id],
+  );
   const dispatchRow = await one<DispatchRow>(
     sql,
     "SELECT * FROM recovery_revision_dispatches WHERE dispatch_id = $1 FOR KEY SHARE",
@@ -484,11 +489,13 @@ async function loadExactChain(
     "SELECT payload FROM finding_sets WHERE finding_set_hash = (SELECT finding_set_hash FROM recovery_revision_dispatches WHERE dispatch_id = $1) FOR KEY SHARE",
     [deliveryRow.dispatch_id],
   );
-  if (!caseRow || !revisionRow || !dispatchRow || !findingRow) {
+  if (!caseRow || !revisionRow || !openingRevisionRow || !dispatchRow || !findingRow) {
     fail("V3_RECOVERY_AUTHORITY_CHAIN_MISSING", "delivery identity chain is incomplete");
   }
   const recoveryCase = mapRecoveryCase(caseRow);
   const revision = mapRevision(revisionRow);
+  // The opening row may be a supported legacy backfill that cannot parse as a
+  // modern revision. Its frozen identity still has to match the case exactly.
   const dispatch = mapDispatch(dispatchRow, revision);
   const delivery = mapDelivery(deliveryRow);
   const findingSet = FindingSetV1Schema.parse(findingRow.payload);
@@ -498,17 +505,29 @@ async function loadExactChain(
     || caseRow.current_revision_id !== revision.revisionId
     || recoveryCase.runId !== delivery.runId
     || recoveryCase.storyId !== delivery.storyId
-    || recoveryCase.findingSetHash !== revision.findingSetHash
+    || openingRevisionRow.recovery_case_id !== recoveryCase.recoveryCaseId
+    || openingRevisionRow.revision_number !== 1
+    || openingRevisionRow.parent_revision_id !== null
+    || openingRevisionRow.run_id !== recoveryCase.runId
+    || openingRevisionRow.story_id !== recoveryCase.storyId
+    || openingRevisionRow.finding_set_hash !== recoveryCase.findingSetHash
+    || !same(openingRevisionRow.finding_ids, recoveryCase.findingIds)
+    || openingRevisionRow.packet_hash !== recoveryCase.packetHash
+    || openingRevisionRow.contract_slice_hash !== recoveryCase.sliceHash
+    || openingRevisionRow.source_sha !== recoveryCase.sourceRevision.sha
+    || openingRevisionRow.source_tree_hash !== recoveryCase.sourceRevision.treeHash
+    || revision.recoveryCaseId !== recoveryCase.recoveryCaseId
+    || revision.runId !== recoveryCase.runId
+    || revision.storyId !== recoveryCase.storyId
     || recoveryCase.packetHash !== revision.packetHash
-    || recoveryCase.sliceHash !== revision.contractSliceHash
-    || !same(recoveryCase.sourceRevision, revision.sourceRevision)
     || recoveryCase.owner !== revision.owner
-    || !same(recoveryCase.findingIds, revision.findingIds)
     || !same(recoveryCase.expectedDelta, revision.expectedDelta)
     || !same(recoveryCase.allowedPaths, revision.allowedPaths)
     || !same(recoveryCase.evidencePlan, revision.evidencePlan)
     || dispatch.recoveryCaseId !== recoveryCase.recoveryCaseId
     || dispatch.revisionId !== revision.revisionId
+    || dispatch.runId !== revision.runId
+    || dispatch.storyId !== revision.storyId
     || dispatch.packetHash !== revision.packetHash
     || dispatch.contractSliceHash !== revision.contractSliceHash
     || dispatch.findingSetHash !== revision.findingSetHash
@@ -519,6 +538,8 @@ async function loadExactChain(
     || delivery.recoveryCaseId !== recoveryCase.recoveryCaseId
     || delivery.revisionId !== revision.revisionId
     || delivery.dispatchId !== dispatch.dispatchId
+    || delivery.runId !== revision.runId
+    || delivery.storyId !== revision.storyId
     || findingSet.runId !== revision.runId
     || findingSet.storyId !== revision.storyId
     || findingSet.findingSetHash !== revision.findingSetHash

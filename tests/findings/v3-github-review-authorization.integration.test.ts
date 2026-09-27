@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import { publishLoopClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
 import { ingestGithubReviewThreadsV1 } from "../../src/findings/github-review-ingestion.js";
 import { createGithubReviewResolutionEvidenceRepository } from "../../src/findings/github-review-resolution-evidence-repository.js";
 import { createGithubReviewResolutionEvidenceV1 } from "../../src/findings/github-review-resolution-evidence.js";
@@ -16,7 +17,9 @@ import {
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
+import { createV3RecoveryClaimAuthority } from "../../src/recovery/v3-recovery-claim-authority.js";
 import { createV3RecoveryCoordinator } from "../../src/recovery/v3-recovery-coordinator.js";
+import { seedCanonicalCompilerStoryAdmissionFixture } from "../execution-attempts/helpers/compiler-story-english-admission-fixture.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
 
 const RELEASE_SHA = "3".repeat(40);
@@ -28,6 +31,8 @@ type Fixture = Readonly<{
   runId: string;
   storyId: string;
   storyDbId: string;
+  implementStepDbId: string;
+  storyAdmissionProof: Awaited<ReturnType<typeof seedCanonicalCompilerStoryAdmissionFixture>>["storyAdmissionProof"];
   recoveryCaseId: string;
   revisionId: string;
   findingSetHash: string;
@@ -109,8 +114,6 @@ describe("v3 GitHub review recovery authorization", () => {
     sequence += 1;
     const current = sequence;
     const runId = `run-v3-github-review-authorization-${current}`;
-    const storyId = `US-GITHUB-${current}`;
-    const storyDbId = `story-v3-github-review-authorization-${current}`;
     const verifyStepDbId = `verify-v3-github-review-authorization-${current}`;
     const packetHash = testHash("packet", current);
     const contractSliceHash = testHash("slice", current);
@@ -123,7 +126,6 @@ describe("v3 GitHub review recovery authorization", () => {
       sha: gitHash("review-head", current),
       treeHash: gitHash("review-tree", current),
     };
-    const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(RELEASE_SHA);
     const producer = JSON.stringify({
       pass: "v3-github-review-authorization-integration-test",
       codeSha: RELEASE_SHA,
@@ -137,15 +139,14 @@ describe("v3 GitHub review recovery authorization", () => {
        ON CONFLICT (artifact_hash) DO NOTHING`,
       [packetHash, producer],
     );
-    await database.sql.unsafe(
-      `INSERT INTO runs (
-         id, workflow_id, task, status, protocol, protocol_version,
-         compiler_release_sha, packet_hash, activation_preflight_hash,
-         release_admission_hash
-       ) VALUES ($1, 'feature-dev', 'typed GitHub review authorization', 'running',
-                 'v3', 1, $2, $3, $4, $5)`,
-      [runId, RELEASE_SHA, packetHash, testHash("activation-preflight", current), releaseAdmissionHash],
-    );
+    const canonical = await seedCanonicalCompilerStoryAdmissionFixture(database, {
+      runId,
+      releaseSha: RELEASE_SHA,
+      packetHash,
+    });
+    const selectedStory = canonical.stories[0]!;
+    const storyId = selectedStory.storyId;
+    const storyDbId = selectedStory.id;
     await database.sql.unsafe(
       `INSERT INTO product_packets (run_id, packet_hash, compiler_metadata)
        VALUES ($1, $2, $3::text::jsonb)`,
@@ -160,18 +161,11 @@ describe("v3 GitHub review recovery authorization", () => {
       [verifyStepDbId, runId],
     );
     await database.sql.unsafe(
-      `INSERT INTO stories (
-         id, run_id, story_index, story_id, title, status, scope_files,
-         resolved_scope_files, story_branch, pr_url
-       ) VALUES ($1, $2, 1, $3, 'GitHub reviewed story', 'done', $4, $4,
-                 $5, 'https://github.com/setrox/generated-project/pull/1925')`,
-      [
-        storyDbId,
-        runId,
-        storyId,
-        JSON.stringify(["src/App.tsx", "src/components/Nav.tsx"]),
-        `story/${storyId.toLowerCase()}`,
-      ],
+      `UPDATE stories
+          SET status = 'done', scope_files = $2, resolved_scope_files = $2,
+              story_branch = $3, pr_url = 'https://github.com/setrox/generated-project/pull/1925'
+        WHERE id = $1`,
+      [storyDbId, JSON.stringify(["src/App.tsx", "src/components/Nav.tsx"]), `story/${storyId.toLowerCase()}`],
     );
 
     const implementationClaimRows = await database.sql.unsafe<Array<{ id: string }>>(
@@ -333,6 +327,8 @@ describe("v3 GitHub review recovery authorization", () => {
       runId,
       storyId,
       storyDbId,
+      implementStepDbId: canonical.implementStepDbId,
+      storyAdmissionProof: canonical.storyAdmissionProof,
       recoveryCaseId: opened.recoveryCase.recoveryCaseId,
       revisionId: revision.revisionId,
       findingSetHash: findingSet.findingSetHash,
@@ -392,21 +388,34 @@ describe("v3 GitHub review recovery authorization", () => {
     );
     assert.equal(authorized.status, "authorized");
     if (authorized.status !== "authorized") throw new Error("expected GitHub review authorization");
-    const leased = await deliveries.leaseNext({
+    const handoff = await createV3RecoveryClaimAuthority(database.sql).acquireRecoveryClaim({
       ownerInstanceId: `github-review-resolution-worker-${fixture.storyId}`,
       runId: fixture.runId,
       storyId: fixture.storyId,
       leaseMs: 60_000,
     }, { now: new Date("2026-07-14T08:00:01.000Z") });
-    assert.ok(leased);
-    assert.equal(leased.dispatchId, authorized.dispatch.dispatchId);
-    const claimRows = await database.sql.unsafe<Array<{ id: string }>>(
-      `INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-       VALUES ($1, 'implement', $2, 'github-review-supervisor', $3)
-       RETURNING id::text`,
-      [fixture.runId, fixture.storyId, new Date("2026-07-14T08:00:02.000Z")],
-    );
-    const claimId = Number(claimRows[0]!.id);
+    assert.equal(handoff.dispatchId, authorized.dispatch.dispatchId);
+    const publication = await publishLoopClaimRuntime(database.sql, {
+      runId: fixture.runId,
+      stepDbId: fixture.implementStepDbId,
+      workflowStepId: "implement",
+      storyDbId: fixture.storyDbId,
+      storyId: fixture.storyId,
+      claimAgentId: "github-review-supervisor",
+      parallelLimit: 1,
+      recoveryHandoff: handoff,
+      storyAdmissionProof: fixture.storyAdmissionProof,
+      runtimeIntent: {
+        schema: "setfarm.runtime-claim-intent.v1",
+        sessionId: `RTS_github-review-resolution-${fixture.runId}-${fixture.storyId}`,
+        runtimeAgentId: "github-review-supervisor",
+        runtimeKind: "local_process",
+        ownerInstanceId: handoff.lease.ownerInstanceId,
+      },
+      now: new Date("2026-07-14T08:00:02.000Z"),
+    });
+    assert.ok(publication?.runtime);
+    const claimId = publication.claimId;
     const attempts = createAttemptRepository(database.sql);
     const reserved = await attempts.reserve({
       claimId,
@@ -422,8 +431,8 @@ describe("v3 GitHub review recovery authorization", () => {
       recoveryCaseRevisionId: authorized.dispatch.revisionId,
       recoveryDispatchId: authorized.dispatch.dispatchId,
       recoveryDeliveryLease: {
-        ownerInstanceId: leased.ownerInstanceId!,
-        leaseToken: leased.leaseToken!,
+        ownerInstanceId: handoff.lease.ownerInstanceId,
+        leaseToken: handoff.lease.leaseToken,
       },
       role: "supervisor",
       agentId: "github-review-supervisor",
