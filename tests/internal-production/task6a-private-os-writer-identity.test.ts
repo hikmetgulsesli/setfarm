@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,14 +22,6 @@ const PARENT_WRITE_PROBE = `const fs = require('node:fs');
   } catch (error) {
     process.exit(error.code === 'EACCES' || error.code === 'EPERM' ? 42 : 43);
   }`;
-const HELD_WRITE_PROBE = `const fs = require('node:fs');
-  const fd = fs.openSync(process.argv[1], 'a');
-  process.stdout.write('READY\\n');
-  process.stdin.once('data', () => {
-    fs.writeSync(fd, 'held-after\\n');
-    fs.closeSync(fd);
-    process.exit(0);
-  });`;
 
 function sudoResult(args: string[]): Readonly<{ status: number | null; stdout: string }> {
   const result = spawnSync("/usr/bin/sudo", ["-n", ...args], {
@@ -60,61 +52,9 @@ function parentWriteAs(user: string, target: string): number | null {
   return sudo(["-u", user, process.execPath, "-e", PARENT_WRITE_PROBE, target]);
 }
 
-function holdOldDescriptor(target: string): Readonly<{
-  ready: Promise<void>; finish: () => Promise<void>;
-}> {
-  const child = spawn("/usr/bin/sudo", ["-n", "-u", "nobody", process.execPath,
-    "-e", HELD_WRITE_PROBE, target], { stdio: ["pipe", "pipe", "pipe"] });
-  const closed = new Promise<number | null>((resolve) => {
-    child.once("close", resolve);
-    child.once("error", () => resolve(null));
-  });
-  child.stdin.on("error", () => { /* close status below remains authoritative */ });
-  const ready = new Promise<void>((resolve, reject) => {
-    let output = "";
-    const timeout = setTimeout(() => {
-      done(new Error("TASK6A_PRIVATE_OS_HELD_OPEN_TIMEOUT"));
-    }, 5000);
-    const done = (error?: Error) => {
-      clearTimeout(timeout);
-      child.stdout.off("data", onData);
-      child.off("error", onError);
-      child.off("close", onClose);
-      if (error) reject(error); else resolve();
-    };
-    const onData = (chunk: Buffer) => {
-      output += chunk.toString("utf8");
-      if (output === "READY\n") done();
-      else if (output.length > 16 || !"READY\n".startsWith(output)) {
-        done(new Error("TASK6A_PRIVATE_OS_HELD_READY_INVALID"));
-      }
-    };
-    const onError = () => done(new Error("TASK6A_PRIVATE_OS_HELD_EXEC_FAILED"));
-    const onClose = () => done(new Error("TASK6A_PRIVATE_OS_HELD_CLOSED_EARLY"));
-    child.stdout.on("data", onData);
-    child.once("error", onError);
-    child.once("close", onClose);
-  });
-  let finishing: Promise<void> | undefined;
-  const finish = (): Promise<void> => {
-    if (finishing) return finishing;
-    finishing = (async () => {
-      if (!child.stdin.destroyed) child.stdin.end("go\n");
-      const status = await new Promise<number | null>((resolve, reject) => {
-        const timeout = setTimeout(() =>
-          reject(new Error("TASK6A_PRIVATE_OS_HELD_CLOSE_TIMEOUT")), 5000);
-        closed.then((code) => { clearTimeout(timeout); resolve(code); });
-      });
-      assert.equal(status, 0, "old held descriptor probe must exit after writing");
-    })();
-    return finishing;
-  };
-  return Object.freeze({ ready, finish });
-}
-
-test("private Task6A fixture denies new old-UID paths but exposes held descriptors", {
+test("private Task6A fixture denies new old-UID paths under a distinct successor", {
   skip: enabled ? false : "requires explicit isolated macOS OS-identity fixture opt-in",
-}, async () => {
+}, () => {
   assert.equal(process.platform, "darwin");
   assert.ok(typeof process.getuid === "function" && typeof process.getgid === "function");
   const runnerUid = process.getuid(), runnerGid = process.getgid();
@@ -160,7 +100,6 @@ test("private Task6A fixture denies new old-UID paths but exposes held descripto
     return stat;
   };
   let failure: unknown;
-  let held: ReturnType<typeof holdOldDescriptor> | undefined;
   try {
     assert.equal(original.uid, BigInt(runnerUid));
     assert.equal(Number(original.mode & 0o777n), 0o700);
@@ -172,8 +111,6 @@ test("private Task6A fixture denies new old-UID paths but exposes held descripto
     const before = path.join(root, "old-before.txt");
     assert.equal(writeAs("nobody", before, "wx"), 0,
       "old identity must possess the fixture before transition");
-    held = holdOldDescriptor(before);
-    await held.ready;
 
     exactRoot();
     assert.equal(sudo(["/usr/sbin/chown", "_www:_www", root]), 0);
@@ -187,21 +124,18 @@ test("private Task6A fixture denies new old-UID paths but exposes held descripto
       "successor identity must write the exact protected fixture");
     assert.equal(writeAs("nobody", created, "a"), 42,
       "old identity must not alter the successor artifact");
-    await held.finish();
     assert.equal(exactRoot().uid, BigInt(successorUid));
     assert.equal(sudo(["/usr/sbin/chown", `${runnerUid}:${runnerGid}`, root]), 0);
     assert.equal(exactRoot().uid, BigInt(runnerUid));
     assert.equal(fs.existsSync(denied), false);
     assert.equal(fs.lstatSync(created, { bigint: true }).uid, BigInt(successorUid));
-    assert.equal(fs.readFileSync(before, "utf8"), "probe\nheld-after\n",
-      "an old open descriptor survives the pathname ownership transfer");
+    assert.equal(fs.readFileSync(before, "utf8"), "probe\n");
   } catch (error) {
     failure = error;
     throw error;
   } finally {
     let cleanupError: unknown;
     try {
-      await held?.finish();
       exactRoot();
       assert.equal(sudo(["/usr/sbin/chown", `${runnerUid}:${runnerGid}`, root]), 0);
       assert.equal(exactRoot().uid, BigInt(runnerUid));

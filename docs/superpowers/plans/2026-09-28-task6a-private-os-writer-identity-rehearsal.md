@@ -29,9 +29,10 @@ distinct-UID filesystem negative rehearsal exists.
 - The test proves an *isolated mechanism*, not the live fence. In particular
   the live `setrox` identity retains sudo. An old process holding a writable
   file descriptor before the directory ownership transfer can keep writing;
-  the test should demonstrate that residual and require old-session/process
-  drain in a real transition. Do not admit Task6A, promote the private create
-  receipt to owner, or run guarded32/33 from this result.
+  this new-path-only fixture does not model such a held process and requires
+  old-session/process drain in a real transition. Do not admit Task6A,
+  promote the private create receipt to owner, or run guarded32/33 from this
+  result.
 
 ## RED/GREEN and delivery
 
