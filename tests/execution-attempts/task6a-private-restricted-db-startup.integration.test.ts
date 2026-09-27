@@ -10,6 +10,18 @@ import { requireTask6aPrivateLoopbackHostname } from "./task6a-private-cluster-l
 
 const expectedDataDirectory = process.env.SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY;
 
+function permissionDenied(error: unknown): boolean {
+  return error !== null && typeof error === "object" && "code" in error
+    && error.code === "42501";
+}
+
+function sequencePermissionDenied(error: unknown): boolean {
+  return permissionDenied(error) && error !== null && typeof error === "object"
+    && "message" in error
+    && typeof error.message === "string"
+    && error.message.includes("runs_run_number_seq");
+}
+
 async function fingerprint(sql: postgres.Sql): Promise<string> {
   const rows = await sql<Array<{ value: string }>>`
     SELECT md5(jsonb_build_object(
@@ -27,7 +39,7 @@ async function fingerprint(sql: postgres.Sql): Promise<string> {
   return rows[0]!.value;
 }
 
-test("private restricted DB startup never falls back to DDL after close", {
+test("private restricted startup fences DDL and scopes the first run-number write", {
   skip: expectedDataDirectory ? false : "requires an explicitly identified private PostgreSQL 17 cluster",
 }, async () => {
   assert.equal(process.env.SETFARM_PG_URL, undefined);
@@ -86,18 +98,29 @@ test("private restricted DB startup never falls back to DDL after close", {
     try {
       const rights = await probe<Array<{ login: string; effective: string;
         superuser: boolean; bypass: boolean; createRole: boolean; createDatabase: boolean;
-        ownerMember: boolean; databaseCreate: boolean; schemaCreate: boolean }>>`
+        ownerMember: boolean; databaseCreate: boolean; schemaCreate: boolean;
+        sequenceUsage: boolean; sequenceUpdate: boolean; journalUpdate: boolean;
+        tableDml: boolean[] }>>`
         SELECT session_user AS login, current_user AS effective,
           r.rolsuper AS superuser, r.rolbypassrls AS bypass,
           r.rolcreaterole AS "createRole", r.rolcreatedb AS "createDatabase",
           pg_catalog.pg_has_role(session_user, o.oid, 'MEMBER') AS "ownerMember",
           has_database_privilege(current_user, current_database(), 'CREATE') AS "databaseCreate",
-          has_schema_privilege(current_user, 'public', 'CREATE') AS "schemaCreate"
+          has_schema_privilege(current_user, 'public', 'CREATE') AS "schemaCreate",
+          has_sequence_privilege(current_user, 'public.runs_run_number_seq', 'USAGE') AS "sequenceUsage",
+          has_sequence_privilege(current_user, 'public.runs_run_number_seq', 'UPDATE') AS "sequenceUpdate",
+          has_table_privilege(current_user, 'public.setfarm_schema_migrations', 'UPDATE') AS "journalUpdate",
+          ARRAY(SELECT has_table_privilege(current_user, name, privilege)
+            FROM unnest(ARRAY['public.runs', 'public.steps', 'public.claim_log',
+              'public.execution_attempts', 'public.runtime_sessions']) AS tables(name)
+            CROSS JOIN unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) AS rights(privilege)) AS "tableDml"
         FROM pg_catalog.pg_roles r CROSS JOIN pg_catalog.pg_roles o
         WHERE r.rolname = session_user AND o.rolname = ${owner}`;
       assert.deepEqual(rights[0], { login: role, effective: role, superuser: false,
         bypass: false, createRole: false, createDatabase: false,
-        ownerMember: false, databaseCreate: false, schemaCreate: false });
+        ownerMember: false, databaseCreate: false, schemaCreate: false,
+        sequenceUsage: false, sequenceUpdate: false, journalUpdate: false,
+        tableDml: Array(15).fill(false) });
     } finally { await probe.end({ timeout: 5 }); }
 
     restrictedDb = await import(`../../src/db-pg.ts?task6a-restricted-startup=${database.database}`);
@@ -107,6 +130,35 @@ test("private restricted DB startup never falls back to DDL after close", {
     await restrictedDb.prepareTask6aRestrictedSpawnerDatabaseV1(owner!);
     await assert.rejects(restrictedDb.prepareTask6aRestrictedSpawnerDatabaseV1(owner!),
       /TASK6A_RESTRICTED_DATABASE_STARTUP_ALREADY_USED/);
+    await assert.rejects(restrictedDb.pgNextRunNumber(), sequencePermissionDenied);
+
+    stage = "scoped-first-write-grant";
+    await database.sql.unsafe(`GRANT USAGE ON SEQUENCE public.runs_run_number_seq TO "${role}"`);
+    const scopedRights = await database.sql<Array<{ sequenceUsage: boolean;
+      sequenceUpdate: boolean; journalUpdate: boolean; databaseCreate: boolean;
+      schemaCreate: boolean; tableDml: boolean[] }>>`
+      SELECT has_sequence_privilege(${role}, 'public.runs_run_number_seq', 'USAGE') AS "sequenceUsage",
+        has_sequence_privilege(${role}, 'public.runs_run_number_seq', 'UPDATE') AS "sequenceUpdate",
+        has_table_privilege(${role}, 'public.setfarm_schema_migrations', 'UPDATE') AS "journalUpdate",
+        has_database_privilege(${role}, current_database(), 'CREATE') AS "databaseCreate",
+        has_schema_privilege(${role}, 'public', 'CREATE') AS "schemaCreate",
+        ARRAY(SELECT has_table_privilege(${role}, name, privilege)
+          FROM unnest(ARRAY['public.runs', 'public.steps', 'public.claim_log',
+            'public.execution_attempts', 'public.runtime_sessions']) AS tables(name)
+          CROSS JOIN unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) AS rights(privilege)) AS "tableDml"`;
+    assert.deepEqual(scopedRights[0], { sequenceUsage: true, sequenceUpdate: false,
+      journalUpdate: false, databaseCreate: false, schemaCreate: false,
+      tableDml: Array(15).fill(false) });
+    const first = await restrictedDb.pgNextRunNumber();
+    const second = await restrictedDb.pgNextRunNumber();
+    assert.ok(Number.isSafeInteger(first) && first > 0);
+    assert.equal(second, first + 1);
+    const sequenceState = await database.sql<Array<{ lastValue: string }>>`
+      SELECT last_value::text AS "lastValue" FROM public.runs_run_number_seq`;
+    assert.equal(Number(sequenceState[0]?.lastValue), second);
+    await assert.rejects(restrictedDb.pgQuery("INSERT INTO public.runs DEFAULT VALUES"), permissionDenied);
+    await assert.rejects(restrictedDb.pgQuery("CREATE TABLE public.task6a_forbidden (id integer)"),
+      permissionDenied);
     assert.equal((await restrictedDb.pgQuery<{ value: number }>("SELECT 1 AS value"))[0]?.value, 1);
     assert.equal(await fingerprint(database.sql), before);
     await assert.rejects(restrictedDb.pgMigrate(), /TASK6A_RESTRICTED_DEFAULT_MIGRATION_FORBIDDEN/);
