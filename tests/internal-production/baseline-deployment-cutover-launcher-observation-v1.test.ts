@@ -118,10 +118,27 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
       fs.writeFileSync(mission, `export function assertHeldTask6aMissionControlSameDatabaseUrlV2(holder,url){
         if(holder?.testBrand!==true)throw Error('FORGED_HOLDER');
         if(url!=='postgresql://fixture:PG_SENTINEL@localhost/setfarm')throw Error('WRONG_MC_URL');
-        return 'fixture';
+        return globalThis.missionRole??'fixture';
       }`);
       source = source.replaceAll('await import("./baseline-task6a-mission-control-launcher-hold-v2.js")',
         `await import(${JSON.stringify(pathToFileURL(mission).href)})`);
+      const receipt = path.join(home, "held-receipt-composer.mjs");
+      fs.writeFileSync(receipt, `export async function observeScopedHeldDiagnosticPositiveWorktreeReceiptCandidateV1(scope,url,root){
+        globalThis.receiptCalls++;
+        globalThis.receiptInputValid=scope.ownerHomeRoot===${JSON.stringify(home)}
+          &&scope.workspaceRoot===${JSON.stringify(path.join(home, "ai", "setrox"))}
+          &&url==='postgresql://fixture:PG_SENTINEL@localhost/setfarm'
+          &&root==='/tmp/projects/story/.worktrees/story-1';
+        globalThis.receiptDrift?.();
+        if(globalThis.receiptFailure)throw Error('PG_SENTINEL_PRIVATE_RECEIPT_FAILURE');
+        await Promise.resolve();
+        return Object.freeze({authority:'diagnostic-only',receiptStatus:'required-unpublished',
+          physicalIdentityProvenance:'unverified',producerAuthentication:'unverified'});
+      }`);
+      source = source.replace('await import("./baseline-positive-worktree-receipt-host-composer-v1.js")',
+        `await import(${JSON.stringify(pathToFileURL(receipt).href)})`);
+      source = source.replace('await import("./baseline-workspace-authority-path-v1.js")',
+        `await import(${JSON.stringify(new URL("../../src/internal-production/baseline-workspace-authority-path-v1.ts", import.meta.url).href)})`);
     } else {
       for (const name of ["baseline-deployment-cutover-node-path-v1", "baseline-deployment-cutover-process-observation-v1"])
         source = source.replace(JSON.stringify(`./${name}.js`), JSON.stringify(new URL(`../../src/internal-production/${name}.ts`, import.meta.url).href));
@@ -137,7 +154,7 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
     const identity = os.userInfo(); os.userInfo = () => ({...identity,homedir:${JSON.stringify(home)}});
     const texts = ${JSON.stringify(texts)}, labels = ${JSON.stringify(labels)};
     let prints = 0, conversions = 0, active = false, run, evidence = () => null;
-    globalThis.dbCalls=0;globalThis.combinedCalls=0;globalThis.v5Calls=0;globalThis.v6Calls=0;globalThis.v7Calls=0;globalThis.activeBindingCalls=0;globalThis.writerCalls=0;globalThis.catalogCalls=0;globalThis.samples=0;globalThis.nodeCloses=0;
+    globalThis.dbCalls=0;globalThis.combinedCalls=0;globalThis.v5Calls=0;globalThis.v6Calls=0;globalThis.v7Calls=0;globalThis.activeBindingCalls=0;globalThis.writerCalls=0;globalThis.catalogCalls=0;globalThis.receiptCalls=0;globalThis.samples=0;globalThis.nodeCloses=0;
     globalThis.processes=()=>Object.freeze({families:Object.freeze([]),listener:null});
     globalThis.nodeHold=()=>({observation:Object.freeze({candidatePath:'/fixture/invoked/node',executablePath:'/fixture/physical/node'}),recheck(){},close(){globalThis.nodeCloses++}});
     globalThis.identify=request=>({schema:'setfarm.internal-production-passive-process-identity.v1',pid:request.pid,ppid:1,
@@ -252,6 +269,69 @@ test("qualified V2 catalog sample keeps URL private and checks all holders", () 
   assert.equal(result.observation?.catalog.schema, "fixture-catalog-v2", JSON.stringify(result));
   assert.deepEqual(result.evidence, { catalogCalls: 1, nodeCloses: 2 });
   assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL/);
+}));
+
+test("qualified held receipt binds genuine MC role, both private URLs and code-owned scope", () => defaultFixture((home, texts) => {
+  const early = observe(home, texts,
+    `evidence=()=>({receiptCalls:globalThis.receiptCalls,nodeCloses:globalThis.nodeCloses});`, undefined,
+    `await context.observeTask6aHeldReceiptCandidateV1(Object.freeze({testBrand:true}),'/tmp/projects/story/.worktrees/story-1');`);
+  assert.match(early.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.deepEqual(early.evidence, { receiptCalls: 0, nodeCloses: 2 });
+  const qualified = observe(home, texts,
+    `evidence=()=>({receiptCalls:globalThis.receiptCalls,valid:globalThis.receiptInputValid,
+      nodeCloses:globalThis.nodeCloses});`, undefined,
+    `await context.qualifyPassiveHome();return await context.observeTask6aHeldReceiptCandidateV1(
+      Object.freeze({testBrand:true}),'/tmp/projects/story/.worktrees/story-1');`);
+  assert.equal(qualified.observation?.authority, "diagnostic-only", JSON.stringify(qualified));
+  assert.equal(qualified.observation?.receiptStatus, "required-unpublished");
+  assert.deepEqual(qualified.evidence, { receiptCalls: 1, valid: true, nodeCloses: 2 });
+  assert.equal(qualified.frozen, true);
+  assert.doesNotMatch(JSON.stringify({ early, qualified }), /PG_SENTINEL|TOKEN_SENTINEL|PRIVATE_RECEIPT_FAILURE/);
+}));
+
+test("held receipt refuses forged MC, role mismatch and private composer failure", () => defaultFixture((home, texts) => {
+  for (const [fault, holder, expectedCalls] of [
+    ["", "false", 0], ["globalThis.missionRole='other';", "true", 0],
+    ["globalThis.receiptFailure=true;", "true", 1],
+  ] as const) {
+    const result = observe(home, texts,
+      `${fault}evidence=()=>({receiptCalls:globalThis.receiptCalls,nodeCloses:globalThis.nodeCloses});`, undefined,
+      `await context.qualifyPassiveHome();await context.observeTask6aHeldReceiptCandidateV1(
+        Object.freeze({testBrand:${holder}}),'/tmp/projects/story/.worktrees/story-1');`);
+    assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+    assert.deepEqual(result.evidence, { receiptCalls: expectedCalls, nodeCloses: 2 });
+    assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|TOKEN_SENTINEL|PRIVATE_RECEIPT_FAILURE/);
+  }
+}));
+
+test("held receipt refuses a crossed launcher URL before the composer", () => defaultFixture((home, texts) => {
+  const file = path.join(home, "Library", "LaunchAgents", `${labels[1]}.plist`);
+  fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("PG_SENTINEL", "CROSSED_PRIVATE_SENTINEL"));
+  texts[1] = texts[1]!.replace("PG_SENTINEL", "CROSSED_PRIVATE_SENTINEL");
+  const result = observe(home, texts,
+    `evidence=()=>({receiptCalls:globalThis.receiptCalls,nodeCloses:globalThis.nodeCloses});`, undefined,
+    `await context.qualifyPassiveHome();await context.observeTask6aHeldReceiptCandidateV1(
+      Object.freeze({testBrand:true}),'/tmp/projects/story/.worktrees/story-1');`);
+  assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.deepEqual(result.evidence, { receiptCalls: 0, nodeCloses: 2 });
+  assert.doesNotMatch(JSON.stringify(result), /PG_SENTINEL|CROSSED_PRIVATE_SENTINEL|TOKEN_SENTINEL/);
+}));
+
+test("held receipt refuses MC role drift and postclose reuse", () => defaultFixture((home, texts) => {
+  const drift = observe(home, texts,
+    `globalThis.receiptDrift=()=>{globalThis.missionRole='other'};
+      evidence=()=>({receiptCalls:globalThis.receiptCalls,nodeCloses:globalThis.nodeCloses});`, undefined,
+    `await context.qualifyPassiveHome();await context.observeTask6aHeldReceiptCandidateV1(
+      Object.freeze({testBrand:true}),'/tmp/projects/story/.worktrees/story-1');`);
+  assert.match(drift.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.deepEqual(drift.evidence, { receiptCalls: 1, nodeCloses: 2 });
+  const closed = observe(home, texts,
+    `evidence=()=>({receiptCalls:globalThis.receiptCalls,nodeCloses:globalThis.nodeCloses});`, undefined,
+    `await context.qualifyPassiveHome();context.close();await context.observeTask6aHeldReceiptCandidateV1(
+      Object.freeze({testBrand:true}),'/tmp/projects/story/.worktrees/story-1');`);
+  assert.match(closed.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/);
+  assert.deepEqual(closed.evidence, { receiptCalls: 0, nodeCloses: 2 });
+  assert.doesNotMatch(JSON.stringify({ drift, closed }), /PG_SENTINEL|TOKEN_SENTINEL/);
 }));
 
 test("V2 catalog sample refuses forged Mission Control holder and launcher drift", () => defaultFixture((home, texts) => {
