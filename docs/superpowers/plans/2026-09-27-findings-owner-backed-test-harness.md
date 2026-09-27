@@ -26,6 +26,7 @@
 - Modify `tests/findings/recovery-delivery-repository.test.ts`: replace the obsolete manual-claim success expectation with exact fail-closed no-residue assertions.
 - Modify `tests/findings/repository.test.ts`: point the cold pre32 catalog source extraction at its current import-inert census module and extract only its actual dependencies; production implementation stays unchanged.
 - Modify `tests/findings/v3-github-review-authorization.integration.test.ts`: replace obsolete manually inserted repair claim with genuine compiler story admission and canonical recovery claim/runtime publication.
+- Modify `tests/findings/v3-recovery-claim-authority.test.ts`: authenticate the attempt-bound reissue case through canonical story admission and claim/runtime publication while leaving the other lease cases unchanged.
 - Create `scripts/__tests__/run-finding-tests.test.js` only if a focused source/partition regression is needed beyond the executable `test:findings` gate.
 
 ---
@@ -76,6 +77,14 @@
 - [x] **Step 1: Confirm RED.** Under P3, the first six cases passed and three resolution-success cases failed at `RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND` from manually inserted repair claims.
 - [x] **Step 2: Use actual authorities.** Seed canonical compiler story admission, keep the selected story's immutable fields, and acquire/publish a bounded recovery claim/runtime before reserving the repair attempt.
 - [ ] **Step 3: Run GREEN.** First P3 run passed 7/9, including the canonical success case, and exposed a second fixture issue: three test runs reused the same global runtime session ID because the canonical story ID is stable. Bind the session ID to the run ID; rerun all cases, then the remaining full findings suite.
+
+### Task 2d: Preserve attempt-bound recovery-lease replay coverage
+
+**Files:** Modify `tests/findings/v3-recovery-claim-authority.test.ts`.
+
+- [x] **Step 1: Confirm RED.** Full findings passed 5/6 claim-authority cases; the lone attempt-bound case manually inserted a claim and failed at `RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND`.
+- [x] **Step 2: Use actual authorities.** Only that case seeds canonical compiler story admission and publishes its acquired recovery lease through `publishLoopClaimRuntime` before attempt reservation.
+- [ ] **Step 3: Run GREEN.** Focused P3 case then the remaining findings files and complete findings suite.
 
 ### Task 3: Review and deliver
 

@@ -51,6 +51,11 @@ seeding genuine compiler story admission, then acquire the recovery handoff
 and publish the loop claim/runtime through the production API. Do not insert
 a repair claim by hand or forge its publication.
 
+The same stale pattern exists in one recovery-first claim-authority test: its
+attempt-bound lease replay case must use a genuine compiler story admission and
+canonical runtime publication before reserving the attempt. Keep its other
+five lease/termination cases minimal and unchanged.
+
 ## Verification and boundary
 
 The observed full-suite failure is RED. Run the findings command on the
