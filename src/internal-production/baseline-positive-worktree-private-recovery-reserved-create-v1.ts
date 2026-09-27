@@ -5,6 +5,9 @@ import type postgres from "postgres";
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { FindingSetV1Schema } from "../findings/finding-set.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { RecoveryCaseV1Schema } from "../recovery/recovery-case.js";
+import { RecoveryCaseRevisionV1Schema, RecoveryRevisionDispatchV1Schema } from
+  "../recovery/recovery-delivery.js";
 import { lockV3RecoveryRunMutationAuthorityInTransaction } from
   "../recovery/v3-recovery-run-mutation-authority.js";
 import { createPrivateDiagnosticPinnedWorktreeV1 } from
@@ -57,6 +60,11 @@ function bounded(value: unknown, max: number): string {
   if (typeof value !== "string" || value.length === 0 || value.length > max
     || value.trim() !== value || value.includes("\0")) return fail();
   return value;
+}
+
+function timestamp(value: unknown): string {
+  if (!(value instanceof Date) || !Number.isFinite(value.getTime())) return fail();
+  return value.toISOString();
 }
 
 function validateReservation(row: Reservation, requestedHash: string): void {
@@ -150,30 +158,102 @@ export async function createPrivateDiagnosticRecoveryReservedWorktreeV1(
         WHERE dispatch_id = $1 FOR UPDATE`, [row.dispatchId]);
       if (deliveries.length !== 1) fail();
       const delivery = deliveries[0]!;
-      const cases = await tx.unsafe<Array<{ currentRevisionId: string; status: string }>>(`SELECT
-        current_revision_id AS "currentRevisionId", status
+      const cases = await tx.unsafe<Array<Record<string, unknown>>>(`SELECT *
         FROM public.recovery_cases WHERE recovery_case_id = $1
           AND run_id = $2 AND story_id = $3 FOR UPDATE`,
       [row.recoveryCaseId, row.runId, row.storyId]);
-      if (cases.length !== 1 || cases[0]?.currentRevisionId !== row.revisionId
+      if (cases.length !== 1 || cases[0]?.current_revision_id !== row.revisionId
         || cases[0].status !== "repairing") fail();
-      const revisions = await tx.unsafe<Array<{ sourceSha: string; sourceTreeHash: string }>>(`SELECT
-        source_sha AS "sourceSha", source_tree_hash AS "sourceTreeHash"
+      const caseRow = cases[0]!;
+      const parsedCase = RecoveryCaseV1Schema.safeParse({
+        schema: "setfarm.recovery-case.v1",
+        recoveryCaseId: caseRow.recovery_case_id,
+        dedupeKey: caseRow.dedupe_key,
+        runId: caseRow.run_id, storyId: caseRow.story_id,
+        findingSetHash: caseRow.finding_set_hash,
+        findingIds: caseRow.finding_ids,
+        packetHash: caseRow.packet_hash,
+        sliceHash: caseRow.slice_hash,
+        sourceRevision: { sha: caseRow.source_sha, treeHash: caseRow.source_tree_hash },
+        owner: caseRow.owner,
+        expectedDelta: caseRow.expected_delta,
+        allowedPaths: caseRow.allowed_paths,
+        evidencePlan: caseRow.evidence_plan,
+        priorAttemptRefs: caseRow.prior_attempt_refs,
+        budget: { limits: { implement: caseRow.max_implement,
+          supervisorRepair: caseRow.max_supervisor_repair,
+          evidenceOnly: caseRow.max_evidence_only },
+        used: { implement: caseRow.used_implement,
+          supervisorRepair: caseRow.used_supervisor_repair,
+          evidenceOnly: caseRow.used_evidence_only } },
+        status: caseRow.status,
+        ...(caseRow.terminal !== null ? { terminal: caseRow.terminal } : {}),
+        decisionRefs: caseRow.decision_refs,
+        stateVersion: caseRow.state_version,
+        createdAt: timestamp(caseRow.created_at),
+        updatedAt: timestamp(caseRow.updated_at),
+      });
+      if (!parsedCase.success) fail();
+      const revisions = await tx.unsafe<Array<Record<string, unknown>>>(`SELECT *
         FROM public.recovery_case_revisions WHERE revision_id = $1
           AND recovery_case_id = $2 AND run_id = $3 AND story_id = $4 FOR KEY SHARE`,
       [row.revisionId, row.recoveryCaseId, row.runId, row.storyId]);
-      if (revisions.length !== 1 || revisions[0]?.sourceSha !== row.sourceSha
-        || revisions[0]?.sourceTreeHash !== row.sourceTreeHash) fail();
-      const dispatches = await tx.unsafe<Array<{ sourceSha: string;
-        sourceTreeHash: string; dispatchClass: string }>>(`SELECT
-        source_sha AS "sourceSha", source_tree_hash AS "sourceTreeHash",
-        dispatch_class AS "dispatchClass"
+      if (revisions.length !== 1 || revisions[0]?.source_sha !== row.sourceSha
+        || revisions[0]?.source_tree_hash !== row.sourceTreeHash) fail();
+      const revisionRow = revisions[0]!;
+      const parsedRevision = RecoveryCaseRevisionV1Schema.safeParse({
+        schema: "setfarm.recovery-case-revision.v1",
+        revisionId: revisionRow.revision_id,
+        revisionIdentityKey: revisionRow.revision_identity_key,
+        recoveryCaseId: revisionRow.recovery_case_id,
+        revisionNumber: revisionRow.revision_number,
+        ...(revisionRow.parent_revision_id !== null
+          ? { parentRevisionId: revisionRow.parent_revision_id } : {}),
+        runId: revisionRow.run_id, storyId: revisionRow.story_id,
+        findingSetHash: revisionRow.finding_set_hash,
+        findingIds: revisionRow.finding_ids,
+        packetHash: revisionRow.packet_hash,
+        contractSliceHash: revisionRow.contract_slice_hash,
+        sourceRevision: { sha: revisionRow.source_sha, treeHash: revisionRow.source_tree_hash },
+        owner: revisionRow.owner,
+        expectedDelta: revisionRow.expected_delta,
+        allowedPaths: revisionRow.allowed_paths,
+        evidencePlan: revisionRow.evidence_plan,
+        ...(revisionRow.evidence_plan_artifact_hash !== null
+          ? { evidencePlanArtifactHash: revisionRow.evidence_plan_artifact_hash } : {}),
+        createdAt: timestamp(revisionRow.created_at),
+      });
+      if (!parsedRevision.success) fail();
+      const revision = parsedRevision.data;
+      if (!revision) return fail();
+      const dispatches = await tx.unsafe<Array<Record<string, unknown>>>(`SELECT *
         FROM public.recovery_revision_dispatches WHERE dispatch_id = $1
           AND revision_id = $2 AND recovery_case_id = $3 FOR KEY SHARE`,
       [row.dispatchId, row.revisionId, row.recoveryCaseId]);
-      if (dispatches.length !== 1 || dispatches[0]?.sourceSha !== row.sourceSha
-        || dispatches[0]?.sourceTreeHash !== row.sourceTreeHash
-        || !["product_implementation", "supervisor_repair"].includes(dispatches[0].dispatchClass)) fail();
+      if (dispatches.length !== 1 || dispatches[0]?.source_sha !== row.sourceSha
+        || dispatches[0]?.source_tree_hash !== row.sourceTreeHash
+        || !["product_implementation", "supervisor_repair"].includes(
+          String(dispatches[0]?.dispatch_class))) fail();
+      const dispatchRow = dispatches[0]!;
+      const parsedDispatch = RecoveryRevisionDispatchV1Schema.safeParse({
+        schema: "setfarm.recovery-revision-dispatch.v1",
+        dispatchId: dispatchRow.dispatch_id,
+        recoveryCaseId: dispatchRow.recovery_case_id,
+        revisionId: dispatchRow.revision_id,
+        dispatchClass: dispatchRow.dispatch_class,
+        dispatchDedupeKey: dispatchRow.dispatch_dedupe_key,
+        runId: revision.runId, storyId: revision.storyId,
+        sourceRevision: { sha: dispatchRow.source_sha, treeHash: dispatchRow.source_tree_hash },
+        packetHash: dispatchRow.packet_hash,
+        contractSliceHash: dispatchRow.contract_slice_hash,
+        findingSetHash: dispatchRow.finding_set_hash,
+        findingIds: dispatchRow.finding_ids,
+        evidencePlan: dispatchRow.evidence_plan,
+        ...(dispatchRow.evidence_plan_artifact_hash !== null
+          ? { evidencePlanArtifactHash: dispatchRow.evidence_plan_artifact_hash } : {}),
+        authorizedAt: timestamp(dispatchRow.authorized_at),
+      });
+      if (!parsedDispatch.success) fail();
       // The immutable reservation records a past lease. A physical add also
       // requires the present full directive chain, not merely a matching SHA.
       const exactChain = await tx.unsafe<Array<{ findingSetHash: string;

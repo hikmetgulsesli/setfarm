@@ -77,6 +77,13 @@ Final review identified a separate publication fence: an old closed claim may
 retain an unreleased runtime session. A RED test with a drained historical
 session proved Git creation remained possible; the private bridge now refuses
 that exact runtime predicate before add.
+Exact-head GitHub review then found a remaining canonical identity gap: valid-
+shape direct SQL could corrupt revision or dispatch derived identity columns
+without changing the source tuple. Both produced pre-add RED tests in the
+isolated cluster. The analogous mutable case dedupe key also produced RED.
+The bridge now parses complete case, revision and dispatch rows with the same
+canonical V3 schemas used by claim authority before invoking Git, without
+changing the live claim authority or producer contract.
 Run focused private PG/Git tests, TypeScript, pure/cutover/manifest and
 migration digests, independent read-only review, exact-head GitHub review,
 then clean-main build and merged-main focused tests. Host verification stays

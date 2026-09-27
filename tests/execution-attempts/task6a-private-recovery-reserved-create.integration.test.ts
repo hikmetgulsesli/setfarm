@@ -250,9 +250,11 @@ test("private recovery reservation derives a pinned disposable Git create withou
 }));
 
 for (const scenario of ["expired", "rotated", "active-claim", "execution-slice-residue",
-  "started-at-residue", "case-owner-residue", "case-status-drift", "case-opening-finding-drift",
+  "started-at-residue", "case-owner-residue", "case-status-drift", "case-dedupe-drift",
+  "case-opening-finding-drift",
   "finding-payload-drift", "step-type-drift", "step-status-drift", "duplicate-implement-step",
   "duplicate-failed-story", "unreleased-runtime", "authorization-time-residue",
+  "revision-identity-drift", "dispatch-identity-drift",
   "occupied", "wrong-repo"] as const) {
   test(`private recovery reserved create refuses ${scenario} before Git mutation`, {
     skip: expectedDataDirectory ? false : "requires an explicitly identified private PostgreSQL 17 cluster",
@@ -290,6 +292,11 @@ for (const scenario of ["expired", "rotated", "active-claim", "execution-slice-r
     }
     if (scenario === "case-status-drift") {
       await database.sql`UPDATE public.recovery_cases SET status = 'evidencing'
+        WHERE recovery_case_id = (SELECT recovery_case_id
+          FROM public.recovery_dispatch_deliveries WHERE dispatch_id = ${dispatchId})`;
+    }
+    if (scenario === "case-dedupe-drift") {
+      await database.sql`UPDATE public.recovery_cases SET dedupe_key = ${"f".repeat(64)}
         WHERE recovery_case_id = (SELECT recovery_case_id
           FROM public.recovery_dispatch_deliveries WHERE dispatch_id = ${dispatchId})`;
     }
@@ -339,6 +346,25 @@ for (const scenario of ["expired", "rotated", "active-claim", "execution-slice-r
         'implement', (SELECT id FROM public.stories
           WHERE run_id = ${runId} AND story_id = ${storyId}), ${storyId},
         999988, 'agent', 'agent', 'external_session', 'drained', 'old-owner', NOW(), NOW())`;
+    }
+    if (scenario === "revision-identity-drift") {
+      await database.sql`ALTER TABLE public.recovery_case_revisions
+        DISABLE TRIGGER trg_recovery_case_revisions_immutable`;
+      await database.sql`UPDATE public.recovery_case_revisions
+        SET revision_identity_key = ${"a".repeat(64)}
+        WHERE revision_id = (SELECT revision_id
+          FROM public.recovery_revision_dispatches WHERE dispatch_id = ${dispatchId})`;
+      await database.sql`ALTER TABLE public.recovery_case_revisions
+        ENABLE TRIGGER trg_recovery_case_revisions_immutable`;
+    }
+    if (scenario === "dispatch-identity-drift") {
+      await database.sql`ALTER TABLE public.recovery_revision_dispatches
+        DISABLE TRIGGER trg_recovery_revision_dispatches_immutable`;
+      await database.sql`UPDATE public.recovery_revision_dispatches
+        SET dispatch_dedupe_key = ${"b".repeat(64)}
+        WHERE dispatch_id = ${dispatchId}`;
+      await database.sql`ALTER TABLE public.recovery_revision_dispatches
+        ENABLE TRIGGER trg_recovery_revision_dispatches_immutable`;
     }
     if (scenario === "authorization-time-residue") {
       await database.sql`UPDATE public.recovery_dispatch_deliveries
