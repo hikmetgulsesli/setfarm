@@ -7,6 +7,7 @@ import path from "node:path";
 import postgres from "postgres";
 
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
+import { requireTask6aPrivateLoopbackHostname } from "./task6a-private-cluster-loopback.js";
 
 const expectedDataDirectory = process.env.SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY;
 
@@ -55,7 +56,7 @@ test("pgMigrate opt-in verifies an isolated database with a restricted login and
   assert.ok(adminUrl);
   const parsed = new URL(adminUrl);
   assert.equal(parsed.pathname, "/postgres");
-  assert.ok(["127.0.0.1", "localhost", "::1"].includes(parsed.hostname));
+  const privateHostname = requireTask6aPrivateLoopbackHostname(parsed);
   assert.notEqual(parsed.port, "5432");
   const admin = postgres(adminUrl, { max: 1 });
   let database: TestDatabase | undefined;
@@ -101,7 +102,7 @@ test("pgMigrate opt-in verifies an isolated database with a restricted login and
     const restrictedUrl = new URL(database.url);
     restrictedUrl.username = role;
     restrictedUrl.password = password;
-    restrictedUrl.hostname = "127.0.0.1";
+    restrictedUrl.hostname = privateHostname;
     restrictedUrl.port = parsed.port;
     restrictedDb = await import(`../../src/db-pg.ts?task6a-optin=${database.database}`);
     restrictedDb.pgConfigureIsolatedTestDatabase(restrictedUrl.toString());
