@@ -13,6 +13,7 @@
 
 - `src/internal-production/baseline-positive-worktree-receipt-protocol-v1.ts`: diagnostic coordinator, exact input validation, no authority status upgrade.
 - `tests/internal-production/baseline-positive-worktree-receipt-protocol-v1.test.ts`: RED then GREEN for order, single invocation, source drift, exact row crossing, terminal/duplicates, no raw fence in output, callback/cleanup failure, no observable writes.
+- `package.json`: include the new test in `test:internal-production:pure`, reached by the standard `npm test` chain. Exact-head PR review found this missing; it must be fixed before delivery.
 - Focused tests, TypeScript, source manifest/digests, independent read-only review, exact-head PR, clean-main build/test.
 
 Actual physical-source authentication, immutable PostgreSQL receipt publication, crash/retry/no-replace semantics, continuous DB/OS writer exclusion and guarded 32/33 remain separate hard gates.
@@ -21,4 +22,4 @@ Actual physical-source authentication, immutable PostgreSQL receipt publication,
 
 - RED: the new protocol test failed because no coordinating module existed.
 - GREEN: one held physical callback encloses two source observations, one single-row DB callback and an end physical tuple recheck; crossed, terminal, missing, duplicate and drifted evidence refuses. Raw fence is absent from the frozen candidate. Physical/DB cleanup refusal returns no candidate.
-- Focused protocol 4/4, adjacent binding/held-candidate/physical-catalog 54/54, TypeScript, source manifest 18/18, migration digests, and diff check passed. Independent read-only review found no Medium+ issue; it emphasized that injected ports are not producer authentication. Exact-head PR and clean-main checks pending.
+- Focused protocol 4/4, adjacent binding/held-candidate/physical-catalog 54/54, TypeScript, source manifest 18/18, migration digests, and diff check passed before PR review. Independent read-only review found no Medium+ issue; it emphasized that injected ports are not producer authentication. Exact-head Codex review identified missing standard-suite registration; package fix and new-head review/clean-main checks pending.
