@@ -52,7 +52,8 @@ publication and private receipt; the synthetic physical receipt remains
 diagnostic, not a physical proof. The fixture commits its publication after
 the receipt to test absent-publication refusal; this is not a production
 lifecycle claim. Test missing publication, crossed input hashes, token
-rotation, expired delivery and attempt, claim/session/slice drift, rollback,
+rotation, expired delivery and attempt, mutable current-case drift,
+claim/session/slice drift, rollback,
 immutable DML, identical retry and continued pending-row presence. A separate
 fixture is still needed for forged immutable publication bytes/hash and
 crossed publication identity; do not claim those adversarial cases passed.

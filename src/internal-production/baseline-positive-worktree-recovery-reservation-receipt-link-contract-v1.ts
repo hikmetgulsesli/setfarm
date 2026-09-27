@@ -148,8 +148,12 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
         || delivery.attemptId === null || delivery.leaseToken === null
         || delivery.executionSliceHash === null) fail();
       const cases = await tx.unsafe<Array<{ currentRevisionId: string; status: string;
-        owner: string }>>(`SELECT
-        current_revision_id AS "currentRevisionId", status, owner FROM public.recovery_cases
+        owner: string; packetHash: string; expectedDelta: unknown;
+        allowedPaths: unknown; evidencePlan: unknown }>>(`SELECT
+        current_revision_id AS "currentRevisionId", status, owner,
+        packet_hash AS "packetHash", expected_delta AS "expectedDelta",
+        allowed_paths AS "allowedPaths", evidence_plan AS "evidencePlan"
+        FROM public.recovery_cases
         WHERE recovery_case_id = $1 AND run_id = $2 AND story_id = $3 FOR UPDATE`,
       [reservation.recoveryCaseId, reservation.runId, reservation.storyId]);
       if (cases.length !== 1 || cases[0]?.currentRevisionId !== reservation.revisionId
@@ -203,6 +207,13 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
         || dispatch.contractSliceHash !== revision.contractSliceHash
         || dispatch.findingSetHash !== revision.findingSetHash
         || cases[0]?.owner !== revision.dispatchClassOwner
+        || cases[0]?.packetHash !== revision.packetHash
+        || canonicalJsonStringify(cases[0]?.expectedDelta)
+          !== canonicalJsonStringify(revision.expectedDelta)
+        || canonicalJsonStringify(cases[0]?.allowedPaths)
+          !== canonicalJsonStringify(revision.allowedPaths)
+        || canonicalJsonStringify(cases[0]?.evidencePlan)
+          !== canonicalJsonStringify(revision.evidencePlan)
         || canonicalJsonStringify(dispatch.findingIds) !== canonicalJsonStringify(revision.findingIds)
         || canonicalJsonStringify(dispatch.evidencePlan) !== canonicalJsonStringify(revision.evidencePlan)
         || dispatch.evidencePlanArtifactHash !== revision.evidencePlanArtifactHash) fail();

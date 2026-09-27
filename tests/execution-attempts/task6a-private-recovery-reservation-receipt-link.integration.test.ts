@@ -276,6 +276,15 @@ stage = "reservation-before-claim";
     ]) await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
       database.sql, crossed), REFUSED);
     stage = "stale-chain-refusal";
+    await database.sql`UPDATE public.recovery_cases
+      SET expected_delta = ${JSON.stringify({ kind: "source_change",
+        invariantRefs: ["INV_CROSSED_CASE"], requiredPaths: ["src/App.tsx"] })}::text::jsonb
+      WHERE recovery_case_id = ${recoveryCase.recoveryCaseId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "mutable current case must still match the published revision");
+    await database.sql`UPDATE public.recovery_cases
+      SET expected_delta = ${JSON.stringify(revision.expectedDelta)}::text::jsonb
+      WHERE recovery_case_id = ${recoveryCase.recoveryCaseId}`;
     await database.sql`UPDATE public.claim_log SET abandoned_at = NOW() WHERE id = ${claimId}`;
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact), REFUSED);
     await database.sql`UPDATE public.claim_log SET abandoned_at = NULL WHERE id = ${claimId}`;
