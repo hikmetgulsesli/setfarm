@@ -289,6 +289,18 @@ stage = "reservation-before-claim";
       database.sql, crossed), REFUSED);
     stage = "stale-chain-refusal";
     await database.sql`UPDATE public.recovery_dispatch_deliveries
+      SET state = 'running' WHERE dispatch_id = ${handoff.dispatchId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "a running delivery cannot have a reserved runtime");
+    await database.sql`UPDATE public.recovery_dispatch_deliveries
+      SET state = 'attempt_reserved' WHERE dispatch_id = ${handoff.dispatchId}`;
+    await database.sql`UPDATE public.runtime_sessions SET state = 'drain_requested'
+      WHERE session_id = ${sessionId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "an active delivery cannot have a draining runtime");
+    await database.sql`UPDATE public.runtime_sessions SET state = 'reserved'
+      WHERE session_id = ${sessionId}`;
+    await database.sql`UPDATE public.recovery_dispatch_deliveries
       SET authorized_at = authorized_at + INTERVAL '1 second'
       WHERE dispatch_id = ${handoff.dispatchId}`;
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
@@ -373,6 +385,14 @@ stage = "reservation-before-claim";
       REFUSED, "mutable current case must still match the published revision");
     await database.sql`UPDATE public.recovery_cases
       SET expected_delta = ${JSON.stringify(revision.expectedDelta)}::text::jsonb
+      WHERE recovery_case_id = ${recoveryCase.recoveryCaseId}`;
+    await database.sql`UPDATE public.recovery_cases
+      SET finding_ids = ${JSON.stringify(["crossed-opening-finding"])}::text::jsonb
+      WHERE recovery_case_id = ${recoveryCase.recoveryCaseId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "case opening finding identity must still match revision one");
+    await database.sql`UPDATE public.recovery_cases
+      SET finding_ids = ${JSON.stringify(recoveryCase.findingIds)}::text::jsonb
       WHERE recovery_case_id = ${recoveryCase.recoveryCaseId}`;
     await database.sql`UPDATE public.claim_log SET abandoned_at = NOW() WHERE id = ${claimId}`;
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact), REFUSED);

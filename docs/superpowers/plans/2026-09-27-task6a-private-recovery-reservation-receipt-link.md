@@ -43,6 +43,10 @@ block cutover.
   equalities.
   Both supported implementation recovery dispatches require current case
   status `repairing`; `open` and evidence-only `evidencing` refuse.
+  Match the case's immutable opening-revision packet, finding set/IDs, slice
+  and source identity before accepting its current revision. Match live
+  delivery/runtime states as a pair: reserved delivery with reserved,
+  starting or running session, or running delivery with running session.
   A legitimate same-token renewal may change expiry, so never require the
   current expiry to equal the original handoff timestamp.
 - Require active claim/attempt/session and exact V3 story binding, current
@@ -66,7 +70,8 @@ diagnostic, not a physical proof. The fixture commits its publication after
 the receipt to test absent-publication refusal; this is not a production
 lifecycle claim. Test missing publication, crossed input hashes, token
 rotation, expired delivery and attempt, mutable current-case/status/step
-drift, changed delivery authorization, absent, shifted or pre-session delivery start,
+drift, crossed case opening identity, invalid delivery/runtime state pair,
+changed delivery authorization, absent, shifted or pre-session delivery start,
 base-schema run-packet immutability, story claimant/birth drift,
 claim/session/slice/role drift
 for both supported recovery dispatch classes,

@@ -158,7 +158,21 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
         packet_hash AS "packetHash", expected_delta AS "expectedDelta",
         allowed_paths AS "allowedPaths", evidence_plan AS "evidencePlan"
         FROM public.recovery_cases
-        WHERE recovery_case_id = $1 AND run_id = $2 AND story_id = $3 FOR UPDATE`,
+        WHERE recovery_case_id = $1 AND run_id = $2 AND story_id = $3
+          AND EXISTS (
+            SELECT 1 FROM public.recovery_case_revisions opening_revision
+            WHERE opening_revision.recovery_case_id = recovery_cases.recovery_case_id
+              AND opening_revision.revision_number = 1
+              AND opening_revision.parent_revision_id IS NULL
+              AND opening_revision.run_id = recovery_cases.run_id
+              AND opening_revision.story_id = recovery_cases.story_id
+              AND opening_revision.packet_hash = recovery_cases.packet_hash
+              AND opening_revision.finding_set_hash = recovery_cases.finding_set_hash
+              AND opening_revision.finding_ids = recovery_cases.finding_ids
+              AND opening_revision.contract_slice_hash = recovery_cases.slice_hash
+              AND opening_revision.source_sha = recovery_cases.source_sha
+              AND opening_revision.source_tree_hash = recovery_cases.source_tree_hash
+          ) FOR UPDATE`,
       [reservation.recoveryCaseId, reservation.runId, reservation.storyId]);
       if (cases.length !== 1 || cases[0]?.currentRevisionId !== reservation.revisionId
         || cases[0]?.status !== "repairing") fail();
@@ -350,7 +364,11 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           AND s.claim_agent_id = c.agent_id AND s.workflow_step_id = c.step_id
           AND s.story_db_id = st.id AND s.story_id = st.story_id
           AND s.worktree = $13
-          AND s.state IN ('reserved', 'starting', 'running', 'drain_requested', 'drained')
+          AND (
+            (live_delivery.state = 'attempt_reserved'
+              AND s.state IN ('reserved', 'starting', 'running'))
+            OR (live_delivery.state = 'running' AND s.state = 'running')
+          )
         FOR UPDATE OF st, step, c, a, s, b`, [reservation.storyDbId,
       reservation.runId, reservation.storyId, receipt.claimId,
       receipt.attemptId, receipt.generation, reservation.dispatchId,
