@@ -213,6 +213,9 @@ stage = "reservation-before-claim";
       WHERE id = ${stepDbId}`;
     await database.sql`INSERT INTO public.claim_log (id, run_id, step_id, story_id, agent_id)
       VALUES (${claimId}, ${runId}, 'implement', ${storyId}, 'agent')`;
+    await database.sql`UPDATE public.stories
+      SET claimed_by = 'agent', claimed_at = c.claimed_at
+      FROM public.claim_log c WHERE stories.id = ${storyDbId} AND c.id = ${claimId}`;
     await database.sql`INSERT INTO public.execution_attempts (
       attempt_id, run_id, step_id, story_id, agent_id, generation, fence_token,
       attempt_class, compilation_report_hash, source_before_sha, source_before_tree_hash,
@@ -272,7 +275,8 @@ stage = "reservation-before-claim";
       ${claimId}, ${sessionId}, ${runId}, ${stepDbId}, 'implement',
       ${storyDbId}, ${storyId}, 1, ${handoff.recoveryCaseId}, ${handoff.revisionId},
       ${handoff.dispatchId}, ${handoff.status}, ${canonicalJsonStringify(handoff)},
-      ${hashCanonicalJson(handoff)}, clock_timestamp()
+      ${hashCanonicalJson(handoff)},
+      (SELECT claimed_at FROM public.claim_log WHERE id = ${claimId})
     )`;
     for (const crossed of [
       { ...exact, reservationHash: "f".repeat(64) },
@@ -281,6 +285,18 @@ stage = "reservation-before-claim";
     ]) await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
       database.sql, crossed), REFUSED);
     stage = "stale-chain-refusal";
+    await database.sql`UPDATE public.stories SET claimed_by = 'crossed-agent'
+      WHERE id = ${storyDbId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "live story claimant must be the active claim agent");
+    await database.sql`UPDATE public.stories SET claimed_by = 'agent'
+      WHERE id = ${storyDbId}`;
+    await database.sql`UPDATE public.stories
+      SET claimed_at = claimed_at + INTERVAL '1 second' WHERE id = ${storyDbId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "story claim birth must equal the immutable publication bound time");
+    await database.sql`UPDATE public.stories SET claimed_at = c.claimed_at
+      FROM public.claim_log c WHERE stories.id = ${storyDbId} AND c.id = ${claimId}`;
     await assert.rejects(database.sql`UPDATE public.runs
       SET packet_hash = ${"f".repeat(64)} WHERE id = ${runId}`,
       /RUN_PACKET_HASH_IMMUTABLE/, "the base schema independently protects the live run packet");

@@ -305,6 +305,8 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           AND a.run_id = st.run_id AND a.step_id = c.step_id AND a.story_id = st.story_id
         JOIN public.runtime_sessions s ON s.claim_id = c.id
           AND s.run_id = st.run_id AND s.attempt_id = a.attempt_id
+        JOIN ${PUBLICATIONS} pub ON pub.dispatch_id = $7
+          AND pub.claim_id = c.id AND pub.runtime_session_id = s.session_id
         JOIN public.v3_story_claim_runtime_bindings_v1 b
           ON b.claim_id = c.id AND b.runtime_session_id = s.session_id
           AND b.run_id = st.run_id AND b.step_db_id = s.step_db_id
@@ -314,6 +316,9 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           AND b.story_claim_generation = st.claim_generation
         WHERE st.id = $1 AND st.run_id = $2 AND st.story_id = $3
           AND st.status = 'running' AND c.id = $4::bigint
+          AND st.claimed_by = c.agent_id
+          AND st.claimed_at = pub.bound_at
+          AND c.claimed_at = pub.bound_at
           AND step.status = 'running' AND step.current_story_id = st.id
           AND c.step_id = 'implement' AND c.outcome IS NULL
           AND c.abandoned_at IS NULL
@@ -330,6 +335,7 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           AND a.worktree = $13 AND a.source_before_sha = $14
           AND a.source_before_tree_hash = $15
           AND s.session_id = $16 AND s.owner_instance_id = $17
+          AND s.created_at >= pub.bound_at
           AND s.step_db_id = step.id AND st.story_index = $19
           AND s.claim_agent_id = c.agent_id AND s.workflow_step_id = c.step_id
           AND s.story_db_id = st.id AND s.story_id = st.story_id

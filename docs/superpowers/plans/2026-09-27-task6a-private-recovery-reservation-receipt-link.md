@@ -42,7 +42,9 @@ block cutover.
   current expiry to equal the original handoff timestamp.
 - Require active claim/attempt/session and exact V3 story binding, current
   running workflow step still owning the story, live run packet hash, fence
-  hash, source SHA/tree, root, generation and owner identity. Insert
+  hash, source SHA/tree, root, generation and owner identity. Story claimant
+  must match the claim agent, and immutable publication bound time must equal
+  claim/story birth and precede runtime creation. Insert
   one immutable link with canonical-body hash and parent FKs; only byte-
   identical retry can adopt a conflict. Shared-field FKs and direct SQL rows
   are not complete producer-authenticity evidence.
@@ -59,7 +61,8 @@ diagnostic, not a physical proof. The fixture commits its publication after
 the receipt to test absent-publication refusal; this is not a production
 lifecycle claim. Test missing publication, crossed input hashes, token
 rotation, expired delivery and attempt, mutable current-case/status/step
-drift, base-schema run-packet immutability, claim/session/slice/role drift
+drift, base-schema run-packet immutability, story claimant/birth drift,
+claim/session/slice/role drift
 for both supported recovery dispatch classes,
 rollback,
 immutable DML, identical retry and continued pending-row presence. A separate
