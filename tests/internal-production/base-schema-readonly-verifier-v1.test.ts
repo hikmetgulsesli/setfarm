@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { verifyOrdinaryBaseSchemaCatalogReadOnlyV1 } from "../../src/db/base-schema-readonly-verifier-v1.js";
+
+test("normal internal-production pure suite includes the base catalog verifier", () => {
+  const packageJson = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+  assert.match(packageJson.scripts["test:internal-production:pure"],
+    /tests\/internal-production\/base-schema-readonly-verifier-v1\.test\.ts/);
+});
 
 test("base catalog verification refuses an empty catalog in a bounded read-only transaction", async () => {
   const statements: string[] = [];

@@ -108,7 +108,10 @@ path for this case. It requires `SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY` and a
 matching `SETFARM_TEST_PG_ADMIN_URL`; without the former, the integration case
 skips and cannot be counted as a passing restricted-role gate.
 - `tests/internal-production/base-schema-readonly-verifier-v1.test.ts`: pure
-  SQL/transaction/error redaction and exact manifest-shape tests.
+  SQL/transaction/error redaction and exact manifest-shape tests; included in
+  the ordinary `test:internal-production:pure` command.
+- `package.json`: keeps that pure registration in `npm test`, while the
+  restricted-login integration retains its explicit private-cluster gate.
 - `tests/internal-production/task-0-source-manifest.test.ts` and test runner
   registration only if their existing source inventory requires new file
   registration.
