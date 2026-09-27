@@ -16,7 +16,7 @@ function permissionDenied(error: unknown): boolean {
     && "code" in error && error.code === "42501";
 }
 
-test("private successor uses sequence and serialized V31 run fence without journal UPDATE", {
+test("private successor proves sequence, V31 fence, and narrow owner-head lock capability", {
   skip: expectedDataDirectory ? false : "requires an explicitly identified private PostgreSQL cluster",
 }, async () => {
   assert.equal(process.env.SETFARM_PG_URL, undefined);
@@ -247,6 +247,85 @@ test("private successor uses sequence and serialized V31 run fence without journ
     } finally {
       await database.db.abortInternalProductionCurrentEntryMigration32TransactionV1(timeoutHolder);
     }
+
+    stage = "restricted-owner-head-lock";
+    const ownerKey = `task6a-private-owner-${role}`;
+    const attemptOwnerBegin = (lockTimeout: string) => successorDb!.pgBegin(async (sql) => {
+      await sql.unsafe("SELECT set_config('lock_timeout', $1, true)", [lockTimeout]);
+      await successorDb!.lockInternalProductionWorkflowRunInsertionFenceV1(sql);
+      await successorDb!.beginOrAdoptInternalProductionOwnerReservationV1(sql, {
+        producerImplementationId: "a-runtime-run-v1",
+        ownerKey,
+      });
+    });
+    const headDenied = (error: unknown) => permissionDenied(error)
+      && error instanceof Error && error.message.includes("internal_production_owner_admission_head_v1");
+    const headBefore = await database.sql<Array<{ head_version: number; head_hash: string }>>`
+      SELECT head_version,head_hash FROM public.internal_production_owner_admission_head_v1
+      WHERE singleton=TRUE
+    `;
+    assert.equal(headBefore.length, 1);
+    await assert.rejects(attemptOwnerBegin("100ms"), headDenied);
+    await database.sql.unsafe(`GRANT SELECT ON public.internal_production_owner_admission_head_v1 TO "${role}"`);
+    await assert.rejects(attemptOwnerBegin("100ms"), headDenied);
+    const readOnlyHeadRights = await database.sql<Array<{ select: boolean; update: boolean }>>`
+      SELECT has_table_privilege(${role}, 'public.internal_production_owner_admission_head_v1', 'SELECT') AS select,
+        has_table_privilege(${role}, 'public.internal_production_owner_admission_head_v1', 'UPDATE') AS update
+    `;
+    assert.deepEqual(readOnlyHeadRights[0], { select: true, update: false });
+
+    await database.sql.unsafe(`GRANT UPDATE (head_version) ON public.internal_production_owner_admission_head_v1 TO "${role}"`);
+    const narrowRights = await database.sql<Array<{ headVersionUpdate: boolean; headHashUpdate: boolean;
+      headTableUpdate: boolean;
+      journalUpdate: boolean;
+      reservationInsert: boolean; authorityInsert: boolean; runInsert: boolean; stepInsert: boolean }>>`
+      SELECT has_column_privilege(${role}, 'public.internal_production_owner_admission_head_v1', 'head_version', 'UPDATE') AS "headVersionUpdate",
+        has_column_privilege(${role}, 'public.internal_production_owner_admission_head_v1', 'head_hash', 'UPDATE') AS "headHashUpdate",
+        has_table_privilege(${role}, 'public.internal_production_owner_admission_head_v1', 'UPDATE') AS "headTableUpdate",
+        has_table_privilege(${role}, 'public.setfarm_schema_migrations', 'UPDATE') AS "journalUpdate",
+        has_table_privilege(${role}, 'public.internal_production_owner_reservations_v1', 'INSERT') AS "reservationInsert",
+        has_table_privilege(${role}, 'public.internal_production_owner_admission_authorities_v1', 'INSERT') AS "authorityInsert",
+        has_table_privilege(${role}, 'public.runs', 'INSERT') AS "runInsert",
+        has_table_privilege(${role}, 'public.steps', 'INSERT') AS "stepInsert"
+    `;
+    assert.deepEqual(narrowRights[0], { headVersionUpdate: true, headHashUpdate: false,
+      headTableUpdate: false,
+      journalUpdate: false,
+      reservationInsert: false, authorityInsert: false, runInsert: false, stepInsert: false });
+    let reportHeadHeld!: () => void;
+    const headHeld = new Promise<void>((resolve) => { reportHeadHeld = resolve; });
+    let releaseHead!: () => void;
+    const headRelease = new Promise<void>((resolve) => { releaseHead = resolve; });
+    const headHolder = database.sql.begin(async (sql) => {
+      await sql`SELECT head_version FROM public.internal_production_owner_admission_head_v1
+        WHERE singleton=TRUE FOR UPDATE`;
+      reportHeadHeld();
+      await headRelease;
+    });
+    try {
+      await Promise.race([headHeld, headHolder.then(() => {
+        throw new Error("TASK6A_OWNER_HEAD_HOLDER_EXITED_EARLY");
+      })]);
+      await assert.rejects(attemptOwnerBegin("100ms"), (error: unknown) =>
+        error !== null && typeof error === "object" && "code" in error && error.code === "55P03");
+    } finally {
+      releaseHead();
+      await headHolder;
+    }
+    const headAfter = await database.sql<Array<{ head_version: number; head_hash: string }>>`
+      SELECT head_version,head_hash FROM public.internal_production_owner_admission_head_v1
+      WHERE singleton=TRUE
+    `;
+    assert.deepEqual(headAfter, headBefore);
+    const ownerCountRows = await database.sql<Array<{ count: string }>>`
+      SELECT count(*)::text AS count FROM public.internal_production_owner_reservations_v1
+      WHERE owner_key=${ownerKey}
+    `;
+    assert.equal(ownerCountRows[0]?.count, "0");
+    const runCountRows = await database.sql<Array<{ count: string }>>`
+      SELECT count(*)::text AS count FROM public.runs WHERE id=${ownerKey}
+    `;
+    assert.equal(runCountRows[0]?.count, "0");
 
     stage = "journal-drift-refusal";
     const driftedChecksum = "f".repeat(64);
