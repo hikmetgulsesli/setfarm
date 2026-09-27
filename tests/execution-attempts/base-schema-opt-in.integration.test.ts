@@ -18,7 +18,18 @@ test("current-entry initializer rechecks verify-only mode after its asynchronous
   assert.ok(start >= 0 && end > start);
   const initializer = source.slice(start, end);
   assert.match(initializer,
-    /await verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1\(\);\s*if \(_verificationOnlyMode\) throw new Error\("SETFARM_BASE_SCHEMA_VERIFY_INCOMPLETE"\);\s*_schemaReady = true;/);
+    /await verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1\(\);\s*if \(_task6aNoDefaultMigration && !_schemaReady\) \{\s*throw new Error\("TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED"\);\s*\}\s*if \(_verificationOnlyMode\) throw new Error\("SETFARM_BASE_SCHEMA_VERIFY_INCOMPLETE"\);\s*_schemaReady = true;/);
+});
+
+test("restricted verification cannot mark a closing or replaced connection ready", async () => {
+  const source = await readFile(path.join(process.cwd(), "src/db-pg.ts"), "utf8");
+  const migrate = source.slice(source.indexOf("export async function pgMigrate("),
+    source.indexOf("export async function pgNextRunNumber("));
+  const close = source.slice(source.indexOf("export async function pgClose("),
+    source.indexOf("export const now =", source.indexOf("export async function pgClose(")));
+  assert.match(migrate, /const restrictedConnectionEpoch = _task6aRestrictedConnectionEpoch;/);
+  assert.match(migrate, /if \(_task6aNoDefaultMigration && \(_task6aRestrictedClosing\s*\|\| restrictedConnectionEpoch !== _task6aRestrictedConnectionEpoch\s*\|\| _sql !== target\)\) \{/);
+  assert.match(close, /_task6aRestrictedConnectionEpoch \+= 1;[\s\S]*?_schemaReady = false;[\s\S]*?await _sql\.end\(\)/);
 });
 
 async function schemaFingerprint(sql: postgres.Sql): Promise<string> {

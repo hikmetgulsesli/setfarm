@@ -141,6 +141,12 @@ let _schemaReady = false;
 let _schemaReadyPromise: Promise<void> | null = null;
 let _isMigrating = false;
 let _verificationOnlyMode = false;
+// Once a restricted startup has been selected, closing/reopening a connection
+// must never restore the ordinary implicit DDL path in this process. This is
+// defense in depth; the separate PostgreSQL role is the mechanical fence.
+let _task6aNoDefaultMigration = false;
+let _task6aRestrictedConnectionEpoch = 0;
+let _task6aRestrictedClosing = false;
 let _isolatedTestPgUrl: string | null = null;
 
 const LEGACY_ISOLATED_TEST_DATABASE_V1 = /^setfarm_contract_spine_test_[0-9]+_[a-f0-9]{12}$/;
@@ -174,7 +180,8 @@ function isExactIsolatedTestDatabaseNameV1(database: string): boolean {
 }
 
 export function pgConfigureIsolatedTestDatabase(rawUrl: string): void {
-  if (_sql || _schemaReady || _schemaReadyPromise || _isMigrating) {
+  if (_sql || _schemaReady || _schemaReadyPromise || _isMigrating
+    || (_task6aNoDefaultMigration && _task6aRestrictedClosing)) {
     throw new Error("ISOLATED_TEST_DATABASE_ALREADY_CONNECTED");
   }
   const parsed = new URL(rawUrl);
@@ -5834,8 +5841,14 @@ export async function verifyInternalProductionCurrentEntryDatabaseThroughMigrati
 
 export async function initializeInternalProductionCurrentEntryDatabaseV1(
 ): Promise<InternalProductionCurrentEntryDatabaseInitializationV1> {
+  if (_task6aNoDefaultMigration && !_schemaReady) {
+    throw new Error("TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED");
+  }
   if (_verificationOnlyMode) throw new Error("SETFARM_BASE_SCHEMA_VERIFY_INCOMPLETE");
   await verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1();
+  if (_task6aNoDefaultMigration && !_schemaReady) {
+    throw new Error("TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED");
+  }
   if (_verificationOnlyMode) throw new Error("SETFARM_BASE_SCHEMA_VERIFY_INCOMPLETE");
   _schemaReady = true;
   const core = Object.freeze({
@@ -5848,7 +5861,11 @@ export async function initializeInternalProductionCurrentEntryDatabaseV1(
 }
 
 async function ensureSchemaReady(): Promise<void> {
+  if (_task6aNoDefaultMigration && _task6aRestrictedClosing) {
+    throw new Error("TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED");
+  }
   if (_schemaReady) return;
+  if (_task6aNoDefaultMigration) throw new Error("TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED");
   if (_verificationOnlyMode) throw new Error("SETFARM_BASE_SCHEMA_VERIFY_INCOMPLETE");
   if (_isMigrating) return;
   if (!_schemaReadyPromise) {
@@ -5904,6 +5921,24 @@ export type PgMigrationOptions = Readonly<{
   expectedSchemaOwner?: string;
 }>;
 
+/**
+ * Private Task6A restricted-startup rehearsal only. No live spawner, CLI or
+ * V2 admission path calls this. The latch is armed synchronously before the
+ * first awaited database operation and is intentionally never reset by
+ * pgClose(). A caller-supplied expected owner is only a catalog assertion,
+ * not producer proof or an admission capability.
+ */
+export async function prepareTask6aRestrictedSpawnerDatabaseV1(
+  expectedSchemaOwner: string,
+): Promise<void> {
+  if (_task6aNoDefaultMigration || _sql || _schemaReady || _schemaReadyPromise
+    || _isMigrating || _verificationOnlyMode) {
+    throw new Error("TASK6A_RESTRICTED_DATABASE_STARTUP_ALREADY_USED");
+  }
+  _task6aNoDefaultMigration = true;
+  await pgMigrate({ baseSchemaMode: "verify", expectedSchemaOwner });
+}
+
 async function verifyExpectedPublicObjectOwnerReadOnlyV1(
   sql: ReturnType<typeof postgres>, expectedOwner: string,
 ): Promise<void> {
@@ -5953,6 +5988,9 @@ export async function pgMigrate(options: PgMigrationOptions = {}): Promise<void>
   const contractSpineMode = optionDescriptors.contractSpineMode?.value as unknown;
   const expectedSchemaOwner = optionDescriptors.expectedSchemaOwner?.value as unknown;
   const verificationOnly = baseSchemaMode === "verify";
+  if (_task6aNoDefaultMigration && !verificationOnly) {
+    throw new Error("TASK6A_RESTRICTED_DEFAULT_MIGRATION_FORBIDDEN");
+  }
   if ((baseSchemaMode !== undefined && !verificationOnly)
     || (contractSpineMode !== undefined
       && contractSpineMode !== "verify" && contractSpineMode !== "apply")
@@ -5973,6 +6011,10 @@ export async function pgMigrate(options: PgMigrationOptions = {}): Promise<void>
   if (verificationOnly && _verificationOnlyMode && !_schemaReady) {
     throw new Error("SETFARM_BASE_SCHEMA_VERIFY_INCOMPLETE");
   }
+  if (_task6aNoDefaultMigration && _task6aRestrictedClosing) {
+    throw new Error("TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED");
+  }
+  const restrictedConnectionEpoch = _task6aRestrictedConnectionEpoch;
   _isMigrating = true;
   if (verificationOnly) {
     _verificationOnlyMode = true;
@@ -5980,13 +6022,19 @@ export async function pgMigrate(options: PgMigrationOptions = {}): Promise<void>
   }
   try {
     if (verificationOnly) {
+      let target: ReturnType<typeof postgres> | null = null;
       try {
-        const target = getSql();
+        target = getSql();
         await verifyContractSpineCurrentHeadJournalReadOnlyV1(target);
         await verifyOrdinaryBaseSchemaCatalogReadOnlyV1(target);
         await verifyExpectedPublicObjectOwnerReadOnlyV1(target, expectedSchemaOwner as string);
       } catch {
         throw new Error("SETFARM_BASE_SCHEMA_VERIFY_REFUSED");
+      }
+      if (_task6aNoDefaultMigration && (_task6aRestrictedClosing
+        || restrictedConnectionEpoch !== _task6aRestrictedConnectionEpoch
+        || _sql !== target)) {
+        throw new Error("TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED");
       }
       _schemaReady = true;
       return;
@@ -6239,14 +6287,28 @@ export async function pgCheckpoint(): Promise<void> {
 }
 
 export async function pgClose(): Promise<void> {
-  if (_sql) {
-    await _sql.end();
-    _sql = null;
+  if (_task6aNoDefaultMigration) {
+    if (_task6aRestrictedClosing) throw new Error("TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED");
+    _task6aRestrictedClosing = true;
+    _task6aRestrictedConnectionEpoch += 1;
+    _schemaReady = false;
+    _schemaReadyPromise = null;
+    _verificationOnlyMode = false;
   }
-  _schemaReady = false;
-  _schemaReadyPromise = null;
-  _verificationOnlyMode = false;
-  _isolatedTestPgUrl = null;
+  try {
+    if (_sql) {
+      await _sql.end();
+      _sql = null;
+    }
+    _schemaReady = false;
+    _schemaReadyPromise = null;
+    _verificationOnlyMode = false;
+    // _task6aNoDefaultMigration is a process-lifetime safety latch.
+    _isolatedTestPgUrl = null;
+  } finally {
+    // A failed close remains fenced; a fresh URL cannot be configured.
+    if (_task6aNoDefaultMigration && _sql === null) _task6aRestrictedClosing = false;
+  }
 }
 
 export const now = (): string => new Date().toISOString();
