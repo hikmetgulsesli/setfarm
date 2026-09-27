@@ -61,7 +61,7 @@ test("pgMigrate opt-in verifies an isolated database with a restricted login and
   let database: TestDatabase | undefined;
   let restrictedDb: typeof import("../../src/db-pg.js") | undefined;
   const role = `task6a_optin_${randomBytes(6).toString("hex")}`;
-  const foreignOwner = `task6a_foreign_${randomBytes(6).toString("hex")}`;
+  const foreignOwner = `Task6A Foreign ${randomBytes(6).toString("hex")}`;
   const password = randomBytes(24).toString("hex");
   let roleCreated = false;
   let foreignOwnerCreated = false;
@@ -144,6 +144,11 @@ test("pgMigrate opt-in verifies an isolated database with a restricted login and
       /SETFARM_BASE_SCHEMA_VERIFY_MODE_INVALID/);
     await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify", expectedSchemaOwner, unknown: true } as never),
       /SETFARM_BASE_SCHEMA_VERIFY_MODE_INVALID/);
+    await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify",
+      expectedSchemaOwner: String.fromCharCode(0xd800) }),
+    /SETFARM_BASE_SCHEMA_VERIFY_MODE_INVALID/);
+    await assert.rejects(restrictedDb.pgMigrate({ baseSchemaMode: "verify", expectedSchemaOwner: "Schema-Owner" }),
+      /SETFARM_BASE_SCHEMA_VERIFY_REFUSED/);
 
     stage = "foreign-object-owner";
     await restrictedDb.pgClose();

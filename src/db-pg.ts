@@ -5943,7 +5943,9 @@ export async function pgMigrate(options: PgMigrationOptions = {}): Promise<void>
     || (contractSpineMode !== undefined
       && contractSpineMode !== "verify" && contractSpineMode !== "apply")
     || (verificationOnly && (typeof expectedSchemaOwner !== "string"
-      || !/^[a-z_][a-z0-9_]{0,62}$/.test(expectedSchemaOwner)))
+      || expectedSchemaOwner.length === 0 || expectedSchemaOwner.includes("\0")
+      || Buffer.byteLength(expectedSchemaOwner, "utf8") > 63
+      || Buffer.from(expectedSchemaOwner, "utf8").toString("utf8") !== expectedSchemaOwner))
     || (!verificationOnly && expectedSchemaOwner !== undefined)
     || (verificationOnly && contractSpineMode === "apply")
     || (_verificationOnlyMode && !verificationOnly)

@@ -50,7 +50,11 @@ assertion of this opt-in path.
 The expected owner is mandatory, cannot be the verifier login or a role it can
 inherit, and must match every `pg_class` object in `public`, including tables,
 indexes, sequences, views and standalone composite types, before readiness.
-It is not learned from the target database's object owners;
+Quoted PostgreSQL role names are valid inputs; the exact name is bound as a
+SQL parameter and compared to `pg_roles.rolname`. Ill-formed UTF-16 is refused
+before binding, so encoding replacement cannot change the supplied identity.
+It is not learned from the
+target database's object owners;
 a future live caller must hold it independently. Extra foreign-owned public
 objects refuse rather than receive an implicit exemption.
 `_schemaReady` becomes true only after all checks succeed; subsequent automatic
