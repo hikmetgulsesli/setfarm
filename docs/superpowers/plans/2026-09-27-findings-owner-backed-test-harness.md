@@ -74,7 +74,7 @@
 
 - [x] **Step 1: Confirm RED.** Under P3, the first six cases passed and three resolution-success cases failed at `RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND` from manually inserted repair claims.
 - [x] **Step 2: Use actual authorities.** Seed canonical compiler story admission, keep the selected story's immutable fields, and acquire/publish a bounded recovery claim/runtime before reserving the repair attempt.
-- [ ] **Step 3: Run GREEN.** Require all GitHub review authorization cases to pass under the private P3 fixture, then run the remaining full findings suite.
+- [ ] **Step 3: Run GREEN.** First P3 run passed 7/9, including the canonical success case, and exposed a second fixture issue: three test runs reused the same global runtime session ID because the canonical story ID is stable. Bind the session ID to the run ID; rerun all cases, then the remaining full findings suite.
 
 ### Task 3: Review and deliver
 

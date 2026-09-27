@@ -407,7 +407,7 @@ describe("v3 GitHub review recovery authorization", () => {
       storyAdmissionProof: fixture.storyAdmissionProof,
       runtimeIntent: {
         schema: "setfarm.runtime-claim-intent.v1",
-        sessionId: `RTS_github-review-resolution-${fixture.storyId}`,
+        sessionId: `RTS_github-review-resolution-${fixture.runId}-${fixture.storyId}`,
         runtimeAgentId: "github-review-supervisor",
         runtimeKind: "local_process",
         ownerInstanceId: handoff.lease.ownerInstanceId,
