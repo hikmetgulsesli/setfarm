@@ -57,6 +57,7 @@ test("base catalog verification refuses required tables with no required columns
         ? [{ database: true, schema: true }]
         : statement.includes("FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n")
           ? requiredTables.map((name) => ({ name, kind: "r", persistence: "p",
+            accessMethod: "heap",
             partitioned: false, rowSecurity: false, forceRowSecurity: false,
             hasInheritance: false, hasRewriteRules: false, ownerReachable: false }))
           : [],

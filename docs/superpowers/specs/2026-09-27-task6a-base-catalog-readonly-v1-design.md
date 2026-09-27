@@ -39,6 +39,12 @@ The restricted login must not be a member of any required base table, index,
 or sequence owner role; denied schema CREATE alone does not deny owner DDL.
 Required ordinary base tables must have no rewrite rules, since an INSERT
 `DO INSTEAD NOTHING` rule would change runtime writes without changing columns.
+Their table access method must be PostgreSQL's source-created `heap`; an
+alternate registered handler changes the storage contract without changing
+the table kind or column projection.
+The canonical PG17 fixture uses `default_table_access_method=heap`; a
+non-heap default environment intentionally refuses pending a reviewed contract
+change.
 Required base columns must have neither fast-default `atthasmissing` nor
 `attmissingval`; a later-added column can otherwise expose stale logical
 values after its visible default is removed.

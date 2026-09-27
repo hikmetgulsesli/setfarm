@@ -170,6 +170,7 @@ const EXPECTED_BASE_SEQUENCES_V1 = Object.freeze([
 
 const TABLE_SQL_V1 = `SELECT c.relname AS name, c.relkind AS kind,
   c.relpersistence AS persistence, c.relispartition AS partitioned,
+  am.amname AS "accessMethod",
   c.relrowsecurity AS "rowSecurity", c.relforcerowsecurity AS "forceRowSecurity",
   pg_catalog.pg_has_role(session_user, c.relowner, 'MEMBER') AS "ownerReachable",
   EXISTS (SELECT 1 FROM pg_catalog.pg_inherits h
@@ -177,6 +178,7 @@ const TABLE_SQL_V1 = `SELECT c.relname AS name, c.relkind AS kind,
   EXISTS (SELECT 1 FROM pg_catalog.pg_rewrite r
     WHERE r.ev_class = c.oid) AS "hasRewriteRules"
   FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  LEFT JOIN pg_catalog.pg_am am ON am.oid = c.relam
  WHERE n.nspname = 'public'
    AND c.relname IN ('claim_log', 'medic_checks', 'rules',
      'run_observations', 'runs', 'steps', 'stories')
@@ -300,6 +302,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         kind: string;
         persistence: string;
         partitioned: boolean;
+        accessMethod: string | null;
         rowSecurity: boolean;
         forceRowSecurity: boolean;
         hasInheritance: boolean;
@@ -313,6 +316,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
           || table.kind !== "r"
           || table.persistence !== "p"
           || table.partitioned !== false
+          || table.accessMethod !== "heap"
           || table.rowSecurity !== false
           || table.forceRowSecurity !== false
           || table.hasInheritance !== false
