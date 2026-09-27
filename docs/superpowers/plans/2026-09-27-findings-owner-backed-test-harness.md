@@ -27,7 +27,7 @@
 - Modify `tests/findings/repository.test.ts`: point the cold pre32 catalog source extraction at its current import-inert census module and extract only its actual dependencies; production implementation stays unchanged.
 - Modify `tests/findings/v3-github-review-authorization.integration.test.ts`: replace obsolete manually inserted repair claim with genuine compiler story admission and canonical recovery claim/runtime publication.
 - Modify `tests/findings/v3-recovery-claim-authority.test.ts`: authenticate the attempt-bound reissue case through canonical story admission and claim/runtime publication while leaving the other lease cases unchanged.
-- Modify `tests/findings/v3-recovery-coordinator.test.ts`: give initial claims genuine owner births and model recovery attempts canonical story proof, claim/runtime publication, execution-slice authority, and no-spawn runtime release.
+- Modify `tests/findings/v3-recovery-coordinator.test.ts`: give initial claims and runs genuine owner births and model recovery attempts canonical story proof, claim/runtime publication, execution-slice authority, and no-spawn runtime release.
 - Create `scripts/__tests__/run-finding-tests.test.js` only if a focused source/partition regression is needed beyond the executable `test:findings` gate.
 
 ---
@@ -93,7 +93,7 @@
 
 - [x] **Step 1: Confirm RED.** P3 coordinator passed 5/8; terminal settlement refused a manually inserted ownerless claim (`INTERNAL_PRODUCTION_CLAIM_OWNER_UNAVAILABLE`), and two model recovery cases refused manually inserted unpublished claims (`RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND`).
 - [x] **Step 2: Model authentic births.** Reuse production claim owner-birth APIs and canonical compiler admission; publish model recovery runtime/claim with a typed execution-slice envelope and release the never-spawned runtime after terminal attempt. Leave evidence-only delivery non-model.
-- [ ] **Step 3: Run GREEN.** First P3 rerun found one shared strict-input mismatch: the local `canonical` fixture property was passed to `V3RecoveryCoordinatorInputSchema` and refused in six cases. Keep admission metadata in a run-keyed test-only map, not in the coordinator input. Rerun focused coordinator, correct any further fixture mismatch without weakening guards, then rerun all findings.
+- [ ] **Step 3: Run GREEN.** First P3 rerun found one shared strict-input mismatch: the local `canonical` fixture property was passed to `V3RecoveryCoordinatorInputSchema` and refused in six cases. Moving it to a run-keyed test-only map restored five passing cases. Remaining RED: two model cases used invalid underscore-rich runtime session IDs, and terminal settlement correctly refused an ownerless workflow-run birth. Use a schema-valid deterministic session ID and the production owner-reservation begin/bind APIs, then rerun.
 
 ### Task 3: Review and deliver
 

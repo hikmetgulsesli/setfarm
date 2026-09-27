@@ -4,7 +4,12 @@ import { after, before, describe, it } from "node:test";
 import { createEvidenceBundleV2, computeObservationRef } from "../../src/evidence/evidence-bundle-v2.js";
 import { compileEvidencePlanV1 } from "../../src/evidence/evidence-plan-v1.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
-import type { PgTransactionSql } from "../../src/db-pg.js";
+import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
+  createInternalProductionWorkflowRunCanonicalOwnerIdentityV1,
+  type PgTransactionSql,
+} from "../../src/db-pg.js";
 import { acquireClaimMutationAuthorityInTransaction } from "../../src/execution/claim-mutation-authority.js";
 import {
   insertAndBindInternalProductionClaimBirthV1,
@@ -237,6 +242,18 @@ async function initialInput(input: Readonly<{
     releaseSha,
     packetHash: slice.packetHash,
   });
+  await input.database.sql.begin(async (transaction) => {
+    const identity = createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(input.runId);
+    const reservation = await beginOrAdoptInternalProductionOwnerReservationV1(
+      transaction as PgTransactionSql,
+      { producerImplementationId: "a-runtime-run-v1", ownerKey: identity.ownerKey },
+    );
+    await bindInternalProductionOwnerReservationV1(transaction as PgTransactionSql, {
+      reservationRef: reservation.reservationRef,
+      reservationHash: reservation.reservationHash,
+      canonicalOwnerIdentity: identity,
+    });
+  });
   canonicalAdmissionByRunId.set(input.runId, canonical);
   const story = canonical.stories.find((candidate) => candidate.storyId === slice.storyId);
   assert.ok(story);
@@ -409,7 +426,7 @@ async function recoveryInput(input: Readonly<{
       storyAdmissionProof: canonical.storyAdmissionProof,
       runtimeIntent: {
         schema: "setfarm.runtime-claim-intent.v1",
-        sessionId: `RTS_coordinator-${input.runId}-${input.dispatch.dispatchId}`,
+        sessionId: `RTS_${hashCanonicalJson({ runId: input.runId, dispatchId: input.dispatch.dispatchId }).slice(0, 32)}`,
         runtimeAgentId: agentId,
         runtimeKind: "local_process",
         ownerInstanceId: modelHandoff.lease.ownerInstanceId,

@@ -58,7 +58,8 @@ five lease/termination cases minimal and unchanged.
 
 The coordinator integration fixture contains a second shared stale path.
 Give its initial claim the actual internal-production owner birth and seed
-canonical `US-001` story admission. For model recovery, acquire a V3 recovery
+canonical `US-001` story admission and the real workflow-run owner reservation
+needed for terminal settlement. For model recovery, acquire a V3 recovery
 handoff, publish the loop claim/runtime, and reserve with the authenticated
 execution-slice envelope. Complete the attempt, close the never-spawned
 reserved runtime with its no-spawn evidence, and restore the failed story
