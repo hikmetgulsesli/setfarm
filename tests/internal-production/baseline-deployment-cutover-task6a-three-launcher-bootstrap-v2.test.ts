@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fs from "node:fs";
-import { spawnSync } from "node:child_process";
+import { assertFeatureBranchCutoverRefusalV1 } from "./cutover-feature-branch-bootstrap-fixture-v1.js";
 
 const script = new URL("../../scripts/deployment-cutover.mjs", import.meta.url);
 const source = fs.readFileSync(script, "utf8");
@@ -17,13 +17,6 @@ test("Task6A three-launcher bootstrap has a distinct authenticated no-write verb
   assert.match(source, /"unverified"/);
 });
 
-test("new host verb refuses a feature worktree before loading or observing the host", () => {
-  const child = spawnSync(process.execPath, [script.pathname, "inspect-task6a-three-launcher-host-v2", "--json"],
-    { encoding: "utf8", timeout: 15000, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
-  assert.equal(child.status, 1);
-  assert.equal(child.stdout, "");
-  const lines = child.stderr.trimEnd().split("\n");
-  assert.equal(lines[0], "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED");
-  assert.equal(JSON.parse(lines[1]!).stage, "source-authentication");
-  assert.equal(lines.length, 2);
+test("new host verb refuses a real feature branch before observing host", () => {
+  assertFeatureBranchCutoverRefusalV1(script, "inspect-task6a-three-launcher-host-v2");
 });
