@@ -12,10 +12,11 @@ import { lockV3RecoveryRunMutationAuthorityInTransaction } from
 // Private post-33 fixture only. Database correlation does not authenticate a
 // physical creator, continuously fence OS/DB writers, settle a pending row,
 // register a migration, or grant owner/admission authority. Direct SQL rows
-// are not a producer proof. The separate ordinary V1 table can still contain
-// a competing root; future census must consider both. The raw lease token
+// are not a producer proof. The separate ordinary V1 table and direct SQL
+// rows still require an independent both-table census. The raw lease token
 // never enters persisted data.
 const TABLE = "public.internal_production_positive_worktree_recovery_precreate_reservations_v1";
+const ORDINARY_TABLE = "public.internal_production_positive_worktree_precreate_reservations_v1";
 const SCHEMA = "setfarm.internal-production-positive-worktree-private-recovery-precreate-reservation.v1";
 const TOKEN_SCHEMA = "setfarm.internal-production-positive-worktree-recovery-lease-token-commitment.v1";
 const REFUSED = "TASK6A_PRIVATE_RECOVERY_PRECREATE_RESERVATION_REFUSED";
@@ -183,6 +184,11 @@ export async function appendPrivateDiagnosticRecoveryPrecreateReservationV1(
       if (!(delivery.leaseExpiresAt instanceof Date)
         || !Number.isFinite(delivery.leaseExpiresAt.getTime())
         || delivery.leaseExpiresAt.getTime() <= now.getTime()) fail();
+      // This predicate stays in the owned serializable transaction, including
+      // identical retry, so concurrent appender write skew cannot be adopted.
+      const competing = await tx.unsafe(`SELECT reservation_hash FROM ${ORDINARY_TABLE}
+        WHERE root = $1 LIMIT 1`, [value.root]);
+      if (competing.length !== 0) fail();
       const leaseTokenHash = hashCanonicalJson({ schema: TOKEN_SCHEMA,
         dispatchId: value.dispatchId, leaseToken: value.leaseToken });
       const body = Object.freeze({ schema: SCHEMA, runId: value.runId,

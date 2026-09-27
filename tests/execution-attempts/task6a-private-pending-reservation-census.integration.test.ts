@@ -24,6 +24,8 @@ import { requireTask6aPrivateLoopbackHostname } from "./task6a-private-cluster-l
 
 const expectedDataDirectory = process.env.SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY;
 const REFUSED = /TASK6A_PRIVATE_PENDING_RESERVATION_CENSUS_REFUSED/;
+const ORDINARY_REFUSED = /TASK6A_PRIVATE_PRECREATE_RESERVATION_REFUSED/;
+const RECOVERY_REFUSED = /TASK6A_PRIVATE_RECOVERY_PRECREATE_RESERVATION_REFUSED/;
 const ORDINARY = "public.internal_production_positive_worktree_precreate_reservations_v1";
 
 async function createPrivateReservationTables(database: TestDatabase): Promise<void> {
@@ -82,10 +84,12 @@ async function withPrivateDatabase(operation: (database: TestDatabase) => Promis
   }
 }
 
-for (const scenario of ["normal", "malformed-recovery"] as const) {
+for (const scenario of ["normal", "malformed-recovery", "concurrent"] as const) {
 test(`private pending census ${scenario === "normal"
   ? "counts both complete post-33 reservation tables without admitting owners"
-  : "refuses recovery parent body-column divergence"}`, {
+  : scenario === "malformed-recovery"
+    ? "refuses recovery parent body-column divergence"
+    : "allows only one concurrent cross-table same-root appender"}`, {
   skip: expectedDataDirectory ? false : "requires an explicitly identified private PostgreSQL 17 cluster",
 }, async () => {
   assert.equal(process.env.SETFARM_PG_URL, undefined);
@@ -250,6 +254,91 @@ test(`private pending census ${scenario === "normal"
     }, { now: new Date() });
     assert.equal(handoff.dispatchId, authorized.dispatch.dispatchId);
     const recoveryRoot = `/tmp/projects/${suffix}/.worktrees/story-1-recovery`;
+    if (scenario === "concurrent") {
+      stage = "concurrent-cross-table-root";
+      const otherRunId = `task6a-census-race-${suffix}`;
+      const otherStoryDbId = `race-story-${suffix}`;
+      await database.sql`INSERT INTO public.runs (id, run_number, workflow_id, task, status, context)
+        VALUES (${otherRunId}, 999988, 'workflow', 'cross-table race', 'running', '{}')`;
+      await database.sql`INSERT INTO public.stories (id, run_id, story_index, story_id, title, status)
+        VALUES (${otherStoryDbId}, ${otherRunId}, 1, 'US-RACE', 'cross-table race', 'pending')`;
+      const ordinaryClient = postgres(database.url, { max: 1 });
+      const recoveryClient = postgres(database.url, { max: 1 });
+      const blockerClient = postgres(database.url, { max: 1 });
+      let releaseBlocker = (): void => {};
+      let blockerPromise: Promise<unknown> | undefined;
+      let settleStarted: Promise<unknown> | undefined;
+      try {
+        const ordinaryPid = (await ordinaryClient<Array<{ pid: number }>>`
+          SELECT pg_backend_pid()::integer AS pid`)[0]!.pid;
+        const recoveryPid = (await recoveryClient<Array<{ pid: number }>>`
+          SELECT pg_backend_pid()::integer AS pid`)[0]!.pid;
+        let lockReady!: () => void;
+        const ready = new Promise<void>((resolve) => { lockReady = resolve; });
+        const released = new Promise<void>((resolve) => { releaseBlocker = resolve; });
+        blockerPromise = blockerClient.begin(async (tx) => {
+          await tx.unsafe(`LOCK TABLE ${ORDINARY},
+            public.internal_production_positive_worktree_recovery_precreate_reservations_v1
+            IN SHARE MODE`);
+          lockReady();
+          await released;
+        });
+        await Promise.race([ready, blockerPromise]);
+        const outcomesPromise = Promise.allSettled([
+          appendPrivateDiagnosticPrecreateReservationV1(ordinaryClient, {
+            runId: otherRunId, storyDbId: otherStoryDbId, storyId: "US-RACE",
+            dispatchKey: `race-ordinary-${suffix}`, ownerInstanceId: `race-owner-${suffix}`,
+            root: recoveryRoot, sourceSha, sourceTreeHash,
+          }),
+          appendPrivateDiagnosticRecoveryPrecreateReservationV1(recoveryClient, {
+            runId, storyDbId, storyId, dispatchId: handoff.dispatchId,
+            ownerInstanceId: `owner-${suffix}`, leaseToken: handoff.lease.leaseToken,
+            root: recoveryRoot, sourceSha, sourceTreeHash,
+          }),
+        ]);
+        settleStarted = outcomesPromise;
+        let bothBlockedAtInsert = false;
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          const activity = await database.sql<Array<{ pid: number;
+            waitEventType: string | null; query: string }>>`SELECT pid,
+              wait_event_type AS "waitEventType", query
+              FROM pg_catalog.pg_stat_activity
+              WHERE pid IN (${ordinaryPid}, ${recoveryPid})`;
+          bothBlockedAtInsert = activity.length === 2 && activity.every((row) =>
+            row.waitEventType === "Lock"
+            && row.query.includes("INSERT INTO public.internal_production_positive_worktree_"));
+          if (bothBlockedAtInsert) break;
+          await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        }
+        assert.equal(bothBlockedAtInsert, true,
+          "both independent appenders must reach blocked INSERT after reciprocal absent-key reads");
+        releaseBlocker();
+        await blockerPromise;
+        const outcomes = await outcomesPromise;
+        assert.equal(outcomes.filter((outcome) => outcome.status === "fulfilled").length, 1);
+        const refused = outcomes.find((outcome) => outcome.status === "rejected");
+        assert.ok(refused && refused.status === "rejected");
+        assert.match(String(refused.reason),
+          /TASK6A_PRIVATE_(?:RECOVERY_)?PRECREATE_RESERVATION_REFUSED/);
+        const owners = await database.sql.unsafe<Array<{ ordinary: number; recovery: number }>>(`
+          SELECT (SELECT count(*)::integer FROM ${ORDINARY} WHERE root = $1) AS ordinary,
+            (SELECT count(*)::integer FROM
+              public.internal_production_positive_worktree_recovery_precreate_reservations_v1
+              WHERE root = $1) AS recovery`, [recoveryRoot]);
+        assert.equal(owners[0]!.ordinary + owners[0]!.recovery, 1);
+        const census = await observePrivatePendingPositiveWorktreeReservationsV1(database.sql);
+        assert.equal(census.disposition, "pending");
+        assert.equal(census.counts.total, 2);
+      } finally {
+        releaseBlocker();
+        await blockerPromise?.catch(() => undefined);
+        await settleStarted;
+        await Promise.all([ordinaryClient.end({ timeout: 5 }),
+          recoveryClient.end({ timeout: 5 }), blockerClient.end({ timeout: 5 })]);
+      }
+      return;
+    }
     if (scenario === "malformed-recovery") {
       const leaseTokenHash = hashCanonicalJson({
         schema: "setfarm.internal-production-positive-worktree-recovery-lease-token-commitment.v1",
@@ -274,6 +363,12 @@ test(`private pending census ${scenario === "normal"
         REFUSED, "a hash-valid recovery body cannot disagree with sibling columns");
       return;
     }
+    await assert.rejects(appendPrivateDiagnosticRecoveryPrecreateReservationV1(database.sql, {
+      runId, storyDbId, storyId, dispatchId: handoff.dispatchId,
+      ownerInstanceId: `owner-${suffix}`, leaseToken: handoff.lease.leaseToken,
+      root, sourceSha, sourceTreeHash,
+    }), RECOVERY_REFUSED,
+    "the recovery appender must refuse the ordinary reservation's exact root");
     await appendPrivateDiagnosticRecoveryPrecreateReservationV1(database.sql, {
       runId, storyDbId, storyId, dispatchId: handoff.dispatchId,
       ownerInstanceId: `owner-${suffix}`, leaseToken: handoff.lease.leaseToken,
@@ -292,6 +387,12 @@ test(`private pending census ${scenario === "normal"
     await database.sql`INSERT INTO public.stories (
       id, run_id, story_index, story_id, title, status
     ) VALUES (${secondStoryDbId}, ${runId}, 2, 'US-002', 'ordering probe', 'pending')`;
+    await assert.rejects(appendPrivateDiagnosticPrecreateReservationV1(database.sql, {
+      runId, storyDbId: secondStoryDbId, storyId: "US-002",
+      dispatchKey: `second-ordinary-${suffix}`, ownerInstanceId: `owner-${suffix}`,
+      root: recoveryRoot, sourceSha, sourceTreeHash,
+    }), ORDINARY_REFUSED,
+    "the ordinary appender must refuse the recovery reservation's exact root");
     await appendPrivateDiagnosticPrecreateReservationV1(database.sql, {
       runId, storyDbId: secondStoryDbId, storyId: "US-002",
       dispatchKey: `second-ordinary-${suffix}`, ownerInstanceId: `owner-${suffix}`,
@@ -306,11 +407,16 @@ test(`private pending census ${scenario === "normal"
     await database.sql`INSERT INTO public.stories (
       id, run_id, story_index, story_id, title, status
     ) VALUES (${thirdStoryDbId}, ${runId}, 3, 'US-003', 'collision probe', 'pending')`;
-    await appendPrivateDiagnosticPrecreateReservationV1(database.sql, {
+    const directBody = { schema: "setfarm.internal-production-positive-worktree-private-precreate-reservation.v1",
       runId, storyDbId: thirdStoryDbId, storyId: "US-003",
       dispatchKey: `third-ordinary-${suffix}`, ownerInstanceId: `owner-${suffix}`,
-      root: recoveryRoot, sourceSha, sourceTreeHash,
-    });
+      root: recoveryRoot, sourceSha, sourceTreeHash };
+    await database.sql`INSERT INTO public.internal_production_positive_worktree_precreate_reservations_v1 (
+      reservation_hash, run_id, story_db_id, story_id, dispatch_key,
+      owner_instance_id, root, source_sha, source_tree_hash, canonical_body
+    ) VALUES (${hashCanonicalJson(directBody)}, ${runId}, ${thirdStoryDbId}, 'US-003',
+      ${directBody.dispatchKey}, ${directBody.ownerInstanceId}, ${recoveryRoot},
+      ${sourceSha}, ${sourceTreeHash}, ${canonicalJsonStringify(directBody)})`;
     await assert.rejects(observePrivatePendingPositiveWorktreeReservationsV1(database.sql),
       REFUSED, "exact cross-table root collision cannot be silently counted as safe");
   } catch (error) {

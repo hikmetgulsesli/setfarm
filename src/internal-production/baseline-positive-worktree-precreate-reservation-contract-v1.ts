@@ -10,6 +10,7 @@ import { canonicalJsonStringify } from "../product-compiler/canonical-json.js";
 // The exact target check is only a sample; a live creator needs continuous
 // DB/OS exclusion and a separately reviewed no-replace physical operation.
 const TABLE = "public.internal_production_positive_worktree_precreate_reservations_v1";
+const RECOVERY_TABLE = "public.internal_production_positive_worktree_recovery_precreate_reservations_v1";
 const REFUSED = "TASK6A_PRIVATE_PRECREATE_RESERVATION_REFUSED";
 const SCHEMA = "setfarm.internal-production-positive-worktree-private-precreate-reservation.v1";
 const fail = (): never => { throw new Error(REFUSED); };
@@ -142,6 +143,11 @@ export async function appendPrivateDiagnosticPrecreateReservationV1(
           AND s.status IN ('pending', 'failed')
         FOR UPDATE OF r, s`, [body.runId, body.storyDbId, body.storyId]);
       if (linked.length !== 1) fail();
+      // Keep the cross-table predicate in this serializable transaction so
+      // concurrent appender write skew aborts instead of committing two roots.
+      const competing = await tx.unsafe(`SELECT reservation_hash FROM ${RECOVERY_TABLE}
+        WHERE root = $1 LIMIT 1`, [body.root]);
+      if (competing.length !== 0) fail();
       const expected: ReservationRow = Object.freeze({ reservationHash,
         runId: body.runId, storyDbId: body.storyDbId, storyId: body.storyId,
         dispatchKey: body.dispatchKey, ownerInstanceId: body.ownerInstanceId,
