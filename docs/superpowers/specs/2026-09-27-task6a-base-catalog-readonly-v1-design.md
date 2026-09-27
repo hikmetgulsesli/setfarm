@@ -45,6 +45,8 @@ the table kind or column projection.
 The canonical PG17 fixture uses `default_table_access_method=heap`; a
 non-heap default environment intentionally refuses pending a reviewed contract
 change.
+Both required table and associated TOAST `reloptions` must be unset; source
+DDL does not opt out of automatic maintenance or set storage parameters.
 Required base columns must have neither fast-default `atthasmissing` nor
 `attmissingval`; a later-added column can otherwise expose stale logical
 values after its visible default is removed.

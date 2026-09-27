@@ -171,6 +171,7 @@ const EXPECTED_BASE_SEQUENCES_V1 = Object.freeze([
 const TABLE_SQL_V1 = `SELECT c.relname AS name, c.relkind AS kind,
   c.relpersistence AS persistence, c.relispartition AS partitioned,
   am.amname AS "accessMethod",
+  c.reloptions AS "tableOptions", toast.reloptions AS "toastOptions",
   c.relrowsecurity AS "rowSecurity", c.relforcerowsecurity AS "forceRowSecurity",
   pg_catalog.pg_has_role(session_user, c.relowner, 'MEMBER') AS "ownerReachable",
   EXISTS (SELECT 1 FROM pg_catalog.pg_inherits h
@@ -179,6 +180,7 @@ const TABLE_SQL_V1 = `SELECT c.relname AS name, c.relkind AS kind,
     WHERE r.ev_class = c.oid) AS "hasRewriteRules"
   FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
   LEFT JOIN pg_catalog.pg_am am ON am.oid = c.relam
+  LEFT JOIN pg_catalog.pg_class toast ON toast.oid = c.reltoastrelid
  WHERE n.nspname = 'public'
    AND c.relname IN ('claim_log', 'medic_checks', 'rules',
      'run_observations', 'runs', 'steps', 'stories')
@@ -303,6 +305,8 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         persistence: string;
         partitioned: boolean;
         accessMethod: string | null;
+        tableOptions: string[] | null;
+        toastOptions: string[] | null;
         rowSecurity: boolean;
         forceRowSecurity: boolean;
         hasInheritance: boolean;
@@ -317,6 +321,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
           || table.persistence !== "p"
           || table.partitioned !== false
           || table.accessMethod !== "heap"
+          || table.tableOptions !== null || table.toastOptions !== null
           || table.rowSecurity !== false
           || table.forceRowSecurity !== false
           || table.hasInheritance !== false

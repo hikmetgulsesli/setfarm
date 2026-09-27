@@ -15,8 +15,10 @@ async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
     SELECT md5(jsonb_build_object(
       'relations', (SELECT jsonb_agg(jsonb_build_array(c.relname, c.relkind,
         c.relpersistence, c.relrowsecurity, c.relforcerowsecurity,
-        c.relowner::text, c.relam::text) ORDER BY c.relname)
+        c.relowner::text, c.relam::text, c.reloptions,
+        toast.reloptions) ORDER BY c.relname)
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        LEFT JOIN pg_class toast ON toast.oid = c.reltoastrelid
         WHERE n.nspname = 'public'),
       'inheritance', (SELECT jsonb_agg(jsonb_build_array(child.relname,
         parent.relname) ORDER BY child.relname, parent.relname)
@@ -139,6 +141,8 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
       ["disabled referenced FK triggers", "ALTER TABLE public.runs DISABLE TRIGGER ALL"],
       ["inherited child table", "CREATE TABLE public.shadow_runs () INHERITS (public.runs)"],
       ["non-source table access method", "CREATE ACCESS METHOD task6a_alt_heap TYPE TABLE HANDLER heap_tableam_handler; ALTER TABLE public.runs SET ACCESS METHOD task6a_alt_heap"],
+      ["non-source table options", "ALTER TABLE public.runs SET (autovacuum_enabled = false)"],
+      ["non-source TOAST options", "ALTER TABLE public.runs SET (toast.autovacuum_enabled = false)"],
       ["wrong collation", "ALTER TABLE public.rules ALTER COLUMN title TYPE text COLLATE \"C\""],
       ["stale fast-default missing value", "ALTER TABLE public.stories RENAME COLUMN output TO old_output; ALTER TABLE public.stories ADD COLUMN output text DEFAULT 'forged'; ALTER TABLE public.stories ALTER COLUMN output DROP DEFAULT"],
       ["row level security", "ALTER TABLE public.runs ENABLE ROW LEVEL SECURITY"],
