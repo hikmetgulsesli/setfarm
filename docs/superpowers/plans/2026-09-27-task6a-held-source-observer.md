@@ -21,7 +21,14 @@ physical interval, without granting owner or publication authority.
   prior catalog comparison. Preserve each Git-listed HEAD OID in the held
   listing and compare it in both the callback recheck and catalog second pass.
   Independent rereview then found an A→B→A window around both source reads;
-  require their matching SHA to equal the first held HEAD OID as well.
+  require their matching SHA to equal the first held HEAD OID as well. A second
+  Codex review found ref churn between all HEAD samples: under Git's `files`
+  ref backend, hold the exact linked HEAD, ordinary shared branch ref and
+  reflogs (including packed/absent path ancestry) through the catalog close.
+  Reject non-`refs/heads/*` symbolic HEAD namespaces here because Git may
+  store those refs under the linked worktree instead of the common directory.
+  Reject multi-hop symbolic HEAD chains because holding only one terminal
+  shared ref would leave an intermediate mutable link unheld.
   This observes the committed base,
   not uncommitted worktree contents or a verified build.
 - `tests/internal-production/baseline-positive-worktree-physical-catalog-v2.test.ts`:
@@ -33,7 +40,10 @@ physical interval, without granting owner or publication authority.
   commit-tree resolution turns it GREEN. Reproduce a same-tree linked HEAD
   update after the source SHA read RED, then require held and second-pass
   rejection GREEN. Reproduce a source-read-only A→B→A ref window RED and bind
-  to the first held HEAD identity GREEN.
+  to the first held HEAD identity GREEN. Reproduce ref churn entirely during
+  the pinned tree command RED, then require held ref/reflog mutation refusal
+  GREEN. Cover a packed nested branch, a worktree-private symbolic ref, and
+  a multi-hop symbolic HEAD (the latter two fail closed).
 
 Keep the catalog and receipt candidate diagnostic-only. No DB writes,
 credentials, owner admission, live service change or cutover gate change.

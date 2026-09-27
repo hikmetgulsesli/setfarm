@@ -79,6 +79,8 @@ function compareRoot(left: string, right: string): number {
 class HeldDirectories {
   private readonly entries: Held[] = [];
   private readonly files: HeldFile[] = [];
+  private readonly absentFiles = new Set<string>();
+  private readonly absentDirectories = new Set<string>();
   private readonly byRoot = new Map<string, Held>();
   private readonly churnedGitAdminCandidates = new Set<string>();
   private closed = false;
@@ -130,6 +132,23 @@ class HeldDirectories {
     this.assertStable();
   }
 
+  holdOptionalFile(target: string): void {
+    if (this.closed || cleanupUncertain) fail();
+    let parent = path.dirname(target);
+    const missing: string[] = [];
+    while (isMissing(parent)) {
+      if (parent === "/" || missing.length >= 128) fail();
+      missing.push(parent);
+      parent = path.dirname(parent);
+    }
+    this.hold(parent);
+    for (const directory of missing) this.absentDirectories.add(directory);
+    if (isMissing(target)) this.absentFiles.add(target);
+    else this.holdFile(target);
+    if (this.absentFiles.size + this.absentDirectories.size > MAX_INCIDENTAL_FILES) fail();
+    this.assertStable();
+  }
+
   assertStable(): void {
     if (this.closed || cleanupUncertain) fail();
     for (const entry of this.entries) {
@@ -149,6 +168,8 @@ class HeldDirectories {
       if (!sameFile(entry.first, lstatSync(entry.root, { bigint: true })))
         drift("file-path", entry.root);
     }
+    for (const directory of this.absentDirectories) if (!isMissing(directory)) fail();
+    for (const file of this.absentFiles) if (!isMissing(file)) fail();
   }
 
   gitAdminChurnCandidateRoots(): readonly string[] {
@@ -625,6 +646,27 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
         return Object.freeze({ root, gitPrimaryRoot: entry.gitPrimaryRoot!, sourceSha, sourceTreeHash });
       };
       try {
+        const git = (args: readonly string[]): string => line(command(held, "/usr/bin/git",
+          [...GIT_PREFIX, "-C", root, ...args]));
+        if (git(["rev-parse", "--show-ref-format"]) !== "files") fail();
+        const gitdir = normalizedGitPath(git(["rev-parse", "--git-dir"]), root);
+        const commonDir = normalizedGitPath(git(["rev-parse", "--git-common-dir"]), root);
+        if (commonDir !== path.join(entry.gitPrimaryRoot, ".git")) fail();
+        held.holdOptionalFile(path.join(gitdir, "HEAD"));
+        held.holdOptionalFile(path.join(gitdir, "logs", "HEAD"));
+        const headRef = git(["rev-parse", "--symbolic-full-name", "HEAD"]);
+        if (headRef !== "HEAD") {
+          const directRef = git(["symbolic-ref", "--no-recurse", "HEAD"]);
+          const terminalRef = git(["symbolic-ref", "HEAD"]);
+          if (headRef !== directRef || directRef !== terminalRef
+            || !headRef.startsWith("refs/heads/") || Buffer.byteLength(headRef) > 1024
+            || command(held, "/usr/bin/git", [...GIT_PREFIX, "check-ref-format", headRef]).length !== 0) fail();
+          const refPath = path.resolve(commonDir, headRef);
+          if (!refPath.startsWith(`${commonDir}/refs/`)) fail();
+          held.holdOptionalFile(refPath);
+          held.holdOptionalFile(path.join(commonDir, "logs", headRef));
+        }
+        held.holdOptionalFile(path.join(commonDir, "packed-refs"));
         await recheckPhysical();
         const result = await withinHold(physical, recheckPhysical, observeSource);
         await recheckPhysical();
