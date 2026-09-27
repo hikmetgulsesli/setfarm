@@ -78,8 +78,13 @@ must reject missing or tampered opening identity and retain every current-chain
 equality guard. The opening anchor compares frozen columns directly so the
 supported legacy revision-1 rehydration remains valid.
 The evidence-only physical source selector must compare a terminal prior
-attempt with the current revision's source, not the frozen case source, and
-inspect all bounded prior refs before declaring ownership unambiguous.
+attempt with the current revision's source, not the frozen case source. For
+revision 1 it retains the case's bounded opening prior refs. A revised case
+does not append the failed model attempt to those refs, so revision 2+ instead
+selects the one attempt bound to the terminal failed dispatch of its exact
+parent revision. Match parent run/story/packet, dispatch, delivery, claim,
+attempt source-before and current source-after; zero or multiple candidates
+fail closed. This reads authoritative ledger rows without mutating case history.
 Publication must also require current revision run/story to equal delivery
 run/story; a matching packet or finding set alone is insufficient.
 

@@ -27,6 +27,7 @@ import { ImplementationSliceV1Schema, type ImplementationSliceV1 } from "../../s
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import { createV3RecoveryClaimAuthority } from "../../src/recovery/v3-recovery-claim-authority.js";
+import { V3EvidenceOnlyRuntimeError, resolveExactPriorSourceOwner } from "../../src/recovery/v3-evidence-only-runtime.js";
 import type { RecoveryCaseRevisionV1, RecoveryRevisionDispatchV1 } from "../../src/recovery/recovery-delivery.js";
 import {
   V3RecoveryCoordinatorInputSchema,
@@ -460,6 +461,8 @@ async function recoveryInput(input: Readonly<{
     },
     role: input.dispatch.dispatchClass === "supervisor_repair" ? "supervisor" : "developer",
     agentId,
+    branch: `fixture/${input.dispatch.dispatchClass}/${input.runId}`,
+    worktree: process.cwd(),
     evidenceRefs: [
       `setfarm://claim-log/${claimId}`,
       `setfarm://artifact/${exactPlanArtifactHash}`,
@@ -906,6 +909,60 @@ describe("V3 recovery coordinator", () => {
       used_evidence_only: 0,
       dispatches: 2,
     });
+  });
+
+  it("selects a revised evidence-only source owner from its terminal parent dispatch", async () => {
+    const coordinator = createV3RecoveryCoordinator(database.sql);
+    const initial = await initialInput({
+      database,
+      runId: "run-v3-coordinator-revised-evidence-owner",
+      productVerdict: "fail",
+      failureClass: "product",
+      semanticSalt: "revised-owner-initial",
+    });
+    const product = await dispatchedIdentity(database, await coordinator.coordinate(initial));
+    const parentFailure = await recoveryInput({
+      database,
+      runId: initial.findingSet.runId,
+      dispatch: product.dispatch,
+      revision: product.revision,
+      productVerdict: "inconclusive",
+      failureClass: "infrastructure",
+      semanticSalt: "revised-owner-parent",
+      candidateSeed: "9",
+    });
+    const evidenceOnly = await dispatchedIdentity(database, await coordinator.coordinate(parentFailure));
+    assert.equal(evidenceOnly.result.dispatchClass, "evidence_only");
+    assert.equal(evidenceOnly.revision.revisionNumber, 2);
+    assert.notEqual(evidenceOnly.revision.sourceRevision.sha, product.revision.sourceRevision.sha);
+    const refs = await database.sql<Array<{ prior_attempt_refs: string[] }>>`
+      SELECT prior_attempt_refs FROM recovery_cases
+       WHERE recovery_case_id = ${product.result.recoveryCaseId}
+    `;
+    assert.equal(refs.length, 1);
+    assert.equal(refs[0]!.prior_attempt_refs.includes(parentFailure.attemptId), false);
+    const leaseIdentity = {
+      recoveryCaseId: evidenceOnly.revision.recoveryCaseId,
+      revisionId: evidenceOnly.revision.revisionId,
+      runId: evidenceOnly.revision.runId,
+      storyId: evidenceOnly.revision.storyId,
+      packetHash: evidenceOnly.revision.packetHash,
+      contractSliceHash: evidenceOnly.revision.contractSliceHash,
+      findingSetHash: evidenceOnly.revision.findingSetHash,
+      sourceRevision: evidenceOnly.revision.sourceRevision,
+    };
+    assert.deepEqual(await resolveExactPriorSourceOwner(database.sql, leaseIdentity), {
+      branch: `fixture/product_implementation/${initial.findingSet.runId}`,
+      worktree: process.cwd(),
+    });
+    await assert.rejects(
+      resolveExactPriorSourceOwner(database.sql, {
+        ...leaseIdentity,
+        sourceRevision: { sha: "0".repeat(40), treeHash: "0".repeat(40) },
+      }),
+      (error: unknown) => error instanceof V3EvidenceOnlyRuntimeError
+        && error.code === "V3_EVIDENCE_ONLY_SOURCE_OWNER_MISSING",
+    );
   });
 
   it("resolves only exact passing attempt evidence and accepts the canonical evidence URI", async () => {

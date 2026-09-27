@@ -20,6 +20,7 @@ type Sql = postgres.Sql;
 
 type SourceOwnerRow = Readonly<{
   attempt_id: string;
+  revision_number: number;
   branch: string | null;
   worktree: string | null;
 }>;
@@ -62,21 +63,22 @@ function publicationLease(lease: V3EvidenceOnlyLeaseV1): V3EvidenceOnlyPublicati
   };
 }
 
-async function resolveExactPriorSourceOwner(
+export async function resolveExactPriorSourceOwner(
   sql: Sql,
-  lease: V3EvidenceOnlyLeaseV1,
+  lease: Pick<V3EvidenceOnlyLeaseV1,
+    "recoveryCaseId" | "revisionId" | "runId" | "storyId" | "packetHash"
+    | "contractSliceHash" | "findingSetHash" | "sourceRevision">,
 ): Promise<Readonly<{ worktree: string; branch: string }>> {
   const rows = await sql.unsafe<SourceOwnerRow[]>(
-    `SELECT attempt.attempt_id, attempt.branch, attempt.worktree
+    `SELECT attempt.attempt_id, revision.revision_number,
+            attempt.branch, attempt.worktree
        FROM recovery_cases recovery_case
        JOIN recovery_case_revisions revision
          ON revision.revision_id = recovery_case.current_revision_id
         AND revision.recovery_case_id = recovery_case.recovery_case_id
-       CROSS JOIN LATERAL jsonb_array_elements_text(
-         recovery_case.prior_attempt_refs::jsonb
-       ) AS prior(attempt_id)
        JOIN execution_attempts attempt
-         ON attempt.attempt_id = prior.attempt_id
+         ON attempt.run_id = recovery_case.run_id
+        AND attempt.story_id = recovery_case.story_id
       WHERE recovery_case.recovery_case_id = $1
         AND recovery_case.current_revision_id = $2
         AND recovery_case.run_id = $3
@@ -112,6 +114,43 @@ async function resolveExactPriorSourceOwner(
         AND attempt.disposition NOT IN ('claimed', 'running', 'superseded')
         AND attempt.worktree IS NOT NULL
         AND attempt.branch IS NOT NULL
+        AND (
+          (revision.revision_number = 1
+            AND recovery_case.prior_attempt_refs::jsonb ? attempt.attempt_id)
+          OR (revision.revision_number > 1 AND EXISTS (
+            SELECT 1
+              FROM recovery_case_revisions parent_revision
+              JOIN recovery_revision_dispatches prior_dispatch
+                ON prior_dispatch.recovery_case_id = parent_revision.recovery_case_id
+               AND prior_dispatch.revision_id = parent_revision.revision_id
+               AND prior_dispatch.packet_hash = parent_revision.packet_hash
+               AND prior_dispatch.contract_slice_hash = parent_revision.contract_slice_hash
+               AND prior_dispatch.finding_set_hash = parent_revision.finding_set_hash
+               AND prior_dispatch.source_sha = parent_revision.source_sha
+               AND prior_dispatch.source_tree_hash = parent_revision.source_tree_hash
+              JOIN recovery_dispatch_deliveries prior_delivery
+                ON prior_delivery.dispatch_id = prior_dispatch.dispatch_id
+               AND prior_delivery.recovery_case_id = recovery_case.recovery_case_id
+               AND prior_delivery.revision_id = parent_revision.revision_id
+               AND prior_delivery.run_id = recovery_case.run_id
+               AND prior_delivery.story_id = recovery_case.story_id
+               AND prior_delivery.attempt_id = attempt.attempt_id
+               AND prior_delivery.claim_id = attempt.claim_id
+             WHERE parent_revision.revision_id = revision.parent_revision_id
+               AND parent_revision.recovery_case_id = recovery_case.recovery_case_id
+               AND parent_revision.revision_number + 1 = revision.revision_number
+               AND parent_revision.run_id = recovery_case.run_id
+               AND parent_revision.story_id = recovery_case.story_id
+               AND parent_revision.packet_hash = recovery_case.packet_hash
+               AND prior_delivery.state = 'failed'
+               AND prior_delivery.attempt_count = 1
+               AND prior_delivery.terminal_result->>'attemptId' = attempt.attempt_id
+               AND attempt.recovery_dispatch_id = prior_dispatch.dispatch_id
+               AND attempt.recovery_case_revision_id = parent_revision.revision_id
+               AND attempt.source_before_sha = parent_revision.source_sha
+               AND attempt.source_before_tree_hash = parent_revision.source_tree_hash
+          ))
+        )
       ORDER BY attempt.attempt_id
       LIMIT 5001`,
     [
@@ -129,7 +168,13 @@ async function resolveExactPriorSourceOwner(
   if (rows.length === 0) {
     fail(
       "V3_EVIDENCE_ONLY_SOURCE_OWNER_MISSING",
-      "current recovery case has no terminal prior attempt owning the exact unchanged source worktree",
+      "current recovery revision has no exact terminal source-owning attempt and worktree",
+    );
+  }
+  if (rows[0]!.revision_number > 1 && rows.length !== 1) {
+    fail(
+      "V3_EVIDENCE_ONLY_SOURCE_OWNER_AMBIGUOUS",
+      "revised evidence-only source has more than one parent dispatch attempt owner",
     );
   }
   const identities = new Map<string, { worktree: string; branch: string }>();
