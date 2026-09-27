@@ -312,7 +312,7 @@ describe("durable recovery coordinator source boundaries", () => {
     );
   });
 
-  it("covers every post-claim pre-transfer return and throw with one exact ownership finalizer", () => {
+  it("finalizes ordinary pre-transfer failures while retaining Task6A V2 refusals", () => {
     const spawn = sourceBlock(
       "let postClaimOwnershipTransferred = false;",
       "async function failStaleRunningClaimsFromPreviousSpawner(): Promise<void> {",
@@ -339,8 +339,8 @@ describe("durable recovery coordinator source boundaries", () => {
     );
     assert.match(
       spawn.slice(outerFinally),
-      /if \(!postClaimOwnershipTransferred\)[\s\S]*killProcessTree\(preTransferChild\.pid, "SIGKILL"\)[\s\S]*releaseUntransferredPostClaimOwnership\(claim, agentId, diagnostic\)/,
-      "all early returns and synchronous spawn failures must terminate any child and settle or hand off the exact durable owner",
+      /if \(!postClaimOwnershipTransferred && !postClaimRefusedV2\)[\s\S]*killProcessTree\(preTransferChild\.pid, "SIGKILL"\)[\s\S]*releaseUntransferredPostClaimOwnership\(claim, agentId, diagnostic\)/,
+      "ordinary failures must kill any child and settle the owner; Task6A V2 refusals retain the exact claim",
     );
 
     const finalizerBody = sourceBlock(
