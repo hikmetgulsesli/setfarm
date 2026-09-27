@@ -1461,12 +1461,19 @@ describe("Task 0 exact source manifest", () => {
       1,
     );
     assert.match(pure, /^env -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL /);
-    const aggregate = [isolated, anchored, pure, packageJson.scripts["test:internal-production:manifest"]].join("\n");
+    const createOnly = packageJson.scripts["test:internal-production:create-only"];
+    assert.equal(createOnly,
+      "env -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL node --import tsx --test tests/internal-production/baseline-positive-worktree-create-only-fixture-v1.test.ts");
+    assert.equal(packageJson.scripts["test:internal-production"].split(
+      "npm run test:internal-production:create-only").length - 1, 1);
+    const aggregate = [isolated, anchored, pure, createOnly,
+      packageJson.scripts["test:internal-production:manifest"]].join("\n");
     for (const file of [
       "tests/internal-production/owner-admission-v1.test.ts",
       "tests/internal-production/baseline-owner-producer-manifest-activation-controller-v1.test.ts",
       "tests/internal-production/baseline-post-handoff-receipt-v1.test.ts",
       "tests/internal-production/product-build-authority-v2-delivery-evidence-v1.test.ts",
+      "tests/internal-production/baseline-positive-worktree-create-only-fixture-v1.test.ts",
       "tests/internal-production/task-0-source-manifest.test.ts",
     ]) {
       assert.match(aggregate, new RegExp(file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));

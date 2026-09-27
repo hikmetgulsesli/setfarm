@@ -43,6 +43,9 @@ continuous DB/OS writer fence, owner promotion, or admission authority.
   fixture-scoped import-inert create-only operation.
 - `tests/internal-production/baseline-positive-worktree-create-only-fixture-v1.test.ts`:
   disposable Git adversarial RED/GREEN cases.
+- `package.json` and `tests/internal-production/task-0-source-manifest.test.ts`:
+  run the new fixture in the standard `npm test` internal-production chain and
+  pin that registration so it cannot silently disappear.
 - `docs/superpowers/plans/2026-09-27-task6a-private-create-only-worktree-fixture.md`:
   scope and evidence.
 
