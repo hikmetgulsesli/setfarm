@@ -454,6 +454,8 @@ async function loadExactPublication(
         AND delivery.story_id = $7
         AND recovery_case.run_id = delivery.run_id
         AND recovery_case.story_id = delivery.story_id
+        AND revision.run_id = delivery.run_id
+        AND revision.story_id = delivery.story_id
         AND EXISTS (
           SELECT 1 FROM recovery_case_revisions opening_revision
            WHERE opening_revision.recovery_case_id = recovery_case.recovery_case_id

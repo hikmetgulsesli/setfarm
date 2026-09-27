@@ -77,6 +77,11 @@ binds the current revision to dispatch, delivery, finding set, and run. It
 must reject missing or tampered opening identity and retain every current-chain
 equality guard. The opening anchor compares frozen columns directly so the
 supported legacy revision-1 rehydration remains valid.
+The evidence-only physical source selector must compare a terminal prior
+attempt with the current revision's source, not the frozen case source, and
+inspect all bounded prior refs before declaring ownership unambiguous.
+Publication must also require current revision run/story to equal delivery
+run/story; a matching packet or finding set alone is insufficient.
 
 ## Verification and boundary
 

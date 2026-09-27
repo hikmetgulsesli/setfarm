@@ -29,7 +29,7 @@
 - Modify `tests/findings/v3-recovery-claim-authority.test.ts`: authenticate the attempt-bound reissue case through canonical story admission and claim/runtime publication while leaving the other lease cases unchanged.
 - Modify `tests/findings/v3-recovery-coordinator.test.ts`: give initial claims and runs genuine owner births and model recovery attempts canonical story proof, claim/runtime publication, execution-slice authority, and no-spawn runtime release.
 - Modify `src/recovery/v3-recovery-claim-authority.ts`, `src/execution/attempt-repository.ts`, `src/recovery/v3-recovery-work-router.ts`, `src/recovery/v3-recovery-lifecycle-reconciler.ts`, `src/recovery/v3-evidence-only-worker.ts`, `src/recovery/v3-evidence-only-publication.ts`, and `src/recovery/recovery-delivery-repository.ts`: anchor the immutable case tuple to revision 1 and preserve the exact current revision/dispatch/delivery/finding-set chain.
-- Modify `src/recovery/v3-evidence-only-runtime.ts` only if the revision-2 non-model proof confirms its original/current source comparison blocks the same bounded flow; physical source ownership must remain exact.
+- Modify `src/recovery/v3-evidence-only-runtime.ts`: read the exact current revision when selecting a terminal prior attempt's physical source worktree; preserve the opening anchor and examine all bounded prior references rather than a truncated first 50.
 - Regenerate `src/db/contract-spine-migration-digests.generated.ts` with the canonical script because migration 33 declares `v3-recovery-claim-authority.ts` as a semantic helper dependency; retain the source-integrity refusal.
 - Create `scripts/__tests__/run-finding-tests.test.js` only if a focused source/partition regression is needed beyond the executable `test:findings` gate.
 
@@ -100,11 +100,11 @@
 
 ### Task 2f: Authenticate bounded revision-2 identity
 
-**Files:** The seven production gate files listed in the File Map, plus focused coordinator and claim/attempt/worker tests.
+**Files:** The eight production gate files listed in the File Map, generated migration digest, and focused coordinator and claim/attempt/worker tests.
 
 - [x] **Step 1: Confirm RED.** The authenticated coordinator integration reaches a real product failure, advances to a different source/slice/finding revision 2, then the supervisor claim fails at `V3_RECOVERY_AUTHORITY_IDENTITY_MISMATCH` solely because the frozen case tuple is compared to the current revision. Independent read-only reviews confirmed the dedupe/FK contract requires the case opening tuple to stay frozen.
-- [ ] **Step 2: Implement the smallest root fix.** Require exact case-to-opening-revision identity and exact current revision-to-dispatch/delivery/finding-set identity in every causally affected gate. Preserve supported legacy revision-1 rehydration and fail closed on a missing/tampered opening row.
-- [ ] **Step 3: Prove GREEN and refusal.** Rerun the coordinator regression on the private P3 cluster, focused initial-chain negative tests, and a revision-2 negative/tamper test before the full findings suite.
+- [x] **Step 2: Implement the smallest root fix.** Exact case-to-opening-revision identity and current revision-to-dispatch/delivery/finding-set identity now replace stale equality in model and non-model gates. The legacy revision-1 rehydration remains supported by raw-column opening comparison. A current revision's run/story must match the delivery before evidence publication. Refresh migration-33's declared helper digest rather than bypassing source integrity.
+- [ ] **Step 3: Prove GREEN and refusal.** The original coordinator P3 file passed 8/8 (including bounded revision-2 supervisor). Rerun the new revision-2 opening-tuple tamper negative, focused initial-chain tests, and the full findings suite. Add a focused evidence-only revised-source runtime proof if possible.
 
 ### Task 3: Review and deliver
 

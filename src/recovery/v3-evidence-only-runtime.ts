@@ -69,6 +69,9 @@ async function resolveExactPriorSourceOwner(
   const rows = await sql.unsafe<SourceOwnerRow[]>(
     `SELECT attempt.attempt_id, attempt.branch, attempt.worktree
        FROM recovery_cases recovery_case
+       JOIN recovery_case_revisions revision
+         ON revision.revision_id = recovery_case.current_revision_id
+        AND revision.recovery_case_id = recovery_case.recovery_case_id
        CROSS JOIN LATERAL jsonb_array_elements_text(
          recovery_case.prior_attempt_refs::jsonb
        ) AS prior(attempt_id)
@@ -79,21 +82,38 @@ async function resolveExactPriorSourceOwner(
         AND recovery_case.run_id = $3
         AND recovery_case.story_id = $4
         AND recovery_case.packet_hash = $5
-        AND recovery_case.slice_hash = $6
-        AND recovery_case.finding_set_hash = $7
-        AND recovery_case.source_sha = $8
-        AND recovery_case.source_tree_hash = $9
+        AND EXISTS (
+          SELECT 1 FROM recovery_case_revisions opening_revision
+           WHERE opening_revision.recovery_case_id = recovery_case.recovery_case_id
+             AND opening_revision.revision_number = 1
+             AND opening_revision.parent_revision_id IS NULL
+             AND opening_revision.run_id = recovery_case.run_id
+             AND opening_revision.story_id = recovery_case.story_id
+             AND opening_revision.packet_hash = recovery_case.packet_hash
+             AND opening_revision.finding_set_hash = recovery_case.finding_set_hash
+             AND opening_revision.finding_ids = recovery_case.finding_ids
+             AND opening_revision.contract_slice_hash = recovery_case.slice_hash
+             AND opening_revision.source_sha = recovery_case.source_sha
+             AND opening_revision.source_tree_hash = recovery_case.source_tree_hash
+        )
+        AND revision.run_id = recovery_case.run_id
+        AND revision.story_id = recovery_case.story_id
+        AND revision.packet_hash = recovery_case.packet_hash
+        AND revision.contract_slice_hash = $6
+        AND revision.finding_set_hash = $7
+        AND revision.source_sha = $8
+        AND revision.source_tree_hash = $9
         AND attempt.run_id = recovery_case.run_id
         AND attempt.step_id = 'implement'
         AND attempt.story_id = recovery_case.story_id
         AND attempt.packet_hash = recovery_case.packet_hash
-        AND attempt.source_after_sha = recovery_case.source_sha
-        AND attempt.source_after_tree_hash = recovery_case.source_tree_hash
+        AND attempt.source_after_sha = revision.source_sha
+        AND attempt.source_after_tree_hash = revision.source_tree_hash
         AND attempt.disposition NOT IN ('claimed', 'running', 'superseded')
         AND attempt.worktree IS NOT NULL
         AND attempt.branch IS NOT NULL
       ORDER BY attempt.attempt_id
-      LIMIT 50`,
+      LIMIT 5001`,
     [
       lease.recoveryCaseId,
       lease.revisionId,

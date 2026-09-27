@@ -26,7 +26,7 @@ import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js"
 import { ImplementationSliceV1Schema, type ImplementationSliceV1 } from "../../src/product-compiler/schemas/implementation-slice-v1.js";
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
-import { createV3RecoveryClaimAuthority } from "../../src/recovery/v3-recovery-claim-authority.js";
+import { V3RecoveryClaimAuthorityError, createV3RecoveryClaimAuthority } from "../../src/recovery/v3-recovery-claim-authority.js";
 import type { RecoveryCaseRevisionV1, RecoveryRevisionDispatchV1 } from "../../src/recovery/recovery-delivery.js";
 import {
   V3RecoveryCoordinatorInputSchema,
@@ -825,6 +825,56 @@ describe("V3 recovery coordinator", () => {
     const supervisor = await dispatchedIdentity(database, supervisorFirst);
     assert.equal(supervisor.result.dispatchClass, "supervisor_repair");
     assert.equal(supervisor.result.recoveryCaseId, product.result.recoveryCaseId);
+    assert.equal(supervisor.revision.revisionNumber, 2);
+    const openingIdentity = await database.sql<Array<{
+      case_finding_set_hash: string;
+      case_slice_hash: string;
+      case_source_sha: string;
+      case_source_tree_hash: string;
+      case_finding_ids: string[];
+      opening_revision_id: string;
+      opening_finding_ids: string[];
+    }>>`
+      SELECT recovery_case.finding_set_hash AS case_finding_set_hash,
+             recovery_case.slice_hash AS case_slice_hash,
+             recovery_case.source_sha AS case_source_sha,
+             recovery_case.source_tree_hash AS case_source_tree_hash,
+             recovery_case.finding_ids AS case_finding_ids,
+             opening.revision_id AS opening_revision_id,
+             opening.finding_ids AS opening_finding_ids
+        FROM recovery_cases recovery_case
+        JOIN recovery_case_revisions opening
+          ON opening.recovery_case_id = recovery_case.recovery_case_id
+         AND opening.revision_number = 1
+       WHERE recovery_case.recovery_case_id = ${product.result.recoveryCaseId}
+    `;
+    assert.equal(openingIdentity.length, 1);
+    assert.equal(openingIdentity[0]!.case_finding_set_hash, product.revision.findingSetHash);
+    assert.equal(openingIdentity[0]!.case_slice_hash, product.revision.contractSliceHash);
+    assert.equal(openingIdentity[0]!.case_source_sha, product.revision.sourceRevision.sha);
+    assert.equal(openingIdentity[0]!.case_source_tree_hash, product.revision.sourceRevision.treeHash);
+    assert.deepEqual(openingIdentity[0]!.opening_finding_ids, openingIdentity[0]!.case_finding_ids);
+    assert.notEqual(supervisor.revision.findingSetHash, openingIdentity[0]!.case_finding_set_hash);
+    assert.notEqual(supervisor.revision.contractSliceHash, openingIdentity[0]!.case_slice_hash);
+    assert.notEqual(supervisor.revision.sourceRevision.sha, openingIdentity[0]!.case_source_sha);
+    await database.sql.unsafe(
+      "UPDATE recovery_case_revisions SET finding_ids = '[]'::jsonb WHERE revision_id = $1",
+      [openingIdentity[0]!.opening_revision_id],
+    );
+    await assert.rejects(
+      createV3RecoveryClaimAuthority(database.sql).acquireRecoveryClaim({
+        ownerInstanceId: "tampered-opening-worker",
+        runId: supervisor.revision.runId,
+        storyId: supervisor.revision.storyId,
+        leaseMs: 60_000,
+      }, { now: new Date("2026-07-13T10:11:30.000Z") }),
+      (error: unknown) => error instanceof V3RecoveryClaimAuthorityError
+        && error.code === "V3_RECOVERY_AUTHORITY_IDENTITY_MISMATCH",
+    );
+    await database.sql.unsafe(
+      "UPDATE recovery_case_revisions SET finding_ids = $2::text::jsonb WHERE revision_id = $1",
+      [openingIdentity[0]!.opening_revision_id, JSON.stringify(openingIdentity[0]!.opening_finding_ids)],
+    );
     assert.equal(supervisorReplay.status, "dispatched");
     if (supervisorReplay.status === "dispatched") assert.equal(supervisorReplay.dispatchId, supervisor.result.dispatchId);
 
