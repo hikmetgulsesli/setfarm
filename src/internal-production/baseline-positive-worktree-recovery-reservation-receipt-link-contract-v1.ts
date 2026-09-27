@@ -157,7 +157,7 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
         WHERE recovery_case_id = $1 AND run_id = $2 AND story_id = $3 FOR UPDATE`,
       [reservation.recoveryCaseId, reservation.runId, reservation.storyId]);
       if (cases.length !== 1 || cases[0]?.currentRevisionId !== reservation.revisionId
-        || !["open", "repairing", "evidencing"].includes(cases[0].status)) fail();
+        || cases[0]?.status !== "repairing") fail();
       const revisions = await tx.unsafe<Array<{ sourceSha: string; sourceTreeHash: string;
         dispatchClassOwner: string; packetHash: string; contractSliceHash: string;
         findingSetHash: string; findingIds: unknown; expectedDelta: unknown;

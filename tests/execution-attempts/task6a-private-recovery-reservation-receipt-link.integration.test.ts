@@ -279,6 +279,12 @@ stage = "reservation-before-claim";
     ]) await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
       database.sql, crossed), REFUSED);
     stage = "stale-chain-refusal";
+    await database.sql`UPDATE public.recovery_cases SET status = 'evidencing'
+      WHERE recovery_case_id = ${recoveryCase.recoveryCaseId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "implementation recovery requires a repairing case");
+    await database.sql`UPDATE public.recovery_cases SET status = 'repairing'
+      WHERE recovery_case_id = ${recoveryCase.recoveryCaseId}`;
     await database.sql`UPDATE public.execution_attempts
       SET role = ${dispatchClass === "product_implementation" ? "supervisor" : "developer"}
       WHERE attempt_id = ${attemptId}`;
