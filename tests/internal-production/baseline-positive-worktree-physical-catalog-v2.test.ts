@@ -11,6 +11,15 @@ import { test } from "node:test";
 
 import { observeHeldPositiveWorktreePhysicalCatalogV2 } from "../../src/internal-production/baseline-positive-worktree-physical-catalog-v2.js";
 
+type HeldPhysical = Readonly<{ root: string; dev: string; ino: string; birthtimeNs: string;
+  gitPrimaryRoot: string }>;
+type WithHeldRuntimeCandidate = <T>(root: string, withinHold: (physical: HeldPhysical,
+  recheckPhysical: () => Promise<HeldPhysical>) => Promise<T>) => Promise<T>;
+const observeWithHeldRuntimeCandidate = observeHeldPositiveWorktreePhysicalCatalogV2 as unknown as (
+  scope: Readonly<{ ownerHomeRoot: string; workspaceRoot: string }>,
+  callback: (entries: readonly Readonly<{ root: string }>[], withHeld: WithHeldRuntimeCandidate) => Promise<void>,
+) => ReturnType<typeof observeHeldPositiveWorktreePhysicalCatalogV2>;
+
 function fixture() {
   const ownerHomeRoot = mkdtempSync(path.join(realpathSync(os.tmpdir()), "setfarm-positive-physical-v2-"));
   const workspaceRoot = path.join(ownerHomeRoot, "ai", "setrox");
@@ -496,6 +505,127 @@ test("generated project linked worktree remains a runtime candidate without a re
   } finally {
     testHome.close();
   }
+});
+
+test("a runtime linked Git candidate has an awaited, root-scoped held physical capability", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.ownerHomeRoot, "projects", "story");
+    mkdirSync(primary);
+    initRepo(primary);
+    const runtime = path.join(primary, ".worktrees", "story-1");
+    mkdirSync(path.dirname(runtime));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-1", runtime]);
+    const stat = fs.lstatSync(runtime, { bigint: true });
+    let lateRecheck: (() => Promise<HeldPhysical>) | null = null;
+    let lateHold: WithHeldRuntimeCandidate | null = null;
+    let observed: HeldPhysical | null = null;
+    const catalog = await observeWithHeldRuntimeCandidate({
+      ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async (entries, withHeld) => {
+      assert.deepEqual(entries.map((entry) => entry.root), [runtime]);
+      lateHold = withHeld;
+      const result = await withHeld(runtime, async (physical, recheckPhysical) => {
+        lateRecheck = recheckPhysical;
+        observed = physical;
+        assert.equal(Object.isFrozen(physical), true);
+        assert.deepEqual(physical, { root: runtime, dev: String(stat.dev), ino: String(stat.ino),
+          birthtimeNs: String(stat.birthtimeNs), gitPrimaryRoot: primary });
+        assert.deepEqual(await recheckPhysical(), physical);
+        return "held";
+      });
+      assert.equal(result, "held");
+      await assert.rejects(lateRecheck!(), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+    });
+    assert.equal(catalog.status, "complete");
+    assert.ok(observed);
+    await assert.rejects(lateHold!(runtime, async () => "late"),
+      /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+  } finally { testHome.close(); }
+});
+
+test("the held capability rejects retained, missing and repeated runtime roots", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.ownerHomeRoot, "projects", "story");
+    mkdirSync(primary);
+    initRepo(primary);
+    const runtime = path.join(primary, ".worktrees", "story-1");
+    mkdirSync(path.dirname(runtime));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-1", runtime]);
+    const retainedPrimary = path.join(testHome.workspaceRoot, "setfarm");
+    initRepo(retainedPrimary, "https://github.com/hikmetgulsesli/setfarm.git");
+    const retained = path.join(testHome.workspaceRoot, ".worktrees", "retained-linked");
+    mkdirSync(path.dirname(retained));
+    git(["-C", retainedPrimary, "worktree", "add", "-q", "-b", "retained-1", retained]);
+    await observeWithHeldRuntimeCandidate({ ownerHomeRoot: testHome.ownerHomeRoot,
+      workspaceRoot: testHome.workspaceRoot }, async (_entries, withHeld) => {
+      await assert.rejects(withHeld(retained, async () => undefined),
+        /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+      await assert.rejects(withHeld(path.join(primary, ".worktrees", "absent"), async () => undefined),
+        /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+      await withHeld(runtime, async () => undefined);
+      await assert.rejects(withHeld(runtime, async () => undefined),
+        /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+    });
+  } finally { testHome.close(); }
+});
+
+for (const rejectOuter of [false, true]) {
+  test(`an unawaited held callback settles before cleanup when outer callback ${rejectOuter ? "rejects" : "returns"}`, async () => {
+    const testHome = fixture();
+    try {
+      const primary = path.join(testHome.ownerHomeRoot, "projects", "story");
+      mkdirSync(primary);
+      initRepo(primary);
+      const runtime = path.join(primary, ".worktrees", "story-1");
+      mkdirSync(path.dirname(runtime));
+      git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-1", runtime]);
+      let release!: () => void;
+      let entered!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const nestedEntered = new Promise<void>((resolve) => { entered = resolve; });
+      let pending: Promise<unknown> | null = null;
+      const observation = observeWithHeldRuntimeCandidate({ ownerHomeRoot: testHome.ownerHomeRoot,
+        workspaceRoot: testHome.workspaceRoot }, async (_entries, withHeld) => {
+        pending = withHeld(runtime, async () => { entered(); await gate; return "unawaited"; });
+        void pending.catch(() => undefined);
+        await nestedEntered;
+        if (rejectOuter) throw new Error("outer callback refusal");
+      });
+      let settled = false;
+      void observation.then(() => { settled = true; }, () => { settled = true; });
+      await nestedEntered;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(settled, false, "held descriptors cannot close before nested work settles");
+      release();
+      await assert.rejects(observation, /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+      assert.ok(pending);
+      await assert.rejects(pending, /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+    } finally { testHome.close(); }
+  });
+}
+
+test("held runtime recheck refuses transient Git-admin churn", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.ownerHomeRoot, "projects", "story");
+    mkdirSync(primary);
+    initRepo(primary);
+    const runtime = path.join(primary, ".worktrees", "story-1");
+    mkdirSync(path.dirname(runtime));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-1", runtime]);
+    const admin = path.resolve(runtime, git(["-C", runtime, "rev-parse", "--git-dir"]));
+    await assert.rejects(observeWithHeldRuntimeCandidate({ ownerHomeRoot: testHome.ownerHomeRoot,
+      workspaceRoot: testHome.workspaceRoot }, async (_entries, withHeld) => {
+      await withHeld(runtime, async (_physical, recheckPhysical) => {
+        const lock = path.join(admin, "index.lock");
+        writeFileSync(lock, "transient fixture lock");
+        rmSync(lock);
+        await recheckPhysical();
+      });
+    }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+  } finally { testHome.close(); }
 });
 
 test("read-only Git status never executes a repository-local fsmonitor command", async () => {

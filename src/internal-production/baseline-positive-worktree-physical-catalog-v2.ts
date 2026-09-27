@@ -336,6 +336,10 @@ type Candidate = Readonly<{ root: string; zone: Zone; kind: CandidateKind; dev: 
   birthtimeNs: string; gitPrimaryRoot: string | null; dirty: boolean | null;
   sourceBuildProvenance: "unverified";
   referencingPids: readonly number[] }>;
+type HeldRuntimePhysicalCandidate = Readonly<{ root: string; dev: string; ino: string;
+  birthtimeNs: string; gitPrimaryRoot: string }>;
+type WithHeldRuntimeCandidate = <T>(root: string, withinHold: (physical: HeldRuntimePhysicalCandidate,
+  recheckPhysical: () => Promise<HeldRuntimePhysicalCandidate>) => Promise<T>) => Promise<T>;
 
 function primaryWorktreeRoots(held: HeldDirectories, root: string): GitWorktreeListing | null {
   const marker = path.join(root, ".git");
@@ -456,7 +460,8 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
 
 export async function observeHeldPositiveWorktreePhysicalCatalogV2(
   rawScope: unknown,
-  betweenPasses: (firstPass: readonly Candidate[]) => Promise<void> = async () => undefined,
+  betweenPasses: (firstPass: readonly Candidate[],
+    withHeldRuntimeCandidate: WithHeldRuntimeCandidate) => Promise<void> = async () => undefined,
 ) {
   const scope = captureScope(rawScope);
   if (cleanupUncertain || typeof betweenPasses !== "function") fail();
@@ -561,7 +566,53 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     }
     held.assertStable();
     operation = "between-passes";
-    await betweenPasses(Object.freeze([...entries]));
+    let betweenPassesOpen = true;
+    let holdCalls = 0;
+    let holdInFlight = false;
+    let holdSettled: Promise<void> | null = null;
+    let settleHold: (() => void) | null = null;
+    const withHeldRuntimeCandidate: WithHeldRuntimeCandidate = async (root, withinHold) => {
+      if (!betweenPassesOpen || holdInFlight || holdCalls !== 0 || typeof root !== "string"
+        || typeof withinHold !== "function") fail();
+      const entry = entries.find((candidate) => candidate.root === root);
+      const first = firstByRoot.get(root);
+      if (!entry || !first || entry.zone !== "runtime-zone" || entry.kind !== "linked-git"
+        || entry.gitPrimaryRoot === null || first.reason !== null) fail();
+      holdCalls += 1;
+      holdInFlight = true;
+      holdSettled = new Promise<void>((resolve) => { settleHold = resolve; });
+      let nestedOpen = true;
+      const physical = Object.freeze({ root: entry.root, dev: entry.dev, ino: entry.ino,
+        birthtimeNs: entry.birthtimeNs, gitPrimaryRoot: entry.gitPrimaryRoot });
+      const recheckPhysical = async (): Promise<HeldRuntimePhysicalCandidate> => {
+        if (!betweenPassesOpen || !nestedOpen || cleanupUncertain) fail();
+        held.assertStable();
+        const fresh = observeGitCandidate(held, root, first.base, first.zone, scope);
+        if (fresh.kind !== entry.kind || fresh.gitPrimaryRoot !== entry.gitPrimaryRoot
+          || fresh.dirty !== entry.dirty || fresh.reason !== first.reason
+          || hashCanonicalJson({ roots: fresh.listedRoots, prunableRoots: fresh.prunableRoots,
+            locked: fresh.locked, barePrimaryRoot: fresh.barePrimaryRoot }) !== first.listedHash
+          || held.gitAdminChurnCandidateRoots().includes(root)) fail();
+        return physical;
+      };
+      try {
+        await recheckPhysical();
+        const result = await withinHold(physical, recheckPhysical);
+        await recheckPhysical();
+        return result;
+      } finally {
+        nestedOpen = false;
+        holdInFlight = false;
+        settleHold?.();
+      }
+    };
+    try {
+      await betweenPasses(Object.freeze([...entries]), withHeldRuntimeCandidate);
+      if (holdInFlight) fail();
+    } finally {
+      betweenPassesOpen = false;
+      if (holdSettled !== null) await holdSettled;
+    }
     operation = "post-database-stability";
     held.assertStable();
     for (const root of absentBases) if (!isMissing(root)) fail();
