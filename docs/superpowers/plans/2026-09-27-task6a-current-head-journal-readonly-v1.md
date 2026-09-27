@@ -32,7 +32,7 @@
 ### Task 1: Source-bound current-head identity
 
 **Files:**
-- Modify: `src/db/contract-spine-migrations.ts` after the v33 registration region.
+- Modify: `src/db/contract-spine-migrations.ts` after the outer `migration-v33-blocked-successor-planner:END` marker and before the next semantic region.
 - Test: `tests/internal-production/contract-spine-readonly-verifier-v1.test.ts`.
 
 **Interfaces:**

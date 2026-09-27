@@ -16517,6 +16517,25 @@ async function planContractSpineMigrationsOnConnection(
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v33-blocked-successor-planner:END
 export { verifyV3RecoveryClaimRuntimePublicationV1 };
 
+/** Source-owned identities only; does not expose migration effect hooks. */
+export function getContractSpineCurrentHeadJournalIdentitiesV1(): readonly Readonly<{
+  version: number;
+  name: string;
+  checksum: string;
+  migrationClass: ContractSpineMigrationClass;
+}>[] {
+  if (completeMigrations.length !== 33
+    || completeMigrations.some((migration, index) => migration.version !== index + 1)) {
+    throw new Error("CONTRACT_SPINE_CURRENT_HEAD_SOURCE_IDENTITY_INVALID_V1");
+  }
+  return Object.freeze(completeMigrations.map((migration) => Object.freeze({
+    version: migration.version,
+    name: migration.name,
+    checksum: checksum(migration),
+    migrationClass: migration.migrationClass,
+  })));
+}
+
 export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpineMigrationPlan> {
   return sql.begin(async (transaction) => {
     await transaction.unsafe(
