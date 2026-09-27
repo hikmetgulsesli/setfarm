@@ -77,17 +77,17 @@ export async function observeHeldDiagnosticPositiveWorktreeReceiptCandidateV1(po
       const session = onlyRow(rows.sessions);
       const candidate = derivePositiveWorktreeBindingReceiptCandidateV1({ attempt, session, physical });
       sameSource(before, candidate.receipt, initialPhysical.gitPrimaryRoot as string);
-      const after = source(await ports.observeSource());
-      sameSource(after, candidate.receipt, initialPhysical.gitPrimaryRoot as string);
-      if (Object.keys(before).some((key) => before[key as keyof SourceObservationV1]
-        !== after[key as keyof SourceObservationV1])) fail();
-      const finalPhysical = exact(await recheckPhysical(),
-        ["root", "dev", "ino", "birthtimeNs", "gitPrimaryRoot"]);
-      if (Object.keys(initialPhysical).some((key) => initialPhysical[key] !== finalPhysical[key])) fail();
       produced = candidate;
       return candidate;
     });
     if (databaseCalls !== 1 || inside !== produced) fail();
+    const after = source(await ports.observeSource());
+    sameSource(after, inside.receipt, initialPhysical.gitPrimaryRoot as string);
+    if (Object.keys(before).some((key) => before[key as keyof SourceObservationV1]
+      !== after[key as keyof SourceObservationV1])) fail();
+    const finalPhysical = exact(await recheckPhysical(),
+      ["root", "dev", "ino", "birthtimeNs", "gitPrimaryRoot"]);
+    if (Object.keys(initialPhysical).some((key) => initialPhysical[key] !== finalPhysical[key])) fail();
     return inside;
   });
   if (holdCalls !== 1 || databaseCalls !== 1 || produced === null || returned !== produced) fail();

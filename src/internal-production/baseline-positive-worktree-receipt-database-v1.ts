@@ -53,43 +53,51 @@ export async function observeDiagnosticPositiveWorktreeReceiptCandidateWithCodeO
       || !["localhost", "127.0.0.1"].includes(target.hostname)
       || (target.port !== "" && target.port !== "5432") || target.pathname !== "/setfarm"
       || target.search !== "" || target.hash !== "") fail();
-    const postgresModule = await import("postgres");
-    sql = postgresModule.default(databaseUrl, {
-      max: 1, idle_timeout: 1, connect_timeout: 5, debug: false, onnotice: () => {},
-    });
-    if (sql.options.host.length !== 1 || sql.options.host[0] !== target.hostname
-      || sql.options.port.length !== 1 || sql.options.port[0] !== 5432
-      || sql.options.database !== "setfarm"
-      || sql.options.user !== decodeURIComponent(target.username)) fail();
     let databaseCalls = 0;
     return await observeHeldDiagnosticPositiveWorktreeReceiptCandidateV1({
       holdPhysical: ports.holdPhysical,
       observeSource: ports.observeSource,
       withReadOnlyDatabaseSnapshot: async (withinTransaction) => {
         databaseCalls += 1;
-        if (databaseCalls !== 1 || !sql) fail();
-        const result = await sql.begin("isolation level repeatable read read only", async (tx) => {
-          const connection = tx as unknown as typeof sql;
-          if (!connection) fail();
-          await connection`SET LOCAL statement_timeout = '5s'`;
-          await connection`SET LOCAL lock_timeout = '1s'`;
-          await connection`SET LOCAL idle_in_transaction_session_timeout = '10s'`;
-          const rawRoleRows = await connection.unsafe(
-            'SELECT session_user AS "sessionUser", current_user AS "currentUser"');
-          const roleRows = normalizeActiveOwnerRowPgResultV2(
-            rawRoleRows as unknown as readonly Record<string, unknown>[]);
-          if (roleRows.length !== 1 || roleRows[0]?.sessionUser !== decodeURIComponent(target.username)
-            || roleRows[0]?.currentUser !== decodeURIComponent(target.username)) fail();
-          const rawAttempts = await connection.unsafe(ATTEMPTS_SQL, [root]);
-          const rawSessions = await connection.unsafe(SESSIONS_SQL, [root]);
-          const attempts = normalizeActiveOwnerRowPgResultV2(
-            rawAttempts as unknown as readonly Record<string, unknown>[]);
-          const sessions = normalizeActiveOwnerRowPgResultV2(
-            rawSessions as unknown as readonly Record<string, unknown>[]);
-          if (attempts.length !== 1 || sessions.length !== 1) fail();
-          return withinTransaction({ attempts, sessions });
+        if (databaseCalls !== 1) fail();
+        const postgresModule = await import("postgres");
+        sql = postgresModule.default(databaseUrl, {
+          max: 1, idle_timeout: 1, connect_timeout: 5, debug: false, onnotice: () => {},
         });
-        return result as unknown as Awaited<ReturnType<typeof withinTransaction>>;
+        try {
+          if (sql.options.host.length !== 1 || sql.options.host[0] !== target.hostname
+            || sql.options.port.length !== 1 || sql.options.port[0] !== 5432
+            || sql.options.database !== "setfarm"
+            || sql.options.user !== decodeURIComponent(target.username)) fail();
+          const result = await sql.begin("isolation level repeatable read read only", async (tx) => {
+            const connection = tx as unknown as typeof sql;
+            if (!connection) fail();
+            await connection`SET LOCAL statement_timeout = '5s'`;
+            await connection`SET LOCAL lock_timeout = '1s'`;
+            await connection`SET LOCAL idle_in_transaction_session_timeout = '10s'`;
+            const rawRoleRows = await connection.unsafe(
+              'SELECT session_user AS "sessionUser", current_user AS "currentUser"');
+            const roleRows = normalizeActiveOwnerRowPgResultV2(
+              rawRoleRows as unknown as readonly Record<string, unknown>[]);
+            if (roleRows.length !== 1 || roleRows[0]?.sessionUser !== decodeURIComponent(target.username)
+              || roleRows[0]?.currentUser !== decodeURIComponent(target.username)) fail();
+            const rawAttempts = await connection.unsafe(ATTEMPTS_SQL, [root]);
+            const rawSessions = await connection.unsafe(SESSIONS_SQL, [root]);
+            const attempts = normalizeActiveOwnerRowPgResultV2(
+              rawAttempts as unknown as readonly Record<string, unknown>[]);
+            const sessions = normalizeActiveOwnerRowPgResultV2(
+              rawSessions as unknown as readonly Record<string, unknown>[]);
+            if (attempts.length !== 1 || sessions.length !== 1) fail();
+            return withinTransaction({ attempts, sessions });
+          });
+          return result as unknown as Awaited<ReturnType<typeof withinTransaction>>;
+        } finally {
+          const closing = sql;
+          sql = undefined;
+          if (closing) {
+            try { await closing.end({ timeout: 1 }); } catch { fail(); }
+          }
+        }
       },
     });
   } catch { fail(); }

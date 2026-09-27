@@ -127,11 +127,30 @@ test("one fixed read-only snapshot returns only an unpublished candidate and clo
           queries:p.queries.map(q => ({statement:q.statement,parameters:q.parameters})),
           closes:p.closes,options:p.options };
       };
+      globalThis.probe = {attempts:[attempt],sessions:[session],options:null,
+        modes:[],locals:[],queries:[],closes:[]};
+      let releaseSecond; let reportSecond;
+      const secondGate = new Promise(resolve => { releaseSecond = resolve; });
+      const secondEntered = new Promise(resolve => { reportSecond = resolve; });
+      let sourceReads = 0;
+      const waitingSourcePorts = {...ports, observeSource: async () => {
+        sourceReads++;
+        if (sourceReads === 2) { reportSecond(); await secondGate; }
+        return source;
+      }};
+      const waitingWork = module.observeDiagnosticPositiveWorktreeReceiptCandidateWithCodeOwnedDatabaseV1(
+        ${JSON.stringify(localUrl)},root,waitingSourcePorts);
+      await secondEntered;
+      const closedBeforeSecondSourceSettles = globalThis.probe.closes.length;
+      releaseSecond();
+      const waitingCandidate = await waitingWork;
+      const pendingSource = {closedBeforeSecondSourceSettles,
+        finalCloses:globalThis.probe.closes.length,authority:waitingCandidate.authority};
       process.stdout.write(JSON.stringify({success:await run({}),wrongRole:await run({wrongRole:true}),
         missingAttempt:await run({missingAttempt:true}),missingSession:await run({missingSession:true}),
         duplicate:await run({duplicate:true}),crossed:await run({crossed:true}),
         queryFailure:await run({queryFailure:true}),closeFailure:await run({closeFailure:true}),
-        wrongTarget:await run({wrongTarget:true})}));
+        wrongTarget:await run({wrongTarget:true}),pendingSource}));
     `], { encoding: "utf8", timeout: 15000, env: {} });
     assert.equal(result.status, 0, result.stderr);
     const observed = JSON.parse(result.stdout);
@@ -160,6 +179,8 @@ test("one fixed read-only snapshot returns only an unpublished candidate and clo
       assert.deepEqual(observed[key].closes, [{ timeout: 1 }], key);
     }
     assert.deepEqual(observed.wrongTarget.modes, []);
+    assert.deepEqual(observed.pendingSource, { closedBeforeSecondSourceSettles: 1,
+      finalCloses: 1, authority: "diagnostic-only" });
     assert.equal(result.stdout.includes("PRIVATE_PASSWORD"), false);
     assert.equal(result.stdout.includes("PRIVATE_QUERY_PASSWORD"), false);
     assert.equal(result.stdout.includes("PRIVATE_CLOSE_PASSWORD"), false);

@@ -53,7 +53,7 @@ test("held diagnostic receipt protocol brackets exactly one read-only DB snapsho
   const wired = ports();
   const candidate = await observeHeldDiagnosticPositiveWorktreeReceiptCandidateV1(wired);
   assert.deepEqual(wired.trace, ["hold-open", "source", "db-open", "db-read",
-    "source", "physical-recheck", "db-close", "hold-close"]);
+    "db-close", "source", "physical-recheck", "hold-close"]);
   assert.equal(candidate.authority, "diagnostic-only");
   assert.equal(candidate.physicalIdentityProvenance, "unverified");
   assert.equal(candidate.producerAuthentication, "unverified");

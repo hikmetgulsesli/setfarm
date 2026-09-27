@@ -18,6 +18,12 @@ does not publish an owner receipt or authorize cutover.
   SQL. Only the private callback passed to the diagnostic receipt protocol may
   see raw fence bytes; the exported function returns its canonical unpublished
   candidate only. Mask all DB/cleanup errors and close before returning.
+- `src/internal-production/baseline-positive-worktree-receipt-protocol-v1.ts`
+  and its test: exact-head Codex review found that an unbounded injected
+  source/physical callback could run while the DB transaction remained open.
+  Complete the DB snapshot before the second source/physical recheck, retaining
+  the outer held interval and fail-closed candidate ordering. This is the
+  smallest causal root fix, not a relaxation of a gate.
 - `tests/internal-production/baseline-positive-worktree-receipt-database-v1.test.ts`:
   RED/GREEN import inertia, URL/root refusal before driver load, fixed query
   shape and one transaction, role/cardinality/crossed-row refusal, no fence or
@@ -43,5 +49,12 @@ not authenticate their producers; no ownership or cutover claim follows.
   the private fixture as `postgres` with the retained rehearsal password was
   denied; no role/credential was changed and this is not SQL parser evidence.
   Independent read-only review found no Medium+ issue, including after adding
-  missing-attempt/session refusal cases. Exact-head PR review and clean-main
-  verification are pending.
+  missing-attempt/session refusal cases. First exact-head Codex review found a
+  P2 unbounded callback inside the transaction. The protocol now completes the
+  DB callback before second source/physical rechecks, and the adapter opens
+  and closes its DB client only inside that callback. RED/GREEN order and a
+  stalled-second-source fake-driver test prove close before source resumes.
+  A truly non-settling injected source/physical observer can still hold the
+  outer diagnostic interval; JavaScript cannot safely cancel arbitrary ports
+  with a bare `Promise.race`. New-head PR review and clean-main verification
+  are pending.
