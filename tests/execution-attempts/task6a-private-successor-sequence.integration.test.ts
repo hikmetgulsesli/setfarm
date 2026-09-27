@@ -5,6 +5,7 @@ import { test } from "node:test";
 
 import postgres from "postgres";
 
+import { contractSpineMigrationLockKey } from "../../src/db/contract-spine-migrations.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 import { requireTask6aPrivateLoopbackHostname } from "./task6a-private-cluster-loopback.js";
 
@@ -15,7 +16,7 @@ function permissionDenied(error: unknown): boolean {
     && "code" in error && error.code === "42501";
 }
 
-test("private successor login allocates run numbers only after scoped sequence USAGE", {
+test("private successor uses sequence and serialized V31 run fence without journal UPDATE", {
   skip: expectedDataDirectory ? false : "requires an explicitly identified private PostgreSQL cluster",
 }, async () => {
   assert.equal(process.env.SETFARM_PG_URL, undefined);
@@ -85,7 +86,7 @@ test("private successor login allocates run numbers only after scoped sequence U
       const rights = await probe<Array<{ login: string; effective: string;
         superuser: boolean; bypassRls: boolean; createRole: boolean; createDatabase: boolean;
         ownerMember: boolean; ownerSet: boolean; ownerAdmin: boolean;
-        databaseCreate: boolean; schemaCreate: boolean;
+        databaseCreate: boolean; schemaCreate: boolean; journalUpdate: boolean;
         sequenceUsage: boolean; sequenceUpdate: boolean; tableDml: boolean[] }>>`
         SELECT session_user AS login, current_user AS effective,
           r.rolsuper AS superuser, r.rolbypassrls AS "bypassRls",
@@ -96,6 +97,7 @@ test("private successor login allocates run numbers only after scoped sequence U
             WHERE m.roleid = o.oid AND m.member = r.oid AND m.admin_option) AS "ownerAdmin",
           has_database_privilege(current_user, current_database(), 'CREATE') AS "databaseCreate",
           has_schema_privilege(current_user, 'public', 'CREATE') AS "schemaCreate",
+          has_table_privilege(current_user, 'public.setfarm_schema_migrations', 'UPDATE') AS "journalUpdate",
           has_sequence_privilege(current_user, 'public.runs_run_number_seq', 'USAGE') AS "sequenceUsage",
           has_sequence_privilege(current_user, 'public.runs_run_number_seq', 'UPDATE') AS "sequenceUpdate",
           ARRAY(SELECT has_table_privilege(current_user, name, privilege)
@@ -108,7 +110,7 @@ test("private successor login allocates run numbers only after scoped sequence U
       assert.deepEqual(rights[0], { login: role, effective: role,
         superuser: false, bypassRls: false, createRole: false, createDatabase: false,
         ownerMember: false, ownerSet: false, ownerAdmin: false,
-        databaseCreate: false, schemaCreate: false,
+        databaseCreate: false, schemaCreate: false, journalUpdate: false,
         sequenceUsage: false, sequenceUpdate: false, tableDml: Array(12).fill(false) });
     } finally {
       await probe.end({ timeout: 5 });
@@ -124,16 +126,17 @@ test("private successor login allocates run numbers only after scoped sequence U
 
     stage = "scoped-sequence-grant";
     await database.sql.unsafe(`GRANT USAGE ON SEQUENCE public.runs_run_number_seq TO "${role}"`);
-    const scopedRights = await database.sql<Array<{ usage: boolean; update: boolean;
+    const scopedRights = await database.sql<Array<{ usage: boolean; update: boolean; journalUpdate: boolean;
       tableDml: boolean[] }>>`
       SELECT has_sequence_privilege(${role}, 'public.runs_run_number_seq', 'USAGE') AS usage,
         has_sequence_privilege(${role}, 'public.runs_run_number_seq', 'UPDATE') AS update,
+        has_table_privilege(${role}, 'public.setfarm_schema_migrations', 'UPDATE') AS "journalUpdate",
         ARRAY(SELECT has_table_privilege(${role}, name, privilege)
           FROM unnest(ARRAY['public.runs', 'public.claim_log',
             'public.execution_attempts', 'public.runtime_sessions']) AS tables(name)
           CROSS JOIN unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) AS rights(privilege)) AS "tableDml"
     `;
-    assert.deepEqual(scopedRights[0], { usage: true, update: false,
+    assert.deepEqual(scopedRights[0], { usage: true, update: false, journalUpdate: false,
       tableDml: Array(12).fill(false) });
     const first = await successorDb.pgNextRunNumber();
     const second = await successorDb.pgNextRunNumber();
@@ -144,6 +147,118 @@ test("private successor login allocates run numbers only after scoped sequence U
       error !== null && typeof error === "object" && "code" in error && error.code === "22003");
     const after = await successorDb.pgQuery<{ value: number }>("SELECT 1 AS value");
     assert.equal(after[0]?.value, 1);
+    stage = "restricted-run-insertion-fence";
+    await successorDb.pgBegin(async (sql) => {
+      await successorDb!.lockInternalProductionWorkflowRunInsertionFenceV1(sql);
+    });
+
+    stage = "runtime-advisory-exclusion";
+    let reportHeld!: () => void;
+    const held = new Promise<void>((resolve) => { reportHeld = resolve; });
+    let releaseRuntime!: () => void;
+    const runtimeRelease = new Promise<void>((resolve) => { releaseRuntime = resolve; });
+    const runtimeHolder = successorDb.pgBegin(async (sql) => {
+      await sql.unsafe("SELECT set_config('lock_timeout', '10s', true)");
+      await successorDb!.lockInternalProductionWorkflowRunInsertionFenceV1(sql);
+      reportHeld();
+      await runtimeRelease;
+    });
+    try {
+      await Promise.race([held, runtimeHolder.then(() => {
+        throw new Error("TASK6A_RUNTIME_FENCE_HOLDER_EXITED_EARLY");
+      })]);
+      const probe = await database.sql<Array<{ acquired: boolean }>>`
+        SELECT pg_try_advisory_xact_lock(${contractSpineMigrationLockKey}) AS acquired
+      `;
+      assert.equal(probe[0]?.acquired, false);
+      let migrationSettled = false;
+      const opening = database.db.openInternalProductionCurrentEntryMigration32TransactionV1()
+        .finally(() => { migrationSettled = true; });
+      try {
+        let waiting = false;
+        for (let attempt = 0; attempt < 100 && !waiting && !migrationSettled; attempt += 1) {
+          const rows = await database.sql<Array<{ waiting: boolean }>>`
+            SELECT EXISTS (
+              SELECT 1 FROM pg_catalog.pg_locks l
+                JOIN pg_catalog.pg_stat_activity a ON a.pid = l.pid
+               WHERE a.datname = current_database() AND a.usename = ${expectedSchemaOwner}
+                 AND l.locktype = 'advisory' AND NOT l.granted
+            ) AS waiting
+          `;
+          waiting = rows[0]?.waiting === true;
+          if (!waiting) await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        assert.equal(waiting, true, "migration32 opener must wait on held runtime advisory fence");
+        assert.equal(migrationSettled, false);
+      } finally {
+        releaseRuntime();
+        const [holderResult, openerResult] = await Promise.allSettled([runtimeHolder, opening]);
+        if (openerResult.status === "fulfilled") {
+          await database.db.abortInternalProductionCurrentEntryMigration32TransactionV1(openerResult.value);
+        }
+        if (holderResult.status === "rejected") throw holderResult.reason;
+        if (openerResult.status === "rejected") throw openerResult.reason;
+      }
+    } finally {
+      releaseRuntime();
+      await runtimeHolder;
+    }
+
+    stage = "migration32-advisory-exclusion";
+    const migration32 = await database.db.openInternalProductionCurrentEntryMigration32TransactionV1();
+    let runtimeSettled = false;
+    const waitingRuntime = successorDb.pgBegin(async (sql) => {
+      await sql.unsafe("SELECT set_config('lock_timeout', '10s', true)");
+      await successorDb!.lockInternalProductionWorkflowRunInsertionFenceV1(sql);
+    }).finally(() => { runtimeSettled = true; });
+    try {
+      let waiting = false;
+      for (let attempt = 0; attempt < 100 && !waiting && !runtimeSettled; attempt += 1) {
+        const rows = await database.sql<Array<{ waiting: boolean }>>`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_locks l
+              JOIN pg_catalog.pg_stat_activity a ON a.pid = l.pid
+             WHERE a.datname = current_database() AND a.usename = ${role}
+               AND l.locktype = 'advisory' AND NOT l.granted
+          ) AS waiting
+        `;
+        waiting = rows[0]?.waiting === true;
+        if (!waiting) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.equal(waiting, true, "restricted runtime must wait on held migration32 advisory fence");
+      assert.equal(runtimeSettled, false);
+    } finally {
+      const [abortResult, runtimeResult] = await Promise.allSettled([
+        database.db.abortInternalProductionCurrentEntryMigration32TransactionV1(migration32),
+        waitingRuntime,
+      ]);
+      if (abortResult.status === "rejected") throw abortResult.reason;
+      if (runtimeResult.status === "rejected") throw runtimeResult.reason;
+    }
+
+    stage = "advisory-lock-timeout-refusal";
+    const timeoutHolder = await database.db.openInternalProductionCurrentEntryMigration32TransactionV1();
+    try {
+      await assert.rejects(successorDb.pgBegin(async (sql) => {
+        await sql.unsafe("SELECT set_config('lock_timeout', '100ms', true)");
+        await successorDb!.lockInternalProductionWorkflowRunInsertionFenceV1(sql);
+      }), (error: unknown) => error !== null && typeof error === "object"
+        && "code" in error && error.code === "55P03");
+    } finally {
+      await database.db.abortInternalProductionCurrentEntryMigration32TransactionV1(timeoutHolder);
+    }
+
+    stage = "journal-drift-refusal";
+    const driftedChecksum = "f".repeat(64);
+    await database.sql`UPDATE public.setfarm_schema_migrations
+      SET checksum = ${driftedChecksum} WHERE version = 31`;
+    await assert.rejects(successorDb.pgBegin(async (sql) => {
+      await successorDb!.lockInternalProductionWorkflowRunInsertionFenceV1(sql);
+    }), /RUN_PERSISTENCE_MIGRATION_31_FENCE_DRIFT/);
+    await database.sql`DELETE FROM public.setfarm_schema_migrations WHERE version = 31`;
+    await assert.rejects(successorDb.pgBegin(async (sql) => {
+      await successorDb!.lockInternalProductionWorkflowRunInsertionFenceV1(sql);
+    }), /RUN_PERSISTENCE_MIGRATION_31_FENCE_UNAVAILABLE/);
   } catch (error) {
     testFailure = error;
     process.stderr.write(`[task6a-private-successor-sequence] failed at ${stage}\n`);
