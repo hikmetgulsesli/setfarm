@@ -10,6 +10,8 @@ import {
   appendPrivateDiagnosticPrecreateReservationV1,
   PRIVATE_POSITIVE_WORKTREE_PRECREATE_RESERVATION_V1_STATEMENTS,
 } from "../../src/internal-production/baseline-positive-worktree-precreate-reservation-contract-v1.js";
+import { PRIVATE_POSITIVE_WORKTREE_RECOVERY_PRECREATE_RESERVATION_V1_STATEMENTS } from
+  "../../src/internal-production/baseline-positive-worktree-recovery-precreate-reservation-contract-v1.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 import { requireTask6aPrivateLoopbackHostname } from "./task6a-private-cluster-loopback.js";
 
@@ -53,6 +55,9 @@ test("private pre-create reservation persists immutably while the physical targe
     assert.equal(maximum[0]?.version, 33);
     assert.ok(PRIVATE_POSITIVE_WORKTREE_PRECREATE_RESERVATION_V1_STATEMENTS.length >= 4);
     for (const statement of PRIVATE_POSITIVE_WORKTREE_PRECREATE_RESERVATION_V1_STATEMENTS) {
+      await database.sql.unsafe(statement);
+    }
+    for (const statement of PRIVATE_POSITIVE_WORKTREE_RECOVERY_PRECREATE_RESERVATION_V1_STATEMENTS) {
       await database.sql.unsafe(statement);
     }
 

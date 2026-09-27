@@ -15,6 +15,8 @@ import {
   appendPrivateDiagnosticRecoveryPrecreateReservationV1,
   PRIVATE_POSITIVE_WORKTREE_RECOVERY_PRECREATE_RESERVATION_V1_STATEMENTS,
 } from "../../src/internal-production/baseline-positive-worktree-recovery-precreate-reservation-contract-v1.js";
+import { PRIVATE_POSITIVE_WORKTREE_PRECREATE_RESERVATION_V1_STATEMENTS } from
+  "../../src/internal-production/baseline-positive-worktree-precreate-reservation-contract-v1.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 import { requireTask6aPrivateLoopbackHostname } from "./task6a-private-cluster-loopback.js";
 
@@ -57,6 +59,9 @@ test("private recovery reservation requires the exact live delivery lease before
       SELECT max(version)::integer AS version FROM public.setfarm_schema_migrations`;
     assert.equal(maximum[0]?.version, 33);
     for (const statement of PRIVATE_POSITIVE_WORKTREE_RECOVERY_PRECREATE_RESERVATION_V1_STATEMENTS) {
+      await database.sql.unsafe(statement);
+    }
+    for (const statement of PRIVATE_POSITIVE_WORKTREE_PRECREATE_RESERVATION_V1_STATEMENTS) {
       await database.sql.unsafe(statement);
     }
 
