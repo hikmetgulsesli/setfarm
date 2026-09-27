@@ -128,6 +128,7 @@ export async function verifyContractSpineCurrentHeadJournalReadOnlyV1(
   try {
     await sql.begin("isolation level repeatable read read only", async (transaction) => {
       await transaction.unsafe("SELECT pg_catalog.set_config('search_path', 'pg_catalog, public, pg_temp', true)");
+      await transaction.unsafe("SELECT pg_catalog.set_config('quote_all_identifiers', 'off', true)");
       await transaction.unsafe("SELECT pg_catalog.set_config('lock_timeout', '1000ms', true)");
       await transaction.unsafe("SELECT pg_catalog.set_config('statement_timeout', '5000ms', true)");
       await transaction.unsafe("SELECT pg_catalog.set_config('idle_in_transaction_session_timeout', '5000ms', true)");
@@ -247,6 +248,7 @@ export async function verifyContractSpineCurrentHeadJournalReadOnlyV1(
       const access = await transaction.unsafe<Array<{
         sameRole: boolean;
         otherRoleMembership: boolean;
+        unsafeRoleAttributes: boolean;
         databaseCreate: boolean;
         schemaCreate: boolean;
         journalSelect: boolean;
@@ -257,6 +259,10 @@ export async function verifyContractSpineCurrentHeadJournalReadOnlyV1(
           EXISTS (SELECT 1 FROM pg_catalog.pg_roles r
             WHERE r.rolname <> session_user
               AND pg_catalog.pg_has_role(session_user, r.oid, 'MEMBER')) AS "otherRoleMembership",
+          COALESCE((SELECT NOT r.rolcanlogin OR r.rolsuper OR r.rolcreaterole
+            OR r.rolcreatedb OR r.rolbypassrls OR r.rolreplication
+            FROM pg_catalog.pg_roles r WHERE r.rolname = session_user), true)
+            AS "unsafeRoleAttributes",
           pg_catalog.has_database_privilege(current_user, current_database(), 'CREATE') AS "databaseCreate",
           pg_catalog.has_schema_privilege(current_user, 'public', 'CREATE') AS "schemaCreate",
           pg_catalog.has_table_privilege(current_user,
@@ -283,6 +289,7 @@ export async function verifyContractSpineCurrentHeadJournalReadOnlyV1(
             'public.setfarm_schema_migrations', 'REFERENCES')) AS "journalColumnWrite"`,
       );
       if (access.length !== 1 || !access[0]?.sameRole || access[0].otherRoleMembership
+        || access[0].unsafeRoleAttributes
         || access[0].databaseCreate || access[0].schemaCreate
         || !access[0].journalSelect || access[0].journalWrite
         || access[0].journalColumnWrite) mismatch();

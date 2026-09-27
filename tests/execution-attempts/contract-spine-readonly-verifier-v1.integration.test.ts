@@ -140,6 +140,14 @@ test("a distinct SELECT-only login verifies the current journal and refuses revo
     const before = await journalFingerprint(database.sql);
     await verifyContractSpineCurrentHeadJournalReadOnlyV1(restricted);
     assert.equal(await journalFingerprint(database.sql), before);
+    await restricted.unsafe("SET quote_all_identifiers TO on");
+    await verifyContractSpineCurrentHeadJournalReadOnlyV1(restricted);
+    const deparserSetting = await restricted<Array<{ value: string }>>`
+      SELECT current_setting('quote_all_identifiers') AS value
+    `;
+    assert.equal(deparserSetting[0]?.value, "on");
+    assert.equal(await journalFingerprint(database.sql), before);
+    await restricted.unsafe("RESET quote_all_identifiers");
     await database.sql.unsafe(`CREATE FUNCTION public.set_config(text, text, boolean)
       RETURNS text LANGUAGE SQL AS $$ SELECT $2 $$`);
     await database.sql.unsafe(`CREATE FUNCTION public.format_type(oid, integer)
@@ -247,6 +255,24 @@ test("a distinct SELECT-only login verifies the current journal and refuses revo
     await assert.rejects(verifyContractSpineCurrentHeadJournalReadOnlyV1(restricted),
       /SETFARM_CURRENT_HEAD_JOURNAL_CATALOG_MISMATCH_V1/,
       "NOINHERIT login can self-grant SET to a journal writer");
+    await admin.unsafe(`REVOKE "${writerRole}" FROM "${role}"`);
+    const privilegedRoleFlags = [
+      ["CREATEROLE", "NOCREATEROLE"],
+      ["CREATEDB", "NOCREATEDB"],
+      ["BYPASSRLS", "NOBYPASSRLS"],
+      ["REPLICATION", "NOREPLICATION"],
+      ["SUPERUSER", "NOSUPERUSER"],
+    ] as const;
+    for (const [enabled, disabled] of privilegedRoleFlags) {
+      await admin.unsafe(`ALTER ROLE "${role}" WITH ${enabled}`);
+      try {
+        await assert.rejects(verifyContractSpineCurrentHeadJournalReadOnlyV1(restricted),
+          /SETFARM_CURRENT_HEAD_JOURNAL_CATALOG_MISMATCH_V1/,
+          `${enabled} login attribute`);
+      } finally {
+        await admin.unsafe(`ALTER ROLE "${role}" WITH ${disabled}`);
+      }
+    }
     const missingTarget = postgres({ host: socketDirectory, port: Number(parsed.port),
       database: `task6a_missing_${randomBytes(8).toString("hex")}`, username: role,
       max: 1, connect_timeout: 2 });

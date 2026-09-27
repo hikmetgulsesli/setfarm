@@ -24,6 +24,9 @@ connection to the already-existing target database. It starts one bounded
 `REPEATABLE READ READ ONLY` transaction, first sets the transaction-local
 `search_path` to `pg_catalog, public, pg_temp`, then sets bounded lock,
 statement and idle-in-transaction timeouts through `pg_catalog.set_config`.
+It also sets `quote_all_identifiers=off` transaction-locally before exact
+textual definition comparisons, so a user/database/session deparser default
+cannot turn an unchanged source catalog into a false mismatch.
 No maintenance-database connection, advisory lock, explicit table lock,
 DDL, DML, repair or `pgGet`/`pgQuery` is allowed. Any missing, extra,
 inaccessible, timed-out or malformed state reduces to one fixed redacted
@@ -54,6 +57,9 @@ can conceal a journal-writer grant from immediately effective privilege
 checks, while SET permits switching roles and ADMIN permits self-granting
 SET. This is an explicit fail-closed rehearsal restriction, not a runtime
 grant or role change.
+Its own role profile must be LOGIN and exclude SUPERUSER, CREATEROLE,
+CREATEDB, BYPASSRLS and REPLICATION; the fixture creator flags alone do not
+prove the verifier enforces that restricted profile.
 
 This certifies only the current-head journal and its own catalog, not the
 objects or private data supposedly installed by migrations 1–33. In
@@ -82,6 +88,10 @@ remain mandatory before PR review and delivery.
 An isolated NOINHERIT login with a SET-able or ADMIN-only journal-writer
 membership must also be rejected even though its directly effective journal
 write privilege is false.
+Isolated ALTER ROLE negative cases must reject each privileged role attribute
+and restore it before the next case.
+The positive fixture must also pass with session `quote_all_identifiers=on`
+without changing its session setting or catalog fingerprint.
 
 ## File map
 

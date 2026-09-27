@@ -42,6 +42,8 @@ test("current-head journal refuses an empty catalog after bounded read-only setu
     /SETFARM_CURRENT_HEAD_JOURNAL_CATALOG_MISMATCH_V1/);
   assert.equal(statements[0],
     "SELECT pg_catalog.set_config('search_path', 'pg_catalog, public, pg_temp', true)");
+  assert.equal(statements[1],
+    "SELECT pg_catalog.set_config('quote_all_identifiers', 'off', true)");
   assert.ok(statements.some((statement) => statement.includes("lock_timeout")));
   assert.ok(statements.some((statement) => statement.includes("statement_timeout")));
   assert.ok(statements.some((statement) => statement.includes("idle_in_transaction_session_timeout")));
