@@ -84,7 +84,7 @@
 
 - [x] **Step 1: Confirm RED.** Full findings passed 5/6 claim-authority cases; the lone attempt-bound case manually inserted a claim and failed at `RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND`.
 - [x] **Step 2: Use actual authorities.** Only that case seeds canonical compiler story admission and publishes its acquired recovery lease through `publishLoopClaimRuntime` before attempt reservation.
-- [ ] **Step 3: Run GREEN.** Focused P3 case then the remaining findings files and complete findings suite.
+- [ ] **Step 3: Run GREEN.** The first focused P3 rerun passed the old five cases and reached the new publication, then refused the test's obsolete arbitrary slice (`RECOVERY_DELIVERY_SLICE_AUTHORITY_MISMATCH`). Bind reservation to the handoff's contract slice, rerun the case, then the remaining findings files and complete suite.
 
 ### Task 3: Review and deliver
 

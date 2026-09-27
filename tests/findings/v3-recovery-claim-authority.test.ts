@@ -332,7 +332,7 @@ describe("v3 recovery-first claim authority", () => {
       attemptClass: "product_implementation",
       packetHash: leased.directive.packetHash,
       compilationReportHash: "f".repeat(64),
-      sliceHash: "9".repeat(64),
+      sliceHash: leased.directive.contractSliceHash,
       sourceBefore: leased.directive.sourceRevision,
       findingSetHash: leased.directive.findingSetHash,
       recoveryCaseRevisionId: leased.revisionId,
