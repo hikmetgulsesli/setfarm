@@ -15,7 +15,7 @@ async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
     SELECT md5(jsonb_build_object(
       'relations', (SELECT jsonb_agg(jsonb_build_array(c.relname, c.relkind,
         c.relpersistence, c.relrowsecurity, c.relforcerowsecurity,
-        c.relowner::text, c.relam::text, c.reloptions,
+        c.relowner::text, c.relam::text, c.reloptions, c.relreplident,
         toast.reloptions) ORDER BY c.relname)
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         LEFT JOIN pg_class toast ON toast.oid = c.reltoastrelid
@@ -162,6 +162,7 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
       ["non-source text storage", "ALTER TABLE public.rules ALTER COLUMN content SET STORAGE PLAIN"],
       ["stale fast-default missing value", "ALTER TABLE public.stories RENAME COLUMN output TO old_output; ALTER TABLE public.stories ADD COLUMN output text DEFAULT 'forged'; ALTER TABLE public.stories ALTER COLUMN output DROP DEFAULT"],
       ["row level security", "ALTER TABLE public.runs ENABLE ROW LEVEL SECURITY"],
+      ["non-source replica identity", "ALTER TABLE public.runs REPLICA IDENTITY NOTHING"],
       ["missing column", "ALTER TABLE public.steps DROP COLUMN started_at"],
       ["dropped then readded column", "ALTER TABLE public.steps DROP COLUMN started_at; ALTER TABLE public.steps ADD COLUMN started_at TIMESTAMPTZ"],
       ["wrong type", "ALTER TABLE public.rules ALTER COLUMN title TYPE varchar(10)"],

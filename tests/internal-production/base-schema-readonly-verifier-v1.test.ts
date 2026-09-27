@@ -59,6 +59,7 @@ test("base catalog verification refuses required tables with no required columns
           ? requiredTables.map((name) => ({ name, kind: "r", persistence: "p",
             accessMethod: "heap",
             tableOptions: null, toastOptions: null,
+            replicaIdentity: "d",
             partitioned: false, rowSecurity: false, forceRowSecurity: false,
             hasInheritance: false, hasRewriteRules: false, ownerReachable: false }))
           : [],

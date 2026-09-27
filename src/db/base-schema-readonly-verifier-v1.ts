@@ -172,6 +172,7 @@ const TABLE_SQL_V1 = `SELECT c.relname AS name, c.relkind AS kind,
   c.relpersistence AS persistence, c.relispartition AS partitioned,
   am.amname AS "accessMethod",
   c.reloptions AS "tableOptions", toast.reloptions AS "toastOptions",
+  c.relreplident AS "replicaIdentity",
   c.relrowsecurity AS "rowSecurity", c.relforcerowsecurity AS "forceRowSecurity",
   pg_catalog.pg_has_role(session_user, c.relowner, 'MEMBER') AS "ownerReachable",
   EXISTS (SELECT 1 FROM pg_catalog.pg_inherits h
@@ -317,6 +318,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         accessMethod: string | null;
         tableOptions: string[] | null;
         toastOptions: string[] | null;
+        replicaIdentity: string;
         rowSecurity: boolean;
         forceRowSecurity: boolean;
         hasInheritance: boolean;
@@ -332,6 +334,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
           || table.partitioned !== false
           || table.accessMethod !== "heap"
           || table.tableOptions !== null || table.toastOptions !== null
+          || table.replicaIdentity !== "d"
           || table.rowSecurity !== false
           || table.forceRowSecurity !== false
           || table.hasInheritance !== false

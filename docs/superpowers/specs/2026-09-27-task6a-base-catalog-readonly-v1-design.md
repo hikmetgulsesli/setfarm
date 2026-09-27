@@ -47,6 +47,8 @@ non-heap default environment intentionally refuses pending a reviewed contract
 change.
 Both required table and associated TOAST `reloptions` must be unset; source
 DDL does not opt out of automatic maintenance or set storage parameters.
+Required tables retain the source-created default replica identity, so
+logical decoding of updates/deletes is not silently altered.
 Required base columns must have neither fast-default `atthasmissing` nor
 `attmissingval`; a later-added column can otherwise expose stale logical
 values after its visible default is removed.
