@@ -342,6 +342,7 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           AND s.created_at >= pub.bound_at
           AND live_delivery.authorized_at = live_dispatch.authorized_at
           AND live_delivery.started_at IS NOT NULL
+          AND live_delivery.started_at = a.lease_acquired_at
           AND live_delivery.started_at >= s.created_at
           AND live_delivery.started_at <= live_delivery.lease_expires_at
           AND live_delivery.lease_expires_at > clock_timestamp()

@@ -234,11 +234,12 @@ stage = "reservation-before-claim";
     await database.sql`INSERT INTO public.runtime_sessions (
       session_id, run_id, step_db_id, workflow_step_id, claim_id, attempt_id,
       claim_agent_id, runtime_agent_id, runtime_kind, state, owner_instance_id,
-      heartbeat_at, worktree, story_db_id, story_id
+      heartbeat_at, worktree, story_db_id, story_id, created_at
     ) VALUES (
       ${sessionId}, ${runId}, ${stepDbId}, 'implement', ${claimId}, ${attemptId},
       'agent', 'agent', 'external_session', 'reserved', ${ownerInstanceId},
-      NOW(), ${root}, ${storyDbId}, ${storyId}
+      NOW(), ${root}, ${storyDbId}, ${storyId},
+      (SELECT claimed_at FROM public.claim_log WHERE id = ${claimId})
     )`;
     await database.sql`INSERT INTO public.v3_story_claim_runtime_bindings_v1 (
       claim_id, runtime_session_id, run_id, step_db_id, workflow_step_id,
@@ -248,11 +249,13 @@ stage = "reservation-before-claim";
       'story_member', ${storyDbId}, ${storyId}, 1, 1,
       ${"c".repeat(64)}, ${"d".repeat(64)}, c.claimed_at
       FROM public.claim_log c WHERE c.id = ${claimId}`;
-    await database.sql`UPDATE public.recovery_dispatch_deliveries
+    await database.sql`UPDATE public.recovery_dispatch_deliveries delivery
       SET state = 'attempt_reserved', attempt_id = ${attemptId},
         claim_id = ${claimId}, attempt_count = 1,
-        execution_slice_hash = ${sliceHash}, started_at = clock_timestamp()
-      WHERE dispatch_id = ${handoff.dispatchId}`;
+        execution_slice_hash = ${sliceHash}, started_at = attempt.lease_acquired_at
+      FROM public.execution_attempts attempt
+      WHERE delivery.dispatch_id = ${handoff.dispatchId}
+        AND attempt.attempt_id = ${attemptId}`;
     const attempt = { runId, claimId: String(claimId), attemptId, generation: 1,
       fenceToken, worktreeRoot: root, sourceSha, sourceTreeHash, disposition: "claimed" };
     const session = { runId, claimId: String(claimId), attemptId, sessionId,
@@ -295,6 +298,16 @@ stage = "reservation-before-claim";
       FROM public.recovery_revision_dispatches dispatch
       WHERE delivery.dispatch_id = ${handoff.dispatchId}
         AND dispatch.dispatch_id = delivery.dispatch_id`;
+    await database.sql`UPDATE public.recovery_dispatch_deliveries
+      SET started_at = started_at + INTERVAL '1 second'
+      WHERE dispatch_id = ${handoff.dispatchId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "delivery start must equal attempt lease acquisition");
+    await database.sql`UPDATE public.recovery_dispatch_deliveries delivery
+      SET started_at = attempt.lease_acquired_at
+      FROM public.execution_attempts attempt
+      WHERE delivery.dispatch_id = ${handoff.dispatchId}
+        AND attempt.attempt_id = ${attemptId}`;
     await database.sql`UPDATE public.recovery_dispatch_deliveries SET started_at = NULL
       WHERE dispatch_id = ${handoff.dispatchId}`;
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
@@ -306,8 +319,11 @@ stage = "reservation-before-claim";
         AND runtime.session_id = ${sessionId}`;
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
       REFUSED, "delivery cannot start before runtime creation");
-    await database.sql`UPDATE public.recovery_dispatch_deliveries
-      SET started_at = clock_timestamp() WHERE dispatch_id = ${handoff.dispatchId}`;
+    await database.sql`UPDATE public.recovery_dispatch_deliveries delivery
+      SET started_at = attempt.lease_acquired_at
+      FROM public.execution_attempts attempt
+      WHERE delivery.dispatch_id = ${handoff.dispatchId}
+        AND attempt.attempt_id = ${attemptId}`;
     await database.sql`UPDATE public.stories SET claimed_by = 'crossed-agent'
       WHERE id = ${storyDbId}`;
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
@@ -367,9 +383,12 @@ stage = "reservation-before-claim";
         lease_expires_at = NOW() - INTERVAL '1 second'
       WHERE attempt_id = ${attemptId}`;
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact), REFUSED);
-    await database.sql`UPDATE public.execution_attempts
-      SET lease_acquired_at = NOW(), heartbeat_at = NOW(),
-        lease_expires_at = NOW() + INTERVAL '1 hour' WHERE attempt_id = ${attemptId}`;
+    await database.sql`UPDATE public.execution_attempts attempt
+      SET lease_acquired_at = delivery.started_at, heartbeat_at = NOW(),
+        lease_expires_at = NOW() + INTERVAL '1 hour'
+      FROM public.recovery_dispatch_deliveries delivery
+      WHERE attempt.attempt_id = ${attemptId}
+        AND delivery.dispatch_id = ${handoff.dispatchId}`;
     await database.sql`UPDATE public.runtime_sessions SET story_id = 'other-story'
       WHERE session_id = ${sessionId}`;
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact), REFUSED);
