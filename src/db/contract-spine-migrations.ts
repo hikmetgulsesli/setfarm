@@ -16529,6 +16529,25 @@ export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpi
   }) as Promise<ContractSpineMigrationPlan>;
 }
 
+/** Source-owned identities only; does not expose migration effect hooks. */
+export function getContractSpineCurrentHeadJournalIdentitiesV1(): readonly Readonly<{
+  version: number;
+  name: string;
+  checksum: string;
+  migrationClass: ContractSpineMigrationClass;
+}>[] {
+  if (completeMigrations.length !== 33
+    || completeMigrations.some((migration, index) => migration.version !== index + 1)) {
+    throw new Error("CONTRACT_SPINE_CURRENT_HEAD_SOURCE_IDENTITY_INVALID_V1");
+  }
+  return Object.freeze(completeMigrations.map((migration) => Object.freeze({
+    version: migration.version,
+    name: migration.name,
+    checksum: checksum(migration),
+    migrationClass: migration.migrationClass,
+  })));
+}
+
 /** Narrow pre-startup journal inspection. Does not invoke migration detect/verify hooks. */
 export async function inspectContractSpineThrough33JournalReadOnlyV2(sql: Sql): Promise<Readonly<{
   schema: "setfarm.contract-spine-through33-journal-read-only.v2";
