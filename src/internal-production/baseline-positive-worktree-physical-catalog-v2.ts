@@ -648,7 +648,9 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
       try {
         const git = (args: readonly string[]): string => line(command(held, "/usr/bin/git",
           [...GIT_PREFIX, "-C", root, ...args]));
-        if (git(["rev-parse", "--show-ref-format"]) !== "files") fail();
+        // Git 2.43 can echo an unknown --show-ref-format option with status 0.
+        // The repository extension is the ref backend selector; absent means files.
+        if (git(["config", "--local", "--default=files", "--get", "extensions.refStorage"]) !== "files") fail();
         const gitdir = normalizedGitPath(git(["rev-parse", "--git-dir"]), root);
         const commonDir = normalizedGitPath(git(["rev-parse", "--git-common-dir"]), root);
         if (commonDir !== path.join(entry.gitPrimaryRoot, ".git")) fail();

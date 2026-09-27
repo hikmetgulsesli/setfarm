@@ -382,6 +382,70 @@ test("held source supports a packed nested linked branch with an absent loose re
   } finally { testHome.close(); }
 });
 
+test("held source supports Git that echoes an unsupported --show-ref-format option", async () => {
+  const testHome = fixture();
+  const originalSpawn = childProcess.spawnSync;
+  try {
+    const primary = path.join(testHome.ownerHomeRoot, "projects", "story");
+    mkdirSync(primary);
+    initRepo(primary);
+    const runtime = path.join(primary, ".worktrees", "story-1");
+    mkdirSync(path.dirname(runtime));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-1", runtime]);
+    childProcess.spawnSync = ((file: string, args: readonly string[], options: unknown) => {
+      if (file === "/usr/bin/git" && args.includes("--show-ref-format")) {
+        return { status: 0, stdout: Buffer.from("--show-ref-format\n"), stderr: Buffer.alloc(0),
+          signal: null, error: undefined };
+      }
+      return Reflect.apply(originalSpawn, childProcess, [file, args, options]);
+    }) as unknown as typeof spawnSync;
+    syncBuiltinESMExports();
+    const catalog = await observeWithHeldRuntimeCandidate({ ownerHomeRoot: testHome.ownerHomeRoot,
+      workspaceRoot: testHome.workspaceRoot }, async (_entries, withHeld) => {
+      await withHeld(runtime, async (_physical, _recheckPhysical, observeSource) => {
+        assert.equal((await observeSource()).sourceSha, git(["-C", runtime, "rev-parse", "HEAD"]));
+      });
+    });
+    assert.equal(catalog.status, "complete");
+  } finally {
+    childProcess.spawnSync = originalSpawn;
+    syncBuiltinESMExports();
+    testHome.close();
+  }
+});
+
+test("held source refuses non-files ref storage from repository config", async () => {
+  const testHome = fixture();
+  const originalSpawn = childProcess.spawnSync;
+  try {
+    const primary = path.join(testHome.ownerHomeRoot, "projects", "story");
+    mkdirSync(primary);
+    initRepo(primary);
+    const runtime = path.join(primary, ".worktrees", "story-1");
+    mkdirSync(path.dirname(runtime));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-1", runtime]);
+    childProcess.spawnSync = ((file: string, args: readonly string[], options: unknown) => {
+      if (file === "/usr/bin/git" && args.includes(runtime)
+        && args.includes("--get") && args.includes("extensions.refStorage")) {
+        return { status: 0, stdout: Buffer.from("reftable\n"), stderr: Buffer.alloc(0),
+          signal: null, error: undefined };
+      }
+      return Reflect.apply(originalSpawn, childProcess, [file, args, options]);
+    }) as unknown as typeof spawnSync;
+    syncBuiltinESMExports();
+    await assert.rejects(observeWithHeldRuntimeCandidate({ ownerHomeRoot: testHome.ownerHomeRoot,
+      workspaceRoot: testHome.workspaceRoot }, async (_entries, withHeld) => {
+      await withHeld(runtime, async (_physical, _recheckPhysical, observeSource) => {
+        await observeSource();
+      });
+    }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+  } finally {
+    childProcess.spawnSync = originalSpawn;
+    syncBuiltinESMExports();
+    testHome.close();
+  }
+});
+
 test("held source refuses a worktree-private symbolic ref namespace", async () => {
   const testHome = fixture();
   try {

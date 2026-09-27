@@ -29,6 +29,10 @@ physical interval, without granting owner or publication authority.
   store those refs under the linked worktree instead of the common directory.
   Reject multi-hop symbolic HEAD chains because holding only one terminal
   shared ref would leave an intermediate mutable link unheld.
+  Exact-head Codex review found that older Git may echo unsupported
+  `rev-parse --show-ref-format` as literal output. Read the repository-local
+  `extensions.refStorage` selector with the documented `files` default instead;
+  fail closed for every non-`files` backend without imposing a new Git version.
   This observes the committed base,
   not uncommitted worktree contents or a verified build.
 - `tests/internal-production/baseline-positive-worktree-physical-catalog-v2.test.ts`:
@@ -44,6 +48,8 @@ physical interval, without granting owner or publication authority.
   the pinned tree command RED, then require held ref/reflog mutation refusal
   GREEN. Cover a packed nested branch, a worktree-private symbolic ref, and
   a multi-hop symbolic HEAD (the latter two fail closed).
+  Cover old-Git unsupported-option behavior and a non-`files` configured
+  backend with RED/GREEN regressions.
 
 Keep the catalog and receipt candidate diagnostic-only. No DB writes,
 credentials, owner admission, live service change or cutover gate change.
