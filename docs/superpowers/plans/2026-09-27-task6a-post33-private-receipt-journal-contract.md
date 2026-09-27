@@ -51,3 +51,10 @@ code-owned producer brackets it; a journal row alone cannot prove current
 owner or fence worktree creation. `markStarting` is too late for the first
 spawner writes, so later integration requires a counted pending reservation
 and pre-create exclusion under the continuous DB/OS writer fence.
+
+Codex review of the first PR head found one further P2: a settled claim
+could still join active-looking attempt/session rows. A new private test was
+RED at `closed-claim-refusal`; the locked query now requires both
+`claim_log.outcome IS NULL` and `abandoned_at IS NULL`, and the test also
+proves an abandonment marker refuses. This does not make the journal a
+current-owner certificate after the transaction returns.

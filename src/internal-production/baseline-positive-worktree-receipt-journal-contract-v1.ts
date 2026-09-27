@@ -109,6 +109,7 @@ export async function appendPrivateDiagnosticPositiveWorktreeReceiptJournalV1(
         AND s.claim_id = a.claim_id AND s.run_id = a.run_id
       JOIN public.claim_log c ON c.id = a.claim_id AND c.run_id = a.run_id
       WHERE a.run_id = $1 AND a.claim_id = $2::bigint AND a.attempt_id = $3
+        AND c.outcome IS NULL AND c.abandoned_at IS NULL
         AND a.generation = $4 AND a.fence_token = $5 AND a.worktree = $6
         AND a.source_before_sha = $7 AND a.source_before_tree_hash = $8
         AND a.disposition IN ('claimed', 'running')

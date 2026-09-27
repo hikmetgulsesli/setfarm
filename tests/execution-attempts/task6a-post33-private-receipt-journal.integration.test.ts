@@ -102,6 +102,18 @@ test("private post-33 receipt journal is insert-once and bound to active claim, 
     const receipt = derivePositiveWorktreeBindingReceiptCandidateV1({ attempt, session, physical }).receipt;
     const input = { attempt, session, physical, receipt };
 
+    stage = "closed-claim-refusal";
+    await database.sql`UPDATE public.claim_log SET outcome = 'completed' WHERE id = ${claimId}`;
+    await assert.rejects(appendPrivateDiagnosticPositiveWorktreeReceiptJournalV1(database.sql, input), REFUSED);
+    const closedClaimRows = await database.sql<Array<{ count: number }>>`
+      SELECT count(*)::integer AS count
+      FROM public.internal_production_positive_worktree_receipt_journal_v1`;
+    assert.equal(closedClaimRows[0]?.count, 0);
+    await database.sql`UPDATE public.claim_log SET outcome = NULL WHERE id = ${claimId}`;
+    await database.sql`UPDATE public.claim_log SET abandoned_at = NOW() WHERE id = ${claimId}`;
+    await assert.rejects(appendPrivateDiagnosticPositiveWorktreeReceiptJournalV1(database.sql, input), REFUSED);
+    await database.sql`UPDATE public.claim_log SET abandoned_at = NULL WHERE id = ${claimId}`;
+
     stage = "rollback-before-commit";
     const defaultIsolation = await database.sql<Array<{ isolation: string }>>`
       SELECT current_setting('default_transaction_isolation') AS isolation`;
