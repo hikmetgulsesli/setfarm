@@ -40,7 +40,9 @@ block cutover.
   PostgreSQL, and require a non-null delivery start equal to the bound
   attempt's lease acquisition and between session creation and delivery lease
   expiry; JavaScript millisecond dates cannot prove these native microsecond
-  equalities.
+  equalities. Re-sample PostgreSQL time after all active owner locks and
+  again after insertion/conflict handling; refuse if either attempt or
+  delivery lease expired during a wait.
   Both supported implementation recovery dispatches require current case
   status `repairing`; `open` and evidence-only `evidencing` refuse.
   Match the case's immutable opening-revision packet, finding set/IDs, slice
@@ -74,6 +76,7 @@ rotation, expired delivery and attempt, mutable current-case/status/step
 drift, crossed case opening identity, invalid delivery/runtime state pair,
 pre-creation runtime heartbeat, non-loop claim step,
 changed delivery authorization, absent, shifted or pre-session delivery start,
+attempt lease expiration during a delayed link insert,
 base-schema run-packet immutability, story claimant/birth drift,
 claim/session/slice/role drift
 for both supported recovery dispatch classes,

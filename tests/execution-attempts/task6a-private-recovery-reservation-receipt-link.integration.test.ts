@@ -452,6 +452,28 @@ stage = "reservation-before-claim";
     assert.equal((await database.sql.unsafe<Array<{ count: number }>>(
       `SELECT count(*)::integer AS count FROM ${LINK}`))[0]?.count, 0);
 
+    stage = "lease-expired-during-link-insert";
+    await database.sql.unsafe(`CREATE FUNCTION public.task6a_private_recovery_link_delay_probe_v1()
+      RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        PERFORM pg_sleep(2.2);
+        RETURN NEW;
+      END $$`);
+    await database.sql.unsafe(`CREATE TRIGGER task6a_private_recovery_link_delay_probe_v1
+      BEFORE INSERT ON ${LINK} FOR EACH ROW
+      EXECUTE FUNCTION public.task6a_private_recovery_link_delay_probe_v1()`);
+    await database.sql`UPDATE public.execution_attempts
+      SET lease_expires_at = clock_timestamp() + INTERVAL '2 seconds'
+      WHERE attempt_id = ${attemptId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "attempt lease may expire while the link insert waits");
+    await database.sql.unsafe(`DROP TRIGGER task6a_private_recovery_link_delay_probe_v1 ON ${LINK}`);
+    await database.sql.unsafe(`DROP FUNCTION public.task6a_private_recovery_link_delay_probe_v1()`);
+    assert.equal((await database.sql.unsafe<Array<{ count: number }>>(
+      `SELECT count(*)::integer AS count FROM ${LINK}`))[0]?.count, 0);
+    await database.sql`UPDATE public.execution_attempts
+      SET lease_expires_at = clock_timestamp() + INTERVAL '1 hour'
+      WHERE attempt_id = ${attemptId}`;
+
     stage = "insert-and-identical-retry";
     const first = await appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact);
     assert.equal(first.authority, "diagnostic-only");

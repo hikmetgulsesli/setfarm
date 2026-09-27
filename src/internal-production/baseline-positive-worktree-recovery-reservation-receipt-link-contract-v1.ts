@@ -380,6 +380,25 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
       reservation.ownerInstanceId, publication.stepDbId,
       publication.storyIndex, now]);
       if (active.length !== 1 || typeof active[0]?.fenceToken !== "string") fail();
+      // The prior wall-clock read may predate a receipt/owner lock wait. Both
+      // leases are held now; sample PostgreSQL time again after acquiring
+      // those locks and after any later unique-index/insert wait.
+      const assertFreshLeases = async (): Promise<void> => {
+        const leases = await tx.unsafe<Array<{ attemptLive: boolean;
+          deliveryLive: boolean }>>(`WITH observed AS MATERIALIZED (
+            SELECT clock_timestamp() AS observed_at
+          ) SELECT a.lease_expires_at > observed.observed_at AS "attemptLive",
+              d.lease_expires_at > observed.observed_at AS "deliveryLive"
+            FROM public.execution_attempts a
+            JOIN public.recovery_dispatch_deliveries d
+              ON d.attempt_id = a.attempt_id
+            CROSS JOIN observed
+            WHERE a.attempt_id = $1 AND d.dispatch_id = $2`,
+        [receipt.attemptId, reservation.dispatchId]);
+        if (leases.length !== 1 || leases[0]?.attemptLive !== true
+          || leases[0]?.deliveryLive !== true) fail();
+      };
+      await assertFreshLeases();
       if (hashCanonicalJson({ schema: FENCE_SCHEMA, attemptId: receipt.attemptId,
         generation: receipt.generation, fenceToken: active[0].fenceToken })
         !== receipt.fenceTokenHash) fail();
@@ -415,9 +434,12 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
       reservation.sourceTreeHash, reservation.leaseTokenHash,
       publication.handoffHash, receipt.physicalIdentityHash,
       receipt.fenceTokenHash, canonicalBody]);
-      if (inserted.length === 1) return Object.freeze({ schema: SCHEMA,
-        authority: "diagnostic-only" as const, disposition: "inserted" as const,
-        linkHash });
+      if (inserted.length === 1) {
+        await assertFreshLeases();
+        return Object.freeze({ schema: SCHEMA,
+          authority: "diagnostic-only" as const, disposition: "inserted" as const,
+          linkHash });
+      }
       const existing = await tx.unsafe<Array<LinkRow>>(`SELECT
         link_hash AS "linkHash", reservation_hash AS "reservationHash",
         receipt_hash AS "receiptHash", dispatch_id AS "dispatchId",
@@ -434,6 +456,7 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
       [linkHash, reservationHash, receiptHash, reservation.dispatchId]);
       if (existing.length !== 1 || !Object.keys(expected).every((key) =>
         existing[0]![key as keyof LinkRow] === expected[key as keyof LinkRow])) fail();
+      await assertFreshLeases();
       return Object.freeze({ schema: SCHEMA, authority: "diagnostic-only" as const,
         disposition: "identical-retry" as const, linkHash });
     });
