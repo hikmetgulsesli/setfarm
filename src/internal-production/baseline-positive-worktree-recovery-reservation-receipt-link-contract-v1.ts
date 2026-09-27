@@ -337,7 +337,8 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           AND st.claimed_by = c.agent_id
           AND st.claimed_at = pub.bound_at
           AND c.claimed_at = pub.bound_at
-          AND step.status = 'running' AND step.current_story_id = st.id
+          AND step.type = 'loop' AND step.status = 'running'
+          AND step.current_story_id = st.id
           AND c.step_id = 'implement' AND c.outcome IS NULL
           AND c.abandoned_at IS NULL
           AND a.agent_id = c.agent_id
@@ -354,6 +355,7 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           AND a.source_before_tree_hash = $15
           AND s.session_id = $16 AND s.owner_instance_id = $17
           AND s.created_at >= pub.bound_at
+          AND s.heartbeat_at >= s.created_at
           AND live_delivery.authorized_at = live_dispatch.authorized_at
           AND live_delivery.started_at IS NOT NULL
           AND live_delivery.started_at = a.lease_acquired_at

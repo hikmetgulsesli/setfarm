@@ -363,6 +363,12 @@ stage = "reservation-before-claim";
       REFUSED, "claim step must remain running");
     await database.sql`UPDATE public.steps SET status = 'running'
       WHERE id = ${stepDbId}`;
+    await database.sql`UPDATE public.steps SET type = 'single'
+      WHERE id = ${stepDbId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "recovery claim step must remain a loop");
+    await database.sql`UPDATE public.steps SET type = 'loop'
+      WHERE id = ${stepDbId}`;
     await database.sql`UPDATE public.recovery_cases SET status = 'evidencing'
       WHERE recovery_case_id = ${recoveryCase.recoveryCaseId}`;
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
@@ -409,6 +415,13 @@ stage = "reservation-before-claim";
       FROM public.recovery_dispatch_deliveries delivery
       WHERE attempt.attempt_id = ${attemptId}
         AND delivery.dispatch_id = ${handoff.dispatchId}`;
+    await database.sql`UPDATE public.runtime_sessions
+      SET heartbeat_at = created_at - INTERVAL '1 second'
+      WHERE session_id = ${sessionId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "runtime heartbeat cannot precede runtime creation");
+    await database.sql`UPDATE public.runtime_sessions SET heartbeat_at = NOW()
+      WHERE session_id = ${sessionId}`;
     await database.sql`UPDATE public.runtime_sessions SET story_id = 'other-story'
       WHERE session_id = ${sessionId}`;
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact), REFUSED);

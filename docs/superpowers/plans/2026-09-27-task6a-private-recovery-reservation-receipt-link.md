@@ -50,7 +50,8 @@ block cutover.
   A legitimate same-token renewal may change expiry, so never require the
   current expiry to equal the original handoff timestamp.
 - Require active claim/attempt/session and exact V3 story binding, current
-  running workflow step still owning the story, live run packet hash, fence
+  running loop workflow step still owning the story, runtime heartbeat no
+  earlier than its creation, live run packet hash, fence
   hash, source SHA/tree, root, generation and owner identity. Story claimant
   must match the claim agent, and immutable publication bound time must equal
   claim/story birth and precede runtime creation. Insert
@@ -71,6 +72,7 @@ the receipt to test absent-publication refusal; this is not a production
 lifecycle claim. Test missing publication, crossed input hashes, token
 rotation, expired delivery and attempt, mutable current-case/status/step
 drift, crossed case opening identity, invalid delivery/runtime state pair,
+pre-creation runtime heartbeat, non-loop claim step,
 changed delivery authorization, absent, shifted or pre-session delivery start,
 base-schema run-packet immutability, story claimant/birth drift,
 claim/session/slice/role drift
