@@ -79,6 +79,8 @@ function compareRoot(left: string, right: string): number {
 class HeldDirectories {
   private readonly entries: Held[] = [];
   private readonly files: HeldFile[] = [];
+  private readonly absentFiles = new Set<string>();
+  private readonly absentDirectories = new Set<string>();
   private readonly byRoot = new Map<string, Held>();
   private readonly churnedGitAdminCandidates = new Set<string>();
   private closed = false;
@@ -130,6 +132,23 @@ class HeldDirectories {
     this.assertStable();
   }
 
+  holdOptionalFile(target: string): void {
+    if (this.closed || cleanupUncertain) fail();
+    let parent = path.dirname(target);
+    const missing: string[] = [];
+    while (isMissing(parent)) {
+      if (parent === "/" || missing.length >= 128) fail();
+      missing.push(parent);
+      parent = path.dirname(parent);
+    }
+    this.hold(parent);
+    for (const directory of missing) this.absentDirectories.add(directory);
+    if (isMissing(target)) this.absentFiles.add(target);
+    else this.holdFile(target);
+    if (this.absentFiles.size + this.absentDirectories.size > MAX_INCIDENTAL_FILES) fail();
+    this.assertStable();
+  }
+
   assertStable(): void {
     if (this.closed || cleanupUncertain) fail();
     for (const entry of this.entries) {
@@ -149,6 +168,8 @@ class HeldDirectories {
       if (!sameFile(entry.first, lstatSync(entry.root, { bigint: true })))
         drift("file-path", entry.root);
     }
+    for (const directory of this.absentDirectories) if (!isMissing(directory)) fail();
+    for (const file of this.absentFiles) if (!isMissing(file)) fail();
   }
 
   gitAdminChurnCandidateRoots(): readonly string[] {
@@ -277,7 +298,8 @@ function normalizedGitPath(value: string, base: string): string {
 }
 
 type GitWorktreeListing = Readonly<{ roots: readonly string[]; prunableRoots: readonly string[];
-  locked: readonly Readonly<{ root: string; reason: string | null }>[]; barePrimaryRoot: string | null }>;
+  locked: readonly Readonly<{ root: string; reason: string | null }>[]; barePrimaryRoot: string | null;
+  headOids: readonly Readonly<{ root: string; oid: string }>[] }>;
 
 function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer, oidWidth: 40 | 64): GitWorktreeListing {
   const value = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -286,6 +308,7 @@ function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer, oidWidth: 40 | 6
   const roots: string[] = [];
   const prunableRoots: string[] = [];
   const locked: Array<Readonly<{ root: string; reason: string | null }>> = [];
+  const headOids: Array<Readonly<{ root: string; oid: string }>> = [];
   const seen = new Set<string>();
   let barePrimaryRoot: string | null = null;
   for (const record of records) {
@@ -310,6 +333,7 @@ function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer, oidWidth: 40 | 6
     const root = normalizedGitPath(rawRoot, "/");
     if (seen.has(root)) fail();
     seen.add(root);
+    if (!bareRecord) headOids.push(Object.freeze({ root, oid: fields[1]!.slice(5) }));
     if (bareRecord) {
       barePrimaryRoot = root;
       roots.push(root);
@@ -322,7 +346,7 @@ function gitWorktreeRoots(held: HeldDirectories, bytes: Buffer, oidWidth: 40 | 6
   }
   if (roots.length === 0 || seen.size > MAX_ENTRIES) fail();
   return Object.freeze({ roots: Object.freeze(roots), prunableRoots: Object.freeze(prunableRoots),
-    locked: Object.freeze(locked), barePrimaryRoot });
+    locked: Object.freeze(locked), barePrimaryRoot, headOids: Object.freeze(headOids) });
 }
 
 function objectIdWidth(format: string): 40 | 64 {
@@ -338,8 +362,11 @@ type Candidate = Readonly<{ root: string; zone: Zone; kind: CandidateKind; dev: 
   referencingPids: readonly number[] }>;
 type HeldRuntimePhysicalCandidate = Readonly<{ root: string; dev: string; ino: string;
   birthtimeNs: string; gitPrimaryRoot: string }>;
+type HeldRuntimeSourceObservation = Readonly<{ root: string; gitPrimaryRoot: string;
+  sourceSha: string; sourceTreeHash: string }>;
 type WithHeldRuntimeCandidate = <T>(root: string, withinHold: (physical: HeldRuntimePhysicalCandidate,
-  recheckPhysical: () => Promise<HeldRuntimePhysicalCandidate>) => Promise<T>) => Promise<T>;
+  recheckPhysical: () => Promise<HeldRuntimePhysicalCandidate>,
+  observeSource: () => Promise<HeldRuntimeSourceObservation>) => Promise<T>) => Promise<T>;
 
 function primaryWorktreeRoots(held: HeldDirectories, root: string): GitWorktreeListing | null {
   const marker = path.join(root, ".git");
@@ -361,7 +388,7 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
   scope: Scope): Readonly<{ kind: CandidateKind; gitPrimaryRoot: string | null; dirty: boolean | null;
     listedRoots: readonly string[]; prunableRoots: readonly string[];
     locked: readonly Readonly<{ root: string; reason: string | null }>[];
-    barePrimaryRoot: string | null; reason: string | null }> {
+    barePrimaryRoot: string | null; reason: string | null; headOid?: string }> {
   const marker = path.join(root, ".git");
   if (isMissing(marker)) return { kind: "unresolved", gitPrimaryRoot: null, dirty: null,
     listedRoots: [], prunableRoots: [], locked: [], barePrimaryRoot: null, reason: "non-git-child" };
@@ -416,6 +443,8 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
         prunableRoots: [], locked: listing.locked, barePrimaryRoot: null,
         reason: "absent-locked-git-list" };
     }
+    const headOid = listing.headOids.find((entry) => entry.root === root)?.oid;
+    if (!headOid) fail();
     for (const listedRoot of listedRoots) held.hold(listedRoot);
     const gitdir = normalizedGitPath(line(git(["rev-parse", "--git-dir"])), root);
     const commonDir = normalizedGitPath(line(git(["rev-parse", "--git-common-dir"])), root);
@@ -449,7 +478,8 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
     }
     const dirty = git(["status", "--porcelain=v2", "--untracked-files=all"]).length !== 0;
     return { kind: root === primary ? "primary-git" : "linked-git", gitPrimaryRoot: primary,
-      dirty, listedRoots, prunableRoots: [], locked: listing.locked, barePrimaryRoot: null, reason: null };
+      dirty, listedRoots, prunableRoots: [], locked: listing.locked, barePrimaryRoot: null,
+      reason: null, headOid };
   } finally {
     if (markerDescriptor !== null) {
       try { closeSync(markerDescriptor); }
@@ -503,7 +533,8 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     const blockers: Array<Readonly<{ root: string; reason: string }>> = absentAgentsParents.map((root) =>
       Object.freeze({ root, reason: "absent-workflow-agents-discovery-parent" }));
     const listedGroups: Array<readonly string[]> = [];
-    const firstByRoot = new Map<string, Readonly<{ base: string; zone: Zone; listedHash: string; reason: string | null }>>();
+    const firstByRoot = new Map<string, Readonly<{ base: string; zone: Zone; listedHash: string;
+      reason: string | null; headOid: string | null }>>();
     const parentGitLists = new Map<string, string>();
     const nonGitParents: string[] = [];
     const absentLockedRoots = new Set<string>();
@@ -547,7 +578,8 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
         if (git.listedRoots.length > 0) listedGroups.push(git.listedRoots);
         firstByRoot.set(root, Object.freeze({ base, zone,
           listedHash: hashCanonicalJson({ roots: git.listedRoots, prunableRoots: git.prunableRoots,
-            locked: git.locked, barePrimaryRoot: git.barePrimaryRoot }), reason: git.reason }));
+            locked: git.locked, barePrimaryRoot: git.barePrimaryRoot }), reason: git.reason,
+          headOid: git.headOid ?? null }));
         entries.push(Object.freeze({ root, zone, kind: git.kind, dev: String(stat.dev), ino: String(stat.ino),
           birthtimeNs: String(stat.birthtimeNs), gitPrimaryRoot: git.gitPrimaryRoot, dirty: git.dirty,
           sourceBuildProvenance: "unverified" as const,
@@ -584,20 +616,61 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
       let nestedOpen = true;
       const physical = Object.freeze({ root: entry.root, dev: entry.dev, ino: entry.ino,
         birthtimeNs: entry.birthtimeNs, gitPrimaryRoot: entry.gitPrimaryRoot });
-      const recheckPhysical = async (): Promise<HeldRuntimePhysicalCandidate> => {
+      const checkPhysical = (): HeldRuntimePhysicalCandidate => {
         if (!betweenPassesOpen || !nestedOpen || cleanupUncertain) fail();
         held.assertStable();
         const fresh = observeGitCandidate(held, root, first.base, first.zone, scope);
         if (fresh.kind !== entry.kind || fresh.gitPrimaryRoot !== entry.gitPrimaryRoot
           || fresh.dirty !== entry.dirty || fresh.reason !== first.reason
+          || (fresh.headOid ?? null) !== first.headOid
           || hashCanonicalJson({ roots: fresh.listedRoots, prunableRoots: fresh.prunableRoots,
             locked: fresh.locked, barePrimaryRoot: fresh.barePrimaryRoot }) !== first.listedHash
           || held.gitAdminChurnCandidateRoots().includes(root)) fail();
         return physical;
       };
+      const recheckPhysical = async (): Promise<HeldRuntimePhysicalCandidate> => checkPhysical();
+      const observeSource = async (): Promise<HeldRuntimeSourceObservation> => {
+        // No await inside this capability: an unawaited call cannot continue
+        // issuing Git commands after the enclosing held callback settles.
+        checkPhysical();
+        const git = (args: readonly string[]): string => line(command(held, "/usr/bin/git",
+          [...GIT_PREFIX, "-C", root, ...args]));
+        const width = objectIdWidth(git(["rev-parse", "--show-object-format=storage"]));
+        const sourceSha = git(["rev-parse", "--verify", "HEAD^{commit}"]);
+        const sourceTreeHash = git(["rev-parse", "--verify", `${sourceSha}^{tree}`]);
+        const repeatedSha = git(["rev-parse", "--verify", "HEAD^{commit}"]);
+        if (sourceSha.length !== width || sourceTreeHash.length !== width
+          || !/^[a-f0-9]+$/.test(sourceSha) || !/^[a-f0-9]+$/.test(sourceTreeHash)
+          || repeatedSha !== sourceSha || sourceSha !== first.headOid) fail();
+        checkPhysical();
+        return Object.freeze({ root, gitPrimaryRoot: entry.gitPrimaryRoot!, sourceSha, sourceTreeHash });
+      };
       try {
+        const git = (args: readonly string[]): string => line(command(held, "/usr/bin/git",
+          [...GIT_PREFIX, "-C", root, ...args]));
+        // Git 2.43 can echo an unknown --show-ref-format option with status 0.
+        // The repository extension is the ref backend selector; absent means files.
+        if (git(["config", "--local", "--default=files", "--get", "extensions.refStorage"]) !== "files") fail();
+        const gitdir = normalizedGitPath(git(["rev-parse", "--git-dir"]), root);
+        const commonDir = normalizedGitPath(git(["rev-parse", "--git-common-dir"]), root);
+        if (commonDir !== path.join(entry.gitPrimaryRoot, ".git")) fail();
+        held.holdOptionalFile(path.join(gitdir, "HEAD"));
+        held.holdOptionalFile(path.join(gitdir, "logs", "HEAD"));
+        const headRef = git(["rev-parse", "--symbolic-full-name", "HEAD"]);
+        if (headRef !== "HEAD") {
+          const directRef = git(["symbolic-ref", "--no-recurse", "HEAD"]);
+          const terminalRef = git(["symbolic-ref", "HEAD"]);
+          if (headRef !== directRef || directRef !== terminalRef
+            || !headRef.startsWith("refs/heads/") || Buffer.byteLength(headRef) > 1024
+            || command(held, "/usr/bin/git", [...GIT_PREFIX, "check-ref-format", headRef]).length !== 0) fail();
+          const refPath = path.resolve(commonDir, headRef);
+          if (!refPath.startsWith(`${commonDir}/refs/`)) fail();
+          held.holdOptionalFile(refPath);
+          held.holdOptionalFile(path.join(commonDir, "logs", headRef));
+        }
+        held.holdOptionalFile(path.join(commonDir, "packed-refs"));
         await recheckPhysical();
-        const result = await withinHold(physical, recheckPhysical);
+        const result = await withinHold(physical, recheckPhysical, observeSource);
         await recheckPhysical();
         return result;
       } finally {
@@ -634,6 +707,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
       operation = "candidate-recheck-compare";
       if (fresh.kind !== entry.kind || fresh.gitPrimaryRoot !== entry.gitPrimaryRoot
         || fresh.dirty !== entry.dirty || fresh.reason !== first.reason
+        || (fresh.headOid ?? null) !== first.headOid
         || hashCanonicalJson({ roots: fresh.listedRoots, prunableRoots: fresh.prunableRoots,
           locked: fresh.locked, barePrimaryRoot: fresh.barePrimaryRoot }) !== first.listedHash
         || hashCanonicalJson(freshPids) !== hashCanonicalJson(entry.referencingPids)) fail();
