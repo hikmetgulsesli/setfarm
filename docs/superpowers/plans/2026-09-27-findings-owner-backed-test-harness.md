@@ -30,6 +30,7 @@
 - Modify `tests/findings/v3-recovery-coordinator.test.ts`: give initial claims and runs genuine owner births and model recovery attempts canonical story proof, claim/runtime publication, execution-slice authority, and no-spawn runtime release.
 - Modify `src/recovery/v3-recovery-claim-authority.ts`, `src/execution/attempt-repository.ts`, `src/recovery/v3-recovery-work-router.ts`, `src/recovery/v3-recovery-lifecycle-reconciler.ts`, `src/recovery/v3-evidence-only-worker.ts`, `src/recovery/v3-evidence-only-publication.ts`, and `src/recovery/recovery-delivery-repository.ts`: anchor the immutable case tuple to revision 1 and preserve the exact current revision/dispatch/delivery/finding-set chain.
 - Modify `src/recovery/v3-evidence-only-runtime.ts` only if the revision-2 non-model proof confirms its original/current source comparison blocks the same bounded flow; physical source ownership must remain exact.
+- Regenerate `src/db/contract-spine-migration-digests.generated.ts` with the canonical script because migration 33 declares `v3-recovery-claim-authority.ts` as a semantic helper dependency; retain the source-integrity refusal.
 - Create `scripts/__tests__/run-finding-tests.test.js` only if a focused source/partition regression is needed beyond the executable `test:findings` gate.
 
 ---
