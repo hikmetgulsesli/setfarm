@@ -179,7 +179,7 @@ export function pgConfigureIsolatedTestDatabase(rawUrl: string): void {
   const parsed = new URL(rawUrl);
   const database = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
   if (
-    !["localhost", "127.0.0.1", "::1"].includes(parsed.hostname)
+    !["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname)
     || !isExactIsolatedTestDatabaseNameV1(database)
   ) {
     throw new Error("ISOLATED_TEST_DATABASE_URL_REJECTED");

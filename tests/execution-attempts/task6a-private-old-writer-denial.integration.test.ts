@@ -6,8 +6,41 @@ import { test } from "node:test";
 import postgres from "postgres";
 
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
+import { requireTask6aPrivateLoopbackHostname } from "./task6a-private-cluster-loopback.js";
 
 const expectedDataDirectory = process.env.SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY;
+
+test("private PostgreSQL URL preflight preserves IPv6 loopback", () => {
+  const parsed = new URL("postgresql://[::1]:55437/postgres");
+  const hostname = requireTask6aPrivateLoopbackHostname(parsed);
+  assert.equal(hostname, "[::1]");
+  const oldUrl = new URL("postgresql://127.0.0.1:55437/test");
+  oldUrl.hostname = hostname;
+  assert.equal(oldUrl.hostname, parsed.hostname);
+  for (const rejected of ["postgresql://127.0.0.2:55437/postgres",
+    "postgresql://[::2]:55437/postgres",
+    "postgresql://db.example:55437/postgres"]) {
+    assert.throws(() => requireTask6aPrivateLoopbackHostname(new URL(rejected)),
+      /TASK6A_PRIVATE_CLUSTER_HOST_INVALID/);
+  }
+});
+
+test("isolated database URL guard accepts IPv6 loopback without admitting other hosts", async () => {
+  const db = await import("../../src/db-pg.ts?task6a-ipv6-isolated-url-guard");
+  const database = "setfarm_contract_spine_test_123_abcdefabcdef";
+  try {
+    assert.doesNotThrow(() => db.pgConfigureIsolatedTestDatabase(
+      `postgresql://[::1]:55437/${database}`,
+    ));
+    for (const host of ["127.0.0.2", "[::2]", "db.example"]) {
+      assert.throws(() => db.pgConfigureIsolatedTestDatabase(
+        `postgresql://${host}:55437/${database}`,
+      ), /ISOLATED_TEST_DATABASE_URL_REJECTED/);
+    }
+  } finally {
+    await db.pgClose();
+  }
+});
 
 function permissionDenied(error: unknown): boolean {
   return error !== null && typeof error === "object"
@@ -23,7 +56,7 @@ test("private Task6A rehearsal denies the old login's direct run and claim inser
   assert.ok(adminUrl);
   const parsed = new URL(adminUrl);
   assert.equal(parsed.pathname, "/postgres");
-  assert.ok(["127.0.0.1", "localhost", "::1"].includes(parsed.hostname));
+  const privateHostname = requireTask6aPrivateLoopbackHostname(parsed);
   assert.notEqual(parsed.port, "5432");
 
   const admin = postgres(adminUrl, { max: 1 });
@@ -78,7 +111,7 @@ test("private Task6A rehearsal denies the old login's direct run and claim inser
     const oldUrl = new URL(database.url);
     oldUrl.username = oldLogin;
     oldUrl.password = oldPassword;
-    oldUrl.hostname = "127.0.0.1";
+    oldUrl.hostname = privateHostname;
     oldUrl.port = parsed.port;
     oldSql = postgres(oldUrl.toString(), { max: 1 });
 
