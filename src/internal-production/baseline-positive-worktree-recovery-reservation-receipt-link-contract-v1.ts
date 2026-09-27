@@ -307,6 +307,10 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           AND s.run_id = st.run_id AND s.attempt_id = a.attempt_id
         JOIN ${PUBLICATIONS} pub ON pub.dispatch_id = $7
           AND pub.claim_id = c.id AND pub.runtime_session_id = s.session_id
+        JOIN public.recovery_dispatch_deliveries live_delivery
+          ON live_delivery.dispatch_id = pub.dispatch_id
+        JOIN public.recovery_revision_dispatches live_dispatch
+          ON live_dispatch.dispatch_id = live_delivery.dispatch_id
         JOIN public.v3_story_claim_runtime_bindings_v1 b
           ON b.claim_id = c.id AND b.runtime_session_id = s.session_id
           AND b.run_id = st.run_id AND b.step_db_id = s.step_db_id
@@ -336,6 +340,11 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           AND a.source_before_tree_hash = $15
           AND s.session_id = $16 AND s.owner_instance_id = $17
           AND s.created_at >= pub.bound_at
+          AND live_delivery.authorized_at = live_dispatch.authorized_at
+          AND live_delivery.started_at IS NOT NULL
+          AND live_delivery.started_at >= s.created_at
+          AND live_delivery.started_at <= live_delivery.lease_expires_at
+          AND live_delivery.lease_expires_at > clock_timestamp()
           AND s.step_db_id = step.id AND st.story_index = $19
           AND s.claim_agent_id = c.agent_id AND s.workflow_step_id = c.step_id
           AND s.story_db_id = st.id AND s.story_id = st.story_id

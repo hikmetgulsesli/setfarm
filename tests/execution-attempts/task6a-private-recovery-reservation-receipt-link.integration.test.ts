@@ -251,7 +251,7 @@ stage = "reservation-before-claim";
     await database.sql`UPDATE public.recovery_dispatch_deliveries
       SET state = 'attempt_reserved', attempt_id = ${attemptId},
         claim_id = ${claimId}, attempt_count = 1,
-        execution_slice_hash = ${sliceHash}
+        execution_slice_hash = ${sliceHash}, started_at = clock_timestamp()
       WHERE dispatch_id = ${handoff.dispatchId}`;
     const attempt = { runId, claimId: String(claimId), attemptId, generation: 1,
       fenceToken, worktreeRoot: root, sourceSha, sourceTreeHash, disposition: "claimed" };
@@ -285,6 +285,29 @@ stage = "reservation-before-claim";
     ]) await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
       database.sql, crossed), REFUSED);
     stage = "stale-chain-refusal";
+    await database.sql`UPDATE public.recovery_dispatch_deliveries
+      SET authorized_at = authorized_at + INTERVAL '1 second'
+      WHERE dispatch_id = ${handoff.dispatchId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "delivery authorization time must equal the dispatch birth");
+    await database.sql`UPDATE public.recovery_dispatch_deliveries delivery
+      SET authorized_at = dispatch.authorized_at
+      FROM public.recovery_revision_dispatches dispatch
+      WHERE delivery.dispatch_id = ${handoff.dispatchId}
+        AND dispatch.dispatch_id = delivery.dispatch_id`;
+    await database.sql`UPDATE public.recovery_dispatch_deliveries SET started_at = NULL
+      WHERE dispatch_id = ${handoff.dispatchId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "an active delivery requires its start time");
+    await database.sql`UPDATE public.recovery_dispatch_deliveries delivery
+      SET started_at = runtime.created_at - INTERVAL '1 second'
+      FROM public.runtime_sessions runtime
+      WHERE delivery.dispatch_id = ${handoff.dispatchId}
+        AND runtime.session_id = ${sessionId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "delivery cannot start before runtime creation");
+    await database.sql`UPDATE public.recovery_dispatch_deliveries
+      SET started_at = clock_timestamp() WHERE dispatch_id = ${handoff.dispatchId}`;
     await database.sql`UPDATE public.stories SET claimed_by = 'crossed-agent'
       WHERE id = ${storyDbId}`;
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),

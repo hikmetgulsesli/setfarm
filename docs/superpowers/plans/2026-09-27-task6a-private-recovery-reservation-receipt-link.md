@@ -36,6 +36,10 @@ block cutover.
 - Require delivery attempt/claim binding to the receipt, state
   `attempt_reserved` or `running`, attempt count exactly one, current lease
   token equal to the handoff and current expiry after fresh PostgreSQL time.
+  Compare the live delivery and dispatch authorization timestamps inside
+  PostgreSQL, and require a non-null delivery start between session creation
+  and lease expiry; JavaScript millisecond dates cannot prove the native
+  microsecond equality.
   Both supported implementation recovery dispatches require current case
   status `repairing`; `open` and evidence-only `evidencing` refuse.
   A legitimate same-token renewal may change expiry, so never require the
@@ -61,7 +65,8 @@ diagnostic, not a physical proof. The fixture commits its publication after
 the receipt to test absent-publication refusal; this is not a production
 lifecycle claim. Test missing publication, crossed input hashes, token
 rotation, expired delivery and attempt, mutable current-case/status/step
-drift, base-schema run-packet immutability, story claimant/birth drift,
+drift, changed delivery authorization, absent or pre-session delivery start,
+base-schema run-packet immutability, story claimant/birth drift,
 claim/session/slice/role drift
 for both supported recovery dispatch classes,
 rollback,
