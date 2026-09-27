@@ -27,7 +27,7 @@ async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
       'columns', (SELECT jsonb_agg(jsonb_build_array(c.relname, a.attname,
         format_type(a.atttypid, a.atttypmod), a.attnotnull,
         a.attcollation::text, a.attidentity, a.attgenerated,
-        a.atthasmissing, a.attmissingval::text,
+        a.atthasmissing, a.attmissingval::text, a.attstorage,
         pg_get_expr(d.adbin, d.adrelid)) ORDER BY c.relname, a.attname)
         FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
         JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -51,7 +51,10 @@ async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public'),
       'indexes', (SELECT jsonb_agg(jsonb_build_array(ic.relname,
-        pg_get_indexdef(i.indexrelid)) ORDER BY ic.relname)
+        pg_get_indexdef(i.indexrelid), i.indimmediate,
+        EXISTS (SELECT 1 FROM pg_constraint co WHERE co.conindid=i.indexrelid
+          AND co.contype IN ('p', 'u', 'x')))
+        ORDER BY ic.relname)
         FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid
         JOIN pg_namespace n ON n.oid = ic.relnamespace
         WHERE n.nspname = 'public')
@@ -120,6 +123,11 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
     await verifyOrdinaryBaseSchemaCatalogReadOnlyV1(restricted);
     const after = await schemaFingerprint(database.sql);
     assert.equal(after, before);
+    await database.sql.unsafe("CREATE TABLE public.task6a_extra_fk (run_number integer REFERENCES public.runs(run_number))");
+    const extraFkBefore = await schemaFingerprint(database.sql);
+    await verifyOrdinaryBaseSchemaCatalogReadOnlyV1(restricted);
+    assert.equal(await schemaFingerprint(database.sql), extraFkBefore);
+    await database.sql.unsafe("DROP TABLE public.task6a_extra_fk");
     await database.sql.unsafe(`CREATE FUNCTION public.set_config(text, text, boolean)
       RETURNS text LANGUAGE SQL AS $$ SELECT $2 $$`);
     await database.sql.unsafe(`CREATE FUNCTION public.format_type(oid, integer)
@@ -144,6 +152,7 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
       ["non-source table options", "ALTER TABLE public.runs SET (autovacuum_enabled = false)"],
       ["non-source TOAST options", "ALTER TABLE public.runs SET (toast.autovacuum_enabled = false)"],
       ["wrong collation", "ALTER TABLE public.rules ALTER COLUMN title TYPE text COLLATE \"C\""],
+      ["non-source text storage", "ALTER TABLE public.rules ALTER COLUMN content SET STORAGE PLAIN"],
       ["stale fast-default missing value", "ALTER TABLE public.stories RENAME COLUMN output TO old_output; ALTER TABLE public.stories ADD COLUMN output text DEFAULT 'forged'; ALTER TABLE public.stories ALTER COLUMN output DROP DEFAULT"],
       ["row level security", "ALTER TABLE public.runs ENABLE ROW LEVEL SECURITY"],
       ["missing column", "ALTER TABLE public.steps DROP COLUMN started_at"],
@@ -153,6 +162,7 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
       ["wrong nullability", "ALTER TABLE public.runs ALTER COLUMN run_number DROP NOT NULL"],
       ["missing default", "ALTER TABLE public.stories ALTER COLUMN status DROP DEFAULT"],
       ["missing index", "DROP INDEX public.idx_steps_run_status"],
+      ["deferred source unique index", "ALTER TABLE public.runs ADD CONSTRAINT idx_runs_run_number_unique UNIQUE USING INDEX idx_runs_run_number_unique DEFERRABLE INITIALLY DEFERRED"],
       ["missing foreign key", "ALTER TABLE public.steps DROP CONSTRAINT steps_run_id_fkey"],
       ["missing sequence", "DROP SEQUENCE public.runs_run_number_seq CASCADE"],
       ["changed sequence", "ALTER SEQUENCE public.runs_run_number_seq INCREMENT BY 2"],

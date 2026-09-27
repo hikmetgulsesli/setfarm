@@ -50,6 +50,13 @@ DDL does not opt out of automatic maintenance or set storage parameters.
 Required base columns must have neither fast-default `atthasmissing` nor
 `attmissingval`; a later-added column can otherwise expose stale logical
 values after its visible default is removed.
+Required text columns retain source-created `EXTENDED` storage; fixed-size
+columns retain `PLAIN`, so a large value cannot be refused by a later
+`SET STORAGE PLAIN` drift.
+Required explicit indexes remain standalone and immediate; adopting one as a
+deferred unique constraint must not silently postpone uniqueness enforcement.
+An added foreign key may reference a required unique index without owning it;
+only primary, unique or exclusion constraint ownership is refused here.
 Before any live admission, audit the target catalog read-only: a historical
 column created by an ordinary ALTER fallback may legitimately carry a fast
 default and will fail this strict check until separately reviewed recovery.

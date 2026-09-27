@@ -194,6 +194,7 @@ const COLUMN_SQL_V1 = `SELECT c.relname AS "table", a.attname AS "column",
   a.attgenerated AS generated,
   a.atthasmissing AS "hasMissing",
   a.attmissingval IS NOT NULL AS "missingPresent",
+  a.attstorage AS storage,
   CASE WHEN a.attcollation = 0 THEN 'none'
        WHEN a.attcollation = 'pg_catalog."default"'::regcollation THEN 'default'
        ELSE 'custom' END AS collation
@@ -210,6 +211,10 @@ const INDEX_SQL_V1 = `SELECT tc.relname AS "table", ic.relname AS name,
   pg_get_indexdef(i.indexrelid) AS definition,
   i.indisvalid AS valid, i.indisready AS ready, i.indislive AS live,
   i.indisunique AS unique, i.indisprimary AS "primary",
+  i.indimmediate AS immediate,
+  EXISTS (SELECT 1 FROM pg_catalog.pg_constraint co
+    WHERE co.conindid = i.indexrelid
+      AND co.contype IN ('p', 'u', 'x')) AS "constraintOwned",
   i.indnkeyatts AS "keyCount", i.indnatts AS "totalCount",
   i.indexprs IS NOT NULL AS "hasExpression", am.amname AS method,
   ic.relkind AS kind, ic.relpersistence AS persistence,
@@ -340,6 +345,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         generated: string;
         hasMissing: boolean;
         missingPresent: boolean;
+        storage: string;
         collation: string;
       }>>(COLUMN_SQL_V1);
       if (columns.length > 1024) mismatch();
@@ -357,6 +363,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
           || actual.notNull !== expected[4]
           || actual.default !== expected[5]
           || actual.hasMissing || actual.missingPresent
+          || actual.storage !== (expected[2] === "text" ? "x" : "p")
           || actual.collation !== (expected[2] === "text" ? "default" : "none")) mismatch();
       }
       const indexes = await transaction.unsafe<Array<{
@@ -368,6 +375,8 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
         live: boolean;
         unique: boolean;
         primary: boolean;
+        immediate: boolean;
+        constraintOwned: boolean;
         keyCount: number;
         totalCount: number;
         hasExpression: boolean;
@@ -384,6 +393,7 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
             || actual.definition !== expected[2]
             || actual.unique !== expected[2].startsWith("CREATE UNIQUE INDEX")
             || !actual.valid || !actual.ready || !actual.live || actual.primary
+            || !actual.immediate || actual.constraintOwned
             || actual.keyCount !== actual.totalCount || actual.hasExpression
             || actual.method !== "btree" || actual.kind !== "i"
             || actual.persistence !== "p" || actual.ownerReachable;
