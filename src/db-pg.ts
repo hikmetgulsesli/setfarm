@@ -6,6 +6,7 @@
 import postgres from "postgres";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { types } from "node:util";
 import { runtimeConfig } from "./runtime-config.js";
 import { observeLegacyFindingPublicationInventoryV1, requireFindingPublicationV1, type FindingPublicationParentRowV1, type FindingPublicationChildRowV1 } from "./findings/finding-publication-v1.js";
 import { LEGACY_FINDING_PUBLICATION_MAX_SETS_V1, LEGACY_FINDING_PUBLICATION_MAX_CHILDREN_V1 } from "./findings/legacy-finding-publication-inventory-v1.js";
@@ -31,6 +32,8 @@ import {
   verifyBootstrapMainClaimHandoffV1Schema,
 } from "./db/bootstrap-main-claim-handoff-v1-migration.js";
 import { computeContractSpineMigrationChecksumV1 } from "./db/contract-spine-migration-checksum.js";
+import { verifyOrdinaryBaseSchemaCatalogReadOnlyV1 } from "./db/base-schema-readonly-verifier-v1.js";
+import { verifyContractSpineCurrentHeadJournalReadOnlyV1 } from "./db/contract-spine-readonly-verifier-v1.js";
 import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "./db/contract-spine-migration-digests.generated.js";
 import { OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_STATEMENTS } from "./db/operational-failure-cause-authority-v3-migration.js";
 import type {
@@ -136,6 +139,7 @@ let _sql: ReturnType<typeof postgres> | null = null;
 let _schemaReady = false;
 let _schemaReadyPromise: Promise<void> | null = null;
 let _isMigrating = false;
+let _verificationOnlyMode = false;
 let _isolatedTestPgUrl: string | null = null;
 
 const LEGACY_ISOLATED_TEST_DATABASE_V1 = /^setfarm_contract_spine_test_[0-9]+_[a-f0-9]{12}$/;
@@ -5816,7 +5820,9 @@ export async function verifyInternalProductionCurrentEntryDatabaseThroughMigrati
 
 export async function initializeInternalProductionCurrentEntryDatabaseV1(
 ): Promise<InternalProductionCurrentEntryDatabaseInitializationV1> {
+  if (_verificationOnlyMode) throw new Error("SETFARM_BASE_SCHEMA_VERIFY_INCOMPLETE");
   await verifyInternalProductionCurrentEntryDatabaseThroughMigration33AndManifestAV1();
+  if (_verificationOnlyMode) throw new Error("SETFARM_BASE_SCHEMA_VERIFY_INCOMPLETE");
   _schemaReady = true;
   const core = Object.freeze({
     schema: "setfarm.internal-production-current-entry-database-initialization.v1" as const,
@@ -5828,7 +5834,9 @@ export async function initializeInternalProductionCurrentEntryDatabaseV1(
 }
 
 async function ensureSchemaReady(): Promise<void> {
-  if (_schemaReady || _isMigrating) return;
+  if (_schemaReady) return;
+  if (_verificationOnlyMode) throw new Error("SETFARM_BASE_SCHEMA_VERIFY_INCOMPLETE");
+  if (_isMigrating) return;
   if (!_schemaReadyPromise) {
     _schemaReadyPromise = pgMigrate()
       .then(() => {
@@ -5878,20 +5886,105 @@ export async function pgBegin<T>(fn: (sql: PgTransactionSql) => Promise<T>): Pro
 
 export type PgMigrationOptions = Readonly<{
   contractSpineMode?: "verify" | "apply";
+  baseSchemaMode?: "verify";
+  expectedSchemaOwner?: string;
 }>;
 
+async function verifyExpectedPublicObjectOwnerReadOnlyV1(
+  sql: ReturnType<typeof postgres>, expectedOwner: string,
+): Promise<void> {
+  await sql.begin("isolation level repeatable read read only", async (transaction) => {
+    await transaction.unsafe("SELECT pg_catalog.set_config('lock_timeout', '1000ms', true)");
+    await transaction.unsafe("SELECT pg_catalog.set_config('statement_timeout', '5000ms', true)");
+    const rows = await transaction.unsafe<Array<{
+      roleExists: boolean;
+      ownerReachable: boolean | null;
+      objectCount: number;
+      ownerMatches: boolean;
+    }>>(`
+      WITH expected AS (
+        SELECT oid FROM pg_catalog.pg_roles WHERE rolname = $1
+      ), objects AS (
+        SELECT c.relowner FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'
+      )
+      SELECT EXISTS(SELECT 1 FROM expected) AS "roleExists",
+        pg_catalog.pg_has_role(session_user, (SELECT oid FROM expected), 'MEMBER') AS "ownerReachable",
+        (SELECT count(*)::integer FROM objects) AS "objectCount",
+        NOT EXISTS(SELECT 1 FROM objects
+          WHERE relowner IS DISTINCT FROM (SELECT oid FROM expected)) AS "ownerMatches"
+    `, [expectedOwner]);
+    if (rows.length !== 1 || !rows[0]?.roleExists || rows[0].ownerReachable !== false
+      || rows[0].objectCount === 0 || !rows[0].ownerMatches) {
+      throw new Error("SETFARM_BASE_SCHEMA_OWNER_MISMATCH");
+    }
+  });
+}
+
 export async function pgMigrate(options: PgMigrationOptions = {}): Promise<void> {
-  if (_isMigrating) return;
+  if (!options || typeof options !== "object" || types.isProxy(options)
+    || Array.isArray(options) || Object.getPrototypeOf(options) !== Object.prototype) {
+    throw new Error("SETFARM_BASE_SCHEMA_VERIFY_MODE_INVALID");
+  }
+  const optionDescriptors = Object.getOwnPropertyDescriptors(options);
+  const optionKeys = Reflect.ownKeys(optionDescriptors);
+  if (optionKeys.some((key) => typeof key !== "string"
+    || !["baseSchemaMode", "contractSpineMode", "expectedSchemaOwner"].includes(key)
+    || !optionDescriptors[key]!.enumerable
+    || !Object.hasOwn(optionDescriptors[key]!, "value"))) {
+    throw new Error("SETFARM_BASE_SCHEMA_VERIFY_MODE_INVALID");
+  }
+  const baseSchemaMode = optionDescriptors.baseSchemaMode?.value as unknown;
+  const contractSpineMode = optionDescriptors.contractSpineMode?.value as unknown;
+  const expectedSchemaOwner = optionDescriptors.expectedSchemaOwner?.value as unknown;
+  const verificationOnly = baseSchemaMode === "verify";
+  if ((baseSchemaMode !== undefined && !verificationOnly)
+    || (contractSpineMode !== undefined
+      && contractSpineMode !== "verify" && contractSpineMode !== "apply")
+    || (verificationOnly && (typeof expectedSchemaOwner !== "string"
+      || expectedSchemaOwner.length === 0 || expectedSchemaOwner.includes("\0")
+      || Buffer.byteLength(expectedSchemaOwner, "utf8") > 63
+      || Buffer.from(expectedSchemaOwner, "utf8").toString("utf8") !== expectedSchemaOwner))
+    || (!verificationOnly && expectedSchemaOwner !== undefined)
+    || (verificationOnly && contractSpineMode === "apply")
+    || (_verificationOnlyMode && !verificationOnly)
+    || (verificationOnly && _schemaReady && !_verificationOnlyMode)) {
+    throw new Error("SETFARM_BASE_SCHEMA_VERIFY_MODE_INVALID");
+  }
+  if (_isMigrating) {
+    if (verificationOnly || _verificationOnlyMode) throw new Error("SETFARM_BASE_SCHEMA_VERIFY_CONCURRENT");
+    return;
+  }
+  if (verificationOnly && _verificationOnlyMode && !_schemaReady) {
+    throw new Error("SETFARM_BASE_SCHEMA_VERIFY_INCOMPLETE");
+  }
   _isMigrating = true;
-  const url = resolvePgUrl();
+  if (verificationOnly) {
+    _verificationOnlyMode = true;
+    _schemaReady = false;
+  }
   try {
+    if (verificationOnly) {
+      try {
+        const target = getSql();
+        await verifyContractSpineCurrentHeadJournalReadOnlyV1(target);
+        await verifyOrdinaryBaseSchemaCatalogReadOnlyV1(target);
+        await verifyExpectedPublicObjectOwnerReadOnlyV1(target, expectedSchemaOwner as string);
+      } catch {
+        throw new Error("SETFARM_BASE_SCHEMA_VERIFY_REFUSED");
+      }
+      _schemaReady = true;
+      return;
+    }
+    const url = resolvePgUrl();
     await ensureDatabaseExists(url);
     const s = getSql();
 
     // Contract-spine migrations are release operations. Runtime startup fails
     // closed on a missing or drifted journal; only the explicit migration CLI
     // and isolated test fixtures opt into applying them.
-    if (options.contractSpineMode === "apply") {
+    if (contractSpineMode === "apply") {
       await applyContractSpineMigrationsIfNeeded(s);
     } else {
       await verifyContractSpineMigrations(s);
@@ -6135,10 +6228,11 @@ export async function pgClose(): Promise<void> {
   if (_sql) {
     await _sql.end();
     _sql = null;
-    _schemaReady = false;
-    _schemaReadyPromise = null;
-    _isolatedTestPgUrl = null;
   }
+  _schemaReady = false;
+  _schemaReadyPromise = null;
+  _verificationOnlyMode = false;
+  _isolatedTestPgUrl = null;
 }
 
 export const now = (): string => new Date().toISOString();
