@@ -327,7 +327,7 @@ describe("revisioned recovery dispatch delivery", () => {
     assert.deepEqual(finalBudget[0], { used_implement: 1, used_supervisor_repair: 1 });
   });
 
-  it("binds one leased dispatch to one attempt atomically and keeps the dispatch replay idempotent", async () => {
+  it("rejects attempt birth from a manual claim without canonical recovery publication", async () => {
     const leased = await deliveries.leaseNext({
       ownerInstanceId: "recovery-worker",
       runId: "run-recovery-delivery",
@@ -367,27 +367,20 @@ describe("revisioned recovery dispatch delivery", () => {
       worktree: ".worktrees/us-001-recovery",
       evidenceRefs: [`setfarm://claim-log/${claimId}`],
     };
-    const reserved = await attemptRepository.reserve(reservation, {
-      now: new Date("2026-07-13T08:04:01.000Z"),
-    });
-    assert.equal(reserved.status, "reserved");
-    assert.equal(reserved.attempt.recoveryCaseRevisionId, dispatch.revisionId);
-    assert.equal(reserved.attempt.recoveryDispatchId, dispatch.dispatchId);
+    await assert.rejects(
+      attemptRepository.reserve(reservation, {
+        now: new Date("2026-07-13T08:04:01.000Z"),
+      }),
+      /RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND/,
+    );
     const boundDelivery = await deliveries.findDelivery(dispatch.dispatchId);
-    assert.equal(boundDelivery?.state, "attempt_reserved");
-    assert.equal(boundDelivery?.attemptId, reserved.attempt.attemptId);
-    assert.equal(boundDelivery?.executionSliceHash, "5".repeat(64));
-
-    const replay = await attemptRepository.reserve(reservation, {
-      now: new Date("2026-07-13T08:04:02.000Z"),
-    });
-    assert.equal(replay.status, "duplicate");
-    assert.equal(replay.attempt.attemptId, reserved.attempt.attemptId);
+    assert.equal(boundDelivery?.state, "leased");
+    assert.equal(boundDelivery?.attemptId, undefined);
     const attemptRows = await database.sql<Array<{ count: number }>>`
       SELECT COUNT(*)::integer AS count FROM execution_attempts
        WHERE recovery_dispatch_id = ${dispatch.dispatchId}
     `;
-    assert.equal(attemptRows[0]?.count, 1);
+    assert.equal(attemptRows[0]?.count, 0);
 
     const running = await deliveries.markRunning({
       dispatchId: dispatch.dispatchId,

@@ -35,7 +35,7 @@
 
 - [x] **Step 1: Confirm RED.** Clean main and the isolated branch's explicit-private-cluster direct run failed at `INTERNAL_PRODUCTION_OWNER_PRODUCER_IMPLEMENTATION_UNAVAILABLE`; downstream missing-row assertions cascaded from the absent owner activation.
 - [x] **Step 2: Implement the smallest runner.** Discovery/sorted partition and exact ten-file allowlist are implemented. The runner rejects newly discovered direct `createIsolatedTestDatabase` use without registration, strips ambient `SETFARM_PG_URL`, and propagates signal/status errors. The pure `contracts.test.ts` focused run passed 8/8 and TypeScript passed. P3 itself refused the dirty `package.json`, as intended, so commit before Step 3.
-- [ ] **Step 3: Run focused GREEN until the next real failure.** Use Node 26 and `SETFARM_TEST_PG_ADMIN_URL` targeting the private cluster; confirm the prior owner-producer error disappears rather than accepting any new failure as success.
+- [x] **Step 3: Run focused GREEN until the next real failure.** With the committed runner, private P3 execution passed the first four delivery tests and exposed only the obsolete manual-claim success expectation. The owner-producer-unavailable cascade disappeared.
 
 ### Task 2: Preserve the recovery publication fence in the legacy test
 
@@ -43,8 +43,8 @@
 
 **Interfaces:** The test consumes existing `createAttemptRepository(...).reserve(...)` and `createRecoveryDeliveryRepository(...).findDelivery(...)`; no runtime API changes.
 
-- [ ] **Step 1: Confirm RED.** Under the P3 runner, the manual `INSERT INTO claim_log` case fails with `RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND` while four sibling cases pass.
-- [ ] **Step 2: Align the expectation.** Keep the manual claim as negative fixture; assert the exact rejection, no `execution_attempts` row for that dispatch, no `attempt_id` on delivery, and delivery still `leased`. Remove the obsolete success/replay assertions from this test only; preserve modern canonical success tests in `claim-step-v3-recovery.integration.test.ts` and `runtime-session-repository.test.ts`.
+- [x] **Step 1: Confirm RED.** Under the committed P3 runner, the manual `INSERT INTO claim_log` case failed with `RECOVERY_ATTEMPT_CLAIM_PUBLICATION_NOT_FOUND` while four sibling cases passed.
+- [x] **Step 2: Align the expectation.** The manual claim is now a negative fixture asserting exact rejection, zero attempt rows, no delivery attempt ID, and retained `leased` state. Modern canonical success tests remain unchanged.
 - [ ] **Step 3: Run GREEN.** Run this file in one P3 invocation, then run the full findings command. Investigate and fix any different failure with its own RED evidence.
 
 ### Task 3: Review and deliver
