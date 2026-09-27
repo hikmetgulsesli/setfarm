@@ -26,7 +26,7 @@ import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js"
 import { ImplementationSliceV1Schema, type ImplementationSliceV1 } from "../../src/product-compiler/schemas/implementation-slice-v1.js";
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
-import { V3RecoveryClaimAuthorityError, createV3RecoveryClaimAuthority } from "../../src/recovery/v3-recovery-claim-authority.js";
+import { createV3RecoveryClaimAuthority } from "../../src/recovery/v3-recovery-claim-authority.js";
 import type { RecoveryCaseRevisionV1, RecoveryRevisionDispatchV1 } from "../../src/recovery/recovery-delivery.js";
 import {
   V3RecoveryCoordinatorInputSchema,
@@ -857,24 +857,18 @@ describe("V3 recovery coordinator", () => {
     assert.notEqual(supervisor.revision.findingSetHash, openingIdentity[0]!.case_finding_set_hash);
     assert.notEqual(supervisor.revision.contractSliceHash, openingIdentity[0]!.case_slice_hash);
     assert.notEqual(supervisor.revision.sourceRevision.sha, openingIdentity[0]!.case_source_sha);
-    await database.sql.unsafe(
-      "UPDATE recovery_case_revisions SET finding_ids = '[]'::jsonb WHERE revision_id = $1",
-      [openingIdentity[0]!.opening_revision_id],
-    );
     await assert.rejects(
-      createV3RecoveryClaimAuthority(database.sql).acquireRecoveryClaim({
-        ownerInstanceId: "tampered-opening-worker",
-        runId: supervisor.revision.runId,
-        storyId: supervisor.revision.storyId,
-        leaseMs: 60_000,
-      }, { now: new Date("2026-07-13T10:11:30.000Z") }),
-      (error: unknown) => error instanceof V3RecoveryClaimAuthorityError
-        && error.code === "V3_RECOVERY_AUTHORITY_IDENTITY_MISMATCH",
+      database.sql.unsafe(
+        "UPDATE recovery_case_revisions SET finding_ids = '[]'::jsonb WHERE revision_id = $1",
+        [openingIdentity[0]!.opening_revision_id],
+      ),
+      /ARTIFACT_IDENTITY_IMMUTABLE/,
     );
-    await database.sql.unsafe(
-      "UPDATE recovery_case_revisions SET finding_ids = $2::text::jsonb WHERE revision_id = $1",
-      [openingIdentity[0]!.opening_revision_id, JSON.stringify(openingIdentity[0]!.opening_finding_ids)],
-    );
+    const retainedOpening = await database.sql<Array<{ finding_ids: string[] }>>`
+      SELECT finding_ids FROM recovery_case_revisions
+       WHERE revision_id = ${openingIdentity[0]!.opening_revision_id}
+    `;
+    assert.deepEqual(retainedOpening[0]?.finding_ids, openingIdentity[0]!.opening_finding_ids);
     assert.equal(supervisorReplay.status, "dispatched");
     if (supervisorReplay.status === "dispatched") assert.equal(supervisorReplay.dispatchId, supervisor.result.dispatchId);
 

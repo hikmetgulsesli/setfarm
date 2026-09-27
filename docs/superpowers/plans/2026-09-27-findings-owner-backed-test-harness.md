@@ -105,7 +105,7 @@
 
 - [x] **Step 1: Confirm RED.** The authenticated coordinator integration reaches a real product failure, advances to a different source/slice/finding revision 2, then the supervisor claim fails at `V3_RECOVERY_AUTHORITY_IDENTITY_MISMATCH` solely because the frozen case tuple is compared to the current revision. Independent read-only reviews confirmed the dedupe/FK contract requires the case opening tuple to stay frozen.
 - [x] **Step 2: Implement the smallest root fix.** Exact case-to-opening-revision identity and current revision-to-dispatch/delivery/finding-set identity now replace stale equality in model and non-model gates. The legacy revision-1 rehydration remains supported by raw-column opening comparison. A current revision's run/story must match the delivery before evidence publication. Refresh migration-33's declared helper digest rather than bypassing source integrity.
-- [ ] **Step 3: Prove GREEN and refusal.** The original coordinator P3 file passed 8/8 (including bounded revision-2 supervisor). Rerun the new revision-2 opening-tuple tamper negative, revised router and initial-chain tests, and the full findings suite. Add a focused evidence-only revised-source runtime proof if possible.
+- [ ] **Step 3: Prove GREEN and refusal.** The original coordinator P3 file passed 8/8 (including bounded revision-2 supervisor). A later direct opening-revision tamper attempt was rejected by PostgreSQL's `ARTIFACT_IDENTITY_IMMUTABLE` trigger before claim authority; assert that exact database refusal and retained row, then rerun the revised router and initial-chain tests and the full findings suite. Add a focused evidence-only revised-source runtime proof if possible.
 
 ### Task 3: Review and deliver
 
