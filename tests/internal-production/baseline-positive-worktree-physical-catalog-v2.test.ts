@@ -13,8 +13,10 @@ import { observeHeldPositiveWorktreePhysicalCatalogV2 } from "../../src/internal
 
 type HeldPhysical = Readonly<{ root: string; dev: string; ino: string; birthtimeNs: string;
   gitPrimaryRoot: string }>;
+type HeldSource = Readonly<{ root: string; gitPrimaryRoot: string; sourceSha: string;
+  sourceTreeHash: string }>;
 type WithHeldRuntimeCandidate = <T>(root: string, withinHold: (physical: HeldPhysical,
-  recheckPhysical: () => Promise<HeldPhysical>) => Promise<T>) => Promise<T>;
+  recheckPhysical: () => Promise<HeldPhysical>, observeSource: () => Promise<HeldSource>) => Promise<T>) => Promise<T>;
 const observeWithHeldRuntimeCandidate = observeHeldPositiveWorktreePhysicalCatalogV2 as unknown as (
   scope: Readonly<{ ownerHomeRoot: string; workspaceRoot: string }>,
   callback: (entries: readonly Readonly<{ root: string }>[], withHeld: WithHeldRuntimeCandidate) => Promise<void>,
@@ -342,6 +344,15 @@ test("a SHA-256 Git repository uses its own HEAD object-id width", async () => {
     git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-sha256", linked]);
     const result = await observeHeldPositiveWorktreePhysicalCatalogV2({
       ownerHomeRoot: testHome.ownerHomeRoot, workspaceRoot: testHome.workspaceRoot,
+    }, async (_entries, withHeld) => {
+      await withHeld(linked, async (_physical, _recheckPhysical, observeSource) => {
+        const source = await observeSource();
+        assert.equal(source.sourceSha.length, 64);
+        assert.equal(source.sourceTreeHash.length, 64);
+        assert.deepEqual(source, { root: linked, gitPrimaryRoot: primary,
+          sourceSha: git(["-C", linked, "rev-parse", "HEAD^{commit}"]),
+          sourceTreeHash: git(["-C", linked, "rev-parse", "HEAD^{tree}"]) });
+      });
     });
     assert.equal(result.status, "complete");
     assert.deepEqual(result.entries.map((entry) => [entry.root, entry.kind]), [[linked, "linked-git"]]);
@@ -516,8 +527,10 @@ test("a runtime linked Git candidate has an awaited, root-scoped held physical c
     const runtime = path.join(primary, ".worktrees", "story-1");
     mkdirSync(path.dirname(runtime));
     git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-1", runtime]);
+    writeFileSync(path.join(runtime, "uncommitted.txt"), "not part of HEAD\n");
     const stat = fs.lstatSync(runtime, { bigint: true });
     let lateRecheck: (() => Promise<HeldPhysical>) | null = null;
+    let lateSource: (() => Promise<HeldSource>) | null = null;
     let lateHold: WithHeldRuntimeCandidate | null = null;
     let observed: HeldPhysical | null = null;
     const catalog = await observeWithHeldRuntimeCandidate({
@@ -525,20 +538,29 @@ test("a runtime linked Git candidate has an awaited, root-scoped held physical c
     }, async (entries, withHeld) => {
       assert.deepEqual(entries.map((entry) => entry.root), [runtime]);
       lateHold = withHeld;
-      const result = await withHeld(runtime, async (physical, recheckPhysical) => {
+      const result = await withHeld(runtime, async (physical, recheckPhysical, observeSource) => {
         lateRecheck = recheckPhysical;
+        lateSource = observeSource;
         observed = physical;
         assert.equal(Object.isFrozen(physical), true);
         assert.deepEqual(physical, { root: runtime, dev: String(stat.dev), ino: String(stat.ino),
           birthtimeNs: String(stat.birthtimeNs), gitPrimaryRoot: primary });
         assert.deepEqual(await recheckPhysical(), physical);
+        const source = await observeSource();
+        assert.equal(Object.isFrozen(source), true);
+        assert.deepEqual(source, { root: runtime, gitPrimaryRoot: primary,
+          sourceSha: git(["-C", runtime, "rev-parse", "HEAD^{commit}"]),
+          sourceTreeHash: git(["-C", runtime, "rev-parse", "HEAD^{tree}"]) });
         return "held";
       });
       assert.equal(result, "held");
       await assert.rejects(lateRecheck!(), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+      await assert.rejects(lateSource!(), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
     });
     assert.equal(catalog.status, "complete");
     assert.ok(observed);
+    assert.equal(catalog.entries[0]?.dirty, true);
+    assert.equal(catalog.entries[0]?.sourceBuildProvenance, "unverified");
     await assert.rejects(lateHold!(runtime, async () => "late"),
       /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
   } finally { testHome.close(); }
@@ -618,14 +640,77 @@ test("held runtime recheck refuses transient Git-admin churn", async () => {
     const admin = path.resolve(runtime, git(["-C", runtime, "rev-parse", "--git-dir"]));
     await assert.rejects(observeWithHeldRuntimeCandidate({ ownerHomeRoot: testHome.ownerHomeRoot,
       workspaceRoot: testHome.workspaceRoot }, async (_entries, withHeld) => {
-      await withHeld(runtime, async (_physical, recheckPhysical) => {
+      await withHeld(runtime, async (_physical, _recheckPhysical, observeSource) => {
         const lock = path.join(admin, "index.lock");
         writeFileSync(lock, "transient fixture lock");
         rmSync(lock);
-        await recheckPhysical();
+        await observeSource();
       });
     }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
   } finally { testHome.close(); }
+});
+
+test("held source observation refuses a changed runtime HEAD", async () => {
+  const testHome = fixture();
+  try {
+    const primary = path.join(testHome.ownerHomeRoot, "projects", "story");
+    mkdirSync(primary);
+    initRepo(primary);
+    const runtime = path.join(primary, ".worktrees", "story-1");
+    mkdirSync(path.dirname(runtime));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-1", runtime]);
+    await assert.rejects(observeWithHeldRuntimeCandidate({ ownerHomeRoot: testHome.ownerHomeRoot,
+      workspaceRoot: testHome.workspaceRoot }, async (_entries, withHeld) => {
+      await withHeld(runtime, async (_physical, _recheckPhysical, observeSource) => {
+        await observeSource();
+        git(["-C", runtime, "commit", "-q", "--allow-empty", "-m", "changed HEAD"]);
+        await observeSource();
+      });
+    }), /INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID/);
+  } finally { testHome.close(); }
+});
+
+test("held source tree is derived from the captured commit, not a second HEAD", async () => {
+  const testHome = fixture();
+  const originalSpawn = childProcess.spawnSync;
+  try {
+    const primary = path.join(testHome.ownerHomeRoot, "projects", "story");
+    mkdirSync(primary);
+    initRepo(primary);
+    writeFileSync(path.join(primary, "source.txt"), "A\n");
+    git(["-C", primary, "add", "source.txt"]);
+    git(["-C", primary, "commit", "-q", "-m", "source A"]);
+    const capturedSha = git(["-C", primary, "rev-parse", "HEAD"]);
+    const capturedTree = git(["-C", primary, "rev-parse", "HEAD^{tree}"]);
+    writeFileSync(path.join(primary, "source.txt"), "B\n");
+    git(["-C", primary, "add", "source.txt"]);
+    git(["-C", primary, "commit", "-q", "-m", "source B"]);
+    const crossedTree = git(["-C", primary, "rev-parse", "HEAD^{tree}"]);
+    assert.notEqual(crossedTree, capturedTree);
+    const runtime = path.join(primary, ".worktrees", "story-1");
+    mkdirSync(path.dirname(runtime));
+    git(["-C", primary, "worktree", "add", "-q", "-b", "runtime-1", runtime, capturedSha]);
+    await observeWithHeldRuntimeCandidate({ ownerHomeRoot: testHome.ownerHomeRoot,
+      workspaceRoot: testHome.workspaceRoot }, async (_entries, withHeld) => {
+      await withHeld(runtime, async (_physical, _recheckPhysical, observeSource) => {
+        childProcess.spawnSync = ((file: string, args: readonly string[], options: unknown) => {
+          if (file === "/usr/bin/git" && args.includes(runtime) && args.includes("HEAD^{tree}")) {
+            return { status: 0, stdout: Buffer.from(`${crossedTree}\n`), stderr: Buffer.alloc(0),
+              signal: null, error: undefined };
+          }
+          return Reflect.apply(originalSpawn, childProcess, [file, args, options]);
+        }) as unknown as typeof spawnSync;
+        syncBuiltinESMExports();
+        const source = await observeSource();
+        assert.equal(source.sourceSha, capturedSha);
+        assert.equal(source.sourceTreeHash, capturedTree);
+      });
+    });
+  } finally {
+    childProcess.spawnSync = originalSpawn;
+    syncBuiltinESMExports();
+    testHome.close();
+  }
 });
 
 test("read-only Git status never executes a repository-local fsmonitor command", async () => {

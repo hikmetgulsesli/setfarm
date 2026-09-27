@@ -338,8 +338,11 @@ type Candidate = Readonly<{ root: string; zone: Zone; kind: CandidateKind; dev: 
   referencingPids: readonly number[] }>;
 type HeldRuntimePhysicalCandidate = Readonly<{ root: string; dev: string; ino: string;
   birthtimeNs: string; gitPrimaryRoot: string }>;
+type HeldRuntimeSourceObservation = Readonly<{ root: string; gitPrimaryRoot: string;
+  sourceSha: string; sourceTreeHash: string }>;
 type WithHeldRuntimeCandidate = <T>(root: string, withinHold: (physical: HeldRuntimePhysicalCandidate,
-  recheckPhysical: () => Promise<HeldRuntimePhysicalCandidate>) => Promise<T>) => Promise<T>;
+  recheckPhysical: () => Promise<HeldRuntimePhysicalCandidate>,
+  observeSource: () => Promise<HeldRuntimeSourceObservation>) => Promise<T>) => Promise<T>;
 
 function primaryWorktreeRoots(held: HeldDirectories, root: string): GitWorktreeListing | null {
   const marker = path.join(root, ".git");
@@ -584,7 +587,7 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
       let nestedOpen = true;
       const physical = Object.freeze({ root: entry.root, dev: entry.dev, ino: entry.ino,
         birthtimeNs: entry.birthtimeNs, gitPrimaryRoot: entry.gitPrimaryRoot });
-      const recheckPhysical = async (): Promise<HeldRuntimePhysicalCandidate> => {
+      const checkPhysical = (): HeldRuntimePhysicalCandidate => {
         if (!betweenPassesOpen || !nestedOpen || cleanupUncertain) fail();
         held.assertStable();
         const fresh = observeGitCandidate(held, root, first.base, first.zone, scope);
@@ -595,9 +598,26 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
           || held.gitAdminChurnCandidateRoots().includes(root)) fail();
         return physical;
       };
+      const recheckPhysical = async (): Promise<HeldRuntimePhysicalCandidate> => checkPhysical();
+      const observeSource = async (): Promise<HeldRuntimeSourceObservation> => {
+        // No await inside this capability: an unawaited call cannot continue
+        // issuing Git commands after the enclosing held callback settles.
+        checkPhysical();
+        const git = (args: readonly string[]): string => line(command(held, "/usr/bin/git",
+          [...GIT_PREFIX, "-C", root, ...args]));
+        const width = objectIdWidth(git(["rev-parse", "--show-object-format=storage"]));
+        const sourceSha = git(["rev-parse", "--verify", "HEAD^{commit}"]);
+        const sourceTreeHash = git(["rev-parse", "--verify", `${sourceSha}^{tree}`]);
+        const repeatedSha = git(["rev-parse", "--verify", "HEAD^{commit}"]);
+        if (sourceSha.length !== width || sourceTreeHash.length !== width
+          || !/^[a-f0-9]+$/.test(sourceSha) || !/^[a-f0-9]+$/.test(sourceTreeHash)
+          || repeatedSha !== sourceSha) fail();
+        checkPhysical();
+        return Object.freeze({ root, gitPrimaryRoot: entry.gitPrimaryRoot!, sourceSha, sourceTreeHash });
+      };
       try {
         await recheckPhysical();
-        const result = await withinHold(physical, recheckPhysical);
+        const result = await withinHold(physical, recheckPhysical, observeSource);
         await recheckPhysical();
         return result;
       } finally {
