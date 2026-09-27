@@ -111,6 +111,10 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
       const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(tx,
         { runId: heads[0]!.runId, storyId: heads[0]!.storyId });
       if (authority.protocol !== "v3") fail();
+      const runs = await tx.unsafe<Array<{ packetHash: string | null }>>(`SELECT
+        packet_hash AS "packetHash" FROM public.runs WHERE id = $1`,
+      [heads[0]!.runId]);
+      if (runs.length !== 1 || !runs[0]?.packetHash) fail();
       const reservations = await tx.unsafe<Array<Reservation>>(`SELECT
         reservation_hash AS "reservationHash", run_id AS "runId",
         story_db_id AS "storyDbId", story_id AS "storyId",
@@ -204,6 +208,7 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
         ...(revision.evidencePlanArtifactHash
           ? { evidencePlanArtifactHash: revision.evidencePlanArtifactHash } : {}) };
       if (dispatch.packetHash !== revision.packetHash
+        || dispatch.packetHash !== runs[0]!.packetHash
         || dispatch.contractSliceHash !== revision.contractSliceHash
         || dispatch.findingSetHash !== revision.findingSetHash
         || cases[0]?.owner !== revision.dispatchClassOwner
@@ -294,6 +299,8 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
       const active = await tx.unsafe<Array<{ fenceToken: string }>>(`SELECT
         a.fence_token AS "fenceToken" FROM public.stories st
         JOIN public.claim_log c ON c.run_id = st.run_id AND c.story_id = st.story_id
+        JOIN public.steps step ON step.id = $18 AND step.run_id = st.run_id
+          AND step.step_id = c.step_id
         JOIN public.execution_attempts a ON a.claim_id = c.id
           AND a.run_id = st.run_id AND a.step_id = c.step_id AND a.story_id = st.story_id
         JOIN public.runtime_sessions s ON s.claim_id = c.id
@@ -307,6 +314,7 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           AND b.story_claim_generation = st.claim_generation
         WHERE st.id = $1 AND st.run_id = $2 AND st.story_id = $3
           AND st.status = 'running' AND c.id = $4::bigint
+          AND step.status = 'running' AND step.current_story_id = st.id
           AND c.step_id = 'implement' AND c.outcome IS NULL
           AND c.abandoned_at IS NULL
           AND a.agent_id = c.agent_id
@@ -322,12 +330,12 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           AND a.worktree = $13 AND a.source_before_sha = $14
           AND a.source_before_tree_hash = $15
           AND s.session_id = $16 AND s.owner_instance_id = $17
-          AND s.step_db_id = $18 AND st.story_index = $19
+          AND s.step_db_id = step.id AND st.story_index = $19
           AND s.claim_agent_id = c.agent_id AND s.workflow_step_id = c.step_id
           AND s.story_db_id = st.id AND s.story_id = st.story_id
           AND s.worktree = $13
           AND s.state IN ('reserved', 'starting', 'running', 'drain_requested', 'drained')
-        FOR UPDATE OF st, c, a, s, b`, [reservation.storyDbId,
+        FOR UPDATE OF st, step, c, a, s, b`, [reservation.storyDbId,
       reservation.runId, reservation.storyId, receipt.claimId,
       receipt.attemptId, receipt.generation, reservation.dispatchId,
       reservation.revisionId, dispatch.dispatchClass, dispatch.packetHash,

@@ -209,6 +209,8 @@ stage = "reservation-before-claim";
     stage = "exact-active-claim-and-receipt";
     await database.sql`UPDATE public.stories
       SET status = 'running', claim_generation = 1 WHERE id = ${storyDbId}`;
+    await database.sql`UPDATE public.steps SET current_story_id = ${storyDbId}
+      WHERE id = ${stepDbId}`;
     await database.sql`INSERT INTO public.claim_log (id, run_id, step_id, story_id, agent_id)
       VALUES (${claimId}, ${runId}, 'implement', ${storyId}, 'agent')`;
     await database.sql`INSERT INTO public.execution_attempts (
@@ -279,6 +281,21 @@ stage = "reservation-before-claim";
     ]) await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
       database.sql, crossed), REFUSED);
     stage = "stale-chain-refusal";
+    await assert.rejects(database.sql`UPDATE public.runs
+      SET packet_hash = ${"f".repeat(64)} WHERE id = ${runId}`,
+      /RUN_PACKET_HASH_IMMUTABLE/, "the base schema independently protects the live run packet");
+    await database.sql`UPDATE public.steps SET current_story_id = NULL
+      WHERE id = ${stepDbId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "claim step must still own the exact story");
+    await database.sql`UPDATE public.steps SET current_story_id = ${storyDbId}
+      WHERE id = ${stepDbId}`;
+    await database.sql`UPDATE public.steps SET status = 'completed'
+      WHERE id = ${stepDbId}`;
+    await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
+      REFUSED, "claim step must remain running");
+    await database.sql`UPDATE public.steps SET status = 'running'
+      WHERE id = ${stepDbId}`;
     await database.sql`UPDATE public.recovery_cases SET status = 'evidencing'
       WHERE recovery_case_id = ${recoveryCase.recoveryCaseId}`;
     await assert.rejects(appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(database.sql, exact),
