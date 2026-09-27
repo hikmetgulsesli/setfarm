@@ -33,8 +33,8 @@
 
 **Interfaces:** The new runner consumes `tests/findings/*.test.ts` and uses the existing `scripts/run-isolated-postgres-tests.ts -- node --import tsx --test --test-concurrency=1 <one file>` interface. It produces the exit status of the first failed child.
 
-- [ ] **Step 1: Confirm RED.** On clean main, the explicit-private-cluster `npm run test:findings` fails with `INTERNAL_PRODUCTION_OWNER_PRODUCER_IMPLEMENTATION_UNAVAILABLE`; record this as the activation-fixture failure.
-- [ ] **Step 2: Implement the smallest runner.** Discover/sort all `.test.ts` files. Freeze the ten owner-backed filenames found by `rg -l createIsolatedTestDatabase tests/findings/*.test.ts`; reject missing names. Run remaining names together with `node --import tsx --test`; run each owner-backed name serially through the P3 wrapper, deleting `SETFARM_PG_URL` from each child environment and propagating signal/status errors. Change only `test:findings` in `package.json`.
+- [x] **Step 1: Confirm RED.** Clean main and the isolated branch's explicit-private-cluster direct run failed at `INTERNAL_PRODUCTION_OWNER_PRODUCER_IMPLEMENTATION_UNAVAILABLE`; downstream missing-row assertions cascaded from the absent owner activation.
+- [x] **Step 2: Implement the smallest runner.** Discovery/sorted partition and exact ten-file allowlist are implemented. The runner rejects newly discovered direct `createIsolatedTestDatabase` use without registration, strips ambient `SETFARM_PG_URL`, and propagates signal/status errors. The pure `contracts.test.ts` focused run passed 8/8 and TypeScript passed. P3 itself refused the dirty `package.json`, as intended, so commit before Step 3.
 - [ ] **Step 3: Run focused GREEN until the next real failure.** Use Node 26 and `SETFARM_TEST_PG_ADMIN_URL` targeting the private cluster; confirm the prior owner-producer error disappears rather than accepting any new failure as success.
 
 ### Task 2: Preserve the recovery publication fence in the legacy test
