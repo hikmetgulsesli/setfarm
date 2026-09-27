@@ -147,8 +147,9 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
         || delivery.attemptCount !== 1 || delivery.claimId === null
         || delivery.attemptId === null || delivery.leaseToken === null
         || delivery.executionSliceHash === null) fail();
-      const cases = await tx.unsafe<Array<{ currentRevisionId: string; status: string }>>(`SELECT
-        current_revision_id AS "currentRevisionId", status FROM public.recovery_cases
+      const cases = await tx.unsafe<Array<{ currentRevisionId: string; status: string;
+        owner: string }>>(`SELECT
+        current_revision_id AS "currentRevisionId", status, owner FROM public.recovery_cases
         WHERE recovery_case_id = $1 AND run_id = $2 AND story_id = $3 FOR UPDATE`,
       [reservation.recoveryCaseId, reservation.runId, reservation.storyId]);
       if (cases.length !== 1 || cases[0]?.currentRevisionId !== reservation.revisionId
@@ -172,10 +173,13 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
         || revisions[0]?.sourceTreeHash !== reservation.sourceTreeHash) fail();
       const dispatches = await tx.unsafe<Array<{ dispatchClass: string;
         sourceSha: string; sourceTreeHash: string; packetHash: string;
-        contractSliceHash: string; findingSetHash: string }>>(`SELECT
+        contractSliceHash: string; findingSetHash: string; findingIds: unknown;
+        evidencePlan: unknown; evidencePlanArtifactHash: string | null }>>(`SELECT
         dispatch_class AS "dispatchClass", source_sha AS "sourceSha",
         source_tree_hash AS "sourceTreeHash", packet_hash AS "packetHash",
-        contract_slice_hash AS "contractSliceHash", finding_set_hash AS "findingSetHash"
+        contract_slice_hash AS "contractSliceHash", finding_set_hash AS "findingSetHash",
+        finding_ids AS "findingIds", evidence_plan AS "evidencePlan",
+        evidence_plan_artifact_hash AS "evidencePlanArtifactHash"
         FROM public.recovery_revision_dispatches WHERE dispatch_id = $1
           AND recovery_case_id = $2 AND revision_id = $3 FOR KEY SHARE`,
       [reservation.dispatchId, reservation.recoveryCaseId, reservation.revisionId]);
@@ -197,7 +201,11 @@ export async function appendPrivateDiagnosticRecoveryReservationReceiptLinkV1(
           ? { evidencePlanArtifactHash: revision.evidencePlanArtifactHash } : {}) };
       if (dispatch.packetHash !== revision.packetHash
         || dispatch.contractSliceHash !== revision.contractSliceHash
-        || dispatch.findingSetHash !== revision.findingSetHash) fail();
+        || dispatch.findingSetHash !== revision.findingSetHash
+        || cases[0]?.owner !== revision.dispatchClassOwner
+        || canonicalJsonStringify(dispatch.findingIds) !== canonicalJsonStringify(revision.findingIds)
+        || canonicalJsonStringify(dispatch.evidencePlan) !== canonicalJsonStringify(revision.evidencePlan)
+        || dispatch.evidencePlanArtifactHash !== revision.evidencePlanArtifactHash) fail();
       const publications = await tx.unsafe<Array<{ claimId: string;
         runtimeSessionId: string; runId: string; stepDbId: string;
         workflowStepId: string; storyDbId: string; storyId: string;
