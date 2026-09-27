@@ -16,7 +16,7 @@ function permissionDenied(error: unknown): boolean {
     && "code" in error && error.code === "42501";
 }
 
-test("private successor proves sequence, V31 fence, and narrow owner-head lock capability", {
+test("private successor proves sequence, V31, owner-head, and read-only run manifest gates", {
   skip: expectedDataDirectory ? false : "requires an explicitly identified private PostgreSQL cluster",
 }, async () => {
   assert.equal(process.env.SETFARM_PG_URL, undefined);
@@ -326,6 +326,38 @@ test("private successor proves sequence, V31 fence, and narrow owner-head lock c
       SELECT count(*)::text AS count FROM public.runs WHERE id=${ownerKey}
     `;
     assert.equal(runCountRows[0]?.count, "0");
+
+    stage = "restricted-run-producer-manifest-read";
+    await database.sql.unsafe(`GRANT SELECT ON public.runtime_completion_requests,
+      public.runtime_sessions, public.internal_production_owner_reservations_v1,
+      public.internal_production_owner_producer_manifest_set_current_v1 TO "${role}"`);
+    const manifestRights = await database.sql<Array<{ select: boolean; update: boolean }>>`
+      SELECT has_table_privilege(${role}, 'public.internal_production_owner_producer_manifest_set_current_v1', 'SELECT') AS select,
+        has_table_privilege(${role}, 'public.internal_production_owner_producer_manifest_set_current_v1', 'UPDATE') AS update
+    `;
+    assert.deepEqual(manifestRights[0], { select: true, update: false });
+    const currentBefore = await database.sql<Array<{ current_revision: string }>>`
+      SELECT current_revision::text FROM public.internal_production_owner_producer_manifest_set_current_v1
+      WHERE singleton_key=TRUE
+    `;
+    assert.deepEqual([...currentBefore], [{ current_revision: "0" }]);
+    await successorDb.pgQuery("SELECT current_revision FROM public.internal_production_owner_producer_manifest_set_current_v1 WHERE singleton_key=TRUE");
+    await assert.rejects(successorDb.pgQuery(
+      "SELECT current_revision FROM public.internal_production_owner_producer_manifest_set_current_v1 WHERE singleton_key=TRUE FOR UPDATE",
+    ), permissionDenied);
+    await assert.rejects(attemptOwnerBegin("100ms"), /RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID/);
+    const currentAfter = await database.sql<Array<{ current_revision: string }>>`
+      SELECT current_revision::text FROM public.internal_production_owner_producer_manifest_set_current_v1
+      WHERE singleton_key=TRUE
+    `;
+    assert.deepEqual([...currentAfter], [...currentBefore]);
+    assert.equal((await database.sql<Array<{ count: string }>>`
+      SELECT count(*)::text AS count FROM public.internal_production_owner_reservations_v1
+      WHERE owner_key=${ownerKey}
+    `)[0]?.count, "0");
+    assert.equal((await database.sql<Array<{ count: string }>>`
+      SELECT count(*)::text AS count FROM public.runs WHERE id=${ownerKey}
+    `)[0]?.count, "0");
 
     stage = "journal-drift-refusal";
     const driftedChecksum = "f".repeat(64);

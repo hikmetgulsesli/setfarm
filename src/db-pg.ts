@@ -1554,7 +1554,10 @@ async function resolveActiveOwnerProducerV1(
   }
   let currentResolution: Awaited<ReturnType<typeof resolveCurrentOwnerProducerManifestSetActivationWithChainInTransactionV1>>;
   try {
-    currentResolution = await resolveCurrentOwnerProducerManifestSetActivationWithChainInTransactionV1(sql);
+    // A is published once from null; runtime-run authentication need not gain
+    // manifest-current UPDATE solely for a row lock. The activation writer
+    // retains its FOR UPDATE/CAS path, and any later phase needs a new audit.
+    currentResolution = await resolveCurrentOwnerProducerManifestSetActivationWithChainInTransactionV1(sql, implementationId !== "a-runtime-run-v1");
   } catch (error) {
     if (implementationId === "a-runtime-run-v1") {
       throw new Error("RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID");
