@@ -838,8 +838,18 @@ function inventoryBuildGenerationV1(root) {
   const entries = [];
   let count = 0;
   let total = 0;
-  function visit(directory, relative, depth) {
+  function visit(directory, relative, depth, expectedIdentity) {
     if (depth > MAX_TREE_DEPTH_V1) fail("generation exceeds the depth cap");
+    const directoryBefore = lstatSync(directory, { bigint: true });
+    if (!directoryBefore.isDirectory() || directoryBefore.isSymbolicLink() || directoryBefore.dev !== device) {
+      fail(`generation directory ${relative || "."} is invalid`);
+    }
+    if (directoryBefore.dev.toString(10) !== expectedIdentity.devDecimal
+      || directoryBefore.ino.toString(10) !== expectedIdentity.inoDecimal
+      || modeOf(directoryBefore) !== expectedIdentity.mode
+      || Number(directoryBefore.nlink) !== expectedIdentity.linkCount) {
+      fail(`generation directory ${relative || "."} changed before inventory traversal`);
+    }
     for (const name of readdirSync(directory).sort(compareBytes)) {
       count += 1;
       if (count > MAX_TREE_ENTRIES_V1) fail("generation exceeds the entry cap");
@@ -854,10 +864,21 @@ function inventoryBuildGenerationV1(root) {
           locator, kind: "directory", devDecimal: stats.dev.toString(10), inoDecimal: stats.ino.toString(10),
           mode: modeOf(stats), linkCount, byteLength: null, sha256: null,
         }));
-        visit(target, locator, depth + 1);
+        visit(target, locator, depth + 1, {
+          devDecimal: stats.dev.toString(10),
+          inoDecimal: stats.ino.toString(10),
+          mode: modeOf(stats),
+          linkCount,
+        });
       } else if (stats.isFile()) {
         if (stats.nlink !== 1n || stats.size > BigInt(MAX_FILE_BYTES_V1)) fail(`invalid generation regular file ${locator}`);
         const observed = readStableRegular(target, { device, linkCounts: [1], maxBytes: MAX_FILE_BYTES_V1 });
+        if (stats.dev !== observed.stats.dev || stats.ino !== observed.stats.ino
+          || stats.mode !== observed.stats.mode || stats.uid !== observed.stats.uid
+          || stats.nlink !== observed.stats.nlink || stats.size !== observed.stats.size
+          || stats.mtimeNs !== observed.stats.mtimeNs || stats.ctimeNs !== observed.stats.ctimeNs) {
+          fail(`${target} changed between inventory lstat and file read`);
+        }
         total += observed.bytes.length;
         if (total > MAX_TOTAL_BYTES_V1) fail("generation exceeds the byte cap");
         entries.push(Object.freeze({
@@ -866,8 +887,15 @@ function inventoryBuildGenerationV1(root) {
         }));
       } else fail(`special generation member ${locator}`);
     }
+    const directoryAfter = lstatSync(directory, { bigint: true });
+    if (directoryBefore.dev !== directoryAfter.dev || directoryBefore.ino !== directoryAfter.ino
+      || directoryBefore.mode !== directoryAfter.mode || directoryBefore.uid !== directoryAfter.uid
+      || directoryBefore.nlink !== directoryAfter.nlink || directoryBefore.mtimeNs !== directoryAfter.mtimeNs
+      || directoryBefore.ctimeNs !== directoryAfter.ctimeNs) {
+      fail(`generation directory ${relative || "."} changed during inventory`);
+    }
   }
-  visit(root, "", 0);
+  visit(root, "", 0, rootIdentity);
   entries.sort((left, right) => compareBytes(left.locator, right.locator));
   const rootPhysicalIdentity = Object.freeze({
     devDecimal: rootIdentity.devDecimal,
@@ -979,6 +1007,47 @@ function assertInventoryBodyV1(value, label = "build-generation inventory") {
     value.physicalInventoryHash !== hashCanonicalJsonV1({ ...common, rootPhysicalIdentity: value.rootPhysicalIdentity, entries: physicalEntries })
     || value.contentInventoryHash !== hashCanonicalJsonV1({ ...common, entries: contentEntries })
   ) fail(`${label} hashes are invalid`);
+}
+
+// A relation between a ledger-validated historical inventory and a freshly
+// observed current inventory is advisory evidence, never permission to run ordinary
+// retention or to rebind a historical completion to the current device.
+export function inspectOperatorArchiveInventoryRelationV1(recorded, observed) {
+  const refuse = () => fail("recorded/current archive inventories are not the same tree apart from device", "BUILD_GENERATION_OPERATOR_INVENTORY_REFUSED");
+  try {
+    assertInventoryBodyV1(recorded, "historical archive inventory");
+    assertInventoryBodyV1(observed, "current archive inventory");
+    const recordedDevice = recorded.rootPhysicalIdentity.devDecimal;
+    const observedDevice = observed.rootPhysicalIdentity.devDecimal;
+    if (recorded.entries.some((entry) => entry.devDecimal !== recordedDevice)
+      || observed.entries.some((entry) => entry.devDecimal !== observedDevice)) refuse();
+    const withoutDevice = (value) => ({
+      schema: value.schema,
+      rootPhysicalIdentity: {
+        inoDecimal: value.rootPhysicalIdentity.inoDecimal,
+        mode: value.rootPhysicalIdentity.mode,
+        linkCount: value.rootPhysicalIdentity.linkCount,
+      },
+      entryCount: value.entryCount,
+      regularFileByteCount: value.regularFileByteCount,
+      entries: value.entries.map(({ devDecimal: ignored, ...entry }) => entry),
+      contentInventoryHash: value.contentInventoryHash,
+    });
+    if (canonicalJsonV1(withoutDevice(recorded)) !== canonicalJsonV1(withoutDevice(observed))) refuse();
+    const kind = recordedDevice === observedDevice ? "same-device" : "uniform-device-only-drift";
+    if ((kind === "same-device") !== (recorded.physicalInventoryHash === observed.physicalInventoryHash)) refuse();
+    return Object.freeze({
+      schema: "setfarm.platform-build-generation-operator-inventory-relation.v1",
+      kind,
+      recordedDevice,
+      observedDevice,
+      entryCount: recorded.entryCount,
+      regularFileByteCount: recorded.regularFileByteCount,
+      contentInventoryHash: recorded.contentInventoryHash,
+    });
+  } catch {
+    refuse();
+  }
 }
 
 function pairOf(record, kind) {
@@ -1137,6 +1206,8 @@ function scanRotationLedgerFromRoots(roots, options = {}) {
     active.push(Object.freeze({ ordinal, intent, completion, disposition: disposition ?? null }));
   }
   for (const ordinal of dispositionByOrdinal.keys()) if (!completionByOrdinal.has(ordinal)) fail("disposition lacks completion");
+  const operatorArchiveParentBefore = options.operatorArchiveObservation === true
+    ? lstatSync(roots.archive, { bigint: true }) : null;
   const archives = readdirSync(roots.archive).sort(compareBytes);
   for (const name of archives) {
     const match = ARCHIVE_NAME.exec(name);
@@ -1145,6 +1216,7 @@ function scanRotationLedgerFromRoots(roots, options = {}) {
     const danglingDestination = danglingIntent?.destinationLocator === `${ARCHIVE_DIRECTORY}/${name}`;
     if ((!generation && !danglingDestination) || generation?.disposition) fail(`unindexed or disposed archive ${name}`);
   }
+  const operatorObservations = [];
   for (const generation of active) {
     const archivePath = path.join(roots.root, generation.completion.archiveLocator);
     const present = optionalLstat(archivePath);
@@ -1153,18 +1225,79 @@ function scanRotationLedgerFromRoots(roots, options = {}) {
       && canonicalJsonV1(pairOf(generation.completion, "completion")) === canonicalJsonV1(options.allowAbsentCompletionPair);
     if ((present && generation.disposition) || (!present && !generation.disposition && !authorizedTransientAbsence)) fail(`archive/disposition mismatch at ordinal ${generation.ordinal}`);
     if (present && !generation.disposition) {
-      const identity = directoryIdentity(archivePath, roots.device);
-      if (!sameDirectoryObject(identity, generation.completion.archiveIdentity)) fail(`active archive identity mismatch at ordinal ${generation.ordinal}`);
-      const inventory = inventoryBuildGenerationV1(archivePath);
-      if (canonicalJsonV1(inventory) !== canonicalJsonV1(generation.completion.inventory)) fail(`active archive inventory mismatch at ordinal ${generation.ordinal}`);
+      if (options.operatorArchiveObservation === true) {
+        const parentBefore = directoryIdentity(roots.archive, roots.device);
+        const identityBefore = directoryIdentity(archivePath, roots.device);
+        const first = inventoryBuildGenerationV1(archivePath);
+        const second = inventoryBuildGenerationV1(archivePath);
+        const final = inventoryBuildGenerationV1(archivePath);
+        if (canonicalJsonV1(first) !== canonicalJsonV1(second)
+          || canonicalJsonV1(second) !== canonicalJsonV1(final)) fail(`unstable operator archive observation at ordinal ${generation.ordinal}`);
+        const identityAfter = directoryIdentity(archivePath, roots.device);
+        const parentAfter = directoryIdentity(roots.archive, roots.device);
+        if (!sameDirectoryIdentity(parentBefore, parentAfter)
+          || !sameDirectoryIdentity(identityBefore, identityAfter)
+          || identityBefore.realpath !== generation.completion.archiveIdentity.realpath
+          || canonicalJsonV1(first.rootPhysicalIdentity) !== canonicalJsonV1({
+            devDecimal: identityBefore.devDecimal,
+            inoDecimal: identityBefore.inoDecimal,
+            mode: identityBefore.mode,
+            linkCount: identityBefore.linkCount,
+          })) fail(`unstable operator archive observation at ordinal ${generation.ordinal}`);
+        const relation = inspectOperatorArchiveInventoryRelationV1(generation.completion.inventory, first);
+        operatorObservations.push(Object.freeze({
+          ordinal: generation.ordinal,
+          buildId: generation.completion.buildId,
+          completion: pairOf(generation.completion, "completion"),
+          archiveLocator: generation.completion.archiveLocator,
+          observedRootIdentity: identityBefore,
+          observedPhysicalInventoryHash: first.physicalInventoryHash,
+          relation,
+        }));
+      } else {
+        const identity = directoryIdentity(archivePath, roots.device);
+        if (!sameDirectoryObject(identity, generation.completion.archiveIdentity)) fail(`active archive identity mismatch at ordinal ${generation.ordinal}`);
+        const inventory = inventoryBuildGenerationV1(archivePath);
+        if (canonicalJsonV1(inventory) !== canonicalJsonV1(generation.completion.inventory)) fail(`active archive inventory mismatch at ordinal ${generation.ordinal}`);
+      }
     }
     if (generation.disposition && options.deferDisposedClosure !== true) resolveDisposedGenerationClosureV1(roots, generation);
+  }
+  if (options.operatorArchiveObservation === true) {
+    const archivesAfter = readdirSync(roots.archive).sort(compareBytes);
+    const operatorArchiveParentAfter = lstatSync(roots.archive, { bigint: true });
+    if (canonicalJsonV1(archives) !== canonicalJsonV1(archivesAfter)
+      || operatorArchiveParentBefore.dev !== operatorArchiveParentAfter.dev
+      || operatorArchiveParentBefore.ino !== operatorArchiveParentAfter.ino
+      || operatorArchiveParentBefore.mode !== operatorArchiveParentAfter.mode
+      || operatorArchiveParentBefore.uid !== operatorArchiveParentAfter.uid
+      || operatorArchiveParentBefore.nlink !== operatorArchiveParentAfter.nlink
+      || operatorArchiveParentBefore.mtimeNs !== operatorArchiveParentAfter.mtimeNs
+      || operatorArchiveParentBefore.ctimeNs !== operatorArchiveParentAfter.ctimeNs) {
+      fail("archive directory changed during operator observation");
+    }
   }
   return Object.freeze({
     schema: "setfarm.platform-build-generation-rotation-ledger-inspection.v1",
     completionTip: predecessor,
     danglingIntent,
     generations: Object.freeze(active),
+    ...(options.operatorArchiveObservation === true ? { operatorObservations: Object.freeze(operatorObservations) } : {}),
+  });
+}
+
+// Read-only evidence. This path deliberately does not create an operation,
+// disposition, or writer exemption, and ordinary `inspect` still uses the
+// strict live-device comparison above.
+function inspectBuildGenerationOperatorArchivesV1() {
+  const roots = readAuthorityRootsV1(repositoryRootV1());
+  const inspection = scanRotationLedgerFromRoots(roots, { operatorArchiveObservation: true });
+  if (inspection.danglingIntent) fail("operator archive inspection has a dangling rotation intent");
+  return Object.freeze({
+    schema: "setfarm.platform-build-generation-operator-archive-inspection.v1",
+    authority: false,
+    completionTip: inspection.completionTip,
+    active: inspection.operatorObservations,
   });
 }
 
@@ -5007,17 +5140,21 @@ function assertRotationControllerSource(value) {
 
 function selectedCommand() {
   const args = process.argv.slice(2);
-  if (args.length === 1 && ["inspect", "prepare"].includes(args[0])) return Object.freeze({ command: args[0] });
+  if (args.length === 1 && ["inspect", "inspect-operator-archives", "prepare"].includes(args[0])) return Object.freeze({ command: args[0] });
   if (args.length === 6 && args[0] === "resume" && args[1] === "--operation-ref" && args[3] === "--operation-hash" && args[5] === "--json") {
     return Object.freeze({ command: "resume", operationRef: args[2], operationHash: args[4] });
   }
-  fail("expected inspect, prepare, or resume --operation-ref <ref> --operation-hash <hash> --json", "BUILD_GENERATION_RETENTION_USAGE");
+  fail("expected inspect, inspect-operator-archives, prepare, or resume --operation-ref <ref> --operation-hash <hash> --json", "BUILD_GENERATION_RETENTION_USAGE");
 }
 
 function main() {
   const selected = selectedCommand();
   if (selected.command === "inspect") {
     process.stdout.write(`${JSON.stringify(inspectBuildGenerationRetentionV1())}\n`);
+    return;
+  }
+  if (selected.command === "inspect-operator-archives") {
+    process.stdout.write(`${JSON.stringify(inspectBuildGenerationOperatorArchivesV1())}\n`);
     return;
   }
   if (selected.command === "prepare") {
