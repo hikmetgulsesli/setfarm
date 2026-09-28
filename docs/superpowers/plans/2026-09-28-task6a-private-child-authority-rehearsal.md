@@ -28,7 +28,9 @@ macOS `sudo -n`, disposable `/tmp` directory.
   `SETFARM_TEST_PG_ADMIN_URL` to an explicitly identified private PG17 cluster:
   `tests/execution-attempts/test-database.ts` otherwise defaults to host
   PostgreSQL `localhost:5432`. Build on a clean worktree before the normal
-  suite because some tests execute `dist/cli/cli.js`.
+  suite because some tests execute `dist/cli/cli.js`. The official Setfarm
+  build additionally requires clean `main` equal to `origin/main`; do not
+  bypass that branch guard. Run it after reviewed merge on clean main.
 
 ---
 
@@ -48,19 +50,21 @@ remain required.
 
 **Interfaces:** The test invokes the child through `sudo -n -u <uid>` with
 only protected credential-file path, PG host/port/database/user and one exact
-fixture path in its environment. The child emits a bounded JSON result with
+fixture path in its environment. Stage a hash-verified child copy in a
+traversable `/tmp` directory because the worktree is private. The child emits a bounded JSON result with
 UID, PG login and boolean read/write outcomes, never secret values.
 
-- [ ] **Step 1:** Add a skipped-by-default test requiring
-  `SETFARM_TASK6A_TEST_CHILD_AUTHORITY_FIXTURE=1`, exact private PG17 data
-  directory, loopback non-5432 endpoint, no ambient `SETFARM_PG_URL`, and
-  successful `sudo -n -u nobody/_www id -u` probes. Run focused test without
-  opt-in; expected `SKIP`, no fixture writes.
-- [ ] **Step 2:** Add child code that reads only the named protected PG pass
+- [x] **Step 1:** Add a skipped-by-default test requiring
+  `SETFARM_TASK6A_TEST_CHILD_AUTHORITY_FIXTURE=1`, no ambient
+  `SETFARM_PG_URL`, installed PG17 tools, and successful
+  `sudo -n -u nobody/_www id -u` probes. The test creates its own exact
+  disposable SCRAM/loopback-only cluster. Run focused test without opt-in;
+  expected `SKIP`, no fixture writes.
+- [x] **Step 2:** Add child code that reads only the named protected PG pass
   file and invokes `/opt/homebrew/opt/postgresql@17/bin/psql` with bounded
   timeout. Its output is fixed booleans and UID/login, not SQL error prose.
   Test malformed/missing credential path as a fixed refusal.
-- [ ] **Step 3:** Run focused tests; before any role transition, assert the
+- [x] **Step 3:** Run focused tests; before any role transition, assert the
   old child can make one rollback-only SQL write and create one file in its
   own exact fixture root. This is the RED capability witness.
 
@@ -74,13 +78,14 @@ preflight. The old role loses writer privileges; the successor role receives
 only SELECT on one exact benign table. The OS fixture root transitions from
 old UID to successor UID with identity-checked `chown`.
 
-- [ ] **Step 1:** Add test assertions for old-child successor credential-file
-  read denial and old-owned file write after transition; run focused test and
+- [x] **Step 1:** Add test assertions for old-child successor credential-file
+  read denial, new-path write denial and successor-owned file append denial
+  after transition; run focused test and
   observe expected failure until transition setup is present.
-- [ ] **Step 2:** Add exact scoped PostgreSQL GRANT/REVOKE and OS ownership
+- [x] **Step 2:** Add exact scoped PostgreSQL GRANT/REVOKE and OS ownership
   transition in the disposable fixture. Assert old child DML denied, successor
   child SELECT succeeds, successor DML/DDL denied, and no marker row remains.
-- [ ] **Step 3:** Add cleanup that revalidates exact temp root inode/path and
+- [x] **Step 3:** Add cleanup that revalidates exact temp root inode/path and
   owned database/role names before removal, stops only its private cluster if
   it created one, and preserves artifacts on uncertain identity. Re-run test.
 
@@ -90,16 +95,17 @@ old UID to successor UID with identity-checked `chown`.
 - Modify: this plan and the design only if review refines scope.
 - Update: root `logs/2026-09-27-task6a-writer-boundary-matrix.md` after proof.
 
-- [ ] **Step 1:** Run focused opted-in test against an exact isolated PG17
-  cluster, recording before/after role/database and temp-root census without
-  secrets. The retained cluster at `/tmp/setfarm-task6a-pg.zK3Q7K/data` is
-  stopped and this shell has no admin URL; do not guess its credential. Create
-  a new disposable SCRAM/loopback-only cluster if necessary. Verify the
-  connected server's `data_directory`, port and socket directory before any
-  database creation.
-- [ ] **Step 2:** Commit reviewed source/test changes, run `npm run build`
-  from the clean worktree, then run `npm test` with the private admin URL
-  explicitly set. Verify outputs and no live marker/credential change.
+- [ ] **Step 1:** Run focused opted-in test against the exact cluster it
+  creates, recording before/after role/database and temp-root census without
+  secrets. The retained older cluster at `/tmp/setfarm-task6a-pg.zK3Q7K/data`
+  is stopped and its credential is unavailable; do not guess or reuse it.
+  Verify the connected server's `data_directory`, port and socket directory
+  before any database creation.
+- [ ] **Step 2:** Commit reviewed source/test changes and run direct TypeScript
+  compilation plus focused tests on the branch. After merge, run official
+  `npm run build` on clean main, then `npm test` only with a separately
+  identified private admin URL pinned. Verify outputs and no live
+  marker/credential change.
 
 ### Observed baseline hazard, 2026-09-28
 

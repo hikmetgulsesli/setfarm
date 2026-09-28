@@ -10,10 +10,9 @@ real harmless child processes under distinct existing macOS UIDs and dedicated
 PG17 roles. It does not edit the ordinary spawner or launchd service and is
 not a live cutover or owner/admission receipt.
 
-The fixture uses an explicitly identified private PG17 cluster only: either
-the previously established one with its existing capability, or a new
-disposable SCRAM-authenticated, loopback-only cluster with a generated
-credential kept out of logs and Git. It creates one isolated test database
+The fixture creates its own uniquely named disposable PG17 cluster under
+`/tmp`, with SCRAM authentication, a generated credential kept out of logs
+and Git, and a loopback-only non-5432 port. It creates one isolated database
 and random scoped roles;
 it uses a unique `/tmp` root with exact inode/path/owner checks. A successor
 child receives only a path to an OS-restricted credential file, not a password
@@ -33,7 +32,9 @@ fixture before any live transition.
 
 - Require explicit test opt-in, exact `/tmp/setfarm-task6a-pg.*/data` identity,
   loopback non-5432 private cluster and `sudo -n` access to existing `nobody`
-  and `_www` UIDs. Refuse otherwise before creating roles/files.
+  and `_www` UIDs. Refuse otherwise before creating roles/files. Stage and
+  hash-verify the child script in a traversable temporary path; the repository
+  worktree is not traversable by those UIDs.
 - Prove a baseline old capability in rollback-only scope, then revoke it and
   prove denial in the real old child. No marker row remains.
 - Prove the successor child has only its scoped credential and cannot use the
