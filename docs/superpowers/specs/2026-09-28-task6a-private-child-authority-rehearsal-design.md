@@ -10,8 +10,11 @@ real harmless child processes under distinct existing macOS UIDs and dedicated
 PG17 roles. It does not edit the ordinary spawner or launchd service and is
 not a live cutover or owner/admission receipt.
 
-The fixture uses the previously established, explicitly named private PG17
-cluster only. It creates one isolated test database and random scoped roles;
+The fixture uses an explicitly identified private PG17 cluster only: either
+the previously established one with its existing capability, or a new
+disposable SCRAM-authenticated, loopback-only cluster with a generated
+credential kept out of logs and Git. It creates one isolated test database
+and random scoped roles;
 it uses a unique `/tmp` root with exact inode/path/owner checks. A successor
 child receives only a path to an OS-restricted credential file, not a password
 on argv or in test logs. It must prove effective UID/PG login, read a benign
