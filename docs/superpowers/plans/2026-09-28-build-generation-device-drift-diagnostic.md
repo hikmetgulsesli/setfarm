@@ -33,7 +33,7 @@ Production retention code is not modified by this slice.
 
 ## Task 1: Strict, non-authoritative classification
 
-- [ ] Add a test with two literal one-file inventories that differ only by
+- [x] Add a test with two literal one-file inventories that differ only by
   uniform decimal device `16777230` to `16777231`. It must require
   `{schema:"setfarm.build-generation-device-drift-diagnostic.v1",
   classification:"uniform-device-only-drift",authority:false,
@@ -56,7 +56,7 @@ Production retention code is not modified by this slice.
 
   Run: `node --test scripts/__tests__/build-generation-device-drift-diagnostic.test.js`
   Expected: module import failure until the classifier exists.
-- [ ] Implement `classifyBuildGenerationDeviceDriftV1(recorded, observed)`
+- [x] Implement `classifyBuildGenerationDeviceDriftV1(recorded, observed)`
   minimally and run the focused test GREEN. Use literal field-by-field
   validation; do not call the retention inspector or change its accepted
   inventory semantics.
@@ -73,7 +73,7 @@ Production retention code is not modified by this slice.
 
   Run: `node --test scripts/__tests__/build-generation-device-drift-diagnostic.test.js`
   Expected: one passing positive test.
-- [ ] Add table-driven negative cases for changed inode, mode, link count,
+- [x] Add table-driven negative cases for changed inode, mode, link count,
   kind, locator/order, count, size, SHA-256, content hash, mixed devices,
   malformed decimal and unchanged device. Observe each RED before adding
   the corresponding refusal; keep refusal output fixed and non-secret.
@@ -86,9 +86,9 @@ Production retention code is not modified by this slice.
     });
   }
   ```
-- [ ] Run focused tests, `npm run check:english`, `git diff --check`; commit
-  only after all pass. Obtain independent read-only exact-head review before
-  PR delivery.
+- [x] Run focused tests, `npm run check:english`, `git diff --check`.
+- [ ] Commit only after all pass. Obtain independent read-only exact-head
+  review before PR delivery.
 
 ## Task 2: Delivery boundary
 

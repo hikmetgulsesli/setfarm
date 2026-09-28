@@ -13,8 +13,9 @@ ledger lacks a historical volume UUID. The existing writer, retention and
 runtime guards must remain unchanged and fail closed.
 
 The first implementation slice is a pure, read-only classifier of a recorded
-inventory and a freshly observed inventory. It reports either exact equality,
-uniform device-only drift, or refusal with a fixed non-secret reason. It never
+inventory and a freshly observed inventory. It reports uniform device-only
+drift or refuses with a fixed non-secret reason; unchanged device values also
+refuse. It never
 returns build, retention, rebind or deletion authority. A caller must still
 authenticate the original ledger and obtain two stable, bounded no-follow
 current observations; this slice does not do so and must not be used to accept
@@ -23,8 +24,8 @@ the live archives.
 ## Contract
 
 `classifyBuildGenerationDeviceDriftV1(recorded, observed)` accepts two strict
-`setfarm.platform-build-generation-inventory.v1` objects from the existing
-inventory producer. It checks the exact root physical identity, entry count,
+`setfarm.platform-build-generation-inventory.v1`-shaped objects. It checks the
+exact root physical identity, entry count,
 regular-file byte count, sorted canonical entry list, kind, inode, mode,
 link count, byte length, SHA-256, and content-inventory hash. Every device
 field, including the root, must be one old value in the recorded inventory
@@ -34,7 +35,8 @@ unchanged device refuses classification. The output is immutable and always
 contains `authority:false`; it includes only the classification, device
 numbers and counts, never paths, bytes or credentials.
 
-The comparator does not recompute or authenticate the historical ledger hash.
+The comparator checks digest field syntax and cross-inventory relationships,
+but does not recompute inventory hashes or authenticate the historical ledger.
 Its two arguments are data, not authority. Tests use literal inventories to
 prove both the one permitted relationship and all important rejection axes.
 
