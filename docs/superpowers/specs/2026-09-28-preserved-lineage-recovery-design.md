@@ -1,5 +1,9 @@
 # Preserved-lineage recovery after device drift
 
+> Superseded on 2026-09-28 by the owner's explicit decision to dispose of the
+> old archives. See `2026-09-28-operator-archive-abandonment-design.md`.
+> This document remains historical context, not rollout authority.
+
 ## Decision and evidence
 
 The existing selected checkout cannot perform an ordinary in-place build:

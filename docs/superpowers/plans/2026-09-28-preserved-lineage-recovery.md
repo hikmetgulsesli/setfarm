@@ -1,5 +1,9 @@
 # Preserved-lineage recovery implementation plan
 
+> Superseded on 2026-09-28 by the owner's explicit archive-disposal decision.
+> See `2026-09-28-operator-archive-abandonment.md`. No live effect from this
+> historical plan was executed.
+
 > Root is the only writer. Other agents may inspect and review read-only.
 
 **Goal:** Restore Setfarm through a separately built, guarded deployment

@@ -898,6 +898,59 @@ function prepareRetentionOperation(root) {
   });
 }
 
+function inspectOperatorArchives(root) {
+  return spawnSync(process.execPath, ["scripts/build-generation-retention.mjs", "inspect-operator-archives"], {
+    cwd: root,
+    encoding: "utf8",
+    env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+  });
+}
+
+function rebindFixtureCompletionChainToHistoricalDevice(root, historicalDevice) {
+  const ledger = join(root, ".setfarm/build-generation-rotation-ledger-v1");
+  const sign = (value, kind) => {
+    delete value[`${kind}Ref`];
+    delete value[`${kind}Hash`];
+    const digest = hashCanonicalFixture(value);
+    value[`${kind}Ref`] = `setfarm://internal-production/build-generation-rotation-${kind}/${String(value.ordinal).padStart(20, "0")}/${value.buildId}/sha256/${digest}`;
+    value[`${kind}Hash`] = digest;
+  };
+  const intentNames = readdirSync(join(ledger, "intents")).sort();
+  const completionNames = readdirSync(join(ledger, "completions")).sort();
+  assert.deepEqual(intentNames, completionNames);
+  let predecessor = null;
+  for (const name of intentNames) {
+    const intentPath = join(ledger, "intents", name);
+    const completionPath = join(ledger, "completions", name);
+    const intent = JSON.parse(readFileSync(intentPath, "utf8"));
+    const completion = JSON.parse(readFileSync(completionPath, "utf8"));
+    const historicalInventory = structuredClone(intent.inventory);
+    historicalInventory.rootPhysicalIdentity.devDecimal = historicalDevice;
+    for (const entry of historicalInventory.entries) entry.devDecimal = historicalDevice;
+    const common = {
+      schema: historicalInventory.schema,
+      entryCount: historicalInventory.entryCount,
+      regularFileByteCount: historicalInventory.regularFileByteCount,
+    };
+    historicalInventory.physicalInventoryHash = hashCanonicalFixture({
+      ...common,
+      rootPhysicalIdentity: historicalInventory.rootPhysicalIdentity,
+      entries: historicalInventory.entries.map(({ sha256: ignored, ...entry }) => entry),
+    });
+    intent.predecessorCompletion = predecessor;
+    intent.inventory = historicalInventory;
+    sign(intent, "intent");
+    completion.predecessorCompletion = predecessor;
+    completion.intent = { intentRef: intent.intentRef, intentHash: intent.intentHash };
+    completion.inventory = historicalInventory;
+    completion.archiveIdentity.devDecimal = historicalDevice;
+    sign(completion, "completion");
+    writeFileSync(intentPath, `${canonicalFixtureJson(intent)}\n`);
+    writeFileSync(completionPath, `${canonicalFixtureJson(completion)}\n`);
+    predecessor = { completionRef: completion.completionRef, completionHash: completion.completionHash };
+  }
+}
+
 function resumeRetentionOperation(root, pair) {
   return spawnSync(process.execPath, [
     "scripts/build-generation-retention.mjs", "resume", "--operation-ref", pair.operationRef,
@@ -1321,6 +1374,7 @@ describe("OA18 build-generation retention authority", () => {
       "holdSelectedSetfarmDeploymentBuildV1",
       "inspectBuildGenerationRetentionV1",
       "inspectBuildGenerationRotationLedgerV1",
+      "inspectOperatorArchiveInventoryRelationV1",
       "observeCurrentFinalizedSetfarmSourceBuildV1",
       "observeSelectedSetfarmDeploymentBuildV1",
       "planNoReplacePublisherRecoveryV1",
@@ -2259,6 +2313,106 @@ describe("OA18 build-generation retention authority", () => {
         assert.deepEqual(expected.sourceBody, operation.operationCore.retainedCurrentBuild);
       }
       assertNoGenerationDisposition(root, 8);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("inspects an archive for operator abandonment without changing ordinary retention", () => {
+    const fixture = prepareGenerationBoundFixture(1, { advance: false });
+    try {
+      const result = inspectOperatorArchives(fixture.root);
+      assert.equal(result.status, 0, result.stderr);
+      const observation = JSON.parse(result.stdout);
+      assert.equal(observation.schema, "setfarm.platform-build-generation-operator-archive-inspection.v1");
+      assert.equal(observation.authority, false);
+      assert.equal(observation.active.length, 1);
+      assert.equal(observation.active[0].ordinal, 1);
+      assert.equal(observation.active[0].relation.kind, "same-device");
+      assert.equal(existsSync(join(fixture.root, ".setfarm/build-generation-quarantine-v1")), false);
+      assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 0);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("observes historical device drift but leaves strict ordinary inspect blocked", () => {
+    const fixture = prepareGenerationBoundFixture(1, { advance: false });
+    try {
+      const completionName = readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions"))[0];
+      const completion = JSON.parse(readFileSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions", completionName), "utf8"));
+      const historicalDevice = (BigInt(completion.inventory.rootPhysicalIdentity.devDecimal) + 1n).toString(10);
+      rebindFixtureCompletionChainToHistoricalDevice(fixture.root, historicalDevice);
+      const result = inspectOperatorArchives(fixture.root);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).active[0].relation.kind, "uniform-device-only-drift");
+      const ordinary = spawnSync(process.execPath, ["scripts/build-generation-retention.mjs", "inspect"], {
+        cwd: fixture.root, encoding: "utf8", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+      });
+      assert.notEqual(ordinary.status, 0);
+      assert.match(ordinary.stderr, /active archive identity mismatch/);
+      fixtureFile(fixture.root, `.setfarm/build-generations-v1/${fixtureBuildId(1)}.dist/artifact.txt`, "changed\n");
+      const changed = inspectOperatorArchives(fixture.root);
+      assert.notEqual(changed.status, 0);
+      assert.match(changed.stderr, /BUILD_GENERATION_OPERATOR_INVENTORY_REFUSED/);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("binds all eight historical drifted completions and rejects an unindexed ninth archive", () => {
+    const fixture = prepareGenerationBoundFixture(8, { advance: false });
+    try {
+      const completionName = readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions"))[0];
+      const completion = JSON.parse(readFileSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions", completionName), "utf8"));
+      rebindFixtureCompletionChainToHistoricalDevice(fixture.root,
+        (BigInt(completion.inventory.rootPhysicalIdentity.devDecimal) + 1n).toString(10));
+      const result = inspectOperatorArchives(fixture.root);
+      assert.equal(result.status, 0, result.stderr);
+      const observation = JSON.parse(result.stdout);
+      assert.equal(observation.authority, false);
+      assert.deepEqual(observation.active.map((entry) => entry.ordinal), [1, 2, 3, 4, 5, 6, 7, 8]);
+      assert.equal(observation.active.every((entry) => entry.relation.kind === "uniform-device-only-drift"), true);
+      assert.equal(new Set(observation.active.map((entry) => entry.completion.completionHash)).size, 8);
+      fixtureFile(fixture.root, `.setfarm/build-generations-v1/${fixtureBuildId(9)}.dist/unindexed`, "unindexed\n");
+      const crossed = inspectOperatorArchives(fixture.root);
+      assert.notEqual(crossed.status, 0);
+      assert.match(crossed.stderr, /unindexed or disposed archive/);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an inode replacement between inventory lstat and stable file read", async () => {
+    const root = createFixture();
+    try {
+      const modulePath = join(root, "scripts/build-generation-retention.mjs");
+      const source = readFileSync(modulePath, "utf8");
+      const boundary = "        const observed = readStableRegular(target, { device, linkCounts: [1], maxBytes: MAX_FILE_BYTES_V1 });";
+      assert.equal(source.includes(boundary), true);
+      writeFileSync(modulePath, source.replace(boundary, `        const replacement = target + ".replacement";
+        writeFileSync(replacement, readFileSync(target));
+        renameSync(replacement, target);
+${boundary}`));
+      const { inventoryBuildGenerationV1 } = await importFixtureInternals(root, ["inventoryBuildGenerationV1"]);
+      assert.throws(() => inventoryBuildGenerationV1(realpathSync(join(root, "dist"))), /changed between inventory lstat and file read/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a root-directory replacement between identity and inventory traversal", async () => {
+    const root = createFixture();
+    try {
+      const modulePath = join(root, "scripts/build-generation-retention.mjs");
+      const source = readFileSync(modulePath, "utf8");
+      const boundary = "  const rootIdentity = directoryIdentity(root);";
+      assert.equal(source.includes(boundary), true);
+      writeFileSync(modulePath, source.replace(boundary, `${boundary}
+  renameSync(root, root + ".old");
+  mkdirSync(root, { mode: 0o755 });`));
+      const { inventoryBuildGenerationV1 } = await importFixtureInternals(root, ["inventoryBuildGenerationV1"]);
+      assert.throws(() => inventoryBuildGenerationV1(realpathSync(join(root, "dist"))), /changed before inventory traversal/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
