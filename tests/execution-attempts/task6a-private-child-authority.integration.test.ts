@@ -44,24 +44,32 @@ async function freeLoopbackPort(): Promise<number> {
 }
 
 type ChildResult = Readonly<{
-  uid: number; login: string; effective: string;
+  uid: number; euid: number; login: string; effective: string;
   read: "ok" | "denied" | "other";
   write: "ok" | "denied" | "other";
   ddl: "ok" | "denied" | "other";
+  tempDdl: "ok" | "denied" | "other";
+  otherDatabase: "ok" | "denied" | "other";
   file: "ok" | "denied" | "other";
   otherCredential: "denied" | "readable" | "other";
   protectedFileWrite: "ok" | "denied" | "other";
 }>;
 
 test("private Task6A child refuses malformed authority without fixture effects", () => {
-  const result = spawnSync(process.execPath, [childSource, "5432", "bad", "bad", "bad", "bad", "bad"], {
-    encoding: "utf8", timeout: 5000, maxBuffer: 1024,
-    env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
-  });
-  assert.equal(result.error, undefined);
-  assert.equal(result.status, 64);
-  assert.equal(result.stdout, "");
-  assert.equal(result.stderr, "");
+  const fixturePath = "/private/tmp/setfarm-task6a-child-authority.ABC";
+  for (const port of ["5432", "05432", "65536", "00001", "bad"]) {
+    const result = spawnSync(process.execPath, [childSource, port, "task6a_child_abcdefabcdef",
+      "task6a_old_abcdefabcdef", `${fixturePath}/writer/probe.txt`,
+      `${fixturePath}/next.pgpass`, `${fixturePath}/writer/protected.txt`], {
+      encoding: "utf8", timeout: 5000, maxBuffer: 1024,
+      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
+        PGPASSFILE: `${fixturePath}/old.pgpass` },
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 64);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "");
+  }
 });
 
 test("private Task6A child jointly proves OS and PostgreSQL authority transition", {
@@ -81,24 +89,39 @@ test("private Task6A child jointly proves OS and PostgreSQL authority transition
     "-n", "-u", "_www", "/usr/bin/id", "-u"], { encoding: "utf8", timeout: 10_000,
     maxBuffer: 1024, env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
   assert.equal(nestedSudo.error, undefined);
-  assert.notEqual(nestedSudo.status, 0, "old UID must not sudo into successor UID");
+  assert.equal(nestedSudo.signal, null);
+  assert.equal(nestedSudo.status, 1, "old UID must receive sudo refusal");
+  assert.equal(nestedSudo.stdout, "");
   for (const binary of ["initdb", "pg_ctl", "psql"]) {
     assert.equal(fs.statSync(path.join(pgBin, binary)).isFile(), true);
   }
   const parent = fs.realpathSync("/tmp");
+  const sourceBytes = fs.readFileSync(childSource);
   const home = fs.mkdtempSync(path.join(parent, "setfarm-task6a-child-authority."));
-  fs.chmodSync(home, 0o711);
   const homeStat = fs.lstatSync(home, { bigint: true });
   const data = path.join(home, "data"), writer = path.join(home, "writer");
   const stagedChild = path.join(home, "child.mjs");
   const adminPass = path.join(home, "admin.pass");
   const oldPass = path.join(home, "old.pgpass"), nextPass = path.join(home, "next.pgpass");
-  const sourceBytes = fs.readFileSync(childSource);
-  fs.writeFileSync(stagedChild, sourceBytes, { mode: 0o644, flag: "wx" });
-  assert.equal(hash(fs.readFileSync(stagedChild)), hash(sourceBytes));
-  const stagedStat = fs.lstatSync(stagedChild, { bigint: true });
-  fs.mkdirSync(writer, { mode: 0o700 });
-  const writerStat = fs.lstatSync(writer, { bigint: true });
+  let stagedStat: fs.BigIntStats;
+  let writerStat: fs.BigIntStats;
+  try {
+    fs.chmodSync(home, 0o711);
+    fs.writeFileSync(stagedChild, sourceBytes, { mode: 0o644, flag: "wx" });
+    assert.equal(hash(fs.readFileSync(stagedChild)), hash(sourceBytes));
+    stagedStat = fs.lstatSync(stagedChild, { bigint: true });
+    fs.mkdirSync(writer, { mode: 0o700 });
+    writerStat = fs.lstatSync(writer, { bigint: true });
+  } catch (error) {
+    const current = fs.lstatSync(home, { bigint: true });
+    assert.equal(current.dev, homeStat.dev);
+    assert.equal(current.ino, homeStat.ino);
+    assert.equal(current.uid, BigInt(runnerUid));
+    assert.equal(current.isDirectory(), true);
+    assert.equal(current.isSymbolicLink(), false);
+    fs.rmSync(home, { recursive: true, force: false });
+    throw error;
+  }
   const exactHome = (): void => {
     assert.equal(path.dirname(home), parent);
     assert.match(path.basename(home), /^setfarm-task6a-child-authority\.[A-Za-z0-9]+$/);
@@ -131,7 +154,7 @@ test("private Task6A child jointly proves OS and PostgreSQL authority transition
     assert.equal(Number(stat.mode & 0o777n), 0o644);
     assert.equal(hash(fs.readFileSync(stagedChild)), hash(sourceBytes));
   };
-  let startAttempted = false;
+  let startAttempted = false, startConfirmed = false;
   let admin: postgres.Sql | undefined;
   let fixture: postgres.Sql | undefined;
   let databaseCreated = false, oldCreated = false, nextCreated = false;
@@ -149,25 +172,36 @@ test("private Task6A child jointly proves OS and PostgreSQL authority transition
       "--auth-host=scram-sha-256", `--pwfile=${adminPass}`, "--no-instructions"], 60_000);
     startAttempted = true;
     command(path.join(pgBin, "pg_ctl"), ["-D", data, "-w", "-l", path.join(home, "server.log"), "-o",
-      `-h 127.0.0.1 -p ${port} -k ${home}`, "start"], 30_000);
+      `-h 127.0.0.1 -p ${port} -k ${home} -c log_min_error_statement=panic -c log_statement=none`, "start"], 30_000);
+    startConfirmed = true;
     const adminUrl = new URL(`postgresql://127.0.0.1:${port}/postgres`);
     adminUrl.username = command("/usr/bin/id", ["-un"]);
     adminUrl.password = adminPassword;
     admin = postgres(adminUrl.toString(), { max: 1, connect_timeout: 5 });
-    const identity = await admin<Array<{ data_directory: string; port: string; sockets: string; version: number }>>`
+    const identity = await admin<Array<{ data_directory: string; port: string; sockets: string;
+      version: number; error_log: string; statement_log: string }>>`
       SELECT current_setting('data_directory') AS data_directory,
         current_setting('port') AS port,
         current_setting('unix_socket_directories') AS sockets,
-        current_setting('server_version_num')::integer AS version`;
+        current_setting('server_version_num')::integer AS version,
+        current_setting('log_min_error_statement') AS error_log,
+        current_setting('log_statement') AS statement_log`;
     assert.deepEqual(identity[0], { data_directory: data, port: String(port), sockets: home,
-      version: identity[0]?.version });
+      version: identity[0]?.version, error_log: "panic", statement_log: "none" });
     assert.ok(identity[0]!.version >= 170000 && identity[0]!.version < 180000);
     const preExisting = await admin<Array<{ count: string }>>`
       SELECT count(*)::text AS count FROM pg_catalog.pg_database WHERE datname = ${database}`;
     assert.equal(preExisting[0]?.count, "0");
     await admin.unsafe(`CREATE DATABASE "${database}"`); databaseCreated = true;
-    await admin.unsafe(`CREATE ROLE "${oldRole}" LOGIN PASSWORD '${oldPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`); oldCreated = true;
-    await admin.unsafe(`CREATE ROLE "${nextRole}" LOGIN PASSWORD '${nextPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`); nextCreated = true;
+    await admin.unsafe(`REVOKE ALL PRIVILEGES ON DATABASE "${database}", postgres, template1 FROM PUBLIC`);
+    try {
+      await admin.unsafe(`CREATE ROLE "${oldRole}" LOGIN PASSWORD '${oldPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
+      oldCreated = true;
+      await admin.unsafe(`CREATE ROLE "${nextRole}" LOGIN PASSWORD '${nextPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
+      nextCreated = true;
+    } catch {
+      throw new Error("TASK6A_PRIVATE_ROLE_CREATE_FAILED");
+    }
     await admin.unsafe(`GRANT CONNECT ON DATABASE "${database}" TO "${oldRole}", "${nextRole}"`);
     const fixtureUrl = new URL(adminUrl);
     fixtureUrl.pathname = `/${database}`;
@@ -177,8 +211,10 @@ test("private Task6A child jointly proves OS and PostgreSQL authority transition
     await fixture.unsafe(`GRANT USAGE ON SCHEMA public TO "${oldRole}", "${nextRole}"`);
     await fixture.unsafe(`GRANT INSERT ON public.probe TO "${oldRole}"`);
     await fixture.unsafe(`GRANT SELECT ON public.probe TO "${nextRole}"`);
-    fs.writeFileSync(oldPass, `127.0.0.1:${port}:${database}:${oldRole}:${oldPassword}\n`, { mode: 0o600, flag: "wx" });
-    fs.writeFileSync(nextPass, `127.0.0.1:${port}:${database}:${nextRole}:${nextPassword}\n`, { mode: 0o600, flag: "wx" });
+    fs.writeFileSync(oldPass, `127.0.0.1:${port}:${database}:${oldRole}:${oldPassword}\n`
+      + `127.0.0.1:${port}:postgres:${oldRole}:${oldPassword}\n`, { mode: 0o600, flag: "wx" });
+    fs.writeFileSync(nextPass, `127.0.0.1:${port}:${database}:${nextRole}:${nextPassword}\n`
+      + `127.0.0.1:${port}:postgres:${nextRole}:${nextPassword}\n`, { mode: 0o600, flag: "wx" });
     sudo(["/usr/sbin/chown", "nobody:nobody", oldPass]);
     sudo(["/usr/sbin/chown", "_www:_www", nextPass]);
     const oldPassStat = fs.lstatSync(oldPass, { bigint: true });
@@ -214,24 +250,29 @@ test("private Task6A child jointly proves OS and PostgreSQL authority transition
     sudo(["/usr/sbin/chown", "nobody:nobody", writer]);
     exactWriter(oldUid);
     const before = invoke("nobody", oldRole, oldPass, nextPass, "old-before.txt", "old-before.txt");
-    assert.deepEqual({ uid: before.uid, login: before.login, effective: before.effective,
-      write: before.write, file: before.file, otherCredential: before.otherCredential,
+    assert.deepEqual({ uid: before.uid, euid: before.euid, login: before.login, effective: before.effective,
+      write: before.write, ddl: before.ddl, tempDdl: before.tempDdl,
+      otherDatabase: before.otherDatabase, file: before.file, otherCredential: before.otherCredential,
       protectedFileWrite: before.protectedFileWrite },
-    { uid: oldUid, login: oldRole, effective: oldRole, write: "ok", file: "ok",
+    { uid: oldUid, euid: oldUid, login: oldRole, effective: oldRole, write: "ok",
+      ddl: "denied", tempDdl: "denied", otherDatabase: "denied", file: "ok",
       otherCredential: "denied", protectedFileWrite: "ok" });
     await fixture.unsafe(`REVOKE INSERT ON public.probe FROM "${oldRole}"`);
     exactWriter(oldUid);
     sudo(["/usr/sbin/chown", "_www:_www", writer]);
     exactWriter(nextUid);
     const successor = invoke("_www", nextRole, nextPass, oldPass, "next.txt", "old-before.txt");
-    assert.deepEqual(successor, { uid: nextUid, login: nextRole, effective: nextRole,
-      read: "ok", write: "denied", ddl: "denied", file: "ok", otherCredential: "denied",
+    assert.deepEqual(successor, { uid: nextUid, euid: nextUid, login: nextRole, effective: nextRole,
+      read: "ok", write: "denied", ddl: "denied", tempDdl: "denied",
+      otherDatabase: "denied", file: "ok", otherCredential: "denied",
       protectedFileWrite: "denied" });
     const after = invoke("nobody", oldRole, oldPass, nextPass, "old-after.txt", "next.txt");
-    assert.deepEqual({ uid: after.uid, login: after.login, effective: after.effective,
-      write: after.write, file: after.file, otherCredential: after.otherCredential,
+    assert.deepEqual({ uid: after.uid, euid: after.euid, login: after.login, effective: after.effective,
+      write: after.write, tempDdl: after.tempDdl, otherDatabase: after.otherDatabase,
+      file: after.file, otherCredential: after.otherCredential,
       protectedFileWrite: after.protectedFileWrite },
-    { uid: oldUid, login: oldRole, effective: oldRole, write: "denied", file: "denied",
+    { uid: oldUid, euid: oldUid, login: oldRole, effective: oldRole, write: "denied",
+      tempDdl: "denied", otherDatabase: "denied", file: "denied",
       otherCredential: "denied", protectedFileWrite: "denied" });
     const rows = await fixture<Array<{ count: string }>>`SELECT count(*)::text AS count FROM public.probe`;
     assert.equal(rows[0]?.count, "1");
@@ -257,6 +298,7 @@ test("private Task6A child jointly proves OS and PostgreSQL authority transition
         else assert.equal(status.status, 3, "TASK6A_CLUSTER_STATUS_UNCERTAIN");
       }
     } catch { cleanup.push("cluster_stop"); }
+    if (startAttempted && !startConfirmed) cleanup.push("start_uncertain");
     if (cleanup.length === 0) {
       try {
         exactHome();

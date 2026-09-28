@@ -30,7 +30,7 @@ fixture before any live transition.
 
 ## Fail-closed tests
 
-- Require explicit test opt-in, exact `/tmp/setfarm-task6a-pg.*/data` identity,
+- Require explicit test opt-in, exact `/private/tmp/setfarm-task6a-child-authority.*/data` identity,
   loopback non-5432 private cluster and `sudo -n` access to existing `nobody`
   and `_www` UIDs. Refuse otherwise before creating roles/files. Stage and
   hash-verify the child script in a traversable temporary path; the repository
