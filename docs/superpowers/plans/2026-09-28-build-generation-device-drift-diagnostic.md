@@ -6,8 +6,9 @@
 **Goal:** Add a pure device-drift classifier that cannot authorize retention
 or live deployment.
 
-**Architecture:** A standalone ESM module compares two already-produced
-inventory bodies and returns a frozen, non-authoritative classification.
+**Architecture:** A pure ESM module compares two already-produced inventory
+bodies and returns a frozen, non-authoritative classification. It imports the
+existing canonical hash function so the inventory hash contract stays exact.
 Production retention code is not modified by this slice.
 
 **Tech Stack:** Node.js ESM, `node:test`.
@@ -64,7 +65,8 @@ Production retention code is not modified by this slice.
   ```js
   export function classifyBuildGenerationDeviceDriftV1(recorded, observed) {
     // Validate exact inventory keys, canonical decimal/string/hash members,
-    // root identity, counts, and strict entry ordering before comparison.
+    // root identity, counts, strict array shape and ordering, and recomputed
+    // canonical inventory hashes before comparison.
     // Compare all fields except devDecimal and physicalInventoryHash.
     // Require one consistent old and one consistent new devDecimal throughout.
     // Return a frozen result with authority: false, or throw a fixed error.

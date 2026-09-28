@@ -35,8 +35,9 @@ unchanged device refuses classification. The output is immutable and always
 contains `authority:false`; it includes only the classification, device
 numbers and counts, never paths, bytes or credentials.
 
-The comparator checks digest field syntax and cross-inventory relationships,
-but does not recompute inventory hashes or authenticate the historical ledger.
+The comparator recomputes both canonical inventory hashes and checks their
+cross-inventory relationships, but does not authenticate the historical ledger
+or prove that current files match the supplied digests.
 Its two arguments are data, not authority. Tests use literal inventories to
 prove both the one permitted relationship and all important rejection axes.
 

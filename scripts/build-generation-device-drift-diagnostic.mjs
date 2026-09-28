@@ -1,3 +1,5 @@
+import { hashCanonicalJsonV1 } from "./build-generation-retention.mjs";
+
 const SCHEMA = "setfarm.build-generation-device-drift-diagnostic.v1";
 const INVENTORY_SCHEMA = "setfarm.platform-build-generation-inventory.v1";
 const DECIMAL = /^(?:0|[1-9][0-9]*)$/;
@@ -38,12 +40,23 @@ function validLocator(value) {
     && value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
+function canonicalEntries(value) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return false;
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== value.length + 1 || keys.at(-1) !== "length") return false;
+  return keys.slice(0, -1).every((key, index) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return key === String(index) && descriptor?.enumerable === true
+      && Object.hasOwn(descriptor, "value");
+  });
+}
+
 function validInventory(value) {
   if (!exactKeys(value, INVENTORY_KEYS) || value.schema !== INVENTORY_SCHEMA
     || !validIdentity(value.rootPhysicalIdentity)
     || !nonnegativeSafe(value.entryCount, 10_000)
     || !nonnegativeSafe(value.regularFileByteCount, 536_870_912)
-    || !Array.isArray(value.entries) || value.entries.length !== value.entryCount
+    || !canonicalEntries(value.entries) || value.entries.length !== value.entryCount
     || !SHA256.test(value.physicalInventoryHash) || !SHA256.test(value.contentInventoryHash)) return false;
 
   let bytes = 0;
@@ -60,7 +73,12 @@ function validInventory(value) {
       if (bytes > 536_870_912) return false;
     } else if (entry.kind !== "directory" || entry.byteLength !== null || entry.sha256 !== null) return false;
   }
-  return bytes === value.regularFileByteCount;
+  if (bytes !== value.regularFileByteCount) return false;
+  const common = { schema: value.schema, entryCount: value.entryCount, regularFileByteCount: value.regularFileByteCount };
+  const physicalEntries = value.entries.map(({ sha256: ignored, ...entry }) => entry);
+  const contentEntries = value.entries.map(({ locator, kind, mode, byteLength, sha256 }) => ({ locator, kind, mode, byteLength, sha256 }));
+  return value.physicalInventoryHash === hashCanonicalJsonV1({ ...common, rootPhysicalIdentity: value.rootPhysicalIdentity, entries: physicalEntries })
+    && value.contentInventoryHash === hashCanonicalJsonV1({ ...common, entries: contentEntries });
 }
 
 function sameExceptDevice(recorded, observed) {

@@ -1,8 +1,29 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { classifyBuildGenerationDeviceDriftV1 } from "../build-generation-device-drift-diagnostic.mjs";
+import { hashCanonicalJsonV1 } from "../build-generation-retention.mjs";
 
-const recorded = Object.freeze({
+function withHashes(inventory) {
+  const common = {
+    schema: inventory.schema,
+    entryCount: inventory.entryCount,
+    regularFileByteCount: inventory.regularFileByteCount,
+  };
+  return Object.freeze({
+    ...inventory,
+    physicalInventoryHash: hashCanonicalJsonV1({
+      ...common,
+      rootPhysicalIdentity: inventory.rootPhysicalIdentity,
+      entries: inventory.entries.map(({ sha256: ignored, ...entry }) => entry),
+    }),
+    contentInventoryHash: hashCanonicalJsonV1({
+      ...common,
+      entries: inventory.entries.map(({ locator, kind, mode, byteLength, sha256 }) => ({ locator, kind, mode, byteLength, sha256 })),
+    }),
+  });
+}
+
+const recorded = withHashes({
   schema: "setfarm.platform-build-generation-inventory.v1",
   rootPhysicalIdentity: Object.freeze({
     devDecimal: "16777230", inoDecimal: "17", mode: 493, linkCount: 2,
@@ -14,15 +35,12 @@ const recorded = Object.freeze({
     inoDecimal: "19", mode: 420, linkCount: 1, byteLength: 3,
     sha256: "4444444444444444444444444444444444444444444444444444444444444444",
   })]),
-  physicalInventoryHash: "1111111111111111111111111111111111111111111111111111111111111111",
-  contentInventoryHash: "3333333333333333333333333333333333333333333333333333333333333333",
 });
 
-const observed = Object.freeze({
+const observed = withHashes({
   ...recorded,
   rootPhysicalIdentity: Object.freeze({ ...recorded.rootPhysicalIdentity, devDecimal: "16777231" }),
   entries: Object.freeze([Object.freeze({ ...recorded.entries[0], devDecimal: "16777231" })]),
-  physicalInventoryHash: "2222222222222222222222222222222222222222222222222222222222222222",
 });
 
 test("classifies uniform device-only drift without granting authority", () => {
@@ -65,10 +83,14 @@ for (const [label, change] of [
   ["nul locator", (v) => { v.entries[0].locator = "a\0.txt"; }],
   ["extra entry property", (v) => { v.entries[0].unknown = true; }],
   ["extra inventory property", (v) => { v.unknown = true; }],
+  ["extra entries property", (v) => { v.entries.extra = true; }],
+  ["symbol entries property", (v) => { v.entries[Symbol("hidden")] = true; }],
+  ["custom entries prototype", (v) => { Object.setPrototypeOf(v.entries, Object.create(Array.prototype)); }],
   ["hidden inventory property", (v) => { Object.defineProperty(v, "hidden", { value: true }); }],
   ["symbol inventory property", (v) => { v[Symbol("hidden")] = true; }],
   ["custom inventory prototype", (v) => { Object.setPrototypeOf(v, { inherited: true }); }],
-  ["unchanged physical hash", (v) => { v.physicalInventoryHash = recorded.physicalInventoryHash; }],
+  ["tampered physical hash", (v) => { v.physicalInventoryHash = "f".repeat(64); }],
+  ["tampered content hash", (v) => { v.contentInventoryHash = "f".repeat(64); }],
 ]) {
   test(`refuses ${label}`, () => {
     assert.throws(() => classifyBuildGenerationDeviceDriftV1(recorded, changed(change)),
@@ -93,8 +115,8 @@ test("classifies sorted multi-entry inventories and refuses reordered entries", 
   newCopy.entries.push({ ...oldCopy.entries[1], devDecimal: "16777231" });
   oldCopy.entryCount = 2;
   newCopy.entryCount = 2;
-  assert.equal(classifyBuildGenerationDeviceDriftV1(oldCopy, newCopy).entryCount, 2);
+  assert.equal(classifyBuildGenerationDeviceDriftV1(withHashes(oldCopy), withHashes(newCopy)).entryCount, 2);
   newCopy.entries.reverse();
-  assert.throws(() => classifyBuildGenerationDeviceDriftV1(oldCopy, newCopy),
+  assert.throws(() => classifyBuildGenerationDeviceDriftV1(withHashes(oldCopy), withHashes(newCopy)),
     { message: "BUILD_DEVICE_DRIFT_DIAGNOSTIC_REFUSED" });
 });
