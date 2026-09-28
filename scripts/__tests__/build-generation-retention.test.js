@@ -2383,6 +2383,25 @@ describe("OA18 build-generation retention authority", () => {
     }
   });
 
+  it("refuses an archive added after the first directory enumeration", () => {
+    const fixture = prepareGenerationBoundFixture(1, { advance: false });
+    try {
+      const modulePath = join(fixture.root, "scripts/build-generation-retention.mjs");
+      const source = readFileSync(modulePath, "utf8");
+      const boundary = "  const operatorObservations = [];";
+      assert.equal(source.includes(boundary), true);
+      writeFileSync(modulePath, source.replace(boundary, `${boundary}
+  if (options.operatorArchiveObservation === true) {
+    mkdirSync(path.join(roots.archive, "${fixtureBuildId(9)}.dist"), { mode: 0o755 });
+  }`));
+      const result = inspectOperatorArchives(fixture.root);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /archive directory changed during operator observation/);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("refuses an inode replacement between inventory lstat and stable file read", async () => {
     const root = createFixture();
     try {

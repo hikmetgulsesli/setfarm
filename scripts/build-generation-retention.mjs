@@ -1206,6 +1206,8 @@ function scanRotationLedgerFromRoots(roots, options = {}) {
     active.push(Object.freeze({ ordinal, intent, completion, disposition: disposition ?? null }));
   }
   for (const ordinal of dispositionByOrdinal.keys()) if (!completionByOrdinal.has(ordinal)) fail("disposition lacks completion");
+  const operatorArchiveParentBefore = options.operatorArchiveObservation === true
+    ? lstatSync(roots.archive, { bigint: true }) : null;
   const archives = readdirSync(roots.archive).sort(compareBytes);
   for (const name of archives) {
     const match = ARCHIVE_NAME.exec(name);
@@ -1258,6 +1260,20 @@ function scanRotationLedgerFromRoots(roots, options = {}) {
       }
     }
     if (generation.disposition && options.deferDisposedClosure !== true) resolveDisposedGenerationClosureV1(roots, generation);
+  }
+  if (options.operatorArchiveObservation === true) {
+    const archivesAfter = readdirSync(roots.archive).sort(compareBytes);
+    const operatorArchiveParentAfter = lstatSync(roots.archive, { bigint: true });
+    if (canonicalJsonV1(archives) !== canonicalJsonV1(archivesAfter)
+      || operatorArchiveParentBefore.dev !== operatorArchiveParentAfter.dev
+      || operatorArchiveParentBefore.ino !== operatorArchiveParentAfter.ino
+      || operatorArchiveParentBefore.mode !== operatorArchiveParentAfter.mode
+      || operatorArchiveParentBefore.uid !== operatorArchiveParentAfter.uid
+      || operatorArchiveParentBefore.nlink !== operatorArchiveParentAfter.nlink
+      || operatorArchiveParentBefore.mtimeNs !== operatorArchiveParentAfter.mtimeNs
+      || operatorArchiveParentBefore.ctimeNs !== operatorArchiveParentAfter.ctimeNs) {
+      fail("archive directory changed during operator observation");
+    }
   }
   return Object.freeze({
     schema: "setfarm.platform-build-generation-rotation-ledger-inspection.v1",
