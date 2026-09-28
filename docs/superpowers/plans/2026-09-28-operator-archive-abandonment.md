@@ -24,7 +24,8 @@ Setfarm installation without changing the fixed CLI selector.
 - `scripts/__tests__/build-generation-operator-inventory-relation.test.js`:
   strict historical/current inventory relation, including same-device
   post-build cleanup; the new read-only `inspect-operator-archives` command
-  observes all active generations twice without granting dispatch authority.
+  observes all active generations across three whole-tree passes without
+  granting dispatch authority.
 - `scripts/__tests__/write-build-info.test.js` (or existing writer suite):
   partial batch refusal and fully disposed ledger acceptance.
 - `logs/2026-09-27-task6a-writer-boundary-matrix.md`: exact host evidence and
@@ -74,7 +75,7 @@ and service state visible and fail closed; do not manually delete or rewrite.
 
 ## Current delivery slice
 
-Only the advisory inventory relation, double-pass `inspect-operator-archives`
+Only the advisory inventory relation, three-pass `inspect-operator-archives`
 command, and inventory identity-race fixes are implemented in this PR slice.
 The command returns `authority:false`. The operator-discard transaction,
 v2 terminal closure, service-quiescence controller, selected rebuild, and

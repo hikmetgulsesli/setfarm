@@ -2402,6 +2402,40 @@ describe("OA18 build-generation retention authority", () => {
     }
   });
 
+  it("refuses a file changed after the second inventory pass", () => {
+    const fixture = prepareGenerationBoundFixture(1, { advance: false });
+    try {
+      const modulePath = join(fixture.root, "scripts/build-generation-retention.mjs");
+      const source = readFileSync(modulePath, "utf8");
+      const boundary = "        const second = inventoryBuildGenerationV1(archivePath);";
+      assert.equal(source.includes(boundary), true);
+      writeFileSync(modulePath, source.replace(boundary, `${boundary}
+        writeFileSync(path.join(archivePath, "nested/artifact.txt"), "changed!\\n");`));
+      const result = inspectOperatorArchives(fixture.root);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /unstable operator archive observation/);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a nested member added after the second inventory pass", () => {
+    const fixture = prepareGenerationBoundFixture(1, { advance: false });
+    try {
+      const modulePath = join(fixture.root, "scripts/build-generation-retention.mjs");
+      const source = readFileSync(modulePath, "utf8");
+      const boundary = "        const second = inventoryBuildGenerationV1(archivePath);";
+      assert.equal(source.includes(boundary), true);
+      writeFileSync(modulePath, source.replace(boundary, `${boundary}
+        writeFileSync(path.join(archivePath, "nested/late.txt"), "late\\n");`));
+      const result = inspectOperatorArchives(fixture.root);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /unstable operator archive observation/);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("refuses an inode replacement between inventory lstat and stable file read", async () => {
     const root = createFixture();
     try {

@@ -1230,11 +1230,13 @@ function scanRotationLedgerFromRoots(roots, options = {}) {
         const identityBefore = directoryIdentity(archivePath, roots.device);
         const first = inventoryBuildGenerationV1(archivePath);
         const second = inventoryBuildGenerationV1(archivePath);
+        const final = inventoryBuildGenerationV1(archivePath);
+        if (canonicalJsonV1(first) !== canonicalJsonV1(second)
+          || canonicalJsonV1(second) !== canonicalJsonV1(final)) fail(`unstable operator archive observation at ordinal ${generation.ordinal}`);
         const identityAfter = directoryIdentity(archivePath, roots.device);
         const parentAfter = directoryIdentity(roots.archive, roots.device);
         if (!sameDirectoryIdentity(parentBefore, parentAfter)
           || !sameDirectoryIdentity(identityBefore, identityAfter)
-          || canonicalJsonV1(first) !== canonicalJsonV1(second)
           || identityBefore.realpath !== generation.completion.archiveIdentity.realpath
           || canonicalJsonV1(first.rootPhysicalIdentity) !== canonicalJsonV1({
             devDecimal: identityBefore.devDecimal,

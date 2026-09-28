@@ -25,7 +25,10 @@ caller-supplied path or relaxed retention mode. Before its first effect it
 must authenticate the clean selected root, immutable completion chain and
 exact active archive set, independently bound and no-follow inspect each
 physical tree, compare every non-device identity and content field with its
-completion, and observe the device-only drift consistently twice. It must
+completion, and observe the device-only drift consistently across at least
+two complete inventories. The advisory inspector currently uses a third
+whole-tree inventory after the first two to detect late file and nested
+directory changes; this is still not an atomic snapshot or dispatch authority. It must
 prove no live process, launcher, loaded runtime, current build, Mission
 Control, or database owner references an archive, with fresh checks at each
 effect. A changed field, ambiguous observation, other device pattern, or
