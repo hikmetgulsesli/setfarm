@@ -3,6 +3,7 @@ import fs from "node:fs";
 
 const [port, database, role, marker, foreignCredential, protectedFile] = process.argv.slice(2);
 const passfile = process.env.PGPASSFILE;
+const fixtureRoot = (target) => /^\/private\/tmp\/setfarm-task6a-child-authority\.[A-Za-z0-9]+(?=\/)/.exec(target ?? "")?.[0];
 if (!/^[0-9]{4,5}$/.test(port ?? "") || String(Number(port)) !== port
   || Number(port) < 1024 || Number(port) > 65535 || port === "5432"
   || !/^task6a_child_[a-f0-9]{12}$/.test(database ?? "")
@@ -11,6 +12,7 @@ if (!/^[0-9]{4,5}$/.test(port ?? "") || String(Number(port)) !== port
   || !/^\/private\/tmp\/setfarm-task6a-child-authority\.[A-Za-z0-9]+\/writer\/[a-z-]+\.txt$/.test(protectedFile ?? "")
   || !/^\/private\/tmp\/setfarm-task6a-child-authority\.[A-Za-z0-9]+\/(?:old|next)\.pgpass$/.test(passfile ?? "")
   || !/^\/private\/tmp\/setfarm-task6a-child-authority\.[A-Za-z0-9]+\/(?:old|next)\.pgpass$/.test(foreignCredential ?? "")
+  || new Set([marker, protectedFile, passfile, foreignCredential].map(fixtureRoot)).size !== 1
   || passfile === foreignCredential || process.env.SETFARM_PG_URL !== undefined) {
   process.exit(64);
 }

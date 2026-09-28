@@ -70,6 +70,18 @@ test("private Task6A child refuses malformed authority without fixture effects",
     assert.equal(result.stdout, "");
     assert.equal(result.stderr, "");
   }
+  const crossed = spawnSync(process.execPath, [childSource, "55438", "task6a_child_abcdefabcdef",
+    "task6a_old_abcdefabcdef", `${fixturePath}/writer/probe.txt`,
+    "/private/tmp/setfarm-task6a-child-authority.DEF/next.pgpass",
+    `${fixturePath}/writer/protected.txt`], {
+    encoding: "utf8", timeout: 5000, maxBuffer: 1024,
+    env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
+      PGPASSFILE: `${fixturePath}/old.pgpass` },
+  });
+  assert.equal(crossed.error, undefined);
+  assert.equal(crossed.status, 64, "cross-fixture authority must refuse before connection or file effects");
+  assert.equal(crossed.stdout, "");
+  assert.equal(crossed.stderr, "");
 });
 
 test("private Task6A child jointly proves OS and PostgreSQL authority transition", {
