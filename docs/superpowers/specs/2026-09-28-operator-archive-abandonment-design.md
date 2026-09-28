@@ -32,9 +32,13 @@ effect. A changed field, ambiguous observation, other device pattern, or
 reference fails closed. The existing ordinary retention and build scanners
 remain strict.
 
-One durable operation binds the historical completion pairs, current
-physical inventories, exact paths, and the explicit abandonment decision.
-Each archive is quarantined and erased through bounded no-follow steps with
+One immutable batch commitment binds the original completion tip, exact eight
+ordered completion pairs/paths, and already-terminal historical dispositions.
+A separate, chained operation for each archive binds that batch commitment,
+its own freshly observed current inventory, and the explicit abandonment
+decision. Full inventories are not embedded together in one record because
+the authority-record byte cap is 1 MiB. Each archive is quarantined and erased
+through bounded no-follow steps with
 durable before/after records, one exact target at a time. Crash recovery
 adopts only matching prior records and observed physical state; it must not
 reinterpret unknown absence as success. A new terminal disposition schema

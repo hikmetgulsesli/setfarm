@@ -39,8 +39,10 @@ Setfarm installation without changing the fixed CLI selector.
    between observations. Include last-two and final-one disposal.
 2. Implement immutable-chain authentication separate from active physical
    equality. Keep existing `inspect`, `prepare`, and writer paths unchanged.
-   Bind operation to the exact eight current inventories and completion
-   pairs. Reuse bounded no-follow inventory and zero-reference observers.
+   Bind a compact immutable batch commitment to the exact eight ordered
+   completion pairs/paths; each candidate operation binds only its own fresh
+   current inventory to stay under the 1 MiB authority-record cap. Reuse
+   bounded no-follow inventory and zero-reference observers.
 3. Extend the durable quarantine/erase transaction for a distinct versioned
    operator action. Test crash windows before/after rename, each unlink,
    root removal, receipt, and disposition; reject ambiguous replay.
