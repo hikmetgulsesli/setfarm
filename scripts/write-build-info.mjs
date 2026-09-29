@@ -353,8 +353,17 @@ function assertWriterRotationRecord(value, kind, filename) {
     assertWriterInventory(value.inventory);
     assertWriterRotationSource(value.rotationControllerSource);
   } else if (kind === "disposition") {
-    if (!hasExactKeys(value, ["schema", "ordinal", "buildId", "completion", "retentionOperation", "retentionReceipt", "sourceAbsent", "quarantineLocator", "disposedRootPhysicalIdentity", "physicalInventoryHash", "contentInventoryHash", "permanentDisposition", "quarantineAbsent", "dispositionRef", "dispositionHash"])
-      || value.schema !== "setfarm.platform-build-generation-rotation-disposition.v1" || value.sourceAbsent !== true || value.permanentDisposition !== true || value.quarantineAbsent !== true) fail("rotation disposition shape is invalid");
+    const operatorDiscard = value.schema === "setfarm.platform-build-generation-rotation-disposition.v2";
+    const commonKeys = ["schema", "ordinal", "buildId", "completion", "retentionOperation", "retentionReceipt", "sourceAbsent", "quarantineLocator", "disposedRootPhysicalIdentity", "physicalInventoryHash", "contentInventoryHash", "permanentDisposition", "quarantineAbsent", "dispositionRef", "dispositionHash"];
+    if (!hasExactKeys(value, operatorDiscard
+      ? [...commonKeys, "operatorDiscardBatch", "recordedRootPhysicalIdentity", "recordedPhysicalInventoryHash"]
+      : commonKeys)
+      || !["setfarm.platform-build-generation-rotation-disposition.v1", "setfarm.platform-build-generation-rotation-disposition.v2"].includes(value.schema)
+      || value.sourceAbsent !== true || value.permanentDisposition !== true || value.quarantineAbsent !== true) fail("rotation disposition shape is invalid");
+    if (operatorDiscard && (!hasExactKeys(value.operatorDiscardBatch, ["batchRef", "batchHash"])
+      || !SHA256.test(value.operatorDiscardBatch.batchHash)
+      || value.operatorDiscardBatch.batchRef !== `setfarm://internal-production/build-generation-operator-discard-batch/sha256/${value.operatorDiscardBatch.batchHash}`
+      || !SHA256.test(value.recordedPhysicalInventoryHash))) fail("operator discard batch/recorded identity is invalid");
   } else fail("rotation record kind is invalid");
   return value;
 }
@@ -508,11 +517,19 @@ function scanWriterRotationLedger(roots) {
     predecessor = writerPair(completion, "completion");
     const disposition = dispositionByOrdinal.get(ordinal) ?? null;
     if (disposition && (canonicalJson(disposition.completion) !== canonicalJson(predecessor)
-      || canonicalJson(disposition.disposedRootPhysicalIdentity) !== canonicalJson(completion.inventory.rootPhysicalIdentity)
-      || disposition.physicalInventoryHash !== completion.inventory.physicalInventoryHash || disposition.contentInventoryHash !== completion.inventory.contentInventoryHash)) fail(`rotation disposition mismatch at ordinal ${ordinal}`);
+      || canonicalJson(disposition.schema === "setfarm.platform-build-generation-rotation-disposition.v2"
+        ? disposition.recordedRootPhysicalIdentity : disposition.disposedRootPhysicalIdentity) !== canonicalJson(completion.inventory.rootPhysicalIdentity)
+      || (disposition.schema === "setfarm.platform-build-generation-rotation-disposition.v2"
+        ? disposition.recordedPhysicalInventoryHash : disposition.physicalInventoryHash) !== completion.inventory.physicalInventoryHash
+      || disposition.contentInventoryHash !== completion.inventory.contentInventoryHash)) fail(`rotation disposition mismatch at ordinal ${ordinal}`);
     generations.push(Object.freeze({ ordinal, intent, completion, disposition }));
   }
   for (const ordinal of dispositionByOrdinal.keys()) if (!completionByOrdinal.has(ordinal)) fail("disposition lacks completion");
+  const operatorDispositions = dispositions.filter((value) => value.schema === "setfarm.platform-build-generation-rotation-disposition.v2");
+  if (operatorDispositions.length > 0 && (operatorDispositions.length !== MAX_BUILD_ARCHIVE_GENERATIONS_V1
+    || operatorDispositions.some((value) => canonicalJson(value.operatorDiscardBatch) !== canonicalJson(operatorDispositions[0].operatorDiscardBatch)))) {
+    fail("operator discard batch is partial or crossed in writer ledger");
+  }
   for (const name of readdirSync(roots.archive).sort(compareBytes)) {
     const match = ARCHIVE_NAME.exec(name);
     if (!match) fail(`invalid archive ${name}`);
