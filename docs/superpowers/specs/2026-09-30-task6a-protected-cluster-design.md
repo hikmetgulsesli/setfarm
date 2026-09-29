@@ -36,6 +36,10 @@ cluster first is larger and introduces unreviewed drain/rollback hazards.
   owner/admin, DDL, destructive SQL, role administration or ALTER SYSTEM.
 - Old UID cannot connect, mutate files/ancestors or inherit sudo. Client cannot
   impersonate admin, alter protected files, mutate socket directory or sudo.
+- The driving admin UID is trusted and already root-capable. Homebrew executable
+  ancestors are writable by that UID, not by the excluded nobody/_www actors.
+  This fixture does not claim protected deployment authority against its driver.
+  The server UID must also fail non-interactive sudo escalation.
 
 ## Lifecycle and evidence
 
@@ -48,7 +52,9 @@ config, and repeat positive and negative SQL probes.
 
 Cleanup never guesses a target or uses a wildcard/killall. Verify the exact
 temporary root and a bounded no-symlink same-device tree, prove the fixture
-postmaster is stopped, then reclaim and remove only that disposable tree. Any
+postmaster is stopped, then remove only that disposable tree with root-controlled
+system executables. Never run Homebrew Node as root or recursively chown paths.
+Any
 ambiguous lifecycle leaves the fixture for explicit recovery and fails the test.
 This proves restart, not reboot/launchd persistence, old open-FD drain, production
 grants, generated-agent isolation, broker handoffs or durable discard provenance.
@@ -57,8 +63,11 @@ Production Task6A/discard gates remain unchanged and closed.
 ## Tests
 
 The regression catches allowing a scoped client to connect as fixture admin.
-A controlled private trust-HBA version must fail that negative assertion, while
-the peer/ident configuration must pass, including after restart. Default skip,
+A controlled trust-HBA predecessor is unsafe on this shared host because SQL
+superuser can execute as the server OS identity. It is never executed. Instead,
+a pure launch-policy regression must fail when a missing guard admits that HBA,
+then pass with the guard, before any ownership/server effect. The real peer/ident
+configuration must pass negative SQL assertions including after restart. Default skip,
 missing opt-in refusal and real privileged run are separately observed. No trust
 mode or authentication override ships in the committed fixture.
 
@@ -66,6 +75,8 @@ mode or authentication override ships in the committed fixture.
 
 - `tests/execution-attempts/task6a-private-protected-cluster.integration.test.ts`:
   self-contained disposable lifecycle and OS/HBA/SQL negative probes.
+- `tests/execution-attempts/task6a-protected-cluster-policy.ts` and `.test.ts`:
+  test-only pre-startup configuration guard and independent unsafe-input tests.
 - `package.json`: one explicit isolated opt-in test command.
 - `docs/superpowers/plans/2026-09-30-task6a-protected-cluster.md`: execution and
   exact evidence, review and delivery gates.
