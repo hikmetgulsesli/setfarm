@@ -680,7 +680,7 @@ function parseMaintenanceLock(file) {
       "schema", "kind", "nonce", "pid", "processLstart", "processGroupId", "candidateKeyHash",
     ])
     || value.schema !== "setfarm.platform-build-generation-maintenance-lock.v1"
-    || !["writer_prepare", "retention_prepare", "retention_resume"].includes(value.kind)
+    || !["writer_prepare", "retention_prepare", "retention_resume", "operator_discard_prepare", "operator_discard_resume"].includes(value.kind)
     || !UUID_V4.test(value.nonce)
     || !Number.isSafeInteger(value.pid) || value.pid < 1
     || typeof value.processLstart !== "string"
@@ -962,7 +962,7 @@ function assertRecordPairV1(value, kind, nullable = false) {
     if (value[refKey] !== exactRef) fail(`${kind} pair reference domain is invalid`);
     return;
   }
-  if (kind === "intent" || kind === "completion") {
+  if (kind === "intent" || kind === "completion" || kind === "disposition") {
     const pattern = new RegExp(`^setfarm://internal-production/build-generation-rotation-${kind}/[0-9]{20}/${UUID_V4.source.slice(1, -1)}/sha256/${hash}$`);
     if (!pattern.test(value[refKey])) fail(`${kind} pair reference domain is invalid`);
     return;
@@ -1110,15 +1110,30 @@ function assertRotationRecordBodyV1(value, kind, filename) {
     assertInventoryBodyV1(value.inventory, "rotation completion inventory");
     assertRotationControllerSource(value.rotationControllerSource);
   } else if (kind === "disposition") {
-    if (!hasExactKeys(value, [
+    const isOperatorDiscard = value.schema === "setfarm.platform-build-generation-rotation-disposition.v2";
+    const commonKeys = [
       "schema", "ordinal", "buildId", "completion", "retentionOperation", "retentionReceipt", "sourceAbsent",
       "quarantineLocator", "disposedRootPhysicalIdentity", "physicalInventoryHash", "contentInventoryHash",
       "permanentDisposition", "quarantineAbsent", "dispositionRef", "dispositionHash",
-    ]) || value.schema !== "setfarm.platform-build-generation-rotation-disposition.v1") fail("rotation disposition shape is invalid");
+    ];
+    if (!hasExactKeys(value, isOperatorDiscard
+      ? [...commonKeys, "operatorDiscardBatch", "recordedRootPhysicalIdentity", "recordedPhysicalInventoryHash"]
+      : commonKeys)
+      || !["setfarm.platform-build-generation-rotation-disposition.v1", "setfarm.platform-build-generation-rotation-disposition.v2"].includes(value.schema)) {
+      fail("rotation disposition shape is invalid");
+    }
     assertRecordPairV1(value.completion, "completion");
     assertRecordPairV1(value.retentionOperation, "operation");
     assertRecordPairV1(value.retentionReceipt, "receipt");
     assertDirectoryIdentityBodyV1(value.disposedRootPhysicalIdentity, "disposed root", false);
+    if (isOperatorDiscard) {
+      assertOperatorDiscardBatchPairV1(value.operatorDiscardBatch);
+      assertDirectoryIdentityBodyV1(value.recordedRootPhysicalIdentity, "recorded discarded root", false);
+      if (!SHA256.test(value.recordedPhysicalInventoryHash)
+        || value.recordedRootPhysicalIdentity.devDecimal === value.disposedRootPhysicalIdentity.devDecimal) {
+        fail("operator discard historical/current identity is invalid");
+      }
+    }
     if (!SHA256.test(value.physicalInventoryHash) || !SHA256.test(value.contentInventoryHash) || value.sourceAbsent !== true || value.permanentDisposition !== true || value.quarantineAbsent !== true) {
       fail("rotation disposition terminal fields are invalid");
     }
@@ -1192,17 +1207,21 @@ function scanRotationLedgerFromRoots(roots, options = {}) {
     ) fail(`rotation completion mismatch at ordinal ${ordinal}`);
     predecessor = pairOf(completion, "completion");
     const disposition = dispositionByOrdinal.get(ordinal);
-    if (disposition && (
-      disposition.schema !== "setfarm.platform-build-generation-rotation-disposition.v1"
-      || disposition.ordinal !== completion.ordinal || disposition.buildId !== completion.buildId
-      || canonicalJsonV1(disposition.completion) !== canonicalJsonV1(pairOf(completion, "completion"))
-      || !disposition.retentionOperation || !SHA256.test(disposition.retentionOperation.operationHash)
-      || !disposition.retentionReceipt || !SHA256.test(disposition.retentionReceipt.receiptHash)
-      || disposition.sourceAbsent !== true || disposition.permanentDisposition !== true || disposition.quarantineAbsent !== true
-      || canonicalJsonV1(disposition.disposedRootPhysicalIdentity) !== canonicalJsonV1(completion.inventory.rootPhysicalIdentity)
-      || disposition.physicalInventoryHash !== completion.inventory.physicalInventoryHash
-      || disposition.contentInventoryHash !== completion.inventory.contentInventoryHash
-    )) fail(`rotation disposition mismatch at ordinal ${ordinal}`);
+    if (disposition) {
+      const operatorDiscard = disposition.schema === "setfarm.platform-build-generation-rotation-disposition.v2";
+      if ((!operatorDiscard && disposition.schema !== "setfarm.platform-build-generation-rotation-disposition.v1")
+        || disposition.ordinal !== completion.ordinal || disposition.buildId !== completion.buildId
+        || canonicalJsonV1(disposition.completion) !== canonicalJsonV1(pairOf(completion, "completion"))
+        || disposition.sourceAbsent !== true || disposition.permanentDisposition !== true || disposition.quarantineAbsent !== true
+        || disposition.contentInventoryHash !== completion.inventory.contentInventoryHash
+        || (operatorDiscard
+          ? (canonicalJsonV1(disposition.recordedRootPhysicalIdentity) !== canonicalJsonV1(completion.inventory.rootPhysicalIdentity)
+            || disposition.recordedPhysicalInventoryHash !== completion.inventory.physicalInventoryHash)
+          : (canonicalJsonV1(disposition.disposedRootPhysicalIdentity) !== canonicalJsonV1(completion.inventory.rootPhysicalIdentity)
+            || disposition.physicalInventoryHash !== completion.inventory.physicalInventoryHash))) {
+        fail(`rotation disposition mismatch at ordinal ${ordinal}`);
+      }
+    }
     active.push(Object.freeze({ ordinal, intent, completion, disposition: disposition ?? null }));
   }
   for (const ordinal of dispositionByOrdinal.keys()) if (!completionByOrdinal.has(ordinal)) fail("disposition lacks completion");
@@ -1261,7 +1280,26 @@ function scanRotationLedgerFromRoots(roots, options = {}) {
         if (canonicalJsonV1(inventory) !== canonicalJsonV1(generation.completion.inventory)) fail(`active archive inventory mismatch at ordinal ${generation.ordinal}`);
       }
     }
-    if (generation.disposition && options.deferDisposedClosure !== true) resolveDisposedGenerationClosureV1(roots, generation);
+    if (generation.disposition && generation.disposition.schema === "setfarm.platform-build-generation-rotation-disposition.v1"
+      && options.deferDisposedClosure !== true) resolveDisposedGenerationClosureV1(roots, generation);
+  }
+  if (options.deferDisposedClosure !== true) {
+    const operatorDispositions = active.filter((generation) => generation.disposition?.schema === "setfarm.platform-build-generation-rotation-disposition.v2");
+    if (operatorDispositions.length > 0) {
+      const stores = existingRetentionStoreDirectoriesV1();
+      if (!stores) fail("operator discard terminal ledger lacks its operation store");
+      const batches = new Map();
+      for (const generation of operatorDispositions) {
+        const operation = readRetentionOperationPairV1(stores, generation.disposition.retentionOperation);
+        if (operation.operationCore.schema !== "setfarm.platform-build-generation-operator-discard-operation.v3") {
+          fail("operator discard disposition operation schema is crossed");
+        }
+        batches.set(operation.operationCore.batchCommitment.batchHash, operation.operationCore.batchCommitment);
+      }
+      if (batches.size !== 1) fail("operator discard ledger has a batch fork");
+      assertOperatorDiscardBatchAgainstLedgerV1([...batches.values()][0], active);
+      for (const generation of operatorDispositions) resolveDisposedGenerationClosureV1(roots, generation);
+    }
   }
   if (options.operatorArchiveObservation === true) {
     const archivesAfter = readdirSync(roots.archive).sort(compareBytes);
@@ -1299,6 +1337,173 @@ function inspectBuildGenerationOperatorArchivesV1() {
     completionTip: inspection.completionTip,
     active: inspection.operatorObservations,
   });
+}
+
+function operatorDiscardBatchCommitmentV1(inspection) {
+  if (inspection.danglingIntent) fail("operator discard batch crosses a dangling rotation intent");
+  const active = inspection.generations.filter((generation) => generation.disposition === null);
+  if (active.length !== 8 || inspection.operatorObservations?.length !== 8) {
+    fail("operator discard batch requires exactly eight observed active archives");
+  }
+  const prior = inspection.generations.filter((generation) => generation.disposition !== null);
+  if (prior.some((generation) => generation.ordinal >= active[0].ordinal)
+    || active.some((generation, index) => generation.ordinal !== active[0].ordinal + index)) {
+    fail("operator discard batch is not an active terminal suffix");
+  }
+  const recordedDevice = inspection.operatorObservations[0].relation.recordedDevice;
+  const observedDevice = inspection.operatorObservations[0].relation.observedDevice;
+  for (let index = 0; index < active.length; index += 1) {
+    const generation = active[index];
+    const observation = inspection.operatorObservations[index];
+    if (observation.ordinal !== generation.ordinal
+      || canonicalJsonV1(observation.completion) !== canonicalJsonV1(pairOf(generation.completion, "completion"))
+      || observation.archiveLocator !== generation.completion.archiveLocator
+      || observation.relation.kind !== "uniform-device-only-drift"
+      || observation.relation.recordedDevice !== recordedDevice
+      || observation.relation.observedDevice !== observedDevice) {
+      fail("operator discard batch has a crossed or nonuniform archive observation");
+    }
+  }
+  const projection = Object.freeze({
+    schema: "setfarm.platform-build-generation-operator-discard-batch.v1",
+    decision: "abandon-historical-archive-physical-claims",
+    originalCompletionTip: inspection.completionTip,
+    recordedDevice,
+    observedDevice,
+    priorTerminalDispositions: Object.freeze(prior.map((generation) => Object.freeze({
+      ordinal: generation.ordinal,
+      completion: pairOf(generation.completion, "completion"),
+      disposition: pairOf(generation.disposition, "disposition"),
+    }))),
+    archiveCompletions: Object.freeze(active.map((generation) => Object.freeze({
+      ordinal: generation.ordinal,
+      completion: pairOf(generation.completion, "completion"),
+      archiveLocator: generation.completion.archiveLocator,
+    }))),
+  });
+  const batchHash = hashCanonicalJsonV1(projection);
+  return Object.freeze({
+    ...projection,
+    batchRef: `setfarm://internal-production/build-generation-operator-discard-batch/sha256/${batchHash}`,
+    batchHash,
+  });
+}
+
+function assertOperatorDiscardBatchCommitmentV1(batch) {
+  if (!batch || !hasExactKeys(batch, [
+    "schema", "decision", "originalCompletionTip", "recordedDevice", "observedDevice",
+    "priorTerminalDispositions", "archiveCompletions", "batchRef", "batchHash",
+  ]) || batch.schema !== "setfarm.platform-build-generation-operator-discard-batch.v1"
+    || batch.decision !== "abandon-historical-archive-physical-claims"
+    || !Array.isArray(batch.priorTerminalDispositions)
+    || !Array.isArray(batch.archiveCompletions) || batch.archiveCompletions.length !== 8
+    || batch.priorTerminalDispositions.length > MAX_LEDGER_ORDINALS_V1 - 8) {
+    fail("operator discard batch shape is invalid");
+  }
+  assertRecordPairV1(batch.originalCompletionTip, "completion");
+  assertCanonicalUnsignedDecimalV1(batch.recordedDevice, "operator discard historical device");
+  assertCanonicalUnsignedDecimalV1(batch.observedDevice, "operator discard observed device");
+  if (batch.recordedDevice === batch.observedDevice) fail("operator discard batch has no device drift");
+  let priorOrdinal = 0;
+  for (const [index, entry] of batch.priorTerminalDispositions.entries()) {
+    if (!entry || !hasExactKeys(entry, ["ordinal", "completion", "disposition"])
+      || !Number.isSafeInteger(entry.ordinal) || entry.ordinal !== index + 1) fail("operator discard prior disposition order is invalid");
+    assertRecordPairV1(entry.completion, "completion");
+    assertRecordPairV1(entry.disposition, "disposition");
+    priorOrdinal = entry.ordinal;
+  }
+  for (const [index, entry] of batch.archiveCompletions.entries()) {
+    if (!entry || !hasExactKeys(entry, ["ordinal", "completion", "archiveLocator"])
+      || !Number.isSafeInteger(entry.ordinal) || entry.ordinal !== priorOrdinal + index + 1
+      || typeof entry.archiveLocator !== "string" || !/^\.setfarm\/build-generations-v1\/[0-9a-f-]{36}\.dist$/.test(entry.archiveLocator)) {
+      fail("operator discard archive batch order is invalid");
+    }
+    assertRecordPairV1(entry.completion, "completion");
+  }
+  if (canonicalJsonV1(batch.originalCompletionTip) !== canonicalJsonV1(batch.archiveCompletions[7].completion)) {
+    fail("operator discard batch completion tip is crossed");
+  }
+  const projection = { ...batch };
+  delete projection.batchRef;
+  delete projection.batchHash;
+  const digest = hashCanonicalJsonV1(projection);
+  if (batch.batchHash !== digest
+    || batch.batchRef !== `setfarm://internal-production/build-generation-operator-discard-batch/sha256/${digest}`) {
+    fail("operator discard batch commitment is invalid");
+  }
+  return batch;
+}
+
+function operatorDiscardBatchPairV1(batch) {
+  return Object.freeze({ batchRef: batch.batchRef, batchHash: batch.batchHash });
+}
+
+function assertOperatorDiscardBatchPairV1(pair) {
+  if (!pair || !hasExactKeys(pair, ["batchRef", "batchHash"]) || !SHA256.test(pair.batchHash)
+    || pair.batchRef !== `setfarm://internal-production/build-generation-operator-discard-batch/sha256/${pair.batchHash}`) {
+    fail("operator discard batch pair is invalid");
+  }
+}
+
+function assertOperatorDiscardBatchAgainstLedgerV1(batch, generations) {
+  assertOperatorDiscardBatchCommitmentV1(batch);
+  const batchEnd = batch.priorTerminalDispositions.length + batch.archiveCompletions.length;
+  if (generations.length < batchEnd) fail("operator discard ledger is shorter than its batch");
+  for (const entry of batch.priorTerminalDispositions) {
+    const generation = generations[entry.ordinal - 1];
+    if (!generation || generation.disposition?.schema !== "setfarm.platform-build-generation-rotation-disposition.v1"
+      || canonicalJsonV1(pairOf(generation.completion, "completion")) !== canonicalJsonV1(entry.completion)
+      || canonicalJsonV1(pairOf(generation.disposition, "disposition")) !== canonicalJsonV1(entry.disposition)) {
+      fail("operator discard prior terminal ledger is crossed");
+    }
+  }
+  let firstActive = null;
+  for (const entry of batch.archiveCompletions) {
+    const generation = generations[entry.ordinal - 1];
+    if (!generation || canonicalJsonV1(pairOf(generation.completion, "completion")) !== canonicalJsonV1(entry.completion)
+      || generation.completion.archiveLocator !== entry.archiveLocator
+      || generation.completion.inventory.rootPhysicalIdentity.devDecimal !== batch.recordedDevice) {
+      fail("operator discard original completion ledger is crossed");
+    }
+    if (!generation.disposition) {
+      firstActive ??= entry.ordinal;
+    } else if (generation.disposition.schema !== "setfarm.platform-build-generation-rotation-disposition.v2"
+      || firstActive !== null
+      || canonicalJsonV1(generation.disposition.operatorDiscardBatch) !== canonicalJsonV1(operatorDiscardBatchPairV1(batch))
+      || generation.disposition.disposedRootPhysicalIdentity.devDecimal !== batch.observedDevice) {
+      fail("operator discard disposition prefix is invalid");
+    }
+  }
+  if (firstActive !== null && generations.length !== batchEnd) {
+    fail("operator discard batch has a newer completion before terminal closure");
+  }
+  return firstActive;
+}
+
+function operatorDiscardBatchForPrepareV3(inspection) {
+  const terminal = inspection.generations.filter((generation) => generation.disposition?.schema === "setfarm.platform-build-generation-rotation-disposition.v2");
+  if (terminal.length === 0) {
+    const batch = assertOperatorDiscardBatchCommitmentV1(operatorDiscardBatchCommitmentV1(inspection));
+    assertOperatorDiscardBatchAgainstLedgerV1(batch, inspection.generations);
+    return batch;
+  }
+  const stores = existingRetentionStoreDirectoriesV1();
+  if (!stores) fail("operator discard continuation lacks its operation store");
+  const first = readRetentionOperationPairV1(stores, terminal[0].disposition.retentionOperation);
+  if (first.operationCore.schema !== "setfarm.platform-build-generation-operator-discard-operation.v3") {
+    fail("operator discard continuation operation is invalid");
+  }
+  const batch = assertOperatorDiscardBatchCommitmentV1(first.operationCore.batchCommitment);
+  const firstActive = assertOperatorDiscardBatchAgainstLedgerV1(batch, inspection.generations);
+  if (firstActive === null) fail("operator discard batch is already terminal");
+  const observations = inspection.operatorObservations;
+  if (observations?.length !== 1 + batch.archiveCompletions.at(-1).ordinal - firstActive
+    || observations.some((observation) => observation.relation.kind !== "uniform-device-only-drift"
+      || observation.relation.recordedDevice !== batch.recordedDevice
+      || observation.relation.observedDevice !== batch.observedDevice)) {
+    fail("operator discard continuation observations are incomplete or crossed");
+  }
+  return batch;
 }
 
 export function inspectBuildGenerationRotationLedgerV1() {
@@ -2103,10 +2308,17 @@ function observeCurrentProductBuildAuthorityForRetentionV2(root) {
   });
 }
 
-function observeOperationAuthoritiesV2(root, inspection) {
+function observeOperationAuthoritiesV2(root, inspection, operatorDiscardBatch = null) {
   if (inspection.danglingIntent) fail("retention v2 cannot cross a dangling rotation intent");
   const active = inspection.generations.filter((generation) => generation.disposition === null);
-  if (active.length !== 8) fail("retention v2 requires exactly eight active completed generations");
+  if (operatorDiscardBatch === null) {
+    if (active.length !== 8) fail("retention v2 requires exactly eight active completed generations");
+  } else {
+    const firstActive = assertOperatorDiscardBatchAgainstLedgerV1(operatorDiscardBatch, inspection.generations);
+    if (firstActive === null || active.length !== 1 + operatorDiscardBatch.archiveCompletions.at(-1).ordinal - firstActive) {
+      fail("operator discard authority requires a nonempty active batch suffix");
+    }
+  }
   const controllerSource = observeCurrentRetentionControllerSourceV2(root);
   const retainedCurrentBuild = observeRetainedCurrentBuildV1(root, controllerSource);
   const pba = observeCurrentProductBuildAuthorityForRetentionV2(root);
@@ -4089,9 +4301,71 @@ function parseRetentionOperationV2(value) {
   return value;
 }
 
+function parseOperatorDiscardOperationV3(value) {
+  if (!value || !hasExactKeys(value, ["operationCore", "expectedQuarantineLocator", "operationRef", "operationHash"])) {
+    fail("operator discard operation shape is invalid");
+  }
+  const core = value.operationCore;
+  if (!core || !hasExactKeys(core, [
+    "schema", "purpose", "batchCommitment", "candidateRelation", "candidateCompletion", "candidateOrdinal",
+    "controllerSource", "retainedCurrentBuild", "productBuildAuthorityV2DeliveryEvidence",
+    "productBuildAuthorityV2Observation", "expectedRuntimeSources", "executingImplementationClosure",
+    "candidateArchiveLocator", "candidateArchiveIdentity", "candidateInventory",
+    "prepareZeroReferenceProof", "prepareZeroReferenceProofHash",
+  ]) || core.schema !== "setfarm.platform-build-generation-operator-discard-operation.v3"
+    || core.purpose !== "permanently-abandon-ledger-bound-archive-physical-claim-v1") {
+    fail("operator discard operation core is invalid");
+  }
+  const digest = hashCanonicalJsonV1(core);
+  if (value.operationHash !== digest || value.operationRef !== operationRefV1(digest)
+    || value.expectedQuarantineLocator !== `${QUARANTINE_DIRECTORY_V1}/${digest}.dist`) {
+    fail("operator discard operation pair is invalid");
+  }
+  const batch = assertOperatorDiscardBatchCommitmentV1(core.batchCommitment);
+  const member = batch.archiveCompletions.find((entry) => entry.ordinal === core.candidateOrdinal);
+  if (!member || canonicalJsonV1(member.completion) !== canonicalJsonV1(core.candidateCompletion)
+    || member.archiveLocator !== core.candidateArchiveLocator) {
+    fail("operator discard candidate is not in the committed batch");
+  }
+  if (!core.candidateRelation || !hasExactKeys(core.candidateRelation, [
+    "schema", "kind", "recordedDevice", "observedDevice", "entryCount", "regularFileByteCount", "contentInventoryHash",
+  ]) || core.candidateRelation.schema !== "setfarm.platform-build-generation-operator-inventory-relation.v1"
+    || core.candidateRelation.kind !== "uniform-device-only-drift"
+    || core.candidateRelation.recordedDevice !== batch.recordedDevice
+    || core.candidateRelation.observedDevice !== batch.observedDevice) {
+    fail("operator discard candidate relation is invalid");
+  }
+  const v2Core = { ...core,
+    schema: "setfarm.platform-build-generation-retention-operation.v2",
+    purpose: "permanently-dispose-lowest-completed-build-generation-v1",
+  };
+  delete v2Core.batchCommitment;
+  delete v2Core.candidateRelation;
+  const v2Digest = hashCanonicalJsonV1(v2Core);
+  parseRetentionOperationV2({
+    operationCore: v2Core,
+    expectedQuarantineLocator: `${QUARANTINE_DIRECTORY_V1}/${v2Digest}.dist`,
+    operationRef: operationRefV1(v2Digest),
+    operationHash: v2Digest,
+  });
+  if (core.candidateInventory.rootPhysicalIdentity.devDecimal !== batch.observedDevice
+    || core.candidateRelation.entryCount !== core.candidateInventory.entryCount
+    || core.candidateRelation.regularFileByteCount !== core.candidateInventory.regularFileByteCount
+    || core.candidateRelation.contentInventoryHash !== core.candidateInventory.contentInventoryHash
+    || canonicalJsonV1(core.prepareZeroReferenceProof.candidate) !== canonicalJsonV1({
+      locator: core.candidateArchiveIdentity.realpath,
+      rootPhysicalIdentity: core.candidateInventory.rootPhysicalIdentity,
+      physicalInventoryHash: core.candidateInventory.physicalInventoryHash,
+    })) {
+    fail("operator discard current archive/proof is crossed");
+  }
+  return value;
+}
+
 function parseRetentionOperationV1OrV2(value) {
   if (value?.operationCore?.schema === "setfarm.platform-build-generation-retention-operation.v1") return parseRetentionOperationV1(value);
   if (value?.operationCore?.schema === "setfarm.platform-build-generation-retention-operation.v2") return parseRetentionOperationV2(value);
+  if (value?.operationCore?.schema === "setfarm.platform-build-generation-operator-discard-operation.v3") return parseOperatorDiscardOperationV3(value);
   fail("retention operation schema is invalid");
 }
 
@@ -4329,6 +4603,146 @@ function retentionOperationV1ImmutablePrepareProjection(core) {
     executingImplementationClosure: core.executingImplementationClosure,
     candidateInventory: core.candidateInventory,
   });
+}
+
+function observeOperatorDiscardPrepareV3(roots) {
+  const root = roots.root;
+  const inspection = scanRotationLedgerFromRoots(roots, { operatorArchiveObservation: true });
+  const batchCommitment = operatorDiscardBatchForPrepareV3(inspection);
+  const firstActive = assertOperatorDiscardBatchAgainstLedgerV1(batchCommitment, inspection.generations);
+  const candidate = inspection.generations.find((generation) => generation.ordinal === firstActive);
+  const candidateCompletion = pairOf(candidate.completion, "completion");
+  const authorities = observeOperationAuthoritiesV2(root, inspection, batchCommitment);
+  const executingImplementationClosure = executingImplementationClosureV1(root, Object.freeze({ sha: authorities.controllerSource.sourceSha }));
+  const archive = path.join(root, candidate.completion.archiveLocator);
+  const candidateArchiveIdentity = directoryIdentity(archive, roots.device);
+  const candidateInventory = inventoryBuildGenerationV1(archive);
+  const candidateRelation = inspectOperatorArchiveInventoryRelationV1(candidate.completion.inventory, candidateInventory);
+  const observation = inspection.operatorObservations.find((entry) => entry.ordinal === candidate.ordinal);
+  if (canonicalJsonV1(candidateRelation) !== canonicalJsonV1(observation.relation)
+    || candidateInventory.physicalInventoryHash !== observation.observedPhysicalInventoryHash
+    || !sameDirectoryIdentity(candidateArchiveIdentity, observation.observedRootIdentity)) {
+    fail("operator discard archive changed between batch observation and prepare");
+  }
+  const prepareZeroReferenceProof = observeZeroReferenceProofV1({
+    phase: "prepare", operation: null, candidateCompletion,
+    candidate: { locator: archive, inventory: candidateInventory },
+    expectedRuntimeSources: authorities.expectedRuntimeSources,
+  });
+  const operationCore = Object.freeze({
+    schema: "setfarm.platform-build-generation-operator-discard-operation.v3",
+    purpose: "permanently-abandon-ledger-bound-archive-physical-claim-v1",
+    batchCommitment,
+    candidateRelation,
+    candidateCompletion,
+    candidateOrdinal: candidate.ordinal,
+    controllerSource: authorities.controllerSource,
+    retainedCurrentBuild: authorities.retainedCurrentBuild,
+    productBuildAuthorityV2DeliveryEvidence: authorities.productBuildAuthorityV2DeliveryEvidence,
+    productBuildAuthorityV2Observation: authorities.productBuildAuthorityV2Observation,
+    expectedRuntimeSources: authorities.expectedRuntimeSources,
+    executingImplementationClosure,
+    candidateArchiveLocator: candidate.completion.archiveLocator,
+    candidateArchiveIdentity,
+    candidateInventory,
+    prepareZeroReferenceProof,
+    prepareZeroReferenceProofHash: prepareZeroReferenceProof.proofHash,
+  });
+  const operationHash = hashCanonicalJsonV1(operationCore);
+  const operation = Object.freeze({
+    operationCore,
+    expectedQuarantineLocator: `${QUARANTINE_DIRECTORY_V1}/${operationHash}.dist`,
+    operationRef: operationRefV1(operationHash),
+    operationHash,
+  });
+  parseOperatorDiscardOperationV3(operation);
+  return Object.freeze({ operation, candidateCompletion });
+}
+
+function acquireOperatorDiscardExclusionV3(binding) {
+  fail("independently enforced operator exclusion is unavailable", "BUILD_GENERATION_OPERATOR_EXCLUSION_UNAVAILABLE");
+}
+
+function withOperatorDiscardExclusionV3(roots, core, action) {
+  const binding = Object.freeze({
+    rootIdentity: directoryIdentity(roots.root),
+    batch: operatorDiscardBatchPairV1(core.batchCommitment),
+    candidateCompletion: core.candidateCompletion,
+  });
+  const held = acquireOperatorDiscardExclusionV3(binding);
+  try {
+    if (!held || !hasExactKeys(held, ["recheck", "close"])
+      || typeof held.recheck !== "function" || typeof held.close !== "function") {
+      fail("operator exclusion holder is invalid", "BUILD_GENERATION_OPERATOR_EXCLUSION_UNAVAILABLE");
+    }
+    const recheck = (stage) => {
+      if (held.recheck(stage, binding) !== undefined) {
+        fail("operator exclusion recheck is not synchronous", "BUILD_GENERATION_OPERATOR_EXCLUSION_UNAVAILABLE");
+      }
+    };
+    recheck("acquired");
+    return action(recheck);
+  } finally {
+    // Closing observation handles must never remove the durable OS/DB fence.
+    if (typeof held?.close === "function" && held.close() !== undefined) {
+      fail("operator exclusion close is not synchronous", "BUILD_GENERATION_OPERATOR_EXCLUSION_CLEANUP_FAILED");
+    }
+  }
+}
+
+function prepareOperatorDiscardV3() {
+  const root = repositoryRootV1();
+  const roots = readAuthorityRootsV1(root);
+  const before = observeOperatorDiscardPrepareV3(roots);
+  const candidateKeyHash = hashCanonicalJsonV1({
+    batch: { batchRef: before.operation.operationCore.batchCommitment.batchRef, batchHash: before.operation.operationCore.batchCommitment.batchHash },
+    candidateCompletion: before.candidateCompletion,
+  });
+  return withOperatorDiscardExclusionV3(roots, before.operation.operationCore, (recheckExclusion) =>
+    withRetentionMaintenanceLockV1(roots, "operator_discard_prepare", candidateKeyHash, () => {
+    recheckExclusion("prepare_stores");
+    const stores = ensureRetentionStoreV1();
+    normalizeRetentionPublisherStoresV1(stores);
+    const locked = observeOperatorDiscardPrepareV3(roots);
+    const immutableCore = (core) => {
+      const value = { ...core };
+      delete value.prepareZeroReferenceProof;
+      delete value.prepareZeroReferenceProofHash;
+      return value;
+    };
+    if (canonicalJsonV1(immutableCore(locked.operation.operationCore)) !== canonicalJsonV1(immutableCore(before.operation.operationCore))) {
+      fail(`operator discard prepare authority changed under lock at ${firstAuthorityDifferencePathV2(immutableCore(before.operation.operationCore), immutableCore(locked.operation.operationCore))}`);
+    }
+    const indexFile = path.join(stores.operationCandidates, candidateIndexNameV1(locked.candidateCompletion));
+    if (optionalLstat(indexFile)) {
+      const index = parseCandidateIndexV1(indexFile, locked.candidateCompletion);
+      const indexed = readRetentionOperationPairV1(stores, index.operation);
+      if (canonicalJsonV1(indexed.operationCore) !== canonicalJsonV1(locked.operation.operationCore)) {
+        fail("indexed operator discard operation differs from current authorities");
+      }
+      recheckExclusion("prepare_complete");
+      return index.operation;
+    }
+    const recovered = findUnindexedOperationForCandidateV1(stores, locked.candidateCompletion);
+    if (recovered && canonicalJsonV1(recovered.operationCore) !== canonicalJsonV1(locked.operation.operationCore)) {
+      fail("unindexed operator discard operation differs from current authorities");
+    }
+    const operation = recovered ?? locked.operation;
+    recheckExclusion("prepare_operation");
+    publishNoReplaceFileV1(stores.operations, `${operation.operationHash}.json`, canonicalRecordBytes(operation), 0o600);
+    const pair = operationPairV1(operation);
+    const index = Object.freeze({
+      schema: "setfarm.platform-build-generation-retention-candidate-index.v1",
+      candidateCompletion: locked.candidateCompletion,
+      operation: pair,
+    });
+    recheckExclusion("prepare_index");
+    publishNoReplaceFileV1(stores.operationCandidates, candidateIndexNameV1(locked.candidateCompletion), canonicalRecordBytes(index), 0o600);
+    parseCandidateIndexV1(indexFile, locked.candidateCompletion);
+    readRetentionOperationPairV1(stores, pair);
+    recheckExclusion("prepare_complete");
+    return pair;
+  }));
 }
 
 function prepareBuildGenerationRetentionV1() {
@@ -4626,7 +5040,7 @@ function scanEraseChainV1(stores, operationPair) {
   for (const key of [...intents.keys(), ...completions.keys()]) {
     if (key >= ordinal || (!intents.has(key) && completions.has(key))) fail("erase-step chain has a gap or suffix fork");
   }
-  return Object.freeze({ nextOrdinal: unmatchedIntent ? ordinal - 1 : ordinal, predecessorCompletion: predecessor, unmatchedIntent, finalCompletion: predecessor });
+  return Object.freeze({ nextOrdinal: unmatchedIntent ? ordinal - 1 : ordinal, predecessorCompletion: predecessor, unmatchedIntent, finalCompletion: predecessor, initialIntent: intents.get(0) ?? null });
 }
 
 function deletionOrderV1(inventory) {
@@ -4731,9 +5145,10 @@ function assertStepTargetV1(root, step) {
   });
 }
 
-function executeEraseStepV1(quarantine, step, intent) {
+function executeEraseStepV1(quarantine, step, intent, recheckExclusion) {
   const target = step.locator === "." ? quarantine : path.join(quarantine, step.locator);
   const parent = path.dirname(target);
+  recheckExclusion(`erase_execute_${intent.ordinal}`);
   if (intent.action === "unlink") unlinkSync(target);
   else rmdirSync(target);
   fsyncDirectory(parent);
@@ -4799,7 +5214,7 @@ function validateHistoricalClosureV2(root, operation) {
 }
 
 function validateHistoricalRetainedBuildV2(root, operation) {
-  if (operation.operationCore.schema !== "setfarm.platform-build-generation-retention-operation.v2") return;
+  if (!["setfarm.platform-build-generation-retention-operation.v2", "setfarm.platform-build-generation-operator-discard-operation.v3"].includes(operation.operationCore.schema)) return;
   const current = observeRetainedCurrentBuildV1(root, operation.operationCore.controllerSource);
   if (canonicalJsonV1(current) !== canonicalJsonV1(operation.operationCore.retainedCurrentBuild)) {
     fail(`historical retained build changed at ${firstAuthorityDifferencePathV2(operation.operationCore.retainedCurrentBuild, current)}`);
@@ -4808,7 +5223,7 @@ function validateHistoricalRetainedBuildV2(root, operation) {
 
 function validateHistoricalOperationClosureV1(root, operation) {
   if (operation.operationCore.schema === "setfarm.platform-build-generation-retention-operation.v1") return validateHistoricalClosureV1(root, operation);
-  if (operation.operationCore.schema === "setfarm.platform-build-generation-retention-operation.v2") return validateHistoricalClosureV2(root, operation);
+  if (["setfarm.platform-build-generation-retention-operation.v2", "setfarm.platform-build-generation-operator-discard-operation.v3"].includes(operation.operationCore.schema)) return validateHistoricalClosureV2(root, operation);
   fail("historical retention operation schema is invalid");
 }
 
@@ -4820,6 +5235,42 @@ function resolveCandidateGenerationV1(inspection, operation) {
   return generation;
 }
 
+function assertOperatorDiscardResumeInspectionV3(roots, inspection, operation) {
+  const core = operation.operationCore;
+  const firstActive = assertOperatorDiscardBatchAgainstLedgerV1(core.batchCommitment, inspection.generations);
+  const generation = resolveCandidateGenerationV1(inspection, operation);
+  if (!generation.disposition && firstActive !== generation.ordinal) {
+    fail("operator discard resume candidate is not the first active batch member");
+  }
+  const expectedArchiveIdentity = { realpath: path.join(roots.root, core.candidateArchiveLocator), ...core.candidateInventory.rootPhysicalIdentity };
+  if (canonicalJsonV1(core.candidateArchiveIdentity) !== canonicalJsonV1(expectedArchiveIdentity)
+    || canonicalJsonV1(inspectOperatorArchiveInventoryRelationV1(generation.completion.inventory, core.candidateInventory))
+      !== canonicalJsonV1(core.candidateRelation)) {
+    fail("operator discard operation is crossed to its historical completion");
+  }
+  for (const observation of inspection.operatorObservations) {
+    if (observation.relation.kind !== "uniform-device-only-drift"
+      || observation.relation.recordedDevice !== core.batchCommitment.recordedDevice
+      || observation.relation.observedDevice !== core.batchCommitment.observedDevice) {
+      fail("operator discard remaining archive relation changed");
+    }
+    if (observation.ordinal === generation.ordinal
+      && (canonicalJsonV1(observation.relation) !== canonicalJsonV1(core.candidateRelation)
+        || observation.observedPhysicalInventoryHash !== core.candidateInventory.physicalInventoryHash
+        || !sameDirectoryIdentity(observation.observedRootIdentity, core.candidateArchiveIdentity))) {
+      fail("operator discard candidate changed before quarantine");
+    }
+  }
+  return generation;
+}
+
+function verifyOperatorDiscardTerminalExclusionV3(roots, operation) {
+  // Self-hashed terminal records and present absence are not proof of a held
+  // historical OS/DB exclusion. A future verifier must resolve independently
+  // protected durable evidence, not acquire a new live holder or trust flags.
+  fail("independently verified historical operator exclusion is unavailable", "BUILD_GENERATION_OPERATOR_TERMINAL_EXCLUSION_UNVERIFIED");
+}
+
 function resolveDisposedGenerationClosureV1(roots, generation) {
   const disposition = generation.disposition;
   if (!disposition) fail("disposed generation closure lacks disposition");
@@ -4828,13 +5279,30 @@ function resolveDisposedGenerationClosureV1(roots, generation) {
   const operation = readRetentionOperationPairV1(stores, disposition.retentionOperation);
   const operationPair = operationPairV1(operation);
   const completionPair = pairOf(generation.completion, "completion");
+  const operatorDiscard = disposition.schema === "setfarm.platform-build-generation-rotation-disposition.v2";
   if (
     operation.operationCore.candidateOrdinal !== generation.ordinal
     || canonicalJsonV1(operation.operationCore.candidateCompletion) !== canonicalJsonV1(completionPair)
     || operation.operationCore.candidateArchiveLocator !== generation.completion.archiveLocator
-    || canonicalJsonV1(operation.operationCore.candidateArchiveIdentity) !== canonicalJsonV1(generation.completion.archiveIdentity)
-    || canonicalJsonV1(operation.operationCore.candidateInventory) !== canonicalJsonV1(generation.completion.inventory)
+    || (operatorDiscard
+      ? operation.operationCore.schema !== "setfarm.platform-build-generation-operator-discard-operation.v3"
+      : (canonicalJsonV1(operation.operationCore.candidateArchiveIdentity) !== canonicalJsonV1(generation.completion.archiveIdentity)
+        || canonicalJsonV1(operation.operationCore.candidateInventory) !== canonicalJsonV1(generation.completion.inventory)))
   ) fail("disposed generation operation is crossed");
+  if (operatorDiscard) {
+    const core = operation.operationCore;
+    const relation = inspectOperatorArchiveInventoryRelationV1(generation.completion.inventory, core.candidateInventory);
+    const expectedArchiveIdentity = { realpath: path.join(roots.root, core.candidateArchiveLocator), ...core.candidateInventory.rootPhysicalIdentity };
+    if (canonicalJsonV1(relation) !== canonicalJsonV1(core.candidateRelation)
+      || canonicalJsonV1(core.candidateArchiveIdentity) !== canonicalJsonV1(expectedArchiveIdentity)
+      || canonicalJsonV1(disposition.operatorDiscardBatch) !== canonicalJsonV1(operatorDiscardBatchPairV1(core.batchCommitment))
+      || canonicalJsonV1(disposition.recordedRootPhysicalIdentity) !== canonicalJsonV1(generation.completion.inventory.rootPhysicalIdentity)
+      || disposition.recordedPhysicalInventoryHash !== generation.completion.inventory.physicalInventoryHash
+      || canonicalJsonV1(disposition.disposedRootPhysicalIdentity) !== canonicalJsonV1(core.candidateInventory.rootPhysicalIdentity)
+      || disposition.physicalInventoryHash !== core.candidateInventory.physicalInventoryHash) {
+      fail("operator discard historical/current closure is crossed");
+    }
+  }
   const index = parseCandidateIndexV1(
     path.join(stores.operationCandidates, candidateIndexNameV1(completionPair)),
     completionPair,
@@ -4881,6 +5349,36 @@ function resolveDisposedGenerationClosureV1(roots, generation) {
   ) fail("disposed generation final erase completion is not the exact root terminal");
   assertZeroReferenceProofV1(receipt.preDispositionZeroReferenceProof, "pre_disposition", operationPair, completionPair, operation.operationCore.expectedRuntimeSources);
   assertZeroReferenceProofV1(receipt.postQuarantineZeroReferenceProof, "post_quarantine", operationPair, completionPair, operation.operationCore.expectedRuntimeSources);
+  const quarantineAuthorization = readOnlyQuarantineAuthorizationV1(stores, operationPair);
+  if (!quarantineAuthorization || !eraseChain.initialIntent
+    || canonicalJsonV1(quarantineAuthorization.operation) !== canonicalJsonV1(operationPair)
+    || canonicalJsonV1(quarantineAuthorization.candidateCompletion) !== canonicalJsonV1(completionPair)
+    || quarantineAuthorization.candidateArchiveLocator !== operation.operationCore.candidateArchiveLocator
+    || quarantineAuthorization.expectedQuarantineLocator !== operation.expectedQuarantineLocator
+    || canonicalJsonV1(quarantineAuthorization.candidateArchiveIdentity) !== canonicalJsonV1(operation.operationCore.candidateArchiveIdentity)
+    || quarantineAuthorization.physicalInventoryHash !== operation.operationCore.candidateInventory.physicalInventoryHash
+    || quarantineAuthorization.contentInventoryHash !== operation.operationCore.candidateInventory.contentInventoryHash
+    || quarantineAuthorization.preDispositionZeroReferenceProofHash !== receipt.preDispositionZeroReferenceProofHash
+    || canonicalJsonV1(quarantineAuthorization.preDispositionZeroReferenceProof) !== canonicalJsonV1(receipt.preDispositionZeroReferenceProof)
+    || canonicalJsonV1(eraseChain.initialIntent.preDispositionZeroReferenceProof) !== canonicalJsonV1(receipt.preDispositionZeroReferenceProof)
+    || canonicalJsonV1(eraseChain.initialIntent.postQuarantineZeroReferenceProof) !== canonicalJsonV1(receipt.postQuarantineZeroReferenceProof)) {
+    fail("disposed generation quarantine authorization and initial erase proof do not match its terminal receipt");
+  }
+  if (operatorDiscard) {
+    const expectedArchiveCandidate = {
+      locator: path.join(roots.root, operation.operationCore.candidateArchiveLocator),
+      rootPhysicalIdentity: operation.operationCore.candidateInventory.rootPhysicalIdentity,
+      physicalInventoryHash: operation.operationCore.candidateInventory.physicalInventoryHash,
+    };
+    const expectedQuarantineCandidate = {
+      ...expectedArchiveCandidate,
+      locator: path.join(roots.root, operation.expectedQuarantineLocator),
+    };
+    if (canonicalJsonV1(receipt.preDispositionZeroReferenceProof.candidate) !== canonicalJsonV1(expectedArchiveCandidate)
+      || canonicalJsonV1(receipt.postQuarantineZeroReferenceProof.candidate) !== canonicalJsonV1(expectedQuarantineCandidate)) {
+      fail("operator discard zero-reference candidate proof is crossed");
+    }
+  }
   const expectedQuarantineIdentity = { realpath: path.join(roots.root, operation.expectedQuarantineLocator), ...operation.operationCore.candidateInventory.rootPhysicalIdentity };
   if (canonicalJsonV1(receipt.quarantineIdentity) !== canonicalJsonV1(expectedQuarantineIdentity)) fail("disposed generation quarantine identity is crossed");
   if (
@@ -4891,6 +5389,7 @@ function resolveDisposedGenerationClosureV1(roots, generation) {
     || optionalLstat(path.join(roots.root, generation.completion.archiveLocator))
     || optionalLstat(path.join(roots.root, operation.expectedQuarantineLocator))
   ) fail("disposed generation terminal filesystem/pairs are invalid");
+  if (operatorDiscard) verifyOperatorDiscardTerminalExclusionV3(roots, operation);
 }
 
 function resumeBuildGenerationRetentionV1(pair) {
@@ -4900,17 +5399,22 @@ function resumeBuildGenerationRetentionV1(pair) {
   if (!stores) fail("retention operation store is absent");
   const operation = readRetentionOperationPairV1(stores, pair);
   const operationPair = operationPairV1(operation);
+  const operatorDiscard = operation.operationCore.schema === "setfarm.platform-build-generation-operator-discard-operation.v3";
   const index = parseCandidateIndexV1(path.join(stores.operationCandidates, candidateIndexNameV1(operation.operationCore.candidateCompletion)), operation.operationCore.candidateCompletion);
   if (canonicalJsonV1(index.operation) !== canonicalJsonV1(operationPair)) fail("retention candidate index/operation mismatch");
   validateHistoricalOperationClosureV1(root, operation);
   const lockKey = hashCanonicalJsonV1({ candidateCompletion: operation.operationCore.candidateCompletion, operation: operationPair });
-  return withRetentionMaintenanceLockV1(roots, "retention_resume", lockKey, () => {
+  const resumeHeld = (recheckExclusion) => withRetentionMaintenanceLockV1(roots, operatorDiscard ? "operator_discard_resume" : "retention_resume", lockKey, () => {
+    recheckExclusion("resume_stores");
     normalizeRetentionPublisherStoresV1(stores);
     const inspection = scanRotationLedgerFromRoots(roots, {
       allowAbsentCompletionPair: operation.operationCore.candidateCompletion,
       recoverPublisherTemps: true,
+      operatorArchiveObservation: operatorDiscard,
     });
-    const generation = resolveCandidateGenerationV1(inspection, operation);
+    const generation = operatorDiscard
+      ? assertOperatorDiscardResumeInspectionV3(roots, inspection, operation)
+      : resolveCandidateGenerationV1(inspection, operation);
     if (generation.disposition) {
       if (canonicalJsonV1(generation.disposition.retentionOperation) !== canonicalJsonV1(operationPair)) fail("terminal disposition operation mismatch");
       const receipt = readReceiptPairV1(stores, generation.disposition.retentionReceipt);
@@ -4919,12 +5423,14 @@ function resumeBuildGenerationRetentionV1(pair) {
         || receipt.permanentDisposition !== true || receipt.quarantineAbsent !== true
         || generation.disposition.quarantineAbsent !== true || generation.disposition.permanentDisposition !== true
       ) fail("terminal retention receipt/disposition is invalid");
+      recheckExclusion("resume_terminal_read");
       return Object.freeze({ receiptRef: receipt.receiptRef, receiptHash: receipt.receiptHash });
     }
     validateHistoricalOperationClosureV1(root, operation);
     validateHistoricalRetainedBuildV2(root, operation);
     const archive = path.join(root, operation.operationCore.candidateArchiveLocator);
     const quarantineRoot = path.join(root, QUARANTINE_DIRECTORY_V1);
+    recheckExclusion("quarantine_root");
     if (!optionalLstat(quarantineRoot)) ensureDirectory(quarantineRoot, 0o700, roots.setfarm, roots.device);
     else if (directoryIdentity(quarantineRoot, roots.device).mode !== 0o700) fail("quarantine root must have mode 0o700");
     const quarantine = path.join(root, operation.expectedQuarantineLocator);
@@ -4983,17 +5489,23 @@ function resumeBuildGenerationRetentionV1(pair) {
         const proposedHash = hashCanonicalJsonV1(authorizationProjection);
         if (quarantineAuthorization) {
           if (quarantineAuthorization.quarantineAuthorizationHash !== proposedHash) fail("quarantine authorization differs from the current archive proof");
-        } else quarantineAuthorization = publishQuarantineAuthorizationV1(stores, authorizationProjection);
+        } else {
+          recheckExclusion("quarantine_authorization");
+          quarantineAuthorization = publishQuarantineAuthorizationV1(stores, authorizationProjection);
+        }
+        recheckExclusion("quarantine_rename");
         renameSync(archive, quarantine);
         fsyncDirectory(roots.archive);
         fsyncDirectory(quarantineRoot);
       } else if (!archivePresent && quarantinePresent) {
+        recheckExclusion("quarantine_adopt");
         if (!quarantineAuthorization) fail("quarantine rename response loss lacks its durable archive-side proof");
         const adopted = inventoryBuildGenerationV1(quarantine);
         if (adopted.physicalInventoryHash !== operation.operationCore.candidateInventory.physicalInventoryHash || adopted.contentInventoryHash !== operation.operationCore.candidateInventory.contentInventoryHash) fail("quarantine rename destination differs from the operation inventory");
       } else fail("retention archive/quarantine rename state is ambiguous");
     } else if (archivePresent || (!quarantinePresent && chain.nextOrdinal === 0 && !authenticatedEmptyRootResponseLoss)) fail("erase prefix conflicts with archive/quarantine state");
     if (!quarantineAuthorization) fail("retention erase state lacks its quarantine authorization");
+    recheckExclusion("quarantine_observed");
     if (
       canonicalJsonV1(quarantineAuthorization.operation) !== canonicalJsonV1(operationPair)
       || canonicalJsonV1(quarantineAuthorization.candidateCompletion) !== canonicalJsonV1(operation.operationCore.candidateCompletion)
@@ -5028,6 +5540,7 @@ function resumeBuildGenerationRetentionV1(pair) {
       } else {
         if (canonicalJsonV1(currentLocators) !== canonicalJsonV1(beforeLocators)) fail("remaining generation subset differs before erase intent");
         const observed = assertStepTargetV1(quarantine, step);
+        recheckExclusion(`erase_intent_${chain.nextOrdinal}`);
         intent = publishEraseRecordV1(stores, "intent", {
           schema: "setfarm.platform-build-generation-retention-erase-step-intent.v1",
           recordKind: "intent",
@@ -5052,12 +5565,25 @@ function resumeBuildGenerationRetentionV1(pair) {
       if (targetPresent && canonicalJsonV1(observedLocators) === canonicalJsonV1(beforeLocators)) {
         assertRemainingInventoryIdentityV1(quarantine, beforeLocators, operation.operationCore.candidateInventory);
         assertStepTargetV1(quarantine, step);
-        executeEraseStepV1(quarantine, step, intent);
+        if (operatorDiscard) {
+          const remainingInventory = inventoryBuildGenerationV1(quarantine);
+          observeZeroReferenceProofV1({
+            phase: "pre_erase_step",
+            operation: operationPair,
+            candidateCompletion: operation.operationCore.candidateCompletion,
+            candidate: { locator: quarantine, inventory: remainingInventory },
+            expectedRuntimeSources: operation.operationCore.expectedRuntimeSources,
+          });
+          assertStepTargetV1(quarantine, step);
+        }
+        executeEraseStepV1(quarantine, step, intent, recheckExclusion);
       } else if (!targetPresent && canonicalJsonV1(observedLocators) === canonicalJsonV1(afterLocators)) {
+        recheckExclusion(`erase_adopt_${intent.ordinal}`);
         assertRemainingInventoryIdentityV1(quarantine, afterLocators, operation.operationCore.candidateInventory);
         // Authenticated response-loss adoption.
       } else fail("erase intent target/subset state is ambiguous");
       assertRemainingInventoryIdentityV1(quarantine, afterLocators, operation.operationCore.candidateInventory);
+      recheckExclusion(`erase_complete_${intent.ordinal}`);
       const completion = publishEraseRecordV1(stores, "completion", {
         schema: "setfarm.platform-build-generation-retention-erase-step-completion.v1",
         recordKind: "completion",
@@ -5105,12 +5631,21 @@ function resumeBuildGenerationRetentionV1(pair) {
       finalEraseStepHash: firstIntent.finalCompletion.eraseStepCompletionHash,
       quarantineAbsent: true,
     };
+    recheckExclusion("receipt");
     const receipt = publishOrAdoptOnlyReceiptV1(stores, receiptProjection);
+    recheckExclusion("disposition");
     const disposition = publishRotationRecord(roots.dispositions, "disposition", {
-      schema: "setfarm.platform-build-generation-rotation-disposition.v1",
+      schema: operatorDiscard
+        ? "setfarm.platform-build-generation-rotation-disposition.v2"
+        : "setfarm.platform-build-generation-rotation-disposition.v1",
       ordinal: generation.ordinal,
       buildId: generation.completion.buildId,
       completion: operation.operationCore.candidateCompletion,
+      ...(operatorDiscard ? {
+        operatorDiscardBatch: operatorDiscardBatchPairV1(operation.operationCore.batchCommitment),
+        recordedRootPhysicalIdentity: generation.completion.inventory.rootPhysicalIdentity,
+        recordedPhysicalInventoryHash: generation.completion.inventory.physicalInventoryHash,
+      } : {}),
       retentionOperation: operationPair,
       retentionReceipt: Object.freeze({ receiptRef: receipt.receiptRef, receiptHash: receipt.receiptHash }),
       sourceAbsent: true,
@@ -5122,9 +5657,13 @@ function resumeBuildGenerationRetentionV1(pair) {
       quarantineAbsent: true,
     });
     if (canonicalJsonV1(disposition.retentionReceipt) !== canonicalJsonV1({ receiptRef: receipt.receiptRef, receiptHash: receipt.receiptHash })) fail("retention disposition receipt mismatch");
-    scanRotationLedgerFromRoots(roots, { recoverPublisherTemps: true });
+    scanRotationLedgerFromRoots(roots, { recoverPublisherTemps: true, operatorArchiveObservation: operatorDiscard });
+    recheckExclusion("resume_complete");
     return Object.freeze({ receiptRef: receipt.receiptRef, receiptHash: receipt.receiptHash });
   });
+  return operatorDiscard
+    ? withOperatorDiscardExclusionV3(roots, operation.operationCore, resumeHeld)
+    : resumeHeld(() => {});
 }
 
 function assertRotationControllerSource(value) {
@@ -5140,11 +5679,11 @@ function assertRotationControllerSource(value) {
 
 function selectedCommand() {
   const args = process.argv.slice(2);
-  if (args.length === 1 && ["inspect", "inspect-operator-archives", "prepare"].includes(args[0])) return Object.freeze({ command: args[0] });
+  if (args.length === 1 && ["inspect", "inspect-operator-archives", "prepare", "prepare-discard"].includes(args[0])) return Object.freeze({ command: args[0] });
   if (args.length === 6 && args[0] === "resume" && args[1] === "--operation-ref" && args[3] === "--operation-hash" && args[5] === "--json") {
     return Object.freeze({ command: "resume", operationRef: args[2], operationHash: args[4] });
   }
-  fail("expected inspect, inspect-operator-archives, prepare, or resume --operation-ref <ref> --operation-hash <hash> --json", "BUILD_GENERATION_RETENTION_USAGE");
+  fail("expected inspect, inspect-operator-archives, prepare, prepare-discard, or resume --operation-ref <ref> --operation-hash <hash> --json", "BUILD_GENERATION_RETENTION_USAGE");
 }
 
 function main() {
@@ -5159,6 +5698,10 @@ function main() {
   }
   if (selected.command === "prepare") {
     process.stdout.write(`${JSON.stringify(prepareBuildGenerationRetentionV1())}\n`);
+    return;
+  }
+  if (selected.command === "prepare-discard") {
+    process.stdout.write(`${JSON.stringify(prepareOperatorDiscardV3())}\n`);
     return;
   }
   if (selected.command === "resume") {

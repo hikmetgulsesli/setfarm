@@ -232,8 +232,11 @@ function runBuildGenerationWriterRotationV1(input) {
 }
 `;
 
-function createFixture() {
-  const root = mkdtempSync(join(tmpdir(), "setfarm-oa18-retention-"));
+function createFixture({ workspaceParent = null } = {}) {
+  const root = workspaceParent === null
+    ? mkdtempSync(join(tmpdir(), "setfarm-oa18-retention-"))
+    : join(workspaceParent, "setfarm");
+  if (workspaceParent !== null) mkdirSync(root, { mode: 0o700 });
   const retentionSource = readFileSync(join(sourceRoot, "scripts/build-generation-retention.mjs"), "utf8");
   fixtureFile(
     root,
@@ -334,7 +337,7 @@ function rotateFixtureGeneration(root, buildId, digit) {
   return JSON.parse(result.stdout);
 }
 
-function installPrivateRetentionObservers(root) {
+function installPrivateRetentionObservers(root, { operatorExclusion = true, workspaceStore = false } = {}) {
   const modulePath = join(root, "scripts/build-generation-retention.mjs");
   let source = readFileSync(modulePath, "utf8");
   if (!git(root, ["remote"]).split("\n").includes("origin")) {
@@ -342,6 +345,7 @@ function installPrivateRetentionObservers(root) {
   }
   const fixturePhysicalRoot = realpathSync(root);
   mkdirSync(join(fixturePhysicalRoot, ".fixture-authority-data"), { mode: 0o700 });
+  if (workspaceStore) mkdirSync(join(dirname(fixturePhysicalRoot), "data"), { mode: 0o700 });
   const launcherProgram = join(fixturePhysicalRoot, ".local/bin/setfarm");
   mkdirSync(dirname(launcherProgram), { recursive: true });
   symlinkSync(join(realpathSync(root), "dist/cli/cli.js"), launcherProgram);
@@ -382,7 +386,9 @@ function installPrivateRetentionObservers(root) {
   fixtureFile(root, ".fixture-hostile-node", "#!/bin/sh\n/bin/cat > .fixture-hostile-secret-received\nexit 97\n", 0o755);
   source = source.replace(
     'const RETENTION_STORE_ROOT_V1 = path.join(CODE_OWNED_WORKSPACE_ROOT_V1, "data", "internal-production-baseline", "build-generation-retention-v1");',
-    'const RETENTION_STORE_ROOT_V1 = path.join(repositoryRootV1(), ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1");',
+    workspaceStore
+      ? 'const RETENTION_STORE_ROOT_V1 = path.join(path.dirname(repositoryRootV1()), "data", "internal-production-baseline", "build-generation-retention-v1");'
+      : 'const RETENTION_STORE_ROOT_V1 = path.join(repositoryRootV1(), ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1");',
   );
   source = source.replace(
     "const CODE_OWNER_HOME_V1 = userInfo().homedir;",
@@ -845,8 +851,51 @@ function requireSuccessfulChild`,
   const pba = observeOperationAuthoritiesV1(root).productBuildAuthorityV2Observation;
   // OA18_PRIVATE_FIXTURE_PBA_V2_END`,
   );
-  assert.equal(source.includes(".fixture-authority-data/internal-production-baseline/.fixture-retention-v1"), true);
+  assert.equal(source.includes(workspaceStore
+    ? 'path.dirname(repositoryRootV1()), "data", "internal-production-baseline", "build-generation-retention-v1"'
+    : ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1"), true);
   assert.equal(source.includes("const pba = observeOperationAuthoritiesV1(root).productBuildAuthorityV2Observation;"), true);
+  if (operatorExclusion) {
+    const bridge = /function acquireOperatorDiscardExclusionV3\(binding\) \{\n[\s\S]*?\n\}/;
+    assert.equal(bridge.test(source), true);
+    const hostBridge = source.match(bridge)[0];
+    const resumeDenial = operatorExclusion === "prepare-only"
+      ? `if (process.argv[2] === "resume") return (${hostBridge})(binding);` : "";
+    source = source.replace(bridge, `function acquireOperatorDiscardExclusionV3(binding) {
+  ${resumeDenial}
+  const expected = canonicalJsonV1(binding);
+  const eventsPath = path.join(repositoryRootV1(), ".setfarm", ".fixture-exclusion-events.json");
+  const record = (stage) => {
+    const events = optionalLstat(eventsPath) ? JSON.parse(readFileSync(eventsPath, "utf8")) : [];
+    events.push(stage);
+    writeFileSync(eventsPath, JSON.stringify(events));
+  };
+  record("acquire");
+  let closed = false;
+  return Object.freeze({
+    recheck(stage, observed) {
+      if (closed || canonicalJsonV1(observed) !== expected) fail("fixture exclusion binding changed");
+      record(stage);
+      if (optionalLstat(path.join(repositoryRootV1(), ".fixture-exclusion-loss-" + stage))) {
+        fail("fixture held exclusion lost", "BUILD_GENERATION_OPERATOR_EXCLUSION_UNAVAILABLE");
+      }
+    },
+    close() { closed = true; record("close"); },
+  });
+}`);
+  }
+  const terminalBridge = /function verifyOperatorDiscardTerminalExclusionV3\(roots, operation\) \{\n[\s\S]*?\n\}/;
+  assert.equal(terminalBridge.test(source), true, "copied historical verifier seam must match");
+  const hostTerminalBridge = source.match(terminalBridge)[0];
+  source = source.replace(terminalBridge, `function verifyOperatorDiscardTerminalExclusionV3(roots, operation) {
+  if (optionalLstat(path.join(repositoryRootV1(), ".fixture-terminal-exclusion-unverified"))) {
+    return (${hostTerminalBridge})(roots, operation);
+  }
+  if (roots.root !== repositoryRootV1()
+    || operation.operationCore.schema !== "setfarm.platform-build-generation-operator-discard-operation.v3") {
+    fail("fixture historical exclusion binding changed");
+  }
+}`);
   writeFileSync(modulePath, source);
   fixtureFile(root, ".gitignore", ".setfarm/\ndist/\n.fixture*\n.local/\nLibrary/\ndist-server/\n");
   git(root, ["add", ".gitignore", "scripts/build-generation-retention.mjs"]);
@@ -906,7 +955,15 @@ function inspectOperatorArchives(root) {
   });
 }
 
-function rebindFixtureCompletionChainToHistoricalDevice(root, historicalDevice) {
+function prepareOperatorDiscardOperation(root) {
+  return spawnSync(process.execPath, ["scripts/build-generation-retention.mjs", "prepare-discard"], {
+    cwd: root,
+    encoding: "utf8",
+    env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+  });
+}
+
+function rebindFixtureCompletionChainToHistoricalDevice(root, historicalDevice, startOrdinal = 1) {
   const ledger = join(root, ".setfarm/build-generation-rotation-ledger-v1");
   const sign = (value, kind) => {
     delete value[`${kind}Ref`];
@@ -924,6 +981,10 @@ function rebindFixtureCompletionChainToHistoricalDevice(root, historicalDevice) 
     const completionPath = join(ledger, "completions", name);
     const intent = JSON.parse(readFileSync(intentPath, "utf8"));
     const completion = JSON.parse(readFileSync(completionPath, "utf8"));
+    if (intent.ordinal < startOrdinal) {
+      predecessor = { completionRef: completion.completionRef, completionHash: completion.completionHash };
+      continue;
+    }
     const historicalInventory = structuredClone(intent.inventory);
     historicalInventory.rootPhysicalIdentity.devDecimal = historicalDevice;
     for (const entry of historicalInventory.entries) entry.devDecimal = historicalDevice;
@@ -961,7 +1022,7 @@ function resumeRetentionOperation(root, pair) {
 function installTerminalCrashSequence(root) {
   const modulePath = join(root, "scripts/build-generation-retention.mjs");
   let source = readFileSync(modulePath, "utf8");
-  const eraseBoundary = "        executeEraseStepV1(quarantine, step, intent);";
+  const eraseBoundary = "        executeEraseStepV1(quarantine, step, intent, recheckExclusion);";
   const receiptBoundary = "    const receipt = publishOrAdoptOnlyReceiptV1(stores, receiptProjection);";
   const dispositionBoundary = "    if (canonicalJsonV1(disposition.retentionReceipt)";
   assert.equal(source.includes(eraseBoundary), true);
@@ -1135,13 +1196,13 @@ function installMaintenanceRaceProbe(root) {
   git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
 }
 
-function installEveryNonRootEraseCrash(root) {
+function installEveryNonRootEraseCrash(root, { firstOnly = false } = {}) {
   const modulePath = join(root, "scripts/build-generation-retention.mjs");
   let source = readFileSync(modulePath, "utf8");
-  const boundary = "        executeEraseStepV1(quarantine, step, intent);";
+  const boundary = "        executeEraseStepV1(quarantine, step, intent, recheckExclusion);";
   assert.equal(source.includes(boundary), true);
   source = source.replace(boundary, `${boundary}
-        if (step.locator !== ".") {
+        if (${firstOnly ? 'step.locator !== "." && chain.nextOrdinal === 0' : 'step.locator !== "."'}) {
           const marker = path.join(root, ".fixture-erase-crash-" + chain.nextOrdinal);
           if (!optionalLstat(marker)) {
             writeFileSync(marker, "crashed\\n");
@@ -1284,8 +1345,25 @@ function rewriteFinalizedFixtureJson(root, locator, transform, pretty = false) {
   chmodSync(target, 0o444);
 }
 
-function prepareGenerationBoundFixture(count, { advance = true, writerCap = 8 } = {}) {
-  const root = createFixture();
+function prepareGenerationBoundFixture(count, { advance = true, writerCap = 8, operatorExclusion = true, workspaceParent = null, codeOwnedWriter = false } = {}) {
+  const root = createFixture({ workspaceParent });
+  if (codeOwnedWriter) {
+    assert.notEqual(workspaceParent, null, "actual writer fixture needs a private workspace parent");
+    const writerSource = readFileSync(join(sourceRoot, "scripts/write-build-info.mjs"), "utf8");
+    const preflight = /function preparePreflight\(\) \{\n[\s\S]*?\n\}/;
+    assert.equal(preflight.test(writerSource), true);
+    // The tiny fixture has no compiler topology. Only its copied preflight is
+    // adapted; the CLI, anchor, lock, store normalization and both scans stay real.
+    fixtureFile(root, "scripts/write-build-info.mjs", writerSource.replace(preflight, `function preparePreflight() {
+  const repository = anchorRepository();
+  const pinned = derivePinnedInputSet(repository.root);
+  verifyLivePinnedInputs(repository.root, pinned, repository.device);
+  return Object.freeze({ schema: "setfarm.platform-build-writer-preflight.v1", buildId: randomUUID(), rotationControllerSource: rotationControllerSourceV1(pinned) });
+}`));
+    git(root, ["add", "scripts/write-build-info.mjs"]);
+    git(root, ["commit", "--amend", "--no-edit", "-q"]);
+    git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  }
   if (writerCap !== 8) {
     const modulePath = join(root, "scripts/build-generation-retention.mjs");
     const source = readFileSync(modulePath, "utf8");
@@ -1296,7 +1374,7 @@ function prepareGenerationBoundFixture(count, { advance = true, writerCap = 8 } 
     git(root, ["commit", "--amend", "--no-edit", "-q"]);
     git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
   }
-  installPrivateRetentionObservers(root);
+  installPrivateRetentionObservers(root, { operatorExclusion, workspaceStore: codeOwnedWriter });
   for (let ordinal = 1; ordinal <= count; ordinal += 1) {
     rotateFixtureGeneration(root, fixtureBuildId(ordinal), String(ordinal));
   }
@@ -1332,12 +1410,14 @@ function installV2PrepareCrash(root, phase) {
   const boundary = phase === "operation"
     ? '    publishNoReplaceFileV1(stores.operations, `${operation.operationHash}.json`, canonicalRecordBytes(operation), 0o600);'
     : "    publishNoReplaceFileV1(stores.operationCandidates, candidateIndexNameV1(candidateCompletion), canonicalRecordBytes(index), 0o600);";
-  assert.equal(source.includes(boundary), true);
-  source = source.replace(boundary, `${boundary}
+  const publicationOffset = source.lastIndexOf(boundary);
+  assert.notEqual(publicationOffset, -1);
+  const crashReplacement = `${boundary}
     if (!optionalLstat(path.join(root, ".setfarm", ".fixture-v2-${phase}-crash"))) {
       writeFileSync(path.join(root, ".setfarm", ".fixture-v2-${phase}-crash"), "crashed\\n");
       process.exit(${phase === "operation" ? 91 : 92});
-    }`);
+    }`;
+  source = `${source.slice(0, publicationOffset)}${crashReplacement}${source.slice(publicationOffset + boundary.length)}`;
   const captureBoundary = "    const indexFile = path.join(stores.operationCandidates, candidateIndexNameV1(candidateCompletion));";
   assert.equal(source.includes(captureBoundary), true);
   source = source.replace(captureBoundary, `    const fixtureCaptureRoot = path.join(root, ".setfarm");
@@ -2380,6 +2460,397 @@ describe("OA18 build-generation retention authority", () => {
       assert.match(crossed.stderr, /unindexed or disposed archive/);
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses operator preparation without independently held exclusion before authority publication", () => {
+    const fixture = prepareGenerationBoundFixture(8, { operatorExclusion: false });
+    try {
+      const completionName = readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions"))[0];
+      const completion = JSON.parse(readFileSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions", completionName), "utf8"));
+      rebindFixtureCompletionChainToHistoricalDevice(fixture.root,
+        (BigInt(completion.inventory.rootPhysicalIdentity.devDecimal) + 1n).toString(10));
+      const prepared = prepareOperatorDiscardOperation(fixture.root);
+      assert.notEqual(prepared.status, 0, prepared.stderr);
+      assert.match(prepared.stderr, /BUILD_GENERATION_OPERATOR_EXCLUSION_UNAVAILABLE/);
+      assertNoDetachedPrepareAuthority(fixture.root, 8);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("prepares only the first member of an exact drifted archive batch", () => {
+    const fixture = prepareGenerationBoundFixture(8);
+    try {
+      const completionName = readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions"))[0];
+      const completion = JSON.parse(readFileSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions", completionName), "utf8"));
+      rebindFixtureCompletionChainToHistoricalDevice(fixture.root,
+        (BigInt(completion.inventory.rootPhysicalIdentity.devDecimal) + 1n).toString(10));
+      const prepared = prepareOperatorDiscardOperation(fixture.root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      assert.match(pair.operationRef, /build-generation-retention-operation/);
+      assert.match(pair.operationHash, /^[0-9a-f]{64}$/);
+      const repeated = prepareOperatorDiscardOperation(fixture.root);
+      assert.equal(repeated.status, 0, repeated.stderr);
+      assert.deepEqual(JSON.parse(repeated.stdout), pair);
+      assertNoGenerationDisposition(fixture.root, 8);
+      const ordinary = prepareRetentionOperation(fixture.root);
+      assert.notEqual(ordinary.status, 0);
+      assert.match(ordinary.stderr, /active archive identity mismatch/);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses operator resume with the production bridge before any recovery mutation", () => {
+    const fixture = prepareGenerationBoundFixture(8, { operatorExclusion: "prepare-only" });
+    try {
+      const completionDirectory = join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions");
+      const completion = JSON.parse(readFileSync(join(completionDirectory, readdirSync(completionDirectory)[0]), "utf8"));
+      rebindFixtureCompletionChainToHistoricalDevice(fixture.root,
+        (BigInt(completion.inventory.rootPhysicalIdentity.devDecimal) + 1n).toString(10));
+      const prepared = prepareOperatorDiscardOperation(fixture.root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const archiveBefore = preservedTreeSnapshot(join(fixture.root, ".setfarm/build-generations-v1"));
+      const store = join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1");
+      const storeBefore = preservedTreeSnapshot(store);
+      const resumed = resumeRetentionOperation(fixture.root, JSON.parse(prepared.stdout));
+      assert.notEqual(resumed.status, 0, resumed.stderr);
+      assert.match(resumed.stderr, /BUILD_GENERATION_OPERATOR_EXCLUSION_UNAVAILABLE/);
+      assertNoGenerationDisposition(fixture.root, 8);
+      assert.deepEqual(preservedTreeSnapshot(join(fixture.root, ".setfarm/build-generations-v1")), archiveBefore);
+      assert.deepEqual(preservedTreeSnapshot(store), storeBefore);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses operator resume when exclusion acquisition fails and closes observation handles", () => {
+    const fixture = prepareGenerationBoundFixture(8);
+    try {
+      const completionName = readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions"))[0];
+      const completion = JSON.parse(readFileSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions", completionName), "utf8"));
+      rebindFixtureCompletionChainToHistoricalDevice(fixture.root,
+        (BigInt(completion.inventory.rootPhysicalIdentity.devDecimal) + 1n).toString(10));
+      const prepared = prepareOperatorDiscardOperation(fixture.root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const eventsPath = join(fixture.root, ".setfarm/.fixture-exclusion-events.json");
+      const before = JSON.parse(readFileSync(eventsPath, "utf8"));
+      fixtureFile(fixture.root, ".fixture-exclusion-loss-acquired", "deny\n");
+      const resumed = resumeRetentionOperation(fixture.root, JSON.parse(prepared.stdout));
+      assert.notEqual(resumed.status, 0, resumed.stderr);
+      assert.match(resumed.stderr, /BUILD_GENERATION_OPERATOR_EXCLUSION_UNAVAILABLE/);
+      assertNoGenerationDisposition(fixture.root, 8);
+      assert.deepEqual(JSON.parse(readFileSync(eventsPath, "utf8")).slice(before.length), ["acquire", "acquired", "close"]);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  for (const point of ["quarantine_rename", "erase_execute_0", "erase_execute_1", "erase_root", "receipt", "disposition"]) {
+    it(`stops the operator effect when held exclusion is lost at ${point}`, () => {
+      const fixture = prepareGenerationBoundFixture(8);
+      try {
+        const completionDirectory = join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions");
+        const completion = JSON.parse(readFileSync(join(completionDirectory, readdirSync(completionDirectory)[0]), "utf8"));
+        rebindFixtureCompletionChainToHistoricalDevice(fixture.root,
+          (BigInt(completion.inventory.rootPhysicalIdentity.devDecimal) + 1n).toString(10));
+        const prepared = prepareOperatorDiscardOperation(fixture.root);
+        assert.equal(prepared.status, 0, prepared.stderr);
+        const pair = JSON.parse(prepared.stdout);
+        const store = join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1");
+        const operation = JSON.parse(readFileSync(join(store, "operations/sha256", `${pair.operationHash}.json`), "utf8"));
+        const archive = join(fixture.root, operation.operationCore.candidateArchiveLocator);
+        const quarantine = join(fixture.root, operation.expectedQuarantineLocator);
+        const archiveBefore = preservedTreeSnapshot(archive);
+        const stage = point === "erase_root" ? `erase_execute_${operation.operationCore.candidateInventory.entryCount}` : point;
+        fixtureFile(fixture.root, `.fixture-exclusion-loss-${stage}`, "deny\n");
+        const resumed = resumeRetentionOperation(fixture.root, pair);
+        assert.notEqual(resumed.status, 0, resumed.stderr);
+        assert.match(resumed.stderr, /BUILD_GENERATION_OPERATOR_EXCLUSION_UNAVAILABLE/);
+        assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 0);
+        const events = JSON.parse(readFileSync(join(fixture.root, ".setfarm/.fixture-exclusion-events.json"), "utf8"));
+        assert.equal(events.at(-1), "close");
+        if (point === "quarantine_rename") {
+          assert.deepEqual(preservedTreeSnapshot(archive), archiveBefore);
+          assert.equal(existsSync(quarantine), false);
+        } else if (point.startsWith("erase_execute_")) {
+          const ordinal = Number(point.slice("erase_execute_".length));
+          const records = readdirSync(join(store, "erase-steps/sha256")).map(name =>
+            JSON.parse(readFileSync(join(store, "erase-steps/sha256", name), "utf8")));
+          const pending = records.find(record => record.recordKind === "intent" && record.ordinal === ordinal);
+          assert.ok(pending, "the durable pending intent must remain visible");
+          assert.equal(existsSync(join(quarantine, pending.locator)), true, "the next target must remain present");
+          assert.equal(records.filter(record => record.recordKind === "completion").length, ordinal);
+        } else if (point === "erase_root") {
+          assert.equal(existsSync(quarantine), true);
+          assert.deepEqual(readdirSync(quarantine), []);
+        } else {
+          assert.equal(existsSync(archive), false);
+          assert.equal(existsSync(quarantine), false);
+          assert.equal(readdirSync(join(store, "receipts/sha256")).length, point === "disposition" ? 1 : 0);
+        }
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  for (const point of ["quarantine_adopt", "erase_adopt_0"]) {
+    it(`preserves response-loss state when exclusion is lost at ${point}`, () => {
+      const fixture = prepareGenerationBoundFixture(8);
+      try {
+        if (point === "quarantine_adopt") installQuarantineRenameCrash(fixture.root);
+        else installEveryNonRootEraseCrash(fixture.root, { firstOnly: true });
+        const completionDirectory = join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions");
+        const completion = JSON.parse(readFileSync(join(completionDirectory, readdirSync(completionDirectory)[0]), "utf8"));
+        rebindFixtureCompletionChainToHistoricalDevice(fixture.root,
+          (BigInt(completion.inventory.rootPhysicalIdentity.devDecimal) + 1n).toString(10));
+        const prepared = prepareOperatorDiscardOperation(fixture.root);
+        assert.equal(prepared.status, 0, prepared.stderr);
+        const pair = JSON.parse(prepared.stdout);
+        const store = join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1");
+        const operation = JSON.parse(readFileSync(join(store, "operations/sha256", `${pair.operationHash}.json`), "utf8"));
+        const crashed = resumeRetentionOperation(fixture.root, pair);
+        assert.equal(crashed.status, 91, crashed.stderr);
+        const quarantine = join(fixture.root, operation.expectedQuarantineLocator);
+        const before = preservedTreeSnapshot(quarantine);
+        const recordsBefore = preservedTreeSnapshot(join(store, "erase-steps/sha256"));
+        const marker = `.fixture-exclusion-loss-${point}`;
+        fixtureFile(fixture.root, marker, "deny\n");
+        const refused = resumeRetentionOperation(fixture.root, pair);
+        assert.notEqual(refused.status, 0, refused.stderr);
+        assert.match(refused.stderr, /BUILD_GENERATION_OPERATOR_EXCLUSION_UNAVAILABLE/);
+        assert.deepEqual(preservedTreeSnapshot(quarantine), before);
+        assert.deepEqual(preservedTreeSnapshot(join(store, "erase-steps/sha256")), recordsBefore);
+        assert.equal(readdirSync(join(store, "receipts/sha256")).length, 0);
+        assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 0);
+        rmSync(join(fixture.root, marker));
+        const recovered = resumeRetentionOperation(fixture.root, pair);
+        assert.equal(recovered.status, 0, recovered.stderr);
+        assert.equal(existsSync(quarantine), false);
+        assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 1);
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it("disposes the first drifted archive with a separate terminal disposition", () => {
+    const fixture = prepareGenerationBoundFixture(8);
+    try {
+      const completionName = readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions"))[0];
+      const completion = JSON.parse(readFileSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions", completionName), "utf8"));
+      rebindFixtureCompletionChainToHistoricalDevice(fixture.root,
+        (BigInt(completion.inventory.rootPhysicalIdentity.devDecimal) + 1n).toString(10));
+      const prepared = prepareOperatorDiscardOperation(fixture.root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      const resumed = resumeRetentionOperation(fixture.root, pair);
+      assert.equal(resumed.status, 0, resumed.stderr);
+      const receipt = JSON.parse(resumed.stdout);
+      assert.match(receipt.receiptHash, /^[0-9a-f]{64}$/);
+      assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generations-v1")).filter((name) => name.endsWith(".dist")).length, 7);
+      const dispositions = readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions"));
+      assert.equal(dispositions.length, 1);
+      const disposition = JSON.parse(readFileSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions", dispositions[0]), "utf8"));
+      assert.equal(disposition.schema, "setfarm.platform-build-generation-rotation-disposition.v2");
+      assert.equal(disposition.ordinal, 1);
+      assert.notEqual(disposition.recordedRootPhysicalIdentity.devDecimal,
+        disposition.disposedRootPhysicalIdentity.devDecimal);
+      const repeated = resumeRetentionOperation(fixture.root, pair);
+      assert.equal(repeated.status, 0, repeated.stderr);
+      assert.deepEqual(JSON.parse(repeated.stdout), receipt);
+      const next = prepareOperatorDiscardOperation(fixture.root);
+      assert.equal(next.status, 0, next.stderr);
+      const nextPair = JSON.parse(next.stdout);
+      assert.notEqual(nextPair.operationHash, pair.operationHash);
+      const operationDirectory = join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/operations/sha256");
+      const firstOperation = JSON.parse(readFileSync(join(operationDirectory, `${pair.operationHash}.json`), "utf8"));
+      const nextOperation = JSON.parse(readFileSync(join(operationDirectory, `${nextPair.operationHash}.json`), "utf8"));
+      assert.equal(nextOperation.operationCore.candidateOrdinal, 2);
+      assert.equal(nextOperation.operationCore.batchCommitment.batchHash, firstOperation.operationCore.batchCommitment.batchHash);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an archive reference acquired after quarantine but before the first erase", () => {
+    const fixture = prepareGenerationBoundFixture(8);
+    try {
+      const modulePath = join(fixture.root, "scripts/build-generation-retention.mjs");
+      const source = readFileSync(modulePath, "utf8");
+      const observer = '  if (executable === LSOF_REFERENCE_OBSERVER_EXECUTABLE_V1 && argv[0] === "-nP") {\n    return { error: null, signal: null, status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };\n  }';
+      assert.equal(source.includes(observer), true);
+      writeFileSync(modulePath, source.replace(observer, `  if (executable === LSOF_REFERENCE_OBSERVER_EXECUTABLE_V1 && argv[0] === "-nP") {
+    fixtureArchiveReferenceChecksV1 += 1;
+    if (process.argv.includes("resume") && fixtureArchiveReferenceChecksV1 >= 3) {
+      return { error: null, signal: null, status: 0, stdout: Buffer.from("p123\\0nlate-reference\\0"), stderr: Buffer.alloc(0) };
+    }
+    return { error: null, signal: null, status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+  }`).replace("function fixedChildResult(executable, argv, options = {}) {",
+        "let fixtureArchiveReferenceChecksV1 = 0;\nfunction fixedChildResult(executable, argv, options = {}) {"));
+      git(fixture.root, ["add", "scripts/build-generation-retention.mjs"]);
+      git(fixture.root, ["commit", "-qm", "fixture late archive reference"]);
+      git(fixture.root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      const completionName = readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions"))[0];
+      const completion = JSON.parse(readFileSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions", completionName), "utf8"));
+      rebindFixtureCompletionChainToHistoricalDevice(fixture.root,
+        (BigInt(completion.inventory.rootPhysicalIdentity.devDecimal) + 1n).toString(10));
+      const prepared = prepareOperatorDiscardOperation(fixture.root);
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const resumed = resumeRetentionOperation(fixture.root, JSON.parse(prepared.stdout));
+      assert.notEqual(resumed.status, 0);
+      assert.match(resumed.stderr, /open reference|lsof is ambiguous/);
+      assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 0);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the original batch commitment through all eight terminal dispositions", async () => {
+    const workspaceParent = realpathSync(mkdtempSync(join(tmpdir(), "setfarm-oa18-writer-workspace-")));
+    try {
+      const fixture = prepareGenerationBoundFixture(8, { workspaceParent, codeOwnedWriter: true });
+      const retentionStore = join(workspaceParent, "data/internal-production-baseline/build-generation-retention-v1");
+      const completionName = readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions"))[0];
+      const completion = JSON.parse(readFileSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions", completionName), "utf8"));
+      rebindFixtureCompletionChainToHistoricalDevice(fixture.root,
+        (BigInt(completion.inventory.rootPhysicalIdentity.devDecimal) + 1n).toString(10));
+      let batchHash = null;
+      for (let ordinal = 1; ordinal <= 8; ordinal += 1) {
+        const prepared = prepareOperatorDiscardOperation(fixture.root);
+        assert.equal(prepared.status, 0, `ordinal ${ordinal}: ${prepared.stderr}`);
+        const pair = JSON.parse(prepared.stdout);
+        const operation = JSON.parse(readFileSync(join(retentionStore,
+          `operations/sha256/${pair.operationHash}.json`), "utf8"));
+        assert.equal(operation.operationCore.candidateOrdinal, ordinal);
+        batchHash ??= operation.operationCore.batchCommitment.batchHash;
+        assert.equal(operation.operationCore.batchCommitment.batchHash, batchHash);
+        const resumed = resumeRetentionOperation(fixture.root, pair);
+        assert.equal(resumed.status, 0, `ordinal ${ordinal}: ${resumed.stderr}`);
+      }
+      assert.deepEqual(readdirSync(join(fixture.root, ".setfarm/build-generations-v1")), []);
+      const strict = inspectOperatorArchives(fixture.root);
+      assert.equal(strict.status, 0, strict.stderr);
+      assert.deepEqual(JSON.parse(strict.stdout).active, []);
+      assert.equal(readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions")).length, 8);
+      const writerPath = join(fixture.root, ".fixture-writer-reader.mjs");
+      const writerSource = readFileSync(join(fixture.root, "scripts/write-build-info.mjs"), "utf8");
+      const cliStart = writerSource.lastIndexOf("\ntry {\n  const phase = selectedPhase();");
+      assert.notEqual(cliStart, -1);
+      writeFileSync(writerPath, `${writerSource.slice(0, cliStart)}\nexport { scanWriterRotationLedger };\n`);
+      const writer = await import(`${pathToFileURL(writerPath).href}?disposedBatch=${Date.now()}`);
+      const writerRoot = realpathSync(fixture.root);
+      const ledgerRoot = join(writerRoot, ".setfarm/build-generation-rotation-ledger-v1");
+      const local = writer.scanWriterRotationLedger({
+        root: writerRoot,
+        intents: join(ledgerRoot, "intents"),
+        completions: join(ledgerRoot, "completions"),
+        dispositions: join(ledgerRoot, "dispositions"),
+        archive: join(writerRoot, ".setfarm/build-generations-v1"),
+      });
+      assert.equal(local.generations.length, 8);
+      assert.equal(local.generations.every((generation) => generation.disposition?.schema === "setfarm.platform-build-generation-rotation-disposition.v2"), true);
+      const terminalReader = await import(`${pathToFileURL(join(writerRoot, "scripts/build-generation-retention.mjs")).href}?terminalFence=${Date.now()}`);
+      const distBefore = preservedTreeSnapshot(join(writerRoot, "dist"));
+      const ledgerBefore = preservedTreeSnapshot(ledgerRoot);
+      const storeBefore = preservedTreeSnapshot(retentionStore);
+      fixtureFile(writerRoot, ".fixture-terminal-exclusion-unverified", "deny\n");
+      assert.throws(() => terminalReader.inspectBuildGenerationRotationLedgerV1(),
+        /BUILD_GENERATION_OPERATOR_TERMINAL_EXCLUSION_UNVERIFIED/);
+      const refusedWriter = runModule(writerRoot, writerExpression(rotationInput(writerRoot, fixtureBuildId(9), "9")));
+      assert.notEqual(refusedWriter.status, 0, refusedWriter.stderr);
+      assert.match(refusedWriter.stderr, /BUILD_GENERATION_OPERATOR_TERMINAL_EXCLUSION_UNVERIFIED/);
+      assert.deepEqual(preservedTreeSnapshot(join(writerRoot, "dist")), distBefore);
+      assert.deepEqual(readdirSync(join(writerRoot, ".setfarm/build-generations-v1")), []);
+      const refusedPrepare = spawnSync(process.execPath, ["scripts/write-build-info.mjs", "--prepare"], {
+        cwd: writerRoot, encoding: "utf8", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+      });
+      assert.notEqual(refusedPrepare.status, 0, refusedPrepare.stderr);
+      assert.match(refusedPrepare.stderr, /BUILD_GENERATION_OPERATOR_TERMINAL_EXCLUSION_UNVERIFIED/);
+      assert.deepEqual(preservedTreeSnapshot(join(writerRoot, "dist")), distBefore);
+      assert.deepEqual(preservedTreeSnapshot(ledgerRoot), ledgerBefore);
+      assert.deepEqual(preservedTreeSnapshot(retentionStore), storeBefore);
+      assert.deepEqual(readdirSync(join(writerRoot, ".setfarm/build-generations-v1")), []);
+      assert.equal(existsSync(join(writerRoot, ".setfarm/build-generation-maintenance-lock-v1.json")), false);
+      rmSync(join(writerRoot, ".fixture-terminal-exclusion-unverified"));
+      assert.doesNotThrow(() => terminalReader.inspectBuildGenerationRotationLedgerV1());
+      const firstReceipt = local.generations[0].disposition.retentionReceipt;
+      const receiptPath = join(retentionStore, "receipts/sha256", `${firstReceipt.receiptHash}.json`);
+      rmSync(receiptPath);
+      const strictModule = await import(`${pathToFileURL(join(writerRoot, "scripts/build-generation-retention.mjs")).href}?missingBatchReceipt=${Date.now()}`);
+      assert.throws(() => strictModule.inspectBuildGenerationRotationLedgerV1(), /receipt|ENOENT/i);
+    } finally {
+      rmSync(workspaceParent, { recursive: true, force: true });
+    }
+  });
+
+  it("commits the original eight archive pairs without embedding inventories", async () => {
+    const fixture = prepareGenerationBoundFixture(8, { advance: false });
+    try {
+      const completionName = readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions"))[0];
+      const completion = JSON.parse(readFileSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions", completionName), "utf8"));
+      rebindFixtureCompletionChainToHistoricalDevice(fixture.root,
+        (BigInt(completion.inventory.rootPhysicalIdentity.devDecimal) + 1n).toString(10));
+      const { readAuthorityRootsV1, scanRotationLedgerFromRoots, operatorDiscardBatchCommitmentV1 } = await importFixtureInternals(fixture.root, [
+        "readAuthorityRootsV1", "scanRotationLedgerFromRoots", "operatorDiscardBatchCommitmentV1",
+      ]);
+      const roots = readAuthorityRootsV1(realpathSync(fixture.root));
+      const inspection = scanRotationLedgerFromRoots(roots, { operatorArchiveObservation: true });
+      const batch = operatorDiscardBatchCommitmentV1(inspection);
+      assert.equal(batch.schema, "setfarm.platform-build-generation-operator-discard-batch.v1");
+      assert.deepEqual(batch.archiveCompletions.map((item) => item.ordinal), [1, 2, 3, 4, 5, 6, 7, 8]);
+      assert.deepEqual(batch.priorTerminalDispositions, []);
+      assert.deepEqual(batch.originalCompletionTip, inspection.completionTip);
+      assert.match(batch.batchHash, /^[0-9a-f]{64}$/);
+      assert.equal(JSON.stringify(batch).includes("entries"), false);
+      assert.ok(Buffer.byteLength(canonicalFixtureJson(batch)) < 16_384);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a drifted batch when an earlier terminal receipt is missing", () => {
+    for (const previouslyPrepared of [false, true]) {
+      const fixture = prepareGenerationBoundFixture(3, { advance: false });
+      try {
+        const preparedRetention = prepareRetentionOperation(fixture.root);
+        assert.equal(preparedRetention.status, 0, preparedRetention.stderr);
+        const disposed = resumeRetentionOperation(fixture.root, JSON.parse(preparedRetention.stdout));
+        assert.equal(disposed.status, 0, disposed.stderr);
+        for (let ordinal = 4; ordinal <= 9; ordinal += 1) {
+          rotateFixtureGeneration(fixture.root, fixtureBuildId(ordinal), String(ordinal));
+        }
+        const completions = readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions")).sort();
+        const second = JSON.parse(readFileSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/completions", completions[1]), "utf8"));
+        rebindFixtureCompletionChainToHistoricalDevice(fixture.root,
+          (BigInt(second.inventory.rootPhysicalIdentity.devDecimal) + 1n).toString(10), 2);
+        fixtureFile(fixture.root, "tracked.txt", "post-build controller source with prior disposition\n");
+        git(fixture.root, ["add", "tracked.txt"]);
+        git(fixture.root, ["commit", "-qm", "advance after retained build"]);
+        git(fixture.root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        const observed = inspectOperatorArchives(fixture.root);
+        assert.equal(observed.status, 0, observed.stderr);
+        assert.deepEqual(JSON.parse(observed.stdout).active.map((entry) => entry.ordinal), [2, 3, 4, 5, 6, 7, 8, 9]);
+        if (previouslyPrepared) {
+          const validPrepare = prepareOperatorDiscardOperation(fixture.root);
+          assert.equal(validPrepare.status, 0, validPrepare.stderr);
+          assert.match(JSON.parse(validPrepare.stdout).operationHash, /^[0-9a-f]{64}$/);
+        }
+        const dispositionName = readdirSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions"))[0];
+        const disposition = JSON.parse(readFileSync(join(fixture.root, ".setfarm/build-generation-rotation-ledger-v1/dispositions", dispositionName), "utf8"));
+        const receiptPath = join(fixture.root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/receipts/sha256", `${disposition.retentionReceipt.receiptHash}.json`);
+        rmSync(receiptPath);
+        const before = retentionPublicationSnapshot(fixture.root);
+        const refused = prepareOperatorDiscardOperation(fixture.root);
+        assert.notEqual(refused.status, 0);
+        assert.match(refused.stderr, /ENOENT|receipt/);
+        assert.deepEqual(retentionPublicationSnapshot(fixture.root), before);
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
     }
   });
 
@@ -4424,6 +4895,37 @@ ${boundary}`));
       chmodSync(dispositionFile, 0o600);
 
       assert.throws(() => authority.inspectBuildGenerationRotationLedgerV1(), /erase|receipt|terminal|cross|completion/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects terminal closure without its durable quarantine authorization", async () => {
+    const root = createFixture();
+    try {
+      installPrivateRetentionObservers(root);
+      rotateFixtureGeneration(root, BUILD_ID, "1");
+      fixtureFile(root, "dist/artifact.txt", "second\n");
+      rotateFixtureGeneration(root, BUILD_ID_2, "2");
+      fixtureFile(root, "dist/artifact.txt", "third\n");
+      rotateFixtureGeneration(root, BUILD_ID_3, "3");
+      const prepared = spawnSync(process.execPath, ["scripts/build-generation-retention.mjs", "prepare"], {
+        cwd: root, encoding: "utf8", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+      });
+      assert.equal(prepared.status, 0, prepared.stderr);
+      const pair = JSON.parse(prepared.stdout);
+      const resumed = resumeRetentionOperation(root, pair);
+      assert.equal(resumed.status, 0, resumed.stderr);
+
+      const eraseDirectory = join(root, ".fixture-authority-data/internal-production-baseline/.fixture-retention-v1/erase-steps/sha256");
+      const authorizationName = readdirSync(eraseDirectory).find((name) =>
+        JSON.parse(readFileSync(join(eraseDirectory, name), "utf8")).recordKind === "quarantine_authorization");
+      assert.ok(authorizationName);
+      rmSync(join(eraseDirectory, authorizationName));
+
+      const modulePath = join(root, "scripts/build-generation-retention.mjs");
+      const authority = await import(`${pathToFileURL(modulePath).href}?missingAuthorization=${Date.now()}`);
+      assert.throws(() => authority.inspectBuildGenerationRotationLedgerV1(), /quarantine authorization|terminal|missing/i);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
