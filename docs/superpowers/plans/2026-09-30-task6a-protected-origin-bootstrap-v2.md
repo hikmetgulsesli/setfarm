@@ -25,12 +25,22 @@
 
 - Create `scripts/task6a-origin-archive-v2.pm`, package `Task6aOriginArchiveV2`, pure `extract_node_v2($gzip_bytes)` returning exact selected member bytes or `TASK6A_ORIGIN_ARCHIVE_REFUSED`. Input/output are bytes, not origin authority. Use fixed SIP IO::Uncompress::Gunzip; no disk writes/exec/network/UID changes.
 - Create `scripts/task6a-origin-native-v2.pm`, package `Task6aOriginNativeV2`, pure `assert_node_native_v2($bytes)` returning diagnostic native details or `TASK6A_ORIGIN_NATIVE_REFUSED`. No process/tool invocation or admission authority.
+- Create `scripts/task6a-origin-map-v2.pm`, package `Task6aOriginMapV2`, pure
+  `parse_map_v2($raw_bytes,$captured_pid)` returning complete interleaved grammar
+  diagnostic/regions or `TASK6A_ORIGIN_MAP_REFUSED`. No process/FS effects or
+  admission. Bounds1MiB/8192lines/4096regions/64summarycategories/32malloczones;
+  exact bound PID/full sections, canonical numeric ranges/paths/known labels,
+  all current/max permissions and complete metric/footer rows. Final reviewed
+  literal source blob is added to authentic publisher policy before import.
 - Create `scripts/task6a-protected-origin-entry-v2.mjs`, builtin-only zero-extra-argument child: READY, fresh parent CHALLENGE/PONG exchange, END/EOF and fixed20s deadline. No child-reported identity or arbitrary eval/paths/imports.
 - Create `scripts/task6a-protected-origin-bootstrap-v2.pl`: fixed zero-argument root system supervisor; source/vendor authentic retrieval, protected staging, held direct child/lifetime and exact cleanup. Helpers are imported only after fixed Git byte-policy authentication.
 - Create `scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`: invoke actual fixed system Perl and helpers under scrubbed environment, actual child entry and parent contract. Default no privileged effects.
 - Create `scripts/task6a-origin-observer-recon-v2.mjs`: ordinary-only zero-arg
   controlled owned-child map-format exploration, mandatory exact review before
   observer execution. No privileged/source/vendor/DB effects; not origin proof.
+- Create `scripts/__tests__/fixtures/task6a-origin-vmmap-interleaved-v2.txt`:
+  sanitized complete actual ordinary own-child map fixture for strict pure-parser
+  grammar tests only, never production/native-origin evidence.
 - Create `tests/execution-attempts/task6a-private-protected-origin.integration.test.ts`: actual independent owner-install invocation/entry/private fixture, explicitly opt-in and gated on delivered package/exact pre-effect clearance. Register only safe default tests; a new opt-in package command is allowed only if needed and source/tests/spec map includes it.
 - Spec/this plan and external checkpoints. No V1/dirty19/default production entry changes.
 
@@ -88,6 +98,64 @@ v22.23.1 manifest has not been acquired by the bootstrap; primary web reader was
 unavailable, so the Windows-row compatibility fixture is explicitly synthetic.
 Main remains unconditionally refused. Stage/UID drop/held origin are absent.
 
+Current physical-holder fragment:20 missing-implementation REDs then20GREEN;
+16 ACL REDs then16GREEN;13 ancestry REDs then13GREEN. Actual ordinary read of
+fixed root-owned Perl retains nofollow/CLOEXEC FD, raw SHA256 and identity checks;
+private ledgers—not returned diagnostic fields—drive all rechecks/release. Actual
+directory descriptors and complete fixed ls ACL rows are held/sampled; only exact
+rootwheel/private/tmp01777 sticky ancestry is allowed writable. Directory checks
+hold dev/inode/mode/uid/gid, NOT changing contents/mtime or a descendant/ABA fence.
+Review exposed root/non-mac registration escape:3 JS-only simulated host REDs
+with forbidden-child sentinel then moved registration and real/effective UID
+gate GREEN. Actual ordinary FIFO with controlled pre-open regular snapshot
+blocked500ms RED, fixed O_NONBLOCK yields ~20ms refusal. Private lifecycle6 tests
+exercise actual4FD release, restored drift/failed hold stay burned, release/reopen
+refusal and missing-burn in-memory mutant. Throwing close left3FDs RED; per-handle
+guard continues completeclose and burns. Fresh full312PASS/0FAIL/0SKIP46752.522ms.
+These are fragments, not protected-stage/native/entry/cleanup authority. Exact
+independent physical-fragment review cleared bootstrap f9d37de5...fac64 and
+tests981a1508...a73d; reviewer independently reran59PASS/0SKIP. The close-fault
+port actually closes before injecting uncertainty: complete attempts and sticky
+denial are proven, not native uncertain-close leak freedom.
+
+Native grammar next slice:ordinary reviewed recon5ae16d... completed actual
+265region/54path format diagnostic; no raw map was retained. Existing V1 cache
+scanner does not parse all rows, can miss anonymous executable regions and uses
+split sections incompatible with fixed interleaved args. Root will first add
+mapText diagnostic through a real output-preservation RED/GREEN, then request
+exact read-only recon pre-effect review before another ordinary own-child run.
+Keep map only in orchestration memory; root uses apply_patch for sanitized full
+grammar fixture and writes pure parser tests before code. Full protection census
+must always classify current OR maximum executable rows; unknown anonymous/JIT/
+trampoline rows refuse until exact independent runtime policy exists. No root
+observer admission or automatic runtime-flag relaxation follows.
+
+Second exact reviewed dc719fa6... ordinary own-child recon completed0.607s,
+actualPID25774,bothdefclose true; independentps absence exit1. Complete raw42583
+characters retained in orchestrationmemory only. Root applied mapped337LF-line
+fixture after substituting PID77777,parent42424,dates2000-01-01 and stripping
+36formatter-padding line endings; full region grammar/counts preserved. Full
+fixture has265rows (one kernel pseudo-row),47currentexec,63currentORmaxexec and
+13anonymous maxexec even for ApplePerl. Native region policy remains unresolved:
+never treat labels as code origin or silently admit anonymous potential code.
+The fixture has338 split items including its terminal empty item, not338
+LF-terminated lines. Pure-parser28 missing-implementation ASSERT REDs thenGREEN;
+seven accepted-bad-input semantic REDs thenGREEN bind details/types, header image
+path/load start and exact per-zone region counts. Full44focusedPASS/0SKIP,
+independently reviewed at mapSHA256cbbb00600be897bffa2e3a9460dc81c5c225a8ea5a7fc0588cf9d80c25ebe201
+and tests99ac8225...b197. Current/max classifiers never exempt unused/cache/guard/
+kernel rows; unused paths are separate from image paths. Coherent actual
+1MiB/+1bytes with missing-bound in-memory mutant,4096/4097regions,64/65categories
+and32/33zones tested. The8192-line defense is structurally redundant under other
+caps; a clearly scaled337/338 in-memory consumer exercises that exact branch.
+Fresh full357PASS/0FAIL/0SKIP47469.747ms before later publisher-pin refinement.
+Mapblob9719bf4f3676b43b7858e3cabe3cee3e679120f8 is now literal source policy:
+two exact-four-source publisher REDs thenGREEN, eleven fixed responses and a
+fully coherently framed replacement map helper refused. Current57map/source
+focusedPASS/0SKIP1131.419ms. No helper import, privilege or publisher network
+effect. Parser success means format only; no observerTCB/process/native/source
+authority. Full bootstrap stage/drop/held-entry/cleanup remains unimplemented.
+
 Native observer decision/review gates (same File Map):
 - [ ] Independently prove vmmap-only literal DT_NO_RESPAWN=1, absent DT_FORCE,
   scrubbed other env, exact byte drift refusal; never DT_NO_RESPAWN_TO_DT.
@@ -125,6 +193,7 @@ Native observer decision/review gates (same File Map):
 ```bash
 git hash-object --no-filters scripts/task6a-origin-archive-v2.pm
 git hash-object --no-filters scripts/task6a-origin-native-v2.pm
+git hash-object --no-filters scripts/task6a-origin-map-v2.pm
 git hash-object --no-filters scripts/task6a-protected-origin-entry-v2.mjs
 ```
 

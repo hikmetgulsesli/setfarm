@@ -123,10 +123,30 @@ Candidate args are `-w -noCoalesce -interleaved` and the exact captured PID:
 no partial-name/file/optional address, `-v`/allSplitLibs, output-file, caller flags
 or unverified malloc/corpse modes. Require actual complete current/max RWX and
 full paths. Footprint is rejected: simplified verbose output omits these
-protections and may perform deferred reclaim. No observer has yet been run.
+protections and may perform deferred reclaim. One exact reviewed ordinary
+own-Perl-child exploration completed (265 regions/54 paths, definite both-close);
+this did not admit the privileged observer, prove complete map grammar or
+classify every executable region. The cache-only V1 parser ignores other rows
+and assumes split sections, whereas the selected candidate is interleaved.
+Always parse two complete maps even when no logging cache exists; current OR
+maximum executable anonymous/JIT/trampoline rows must not be silently exempted.
+Entry currently admits no execution flags; any runtime-mode change requires its
+own reviewed behavior/source-policy refinement. Next ordinary exploration may
+return the complete exact own-child map as an explicitly diagnostic `mapText`
+field, after both definite closes, for in-memory analysis and a sanitized full
+test fixture. No caller PID/file selection, live target or native authority.
+The second exact ordinary exploration retained a complete interleaved map in
+orchestration memory:265 rows (one kernel pseudo-row),47 current-executable,
+63 current-or-maximum-executable,13 anonymous maximum-executable rows. This
+already occurs in ordinary ApplePerl heap/stack/guard mappings, not merely V8
+JIT. A pure full-format parser reports these separately with no admission;
+label/maximum permission is neither loaded-code identity nor permission to
+ignore a row. Strict held admission still refuses unexplained potential code.
 ACL observation uses fixed `/bin/ls -lde` with bounded
 complete output. No user-owned Apple developer shim is treated as a real tool.
-Apple POSIX Perl has no setgroups/getgroups binding. Use documented checked core
+Apple POSIX Perl has no native XS setgroups/getgroups binding; POSIX getgroups
+is Perl-level emulation of the core group string, not an independent kernel
+query. Use documented checked core
 effective/supplementary GID assignment followed by checked setgid/setuid and
 verify real/effective IDs and actual supplementary groups before exec. Its
 behavior must be proven in the approved actual rehearsal, not assumed. `$^F`
@@ -183,6 +203,12 @@ all HTTP/authenticated host/fresh clean Setfarm run. None is implied here.
   publisher, root-owned source/vendor staging, retained parent and direct child.
 - `scripts/task6a-origin-archive-v2.pm`: bounded pure archive/member validation.
 - `scripts/task6a-origin-native-v2.pm`: bounded pure native load-command policy.
+- `scripts/task6a-origin-map-v2.pm`: bounded pure complete interleaved map parser,
+  1MiB/8192lines/4096regions/64summarycategories/32malloczones. Bind actual
+  captured PID, full headers/columns/region-table/legend/summary/footer, numeric
+  ranges/metrics/current-max permissions and every row; report all potential
+  executable/anonymous regions without admission. No process/privilege effects.
+  Final literal blob policy must authenticate this helper before privileged use.
 - `scripts/task6a-protected-origin-entry-v2.mjs`: exact builtin-only private child.
 - `scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`: actual system
   Perl/helper and MJS protocol tests, mandatory denial/default graph registration.
@@ -194,9 +220,15 @@ all HTTP/authenticated host/fresh clean Setfarm run. None is implied here.
   close. Both helper and target must settle before diagnostic output. A target
   left suspended by observer failure is killed/reaped, never reused. No target
   PID/argv/env/path supplied by caller; no output-file/allProcesses/corpse flag.
+  May return bounded complete own-child mapText only for diagnostic parser
+  research after definite both-close; not a protection/native-origin receipt.
   Static default analysis options0 may inspect original or analysis copy: the
   ordinary diagnostic does not claim live-snapshot or no target effects.
   Full all-source read-only review BEFORE even ordinary observer execution.
+- `scripts/__tests__/fixtures/task6a-origin-vmmap-interleaved-v2.txt`: sanitized
+  complete actual ordinary own-child interleaved-format fixture for pure parser
+  tests only; substitute process/parent identity labels, preserve region grammar,
+  columns, section endings, legend and summary. Never a native-origin witness.
 - `tests/execution-attempts/task6a-private-protected-origin.integration.test.ts`:
   separately opted-in exact trusted-owner admitted private actual rehearsal.
 - This spec and implementation plan. Keep source changes confined to these mapped
