@@ -21064,3 +21064,138 @@ export async function verifyHeldPre32ContractSpineJournalIdentityV1(
     );
   }
 }
+
+const task6aUsedHeldV31SessionsV2 = new WeakSet<object>();
+
+/**
+ * Diagnostic composition in the caller's fresh reserved session. The caller
+ * owns transport/physical checks and definite backend disposal; this is not a
+ * source, arbitrary-writer fence, genesis, migration or admission capability.
+ * Temporary source-owned behavioral preflight precedes the read-only phase.
+ * Neither the backend reservation nor the cooperative migration lock is
+ * released before the continuation settles. The 30s audit budget bounds
+ * admission only; the caller must actively bound its continuation and own
+ * definite disposal (the private adapter uses its original 60s invocation).
+ */
+export async function withHeldContractSpineV31DiagnosticV2<T>(
+  session: ReservedSql,
+  operation: (audit: CurrentContractSpineAuthorityLedgersAuditV2) => Promise<T>,
+): Promise<T> {
+  if (arguments.length !== 2 || !session || typeof session.unsafe !== "function"
+    || typeof operation !== "function" || task6aUsedHeldV31SessionsV2.has(session)) {
+    throw new Error("TASK6A_HELD_V31_DIAGNOSTIC_REFUSED");
+  }
+  task6aUsedHeldV31SessionsV2.add(session); // One use, including concurrent/failed invocations.
+  // Frozen preflight helpers contain finally-DROP paths that can mask an
+  // earlier query failure. Track the actual driver boundary without changing
+  // those helpers, and never yield a diagnostic after an absorbed failure.
+  const queryFailures: unknown[] = [];
+  const inFlight = new Set<Promise<unknown>>();
+  let normalClosed = false, temporaryPreflight = true;
+  const originalSession = session;
+  session = new Proxy(originalSession, {
+    get(target, property, receiver) {
+      if (property !== "unsafe") return Reflect.get(target, property, receiver);
+      return (...args: unknown[]) => {
+        const query = typeof args[0] === "string" ? args[0] : "";
+        const temporaryCleanup = temporaryPreflight && (
+          query === "SELECT set_config('statement_timeout', $1, false)"
+          || /^DROP TABLE IF EXISTS pg_temp\.setfarm_operational_failure_cause_v3_(?:verify_v3|canonical_identity_v3|behavior)$/.test(query));
+        if (normalClosed && !temporaryCleanup) return Promise.reject(queryFailures[0]);
+        const pending = (async () => {
+          try { return await Reflect.apply(target.unsafe, target, args); }
+          catch (error) { normalClosed = true; queryFailures.push(error); throw error; }
+        })();
+        inFlight.add(pending);
+        void pending.then(() => inFlight.delete(pending), () => inFlight.delete(pending));
+        return pending;
+      };
+    },
+  });
+  const deadline = currentAuthorityAuditDeadline({ lockTimeoutMs: 1000, statementTimeoutMs: 30000 });
+  let lockPossiblyHeld = false, transactionPossiblyOpen = false, setupPossiblyChanged = false;
+  let result: T | undefined;
+  const cleanup: unknown[] = [];
+  try {
+    setupPossiblyChanged = true;
+    await session.unsafe(`SELECT set_config('lock_timeout', '1000ms', false),
+      set_config('statement_timeout', '30000ms', false),
+      set_config('idle_in_transaction_session_timeout', '5000ms', false),
+      set_config('search_path', 'pg_catalog, public, pg_temp', false),
+      set_config('quote_all_identifiers', 'off', false)`);
+    remainingCurrentAuthorityAuditMilliseconds(deadline, "held31 session setup");
+    lockPossiblyHeld = true; // Burn before the await, including response loss.
+    await session.unsafe("SELECT pg_advisory_lock($1)", [contractSpineMigrationLockKey]);
+    remainingCurrentAuthorityAuditMilliseconds(deadline, "held31 migration lock");
+    const boundedSession = currentAuthorityAuditV31ReservedFacade(session, deadline);
+    const head = await boundedSession.unsafe<Array<{ version: number; state: string }>>(
+      "SELECT version, state FROM public.setfarm_schema_migrations ORDER BY version",
+    );
+    assertCurrentAuthorityAuditAtV31Head(head);
+    await verifyOperationalFailureCauseAuthorityV3Constraint(boundedSession);
+    const expected = await canonicalOperationalFailureCauseAuthorityV3ConstraintIdentity(boundedSession);
+    if (queryFailures.length) throw queryFailures[0];
+    temporaryPreflight = false;
+    remainingCurrentAuthorityAuditMilliseconds(deadline, "held31 source-owned temporary preflight");
+
+    transactionPossiblyOpen = true; // A rejected BEGIN may still have reached PG.
+    await session.unsafe("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    const transaction = session as unknown as TransactionSql;
+    const boundedTransaction = currentAuthorityAuditTransactionFacade(transaction, deadline);
+    await boundedTransaction.unsafe("LOCK TABLE public.run_termination_requests IN ACCESS SHARE MODE");
+    const audit = await auditCurrentAuthorityAtV31OnTransaction(
+      currentAuthorityAuditAlreadySessionLockedTransactionFacade(boundedTransaction), deadline, expected,
+    );
+    if (queryFailures.length) throw queryFailures[0];
+    const diagnostic = Object.freeze({
+      schema: "setfarm.contract-spine-current-authority-ledgers-audit.v2" as const,
+      version: "2.0.0" as const, scope: "database-current-authority-ledgers-only" as const,
+      status: "verified" as const, authorityState: "database_integrity_audit_only" as const,
+      productionAuthority: false as const, productionAdmission: "forbidden" as const,
+      mutationAuthority: false as const, storeAuthority: false as const,
+      restartAuthority: false as const, trustConclusion: "characterization_only" as const,
+      artifactPublicationAuthorityLedger: audit.artifactPublicationAuthorityLedger,
+      platformReleaseStoreRecordLedger: audit.platformReleaseStoreRecordLedger,
+      v3StoryClaimRuntimeBinding: audit.v3StoryClaimRuntimeBinding,
+    });
+    remainingCurrentAuthorityAuditMilliseconds(deadline, "held31 continuation admission");
+    result = await operation(diagnostic);
+  } catch (error) { queryFailures.push(error); }
+
+  normalClosed = true;
+  temporaryPreflight = false;
+  // Promise.all in the unchanged core is fail-fast. A sibling may still be
+  // awaiting its timeout setup: burn further reads and settle actual driver
+  // work before fixed control cleanup or returning the caller's session.
+  while (inFlight.size) await Promise.allSettled([...inFlight]);
+
+  if (transactionPossiblyOpen) {
+    try { await originalSession.unsafe("ROLLBACK"); transactionPossiblyOpen = false; }
+    catch (error) { cleanup.push(error); }
+  }
+  // A failed rollback leaves transaction/session disposition unknown. Never
+  // pretend that unlock/reset restored a reusable backend in that condition.
+  if (!transactionPossiblyOpen && lockPossiblyHeld) {
+    try {
+      const rows = await originalSession.unsafe<Array<{ unlocked: boolean }>>(
+        "SELECT pg_advisory_unlock($1) AS unlocked", [contractSpineMigrationLockKey],
+      );
+      if (rows.length !== 1 || rows[0]?.unlocked !== true) throw Error("TASK6A_HELD_V31_UNLOCK_UNCERTAIN");
+      lockPossiblyHeld = false;
+    } catch (error) { cleanup.push(error); }
+  }
+  if (!transactionPossiblyOpen && !lockPossiblyHeld && setupPossiblyChanged) {
+    for (const setting of ["lock_timeout", "statement_timeout", "idle_in_transaction_session_timeout",
+      "search_path", "quote_all_identifiers"] as const) {
+      try { await originalSession.unsafe(`RESET ${setting}`); }
+      catch (error) { cleanup.push(error); break; }
+    }
+  }
+  const failures = [...queryFailures, ...cleanup]
+    .filter((error, index, all) => all.findIndex(candidate => Object.is(candidate, error)) === index);
+  if (failures.length > 1 || cleanup.length) {
+    throw new AggregateError(failures, "TASK6A_HELD_V31_CLEANUP_UNCERTAIN");
+  }
+  if (failures.length) throw failures[0];
+  return result as T;
+}
