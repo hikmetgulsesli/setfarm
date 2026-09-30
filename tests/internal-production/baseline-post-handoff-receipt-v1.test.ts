@@ -5926,6 +5926,13 @@ function ensurePhase5cStartupFixtureV1(root: string): void {
   }
 }
 
+function receiptCleanupErrorLeavesFixtureV1(value: unknown): string[] {
+  assert.ok(value !== null && typeof value === "object");
+  const tree = value as { message: unknown; causes: unknown };
+  assert.equal(typeof tree.message, "string"); assert.ok(Array.isArray(tree.causes));
+  return tree.causes.length === 0 ? [tree.message as string] : tree.causes.flatMap(receiptCleanupErrorLeavesFixtureV1);
+}
+
 function instrumentPhase5cProgressFixtureV1(root: string): void {
   const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
   ensurePhase5cStartupFixtureV1(root);
@@ -5983,30 +5990,36 @@ function instrumentPhase5cProgressFixtureV1(root: string): void {
         p5cSEndpointMemberProbe.events.push("member-read:" + path.basename(memberTarget));
         if (p5cSEndpointMemberProbe.afterReadTarget === memberTarget) throw new Error("P5C_S_ENDPOINT_MEMBER_PRIMARY_AFTER_READ");
       }`);
-    const localCloseAnchor = "closeSync(descriptor);";
+    const localCloseAnchor = "attemptTask6aReceiptOwnedCleanupV1([() => closeSync(descriptor)], error);";
     assert.equal(pinRegion.split(localCloseAnchor).length - 1, 1, "P5c-S injects one in-progress member cleanup fault after the real close");
-    pinRegion = pinRegion.replace(localCloseAnchor, `${localCloseAnchor}
+    pinRegion = pinRegion.replace(localCloseAnchor, `attemptTask6aReceiptOwnedCleanupV1([() => {
+        closeSync(descriptor);
         if (p5cSEndpointMemberProbe) {
           p5cSEndpointMemberProbe.events.push("in-progress-close:" + path.basename(memberTarget));
           if (p5cSEndpointMemberProbe.inProgressCloseFaultTarget === memberTarget) throw new Error("P5C_S_ENDPOINT_IN_PROGRESS_CLOSE_FAULT");
-        }`);
+        }
+      }], error);`);
     transformedOwner = transformedOwner.slice(0, pinStart) + pinRegion + transformedOwner.slice(pinEnd);
-    const retainedCloseAnchor = "closeSync(memberPins[index]!.descriptor);";
+    const retainedCloseAnchor = "...[...memberPins].reverse().map((pin) => () => closeSync(pin.descriptor)),";
     assert.equal(transformedOwner.split(retainedCloseAnchor).length - 1, 1, "P5c-S injects one retained-member close fault after the real reverse close");
-    transformedOwner = transformedOwner.replace(retainedCloseAnchor, `${retainedCloseAnchor}
+    transformedOwner = transformedOwner.replace(retainedCloseAnchor, `...[...memberPins].reverse().map((pin) => () => {
+          closeSync(pin.descriptor);
           if (p5cSEndpointMemberProbe) {
-            const closedTarget = memberPins[index]!.target;
+            const closedTarget = pin.target;
             p5cSEndpointMemberProbe.events.push("pin-close:" + path.basename(closedTarget));
             if (p5cSEndpointMemberProbe.retainedCloseFaultTarget === closedTarget) throw new Error("P5C_S_ENDPOINT_RETAINED_CLOSE_FAULT");
-          }`);
-    const guardCloseAnchor = "guard.close();";
+          }
+        }),`);
+    const guardCloseAnchor = "() => guard.close(),";
     const guardCloseCount = transformedOwner.split(guardCloseAnchor).length - 1;
     assert.ok(guardCloseCount >= 1, "P5c-S retained-member owner has an exact directory-guard cleanup call");
-    transformedOwner = transformedOwner.replaceAll(guardCloseAnchor, `${guardCloseAnchor}
+    transformedOwner = transformedOwner.replaceAll(guardCloseAnchor, `() => {
+        guard.close();
         if (p5cSEndpointMemberProbe) {
           p5cSEndpointMemberProbe.events.push("guard-close");
           if (p5cSEndpointMemberProbe.guardCloseFault) throw new Error("P5C_S_ENDPOINT_GUARD_CLOSE_FAULT");
-        }`);
+        }
+      },`);
     source = source.slice(0, ownerStart) + transformedOwner + source.slice(ownerStart + ownerRegion.length);
   }
   if (!source.includes("\n  rmdirSync,\n")) {
@@ -7857,16 +7870,17 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
     assert.ok(closeHelperHeader, "P5c-S copied fixture bounds the exact recovery resource cleanup helper");
     let transformedCloseHelper = closeHelperRegion.slice(0, closeHelperHeader[0].length) + `
   const p5cSRecoveryCloseProbe = Reflect.get(globalThis, "__p5cSRecoveryAtRootProbeV1") as undefined | {internalCloseFaultMode:"construction"|"returned"|null;internalCloseFaultAt:number|null;internalCloseCalls:Record<"construction"|"returned",number>;events:string[]};` + closeHelperRegion.slice(closeHelperHeader[0].length);
-    const childCloseCalls = [...transformedCloseHelper.matchAll(/\.close\(\);/g)];
-    assert.equal(childCloseCalls.length, 1, "P5c-S recovery cleanup helper has one reverse-loop child close call");
-    const childCloseEnd = childCloseCalls[0]!.index! + childCloseCalls[0]![0].length;
-    transformedCloseHelper = transformedCloseHelper.slice(0, childCloseEnd) + `
+    const childCloseAnchor = "() => resource.close()";
+    assert.equal(transformedCloseHelper.split(childCloseAnchor).length - 1, 1, "P5c-S recovery cleanup helper has one reverse-loop child close call");
+    transformedCloseHelper = transformedCloseHelper.replace(childCloseAnchor, `() => {
+      resource.close();
       if (p5cSRecoveryCloseProbe) {
         const phase = primaryError === null ? "returned" : "construction";
         p5cSRecoveryCloseProbe.internalCloseCalls[phase] += 1;
         p5cSRecoveryCloseProbe.events.push("child-close:" + phase + ":" + p5cSRecoveryCloseProbe.internalCloseCalls[phase]);
         if (p5cSRecoveryCloseProbe.internalCloseFaultMode === phase && p5cSRecoveryCloseProbe.internalCloseFaultAt === p5cSRecoveryCloseProbe.internalCloseCalls[phase]) throw new Error("P5C_S_RECOVERY_AT_ROOT_INTERNAL_CLOSE_FAULT:" + phase);
-      }` + transformedCloseHelper.slice(childCloseEnd);
+      }
+    }`);
     source = source.slice(0, closeHelperStart) + transformedCloseHelper + source.slice(closeHelperEnd);
     const helperStart = source.indexOf("async function observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(");
     const helperRegion = topLevelFunctionRegionV1(source, "observeInternalProductionRecoverySourceBootstrapStatusAtRootV1");
@@ -8316,6 +8330,10 @@ export async function p5cSObservePhysicalPresentTask12EndpointFixtureV1(input: R
   let mutationStep = 0;
   const mutationBytes = input.memberMutation === null ? null : Buffer.from(input.memberMutation.originalBytesBase64, "base64");
   const mutationBackup = input.memberMutation === null ? null : path.join(path.dirname(path.dirname(input.memberMutation.target)), ".p5c-s-endpoint-member-held-" + process.pid + "-" + path.basename(input.memberMutation.target));
+  let errorTree: unknown = null;
+  const projectError = (error: unknown): unknown => Object.freeze({
+    message: String(error), causes: Object.freeze(error instanceof AggregateError ? error.errors.map(projectError) : []),
+  });
   const cleanupProbe = { events: [] as string[], afterReadTarget: input.cleanupFault?.afterReadTarget ?? null, inProgressCloseFaultTarget: input.cleanupFault?.inProgressCloseFaultTarget ?? null, retainedCloseFaultTarget: input.cleanupFault?.retainedCloseFaultTarget ?? null, guardCloseFault: input.cleanupFault?.guardCloseFault === true };
   Reflect.set(globalThis, "__p5cSEndpointMemberProbeV1", cleanupProbe);
   try {
@@ -8342,6 +8360,7 @@ export async function p5cSObservePhysicalPresentTask12EndpointFixtureV1(input: R
   } catch (error) {
     outcome = "threw";
     message = String(error);
+    errorTree = projectError(error);
   } finally {
     try {
       if (input.memberMutation !== null && mutationBytes !== null && mutationBackup !== null && mutationStep > 0) {
@@ -8359,11 +8378,12 @@ export async function p5cSObservePhysicalPresentTask12EndpointFixtureV1(input: R
     } catch (error) {
       outcome = "threw";
       message ??= String(error);
+      errorTree = errorTree === null ? projectError(error) : Object.freeze({ message: "fixture operation and cleanup", causes: [errorTree, projectError(error)] });
     }
   }
   Reflect.deleteProperty(globalThis, "__p5cSEndpointMemberProbeV1");
   const publicationTargetBytes = observed?.publication.members.find((member) => member.target === input.target)?.bytes ?? null;
-  return Object.freeze({ outcome, message, closeCount, mutationApplied, cleanupEvents: Object.freeze([...cleanupProbe.events]), publication: observed?.publication ?? null, writer: observed?.writer ?? null, publicationTargetBytesBase64: publicationTargetBytes?.toString("base64") ?? null });
+  return Object.freeze({ outcome, message, errorTree, closeCount, mutationApplied, cleanupEvents: Object.freeze([...cleanupProbe.events]), publication: observed?.publication ?? null, writer: observed?.writer ?? null, publicationTargetBytesBase64: publicationTargetBytes?.toString("base64") ?? null });
 }
 
 `
@@ -9645,10 +9665,12 @@ export function p5cSProjectProgressNestedAuthorityPairFixtureV1(..._args: readon
   publisher = publisher.replace(heldProgress, `      (Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as {events:string[]}).events.push("s-h-writer-before");
 ${heldProgress}
       (Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as {events:string[]}).events.push("s-h-writer-after");`);
-  const heldClose = "    heldWriter.close();";
+  const heldClose = "    attemptTask6aReceiptOwnedCleanupV1([() => heldWriter.close()], primaryError);";
   assert.equal(publisher.split(heldClose).length - 1, 1, "P5c-S publisher closes the sole H writer in its finalizer");
-  publisher = publisher.replace(heldClose, `    try { heldWriter.close(); }
-    finally { (Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as {events:string[]}).events.push("s-h-writer-close"); }`);
+  publisher = publisher.replace(heldClose, `    attemptTask6aReceiptOwnedCleanupV1([() => {
+      try { heldWriter.close(); }
+      finally { (Reflect.get(globalThis, "__p5bStrictCEntryProbeV1") as {events:string[]}).events.push("s-h-writer-close"); }
+    }], primaryError);`);
   source = source.slice(0, publisherStart) + publisher + source.slice(publisherEnd);
   writeFileSync(modulePath, source);
 }
@@ -9724,6 +9746,10 @@ export async function p5cSObserveCurrentEntryAuthorityAtRootFixtureV1(input: Rea
   const contentBackup = path.join(externalParent, ".p5c-s-e1-content-member-backup");
   const contentParentBackup = path.join(externalParent, ".p5c-s-e1-content-parent-backup");
   const operationDirectoryBackup = path.join(externalParent, ".p5c-s-e1-operation-directory-backup");
+  let errorTree: unknown = null;
+  const projectError = (error: unknown): unknown => Object.freeze({
+    message: String(error), causes: Object.freeze(error instanceof AggregateError ? error.errors.map(projectError) : []),
+  });
   const replaceDirectoryWithLinkedClone = (directory: string, backup: string): void => {
     renameSync(directory, backup);
     mkdirSync(directory, { mode: 0o700 });
@@ -9759,12 +9785,14 @@ export async function p5cSObserveCurrentEntryAuthorityAtRootFixtureV1(input: Rea
   } catch (error) {
     outcome = "threw";
     message = String(error);
+    errorTree = projectError(error);
   } finally {
     try {
       if (owner !== null) { closeCalls += 1; owner.close(); }
     } catch (error) {
       outcome = "threw";
       message ??= String(error);
+      errorTree = errorTree === null ? projectError(error) : Object.freeze({ message: "fixture operation and cleanup", causes: [errorTree, projectError(error)] });
     } finally {
       Reflect.deleteProperty(globalThis, "__p5cSEndpointMemberProbeV1");
       if (mutationApplied && input.mutation === "locator-appearance") unlinkSync(input.locatorTarget);
@@ -9777,6 +9805,7 @@ export async function p5cSObserveCurrentEntryAuthorityAtRootFixtureV1(input: Rea
   return Object.freeze({
     outcome,
     message,
+    errorTree,
     value: owner?.value ?? null,
     pair: owner?.pair ?? null,
     pairBytesBase64: owner?.pairBytes?.toString("base64") ?? null,
@@ -30548,12 +30577,14 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       const cleanupMemberValue = cleanupMemberFault.value as Readonly<Record<string, unknown>>;
       assert.deepEqual({ outcome: cleanupMemberValue.outcome, closeCount: cleanupMemberValue.closeCount, events: cleanupMemberValue.cleanupEvents }, { outcome: "threw", closeCount: 1, events: cleanupOrder },
         "the first reverse member-close error is reported only after all remaining pins and the guard close exactly once");
-      assert.match(String(cleanupMemberValue.message), /P5C_S_ENDPOINT_RETAINED_CLOSE_FAULT/, "the first retained-pin cleanup error wins over the later injected guard-close error");
+      assert.deepEqual(receiptCleanupErrorLeavesFixtureV1(cleanupMemberValue.errorTree), [
+        "Error: P5C_S_ENDPOINT_RETAINED_CLOSE_FAULT", "Error: P5C_S_ENDPOINT_GUARD_CLOSE_FAULT",
+      ], "both retained-pin and later guard failures remain in exact release order");
       assert.equal(cleanupGuardFault.descriptorDelta, 0, "a directory-guard close fault occurs after every member descriptor is closed");
       const cleanupGuardValue = cleanupGuardFault.value as Readonly<Record<string, unknown>>;
       assert.deepEqual({ outcome: cleanupGuardValue.outcome, closeCount: cleanupGuardValue.closeCount, events: cleanupGuardValue.cleanupEvents }, { outcome: "threw", closeCount: 1, events: cleanupOrder },
         "a guard-close failure is reported after exact reverse member cleanup");
-      assert.match(String(cleanupGuardValue.message), /P5C_S_ENDPOINT_GUARD_CLOSE_FAULT/, "the guard cleanup error is reported when no earlier close failed");
+      assert.deepEqual(receiptCleanupErrorLeavesFixtureV1(cleanupGuardValue.errorTree), ["Error: P5C_S_ENDPOINT_GUARD_CLOSE_FAULT"], "the sole guard cleanup error is retained");
 
       const sortedPrimaryMembers = [path.basename(target), path.basename(siblingTarget), path.basename(primaryFaultTarget)].sort((left, right) =>
         Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8")),
@@ -30570,7 +30601,10 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       const primaryValue = primaryWithCleanupFaults.value as Readonly<Record<string, unknown>>;
       assert.deepEqual({ outcome: primaryValue.outcome, closeCount: primaryValue.closeCount, events: primaryValue.cleanupEvents }, { outcome: "threw", closeCount: 0, events: primaryEvents },
         "the in-progress descriptor, retained prefix, and guard close exactly once in causal reverse order before transfer");
-      assert.match(String(primaryValue.message), /P5C_S_ENDPOINT_MEMBER_PRIMARY_AFTER_READ/, "the post-read construction primary is preserved over in-progress, retained-pin, and guard cleanup errors");
+      assert.deepEqual(receiptCleanupErrorLeavesFixtureV1(primaryValue.errorTree), [
+        "Error: P5C_S_ENDPOINT_MEMBER_PRIMARY_AFTER_READ", "Error: P5C_S_ENDPOINT_IN_PROGRESS_CLOSE_FAULT",
+        "Error: P5C_S_ENDPOINT_RETAINED_CLOSE_FAULT", "Error: P5C_S_ENDPOINT_GUARD_CLOSE_FAULT",
+      ], "construction primary and every independent cleanup failure remain in causal order");
 
       const writerNonce = "91000000-0000-4000-8000-000000000091";
       const writerBytes = exactLiveWriterOwnerFixtureV1(target, process.pid, writerNonce);
@@ -35053,22 +35087,23 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
                 `${entry.label}: the owned parent generation, not incidental member bytes, is load-bearing`);
             }
           } else if (entry.label === "construction-primary-over-close") {
-            assert.match(String(observed.message), /P5C_S_ENDPOINT_MEMBER_PRIMARY_AFTER_READ/,
-              `${entry.label}: the read/open primary survives its cleanup fault`);
-            assert.doesNotMatch(String(observed.message), /IN_PROGRESS_CLOSE_FAULT|RETAINED_CLOSE_FAULT/,
-              `${entry.label}: cleanup failure never replaces construction primary`);
+            assert.deepEqual(receiptCleanupErrorLeavesFixtureV1(observed.errorTree), [
+              "Error: P5C_S_ENDPOINT_MEMBER_PRIMARY_AFTER_READ", "Error: P5C_S_ENDPOINT_IN_PROGRESS_CLOSE_FAULT",
+              "Error: P5C_S_ENDPOINT_RETAINED_CLOSE_FAULT",
+            ], `${entry.label}: read/open primary leads both independent cleanup failures`);
             assert.ok((observed.endpointEvents as readonly string[]).some((event) => event.startsWith("in-progress-close:")),
               `${entry.label}: the secondary in-progress descriptor close fault really executes`);
           } else if (entry.label === "missing-content-primary-over-close") {
-            assert.match(String(observed.message), /content|missing|ENOENT|absent/i,
+            const causes = receiptCleanupErrorLeavesFixtureV1(observed.errorTree);
+            assert.match(causes[0]!, /content|missing|ENOENT|absent/i,
               `${entry.label}: missing authenticated content remains primary over locator cleanup failure`);
-            assert.doesNotMatch(String(observed.message), /RETAINED_CLOSE_FAULT/,
-              `${entry.label}: construction cleanup failure is secondary`);
+            assert.deepEqual(causes.slice(1), ["Error: P5C_S_ENDPOINT_RETAINED_CLOSE_FAULT"],
+              `${entry.label}: construction cleanup failure is retained as secondary`);
             assert.ok((observed.endpointEvents as readonly string[]).includes("pin-close:02-entry-authority.pair.json"),
               `${entry.label}: the secondary retained-locator close fault really executes during partial construction cleanup`);
           } else if (entry.label === "returned-close-fault") {
-            assert.match(String(observed.message), /P5C_S_ENDPOINT_RETAINED_CLOSE_FAULT/,
-              `${entry.label}: returned close reports its first child failure`);
+            assert.deepEqual(receiptCleanupErrorLeavesFixtureV1(observed.errorTree), ["Error: P5C_S_ENDPOINT_RETAINED_CLOSE_FAULT"],
+              `${entry.label}: returned close retains its child failure`);
             assert.equal(observed.closeCalls, 1, `${entry.label}: caller invokes returned close exactly once`);
             const events = observed.endpointEvents as readonly string[];
             const contentClose = events.findIndex((event) => event.startsWith("pin-close:") && event.endsWith(".json"));

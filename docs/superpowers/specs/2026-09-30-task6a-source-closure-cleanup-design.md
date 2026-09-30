@@ -23,6 +23,29 @@ it aggregates already collected errors without re-invoking resource releases.
 The startup worktree and its dirty files remain preserved and paused. Root is
 the sole writer in this scoped branch; reviewers are read-only.
 
+Exact-head cloud review at16e7b78d found two further raw descriptor/guard
+groups: receipt-store snapshot reading and recovery candidate parent durability.
+Both must attempt the descriptor and guard even after either close fails,
+preserve the operation's primary rejection, and reject subsequent allocation
+after cleanup uncertainty. Existing read validation and fsync ordering are
+unchanged; testing the durability body's resource protocol does not perform a
+production fsync or grant publication authority.
+The immediate authentic held-writer owner and selected progress CAS child must
+also obey the same contract; an outer attempt-all wrapper cannot exhaust a
+child whose own first-error loop leaks pins. Release and revoke acquisition-only
+writer pins before transfer, revoke rejected link descriptors before close,
+retain link/acquisition cleanup evidence, and preserve the ordinary bounded
+EEXIST collision retry when cleanup succeeds. CAS member acquisition, stability
+and release share the latch. Immediate presence/root/directory and publisher
+context wrappers retain primary plus nested cleanup failures. Generic CAS
+mutation/publication machinery is excluded; no unrelated refactoring follows.
+Actual copied physical-present and E1 regressions require retaining all child
+causes through E1 resource grouping and policy/common/content-shard/entry-content
+endpoint borrower catches as well. Their old first-error/suppression behavior
+cannot discard evidence from the repaired directory owner. Test-only aggregate
+tree projection checks exact primary and independent cleanup causes in causal
+order, preserving FD, close-count, reverse-order, topology and semantic checks.
+
 ## Chosen contract
 
 Keep every existing parser, fixed home/UID, 0700 parent, 0600 leaf, strict final

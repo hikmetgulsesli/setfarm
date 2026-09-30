@@ -140,15 +140,70 @@ function fixture(fault: "none" | "file" | "parent" | "historical" | "guard" = "n
   }
   function finalizer(name: string, state: Record<string, unknown>, asynchronous = false) {
     const owner = ast.statements.filter(ts.isFunctionDeclaration).find(node => node.name?.text === name)!;
-    const block = owner.body!.statements.filter(ts.isTryStatement)[0]?.finallyBlock;
+    let block = owner.body!.statements.filter(ts.isTryStatement)[0]?.finallyBlock;
+    if (!block) {
+      const visit = (node: ts.Node): void => {
+        if (ts.isTryStatement(node) && node.finallyBlock && !block) block = node.finallyBlock;
+        ts.forEachChild(node, visit);
+      }; visit(owner.body!);
+    }
     assert.ok(block, `missing actual finalizer ${name}`);
     return load(name, ["openExactPoisonHistoricalInventoryPinsV1"], state, `${asynchronous ? "async " : ""}function ${name}() ${block.getText(ast)}`);
   }
+  function returnedClose(name: string, state: Record<string, unknown>) {
+    const owner = ast.statements.filter(ts.isFunctionDeclaration).find(node => node.name?.text === name)!;
+    let close: ts.ArrowFunction | undefined;
+    const visit = (node: ts.Node): void => {
+      if (ts.isPropertyAssignment(node) && node.name.getText(ast) === "close" && ts.isArrowFunction(node.initializer)) {
+        assert.equal(close, undefined, "owner must have one returned close callback"); close = node.initializer;
+      }
+      ts.forEachChild(node, visit);
+    }; visit(owner); assert.ok(close);
+    return load(name, ["openExactPoisonHistoricalInventoryPinsV1"], state, `const ${name} = ${close.getText(ast)};`);
+  }
+  function writerBoundary(boundary: "link-rejection" | "transfer", state: Record<string, unknown>) {
+    const name = "acquireTask12ReceiptLocatorWriterV1";
+    const owner = ast.statements.filter(ts.isFunctionDeclaration).find(node => node.name?.text === name)!;
+    let acquisition: ts.TryStatement | undefined; let link: ts.TryStatement | undefined;
+    const visit = (node: ts.Node): void => {
+      if (ts.isTryStatement(node) && node.finallyBlock && !acquisition) acquisition = node;
+      if (ts.isTryStatement(node) && node.tryBlock.statements.some(statement =>
+        ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression)
+        && ts.isIdentifier(statement.expression.expression) && statement.expression.expression.text === "linkSync")) link = node;
+      ts.forEachChild(node, visit);
+    }; visit(owner); assert.ok(acquisition?.finallyBlock); assert.ok(link?.catchClause);
+    let body: string;
+    if (boundary === "link-rejection") {
+      body = `for (;;) { try { throw rejected; } catch (error) ${link.catchClause.block.getText(ast)} }`;
+    } else {
+      const statements = acquisition.tryBlock.statements;
+      const index = statements.findIndex(statement => ts.isVariableStatement(statement)
+        && statement.declarationList.declarations.some(declaration => declaration.name.getText(ast) === "heldBytes"));
+      assert.ok(index >= 0); body = statements.slice(index).map(statement => statement.getText(ast)).join("\n");
+    }
+    return load(name, ["openExactPoisonHistoricalInventoryPinsV1"], state, `function ${name}() { try { ${body} } finally ${acquisition.finallyBlock.getText(ast)} }`);
+  }
+  function publisherContextFinalizer(branch: number, state: Record<string, unknown>) {
+    const name = "resumeExactPoisonQuarantinePublisherCoreV1";
+    const owner = ast.statements.filter(ts.isFunctionDeclaration).find(node => node.name?.text === name)!;
+    const blocks: ts.Block[] = [];
+    const visit = (node: ts.Node): void => {
+      if (ts.isTryStatement(node) && node.finallyBlock?.getText(ast).includes("context.close()")) blocks.push(node.finallyBlock);
+      ts.forEachChild(node, visit);
+    }; visit(owner); assert.equal(blocks.length, 3);
+    return load(name, [], state, `function ${name}() ${blocks[branch]!.getText(ast)}`);
+  }
   function acquisitionCatch(name: string, state: Record<string, unknown>, asynchronous = false) {
     const owner = ast.statements.filter(ts.isFunctionDeclaration).find(node => node.name?.text === name)!;
-    const block = owner.body!.statements.filter(ts.isTryStatement)[0]?.catchClause?.block;
+    let block = owner.body!.statements.filter(ts.isTryStatement)[0]?.catchClause?.block;
+    if (!block) {
+      const visit = (node: ts.Node): void => {
+        if (ts.isTryStatement(node) && node.finallyBlock && node.catchClause && !block) block = node.catchClause.block;
+        ts.forEachChild(node, visit);
+      }; visit(owner.body!);
+    }
     assert.ok(block, `missing actual acquisition catch ${name}`);
-    return load(name, [], state, `${asynchronous ? "async " : ""}function ${name}(error: unknown) ${block.getText(ast)}`);
+    return load(name, ["openExactPoisonHistoricalInventoryPinsV1"], state, `${asynchronous ? "async " : ""}function ${name}(error: unknown) ${block.getText(ast)}`);
   }
   function nestedAuthorityLoop(state: Record<string, unknown>) {
     const name = "openExactPoisonPostVisibleProgressStatusV1";
@@ -161,7 +216,7 @@ function fixture(fault: "none" | "file" | "parent" | "historical" | "guard" = "n
     }; visit(owner); assert.ok(loop);
     return load(name, [], state, `async function ${name}() { ${loop.getText(ast)} }`);
   }
-  return { home, privateDir, files, inventory, allocated, attempts, load, local, finalizer, acquisitionCatch, nestedAuthorityLoop, openRecord, openParent, rawClose: close,
+  return { home, privateDir, files, inventory, allocated, attempts, load, local, finalizer, returnedClose, writerBoundary, publisherContextFinalizer, acquisitionCatch, nestedAuthorityLoop, openRecord, openParent, rawClose: close,
     failConstruction() { constructionFailure = true; },
     failGuardConstruction() { failGuardAfterOpen = true; },
     failParentConstruction() { failParentIdentity = true; },
@@ -183,6 +238,366 @@ function fixture(fault: "none" | "file" | "parent" | "historical" | "guard" = "n
     },
   };
 }
+
+// These two complete production bodies own a raw descriptor plus a directory
+// guard. A released-then-failed close must not skip the guard, discard a primary
+// rejection, or allow another allocation from the same receipt operation.
+for (const name of ["readTask12ReceiptStoreSnapshotV1", "fsyncExactPoisonRecoveryCandidateParentV1"] as const) {
+  for (const fault of ["none", "guard", "parent"] as const) {
+    for (const rejected of [false, true]) test(`${name} ${fault} cleanup preserves ${rejected ? "primary rejection" : "success/uncertainty"} and exhausts its guard`, () => {
+      const f = fixture(fault);
+      try {
+        const primary = new Error("TEST_ONLY_RECEIPT_OPERATION_REJECTION");
+        const operation = f.load(name, [], {
+          authenticateTask12ReceiptDirectoryChainV1: () => {
+            const parent = f.openParent(f.home); return { assertStable: parent.pin.assertStable, close: parent.close };
+          },
+          fsyncSync() { if (rejected) throw primary; },
+          readTask12ReceiptDescriptorBytesV1(fd: number) {
+            if (rejected) throw primary;
+            const bytes = Buffer.alloc(fs.fstatSync(fd).size); fs.readSync(fd, bytes, 0, bytes.length, 0); return bytes;
+          },
+        });
+        const run = () => name === "readTask12ReceiptStoreSnapshotV1"
+          ? operation(f.files[0]!) : operation({ assertStable() {} }, f.home);
+        if (fault === "none" && !rejected) run();
+        else assert.throws(run, (error: unknown) => {
+          if (fault === "none") assert.equal(error, primary);
+          else if (rejected) {
+            assert.ok(error instanceof AggregateError); assert.equal(error.errors[0], primary);
+            assert.match(String(error.errors[1]), /cleanup uncertain/);
+          } else assert.match(String(error), /cleanup uncertain/);
+          return true;
+        });
+        f.assertReleased();
+        if (fault !== "none") {
+          const count = f.allocated.length;
+          assert.throws(run, /cleanup uncertain/);
+          assert.equal(f.allocated.length, count, "receipt operation must reject before allocating after uncertainty");
+        }
+      } finally { f.cleanup(); }
+    });
+  }
+}
+
+for (const name of [
+  "openSelectedCurrentEntryPrerequisiteRootReaderV1",
+  "openFixedLegacyCurrentEntryPrerequisiteRootReaderV1",
+  "readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1",
+  "ensureExactPoisonRecoveryCandidateDirectoryV1",
+  "ensureTask12ReceiptPrivateDirectoryV1",
+] as const) test(`${name} immediate receipt guard preserves its primary rejection after uncertain release`, () => {
+  const f = fixture("parent");
+  try {
+    const primary = new Error("TEST_ONLY_PRIMARY_GUARD_REJECTION");
+    const store = { directory: f.home, device: fs.lstatSync(f.home, { bigint: true }).dev };
+    const operation = f.load(name, ["openExactPoisonHistoricalInventoryPinsV1"], {
+      readCurrentEntryStore: () => store,
+      directorySnapshot() {
+        if (name.startsWith("open")) throw primary;
+        return {};
+      },
+      authenticateTask12ReceiptDirectoryChainV1: () => {
+        const parent = f.openParent(f.home);
+        return { assertStable() { if (name.startsWith("read")) throw primary; }, close: parent.close };
+      },
+      exactPoisonRecoveryCandidateDirectoriesV1: () => [f.privateDir],
+      mkdirSync() {}, fsyncExactPoisonRecoveryCandidateParentV1() { throw primary; },
+      lstatSync(target: string, options: { bigint: true }) {
+        if (name === "ensureTask12ReceiptPrivateDirectoryV1" && target === f.privateDir) {
+          throw Object.assign(new Error("TEST_ONLY_ABSENT"), { code: "ENOENT" });
+        }
+        return fs.lstatSync(target, options);
+      },
+      isEnoent: (error: { code?: string }) => error.code === "ENOENT",
+    });
+    const run = () => {
+      if (name === "openSelectedCurrentEntryPrerequisiteRootReaderV1") return operation({});
+      if (name === "openFixedLegacyCurrentEntryPrerequisiteRootReaderV1") return operation(store);
+      if (name === "readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1") return operation(store, f.files[0]!);
+      if (name === "ensureExactPoisonRecoveryCandidateDirectoryV1") return operation({}, { assertStable() {} });
+      return operation(f.privateDir, () => { throw primary; });
+    };
+    assert.throws(run, (error: unknown) => {
+      assert.ok(error instanceof AggregateError); assert.equal(error.errors[0], primary);
+      assert.match(String(error.errors[1]), /cleanup uncertain/); return true;
+    }); f.assertReleased();
+    assert.throws(() => operation.peers.openExactPoisonHistoricalInventoryPinsV1!(f.inventory), /cleanup uncertain/);
+  } finally { f.cleanup(); }
+});
+
+test("private directory appeared guard retains primary and both nested cleanup causes", () => {
+  const f = fixture();
+  try {
+    const primary = new Error("TEST_ONLY_APPEARED_REJECTION");
+    const childCleanup = new Error("TEST_ONLY_APPEARED_CLOSE");
+    const parentCleanup = new Error("TEST_ONLY_PARENT_CLOSE");
+    let guards = 0;
+    const operation = f.load("ensureTask12ReceiptPrivateDirectoryV1", [], {
+      authenticateTask12ReceiptDirectoryChainV1: () => {
+        const parent = f.openParent(f.home); const appeared = guards++ > 0;
+        return {
+          assertStable() { if (appeared) throw primary; },
+          close() { parent.close(); throw appeared ? childCleanup : parentCleanup; },
+        };
+      },
+      lstatSync() { throw Object.assign(new Error("TEST_ONLY_ABSENT"), { code: "ENOENT" }); },
+      isEnoent: (error: { code?: string }) => error.code === "ENOENT",
+      mkdirSync() { throw Object.assign(new Error("TEST_ONLY_APPEARED"), { code: "EEXIST" }); },
+      Error,
+    });
+    assert.throws(() => operation(f.privateDir), (error: unknown) => {
+      const leaves: unknown[] = [];
+      const visit = (value: unknown): void => {
+        if (value instanceof AggregateError) value.errors.forEach(visit); else leaves.push(value);
+      }; visit(error);
+      assert.deepEqual(leaves, [primary, childCleanup, parentCleanup]); return true;
+    }); f.assertReleased();
+  } finally { f.cleanup(); }
+});
+
+for (const name of ["acquireTask12ReceiptLocatorWriterV1", "observeTask12CurrentStatusCasForProgressNoWriteV1"] as const) {
+  for (const rejected of [false, true]) test(`${name} returned child owner exhausts raw members and preserves ${rejected ? "primary" : "cleanup"} causes`, () => {
+    const f = fixture("file");
+    try {
+      const a = f.openRecord(f.files[0]!); const p = f.openParent(f.home);
+      const primary = new Error("TEST_ONLY_CHILD_PRIMARY");
+      const b = name.startsWith("observe") ? f.openRecord(f.files[1]!) : null;
+      const close = f.returnedClose(name, {
+        closed: false, heldClosed: false, heldDescriptor: a.descriptor,
+        guard: { assertStable() {}, close: p.close }, parent: p,
+        assertStable() { if (rejected) throw primary; },
+        unlinkSync() {}, fsyncCurrentEntryDirectory() {}, lockPath: f.files[0], directory: f.home,
+        temporaries: [a], fixed: b,
+        closeTask12CurrentStatusCasPinnedMemberV1: (member: { descriptor: number }) => f.rawClose(member.descriptor),
+      });
+      assert.throws(() => close(), (error: unknown) => {
+        assert.ok(error instanceof AggregateError);
+        if (name.startsWith("acquire") && rejected) assert.equal(error.errors[0], primary);
+        return true;
+      }); f.assertReleased();
+      assert.throws(() => close(), /closed twice/);
+      assert.throws(() => close.peers.openExactPoisonHistoricalInventoryPinsV1!(f.inventory), /cleanup uncertain/);
+    } finally { f.cleanup(); }
+  });
+}
+
+test("receipt writer acquisition finalizer exhausts all pins/raw descriptor/guard retaining primary", () => {
+  const f = fixture("file");
+  try {
+    const a = f.openRecord(f.files[0]!); const b = f.openRecord(f.files[1]!);
+    const c = f.openRecord(f.files[2]!); const p = f.openParent(f.home);
+    const primary = new Error("TEST_ONLY_WRITER_ACQUISITION");
+    const close = f.finalizer("acquireTask12ReceiptLocatorWriterV1", {
+      pinned: [a, b], descriptor: c.descriptor, guard: p, guardTransferred: false, primaryError: primary,
+    });
+    assert.throws(() => close(), (error: unknown) => {
+      assert.ok(error instanceof AggregateError); assert.equal(error.errors[0], primary); return true;
+    }); f.assertReleased();
+  } finally { f.cleanup(); }
+});
+
+test("receipt writer untracked member rejection preserves invalid identity and cleanup uncertainty", () => {
+  const f = fixture("guard");
+  try {
+    f.failMemberConstruction();
+    const open = f.local("acquireTask12ReceiptLocatorWriterV1", "openPinned", {});
+    assert.throws(() => open(f.files[0]!), (error: unknown) => {
+      assert.ok(error instanceof AggregateError); assert.match(String(error.errors[0]), /member is invalid/); return true;
+    }); f.assertReleased();
+    assert.throws(() => open.peers.openExactPoisonHistoricalInventoryPinsV1!(f.inventory), /cleanup uncertain/);
+  } finally { f.cleanup(); }
+});
+
+for (const boundary of ["link-rejection", "transfer"] as const) test(`receipt writer ${boundary} releases each acquisition once before uncertainty can lose ownership`, () => {
+  const f = fixture("file");
+  try {
+    const a = f.openRecord(f.files[0]!); const p = f.openParent(f.home);
+    const pin = boundary === "transfer" ? f.openRecord(f.files[1]!) : null;
+    const operation = f.writerBoundary(boundary, {
+      rejected: new Error("TEST_ONLY_LINK_REJECTION"), Error,
+      descriptor: a.descriptor, heldDescriptor: a.descriptor, heldIdentity: a.identity,
+      pinned: pin === null ? [] : [pin], guardTransferred: false,
+      guard: { assertStable() {}, close: p.close }, primaryError: null,
+      bytes: a.bytes, temp: f.files[0], lockPath: f.files[0], directory: f.home,
+      identity: a.identity, target: f.files[0], targetHash: "test-only", owner: {},
+      unlinkPinned() {}, fsyncCurrentEntryDirectory() {},
+    });
+    assert.throws(() => operation()); f.assertReleased();
+  } finally { f.cleanup(); }
+});
+
+test("recovery publisher borrowed writer finalizer retains its primary plus cleanup cause", () => {
+  const f = fixture("file");
+  try {
+    const member = f.openRecord(f.files[0]!); const primary = new Error("TEST_ONLY_PUBLISHER_REJECTION");
+    const close = f.finalizer("resumeExactPoisonQuarantinePublisherCoreV1", {
+      heldWriter: { close() { f.rawClose(member.descriptor); } }, primaryError: primary,
+    });
+    assert.throws(() => close(), (error: unknown) => {
+      assert.ok(error instanceof AggregateError); assert.equal(error.errors[0], primary); return true;
+    }); f.assertReleased();
+  } finally { f.cleanup(); }
+});
+
+test("receipt writer expected link collision still reaches bounded retry after certain cleanup", () => {
+  const f = fixture();
+  try {
+    const a = f.openRecord(f.files[0]!); const p = f.openParent(f.home);
+    const reachedRetry = new Error("TEST_ONLY_REACHED_BOUNDED_RETRY");
+    const operation = f.writerBoundary("link-rejection", {
+      rejected: Object.assign(new Error("TEST_ONLY_EXPECTED_COLLISION"), { code: "EEXIST" }), Error,
+      descriptor: a.descriptor, pinned: [], guardTransferred: false, primaryError: null,
+      guard: { assertStable() {}, close: p.close }, directory: f.home, temp: f.files[0], identity: a.identity, bytes: a.bytes,
+      unlinkPinned() {}, fsyncCurrentEntryDirectory() {}, deadline: Infinity,
+      Atomics: { wait() { throw reachedRetry; } },
+    });
+    assert.throws(() => operation(), error => error === reachedRetry); f.assertReleased();
+  } finally { f.cleanup(); }
+});
+
+test("receipt writer acquisition retains crossed cleanup evidence and burns future acquisition", () => {
+  const f = fixture();
+  try {
+    const a = f.openRecord(f.files[0]!);
+    const primary = new Error("TEST_ONLY_WRITER_PRIMARY"); const cleanup = new Error("TEST_ONLY_CROSSED_LOCK_CLEANUP");
+    const reject = f.acquisitionCatch("acquireTask12ReceiptLocatorWriterV1", {
+      descriptor: a.descriptor, identity: a.identity, bytes: a.bytes, linked: true, temp: "", lockPath: a.target,
+      unlinkSync() { throw cleanup; }, fsyncCurrentEntryDirectory() {}, primaryError: null,
+    });
+    assert.throws(() => reject(primary), (error: unknown) => {
+      assert.ok(error instanceof AggregateError); assert.equal(error.errors[0], primary);
+      const cleanupAggregate = error.errors[1]; assert.ok(cleanupAggregate instanceof AggregateError);
+      assert.deepEqual(cleanupAggregate.errors, [cleanup]); return true;
+    });
+    f.rawClose(a.descriptor); f.assertReleased();
+    assert.throws(() => reject.peers.openExactPoisonHistoricalInventoryPinsV1!(f.inventory), /cleanup uncertain/);
+  } finally { f.cleanup(); }
+});
+
+for (const branch of [0, 1, 2]) test(`recovery publisher context branch ${branch} retains validation plus close rejection`, () => {
+  const f = fixture("file");
+  try {
+    const member = f.openRecord(f.files[0]!); const primary = new Error("TEST_ONLY_VALIDATION_REJECTION");
+    const context = { close() { f.rawClose(member.descriptor); } };
+    const close = f.publisherContextFinalizer(branch, { existing: { context }, context, contextPrimaryError: primary });
+    assert.throws(() => close(), (error: unknown) => {
+      assert.ok(error instanceof AggregateError); assert.equal(error.errors[0], primary); return true;
+    }); f.assertReleased();
+  } finally { f.cleanup(); }
+});
+
+for (const boundary of ["unlink", "durability", "guard"] as const) test(`receipt writer link rejection retains original plus ${boundary} cleanup failure`, () => {
+  const f = fixture();
+  try {
+    const a = f.openRecord(f.files[0]!); const p = f.openParent(f.home);
+    const primary = new Error("TEST_ONLY_LINK_PRIMARY"); const cleanup = new Error("TEST_ONLY_LINK_CLEANUP");
+    const operation = f.writerBoundary("link-rejection", {
+      rejected: primary, Error, descriptor: a.descriptor, pinned: [], guardTransferred: false, primaryError: null,
+      guard: { assertStable() { if (boundary === "guard") throw cleanup; }, close: p.close },
+      directory: f.home, temp: f.files[0], identity: a.identity, bytes: a.bytes,
+      unlinkPinned() { if (boundary === "unlink") throw cleanup; },
+      fsyncCurrentEntryDirectory() { if (boundary === "durability") throw cleanup; },
+    });
+    assert.throws(() => operation(), (error: unknown) => {
+      assert.ok(error instanceof AggregateError); assert.equal(error.errors[0], primary);
+      assert.ok(error.errors[1] instanceof AggregateError); assert.deepEqual(error.errors[1].errors, [cleanup]); return true;
+    }); f.assertReleased();
+    assert.throws(() => operation.peers.openExactPoisonHistoricalInventoryPinsV1!(f.inventory), /cleanup uncertain/);
+  } finally { f.cleanup(); }
+});
+
+for (const name of [
+  "observeExactPoisonPostVisibleTask12ReceiptEndpointNoWriteV1",
+  "observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1",
+  "observeExactPoisonPostVisibleEntryAuthorityContentEndpointNoWriteV1",
+] as const) test(`${name} acquisition preserves its primary plus directory-owner cleanup failure`, () => {
+  const f = fixture("file");
+  try {
+    const member = f.openRecord(f.files[0]!); const primary = new Error("TEST_ONLY_ENDPOINT_PRIMARY");
+    const reject = f.acquisitionCatch(name, { directoryOwner: { close() { f.rawClose(member.descriptor); } } });
+    assert.throws(() => reject(primary), (error: unknown) => {
+      assert.ok(error instanceof AggregateError); assert.equal(error.errors[0], primary); return true;
+    }); f.assertReleased();
+    assert.throws(() => reject.peers.openExactPoisonHistoricalInventoryPinsV1!(f.inventory), /cleanup uncertain/);
+  } finally { f.cleanup(); }
+});
+
+test("receipt policy endpoint projection rejection retains its owned child's cleanup cause", () => {
+  const f = fixture("file");
+  try {
+    const member = f.openRecord(f.files[0]!); const primary = new Error("TEST_ONLY_POLICY_PROJECTION");
+    const reject = f.acquisitionCatch("observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1", {
+      owner: { close() { f.rawClose(member.descriptor); } },
+    });
+    assert.throws(() => reject(primary), (error: unknown) => {
+      assert.ok(error instanceof AggregateError); assert.equal(error.errors[0], primary); return true;
+    }); f.assertReleased();
+    assert.throws(() => reject.peers.openExactPoisonHistoricalInventoryPinsV1!(f.inventory), /cleanup uncertain/);
+  } finally { f.cleanup(); }
+});
+
+for (const rejected of [false, true]) test(`entry-authority child group retains two cleanup causes${rejected ? " alongside its primary" : ""}`, () => {
+  const f = fixture();
+  try {
+    const a = f.openRecord(f.files[0]!); const b = f.openRecord(f.files[1]!);
+    const first = new Error("TEST_ONLY_ENTRY_FIRST_CLOSE"); const second = new Error("TEST_ONLY_ENTRY_SECOND_CLOSE");
+    const primary = rejected ? new Error("TEST_ONLY_ENTRY_PRIMARY") : null;
+    const close = f.load("closeExactPoisonPostVisibleProgressCurrentEntryAuthorityResourcesV1", ["openExactPoisonHistoricalInventoryPinsV1"]);
+    assert.throws(() => close([
+      { close() { f.rawClose(a.descriptor); throw first; } },
+      { close() { f.rawClose(b.descriptor); throw second; } },
+    ], primary), (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      const cleanup = primary === null ? error : error.errors[1];
+      if (primary !== null) assert.equal(error.errors[0], primary);
+      assert.ok(cleanup instanceof AggregateError); assert.deepEqual(cleanup.errors, [second, first]); return true;
+    }); f.assertReleased();
+    assert.throws(() => close.peers.openExactPoisonHistoricalInventoryPinsV1!(f.inventory), /cleanup uncertain/);
+  } finally { f.cleanup(); }
+});
+
+test("progress CAS construction cleanup exhausts every child retaining primary", () => {
+  const f = fixture("file");
+  try {
+    const a = f.openRecord(f.files[0]!); const b = f.openRecord(f.files[1]!); const p = f.openParent(f.home);
+    const primary = new Error("TEST_ONLY_CAS_CONSTRUCTION");
+    const reject = f.acquisitionCatch("observeTask12CurrentStatusCasForProgressNoWriteV1", {
+      closed: false, temporaries: [a], fixed: b, parent: p,
+      closeTask12CurrentStatusCasPinnedMemberV1: (member: { descriptor: number }) => f.rawClose(member.descriptor),
+    });
+    assert.throws(() => reject(primary), (error: unknown) => {
+      assert.ok(error instanceof AggregateError); assert.equal(error.errors[0], primary); return true;
+    }); f.assertReleased();
+  } finally { f.cleanup(); }
+});
+
+test("CAS rejected member acquisition retains invalid identity and burns future allocation", () => {
+  const f = fixture("guard");
+  try {
+    f.failMemberConstruction();
+    const open = f.load("openTask12CurrentStatusCasPinnedMemberV1");
+    const parent = fs.lstatSync(f.home, { bigint: true });
+    assert.throws(() => open(f.files[0]!, parent), (error: unknown) => {
+      assert.ok(error instanceof AggregateError); assert.match(String(error.errors[0]), /member identity is invalid/); return true;
+    }); f.assertReleased(); const count = f.allocated.length;
+    assert.throws(() => open(f.files[0]!, parent), /cleanup uncertain/); assert.equal(f.allocated.length, count);
+  } finally { f.cleanup(); }
+});
+
+test("CAS member uncertain close invalidates a distinct held observation without blocking its release", () => {
+  const f = fixture("file");
+  try {
+    const a = f.openRecord(f.files[0]!); const b = f.openRecord(f.files[1]!);
+    const close = f.load("closeTask12CurrentStatusCasPinnedMemberV1", ["assertTask12CurrentStatusCasPinnedMemberStableV1", "openTask12CurrentStatusCasPinnedMemberV1"]);
+    close.peers.assertTask12CurrentStatusCasPinnedMemberStableV1!(b);
+    assert.throws(() => close(a), /cleanup uncertain/);
+    assert.throws(() => close.peers.assertTask12CurrentStatusCasPinnedMemberStableV1!(b), /cleanup uncertain/);
+    const count = f.allocated.length;
+    assert.throws(() => close.peers.openTask12CurrentStatusCasPinnedMemberV1!(f.files[2]!, fs.lstatSync(f.home, { bigint: true })), /cleanup uncertain/);
+    assert.equal(f.allocated.length, count); close(b); f.assertReleased();
+  } finally { f.cleanup(); }
+});
 
 for (const invalidState of [false, true]) test(`recovery frontier exhausts temp and final release${invalidState ? " retaining the primary rejection" : " and burns subsequent acquisition"}`, () => {
   const f = fixture("file");

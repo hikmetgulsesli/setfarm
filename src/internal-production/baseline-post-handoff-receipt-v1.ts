@@ -2037,6 +2037,7 @@ function readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1(
   }
   const record = path.join(directory, basename);
   const guard = authenticateTask12ReceiptDirectoryChainV1(directory);
+  let primaryError: unknown | null = null;
   try {
     guard.assertStable();
     try {
@@ -2054,8 +2055,11 @@ function readCurrentEntryAuthorityRecordSnapshotInStoreIfPresentV1(
       currentEntryFail("absent current-entry authority record appeared while observed");
     }
     guard.assertStable();
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    guard.close();
+    attemptTask6aReceiptOwnedCleanupV1([() => guard.close()], primaryError);
   }
   try {
     return Object.freeze({ locator: record, observed: readTask12ReceiptStoreSnapshotV1(record) });
@@ -2137,7 +2141,7 @@ function openSelectedCurrentEntryPrerequisiteRootReaderV1(
     });
   } catch (error) {
     closed = true;
-    guard.close();
+    attemptTask6aReceiptOwnedCleanupV1([() => guard.close()], error);
     throw error;
   }
 }
@@ -2172,7 +2176,7 @@ function openFixedLegacyCurrentEntryPrerequisiteRootReaderV1(
     });
   } catch (error) {
     closed = true;
-    guard.close();
+    attemptTask6aReceiptOwnedCleanupV1([() => guard.close()], error);
     throw error;
   }
 }
@@ -6665,13 +6669,17 @@ function ensureExactPoisonRecoveryCandidateDirectoryV1(
     heldWriter.assertStable();
     const parent = path.dirname(directory);
     const guard = authenticateTask12ReceiptDirectoryChainV1(parent);
+    let primaryError: unknown | null = null;
     try {
       guard.assertStable();
       try { mkdirSync(directory, { mode: 0o700 }); } catch (error) { if (!isEexist(error)) throw error; }
       guard.assertStable();
       fsyncExactPoisonRecoveryCandidateParentV1(heldWriter, parent);
+    } catch (error) {
+      primaryError = error;
+      throw error;
     } finally {
-      guard.close();
+      attemptTask6aReceiptOwnedCleanupV1([() => guard.close()], primaryError);
     }
     const stats = lstatSync(directory, { bigint: true });
     if (
@@ -6690,8 +6698,10 @@ function fsyncExactPoisonRecoveryCandidateParentV1(
   heldWriter: ExactPoisonRecoveryWriterV1,
   directory: string,
 ): void {
+  if (task6aReceiptCleanupUncertainV1) currentEntryFail("Task6A receipt cleanup uncertain");
   const guard = authenticateTask12ReceiptDirectoryChainV1(directory);
   let descriptor = -1;
+  let primaryError: unknown | null = null;
   try {
     heldWriter.assertStable();
     guard.assertStable();
@@ -6728,9 +6738,14 @@ function fsyncExactPoisonRecoveryCandidateParentV1(
     ) currentEntryFail("exact-poison recovery parent changed while fsynced");
     guard.assertStable();
     heldWriter.assertStable();
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    if (descriptor >= 0) closeSync(descriptor);
-    guard.close();
+    attemptTask6aReceiptOwnedCleanupV1([
+      ...(descriptor < 0 ? [] : [() => closeSync(descriptor)]),
+      () => guard.close(),
+    ], primaryError);
   }
 }
 
@@ -7015,6 +7030,7 @@ async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
     || sha256(operation.observed.bytes) !== EXACT_POISON_OPERATION_BYTES_SHA256_V1
   ) currentEntryFail("fixed legacy exact-poison publisher operation is crossed");
   const heldWriter = acquireExactPoisonRecoveryWriterV1();
+  let primaryError: unknown | null = null;
   try {
     heldWriter.assertStable();
     const existing = await inspectExactPoisonRecoveryChainBeforeSelectionV1(operation);
@@ -7033,8 +7049,10 @@ async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
       context.assertStable();
     };
     if (existing.state === "complete") {
+      let contextPrimaryError: unknown | null = null;
       try { await validatePostVisible(existing.context); }
-      finally { existing.context.close(); }
+      catch (error) { contextPrimaryError = error; throw error; }
+      finally { attemptTask6aReceiptOwnedCleanupV1([() => existing.context.close()], contextPrimaryError); }
       return;
     }
     const admission = await observeExactPoisonQuarantineAdmissionV1(operation, heldWriter);
@@ -7042,18 +7060,25 @@ async function resumeExactPoisonQuarantinePublisherCoreV1(): Promise<void> {
       await publishExactPoisonRecoveryCandidateV1(operation, admission, phase, ordinal, heldWriter);
       if (ordinal === 5) {
         const context = await openExactPoisonRecoveryPinnedSealChainV1();
+        let contextPrimaryError: unknown | null = null;
         try { await durablyAuthenticateSuccessorActivationSealV1(context, heldWriter); }
-        finally { context.close(); }
+        catch (error) { contextPrimaryError = error; throw error; }
+        finally { attemptTask6aReceiptOwnedCleanupV1([() => context.close()], contextPrimaryError); }
       }
       if (ordinal === 6) {
         const context = await openExactPoisonRecoveryPinnedCommitChainV1();
+        let contextPrimaryError: unknown | null = null;
         try { await validatePostVisible(context, admission); }
-        finally { context.close(); }
+        catch (error) { contextPrimaryError = error; throw error; }
+        finally { attemptTask6aReceiptOwnedCleanupV1([() => context.close()], contextPrimaryError); }
       }
     }
     heldWriter.assertStable();
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    heldWriter.close();
+    attemptTask6aReceiptOwnedCleanupV1([() => heldWriter.close()], primaryError);
   }
 }
 
@@ -9069,6 +9094,7 @@ function ensureTask12ReceiptPrivateDirectoryV1(
     if (!segment || segment === "." || segment === "..") currentEntryFail("Task12 receipt directory member is invalid");
     const parent = authenticateTask12ReceiptDirectoryChainV1(current);
     current = path.join(current, segment);
+    let primaryError: unknown | null = null;
     try {
       parent.assertStable();
       let missing = false;
@@ -9085,12 +9111,15 @@ function ensureTask12ReceiptPrivateDirectoryV1(
           if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
           parent.assertStable();
           const appeared = authenticateTask12ReceiptDirectoryChainV1(current);
+          let appearedError: unknown | null = null;
           try { appeared.assertStable(); }
-          finally { appeared.close(); }
+          catch (error) { appearedError = error; throw error; }
+          finally { attemptTask6aReceiptOwnedCleanupV1([() => appeared.close()], appearedError); }
         }
       }
       parent.assertStable();
-    } finally { parent.close(); }
+    } catch (error) { primaryError = error; throw error; }
+    finally { attemptTask6aReceiptOwnedCleanupV1([() => parent.close()], primaryError); }
     const created = authenticateTask12ReceiptDirectoryChainV1(current);
     created.close();
   }
@@ -9111,8 +9140,10 @@ function readTask12ReceiptDescriptorBytesV1(descriptor: number, size: bigint): B
 }
 
 function readTask12ReceiptStoreSnapshotV1(target: string, expectedLinkCount = 1): StableRegular {
+  if (task6aReceiptCleanupUncertainV1) currentEntryFail("Task6A receipt cleanup uncertain");
   const guard = authenticateTask12ReceiptDirectoryChainV1(path.dirname(target));
   let descriptor = -1;
+  let primaryError: unknown | null = null;
   try {
     guard.assertStable();
     const parent = lstatSync(path.dirname(target), { bigint: true });
@@ -9126,9 +9157,14 @@ function readTask12ReceiptStoreSnapshotV1(target: string, expectedLinkCount = 1)
     if (!sameRegularMetadata(before, after) || after.dev !== reopened.dev || after.ino !== reopened.ino || after.mode !== reopened.mode || after.nlink !== reopened.nlink || BigInt(bytes.length) !== after.size) currentEntryFail("Task12 receipt record changed while read");
     guard.assertStable();
     return Object.freeze({ bytes, mode: Number(after.mode & 0o7777n), stats: after });
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    if (descriptor >= 0) closeSync(descriptor);
-    guard.close();
+    attemptTask6aReceiptOwnedCleanupV1([
+      ...(descriptor < 0 ? [] : [() => closeSync(descriptor)]),
+      () => guard.close(),
+    ], primaryError);
   }
 }
 
@@ -9141,6 +9177,7 @@ function acquireTask12ReceiptLocatorWriterV1(
   beforeStaleMutation?: (snapshot: Task12ReceiptLocatorWriterStaleSnapshotV1) => void,
   beforeAnyWriterMutation?: () => void,
 ): Task12ReceiptLocatorWriterHandleV1 {
+  if (task6aReceiptCleanupUncertainV1) currentEntryFail("Task6A receipt cleanup uncertain");
   const directory = path.dirname(target);
   const lockPath = path.join(directory, `.${path.basename(target)}.writer.lock`);
   const tempPrefix = `${path.basename(lockPath)}.tmp-`;
@@ -9193,12 +9230,14 @@ function acquireTask12ReceiptLocatorWriterV1(
     let identity: BigIntStats | null = null;
     let bytes: Buffer | null = null;
     let linked = false;
+    let primaryError: unknown | null = null;
     const pinned: Task12ReceiptLocatorWriterPinnedMemberV1[] = [];
     try {
       guard.assertStable();
       const candidates = readdirSync(directory).filter((entry) => entry.startsWith(tempPrefix)).sort(compareBytes);
       if (candidates.length > 8) currentEntryFail("Task12 receipt writer lock temp cap exceeded");
       const openPinned = (member: string, pid?: number, nonce?: string): Task12ReceiptLocatorWriterPinnedMemberV1 => {
+        if (task6aReceiptCleanupUncertainV1) currentEntryFail("Task6A receipt cleanup uncertain");
         const memberDescriptor = openSync(member, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
         try {
           const memberIdentity = fstatSync(memberDescriptor, { bigint: true });
@@ -9226,7 +9265,7 @@ function acquireTask12ReceiptLocatorWriterV1(
           if (!sameRegularMetadata(memberIdentity, after) || !sameRegularMetadata(memberIdentity, reopened)) throw retryPinnedSnapshot;
           return { member, descriptor: memberDescriptor, identity: memberIdentity, bytes: memberBytes, pid, nonce };
         } catch (error) {
-          closeSync(memberDescriptor);
+          attemptTask6aReceiptOwnedCleanupV1([() => closeSync(memberDescriptor)], error);
           throw error;
         }
       };
@@ -9411,10 +9450,18 @@ function acquireTask12ReceiptLocatorWriterV1(
         linkSync(temp, lockPath);
         linked = true;
       } catch (error) {
-        unlinkPinned(temp, descriptor, identity, bytes);
-        temp = ""; fsyncCurrentEntryDirectory(directory); guard.assertStable();
-        closeSync(descriptor);
+        try {
+          unlinkPinned(temp, descriptor, identity, bytes);
+          temp = ""; fsyncCurrentEntryDirectory(directory); guard.assertStable();
+        } catch (cleanupError) {
+          attemptTask6aReceiptOwnedCleanupV1([() => { throw cleanupError; }], error);
+        }
+        const rejectedDescriptor = descriptor;
         descriptor = -1;
+        try { attemptTask6aReceiptOwnedCleanupV1([() => closeSync(rejectedDescriptor)]); }
+        catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: writer link rejection cleanup uncertain");
+        }
         if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
         if (Date.now() >= deadline) currentEntryFail("Task12 receipt writer lock is busy");
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
@@ -9448,11 +9495,16 @@ function acquireTask12ReceiptLocatorWriterV1(
       catch { currentEntryFail("Task12 receipt writer lock post-link identity changed"); }
       if (!heldObserved.equals(bytes)) currentEntryFail("Task12 receipt writer lock post-link bytes are invalid");
       const heldBytes = bytes;
+      // Finish acquisition-only cleanup while the held descriptor and guard
+      // still belong to this frame. A failed pin release cannot strand a
+      // not-yet-returned owner behind guardTransferred.
+      attemptTask6aReceiptOwnedCleanupV1(pinned.splice(0).map(member => () => closeSync(member.descriptor)));
       descriptor = -1;
       guardTransferred = true;
       let heldClosed = false;
       const assertStable = (): void => {
         if (heldClosed) currentEntryFail("Task12 receipt writer lock is closed");
+        if (task6aReceiptCleanupUncertainV1) currentEntryFail("Task6A receipt cleanup uncertain");
         guard.assertStable();
         const atPath = lstatSync(lockPath, { bigint: true });
         const now = fstatSync(heldDescriptor, { bigint: true });
@@ -9475,19 +9527,25 @@ function acquireTask12ReceiptLocatorWriterV1(
         assertStable,
         close: () => {
           if (heldClosed) currentEntryFail("Task12 receipt writer lock closed twice");
+          let primaryError: unknown | null = null;
           try {
             assertStable();
             unlinkSync(lockPath);
             fsyncCurrentEntryDirectory(directory);
             guard.assertStable();
+          } catch (error) {
+            primaryError = error;
+            throw error;
           } finally {
             heldClosed = true;
-            closeSync(heldDescriptor);
-            guard.close();
+            attemptTask6aReceiptOwnedCleanupV1([
+              () => closeSync(heldDescriptor), () => guard.close(),
+            ], primaryError);
           }
         },
       });
     } catch (error) {
+      primaryError = error;
       if (descriptor >= 0 && identity !== null && bytes !== null) {
         try {
           if (linked) {
@@ -9514,16 +9572,23 @@ function acquireTask12ReceiptLocatorWriterV1(
             temp = "";
           }
           fsyncCurrentEntryDirectory(directory);
-        } catch {
-          // The primary acquisition failure remains authoritative; crossed
-          // cleanup evidence is retained for a later authenticated retry.
+        } catch (cleanupError) {
+          // Crossed cleanup is uncertainty, not permission for a same-process
+          // retry. Preserve it alongside the acquisition failure; the outer
+          // finalizer still releases every descriptor and guard.
+          try { attemptTask6aReceiptOwnedCleanupV1([() => { throw cleanupError; }], error); }
+          catch (combinedError) { primaryError = combinedError; throw combinedError; }
         }
       }
       throw error;
     } finally {
-      for (const member of pinned) closeSync(member.descriptor);
-      if (descriptor >= 0) closeSync(descriptor);
-      if (!guardTransferred) guard.close();
+      const ownedDescriptor = descriptor;
+      descriptor = -1;
+      attemptTask6aReceiptOwnedCleanupV1([
+        ...pinned.splice(0).map(member => () => closeSync(member.descriptor)),
+        ...(ownedDescriptor < 0 ? [] : [() => closeSync(ownedDescriptor)]),
+        ...(guardTransferred ? [] : [() => guard.close()]),
+      ], primaryError);
     }
   }
 }
@@ -9710,6 +9775,7 @@ function openTask12CurrentStatusCasPinnedMemberV1(
   target: string,
   parentIdentity: BigIntStats,
 ): Task12CurrentStatusCasPinnedMemberV1 {
+  if (task6aReceiptCleanupUncertainV1) currentEntryFail("Task6A receipt cleanup uncertain");
   const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const identity = fstatSync(descriptor, { bigint: true });
@@ -9733,7 +9799,7 @@ function openTask12CurrentStatusCasPinnedMemberV1(
     }
     return Object.freeze({ target, descriptor, identity, bytes });
   } catch (error) {
-    closeSync(descriptor);
+    attemptTask6aReceiptOwnedCleanupV1([() => closeSync(descriptor)], error);
     throw error;
   }
 }
@@ -9742,6 +9808,7 @@ function assertTask12CurrentStatusCasPinnedMemberStableV1(
   member: Task12CurrentStatusCasPinnedMemberV1,
   expectedLinkCount = 1n,
 ): void {
+  if (task6aReceiptCleanupUncertainV1) currentEntryFail("Task6A receipt cleanup uncertain");
   const before = fstatSync(member.descriptor, { bigint: true });
   let atPath: BigIntStats;
   try { atPath = lstatSync(member.target, { bigint: true }); }
@@ -9772,7 +9839,7 @@ function assertTask12CurrentStatusCasPinnedMemberStableV1(
 }
 
 function closeTask12CurrentStatusCasPinnedMemberV1(member: Task12CurrentStatusCasPinnedMemberV1): void {
-  closeSync(member.descriptor);
+  attemptTask6aReceiptOwnedCleanupV1([() => closeSync(member.descriptor)]);
 }
 
 function task12CurrentStatusCasBytesAreIncompleteV1(bytes: Buffer): boolean {
@@ -11082,13 +11149,7 @@ function closeExactPoisonPostVisibleProgressCurrentEntryAuthorityResourcesV1(
   resources: readonly ExactPoisonPostVisibleProgressCurrentEntryAuthorityResourceV1[],
   primaryError: unknown,
 ): void {
-  let firstCloseError: unknown = null;
-  for (let index = resources.length - 1; index >= 0; index -= 1) {
-    try { resources[index]!.close(); }
-    catch (error) { firstCloseError ??= error; }
-  }
-  if (primaryError !== null) throw primaryError;
-  if (firstCloseError !== null) throw firstCloseError;
+  attemptTask6aReceiptOwnedCleanupV1([...resources].reverse().map(resource => () => resource.close()), primaryError);
 }
 
 type ExactPoisonPostVisibleProgressRowV1 =
@@ -15259,7 +15320,7 @@ async function observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1
       close: owner.close,
     });
   } catch (error) {
-    try { owner.close(); } catch { /* preserve the primary construction failure */ }
+    attemptTask6aReceiptOwnedCleanupV1([() => owner.close()], error);
     throw error;
   }
 }
@@ -17630,6 +17691,7 @@ function observeTask12CurrentStatusCasForProgressNoWriteV1(
   nextPairBytes: Buffer | null,
   evidence: ExactPoisonPostVisibleProgressRawObservationV1["evidence"],
 ): Task12CurrentStatusCasForProgressNoWriteObservationV1 {
+  if (task6aReceiptCleanupUncertainV1) currentEntryFail("Task6A receipt cleanup uncertain");
   if (path.basename(target) !== "01-current-status.pair.json") currentEntryFail("progress current-status CAS target is invalid");
   requireTask12CurrentStatusPairBytesV1(currentPairBytes, "progress current-status current pair");
   if (previousPairBytes !== null) {
@@ -17777,16 +17839,20 @@ function observeTask12CurrentStatusCasForProgressNoWriteV1(
       close: () => {
         if (closed) currentEntryFail("progress current-status CAS observation closed twice");
         closed = true;
-        for (const temporary of [...temporaries].reverse()) closeTask12CurrentStatusCasPinnedMemberV1(temporary);
-        closeTask12CurrentStatusCasPinnedMemberV1(fixed!);
-        parent.close();
+        attemptTask6aReceiptOwnedCleanupV1([
+          ...[...temporaries].reverse().map(temporary => () => closeTask12CurrentStatusCasPinnedMemberV1(temporary)),
+          () => closeTask12CurrentStatusCasPinnedMemberV1(fixed!),
+          () => parent.close(),
+        ]);
       },
     });
   } catch (error) {
     closed = true;
-    for (const temporary of [...temporaries].reverse()) closeTask12CurrentStatusCasPinnedMemberV1(temporary);
-    if (fixed !== null) closeTask12CurrentStatusCasPinnedMemberV1(fixed);
-    parent.close();
+    attemptTask6aReceiptOwnedCleanupV1([
+      ...[...temporaries].reverse().map(temporary => () => closeTask12CurrentStatusCasPinnedMemberV1(temporary)),
+      ...(fixed === null ? [] : [() => closeTask12CurrentStatusCasPinnedMemberV1(fixed!)]),
+      () => parent.close(),
+    ], error);
     throw error;
   }
 }
@@ -19870,8 +19936,7 @@ function observeExactPoisonPostVisibleEntryAuthorityContentEndpointNoWriteV1(
       },
     });
   } catch (error) {
-    try { directoryOwner.close(); }
-    catch {}
+    attemptTask6aReceiptOwnedCleanupV1([() => directoryOwner.close()], error);
     throw error;
   }
 }
@@ -19937,8 +20002,7 @@ function observeExactPoisonPostVisibleTask12ContentShardEndpointNoWriteV1(
       },
     });
   } catch (error) {
-    try { directoryOwner.close(); }
-    catch {}
+    attemptTask6aReceiptOwnedCleanupV1([() => directoryOwner.close()], error);
     throw error;
   }
 }
@@ -19992,8 +20056,7 @@ function observeExactPoisonPostVisibleTask12ReceiptEndpointNoWriteV1(
       },
     });
   } catch (error) {
-    try { directoryOwner.close(); }
-    catch {}
+    attemptTask6aReceiptOwnedCleanupV1([() => directoryOwner.close()], error);
     throw error;
   }
 }
