@@ -91,3 +91,12 @@ exit0, BUILD_INFO fullf149/main/dirtyfalse. Selected deployment untouched.
   artifacts and diff checks passed. Independent final staged review no blockers.
   No full application-suite or live cutover claim. Exact-head PR/cloud/security
   and ordinary clean-main standby build remain delivery gates.
+- PR245 exact385a536 cloud review found the pure fixture's hardcoded
+  /private/tmp would fail before discovery on Linux. Intended regression
+  RED6pass/1fail confirms the home ignores the platform temp directory.
+  Use canonical os.tmpdir() and a short sf-sb. prefix to retain the 103-byte
+  Unix socket bound on Darwin too. This changes only unprivileged test data,
+  not the opt-in protected PG fixture or production transport paths.
+  GREEN7/7 with the native Darwin temp directory and again with TMPDIR=/tmp;
+  source and actual-test strict TS plus all five source contracts passed.
+  This is path portability coverage, not an actual Linux-host execution claim.

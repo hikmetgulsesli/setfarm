@@ -2,17 +2,25 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { once } from "node:events";
 import { createTask6aSingleBackendSocketClientV1 }
   from "../../src/internal-production/task6a-single-backend-socket-client-v1.js";
 
-const home = fs.mkdtempSync("/private/tmp/setfarm-task6a-single-socket-unit.");
+// Keep the suffix short: Darwin's platform temp path can already be long.
+const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "sf-sb.")));
 const candidate = { schema: "setfarm.postgres-socket-transport.v1", socketDirectory: home,
   port: 55439, database: "setfarm_fixture", user: "task6a_runtime", osUid: process.getuid!() };
 const keys = Object.keys(process.env).filter(key => key.startsWith("PG") || key === "SETFARM_PG_URL" || key === "DATABASE_URL");
 const saved = new Map(keys.map(key => [key, process.env[key]!]));
 for (const key of keys) delete process.env[key];
 process.on("exit", () => { for (const [key, value] of saved) process.env[key] = value; fs.rmSync(home, { recursive: true, force: true }); });
+
+test("unit socket fixture uses the platform temp directory within the Unix path limit", () => {
+  assert.equal(path.dirname(home), fs.realpathSync(os.tmpdir()));
+  assert.ok(Buffer.byteLength(`${home}/.s.PGSQL.55439`) <= 103);
+});
 
 test("single backend uses persistent single-connection options without opening a socket", async () => {
   const client = createTask6aSingleBackendSocketClientV1(candidate);
