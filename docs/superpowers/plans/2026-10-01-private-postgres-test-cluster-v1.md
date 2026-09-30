@@ -20,7 +20,9 @@ Sole writer existing linked task6a-protected-origin-bootstrap-v2 tree,
 branchfix/private-postgres-test-cluster-v1, base0185aaee631341d057c79e855e5ab9b51e9d402a
 (PR256). Exactly six spec-mapped paths. No src/migration/P3 scope/finding preflight
 change. Preserve all prior dirty/failed fixtures/DBs/branches/trees/archives;
-no reset/revert/maincommit/forcepush/role changes/sudo/guard bypass/secret logging.
+no reset/revert/maincommit/forcepush/existing/live/global role or credential
+changes/sudo/guard bypass/secret logging. Fresh isolated bootstrap role/credential
+is expressly covered by scoped authorization, not a live policy change.
 Explicit isolated credential authority does not prove protected admission.
 No standby modification while execution14018 runs. Every new cluster footprint
 is retained0700, never deleted. No native/privileged/genuine-host-fixture overlap.
@@ -44,7 +46,8 @@ is retained0700, never deleted. No native/privileged/genuine-host-fixture overla
   sync, loopback and private sockets with no pg_ctl/trust/fsync-off fallback.
 - [ ] Test real incremental output redactor with secret literal split at every
   byte boundary, full URL plus password, no-secret normal text, binary Buffers,
-  flush once. Expected output '[REDACTED]' derived without redactor helpers.
+  flush once and all truncated suffix prefixes; forced termination cannot flush
+  credential prefixes raw. Expected '[REDACTED]' derived without redactor helpers.
 - [ ] Test owned lifecycle consumer using EventEmitter ChildProcess boundary:
   normal SIGINT then exit0+close0 true; exit0 alone false; nonzero/signal/error/
   timeout/killfalse false; already definitely closed does not signal. Assert
@@ -58,7 +61,7 @@ is retained0700, never deleted. No native/privileged/genuine-host-fixture overla
 ## Task2: Real ordinary constructor and unchanged graph dispatch
 
 - [ ] Implement CLI's strictfindings/all parse before effects and preconditions:
-  macOS/nonroot equal real/effective IDs, Node26+, free disk>=4GiB, clean source,
+  macOS/UIDeUID501/GIDeGID20, Node26+, free disk>=4GiB, clean source,
   fixed tools version17 and regular npm-cli. Scrub loader/PG/Task6A opt-ins.
 - [ ] mkdtemp literal /tmp/setfarm-task6a-pg.; chmod0700 and lstat/fstat pins;
   reserve127.0.0.1 ephemeralport, close reservation before spawn (no retry).
@@ -72,15 +75,21 @@ is retained0700, never deleted. No native/privileged/genuine-host-fixture overla
     current_setting('port') AS port,
     current_setting('unix_socket_directories') AS socket_directories,
     current_setting('listen_addresses') AS listen_addresses,
-    current_setting('password_encryption') AS password_encryption;
+    current_setting('password_encryption') AS password_encryption,
+    current_setting('unix_socket_permissions') AS socket_permissions;
   ```
   Existing verifyFindingPrivateClusterIdentityV1 plus exact127.0.0.1/SCRAM must
-  pass within30s before test dispatch; no trust/mismatch fallback.
+  pass within30s before test dispatch; exact socket parent/0700 too, no trust/
+  mismatch fallback. Initdb uncertain close/timeout forbids server startup.
 - [ ] Spawn process.execPath with exact planner npm-cli args, private adminURL+
   data directory, ambient PGurl/PG*/loaders/privileged Task6A flags removed.
   Incrementally redact both output streams, keep all test diagnostics/counts.
-  Wait definite test close before SQL end and captured serverSIGINT/30sclose.
-  Nonzero preserved. Uncertain test/server closure retains directory/refuses;
+  Require agreeing exit+close integercode/no signal/error, then exactprivate
+  pg_database baseline three and two no-other-external/unknown-backend observations100ms
+  apart. Only after this DB cleanup/quiescence gate, SQL end and captured
+  serverSIGINT/30sclose. No all-nonDB-descendant or continuousfence inference.
+  Nonzero preserved. Uncertain test/server closure/retainedDB/backend retains
+  directory/refuses; constructor failure before tests may settle onlyownserver;
   unref only owned handles, no foreign kill or fabricated cleanup witness.
 - [ ] Add package entries:
   ```json

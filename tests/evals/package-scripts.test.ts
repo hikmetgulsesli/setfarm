@@ -4,6 +4,31 @@ import { describe, it } from "node:test";
 import { spawnSync } from "node:child_process";
 
 describe("package test coverage contract", () => {
+  for (const [script, expectedMode] of [
+    ["test:findings:private", "findings"], ["test:private-postgres", "all"],
+  ] as const) {
+    it(`dispatches ${script} to its exact private wrapper mode without starting PostgreSQL`, () => {
+      // Observe the actual npm edge at wrapper entry, before its imports/effects.
+      const guard = `
+if (process.argv[1]?.endsWith('/scripts/run-private-postgres-tests.mjs')) {
+  console.log('PRIVATE_TEST_PACKAGE_MODE:'+JSON.stringify(process.argv.slice(2)));
+  process.exit(0);
+}
+`;
+      const result = spawnSync("npm", ["run", script, "--silent"], {
+        encoding: "utf8", timeout: 10000, maxBuffer: 65536,
+        env: { PATH: process.env.PATH ?? "", LANG: "C", LC_ALL: "C",
+          NODE_OPTIONS: "--import=data:text/javascript;base64," + Buffer.from(guard).toString("base64") },
+      });
+      assert.equal(result.error, undefined); assert.equal(result.signal, null);
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      const observed = result.stdout.split("\n")
+        .filter(line => line.startsWith("PRIVATE_TEST_PACKAGE_MODE:"))
+        .map(line => JSON.parse(line.slice("PRIVATE_TEST_PACKAGE_MODE:".length)));
+      assert.deepEqual(observed, [[expectedMode]]);
+    });
+  }
+
   it("keeps eval, evidence, and recovery suites in the main test chain", async () => {
     const pkg = JSON.parse(await readFile("package.json", "utf8")) as { scripts?: Record<string, string> };
     const scripts = pkg.scripts ?? {};
