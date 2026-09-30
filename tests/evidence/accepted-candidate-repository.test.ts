@@ -26,6 +26,13 @@ import { ImplementationSliceV1Schema } from "../../src/product-compiler/schemas/
 import { createPostgresConvergencePort } from "../../src/evals/convergence-runner.js";
 import { transitionRunToTerminal } from "../../src/execution/run-terminal-transition.js";
 import {
+  beginOrAdoptInternalProductionOwnerReservationV1,
+  bindInternalProductionOwnerReservationV1,
+  createInternalProductionWorkflowRunCanonicalOwnerIdentityV1,
+  type PgTransactionSql,
+} from "../../src/db-pg.js";
+import { createInternalProductionExecutionAttemptCanonicalOwnerIdentityV1 } from "../../src/internal-production/owner-admission-v1.js";
+import {
   assertV3DeployAuthority,
   V3DeployAuthorityError,
 } from "../../src/execution/v3-deploy-authority.js";
@@ -74,13 +81,26 @@ describe("accepted candidate repository", () => {
     const runId = "accepted-candidate-run";
     const intent = buildTaskIntentOracleFixture(runId);
     const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(RELEASE_SHA);
-    await database.sql.unsafe(
+    await database.sql.begin(async (transaction) => {
+      const sql = transaction as PgTransactionSql;
+      const identity = createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(runId);
+      const reservation = options.missingOwner === "run" ? undefined
+        : await beginOrAdoptInternalProductionOwnerReservationV1(sql, {
+          producerImplementationId: "a-runtime-run-v1", ownerKey: identity.ownerKey,
+        });
+      await sql.unsafe(
       `INSERT INTO runs (
          id, workflow_id, task, status, protocol, compiler_release_sha,
          activation_preflight_hash, release_admission_hash
        ) VALUES ($1, 'feature-dev', $2, 'running', 'v3', $3, $4, $5)`,
       [runId, intent.task, RELEASE_SHA, "d".repeat(64), releaseAdmissionHash],
-    );
+      );
+      if (reservation) await bindInternalProductionOwnerReservationV1(sql, {
+        reservationRef: reservation.reservationRef,
+        reservationHash: reservation.reservationHash,
+        canonicalOwnerIdentity: identity,
+      });
+    });
     const contracts = intent.contracts;
     const producer = { pass: "accepted-candidate-test", codeSha: RELEASE_SHA, toolVersions: {} };
     const compiler = { version: "3.0.0", codeSha: RELEASE_SHA };
@@ -242,8 +262,15 @@ describe("accepted candidate repository", () => {
       `setfarm://artifact/${planPublication.hash}`,
       `setfarm://evidence-bundle/${evidenceBundleHash}`,
     ].sort();
-    await database.sql.unsafe(
-      `INSERT INTO execution_attempts (
+    await database.sql.begin(async (transaction) => {
+      const sql = transaction as PgTransactionSql;
+      const identity = createInternalProductionExecutionAttemptCanonicalOwnerIdentityV1({ attemptId });
+      const reservation = options.missingOwner === "execution-attempt" ? undefined
+        : await beginOrAdoptInternalProductionOwnerReservationV1(sql, {
+          producerImplementationId: "a-execution-attempt-v1", ownerKey: identity.ownerKey,
+        });
+      await sql.unsafe(
+        `INSERT INTO execution_attempts (
          attempt_id, run_id, step_id, story_id, generation, fence_token,
          attempt_class, packet_hash, compilation_report_hash, slice_hash,
          source_before_sha, source_before_tree_hash, source_after_sha,
@@ -269,7 +296,13 @@ describe("accepted candidate repository", () => {
         evidenceBundleHash,
         JSON.stringify(evidenceRefs),
       ],
-    );
+      );
+      if (reservation) await bindInternalProductionOwnerReservationV1(sql, {
+        reservationRef: reservation.reservationRef,
+        reservationHash: reservation.reservationHash,
+        canonicalOwnerIdentity: identity,
+      });
+    });
     await database.sql.unsafe(
       `INSERT INTO evidence_bundles (
          evidence_bundle_hash, evidence_id, run_id, story_id, packet_hash,
