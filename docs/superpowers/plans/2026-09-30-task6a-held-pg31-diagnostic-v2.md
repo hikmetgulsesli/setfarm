@@ -169,7 +169,7 @@ ambient db-pg and does not include the TypeScript parser in its runtime closure.
 
 ### Task 4: Scoped delivery and clean-main host proof
 
-- [ ] Fresh-head cloud P2 on8320522 found the inner30s audit clock also checked
+- [x] Fresh-head cloud P2 on8320522 found the inner30s audit clock also checked
   callback settlement, incorrectly refusing legitimate30–60s retained evidence
   collection. First add real-composition/shared-clock regressions:35s and59999ms
   total invocation can settle;60000ms and audit31s must refuse. Observe RED for
@@ -236,3 +236,18 @@ Strict eval TypeScript, English/path and diff checks passed. Independent
 four-file incremental review cleared package/eval/spec/plan; no source, protected
 fixture, entry or native bytes changed. Fresh-head cloud clearance is still
 required; initial562a276 completion cannot clear the follow-up commit.
+
+Second cloud P2 refinement: joined actual lower/private bodies observed35s and
+59999ms RED at the erroneous30s callback-settlement check; removal of only that
+check makes both GREEN, while60000ms overall and31000ms audit still refuse.
+Expanded75PASS/0FAIL/0SKIP; source/strict six-test TS and all contracts PASS.
+Independent read-only review cleared exact new migration hashfb5b79ae and
+unchanged other privileged bytes before actual rerun96374. The fifth actual
+run passed3/3,0skips,116.388521s fixture/117.017543s total. Its exact private
+root PiuWTP was safely stopped/removed; root independently verified prefix-only
+old t2ZHB6, no UID70/216 processes and absence of all14 captured PIDs. Native35
+images/935files, full source31/cold census/guarded32pending, other-backend,
+backend-loss, physical no-revival and corrupt-constraint refusals passed.
+Old evidence tree metadata dev16777231/ino201769033/uid501/gid0/mode0700 is
+unchanged; no fresh complete digest was inferred. Fresh new-head cloud gate
+remains mandatory before normal merge/cleanmain build.

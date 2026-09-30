@@ -17,6 +17,7 @@ import { parseTask6aPostgresSocketTransportV1, buildTask6aPostgresSocketOptionsV
 // composition, existing deadline and SQL facades execute. The actual protected
 // opt-in fixture, not these boundaries, must prove complete schema/audit truth.
 function fixture(options: { unlock?: boolean; coreError?: Error; rollbackError?: Error;
+  clock?: () => number; coreAdvance?: () => void;
   canonicalFailures?: readonly [Error, Error]; parallel?: {
     primary: Error; lateError?: Error; gate: Promise<void>; entered: () => void;
   } } = {}) {
@@ -66,7 +67,9 @@ function fixture(options: { unlock?: boolean; coreError?: Error; rollbackError?:
     begin: () => { throw new Error("driver-owned automatic transaction is forbidden"); },
     end: () => { throw new Error("caller client must remain owned by caller"); },
   };
-  const context = vm.createContext({ process, Object, Number, Math, Array, Promise, Error, AggregateError,
+  const context = vm.createContext({ process: options.clock
+    ? { hrtime: { bigint: () => BigInt(options.clock!()) * 1000000n } } : process,
+    Object, Number, Math, Array, Promise, Error, AggregateError,
     ContractSpineMigrationError, contractSpineMigrationLockKey: 1397117251, normalizeSql: normalize,
     verifyOperationalFailureCauseAuthorityV3Constraint: async (sql: typeof session) => {
       events.push("source-v3-verification");
@@ -79,6 +82,7 @@ function fixture(options: { unlock?: boolean; coreError?: Error; rollbackError?:
     },
     auditCurrentAuthorityAtV31OnTransaction: async (_sql: any, _deadline: unknown, identity: unknown) => {
       events.push("full-v31-core");
+      options.coreAdvance?.();
       assert.deepEqual(identity, { validated: true, expression: "canonical source" });
       if (options.coreError) throw options.coreError;
       if (options.parallel) await Promise.all([
@@ -277,7 +281,7 @@ test("held cold census refuses actual nonzero ownership", async () => {
   await assert.rejects(invoke(connection), /activeRunCount is nonzero/);
 });
 
-function privateFixture(pending?: { phase: string; gate: Promise<void>; entered: () => void }) {
+function privateFixture(pending?: { phase: string; gate: Promise<void>; entered: () => void }, realComposition = false) {
   const file = new URL("../../src/internal-production/task6a-held-pg31-diagnostic-v2.ts", import.meta.url);
   assert.ok(fs.existsSync(file), "bounded private held diagnostic is missing");
   const source = fs.readFileSync(file, "utf8");
@@ -289,6 +293,7 @@ function privateFixture(pending?: { phase: string; gate: Promise<void>; entered:
     physicalBad: false, otherCount: "0", backendStart: "2026-09-30 01:02:03+00",
     currentRole: "task6a_runtime", now: 0, cachedOther: "0", readsWithoutClear: 0, parallel: false,
     coreFailure: undefined as Error | undefined, aborted: false, physicalAdvance: 0, holdAdvance: 0,
+    auditAdvance: 0,
     holdRecheck: false, pendingFailure: new Error("distinct disposed recheck query") };
   let expire: (() => void) | undefined;
   let cleared = false;
@@ -324,6 +329,10 @@ function privateFixture(pending?: { phase: string; gate: Promise<void>; entered:
         backendType: "client backend", otherBackendCount: state.cachedOther }];
     }
     if (parts) return census.connection(parts);
+    if (query.includes("FROM public.setfarm_schema_migrations")) {
+      return contractSpinePre32SourceJournalIdentitiesV1().map(row => ({ ...row, state: "applied" }));
+    }
+    if (query.includes("pg_advisory_unlock")) return [{ unlocked: true }];
     return [];
   };
   const reserved = Object.assign((parts: TemplateStringsArray) => raw(parts.join("?"), parts), {
@@ -347,7 +356,9 @@ function privateFixture(pending?: { phase: string; gate: Promise<void>; entered:
         revoke: () => { state.revoked = true; disposal(); },
         close: async () => { state.revoked = true; disposal(); events.push("close"); await hold("close"); } };
     },
-    withHeldContractSpineV31DiagnosticV2: async (session: typeof reserved, continuation: () => Promise<unknown>) => {
+    withHeldContractSpineV31DiagnosticV2: realComposition
+      ? fixture({ clock: () => state.now, coreAdvance: () => { state.now += state.auditAdvance; } }).invoke
+      : async (session: typeof reserved, continuation: () => Promise<unknown>) => {
       await session.unsafe("SELECT set_config('lock_timeout', '1000ms', false)");
       await session.unsafe("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
       try {
@@ -394,6 +405,55 @@ test("private held diagnostic retains one backend and brackets tagged census and
   assert.equal(state.revoked, true);
   assert.throws(() => captured.observe());
   await assert.rejects(captured.recheck());
+});
+
+for (const elapsed of [35000, 59999]) test(`composed held diagnostic settles within original60s after ${elapsed}ms`, async () => {
+  // A 30s audit budget incorrectly applied after the callback rejects a valid
+  // retained invocation. Run both actual compositions with one shared clock.
+  const { state, candidate, invoke } = privateFixture(undefined, true);
+  state.auditAdvance = 1000;
+  let captured: any;
+  const result = await invoke(candidate, 71, 70, async (held: any) => {
+    captured = held;
+    state.now = elapsed;
+    await held.recheck();
+    return "settled retained evidence";
+  });
+  assert.equal(result, "settled retained evidence");
+  assert.equal(state.allocations, 1);
+  assert.equal(state.revoked, true);
+  assert.throws(() => captured.observe());
+});
+
+test("composed held diagnostic cannot renew original60s at continuation admission", async () => {
+  // An audit consuming time must not give the callback a fresh60s clock.
+  const { state, candidate, invoke } = privateFixture(undefined, true);
+  state.auditAdvance = 1000;
+  let yielded = false, lateObservation: unknown;
+  const outcome = await invoke(candidate, 71, 70, async (held: any) => {
+    yielded = true;
+    state.now = 60000;
+    try { lateObservation = held.observe(); } catch {}
+    return "forbidden renewed result";
+  }).then(value => ({ value }), error => ({ error }));
+  assert.equal(yielded, true);
+  assert.equal(lateObservation, undefined);
+  assert.ok("error" in outcome);
+  assert.equal(state.revoked, true);
+});
+
+test("composed held diagnostic retains30s full audit admission bound", async () => {
+  // Separating callback settlement cannot extend the source audit budget.
+  const { state, candidate, invoke } = privateFixture(undefined, true);
+  state.auditAdvance = 31000;
+  let yielded = false;
+  await assert.rejects(invoke(candidate, 71, 70, async () => { yielded = true; }), error => {
+    assert.ok(error instanceof ContractSpineMigrationError);
+    assert.equal(error.code, "MIGRATION_LOCK_TIMEOUT");
+    return true;
+  });
+  assert.equal(yielded, false);
+  assert.equal(state.revoked, true);
 });
 
 test("private held diagnostic never shares a cached activity sample across concurrent audit branches", async () => {

@@ -21073,7 +21073,9 @@ const task6aUsedHeldV31SessionsV2 = new WeakSet<object>();
  * source, arbitrary-writer fence, genesis, migration or admission capability.
  * Temporary source-owned behavioral preflight precedes the read-only phase.
  * Neither the backend reservation nor the cooperative migration lock is
- * released before the continuation settles.
+ * released before the continuation settles. The 30s audit budget bounds
+ * admission only; the caller must actively bound its continuation and own
+ * definite disposal (the private adapter uses its original 60s invocation).
  */
 export async function withHeldContractSpineV31DiagnosticV2<T>(
   session: ReservedSql,
@@ -21158,7 +21160,6 @@ export async function withHeldContractSpineV31DiagnosticV2<T>(
     });
     remainingCurrentAuthorityAuditMilliseconds(deadline, "held31 continuation admission");
     result = await operation(diagnostic);
-    remainingCurrentAuthorityAuditMilliseconds(deadline, "held31 continuation settlement");
   } catch (error) { queryFailures.push(error); }
 
   normalClosed = true;

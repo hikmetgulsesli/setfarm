@@ -106,6 +106,10 @@ subject to the private adapter's original active 60s clock, including cleanup.
 Choose this phase separation over accepting a caller-supplied deadline or
 starting a fresh callback clock. No audit timeout, SQL guard or frozen helper is
 weakened; a callback cannot renew the outer invocation deadline.
+The lower exported helper alone does not actively bound callback lifetime:
+its caller owns that bound and definite backend disposal. Unchanged statement
+and idle timeouts are additional limits, so60s is a maximum, not a guaranteed
+usable observation window.
 
 ## Actual protected private fixture
 
