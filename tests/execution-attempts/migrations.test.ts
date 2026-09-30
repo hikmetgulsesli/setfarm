@@ -117,8 +117,8 @@ it("P4 guarded stage uses held savepoint without changing v32 digest", async () 
     [sha256(migrationSource), sha256(guardedSource), sha256(generatedDigests)],
     [
       "1f5b1f1c9d54051b674ad883c1b1e5998df6f3e5b5f77fe6d7f960337b6b4ff6",
-      "e11be19ca4a1bd97408355f33845da7d9aee87991667ba4ba407056c084a6002",
-      "d61009aebe3a1cca347a4a6132fa39e35855514b697f8132b3fc81ae506e3e95",
+      "fb5b79aed2d9477e1fded8ee4f2d4cead37dbe1a9a20e49e0973a6d1741cb9b9",
+      "4b8e307863fbd9ce07e9612c969701d5732840bdbac3ec620cf006505b1d2c69",
     ],
   );
   assert.match(
@@ -127,7 +127,7 @@ it("P4 guarded stage uses held savepoint without changing v32 digest", async () 
   );
   assert.match(
     generatedDigests.toString("utf8"),
-    /33: "e55159dc7b0471ee757742ee978cdea3ddb52ff59ae457aa90208a74e3bb771a"/,
+    /33: "eb75ce31cd8715590e31a9c64b6e701c84a947fbb1f2ff67b540d1b658dd1f79"/,
   );
 
   const start = databaseSource.indexOf("// SETFARM_P4_MIGRATION_32_TRANSACTION_V1:BEGIN");
