@@ -48,7 +48,7 @@ const WRITE_PROBE = `const fs=require('node:fs');
 try { fs.writeFileSync(process.argv[1], 'denied', {flag:process.argv[2]}); process.exit(0); }
 catch(e) { process.exit(e.code==='EACCES'||e.code==='EPERM'?42:43); }`;
 const SOCKET_CLIENT_PROBE = `import assert from 'node:assert/strict';
-const {createTask6aPostgresSocketSqlV1}=await import(process.argv[1]);
+const {createTask6aPostgresSocketSqlV1,createTask6aSingleBackendSocketClientV1}=await import(process.argv[1]);
 const candidate=JSON.parse(process.argv[2]);
 process.env.PGPASSWORD='fixture-sentinel';
 assert.throws(()=>createTask6aPostgresSocketSqlV1(candidate,'pool'),/TASK6A_SOCKET_TRANSPORT_ENVIRONMENT_REFUSED/);
@@ -82,7 +82,50 @@ for(const profile of ['pool','listener']) {
   try {await assert.rejects(missing.unsafe('SELECT 1'),e=>e.code==='ENOENT');}
   finally {await missing.end({timeout:2});}
 }
-console.log('peer socket pool/listener verified');`;
+let resolveSingleNotification;
+const singleNotification=new Promise(resolve=>{resolveSingleNotification=resolve;});
+const single=createTask6aSingleBackendSocketClientV1(candidate,(channel,payload)=>{
+  assert.equal(channel,'task6a_single_backend_fixture');resolveSingleNotification(payload);
+});
+let reserved;
+try {
+  reserved=await single.sql.reserve();
+  const before=(await reserved.unsafe('SELECT pg_backend_pid() AS pid, session_user AS session, current_user AS role, current_database() AS database, inet_client_addr() IS NULL AS socket'))[0];
+  assert.equal(before.session,'task6a_runtime');assert.equal(before.role,'task6a_runtime');
+  assert.equal(before.database,'postgres');assert.equal(before.socket,true);
+  assert.ok(Number.isSafeInteger(before.pid)&&before.pid>1);
+  await reserved.unsafe('LISTEN task6a_single_backend_fixture');
+  await reserved.unsafe("SELECT pg_notify('task6a_single_backend_fixture','same-backend-notification')");
+  let timer;
+  try {
+    const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('single backend notification timeout')),3000);});
+    assert.equal(await Promise.race([singleNotification,timeout]),'same-backend-notification');
+  } finally {clearTimeout(timer);}
+  const after=(await reserved.unsafe('SELECT pg_backend_pid() AS pid'))[0];
+  assert.equal(after.pid,before.pid);
+  assert.deepEqual(single.observe(),{nativeSocketCreations:1,revoked:false});
+} finally {single.revoke();reserved?.release();await single.close();}
+await assert.rejects(single.sql.unsafe('SELECT 1'));
+assert.deepEqual(single.observe(),{nativeSocketCreations:1,revoked:true});
+
+const lost=createTask6aSingleBackendSocketClientV1(candidate);
+try {
+  const live=(await lost.sql.unsafe('SELECT pg_backend_pid() AS pid, current_user AS role'))[0];
+  assert.equal(live.role,'task6a_runtime');assert.ok(live.pid>1);
+  // Only our own scoped backend; never the postmaster or another live session.
+  const killing=lost.sql.unsafe('SELECT pg_terminate_backend(pg_backend_pid())').then(
+    ()=>{throw Error('own backend unexpectedly survived');},()=>true);
+  const queued=Array.from({length:4},()=>lost.sql.unsafe("INSERT INTO task6a_probe.effects(note) VALUES ('gated-queued-after-loss')").then(
+    ()=>{throw Error('forbidden replacement backend effect');},()=>true));
+  let timer;
+  try {
+    const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('single backend loss timeout')),3000);});
+    assert.deepEqual(await Promise.race([Promise.all([killing,...queued]),timeout]),[true,true,true,true,true]);
+  } finally {clearTimeout(timer);}
+  await assert.rejects(lost.sql.unsafe('SELECT 1'));
+  assert.deepEqual(lost.observe(),{nativeSocketCreations:1,revoked:true});
+} finally {await lost.close();}
+console.log('peer transport and single backend lifecycle verified');`;
 
 test("private protected PG denies old identity and scoped admin impersonation across restart", {
   skip: enabled ? false : "requires explicit isolated protected PostgreSQL OS fixture opt-in",
@@ -256,7 +299,9 @@ test("private protected PG denies old identity and scoped admin impersonation ac
       JSON.stringify({ schema: "setfarm.postgres-socket-transport.v1", socketDirectory: socket,
         port, database: "postgres", user: "task6a_runtime", osUid: clientUid })], 30_000);
     assert.equal(client.status, 0, `actual source connector failed: ${client.stderr}`);
-    assert.equal(client.stdout.trim(), "peer socket pool/listener verified");
+    assert.equal(client.stdout.trim(), "peer transport and single backend lifecycle verified");
+    assert.equal(admin("SELECT count(*) FROM task6a_probe.effects WHERE note='gated-queued-after-loss'"), "0",
+      "queued effects must not execute on a replacement backend");
     fileDenials();
   }
 
@@ -267,7 +312,7 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     // actual source and dependency unchanged; never relax repository permissions.
     const esbuild = createRequire(import.meta.url)("esbuild") as typeof import("esbuild");
     const bundle = esbuild.buildSync({ entryPoints: [fileURLToPath(new URL(
-      "../../src/internal-production/task6a-postgres-socket-transport-v1.ts", import.meta.url))],
+      "./task6a-protected-cluster-client-entry.ts", import.meta.url))],
       bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent" });
     assert.equal(bundle.outputFiles.length, 1);
     fs.writeFileSync(clientModule, bundle.outputFiles[0].contents, { mode: 0o444 });
