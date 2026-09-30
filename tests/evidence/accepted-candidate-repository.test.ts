@@ -56,7 +56,10 @@ describe("accepted candidate repository", () => {
     await database.reset();
   });
 
-  async function fixture(options: Readonly<{ forgedBundleHash?: boolean }> = {}) {
+  async function fixture(options: Readonly<{
+    forgedBundleHash?: boolean;
+    missingOwner?: "run" | "execution-attempt";
+  }> = {}) {
     const root = await mkdtemp(path.join(tmpdir(), "setfarm-accepted-candidate-"));
     roots.push(root);
     const artifactRoot = path.join(root, "sha256");
@@ -297,7 +300,7 @@ describe("accepted candidate repository", () => {
       evidencePlanArtifactHash: planPublication.hash,
       evidenceBundleHash,
     }];
-    return { runId, repository, sourceRevision, storyEvidence, artifactRoot, intent };
+    return { runId, attemptId, repository, sourceRevision, storyEvidence, artifactRoot, intent };
   }
 
   it("atomically seals one exact final-tree candidate and replays it after terminalization", async () => {
@@ -352,6 +355,16 @@ describe("accepted candidate repository", () => {
       diagnostic: "canonical AcceptedCandidate sealed",
     });
     assert.equal(terminal.status, "completed");
+    const closedOwners = await database.sql<Array<{ category: string; state: string }>>`
+      SELECT category,state FROM internal_production_owner_reservations_v1
+       WHERE (category='run' AND owner_key=${test.runId})
+          OR (category='execution-attempt' AND owner_key=${test.attemptId})
+       ORDER BY category
+    `;
+    assert.deepEqual(closedOwners.map(row => ({ ...row })), [
+      { category: "execution-attempt", state: "closed" },
+      { category: "run", state: "closed" },
+    ]);
     const replay = await test.repository.publish({
       runId: test.runId,
       sourceRevision: test.sourceRevision,
@@ -379,6 +392,38 @@ describe("accepted candidate repository", () => {
       /ARTIFACT_IDENTITY_IMMUTABLE/,
     );
   });
+
+  for (const missingOwner of ["execution-attempt", "run"] as const) {
+    it(`refuses a missing ${missingOwner} owner and rolls terminalization back`, async () => {
+      const test = await fixture({ missingOwner });
+      await test.repository.publish({
+        runId: test.runId,
+        sourceRevision: test.sourceRevision,
+        storyEvidence: test.storyEvidence,
+      });
+      const snapshot = async () => database.sql<Array<{ state: unknown }>>`
+        SELECT jsonb_build_object(
+          'run',(SELECT to_jsonb(row) FROM runs row WHERE id=${test.runId}),
+          'attempt',(SELECT to_jsonb(row) FROM execution_attempts row WHERE attempt_id=${test.attemptId}),
+          'head',(SELECT to_jsonb(row) FROM internal_production_owner_admission_head_v1 row WHERE singleton=TRUE),
+          'owners',(SELECT coalesce(jsonb_agg(to_jsonb(row) ORDER BY reservation_ref),'[]'::jsonb)
+                      FROM internal_production_owner_reservations_v1 row),
+          'stories',(SELECT coalesce(jsonb_agg(to_jsonb(row) ORDER BY id),'[]'::jsonb)
+                       FROM stories row WHERE run_id=${test.runId}),
+          'events',(SELECT coalesce(jsonb_agg(to_jsonb(row) ORDER BY event_key),'[]'::jsonb)
+                      FROM operational_events row WHERE aggregate_type='run' AND aggregate_id=${test.runId})
+        ) AS state
+      `;
+      const before = await snapshot();
+      await assert.rejects(
+        transitionRunToTerminal(database.sql, {
+          runId: test.runId, status: "completed", diagnostic: "missing owner negative control",
+        }),
+        new RegExp(`INTERNAL_PRODUCTION_${missingOwner.toUpperCase().replaceAll("-", "_")}_OWNER_UNAVAILABLE`),
+      );
+      assert.deepEqual(await snapshot(), before);
+    });
+  }
 
   it("refuses incomplete StoryPlan coverage before writing acceptance state", async () => {
     const test = await fixture();

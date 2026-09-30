@@ -80,6 +80,7 @@ const P3_TRACKED_SCOPE = new Set([
   "src/recovery/v3-recovery-lifecycle-reconciler.ts",
   "tests/claim-log-lifecycle.test.ts",
   "tests/cleanup-ops.test.ts",
+  "tests/evidence/accepted-candidate-repository.test.ts",
   "tests/run-operational-snapshot.test.ts",
   "tests/execution-attempts/attempt-reconciler.test.ts",
   "tests/execution-attempts/claim-authority.test.ts",
