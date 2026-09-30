@@ -101,7 +101,7 @@ Standby-v2 ordinary build terminal, unselected; selected/old19dirty unchanged.
 
 ## Implementation evidence before privileged execution
 
-Parser/collector/relocated verifier50 focused cases pass with0skips. All new
+Parser/collector/relocated verifier51 focused cases pass with0skips. All new
 behavior fixes followed observed RED/GREEN: independent review identified source
 and resolution context drift, exact intended relocation, bounded pre-read FD
 identity, synchronous/async child ambiguity, FD release ambiguity, unsupported
@@ -131,3 +131,13 @@ failed tree's complete metadata/bytes digest stayed identical; no live paths
 changed. Exact PID/root diagnostics remain in local continuation logs, not source
 authority. Actual private success does NOT establish production origin, held live
 writer fence, PG31genesis, guarded32/33, owner admission or fullTask6A completion.
+
+Exact-head cloud review of PR249 identified one genuine portability issue: the
+normal execution-attempt runner discovers this pure suite on Linux too, where
+/private/tmp is absent. An actual-body boundary regression observed the literal
+Darwin prefix RED (50pass/1fail), then normalized os.tmpdir() prefix use reached
+51GREEN. Bounded same-device/no-symlink cleanup remains unchanged. This correction
+changes only pure tests and this plan; all three privileged implementation file
+digests remain identical to the actual3/3 rehearsal. The selected normal runner
+also passes51/51 without PostgreSQL or native opt-ins. No actual Linux-host run is
+claimed; the independent mocked platform-path boundary proves prefix selection.

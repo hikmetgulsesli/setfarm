@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import fs, { existsSync } from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import vm from "node:vm";
 import ts from "typescript";
 import { fileURLToPath } from "node:url";
@@ -89,7 +90,7 @@ test("native parser accepts the literal loader directory as a search root", () =
 
 // Removing transitive traversal or the destination containment check must fail.
 function withTree(run: (root: string) => void): void {
-  const root = fs.mkdtempSync("/private/tmp/setfarm-native-graph.");
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),"setfarm-native-graph."));
   const identity = fs.lstatSync(root, { bigint: true });
   try { run(root); }
   finally {
@@ -354,4 +355,16 @@ test("logging data exclusion never admits another Library path, traversal or an 
   for(const cache of ["/Library/Preferences/Logging/other","/Library/Preferences/Logging/../.plist-cache.a",`${loggingCache}/extra`])
     assert.throws(()=>verifyCache(vmMap([mappedCache("r--/r--",cache)]),undefined,cache),/TASK6A_NATIVE_CLOSURE_REFUSED/);
   assert.throws(()=>verifyCache(`${vmMap([mappedCache()])}${" ".repeat(1_048_577)}`),/TASK6A_NATIVE_CLOSURE_REFUSED/);
+});
+test("pure native graph fixtures use the normalized platform temp directory, not a Darwin-only path",()=>{
+  const source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8");
+  const ast=ts.createSourceFile("native.test.ts",source,ts.ScriptTarget.Latest,true);
+  const body=ast.statements.find((node):node is ts.FunctionDeclaration=>ts.isFunctionDeclaration(node)&&node.name?.text==="withTree")!;
+  const sentinel=Error("stop before actual fixture allocation");let prefix="";
+  const sandbox:any={assert,path,os:{tmpdir:()=>"/platform/temporary"},fs:{
+    realpathSync:(p:string)=>{assert.equal(p,"/platform/temporary");return "/physical/platform-temporary";},
+    mkdtempSync:(p:string)=>{prefix=p;throw sentinel;}}};
+  const compiled=ts.transpileModule(body.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+  vm.runInNewContext(compiled,sandbox);assert.throws(()=>sandbox.withTree(()=>{}),error=>error===sentinel);
+  assert.equal(prefix,"/physical/platform-temporary/setfarm-native-graph.");
 });
