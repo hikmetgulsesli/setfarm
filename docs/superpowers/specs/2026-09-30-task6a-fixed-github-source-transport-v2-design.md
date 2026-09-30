@@ -69,8 +69,10 @@ Recheck the same deadline after the subprocess and before returning.
    entries must be regular100644 blobs, exact names and bounded sizes.
 6. Read the two blobs by authenticated OIDs, recompute framed Git SHA1 and
    independent SHA256, and join exact tree size. Ignore all returned URLs.
-7. Re-read main ref and require unchanged main; no retry, partial result or
-   success if main moves during observation.
+7. Re-read main ref and require agreement with the first sample; no retry,
+   partial result or success if those endpoints differ. This is sampled
+   agreement, not continuous ref stability: transient ABA moves cannot be
+   excluded. Immutable selected object identities remain joined to sampled main.
 
 ## Result and refusal
 
@@ -84,6 +86,9 @@ upstream bodies, environment or credentials. No filesystem writes, Git execution
 root/vendor/archive/native/DB/service/selector effects. Authentic initial root
 publisher, official vendor Node admission and parent-owned real entry execution
 are later separate obligations, as are compiler/fence/genesis/32/33/admission.
+Same-process hostile JavaScript or monkeypatched builtins are not sandboxed.
+The reader does not attest its own executing code, system curl/CA physical
+identity or native toolchain; these belong to the independent protected launcher.
 
 ## Verification
 

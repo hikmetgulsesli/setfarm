@@ -30,8 +30,8 @@
 
 **Interfaces:** Consume the three delivered `verifyTask6aGithub*ObjectV2(record,expectedSha)` functions. Produce `observeCurrentTask6aGithubMergedSourceTransportV2()` and only frozen diagnostic results described in the spec.
 
-- [ ] Write independent literal fixture framing in tests and a VM loader using the actual delivered verifier. Replace only `node:child_process.spawnSync` and `node:perf_hooks.performance.now`; never production injection parameters.
-- [ ] Write the positive contract test first:
+- [x] Write independent literal fixture framing in tests and a VM loader using the actual delivered verifier. Replace only `node:child_process.spawnSync` and `node:perf_hooks.performance.now`; never production injection parameters.
+- [x] Write the positive contract test first:
 
 ```js
 const {observe,calls,fixture}=await loadReader();
@@ -45,12 +45,12 @@ assert.deepEqual(result.sources.map(x=>x.path),[
 assert.equal(calls.length,9);
 ```
 
-- [ ] Add behavior tests rejecting caller args before any subprocess, request env/config/proxy/redirect/effective URL/status/encoding/bounds/errors, open/mismatched PR/base/head/merge, incomplete/ambiguous association, coherent symlink/size/byte substitution, missing blob and moving main. Assert frozen nested results and no extra request after refusal.
-- [ ] Run `node --experimental-vm-modules --test scripts/__tests__/task6a-fixed-github-source-transport-v2.test.js` and record missing implementation assertion RED; fix test defects before implementation.
-- [ ] Implement fixed route derivation, direct curl args/options, exact UTF8/status trailer parsing, deadline checks and existing verifier composition. The output's data records never serve as protected authority.
-- [ ] Run the complete new suite and PR251 suite; fix implementation until green. Use in-memory mutation of an actual guard to prove the consuming test refuses it; do not rewrite source for mutation.
-- [ ] Exercise actual default npm graph selecting a bounded real new leaf. Default test invocation spawns the VM test child if needed because the repository's normal scripts test command omits the experimental VM flag; keep this test-only, bounded and scrubbed.
-- [ ] Run source `tsc --noEmit`, node syntax checks, version/English/path/migration/MC contracts and diff checks; no ambient full test side effects.
+- [x] Add behavior tests rejecting caller args before any subprocess, request env/config/proxy/redirect/effective URL/status/encoding/bounds/errors, open/mismatched PR/base/head/merge, incomplete/ambiguous association, coherent symlink/size/byte substitution, missing blob and differing main endpoints. Assert frozen nested results and no extra request after refusal. Endpoint equality cannot exclude ABA moves or attest continuous main stability.
+- [x] Run `node --experimental-vm-modules --test scripts/__tests__/task6a-fixed-github-source-transport-v2.test.js` and record missing implementation assertion RED. Initial35 failed expected assertion. Corrected independent literal SHA and a VM file-URL harness read; harness defect is not claimed production RED.
+- [x] Implement fixed route derivation, direct curl args/options, exact UTF8/status trailer parsing, deadline checks and existing verifier composition. The output's data records never serve as protected authority.
+- [x] Run the complete new suite and PR251 suite; expanded43+62 passed105/0fail/0skip. In-memory moving-main guard mutation misses the actual refusal consumer; no source files rewritten.
+- [x] Exercise actual default npm graph selecting a bounded real new leaf; omitted-glob mutant rejected before child. Default test invocation spawns full43 VM suite if needed because normal scripts test command omits the experimental VM flag; test-only, bounded and scrubbed.
+- [x] Run source `tsc --noEmit`, node syntax checks, version2.3.79/English1888/path952/frozen migration/12MC contracts and diff checks; no ambient full test side effects.
 - [ ] Independent read-only exact file/hash review. Scope feature build attempt must respect existing main guard; no dirty/guard bypass.
 - [ ] Stage only the four mapped files and conventional commit; normal push/scoped PR. Request optional Copilot/Gemini once using existing accounts. Obtain fresh-head available mandatory cloud/security gate and inspect full paginated comments/reviews/threads before normal SHA-bound merge.
 - [ ] Fast-forward clean standby main, ordinary `npm run build`, actual compiled source/build observer, merged new+object suites, zero-input actual fixed public HTTPS observation and read-only PG/HTTP/selector checks. Keep standby unselected; record exact evidence and remaining bootstrap/compiler/fence/genesis/admission obligations externally.
