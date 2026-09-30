@@ -5646,6 +5646,96 @@ async function openExactPoisonRecoveryPinnedCommitChainV1(): Promise<ExactPoison
   return openExactPoisonRecoveryPinnedChainV1(true);
 }
 
+function captureTask6aReceiptPinnedMemberV1(
+  record: ExactPoisonRecoveryPinnedRecordV1,
+  role: string,
+): Readonly<Record<string, unknown>> {
+  assertExactPoisonRecoveryPinnedRecordStableV1(record, "original-owner capture member");
+  const identity = record.identity;
+  const result = Object.freeze({
+    role,
+    locator: exactPoisonRecoveryRelativeLocatorV1(record.target),
+    identity: Object.freeze({
+      deviceDecimal: String(identity.dev), inodeDecimal: String(identity.ino),
+      birthtimeNsDecimal: String(identity.birthtimeNs), uidDecimal: String(identity.uid),
+      gidDecimal: String(identity.gid), mode: `0${(identity.mode & 0o7777n).toString(8)}`,
+      linkCountDecimal: String(identity.nlink), byteLengthDecimal: String(identity.size),
+      mtimeNsDecimal: String(identity.mtimeNs), ctimeNsDecimal: String(identity.ctimeNs),
+    }),
+    bytesSha256: sha256(record.bytes), bytesBase64: record.bytes.toString("base64"),
+  });
+  assertExactPoisonRecoveryPinnedRecordStableV1(record, "original-owner capture member");
+  return result;
+}
+
+/** Diagnostic capture only; not promoted source, readiness, owner or admission authority. */
+export async function observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1(): Promise<Readonly<Record<string, unknown>>> {
+  if (arguments.length !== 0) currentEntryFail("original-owner capture requires zero arguments");
+  if (task6aReceiptCleanupUncertainV1) currentEntryFail("receipt cleanup uncertain");
+  const anchor = authenticateInternalProductionBaselineWorkspaceAnchorV1();
+  let context: ExactPoisonRecoveryPinnedCommitChainV1 | null = null;
+  let originals: ExactPoisonRecoveryPostVisibleOriginalsV1 | null = null;
+  let primaryError: unknown | null = null;
+  const assertStable = (): void => {
+    anchor.assertStable();
+    if (task6aReceiptCleanupUncertainV1) currentEntryFail("receipt cleanup uncertain");
+    context?.assertStable();
+    originals?.evidence.assertStableOriginals();
+    context?.assertStable();
+    anchor.assertStable();
+  };
+  try {
+    assertStable();
+    const sourceA = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
+    assertStable();
+    context = await openExactPoisonRecoveryPinnedCommitChainV1();
+    assertStable();
+    originals = openExactPoisonRecoveryPostVisibleOriginalsV1(context);
+    assertStable();
+    const expectedMembers = [context.operation, context.edge, context.disposition,
+      context.successorOperationRecord, context.successorAuthorityV31, context.successorPending,
+      context.seal, context.commit];
+    if (context.records.length !== 8 || context.records.some((record, index) => record !== expectedMembers[index])
+      || originals.records.length !== 5 || originals.records.some((record, index) =>
+        exactPoisonRecoveryRelativeLocatorV1(record.target) !== EXACT_POISON_ORIGINAL_FILE_LOCATORS_V1[index])) {
+      currentEntryFail("original-owner capture member relations are crossed");
+    }
+    const heldMembers = [...context.records, ...originals.records];
+    if (heldMembers.reduce((total, record) => total + record.bytes.length, 0) > 16_777_216) {
+      currentEntryFail("original-owner capture member bytes exceed bound");
+    }
+    const roles = ["predecessor-operation", "successor-edge", "quarantine-disposition", "successor-operation",
+      "authority-v31", "pending-migration", "activation-seal", "activation-commit"];
+    const captured = recursivelyFreeze({
+      schema: "setfarm.internal-production-original-owner-receipt-capture.v1",
+      purpose: "task6a-original-owner-receipt-capture-no-write-v1",
+      workspaceRoot: resolveInternalProductionBaselineWorkspaceRootV1(),
+      originalOwnerUidDecimal: String(process.getuid!()), currentCaptureSource: sourceA,
+      orderedMembers: context.records.map((record, index) => captureTask6aReceiptPinnedMemberV1(record, roles[index]!)),
+      originalMembers: originals.records.map(record => captureTask6aReceiptPinnedMemberV1(record, "quarantined-original")),
+      originalInventory: {
+        inventoryBody: originals.evidence.inventoryBody, inventoryHash: originals.evidence.inventoryHash,
+        predecessorFileIdentities: originals.evidence.predecessorFileIdentities,
+      },
+      historicalPrerequisiteInventory: context.dispositionValue.value.historicalPrerequisiteInventory ?? null,
+    });
+    if (Buffer.byteLength(JSON.stringify(captured), "utf8") > 33_554_432) currentEntryFail("original-owner capture serialization exceeds bound");
+    assertStable();
+    const sourceB = requireSource(observeCurrentInternalProductionCleanSetfarmSourceBuildV1());
+    assertStable();
+    if (canonicalComparable(sourceA) !== canonicalComparable(sourceB)) currentEntryFail("original-owner capture source changed");
+    assertStable();
+    return captured;
+  } catch (error) { primaryError = error; throw error; }
+  finally {
+    attemptTask6aReceiptOwnedCleanupV1([
+      ...(originals === null ? [] : [() => originals!.close()]),
+      ...(context === null ? [] : [() => context!.close()]),
+      () => anchor.close(),
+    ], primaryError);
+  }
+}
+
 function exactPoisonRecoveryCurrentPrerequisitesFromPinnedSuccessorV1(
   context: ExactPoisonRecoveryPinnedCommitChainV1,
 ): ExactPoisonRecoveryPrerequisitesV1 {
@@ -6260,6 +6350,7 @@ type ExactPoisonPostVisibleZeroProgressSelectionV1 = Readonly<{
 }>;
 
 type ExactPoisonRecoveryPostVisibleOriginalsV1 = Readonly<{
+  records: readonly ExactPoisonRecoveryPinnedRecordV1[];
   evidence: ExactPoisonRecoveryInventoryEvidenceV1;
   close: () => void;
 }>;
@@ -6433,6 +6524,7 @@ function openExactPoisonRecoveryPostVisibleOriginalsV1(
     };
     assertStableOriginals();
     return Object.freeze({
+      records: Object.freeze(filePins),
       evidence: Object.freeze({
         inventoryBody,
         inventoryHash: EXACT_POISON_QUARANTINED_INVENTORY_HASH_V1,

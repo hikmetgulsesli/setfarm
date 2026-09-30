@@ -20661,6 +20661,97 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     });
   }
 
+  it("Task6A original-owner capture composes the full strict chain and physical originals without durability or filesystem mutation", async () => {
+    const root = createFixture();
+    try {
+      const harness = configureExactPoisonDurabilityHarnessV1(root, "commit");
+      // Real source/build observer, local historical Git objects and strict lower
+      // readers. Existing fixture incident identities/output bytes are synthetic;
+      // this regression is not genuine production-host authority or promotion.
+      git(root, ["add", "src/internal-production/baseline-post-handoff-receipt-v1.ts"]);
+      git(root, ["commit", "-qm", "fixture no-write capture composition"]);
+      git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+      const prepared = runProducer(root, "--prepare");
+      assert.equal(prepared.status, 0, prepared.stderr);
+      materializeOutputs(root);
+      const finalized = runProducer(root, "--finalize");
+      assert.equal(finalized.status, 0, finalized.stderr);
+      const before = filesystemTreeSnapshot(harness.original.store);
+      const result = await runFixtureExpressionAsync(root, `(async()=>{
+        const fs=await import("node:fs");
+        const fdCount=()=>fs.readdirSync("/dev/fd").filter(name=>{if(!/^[0-9]+$/.test(name))return false;try{fs.fstatSync(Number(name));return true}catch{return false}}).length;
+        const probe={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",probe);
+        const before=fdCount();const first=await m.observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1();
+        const second=await m.observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1();
+        process.stdout.write(JSON.stringify({first,second,events:probe.events,descriptorDelta:fdCount()-before,
+          frozen:Object.isFrozen(first)&&Object.isFrozen(first.orderedMembers)&&Object.isFrozen(first.originalMembers)}));
+      })()`);
+      assert.equal(result.status, 0, result.stderr);
+      const observed = JSON.parse(result.stdout) as {
+        first: { schema: string; orderedMembers: Array<{ role: string; locator: string; bytesBase64: string; identity: Record<string, string> }>;
+          originalMembers: Array<{ locator: string; bytesBase64: string; identity: Record<string, string> }>; currentCaptureSource: { sha: string }; historicalPrerequisiteInventory: unknown };
+        second: unknown; events: string[]; descriptorDelta: number; frozen: boolean;
+      };
+      assert.equal(observed.first.schema, "setfarm.internal-production-original-owner-receipt-capture.v1");
+      assert.deepEqual(observed.first.orderedMembers.map(member => member.role), ["predecessor-operation", "successor-edge", "quarantine-disposition", "successor-operation", "authority-v31", "pending-migration", "activation-seal", "activation-commit"]);
+      assert.equal(observed.first.orderedMembers.length, 8);
+      assert.deepEqual(observed.first.originalMembers.map(member => member.locator), [...EXACT_ORIGINAL_POISON_FILE_LOCATORS_V1]);
+      for (const member of [...observed.first.orderedMembers, ...observed.first.originalMembers]) {
+        const target = path.join(harness.original.store, member.locator);
+        assert.equal(member.bytesBase64, readFileSync(target).toString("base64"));
+        const stats = lstatSync(target, { bigint: true });
+        assert.deepEqual(member.identity, {
+          deviceDecimal: String(stats.dev), inodeDecimal: String(stats.ino),
+          birthtimeNsDecimal: String(stats.birthtimeNs), uidDecimal: String(stats.uid), gidDecimal: String(stats.gid),
+          mode: `0${(stats.mode & 0o7777n).toString(8)}`, linkCountDecimal: String(stats.nlink),
+          byteLengthDecimal: String(stats.size), mtimeNsDecimal: String(stats.mtimeNs), ctimeNsDecimal: String(stats.ctimeNs),
+        });
+      }
+      const operation = lstatSync(path.join(harness.original.store, "current-entry-operation.json"), { bigint: true });
+      assert.equal(observed.first.orderedMembers[0]!.identity.deviceDecimal, String(operation.dev));
+      assert.equal(observed.first.orderedMembers[0]!.identity.inodeDecimal, String(operation.ino));
+      assert.equal(observed.first.currentCaptureSource.sha, git(root, ["rev-parse", "HEAD"]));
+      assert.equal(observed.first.historicalPrerequisiteInventory, null, "a V1 disposition has explicit absent history, not an invented proof");
+      assert.deepEqual(observed.second, observed.first);
+      assert.equal(observed.frozen, true);
+      assert.deepEqual(observed.events, [], "capture must not invoke any V1 seal/commit durability boundary");
+      assert.equal(observed.descriptorDelta, 0, "two complete captures release every original/chain/workspace owner");
+      assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before);
+    } finally { removeFixture(root); }
+  });
+
+  for (const fault of ["original-mode", "commit-bytes"] as const) {
+    it(`Task6A original-owner capture refuses actual ${fault} drift with no writes or descriptor leak`, async () => {
+      const root = createFixture();
+      try {
+        const harness = configureExactPoisonDurabilityHarnessV1(root, "commit");
+        git(root, ["add", "src/internal-production/baseline-post-handoff-receipt-v1.ts"]);
+        git(root, ["commit", "-qm", "fixture no-write capture refusal"]);
+        git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        const prepared = runProducer(root, "--prepare"); assert.equal(prepared.status, 0, prepared.stderr);
+        materializeOutputs(root);
+        const finalized = runProducer(root, "--finalize"); assert.equal(finalized.status, 0, finalized.stderr);
+        if (fault === "original-mode") chmodSync(path.join(harness.original.store, EXACT_ORIGINAL_POISON_FILE_LOCATORS_V1[1]), 0o644);
+        else writeFileSync(harness.seeded.C, "{\n");
+        const before = filesystemTreeSnapshot(harness.original.store);
+        const result = await runFixtureExpressionAsync(root, `(async()=>{
+          const fs=await import("node:fs");
+          const fdCount=()=>fs.readdirSync("/dev/fd").filter(name=>{if(!/^[0-9]+$/.test(name))return false;try{fs.fstatSync(Number(name));return true}catch{return false}}).length;
+          const before=fdCount();const probe={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",probe);
+          let outcome="returned",message=null;try{await m.observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1()}catch(error){outcome="threw";message=String(error)}
+          process.stdout.write(JSON.stringify({outcome,message,events:probe.events,descriptorDelta:fdCount()-before}));
+        })()`);
+        assert.equal(result.status, 0, result.stderr);
+        const observed = JSON.parse(result.stdout) as { outcome: string; message: string; events: string[]; descriptorDelta: number };
+        assert.equal(observed.outcome, "threw");
+        assert.match(observed.message, fault === "original-mode" ? /invalid|identity|mode|crossed/i : /canonical|JSON|invalid/i);
+        assert.deepEqual(observed.events, []);
+        assert.equal(observed.descriptorDelta, 0);
+        assert.deepEqual(filesystemTreeSnapshot(harness.original.store), before);
+      } finally { removeFixture(root); }
+    });
+  }
+
   it("P5a-A seal durability refuses a structural H-writer clone before fsync", async () => {
     const root = createFixture();
     try {
