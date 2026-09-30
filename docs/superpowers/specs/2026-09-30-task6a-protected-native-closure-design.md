@@ -37,6 +37,15 @@ paths; ambiguity or missing dependency refuses. Record original bytes/hash and
 recheck each source before/after copying; copies are fixture payloads chosen by
 the trusted driver, NOT independent vendor/origin attestation.
 
+Unsupported alternate dylib_use_command marker/flags refuse rather than being
+silently interpreted as legacy records. Each executable resolution context is
+traversed; shared-image resolutions must agree. Standalone non-executable module
+entries and their descendants reject @executable_path/@rpath dependency imports
+instead of pretending that the module is PostgreSQL's executable context. Actual
+inherited-rpath positive and two-existing-candidate refusal tests cover resolver
+behavior. Complete published-byte accounting includes negative copies and any
+post-edit/signature growth, not merely original images and share resources.
+
 Relocate non-system dependencies to concrete @loader_path-relative paths inside
 the new native root. Remove original LC_RPATH entries and use no DYLD search or
 fallback environment. Reparse every copied binary after edits, resolve every
@@ -54,6 +63,14 @@ prefix relocation compares path suffixes; a naive root/bin layout can fall back
 to the original Homebrew share/modules. Copy the bounded complete share tree,
 only regular files/directories, and both selected modules. initdb must prove
 that its relocated default resource lookup works WITHOUT a -L override.
+
+The complete share tree is captured/rechecked read-only before the first native
+payload mkdir/write/edit/sign. Trusted non-executable source resources may have
+1..4096 hardlinks (installed timezone aliases); keep each path and full captured
+bytes/10metadata plus directory membership. The private resource reader rejects
+executable data inputs and alias-induced drift. Publication uses wx byte copies,
+never hardlinks; all native-image and protected-output readers remain exact1link.
+Every copied alias counts separately against complete published-byte accounting.
 
 Node uses a fixed root-protected empty OpenSSL configuration and protected
 module directory. No ambient NODE_OPTIONS, OPENSSL_CONF, OPENSSL_MODULES,
@@ -87,12 +104,34 @@ libraries/module to be inside the protected root or system image roots; reject
 any Homebrew/Home/temporary outside image. lsof is sampled corroboration, not
 proof of all future dlopen or full application/npm/extension behavior.
 
+Darwin lsof txt also contains mapped data. Only an exact
+/Library/Preferences/Logging/.plist-cache.<alphanumeric> path may be classified
+as sampled non-executable data, never code/source/ownership authority. Require
+the same complete lsof membership between TWO root-system vmmap -w samples for
+the same bracketed PID; every matching VM region must be exactly r--/r-- current
+AND maximum protection. Missing/conflicting/unparseable/truncated/warning output
+refuses. No generic /Library exclusion; every other non-system name retains the
+exact protected-image requirement. Cache data cannot satisfy required binaries
+or modules. Path/VM evidence does not prove mapped inode UID, especially after
+unlink; do not reopen a replacement cache as mapped-object identity.
+
 Repeat positive/negative peer SQL and native checks across the existing exact
 postmaster restart. Stop only the captured PID/UID/start/command/data identity.
-Any timeout, unknown child completion, native drift, failed stop or cleanup
+Any lifecycle/control-subprocess timeout, unknown child completion, native drift, failed stop or cleanup
 retains the exact fixture and fails. Existing bounded same-device no-symlink
 cleanup removes only the proven stopped temporary tree; no historical worktree
 or production namespace is removed. Independently check recorded PIDs/root gone.
+
+Synchronous command error/signal/null status permanently burns cleanup authority.
+The intentional missing-lib Node abort is waited/reaped by an unprivileged system
+shell with a child-only zero core limit; only exact134 plus missing-lib diagnostic
+is expected, not an arbitrary signal. Native reader close ambiguity permanently
+denies reacquisition/cleanup, preserving the primary and close errors together.
+Preparation-tool ambiguity burns the same private native cleanup latch, including
+when preparation failed before the returned protected object was assigned.
+An embedded SQL/notification logical-probe deadline is a test failure; a definite
+normal probe-child completion can still permit verified stop/cleanup, unlike an
+unknown lifecycle/control-subprocess completion.
 
 ## File map and verification
 
@@ -127,3 +166,7 @@ production native closure or Task6A completion. Freeze the old startup19 changes
   https://www.postgresql.org/docs/17/runtime-config-client.html
 - PostgreSQL REL_17_STABLE src/port/path.c make_relative_path (executable suffix
   matching decides whether compiled resource paths can be relocated).
+- Apple, Viewing Virtual Memory Usage (current/maximum VM protections):
+  https://developer.apple.com/library/archive/documentation/Performance/Conceptual/ManagingMemory/Articles/VMPages.html
+- lsof upstream manual (txt includes program code and data):
+  https://raw.githubusercontent.com/lsof-org/lsof/master/Lsof.8
