@@ -39,6 +39,8 @@ scripts/run-private-postgres-tests.mjs is inert on import. It exports:
 - watchPrivateTestCancellationV1(emitter): scoped SIGINT/SIGTERM observer races
   waits; cancellation does not itself signal test/server children. Remove only
   owned listeners on return, retain/refuse uncertain test chain.
+- racePrivateTestDeadlineV1(promise,timeoutMs): monotonic absolute awaited-result
+  deadline, not merely connect/idle timeout; timeout refuses and own SQL is ended.
 
 CLI accepts exactly findings orall. Before effects require macOS, real/effective
 UID501 and GID20 (this approved ordinary host account), Node26+, fourGiB free,
@@ -46,6 +48,10 @@ clean current source worktree,
 fixed installed PostgreSQL17 tools and fixed npm-cli script. Reuse linked writer
 and existing dependencies; no install, sudo, OS/grant/global credential change.
 Actual execution follows reviewed committed source, never a dirty-source bypass.
+Before any subprocess/filesystem creation, refuse every ambient PG* key in the
+wrapper itself: the in-process driver reads original process.env defaults. Child
+whitelisting alone is not that proof. Refusal prints only a fixed reason enum,
+never the setting value/raw exception.
 
 Create a fresh mkdtemp /tmp/setfarm-task6a-pg. directory0700, verify ordinary
 owner/mode/no symlink and pin inode/device. A locally reserved loopback ephemeral
@@ -61,11 +67,13 @@ never unlink/drop/delete it or expose credentials in source/logs/error objects.
 Directly spawn fixed ordinary postgres17 foreground child with -D exactdata,
 -h127.0.0.1, -p selectedport, -k exactparent, explicit socket0700 and modest
 shared_buffers/max_connections. Register event witnesses immediately. Initial
-commands/version/initdb bounded60s; readiness absolute30s. Confirm exact existing
-finding preflight identity plus actual password_encryption and listen_addresses
+commands/version/initdb bounded60s; readiness absolute30s.
+Identity operation including connected SQL is externally deadline-bound30s;
+port reservation and complete DB-quiescence operation bounded10s each.
+Confirm exact existing finding preflight identity plus actual password_encryption and listen_addresses
 and exact socket directory/0700 setting before the unchanged test command.
-Initdb timeout/uncertain closure retains/refuses with no server start. Use existing postgres driver, no
-new dependency. Only read-only identity SQL occurs before test dispatch.
+Initdb timeout/uncertain closure retains/refuses with no server start. Use existing
+postgres driver, no new dependency. Only read-only identity SQL before dispatch.
 
 Pass the actual private admin URL and data directory to the normal test child;
 remove ambient SETFARM_PG_URL/PG*/NODE_OPTIONS and all Task6A privileged opt-ins.
@@ -80,10 +88,11 @@ and no child error. They are not descendant settlement. Before ordinary shutdown
 read-only pg_database must contain only originalpostgres/template0/template1 and
 two pg_stat_activity observations100ms apart must show no external/unknown
 backend other than the wrapper. Known ordinary PG worker types are explicitly
-classified; client-address-bearing/walsender/unknown types deny.
+classified; client-address-bearing/walsender/unknown or NULL types deny.
 This verifies actual private DB cleanup/quiescence, not a continuous writer fence
 or all non-DB descendant absence. Normal nonzero test result remains nonzero even
-if this private cleanup gate passes. End wrapper SQL then fast-shutdown only
+if this private cleanup gate passes. Await own driver.end API settlement (not
+independent socket/backend absence), then fast-shutdown only
 the captured server, requiring definite successful close. On unknown, signal,
 error, cancel, retained test DB or foreign backend, do NOT stop the cluster under
 potentially running descendants. Before tests start, a constructor refusal may

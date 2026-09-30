@@ -129,6 +129,20 @@ export function watchPrivateTestCancellationV1(emitter){
   });
 }
 
+export async function racePrivateTestDeadlineV1(promise,timeoutMs){
+  if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>60000){
+    throw Error('PRIVATE_TEST_CLUSTER_DEADLINE_INVALID');
+  }
+  const started=performance.now();let timer;
+  try{
+    const result=await Promise.race([promise,new Promise((_,reject)=>{
+      timer=setTimeout(()=>reject(Error('PRIVATE_TEST_CLUSTER_DEADLINE')),timeoutMs);
+    })]);
+    if(performance.now()-started>=timeoutMs)throw Error('PRIVATE_TEST_CLUSTER_DEADLINE');
+    return result;
+  }finally{clearTimeout(timer);}
+}
+
 function event(stage,fields={}){
   console.log(JSON.stringify({event:'private-postgres-test-cluster',stage,...fields}));
 }
@@ -142,6 +156,9 @@ function scrubEnvironment(){
   };
 }
 function preconditions(){
+  if(Object.keys(process.env).some(name=>name.startsWith('PG'))){
+    throw Error('PRIVATE_TEST_CLUSTER_AMBIENT_PG_FORBIDDEN');
+  }
   if(process.platform!=='darwin'||process.getuid()!==501||process.geteuid()!==501
     ||process.getgid()!==20||process.getegid()!==20||Number(process.versions.node.split('.')[0])<26
     ||process.env.NODE_OPTIONS!==undefined||process.env.NODE_PATH!==undefined){
@@ -233,7 +250,7 @@ async function quiescence(admin){
     const rows=await admin`SELECT pg_backend_pid() AS pid,
       (SELECT array_agg(datname ORDER BY datname) FROM pg_database) AS databases,
       (SELECT array_agg(pid ORDER BY pid) FROM pg_stat_activity
-        WHERE pid=pg_backend_pid() OR backend_type NOT IN (
+        WHERE pid=pg_backend_pid() OR backend_type IS NULL OR backend_type NOT IN (
           'autovacuum launcher','autovacuum worker','background writer',
           'checkpointer','walwriter','logical replication launcher'
         ) OR client_addr IS NOT NULL) AS backends`;
@@ -265,7 +282,8 @@ async function main(){
       }
     }
     recheckRoot();
-    const port=await cancellation.run(reservePort()),plan=planPrivatePostgresTestsV1({root,port,mode:args[0]});
+    const port=await cancellation.run(racePrivateTestDeadlineV1(reservePort(),10000)),
+      plan=planPrivatePostgresTestsV1({root,port,mode:args[0]});
     const password=randomBytes(32).toString('hex');
     const passwordFd=openSync(root+'/password',constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
     try{
@@ -285,7 +303,8 @@ async function main(){
     }
     stage='server-start';recheckRoot();server=forwardedChild(PG+'postgres',plan.server,env,secrets);
     admin=postgres(url,{max:1,connect_timeout:2,idle_timeout:1,onnotice:()=>{}});
-    stage='identity';await cancellation.run(clusterIdentity(admin,url,root+'/data',server));recheckRoot();
+    stage='identity';await cancellation.run(racePrivateTestDeadlineV1(
+      clusterIdentity(admin,url,root+'/data',server),30000));recheckRoot();
     event('identity-verified',{root,port,serverPid:server.child.pid});
     const testEnv={...env,SETFARM_TEST_PG_ADMIN_URL:url,SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY:root+'/data'};
     stage='test-graph';testsStarted=true;mayStopServer=false;
@@ -294,8 +313,10 @@ async function main(){
     if(!definiteNormalClose(testChild.witness))throw Error('PRIVATE_TEST_CLUSTER_TEST_CLOSE_UNCERTAIN');
     resultCode=testChild.witness.result.code;
     stage='private-db-quiescence';recheckRoot();
-    if(!await cancellation.run(quiescence(admin)))throw Error('PRIVATE_TEST_CLUSTER_DB_CLEANUP_UNVERIFIED');
-    mayStopServer=true;event('test-graph-closed',{code:resultCode,privateDbQuiescent:true});
+    if(!await cancellation.run(racePrivateTestDeadlineV1(quiescence(admin),10000))){
+      throw Error('PRIVATE_TEST_CLUSTER_DB_CLEANUP_UNVERIFIED');
+    }
+    mayStopServer=true;event('direct-test-child-closed',{code:resultCode,privateDbQuiescent:true});
     stage='admin-close';await cancellation.run(admin.end({timeout:5}));admin=null;
     stage='server-close';
     if(!await cancellation.run(settleOwnedPrivatePostgresV1(server.witness,30000))){
@@ -303,7 +324,7 @@ async function main(){
     }
     event('server-definitely-closed',{root,port,code:resultCode,retained:true,productionAuthority:false});
     process.exitCode=resultCode;
-  }catch{
+  }catch(error){
     if(cancellation.cancelled&&testsStarted)mayStopServer=false;
     if(admin){
       try{await admin.end({timeout:5});}catch{if(testsStarted)mayStopServer=false;}
@@ -312,7 +333,18 @@ async function main(){
     let serverClosed=server?.witness.closed===true&&definiteNormalClose(server.witness)
       &&server.witness.result.code===0;
     if(server&&mayStopServer&&!serverClosed)serverClosed=await settleOwnedPrivatePostgresV1(server.witness,30000);
-    event('refused',{stage,root,retained:root!==null,testsStarted,serverClosed:serverClosed===true,
+    const knownReasons=new Set([
+      'PRIVATE_TEST_CLUSTER_AMBIENT_PG_FORBIDDEN','PRIVATE_TEST_CLUSTER_HOST_INVALID',
+      'PRIVATE_TEST_CLUSTER_DISK_LOW','PRIVATE_TEST_CLUSTER_SOURCE_DIRTY','PRIVATE_TEST_CLUSTER_TOOL_INVALID',
+      'PRIVATE_TEST_CLUSTER_ROOT_CHANGED','PRIVATE_TEST_CLUSTER_PASSWORD_FILE_INVALID',
+      'PRIVATE_TEST_CLUSTER_INIT_FAILED','PRIVATE_TEST_CLUSTER_SERVER_UNAVAILABLE',
+      'PRIVATE_TEST_CLUSTER_IDENTITY_INVALID','PRIVATE_TEST_CLUSTER_READINESS_TIMEOUT',
+      'PRIVATE_TEST_CLUSTER_TEST_CLOSE_UNCERTAIN','PRIVATE_TEST_CLUSTER_DB_CLEANUP_UNVERIFIED',
+      'PRIVATE_TEST_CLUSTER_SERVER_CLOSE_UNCERTAIN','PRIVATE_TEST_CLUSTER_CANCELLED',
+      'PRIVATE_TEST_CLUSTER_DEADLINE',
+    ]);
+    const reason=knownReasons.has(error?.message)?error.message:'PRIVATE_TEST_CLUSTER_REFUSED';
+    event('refused',{stage,reason,root,retained:root!==null,testsStarted,serverClosed:serverClosed===true,
       productionAuthority:false});process.exitCode=1;
     unrefOwned(init);unrefOwned(testChild);unrefOwned(server);
   }finally{

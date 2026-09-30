@@ -62,7 +62,9 @@ is retained0700, never deleted. No native/privileged/genuine-host-fixture overla
 
 - [x] Implement CLI's strictfindings/all parse before effects and preconditions:
   macOS/UIDeUID501/GIDeGID20, Node26+, free disk>=4GiB, clean source,
-  fixed tools version17 and regular npm-cli. Scrub loader/PG/Task6A opt-ins.
+  fixed tools version17 and regular npm-cli. Refuse original ambient PG* keys
+  before effects; the in-process driver reads those settings. Child environment
+  is an explicit ordinary whitelist, no loader/PG/Task6A/provider secrets.
 - [x] mkdtemp literal /tmp/setfarm-task6a-pg.; chmod0700 and lstat/fstat pins;
   reserve127.0.0.1 ephemeralport, close reservation before spawn (no retry).
   Exclusive O_CREAT|O_EXCL|O_NOFOLLOW0600 passwordfile and random32-byte hex.
@@ -79,7 +81,8 @@ is retained0700, never deleted. No native/privileged/genuine-host-fixture overla
     current_setting('unix_socket_permissions') AS socket_permissions;
   ```
   Existing verifyFindingPrivateClusterIdentityV1 plus exact127.0.0.1/SCRAM must
-  pass within30s before test dispatch; exact socket parent/0700 too, no trust/
+  pass within absolute30s including awaited SQL, not just connect_timeout;
+  whole quiescence separately bounded10s. Exact socket parent/0700 too, no trust/
   mismatch fallback. Initdb uncertain close/timeout forbids server startup.
 - [x] Spawn process.execPath with exact planner npm-cli args, private adminURL+
   data directory, ambient PGurl/PG*/loaders/privileged Task6A flags removed.
@@ -149,3 +152,13 @@ Six mapped paths only, no production src/migration/P3/preflight change.
   P3claimpublication46PASS0FAIL1472028ms, its exactDBs owner-dropped; subsequent
   P3files in flight. Full execution/npm not claimed. Disk14GiB/freepages~179k;
   no resource health boundary observed, no unrelated OS process intervention.
+
+Remedy follow-up23:09UTC: exact full source review found connected SQL could
+outlive a loop-only30s check and the in-process driver still reads ambientPG*.
+Root added never-settling query consumer RED1→absolute awaited-result deadline;
+readiness30s and quiescence/port10s include complete async waits. BackendNULL
+is unknown/denied. Actual CLI ambientPGsetting consumer RED1→pre-subprocess
+refusal with fixed reason enum/no value exposure. Focused28PASS232.464166ms,
+package4PASS1137.513792ms; both commands definitively exit0, no cluster effects.
+Driver.end fulfillment is API settlement, not backend/socket-absence authority;
+only captured ordinary server close is claimed. New exact remedy review pending.

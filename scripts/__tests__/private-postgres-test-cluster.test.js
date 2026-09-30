@@ -104,6 +104,12 @@ test('private cancellation races owned waits without signalling any child',async
   controller.dispose();assert.equal(emitter.listenerCount('SIGINT'),0);
   assert.equal(emitter.listenerCount('SIGTERM'),0);
 });
+test('private SQL deadline refuses a connected but permanently stalled query',async()=>{
+  const {racePrivateTestDeadlineV1:bounded}=await implementation();
+  assert.equal(typeof bounded,'function','absolute private SQL deadline missing');
+  await assert.rejects(bounded(new Promise(()=>{}),5),/PRIVATE_TEST_CLUSTER_DEADLINE/);
+  assert.equal(await bounded(Promise.resolve('actual-result'),50),'actual-result');
+});
 test('private shutdown gate requires exact original DB catalog and sole wrapper backend',async()=>{
   const {verifyPrivateTestClusterQuiescenceV1:verify}=await implementation();
   assert.equal(typeof verify,'function','real private cleanup gate missing');
@@ -169,3 +175,21 @@ cp.spawn=cp.spawnSync=()=>{throw Error('PRIVATE_TEST_FORBIDDEN_TEST_EFFECT');};s
     assert.doesNotMatch(result.stdout+result.stderr,/PRIVATE_TEST_FORBIDDEN_TEST_EFFECT/);
   });
 }
+
+test('private CLI refuses ambient PG driver settings before any subprocess or cluster creation',()=>{
+  const secretMarker='never-expose-this-pg-debug-value';
+  const guard=`
+import cp from 'node:child_process';import fs from 'node:fs';
+import {syncBuiltinESMExports} from 'node:module';
+const deny=()=>{console.log('PRIVATE_TEST_FORBIDDEN_TEST_EFFECT');throw Error('blocked');};
+cp.spawn=cp.spawnSync=cp.execFileSync=deny;fs.mkdtempSync=deny;syncBuiltinESMExports();`;
+  const result=spawnSync(process.execPath,[fileURLToPath(MODULE),'findings'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,
+    env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',PGDEBUG:secretMarker,
+      NODE_OPTIONS:'--import=data:text/javascript;base64,'+Buffer.from(guard).toString('base64')},
+  });
+  assert.equal(result.error,undefined);assert.equal(result.signal,null);assert.equal(result.status,1);
+  assert.match(result.stdout,/PRIVATE_TEST_CLUSTER_AMBIENT_PG_FORBIDDEN/);
+  assert.doesNotMatch(result.stdout+result.stderr,/PRIVATE_TEST_FORBIDDEN_TEST_EFFECT/);
+  assert.equal((result.stdout+result.stderr).includes(secretMarker),false);
+});
