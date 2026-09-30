@@ -426,7 +426,10 @@ describe("accepted candidate repository", () => {
     );
   });
 
-  for (const missingOwner of ["execution-attempt", "run"] as const) {
+  for (const [missingOwner, expectedError] of [
+    ["execution-attempt", /INTERNAL_PRODUCTION_EXECUTION_ATTEMPT_OWNER_UNAVAILABLE/],
+    ["run", /INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER_UNAVAILABLE/],
+  ] as const) {
     it(`refuses a missing ${missingOwner} owner and rolls terminalization back`, async () => {
       const test = await fixture({ missingOwner });
       await test.repository.publish({
@@ -452,7 +455,7 @@ describe("accepted candidate repository", () => {
         transitionRunToTerminal(database.sql, {
           runId: test.runId, status: "completed", diagnostic: "missing owner negative control",
         }),
-        new RegExp(`INTERNAL_PRODUCTION_${missingOwner.toUpperCase().replaceAll("-", "_")}_OWNER_UNAVAILABLE`),
+        expectedError,
       );
       assert.deepEqual(await snapshot(), before);
     });
