@@ -65,5 +65,7 @@ fixture cleanup and production deny bridges remain unchanged.
   independent literal options and hostile-input tests without DB access.
 - `tests/execution-attempts/task6a-private-protected-cluster.integration.test.ts`:
   real source-factory child proof under the scoped peer UID.
+- `package.json`: focused transport command, chained into normal internal-production
+  tests so this new non-globbed test remains a default regression gate.
 - `docs/superpowers/plans/2026-09-30-task6a-postgres-socket-transport.md`:
   root execution, review/delivery and remaining integration boundaries.

@@ -19,7 +19,7 @@
 
 ## File Map
 
-Create source `src/internal-production/task6a-postgres-socket-transport-v1.ts` and pure test `tests/internal-production/task6a-postgres-socket-transport-v1.test.ts`. Extend only the existing opt-in protected cluster test for actual peer child proof; keep root cleanup unchanged. Create this plan/spec.
+Create source `src/internal-production/task6a-postgres-socket-transport-v1.ts` and pure test `tests/internal-production/task6a-postgres-socket-transport-v1.test.ts`. Extend only the existing opt-in protected cluster test for actual peer child proof; keep root cleanup unchanged. Modify `package.json` to register the new focused test in the normal internal-production chain (that suite is explicitly listed, not glob-discovered). Create this plan/spec. This causal scope refinement prevents the new primitive from losing its default regression gate.
 
 ## Task 1: Explicit transport and actual peer proof
 
@@ -64,3 +64,7 @@ Record exact RED/GREEN, private lifecycle, review/delivery and clean-main build 
   zero skips/failures, exit0 (26.488s). Source strict TS no-emit passed after the
   final delta. Reviewed changes remain primitive-only, with no existing runtime
   pool/default modification. A normal clean-source build is the delivery gate.
+- Owner delivery audit found explicit internal-production discovery did not
+  automatically include the new pure test. Register the focused transport
+  command and chain it into normal internal-production verification before
+  delivery; no dependency or runtime gate changes. Reverify the exact new head.
