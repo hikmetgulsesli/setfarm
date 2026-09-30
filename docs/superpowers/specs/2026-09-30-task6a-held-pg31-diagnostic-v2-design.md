@@ -45,16 +45,24 @@ change source checksums, or reclassify temporary effects as immutable origin.
 Refactor the existing cold-census body into one caller-held read-only primitive;
 the old URL adapter must still own its original BEGIN/end and callback contract.
 The new primitive preserves the complete existing cold32/33 relation/index/type/
-function/trigger absence, source31 journal identity, logical-owner and finding
-inventory checks. It creates no connection, transaction or authority. Complete
-V31 audit plus this census must run before the positive diagnostic is yielded.
+function/trigger absence, logical-owner and finding
+inventory checks. It creates no connection, transaction or authority.
+The complete held V31 audit supplies source31 journal identity; the census alone
+does not verify that identity. Both must run before the diagnostic is yielded.
 
-Sample exact backend PID/session/effective role/database/socket origin and ALL
-client-backend sessions for the database, not just same-role sessions. Count the
+Before any timeout/lock/TEMP effect, sample exact backend PID/backend-start,
+session-role OID/name, database OID/name, effective role and Unix client address/
+port. Retain that lifetime tuple, not PID alone. Before EACH population sample,
+separately await/bracket SELECT pg_catalog.pg_stat_clear_snapshot(). Count ALL
+other database backends conservatively, including unknown/background types,
+not just same-role sessions. Count the
 one observing backend explicitly; any unrelated client backend, malformed count
 or identity mismatch refuses. Catalog/activity observations remain sampled:
 ACCESS SHARE and advisory locks do not exclude arbitrary DML/DDL/new sessions.
-Rechecks must state that limit and never yield a continuous zero-owner label.
+Complete integrity/cold census is a retained MVCC snapshot; rerunning it cannot
+detect DML committed after snapshot creation. Recheck refreshes session/physical/
+lifecycle facts, not logical-data freshness. A transient writer between samples
+can remain unseen. Never yield a continuous zero-owner label.
 
 ## Private socket/lifecycle composition
 
@@ -66,19 +74,30 @@ and reports diagnostic-only/private-fixture scope. No default production callsit
 
 Keep the reserved backend, read-only transaction and cooperative migration lock
 alive across the bounded continuation. Bracket every query with physical/socket/
-runtime identity and client-revocation checks. At every awaited boundary recheck
+runtime identity and client-revocation checks. Cover BOTH unsafe calls and callable
+tagged-template queries; keep the full core's internal concurrent queries working.
+At every awaited boundary recheck
 the irreversible closing/invalid state before yielding any positive result.
 Close burns eligibility synchronously; late successful audit cannot reopen it.
 No raw SQL client, authorization DTO, reconstructible capability or producer
 reference is exported by the private adapter.
 
+Record control-query obligations BEFORE timeout/lock/BEGIN awaits. Separate
+revoked positive eligibility from fixed bounded cleanup permission; source-owned
+TEMP finally cleanup cannot reopen eligibility or erase an earlier query error.
+Capture all distinct driver errors, including primary failure followed by TEMP
+DROP failure, even when an unchanged verifier's finally masks its first error.
 Any query/identity/socket/backend loss, callback error, ambiguous completion,
 timeout or cleanup error irreversibly invalidates this invocation. No hidden
 replacement backend is permitted. Clean settlement rolls back the read-only
 transaction, verifies exact advisory unlock, then the owning private adapter
 revokes/releases/closes its one client. Preserve primary and cleanup errors;
 never silently restore eligibility after cleanup uncertainty. A bounded holder
-expiry and server-side idle timeout forbid an unbounded retained transaction.
+expiry actively revokes even while a callback remains pending; monotonic checks
+after callback settlement alone are insufficient. The deadline is common and
+never renewed. Sequential bounded rechecks are allowed; concurrent external
+recheck or reuse after settlement refuses. Server-side idle timeout is additional,
+not the active total-invocation bound.
 
 ## Actual protected private fixture
 
@@ -95,7 +114,28 @@ AST's literal ordinary DDL, rather than a hand-maintained alternate schema or
 ambient database harness. An explicitly trusted setup driver may create the
 disposable database/roles/grants before the observation; it is not origin proof.
 
-The observer runs as the unprivileged private client on the relocated protected
+The second real rehearsal rejected the setup's extra SELECT grant: frozen
+V27/V28/V29 require the journal owner's literal owner-default table ACL and
+owner-only guard-function EXECUTE. Do not relax those contracts. The chosen
+private rehearsal therefore uses the existing task6a_runtime peer login as an
+explicit source-owner-class diagnostic principal. Keep the disposable database
+and original postgres probe owned by NOLOGIN task6a_owner. The trusted setup
+actor temporarily grants public-schema CREATE/USAGE to task6a_runtime, SET ROLE
+to that principal, applies unchanged automatic1–31 and ordinary base52, then
+RESET ROLE and revokes schema CREATE. Add no table/function/column ACL grants,
+role memberships, login roles or HBA changes. Verify common source/journal owner,
+no schema CREATE, no superuser/CREATEROLE/CREATEDB/BYPASSRLS and no membership in
+task6a_owner/admin. The full unchanged V31 audit must prove exact source ACLs.
+
+This is a private owner-class integrity rehearsal, NOT least-privilege runtime
+or an excluded-writer proof. The unprivileged OS actor still has inherent owner
+DML/DDL powers on its private source objects outside the held READ ONLY
+transaction; schema CREATE revocation does not remove those powers. Keeping a
+different observer and granting SELECT violates frozen ACLs; adding inherited
+owner membership expands roles/HBA scope without removing owner-class powers.
+Production grants, roles, origin/genesis and writer exclusion remain separate.
+
+The observer runs as the OS-unprivileged, DB-owner-class private client on the relocated protected
 Node and bundle. Its backend must be the captured PG31 client throughout. The
 driver samples actual Node/backend/native images while held. Actual positive
 full31/cold-census then close, source/socket drift, own-backend loss, unrelated
@@ -114,7 +154,11 @@ fixture; old failed preparation tree and every historical worktree survive.
 - tests/internal-production/task6a-held-pg31-diagnostic-v2.test.ts: real lifecycle
   and narrow SQL boundary tests; no live/ambient database access.
 - tests/execution-attempts/task6a-held-pg31-fixture-entry-v2.ts: test-only compiled
-  setup/observer entry, actual source base DDL extraction and private preparation.
+  setup/observer entry and private owner-class preparation with complete errors.
+- tests/execution-attempts/task6a-held-pg31-base-ddl-v2.ts: trusted driving-process
+  extraction of literal base52 SQL from actual db-pg AST, with no ambient import.
+- tests/execution-attempts/task6a-held-pg31-base-ddl-v2.test.ts: actual extractor,
+  setup-body boundary and literal observer-probe refusal/cleanup regressions.
 - tests/execution-attempts/task6a-private-protected-cluster.integration.test.ts:
   third-opt-in wiring and actual protected PG31 positive/revocation rehearsal.
 - package.json: bounded focused pure/actual private commands, no default change.
@@ -132,3 +176,9 @@ Deliver a scoped reviewed PR, exact-head cloud/security/thread gates, normal
 SHA-bound merge and ordinary clean-main standby build. Keep branches/worktrees.
 Do not claim production startup, source genesis, continuous writer exclusion,
 guarded32/33, owner admission or Task6A completion from this diagnostic.
+
+Primary semantics: PostgreSQL17 monitoring-stats.html#MONITORING-STATS-VIEWS
+(transaction activity cache/explicit clear/ordinary visibility),
+transaction-iso.html#XACT-REPEATABLE-READ (MVCC snapshot), and
+sql-set-transaction.html (read-only statement restrictions), at
+https://www.postgresql.org/docs/17/.

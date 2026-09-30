@@ -9,12 +9,18 @@ import { test } from "node:test";
 import { assertProtectedClusterPolicyV1 } from "./task6a-protected-cluster-policy.js";
 import { prepareTask6aProtectedNativeFixtureV1, type ProtectedNativeFixtureV1 } from "./task6a-protected-native-fixture-v1.js";
 import { assertTask6aNativeCleanupCertainV1, markTask6aNativeReleaseUncertainV1 } from "./task6a-native-load-commands-v1.js";
+import { extractTask6aOrdinaryBaseStatementsV2 } from "./task6a-held-pg31-base-ddl-v2.js";
 
 // Standalone OS/HBA rehearsal: never import the ambient database test harness.
 // The root-capable driving UID is trusted; nobody/_www are the excluded actors.
 // Homebrew tools are not a protected production deployment identity.
 const enabled = process.env.SETFARM_TASK6A_TEST_PROTECTED_PG_FIXTURE === "1";
 const nativeEnabled = process.env.SETFARM_TASK6A_TEST_PROTECTED_NATIVE_FIXTURE === "1";
+const heldPg31Enabled = process.env.SETFARM_TASK6A_TEST_HELD_PG31_FIXTURE === "1";
+if (process.env.SETFARM_TASK6A_TEST_HELD_PG31_FIXTURE !== undefined) {
+  assert.equal(heldPg31Enabled && nativeEnabled && enabled, true,
+    "held PG31 fixture requires all three explicit opt-ins");
+}
 if (process.env.SETFARM_TASK6A_TEST_PROTECTED_NATIVE_FIXTURE !== undefined) {
   assert.equal(nativeEnabled && enabled, true, "native fixture requires both explicit opt-ins");
 }
@@ -28,6 +34,10 @@ function definiteFixtureChildClose(code:number|null,signal:NodeJS.Signals|null):
 }
 function fixtureTimeout(message:string):Error {
   markTask6aNativeReleaseUncertainV1();return Error(`${message}; retain exact fixture`);
+}
+
+function endHeldFixtureInputV2(input: Pick<import("node:stream").Writable, "writableEnded" | "end">): void {
+  if (!input.writableEnded) input.end("finish\n");
 }
 
 function command(executable: string, args: string[], timeout = 15_000): Result {
@@ -188,6 +198,55 @@ console.log(JSON.stringify({pid:process.pid,backendPid:facts.pid,uid:process.get
 for await(const line of createInterface({input:process.stdin})){assert.equal(line,'finish');break;}
 }finally{reserved?.release();await sql.end({timeout:2});}`;
 
+const HELD_PG31_PROBE = `import assert from 'node:assert/strict';
+import {createInterface} from 'node:readline';
+const {withTask6aPrivateHeldPg31DiagnosticV2}=await import(process.argv[1]);
+const candidate=JSON.parse(process.argv[2]),identities=JSON.parse(process.argv[3]),mode=process.argv[4];
+let entered=false,denied=false,captured;
+function rejectAssertionFailures(error,seen=new Set()) {
+  if(error instanceof assert.AssertionError)throw error;
+  if(!error||typeof error!=='object'||seen.has(error))return;
+  seen.add(error);
+  if(error instanceof AggregateError)for(const nested of error.errors)rejectAssertionFailures(nested,seen);
+  if(Object.hasOwn(error,'cause'))rejectAssertionFailures(error.cause,seen);
+}
+try {
+  const result=await withTask6aPrivateHeldPg31DiagnosticV2(candidate,identities.serverUid,identities.clientGid,async held=>{
+    entered=true;captured=held;const facts=held.observe();
+    assert.equal(facts.authority,'diagnostic-only');assert.equal(facts.productionAuthority,false);
+    assert.equal(facts.observingBackendCount,1);assert.ok(facts.backendPid>1);
+    console.log(JSON.stringify({event:'held',nodePid:process.pid,backendPid:facts.backendPid,
+      uid:process.getuid(),euid:process.geteuid(),executable:process.execPath}));
+    for await(const line of createInterface({input:process.stdin})) {
+      if(line==='finish')break;
+      assert.equal(line,'check');
+      let refused=false;
+      try {await held.recheck();}catch(error){rejectAssertionFailures(error);refused=true;}
+      if(!refused){assert.equal(denied,false);console.log(JSON.stringify({event:'rechecked'}));}
+      else {denied=true;assert.throws(()=>held.observe());await assert.rejects(held.recheck());
+        console.log(JSON.stringify({event:'refused'}));}
+    }
+    if(mode==='positive'){assert.equal(denied,false);await held.recheck();return 'same-held-backend';}
+    assert.equal(denied,true);return 'forbidden-revival';
+  });
+  assert.equal(mode,'positive');assert.equal(result,'same-held-backend');
+} catch(error) {
+  rejectAssertionFailures(error);
+  assert.notEqual(mode,'positive',String(error));
+  if(mode==='corrupt'){assert.equal(entered,false);denied=true;}else assert.equal(denied,true);
+}
+if(captured){assert.throws(()=>captured.observe());await assert.rejects(captured.recheck());}
+assert.equal(mode==='positive'?entered:denied,true);
+console.log(JSON.stringify({event:'closed',mode,entered,denied}));`;
+
+const EXTRA_PG31_BACKEND_PROBE = `import {createInterface} from 'node:readline';
+const {createTask6aSingleBackendSocketClientV1}=await import(process.argv[1]);
+const client=createTask6aSingleBackendSocketClientV1(JSON.parse(process.argv[2]));
+try {const rows=await client.sql.unsafe('SELECT pg_backend_pid() AS pid');
+console.log(JSON.stringify({event:'extra',backendPid:rows[0].pid}));
+for await(const line of createInterface({input:process.stdin})){if(line==='finish')break;throw Error('unexpected extra action');}}
+finally{client.revoke();await client.close();}`;
+
 test("private protected PG denies old identity and scoped admin impersonation across restart", {
   skip: enabled ? false : "requires explicit isolated protected PostgreSQL OS fixture opt-in",
   timeout: nativeEnabled ? 600_000 : 180_000,
@@ -232,11 +291,13 @@ test("private protected PG denies old identity and scoped admin impersonation ac
   const config = path.join(home, "postgresql.conf"), hba = path.join(home, "pg_hba.conf");
   const ident = path.join(home, "pg_ident.conf"), pidFile = path.join(data, "postmaster.pid");
   const clientModule = path.join(home, "socket-client.mjs");
+  const heldModule = path.join(home, "held-pg31.mjs");
   const port = randomInt(55_000, 59_000);
   const socketFile = path.join(socket, `.s.PGSQL.${port}`);
   let protectedRoot = false, uncertainLifecycle = false;
   let observerLifecycleUncertain = false, observerModeUncertain = false;
   let nativeChildUncertain=false;
+  let heldChildrenPossiblyRunning = 0;
   let server: Readonly<{ pid: number; identity: string; pidFile: string }> | undefined;
   let dataAnchor: fs.BigIntStats | undefined;
   let failure: unknown;
@@ -498,6 +559,125 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     native.recheck();exactServer();
   }
 
+  async function heldPg31Evidence(): Promise<void> {
+    if (!heldPg31Enabled) return;
+    assert.ok(native); exactServer(); native.recheck();
+    const candidate = { schema: "setfarm.postgres-socket-transport.v1", socketDirectory: socket,
+      port, database: "setfarm", user: "task6a_runtime", osUid: clientUid };
+    const adminCandidate = { ...candidate, user: "task6a_admin", osUid: serverUid };
+    const statements = extractTask6aOrdinaryBaseStatementsV2(fs.readFileSync(new URL("../../src/db-pg.ts", import.meta.url), "utf8"));
+    admin("CREATE DATABASE setfarm OWNER task6a_owner");
+    const setup = asUser("_postgres", fixtureNode, ["--input-type=module", "-e",
+      `const {prepareTask6aPrivateSource31FixtureV2}=await import(process.argv[1]);
+       await prepareTask6aPrivateSource31FixtureV2(JSON.parse(process.argv[2]),JSON.parse(process.argv[3]));
+       console.log('actual source31 prepared; guarded32 pending');`,
+      new URL(`file://${heldModule}`).href, JSON.stringify(adminCandidate), JSON.stringify(statements)], 120000);
+    assert.equal(setup.status, 0, setup.stderr); assert.equal(setup.stderr, "");
+    assert.equal(setup.stdout.trim(), "actual source31 prepared; guarded32 pending");
+    t.diagnostic("actual ordinary base52/source1-through31 prepared by peer setup actor; guarded32 remains pending");
+
+    function spawnHeld(user: string, code: string, module: string, transport: unknown, mode = "") {
+      exactServer(); native!.recheck(); heldChildrenPossiblyRunning++;
+      const child = spawn("/usr/bin/sudo", ["-n", "-u", user, "/usr/bin/env", "-i",
+        "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C",
+        ...Object.entries(native!.environment).map(([key, value]) => `${key}=${value}`),
+        fixtureNode, "--input-type=module", "-e", code, new URL(`file://${module}`).href,
+        JSON.stringify(transport), JSON.stringify({ serverUid, clientGid }), mode],
+      { cwd: "/private/tmp", env: cleanEnv, stdio: ["pipe", "pipe", "pipe"] });
+      let output = "", errors = "", finished = false, spawnError: Error | undefined;
+      child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+      child.stdout.on("data", chunk => { output += chunk; }); child.stderr.on("data", chunk => { errors += chunk; });
+      child.on("error", error => { spawnError = error; }); child.stdin.on("error", error => { spawnError = error; });
+      const done = new Promise<number | null>(resolve => child.once("close", (code, signal) => {
+        finished = true;
+        if (definiteFixtureChildClose(code, signal)) heldChildrenPossiblyRunning--;
+        resolve(code);
+      }));
+      const next = async () => {
+        const deadline = Date.now() + 40000;
+        while (!output.includes("\n")) {
+          assert.equal(spawnError, undefined); assert.equal(finished, false, errors);
+          assert.ok(output.length < 4096 && errors.length < 4096);
+          if (Date.now() >= deadline) throw fixtureTimeout("held PG31 observer response uncertain");
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        const split = output.indexOf("\n"), line = output.slice(0, split); output = output.slice(split + 1);
+        return JSON.parse(line) as Record<string, unknown>;
+      };
+      const close = async () => {
+        if (!finished) endHeldFixtureInputV2(child.stdin);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const timeout = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(fixtureTimeout("held PG31 child close uncertain")), 10000);
+          });
+          assert.equal(await Promise.race([done, timeout]), 0, errors);
+          assert.equal(errors, ""); assert.equal(spawnError, undefined);
+        } finally { clearTimeout(timer); }
+      };
+      return { next, close, check: () => child.stdin.write("check\n"), finish: () => endHeldFixtureInputV2(child.stdin) };
+    }
+    const checkedFacts = (facts: Record<string, unknown>) => {
+      assert.equal(facts.event, "held"); assert.equal(facts.uid, clientUid); assert.equal(facts.euid, clientUid);
+      assert.equal(facts.executable, fixtureNode);
+      assert.ok(Number.isSafeInteger(facts.nodePid) && Number(facts.nodePid) > 1);
+      assert.ok(Number.isSafeInteger(facts.backendPid) && Number(facts.backendPid) > 1);
+      native!.verifyImages(Number(facts.nodePid), clientUid, [fixtureNode], rootCommand);
+      native!.verifyImages(Number(facts.backendPid), serverUid, [path.join(pgBin, "postgres"),
+        path.join(native!.root, "opt/homebrew/lib/postgresql@17/plpgsql.dylib")], rootCommand);
+      t.diagnostic(`retained actual PG31 Node ${facts.nodePid}/backend ${facts.backendPid}; native images sampled while held`);
+    };
+    for (const mode of ["positive", "other-backend", "backend-loss", "physical"]) {
+      const child = spawnHeld("_www", HELD_PG31_PROBE, heldModule, candidate, mode);
+      let extra: ReturnType<typeof spawnHeld> | undefined;
+      let tightened = false;
+      const socketPin = fs.lstatSync(socket, { bigint: true });
+      const restore = () => {
+        exactServer();
+        const current = fs.lstatSync(socket, { bigint: true });
+        for (const key of ["dev", "ino", "uid", "gid", "birthtimeNs"] as const) assert.equal(current[key], socketPin[key]);
+        assert.ok([0o700n, 0o710n].includes(current.mode & 0o7777n));
+        rootCommand("/bin/chmod", ["0710", socket]);
+        assert.equal(fs.lstatSync(socket, { bigint: true }).mode & 0o7777n, 0o710n);
+        tightened = false; observerModeUncertain = false;
+      };
+      try {
+        const facts = await child.next(); checkedFacts(facts);
+        if (mode === "other-backend") {
+          extra = spawnHeld("_postgres", EXTRA_PG31_BACKEND_PROBE, clientModule, adminCandidate);
+          const other = await extra.next(); assert.equal(other.event, "extra");
+          assert.notEqual(other.backendPid, facts.backendPid);
+        } else if (mode === "backend-loss") {
+          assert.equal(admin(`SELECT pg_terminate_backend(pid) FROM pg_catalog.pg_stat_activity
+            WHERE pid=${Number(facts.backendPid)} AND datname='setfarm' AND usename='task6a_runtime'`), "t");
+        } else if (mode === "physical") {
+          observerModeUncertain = true; tightened = true; rootCommand("/bin/chmod", ["0700", socket]);
+        }
+        child.check(); assert.equal((await child.next()).event, mode === "positive" ? "rechecked" : "refused");
+        if (extra) { await extra.close(); extra = undefined; }
+        if (tightened) restore();
+        child.check(); assert.equal((await child.next()).event, mode === "positive" ? "rechecked" : "refused");
+        child.finish(); const closed = await child.next(); assert.equal(closed.event, "closed");
+        assert.equal(closed.denied, mode !== "positive");
+      } finally {
+        try { if (extra) await extra.close(); if (tightened) restore(); }
+        finally { await child.close(); }
+      }
+      exactServer(); native!.recheck();
+      t.diagnostic(`actual retained PG31 ${mode} validated; no holder revival/reconnect`);
+    }
+    const corrupt = asUser("_postgres", path.join(pgBin, "psql"), ["-X", "-w", "-v", "ON_ERROR_STOP=1",
+      "-h", socket, "-p", String(port), "-U", "task6a_admin", "-d", "setfarm", "-c",
+      "ALTER TABLE public.run_termination_requests DROP CONSTRAINT run_termination_requests_operational_failure_cause_check"]);
+    assert.equal(corrupt.status, 0, corrupt.stderr);
+    const denied = spawnHeld("_www", HELD_PG31_PROBE, heldModule, candidate, "corrupt");
+    try {
+      const closed = await denied.next(); assert.equal(closed.event, "closed");
+      assert.equal(closed.entered, false); assert.equal(closed.denied, true);
+    } finally { await denied.close(); }
+    t.diagnostic("actual corrupt source31 constraint refused before continuation; no migration32/33 applied");
+  }
+
   try {
     fs.mkdirSync(data, { mode: 0o700 }); fs.mkdirSync(socket, { mode: 0o710 });
     dataAnchor = fs.lstatSync(data, { bigint: true });
@@ -513,6 +693,13 @@ test("private protected PG denies old identity and scoped admin impersonation ac
       bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent" });
     assert.equal(bundle.outputFiles.length, 1);
     fs.writeFileSync(clientModule, bundle.outputFiles[0].contents, { mode: 0o444 });
+    if (heldPg31Enabled) {
+      const heldBundle = esbuild.buildSync({ entryPoints: [fileURLToPath(new URL(
+        "./task6a-held-pg31-fixture-entry-v2.ts", import.meta.url))],
+        bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent" });
+      assert.equal(heldBundle.outputFiles.length, 1);
+      fs.writeFileSync(heldModule, heldBundle.outputFiles[0].contents, { mode: 0o444 });
+    }
     fs.writeFileSync(hba, "local all task6a_admin peer map=task6a_fixture\nlocal all task6a_runtime peer map=task6a_fixture\nlocal all all reject\nlocal replication all reject\nhost all all 0.0.0.0/0 reject\nhost all all ::0/0 reject\nhost replication all 0.0.0.0/0 reject\nhost replication all ::0/0 reject\n", { mode: 0o444 });
     fs.writeFileSync(ident, "task6a_fixture _postgres task6a_admin\ntask6a_fixture _www task6a_runtime\n", { mode: 0o444 });
     fs.writeFileSync(config, `data_directory='${data}'\nhba_file='${hba}'\nident_file='${ident}'\nlisten_addresses=''\nport=${port}\nunix_socket_directories='${socket}'\nunix_socket_permissions=0777\nunix_socket_group=''\nshared_buffers='16MB'\nmax_connections=10\n`, { mode: 0o444 });
@@ -523,6 +710,10 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     rootCommand("/bin/chmod", ["0710", socket]);
     rootCommand("/usr/sbin/chown", ["root:wheel", config, hba, ident, clientModule]);
     rootCommand("/bin/chmod", ["0444", config, hba, ident, clientModule]);
+    if (heldPg31Enabled) {
+      rootCommand("/usr/sbin/chown", ["root:wheel", heldModule]);
+      rootCommand("/bin/chmod", ["0444", heldModule]);
+    }
     rootCommand("/bin/chmod", ["0711", home]);
     rootCommand("/usr/sbin/chown", ["root:wheel", home]); protectedRoot = true;
     exactHome();
@@ -569,7 +760,8 @@ GRANT USAGE ON SCHEMA task6a_probe TO task6a_runtime;
 GRANT SELECT,INSERT ON task6a_probe.effects TO task6a_runtime;
 GRANT USAGE ON SEQUENCE task6a_probe.effects_id_seq TO task6a_runtime;`);
     if(native)admin("CREATE FUNCTION task6a_probe.native_add(a int,b int) RETURNS int LANGUAGE plpgsql AS 'BEGIN RETURN a+b; END'; GRANT EXECUTE ON FUNCTION task6a_probe.native_add(int,int) TO task6a_runtime;");
-    boundary();await nativeEvidence(); await physicalRevocation(); stop(); start(); boundary();await nativeEvidence(); await physicalRevocation(); stop();
+    boundary();await nativeEvidence(); await physicalRevocation(); stop(); start(); boundary();await nativeEvidence(); await physicalRevocation();
+    await heldPg31Evidence(); stop();
   } catch (error) {
     failure = error; throw error;
   } finally {
@@ -580,6 +772,7 @@ GRANT USAGE ON SEQUENCE task6a_probe.effects_id_seq TO task6a_runtime;`);
       assert.equal(observerLifecycleUncertain, false, `observer completion uncertain; retain ${home}`);
       assert.equal(observerModeUncertain, false, `observer mode restoration uncertain; retain ${home}`);
       assert.equal(nativeChildUncertain,false,`native child completion uncertain; retain ${home}`);
+      assert.equal(heldChildrenPossiblyRunning, 0, `held PG31 child completion uncertain; retain ${home}`);
       if (server) stop();
       exactHome();
       if (protectedRoot) {
