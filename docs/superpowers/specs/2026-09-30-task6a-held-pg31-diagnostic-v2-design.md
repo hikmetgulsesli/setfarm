@@ -99,6 +99,14 @@ never renewed. Sequential bounded rechecks are allowed; concurrent external
 recheck or reuse after settlement refuses. Server-side idle timeout is additional,
 not the active total-invocation bound.
 
+The unchanged source audit has a separate, stricter 30s budget for setup,
+preflight, full31 and continuation admission only. It must not reject callback
+settlement using that audit clock: an otherwise valid 30–60s invocation remains
+subject to the private adapter's original active 60s clock, including cleanup.
+Choose this phase separation over accepting a caller-supplied deadline or
+starting a fresh callback clock. No audit timeout, SQL guard or frozen helper is
+weakened; a callback cannot renew the outer invocation deadline.
+
 ## Actual protected private fixture
 
 Add a third explicit held-PG31 opt-in requiring BOTH prior protected-PG/native

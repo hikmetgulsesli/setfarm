@@ -169,6 +169,15 @@ ambient db-pg and does not include the TypeScript parser in its runtime closure.
 
 ### Task 4: Scoped delivery and clean-main host proof
 
+- [ ] Fresh-head cloud P2 on8320522 found the inner30s audit clock also checked
+  callback settlement, incorrectly refusing legitimate30–60s retained evidence
+  collection. First add real-composition/shared-clock regressions:35s and59999ms
+  total invocation can settle;60000ms and audit31s must refuse. Observe RED for
+  the positive cases. Remove only post-callback audit-deadline checking; retain
+  30s setup/preflight/full31/admission and the existing active outer60s through
+  all cleanup. No new deadline parameter, renewed clock or frozen helper edit.
+  Verify pure/source contracts, independent exact-byte review, then rerun the
+  actual protected fixture because privileged source bytes have changed.
 - [x] Cloud P2 on562a276 found the lifecycle file was absent from the advertised
   npm-test chain. Add tests/evals/package-scripts.test.ts coverage that resolves
   reachable npm-run commands and then executes the selected real lifecycle leaf
