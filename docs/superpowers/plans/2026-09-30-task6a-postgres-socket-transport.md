@@ -68,3 +68,7 @@ Record exact RED/GREEN, private lifecycle, review/delivery and clean-main build 
   automatically include the new pure test. Register the focused transport
   command and chain it into normal internal-production verification before
   delivery; no dependency or runtime gate changes. Reverify the exact new head.
+- Review's shell-environment caveat is resolved in the positive lazy-client
+  test: save/unset/restore PG/URL values inside that test process only. Explicit
+  negative guard cases and real private child environment poisoning remain
+  unchanged; no source guard is relaxed. Verify clean and poisoned shell runs.

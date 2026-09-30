@@ -66,14 +66,24 @@ test("socket transport refuses every ambient PG or URL source before client cons
 test("lazy socket clients preserve resolved endpoint and reject wrong peer UID", async () => {
   assert.throws(() => createTask6aPostgresSocketSqlV1({ ...candidate, osUid: candidate.osUid + 1 }, "pool"),
     /TASK6A_SOCKET_TRANSPORT_UID_REFUSED/);
-  for (const profile of ["pool", "listener"] as const) {
-    const sql = createTask6aPostgresSocketSqlV1(candidate, profile);
-    try {
-      assert.equal(sql.options.path, "/private/tmp/task6a-socket/.s.PGSQL.55437");
-      assert.equal(sql.options.user, "task6a_runtime");
-      assert.equal(sql.options.database, "setfarm_fixture");
-      assert.deepEqual(sql.options.port, [55437]);
-      assert.equal(sql.options.pass, "");
-    } finally { await sql.end({ timeout: 1 }); }
+  // Positive test inputs must not depend on unrelated shell database settings.
+  // Only this test process is isolated; production's environment guard remains real.
+  const keys = Object.keys(process.env).filter((key) => key.startsWith("PG")
+    || key === "SETFARM_PG_URL" || key === "DATABASE_URL");
+  const saved = new Map(keys.map((key) => [key, process.env[key]!]));
+  for (const key of keys) delete process.env[key];
+  try {
+    for (const profile of ["pool", "listener"] as const) {
+      const sql = createTask6aPostgresSocketSqlV1(candidate, profile);
+      try {
+        assert.equal(sql.options.path, "/private/tmp/task6a-socket/.s.PGSQL.55437");
+        assert.equal(sql.options.user, "task6a_runtime");
+        assert.equal(sql.options.database, "setfarm_fixture");
+        assert.deepEqual(sql.options.port, [55437]);
+        assert.equal(sql.options.pass, "");
+      } finally { await sql.end({ timeout: 1 }); }
+    }
+  } finally {
+    for (const [key, value] of saved) process.env[key] = value;
   }
 });
