@@ -15,10 +15,15 @@ root-owned JSON, self-check or generic copy/chown. No privileged rehearsal befor
 fresh merged delivery and a separate exact pre-effect review of invocation,
 source/native policy, UID/GID drop, child lifecycle and cleanup. Root administrators
 are trusted; excluded ordinary/runtime actors cannot rewrite the protected tree.
+Default Perl/helper/entry tests require macOS and an ordinary non-root UID. Other
+hosts/root test invocation explicitly report unavailable/skipped coverage before
+any local Perl/supervisor execution; no ambient Perl or module-root fallback.
+Actual macOS gates require zero skips. Opt-in privileged rehearsal is separate.
 
 ## Chosen architecture
 
-Use admitted Apple system Perl5.34.1 as the retained root bootstrap/supervisor.
+Use admitted Apple system `/usr/bin/perl` (runtime5.34.1, not a nonexistent
+`/usr/bin/perl5.34.1` path) as the retained root bootstrap/supervisor.
 Set its first `BEGIN` module search to exactly
 `/System/Library/Perl/5.34/darwin-thread-multi-2level` and
 `/System/Library/Perl/5.34`, before any module import; invoke through scrubbed
@@ -66,8 +71,11 @@ member typing. Stream only the exact selected bytes into a fresh protected file.
 Actual archive topology is currently unknown; unsupported topology must refuse.
 
 Before even Node version/entry execution, authenticate the exact Node bytes and
-thin arm64 executable Mach-O header/load-command table; reject unsupported
+thin arm64 executable Mach-O header/load-command table; validate SDK command
+structure sizes and bounded variable tails, reject unsupported
 commands, non-system dylib references, search paths and external loader fallback.
+This policy does not prove all segment/linkedit payloads are loadable; authentic
+vendor identity and actual admitted execution/maps remain separate requirements.
 Root-owned protected ACL-free one-link file/ancestry plus retained physical
 identities must join vendor bytes. Static native admission is not loaded-image
 evidence; actual parent-owned child maps are required separately while held.
@@ -81,6 +89,43 @@ No sudo/shell wrapper, `-e`, loader/preload/caller argv or inherited privileged 
 Close every unrelated FD; only the private protocol and required standard pipes
 survive. The parent captures exit/error/EOF/close itself; child messages never
 supply PID, source identity, origin or cleanup authority.
+Fix child UID70/GID70 (`_www`) and resulting supplementary group set exactly70;
+actual host initially reports70,12,61,100,701, so inheriting its default groups
+is not acceptable. Internal fresh fixture prefix is
+`/private/tmp/setfarm-task6a-origin-v2.XXXXXX`, initial root:wheel0700, final
+root:wheel0711 for runtime search; source/vendor directories0555, entry0444,
+vendor Node0555, root-only Perl/helpers/archive0400. No existing path is reused.
+Native/process observers initially proposed `/bin/ps`, `/usr/sbin/lsof` and
+`/usr/bin/vmmap`; complete system/SIP/native/tool closure must be admitted before
+root invocation. Fresh static evidence shows vmmap imports xcselect developer
+selection and posix_spawn with a selected SharedFrameworks path. No fixed CLT
+vmmap target exists. It is **unadmitted and refused before exec**, pending bounded
+static control-flow review or a separately reviewed genuine fixed observer.
+An Apple signature/system pathname alone cannot clear that edge. No protected
+rehearsal may proceed without complete held native map/protection evidence.
+The researched stricter candidate is a supervisor-literal vmmap-only environment
+with `DT_NO_RESPAWN=1` and `DT_FORCE_RESPAWN` absent, plus the ordinary scrubbed
+PATH/LANG/LC_ALL. This is not a caller environment override or Setfarm guard
+bypass: it disables developer substitution. At exact system vmmap SHA256
+`9e2b3e0653ca8c4bdde2ea17c01f6f8e1eecab3658aa470b5e6f511c55f59928`,
+static5f24/5f34/5f38→607c proves the direct no-respawn branch; architecture
+mismatch can exit, never fall back. `DT_NO_RESPAWN_TO_DT` is insufficient and
+must not be used as an equivalent. This candidate remains UNADMITTED pending
+the full pre-gate/framework/loaded-closure and target-effect review.
+Unlike a pure reader, vmmap's analysis callback uses VMUTask/memoryCache peeking
+and may suspend the target; analysis-task/corpse choice still needs exact proof.
+Only the supervisor's captured private child may be such a target. Its lifecycle
+must cover observer failure/timeout, any target suspension and exact definite
+shutdown/reap before cleanup; never probe live services or arbitrary PIDs.
+Any ordinary exploratory invocation must first have a separate exact reviewed
+own-child/no-privilege lifecycle, and yields no protected-origin authority.
+Candidate args are `-w -noCoalesce -interleaved` and the exact captured PID:
+no partial-name/file/optional address, `-v`/allSplitLibs, output-file, caller flags
+or unverified malloc/corpse modes. Require actual complete current/max RWX and
+full paths. Footprint is rejected: simplified verbose output omits these
+protections and may perform deferred reclaim. No observer has yet been run.
+ACL observation uses fixed `/bin/ls -lde` with bounded
+complete output. No user-owned Apple developer shim is treated as a real tool.
 Apple POSIX Perl has no setgroups/getgroups binding. Use documented checked core
 effective/supplementary GID assignment followed by checked setgid/setuid and
 verify real/effective IDs and actual supplementary groups before exec. Its
@@ -90,9 +135,22 @@ close-on-exec error pipe are mandatory. Parent uses exact
 `waitpid(forkPID,WNOHANG)` before/after readiness/native samples; no global reaper,
 PID reuse, kill-after-reap or child-provided cleanup identity. On parent EOF or
 deadline the fixed child self-exits; parent uncertainty retains artifacts.
+Shared bootstrap deadline180s bounds authentication/staging/helper work; metadata
+GET10s/connect5s/body4MiB, archiveGET60s/128MiB. Held child phase has a separate
+nonrenewable45s bound and child's fixed20s lifetime. Once burned, shutdown-only
+budget30s never extends origin validity: EOF/graceful wait5s, TERM wait2s then
+KILL wait2s only for the captured still-unreaped PID. Every helper requires its
+own captured PID/complete output/definite reap. Filesystem cleanup30s is permitted
+only after all definite termination and exact fresh-tree identity checks; expiry
+or uncertainty preserves the tree. Never signal a reaped PID.
 
 The entry is builtin-only and implements a bounded private fresh-challenge
-exchange. Parent-owned source/native/physical/child lifetime stays held throughout
+exchange: `READY\n`, exactly three distinct `CHALLENGE <64 lowercase hex>\n`
+requests with matching `PONG <nonce>\n`, then `END\n` plus definite input EOF
+before its final `END\n` and exit0. It refuses extra args/exec flags/NODE_OPTIONS,
+replays, excess messages, premature/partial EOF and input over229bytes. Its20s
+monotonic deadline never renews; refusal exits2. Protocol tests use ordinary test
+Node and prove no vendor/protected-origin facts. Parent-owned source/native/physical/child lifetime stays held throughout
 the fixed continuation. Source/native pins, exact UID/start/process and actual
 loaded executable images are rechecked before/after continuation. Process title,
 argv and matching Node image cannot independently prove entry execution: the
@@ -128,6 +186,17 @@ all HTTP/authenticated host/fresh clean Setfarm run. None is implied here.
 - `scripts/task6a-protected-origin-entry-v2.mjs`: exact builtin-only private child.
 - `scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`: actual system
   Perl/helper and MJS protocol tests, mandatory denial/default graph registration.
+- `scripts/task6a-origin-observer-recon-v2.mjs`: ordinary macOS-only zero-argument
+  owned-Perl-child map-format exploration. Exact pinned system vmmap with the
+  reviewed no-developer-respawn environment; no root/source/vendor/fixture/DB
+  effects or origin authority. Hold only captured child, helper bounded10s,
+  target20s, output8MiB; EOF5s/TERM2s/KILL2s exact unreaped PIDs and definite
+  close. Both helper and target must settle before diagnostic output. A target
+  left suspended by observer failure is killed/reaped, never reused. No target
+  PID/argv/env/path supplied by caller; no output-file/allProcesses/corpse flag.
+  Static default analysis options0 may inspect original or analysis copy: the
+  ordinary diagnostic does not claim live-snapshot or no target effects.
+  Full all-source read-only review BEFORE even ordinary observer execution.
 - `tests/execution-attempts/task6a-private-protected-origin.integration.test.ts`:
   separately opted-in exact trusted-owner admitted private actual rehearsal.
 - This spec and implementation plan. Keep source changes confined to these mapped

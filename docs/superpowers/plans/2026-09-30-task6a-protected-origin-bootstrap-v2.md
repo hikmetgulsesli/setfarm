@@ -28,6 +28,9 @@
 - Create `scripts/task6a-protected-origin-entry-v2.mjs`, builtin-only zero-extra-argument child: READY, fresh parent CHALLENGE/PONG exchange, END/EOF and fixed20s deadline. No child-reported identity or arbitrary eval/paths/imports.
 - Create `scripts/task6a-protected-origin-bootstrap-v2.pl`: fixed zero-argument root system supervisor; source/vendor authentic retrieval, protected staging, held direct child/lifetime and exact cleanup. Helpers are imported only after fixed Git byte-policy authentication.
 - Create `scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`: invoke actual fixed system Perl and helpers under scrubbed environment, actual child entry and parent contract. Default no privileged effects.
+- Create `scripts/task6a-origin-observer-recon-v2.mjs`: ordinary-only zero-arg
+  controlled owned-child map-format exploration, mandatory exact review before
+  observer execution. No privileged/source/vendor/DB effects; not origin proof.
 - Create `tests/execution-attempts/task6a-private-protected-origin.integration.test.ts`: actual independent owner-install invocation/entry/private fixture, explicitly opt-in and gated on delivered package/exact pre-effect clearance. Register only safe default tests; a new opt-in package command is allowed only if needed and source/tests/spec map includes it.
 - Spec/this plan and external checkpoints. No V1/dirty19/default production entry changes.
 
@@ -53,6 +56,64 @@ assert.deepEqual(actual,Buffer.from('literal selected bytes'));
 
 **Consumes:** Pure helpers only after actual admitted delivery. **Produces:** Fixed actual source/vendor/physical/direct-child held diagnostic, not a serialized capability.
 
+Current evidence: Task1 pure helpers independently reviewed at archive blob
+da1fd458fcaba775be5ba09ef88157b5ee48dbda and native blob
+59e1ae8de38cf2083a0294c55454083840eb47f1;110tests passed. Two genuine review
+findings (empty pending PAX and8byte segment command) each reproduced RED then
+fixed;25 additional structural command/platform REDs fixed. Actual20000/20001
+tar-member and4096/4097command bounds tested with coherent complete fixtures.
+Read-request observer isolates selected-size denial before body reads; lowered
+in-memory test limits exercise compressed/expanded branches without allocating
+128/512MiB. These are pure-byte diagnostics, not vendor/admission evidence.
+
+Entry16missing-source AssertionRED then16GREEN; final-END broken output exposed
+real exit0bug, independently RED and fixed by checking its end callback error.
+Open-input replay consumer prevents premature EOF from masking missing replay
+checks. Embedded Perl Git framing31missing-source AssertionRED then31GREEN;
+main remains unconditionally fail-closed while publisher/held origin are absent.
+Its SIP B scalar flags preserve parsed numeric-vs-string field typing; full root
+PM/XS closure admission must include B before any privileged execution.
+
+Current transport evidence: helper lifecycle independently reviewed after actual
+FD200 closure, partial-readdir EIO, undefined POSIX calls/waitpid and sticky
+uncertainty consumers. Actual full suite224PASS/0SKIP before later additions.
+Metadata38 plus missing-route-guard exec-edge mutant1PASS independently reviewed;
+only external capture/clock is replaced in tests, preserving UTF8/JSON/body/depth,
+timers and all ten Git framing/source joins. Post-decode expiration was genuinely
+accepted in two RED tests before the new final clock check. Vendor16 protocol
+tests now pass with coherent synthetic gzip/pin substitution IN MEMORY only:
+no real archive, vendor-positive or source-origin claim. Canonical unrelated
+relative manifest names are inert, never URL/extraction selections. Actual full
+v22.23.1 manifest has not been acquired by the bootstrap; primary web reader was
+unavailable, so the Windows-row compatibility fixture is explicitly synthetic.
+Main remains unconditionally refused. Stage/UID drop/held origin are absent.
+
+Native observer decision/review gates (same File Map):
+- [ ] Independently prove vmmap-only literal DT_NO_RESPAWN=1, absent DT_FORCE,
+  scrubbed other env, exact byte drift refusal; never DT_NO_RESPAWN_TO_DT.
+  Static direct branch proves no developer respawn for observed9e2b3e... bytes;
+  no full transitive/target-effect or privilege clearance follows.
+- [ ] Prove default VMUTask analysis/corpse/live-target behavior. Document
+  peeking/suspension as an explicit owned-private-child lifecycle effect, not a
+  globally read-only observation. Never probe live services/foreign PIDs.
+- [ ] Review separate ordinary own-child exploratory script and timeout/kill/
+  definite reap before any observer invocation. Fixed args -w/-noCoalesce/
+  -interleaved/actualPID; do not use-v/allSplitLibs/unverified modes/output files.
+  Implement script first through missing-source default-denial tests; ordinary
+  invocation with extra argv refuses before spawn. Script must hash/read/check
+  nonsymlink rootwheel0755/nlink1 exact system vmmap/perl before either exec,
+  then parent captures Perl READY/PID/privatepipes and no caller selection.
+  Spawn vmmap with literal env DT_NO_RESPAWN=1 and no DT_FORCE/DYLD/otherenv;
+  actualpid args only. Collect complete close/output within10s/8MiB. Close
+  target input and require definite both-helper-and-target close, exactPID-only
+  bounded shutdown on failure. Print small ordinary diagnostic only after both
+  settle; refuse unknown close/reap/signal status. Independent review each file
+  and plan then explicit ordinary script invocation; preserve raw maps only in
+  memory, no filesystem artifacts or protected-origin claims.
+- [ ] After cleared ordinary format/closure evidence, root TDD exact system-tool
+  env/byte pins/loaded current+max protections and helper/target failure/reap.
+  Keep default main and privileged invocation closed until complete delivery.
+
 - [ ] Write actual unprivileged entry tests before source: exact stdout READY/PONG/END behavior, missing/bad/replayed nonce, extra args, wrong/partial/overbound messages, input EOF, parent loss, fixed deadline and definite close. Spawn ordinary test Node only for protocol evidence; never label it vendor/protected origin.
 - [ ] Implement builtin-only child with parent protocol and fixed20s total timer, no renewal/caller options, exit on EOF/invalid input/uncertain stream error. Supply no PID/source facts to parent.
 - [ ] Write root-supervisor default denial test: ordinary real system Perl invocation refuses before network/staging/fork. Stub only external effects in a test-only harness where necessary; retain actual program branches, canonical route/source/tree framing, native helper and parent state machine. No production dependency-injection or special test argv.
@@ -62,9 +123,9 @@ assert.deepEqual(actual,Buffer.from('literal selected bytes'));
 - [ ] Source helper/entry policy uses actual literal blob identities computed after their final byte review:
 
 ```bash
-git hash-object scripts/task6a-origin-archive-v2.pm
-git hash-object scripts/task6a-origin-native-v2.pm
-git hash-object scripts/task6a-protected-origin-entry-v2.mjs
+git hash-object --no-filters scripts/task6a-origin-archive-v2.pm
+git hash-object --no-filters scripts/task6a-origin-native-v2.pm
+git hash-object --no-filters scripts/task6a-protected-origin-entry-v2.mjs
 ```
 
 Insert exact literals with apply_patch before final review; source identities come from reviewed files and actual delivered Git graph, never runtime arguments. Bootstrap own delivered blob is bound by independent owner-install invocation after merge, outside its own self-hash.
