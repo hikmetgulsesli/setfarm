@@ -169,6 +169,13 @@ ambient db-pg and does not include the TypeScript parser in its runtime closure.
 
 ### Task 4: Scoped delivery and clean-main host proof
 
+- [x] Cloud P2 on562a276 found the lifecycle file was absent from the advertised
+  npm-test chain. Add tests/evals/package-scripts.test.ts coverage that resolves
+  reachable npm-run commands and then executes the selected real lifecycle leaf
+  under a bounded no-ambient child; observe missing selection RED before wiring
+  existing pure diagnostic script into test:internal-production. No privileged
+  fixture command/flag becomes a default. Verify GREEN plus all diagnostic tests;
+  no unrelated all-tests/PG effects are needed to establish this registration.
 - [ ] Focused pure/census/socket regressions, source TS, English/path/version/
   migration-digest/12MC contracts, diff check, final independent complete diff review.
 - [ ] Record causality, RED/GREEN, actual private outcome and explicit diagnostic
@@ -210,3 +217,13 @@ In-memory old/new complete literal52 SQL bytes are identical, SHA256
 both still refuse dynamic/missing source. Fresh expanded69 and strict tests were
 rerun after this compiler-only correction. No extra privileged rerun inferred.
 Production authority, origin/genesis, live writer exclusion and32/33 are pending.
+
+Cloud-review registration refinement: default-graph test observed missing
+selection RED; pure-only default registration then eval+diagnostic48PASS and
+expanded census/socket/physical/backend71PASS,0fail/skip. The bounded selected
+lifecycle leaf actually passed once in a clean-env child; inherited
+NODE_TEST_CONTEXT was removed rather than allowing a silent empty runner.
+Strict eval TypeScript, English/path and diff checks passed. Independent
+four-file incremental review cleared package/eval/spec/plan; no source, protected
+fixture, entry or native bytes changed. Fresh-head cloud clearance is still
+required; initial562a276 completion cannot clear the follow-up commit.

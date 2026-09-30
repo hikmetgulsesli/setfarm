@@ -161,7 +161,11 @@ fixture; old failed preparation tree and every historical worktree survive.
   setup-body boundary and literal observer-probe refusal/cleanup regressions.
 - tests/execution-attempts/task6a-private-protected-cluster.integration.test.ts:
   third-opt-in wiring and actual protected PG31 positive/revocation rehearsal.
-- package.json: bounded focused pure/actual private commands, no default change.
+- tests/evals/package-scripts.test.ts: resolve the real default npm-run graph and
+  prove selection/execution of a bounded actual lifecycle leaf, without all-tests
+  ambient/privileged effects. Cloud review found the initial missing registration.
+- package.json: bounded focused pure/actual private commands and pure lifecycle
+  registration in the default test chain; privileged execution stays opt-in only.
 - this spec and companion plan: causal refinement, exact evidence and limits.
 
 ## Verification and delivery
