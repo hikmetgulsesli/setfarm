@@ -33,8 +33,9 @@ the compiled writable-Xcode fallback exclusion remain unproved for privileged
 admission. Ordinary execution must not claim to close those gaps.
 
 The Python program takes no arguments and first rejects non-Darwin, root,
-real/effective UID mismatch or nonisolated/site-enabled invocation. No native
-library or child is loaded before this guard. It then pins /usr/bin/perl bytes
+real/effective UID mismatch or nonisolated/site-enabled invocation. No explicit
+Mach CDLL/query or child is created before this guard. Python startup/imports
+can load XS and remain unadmitted. It then pins /usr/bin/perl bytes
 to abda2bfd23a6c9a8e57adf2291f0aea4abd8faf440558ee49fe4ced55e8d9ad0
 and owns a direct subprocess with private stdin/stdout/stderr, cwd=/, scrubbed
 environment and close_fds=true. The fixed Perl first BEGIN restricts @INC to the
@@ -42,7 +43,8 @@ two SIP Perl5.34 roots, emits READY, exits on stdin EOF, and has alarm20. No she
 caller code, inherited authority or child-reported PID. Native target PID is
 only the captured subprocess PID while poll() confirms it remains unreaped.
 
-Readiness5s, overall nonrenewing native epoch10s, <=4096 native calls, depth<=64,
+Readiness5s, nonrenewing native epoch10s starting BEFORE read-port acquisition,
+<=4096 native calls, depth<=64,
 bounded output1MiB. Native calls can block; the diagnostic does not promise a
 kernel RPC wall-clock bound. A parent guardian may terminate only its own
 diagnostic process; uncertain target settlement forbids successful output.
@@ -56,8 +58,9 @@ is refusal even when cleanup completed. Cancellation is irreversible refusal.
 
 Load only /usr/lib/libSystem.B.dylib through ctypes.CDLL; no dynamic library
 search, arbitrary symbol, callback, memory reads/writes, suspension or task_for_pid.
-Read mach_task_self_ as exported uint32, not a callable macro. BSD syscall539
-task_read_for_pid takes uint32 self, int32 captured PID, uint32* output. Clear
+Read mach_task_self_ as exported uint32, not a callable macro. Use the exported
+fixed C stub task_read_for_pid (BSD syscall539 internally), NOT variadic syscall;
+its arguments are uint32 self, int32 captured PID, uint32* output. Clear
 and capture errno adjacent to syscall. Only return0, errno0 and nonzero/non-dead
 port are usable. Any failure refuses; no fallback to a control task port.
 Use typed mach_vm_region_recurse(uint32, uint64*, uint64*, uint32*, int32*,
@@ -71,7 +74,8 @@ wired/flags u16 at60/62, reusable u32 at64, object_id_full u64 at68.
 This is distinct from the delivered96-byte BSD struct. Preserve every field;
 offset/object_id_full become exact padded hexadecimal strings. Reject short/
 extra/count-mismatched bytes, unknown protection or flags, current outside max,
-nonboolean submap/external, synthetic tag UINT32_MAX and unsupported sharing.
+nonboolean submap/external, synthetic tag UINT32_MAX and sharing outside SDK
+SM_COW1 through SM_LARGE_PAGE8 (including undefined0).
 Address space diagnostic bound is exclusive2^48, not a universal kernel claim.
 
 Pure walk starts address0/depth0. Each successful reply must have bounded,
@@ -84,6 +88,18 @@ loops, depth/call/output cap, target exit or timeout refuse. Enumeration is not
 atomic, source/page origin or a complete loaded-image closure. Success always
 reports completeNativeClosure:false, productionAuthority:false and sampled:true.
 
+Refusal has no stdout and one bounded JSON stderr line with the fixed error
+literal, finite stage and both authority fields false. Actual acquisition
+refusal may retain only bounded integer nativeResult/nativeErrno captured next
+to the fixed call. No arbitrary exception text, paths, environment or credentials.
+Cleanup failure preserves the first refusal and never creates successful output.
+Exception: if acquisition returns an uncertain right and its release also fails,
+the constructor reports read-port-close instead of acquisition. No successful
+acquisition or settlement is inferred from either refusal; this priority is
+intentional because the right's disposition is then uncertain.
+The guardian treats nonzero/timeout/cancellation/partial output as refusal;
+a refused diagnostic is not definite target-cleanup evidence.
+
 ## File map and verification
 
 - scripts/task6a-origin-mach-recon-v2.py: pure76-byte decoder/walk, lazy fixed
@@ -94,6 +110,22 @@ reports completeNativeClosure:false, productionAuthority:false and sampled:true.
   hosts unavailable before spawning Python. Test cancellation/early loss/forced
   settlement/port errors and mutations in memory only.
 - This spec and docs/superpowers/plans/2026-10-01-task6a-owned-mach-region-recon-v2.md.
+- tests/execution-attempts/migrations.test.ts: refresh only the three historical
+  whole-source/generated-file/migration33 expectations to already reviewed main
+  identities. Keep actual migration32 file/semantic digest and transaction,
+  savepoint, verifier placement and canonical digest-check guards unchanged.
+
+Scope refinement from fresh broad verification: seven Product Compiler failures
+were an incomplete local esbuild postinstall, repaired by ordinary offline npm
+rebuild against exact existing pinned official trees, not by source/policy edits.
+The complete1383-test Product Compiler stage then passed. Execution attempts
+subsequently failed only the historical P4 test pins. Reviewed held31 additions
+562a2760/d42342df are outside the frozen migration regions; reviewed PR209 merge
+97a111f6 changed the declared migration33 recovery helper digest. Keeping obsolete
+whole-file/33 expectations would block the same Task6A verification goal without
+protecting the unchanged32 boundary. Update literals from independently inspected
+Git provenance, not by recomputing expectations inside the test. Do not regenerate
+digests, change migration source, weaken checks, or apply any live migration.
 
 Default npm script glob must select the pure suite. All-source independent
 review of exact source/tests/argv/lifecycle is required BEFORE any actual native
