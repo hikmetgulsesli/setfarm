@@ -23,9 +23,13 @@ delivered/reviewed provenance. Output is frozen protocol-only characterization
 with productionAuthority:false. A future reviewed fixedHTTPS publisher must
 establish fresh stable-main/mergedPR/review/check evidence and an independently
 admitted initial Node/native execution before using these checks for origin.
+The2MiB selected-module policy is not a generic whole-repository inventory:
+current main has unrelated assets/tests larger than that. A future publisher
+must select the reviewed tiny builtin MJS graph, never claim full-source
+coverage from this bounded subset or skip a required executable graph member.
 
 Fixed bounds: payload64KiB, signature16KiB, tree4096entries, each tree name255
-UTF8bytes and blob2MiB. Every textual field must round-trip exact UTF8; every
+UTF8bytes and blob2MiB. Every consumed textual field must round-trip exact UTF8; every
 size is a nonnegative safeinteger. No coercion or inherited/accessor metadata.
 
 ## Signed merge subset
@@ -47,7 +51,7 @@ verification verdict is NOT independently verified local GPG authority.
 ## Nonrecursive tree and blob subset
 
 Require a bounded nonrecursive plain tree response, exactsha and truncated:false.
-Entries have one portable UTF8 basename, unique exact and case-folded names,
+Entries have one portable ASCII basename (A–Z/a–z/0–9/dot/underscore/@/plus/minus), unique exact and case-folded names,
 known regularblob100644/100755 or directory040000 mode/type, valid40hex OID and
 bounded integral size where a blob. Reject slash/dot/dotdot/NUL names, symlink
 120000, gitlink160000, unknown mode/type, duplicate/ambiguous members and overflow.
@@ -62,6 +66,12 @@ exact byte length. Compute framed blobSHA1 and independentSHA256. No file read,
 write, path selection or executable evaluation occurs. Object functions require
 exact arity and plain data descriptors; malformed input fails closed without
 partial positive output. API metadata does not reconstruct a runtime holder.
+These ordinary descriptor checks reject accessor/inherited data; they are not
+a sandbox against Proxy traps or altered same-process builtins. A later trusted
+transport must own authentic plain JSON parsing, rather than accept arbitrary
+same-process JavaScript authority. Signature armor syntax accepts optional
+Version/Comment headers once, canonical base64 lines up to76characters and an
+optional syntactic CRC. It does not independently verify CRC or GPG signatures.
 
 ## File Map and verification
 
