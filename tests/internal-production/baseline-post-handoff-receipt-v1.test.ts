@@ -4718,7 +4718,7 @@ function instrumentPhase5bStrictCEntryFixtureV1(root: string): void {
   const commitBuilderStart = source.indexOf(commitBuilder, chainBuilderStart);
   assert.ok(chainBuilderStart >= 0 && commitBuilderStart > chainBuilderStart, "P5b-B1 bounds the private pinned-chain builder");
   const chainBuilderRegion = source.slice(chainBuilderStart, commitBuilderStart);
-  const closeMarker = "    const close = (): void => {";
+  const closeMarker = "  const close = (): void => {";
   assert.equal(chainBuilderRegion.split(closeMarker).length - 1, 1, "P5b-B1 counts the sole pinned-chain close boundary");
   const closeIndex = source.indexOf(closeMarker, chainBuilderStart);
   source = source.slice(0, closeIndex) + `${closeMarker}
