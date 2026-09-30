@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { randomInt } from "node:crypto";
@@ -47,13 +47,39 @@ function id(user: string, option: "-u" | "-g"): number {
 const WRITE_PROBE = `const fs=require('node:fs');
 try { fs.writeFileSync(process.argv[1], 'denied', {flag:process.argv[2]}); process.exit(0); }
 catch(e) { process.exit(e.code==='EACCES'||e.code==='EPERM'?42:43); }`;
+const PHYSICAL_HOLD_PROBE = `import assert from 'node:assert/strict';
+import {createInterface} from 'node:readline';
+const {holdTask6aSocketPhysicalEvidenceV1}=await import(process.argv[1]);
+const candidate=JSON.parse(process.argv[2]),identity=JSON.parse(process.argv[3]);
+const held=holdTask6aSocketPhysicalEvidenceV1(candidate,identity.serverUid,identity.clientGid);
+held.recheck();console.log('held');
+try {for await(const line of createInterface({input:process.stdin})) {
+  assert.equal(line,'check');
+  assert.throws(()=>held.recheck(),/TASK6A_SOCKET_PHYSICAL_REFUSED/);console.log('refused');
+}} finally {held.close();}`;
 const SOCKET_CLIENT_PROBE = `import assert from 'node:assert/strict';
-const {createTask6aPostgresSocketSqlV1,createTask6aSingleBackendSocketClientV1}=await import(process.argv[1]);
+const {createTask6aPostgresSocketSqlV1,createTask6aSingleBackendSocketClientV1,holdTask6aSocketPhysicalEvidenceV1}=await import(process.argv[1]);
 const candidate=JSON.parse(process.argv[2]);
+const physicalInput=JSON.parse(process.argv[3]);
+const physical=holdTask6aSocketPhysicalEvidenceV1(candidate,physicalInput.serverUid,physicalInput.clientGid);
+const physicalObservation=physical.observe();
+assert.equal(Object.isFrozen(physical),true);assert.equal(Object.isFrozen(physicalObservation),true);
+assert.equal(Object.isFrozen(physicalObservation.directory),true);assert.equal(Object.isFrozen(physicalObservation.socket),true);
+assert.equal(physicalObservation.schema,'setfarm.socket-physical-evidence.v1');
+for(const key of ['directory','socket']) {
+  const expected=physicalInput[key],actual=physicalObservation[key];
+  for(const field of ['dev','ino','uid','gid','mode','nlink'])assert.equal(actual[field],expected[field]);
+  assert.equal(String(BigInt(actual.birthtimeNs)/1000000000n),expected.birthtimeSeconds);
+}
+assert.throws(()=>holdTask6aSocketPhysicalEvidenceV1(candidate,candidate.osUid,physicalInput.clientGid),/TASK6A_SOCKET_PHYSICAL_REFUSED/);
+assert.throws(()=>holdTask6aSocketPhysicalEvidenceV1(candidate,physicalInput.otherUid,physicalInput.clientGid),/TASK6A_SOCKET_PHYSICAL_REFUSED/);
+assert.throws(()=>holdTask6aSocketPhysicalEvidenceV1(candidate,physicalInput.serverUid,physicalInput.clientGid+1),/TASK6A_SOCKET_PHYSICAL_REFUSED/);
+assert.throws(()=>holdTask6aSocketPhysicalEvidenceV1({...candidate,port:candidate.port+1},physicalInput.serverUid,physicalInput.clientGid),/TASK6A_SOCKET_PHYSICAL_REFUSED/);
 process.env.PGPASSWORD='fixture-sentinel';
 assert.throws(()=>createTask6aPostgresSocketSqlV1(candidate,'pool'),/TASK6A_SOCKET_TRANSPORT_ENVIRONMENT_REFUSED/);
 delete process.env.PGPASSWORD;
 for(const profile of ['pool','listener']) {
+  physical.recheck();
   const sql=createTask6aPostgresSocketSqlV1(candidate,profile);
   try {
     const rows=await sql.unsafe('SELECT current_user AS role, current_database() AS database, inet_client_addr() IS NULL AS socket');
@@ -81,6 +107,7 @@ for(const profile of ['pool','listener']) {
   const missing=createTask6aPostgresSocketSqlV1({...candidate,port:candidate.port+1},profile);
   try {await assert.rejects(missing.unsafe('SELECT 1'),e=>e.code==='ENOENT');}
   finally {await missing.end({timeout:2});}
+  physical.recheck();
 }
 let resolveSingleNotification;
 const singleNotification=new Promise(resolve=>{resolveSingleNotification=resolve;});
@@ -104,6 +131,7 @@ try {
   const after=(await reserved.unsafe('SELECT pg_backend_pid() AS pid'))[0];
   assert.equal(after.pid,before.pid);
   assert.deepEqual(single.observe(),{nativeSocketCreations:1,revoked:false});
+  physical.recheck();
 } finally {single.revoke();reserved?.release();await single.close();}
 await assert.rejects(single.sql.unsafe('SELECT 1'));
 assert.deepEqual(single.observe(),{nativeSocketCreations:1,revoked:true});
@@ -125,12 +153,15 @@ try {
   await assert.rejects(lost.sql.unsafe('SELECT 1'));
   assert.deepEqual(lost.observe(),{nativeSocketCreations:1,revoked:true});
 } finally {await lost.close();}
+physical.recheck();physical.close();physical.close();
+assert.throws(()=>physical.observe(),/TASK6A_SOCKET_PHYSICAL_REFUSED/);
+assert.throws(()=>physical.recheck(),/TASK6A_SOCKET_PHYSICAL_REFUSED/);
 console.log('peer transport and single backend lifecycle verified');`;
 
 test("private protected PG denies old identity and scoped admin impersonation across restart", {
   skip: enabled ? false : "requires explicit isolated protected PostgreSQL OS fixture opt-in",
   timeout: 180_000,
-}, (t) => {
+}, async (t) => {
   assert.equal(process.platform, "darwin");
   const runnerUid = process.getuid!();
   const serverUid = id("_postgres", "-u"), clientUid = id("_www", "-u");
@@ -163,6 +194,7 @@ test("private protected PG denies old identity and scoped admin impersonation ac
   const port = randomInt(55_000, 59_000);
   const socketFile = path.join(socket, `.s.PGSQL.${port}`);
   let protectedRoot = false, uncertainLifecycle = false;
+  let observerLifecycleUncertain = false, observerModeUncertain = false;
   let server: Readonly<{ pid: number; identity: string; pidFile: string }> | undefined;
   let dataAnchor: fs.BigIntStats | undefined;
   let failure: unknown;
@@ -239,6 +271,75 @@ test("private protected PG denies old identity and scoped admin impersonation ac
       }
     }
   }
+  async function physicalRevocation(): Promise<void> {
+    exactServer();
+    observerLifecycleUncertain = true; // Burn before spawn; only CLOSE proves completion.
+    const child = spawn("/usr/bin/sudo", ["-n", "-u", "_www", "/usr/bin/env", "-i",
+      "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", process.execPath, "--input-type=module", "-e",
+      PHYSICAL_HOLD_PROBE, new URL(`file://${clientModule}`).href,
+      JSON.stringify({ schema: "setfarm.postgres-socket-transport.v1", socketDirectory: socket,
+        port, database: "postgres", user: "task6a_runtime", osUid: clientUid }),
+      JSON.stringify({ serverUid, clientGid })], { cwd: "/private/tmp", env: cleanEnv, stdio: ["pipe", "pipe", "pipe"] });
+    let output = "", errors = "", finished = false;
+    let spawnError: Error | undefined;
+    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+    child.stdout.on("data", chunk => { output += chunk; });
+    child.stderr.on("data", chunk => { errors += chunk; });
+    child.on("error", error => { spawnError = error; });
+    const done = new Promise<number | null>(resolve => child.once("close", code => {
+      finished = true; observerLifecycleUncertain = false; resolve(code);
+    }));
+    async function waitLines(lines: string): Promise<void> {
+      const deadline = Date.now() + 3000;
+      while (!output.endsWith(lines)) {
+        assert.equal(spawnError, undefined); assert.equal(finished, false, errors);
+        assert.ok(output.length < 2048 && errors.length < 2048, "bounded child output required");
+        assert.ok(Date.now() < deadline, "held physical evidence response timeout");
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }
+    let tightened = false, runIdentity: fs.BigIntStats | undefined;
+    function restore(): void {
+      exactServer(); assert.ok(runIdentity);
+      const before = fs.lstatSync(socket, { bigint: true });
+      assert.ok(before.isDirectory() && !before.isSymbolicLink());
+      for (const key of ["dev", "ino", "uid", "gid", "birthtimeNs"] as const)
+        assert.equal(before[key], runIdentity[key]);
+      assert.ok([0o700n, 0o710n].includes(before.mode & 0o7777n));
+      rootCommand("/bin/chmod", ["0710", socket]);
+      const after = fs.lstatSync(socket, { bigint: true });
+      for (const key of ["dev", "ino", "uid", "gid", "birthtimeNs"] as const)
+        assert.equal(after[key], runIdentity[key]);
+      assert.equal(after.mode & 0o7777n, 0o710n);
+      exactServer(); tightened = false; observerModeUncertain = false;
+    }
+    try {
+      await waitLines("held\n"); exactServer();
+      const current = fs.lstatSync(socket, { bigint: true });
+      assert.ok(current.isDirectory() && !current.isSymbolicLink());
+      assert.equal(current.uid, BigInt(serverUid)); assert.equal(current.gid, BigInt(clientGid));
+      assert.equal(current.mode & 0o7777n, 0o710n);
+      runIdentity = current; tightened = true; observerModeUncertain = true;
+      rootCommand("/bin/chmod", ["0700", socket]);
+      child.stdin.write("check\n"); await waitLines("held\nrefused\n");
+      restore();
+      child.stdin.write("check\n"); await waitLines("held\nrefused\nrefused\n");
+    } finally {
+      try {
+        if (tightened) restore();
+      } finally {
+        // Always close the exact child even if directory restoration refuses.
+        child.stdin.end();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => {
+            reject(Error("observer child close uncertain; retain exact fixture"));
+          }, 3000); });
+          assert.equal(await Promise.race([done, timeout]), 0, errors); assert.equal(errors, "");
+        } finally { clearTimeout(timer); }
+      }
+    }
+  }
   function boundary(): void {
     exactServer();
     const dataStat = fs.lstatSync(data, { bigint: true });
@@ -293,11 +394,20 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     }
     assert.equal(admin("SELECT rolcanlogin FROM pg_roles WHERE rolname='task6a_owner'"), "f");
     assert.equal(admin("SELECT rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls FROM pg_roles WHERE rolname='task6a_runtime'"), "f");
+    const physicalSnapshots = Object.fromEntries([["directory", socket], ["socket", socketFile]].map(([key, target]) => {
+      // Driving UID intentionally cannot traverse0710. Root runs only the
+      // system read-only metadata tool, never user-owned Node or wider ACLs.
+      const fields = rootCommand("/usr/bin/stat", ["-f", "%d %i %u %g %p %B %l", target]).split(" ");
+      assert.equal(fields.length, 7); assert.ok(fields.every(value => /^[0-9]+$/.test(value)));
+      const [dev, ino, uid, gid, octalMode, birthtimeSeconds, nlink] = fields;
+      return [key, { dev, ino, uid, gid, mode: String(BigInt(`0o${octalMode}`)), birthtimeSeconds, nlink }];
+    }));
     const client = asUser("_www", process.execPath, [
       "--input-type=module", "-e", SOCKET_CLIENT_PROBE,
       new URL(`file://${clientModule}`).href,
       JSON.stringify({ schema: "setfarm.postgres-socket-transport.v1", socketDirectory: socket,
-        port, database: "postgres", user: "task6a_runtime", osUid: clientUid })], 30_000);
+        port, database: "postgres", user: "task6a_runtime", osUid: clientUid }),
+      JSON.stringify({ serverUid, clientGid, otherUid: oldUid, ...physicalSnapshots })], 30_000);
     assert.equal(client.status, 0, `actual source connector failed: ${client.stderr}`);
     assert.equal(client.stdout.trim(), "peer transport and single backend lifecycle verified");
     assert.equal(admin("SELECT count(*) FROM task6a_probe.effects WHERE note='gated-queued-after-loss'"), "0",
@@ -351,12 +461,14 @@ RESET ROLE;
 GRANT USAGE ON SCHEMA task6a_probe TO task6a_runtime;
 GRANT SELECT,INSERT ON task6a_probe.effects TO task6a_runtime;
 GRANT USAGE ON SEQUENCE task6a_probe.effects_id_seq TO task6a_runtime;`);
-    boundary(); stop(); start(); boundary(); stop();
+    boundary(); await physicalRevocation(); stop(); start(); boundary(); await physicalRevocation(); stop();
   } catch (error) {
     failure = error; throw error;
   } finally {
     try {
       assert.equal(uncertainLifecycle, false, `ambiguous lifecycle; retain ${home}`);
+      assert.equal(observerLifecycleUncertain, false, `observer completion uncertain; retain ${home}`);
+      assert.equal(observerModeUncertain, false, `observer mode restoration uncertain; retain ${home}`);
       if (server) stop();
       exactHome();
       if (protectedRoot) {
