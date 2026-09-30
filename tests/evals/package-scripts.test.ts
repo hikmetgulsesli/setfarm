@@ -8,7 +8,7 @@ describe("package test coverage contract", () => {
     const pkg = JSON.parse(await readFile("package.json", "utf8")) as { scripts?: Record<string, string> };
     const scripts = pkg.scripts ?? {};
     assert.match(scripts["test:evals"] ?? "", /tests\/evals\/\*\.test\.ts/);
-    assert.match(scripts["test:evidence"] ?? "", /tests\/evidence\/\*\.test\.ts/);
+    assert.match(scripts["test:evidence"] ?? "", /node scripts\/run-evidence-tests\.mjs/);
     assert.match(scripts["test:recovery"] ?? "", /tests\/recovery\/\*\.test\.ts/);
     assert.match(scripts["test"] ?? "", /npm run test:evals/);
     assert.match(scripts["test"] ?? "", /npm run test:evidence/);
