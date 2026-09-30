@@ -6,6 +6,20 @@ Protected startup needs a separately authenticated read-only source closure.
 Original-owner V1 successor holders are potential capture prerequisites, but
 their first-close-error loops skip owned resources. Repair that systemic defect
 independently; do not ship the incomplete protected initializer with this fix.
+PR247 cloud P1 at634b64d exposed raw-member callers outside the first owner
+set. The same prerequisite must cover every raw-member release: frontier,
+publication, post-visible originals/status, historical authority, retained
+status and source observers. Publication ownership slots must be revoked before
+close; replacement ownership transfers before releasing the predecessor.
+Pre-schema observers must track newly opened members before validation can
+throw. Progress status must likewise track a returned nested owner before
+crossed-operation/source validation can throw. No new receipt semantics or
+source authority follows from this refinement.
+Five immediate borrower wrappers must not discard the newly retained child
+cleanup errors. Original holders, both raw return branches, selected pass and
+progress pass preserve all causes through synchronous or awaited attempt-all
+cleanup. The private async helper burns the latch at each failure immediately;
+it aggregates already collected errors without re-invoking resource releases.
 The startup worktree and its dirty files remain preserved and paused. Root is
 the sole writer in this scoped branch; reviewers are read-only.
 
@@ -39,6 +53,12 @@ releases the FD then reports uncertainty, modeling ambiguous close without
 retries. Independent EBADF assertions detect skipped real resources. Tests
 cover construction/normal cleanup, retained errors, rejection before tracking,
 two-link inode, shared-owner revocation and an in-flight semantic await.
+The refinement also executes actual owner-local callbacks, finalizers, catch
+blocks and the progress nested-owner loop. Publication effects are controlled
+and do not authenticate publication; real acquired FDs and transfers are tested.
+Track each acquisition generation so legitimate numeric FD reuse is accepted
+but ambiguous re-close is rejected. Preserve primary plus multiple independent
+cleanup causes rather than just the first failure.
 
 These are resource protocol tests, not genuine source/Git/positive startup
 authentication. Temporary fixtures are owned private directories; exact known
