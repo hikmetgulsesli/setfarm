@@ -28,7 +28,8 @@ this small source refinement and private fixture; no additional permission asked
   refuse. Require integer port 1–65535 except live 5432, nonempty identifier
   database/user, positive non-root OS UID and exact keys.
 - Refuse any PG-prefixed environment key, SETFARM_PG_URL or DATABASE_URL, even
-  if other explicit transport fields would override it. Never accept password,
+  if other explicit transport fields would override it. Check inherited keys in
+  a bounded prototype chain as well as own keys. Never accept password,
   URL, custom socket factory or caller-supplied client options.
 - Factory checks actual current process UID against osUid before constructing
   Postgres.js. Both pool and listener profiles construct explicit full `path`,
@@ -47,8 +48,13 @@ Pure behavior tests first fail against absent guard/empty path, then prove exact
 resolved Postgres.js options (no connection), hostile inputs and environment
 refusal, UID mismatch and pool/listener agreement. The actual opt-in private
 cluster runs the factory under `_www`, checks `inet_client_addr() IS NULL` and
-role identity, allowed INSERT/SELECT, and admin impersonation denial; repeat
-after exact restart. Scrubbed child commands never contact live 5432. Existing
+role identity, allowed INSERT/SELECT, genuine LISTEN/NOTIFY, admin impersonation,
+actual ambient-password refusal and missing Unix socket ENOENT; repeat after
+exact restart. The separated UID cannot traverse the protected Home/worktree,
+so existing esbuild bundles the actual source/dependency unchanged into a
+root-owned 0444 fixture module. Do not open repository permissions or claim this
+test bundle is a production deployment. Scrubbed child commands never contact
+live 5432. Existing
 fixture cleanup and production deny bridges remain unchanged.
 
 ## File map

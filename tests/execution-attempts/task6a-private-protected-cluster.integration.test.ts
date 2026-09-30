@@ -3,6 +3,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { randomInt } from "node:crypto";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { assertProtectedClusterPolicyV1 } from "./task6a-protected-cluster-policy.js";
 
@@ -45,6 +47,42 @@ function id(user: string, option: "-u" | "-g"): number {
 const WRITE_PROBE = `const fs=require('node:fs');
 try { fs.writeFileSync(process.argv[1], 'denied', {flag:process.argv[2]}); process.exit(0); }
 catch(e) { process.exit(e.code==='EACCES'||e.code==='EPERM'?42:43); }`;
+const SOCKET_CLIENT_PROBE = `import assert from 'node:assert/strict';
+const {createTask6aPostgresSocketSqlV1}=await import(process.argv[1]);
+const candidate=JSON.parse(process.argv[2]);
+process.env.PGPASSWORD='fixture-sentinel';
+assert.throws(()=>createTask6aPostgresSocketSqlV1(candidate,'pool'),/TASK6A_SOCKET_TRANSPORT_ENVIRONMENT_REFUSED/);
+delete process.env.PGPASSWORD;
+for(const profile of ['pool','listener']) {
+  const sql=createTask6aPostgresSocketSqlV1(candidate,profile);
+  try {
+    const rows=await sql.unsafe('SELECT current_user AS role, current_database() AS database, inet_client_addr() IS NULL AS socket');
+    assert.deepEqual(rows[0],{role:'task6a_runtime',database:'postgres',socket:true});
+    const inserted=await sql.unsafe("INSERT INTO task6a_probe.effects(note) VALUES ('socket-client') RETURNING note");
+    assert.equal(inserted[0].note,'socket-client');
+    const counted=await sql.unsafe('SELECT count(*) > 0 AS present FROM task6a_probe.effects');
+    assert.equal(counted[0].present,true);
+    await assert.rejects(sql.unsafe('SET ROLE task6a_admin'),e=>e.code==='42501');
+    if(profile==='listener') {
+      let resolveNotification;
+      const notification=new Promise(resolve=>{resolveNotification=resolve;});
+      const listening=await sql.listen('task6a_socket_fixture',payload=>resolveNotification(payload));
+      let timer;
+      try {
+        await sql.notify('task6a_socket_fixture','fixture-notification');
+        const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('fixture notification timeout')),3000);});
+        assert.equal(await Promise.race([notification,timeout]),'fixture-notification');
+      } finally {clearTimeout(timer);await listening.unlisten();}
+    }
+  } finally {await sql.end({timeout:2});}
+  const denied=createTask6aPostgresSocketSqlV1({...candidate,user:'task6a_admin'},profile);
+  try {await assert.rejects(denied.unsafe('SELECT current_user'),e=>e.code==='28000');}
+  finally {await denied.end({timeout:2});}
+  const missing=createTask6aPostgresSocketSqlV1({...candidate,port:candidate.port+1},profile);
+  try {await assert.rejects(missing.unsafe('SELECT 1'),e=>e.code==='ENOENT');}
+  finally {await missing.end({timeout:2});}
+}
+console.log('peer socket pool/listener verified');`;
 
 test("private protected PG denies old identity and scoped admin impersonation across restart", {
   skip: enabled ? false : "requires explicit isolated protected PostgreSQL OS fixture opt-in",
@@ -78,6 +116,7 @@ test("private protected PG denies old identity and scoped admin impersonation ac
   const data = path.join(home, "data"), socket = path.join(home, "socket");
   const config = path.join(home, "postgresql.conf"), hba = path.join(home, "pg_hba.conf");
   const ident = path.join(home, "pg_ident.conf"), pidFile = path.join(data, "postmaster.pid");
+  const clientModule = path.join(home, "socket-client.mjs");
   const port = randomInt(55_000, 59_000);
   const socketFile = path.join(socket, `.s.PGSQL.${port}`);
   let protectedRoot = false, uncertainLifecycle = false;
@@ -149,10 +188,10 @@ test("private protected PG denies old identity and scoped admin impersonation ac
   }
   function fileDenials(): void {
     for (const user of ["nobody", "_www"]) {
-      for (const target of [config, hba, ident, path.join(home, "replacement"),
+      for (const target of [config, hba, ident, clientModule, path.join(home, "replacement"),
         path.join(socket, "replacement"), path.join(data, "replacement")]) {
         const result = asUser(user, process.execPath, ["-e", WRITE_PROBE, target,
-          [config, hba, ident].includes(target) ? "a" : "wx"]);
+          [config, hba, ident, clientModule].includes(target) ? "a" : "wx"]);
         assert.equal(result.status, 42, `${user} must not modify ${target}: ${result.stderr}`);
       }
     }
@@ -211,12 +250,27 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     }
     assert.equal(admin("SELECT rolcanlogin FROM pg_roles WHERE rolname='task6a_owner'"), "f");
     assert.equal(admin("SELECT rolsuper OR rolcreaterole OR rolcreatedb OR rolbypassrls FROM pg_roles WHERE rolname='task6a_runtime'"), "f");
+    const client = asUser("_www", process.execPath, [
+      "--input-type=module", "-e", SOCKET_CLIENT_PROBE,
+      new URL(`file://${clientModule}`).href,
+      JSON.stringify({ schema: "setfarm.postgres-socket-transport.v1", socketDirectory: socket,
+        port, database: "postgres", user: "task6a_runtime", osUid: clientUid })], 30_000);
+    assert.equal(client.status, 0, `actual source connector failed: ${client.stderr}`);
+    assert.equal(client.stdout.trim(), "peer socket pool/listener verified");
     fileDenials();
   }
 
   try {
     fs.mkdirSync(data, { mode: 0o700 }); fs.mkdirSync(socket, { mode: 0o710 });
     dataAnchor = fs.lstatSync(data, { bigint: true });
+    // The excluded UID cannot traverse the user's Home/worktree. Bundle the
+    // actual source and dependency unchanged; never relax repository permissions.
+    const esbuild = createRequire(import.meta.url)("esbuild") as typeof import("esbuild");
+    const bundle = esbuild.buildSync({ entryPoints: [fileURLToPath(new URL(
+      "../../src/internal-production/task6a-postgres-socket-transport-v1.ts", import.meta.url))],
+      bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent" });
+    assert.equal(bundle.outputFiles.length, 1);
+    fs.writeFileSync(clientModule, bundle.outputFiles[0].contents, { mode: 0o444 });
     fs.writeFileSync(hba, "local all task6a_admin peer map=task6a_fixture\nlocal all task6a_runtime peer map=task6a_fixture\nlocal all all reject\nlocal replication all reject\nhost all all 0.0.0.0/0 reject\nhost all all ::0/0 reject\nhost replication all 0.0.0.0/0 reject\nhost replication all ::0/0 reject\n", { mode: 0o444 });
     fs.writeFileSync(ident, "task6a_fixture _postgres task6a_admin\ntask6a_fixture _www task6a_runtime\n", { mode: 0o444 });
     fs.writeFileSync(config, `data_directory='${data}'\nhba_file='${hba}'\nident_file='${ident}'\nlisten_addresses=''\nport=${port}\nunix_socket_directories='${socket}'\nunix_socket_permissions=0777\nunix_socket_group=''\nshared_buffers='16MB'\nmax_connections=10\n`, { mode: 0o444 });
@@ -225,14 +279,14 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     rootCommand("/usr/sbin/chown", ["_postgres:_postgres", data]);
     rootCommand("/usr/sbin/chown", ["_postgres:_www", socket]);
     rootCommand("/bin/chmod", ["0710", socket]);
-    rootCommand("/usr/sbin/chown", ["root:wheel", config, hba, ident]);
-    rootCommand("/bin/chmod", ["0444", config, hba, ident]);
+    rootCommand("/usr/sbin/chown", ["root:wheel", config, hba, ident, clientModule]);
+    rootCommand("/bin/chmod", ["0444", config, hba, ident, clientModule]);
     rootCommand("/bin/chmod", ["0711", home]);
     rootCommand("/usr/sbin/chown", ["root:wheel", home]); protectedRoot = true;
     exactHome();
     assert.equal(fs.lstatSync(socket).uid, serverUid);
     assert.equal(fs.lstatSync(socket).gid, clientGid);
-    for (const file of [config, hba, ident]) {
+    for (const file of [config, hba, ident, clientModule]) {
       const stat = fs.lstatSync(file);
       assert.equal(stat.uid, 0); assert.equal(stat.mode & 0o777, 0o444);
     }

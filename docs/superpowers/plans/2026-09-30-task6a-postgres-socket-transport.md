@@ -26,15 +26,41 @@ Create source `src/internal-production/task6a-postgres-socket-transport-v1.ts` a
 **Interfaces:** `parseTask6aPostgresSocketTransportV1(value: unknown)` returns a frozen typed transport candidate. `buildTask6aPostgresSocketOptionsV1(value: unknown, profile: 'pool'|'listener', environment)` returns frozen explicit client options. `createTask6aPostgresSocketSqlV1(value: unknown, profile)` validates actual process UID/environment and resolved options before returning lazy SQL. None authenticate a descriptor or enable admission.
 
 - [x] Inspect dependency transport code and existing runtime pool/LISTEN/MC defaults; identify the absent Unix path boundary. Baseline policy pure tests 2/2 passed, prior merged-main build `ed1fde26` is clean.
-- [ ] Write pure tests with literal full socket filename, user/database/port and profiles; malformed directory/schema/PG/URL/password and wrong UID cases.
+- [x] Write pure tests with literal full socket filename, user/database/port and profiles; malformed directory/schema/PG/URL/password and wrong UID cases.
   Example: `assert.equal(sql.options.path, '/private/tmp/task6a-socket/.s.PGSQL.55437')`.
-- [ ] Run intended RED against the empty guard/path implementation; confirm wrong path acceptance/refusal assertions fail, without any DB connection.
-- [ ] Implement exact-key validator, canonical absolute directory validation and no-environment guard. Construct Postgres.js only after current UID agreement, then verify resolved path/user/db/port/password before any query.
-- [ ] Run pure tests GREEN. In the private fixture run a scrubbed `_www` Node child importing the source factory: `SELECT current_user, inet_client_addr() IS NULL AS socket` and allowed INSERT/SELECT; admin role request must receive 28000 denial. Repeat pool/listener transport and negative probes after restart.
-- [ ] Run privileged fixture 3/3 or expanded count, default skip/runner, focused pure suite, strict TS including test files, source contracts and diff check. Independently review; fix and rerun findings.
+- [x] Run intended RED against the empty guard/path implementation; confirm wrong path acceptance/refusal assertions fail, without any DB connection.
+- [x] Implement exact-key validator, canonical absolute directory validation and no-environment guard. Construct Postgres.js only after current UID agreement, then verify resolved path/user/db/port/password before any query.
+- [x] Run pure tests GREEN. In the private fixture run a scrubbed `_www` Node child importing the actual source-factory bundle: `SELECT current_user, inet_client_addr() IS NULL AS socket` and allowed INSERT/SELECT; admin role request must receive 28000 denial. Repeat pool/listener transport and negative probes after restart, plus genuine LISTEN/NOTIFY, missing socket ENOENT and actual environment refusal.
+- [x] Run privileged fixture 3/3 or expanded count, default skip/runner, focused pure suite, strict TS including test files, source contracts and diff check. Independently review; fix and rerun findings.
 - [ ] Commit/push, exact-head GitHub review/security, reviewed PR merge without deleting preserved branches/worktrees.
 - [ ] Fast-forward clean standby main, ordinary guarded build and final BUILD_INFO/HTTP proof. Continue protected descriptor and irreversible restricted pool/LISTEN wiring; never claim primitive success is live cutover.
 
 ## Evidence
 
 Record exact RED/GREEN, private lifecycle, review/delivery and clean-main build here; do not infer full application-suite or host-exclusion proof.
+
+- Intended initial RED: four failures (empty full socket path, missing validation,
+  missing environment and UID refusal). GREEN 4/4 against the implementation,
+  without database queries. Additional inherited PGPASSWORD RED: one of four
+  failed with Missing expected exception, then bounded prototype check GREEN4/4.
+- First actual connector attempt failed because `_www` cannot traverse the
+  user's protected Home/worktree. It was a fixture-loading failure, not transport
+  RED; postmaster and exact root were still stopped/removed. No repo permission
+  change. Existing esbuild compiles the actual source/dependency unchanged into
+  a root-owned 0444 temporary fixture module; Node executes only as `_www`, never
+  root. This fixture bundle is not a production deployment/build handoff.
+- Final expanded private run: 3/3 pass, zero skips, exit0 (4.570s), root
+  `/private/tmp/setfarm-task6a-protected-pg.CsKHQK`, verified postmasters48619 and
+  48793. Actual peer socket roles/null client address, pool/listener SELECT/INSERT,
+  LISTEN/NOTIFY roundtrip, actual PGPASSWORD refusal, admin 28000 and missing
+  Unix socket ENOENT passed before and after restart. Exact processes stopped
+  and temporary tree removed; independently confirmed absent.
+- Default test discovery: 6 pass, one explicit privileged skip; no effects.
+  Strict TS including actual test/helper files, English1847/path943, version,
+  migration digests,12MC artifacts and diff checks passed. Independent final
+  delta review found no remaining primitive-only blocker; whole app-suite,
+  protected descriptor/runtime wiring and live exclusion are not claimed.
+- The complete existing internal-production pure suite also passed 372/372,
+  zero skips/failures, exit0 (26.488s). Source strict TS no-emit passed after the
+  final delta. Reviewed changes remain primitive-only, with no existing runtime
+  pool/default modification. A normal clean-source build is the delivery gate.
