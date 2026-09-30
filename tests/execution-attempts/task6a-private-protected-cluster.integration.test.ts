@@ -7,22 +7,38 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { assertProtectedClusterPolicyV1 } from "./task6a-protected-cluster-policy.js";
+import { prepareTask6aProtectedNativeFixtureV1, type ProtectedNativeFixtureV1 } from "./task6a-protected-native-fixture-v1.js";
+import { assertTask6aNativeCleanupCertainV1, markTask6aNativeReleaseUncertainV1 } from "./task6a-native-load-commands-v1.js";
 
 // Standalone OS/HBA rehearsal: never import the ambient database test harness.
 // The root-capable driving UID is trusted; nobody/_www are the excluded actors.
 // Homebrew tools are not a protected production deployment identity.
 const enabled = process.env.SETFARM_TASK6A_TEST_PROTECTED_PG_FIXTURE === "1";
-const pgBin = "/opt/homebrew/opt/postgresql@17/bin";
+const nativeEnabled = process.env.SETFARM_TASK6A_TEST_PROTECTED_NATIVE_FIXTURE === "1";
+if (process.env.SETFARM_TASK6A_TEST_PROTECTED_NATIVE_FIXTURE !== undefined) {
+  assert.equal(nativeEnabled && enabled, true, "native fixture requires both explicit opt-ins");
+}
+const defaultPgBin = "/opt/homebrew/opt/postgresql@17/bin";
 const cleanEnv = Object.freeze({ PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" });
 type Result = Readonly<{ status: number | null; stdout: string; stderr: string }>;
+let synchronousChildUncertain=false;
+function definiteFixtureChildClose(code:number|null,signal:NodeJS.Signals|null):boolean {
+  if(code!==null&&Number.isInteger(code)&&signal===null)return true;
+  markTask6aNativeReleaseUncertainV1();return false;
+}
+function fixtureTimeout(message:string):Error {
+  markTask6aNativeReleaseUncertainV1();return Error(`${message}; retain exact fixture`);
+}
 
 function command(executable: string, args: string[], timeout = 15_000): Result {
   const result = spawnSync(executable, args, {
     env: cleanEnv, cwd: "/private/tmp", encoding: "utf8", timeout,
     maxBuffer: 1024 * 1024,
   });
+  if(result.error||result.signal!==null||result.status===null)synchronousChildUncertain=true;
   assert.equal(result.error, undefined, `fixture command failed: ${executable}`);
   assert.equal(result.signal, null, `fixture command interrupted: ${executable}`);
+  assert.notEqual(result.status,null,`fixture command completion uncertain: ${executable}`);
   return Object.freeze({ status: result.status, stdout: result.stdout, stderr: result.stderr });
 }
 function checked(executable: string, args: string[], timeout?: number): string {
@@ -30,12 +46,13 @@ function checked(executable: string, args: string[], timeout?: number): string {
   assert.equal(result.status, 0, `${executable}: ${result.stderr}`);
   return result.stdout.trim();
 }
-function asUser(user: string, executable: string, args: string[], timeout?: number): Result {
+function asUserBase(user: string, executable: string, args: string[], timeout?: number,
+  environment:Readonly<Record<string,string>>={}): Result {
   return command("/usr/bin/sudo", ["-n", "-u", user, "/usr/bin/env", "-i",
-    "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", executable, ...args], timeout);
+    "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C",...Object.entries(environment).map(([key,value])=>`${key}=${value}`), executable, ...args], timeout);
 }
 function asChecked(user: string, executable: string, args: string[], timeout?: number): string {
-  const result = asUser(user, executable, args, timeout);
+  const result = asUserBase(user, executable, args, timeout);
   assert.equal(result.status, 0, `${user} ${executable}: ${result.stderr}`);
   return result.stdout.trim();
 }
@@ -158,9 +175,22 @@ assert.throws(()=>physical.observe(),/TASK6A_SOCKET_PHYSICAL_REFUSED/);
 assert.throws(()=>physical.recheck(),/TASK6A_SOCKET_PHYSICAL_REFUSED/);
 console.log('peer transport and single backend lifecycle verified');`;
 
+const NATIVE_IMAGE_PROBE=`import assert from 'node:assert/strict';
+import {createHash,randomBytes} from 'node:crypto';import {createInterface} from 'node:readline';
+assert.equal(createHash('sha256').update('abc').digest('hex'),'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+assert.equal(randomBytes(32).length,32);assert.equal(new Intl.Collator('tr').resolvedOptions().locale,'tr');
+const {createTask6aPostgresSocketSqlV1}=await import(process.argv[1]);
+const sql=createTask6aPostgresSocketSqlV1(JSON.parse(process.argv[2]),'pool');let reserved;
+try {reserved=await sql.reserve();
+const facts=(await reserved.unsafe("SELECT pg_backend_pid() AS pid, task6a_probe.native_add(40,2) AS result, to_tsvector('english','running')::text AS dictionary"))[0];
+assert.equal(facts.result,42);assert.equal(facts.dictionary,"'run':1");
+console.log(JSON.stringify({pid:process.pid,backendPid:facts.pid,uid:process.getuid(),euid:process.geteuid(),executable:process.execPath}));
+for await(const line of createInterface({input:process.stdin})){assert.equal(line,'finish');break;}
+}finally{reserved?.release();await sql.end({timeout:2});}`;
+
 test("private protected PG denies old identity and scoped admin impersonation across restart", {
   skip: enabled ? false : "requires explicit isolated protected PostgreSQL OS fixture opt-in",
-  timeout: 180_000,
+  timeout: nativeEnabled ? 600_000 : 180_000,
 }, async (t) => {
   assert.equal(process.platform, "darwin");
   const runnerUid = process.getuid!();
@@ -168,6 +198,17 @@ test("private protected PG denies old identity and scoped admin impersonation ac
   const oldUid = id("nobody", "-u"), clientGid = id("_www", "-g");
   assert.equal(new Set([runnerUid, serverUid, clientUid, oldUid]).size, 4);
   assert.ok(runnerUid > 0);
+  let native:ProtectedNativeFixtureV1|undefined;
+  let pgBin=defaultPgBin,fixtureNode=process.execPath;
+  function asUser(user:string,executable:string,args:string[],timeout?:number):Result {
+    native?.recheck();
+    const result=asUserBase(user,executable,args,timeout,native?.environment);
+    native?.recheck();return result;
+  }
+  function asChecked(user:string,executable:string,args:string[],timeout?:number):string {
+    const result=asUser(user,executable,args,timeout);assert.equal(result.status,0,`${user} ${executable}: ${result.stderr}`);
+    return result.stdout.trim();
+  }
   assert.equal(checked("/usr/bin/sudo", ["-n", "/usr/bin/id", "-u"]), "0");
   for (const user of ["_postgres", "_www", "nobody"]) {
     assert.equal(asChecked(user, "/usr/bin/id", ["-u"]), String(id(user, "-u")));
@@ -195,6 +236,7 @@ test("private protected PG denies old identity and scoped admin impersonation ac
   const socketFile = path.join(socket, `.s.PGSQL.${port}`);
   let protectedRoot = false, uncertainLifecycle = false;
   let observerLifecycleUncertain = false, observerModeUncertain = false;
+  let nativeChildUncertain=false;
   let server: Readonly<{ pid: number; identity: string; pidFile: string }> | undefined;
   let dataAnchor: fs.BigIntStats | undefined;
   let failure: unknown;
@@ -211,6 +253,11 @@ test("private protected PG denies old identity and scoped admin impersonation ac
   }
   function rootCommand(executable: string, args: string[]): string {
     exactHome();
+    if(executable==="/usr/bin/vmmap"){
+      const result=command("/usr/bin/sudo",["-n",executable,...args]);
+      assert.equal(result.status,0,result.stderr);assert.equal(result.stderr,"","VM map warnings/errors refuse classification");
+      return result.stdout.trim();
+    }
     return checked("/usr/bin/sudo", ["-n", executable, ...args]);
   }
   function sqlAs(user: string, role: string, sql: string): Result {
@@ -265,7 +312,7 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     for (const user of ["nobody", "_www"]) {
       for (const target of [config, hba, ident, clientModule, path.join(home, "replacement"),
         path.join(socket, "replacement"), path.join(data, "replacement")]) {
-        const result = asUser(user, process.execPath, ["-e", WRITE_PROBE, target,
+        const result = asUser(user, fixtureNode, ["-e", WRITE_PROBE, target,
           [config, hba, ident, clientModule].includes(target) ? "a" : "wx"]);
         assert.equal(result.status, 42, `${user} must not modify ${target}: ${result.stderr}`);
       }
@@ -275,7 +322,7 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     exactServer();
     observerLifecycleUncertain = true; // Burn before spawn; only CLOSE proves completion.
     const child = spawn("/usr/bin/sudo", ["-n", "-u", "_www", "/usr/bin/env", "-i",
-      "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", process.execPath, "--input-type=module", "-e",
+      "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C",...Object.entries(native?.environment??{}).map(([key,value])=>`${key}=${value}`), fixtureNode, "--input-type=module", "-e",
       PHYSICAL_HOLD_PROBE, new URL(`file://${clientModule}`).href,
       JSON.stringify({ schema: "setfarm.postgres-socket-transport.v1", socketDirectory: socket,
         port, database: "postgres", user: "task6a_runtime", osUid: clientUid }),
@@ -286,15 +333,15 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     child.stdout.on("data", chunk => { output += chunk; });
     child.stderr.on("data", chunk => { errors += chunk; });
     child.on("error", error => { spawnError = error; });
-    const done = new Promise<number | null>(resolve => child.once("close", code => {
-      finished = true; observerLifecycleUncertain = false; resolve(code);
+    const done = new Promise<number | null>(resolve => child.once("close", (code,signal) => {
+      finished = true; observerLifecycleUncertain = !definiteFixtureChildClose(code,signal); resolve(code);
     }));
     async function waitLines(lines: string): Promise<void> {
       const deadline = Date.now() + 3000;
       while (!output.endsWith(lines)) {
         assert.equal(spawnError, undefined); assert.equal(finished, false, errors);
         assert.ok(output.length < 2048 && errors.length < 2048, "bounded child output required");
-        assert.ok(Date.now() < deadline, "held physical evidence response timeout");
+        if(Date.now()>=deadline)throw fixtureTimeout("held physical evidence response timeout");
         await new Promise(resolve => setTimeout(resolve, 10));
       }
     }
@@ -333,7 +380,7 @@ test("private protected PG denies old identity and scoped admin impersonation ac
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => {
-            reject(Error("observer child close uncertain; retain exact fixture"));
+            reject(fixtureTimeout("observer child close uncertain"));
           }, 3000); });
           assert.equal(await Promise.race([done, timeout]), 0, errors); assert.equal(errors, "");
         } finally { clearTimeout(timer); }
@@ -402,7 +449,7 @@ test("private protected PG denies old identity and scoped admin impersonation ac
       const [dev, ino, uid, gid, octalMode, birthtimeSeconds, nlink] = fields;
       return [key, { dev, ino, uid, gid, mode: String(BigInt(`0o${octalMode}`)), birthtimeSeconds, nlink }];
     }));
-    const client = asUser("_www", process.execPath, [
+    const client = asUser("_www", fixtureNode, [
       "--input-type=module", "-e", SOCKET_CLIENT_PROBE,
       new URL(`file://${clientModule}`).href,
       JSON.stringify({ schema: "setfarm.postgres-socket-transport.v1", socketDirectory: socket,
@@ -415,9 +462,49 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     fileDenials();
   }
 
+  async function nativeEvidence():Promise<void>{
+    if(!native)return;
+    exactServer();native.recheck();
+    native.verifyImages(server!.pid,serverUid,[path.join(pgBin,"postgres")],rootCommand);
+    nativeChildUncertain=true;
+    const child=spawn("/usr/bin/sudo",["-n","-u","_www","/usr/bin/env","-i","PATH=/usr/bin:/bin","LANG=C","LC_ALL=C",
+      ...Object.entries(native.environment).map(([key,value])=>`${key}=${value}`),fixtureNode,"--input-type=module","-e",NATIVE_IMAGE_PROBE,
+      new URL(`file://${clientModule}`).href,JSON.stringify({schema:"setfarm.postgres-socket-transport.v1",socketDirectory:socket,
+        port,database:"postgres",user:"task6a_runtime",osUid:clientUid})],{cwd:"/private/tmp",env:cleanEnv,stdio:["pipe","pipe","pipe"]});
+    let output="",errors="",finished=false,spawnError:Error|undefined;
+    child.stdout.setEncoding("utf8");child.stderr.setEncoding("utf8");
+    child.stdout.on("data",chunk=>{output+=chunk;});child.stderr.on("data",chunk=>{errors+=chunk;});
+    child.on("error",error=>{spawnError=error;});
+    const done=new Promise<number|null>(resolve=>child.once("close",(code,signal)=>{
+      finished=true;nativeChildUncertain=!definiteFixtureChildClose(code,signal);resolve(code);}));
+    try{
+      const deadline=Date.now()+5000;
+      while(!output.endsWith("\n")){
+        assert.equal(spawnError,undefined);assert.equal(finished,false,errors);assert.ok(output.length<2048&&errors.length<2048);
+        if(Date.now()>=deadline)throw fixtureTimeout("native observer ready timeout");await new Promise(resolve=>setTimeout(resolve,10));
+      }
+      const facts=JSON.parse(output.trim());assert.equal(facts.uid,clientUid);assert.equal(facts.euid,clientUid);
+      assert.equal(facts.executable,fixtureNode);assert.ok(Number.isSafeInteger(facts.backendPid)&&facts.backendPid>1);
+      native.verifyImages(facts.pid,clientUid,[fixtureNode],rootCommand);
+      native.verifyImages(facts.backendPid,serverUid,[path.join(pgBin,"postgres"),path.join(native.root,"opt/homebrew/lib/postgresql@17/plpgsql.dylib"),
+        path.join(native.root,"opt/homebrew/lib/postgresql@17/dict_snowball.dylib")],rootCommand);
+      t.diagnostic(`protected native ${native.imageCount} images/${native.memberCount} files; Node ${facts.pid}; backend ${facts.backendPid}`);
+    }finally{
+      child.stdin.end("finish\n");let timer:ReturnType<typeof setTimeout>|undefined;
+      try{const timeout=new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(fixtureTimeout("native child close uncertain")),5000);});
+        assert.equal(await Promise.race([done,timeout]),0,errors);assert.equal(errors,"");
+      }finally{clearTimeout(timer);}
+    }
+    native.recheck();exactServer();
+  }
+
   try {
     fs.mkdirSync(data, { mode: 0o700 }); fs.mkdirSync(socket, { mode: 0o710 });
     dataAnchor = fs.lstatSync(data, { bigint: true });
+    if(nativeEnabled){
+      const prepared=prepareTask6aProtectedNativeFixtureV1(home);prepared.protect(rootCommand);
+      native=prepared;pgBin=prepared.pgBin;fixtureNode=prepared.node;
+    }
     // The excluded UID cannot traverse the user's Home/worktree. Bundle the
     // actual source and dependency unchanged; never relax repository permissions.
     const esbuild = createRequire(import.meta.url)("esbuild") as typeof import("esbuild");
@@ -439,6 +526,7 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     rootCommand("/bin/chmod", ["0711", home]);
     rootCommand("/usr/sbin/chown", ["root:wheel", home]); protectedRoot = true;
     exactHome();
+    native?.sealParent();
     assert.equal(fs.lstatSync(socket).uid, serverUid);
     assert.equal(fs.lstatSync(socket).gid, clientGid);
     for (const file of [config, hba, ident, clientModule]) {
@@ -446,6 +534,25 @@ test("private protected PG denies old identity and scoped admin impersonation ac
       assert.equal(stat.uid, 0); assert.equal(stat.mode & 0o777, 0o444);
     }
     fileDenials();
+    if(native){
+      const denialTargets:readonly string[]=native.denialTargets;
+      for(const user of ["_postgres","_www","nobody"]){
+        for(const target of denialTargets){
+          const stat:fs.Stats=fs.lstatSync(target);const probe:string=stat.isDirectory()?path.join(target,"forbidden-new-file"):target;
+          assert.equal(asUser(user,fixtureNode,["-e",WRITE_PROBE,probe,stat.isDirectory()?"wx":"a"]).status,42,
+            `${user} must not modify protected native member`);
+        }
+      }
+      native.recheck();
+      // Unprivileged system shell waits/reaps the deliberate dyld abort and
+      // disables core files only in this child. All arguments stay positional.
+      const negative=asUser("_www","/bin/sh",["-c",'ulimit -c 0; "$@"; code=$?; exit "$code"',
+        "fixture-no-core",native.negativeNode,"--version"],5000);
+      assert.equal(negative.status,134,"only the deliberately missing-lib dyld abort is expected");
+      assert.match(negative.stderr,/Library not loaded:.*libnode|libnode.*not found/s);
+      assert.equal(negative.stdout,"");native.recheck();
+      assert.match(asChecked("_www",fixtureNode,["--version"]),/^v22\.23\.1$/);
+    }
     asChecked("_postgres", path.join(pgBin, "initdb"), ["-D", data,
       "-U", "task6a_admin", "--auth-local=peer", "--auth-host=reject", "--no-locale", "--no-instructions"], 30_000);
     start();
@@ -461,14 +568,18 @@ RESET ROLE;
 GRANT USAGE ON SCHEMA task6a_probe TO task6a_runtime;
 GRANT SELECT,INSERT ON task6a_probe.effects TO task6a_runtime;
 GRANT USAGE ON SEQUENCE task6a_probe.effects_id_seq TO task6a_runtime;`);
-    boundary(); await physicalRevocation(); stop(); start(); boundary(); await physicalRevocation(); stop();
+    if(native)admin("CREATE FUNCTION task6a_probe.native_add(a int,b int) RETURNS int LANGUAGE plpgsql AS 'BEGIN RETURN a+b; END'; GRANT EXECUTE ON FUNCTION task6a_probe.native_add(int,int) TO task6a_runtime;");
+    boundary();await nativeEvidence(); await physicalRevocation(); stop(); start(); boundary();await nativeEvidence(); await physicalRevocation(); stop();
   } catch (error) {
     failure = error; throw error;
   } finally {
     try {
+      assert.equal(synchronousChildUncertain,false,`synchronous child completion uncertain; retain ${home}`);
+      assertTask6aNativeCleanupCertainV1();
       assert.equal(uncertainLifecycle, false, `ambiguous lifecycle; retain ${home}`);
       assert.equal(observerLifecycleUncertain, false, `observer completion uncertain; retain ${home}`);
       assert.equal(observerModeUncertain, false, `observer mode restoration uncertain; retain ${home}`);
+      assert.equal(nativeChildUncertain,false,`native child completion uncertain; retain ${home}`);
       if (server) stop();
       exactHome();
       if (protectedRoot) {
