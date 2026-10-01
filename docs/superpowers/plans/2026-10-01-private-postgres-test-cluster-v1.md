@@ -202,9 +202,9 @@ or error/ENV serialization, no repair/reopen/adoption/detach/signal fallback.
   `node --test scripts/__tests__/private-postgres-test-cluster.test.js`
   actual28PASS0FAIL0SKIP233.287ms. Package baseline also selected unchanged edges.
   Actual complete package4PASS0FAIL0SKIP1403.487ms, definiteexit0.
-- [ ] Commit canonical refined design/plan before implementation. Request exact
+- [x] Commit canonical refined design/plan before implementation. Request exact
   independent source-only design review; resolve contradictions explicitly.
-- [ ] Write actual-file missing-module AssertionRED. Test-owned mkdtemp under
+- [x] Write actual-file missing-module AssertionRED. Test-owned mkdtemp under
   the fixed prefix,0700 and held directoryFD; retain files. No PG/root effect:
   ```js
   assert.ok(existsSync(MODULE),'private test journal implementation missing');
@@ -213,7 +213,8 @@ or error/ENV serialization, no repair/reopen/adoption/detach/signal fallback.
   const rootFd=openSync(root,constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
   const journal=createPrivateTestJournalV1(root,rootFd);
   assert.equal(journal.control('journal-opened',{root}),true);
-  assert.equal(journal.output('test','stdout',Buffer.from([0,255,10])),true);
+  assert.equal(journal.control('initdb'),true);
+  assert.equal(journal.output('initdb','stdout',Buffer.from([0,255,10])),true);
   const reader=createPrivateTestJournalReaderV1();
   const records=reader.write(readFileSync(root+'/transcript.journal'));
   assert.deepEqual(records.find(r=>r.kind==='output').payload,Buffer.from([0,255,10]));
@@ -222,7 +223,7 @@ or error/ENV serialization, no repair/reopen/adoption/detach/signal fallback.
   Derive wire/digest expectations independently with literal JSON and node:crypto,
   not the journal's encoder. Test exclusive existing file/symlink refusal before
   any write; exactfile0600/nlink1; root/file drift burns. No cleanup of old data.
-- [ ] Add every-byte split/truncated-terminal/after-terminal consumers, coherent
+- [x] Add every-byte split/truncated-terminal/after-terminal consumers, coherent
   bad sequence/length/digest/base64/key/size/unknown kind/channel, contradictory
   actual result flags, zero-output prefix and nonzero test result. No whole
   transcript accumulation: reader chunks at most128KiB; scaled IN-MEMORY limit
@@ -239,7 +240,7 @@ or error/ENV serialization, no repair/reopen/adoption/detach/signal fallback.
   early server exit remain known diagnostics but cannot revive eligibility.
   Exact fields/enums and
   framing keys are fixed in spec, not configurable test limits.
-- [ ] Add actual fs boundary fault subprocess tests. Wrap builtin write/fsync/
+- [x] Add actual fs boundary fault subprocess tests. Wrap builtin write/fsync/
   close IN MEMORY before import, preserve actual owned files and complete
   observable writes where claimed. Short write/EINTR uncertainty retains the
   torn tail and reader reports incomplete. Fsync/close failure makes writer
@@ -250,15 +251,58 @@ or error/ENV serialization, no repair/reopen/adoption/detach/signal fallback.
   fictional partial tail. Check immediate journal FD ownership/once-only close
   on partial construction and identity drift; borrowed directory FD remains
   usable, and ambiguous close is never retried.
-- [ ] Implement minimal inert framing/file writer/reader/mirror only after RED.
+- [x] Implement minimal inert framing/file writer/reader/mirror only after RED.
   No subprocess,SQL or password access from module. Full-write requirement,
   fixed caps, private FD identity, separate I/O and completeness burn, fsync
   checkpoints, per-call bounded reader record results. Run every earlier RED
   GREEN; coherent missing digest/terminal/size/sticky-state mutants must reach
   forbidden consumer results, not merely pass source-text assertions.
-- [ ] Real Writable/EventEmitter mirror tests: sync throw, async EPIPE/close,
+- [x] Real Writable/EventEmitter mirror tests: sync throw, async EPIPE/close,
   first backpressure disables mirroring exactly once; journal persists first,
   no child signal/cancellation callback and no unbounded display queue.
+
+### Task4 evidence ledger (2026-10-01, ordinary unit effects only)
+
+Docs-first00d29854 refined to1d815114. Independent source-only design review
+cleared causal order, owned/borrowed FD distinction and complete bytes versus
+fsync/future-close after the explicit completeness-burn/FD clarification.
+No implementation/invocation authority inferred from that design review.
+
+Actual missing-module AssertionRED31/0PASS52.501ms; minimal implementation
+then31PASS433.170ms after correcting the real Writable fixture: synchronous
+draining does not create backpressure, deferred completion does. New reserved
+stage/authority override and getter consumers produced four semantic REDs.
+Independent review found coercible stage/signal and checkpoint overrun; actual
+three coercion REDs and encoded unsynced326104bytes versus262144 bound were
+reproduced. Strict literal fields/snapshot/catches and PRE-frame fsync fixed them.
+Filesystem fault harness first required two test-only fixes: post-close FD reuse
+by readFileSync is not a second journal-owned close, and restoring all builtin
+fs properties fails on a getter-only property. Restore only wrapped functions
+before diagnostic read; these harness errors are NOT production defect proofs.
+Seven actual FS consumers now cover constructor fstat/fsync, creation mode drift,
+short write/EINTR, completed-frame fsync and post-terminal ambiguous close.
+Creation mode drift had its own semanticRED1 before full final identity recheck.
+
+Combined journal45 plus unchanged cluster28:73PASS0FAIL0SKIP853.757ms.
+Expanded journal51 plus cluster28:79PASS0FAIL0SKIP943.518ms. Latest journal-only
+54PASS0FAIL0SKIP968.909ms, definiteexit0, complete test output read. Actual files
+and roots retained, borrowed directory FDs usable, no PostgreSQL constructor,
+password, SQL, subprocess server or live/native effect. Child-boundary fault
+subprocesses are ordinary Node-only and tests own only their new journal files.
+Scaled IN-MEMORY cap consumers and coherent output-cap bypass are explicitly
+NOT an actual257MiB proof. Final Task4 source-only review found no Critical or
+Important issue at moduleSHA
+7efd83d45636d0f3970aff81637e3832ec73907acf7ef9dcbef509dee24f32df and testSHA
+0445e4001f313a9a841041fd0c96824896bed47c0f524804deffe957d5100d88.
+That54-test candidate's one Minor gap (every terminal-prefix truncation) was
+subsequently closed, source unchanged, new testSHA
+73cbb502c386adff99936a35a93206aa0d032ee1b24ee5656c88f94b502a6329.
+Fresh combined54journal+28cluster82PASS0FAIL0SKIP1005.479ms, definiteexit0,
+complete output read. Noemit0; version2.3.79, English1909/path963, check-only
+migration digests and Mission Control12 contracts each definiteexit0. Final
+Minor-delta read-only check confirmed exactly the five-line addition, no remaining
+finding; source-only Task4 commit readiness cleared. Task5 wiring and Task6 invocation remain
+unimplemented/unverified.
 
 ### Task5: Wire observed constructor lifecycle without relaxing ownership
 
