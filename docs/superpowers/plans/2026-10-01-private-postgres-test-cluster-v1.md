@@ -306,6 +306,24 @@ unimplemented/unverified.
 
 ### Task5: Wire observed constructor lifecycle without relaxing ownership
 
+**Interfaces:** Existing wrapper exports inert
+attachPrivateTestChildJournalV1(child,role,secrets,journal,mirrors), event/stream
+binding only. Actual unknown child PID is null and ineligible, never fabricated.
+No extra files beyond mapped eight cumulative paths. Module schema normal PID
+requirement retains nullable failure diagnostics only. Pre-dispatch health
+gates forbid password/new children, not already-owned draining or observation.
+
+**First RED consumers:** Actual wrapper entry receives in-memory fsync failure
+only on its exclusive new journal FD; forbidden password-open/spawn sentinel
+must remain absent. Stub only external version/Git commands, remove test loader
+environment before host guard, retain actual filesystem/ordinary UID checks.
+No actual PG/version subprocess or password creation. Separate binding consumer
+starts an actual new journal and event/Readable child boundary; every actual
+password/URL split traverses real redactor→writer→reader before mirror. EPIPE/
+backpressure/throw affect only display; no callback kill/cancel. Null PID failed
+spawn observations are retained, no invented exit/EOF; coherent terminal cannot
+turn them positive. These tests do not authorize genuine dirty-source execution.
+
 - [ ] Extend existing actual wrapper-entry test harness with forbidden subprocess
   sentinel: journal creation/fsync failure refuses before password/child effects.
   Keep imports inert and CLI/default/ambientPG guards unchanged. The harness

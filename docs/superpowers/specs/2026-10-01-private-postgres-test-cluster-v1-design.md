@@ -201,8 +201,11 @@ server-definitely-closed,terminal-unavailable,refused. Field names are limited t
 root,port,serverPid,testPid,childRole,channel,pid,code,signal,sample,passed,
 testsStarted,reason,serverClosed,retained,operation,privateDbQuiescent,
 productionAuthority. Root uses the
-fixed prefix; role/channel their enums; IDs positive safe integers; port1024..
-65535 except5432; code null or integer-4095..255 (negative spawn failures never
+fixed prefix; role/channel their enums; IDs positive safe integers, except
+child-exit/child-close pid permits null for actually unavailable ChildProcess PID
+(e.g. failed spawn). Null PID is a retained unknown, never normal/positive.
+port1024..
+  65535 except5432; code null or integer-4095..255 (negative spawn failures never
 qualify as normal outcomes); signal null or a node:os.constants.signals name;
 sample0/1; flag fields actual booleans. Reason is a fixed journal/cluster/mirror
 reason enum, never raw exception text or open prefix matching. Closed reasons
@@ -293,6 +296,45 @@ read, cleanup/deletion or production selection. Exact reviewed source and fresh
 pre-effect clearance are required for a NEW ordinary invocation. Read every
 complete output and actual result before delivery/full npm claims; missing
 evidence remains missing. All old uncertain runs remain historical, unverified.
+
+### Constructor binding details (Task5)
+
+The existing wrapper additionally exports inert
+attachPrivateTestChildJournalV1(child,role,secrets,journal,mirrors): bind only the
+already-captured child's actual exit/close/error and its two stream callbacks;
+no spawn/signal/cancel/unref/PID lookup/SQL effect. Actual absent PID is null,
+not invented. mirrors has stdout/stderr best-effort writer objects. Tests use
+event/stream boundaries and actual new journal files; these are not an actual
+PostgreSQL invocation or protected child ownership proof.
+
+Per-stream redaction precedes journal.output, which precedes display. A failed
+persistence attempt disables that output's display but continues bounded
+draining without queues. End flushes the redactor before an actual stream-end
+control; error/close without end flushes safely and records stream-error, never
+a synthetic EOF. Any callback input/error makes positive eligibility false,
+never throws raw errors or grants shutdown. Terminal-unavailable is a fixed
+nonfatal display fact, not a child error or completeness burn. Retain at most
+one fixed unavailable reason for each terminal channel before journal creation,
+and record those after journal-opened; do not recursively mirror that callback.
+
+Stage controls are durable intent before effects. Journal creation and durable
+journal-opened precede port/password/child effects. Before password, initdb,
+server and test dispatch require healthy journal and successful durable intent;
+failure cannot start a new child or create a password. After already-owned
+effects, journal failure does not cancel draining or revoke the existing actual
+close/quiescence gates: bounded identity/quiescence observations, own admin end
+and captured-server settlement may still proceed only under those original
+gates. They cannot make the incomplete journal a success. Persist actual two
+quiescence samples and admin-ended settlement; normal final finish requires
+healthy ordered observations and actual captured server close. Refusal burns
+positive eligibility and may use reserved control space. Final journal.close
+failure makes wrapper exit nonzero even if an earlier terminal is readable.
+Default/ambientPG/host/clean-source/timeout/SQL/cancellation gates stay unchanged;
+test harness boundary replacements are IN MEMORY, never a production opt-in.
+Bounded draining means bounded memory/no queues and existing operation deadlines,
+not a new whole-graph timeout guarantee: test-child completion has no fixed
+overall wall-clock deadline. Unknown test close always retains/refuses and never
+grants server shutdown.
 
 ## Primary-source basis
 
