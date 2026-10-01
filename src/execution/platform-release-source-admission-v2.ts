@@ -17,7 +17,6 @@ import {
   fsyncSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   openSync,
   readFileSync,
   readSync,
@@ -30,6 +29,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createNodeCandidateRuntimeAttemptRootInternalV2 } from "../product-compiler/node-candidate-runtime-attempt-root-ownership-v2.js";
 import { fileURLToPath } from "node:url";
 import { isProxy } from "node:util/types";
 
@@ -2471,14 +2471,10 @@ function materializeSourceStage(
     | undefined;
   let stageRoot: string | undefined;
   try {
-    contextRoot = mkdtempSync(
-      path.join(parent, SOURCE_STAGE_PREFIX_V2),
+    contextAnchor = createSourceOwnedPrivateDirectoryV2(
+      path.join(parent, SOURCE_STAGE_PREFIX_V2), "Source context",
     );
-    contextAnchor =
-      anchorSourceOwnedPrivateDirectoryV2(
-        realpathSync(contextRoot),
-        "Source context",
-      );
+    contextRoot = contextAnchor.absolutePath;
     const context = lstatSync(contextRoot, { bigint: true });
     if (
       context.isSymbolicLink()
@@ -2491,6 +2487,7 @@ function materializeSourceStage(
         "Source context was not one fresh private empty directory",
       );
     }
+    assertSourceOwnedPrivateDirectoryCurrentV2(contextAnchor, "Source context before stage creation");
     stageRoot = path.join(contextRoot, "source");
     mkdirSync(stageRoot, { mode: 0o700 });
     stageRoot = realpathSync(stageRoot);
@@ -3168,6 +3165,19 @@ function anchorSourceOwnedPrivateDirectoryV2(
   }
 }
 
+function createSourceOwnedPrivateDirectoryV2(
+  prefix: string,
+  label: string,
+): SourceOwnedPrivateDirectoryV2 {
+  const fresh = createNodeCandidateRuntimeAttemptRootInternalV2(prefix);
+  const anchor = anchorSourceOwnedPrivateDirectoryV2(fresh.absolutePath, label);
+  if (anchor.identity.device !== fresh.device.toString()
+    || anchor.identity.inode !== fresh.inode.toString()) {
+    return fail("PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID", `${label} fresh identity changed`);
+  }
+  return anchor;
+}
+
 type SourceOwnedPrivateDirectoryFailureV2 = (
   message: string,
   cause?: unknown,
@@ -3718,8 +3728,10 @@ function allocateSourceOwnedOutputRootV2(
   const prefix = occurrence === "first"
     ? COMPILED_OUTPUT_FIRST_PREFIX_V2
     : COMPILED_OUTPUT_SECOND_PREFIX_V2;
-  const privateParentPath =
-    mkdtempSync(path.join(parent, prefix));
+  const privateParent = createSourceOwnedPrivateDirectoryV2(
+    path.join(parent, prefix), `${occurrence} compiled-output parent`,
+  );
+  const privateParentPath = privateParent.absolutePath;
   state.ownedOutputRoots[occurrence] =
     Object.freeze({
       status: "parent_created" as const,
@@ -3736,11 +3748,7 @@ function allocateSourceOwnedOutputRootV2(
       "Injected test fault after first output parent creation",
     );
   }
-  const privateParent =
-    anchorSourceOwnedPrivateDirectoryV2(
-      realpathSync(privateParentPath),
-      `${occurrence} compiled-output parent`,
-    );
+  assertSourceOwnedPrivateDirectoryCurrentV2(privateParent, `${occurrence} compiled-output parent`);
   state.ownedOutputRoots[occurrence] =
     Object.freeze({
       status: "parent_anchored" as const,
@@ -4761,15 +4769,11 @@ function createPrivateBuildToolchainInstallScope(
     | SourceOwnedPrivateDirectoryV2
     | undefined;
   try {
-    environmentRoot = mkdtempSync(path.join(
+    environmentAnchor = createSourceOwnedPrivateDirectoryV2(path.join(
       parent,
       BUILD_TOOLCHAIN_ENVIRONMENT_PREFIX_V2,
-    ));
-    environmentAnchor =
-      anchorSourceOwnedPrivateDirectoryV2(
-        realpathSync(environmentRoot),
-        "Build-toolchain environment root",
-      );
+    ), "Build-toolchain environment root");
+    environmentRoot = environmentAnchor.absolutePath;
     for (const name of [
       "cache",
       "config-probe",
@@ -4805,15 +4809,11 @@ function createPrivateBuildToolchainInstallScope(
     }
     fsyncDirectory(environmentRoot);
 
-    installRoot = mkdtempSync(path.join(
+    installAnchor = createSourceOwnedPrivateDirectoryV2(path.join(
       parent,
       BUILD_TOOLCHAIN_INSTALL_PREFIX_V2,
-    ));
-    installAnchor =
-      anchorSourceOwnedPrivateDirectoryV2(
-        realpathSync(installRoot),
-        "Build-toolchain install root",
-      );
+    ), "Build-toolchain install root");
+    installRoot = installAnchor.absolutePath;
     mkdirSync(
       path.join(installRoot, "dependency-capsule"),
       { mode: 0o700 },
@@ -5085,15 +5085,11 @@ function createPrivateProductionDependencyInstallScopeV2(
     | SourceOwnedPrivateDirectoryV2
     | undefined;
   try {
-    environmentRoot = mkdtempSync(path.join(
+    environmentAnchor = createSourceOwnedPrivateDirectoryV2(path.join(
       parent,
       environmentPrefix,
-    ));
-    environmentAnchor =
-      anchorSourceOwnedPrivateDirectoryV2(
-        realpathSync(environmentRoot),
-        `${occurrence} dependency environment root`,
-      );
+    ), `${occurrence} dependency environment root`);
+    environmentRoot = environmentAnchor.absolutePath;
     for (const name of [
       "cache",
       "config-probe",
@@ -5129,15 +5125,11 @@ function createPrivateProductionDependencyInstallScopeV2(
     }
     fsyncDirectory(environmentRoot);
 
-    installRoot = mkdtempSync(path.join(
+    installAnchor = createSourceOwnedPrivateDirectoryV2(path.join(
       parent,
       installPrefix,
-    ));
-    installAnchor =
-      anchorSourceOwnedPrivateDirectoryV2(
-        realpathSync(installRoot),
-        `${occurrence} dependency install root`,
-      );
+    ), `${occurrence} dependency install root`);
+    installRoot = installAnchor.absolutePath;
     const projectRoot = path.join(installRoot, "project");
     mkdirSync(projectRoot, { mode: 0o700 });
     projectAnchor =

@@ -1,13 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import {
-  chmodSync,
   closeSync,
   constants as fsConstants,
   fstatSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   openSync,
   readdirSync,
   readSync,
@@ -17,6 +15,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createNodeCandidateRuntimeAttemptRootInternalV2 } from "./node-candidate-runtime-attempt-root-ownership-v2.js";
 import { isProxy } from "node:util/types";
 
 import {
@@ -82,6 +81,7 @@ type CommandResultV2 = Readonly<{
 type FixtureStateV2 = Readonly<{
   rootAlias: string;
   root: string;
+  rootIdentity: Readonly<{ device: bigint; inode: bigint }>;
   payloadRoot: string;
   packagePath: string;
   packageIdentifier: typeof PLATFORM_RELEASE_BOOTSTRAP_DARWIN_LOCAL_PACKAGE_TRUST_AUDIT_PACKAGE_IDENTIFIER_V2;
@@ -235,31 +235,63 @@ function exactCommandRunnerV2(
   return runBoundedCommandV2(invocation);
 }
 
-function exactPrivateRootV2(): Readonly<{ alias: string; root: string }> {
-  const alias = mkdtempSync(path.join(os.tmpdir(), ROOT_PREFIX_V2));
-  const root = realpathSync(alias);
-  chmodSync(root, 0o700);
-  const stat = lstatSync(root);
-  if (
-    stat.isSymbolicLink()
-    || !stat.isDirectory()
-    || (stat.mode & 0o7777) !== 0o700
-    || (typeof process.getuid === "function" && stat.uid !== process.getuid())
-    || (typeof process.getgid === "function" && stat.gid !== process.getgid())
-  ) {
-    rmSync(alias, { recursive: true, force: true });
-    return failV2(
-      "DARWIN_LOCAL_PACKAGE_TRUST_AUDIT_BUILD_FAILED",
-      "Trust audit root must be one private process-owned directory",
-    );
+function removePrivateFixtureRootIfAuthenticV2(root: Readonly<{
+  alias: string; root: string; device: bigint; inode: bigint;
+}>): void {
+  try {
+    const current = lstatSync(root.root, { bigint: true });
+    if (!current.isDirectory() || current.isSymbolicLink()
+      || current.dev !== root.device || current.ino !== root.inode
+      || current.uid !== BigInt(process.getuid!()) || current.gid !== BigInt(process.getgid!())
+      || (current.mode & 0o7777n) !== 0o700n
+      || realpathSync(root.alias) !== root.root || realpathSync(root.root) !== root.root) return;
+  } catch {
+    // An uncertain path is retained; cleanup never adopts a replacement.
+    return;
   }
-  return Object.freeze({ alias, root });
+  // Snapshot-checked existing fixture cleanup, not atomic conditional unlink.
+  // A failed authenticated removal is observable, not silently swallowed.
+  rmSync(root.alias, { recursive: true, force: true });
+}
+
+function exactPrivateRootV2(): Readonly<{ alias: string; root: string; device: bigint; inode: bigint }> {
+  let fresh: ReturnType<typeof createNodeCandidateRuntimeAttemptRootInternalV2>;
+  try {
+    fresh = createNodeCandidateRuntimeAttemptRootInternalV2(path.join(os.tmpdir(), ROOT_PREFIX_V2));
+  } catch (error) {
+    return failV2("DARWIN_LOCAL_PACKAGE_TRUST_AUDIT_BUILD_FAILED", "Could not prepare the original private fresh root", error);
+  }
+  try {
+    const alias = fresh.absolutePath;
+    const root = realpathSync(alias);
+    const stat = lstatSync(root);
+    if (
+      !Number.isSafeInteger(stat.dev) || !Number.isSafeInteger(stat.ino)
+      || BigInt(stat.dev) !== fresh.device || BigInt(stat.ino) !== fresh.inode
+      || stat.isSymbolicLink()
+      || !stat.isDirectory()
+      || (stat.mode & 0o7777) !== 0o700
+      || (typeof process.getuid === "function" && stat.uid !== process.getuid())
+      || (typeof process.getgid === "function" && stat.gid !== process.getgid())
+    ) {
+      return failV2(
+        "DARWIN_LOCAL_PACKAGE_TRUST_AUDIT_BUILD_FAILED",
+        "Trust audit root must be one private process-owned directory",
+      );
+    }
+    return Object.freeze({ alias, root, device: fresh.device, inode: fresh.inode });
+  } catch (error) {
+    return failV2("DARWIN_LOCAL_PACKAGE_TRUST_AUDIT_BUILD_FAILED", "Original private root could not be captured", error);
+  }
 }
 
 function assertPrivateFixtureStateV2(state: FixtureStateV2): void {
   const rootStat = lstatSync(state.root);
   if (
     rootStat.isSymbolicLink()
+    || !Number.isSafeInteger(rootStat.dev) || !Number.isSafeInteger(rootStat.ino)
+    || BigInt(rootStat.dev) !== state.rootIdentity.device
+    || BigInt(rootStat.ino) !== state.rootIdentity.inode
     || !rootStat.isDirectory()
     || realpathSync(state.root) !== state.root
     || realpathSync(state.rootAlias) !== state.root
@@ -348,6 +380,7 @@ export function buildPlatformReleaseBootstrapDarwinLocalPackageTrustAuditFixture
     const state: FixtureStateV2 = Object.freeze({
       rootAlias: privateRoot.alias,
       root: privateRoot.root,
+      rootIdentity: Object.freeze({ device: privateRoot.device, inode: privateRoot.inode }),
       payloadRoot,
       packagePath,
       packageIdentifier:
@@ -356,15 +389,19 @@ export function buildPlatformReleaseBootstrapDarwinLocalPackageTrustAuditFixture
     const fixture: PlatformReleaseBootstrapDarwinLocalPackageTrustAuditFixtureV2 = {
       packageIdentifier: state.packageIdentifier,
       dispose(): void {
+        removePrivateFixtureRootIfAuthenticV2(privateRoot);
         fixtureStatesV2.delete(fixture);
-        rmSync(privateRoot.alias, { recursive: true, force: true });
       },
     };
     const handle = Object.freeze(fixture);
     fixtureStatesV2.set(handle, state);
     return handle;
   } catch (error) {
-    rmSync(privateRoot.alias, { recursive: true, force: true });
+    try { removePrivateFixtureRootIfAuthenticV2(privateRoot); }
+    catch (cleanup) {
+      return failV2("DARWIN_LOCAL_PACKAGE_TRUST_AUDIT_BUILD_FAILED", "Fixture construction and authenticated cleanup failed",
+        new AggregateError([error, cleanup], "Primary fixture failure followed by cleanup failure", { cause: error }));
+    }
     return failV2(
       "DARWIN_LOCAL_PACKAGE_TRUST_AUDIT_BUILD_FAILED",
       "Could not create the private unsigned package fixture root",

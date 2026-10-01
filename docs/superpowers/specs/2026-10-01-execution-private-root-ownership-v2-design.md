@@ -42,8 +42,14 @@ Each consumer binds its first stat/anchor to the constructor's ORIGINAL device
 and inode. No post-helper repinning of a same-owner empty replacement is allowed.
 Numeric consumers require safe/injective conversion before comparison. Remove
 redundant pre-capture path chmod. Invalid initial-root evidence is retained,
-not recursively removed by pathname. Existing later exact owned cleanup remains
-unchanged. No claim of continuous kernel writer exclusion follows.
+not recursively removed by pathname. Existing source-admission exact-anchor
+cleanup remains unchanged. Independent review found that four mapped ordinary
+fixture builders discard the original pin before state capture or cleanup.
+Actual replacement REDs establish this as a causally required refinement:
+carry the original pin, reject later replacement captures and refuse cleanup of
+a mismatched root. The existing pathname deletion is not atomic conditional
+unlink; these are bounded identity observations, not continuous kernel writer
+exclusion. No atomic cleanup or production authority claim follows.
 
 The source-admission allocator will use a private create-and-anchor operation:
 create through the existing helper, then anchor only if original device/inode
@@ -70,18 +76,28 @@ Source changes:
 - src/product-compiler/platform-release-bootstrap-darwin-host-self-observation-test-support-v2.ts
 - src/product-compiler/platform-release-bootstrap-darwin-suspended-exec-binding-test-support-v2.ts
 - src/product-compiler/host-node-toolchain-authority-v2.ts
+- src/product-compiler/platform-release-bootstrap-installed-metadata-operation-test-support-v2.ts
 - src/execution/platform-release-source-admission-v2.ts
 
 Positive test fixture changes:
 - tests/execution-attempts/platform-release-bootstrap-darwin-filesystem-native-fixture-v2.test.ts
-- tests/execution-attempts/platform-release-bootstrap-darwin-host-self-observation-native-fixture-v2.test.ts
-- tests/execution-attempts/platform-release-bootstrap-darwin-suspended-exec-binding-v2.test.ts
 - tests/execution-attempts/platform-release-build-toolchain-capsule-v2.test.ts
 - tests/execution-attempts/platform-release-host-node-toolchain-authority-v2.test.ts
 - tests/execution-attempts/platform-release-terminal-writer-v2.test.ts
 
 New regression: tests/execution-attempts/private-fresh-root-ownership-v2.test.ts.
-This design and its corresponding implementation plan complete the18-file map.
+This design and its corresponding implementation plan complete the17-file map.
+Host-self and suspended-exec test files need no fixture change: their standalone
+capture roots are adversarial, and their actual native consumer suites passed
+without changing those roots. Their source builders retain the original pin
+across pre-dispatch and pre-receipt checks; finite no-native boundary tests cover
+both replacements. These snapshot checks do not prove continuous exclusion.
+The installed-metadata builder is a causal refinement: after fresh Node/npm
+pairing became valid, the actual capsule test reached and rejected its GID0
+target root with INSTALLED_METADATA_OPERATION_FIXTURE_BUILD_FAILED. Correct its
+new-root preparation and preserve the original pin through state and cleanup.
+Installed-network-negative scratch remains unchanged: it uses a different fixed
+occurrence-path ABI and no observed current-GID failure justifies changing it.
 
 ## Verification and delivery
 
@@ -91,6 +107,9 @@ compiler/process observer is needed for constructor REDs. Real new-directory
 metadata proves exact current UID/GID/0700/canonical identity and original inode;
 real same-owner empty rebinds must refuse without chmod/removal/adoption.
 Source/probe tests stop at controlled ordinary boundaries without native/DB work.
+This new regression leaf explicitly skips non-Darwin hosts: its installed
+builders and fixed private probe parent are Darwin-specific. No Linux/Windows
+coverage or emulated macOS claim is made; this host has no skipped regression.
 Existing source-admission, host, content-store, terminal and native fixture tests
 remain consumer verification after focused construction is green. Run them only
 with their actual required private/ordinary effect clearance; never default a

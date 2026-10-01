@@ -22,6 +22,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createNodeCandidateRuntimeAttemptRootInternalV2 } from "./node-candidate-runtime-attempt-root-ownership-v2.js";
 import { isProxy } from "node:util/types";
 
 import {
@@ -658,19 +659,31 @@ function cleanupExactOwnedTreeV2(
 }
 
 function privateRootV2(): PrivateRootV2 {
-  const alias = mkdtempSync(path.join(os.tmpdir(), ROOT_PREFIX_V2));
+  let fresh: ReturnType<typeof createNodeCandidateRuntimeAttemptRootInternalV2>;
+  try {
+    fresh = createNodeCandidateRuntimeAttemptRootInternalV2(path.join(os.tmpdir(), ROOT_PREFIX_V2));
+  } catch (error) {
+    return failV2("CONTENT_STORE_FIXTURE_BUILD_FAILED", "Could not prepare the original private fresh root", error);
+  }
+  const alias = fresh.absolutePath;
   const cleanupInventory: CleanupInventoryV2 = new Map();
   try {
     const root = realpathSync(alias);
-    chmodSync(root, 0o700);
     const stat = lstatSync(root, { bigint: true }) as BigIntStatV2;
     const ownerMatches =
       (typeof process.getuid !== "function" || Number(stat.uid) === process.getuid())
       && (typeof process.getgid !== "function" || Number(stat.gid) === process.getgid());
-    if (stat.isSymbolicLink() || !stat.isDirectory() || modeTextV2(stat) !== STORE_ROOT_MODE_V2 || !ownerMatches) {
+    if (stat.dev !== fresh.device || stat.ino !== fresh.inode
+      || stat.isSymbolicLink() || !stat.isDirectory() || modeTextV2(stat) !== STORE_ROOT_MODE_V2 || !ownerMatches) {
       throw new Error("private root policy mismatch");
     }
-    recordCleanupPathV2(root, cleanupInventory, root);
+    const current = lstatSync(root, { bigint: true }) as BigIntStatV2;
+    if (current.dev !== fresh.device || current.ino !== fresh.inode
+      || current.mode !== stat.mode || current.uid !== stat.uid || current.gid !== stat.gid
+      || realpathSync(root) !== root) {
+      throw new Error("private root changed before cleanup inventory binding");
+    }
+    cleanupInventory.set("", cleanupInventoryEntryV2("", stat));
     return Object.freeze({ alias, root, stat, cleanupInventory });
   } catch (error) {
     let cleanupError: unknown;
