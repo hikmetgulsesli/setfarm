@@ -192,3 +192,35 @@ credential changes, generated runtime edits or unrelated feature work included.
   quiescence samplesPASS. Outer0 separately observed. Post11:00:53UTC primary
   real5432/setfarm/schema31claims0/unreleased0, HTTP3080200, available13957700KiB.
   Root retained with all old footprints; no production rollout or ALL success.
+
+## Task 4: Public algorithm classification without weakening security
+
+**Files:** Existing six-path map; only both fixtures, wrapper regression tests,
+spec and plan change. Wrapper/journal/package/production policy remain unchanged.
+
+**Cause:** Actual PR263 security check110342098605 reports incident37785060
+at both literal algorithm assertions. Both independent source reviewers confirm
+the enum literal is not a committed credential; the external check remains red.
+
+- [ ] Add complete real callback consumers for each fixture and literal
+  observed values undefined, md5 and scram-sha-256 followed by a space. Finite
+  admin returns the existing full identity row; database/role calls are denied
+  and counted, admin end is counted. Require AssertionError, zero database/role
+  effects and one admin end. Removing the exact equality via a test-only AST
+  mutant must make those expectations fail; no production source mutation.
+- [ ] Baseline consumer GREEN, then semantic-only local declaration:
+
+```typescript
+const PRIVATE_CLUSTER_AUTH_ALGORITHM = "scram-sha-256" as const;
+// Same position before privateClusterVerified/database/role effects:
+assert.equal(identity[0]?.password_encryption, PRIVATE_CLUSTER_AUTH_ALGORITHM);
+```
+
+- [ ] Full pure regression, noemit/contracts/diff, independent exact-head
+  review, clean normal commit/push. No new real private invocation until fresh
+  per-invocation review/preflight and full closure protocol.
+- [ ] Inspect actual new head security/check/review state. Never ignore,
+  dismiss, suppress, encode literals, weaken assertion or rewrite history.
+  If historical finding persists, record external classification boundary.
+  Merge/build/ALL/cutover remain gated; a local semantic refactor is not
+  evidence of scanner resolution. Renew genuine focused GREEN if deliverable.

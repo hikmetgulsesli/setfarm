@@ -110,3 +110,32 @@ security gates; no admin bypass, force, deletion or direct main commit. New
 clean-main synchronization/guarded build and actual source/build identities.
 Only afterward consider a separately reviewed genuine unchanged ALL. Protected
 bootstrap/origin/fence/genesis/32/33 and live cutover remain unproven/fail-closed.
+
+## Exact-head security classification refinement
+
+PR263 GitGuardian check110342098605 failed at fec39e46. Incident37785060
+points only to both observed password_encryption comparisons with the public
+algorithm literal scram-sha-256, not the runtime random password. No secret was
+found at those lines by either independent source/provenance reviewer.
+
+Options: retain the assertion and seek authorized external classification;
+or clarify the enum's non-credential meaning with an immutable module-local
+PRIVATE_CLUSTER_AUTH_ALGORITHM constant. Choose the latter semantic-only
+refactor as a bounded candidate, preserving the readable full literal and the
+exact pre-effect equality. No encoding/splitting, suppression, scanner setting,
+incident disposition, credential change or history rewrite is permitted.
+This is not guaranteed to repair a check scanning historical commits.
+
+Before refactoring, characterize actual complete integration callbacks with
+missing, md5 and whitespace-suffixed observed algorithms. Require assertion
+refusal before database or role creation and one owned admin end; use finite
+SQL boundaries, no real SQL. A removed-assertion mutant must fail the consumer
+contract. Existing authentication RED/GREEN supplies the refactor baseline;
+no new authentication behavior or scanner emulation is introduced.
+
+Afterward run full pure regressions/noemit/contracts, fresh independent source
+review and push normally. Only actual fresh exact-head remote security success
+can reopen merge eligibility. If history-bound findings persist, preserve all
+source/history/assertions and stop at authorized external classification; never
+claim a local refactor cleared an external gate. A changed source requires a
+new independently cleared focused real GREEN before delivery readiness.
