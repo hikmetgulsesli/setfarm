@@ -200,6 +200,7 @@ skips non-Darwin; no platform emulation or cross-platform pass is claimed.
 
 Each source preparation change has a constructor RED plus unchanged guard
 consumer coverage. Original-pin replacement denials protect against repinning;
-normalization cannot accept external paths. Every new root failure retains
-evidence. The independent auth failure and remaining protected/native/live
+normalization cannot accept external paths. Uncertain or unanchored failures
+retain their roots; authenticated builder failures may clean only the original
+fixture root. The independent auth failure and remaining protected/native/live
 obligations are explicit exclusions, not completed outcomes.
