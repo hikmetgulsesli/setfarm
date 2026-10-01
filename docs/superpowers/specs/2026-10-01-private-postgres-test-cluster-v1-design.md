@@ -55,8 +55,9 @@ never the setting value/raw exception.
 
 Create a fresh mkdtemp /tmp/setfarm-task6a-pg. directory0700, verify ordinary
 owner/mode/no symlink and pin inode/device. A locally reserved loopback ephemeral
-port is released immediately before owned server spawn; a competing binder
-causes startup refusal, never fallback or connection to an unverified cluster.
+port is released before password creation and initdb, leaving a reservation gap
+until owned server spawn. A competing binder causes startup refusal, never
+fallback or connection to an unverified cluster.
 Create random32-byte hex credential in a0600 exclusive/no-follow owned password
 file; initdb uses explicit scram-sha-256 host/local, UTF8/C, no-clean, no-instructions,
 normal sync, fixed bootstrap userpostgres. Initdb never inherits PG*, SETFARM*,
@@ -335,6 +336,11 @@ Bounded draining means bounded memory/no queues and existing operation deadlines
 not a new whole-graph timeout guarantee: test-child completion has no fixed
 overall wall-clock deadline. Unknown test close always retains/refuses and never
 grants server shutdown.
+Capture/assign each actual returned ChildProcess record before fallible witness
+and stream binding. A setup exception must not erase main's own captured record;
+missing witness never permits a signal, and missing stream records stream-error
+without invented EOF. Existing captured-record stop/retain gates remain the only
+shutdown authority; never replace capture with PID lookup/adoption.
 
 ## Primary-source basis
 

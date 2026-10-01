@@ -323,21 +323,38 @@ password/URL split traverses real redactor→writer→reader before mirror. EPIP
 backpressure/throw affect only display; no callback kill/cancel. Null PID failed
 spawn observations are retained, no invented exit/EOF; coherent terminal cannot
 turn them positive. These tests do not authorize genuine dirty-source execution.
+Full wrapper-entry unit fixtures additionally replace only external process/SQL
+boundaries IN MEMORY: fixed ChildProcess event/PassThrough streams (not real PG),
+an inert postgres tagged-query driver, and virtual password file IO/metadata
+(no password file/credential created). Real new root/journal IO and guards stay.
+Strict fake fixed-tool dispatch refuses every unexpected subprocess; source/Git
+version boundary literals are unit inputs, never clean-source/origin proof.
+Assert control order/actual callback arguments before fake captured SIGINT;
+normal0/nonzero7, displayEPIPE, journal loss and final journal-close fault use
+real wrapper consumers. Such unit runs are NOT finding graph or host invocation
+clearance, and their fabricated child PIDs/results are never production evidence.
+Early source review found a causal partial-ownership gap: binding can throw
+after spawn but before the caller receives its owned record. Fix only existing
+wrapper/test: assign captured ChildProcess record in main before witness/binding
+setup, keep unavailable witness/stream unknown, and route that original record
+through unchanged stop/retain gates. Server/test attach-fault consumers must
+fail before fix; missing stream records error, never synthetic EOF. No PID
+search/adoption/new signal permission. This is not the lost invocation's cause.
 
-- [ ] Extend existing actual wrapper-entry test harness with forbidden subprocess
+- [x] Extend existing actual wrapper-entry test harness with forbidden subprocess
   sentinel: journal creation/fsync failure refuses before password/child effects.
   Keep imports inert and CLI/default/ambientPG guards unchanged. The harness
   replaces only actual slow effects, not precondition/cleanup/ownership checks.
-- [ ] Capture actual child exit/close into durable controls immediately; raw
+- [x] Capture actual child exit/close into durable controls immediately; raw
   child results/stream error are observed, not fabricated caller receipts. Test
   exit-only/nonzero/signal/unknown close and cancellation on real lifecycle
   consumers. Existing observe/settle/quiescence/deadline functions remain gates.
-- [ ] Wire output redaction BEFORE persistence BEFORE terminal mirroring. Every
+- [x] Wire output redaction BEFORE persistence BEFORE terminal mirroring. Every
   real per-stream split/full URL/password/truncated-prefix/binary consumer passes
   through persistence and strict reader; no assertion on a redactor mock.
   Input/journal failure burns completeness yet drains already-owned children;
   do not throw out of stream callbacks or infer descendants from directclose.
-- [ ] Journal each quiescence sample and actual admin-end API settlement; only
+- [x] Journal each quiescence sample and actual admin-end API settlement; only
   existing complete test-close/private-catalog/backend gate may grant own
   shutdown. Final observed terminal after known server close; test nonzero
   preserved, journal close uncertainty prevents wrapper success. Reader never
@@ -345,6 +362,80 @@ turn them positive. These tests do not authorize genuine dirty-source execution.
 - [ ] Fresh journal+cluster+package/default-discovery tests, full evals/noemit/
   contracts/check-only digests/MC/diff/credential scan. Commit scoped clean source;
   independent exact eight-path source/test/spec/plan review before any invocation.
+
+### Task5 evidence ledger (2026-10-01 01:29 UTC)
+
+Docs-first44d6ee42 precedes binding changes. Journal construction/opened fsync
+faults each produced actual semantic RED before the password/spawn sentinel;
+binding export and nullable-PID consumers also failed before implementation.
+The first entry harness had a loader newline SyntaxError: corrected before
+semantic RED claims, not treated as a production defect. The seven-mode entry
+matrix produced seven semantic failures before minimal wiring. Journal-loss
+coverage was strengthened to fault during test observations BEFORE quiescence,
+not at final close. Additional before-server/before-test faults prevent new
+dispatch. A test-only missing-root trace required wrapping actual mkdtemp;
+that harness correction is not production defect evidence.
+
+Independent review found partial capture could be lost if binding threw after
+spawn. Recorded the causal refinement before code. Three semantic REDs for
+server attachment, test attachment and missing stream (245.676ms) became three
+GREEN (270.736ms) after main assigned captured records before fallible witness/
+binding. Missing witness cannot signal; missing stream records error, not EOF.
+No PID search/adoption/new signal permission or incident-cause inference.
+
+Full entry fixtures cover normal0, nonzero7, display EPIPE, journal loss,
+post-terminal close fault, retained DB, cancellation, before-server/before-test,
+server/test attachment faults and stream input error. All are Node-only external
+process/SQL/virtual-password boundary replacements, not a real private cluster,
+credential file or findings graph. Actual new ordinary journal roots retained.
+Credential/full-URL/binary and partial-prefix consumers persist actual redactor
+output before mirrors; no fabricated EOF on error/close.
+
+Fresh complete focused journal55+cluster47:102PASS0FAIL0SKIP2814.651667ms,
+definiteexit0 and all output read. Full evals53PASS0FAIL0SKIP16030.52625ms,
+definiteexit0; its own three ordinary DBs definitely owner-dropped:
+setfarm_contract_spine_test_5480_8773bff23bbb,
+setfarm_contract_spine_test_5481_b7f9bfc82024,
+setfarm_contract_spine_test_5481_7d9b0974023a. No manual DB cleanup.
+Noemit0, version2.3.79, English1909, paths963, check-only migration digests/MC12
+and diff0; four code/test files credential-pattern scan has zero matches.
+Exact cumulative eight-path source-only review found no Critical/Important;
+minor reservation-gap description corrected to match actual release before
+password/initdb. Reviewer did not run tests/effects or grant invocation clearance.
+Broader script/default-discovery verification, clean source commit, exact
+committed-head/pre-effect review and genuine graph outcomes remain unverified.
+
+Fresh live read-only PG audit01:29:23UTC: database setfarm/user setrox/port5432,
+data_directory /opt/homebrew/var/postgresql@17; schema31/adopted1+applied30,
+openclaims0, active attempts0 (inconclusive7/produced_delta2), unreleasedsessions0.
+HTTP3080/api/projects and18789/root200 at01:28. Ordinary tests do not prove
+protected admission/native closure/live handoff; Task6A remains unfinished.
+
+Fresh preparation01:41–01:47UTC: actual noemit0 and all above contracts0 rerun;
+remote main remains95c557d5 and open PRs0. Broad managed39840 still running
+serially, so no commit/invocation clearance claimed. Its actual runner uses
+Node26.4.0; login-shell default Node22 is NOT sufficient for the constructor.
+Future fixed command uses /opt/homebrew/Cellar/node/26.4.0/bin/node directly,
+without changing global PATH/loader/guards. PG tools both17.10. Dependency
+symlink still targets the retained old private tree's existing node_modules;
+both package-lock SHA256s equal
+a7619de7cab700d96ce2c8073f842f9f02f480ff704d0ac689914f0f3e9267fc.
+Actual TypeScript5.9.3/tsx4.22.4/postgres3.4.8 versions match that lock.
+No install/repoint or full protected dependency-closure claim. One initial
+version read tried an unexported package.json subpath; corrected to read that
+ordinary local metadata file, not counted as a source defect or test failure.
+An additional broad credential expression matches four static URL constructors
+(concatenated variables/synthetic test secret), not persisted real credentials;
+the earlier exact-pattern zero-match result is separate, not a universal scan.
+
+Broad verification completed01:55UTC: exact full npm run test:scripts,
+managed39840 definitiveexit0 and ALL output read without truncation.
+Unit1644PASS0FAIL0SKIP1181898.7595ms plus serial genuine-integration
+43PASS0FAIL0SKIP110301.662875ms; all five fixed integration files reached.
+This is the whole scripts graph, NOT the complete npm/finding graph or protected
+host admission. No source/test change since the four frozen reviewed hashes.
+Root will commit the six refinement files, then obtain exact committed eight-
+path review and fresh host/resource pre-effect audit before any NEW invocation.
 
 ### Task6: New actual ordinary verification and delivery
 

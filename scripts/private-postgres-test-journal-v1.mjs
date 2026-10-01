@@ -36,14 +36,16 @@ const keysMatch=(object,keys)=>object!==null&&typeof object==='object'&&!Array.i
   &&Object.keys(object).length===keys.length&&keys.every(key=>Object.hasOwn(object,key));
 const validRoot=value=>typeof value==='string'&&value.length<=128&&ROOT.test(value);
 const validCode=value=>value===null||(Number.isInteger(value)&&value>=-4095&&value<=255);
-const normal=value=>value&&Number.isInteger(value.code)&&value.code>=0&&value.code<=255&&value.signal===null;
+const normal=value=>value&&Number.isSafeInteger(value.pid)&&value.pid>0
+  &&Number.isInteger(value.code)&&value.code>=0&&value.code<=255&&value.signal===null;
 function validControl(value){
   if(!value||typeof value.stage!=='string'||!Object.hasOwn(FIELDS,value.stage)
     ||!keysMatch(value,['stage',...FIELDS[value.stage],'productionAuthority'])||value.productionAuthority!==false)return false;
   for(const [key,item] of Object.entries(value)){
     if(key==='root'&&!(validRoot(item)||(value.stage==='refused'&&item===null)))return false;
     if(key==='port'&&(!Number.isInteger(item)||item<1024||item>65535||item===5432))return false;
-    if(['pid','serverPid','testPid'].includes(key)&&(!Number.isSafeInteger(item)||item<1))return false;
+    if(['pid','serverPid','testPid'].includes(key)&&!(key==='pid'&&item===null
+      &&['child-exit','child-close'].includes(value.stage))&&(!Number.isSafeInteger(item)||item<1))return false;
     if(key==='childRole'&&!ROLES.includes(item))return false;
     if(key==='channel'&&!CHANNELS.includes(item))return false;
     if(key==='code'&&!validCode(item))return false;

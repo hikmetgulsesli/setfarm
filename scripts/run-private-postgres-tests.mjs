@@ -8,6 +8,7 @@ import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 import postgres from 'postgres';
 import {verifyFindingPrivateClusterIdentityV1} from './finding-test-preflight.mjs';
+import {createPrivateTestJournalV1,createPrivateTestTerminalMirrorV1} from './private-postgres-test-journal-v1.mjs';
 
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const PG='/opt/homebrew/opt/postgresql@17/bin/';
@@ -71,6 +72,42 @@ export function createPrivateTestOutputRedactorV1(secrets){
       closed=true;return consume(true);
     },
   });
+}
+
+export function attachPrivateTestChildJournalV1(child,role,secrets,journal,mirrors){
+  if(!['initdb','server','test'].includes(role))throw Error('PRIVATE_TEST_JOURNAL_REFUSED');
+  function observed(stage,fields){journal.control(stage,fields);}
+  const pid=()=>Number.isSafeInteger(child.pid)&&child.pid>0?child.pid:null;
+  child.once('error',()=>observed('child-error',{childRole:role,reason:'PRIVATE_TEST_CLUSTER_REFUSED'}));
+  child.once('exit',(code,signal)=>observed('child-exit',{childRole:role,pid:pid(),code,signal}));
+  child.once('close',(code,signal)=>observed('child-close',{childRole:role,pid:pid(),code,signal}));
+  for(const channel of ['stdout','stderr']){
+    const input=child[channel],redactor=createPrivateTestOutputRedactorV1(secrets);
+    if(!input||typeof input.on!=='function'||typeof input.once!=='function'){
+      journal.burn('journal-input');
+      observed('stream-error',{childRole:role,channel,reason:'PRIVATE_TEST_CLUSTER_REFUSED'});
+      continue;
+    }
+    let flushed=false,ended=false;
+    function persist(buffer){
+      if(buffer.length&&journal.output(role,channel,buffer))mirrors[channel].write(buffer);
+    }
+    function flush(){if(!flushed){flushed=true;persist(redactor.end());}}
+    function failed(){
+      journal.burn('journal-input');
+      observed('stream-error',{childRole:role,channel,reason:'PRIVATE_TEST_CLUSTER_REFUSED'});
+      try{flush();}catch{journal.burn('journal-input');}
+    }
+    input.on('data',chunk=>{
+      if(flushed)return;
+      try{persist(redactor.write(chunk));}catch{failed();}
+    });
+    input.once('end',()=>{
+      ended=true;
+      try{flush();observed('stream-end',{childRole:role,channel});}catch{failed();}
+    });
+    input.once('error',failed);input.once('close',()=>{if(!ended)failed();});
+  }
 }
 
 export function observeOwnedPrivateTestChildV1(child){
@@ -143,9 +180,6 @@ export async function racePrivateTestDeadlineV1(promise,timeoutMs){
   }finally{clearTimeout(timer);}
 }
 
-function event(stage,fields={}){
-  console.log(JSON.stringify({event:'private-postgres-test-cluster',stage,...fields}));
-}
 function scrubEnvironment(){
   return {
     PATH:path.dirname(process.execPath)+':/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin',
@@ -189,16 +223,8 @@ async function reservePort(){
   await new Promise((resolve,reject)=>socket.close(error=>error?reject(error):resolve()));
   return port;
 }
-function forwardedChild(tool,args,env,secrets){
-  const child=spawn(tool,args,{cwd:ROOT,env,stdio:['ignore','pipe','pipe']});
-  const witness=observeOwnedPrivateTestChildV1(child);
-  for(const [input,output] of [[child.stdout,process.stdout],[child.stderr,process.stderr]]){
-    const redactor=createPrivateTestOutputRedactorV1(secrets);
-    input.on('data',chunk=>output.write(redactor.write(chunk)));
-    input.once('end',()=>output.write(redactor.end()));
-    input.once('error',()=>{});
-  }
-  return {child,witness};
+function capturedChild(tool,args,env){
+  return {child:spawn(tool,args,{cwd:ROOT,env,stdio:['ignore','pipe','pipe']}),witness:null};
 }
 async function boundedClose(witness,timeoutMs){
   let timer;
@@ -209,7 +235,7 @@ async function boundedClose(witness,timeoutMs){
   }finally{clearTimeout(timer);}
 }
 function definiteNormalClose(witness){
-  return witness.closed&&witness.exited&&!witness.failed
+  return witness&&witness.closed&&witness.exited&&!witness.failed
     &&Number.isInteger(witness.result.code)&&witness.result.signal===null
     &&witness.exitResult.code===witness.result.code&&witness.exitResult.signal===null;
 }
@@ -245,7 +271,7 @@ async function clusterIdentity(admin,url,dataDirectory,server){
   }
   throw Error('PRIVATE_TEST_CLUSTER_READINESS_TIMEOUT');
 }
-async function quiescence(admin){
+async function quiescence(admin,journal){
   for(let sample=0;sample<2;sample++){
     const rows=await admin`SELECT pg_backend_pid() AS pid,
       (SELECT array_agg(datname ORDER BY datname) FROM pg_database) AS databases,
@@ -254,21 +280,40 @@ async function quiescence(admin){
           'autovacuum launcher','autovacuum worker','background writer',
           'checkpointer','walwriter','logical replication launcher'
         ) OR client_addr IS NOT NULL) AS backends`;
-    if(rows.length!==1||!verifyPrivateTestClusterQuiescenceV1(rows[0].databases,rows[0].backends,rows[0].pid)){
-      return false;
-    }
+    const passed=rows.length===1&&verifyPrivateTestClusterQuiescenceV1(rows[0].databases,rows[0].backends,rows[0].pid);
+    journal.control('quiescence-sample',{sample,passed});
+    if(!passed)return false;
     if(sample===0)await delay(100);
   }
   return true;
 }
 async function main(){
+  let journal=null;
+  const unavailable=new Map();
+  const mirrors=Object.fromEntries(['stdout','stderr'].map(channel=>[channel,
+    createPrivateTestTerminalMirrorV1(process[channel],reason=>{
+      unavailable.set(channel,reason);
+      journal?.control('terminal-unavailable',{channel,reason});
+    })]));
   const args=process.argv.slice(2);
   if(args.length!==1||!['findings','all'].includes(args[0])){
-    console.error('PRIVATE_TEST_CLUSTER_MODE_INVALID');process.exitCode=1;return;
+    mirrors.stderr.write(Buffer.from('PRIVATE_TEST_CLUSTER_MODE_INVALID\n'));process.exitCode=1;return;
   }
   let stage='preconditions',root=null,directoryFd=null,init=null,server=null,testChild=null,admin=null;
   let testsStarted=false,mayStopServer=true,resultCode=1;
   const cancellation=watchPrivateTestCancellationV1(process);
+  function record(stage,fields={}){
+    const persisted=journal?journal.control(stage,fields):true;
+    mirrors.stdout.write(Buffer.from(JSON.stringify({event:'private-postgres-test-cluster',stage,
+      ...fields,productionAuthority:false})+'\n'));
+    return persisted;
+  }
+  function intent(next,dispatch=false){
+    stage=next;
+    if(dispatch&&!journal.healthy)throw Error('PRIVATE_TEST_JOURNAL_REFUSED');
+    const persisted=record(next);
+    if(dispatch&&(!persisted||!journal.healthy))throw Error('PRIVATE_TEST_JOURNAL_REFUSED');
+  }
   try{
     const env=preconditions();
     stage='create-private-root';root=mkdtempSync('/tmp/setfarm-task6a-pg.');chmodSync(root,0o700);
@@ -282,8 +327,13 @@ async function main(){
       }
     }
     recheckRoot();
+    journal=createPrivateTestJournalV1(root,directoryFd);
+    if(!record('journal-opened',{root})||!journal.healthy)throw Error('PRIVATE_TEST_JOURNAL_REFUSED');
+    for(const [channel,reason] of unavailable)journal.control('terminal-unavailable',{channel,reason});
+    intent('port-reservation',true);
     const port=await cancellation.run(racePrivateTestDeadlineV1(reservePort(),10000)),
       plan=planPrivatePostgresTestsV1({root,port,mode:args[0]});
+    intent('password-create',true);
     const password=randomBytes(32).toString('hex');
     const passwordFd=openSync(root+'/password',constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
     try{
@@ -295,44 +345,60 @@ async function main(){
     }finally{closeSync(passwordFd);}
     const url='postgresql://postgres:'+password+'@127.0.0.1:'+port+'/postgres';
     const secrets=[password,url];
-    event('private-root-retained',{root,port});
-    stage='initdb';recheckRoot();init=forwardedChild(PG+'initdb',plan.initdb,env,secrets);
+    record('private-root-retained',{root,port});
+    intent('initdb',true);recheckRoot();
+    init=capturedChild(PG+'initdb',plan.initdb,env);
+    init.witness=observeOwnedPrivateTestChildV1(init.child);
+    attachPrivateTestChildJournalV1(init.child,'initdb',secrets,journal,mirrors);
     if(!await cancellation.run(boundedClose(init.witness,60000))
       ||!definiteNormalClose(init.witness)||init.witness.result.code!==0){
       throw Error('PRIVATE_TEST_CLUSTER_INIT_FAILED');
     }
-    stage='server-start';recheckRoot();server=forwardedChild(PG+'postgres',plan.server,env,secrets);
+    intent('server-start',true);recheckRoot();
+    server=capturedChild(PG+'postgres',plan.server,env);
+    server.witness=observeOwnedPrivateTestChildV1(server.child);
+    attachPrivateTestChildJournalV1(server.child,'server',secrets,journal,mirrors);
     admin=postgres(url,{max:1,connect_timeout:2,idle_timeout:1,onnotice:()=>{}});
-    stage='identity';await cancellation.run(racePrivateTestDeadlineV1(
+    intent('identity');await cancellation.run(racePrivateTestDeadlineV1(
       clusterIdentity(admin,url,root+'/data',server),30000));recheckRoot();
-    event('identity-verified',{root,port,serverPid:server.child.pid});
+    record('identity-verified',{root,port,serverPid:server.child.pid});
     const testEnv={...env,SETFARM_TEST_PG_ADMIN_URL:url,SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY:root+'/data'};
-    stage='test-graph';testsStarted=true;mayStopServer=false;
-    testChild=forwardedChild(process.execPath,plan.test,testEnv,secrets);
+    intent('test-graph',true);testsStarted=true;mayStopServer=false;
+    testChild=capturedChild(process.execPath,plan.test,testEnv);
+    testChild.witness=observeOwnedPrivateTestChildV1(testChild.child);
+    attachPrivateTestChildJournalV1(testChild.child,'test',secrets,journal,mirrors);
     await cancellation.run(testChild.witness.completion);
     if(!definiteNormalClose(testChild.witness))throw Error('PRIVATE_TEST_CLUSTER_TEST_CLOSE_UNCERTAIN');
     resultCode=testChild.witness.result.code;
-    stage='private-db-quiescence';recheckRoot();
-    if(!await cancellation.run(racePrivateTestDeadlineV1(quiescence(admin),10000))){
+    intent('private-db-quiescence');recheckRoot();
+    if(!await cancellation.run(racePrivateTestDeadlineV1(quiescence(admin,journal),10000))){
       throw Error('PRIVATE_TEST_CLUSTER_DB_CLEANUP_UNVERIFIED');
     }
-    mayStopServer=true;event('direct-test-child-closed',{code:resultCode,privateDbQuiescent:true});
-    stage='admin-close';await cancellation.run(admin.end({timeout:5}));admin=null;
-    stage='server-close';
+    mayStopServer=true;record('direct-test-child-closed',{code:resultCode,privateDbQuiescent:true});
+    intent('admin-close');await cancellation.run(admin.end({timeout:5}));admin=null;
+    record('admin-ended');intent('server-close');
     if(!await cancellation.run(settleOwnedPrivatePostgresV1(server.witness,30000))){
       mayStopServer=false;throw Error('PRIVATE_TEST_CLUSTER_SERVER_CLOSE_UNCERTAIN');
     }
-    event('server-definitely-closed',{root,port,code:resultCode,retained:true,productionAuthority:false});
+    record('server-definitely-closed',{root,port,code:resultCode,retained:true});
+    if(!journal.finish({outcome:'observed',testCode:resultCode,privateDbQuiescent:true,
+      adminEnded:true,serverClosed:true,productionAuthority:false}))throw Error('PRIVATE_TEST_JOURNAL_REFUSED');
     process.exitCode=resultCode;
   }catch(error){
+    const operation=stage;
+    journal?.burn('journal-input');
     if(cancellation.cancelled&&testsStarted)mayStopServer=false;
     if(admin){
-      try{await admin.end({timeout:5});}catch{if(testsStarted)mayStopServer=false;}
+      try{
+        record('admin-close');await admin.end({timeout:5});record('admin-ended');
+      }catch{if(testsStarted)mayStopServer=false;}
       admin=null;
     }
-    let serverClosed=server?.witness.closed===true&&definiteNormalClose(server.witness)
+    let serverClosed=server?.witness?.closed===true&&definiteNormalClose(server.witness)
       &&server.witness.result.code===0;
-    if(server&&mayStopServer&&!serverClosed)serverClosed=await settleOwnedPrivatePostgresV1(server.witness,30000);
+    if(server?.witness&&mayStopServer&&!serverClosed){
+      record('server-close');serverClosed=await settleOwnedPrivatePostgresV1(server.witness,30000);
+    }
     const knownReasons=new Set([
       'PRIVATE_TEST_CLUSTER_AMBIENT_PG_FORBIDDEN','PRIVATE_TEST_CLUSTER_HOST_INVALID',
       'PRIVATE_TEST_CLUSTER_DISK_LOW','PRIVATE_TEST_CLUSTER_SOURCE_DIRTY','PRIVATE_TEST_CLUSTER_TOOL_INVALID',
@@ -342,13 +408,15 @@ async function main(){
       'PRIVATE_TEST_CLUSTER_TEST_CLOSE_UNCERTAIN','PRIVATE_TEST_CLUSTER_DB_CLEANUP_UNVERIFIED',
       'PRIVATE_TEST_CLUSTER_SERVER_CLOSE_UNCERTAIN','PRIVATE_TEST_CLUSTER_CANCELLED',
       'PRIVATE_TEST_CLUSTER_DEADLINE',
+      'PRIVATE_TEST_JOURNAL_REFUSED',
     ]);
     const reason=knownReasons.has(error?.message)?error.message:'PRIVATE_TEST_CLUSTER_REFUSED';
-    event('refused',{stage,reason,root,retained:root!==null,testsStarted,serverClosed:serverClosed===true,
-      productionAuthority:false});process.exitCode=1;
+    record('refused',{operation,reason,root,retained:root!==null,testsStarted,serverClosed:serverClosed===true});
+    journal?.finish({outcome:'refused',reason,productionAuthority:false});process.exitCode=1;
     unrefOwned(init);unrefOwned(testChild);unrefOwned(server);
   }finally{
-    if(directoryFd!==null)closeSync(directoryFd);
+    if(journal&&!journal.close())process.exitCode=1;
+    if(directoryFd!==null){try{closeSync(directoryFd);}catch{process.exitCode=1;}}
     cancellation.dispose();
   }
 }

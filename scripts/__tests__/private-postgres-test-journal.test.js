@@ -445,3 +445,19 @@ test('terminal mirror synchronous throw and close never escape or restart displa
     assert.equal(writes,mode==='throw'?1:0);
   }
 });
+
+test('failed-spawn null PID close is retained as diagnostic unknown, never invented normal closure',async()=>{
+  const {createPrivateTestJournalV1:create}=await implementation();
+  const {root,fd}=ownedRoot();const journal=create(root,fd);
+  try{
+    journal.control('journal-opened',{root});journal.control('initdb');
+    journal.control('child-error',{childRole:'initdb',reason:'PRIVATE_TEST_CLUSTER_REFUSED'});
+    assert.equal(journal.control('child-close',{childRole:'initdb',pid:null,code:-2,signal:null}),true);
+    assert.equal(journal.healthy,false);assert.equal(journal.finish(terminal(0)),false);
+    assert.equal(journal.finish({outcome:'refused',reason:'PRIVATE_TEST_CLUSTER_INIT_FAILED',productionAuthority:false}),true);
+    const {records,result}=await read(readFileSync(root+'/transcript.journal'));
+    assert.equal(result.incomplete,true);assert.equal(result.terminalObserved,true);
+    assert.deepEqual(JSON.parse(records[3].payload),{stage:'child-close',childRole:'initdb',pid:null,
+      code:-2,signal:null,productionAuthority:false});
+  }finally{journal.close();closeSync(fd);}
+});
