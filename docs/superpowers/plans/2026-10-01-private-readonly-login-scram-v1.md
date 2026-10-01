@@ -109,14 +109,14 @@ identity SQL with password_encryption and require scram-sha-256 before effects.
   no real SQL; require primary duplicate error and zero foreign-role DROP.
   Observe RED, then set roleCreated only after successful CREATE acknowledgment
   and require it for cleanup. Keep current journal collision guard unchanged.
-- [ ] Run full pure wrapper/journal tests, noemit, version/English/path/migration/
+- [x] Run full pure wrapper/journal tests, noemit, version/English/path/migration/
   MC/diff checks; review exact6-path map and causal unchanged ALL/fail-closed
   invariants. Commit clean source before real GREEN.
-- [ ] New independent exact-head per-invocation review and immediate preflight;
+- [x] New independent exact-head per-invocation review and immediate preflight;
   same focused mode, new owned private cluster. Freeze to full closure. Require
   both integration bodies PASS0SKIP with all negative catalog cases and actual
   two quiescence samples, admin end/server close/strict terminal/outer0/posthost.
-- [ ] Address only causal failures exposed by genuine evidence; refine map/tests
+- [x] Address only causal failures exposed by genuine evidence; refine map/tests
   and review first. Never weaken catalog or authentication proofs to get green.
 
 ## Task 3: Reviewed delivery and genuine ALL preparation
@@ -173,3 +173,22 @@ credential changes, generated runtime edits or unrelated feature work included.
   SKIP9191.068666ms, followed by noemit/diff0. Real focused GREEN remains pending
   clean commit and a NEW per-invocation review/health check. No credential changed
   in the closed RED cluster, primary or any retained footprint.
+- Auth source commit a89cd5406f7da936b7eb2c9577fe851bb43824f2 clean;
+  fresh exact-head pure18661 CLOSED0:127PASS0FAIL0CANCELLED0SKIP9355.13725ms.
+  Both separate one-GREEN-invocation reviewers C0/I0/M0. Fresh10:55:45UTC
+  primary claims0/unreleased0, source/dependency/environment unchanged,
+  ordinary Node26.4 UID/EUID501 GID/EGID20; disk14557528KiB available.
+- Genuine same-command focused GREEN14966 definitely CLOSED0:2PASS0FAIL/
+  CANCELLED/SKIP238255.382459ms. Full base catalog164695.775584ms and current
+  journal72341.289125ms bodies, all existing negative rights/drift/fingerprint/
+  missing-target checks unchanged. Expected missing-database FATAL logs are
+  negative evidence, not ignored failures. No HBA or verifier relaxation.
+- NEW /tmp/setfarm-task6a-pg.fS1yEu54201 originalrootdev16777231ino206856554
+  UID501GID0mode0700; journalino206856555mode0600nlink1. Strict whole74records
+  23256bytesSHA648d2a167bb10b1bad0c2e88c0fb110f1e742abd47fdf105f0da61f6937407c9,
+  stable identity/bytes, terminalObservedtrue/incompletefalse/reasonnull,
+  observed testCode0/quiescent/adminEnded/serverClosedtrue. Ownedinitdb78683/
+  test78702/server78694 each actualexit+close0signalsnull, sixEOF and two ordered
+  quiescence samplesPASS. Outer0 separately observed. Post11:00:53UTC primary
+  real5432/setfarm/schema31claims0/unreleased0, HTTP3080200, available13957700KiB.
+  Root retained with all old footprints; no production rollout or ALL success.
