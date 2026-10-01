@@ -39,9 +39,10 @@
 env -u TMPDIR -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 scripts/__tests__/private-postgres-test-cluster.test.js
 ```
 
-- [ ] Add actual integration-consumer malformed-password cases for each file:
+- [x] Add actual integration-consumer malformed-password cases for each file:
   synthetic explicit private data path/admin URL, fixed invalid password markers,
-  a child preload forbids every Socket.connect, actual node --import tsx --test.
+  a child preload forbids the synthetic PostgreSQL target via numeric/object/path
+  Socket.connect forms while preserving runtime IPC, actual node --import tsx --test.
   Require literal PRIVATE_READONLY_LOGIN_PASSWORD_INVALID, exit1, zero forbidden
   connection marker and no password marker in output. Observe RED before change;
   do not use real SQL/cluster/native effects or source-text matching.
@@ -63,10 +64,11 @@ real RED, before authentication implementation. Fixed-mode planner RED:
 7PASS1FAIL300.359958ms, PRIVATE_TEST_CLUSTER_PLAN_INVALID. Full pure harness/
 journal GREEN:120PASS0FAIL0CANCELLED0SKIP6390.071917ms, including all12 lifecycle
 fault modes for findings and readonly-verifiers and normal unchanged all dispatch.
-- [ ] Commit clean fixed harness/tests, inspect actual source diff, obtain
+- [x] Commit clean fixed harness/tests:820afbddd24e7dffff645389957114ff7f57fc0d;
+  inspect actual source diff, obtain
   independent one-invocation review before real RED. Secret-shape cases can be
   added after the harness-only commit so real RED does not include them.
-- [ ] Fresh readonly-verifiers invocation after preflight:
+- [x] Fresh readonly-verifiers invocation after preflight:
 
 ```bash
 /opt/homebrew/Cellar/node/26.4.0/bin/node scripts/run-private-postgres-tests.mjs readonly-verifiers
@@ -85,21 +87,23 @@ before all effects close. Prior fifth ALL RED is corroboration, not this command
 all existing postgres clients keep identical host/port/database/user/max fields
 and add password. No new utility or production API.
 
-- [ ] Complete malformed credential consumer RED from Task1, then add before
+- [x] Complete malformed credential consumer RED from Task1, then add before
   admin client construction in both tests:
 
 ```typescript
-const password = decodeURIComponent(parsed.password);
+let password: string;
+try { password = decodeURIComponent(parsed.password); }
+catch { throw new Error("PRIVATE_READONLY_LOGIN_PASSWORD_INVALID"); }
 assert.ok(/^[a-f0-9]{64}$/.test(password), "PRIVATE_READONLY_LOGIN_PASSWORD_INVALID");
 ```
 
 Never use assert.match(password), whose failure could print it. Extend observed
 identity SQL with password_encryption and require scram-sha-256 before effects.
-- [ ] Append `PASSWORD '${password}'` to shape-validated existing random LOGIN
+- [x] Append `PASSWORD '${password}'` to shape-validated existing random LOGIN
   DDL. Supply password to all4 restricted clients in each file, including missing
   target. Keep writerRole NOLOGIN, all flags/grants, fingerprint/drift/cleanup
   tests unchanged. No credential literals or new unregistered passwords.
-- [ ] Independently reviewed causal ownership refinement: base fixture cleanup
+- [x] Independently reviewed causal ownership refinement: base fixture cleanup
   currently drops a role even on CREATE collision. Test the complete actual
   integration callback with finite identity/database/CREATE-42710 boundaries,
   no real SQL; require primary duplicate error and zero foreign-role DROP.
@@ -137,3 +141,35 @@ hour-long ALL or weakening its graph. Existing random private password reuse
 keeps redaction coverage; secret separation is explicitly not claimed. Privilege
 and catalog invariants remain actual consumer assertions. No placeholders, live
 credential changes, generated runtime edits or unrelated feature work included.
+
+## Actual observed RED/GREEN checkpoint
+
+- Exact820afbdd pure rerun26241 CLOSED0:120PASS0FAIL0CANCELLED0SKIP6416.207625ms.
+  Both independent one-invocation read-only reviews C0/I0/M0. Immediate10:47:02UTC
+  primary5432/setfarm claims0/unreleased0, ordinary UID/EUID501 GID/EGID20 Node26.4,
+  ambient forbidden names empty, PG17.10, unchanged dependency digests, 14.6GB free.
+- Genuine focused RED96971 definitely CLOSED1, constructor-owned NEW
+  /tmp/setfarm-task6a-pg.vYFmIs, port52953; original root dev16777231ino206852394
+  UID501GID0mode0700; journalino206852395mode0600nlink1. Two actual28P01 failures,
+  no password assigned under unchanged localSCRAM,0PASS2FAIL0CANCELLED0SKIP
+  10008.074417ms. No auth/cutover success is inferred.
+- Whole held-FD reader:74records28586bytesSHA
+  647b931f80abed1454ca599ddb9c42febb1852e8374e0b959a6559e207e4f5c2,
+  stable identity/bytes, terminalObservedtrue/incompletefalse/reasonnull;
+  observed testCode1/quiescent/adminEnded/serverClosedtrue. Owned initdb77194,
+  test77213, server77205 each actualexit+close0/1/0signalsnull; all6EOF and two
+  ordered quiescence samplesPASS. Outer1 separately observed. Post10:47:43UTC
+  primaryschema31claims0/unreleased0/HTTP3080200. Cluster/root retained; no reuse.
+- Initial malformed-test preload incorrectly denied runtime IPC and four child
+  cases timed out. Object-only refinement then missed postgres numeric connect
+  and observed ECONNREFUSED at synthetic127.0.0.1:55439, no SQL/live5432 effect.
+  Neither attempt is accepted as the no-network regression RED. Corrected
+  numeric/object/path boundary preserves IPC and prevents that PostgreSQL target.
+- Genuine final seven-case RED75997 CLOSED1:0PASS7FAIL0CANCELLED0SKIP
+  2798.170584ms. Four cases reach the forbidden-target sentinel; two malformed
+  encoding cases escape as untyped URIError; base callback drops a foreign role
+  after CREATE collision. No real SQL/native process beyond finite Node test child.
+- After minimal fixes, pure wrapper/journal72138 CLOSED0:127PASS0FAIL0CANCELLED/
+  SKIP9191.068666ms, followed by noemit/diff0. Real focused GREEN remains pending
+  clean commit and a NEW per-invocation review/health check. No credential changed
+  in the closed RED cluster, primary or any retained footprint.

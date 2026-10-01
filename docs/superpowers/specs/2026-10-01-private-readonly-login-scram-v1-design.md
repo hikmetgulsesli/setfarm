@@ -36,6 +36,8 @@ No live credential, role, privilege, deployment selector or native policy change
 Each test obtains the existing explicit private admin URL. Decode its password
 and require exactly64 lowercase hex characters with a boolean assertion and
 literal non-secret error message, before constructing a SQL client. Never print
+malformed percent-decoding errors or attach a credential-bearing cause; decoding
+failure uses the same literal refusal. Never print
 the password, admin URL, SQL containing it, or arbitrary driver errors manually.
 Existing private data-directory, non5432 port and socket joins remain. Add an
 observed password_encryption=scram-sha-256 check before role/database effects.

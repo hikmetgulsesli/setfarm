@@ -3,6 +3,8 @@ import {EventEmitter} from 'node:events';
 import {spawnSync} from 'node:child_process';
 import {chmodSync,closeSync,constants,existsSync,mkdtempSync,openSync,readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
+import {createRequire} from 'node:module';
+import {runInNewContext} from 'node:vm';
 import test from 'node:test';
 
 const MODULE=new URL('../run-private-postgres-tests.mjs',import.meta.url);
@@ -11,6 +13,81 @@ async function implementation(){
   return import(MODULE.href);
 }
 const root='/tmp/setfarm-task6a-pg.Abc123';
+for(const file of ['base-schema-readonly-verifier-v1.integration.test.ts',
+  'contract-spine-readonly-verifier-v1.integration.test.ts'])
+for(const [label,password] of [['nonhex','NEVER_EXPOSE_PRIVATE_LOGIN_BAD_PASSWORD'],
+  ['empty',''],['malformed-encoding','NEVER_EXPOSE_PRIVATE_LOGIN_BAD_PASSWORD%ZZ']]){
+  test('actual '+file+' refuses '+label+' password before connecting or exposing it',()=>{
+    const guard=`import net from 'node:net';
+const connect=net.Socket.prototype.connect;
+net.Socket.prototype.connect=function(...args){
+  const options=Array.isArray(args[0])?args[0][0]:args[0];
+  if(Number(options)===55439
+    ||(typeof options==='string'&&options.includes('setfarm-task6a-pg.Abc123'))
+    ||(options&&typeof options==='object'&&(Number(options.port)===55439
+      ||String(options.path??'').includes('setfarm-task6a-pg.Abc123')))){
+    console.log('PRIVATE_LOGIN_FORBIDDEN_CONNECT');process.exit(87);
+  }
+  return connect.apply(this,args);
+};`;
+    const filePath=fileURLToPath(new URL('../../tests/execution-attempts/'+file,import.meta.url));
+    const result=spawnSync(process.execPath,['--import','tsx','--test',filePath],{
+      encoding:'utf8',timeout:5000,maxBuffer:131072,
+      env:{PATH:'/opt/homebrew/bin:/usr/bin:/bin',LANG:'C',LC_ALL:'C',
+        SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY:root+'/data',
+        SETFARM_TEST_PG_ADMIN_URL:'postgresql://postgres:'+password+'@127.0.0.1:55439/postgres',
+        NODE_OPTIONS:'--import=data:text/javascript;base64,'+Buffer.from(guard).toString('base64')},
+    });
+    assert.equal(result.error,undefined);assert.equal(result.signal,null);
+    assert.equal(result.status,1);
+    const output=result.stdout+result.stderr;
+    assert.match(output,/PRIVATE_READONLY_LOGIN_PASSWORD_INVALID/);
+    assert.doesNotMatch(output,/PRIVATE_LOGIN_FORBIDDEN_CONNECT|NEVER_EXPOSE_PRIVATE_LOGIN_BAD_PASSWORD/);
+  });
+}
+
+test('actual base fixture never drops a pre-existing role after CREATE collision',async()=>{
+  const file=fileURLToPath(new URL('../../tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',import.meta.url));
+  const actualRequire=createRequire(file),ts=actualRequire('typescript');
+  let callback,roleDrops=0,databaseCleanups=0,adminEnds=0;
+  const collision=Object.assign(new Error('PRIVATE_ROLE_ALREADY_EXISTS'),{code:'42710'});
+  const admin=async strings=>{
+    assert.match(strings.join('?'),/current_setting\('data_directory'\)/);
+    return [{data_directory:root+'/data',port:'55439',socket_directories:root,
+      password_encryption:'scram-sha-256'}];
+  };
+  admin.unsafe=async sql=>{
+    if(/^CREATE ROLE /.test(sql))throw collision;
+    if(/^DROP ROLE /.test(sql)){roleDrops++;return [];}
+    if(sql==='DROP ACCESS METHOD IF EXISTS task6a_alt_heap')return [];
+    throw new Error('PRIVATE_COLLISION_UNEXPECTED_SQL');
+  };
+  admin.end=async()=>{adminEnds++;};
+  const denyVerifier=()=>{throw new Error('PRIVATE_COLLISION_FORBIDDEN_VERIFIER');};
+  const compiled=ts.transpileModule(readFileSync(file,'utf8'),{
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true},
+    fileName:file,
+  }).outputText;
+  runInNewContext(compiled,{
+    exports:{},Buffer,URL,console,
+    process:{env:{SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY:root+'/data',
+      SETFARM_TEST_PG_ADMIN_URL:'postgresql://postgres:'+('a'.repeat(64))+'@127.0.0.1:55439/postgres'}},
+    require(specifier){
+      if(specifier==='node:test')return {test(_name,_options,run){callback=run;}};
+      if(specifier==='postgres')return ()=>admin;
+      if(specifier==='./test-database.js')return {async createIsolatedTestDatabase(){
+        return {database:'setfarm_contract_spine_test_1_abcdef012345',
+          async cleanup(){databaseCleanups++;}};
+      }};
+      if(specifier==='../../src/db/base-schema-readonly-verifier-v1.js')return {verifyOrdinaryBaseSchemaCatalogReadOnlyV1:denyVerifier};
+      return actualRequire(specifier);
+    },
+  },{filename:file});
+  assert.equal(typeof callback,'function');
+  await assert.rejects(callback(),error=>error===collision);
+  assert.equal(roleDrops,0,'CREATE collision cannot authorize deleting the foreign role');
+  assert.equal(databaseCleanups,1);assert.equal(adminEnds,1);
+});
 test('private cluster plans only SCRAM loopback PG17 and the unchanged findings command',async()=>{
   const {planPrivatePostgresTestsV1:plan}=await implementation();
   const result=plan({root,port:55439,mode:'findings'});

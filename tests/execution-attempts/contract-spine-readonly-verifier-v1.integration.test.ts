@@ -75,6 +75,10 @@ test("a distinct SELECT-only login verifies the current journal and refuses revo
   assert.equal(parsed.pathname, "/postgres");
   assert.ok(["127.0.0.1", "localhost", "::1"].includes(parsed.hostname));
   assert.notEqual(parsed.port, "5432");
+  let password: string;
+  try { password = decodeURIComponent(parsed.password); }
+  catch { throw new Error("PRIVATE_READONLY_LOGIN_PASSWORD_INVALID"); }
+  assert.ok(/^[a-f0-9]{64}$/.test(password), "PRIVATE_READONLY_LOGIN_PASSWORD_INVALID");
   const admin = postgres(adminUrl, { max: 1 });
   let database: TestDatabase | undefined;
   let restricted: postgres.Sql | undefined;
@@ -89,16 +93,19 @@ test("a distinct SELECT-only login verifies the current journal and refuses revo
       data_directory: string;
       port: string;
       socket_directories: string;
+      password_encryption: string;
     }>>`
       SELECT current_setting('data_directory') AS data_directory,
         current_setting('port') AS port,
-        current_setting('unix_socket_directories') AS socket_directories
+        current_setting('unix_socket_directories') AS socket_directories,
+        current_setting('password_encryption') AS password_encryption
     `;
     assert.equal(identity[0]?.data_directory, expectedDataDirectory);
     assert.equal(identity[0]?.port, parsed.port);
     const socketDirectory = path.dirname(expectedDataDirectory!);
     assert.ok(identity[0]?.socket_directories.split(",").map((value) => value.trim())
       .includes(socketDirectory));
+    assert.equal(identity[0]?.password_encryption, "scram-sha-256");
     privateClusterVerified = true;
     const existingRoles = await admin<Array<{ name: string }>>`
       SELECT rolname AS name FROM pg_catalog.pg_roles
@@ -110,7 +117,7 @@ test("a distinct SELECT-only login verifies the current journal and refuses revo
 
     database = await createIsolatedTestDatabase();
     try {
-      await admin.unsafe(`CREATE ROLE "${role}" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
+      await admin.unsafe(`CREATE ROLE "${role}" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD '${password}'`);
     } catch (error) {
       if (error && typeof error === "object" && "code" in error && error.code === "42710") {
         roleCleanupEligible = false;
@@ -121,7 +128,7 @@ test("a distinct SELECT-only login verifies the current journal and refuses revo
     await database.sql.unsafe(`GRANT USAGE ON SCHEMA public TO "${role}"`);
     await database.sql.unsafe(`GRANT SELECT ON public.setfarm_schema_migrations TO "${role}"`);
     restricted = postgres({ host: socketDirectory, port: Number(parsed.port),
-      database: database.database, username: role, max: 1 });
+      database: database.database, username: role, password, max: 1 });
     const rights = await restricted<Array<{
       login: string;
       database_create: boolean;
@@ -187,7 +194,7 @@ test("a distinct SELECT-only login verifies the current journal and refuses revo
       await database.sql.unsafe(`GRANT SELECT ON public.setfarm_schema_migrations TO "${role}"`);
       await database.sql.unsafe(mutation);
       restricted = postgres({ host: socketDirectory, port: Number(parsed.port),
-        database: database.database, username: role, max: 1 });
+        database: database.database, username: role, password, max: 1 });
       const driftBefore = await journalFingerprint(database.sql);
       await assert.rejects(verifyContractSpineCurrentHeadJournalReadOnlyV1(restricted),
         /SETFARM_CURRENT_HEAD_JOURNAL_CATALOG_MISMATCH_V1/, label);
@@ -200,7 +207,7 @@ test("a distinct SELECT-only login verifies the current journal and refuses revo
     await database.sql.unsafe(`GRANT USAGE ON SCHEMA public TO "${role}"`);
     await database.sql.unsafe(`GRANT SELECT ON public.setfarm_schema_migrations TO "${role}"`);
     restricted = postgres({ host: socketDirectory, port: Number(parsed.port),
-      database: database.database, username: role, max: 1 });
+      database: database.database, username: role, password, max: 1 });
     await database.sql.unsafe(`GRANT CREATE ON SCHEMA public TO "${role}"`);
     await assert.rejects(verifyContractSpineCurrentHeadJournalReadOnlyV1(restricted),
       /SETFARM_CURRENT_HEAD_JOURNAL_CATALOG_MISMATCH_V1/,
@@ -274,7 +281,7 @@ test("a distinct SELECT-only login verifies the current journal and refuses revo
       }
     }
     const missingTarget = postgres({ host: socketDirectory, port: Number(parsed.port),
-      database: `task6a_missing_${randomBytes(8).toString("hex")}`, username: role,
+      database: `task6a_missing_${randomBytes(8).toString("hex")}`, username: role, password,
       max: 1, connect_timeout: 2 });
     try {
       await assert.rejects(verifyContractSpineCurrentHeadJournalReadOnlyV1(missingTarget),
