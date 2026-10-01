@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -16,6 +15,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { createPrivateOutputParent } from "./fixtures/private-output-parent.mjs";
 import {
   runDarwinHostSelfObservationFixtureDescriptorSettlementFaultForTestV2,
   runDarwinHostSelfObservationFixtureRunnerFaultForTestV2,
@@ -300,10 +300,10 @@ describe("Darwin host self-observation native fixture builder", () => {
   it("publishes deterministic bytes with retained evidence and false authority", {
     skip: process.platform !== "darwin",
   }, () => {
-    const firstAlias = mkdtempSync(
+    const firstAlias = createPrivateOutputParent(
       join(tmpdir(), "setfarm-host-self-observation-a-"),
     );
-    const secondAlias = mkdtempSync(
+    const secondAlias = createPrivateOutputParent(
       join(tmpdir(), "setfarm-host-self-observation-b-"),
     );
     const firstRoot = realpathSync(firstAlias);
@@ -419,10 +419,10 @@ describe("Darwin host self-observation native fixture builder", () => {
     assert.equal(badArgv.status, 1);
     assert.match(badArgv.stderr, /Usage:/u);
 
-    const publicAlias = mkdtempSync(
+    const publicAlias = createPrivateOutputParent(
       join(tmpdir(), "setfarm-host-self-observation-mode-"),
     );
-    const timeoutAlias = mkdtempSync(
+    const timeoutAlias = createPrivateOutputParent(
       join(tmpdir(), "setfarm-host-self-observation-timeout-"),
     );
     try {
@@ -494,7 +494,7 @@ describe("Darwin host self-observation native fixture builder", () => {
         "SETFARM_DARWIN_HOST_SELF_OBSERVATION_FIXTURE_TEST_FORCE_POST_PUBLICATION_FAILURE_V2",
       ],
     ].map(([name, variable]) => {
-      const alias = mkdtempSync(
+      const alias = createPrivateOutputParent(
         join(tmpdir(), `setfarm-host-self-observation-${name}-`),
       );
       const root = realpathSync(alias);
@@ -578,7 +578,7 @@ describe("Darwin host self-observation native fixture builder", () => {
   it("kills a readiness-proven timed-out tool's whole process group", {
     skip: process.platform !== "darwin",
   }, () => {
-    const alias = mkdtempSync(
+    const alias = createPrivateOutputParent(
       join(tmpdir(), "setfarm-host-self-observation-grandchild-"),
     );
     const root = realpathSync(alias);
@@ -615,7 +615,7 @@ describe("Darwin host self-observation native fixture builder", () => {
   it("preserves a foreign output that wins the O_EXCL publication race", {
     skip: process.platform !== "darwin",
   }, async () => {
-    const alias = mkdtempSync(
+    const alias = createPrivateOutputParent(
       join(tmpdir(), "setfarm-host-self-observation-o-excl-"),
     );
     const root = realpathSync(alias);
