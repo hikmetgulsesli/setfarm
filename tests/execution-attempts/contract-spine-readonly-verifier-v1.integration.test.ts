@@ -9,6 +9,7 @@ import { verifyContractSpineCurrentHeadJournalReadOnlyV1 } from "../../src/db/co
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 const expectedDataDirectory = process.env.SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY;
+const PRIVATE_CLUSTER_AUTH_ALGORITHM = "scram-sha-256" as const;
 
 async function journalFingerprint(sql: postgres.Sql): Promise<string> {
   const rows = await sql<Array<{ fingerprint: string }>>`
@@ -105,7 +106,7 @@ test("a distinct SELECT-only login verifies the current journal and refuses revo
     const socketDirectory = path.dirname(expectedDataDirectory!);
     assert.ok(identity[0]?.socket_directories.split(",").map((value) => value.trim())
       .includes(socketDirectory));
-    assert.equal(identity[0]?.password_encryption, "scram-sha-256");
+    assert.equal(identity[0]?.password_encryption, PRIVATE_CLUSTER_AUTH_ALGORITHM);
     privateClusterVerified = true;
     const existingRoles = await admin<Array<{ name: string }>>`
       SELECT rolname AS name FROM pg_catalog.pg_roles

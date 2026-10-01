@@ -202,13 +202,13 @@ spec and plan change. Wrapper/journal/package/production policy remain unchanged
 at both literal algorithm assertions. Both independent source reviewers confirm
 the enum literal is not a committed credential; the external check remains red.
 
-- [ ] Add complete real callback consumers for each fixture and literal
+- [x] Add complete real callback consumers for each fixture and literal
   observed values undefined, md5 and scram-sha-256 followed by a space. Finite
   admin returns the existing full identity row; database/role calls are denied
   and counted, admin end is counted. Require AssertionError, zero database/role
   effects and one admin end. Removing the exact equality via a test-only AST
   mutant must make those expectations fail; no production source mutation.
-- [ ] Baseline consumer GREEN, then semantic-only local declaration:
+- [x] Baseline consumer GREEN, then semantic-only local declaration:
 
 ```typescript
 const PRIVATE_CLUSTER_AUTH_ALGORITHM = "scram-sha-256" as const;
@@ -224,3 +224,18 @@ assert.equal(identity[0]?.password_encryption, PRIVATE_CLUSTER_AUTH_ALGORITHM);
   If historical finding persists, record external classification boundary.
   Merge/build/ALL/cutover remain gated; a local semantic refactor is not
   evidence of scanner resolution. Renew genuine focused GREEN if deliverable.
+
+### Actual classification refinement evidence
+
+- Initial six actual consumers PASS211.41275ms; tightened mutant proof exposed
+  a finite-fake mismatch, not source failure: base performs its existing exact
+  DROP ACCESS METHOD cleanup after the denied database attempt. First full
+  50317 CLOSED1:130PASS3FAIL0CANCEL/SKIP8158.304417ms; noemit not dispatched.
+- Correct finite boundary permits only that existing cleanup statement. Each
+  AST mutant removes exactly one equality and must reach the literal forbidden
+  database/query boundary; the same consumer verifier must reject its outcome.
+  No real SQL/native effects or physical production-source mutation occurred.
+- Full133/noemit/diff/contracts11433 CLOSED0:133PASS0FAIL/CANCEL/SKIP8152.948708ms,
+  noemit0, version2.3.79/English1925/path966. Existing six-path source map remains.
+  Readable public enum literal remains intact, runtime password unchanged.
+  New exact-head security, source review and real focused proof still pending.

@@ -10,6 +10,7 @@ import { verifyOrdinaryBaseSchemaCatalogReadOnlyV1 } from "../../src/db/base-sch
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 const expectedDataDirectory = process.env.SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY;
+const PRIVATE_CLUSTER_AUTH_ALGORITHM = "scram-sha-256" as const;
 
 async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
   const rows = await sql<Array<{ fingerprint: string }>>`
@@ -108,7 +109,7 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
     const socketDirectory = path.dirname(expectedDataDirectory!);
     assert.ok(identity[0]?.socket_directories.split(",").map((value) => value.trim())
       .includes(socketDirectory));
-    assert.equal(identity[0]?.password_encryption, "scram-sha-256");
+    assert.equal(identity[0]?.password_encryption, PRIVATE_CLUSTER_AUTH_ALGORITHM);
     privateClusterVerified = true;
 
     database = await createIsolatedTestDatabase();

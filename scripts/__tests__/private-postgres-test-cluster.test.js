@@ -46,6 +46,82 @@ net.Socket.prototype.connect=function(...args){
   });
 }
 
+for(const fileName of ['base-schema-readonly-verifier-v1.integration.test.ts',
+  'contract-spine-readonly-verifier-v1.integration.test.ts'])
+for(const [label,algorithm] of [['missing',undefined],['legacy','md5'],
+  ['noncanonical','scram-sha-256 ']]){
+  test('actual '+fileName+' refuses '+label+' algorithm before database or role effects',async()=>{
+    const file=fileURLToPath(new URL('../../tests/execution-attempts/'+fileName,import.meta.url));
+    const actualRequire=createRequire(file),ts=actualRequire('typescript');
+    async function consumer(removeGuard){
+      let callback,databaseCreates=0,roleEffects=0,adminEnds=0,removed=0;
+      const admin=async strings=>{
+        if(!strings.join('?').includes("current_setting('data_directory')")){
+          throw new Error('PRIVATE_ALGORITHM_FORBIDDEN_QUERY');
+        }
+        return [{data_directory:root+'/data',port:'55439',socket_directories:root,
+          password_encryption:algorithm}];
+      };
+      admin.unsafe=async sql=>{
+        if(sql==='DROP ACCESS METHOD IF EXISTS task6a_alt_heap')return [];
+        roleEffects++;throw new Error('PRIVATE_ALGORITHM_FORBIDDEN_ROLE');
+      };
+      admin.end=async()=>{adminEnds++;};
+      const compiled=ts.transpileModule(readFileSync(file,'utf8'),{
+        compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true},
+        fileName:file,
+        ...(removeGuard?{transformers:{before:[context=>{
+          function visit(node){
+            if(ts.isExpressionStatement(node)&&ts.isCallExpression(node.expression)){
+              const call=node.expression,arg=call.arguments[0];
+              if(ts.isPropertyAccessExpression(call.expression)
+                &&call.expression.name.text==='equal'&&arg
+                &&ts.isPropertyAccessExpression(arg)&&arg.name.text==='password_encryption'){
+                removed++;return context.factory.createEmptyStatement();
+              }
+            }
+            return ts.visitEachChild(node,visit,context);
+          }
+          return source=>ts.visitNode(source,visit);
+        }]}}:{}),
+      }).outputText;
+      runInNewContext(compiled,{
+        exports:{},Buffer,URL,console,
+        process:{env:{SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY:root+'/data',
+          SETFARM_TEST_PG_ADMIN_URL:'postgresql://postgres:'+('a'.repeat(64))+'@127.0.0.1:55439/postgres'}},
+        require(specifier){
+          if(specifier==='node:test')return {test(_name,_options,run){callback=run;}};
+          if(specifier==='postgres')return ()=>admin;
+          if(specifier==='./test-database.js')return {async createIsolatedTestDatabase(){
+            databaseCreates++;throw new Error('PRIVATE_ALGORITHM_FORBIDDEN_DATABASE');
+          }};
+          if(specifier.includes('/base-schema-readonly-verifier-v1.js'))return {
+            verifyOrdinaryBaseSchemaCatalogReadOnlyV1(){throw new Error('PRIVATE_ALGORITHM_FORBIDDEN_VERIFIER');}};
+          if(specifier.includes('/contract-spine-readonly-verifier-v1.js'))return {
+            verifyContractSpineCurrentHeadJournalReadOnlyV1(){throw new Error('PRIVATE_ALGORITHM_FORBIDDEN_VERIFIER');}};
+          return actualRequire(specifier);
+        },
+      },{filename:file});
+      assert.equal(typeof callback,'function');
+      let failure;
+      try{await callback();}catch(error){failure=error;}
+      return {failure,databaseCreates,roleEffects,adminEnds,removed};
+    }
+    function verify(observed){
+      assert.equal(observed.failure?.code,'ERR_ASSERTION');
+      assert.equal(observed.failure.actual,algorithm);
+      assert.equal(observed.failure.expected,'scram-sha-256');
+      assert.equal(observed.databaseCreates,0);assert.equal(observed.roleEffects,0);
+      assert.equal(observed.adminEnds,1);
+    }
+    verify(await consumer(false));
+    const mutant=await consumer(true);
+    assert.equal(mutant.removed,1,'mutant removes only the observed algorithm equality');
+    assert.match(mutant.failure?.message??'',/^PRIVATE_ALGORITHM_FORBIDDEN_(DATABASE|QUERY)$/);
+    assert.throws(()=>verify(mutant),error=>error.code==='ERR_ASSERTION');
+  });
+}
+
 test('actual base fixture never drops a pre-existing role after CREATE collision',async()=>{
   const file=fileURLToPath(new URL('../../tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',import.meta.url));
   const actualRequire=createRequire(file),ts=actualRequire('typescript');
