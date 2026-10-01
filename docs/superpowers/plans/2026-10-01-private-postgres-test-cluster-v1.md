@@ -359,7 +359,7 @@ search/adoption/new signal permission. This is not the lost invocation's cause.
   shutdown. Final observed terminal after known server close; test nonzero
   preserved, journal close uncertainty prevents wrapper success. Reader never
   equates terminal observations with the writer's future process exit.
-- [ ] Fresh journal+cluster+package/default-discovery tests, full evals/noemit/
+- [x] Fresh journal+cluster+package/default-discovery tests, full evals/noemit/
   contracts/check-only digests/MC/diff/credential scan. Commit scoped clean source;
   independent exact eight-path source/test/spec/plan review before any invocation.
 
@@ -439,17 +439,100 @@ path review and fresh host/resource pre-effect audit before any NEW invocation.
 
 ### Task6: New actual ordinary verification and delivery
 
-- [ ] Obtain exact reviewed pre-effect clearance for ONE fresh ordinary findings
+- [x] Obtain exact reviewed pre-effect clearance for ONE fresh ordinary findings
   invocation at clean committed source. Current plan does NOT invoke anything,
   adopt old PID, read old private password/SQL or signal/clean old fixtures.
-- [ ] Observe freshidentity, unchanged complete finding graph, exit AND close,
+- [x] Observe freshidentity, unchanged complete finding graph, exit AND close,
   both actual catalog/backend samples, driver-end API, captured server normal
   shutdown/close; inspect entire redacted journal and managed result. A daemon
   loss with missing final result stays incomplete; no test restart/adoption.
-- [ ] Only actual complete findings success permits reviewed whole npm graph;
-  all default stages and actual closure required, never combine partial runs.
+- [ ] After actual findings success and reviewed docs refinement, deliver the
+  scoped source PR with fullnpm explicitly UNVERIFIED. Preserve normal exact-head
+  source/cloud/security/full-paginated-comments gates and normal SHA-bound merge.
+  Never claim the source delivery itself proves complete npm or Task6A.
+- [ ] Create a NEW separate clean-main tree at the delivered reviewed merge;
+  verify HEAD equals origin/main, branch main and clean source. Run guarded
+  npm run build normally, no copied dist/bare compilation/branch disguise.
+  Preserve every old tree/standby and uncertain build. Freeze exact merged
+  source/build/dependencies; obtain independent exact all-mode pre-effect review.
+- [ ] Only actual complete findings success and the reviewed genuine merged
+  build permit ONE fresh all-mode invocation at that exact clean source;
+  all thirteen unchanged top-level stages and actual closure required, never
+  combine partial runs. Count derives from package.json's actual && graph,
+  including its initial tests/*.test.ts stage, not a historical fourteen estimate.
   Disk/memory/livePG31/zero-owner/HTTP checks before and after; stop at resource
   safety/new-authority boundary, not at a stale historical blocked flag.
-- [ ] Reviewed normal scoped PR/security/full paginated comments/exacthead
-  delivery; separate fresh clean-main build/merged proof without modifying
-  uncertain old trees. No full npm/Task6A claim until respective outcomes proven.
+- [ ] Record complete merged full graph/journal/outer result and post-run host
+  checks. No full npm/Task6A claim until respective outcomes proven. Protected
+  bootstrap/native/compiler/fence/genesis/32/33/live handoff remain separate.
+
+### Task6 actual findings and causal build prerequisite (2026-10-01 02:56 UTC)
+
+Independent exact eight-path pre-effect review at clean
+1cbef5c65ddfd10e245771d421649cf289e1f0cc returned Critical0/Important0/Minor0
+for ONE ordinary findings invocation. Root rechecked resources and fresh live
+READ ONLY schema31/zero-owner state; clearance consumed by managed53743 at
+01:58:45UTC. Source/HEAD/dependencies stayed frozen throughout, four reviewed
+code/test hashes unchanged. No old PID/password/SQL/adoption/signal/cleanup.
+
+Exact fixed Node26 invocation completed with observed outer exit0 at02:56UTC.
+New retained root /tmp/setfarm-task6a-pg.cbNKyN, port53615; actual initdb20095,
+test20114 and captured foreground server20105 each emitted agreeing exit0 AND
+close0, signalnull, both actual stream EOFs. Two private catalog/backend samples
+passed in order0/1; own admin-end API settled before captured-server shutdown.
+Actual server fast shutdown and definite close0 observed; whole footprint retained.
+This is direct owned-child/private DB quiescence proof, not every non-DB descendant
+absence, continuous writer exclusion or protected origin/admission.
+
+All18 unchanged finding files reached through13 genuine group summaries:
+pass counts41/7/1/5/16/17/9/6/9/10/10/9/8, each fail0/cancelled0/todo0.
+Total148PASS, not an anticipated149: final work-router actually contains8.
+Three authenticated lifecycle shards0/3,1/3,2/3 passed10/10/9 with19/19/20
+partitionSKIPs. Root independently compared actual reconstructed stdout against
+all29 literal source test titles: each passed exactly once and skipped exactly
+its two other partitions. Total58partitionSKIPs, no missing lifecycle coverage.
+Complete group durations_ms1133.3905/38812.373/2324.985708/8272.508167/
+65283.837708/132100.801042/413996.446541/65400.674708/412804.636667/
+799020.217417/554985.970292/470642.883708/45042.614667.
+
+Root consumed ALL managed output without truncation and audited the whole
+stable journal in bounded65536-byte reads through the production strict reader:
+207281bytes/520validatedrecords, SHA256
+a7e5048b58a64d02f51ced08bd343ccd9fd81895782de11a7ee6551b5a6948e2.
+Root0700/inode203867655 and journal0600/nlink1/inode203867656/UID501 stayed
+unchanged across read. All causal controls, frame digests/order and complete
+per-channel decoded lines validated; no refusal/child/input/mirror-unavailable
+controls. Terminal observed testCode0/privateDbQuiescent/adminEnded/serverClosed
+alltrue, productionAuthorityfalse; strict reader incompletefalse/reasonnull.
+Future writer closure is NOT inferred from terminal: outer actual exit0 was
+separately observed. No private password or SQL was read by the diagnostic audit.
+
+Independent all-mode preparation found Important execution prerequisite:
+feature tree lacks dist/cli/cli.js, required by tests/ant.test.ts:12,24 in the
+first unchanged npm stage. scripts/write-build-info.mjs:925–929 requires clean
+main equalorigin/main for a genuine guarded build. Root independently read those
+consumers. Smallest causal refinement is the above delivery→NEW guarded build→
+fresh exact merged-head review→all sequence, consistent with earlier Task3.
+File Map remains the same eight paths; this follow-up modifies only this plan
+and linked spec, no source/tests/default graph/guard change. Existing actual
+CLI consumer and build guard supply the dependency evidence; no new behavior
+requires a new test. No all-mode invocation clearance or whole npm result yet.
+
+Fresh post-run live READ ONLY transaction: setfarm/setrox/5432, data_directory
+/opt/homebrew/var/postgresql@17, schema31, openclaims0, activeattempts0
+(inconclusive7/produced_delta2), unreleasedsessions0. Last pre-close HTTP sample
+02:51:39UTC was3080projects/18789root200 and3333connectionrefused000. A separate
+fresh POST-close HTTP check03:02:28UTC also returned3080projects/18789root200
+(each curl exit0),3333connectionrefused000 (actual curl exit7). Fresh disk17GiB,
+freepages162614/inactive252873/throttled0/swapout4192; no resource health boundary.
+No selector/standby/role/grant/native/protected/runtime transition performed.
+Source-only PR delivery readiness requires exact reviewed docs delta and normal
+security/GitHub checks; fullnpm and Task6A/project completion remain UNVERIFIED.
+
+Docs-only refinement verification03:02UTC: fresh full focused journal55+cluster47
+102PASS0FAIL0SKIP3016.406042ms, dedicated actualexit0/all output read. Package
+dispatch suite4PASS0FAIL0SKIP1185.33ms; separate dedicated noemit actualexit0.
+Version2.3.79/English1909/path963/check-onlydigests/MC12 returned their success
+outputs; diff0, frozen four code/test hashes still exact. Independent docs-delta
+review Critical0/Important0 and one Minor timestamp ambiguity, corrected above
+with a genuine post-close HTTP check. No new graph/invocation/protected authority.

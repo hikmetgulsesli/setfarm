@@ -120,9 +120,19 @@ clean committed head and contracts/noemit/diff/security gates. Then actual
 findings-only wrapper run, all18 tests files through unchanged routing, record
 each stage/count/close and retained root. Only after actual findings success may
 the same delivered wrapper execute the whole fresh npm graph; partial passes
-cannot be combined into a fullnpm claim. Standby14018 remains immutable until
-its current execution graph definitely closes. Reviewed SHA-bound PR delivery,
-ordinary unselected clean-main build and merged wrapper proof follow.
+cannot be combined into a fullnpm claim. The first unchanged npm stage includes
+tests/ant.test.ts, which invokes dist/cli/cli.js. A feature tree without dist
+cannot reach the complete graph. The guarded build requires clean main equal
+to origin/main; never copy dist, disguise the branch, invoke bare compilation
+or bypass that guard. Therefore actual complete findings/owned closure precedes
+reviewed SHA-bound source PR delivery with fullnpm explicitly unverified, then
+a NEW separate ordinary unselected clean-main guarded build. Freeze that exact
+merged source/build/dependencies and obtain fresh exact pre-effect review and
+host/resource/zero-owner checks before ONE new all-mode invocation. Every npm
+stage and owned closure must then pass before any fullnpm claim. This ordering
+resolves a causal build prerequisite, not a test/review/security waiver; no
+wrapper/default graph/build guard change is needed. Standby14018 and its old
+unverified source/build remain immutable, even after the new invocation closes.
 
 ## Durable diagnostic journal refinement (2026-10-01)
 
