@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
-  mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -12,6 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { createPrivateOutputParent } from "./fixtures/private-output-parent.mjs";
 import assert from "node:assert/strict";
 
 const sourceRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -41,8 +41,8 @@ function buildBundle(output) {
 
 describe("Node toolchain provisioner bootstrap bundle", () => {
   it("builds deterministic self-contained bytes and emits canonical bootstrap failure", () => {
-    const firstRootAlias = mkdtempSync(join(tmpdir(), "setfarm-provisioner-bundle-a-"));
-    const secondRootAlias = mkdtempSync(join(tmpdir(), "setfarm-provisioner-bundle-b-"));
+    const firstRootAlias = createPrivateOutputParent(join(tmpdir(), "setfarm-provisioner-bundle-a-"));
+    const secondRootAlias = createPrivateOutputParent(join(tmpdir(), "setfarm-provisioner-bundle-b-"));
     const firstRoot = realpathSync(firstRootAlias);
     const secondRoot = realpathSync(secondRootAlias);
     try {

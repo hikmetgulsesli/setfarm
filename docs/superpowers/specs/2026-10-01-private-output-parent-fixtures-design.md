@@ -20,8 +20,8 @@ preparation assumption. The guard is correct; the fixture is incomplete.
 ## Decision and alternatives
 
 Use one test-only helper for newly created fixture output parents. Pin its own
-directory identity, establish current process GID on its held descriptor when
-necessary, and verify UID/GID/mode and path binding before returning.
+directory identity, establish current process GID on its held descriptor during
+preparation, and verify UID/GID/mode and path binding before returning.
 
 Changing the private PostgreSQL wrapper to select another `TMPDIR` would add
 environment and retained-footprint behavior and conceal the fixture assumption.
@@ -49,10 +49,10 @@ the created, held, alias-path and canonical-path device/inode identities.
 Before group preparation, every observation must be a real directory owned by
 current UID with exact mode 0700 and the same captured inherited GID. Unexpected
 preparation-time group drift is refused, not normalized. Process real/effective
-UID and GID must agree.
-If its inherited GID differs, `fchownSync` changes only that held directory to
-the already current UID/GID. Afterward fresh held and path observations must
-still agree on identity and have current UID/GID/mode 0700; canonical resolution
+UID and GID must agree. One `fchownSync` establishes only that held directory at
+the already current UID/GID, including the no-change case. Afterward fresh held
+and path observations must still agree on identity and have current UID/GID/mode
+0700; canonical resolution
 must remain identical. A successful descriptor close is required before return.
 
 Any creation, canonicalization, open, validation, group preparation or close

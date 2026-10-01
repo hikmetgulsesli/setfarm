@@ -53,7 +53,7 @@ guard. This is a real semantic failure, not a missing module or syntax error.
 
 - [x] Have a read-only reviewer inspect the exact design, alternatives and
   fresh-directory-only group preparation; address important findings first.
-- [ ] Commit the reviewed docs before helper implementation (Markdown-only).
+- [x] Commit the reviewed docs before helper implementation (Markdown-only).
 
 ### Task 2: Fresh output-parent helper and regression coverage
 
@@ -64,7 +64,7 @@ guard. This is a real semantic failure, not a missing module or syntax error.
 **Produces:** `createPrivateOutputParent(prefix, io): canonicalPath`, or throws
 without returning a path or repairing a rebound/foreign directory.
 
-- [ ] Write tests first, using real filesystem creation and explicit metadata:
+- [x] Write tests first, using real filesystem creation and explicit metadata:
 
 ```js
 const root = createPrivateOutputParent(join('/tmp', 'setfarm-output-parent-'));
@@ -85,10 +85,10 @@ Cleanup only each test's own paths in that test's finally block.
 Invalid prefix fixtures must fail before mkdtemp; all pre-group UID/mode/identity
 and inherited-GID observations must agree before any descriptor preparation.
 
-- [ ] Implement the minimal helper from the spec: create -> capture -> resolve
-  -> open -> validate identity/UID/mode -> conditional descriptor fchown -> fresh
+- [x] Implement the minimal helper from the spec: create -> capture -> resolve
+  -> open -> validate identity/UID/mode/inherited-GID -> one descriptor fchown -> fresh
   validate identity/UID/GID/mode/canonicality -> close once -> return.
-- [ ] Run the direct tests serially; fix only demonstrated failures. Deliberate
+- [x] Run the direct tests serially; fix only demonstrated failures. Deliberate
   realistic fault interpositions must remain red without each corresponding
   fail-closed check, while positives prove real current-GID metadata.
 
@@ -99,7 +99,7 @@ and inherited-GID observations must agree before any descriptor preparation.
 **Produces:** Existing actual bundle/native consumer behavior with complete
 parent preparation, including intentional invalid-mode/nonempty fixtures.
 
-- [ ] Replace each `mkdtempSync` setup call with the helper, removing only its
+- [x] Replace each `mkdtempSync` setup call with the helper, removing only its
   fs import and adding the helper import. Keep tmpdir prefixes, all actual
   builders/native assertions, explicit chmod and existing cleanup unchanged.
 
@@ -108,7 +108,7 @@ import { createPrivateOutputParent } from './fixtures/private-output-parent.mjs'
 const alias = createPrivateOutputParent(join(tmpdir(), 'setfarm-fixture-'));
 ```
 
-- [ ] Run the complete six-file set (helper plus five consumers), serially under
+- [x] Run the complete six-file set (helper plus five consumers), serially under
   the Task 1 environment with TMPDIR absent. Read full output and actual exit;
   expect original guards, timeout, retained stages and O_EXCL behavior to pass.
 - [ ] Run normal complete `npm run test:scripts` separately and record exact
@@ -152,3 +152,37 @@ are consistent; no unrelated runtime or deployment authority is introduced.
 - Full graph is still failed/unverified; the original failed epoch is closed.
 - Independent read-only design review: Critical 0 / Important 0 / Minor 2;
   prefix-before-effect validation and inherited-GID drift refusal added to spec.
+- Docs-first commit: `0ed0aea4`. Test-first baseline helper copied only the
+  existing mkdtemp/realpath recipe: 12 tests, 1 pass, 11 fail, 47.494125 ms,
+  actual exit 1. The actual current-GID assertion failed `0 !== 20`; no missing
+  module, skipped test or syntax/tool failure substitutes for that semantic RED.
+- Minimal helper GREEN: 12 pass, 0 fail, 0 skip, 46.851584 ms, actual exit 0.
+- Six complete serial suites with TMPDIR absent: 45 pass, 0 fail/cancel/skip/todo,
+  51102.2635 ms, managed 57188 actual exit 0; all output read without truncation.
+  All original 21 previously failing cases now reach and pass their intended
+  real consumer branches. This remains ordinary false-authority fixture proof.
+- Subsequent rebound tests use mode 0700 and matching expected GID, isolating
+  inode substitution from unrelated mode/group refusals. Fresh direct suite:
+  12 pass, 0 fail/skip, 46.155583 ms, exit 0.
+- Exact base comparison of all five builders, wrapper/journal, package/lock,
+  production src and native sources: `git diff --exit-code` exit 0, no output.
+- Group preparation uses one current-UID/GID descriptor operation also in the
+  no-change case. This preserves the gate and deterministically tests the same
+  OS failure boundary on hosts whose new directories already have current GID.
+- Fresh strengthened direct suite: 12 pass, 0 fail/skip, 47.77675 ms, exit 0;
+  replacements now have mode 0700, current UID and the expected pre/post GID.
+  Tests assert unchanged replacement dev/inode/UID/GID/mode and no pre-group
+  preparation of either substituted directory.
+- Root in-memory mutation check (no tracked writes, only own ordinary fixtures):
+  original post-rebind helper refused; omitted dev/inode checks incorrectly
+  returned the substituted path. Original pre-rebind helper made zero group
+  calls; omitted pre-validation wrongly made one group call before the remaining
+  post-group guard refused. All four held descriptors closed exactly once and
+  each replacement's metadata remained unchanged. Actual exit 0 for the check.
+- English contract 1913 files, path contract 965 files and version 2.3.79: each
+  actual exit 0. Mapped nine-file credential regex scan found no matches (rg
+  exit 1/no output); this is not a universal secret-absence claim. Diff check 0.
+- Independent implementation review: Critical 0 / Important 0 / Minor 2;
+  stronger inode-isolating rebound tests and spec wording are now addressed.
+  Exact final committed-source review and complete scripts verification remain
+  required before delivery. No whole-graph or protected transition approval.

@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -16,6 +15,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { createPrivateOutputParent } from "./fixtures/private-output-parent.mjs";
 import {
   runSuspendedExecControllerFixtureDescriptorSettlementFaultForTestV2,
   runSuspendedExecControllerFixtureRunnerFaultForTestV2,
@@ -315,8 +315,8 @@ describe("Darwin suspended-exec controller fixture builder", () => {
   it("publishes deterministic universal bytes under an exact false-authority compile contract", {
     skip: process.platform !== "darwin",
   }, () => {
-    const firstAlias = mkdtempSync(join(tmpdir(), "setfarm-suspended-exec-a-"));
-    const secondAlias = mkdtempSync(join(tmpdir(), "setfarm-suspended-exec-b-"));
+    const firstAlias = createPrivateOutputParent(join(tmpdir(), "setfarm-suspended-exec-a-"));
+    const secondAlias = createPrivateOutputParent(join(tmpdir(), "setfarm-suspended-exec-b-"));
     const firstRoot = realpathSync(firstAlias);
     const secondRoot = realpathSync(secondAlias);
     try {
@@ -486,7 +486,7 @@ describe("Darwin suspended-exec controller fixture builder", () => {
     assert.equal(badArgv.status, 1);
     assert.match(badArgv.stderr, /Usage:/u);
 
-    const publicAlias = mkdtempSync(join(tmpdir(), "setfarm-suspended-exec-mode-"));
+    const publicAlias = createPrivateOutputParent(join(tmpdir(), "setfarm-suspended-exec-mode-"));
     const publicRoot = realpathSync(publicAlias);
     try {
       chmodSync(publicRoot, 0o755);
@@ -497,7 +497,7 @@ describe("Darwin suspended-exec controller fixture builder", () => {
       rmSync(publicAlias, { recursive: true, force: true });
     }
 
-    const nonemptyAlias = mkdtempSync(
+    const nonemptyAlias = createPrivateOutputParent(
       join(tmpdir(), "setfarm-suspended-exec-over-limit-"),
     );
     const nonemptyRoot = realpathSync(nonemptyAlias);
@@ -517,7 +517,7 @@ describe("Darwin suspended-exec controller fixture builder", () => {
     assert.equal(repositoryResult.status, 1);
     assert.match(repositoryResult.stderr, /external empty/u);
 
-    const timeoutAlias = mkdtempSync(
+    const timeoutAlias = createPrivateOutputParent(
       join(tmpdir(), "setfarm-suspended-exec-timeout-"),
     );
     const timeoutRoot = realpathSync(timeoutAlias);
@@ -557,22 +557,22 @@ describe("Darwin suspended-exec controller fixture builder", () => {
   it("retains partial, compiler-error, compiled, and partial-publication evidence", {
     skip: process.platform !== "darwin",
   }, () => {
-    const outputLimitAlias = mkdtempSync(
+    const outputLimitAlias = createPrivateOutputParent(
       join(tmpdir(), "setfarm-suspended-exec-output-limit-"),
     );
-    const toolErrorAlias = mkdtempSync(
+    const toolErrorAlias = createPrivateOutputParent(
       join(tmpdir(), "setfarm-suspended-exec-tool-error-"),
     );
-    const partialCompilerAlias = mkdtempSync(
+    const partialCompilerAlias = createPrivateOutputParent(
       join(tmpdir(), "setfarm-suspended-exec-partial-compiler-"),
     );
-    const compiledAlias = mkdtempSync(
+    const compiledAlias = createPrivateOutputParent(
       join(tmpdir(), "setfarm-suspended-exec-compiled-"),
     );
-    const partialPublicationAlias = mkdtempSync(
+    const partialPublicationAlias = createPrivateOutputParent(
       join(tmpdir(), "setfarm-suspended-exec-partial-publication-"),
     );
-    const postPublicationAlias = mkdtempSync(
+    const postPublicationAlias = createPrivateOutputParent(
       join(tmpdir(), "setfarm-suspended-exec-post-publication-"),
     );
     const aliases = [
@@ -676,7 +676,7 @@ describe("Darwin suspended-exec controller fixture builder", () => {
   it("kills a readiness-proven timed-out tool's whole process group and proves the grandchild absent", {
     skip: process.platform !== "darwin",
   }, () => {
-    const alias = mkdtempSync(join(tmpdir(), "setfarm-suspended-exec-grandchild-"));
+    const alias = createPrivateOutputParent(join(tmpdir(), "setfarm-suspended-exec-grandchild-"));
     const root = realpathSync(alias);
     try {
       chmodSync(root, 0o700);
@@ -707,7 +707,7 @@ describe("Darwin suspended-exec controller fixture builder", () => {
   it("preserves a foreign output that wins the O_EXCL publication race", {
     skip: process.platform !== "darwin",
   }, async () => {
-    const alias = mkdtempSync(join(tmpdir(), "setfarm-suspended-exec-o-excl-"));
+    const alias = createPrivateOutputParent(join(tmpdir(), "setfarm-suspended-exec-o-excl-"));
     const root = realpathSync(alias);
     let running;
     try {

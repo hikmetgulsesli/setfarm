@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -16,6 +15,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { createPrivateOutputParent } from "./fixtures/private-output-parent.mjs";
 import {
   runContentStoreFilesystemFixtureDescriptorSettlementFaultForTestV2,
   runContentStoreFilesystemFixtureRunnerFaultForTestV2,
@@ -464,8 +464,8 @@ describe("Darwin content-store filesystem backend native fixture builder", () =>
   it("publishes deterministic bytes with retained evidence and false authority", {
     skip: process.platform !== "darwin",
   }, () => {
-    const firstAlias = mkdtempSync(join(tmpdir(), "setfarm-content-store-fs-fixture-a-"));
-    const secondAlias = mkdtempSync(join(tmpdir(), "setfarm-content-store-fs-fixture-b-"));
+    const firstAlias = createPrivateOutputParent(join(tmpdir(), "setfarm-content-store-fs-fixture-a-"));
+    const secondAlias = createPrivateOutputParent(join(tmpdir(), "setfarm-content-store-fs-fixture-b-"));
     const firstRoot = realpathSync(firstAlias);
     const secondRoot = realpathSync(secondAlias);
     try {
@@ -589,8 +589,8 @@ describe("Darwin content-store filesystem backend native fixture builder", () =>
     assert.equal(badArgv.status, 1);
     assert.match(badArgv.stderr, /Usage:/u);
 
-    const publicAlias = mkdtempSync(join(tmpdir(), "setfarm-content-store-fs-mode-"));
-    const timeoutAlias = mkdtempSync(join(tmpdir(), "setfarm-content-store-fs-timeout-"));
+    const publicAlias = createPrivateOutputParent(join(tmpdir(), "setfarm-content-store-fs-mode-"));
+    const timeoutAlias = createPrivateOutputParent(join(tmpdir(), "setfarm-content-store-fs-timeout-"));
     try {
       const publicRoot = realpathSync(publicAlias);
       chmodSync(publicRoot, 0o755);
@@ -641,7 +641,7 @@ describe("Darwin content-store filesystem backend native fixture builder", () =>
       ["partial-publication", "SETFARM_CONTENT_STORE_FIXTURE_TEST_FORCE_PARTIAL_PUBLICATION_FAILURE_V2"],
       ["post-publication", "SETFARM_CONTENT_STORE_FIXTURE_TEST_FORCE_POST_PUBLICATION_FAILURE_V2"],
     ].map(([name, variable]) => {
-      const alias = mkdtempSync(join(tmpdir(), `setfarm-content-store-fs-${name}-`));
+      const alias = createPrivateOutputParent(join(tmpdir(), `setfarm-content-store-fs-${name}-`));
       const root = realpathSync(alias);
       chmodSync(root, 0o700);
       return { alias, name, root, variable };
@@ -714,7 +714,7 @@ describe("Darwin content-store filesystem backend native fixture builder", () =>
   it("kills a readiness-proven timed-out tool's whole process group", {
     skip: process.platform !== "darwin",
   }, () => {
-    const alias = mkdtempSync(join(tmpdir(), "setfarm-content-store-fs-grandchild-"));
+    const alias = createPrivateOutputParent(join(tmpdir(), "setfarm-content-store-fs-grandchild-"));
     const root = realpathSync(alias);
     try {
       chmodSync(root, 0o700);
@@ -745,7 +745,7 @@ describe("Darwin content-store filesystem backend native fixture builder", () =>
   it("preserves a foreign output that wins the O_EXCL publication race", {
     skip: process.platform !== "darwin",
   }, async () => {
-    const alias = mkdtempSync(join(tmpdir(), "setfarm-content-store-fs-o-excl-"));
+    const alias = createPrivateOutputParent(join(tmpdir(), "setfarm-content-store-fs-o-excl-"));
     const root = realpathSync(alias);
     let running;
     let disposalSafe = false;
