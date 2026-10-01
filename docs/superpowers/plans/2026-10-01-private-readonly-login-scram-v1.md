@@ -183,7 +183,7 @@ credential changes, generated runtime edits or unrelated feature work included.
   journal72341.289125ms bodies, all existing negative rights/drift/fingerprint/
   missing-target checks unchanged. Expected missing-database FATAL logs are
   negative evidence, not ignored failures. No HBA or verifier relaxation.
-- NEW /tmp/setfarm-task6a-pg.fS1yEu54201 originalrootdev16777231ino206856554
+- NEW /tmp/setfarm-task6a-pg.fS1yEu, port54201 originalrootdev16777231ino206856554
   UID501GID0mode0700; journalino206856555mode0600nlink1. Strict whole74records
   23256bytesSHA648d2a167bb10b1bad0c2e88c0fb110f1e742abd47fdf105f0da61f6937407c9,
   stable identity/bytes, terminalObservedtrue/incompletefalse/reasonnull,
