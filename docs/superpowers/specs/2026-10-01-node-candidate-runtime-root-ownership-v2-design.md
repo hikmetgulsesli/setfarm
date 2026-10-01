@@ -40,6 +40,8 @@ identity. Return frozen path/device/inode only after all fences succeed.
 No serialized receipt or runtime authority is granted by that internal value.
 
 `createLayout` consumes this result, checks bigint identity before children,
+binds the numeric identity to that original bigint pin, rechecks immediately
+before its first child effect and after bundle identity capture before return,
 and preserves every existing UID/GID/0700/canonical/empty-root check. Remove its
 pre-pin path chmod and unconditional failure-path recursive rm. Failed partial
 layouts are retained because Node path deletion cannot atomically condition on
@@ -57,6 +59,8 @@ constructor, no source-text assertion, no DB or native compiler invocation.
 Fresh real roots and scoped syscall fault injection exercise both code-owned
 prefixes, GID correction, pre/post identity drift, group failure, close failure,
 ordered dual failure, post-close path rebind, and later-layout retention.
+Same-owner empty replacements at numeric stat, empty census and after bundle
+capture must refuse without adopting, creating children or deleting replacement.
 Every denial must retain its owned root and any test-owned replacement and
 never modify/delete a replacement. Fault hooks are restored and held FDs closed.
 Existing runtime identity and proportional DB-free compiler suites, noemit and
@@ -77,3 +81,10 @@ Protected native origin/cutover remain separate and unproven.
 
 Self-review: one cause, explicit pins/errors/retention, no placeholder, no new
 native/PG/credential authority, no existing-root API or unrelated refactor.
+
+Actual semantic reproduction: with ambient TMPDIR, production prefix inherited
+GID0 and failed while fixture prefix inheritedGID20 and passed. With TMPDIR
+absent (the unchanged wrapper's scrubbed environment), BOTH actual prefixes
+inheritedGID0 and failed the existing group guard. The fresh created metadata
+was captured before old cleanup. No claim about the discarded fourth-run root's
+unobserved metadata is needed. First fault-expanded run0PASS10FAIL/exit1.

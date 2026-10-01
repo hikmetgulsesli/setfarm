@@ -38,7 +38,7 @@ until the actual-constructor regression records a fresh inherited group.
 returns `Readonly<{absolutePath:string;device:bigint;inode:bigint}>` and never
 accepts an existing directory or caller-supplied ownership evidence.
 
-- [ ] Compile actual source into a VM with createRequire bound to the source
+- [x] Compile actual source into a VM with createRequire bound to the source
   filename, append test-context export of createLayout, and call both scopes.
   Preserve real imports and source logic; no production export or copied body.
   In a scoped mkdtemp hook retain actual created metadata; on success assert
@@ -51,15 +51,16 @@ accepts an existing directory or caller-supplied ownership evidence.
   assert.equal(fs.lstatSync(layout.applicationRoot).mode & 0o7777, 0o700);
   ```
 
-- [ ] Run with `/opt/homebrew/Cellar/node/26.4.0/bin/node --import tsx --test
+- [x] Run with `env -u TMPDIR -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL
+  /opt/homebrew/Cellar/node/26.4.0/bin/node --import tsx --test
   tests/product-compiler/node-candidate-runtime-root-ownership-v2.test.ts`.
   Expected actual existing LAYOUT_INVALID denial and captured inheritedGID0;
   do not mistake loader/VM errors for semantic RED.
-- [ ] Add scoped pre/post fstat drift, fchown failure, close failure, combined
+- [x] Add scoped pre/post fstat drift, fchown failure, close failure, combined
   group+close, post-close alias rebind, and child mkdir denial tests. Assert
   LAYOUT_INVALID, actual original/replacement retention, no replacement chmod/
   chown/deletion, EBADF after real close and ordered cause preservation.
-- [ ] Implement fresh creation/open/precheck/fchown/postcheck/exactclose/final
+- [x] Implement fresh creation/open/precheck/fchown/postcheck/exactclose/final
   original-pin check, as specified. Wire existing layout to original pin:
 
   ```ts
@@ -74,7 +75,7 @@ accepts an existing directory or caller-supplied ownership evidence.
 
   Retain existing owner/mode/canonical/empty guards; remove pre-pin pathchmod
   and unconditional failure rm. Wrap raw errors using existing typed fail.
-- [ ] Run new suite plus existing runtime identity test; record RED/GREEN and
+- [x] Run new suite plus existing runtime identity test; record RED/GREEN and
   whole output, then proportional DB-free catalog/closure/environment/
   materialization/fixture suites. Run tsc --noEmit, English/path/version/
   migration/MC contracts and git diff --check. Request independent read-only
@@ -101,3 +102,30 @@ accepts an existing directory or caller-supplied ownership evidence.
 
 Plan self-review: all spec fences/denials covered; constructor interface and
 paths consistent; implementation inline, review read-only, no placeholder.
+
+## Verification checkpoints
+
+- Docs-first commit1aeb7fab on new solewriter branch based095220, old canonical
+  repos/worktrees untouched. Existing locked dependencies linked, no install.
+- Initial VM fixture had esModuleInterop missing; corrected BEFORE accepting
+  test-fixture failure as semantic evidence. Normal ambient source run1PASS1FAIL:
+  productionGID0 denial/fixtureGID20 pass. ScrubbedTMPDIR0PASS10FAIL919.287208ms:
+  both actual fresh root GID0, intended source denial; no loader failures.
+- Minimal source helper/layout first11PASS737.430917ms, then proportional13
+  DB-free files165PASS0FAIL61516.2355ms. ESBUILD_BINARY_PATH explicitly selects
+  unchanged private arm64 binary10573778bytes/hash e2dc9a52440a2a34f09434a2f4843cb1e30f84e40dcf238976ec61ef8cd7f36a;
+  it does not change the fixed all wrapper or shared dependency bytes.
+- Independent review found numeric-stat repinning. Actual consumer rebind RED
+  10PASS3FAIL720.215083ms (three missing exceptions); fixed original pin binding
+  and first-effect/final-return fences. Focused14PASS698.577791ms includes prior
+  identity case. Secondmkdir retained-partial case added; final gates pending.
+- Noemit exit0; version2.3.79/English1920/path966/migrationdigests/MC12/diff0.
+  These pre-final checks are not complete npm, build or protected-origin proof.
+- Final proportional18637 CLOSED0:169PASS0FAIL0CANCELLED0SKIP0TODO62869.597416ms;
+  all13 file outputs read. Final noemit/contracts85880 CLOSED0 with same counts.
+  Independent frozen-source final review C0/I0/M0, all three findings resolved:
+  helper b2d2abca4bf81fb0f39fc31990efcb16baab1798321f81343ceeb98086dffb51;
+  materializer2e29c461a96d39e3d5be48dbe88090c8bc4c1455d418c119cb86653d44ce3aef;
+  test eac5776ae02d209eec7b8b1767ef8ad2cbd0b27e68a1225ee49b8ddb59fdfe83.
+  Reviewer did not rerun tests or clear an ALL/protected effect; exact committed
+  head/delivery audit follows. Five mapped paths only, unchanged dependency bytes.

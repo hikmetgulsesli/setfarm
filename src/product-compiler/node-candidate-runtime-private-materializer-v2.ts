@@ -8,7 +8,6 @@ import {
   fsyncSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   openSync,
   readFileSync,
   readdirSync,
@@ -21,6 +20,10 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { isProxy } from "node:util/types";
+
+import {
+  createNodeCandidateRuntimeAttemptRootInternalV2,
+} from "./node-candidate-runtime-attempt-root-ownership-v2.js";
 
 import {
   captureCanonicalRuntimeTreeV2,
@@ -735,17 +738,27 @@ function createLayout(scope: AdmissionScopeV2): Readonly<{
   bundleExactIdentity: NodeCandidateRuntimeExactFilesystemIdentityInternalV2;
 }> {
   const owner = processOwner();
-  let attemptRoot: string | undefined;
   try {
     const prefix = scope === "production_host"
       ? PRODUCTION_ATTEMPT_PREFIX_V2
       : path.join(realpathSync(os.tmpdir()), TEST_ATTEMPT_PREFIX_V2);
-    attemptRoot = mkdtempSync(prefix);
-    chmodSync(attemptRoot, 0o700);
+    const prepared = createNodeCandidateRuntimeAttemptRootInternalV2(prefix);
+    const attemptRoot = prepared.absolutePath;
+    const exactAttemptStat = lstatSync(attemptRoot, { bigint: true });
+    if (exactAttemptStat.dev !== prepared.device || exactAttemptStat.ino !== prepared.inode) {
+      return fail(
+        "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_LAYOUT_INVALID",
+        "Candidate runtime attempt root identity changed after preparation",
+      );
+    }
     const attemptStat = lstatSync(attemptRoot);
     if (
       attemptStat.isSymbolicLink()
       || !attemptStat.isDirectory()
+      || !Number.isSafeInteger(attemptStat.dev)
+      || !Number.isSafeInteger(attemptStat.ino)
+      || BigInt(attemptStat.dev) !== prepared.device
+      || BigInt(attemptStat.ino) !== prepared.inode
       || realpathSync(attemptRoot) !== attemptRoot
       || modeBits(attemptStat) !== 0o700
       || attemptStat.uid !== owner.uid
@@ -757,8 +770,22 @@ function createLayout(scope: AdmissionScopeV2): Readonly<{
         "Candidate runtime attempt root is not fresh and private",
       );
     }
+    const assertAttemptCurrent = (): void => {
+      const current = lstatSync(attemptRoot, { bigint: true });
+      if (!current.isDirectory() || current.isSymbolicLink()
+        || current.dev !== prepared.device || current.ino !== prepared.inode
+        || current.uid !== BigInt(owner.uid) || current.gid !== BigInt(owner.gid)
+        || current.mode !== exactAttemptStat.mode || (current.mode & 0o7777n) !== 0o700n
+        || realpathSync(attemptRoot) !== attemptRoot) {
+        return fail(
+          "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_LAYOUT_INVALID",
+          "Candidate runtime attempt root identity changed during layout",
+        );
+      }
+    };
     const bundleRoot = path.join(attemptRoot, "candidate-bundle");
     const applicationRoot = path.join(bundleRoot, "application");
+    assertAttemptCurrent();
     mkdirSync(bundleRoot, { mode: 0o700 });
     mkdirSync(applicationRoot, { mode: 0o700 });
     chmodSync(bundleRoot, 0o700);
@@ -771,6 +798,7 @@ function createLayout(scope: AdmissionScopeV2): Readonly<{
       objectKind: "directory",
       errorCode: "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_LAYOUT_INVALID",
     });
+    assertAttemptCurrent();
     const value = Object.freeze({
       attemptRoot,
       bundleRoot,
@@ -778,7 +806,6 @@ function createLayout(scope: AdmissionScopeV2): Readonly<{
       attemptIdentity: rootIdentity(attemptStat),
       bundleExactIdentity,
     });
-    attemptRoot = undefined;
     return value;
   } catch (error) {
     if (error instanceof NodeCandidateRuntimePrivateMaterializerErrorV2) throw error;
@@ -787,9 +814,8 @@ function createLayout(scope: AdmissionScopeV2): Readonly<{
       "Candidate runtime private layout could not be created",
       error,
     );
-  } finally {
-    if (attemptRoot) rmSync(attemptRoot, { recursive: true, force: true });
   }
+  // Retain failed partial layouts: pathname cleanup cannot bind the original inode.
 }
 
 function captureApplicationTree(
