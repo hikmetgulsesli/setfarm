@@ -10,6 +10,7 @@ import { verifyOrdinaryBaseSchemaCatalogReadOnlyV1 } from "../../src/db/base-sch
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 const expectedDataDirectory = process.env.SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY;
+const PRIVATE_CLUSTER_AUTH_ALGORITHM = "scram-sha-256" as const;
 
 async function schemaFingerprint(sql: postgres.Sql): Promise<string> {
   const rows = await sql<Array<{ fingerprint: string }>>`
@@ -78,12 +79,17 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
   assert.equal(parsed.pathname, "/postgres");
   assert.ok(["127.0.0.1", "localhost", "::1"].includes(parsed.hostname));
   assert.notEqual(parsed.port, "5432");
+  let password: string;
+  try { password = decodeURIComponent(parsed.password); }
+  catch { throw new Error("PRIVATE_READONLY_LOGIN_PASSWORD_INVALID"); }
+  assert.ok(/^[a-f0-9]{64}$/.test(password), "PRIVATE_READONLY_LOGIN_PASSWORD_INVALID");
   const admin = postgres(adminUrl, { max: 1 });
   let database: TestDatabase | undefined;
   let restricted: postgres.Sql | undefined;
   const role = `task6a_base_v1_${randomBytes(6).toString("hex")}`;
   const tablespace = `task6a_base_space_${randomBytes(6).toString("hex")}`;
   let privateClusterVerified = false;
+  let roleCreated = false;
   let tablespaceDirectory: string | undefined;
   let testFailure: unknown;
   try {
@@ -91,24 +97,28 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
       data_directory: string;
       port: string;
       socket_directories: string;
+      password_encryption: string;
     }>>`
       SELECT current_setting('data_directory') AS data_directory,
         current_setting('port') AS port,
-        current_setting('unix_socket_directories') AS socket_directories
+        current_setting('unix_socket_directories') AS socket_directories,
+        current_setting('password_encryption') AS password_encryption
     `;
     assert.equal(identity[0]?.data_directory, expectedDataDirectory);
     assert.equal(identity[0]?.port, parsed.port);
     const socketDirectory = path.dirname(expectedDataDirectory!);
     assert.ok(identity[0]?.socket_directories.split(",").map((value) => value.trim())
       .includes(socketDirectory));
+    assert.equal(identity[0]?.password_encryption, PRIVATE_CLUSTER_AUTH_ALGORITHM);
     privateClusterVerified = true;
 
     database = await createIsolatedTestDatabase();
-    await admin.unsafe(`CREATE ROLE "${role}" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
+    await admin.unsafe(`CREATE ROLE "${role}" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD '${password}'`);
+    roleCreated = true;
     await admin.unsafe(`GRANT CONNECT ON DATABASE "${database.database}" TO "${role}"`);
     await database.sql.unsafe(`GRANT USAGE ON SCHEMA public TO "${role}"`);
     restricted = postgres({ host: socketDirectory, port: Number(parsed.port),
-      database: database.database, username: role, max: 1 });
+      database: database.database, username: role, password, max: 1 });
     const rights = await restricted<Array<{
       login: string;
       effective: string;
@@ -204,7 +214,7 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
       await database.sql.unsafe(`GRANT USAGE ON SCHEMA public TO "${role}"`);
       await database.sql.unsafe(mutation);
       restricted = postgres({ host: socketDirectory, port: Number(parsed.port),
-        database: database.database, username: role, max: 1 });
+        database: database.database, username: role, password, max: 1 });
       const driftBefore = await schemaFingerprint(database.sql);
       await assert.rejects(
         verifyOrdinaryBaseSchemaCatalogReadOnlyV1(restricted),
@@ -219,7 +229,7 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
     await database.reset();
     await database.sql.unsafe(`REVOKE USAGE ON SCHEMA public FROM "${role}"`);
     restricted = postgres({ host: socketDirectory, port: Number(parsed.port),
-      database: database.database, username: role, max: 1 });
+      database: database.database, username: role, password, max: 1 });
     const deniedUsage = await restricted<Array<{ allowed: boolean }>>`
       SELECT has_schema_privilege(current_user, 'public', 'USAGE') AS allowed
     `;
@@ -230,7 +240,7 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
       "inaccessible public schema",
     );
     const missingTarget = postgres({ host: socketDirectory, port: Number(parsed.port),
-      database: `task6a_missing_${randomBytes(8).toString("hex")}`, username: role,
+      database: `task6a_missing_${randomBytes(8).toString("hex")}`, username: role, password,
       max: 1, connect_timeout: 2 });
     try {
       await assert.rejects(
@@ -262,7 +272,7 @@ test("a distinct non-CREATE login verifies the isolated base catalog without a s
       if (tablespaceDirectory && tablespaceDropped) rmdirSync(tablespaceDirectory);
     } catch { cleanupFailures.push("private_tablespace_directory"); }
     try {
-      if (privateClusterVerified) await admin.unsafe(`DROP ROLE IF EXISTS "${role}"`);
+      if (privateClusterVerified && roleCreated) await admin.unsafe(`DROP ROLE IF EXISTS "${role}"`);
     } catch { cleanupFailures.push("private_role"); }
     try { await admin.end({ timeout: 5 }); } catch { cleanupFailures.push("admin_connection"); }
     if (cleanupFailures.length > 0) {

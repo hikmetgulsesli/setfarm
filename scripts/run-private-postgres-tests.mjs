@@ -16,7 +16,7 @@ const PG='/opt/homebrew/opt/postgresql@17/bin/';
 export function planPrivatePostgresTestsV1({root,port,mode}={}){
   if(typeof root!=='string'||!/^\/tmp\/setfarm-task6a-pg\.[A-Za-z0-9]+$/.test(root)
     ||!Number.isInteger(port)||port<1024||port>65535||port===5432
-    ||!['findings','all'].includes(mode))throw Error('PRIVATE_TEST_CLUSTER_PLAN_INVALID');
+    ||!['findings','all','readonly-verifiers'].includes(mode))throw Error('PRIVATE_TEST_CLUSTER_PLAN_INVALID');
   return Object.freeze({
     initdb:Object.freeze([
       '-D',root+'/data','--username=postgres','--auth-host=scram-sha-256',
@@ -28,7 +28,11 @@ export function planPrivatePostgresTestsV1({root,port,mode}={}){
       '-c','unix_socket_permissions=0700','-c','shared_buffers=32MB',
       '-c','max_connections=50',
     ]),
-    test:Object.freeze(['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
+    test:Object.freeze(mode==='readonly-verifiers'?[
+      '--import','tsx','--test','--test-concurrency=1',
+      'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
+      'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts',
+    ]:['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
       ...(mode==='findings'?['run','test:findings']:['test'])]),
   });
 }
@@ -296,7 +300,7 @@ async function main(){
       journal?.control('terminal-unavailable',{channel,reason});
     })]));
   const args=process.argv.slice(2);
-  if(args.length!==1||!['findings','all'].includes(args[0])){
+  if(args.length!==1||!['findings','all','readonly-verifiers'].includes(args[0])){
     mirrors.stderr.write(Buffer.from('PRIVATE_TEST_CLUSTER_MODE_INVALID\n'));process.exitCode=1;return;
   }
   let stage='preconditions',root=null,directoryFd=null,init=null,server=null,testChild=null,admin=null;

@@ -3,6 +3,8 @@ import {EventEmitter} from 'node:events';
 import {spawnSync} from 'node:child_process';
 import {chmodSync,closeSync,constants,existsSync,mkdtempSync,openSync,readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
+import {createRequire} from 'node:module';
+import {runInNewContext} from 'node:vm';
 import test from 'node:test';
 
 const MODULE=new URL('../run-private-postgres-tests.mjs',import.meta.url);
@@ -11,6 +13,157 @@ async function implementation(){
   return import(MODULE.href);
 }
 const root='/tmp/setfarm-task6a-pg.Abc123';
+for(const file of ['base-schema-readonly-verifier-v1.integration.test.ts',
+  'contract-spine-readonly-verifier-v1.integration.test.ts'])
+for(const [label,password] of [['nonhex','NEVER_EXPOSE_PRIVATE_LOGIN_BAD_PASSWORD'],
+  ['empty',''],['malformed-encoding','NEVER_EXPOSE_PRIVATE_LOGIN_BAD_PASSWORD%ZZ']]){
+  test('actual '+file+' refuses '+label+' password before connecting or exposing it',()=>{
+    const guard=`import net from 'node:net';
+const connect=net.Socket.prototype.connect;
+net.Socket.prototype.connect=function(...args){
+  const options=Array.isArray(args[0])?args[0][0]:args[0];
+  if(Number(options)===55439
+    ||(typeof options==='string'&&options.includes('setfarm-task6a-pg.Abc123'))
+    ||(options&&typeof options==='object'&&(Number(options.port)===55439
+      ||String(options.path??'').includes('setfarm-task6a-pg.Abc123')))){
+    console.log('PRIVATE_LOGIN_FORBIDDEN_CONNECT');process.exit(87);
+  }
+  return connect.apply(this,args);
+};`;
+    const filePath=fileURLToPath(new URL('../../tests/execution-attempts/'+file,import.meta.url));
+    const result=spawnSync(process.execPath,['--import','tsx','--test',filePath],{
+      encoding:'utf8',timeout:5000,maxBuffer:131072,
+      env:{PATH:'/opt/homebrew/bin:/usr/bin:/bin',LANG:'C',LC_ALL:'C',
+        SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY:root+'/data',
+        SETFARM_TEST_PG_ADMIN_URL:'postgresql://postgres:'+password+'@127.0.0.1:55439/postgres',
+        NODE_OPTIONS:'--import=data:text/javascript;base64,'+Buffer.from(guard).toString('base64')},
+    });
+    assert.equal(result.error,undefined);assert.equal(result.signal,null);
+    assert.equal(result.status,1);
+    const output=result.stdout+result.stderr;
+    assert.match(output,/PRIVATE_READONLY_LOGIN_PASSWORD_INVALID/);
+    assert.doesNotMatch(output,/PRIVATE_LOGIN_FORBIDDEN_CONNECT|NEVER_EXPOSE_PRIVATE_LOGIN_BAD_PASSWORD/);
+  });
+}
+
+for(const fileName of ['base-schema-readonly-verifier-v1.integration.test.ts',
+  'contract-spine-readonly-verifier-v1.integration.test.ts'])
+for(const [label,algorithm] of [['missing',undefined],['legacy','md5'],
+  ['noncanonical','scram-sha-256 ']]){
+  test('actual '+fileName+' refuses '+label+' algorithm before database or role effects',async()=>{
+    const file=fileURLToPath(new URL('../../tests/execution-attempts/'+fileName,import.meta.url));
+    const actualRequire=createRequire(file),ts=actualRequire('typescript');
+    async function consumer(removeGuard){
+      let callback,databaseCreates=0,roleEffects=0,adminEnds=0,removed=0;
+      const admin=async strings=>{
+        if(!strings.join('?').includes("current_setting('data_directory')")){
+          throw new Error('PRIVATE_ALGORITHM_FORBIDDEN_QUERY');
+        }
+        return [{data_directory:root+'/data',port:'55439',socket_directories:root,
+          password_encryption:algorithm}];
+      };
+      admin.unsafe=async sql=>{
+        if(sql==='DROP ACCESS METHOD IF EXISTS task6a_alt_heap')return [];
+        roleEffects++;throw new Error('PRIVATE_ALGORITHM_FORBIDDEN_ROLE');
+      };
+      admin.end=async()=>{adminEnds++;};
+      const compiled=ts.transpileModule(readFileSync(file,'utf8'),{
+        compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true},
+        fileName:file,
+        ...(removeGuard?{transformers:{before:[context=>{
+          function visit(node){
+            if(ts.isExpressionStatement(node)&&ts.isCallExpression(node.expression)){
+              const call=node.expression,arg=call.arguments[0];
+              if(ts.isPropertyAccessExpression(call.expression)
+                &&call.expression.name.text==='equal'&&arg
+                &&ts.isPropertyAccessExpression(arg)&&arg.name.text==='password_encryption'){
+                removed++;return context.factory.createEmptyStatement();
+              }
+            }
+            return ts.visitEachChild(node,visit,context);
+          }
+          return source=>ts.visitNode(source,visit);
+        }]}}:{}),
+      }).outputText;
+      runInNewContext(compiled,{
+        exports:{},Buffer,URL,console,
+        process:{env:{SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY:root+'/data',
+          SETFARM_TEST_PG_ADMIN_URL:'postgresql://postgres:'+('a'.repeat(64))+'@127.0.0.1:55439/postgres'}},
+        require(specifier){
+          if(specifier==='node:test')return {test(_name,_options,run){callback=run;}};
+          if(specifier==='postgres')return ()=>admin;
+          if(specifier==='./test-database.js')return {async createIsolatedTestDatabase(){
+            databaseCreates++;throw new Error('PRIVATE_ALGORITHM_FORBIDDEN_DATABASE');
+          }};
+          if(specifier.includes('/base-schema-readonly-verifier-v1.js'))return {
+            verifyOrdinaryBaseSchemaCatalogReadOnlyV1(){throw new Error('PRIVATE_ALGORITHM_FORBIDDEN_VERIFIER');}};
+          if(specifier.includes('/contract-spine-readonly-verifier-v1.js'))return {
+            verifyContractSpineCurrentHeadJournalReadOnlyV1(){throw new Error('PRIVATE_ALGORITHM_FORBIDDEN_VERIFIER');}};
+          return actualRequire(specifier);
+        },
+      },{filename:file});
+      assert.equal(typeof callback,'function');
+      let failure;
+      try{await callback();}catch(error){failure=error;}
+      return {failure,databaseCreates,roleEffects,adminEnds,removed};
+    }
+    function verify(observed){
+      assert.equal(observed.failure?.code,'ERR_ASSERTION');
+      assert.equal(observed.failure.actual,algorithm);
+      assert.equal(observed.failure.expected,'scram-sha-256');
+      assert.equal(observed.databaseCreates,0);assert.equal(observed.roleEffects,0);
+      assert.equal(observed.adminEnds,1);
+    }
+    verify(await consumer(false));
+    const mutant=await consumer(true);
+    assert.equal(mutant.removed,1,'mutant removes only the observed algorithm equality');
+    assert.match(mutant.failure?.message??'',/^PRIVATE_ALGORITHM_FORBIDDEN_(DATABASE|QUERY)$/);
+    assert.throws(()=>verify(mutant),error=>error.code==='ERR_ASSERTION');
+  });
+}
+
+test('actual base fixture never drops a pre-existing role after CREATE collision',async()=>{
+  const file=fileURLToPath(new URL('../../tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',import.meta.url));
+  const actualRequire=createRequire(file),ts=actualRequire('typescript');
+  let callback,roleDrops=0,databaseCleanups=0,adminEnds=0;
+  const collision=Object.assign(new Error('PRIVATE_ROLE_ALREADY_EXISTS'),{code:'42710'});
+  const admin=async strings=>{
+    assert.match(strings.join('?'),/current_setting\('data_directory'\)/);
+    return [{data_directory:root+'/data',port:'55439',socket_directories:root,
+      password_encryption:'scram-sha-256'}];
+  };
+  admin.unsafe=async sql=>{
+    if(/^CREATE ROLE /.test(sql))throw collision;
+    if(/^DROP ROLE /.test(sql)){roleDrops++;return [];}
+    if(sql==='DROP ACCESS METHOD IF EXISTS task6a_alt_heap')return [];
+    throw new Error('PRIVATE_COLLISION_UNEXPECTED_SQL');
+  };
+  admin.end=async()=>{adminEnds++;};
+  const denyVerifier=()=>{throw new Error('PRIVATE_COLLISION_FORBIDDEN_VERIFIER');};
+  const compiled=ts.transpileModule(readFileSync(file,'utf8'),{
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true},
+    fileName:file,
+  }).outputText;
+  runInNewContext(compiled,{
+    exports:{},Buffer,URL,console,
+    process:{env:{SETFARM_TASK6A_TEST_PG_DATA_DIRECTORY:root+'/data',
+      SETFARM_TEST_PG_ADMIN_URL:'postgresql://postgres:'+('a'.repeat(64))+'@127.0.0.1:55439/postgres'}},
+    require(specifier){
+      if(specifier==='node:test')return {test(_name,_options,run){callback=run;}};
+      if(specifier==='postgres')return ()=>admin;
+      if(specifier==='./test-database.js')return {async createIsolatedTestDatabase(){
+        return {database:'setfarm_contract_spine_test_1_abcdef012345',
+          async cleanup(){databaseCleanups++;}};
+      }};
+      if(specifier==='../../src/db/base-schema-readonly-verifier-v1.js')return {verifyOrdinaryBaseSchemaCatalogReadOnlyV1:denyVerifier};
+      return actualRequire(specifier);
+    },
+  },{filename:file});
+  assert.equal(typeof callback,'function');
+  await assert.rejects(callback(),error=>error===collision);
+  assert.equal(roleDrops,0,'CREATE collision cannot authorize deleting the foreign role');
+  assert.equal(databaseCleanups,1);assert.equal(adminEnds,1);
+});
 test('private cluster plans only SCRAM loopback PG17 and the unchanged findings command',async()=>{
   const {planPrivatePostgresTestsV1:plan}=await implementation();
   const result=plan({root,port:55439,mode:'findings'});
@@ -32,6 +185,18 @@ test('private cluster plans only SCRAM loopback PG17 and the unchanged findings 
   ]);
   assert.equal(Object.isFrozen(result),true);
   assert.equal(Object.isFrozen(result.initdb),true);
+});
+test('private focused verifier mode dispatches only both real serial integration files',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const result=plan({root,port:55439,mode:'readonly-verifiers'});
+  assert.deepEqual(result.test,[
+    '--import','tsx','--test','--test-concurrency=1',
+    'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
+    'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts',
+  ]);
+  assert.deepEqual(result.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(result.server,plan({root,port:55439,mode:'findings'}).server);
+  assert.equal(Object.isFrozen(result.test),true);
 });
 for(const [label,overrides] of [
   ['live port',{port:5432}],['zero port',{port:0}],['fraction port',{port:55439.5}],
@@ -160,7 +325,9 @@ test('private server kill failure or timeout never becomes cleanup success',asyn
   }
 });
 
-for(const args of [[],['unknown'],['findings','extra']]){
+for(const args of [[],['unknown'],['findings','extra'],
+  ['readonly-verifier'],['readonly-verifiers','extra'],
+  ['readonly-verifiers','--test-name-pattern=other'],['readonly-verifiers','all']]){
   test('private CLI refuses invalid mode '+JSON.stringify(args)+' before child effects',()=>{
     const guard=`import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
 cp.spawn=cp.spawnSync=()=>{throw Error('PRIVATE_TEST_FORBIDDEN_TEST_EFFECT');};syncBuiltinESMExports();`;
@@ -269,7 +436,13 @@ test('captured child binding persists real redactor output before every terminal
 });
 
 // Ordinary Node-only boundary fixture: NO PG process, SQL or password file.
-function wrapperBoundaryFixture(mode){
+function wrapperBoundaryFixture(mode,commandMode='findings'){
+  const expectedTestArgs=commandMode==='readonly-verifiers'?[
+    '--import','tsx','--test','--test-concurrency=1',
+    'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
+    'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts',
+  ]:['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
+    ...(commandMode==='all'?['test']:['run','test:findings'])];
   const guard=`
 import cp from 'node:child_process';import fs from 'node:fs';import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';import {registerHooks,syncBuiltinESMExports} from 'node:module';
@@ -323,7 +496,7 @@ cp.spawn=(tool,args,options)=>{
   let role;
   if(tool==='/opt/homebrew/opt/postgresql@17/bin/initdb')role='initdb';
   else if(tool==='/opt/homebrew/opt/postgresql@17/bin/postgres')role='server';
-  else if(tool===process.execPath&&args.join('|')==='/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js|run|test:findings')role='test';
+  else if(tool===process.execPath&&JSON.stringify(args)===${JSON.stringify(JSON.stringify(expectedTestArgs))})role='test';
   else return deny();
   if(spawned.has(role))return deny();spawned.add(role);trace.push(role+'-dispatch');
   if(role==='server'){root=args[args.indexOf('-k')+1];port=Number(args[args.indexOf('-p')+1]);}
@@ -365,15 +538,17 @@ const driverUrl='data:text/javascript;base64,'+Buffer.from('export default (...a
 registerHooks({resolve(specifier,context,next){return specifier==='postgres'?{url:driverUrl,shortCircuit:true}:next(specifier,context);}});
 syncBuiltinESMExports();
 process.once('exit',()=>{original.writeSync(1,Buffer.from('UNIT_BOUNDARY_RESULT '+JSON.stringify({root,trace,journalFaulted})+'\\n'));});`;
-  return spawnSync(process.execPath,[fileURLToPath(MODULE),'findings'],{
+  return spawnSync(process.execPath,[fileURLToPath(MODULE),commandMode],{
     encoding:'utf8',timeout:7000,maxBuffer:262144,
     env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',
       NODE_OPTIONS:'--import=data:text/javascript;base64,'+Buffer.from(guard).toString('base64')},
   });
 }
-for(const mode of ['normal','nonzero','mirror-error','journal-loss','close-fault','retained-db','cancel','before-server','before-test','attach-server','attach-test','input-error']){
-  test('wrapper boundary '+mode+' retains ordered observed outcomes without native effects',async()=>{
-    const result=wrapperBoundaryFixture(mode);
+for(const commandMode of ['findings','all','readonly-verifiers'])
+for(const mode of commandMode==='all'?['normal']:
+  ['normal','nonzero','mirror-error','journal-loss','close-fault','retained-db','cancel','before-server','before-test','attach-server','attach-test','input-error']){
+  test('wrapper boundary '+commandMode+' '+mode+' retains ordered observed outcomes without native effects',async()=>{
+    const result=wrapperBoundaryFixture(mode,commandMode);
     assert.equal(result.error,undefined);assert.equal(result.signal,null);assert.equal(result.stderr,'',result.stderr);
     const marker=result.stdout.split('\n').find(line=>line.startsWith('UNIT_BOUNDARY_RESULT '));
     assert.ok(marker,'unit boundary must finish without native tool dispatch');
