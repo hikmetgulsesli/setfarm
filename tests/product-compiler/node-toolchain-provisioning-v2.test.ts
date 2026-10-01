@@ -1,3 +1,4 @@
+import { createPrivateOutputParent } from "../../scripts/__tests__/fixtures/private-output-parent.mjs";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -8,7 +9,6 @@ import {
   link,
   lstat,
   mkdir,
-  mkdtemp,
   readFile,
   realpath,
   readdir,
@@ -267,7 +267,7 @@ function testArtifact(bytes: Uint8Array) {
 }
 
 async function privateTree(nodeBytes = "node-binary\n"): Promise<MaterializedNodeToolchainPrivateTreeV2> {
-  const root = await mkdtemp(path.join(tmpdir(), "setfarm-node-provisioning-fixture-v2-"));
+  const root = await createPrivateOutputParent(path.join(tmpdir(), "setfarm-node-provisioning-fixture-v2-"));
   roots.push(root);
   const source = path.join(root, "source", ARCHIVE_ROOT);
   const npmRoot = path.join(source, "lib", "node_modules", "npm");
@@ -306,7 +306,7 @@ async function privateTree(nodeBytes = "node-binary\n"): Promise<MaterializedNod
 }
 
 async function privateParent(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "setfarm-node-provisioning-parent-v2-"));
+  const root = await createPrivateOutputParent(path.join(tmpdir(), "setfarm-node-provisioning-parent-v2-"));
   roots.push(root);
   await chmod(root, 0o700);
   return root;
@@ -360,6 +360,18 @@ async function privateProvisionerBundleDependencies(
     path.join(REPOSITORY_ROOT, "node_modules", "zod"),
     path.join(dependencyRoot, "zod"),
   );
+  const genericBinary = path.join(dependencyRoot, "esbuild", "bin", "esbuild");
+  const platformBinary = path.join(scopeRoot, platformName, "bin", "esbuild");
+  const genericBytes = await readFile(genericBinary);
+  if (sha256(genericBytes) === "fe9a7b65a540d8df1a0f59941d52e7c1260c36fed9a2af3dd966f15381b6eb76") {
+    // Reproduce npm's official binary replacement only inside this fresh copy.
+    // The unchanged bundle authority still verifies both complete official trees.
+    await copyFile(platformBinary, genericBinary);
+    await chmod(genericBinary, (await lstat(platformBinary)).mode & 0o7777);
+  } else {
+    assert.deepEqual(genericBytes, await readFile(platformBinary),
+      "private esbuild must be the exact registry wrapper or paired platform binary");
+  }
   assert.deepEqual((await readdir(dependencyRoot)).sort(), ["@esbuild", "esbuild", "zod"]);
   assert.deepEqual(await readdir(scopeRoot), [platformName]);
   return Object.freeze({
@@ -757,6 +769,20 @@ describe("NodeToolchainProvisioningV2", () => {
 });
 
 describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
+  it("prepares the official private esbuild binary without mutating shared dependencies", async () => {
+    const shared = path.join(REPOSITORY_ROOT, "node_modules", "esbuild", "bin", "esbuild");
+    const before = await readFile(shared);
+    const beforeStat = await lstat(shared);
+    const options = await privateProvisionerBundleDependencies();
+    const privateBinary = await readFile(path.join(options.privateDependencyRoot, "esbuild", "bin", "esbuild"));
+    assert.equal(privateBinary.byteLength, 10_573_778);
+    assert.equal(sha256(privateBinary), "e2dc9a52440a2a34f09434a2f4843cb1e30f84e40dcf238976ec61ef8cd7f36a");
+    assert.deepEqual(await readFile(shared), before);
+    const afterStat = await lstat(shared);
+    for (const key of ["dev", "ino", "uid", "gid", "mode", "size", "mtimeMs", "ctimeMs"] as const) {
+      assert.equal(afterStat[key], beforeStat[key]);
+    }
+  });
   it("turns absent and ready targets into pathless exact apply and rollback plans", async () => {
     const parent = await privateParent();
     const tree = await privateTree();

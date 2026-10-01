@@ -4,6 +4,7 @@ import {
   chmodSync,
   closeSync,
   constants,
+  fchownSync,
   fstatSync,
   lstatSync,
   mkdtempSync,
@@ -815,11 +816,77 @@ function throwBuildFailureV2(primary: unknown): never {
 }
 
 function createBuildRootV2(): BuildRootV2 {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined
+    || uid !== process.geteuid?.() || gid !== process.getegid?.()) {
+    failV2(
+      "CONTENT_STORE_DARWIN_FIXTURE_BUILD_FAILED",
+      "Native content-store fresh build-root requires ordinary process ownership",
+    );
+  }
   const alias = mkdtempSync(path.join(os.tmpdir(), BUILD_PARENT_PREFIX_V2));
   try {
+    const created = lstatSync(alias, { bigint: true });
     const root = realpathSync(alias);
-    chmodSync(root, 0o700);
+    const createdPin = pinDirectoryV2(created);
+    const verify = (status: BigIntStats, expectedGid: bigint): void => {
+      if (status.isSymbolicLink() || !status.isDirectory()
+        || !sameDirectoryPinV2(status, { ...createdPin, ownerGid: expectedGid })
+        || status.uid !== BigInt(uid) || (status.mode & 0o7777n) !== 0o700n) {
+        failV2(
+          "CONTENT_STORE_DARWIN_FIXTURE_BUILD_FAILED",
+          "Native content-store fresh build-root identity or ownership changed",
+        );
+      }
+    };
+    verify(created, created.gid);
+    if (root === REPOSITORY_ROOT_V2
+      || root.startsWith(`${REPOSITORY_ROOT_V2}${path.sep}`)) {
+      failV2(
+        "CONTENT_STORE_DARWIN_FIXTURE_BUILD_FAILED",
+        "Native content-store fresh build-root must be external to the repository",
+      );
+    }
+    let descriptor: number | undefined;
+    const errors: unknown[] = [];
+    const verifyCurrent = (expectedGid: bigint): void => {
+      verify(fstatSync(descriptor!, { bigint: true }), expectedGid);
+      verify(lstatSync(alias, { bigint: true }), expectedGid);
+      verify(lstatSync(root, { bigint: true }), expectedGid);
+      if (realpathSync(alias) !== root || realpathSync(root) !== root) {
+        failV2(
+          "CONTENT_STORE_DARWIN_FIXTURE_BUILD_FAILED",
+          "Native content-store fresh build-root identity changed its canonical path",
+        );
+      }
+    };
+    try {
+      descriptor = openSync(
+        root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+      );
+      verifyCurrent(created.gid);
+      // Preparation is limited to this invocation's fresh, pinned UID-owned root.
+      fchownSync(descriptor, uid, gid);
+      verifyCurrent(BigInt(gid));
+    } catch (error) {
+      errors.push(error);
+    }
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length > 1) {
+      throw new AggregateError(errors, "Fresh build-root preparation and close failed", {
+        cause: errors[0],
+      });
+    }
+    if (errors.length === 1) throw errors[0];
     const status = lstatSync(root, { bigint: true });
+    verify(status, BigInt(gid));
     const initialPin = pinDirectoryV2(status);
     assertRootCurrentV2(
       alias,

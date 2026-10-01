@@ -1,3 +1,4 @@
+import { createPrivateOutputParent } from "../../scripts/__tests__/fixtures/private-output-parent.mjs";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -9,7 +10,6 @@ import {
   fstatSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   openSync,
   readFileSync,
   readlinkSync,
@@ -675,7 +675,7 @@ async function assertCheckpointDisplacementV2(
   checkpoint: 9 | 11,
   displacedChild: "attestations" | ".staging",
 ): Promise<void> {
-  const storeAlias = mkdtempSync(
+  const storeAlias = createPrivateOutputParent(
     path.join(os.tmpdir(), `setfarm-content-store-checkpoint-${checkpoint}-v2-`),
   );
   const storeRoot = realpathSync(storeAlias);
@@ -690,7 +690,7 @@ async function assertCheckpointDisplacementV2(
       ? ".attestations-displaced-v2"
       : ".staging-displaced-v2",
   );
-  const sentinelAlias = mkdtempSync(
+  const sentinelAlias = createPrivateOutputParent(
     path.join(os.tmpdir(), `setfarm-content-store-sentinel-${checkpoint}-v2-`),
   );
   const sentinelRoot = realpathSync(sentinelAlias);
@@ -868,7 +868,7 @@ async function assertCrashReplayV2(
   nativeFixture: PlatformReleaseContentStoreDarwinFilesystemFixtureV2,
   checkpoint: 2 | 4 | 8 | 10 | 12,
 ): Promise<void> {
-  const storeAlias = mkdtempSync(
+  const storeAlias = createPrivateOutputParent(
     path.join(os.tmpdir(), `setfarm-content-store-crash-${checkpoint}-v2-`),
   );
   const storeRoot = realpathSync(storeAlias);
@@ -877,7 +877,7 @@ async function assertCrashReplayV2(
   const releases = path.join(storeRoot, "releases");
   const attestations = path.join(storeRoot, "attestations");
   const sentinelAlias = [4, 8, 10].includes(checkpoint)
-    ? mkdtempSync(
+    ? createPrivateOutputParent(
       path.join(os.tmpdir(), `setfarm-content-store-crash-sentinel-${checkpoint}-v2-`),
     )
     : "";
@@ -1495,7 +1495,7 @@ describe("Darwin content-store filesystem fixture v2 runner", () => {
   it("bounds binary capture before allocation and rejects exact-read drift", {
     skip: process.getuid === undefined,
   }, () => {
-    const alias = mkdtempSync(
+    const alias = createPrivateOutputParent(
       path.join(os.tmpdir(), "setfarm-content-store-binary-capture-v2-"),
     );
     const root = realpathSync(alias);
@@ -1643,7 +1643,7 @@ describe("Darwin content-store filesystem fixture v2 runner", () => {
       unauthenticated,
     );
 
-    const storeAlias = mkdtempSync(
+    const storeAlias = createPrivateOutputParent(
       path.join(os.tmpdir(), "setfarm-content-store-runner-test-v2-"),
     );
     const storeRoot = realpathSync(storeAlias);
@@ -1819,7 +1819,7 @@ describe("Darwin content-store filesystem fixture v2 runner", () => {
       assert.equal(descriptorAfter.ino, descriptorBefore.ino);
       assert.equal(descriptorAfter.isDirectory(), true);
 
-      const pollutedAlias = mkdtempSync(
+      const pollutedAlias = createPrivateOutputParent(
         path.join(os.tmpdir(), "setfarm-content-store-root-extra-v2-"),
       );
       const pollutedRoot = realpathSync(pollutedAlias);
@@ -1905,7 +1905,7 @@ describe("Darwin content-store filesystem fixture v2 runner", () => {
     skip: process.platform !== "darwin",
   }, async () => {
     assert.ok(fixture);
-    const storeAlias = mkdtempSync(
+    const storeAlias = createPrivateOutputParent(
       path.join(os.tmpdir(), "setfarm-content-store-callback-throw-v2-"),
     );
     const storeRoot = realpathSync(storeAlias);
@@ -1986,7 +1986,7 @@ describe("Darwin content-store filesystem fixture v2 runner", () => {
     skip: process.platform !== "darwin",
   }, async () => {
     assert.ok(fixture);
-    const storeAlias = mkdtempSync(
+    const storeAlias = createPrivateOutputParent(
       path.join(os.tmpdir(), "setfarm-content-store-active-lock-v2-"),
     );
     const storeRoot = realpathSync(storeAlias);

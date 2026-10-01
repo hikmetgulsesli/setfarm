@@ -1,10 +1,10 @@
+import { createPrivateOutputParent } from "../../scripts/__tests__/fixtures/private-output-parent.mjs";
 import assert from "node:assert/strict";
 import { appendFileSync } from "node:fs";
 import {
   chmod,
   lstat,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
   realpath,
@@ -82,7 +82,7 @@ async function createInstalledFixture(
   nodeModulesRoot: string;
   closure: ReturnType<typeof deriveCodeOwnedNodeScaffoldProductionClosureV2>;
 }>> {
-  const scratchRoot = await realpath(await mkdtemp(path.join(
+  const scratchRoot = await realpath(await createPrivateOutputParent(path.join(
     os.tmpdir(),
     "setfarm-production-materialization-v2-",
   )));
@@ -183,7 +183,7 @@ function expectCode(
 
 describe("Node scaffold production materialization V2", () => {
   it("bounds exact reads before allocation and preserves the growth and close causes", async () => {
-    const root = await realpath(await mkdtemp(path.join(
+    const root = await realpath(await createPrivateOutputParent(path.join(
       os.tmpdir(),
       "setfarm-production-exact-read-growth-v2-",
     )));
@@ -217,7 +217,7 @@ describe("Node scaffold production materialization V2", () => {
   });
 
   it("stops a growing install file at its admitted size and still reports close failure", async () => {
-    const root = await realpath(await mkdtemp(path.join(
+    const root = await realpath(await createPrivateOutputParent(path.join(
       os.tmpdir(),
       "setfarm-production-hash-growth-v2-",
     )));
@@ -252,7 +252,7 @@ describe("Node scaffold production materialization V2", () => {
   });
 
   it("bounds raw directory enumeration before materializing the full namespace", async () => {
-    const root = await realpath(await mkdtemp(path.join(
+    const root = await realpath(await createPrivateOutputParent(path.join(
       os.tmpdir(),
       "setfarm-production-directory-bound-v2-",
     )));
@@ -276,7 +276,7 @@ describe("Node scaffold production materialization V2", () => {
   });
 
   it("preserves path-sync primary and descriptor-close failures in order", async () => {
-    const root = await realpath(await mkdtemp(path.join(
+    const root = await realpath(await createPrivateOutputParent(path.join(
       os.tmpdir(),
       "setfarm-production-sync-finalizer-v2-",
     )));
@@ -319,7 +319,7 @@ describe("Node scaffold production materialization V2", () => {
   });
 
   it("fences exact hidden-lock and bin targets after the raw snapshot", async () => {
-    const root = await realpath(await mkdtemp(path.join(
+    const root = await realpath(await createPrivateOutputParent(path.join(
       os.tmpdir(),
       "setfarm-production-census-v2-",
     )));
@@ -374,7 +374,7 @@ describe("Node scaffold production materialization V2", () => {
   });
 
   it("preserves a foreign bin descendant instead of recursively deleting it", async () => {
-    const root = await realpath(await mkdtemp(path.join(
+    const root = await realpath(await createPrivateOutputParent(path.join(
       os.tmpdir(),
       "setfarm-production-cleanup-census-v2-",
     )));
@@ -413,7 +413,7 @@ describe("Node scaffold production materialization V2", () => {
   });
 
   it("removes an admitted 0555 bin tree through exact descriptor-bound chmod", async () => {
-    const root = await realpath(await mkdtemp(path.join(
+    const root = await realpath(await createPrivateOutputParent(path.join(
       os.tmpdir(),
       "setfarm-production-readonly-bin-v2-",
     )));
@@ -453,7 +453,7 @@ describe("Node scaffold production materialization V2", () => {
   });
 
   it("restores every surviving directory mode when exact cleanup fails after chmod", async () => {
-    const root = await realpath(await mkdtemp(path.join(
+    const root = await realpath(await createPrivateOutputParent(path.join(
       os.tmpdir(),
       "setfarm-production-readonly-bin-failure-v2-",
     )));
@@ -499,7 +499,7 @@ describe("Node scaffold production materialization V2", () => {
   });
 
   it("preserves chmod and descriptor-close failures while restoring every surviving mode", async () => {
-    const root = await realpath(await mkdtemp(path.join(
+    const root = await realpath(await createPrivateOutputParent(path.join(
       os.tmpdir(),
       "setfarm-production-readonly-bin-double-failure-v2-",
     )));
@@ -556,7 +556,7 @@ describe("Node scaffold production materialization V2", () => {
   });
 
   it("aggregates a restoration-close failure without losing the primary cleanup cause", async () => {
-    const root = await realpath(await mkdtemp(path.join(
+    const root = await realpath(await createPrivateOutputParent(path.join(
       os.tmpdir(),
       "setfarm-production-mode-restore-close-failure-v2-",
     )));

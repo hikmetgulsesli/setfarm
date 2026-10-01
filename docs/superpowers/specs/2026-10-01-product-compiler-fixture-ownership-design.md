@@ -12,6 +12,22 @@ Two before-hook failures account for all 50 cancellations. This causal test
 preparation fix is required for the existing clean-main verification objective;
 it does not implement protected startup or authorize live cutover.
 
+The first scoped DB-free follow-up closed with 128 passes and 7 failures.
+All seven are newly reached provisioning bundle cases. The shared esbuild
+package is the exact pinned registry tree, including its 9,350-byte JS wrapper;
+the arm64 platform package is the exact pinned official platform tree. The
+fixture copied the wrapper as though npm's binary-replacement install step had
+already run, while its unchanged authority guard requires the installed tree.
+Prepare that install step only in the fresh private test copy. Recognize the
+exact official wrapper SHA256 `fe9a7b65a540d8df1a0f59941d52e7c1260c36fed9a2af3dd966f15381b6eb76`,
+or require an already-installed binary to equal the selected private platform
+binary. Replace a recognized wrapper only with the selected private platform
+copy. The existing complete tree hashes, binary pairing and admission checks
+remain the authority. Reject other wrapper/binary bytes; never run install
+scripts or mutate shared dependencies. This is another fixture-preparation
+assumption unmasked by the same causal verification objective, not a new
+production dependency admission policy.
+
 ## Decision and alternatives
 
 Reuse the reviewed `createPrivateOutputParent` test helper in nine TS suites.
@@ -48,13 +64,19 @@ expected injected stream failure after ownership preparation. Test pre-change
 FD drift, fchown denial, post-change drift, close denial and ordered combined
 errors without starting a builder when root preparation fails. Every root
 remains retained and foreign metadata remains unmodified.
-Then run the nine complete affected suites and the existing helper tests,
-contracts, diff/secret checks, independent review, committed clean build and
-reviewed PR delivery. A subsequent newly reviewed clean-main private ALL run
+Run only the confirmed DB-free affected suites and existing helper tests
+before PR delivery, plus TypeScript no-emit checking, contracts, diff/secret
+checks and independent review. The private-materializer suite creates a DB;
+never dispatch it with an ambient/default connection. Defer it and any other
+DB-backed suite to a newly reviewed private epoch with explicit owned binding.
+The standalone stdout-stream fault contains its fixed `/bin/sleep` child,
+not a Node child or compiler. Genuine guarded build requires `main == origin/main`
+and therefore belongs in a NEW merged-main checkout after reviewed delivery.
+A subsequent newly reviewed clean-main private ALL run
 is separate evidence, not a stitched collection of focused results.
 
 ## Non-goals
 
 No TMPDIR or package-command changes, no consumer-guard weakening, no native
-or privileged startup changes, no PostgreSQL schema/data mutation, no old
+or privileged startup changes, no live PostgreSQL schema/data mutation, no old
 worktree synchronization or deletion, no new production ownership admission.
