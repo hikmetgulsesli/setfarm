@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -105,8 +105,22 @@ function preflightAtFakeHome(home: string) {
 }
 
 test("Task6A V2 ordinary preflight leaves a noncanonical installation with no fixed workspace to existing gates", () => {
-  const home = mkdtempSync(path.join(tmpdir(), "task6a-ordinary-home-"));
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), "task6a-ordinary-home-")));
   try {
+    // Positive homes are physical; caller-supplied symlink ancestry stays refused.
+    const linkedHome = path.join(home, "linked-home");
+    symlinkSync(".", linkedHome);
+    const linkBefore = lstatSync(linkedHome, { bigint: true });
+    const entriesBefore = readdirSync(home);
+    const linkedHomeResult = preflightAtFakeHome(linkedHome);
+    assert.equal(linkedHomeResult.status, 1);
+    assert.equal(linkedHomeResult.stdout, "");
+    assert.equal(linkedHomeResult.stderr, "TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED\n");
+    assert.deepEqual(readdirSync(home), entriesBefore);
+    assert.equal(readlinkSync(linkedHome), ".");
+    assert.equal(lstatSync(linkedHome, { bigint: true }).ino, linkBefore.ino);
+    assert.equal(lstatSync(linkedHome, { bigint: true }).mtimeNs, linkBefore.mtimeNs);
+    rmSync(linkedHome);
     const result = preflightAtFakeHome(home);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, "EXISTING_GATES\n");
@@ -169,7 +183,7 @@ test("Task6A V2 ordinary workspace absence cannot bypass uncertain cleanup", () 
 });
 
 test("Task6A V2 fixed-operation probe is no-write and refuses malformed or symlinked records", () => {
-  const home = mkdtempSync(path.join(tmpdir(), "task6a-preschema-home-"));
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), "task6a-preschema-home-")));
   try {
     const store = path.join(home, "ai/setrox/data/internal-production-baseline/current-entry-v1");
     mkdirSync(store, { recursive: true, mode: 0o700 });
@@ -180,6 +194,21 @@ test("Task6A V2 fixed-operation probe is no-write and refuses malformed or symli
     const bytes = operationBytes();
     writeFileSync(target, bytes, { mode: 0o600 });
     const before = statSync(target, { bigint: true });
+    const linkedHome = path.join(home, "linked-home");
+    symlinkSync(".", linkedHome);
+    const linkBefore = lstatSync(linkedHome, { bigint: true });
+    const entriesBefore = readdirSync(home);
+    const linkedHomeResult = observeAtFakeHome(linkedHome);
+    assert.equal(linkedHomeResult.status, 1);
+    assert.equal(linkedHomeResult.stdout, "");
+    assert.equal(linkedHomeResult.stderr, "INTERNAL_PRODUCTION_BASELINE_WORKSPACE_ANCESTOR_IDENTITY_INVALID\n");
+    assert.deepEqual(readdirSync(home), entriesBefore);
+    assert.equal(readlinkSync(linkedHome), ".");
+    assert.equal(lstatSync(linkedHome, { bigint: true }).ino, linkBefore.ino);
+    assert.equal(lstatSync(linkedHome, { bigint: true }).mtimeNs, linkBefore.mtimeNs);
+    assert.deepEqual(readFileSync(target), bytes);
+    assert.equal(statSync(target, { bigint: true }).mtimeNs, before.mtimeNs);
+    rmSync(linkedHome);
     const presentResult = observeAtFakeHome(home);
     assert.equal(presentResult.status, 0, presentResult.stderr);
     assert.equal(JSON.parse(presentResult.stdout).state, "present");
