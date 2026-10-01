@@ -30,8 +30,8 @@
 - [x] New isolated branch fix/private-readonly-login-scram-v1 at a5654e98;
   ignored shared node_modules unchanged/no install. Existing wrapper/journal
   baseline102PASS0FAIL0CANCELLED0SKIP3831.742833ms.
-- [ ] Self-review and commit spec/plan before implementation.
-- [ ] Add actual plan readonly-verifiers case, literal two-file serial argv and
+- [x] Self-review and commit spec/plan before implementation:f2a20c0d.
+- [x] Add actual plan readonly-verifiers case, literal two-file serial argv and
   unchanged initdb/server/findings/all assertions. Add invalid near-mode and
   extra focused argument CLI checks with forbidden effect sentinels. Run RED:
 
@@ -45,7 +45,7 @@ env -u TMPDIR -u SETFARM_PG_URL -u SETFARM_TEST_PG_ADMIN_URL /opt/homebrew/Cella
   Require literal PRIVATE_READONLY_LOGIN_PASSWORD_INVALID, exit1, zero forbidden
   connection marker and no password marker in output. Observe RED before change;
   do not use real SQL/cluster/native effects or source-text matching.
-- [ ] Implement only fixed mode in both validation sites and plan test selection:
+- [x] Implement only fixed mode in both validation sites and plan test selection:
 
 ```javascript
 test: Object.freeze(mode === 'readonly-verifiers' ? [
@@ -58,6 +58,11 @@ test: Object.freeze(mode === 'readonly-verifiers' ? [
 
 Keep credential-shape regressions RED until Task2; select focused mode tests for
 GREEN. All prior102 wrapper/journal cases must remain green independently.
+The malformed credential cases are deferred until after the clean harness-only
+real RED, before authentication implementation. Fixed-mode planner RED:
+7PASS1FAIL300.359958ms, PRIVATE_TEST_CLUSTER_PLAN_INVALID. Full pure harness/
+journal GREEN:120PASS0FAIL0CANCELLED0SKIP6390.071917ms, including all12 lifecycle
+fault modes for findings and readonly-verifiers and normal unchanged all dispatch.
 - [ ] Commit clean fixed harness/tests, inspect actual source diff, obtain
   independent one-invocation review before real RED. Secret-shape cases can be
   added after the harness-only commit so real RED does not include them.
@@ -94,6 +99,12 @@ identity SQL with password_encryption and require scram-sha-256 before effects.
   DDL. Supply password to all4 restricted clients in each file, including missing
   target. Keep writerRole NOLOGIN, all flags/grants, fingerprint/drift/cleanup
   tests unchanged. No credential literals or new unregistered passwords.
+- [ ] Independently reviewed causal ownership refinement: base fixture cleanup
+  currently drops a role even on CREATE collision. Test the complete actual
+  integration callback with finite identity/database/CREATE-42710 boundaries,
+  no real SQL; require primary duplicate error and zero foreign-role DROP.
+  Observe RED, then set roleCreated only after successful CREATE acknowledgment
+  and require it for cleanup. Keep current journal collision guard unchanged.
 - [ ] Run full pure wrapper/journal tests, noemit, version/English/path/migration/
   MC/diff checks; review exact6-path map and causal unchanged ALL/fail-closed
   invariants. Commit clean source before real GREEN.

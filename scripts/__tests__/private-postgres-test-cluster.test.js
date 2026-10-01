@@ -33,6 +33,18 @@ test('private cluster plans only SCRAM loopback PG17 and the unchanged findings 
   assert.equal(Object.isFrozen(result),true);
   assert.equal(Object.isFrozen(result.initdb),true);
 });
+test('private focused verifier mode dispatches only both real serial integration files',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const result=plan({root,port:55439,mode:'readonly-verifiers'});
+  assert.deepEqual(result.test,[
+    '--import','tsx','--test','--test-concurrency=1',
+    'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
+    'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts',
+  ]);
+  assert.deepEqual(result.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(result.server,plan({root,port:55439,mode:'findings'}).server);
+  assert.equal(Object.isFrozen(result.test),true);
+});
 for(const [label,overrides] of [
   ['live port',{port:5432}],['zero port',{port:0}],['fraction port',{port:55439.5}],
   ['overflow port',{port:65536}],['unknown command',{mode:'build'}],
@@ -160,7 +172,9 @@ test('private server kill failure or timeout never becomes cleanup success',asyn
   }
 });
 
-for(const args of [[],['unknown'],['findings','extra']]){
+for(const args of [[],['unknown'],['findings','extra'],
+  ['readonly-verifier'],['readonly-verifiers','extra'],
+  ['readonly-verifiers','--test-name-pattern=other'],['readonly-verifiers','all']]){
   test('private CLI refuses invalid mode '+JSON.stringify(args)+' before child effects',()=>{
     const guard=`import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
 cp.spawn=cp.spawnSync=()=>{throw Error('PRIVATE_TEST_FORBIDDEN_TEST_EFFECT');};syncBuiltinESMExports();`;
@@ -269,7 +283,13 @@ test('captured child binding persists real redactor output before every terminal
 });
 
 // Ordinary Node-only boundary fixture: NO PG process, SQL or password file.
-function wrapperBoundaryFixture(mode){
+function wrapperBoundaryFixture(mode,commandMode='findings'){
+  const expectedTestArgs=commandMode==='readonly-verifiers'?[
+    '--import','tsx','--test','--test-concurrency=1',
+    'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
+    'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts',
+  ]:['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
+    ...(commandMode==='all'?['test']:['run','test:findings'])];
   const guard=`
 import cp from 'node:child_process';import fs from 'node:fs';import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';import {registerHooks,syncBuiltinESMExports} from 'node:module';
@@ -323,7 +343,7 @@ cp.spawn=(tool,args,options)=>{
   let role;
   if(tool==='/opt/homebrew/opt/postgresql@17/bin/initdb')role='initdb';
   else if(tool==='/opt/homebrew/opt/postgresql@17/bin/postgres')role='server';
-  else if(tool===process.execPath&&args.join('|')==='/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js|run|test:findings')role='test';
+  else if(tool===process.execPath&&JSON.stringify(args)===${JSON.stringify(JSON.stringify(expectedTestArgs))})role='test';
   else return deny();
   if(spawned.has(role))return deny();spawned.add(role);trace.push(role+'-dispatch');
   if(role==='server'){root=args[args.indexOf('-k')+1];port=Number(args[args.indexOf('-p')+1]);}
@@ -365,15 +385,17 @@ const driverUrl='data:text/javascript;base64,'+Buffer.from('export default (...a
 registerHooks({resolve(specifier,context,next){return specifier==='postgres'?{url:driverUrl,shortCircuit:true}:next(specifier,context);}});
 syncBuiltinESMExports();
 process.once('exit',()=>{original.writeSync(1,Buffer.from('UNIT_BOUNDARY_RESULT '+JSON.stringify({root,trace,journalFaulted})+'\\n'));});`;
-  return spawnSync(process.execPath,[fileURLToPath(MODULE),'findings'],{
+  return spawnSync(process.execPath,[fileURLToPath(MODULE),commandMode],{
     encoding:'utf8',timeout:7000,maxBuffer:262144,
     env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',
       NODE_OPTIONS:'--import=data:text/javascript;base64,'+Buffer.from(guard).toString('base64')},
   });
 }
-for(const mode of ['normal','nonzero','mirror-error','journal-loss','close-fault','retained-db','cancel','before-server','before-test','attach-server','attach-test','input-error']){
-  test('wrapper boundary '+mode+' retains ordered observed outcomes without native effects',async()=>{
-    const result=wrapperBoundaryFixture(mode);
+for(const commandMode of ['findings','all','readonly-verifiers'])
+for(const mode of commandMode==='all'?['normal']:
+  ['normal','nonzero','mirror-error','journal-loss','close-fault','retained-db','cancel','before-server','before-test','attach-server','attach-test','input-error']){
+  test('wrapper boundary '+commandMode+' '+mode+' retains ordered observed outcomes without native effects',async()=>{
+    const result=wrapperBoundaryFixture(mode,commandMode);
     assert.equal(result.error,undefined);assert.equal(result.signal,null);assert.equal(result.stderr,'',result.stderr);
     const marker=result.stdout.split('\n').find(line=>line.startsWith('UNIT_BOUNDARY_RESULT '));
     assert.ok(marker,'unit boundary must finish without native tool dispatch');

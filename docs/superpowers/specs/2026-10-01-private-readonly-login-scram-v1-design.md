@@ -46,6 +46,12 @@ clients in each file, including drift/revocation reconnects and missing-target
 refusal. NOLOGIN writer role is unchanged. Preserve positive catalog fingerprints,
 restricted privilege assertions, negative drift/revocation cases, cleanup and
 primary/cleanup failure ordering. No production source change is required.
+Independent ownership review found the base fixture drops its random role even
+if CREATE reports a collision. Track successful role creation and drop only that
+acknowledged new role; uncertain/duplicate creation never authorizes deletion.
+This is causally required to preserve the new ephemeral-role ownership contract,
+not a production role/access-control change. Test the actual callback against a
+finite duplicate-role SQL boundary and require zero DROP of the foreign role.
 
 ## Closed focused private execution mode
 
