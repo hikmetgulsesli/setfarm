@@ -150,7 +150,23 @@ function systemObject(kind,record,expected,{sourceOverride}={}) {
   assert.ok(existsSync(BOOTSTRAP),'system supervisor implementation missing');
   // Load only declarations in the ordinary test process. No production test
   // options/entry points: remove the sole final main call in memory, not on disk.
-  const source=replaceOnce(sourceOverride??readFileSync(BOOTSTRAP,'utf8'),'\ntask6a_origin_main();\n','\n');
+  let source=replaceOnce(sourceOverride??readFileSync(BOOTSTRAP,'utf8'),'\ntask6a_origin_main();\n','\n');
+  if(kind==='composed-physical'&&record.mode.startsWith('ledger-')) {
+    source=replaceOnce(source,'sub task6a_origin_record {',String.raw`
+sub test_contaminate_physical_ledger {
+    my ($replace)=@_;
+    if($replace) {
+        sysopen(my $other,'/usr/bin/perl',Fcntl::O_RDONLY()) or die "test replacement open failed\n";
+        {no warnings 'once';$main::test_replacement_fh=$other;}
+        $file_ledger[0]={%{$file_ledger[0]},fh=>$other};
+    } else {shift @file_ledger;}
+}
+sub task6a_origin_record {`);
+  }
+  if(kind==='composed-physical'&&record.mode==='unknown-helper') {
+    source=replaceOnce(source,'$pid=fork();',"$pid=fork(); {no warnings 'once'; $main::capture_test_pid=$pid if defined($pid)&&$pid>0;}");
+    source=replaceOnce(source,"'/usr/bin/curl'=>1,","'/usr/bin/perl'=>1,'/usr/bin/curl'=>1,");
+  }
   const program=String.raw`
     BEGIN { @INC=("/System/Library/Perl/5.34/darwin-thread-multi-2level","/System/Library/Perl/5.34"); }
     use strict; use warnings; use MIME::Base64 (); use JSON::PP ();
@@ -163,19 +179,39 @@ function systemObject(kind,record,expected,{sourceOverride}={}) {
     if($q->{kind} eq 'poll-error') {
       eval q{BEGIN { *CORE::GLOBAL::waitpid=sub ($$) {$!=5;return undef;}; }};die $@ if $@;
     }
-    if($q->{kind} eq 'held-file'||$q->{kind} eq 'ancestry'||$q->{kind} eq 'held-lifecycle') {
+    if($q->{kind} eq 'held-file'||$q->{kind} eq 'ancestry'||$q->{kind} eq 'held-lifecycle'||$q->{kind} eq 'composed-physical') {
       {no warnings 'once';$main::test_fifo_path=$q->{record}{path} if $q->{record}{fifoRace};}
       eval q{BEGIN { *CORE::GLOBAL::lstat=sub (_) {
         if(defined($main::test_fifo_path)&&$_[0] eq $main::test_fifo_path) {return CORE::lstat('/usr/bin/perl');}
         my @value=CORE::lstat($_[0]);
+        $value[1]+=1 if $main::test_composed_ancestry_drift&&$_[0] eq '/usr/bin';
         if($main::test_file_drift) {$value[$main::test_file_drift_index]+=1;}
         return @value;
       }; }};die $@ if $@;
     }
-    if($q->{kind} eq 'held-lifecycle') {
+    if($q->{kind} eq 'composed-physical'&&$q->{record}{mode} eq 'partial-capture') {
+      eval q{BEGIN { *CORE::GLOBAL::sysseek=sub (*$$) {
+        no warnings 'once';
+        if($main::test_composed_seek_fault) {
+          my @actual=CORE::stat($_[0]);my @expected=CORE::stat('/usr/bin/perl');
+          if(@actual&&$actual[0]==$expected[0]&&$actual[1]==$expected[1]) {
+            my %before=map {$_=>1} @main::test_composed_before;
+            @main::test_composed_owned=grep {!$before{$_}} @{main::task6a_origin_fds()};
+            $!=5;return undef;
+          }
+        }
+        return CORE::sysseek($_[0],$_[1],$_[2]);
+      }; }};die $@ if $@;
+    }
+    if($q->{kind} eq 'held-lifecycle'||$q->{kind} eq 'composed-physical') {
       eval q{BEGIN { *CORE::GLOBAL::close=sub (*) {
+        no warnings 'once';
+        my $fd=fileno($_[0]);
+        push @main::test_composed_close_attempts,$fd
+          if defined($fd)&&grep {$_==$fd} @main::test_composed_owned;
         my $result=CORE::close($_[0]);
-        if($main::test_file_close_fault) {
+        if($main::test_file_close_fault&&(!$main::test_composed_close_only
+          ||grep {$_==$fd} @main::test_composed_owned)) {
           $main::test_file_close_fault=0;
           die "test close uncertainty\n" if $main::test_file_close_throw;
           return 0;
@@ -277,6 +313,127 @@ function systemObject(kind,record,expected,{sourceOverride}={}) {
       $out={settled=>$first,afterIndependentReap=>$after,
         refused=>(!defined($got)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n")?JSON::PP::true:JSON::PP::false,
         forgedRefused=>(!defined($forged)&&$forged_error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n")?JSON::PP::true:JSON::PP::false};
+    } elsif($q->{kind} eq 'composed-physical') {
+      die "composed physical implementation missing\n"
+        unless defined &task6a_origin_hold_system_perl_physical
+          &&defined &task6a_origin_recheck_system_perl_physical
+          &&defined &task6a_origin_release_system_perl_physical;
+      my $r=$q->{record};no warnings qw(redefine once);
+      $main::test_composed_close_only=1;
+      my %before=map {$_=>1} @{task6a_origin_fds()};
+      @main::test_composed_before=keys %before;
+      my $refused=sub {my ($call)=@_;my $got=eval {$call->();1;};
+        die $@ if !$got&&$@ ne "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+        return $got?JSON::PP::false:JSON::PP::true;};
+      my ($first,$restored)=(JSON::PP::false,JSON::PP::false);my $diagnostic;
+      my $leaf_fault=0;my $leaf_samples=0;my $real_capture=\&task6a_origin_capture;
+      local *main::task6a_origin_capture=sub {
+        my ($tool,$args,$seconds,$limit)=@_;my $result=$real_capture->(@_);
+        if($tool eq '/bin/ls'&&JSON::PP->new->encode($args) eq '["-lde","/usr/bin/perl"]') {
+          die "incorrect leaf ACL external contract\n" unless $seconds==2&&$limit==4096;
+          ++$leaf_samples;
+          if($r->{mode} eq 'post-ancestry'&&$leaf_samples==2) {
+            @main::test_composed_owned=grep {!$before{$_}} @{task6a_origin_fds()};
+            $main::test_composed_ancestry_drift=1;
+          }
+          if($leaf_fault) {
+            if($r->{mode} eq 'acl-row') {$result->{out}.=" 0: user:someone allow write\n";}
+            elsif($r->{mode} eq 'acl-marker') {$result->{out}=~s/\A(-[rwxStTs-]{9})\@? /$1+ /;}
+            elsif($r->{mode} eq 'acl-stderr') {$result->{err}='test warning';}
+            elsif($r->{mode} eq 'acl-nonzero') {$result->{status}=1;}
+            elsif($r->{mode} eq 'acl-unknown-reap') {$result->{reaped}=JSON::PP::false;}
+            else {die "unknown leaf fault\n";}
+          }
+        }
+        return $result;
+      };
+      my $prior_alive=0;my $unknown_stays_burned=0;
+      if($r->{mode} eq 'prior-contamination') {
+        task6a_origin_hold_file('/usr/bin/perl','abda2bfd23a6c9a8e57adf2291f0aea4abd8faf440558ee49fe4ced55e8d9ad0',0755,1048576);
+        @main::test_composed_owned=grep {!$before{$_}} @{task6a_origin_fds()};
+        $first=$refused->(sub {task6a_origin_hold_system_perl_physical();});
+        $restored=$refused->(sub {task6a_origin_hold_system_perl_physical();});
+      } elsif($r->{mode} eq 'partial-capture'||$r->{mode} eq 'post-ancestry') {
+        $main::test_composed_seek_fault=1 if $r->{mode} eq 'partial-capture';
+        $first=$refused->(sub {task6a_origin_hold_system_perl_physical();});
+        $main::test_composed_seek_fault=0;$main::test_composed_ancestry_drift=0;
+        $restored=$refused->(sub {task6a_origin_hold_system_perl_physical();});
+      } elsif($r->{mode} eq 'before-start'||$r->{mode} eq 'hold-arity') {
+        $first=$refused->(sub {$r->{mode} eq 'before-start'
+          ?task6a_origin_recheck_system_perl_physical()
+          :task6a_origin_hold_system_perl_physical({receipt=>JSON::PP::true});});
+        $restored=$refused->(sub {task6a_origin_hold_system_perl_physical();});
+      } else {
+        $diagnostic=task6a_origin_hold_system_perl_physical();
+        @main::test_composed_owned=grep {!$before{$_}} @{task6a_origin_fds()};
+        task6a_origin_recheck_system_perl_physical();
+        if($r->{mode} eq 'unknown-helper') {
+          # Discard earlier, definitely reaped ACL child breadcrumbs. Lose the
+          # actual clock only after this new helper's real fork, not a receipt.
+          undef $main::capture_test_pid;
+          my $clock=Time::HiRes->can('clock_gettime');
+          {
+            local *Time::HiRes::clock_gettime=sub {die "test clock loss\n" if defined($main::capture_test_pid);return $clock->(@_);};
+            my $probe=q{BEGIN { @INC=("/System/Library/Perl/5.34/darwin-thread-multi-2level","/System/Library/Perl/5.34"); } select undef,undef,undef,0.15;};
+            $first=$refused->(sub {task6a_origin_capture('/usr/bin/perl',['-f','-e',$probe],2,65536);});
+          }
+          my $pid=$main::capture_test_pid;die "test fork PID missing\n" unless defined($pid)&&$pid>1;
+          die "independent test reap failed\n" unless waitpid($pid,0)==$pid;
+          $unknown_stays_burned=!task6a_origin_helpers_settled();
+          $restored=$refused->(sub {task6a_origin_recheck_system_perl_physical();});
+        } elsif($r->{mode} eq 'deadline') {
+          my $clock=Time::HiRes->can('clock_gettime');
+          {
+            local *Time::HiRes::clock_gettime=sub {return $clock->(@_)+181;};
+            $first=$refused->(sub {task6a_origin_recheck_system_perl_physical();});
+          }
+          $restored=$refused->(sub {task6a_origin_recheck_system_perl_physical();});
+        } elsif($r->{mode} eq 'recheck-arity') {
+          $first=$refused->(sub {task6a_origin_recheck_system_perl_physical({receipt=>JSON::PP::true});});
+          $restored=$refused->(sub {task6a_origin_recheck_system_perl_physical();});
+        } elsif($r->{mode}=~/\Aacl-/) {
+          $leaf_fault=1;$first=$refused->(sub {task6a_origin_recheck_system_perl_physical();});
+          $leaf_fault=0;$restored=$refused->(sub {task6a_origin_recheck_system_perl_physical();});
+        } elsif($r->{mode} eq 'helper-nonzero') {
+          $first=$refused->(sub {task6a_origin_capture('/usr/bin/curl',['-q','--invalid-setfarm-test-option'],2,65536);});
+          $restored=$refused->(sub {task6a_origin_recheck_system_perl_physical();});
+        } elsif($r->{mode}=~/\Aledger-/) {
+          test_contaminate_physical_ledger($r->{mode} eq 'ledger-replace');
+          $first=$refused->(sub {task6a_origin_recheck_system_perl_physical();});
+          $restored=$refused->(sub {task6a_origin_recheck_system_perl_physical();});
+        } elsif($r->{mode} eq 'duplicate'||$r->{mode} eq 'raw-append') {
+          $first=$refused->(sub {$r->{mode} eq 'duplicate'
+            ?task6a_origin_hold_system_perl_physical()
+            :task6a_origin_hold_file('/usr/bin/perl','abda2bfd23a6c9a8e57adf2291f0aea4abd8faf440558ee49fe4ced55e8d9ad0',0755,1048576);});
+          $restored=$refused->(sub {task6a_origin_recheck_system_perl_physical();});
+        }
+      }
+      $main::test_file_close_fault=1 if $r->{mode} eq 'close-failure'||$r->{mode} eq 'close-throw';
+      $main::test_file_close_throw=1 if $r->{mode} eq 'close-throw';
+      my $close_refused=$refused->(sub {$r->{mode} eq 'release-arity'
+        ?task6a_origin_release_system_perl_physical({receipt=>JSON::PP::true})
+        :task6a_origin_release_system_perl_physical();});
+      if($r->{mode} eq 'prior-contamination') {
+        my %still=map {$_=>1} @{task6a_origin_fds()};
+        $prior_alive=@main::test_composed_owned==1&&$still{$main::test_composed_owned[0]}
+          &&@main::test_composed_close_attempts==0;
+        task6a_origin_close_files();
+      }
+      my %after=map {$_=>1} @{task6a_origin_fds()};
+      my @leaked=grep {$after{$_}} @main::test_composed_owned;
+      my %attempts; ++$attempts{$_} for @main::test_composed_close_attempts;
+      my $replacement_alive=defined($main::test_replacement_fh)&&defined(fileno($main::test_replacement_fh));
+      CORE::close($main::test_replacement_fh) or die "test replacement cleanup failed\n" if $replacement_alive;
+      $out={%{$diagnostic||{}},replacementAlive=>$replacement_alive?JSON::PP::true:JSON::PP::false,
+        priorAlive=>$prior_alive?JSON::PP::true:JSON::PP::false,
+        unknownStaysBurned=>$unknown_stays_burned?JSON::PP::true:JSON::PP::false,
+        ownedCount=>scalar(@main::test_composed_owned),leakedCount=>scalar(@leaked),
+        exactCloseOnce=>(scalar(keys %attempts)==scalar(@main::test_composed_owned)
+          &&!grep {($attempts{$_}//0)!=1} @main::test_composed_owned)?JSON::PP::true:JSON::PP::false,
+        leafSamples=>$leaf_samples,firstRefused=>$first,restoredRefused=>$restored,closeRefused=>$close_refused,
+        releasedRefused=>$refused->(sub {task6a_origin_recheck_system_perl_physical();}),
+        reopenRefused=>$refused->(sub {task6a_origin_hold_system_perl_physical();}),
+        repeatCloseRefused=>$refused->(sub {task6a_origin_release_system_perl_physical();})};
     } elsif($q->{kind} eq 'held-lifecycle') {
       my $r=$q->{record};no warnings 'once';my %before=map {$_=>1} @{task6a_origin_fds()};
       task6a_origin_hold_file('/usr/bin/perl','abda2bfd23a6c9a8e57adf2291f0aea4abd8faf440558ee49fe4ced55e8d9ad0',0755,1048576);
@@ -580,6 +737,57 @@ test('retained holder lifecycle consumers detect missing burn and release enforc
   let source=readFileSync(BOOTSTRAP,'utf8');source=source.replaceAll('!$file_lifecycle_burned','1').replaceAll('!$file_lifecycle_released','1');
   const r=systemObject('held-lifecycle',{mode:'drift-restore'},'',{sourceOverride:source});assert.equal(r.status,0,r.stderr.toString());
   const out=JSON.parse(r.stdout);assert.equal(out.restoredRefused,false,'mutant did not reach restored real-file consumer');
+});
+for(const mode of ['success','acl-row','acl-marker','acl-stderr','acl-nonzero','acl-unknown-reap',
+  'duplicate','raw-append','close-failure','close-throw','release-arity','before-start','hold-arity',
+  'ledger-remove','ledger-replace','helper-nonzero','partial-capture','post-ancestry',
+  'prior-contamination','unknown-helper','recheck-arity','deadline'])
+  test(`composed physical holder has one irreversible owned epoch after ${mode}`,()=>{
+    const r=systemObject('composed-physical',{mode},'');assert.equal(r.status,0,r.stderr.toString());
+    assert.equal(r.stderr.length,0);const out=JSON.parse(r.stdout);
+    const noCapture=['before-start','hold-arity','prior-contamination'].includes(mode);
+    const failedCapture=['partial-capture','post-ancestry'].includes(mode);
+    const burnsBeforeRelease=mode.startsWith('acl-')||mode.startsWith('ledger-')||['duplicate','raw-append','before-start','hold-arity','helper-nonzero',
+      'partial-capture','post-ancestry','prior-contamination','unknown-helper','recheck-arity','deadline'].includes(mode);
+    if(!noCapture&&!failedCapture){
+      assert.equal(out.scope,'composed-system-perl-physical-candidate-diagnostic-only');
+      assert.equal(out.productionAuthority,false);assert.ok(out.leafSamples>=2,'leaf ACL never composed');
+    }else if(noCapture) assert.equal(out.leafSamples,0,'invalid initial state started helpers');
+    else assert.equal(out.leafSamples,mode==='partial-capture'?1:2);
+    assert.equal(out.ownedCount,mode==='prior-contamination'?1:noCapture?0:4);assert.equal(out.leakedCount,0);
+    assert.equal(out.replacementAlive,mode==='ledger-replace','cleanup adopted a descriptor it did not own');
+    assert.equal(out.priorAlive,mode==='prior-contamination','composition closed a preexisting raw-owner descriptor');
+    assert.equal(out.unknownStaysBurned,mode==='unknown-helper');
+    assert.equal(out.exactCloseOnce,true,'not every owned descriptor received exactly one closure attempt');
+    assert.equal(out.firstRefused,burnsBeforeRelease);assert.equal(out.restoredRefused,burnsBeforeRelease);
+    assert.equal(out.closeRefused,mode!=='success');
+    assert.equal(out.releasedRefused,true);assert.equal(out.reopenRefused,true);assert.equal(out.repeatCloseRefused,true);
+  });
+test('composed physical consumers expose omitted leaf ACL and final ancestry checks',()=>{
+  const source=readFileSync(BOOTSTRAP,'utf8');
+  const cases=[
+    ['acl-row',replaceOnce(source,"        task6a_origin_acl_free('/usr/bin/perl');\n        task6a_origin_recheck_files();",
+      '        task6a_origin_recheck_files();')],
+    ['post-ancestry',replaceOnce(source,'        task6a_origin_recheck_ancestry();\n        task6a_origin_refuse() unless task6a_origin_physical_records()',
+      '        task6a_origin_refuse() unless task6a_origin_physical_records()')],
+  ];
+  for(const [mode,sourceOverride] of cases) {
+    const r=systemObject('composed-physical',{mode},'',{sourceOverride});assert.equal(r.status,0,r.stderr.toString());
+    assert.equal(JSON.parse(r.stdout).firstRefused,false,`${mode} mutant never reached forbidden acceptance`);
+  }
+});
+test('composed physical consumers expose missing sticky burn and partial-handle ownership',()=>{
+  const source=readFileSync(BOOTSTRAP,'utf8');
+  const noBurn=replaceOnce(source,String.raw`    $physical_state='burned' unless $physical_state eq 'released';
+    $file_lifecycle_burned=1 if $physical_owns_ledgers;
+    task6a_origin_physical_cleanup();`, '    # Test-only removal of lifecycle effects.');
+  const burn=systemObject('composed-physical',{mode:'acl-row'},'',{sourceOverride:noBurn});assert.equal(burn.status,0,burn.stderr.toString());
+  assert.equal(JSON.parse(burn.stdout).restoredRefused,false,'missing burn did not revive the actual held-file consumer');
+  const noOwnership=source.replaceAll('push(@physical_owned_handles,$fh) if $physical_owns_ledgers&&$physical_internal;',
+    '# Test-only omission of partial-start handle ownership.');
+  const partial=systemObject('composed-physical',{mode:'partial-capture'},'',{sourceOverride:noOwnership});
+  assert.equal(partial.status,0,partial.stderr.toString());const out=JSON.parse(partial.stdout);
+  assert.equal(out.ownedCount,4);assert.equal(out.leakedCount,4);assert.equal(out.exactCloseOnce,false);
 });
 function sourceGraph({sourceBytes={}}={}) {
   const sources=[['task6a-origin-archive-v2.pm',HELPER],['task6a-origin-native-v2.pm',NATIVE],['task6a-origin-map-v2.pm',MAP],['task6a-protected-origin-entry-v2.mjs',ENTRY]];

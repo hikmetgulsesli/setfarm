@@ -120,10 +120,15 @@ Any composition arity/state/ACL/file/ancestry/helper/deadline failure burns the
 same epoch. Partial capture failure burns and attempts owned closure once; a
 caught failure/restored input cannot revive it. Cleanup bypasses validity,
 deadline and helper checks, attempts every privately owned FD despite one
-throwing/failing close, and refuses uncertainty. Composed release state burns
-before attempts, but do NOT pre-set raw file_lifecycle_released: close_files
-owns that transition or it would refuse before its loop. Cleanup ownership and
-attempted state are separate from positive validity. Bad-arity/repeated release
+throwing/failing close, and refuses uncertainty. Seal each actual handle directly
+after successful open, before binmode/fcntl/hash/ACL checks; partial-start handles
+remain owned even before final record pins exist. Cleanup consumes only this
+private handle ledger, never the mutable raw file/directory records. Removing or
+replacing a raw record cannot leak the original or adopt/close a replacement.
+Composed cleanup owns its release transition and per-handle loop; it does not
+delegate to raw close_files (whose released guard would prevent that loop if
+pre-set). Cleanup ownership and attempted state are separate from positive
+validity. Bad-arity/repeated release
 cannot double-close/reopen. Calling release after an already-cleaned failure is
 refusal, not permission to close reused descriptor numbers.
 

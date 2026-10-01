@@ -145,10 +145,11 @@ record references drive recheck, never copied diagnostics.
 - [x] Verify new isolated clean baseline with unchanged dependencies:
   `node --test --test-name-pattern='retained|ACL sample' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`
   Actual57PASS0FAIL0SKIP1345.173ms, exit0. No PG/native/privileged fixture effect.
-- [ ] Commit reviewed causal design/File Map before implementation. External
+- [x] Commit reviewed causal design/File Map before implementation (4f15bf5d).
+  External
   source-only design review found release-before-raw-close and ownership/state
   pitfalls; canonical spec includes the fixes, not invented execution clearance.
-- [ ] Add test-only systemObject kind composed-physical, load actual declarations
+- [x] Add test-only systemObject kind composed-physical, load actual declarations
   with sole final main removed IN MEMORY. Missing-interface assertion RED first:
   ```js
   const r=systemObject('composed-physical',{mode:'success'},'');
@@ -159,27 +160,46 @@ record references drive recheck, never copied diagnostics.
   assert.equal(out.ownedCount,4);assert.equal(out.leakedCount,0);
   assert.equal(out.releasedRefused,true);assert.equal(out.reopenRefused,true);
   ```
-- [ ] Extend the same real consumer with exact leaf ACL fault AFTER healthy
+- [x] Extend the same real consumer with exact leaf ACL fault AFTER healthy
   fixed baseline, preserving actual file metadata/hash and ancestor rows. Added
   row/plus marker/stderr/nonzero/unknown reap each refuses; restoration after
   caught recheck still refuses. @ xattr alone is not an ACL entry. Expected
   refusal is exactly TASK6A_ORIGIN_BOOTSTRAP_REFUSED, not generic harness failure.
-- [ ] Test post-capture ancestor drift; close fault counts actual descriptor
+- [x] Test post-capture ancestor drift; close fault counts actual descriptor
   attempts; helper failure plus definite reap cannot revive; partial initial
   capture attempts owned closure. Prior raw contamination is refused without
   closing its original descriptor; raw owner can still clean its own FD.
   Duplicate/arguments/recheck-before-start/release/reopen/raw additions refuse.
-- [ ] Implement minimal private new/starting/active/burned/released state,
+- [x] Implement minimal private new/starting/active/burned/released state,
   exclusive initially-empty ledgers, private internal capture/cleanup flag and
   exact record pins. Capture ancestry -> leaf ACL -> fixed retained file ->
   full composed recheck. Recheck privately authenticates state/counts/references,
   settlement/deadline, ancestry/file, leaf ACL, file/ancestry and final settlement.
   Any failure burns and attempts owned cleanup once; cleanup never depends on
-  still-valid origin and never pre-sets the raw close-loop release flag.
-- [ ] Run `node --test --test-name-pattern='composed physical|retained|ACL sample' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`
+  still-valid origin. Independent review found live-ledger cleanup could adopt
+  a replacement and leak the original FD: actual ledger removal/replacement
+  consumers each observed 1 leaked original FD (2 semantic REDs,187.694ms).
+  Seal actual handles immediately after successful open and before fallible
+  checks, including partial starts; the private cleanup loop owns release and
+  ignores contaminated raw ledgers. Original/raw-owner behavior is unchanged.
+  The repaired consumers plus old lifecycle tests passed21/0/0,1232.154ms.
+  Actual curl nonzero-but-definitely-reaped operation also revived the epoch
+  (1 semantic RED,163.046ms); burn at the captor's final failed-operation edge,
+  AFTER its own settlement attempt. The fixed consumer passed1/0/0,124.881ms.
+- [x] Run `node --test --test-name-pattern='composed physical|retained|ACL sample' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`
   Observe genuine GREEN for every earlier RED, and original fragment regressions.
   Run coherent in-memory missing-leaf-ACL/post-ancestry/sticky-state mutants:
   literal independent consumer expectations must reject mutants, not source text.
+  Initial missing-interface13RED ->13GREEN plus6 old lifecycle GREEN. Focused
+  original57 plus initial13 passed70/0/0,2163.677ms. Expanded composition24/0/0,
+  1889.127ms:22 modes and2 coherent mutant consumers. Partial capture records
+  actual4FD ownership at the external real-file seek edge before denial;
+  missing registration mutant exposes all4 leaked FDs. Post-leaf ancestry
+  omission actually reaches forbidden acceptance; leaf-ACL omission accepts
+  the added row; missing lifecycle burn revives restored actual file validity.
+  Real helper clock loss is independently reaped only by its test owner and
+  cannot revive helper/composed state. Prior raw FD remains untouched until its
+  original owner's explicit close. These are ordinary read-only diagnostics.
 - [ ] Fresh whole bootstrap/default host contract suite with actualmacOS zero
   skips; noemit/version/English/path/check-only frozen digests/MC/diff/credential
   gates. Independent exact four-file source/test/spec/plan review; root scoped
