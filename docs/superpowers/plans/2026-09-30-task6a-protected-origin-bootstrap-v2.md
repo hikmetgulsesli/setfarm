@@ -118,6 +118,98 @@ tests981a1508...a73d; reviewer independently reran59PASS/0SKIP. The close-fault
 port actually closes before injecting uncertainty: complete attempts and sticky
 denial are proven, not native uncertain-close leak freedom.
 
+### Task2 physical composition refinement (2026-10-01)
+
+This closes the causally necessary gap between the already-delivered physical
+fragments; it does NOT enable main or claim protected/native execution. Root is
+the sole writer at .worktrees/setfarm-task6a-composed-physical-v2 on
+fix/task6a-composed-physical-v2, base0185aaee631341d057c79e855e5ab9b51e9d402a.
+The old private-test tree remains immutable2b6b3031 while interrupted descendants
+settle; standby stays immutable4cdb88dd. Only one branch is written at a time.
+All old trees/archives/failed footprints/user changes remain preserved.
+
+**Files (exactly four modified):**
+- scripts/task6a-protected-origin-bootstrap-v2.pl: private fixed composition and
+  raw-capture/close ownership guard, no new imports or main behavior.
+- scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js: ordinary real
+  system-Perl consumers; only external ACL/stat/close fault ports in memory.
+- docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md.
+- This plan. Source-helper/entry/vendor/native pins and production paths unchanged.
+
+**Interfaces:** hold/recheck/release_system_perl_physical, each prefixed
+task6a_origin_ and zero-argument. Fixed rootwheel0755/nlink1 /usr/bin/perl,
+SHA256abda2bfd23a6c9a8e57adf2291f0aea4abd8faf440558ee49fe4ced55e8d9ad0,
+max1048576 bytes; exactly three retained ancestry directories. Private state and
+record references drive recheck, never copied diagnostics.
+
+- [x] Verify new isolated clean baseline with unchanged dependencies:
+  `node --test --test-name-pattern='retained|ACL sample' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`
+  Actual57PASS0FAIL0SKIP1345.173ms, exit0. No PG/native/privileged fixture effect.
+- [x] Commit reviewed causal design/File Map before implementation (4f15bf5d).
+  External
+  source-only design review found release-before-raw-close and ownership/state
+  pitfalls; canonical spec includes the fixes, not invented execution clearance.
+- [x] Add test-only systemObject kind composed-physical, load actual declarations
+  with sole final main removed IN MEMORY. Missing-interface assertion RED first:
+  ```js
+  const r=systemObject('composed-physical',{mode:'success'},'');
+  assert.equal(r.status,0,r.stderr.toString());
+  const out=JSON.parse(r.stdout);
+  assert.equal(out.scope,'composed-system-perl-physical-candidate-diagnostic-only');
+  assert.equal(out.productionAuthority,false);
+  assert.equal(out.ownedCount,4);assert.equal(out.leakedCount,0);
+  assert.equal(out.releasedRefused,true);assert.equal(out.reopenRefused,true);
+  ```
+- [x] Extend the same real consumer with exact leaf ACL fault AFTER healthy
+  fixed baseline, preserving actual file metadata/hash and ancestor rows. Added
+  row/plus marker/stderr/nonzero/unknown reap each refuses; restoration after
+  caught recheck still refuses. @ xattr alone is not an ACL entry. Expected
+  refusal is exactly TASK6A_ORIGIN_BOOTSTRAP_REFUSED, not generic harness failure.
+- [x] Test post-capture ancestor drift; close fault counts actual descriptor
+  attempts; helper failure plus definite reap cannot revive; partial initial
+  capture attempts owned closure. Prior raw contamination is refused without
+  closing its original descriptor; raw owner can still clean its own FD.
+  Duplicate/arguments/recheck-before-start/release/reopen/raw additions refuse.
+- [x] Implement minimal private new/starting/active/burned/released state,
+  exclusive initially-empty ledgers, private internal capture/cleanup flag and
+  exact record pins. Capture ancestry -> leaf ACL -> fixed retained file ->
+  full composed recheck. Recheck privately authenticates state/counts/references,
+  settlement/deadline, ancestry/file, leaf ACL, file/ancestry and final settlement.
+  Any failure burns and attempts owned cleanup once; cleanup never depends on
+  still-valid origin. Independent review found live-ledger cleanup could adopt
+  a replacement and leak the original FD: actual ledger removal/replacement
+  consumers each observed 1 leaked original FD (2 semantic REDs,187.694ms).
+  Seal actual handles immediately after successful open and before fallible
+  checks, including partial starts; the private cleanup loop owns release and
+  ignores contaminated raw ledgers. Original/raw-owner behavior is unchanged.
+  The repaired consumers plus old lifecycle tests passed21/0/0,1232.154ms.
+  Actual curl nonzero-but-definitely-reaped operation also revived the epoch
+  (1 semantic RED,163.046ms); burn at the captor's final failed-operation edge,
+  AFTER its own settlement attempt. The fixed consumer passed1/0/0,124.881ms.
+- [x] Run `node --test --test-name-pattern='composed physical|retained|ACL sample' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`
+  Observe genuine GREEN for every earlier RED, and original fragment regressions.
+  Run coherent in-memory missing-leaf-ACL/post-ancestry/sticky-state mutants:
+  literal independent consumer expectations must reject mutants, not source text.
+  Initial missing-interface13RED ->13GREEN plus6 old lifecycle GREEN. Focused
+  original57 plus initial13 passed70/0/0,2163.677ms. Expanded composition24/0/0,
+  1889.127ms:22 modes and2 coherent mutant consumers. Partial capture records
+  actual4FD ownership at the external real-file seek edge before denial;
+  missing registration mutant exposes all4 leaked FDs. Post-leaf ancestry
+  omission actually reaches forbidden acceptance; leaf-ACL omission accepts
+  the added row; missing lifecycle burn revives restored actual file validity.
+  Real helper clock loss is independently reaped only by its test owner and
+  cannot revive helper/composed state. Prior raw FD remains untouched until its
+  original owner's explicit close. These are ordinary read-only diagnostics.
+- [ ] Fresh whole bootstrap/default host contract suite with actualmacOS zero
+  skips; noemit/version/English/path/check-only frozen digests/MC/diff/credential
+  gates. Independent exact four-file source/test/spec/plan review; root scoped
+  conventional commits and normal reviewed SHA-bound PR delivery only. No main
+  commit, history rewrite, guard bypass, root/native/PG/network/selector effect.
+- [ ] Synchronize/build only a separately proven clean inactive standby; do not
+  change a source tree with unknown surviving children. No fullnpm/Task6A success
+  without fresh complete respective evidence. Lost daemon sessions are unverified,
+  not passes or authority to signal/adopt/clean old private fixtures.
+
 Native grammar next slice:ordinary reviewed recon5ae16d... completed actual
 265region/54path format diagnostic; no raw map was retained. Existing V1 cache
 scanner does not parse all rows, can miss anonymous executable regions and uses
