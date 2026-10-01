@@ -1,3 +1,4 @@
+import { createPrivateOutputParent } from "../../scripts/__tests__/fixtures/private-output-parent.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -15,7 +16,6 @@ import {
   copyFile,
   link,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
   realpath,
@@ -1000,7 +1000,7 @@ describe("Node scaffold private staged materializer V2", () => {
 
   before(async () => {
     database = await createIsolatedTestDatabase();
-    sandbox = await mkdtemp(path.join(tmpdir(), "setfarm-f4-stage-v2-"));
+    sandbox = await createPrivateOutputParent(path.join(tmpdir(), "setfarm-f4-stage-v2-"));
     const index = createArtifactIndex(database.sql);
     await index.bootstrap({
       artifacts: [],
@@ -1056,7 +1056,7 @@ describe("Node scaffold private staged materializer V2", () => {
         typescriptCompilerConfig: handles.get("typescript_compiler_config")!,
       }));
     }
-    const fixtureRoot = await mkdtemp(path.join(sandbox, "host-"));
+    const fixtureRoot = await createPrivateOutputParent(path.join(sandbox, "host-"));
     hostFixture = await makeHostFixture(fixtureRoot);
     for (const profileId of [CLI_PROFILE, API_PROFILE]) {
       hosts.set(profileId, await createHostNodeToolchainAuthorityV2ForTest({
@@ -1119,7 +1119,7 @@ describe("Node scaffold private staged materializer V2", () => {
   });
 
   async function privateParent(label: string): Promise<string> {
-    const root = await mkdtemp(path.join(sandbox, `${label}-`));
+    const root = await createPrivateOutputParent(path.join(sandbox, `${label}-`));
     await chmod(root, 0o700);
     return realpath(root);
   }

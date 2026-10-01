@@ -1,3 +1,4 @@
+import { createPrivateOutputParent } from "../../scripts/__tests__/fixtures/private-output-parent.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -8,7 +9,6 @@ import {
   closeSync,
   constants as fsConstants,
   mkdirSync,
-  mkdtempSync,
   openSync,
   readdirSync,
   rmSync,
@@ -148,7 +148,7 @@ function createSemanticallyMismatchedRelease(
 }
 
 function createStoreFixture(): StoreFixtureV3 {
-  const root = mkdtempSync(
+  const root = createPrivateOutputParent(
     path.join(os.tmpdir(), "setfarm-global-content-store-census-v3-"),
   );
   chmodSync(root, 0o700);

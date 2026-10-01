@@ -1,6 +1,7 @@
+import { createPrivateOutputParent } from "../../scripts/__tests__/fixtures/private-output-parent.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -3482,7 +3483,7 @@ describe("platform release bootstrap registry activation v2", () => {
     "runs the activated core path under actual Darwin shared then package fixture leases",
     { skip: process.platform !== "darwin" },
     async () => {
-      const root = await mkdtemp(
+      const root = await createPrivateOutputParent(
         path.join(tmpdir(), "setfarm-activation-core-darwin-lock-v2-"),
       );
       const lockBytes = {
@@ -3632,7 +3633,7 @@ describe("platform release bootstrap registry activation v2", () => {
     "drives the full activation transition through fresh reducer-ordered Darwin lock fixtures",
     { skip: process.platform !== "darwin" },
     async () => {
-      const root = await mkdtemp(
+      const root = await createPrivateOutputParent(
         path.join(tmpdir(), "setfarm-activation-transition-darwin-lock-v2-"),
       );
       const lockBytes = {

@@ -1,3 +1,4 @@
+import { createPrivateOutputParent } from "../../scripts/__tests__/fixtures/private-output-parent.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, renameSync } from "node:fs";
@@ -8,7 +9,6 @@ import {
   link,
   lstat,
   mkdir,
-  mkdtemp,
   readFile,
   realpath,
   rename,
@@ -74,7 +74,7 @@ function sha256(value: string | Buffer): string {
 }
 
 async function makeFixture(): Promise<Fixture> {
-  const root = await mkdtemp(path.join(tmpdir(), "setfarm-host-node-v2-"));
+  const root = await createPrivateOutputParent(path.join(tmpdir(), "setfarm-host-node-v2-"));
   roots.push(root);
   const node = path.join(root, "bin", "node");
   const npmRoot = path.join(root, "lib", "node_modules", "npm");
@@ -170,7 +170,7 @@ async function authority(
 async function makeCandidateProductionInstallFixture():
 Promise<CandidateProductionInstallFixture> {
   const privateRoot = await realpath(
-    await mkdtemp(path.join(tmpdir(), "setfarm-runtime-env-v2-")),
+    await createPrivateOutputParent(path.join(tmpdir(), "setfarm-runtime-env-v2-")),
   );
   roots.push(privateRoot);
   for (const name of ["cache", "config-probe", "home", "tmp"]) {
@@ -182,7 +182,7 @@ Promise<CandidateProductionInstallFixture> {
   await chmod(privateRoot, 0o700);
 
   const attemptRoot = await realpath(
-    await mkdtemp(path.join(tmpdir(), "setfarm-runtime-attempt-v2-")),
+    await createPrivateOutputParent(path.join(tmpdir(), "setfarm-runtime-attempt-v2-")),
   );
   roots.push(attemptRoot);
   const candidateBundleRoot = path.join(attemptRoot, "candidate-bundle");
@@ -429,7 +429,7 @@ describe("HostNodeToolchainAuthorityV2", () => {
 
   it("rejects a transient same-byte physical substitute restored before the final V2 fence", async () => {
     const fixture = await makeFixture();
-    const swapRoot = await mkdtemp(path.join(tmpdir(), "setfarm-host-node-v3-aba-"));
+    const swapRoot = await createPrivateOutputParent(path.join(tmpdir(), "setfarm-host-node-v3-aba-"));
     roots.push(swapRoot);
     const displaced = path.join(swapRoot, "node.original");
     const substitute = path.join(swapRoot, "node.substitute");

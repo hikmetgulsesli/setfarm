@@ -1,3 +1,4 @@
+import { createPrivateOutputParent } from "../../scripts/__tests__/fixtures/private-output-parent.mjs";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import {
@@ -5,7 +6,6 @@ import {
   link,
   lstat,
   mkdir,
-  mkdtemp,
   realpath,
   rename,
   rm,
@@ -74,7 +74,7 @@ function exited(stdout: string, stderr = ""): HostNodeToolchainProbeResultV2 {
 }
 
 async function makeFixture(): Promise<Fixture> {
-  const root = await mkdtemp(path.join(tmpdir(), "setfarm-f3-host-"));
+  const root = await createPrivateOutputParent(path.join(tmpdir(), "setfarm-f3-host-"));
   cleanupRoots.push(root);
   const node = path.join(root, "bin", "node");
   const npmRoot = path.join(root, "lib", "node_modules", "npm");
@@ -184,7 +184,7 @@ async function makeAuthority(input: Readonly<{
 }
 
 async function makeScratchParent(): Promise<string> {
-  const logical = await mkdtemp(path.join(tmpdir(), "setfarm-f3-parent-"));
+  const logical = await createPrivateOutputParent(path.join(tmpdir(), "setfarm-f3-parent-"));
   cleanupRoots.push(logical);
   await chmod(logical, 0o700);
   return realpath(logical);

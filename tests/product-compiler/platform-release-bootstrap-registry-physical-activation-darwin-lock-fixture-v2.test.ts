@@ -1,5 +1,6 @@
+import { createPrivateOutputParent } from "../../scripts/__tests__/fixtures/private-output-parent.mjs";
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -53,7 +54,7 @@ async function makeLockBoundaryV2(): Promise<Readonly<{
   root: string;
   input: PlatformReleaseBootstrapRegistryDarwinLockFixtureInputV2["locks"];
 }>> {
-  const root = await mkdtemp(
+  const root = await createPrivateOutputParent(
     path.join(tmpdir(), "setfarm-darwin-dual-lock-fixture-v2-"),
   );
   await chmod(root, 0o700);
@@ -211,7 +212,7 @@ describe(
           { code: "DARWIN_LOCK_FIXTURE_INPUT_INVALID" },
         );
 
-        const splitRoot = await mkdtemp(
+        const splitRoot = await createPrivateOutputParent(
           path.join(tmpdir(), "setfarm-darwin-split-lock-fixture-v2-"),
         );
         try {
