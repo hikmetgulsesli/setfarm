@@ -4,7 +4,6 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -15,6 +14,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createNodeCandidateRuntimeAttemptRootInternalV2 } from "../../src/product-compiler/node-candidate-runtime-attempt-root-ownership-v2.js";
 import { describe, it } from "node:test";
 
 import {
@@ -95,7 +95,18 @@ function chmodTreeWritable(root: string): void {
   }
 }
 
+const freshStagePins = new Map<string, Readonly<{ device: bigint; inode: bigint }>>();
 function cleanupStage(root: string): void {
+  const pin = freshStagePins.get(root);
+  if (!pin) return;
+  try {
+    const current = lstatSync(root, { bigint: true });
+    if (current.dev !== pin.device || current.ino !== pin.inode
+      || !current.isDirectory() || current.isSymbolicLink()
+      || current.uid !== BigInt(process.getuid!()) || current.gid !== BigInt(process.getgid!())
+      || realpathSync(root) !== root) return;
+  } catch { return; }
+  freshStagePins.delete(root);
   chmodTreeWritable(root);
   rmSync(root, { recursive: true, force: true });
 }
@@ -138,10 +149,11 @@ function createStage(): Readonly<{
     typeof bindPlatformReleaseCandidateEnvelopeFixtureToStageV2
   >["buildAttestation"];
 }> {
-  const created = mkdtempSync(
+  const created = createNodeCandidateRuntimeAttemptRootInternalV2(
     path.join(os.tmpdir(), "setfarm-release-terminal-v2-"),
   );
-  const root = realpathSync(created);
+  const root = created.absolutePath;
+  freshStagePins.set(root, created);
   const raw = createPlatformReleaseManifestFixtureV2();
   try {
     mkdirSync(path.join(root, "payload", "dist"), {

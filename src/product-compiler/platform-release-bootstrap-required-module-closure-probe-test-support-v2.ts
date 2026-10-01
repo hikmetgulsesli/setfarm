@@ -7,7 +7,6 @@ import {
   fstatSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   openSync,
   opendirSync,
   readSync,
@@ -18,6 +17,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createNodeCandidateRuntimeAttemptRootInternalV2 } from "./node-candidate-runtime-attempt-root-ownership-v2.js";
 import { isProxy } from "node:util/types";
 
 import {
@@ -475,19 +475,28 @@ function directoryPathsV2(
   return [...directories].sort();
 }
 
-function exactPrivateRootV2(): Readonly<{ alias: string; root: string }> {
-  const alias = mkdtempSync(path.join(os.tmpdir(), ROOT_PREFIX_V2));
-  const root = realpathSync(alias);
-  chmodSync(root, 0o700);
-  const stat = lstatSync(root, { bigint: true }) as BigIntStatV2;
-  const ownerMatches =
-    (typeof process.getuid !== "function" || Number(stat.uid) === process.getuid())
-    && (typeof process.getgid !== "function" || Number(stat.gid) === process.getgid());
-  if (stat.isSymbolicLink() || !stat.isDirectory() || modeTextV2(stat) !== "0700" || !ownerMatches) {
-    rmSync(alias, { recursive: true, force: true });
-    return failV2("REQUIRED_MODULE_CLOSURE_PROBE_FIXTURE_BUILD_FAILED", "Fixture root is not private and process-owned");
+function exactPrivateRootV2(): Readonly<{ alias: string; root: string; device: bigint; inode: bigint }> {
+  let fresh: ReturnType<typeof createNodeCandidateRuntimeAttemptRootInternalV2>;
+  try {
+    fresh = createNodeCandidateRuntimeAttemptRootInternalV2(path.join(os.tmpdir(), ROOT_PREFIX_V2));
+  } catch (error) {
+    return failV2("REQUIRED_MODULE_CLOSURE_PROBE_FIXTURE_BUILD_FAILED", "Could not prepare the original private fresh root", error);
   }
-  return Object.freeze({ alias, root });
+  try {
+    const alias = fresh.absolutePath;
+    const root = realpathSync(alias);
+    const stat = lstatSync(root, { bigint: true }) as BigIntStatV2;
+    const ownerMatches =
+      (typeof process.getuid !== "function" || Number(stat.uid) === process.getuid())
+      && (typeof process.getgid !== "function" || Number(stat.gid) === process.getgid());
+    if (stat.dev !== fresh.device || stat.ino !== fresh.inode
+      || stat.isSymbolicLink() || !stat.isDirectory() || modeTextV2(stat) !== "0700" || !ownerMatches) {
+      return failV2("REQUIRED_MODULE_CLOSURE_PROBE_FIXTURE_BUILD_FAILED", "Fixture root is not private and process-owned");
+    }
+    return Object.freeze({ alias, root, device: fresh.device, inode: fresh.inode });
+  } catch (error) {
+    return failV2("REQUIRED_MODULE_CLOSURE_PROBE_FIXTURE_BUILD_FAILED", "Original private root could not be captured", error);
+  }
 }
 
 function generatedModuleBytesV2(definition: PlatformReleaseRequiredModuleDefinitionV2): Buffer {
@@ -1076,12 +1085,12 @@ function authenticFixtureStateV2(
 function removePrivateFixtureRootIfAuthenticV2(
   alias: string,
   root: string,
-  expectedIdentity?: Readonly<{ device: string; inode: string }>,
+  expectedIdentity: Readonly<{ device: string; inode: string }>,
 ): boolean {
   try {
     const aliasStat = lstatSync(alias, { bigint: true }) as BigIntStatV2;
     const rootStat = lstatSync(root, { bigint: true }) as BigIntStatV2;
-    if (aliasStat.isSymbolicLink() || rootStat.isSymbolicLink() || !rootStat.isDirectory() || realpathSync(alias) !== root || modeTextV2(rootStat) !== "0700" || (expectedIdentity !== undefined && !sameIdentityV2(statIdentityV2(rootStat), expectedIdentity))) return false;
+    if (aliasStat.isSymbolicLink() || rootStat.isSymbolicLink() || !rootStat.isDirectory() || realpathSync(alias) !== root || modeTextV2(rootStat) !== "0700" || !sameIdentityV2(statIdentityV2(rootStat), expectedIdentity)) return false;
     rmSync(alias, { recursive: true, force: true });
     return true;
   } catch {
@@ -1130,6 +1139,9 @@ export function buildPlatformReleaseBootstrapRequiredModuleClosureProbeFixtureFo
       return modulePath;
     })) as [string[], string[]];
     const root = lstatSync(privateRoot.root, { bigint: true }) as BigIntStatV2;
+    if (root.dev !== privateRoot.device || root.ino !== privateRoot.inode) {
+      return failV2("REQUIRED_MODULE_CLOSURE_PROBE_FIXTURE_BUILD_FAILED", "Original fixture root changed before state capture");
+    }
     const ownerUid = Number(root.uid);
     const ownerGid = Number(root.gid);
     const directoryIdentities = modulePaths.map((paths, occurrenceIndex) =>
@@ -1162,7 +1174,9 @@ export function buildPlatformReleaseBootstrapRequiredModuleClosureProbeFixtureFo
     fixtureStatesV2.set(fixture, state);
     return fixture;
   } catch (error) {
-    removePrivateFixtureRootIfAuthenticV2(privateRoot.alias, privateRoot.root);
+    removePrivateFixtureRootIfAuthenticV2(privateRoot.alias, privateRoot.root, {
+      device: String(privateRoot.device), inode: String(privateRoot.inode),
+    });
     return failV2("REQUIRED_MODULE_CLOSURE_PROBE_FIXTURE_BUILD_FAILED", "Could not build private full module closure fixture", error);
   }
 }

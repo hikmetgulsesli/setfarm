@@ -6,7 +6,6 @@ import {
   constants as fsConstants,
   fstatSync,
   lstatSync,
-  mkdtempSync,
   openSync,
   readdirSync,
   realpathSync,
@@ -17,6 +16,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createNodeCandidateRuntimeAttemptRootInternalV2 } from "./node-candidate-runtime-attempt-root-ownership-v2.js";
 import { isProxy } from "node:util/types";
 
 import {
@@ -1041,12 +1041,21 @@ PlatformReleaseBootstrapInstalledMetadataOperationFixtureV2 {
       "Installed metadata operation fixture requires Darwin",
     );
   }
-  const alias = mkdtempSync(path.join(os.tmpdir(), ROOT_PREFIX_V2));
+  let fresh: ReturnType<typeof createNodeCandidateRuntimeAttemptRootInternalV2>;
+  try {
+    fresh = createNodeCandidateRuntimeAttemptRootInternalV2(path.join(os.tmpdir(), ROOT_PREFIX_V2));
+  } catch (error) {
+    return failV2("INSTALLED_METADATA_OPERATION_FIXTURE_BUILD_FAILED", "Could not prepare the original private fresh target", error);
+  }
+  const alias = fresh.absolutePath;
   let fixture:
     PlatformReleaseBootstrapInstalledMetadataOperationFixtureV2;
   try {
     const targetRoot = realpathSync(alias);
-    chmodSync(targetRoot, 0o700);
+    const initial = lstatSync(targetRoot, { bigint: true });
+    if (initial.dev !== fresh.device || initial.ino !== fresh.inode) {
+      return failV2("INSTALLED_METADATA_OPERATION_FIXTURE_BUILD_FAILED", "Original metadata target changed before child creation");
+    }
     const entryPath = path.join(targetRoot, ENTRY_BASENAME_V2);
     writeFileSync(entryPath, ENTRY_BYTES_V2, { mode: 0o444 });
     chmodSync(entryPath, 0o444);
@@ -1060,7 +1069,8 @@ PlatformReleaseBootstrapInstalledMetadataOperationFixtureV2 {
       && (typeof process.getgid !== "function"
         || Number(target.gid) === process.getgid());
     if (
-      target.isSymbolicLink()
+      target.dev !== fresh.device || target.ino !== fresh.inode
+      || target.isSymbolicLink()
       || !target.isDirectory()
       || modeTextV2(target) !== "0700"
       || !ownerMatches
@@ -1091,7 +1101,11 @@ PlatformReleaseBootstrapInstalledMetadataOperationFixtureV2 {
     fixtureStatesV2.set(fixture, state);
     return fixture;
   } catch (error) {
-    rmSync(alias, { recursive: true, force: true });
+    try { removePrivateMetadataRootIfAuthenticV2(alias, fresh); }
+    catch (cleanup) {
+      return failV2("INSTALLED_METADATA_OPERATION_FIXTURE_BUILD_FAILED", "Fixture construction and authenticated cleanup failed",
+        new AggregateError([error, cleanup], "Primary fixture failure followed by cleanup failure", { cause: error }));
+    }
     if (
       error
         instanceof PlatformReleaseBootstrapInstalledMetadataOperationErrorV2
@@ -1110,8 +1124,25 @@ export function disposePlatformReleaseBootstrapInstalledMetadataOperationFixture
   fixture: PlatformReleaseBootstrapInstalledMetadataOperationFixtureV2,
 ): void {
   const state = authenticStateWithoutLayoutV2(fixture);
+  removePrivateMetadataRootIfAuthenticV2(state.alias, {
+    device: BigInt(state.targetStableIdentity.device), inode: BigInt(state.targetStableIdentity.inode),
+  });
   fixtureStatesV2.delete(fixture);
-  rmSync(state.alias, { recursive: true, force: true });
+}
+
+function removePrivateMetadataRootIfAuthenticV2(
+  root: string,
+  pin: Readonly<{ device: bigint; inode: bigint }>,
+): void {
+  try {
+    const stat = lstatSync(root, { bigint: true });
+    if (!stat.isDirectory() || stat.isSymbolicLink()
+      || stat.dev !== pin.device || stat.ino !== pin.inode
+      || stat.uid !== BigInt(process.getuid!()) || stat.gid !== BigInt(process.getgid!())
+      || (stat.mode & 0o7777n) !== 0o700n || realpathSync(root) !== root) return;
+  } catch { return; }
+  // Snapshot-checked existing fixture cleanup, not atomic conditional unlink.
+  rmSync(root, { recursive: true, force: true });
 }
 
 export function mutatePlatformReleaseBootstrapInstalledMetadataOperationFixtureForTestV2(

@@ -20,6 +20,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createNodeCandidateRuntimeAttemptRootInternalV2 } from "../../src/product-compiler/node-candidate-runtime-attempt-root-ownership-v2.js";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, it } from "node:test";
 
@@ -193,6 +194,12 @@ const GIT = "/usr/bin/git";
 const REQUIRED_MODULE_BUILD_FIXTURE_V2 =
   ".setfarm-required-modules-fixture-v2.json";
 const roots: string[] = [];
+const freshPins = new Map<string, Readonly<{ device: bigint; inode: bigint }>>();
+function privateRootForTest(prefix: string): string {
+  const fresh = createNodeCandidateRuntimeAttemptRootInternalV2(prefix);
+  freshPins.set(fresh.absolutePath, fresh);
+  return fresh.absolutePath;
+}
 
 type InstallModeV2 =
   | "valid"
@@ -422,10 +429,10 @@ function sourceArtifactsWithProductionV2(
 function createRepositoryFixtureV2(
   artifacts = sourceArtifactsV2(),
 ): RepositoryFixtureV2 {
-  const root = realpathSync(mkdtempSync(path.join(
+  const root = privateRootForTest(path.join(
     tmpdir(),
     "setfarm-platform-build-toolchain-source-v2-",
-  )));
+  ));
   roots.push(root);
   const origin = path.join(root, "origin.git");
   const repository = path.join(root, "repository");
@@ -595,10 +602,10 @@ function createHostFixtureV2(
     operationalNetworkSandboxWrapper?: boolean;
   }> = {},
 ): HostFixtureV2 {
-  const root = realpathSync(mkdtempSync(path.join(
+  const root = privateRootForTest(path.join(
     tmpdir(),
     "setfarm-platform-build-toolchain-host-v2-",
-  )));
+  ));
   roots.push(root);
   const composition =
     materializePlatformReleaseHostCompositionFixtureV2(
@@ -1210,12 +1217,10 @@ function packageNameFromCurrentLockPathV2(
 }
 
 function createCurrentProductionProjectV2() {
-  const parent = realpathSync(
-    mkdtempSync(path.join(
+  const parent = privateRootForTest(path.join(
       tmpdir(),
       "setfarm-current-production-lock-v2-",
-    )),
-  );
+  ));
   roots.push(parent);
   chmodSync(parent, 0o700);
   const projectRoot = path.join(parent, "project");
@@ -1425,6 +1430,17 @@ function createCurrentProductionProjectV2() {
 
 afterEach(() => {
   for (const root of roots.splice(0)) {
+    const pin = freshPins.get(root);
+    if (pin) {
+      try {
+        const current = lstatSync(root, { bigint: true });
+        if (current.dev !== pin.device || current.ino !== pin.inode
+          || !current.isDirectory() || current.isSymbolicLink()
+          || current.uid !== BigInt(process.getuid!()) || current.gid !== BigInt(process.getgid!())
+          || (current.mode & 0o7777n) !== 0o700n || realpathSync(root) !== root) continue;
+      } catch { continue; }
+      freshPins.delete(root);
+    }
     makeWritable(root);
     rmSync(root, { recursive: true, force: true });
   }

@@ -1,14 +1,12 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  chmodSync,
   closeSync,
   constants,
   existsSync,
   fstatSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   openSync,
   readFileSync,
   readSync,
@@ -22,6 +20,7 @@ import {
 } from "node:fs";
 import { release as osRelease } from "node:os";
 import path from "node:path";
+import { createNodeCandidateRuntimeAttemptRootInternalV2 } from "./node-candidate-runtime-attempt-root-ownership-v2.js";
 import { isProxy } from "node:util/types";
 
 import { hashCanonicalJson } from "./canonical-json.js";
@@ -1718,14 +1717,20 @@ async function probeToolchain(input: Readonly<{
   host: HostIdentityV2;
   probeAdapter: HostNodeToolchainProbeAdapterV2;
 }>): Promise<NodeProbeIdentityV2> {
-  const probeRoot = mkdtempSync("/private/tmp/setfarm-host-node-probe-v2-");
+  let fresh: ReturnType<typeof createNodeCandidateRuntimeAttemptRootInternalV2>;
+  try {
+    fresh = createNodeCandidateRuntimeAttemptRootInternalV2("/private/tmp/setfarm-host-node-probe-v2-");
+  } catch (error) {
+    return fail("HOST_NODE_TOOLCHAIN_V2_PROBE_CLEANUP_FAILED", "Host Node probe fresh root preparation failed", error);
+  }
+  const probeRoot = fresh.absolutePath;
   let probeRootIdentity: Readonly<{ device: number; inode: number }> | undefined;
   try {
     try {
-      chmodSync(probeRoot, 0o700);
       const exactRoot = lstatSync(probeRoot, { bigint: true });
       if (
-        exactRoot.isSymbolicLink()
+        exactRoot.dev !== fresh.device || exactRoot.ino !== fresh.inode
+        || exactRoot.isSymbolicLink()
         || !exactRoot.isDirectory()
         || (exactRoot.mode & 0o7777n) !== 0o700n
       ) {

@@ -7,7 +7,6 @@ import {
   fstatSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   openSync,
   opendirSync,
   readSync,
@@ -18,6 +17,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createNodeCandidateRuntimeAttemptRootInternalV2 } from "./node-candidate-runtime-attempt-root-ownership-v2.js";
 import { isProxy } from "node:util/types";
 
 import {
@@ -473,27 +473,55 @@ function captureDirectoryV2(
   }
 }
 
-function exactPrivateRootV2(): Readonly<{ alias: string; root: string }> {
-  const alias = mkdtempSync(path.join(os.tmpdir(), ROOT_PREFIX_V2));
-  const root = realpathSync(alias);
-  chmodSync(root, 0o700);
-  const stat = lstatSync(root, { bigint: true }) as BigIntStatV2;
-  const ownerMatches =
-    (typeof process.getuid !== "function" || Number(stat.uid) === process.getuid())
-    && (typeof process.getgid !== "function" || Number(stat.gid) === process.getgid());
-  if (
-    stat.isSymbolicLink()
-    || !stat.isDirectory()
-    || modeTextV2(stat) !== "0700"
-    || !ownerMatches
-  ) {
-    rmSync(alias, { recursive: true, force: true });
-    return failV2(
-      "MODULE_EXPORT_PROBE_FIXTURE_BUILD_FAILED",
-      "Module export probe root must be one private process-owned directory",
-    );
+function removePrivateFixtureRootIfAuthenticV2(root: Readonly<{
+  alias: string; root: string; device: bigint; inode: bigint;
+}>): void {
+  try {
+    const current = lstatSync(root.root, { bigint: true });
+    if (!current.isDirectory() || current.isSymbolicLink()
+      || current.dev !== root.device || current.ino !== root.inode
+      || current.uid !== BigInt(process.getuid!()) || current.gid !== BigInt(process.getgid!())
+      || (current.mode & 0o7777n) !== 0o700n
+      || realpathSync(root.alias) !== root.root || realpathSync(root.root) !== root.root) return;
+  } catch {
+    // An uncertain path is retained; cleanup never adopts a replacement.
+    return;
   }
-  return Object.freeze({ alias, root });
+  // Snapshot-checked existing fixture cleanup, not atomic conditional unlink.
+  // A failed authenticated removal is observable, not silently swallowed.
+  rmSync(root.alias, { recursive: true, force: true });
+}
+
+function exactPrivateRootV2(): Readonly<{ alias: string; root: string; device: bigint; inode: bigint }> {
+  let fresh: ReturnType<typeof createNodeCandidateRuntimeAttemptRootInternalV2>;
+  try {
+    fresh = createNodeCandidateRuntimeAttemptRootInternalV2(path.join(os.tmpdir(), ROOT_PREFIX_V2));
+  } catch (error) {
+    return failV2("MODULE_EXPORT_PROBE_FIXTURE_BUILD_FAILED", "Could not prepare the original private fresh root", error);
+  }
+  try {
+    const alias = fresh.absolutePath;
+    const root = realpathSync(alias);
+    const stat = lstatSync(root, { bigint: true }) as BigIntStatV2;
+    const ownerMatches =
+      (typeof process.getuid !== "function" || Number(stat.uid) === process.getuid())
+      && (typeof process.getgid !== "function" || Number(stat.gid) === process.getgid());
+    if (
+      stat.dev !== fresh.device || stat.ino !== fresh.inode
+      || stat.isSymbolicLink()
+      || !stat.isDirectory()
+      || modeTextV2(stat) !== "0700"
+      || !ownerMatches
+    ) {
+      return failV2(
+        "MODULE_EXPORT_PROBE_FIXTURE_BUILD_FAILED",
+        "Module export probe root must be one private process-owned directory",
+      );
+    }
+    return Object.freeze({ alias, root, device: fresh.device, inode: fresh.inode });
+  } catch (error) {
+    return failV2("MODULE_EXPORT_PROBE_FIXTURE_BUILD_FAILED", "Original private root could not be captured", error);
+  }
 }
 
 function captureModuleV2(
@@ -1172,6 +1200,9 @@ export function buildPlatformReleaseBootstrapModuleExportProbeFixtureForTestV2()
       return modulePath;
     }) as [string, string];
     const root = lstatSync(privateRoot.root, { bigint: true }) as BigIntStatV2;
+    if (root.dev !== privateRoot.device || root.ino !== privateRoot.inode) {
+      return failV2("MODULE_EXPORT_PROBE_FIXTURE_BUILD_FAILED", "Original fixture root changed before state capture");
+    }
     const directories = modulePaths.map(
       (modulePath) => lstatSync(path.dirname(modulePath), { bigint: true }) as BigIntStatV2,
     ) as [BigIntStatV2, BigIntStatV2];
@@ -1211,14 +1242,18 @@ export function buildPlatformReleaseBootstrapModuleExportProbeFixtureForTestV2()
     let fixture: PlatformReleaseBootstrapModuleExportProbeFixtureV2;
     fixture = Object.freeze({
       dispose(): void {
+        removePrivateFixtureRootIfAuthenticV2(privateRoot);
         fixtureStatesV2.delete(fixture);
-        rmSync(privateRoot.alias, { recursive: true, force: true });
       },
     });
     fixtureStatesV2.set(fixture, state);
     return fixture;
   } catch (error) {
-    rmSync(privateRoot.alias, { recursive: true, force: true });
+    try { removePrivateFixtureRootIfAuthenticV2(privateRoot); }
+    catch (cleanup) {
+      return failV2("MODULE_EXPORT_PROBE_FIXTURE_BUILD_FAILED", "Fixture construction and authenticated cleanup failed",
+        new AggregateError([error, cleanup], "Primary fixture failure followed by cleanup failure", { cause: error }));
+    }
     return failV2(
       "MODULE_EXPORT_PROBE_FIXTURE_BUILD_FAILED",
       "Could not create the private module export fixture",

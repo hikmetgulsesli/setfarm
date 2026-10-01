@@ -6,7 +6,6 @@ import {
   constants,
   linkSync,
   lstatSync,
-  mkdtempSync,
   openSync,
   readFileSync,
   realpathSync,
@@ -16,6 +15,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createNodeCandidateRuntimeAttemptRootInternalV2 } from "../../src/product-compiler/node-candidate-runtime-attempt-root-ownership-v2.js";
 import { after, before, describe, it } from "node:test";
 
 import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
@@ -69,6 +69,7 @@ type TimingReceiptV2 = Readonly<{
 
 let buildRootAlias = "";
 let buildRoot = "";
+let buildRootPin: Readonly<{ device: bigint; inode: bigint }> | undefined;
 let fixtureBinary = "";
 
 function exactScopeBytes(character: string): Buffer {
@@ -92,11 +93,11 @@ function privateParent(): Readonly<{
   stage: string;
   target: string;
 }> {
-  const alias = mkdtempSync(
+  const fresh = createNodeCandidateRuntimeAttemptRootInternalV2(
     path.join(os.tmpdir(), "setfarm-darwin-native-scope-v2-"),
   );
-  const parent = realpathSync(alias);
-  chmodSync(parent, 0o700);
+  const alias = fresh.absolutePath;
+  const parent = fresh.absolutePath;
   return Object.freeze({
     alias,
     parent,
@@ -250,11 +251,12 @@ function assertMissing(target: string): void {
 
 before(() => {
   if (process.platform !== "darwin") return;
-  buildRootAlias = mkdtempSync(
+  const fresh = createNodeCandidateRuntimeAttemptRootInternalV2(
     path.join(os.tmpdir(), "setfarm-darwin-native-scope-build-v2-"),
   );
-  buildRoot = realpathSync(buildRootAlias);
-  chmodSync(buildRoot, 0o700);
+  buildRootAlias = fresh.absolutePath;
+  buildRoot = fresh.absolutePath;
+  buildRootPin = fresh;
   fixtureBinary = path.join(buildRoot, "fixture");
   const built = spawnSync(
     process.execPath,
@@ -281,7 +283,12 @@ before(() => {
 });
 
 after(() => {
-  if (buildRootAlias !== "") {
+  if (buildRootAlias !== "" && buildRootPin) {
+    const current = lstatSync(buildRootAlias, { bigint: true });
+    if (current.dev !== buildRootPin.device || current.ino !== buildRootPin.inode
+      || !current.isDirectory() || current.isSymbolicLink()
+      || current.uid !== BigInt(process.getuid!()) || current.gid !== BigInt(process.getgid!())
+      || (current.mode & 0o7777n) !== 0o700n || realpathSync(buildRootAlias) !== buildRootAlias) return;
     rmSync(buildRootAlias, { recursive: true, force: true });
   }
 });

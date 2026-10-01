@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import {
   chmod,
   mkdir,
-  mkdtemp,
+  lstat,
   readFile,
   readdir,
   realpath,
@@ -13,6 +13,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createNodeCandidateRuntimeAttemptRootInternalV2 } from "../../src/product-compiler/node-candidate-runtime-attempt-root-ownership-v2.js";
 import { afterEach, describe, it } from "node:test";
 
 import {
@@ -85,6 +86,12 @@ type FixtureV2 = Readonly<{
 }>;
 
 const cleanupRoots: string[] = [];
+const freshPins = new Map<string, Readonly<{ device: bigint; inode: bigint }>>();
+function privateRootForTest(prefix: string): string {
+  const fresh = createNodeCandidateRuntimeAttemptRootInternalV2(prefix);
+  freshPins.set(fresh.absolutePath, fresh);
+  return fresh.absolutePath;
+}
 const BUILD_SOURCE_SHA_V2 = "a".repeat(40);
 const BUILD_SOURCE_EPOCH_V2 = "1700000000";
 const BUILD_TOOLCHAIN_HASH_V2 = "b".repeat(64);
@@ -143,11 +150,7 @@ function hasWrappedBuildCauseV2(
 }
 
 async function makeFixtureV2(): Promise<FixtureV2> {
-  const root = await realpath(
-    await mkdtemp(
-      path.join(tmpdir(), "setfarm-platform-host-v2-"),
-    ),
-  );
+  const root = privateRootForTest(path.join(tmpdir(), "setfarm-platform-host-v2-"));
   cleanupRoots.push(root);
   const composition =
     materializePlatformReleaseHostCompositionFixtureV2();
@@ -292,11 +295,7 @@ async function hostAuthorityV2(
 }
 
 async function makeInstallScopeV2() {
-  const environmentRoot = await realpath(
-    await mkdtemp(
-      path.join(tmpdir(), "setfarm-platform-env-v2-"),
-    ),
-  );
+  const environmentRoot = privateRootForTest(path.join(tmpdir(), "setfarm-platform-env-v2-"));
   cleanupRoots.push(environmentRoot);
   for (const name of ["cache", "config-probe", "home", "tmp"]) {
     await mkdir(path.join(environmentRoot, name), {
@@ -315,11 +314,7 @@ async function makeInstallScopeV2() {
   );
   await chmod(environmentRoot, 0o700);
 
-  const installRoot = await realpath(
-    await mkdtemp(
-      path.join(tmpdir(), "setfarm-platform-install-v2-"),
-    ),
-  );
+  const installRoot = privateRootForTest(path.join(tmpdir(), "setfarm-platform-install-v2-"));
   cleanupRoots.push(installRoot);
   const projectRoot = path.join(installRoot, "project");
   await mkdir(
@@ -368,11 +363,7 @@ async function makeInstallScopeV2() {
 }
 
 async function makeBuildScopeV2() {
-  const contextRoot = await realpath(
-    await mkdtemp(
-      path.join(tmpdir(), "setfarm-platform-build-context-v2-"),
-    ),
-  );
+  const contextRoot = privateRootForTest(path.join(tmpdir(), "setfarm-platform-build-context-v2-"));
   cleanupRoots.push(contextRoot);
   const sourceRoot = path.join(contextRoot, "source");
   const buildToolchainRoot =
@@ -410,11 +401,7 @@ async function makeBuildScopeV2() {
     chmod(contextRoot, 0o700),
   ]);
 
-  const outputParent = await realpath(
-    await mkdtemp(
-      path.join(tmpdir(), "setfarm-platform-build-output-v2-"),
-    ),
-  );
+  const outputParent = privateRootForTest(path.join(tmpdir(), "setfarm-platform-build-output-v2-"));
   cleanupRoots.push(outputParent);
   const outputRoot = path.join(outputParent, "output");
   await mkdir(outputRoot, { mode: 0o700 });
@@ -450,6 +437,15 @@ async function makeTreeWritableV2(root: string): Promise<void> {
 
 afterEach(async () => {
   await Promise.all(cleanupRoots.splice(0).map(async (root) => {
+    const pin = freshPins.get(root);
+    if (pin) {
+      const current = await lstat(root, { bigint: true }).catch(() => undefined);
+      if (!current || current.dev !== pin.device || current.ino !== pin.inode
+        || !current.isDirectory() || current.isSymbolicLink()
+        || current.uid !== BigInt(process.getuid!()) || current.gid !== BigInt(process.getgid!())
+        || (current.mode & 0o7777n) !== 0o700n || await realpath(root) !== root) return;
+      freshPins.delete(root);
+    }
     await makeTreeWritableV2(root);
     await rm(root, { recursive: true, force: true });
   }));

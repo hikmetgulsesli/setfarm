@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createNodeCandidateRuntimeAttemptRootInternalV2 } from "./node-candidate-runtime-attempt-root-ownership-v2.js";
 import { isProxy } from "node:util/types";
 
 import {
@@ -533,25 +534,53 @@ export function capturePlatformReleaseBootstrapDarwinSuspendedExecExecutableForT
   }
 }
 
-function exactPrivateRootV2(): Readonly<{ alias: string; root: string }> {
-  const alias = mkdtempSync(path.join(os.tmpdir(), BUILD_ROOT_PREFIX_V2));
-  const root = realpathSync(alias);
-  chmodSync(root, 0o700);
-  const stat = lstatSync(root);
-  if (
-    stat.isSymbolicLink()
-    || !stat.isDirectory()
-    || realpathSync(root) !== root
-    || (stat.mode & 0o7777) !== 0o700
-    || (typeof process.getuid === "function" && stat.uid !== process.getuid())
-    || (typeof process.getgid === "function" && stat.gid !== process.getgid())
-  ) {
-    return failV2(
-      "DARWIN_SUSPENDED_EXEC_BUILD_FAILED",
-      "Suspended-exec fixture root must be one private process-owned directory",
-    );
+function assertPrivateRootCurrentV2(root: Readonly<{
+  alias: string; root: string; device: bigint; inode: bigint;
+}>): void {
+  let valid = false;
+  try {
+    const current = lstatSync(root.root, { bigint: true });
+    valid = !(!current.isDirectory() || current.isSymbolicLink()
+      || current.dev !== root.device || current.ino !== root.inode
+      || current.uid !== BigInt(process.getuid!()) || current.gid !== BigInt(process.getgid!())
+      || (current.mode & 0o7777n) !== 0o700n
+      || realpathSync(root.alias) !== root.root || realpathSync(root.root) !== root.root);
+  } catch (error) {
+    return failV2("DARWIN_SUSPENDED_EXEC_BUILD_FAILED", "Original private build root could not be rechecked", error);
   }
-  return Object.freeze({ alias, root });
+  if (!valid) return failV2("DARWIN_SUSPENDED_EXEC_BUILD_FAILED", "Original private build root changed at the native builder boundary");
+}
+
+function exactPrivateRootV2(): Readonly<{ alias: string; root: string; device: bigint; inode: bigint }> {
+  let fresh: ReturnType<typeof createNodeCandidateRuntimeAttemptRootInternalV2>;
+  try {
+    fresh = createNodeCandidateRuntimeAttemptRootInternalV2(path.join(os.tmpdir(), BUILD_ROOT_PREFIX_V2));
+  } catch (error) {
+    return failV2("DARWIN_SUSPENDED_EXEC_BUILD_FAILED", "Could not prepare the original private fresh root", error);
+  }
+  try {
+    const alias = fresh.absolutePath;
+    const root = realpathSync(alias);
+    const stat = lstatSync(root);
+    if (
+      !Number.isSafeInteger(stat.dev) || !Number.isSafeInteger(stat.ino)
+      || BigInt(stat.dev) !== fresh.device || BigInt(stat.ino) !== fresh.inode
+      || stat.isSymbolicLink()
+      || !stat.isDirectory()
+      || realpathSync(root) !== root
+      || (stat.mode & 0o7777) !== 0o700
+      || (typeof process.getuid === "function" && stat.uid !== process.getuid())
+      || (typeof process.getgid === "function" && stat.gid !== process.getgid())
+    ) {
+      return failV2(
+        "DARWIN_SUSPENDED_EXEC_BUILD_FAILED",
+        "Suspended-exec fixture root must be one private process-owned directory",
+      );
+    }
+    return Object.freeze({ alias, root, device: fresh.device, inode: fresh.inode });
+  } catch (error) {
+    return failV2("DARWIN_SUSPENDED_EXEC_BUILD_FAILED", "Original private root could not be captured", error);
+  }
 }
 
 function assertBuildReceiptV2(
@@ -1052,6 +1081,7 @@ async function buildPlatformReleaseBootstrapDarwinSuspendedExecFixtureInternalV2
   }
   const root = exactPrivateRootV2();
   observeRoot?.(root);
+  assertPrivateRootCurrentV2(root);
   const controller = path.join(root.root, "suspended-exec-controller-v2");
   let built: ContainedProcessResultV2 | undefined;
   try {
@@ -1076,6 +1106,7 @@ async function buildPlatformReleaseBootstrapDarwinSuspendedExecFixtureInternalV2
         timeoutMilliseconds: BUILD_TIMEOUT_MILLISECONDS_V2,
       },
     );
+    assertPrivateRootCurrentV2(root);
     const buildReceipt = deepFreezePlatformReleaseJsonV2(
       JSON.parse(
         receiptFault === "malformed_receipt_after_success"
