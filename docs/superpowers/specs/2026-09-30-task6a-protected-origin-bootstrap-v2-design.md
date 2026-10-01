@@ -80,6 +80,68 @@ Root-owned protected ACL-free one-link file/ancestry plus retained physical
 identities must join vendor bytes. Static native admission is not loaded-image
 evidence; actual parent-owned child maps are required separately while held.
 
+## Composed system-Perl physical candidate
+
+The retained file, ACL and ancestry fragments alone do not compose a held epoch:
+file rechecks omit the leaf ACL, and caught standalone ACL refusal does not burn
+file validity. Add a private fixed-policy composition as a prerequisite for the
+same protected bootstrap. Main remains unconditional refusal. This ordinary
+read-only slice supplies no staging, native, owner-install or execution authority.
+Select composition rather than relying on callers to remember three fragments
+or implementing all unresolved publisher/native/staging edges at once.
+
+Three zero-argument declarations are admitted:
+task6a_origin_hold_system_perl_physical(),
+task6a_origin_recheck_system_perl_physical() and
+task6a_origin_release_system_perl_physical(). Fix /usr/bin/perl, SHA256
+abda2bfd23a6c9a8e57adf2291f0aea4abd8faf440558ee49fe4ced55e8d9ad0,
+rootwheel0755/nlink1/max1048576 bytes; ancestry exactly /,/usr,/usr/bin.
+Return only scope composed-system-perl-physical-candidate-diagnostic-only,
+productionAuthority:false and descriptive counts. No path/hash/receipt/JSON/
+callback/argv/environment selector can construct, recheck or revive authority.
+
+Private one-use state is new -> starting -> active -> burned/released. Mark
+starting before helper/FD effects. Acquire exclusive ledger ownership only if
+both raw ledgers are initially empty and unburned/unreleased. Prior contamination
+refuses without adopting or closing its descriptors; the original raw owner must
+release them. Once composition owns the ledgers, generic raw captures/close are
+refused before FD effects except its private internal capture/cleanup path.
+Pin exact private record references/counts/paths; every composed validity check
+rejects additions/replacements. Diagnostics never supply these records.
+
+Capture ancestry first, require complete leaf ACL, retain/hash the fixed file,
+then bracket repeated complete leaf ACL with held file and ancestry rechecks.
+Rechecks repeat all components, helper settlement and fixed bootstrap deadline.
+All metadata/ACL observations remain sampled: no directory-content census, ABA
+proof or continuous kernel exclusion. Helper nonzero refusal burns even when
+its definite reap leaves helpers_settled true. Unknown helper lifecycle denies.
+
+Any composition arity/state/ACL/file/ancestry/helper/deadline failure burns the
+same epoch. Partial capture failure burns and attempts owned closure once; a
+caught failure/restored input cannot revive it. Cleanup bypasses validity,
+deadline and helper checks, attempts every privately owned FD despite one
+throwing/failing close, and refuses uncertainty. Seal each actual handle directly
+after successful open, before binmode/fcntl/hash/ACL checks; partial-start handles
+remain owned even before final record pins exist. Cleanup consumes only this
+private handle ledger, never the mutable raw file/directory records. Removing or
+replacing a raw record cannot leak the original or adopt/close a replacement.
+Composed cleanup owns its release transition and per-handle loop; it does not
+delegate to raw close_files (whose released guard would prevent that loop if
+pre-set). Cleanup ownership and attempted state are separate from positive
+validity. Bad-arity/repeated release
+cannot double-close/reopen. Calling release after an already-cleaned failure is
+refusal, not permission to close reused descriptor numbers.
+
+Ordinary tests isolate exact leaf ACL faults with stable lstat/fstat/hash,
+post-capture ancestry drift, prior contamination, generic additions, helper
+failure, partial capture, irreversible restoration and exact close attempts.
+Fault ports that close before injecting uncertainty prove complete attempts and
+sticky denial, not native uncertain-close leak freedom. In-memory omitted ACL,
+post-ancestry or sticky-state mutants must fail real consumer expectations.
+Existing observed current33PM/9XS and futureGunzip50PM/12XS inventory is not
+complete lazy/transitive loaded closure; no repeated supposedly missing inventory
+or new native invocation follows from this composition.
+
 ## Parent-owned real execution edge
 
 The trusted supervisor owns the actual fork PID and private pipes, drops all

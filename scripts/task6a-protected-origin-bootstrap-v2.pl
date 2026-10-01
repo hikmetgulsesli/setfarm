@@ -27,6 +27,14 @@ my @file_ledger;
 my @directory_ledger;
 my $file_lifecycle_burned=0;
 my $file_lifecycle_released=0;
+my $physical_state='new';
+my $physical_owns_ledgers=0;
+my $physical_internal=0;
+my $physical_cleanup_attempted=0;
+my $physical_cleanup_ok=0;
+my $physical_file;
+my @physical_directories;
+my @physical_owned_handles;
 
 sub task6a_origin_helpers_settled {
     task6a_origin_refuse() unless @_==0;
@@ -67,6 +75,7 @@ sub task6a_origin_check_held_file {
     task6a_origin_refuse() unless task6a_origin_now()<$bootstrap_deadline;
 }
 sub task6a_origin_hold_file {
+    task6a_origin_guard_raw_physical();
     task6a_origin_refuse() unless @_==4&&!$file_lifecycle_burned&&!$file_lifecycle_released;
     my ($path,$hash,$mode,$limit)=@_;my $record;
     my $ok=eval {
@@ -83,6 +92,7 @@ sub task6a_origin_hold_file {
         $record={path=>$path,sha256=>$hash,identity=>\@before,fh=>undef};
         push(@file_ledger,$record);
         sysopen(my $fh,$path,Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK()) or task6a_origin_refuse();
+        push(@physical_owned_handles,$fh) if $physical_owns_ledgers&&$physical_internal;
         $record->{fh}=$fh;
         binmode($fh) or task6a_origin_refuse();
         fcntl($fh,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()) or task6a_origin_refuse();
@@ -103,6 +113,7 @@ sub task6a_origin_recheck_files {
         fileCount=>scalar(@file_ledger)};
 }
 sub task6a_origin_close_files {
+    task6a_origin_guard_raw_physical();
     task6a_origin_refuse() unless @_==0&&!$file_lifecycle_released;
     $file_lifecycle_released=1;
     for my $record(@file_ledger,@directory_ledger) {
@@ -152,6 +163,7 @@ sub task6a_origin_check_directory {
     task6a_origin_refuse() unless task6a_origin_now()<$bootstrap_deadline;
 }
 sub task6a_origin_hold_ancestry {
+    task6a_origin_guard_raw_physical();
     task6a_origin_refuse() unless @_==1&&!$file_lifecycle_burned&&!$file_lifecycle_released;
     my ($path)=@_;my $ok=eval {
         task6a_origin_text($path,1024);
@@ -173,6 +185,7 @@ sub task6a_origin_hold_ancestry {
                 :($mode==0755||$mode==0711||$mode==0700||$mode==0555);
             my $record={path=>$parent,identity=>\@before,fh=>undef};push(@directory_ledger,$record);
             sysopen(my $fh,$parent,Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_DIRECTORY()) or task6a_origin_refuse();
+            push(@physical_owned_handles,$fh) if $physical_owns_ledgers&&$physical_internal;
             $record->{fh}=$fh;
             fcntl($fh,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()) or task6a_origin_refuse();
             task6a_origin_check_directory($record);
@@ -189,6 +202,98 @@ sub task6a_origin_recheck_ancestry {
     if(!$ok) {$file_lifecycle_burned=1;task6a_origin_refuse();}
     return {scope=>'retained-ancestry-diagnostic-only',productionAuthority=>JSON::PP::false,
         directoryCount=>scalar(@directory_ledger)};
+}
+sub task6a_origin_physical_cleanup {
+    return $physical_cleanup_ok if $physical_cleanup_attempted;
+    return 0 unless $physical_owns_ledgers;
+    $physical_cleanup_attempted=1;
+    $file_lifecycle_released=1;
+    # Capture handle ownership immediately after each successful open, before
+    # any subsequent fallible check. Never adopt a contaminated live ledger.
+    for my $fh(@physical_owned_handles) {
+        my $closed=eval {defined(fileno($fh))&&close($fh)};
+        $file_lifecycle_burned=1 unless $closed&&!$@;
+    }
+    $physical_cleanup_ok=$file_lifecycle_burned?0:1;
+    return $physical_cleanup_ok;
+}
+sub task6a_origin_physical_fail {
+    $physical_state='burned' unless $physical_state eq 'released';
+    $file_lifecycle_burned=1 if $physical_owns_ledgers;
+    task6a_origin_physical_cleanup();
+    task6a_origin_refuse();
+}
+sub task6a_origin_guard_raw_physical {
+    task6a_origin_physical_fail() if $physical_owns_ledgers&&!$physical_internal;
+}
+sub task6a_origin_physical_records {
+    return 0 unless @file_ledger==1&&@directory_ledger==3&&@physical_directories==3
+        &&defined($physical_file)&&$file_ledger[0]==$physical_file
+        &&$physical_file->{path} eq '/usr/bin/perl';
+    my @paths=('/','/usr','/usr/bin');
+    for my $index(0..2) {
+        return 0 unless $directory_ledger[$index]==$physical_directories[$index]
+            &&$directory_ledger[$index]{path} eq $paths[$index];
+    }
+    return 1;
+}
+sub task6a_origin_recheck_system_perl_physical {
+    my $ok=eval {
+        task6a_origin_refuse() unless @_==0&&$physical_state eq 'active'
+            &&$physical_owns_ledgers&&!$physical_internal&&!$file_lifecycle_burned
+            &&!$file_lifecycle_released&&task6a_origin_physical_records()
+            &&task6a_origin_helpers_settled()&&task6a_origin_now()<$bootstrap_deadline;
+        task6a_origin_recheck_ancestry();
+        task6a_origin_recheck_files();
+        task6a_origin_acl_free('/usr/bin/perl');
+        task6a_origin_recheck_files();
+        task6a_origin_recheck_ancestry();
+        task6a_origin_refuse() unless task6a_origin_physical_records()
+            &&task6a_origin_helpers_settled()&&task6a_origin_now()<$bootstrap_deadline;
+        1;
+    };
+    task6a_origin_physical_fail() unless $ok;
+    return {scope=>'composed-system-perl-physical-candidate-diagnostic-only',
+        productionAuthority=>JSON::PP::false,fileCount=>1,directoryCount=>3};
+}
+sub task6a_origin_hold_system_perl_physical {
+    task6a_origin_physical_fail() unless @_==0&&$physical_state eq 'new'
+        &&!$file_lifecycle_burned&&!$file_lifecycle_released
+        &&@file_ledger==0&&@directory_ledger==0;
+    $physical_state='starting';
+    $physical_owns_ledgers=1;
+    $physical_internal=1;
+    my $ok=eval {
+        task6a_origin_refuse() unless task6a_origin_helpers_settled()
+            &&task6a_origin_now()<$bootstrap_deadline;
+        task6a_origin_hold_ancestry('/usr/bin/perl');
+        task6a_origin_acl_free('/usr/bin/perl');
+        task6a_origin_hold_file('/usr/bin/perl',
+            'abda2bfd23a6c9a8e57adf2291f0aea4abd8faf440558ee49fe4ced55e8d9ad0',0755,1048576);
+        $physical_file=$file_ledger[0];
+        @physical_directories=@directory_ledger;
+        $physical_internal=0;
+        $physical_state='active';
+        task6a_origin_recheck_system_perl_physical();
+        1;
+    };
+    $physical_internal=0;
+    task6a_origin_physical_fail() unless $ok;
+    return {scope=>'composed-system-perl-physical-candidate-diagnostic-only',
+        productionAuthority=>JSON::PP::false,fileCount=>1,directoryCount=>3};
+}
+sub task6a_origin_release_system_perl_physical {
+    my $valid=eval {
+        task6a_origin_refuse() unless @_==0;
+        task6a_origin_recheck_system_perl_physical();
+        1;
+    };
+    $physical_state='released';
+    $file_lifecycle_burned=1 if !$valid&&$physical_owns_ledgers;
+    my $closed=task6a_origin_physical_cleanup();
+    task6a_origin_refuse() unless $valid&&$closed;
+    return {scope=>'composed-system-perl-physical-candidate-diagnostic-only',
+        productionAuthority=>JSON::PP::false,released=>JSON::PP::true};
 }
 sub task6a_origin_record {
     my ($v)=@_;task6a_origin_refuse() unless ref($v) eq 'HASH'&&keys(%$v)<=64;return $v;
@@ -439,7 +544,10 @@ sub task6a_origin_capture {
     }
     if(defined($pid)&&$pid>0&&$close_ok&&$reaped&&!$uncertain) {$record->{settled}=1;}
     else {$helper_lifecycle_burned=1;}
-    task6a_origin_refuse() unless $ok&&$close_ok&&$reaped&&!$uncertain;
+    unless($ok&&$close_ok&&$reaped&&!$uncertain) {
+        task6a_origin_physical_fail() if $physical_owns_ledgers;
+        task6a_origin_refuse();
+    }
     return {out=>$out,err=>$err,status=>0,pid=>$pid,reaped=>JSON::PP::true};
 }
 sub task6a_origin_get_metadata {
