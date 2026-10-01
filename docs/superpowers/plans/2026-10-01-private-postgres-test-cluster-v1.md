@@ -162,3 +162,131 @@ refusal with fixed reason enum/no value exposure. Focused28PASS232.464166ms,
 package4PASS1137.513792ms; both commands definitively exit0, no cluster effects.
 Driver.end fulfillment is API settlement, not backend/socket-absence authority;
 only captured ordinary server close is claimed. New exact remedy review pending.
+
+## Durable journal refinement plan (2026-10-01)
+
+**Goal:** Preserve bounded redacted observations across terminal loss, without
+claiming survival/recovery/authority or changing owned lifecycle gates.
+**Architecture:** One inert builtin-only journal module, strict incremental
+reader and best-effort mirror; constructor owns ordering, captured children and
+SQL. Root executes inline; existing agents only source-review.
+**Spec:** Durable diagnostic journal section of the existing linked spec.
+
+### Global constraints and exact File Map
+
+Root sole writer now at .worktrees/setfarm-task6a-private-test-journal-v1,
+branchfix/private-postgres-test-journal-v1. Base immutable2b6b3031, normally merged
+deliveredmain95c557d5 via65e1dc87; no history rewrite. Old private tree remains
+clean2b6b3031 and orphan59089/old footprint untouched. Interrupted findings and
+standby execution results are UNVERIFIED; consumed one-invocation clearance
+cannot be reused. Delivered physical PR257 independently reviewed; new separate
+clean-main clone at95c557d5 built and bootstrap382/0/0 passed49454.189ms.
+No live selector, old standby update, native/root/privileged/role/grant effects.
+
+Modify existing wrapper, its existing test and existing spec/plan. Create
+scripts/private-postgres-test-journal-v1.mjs and
+scripts/__tests__/private-postgres-test-journal.test.js. Six refinement paths;
+cumulative PR includes v1 package.json/tests/evals/package-scripts.test.ts for
+eight total, unchanged by journal work. No production test knobs/dependencies.
+
+Fixed bounds: frame128KiB, output payload64KiB, encoded output256MiB plus
+reserved control1MiB, total257MiB, output checkpoint256KiB, frames1000000.
+Only fresh internally selected fixed journal; ordinaryUID501/root0700/journal
+0600/nlink1/exclusive/nofollow, held root and file identity checks. No raw secret
+or error/ENV serialization, no repair/reopen/adoption/detach/signal fallback.
+
+### Task4: Actual durable framing and strict prefix consumers
+
+- [x] Preserve old trees; create new isolated branch and normal merge. Existing
+  dependencies reused only through ignored symlink; no install. Baseline
+  `node --test scripts/__tests__/private-postgres-test-cluster.test.js`
+  actual28PASS0FAIL0SKIP233.287ms. Package baseline also selected unchanged edges.
+  Actual complete package4PASS0FAIL0SKIP1403.487ms, definiteexit0.
+- [ ] Commit canonical refined design/plan before implementation. Request exact
+  independent source-only design review; resolve contradictions explicitly.
+- [ ] Write actual-file missing-module AssertionRED. Test-owned mkdtemp under
+  the fixed prefix,0700 and held directoryFD; retain files. No PG/root effect:
+  ```js
+  assert.ok(existsSync(MODULE),'private test journal implementation missing');
+  const {createPrivateTestJournalV1,createPrivateTestJournalReaderV1}=await import(MODULE.href);
+  const root=mkdtempSync('/tmp/setfarm-task6a-pg.');chmodSync(root,0o700);
+  const rootFd=openSync(root,constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
+  const journal=createPrivateTestJournalV1(root,rootFd);
+  assert.equal(journal.control('journal-opened',{root}),true);
+  assert.equal(journal.output('test','stdout',Buffer.from([0,255,10])),true);
+  const reader=createPrivateTestJournalReaderV1();
+  const records=reader.write(readFileSync(root+'/transcript.journal'));
+  assert.deepEqual(records.find(r=>r.kind==='output').payload,Buffer.from([0,255,10]));
+  assert.equal(reader.end().incomplete,true); // No terminal observation.
+  ```
+  Derive wire/digest expectations independently with literal JSON and node:crypto,
+  not the journal's encoder. Test exclusive existing file/symlink refusal before
+  any write; exactfile0600/nlink1; root/file drift burns. No cleanup of old data.
+- [ ] Add every-byte split/truncated-terminal/after-terminal consumers, coherent
+  bad sequence/length/digest/base64/key/size/unknown kind/channel, contradictory
+  actual result flags, zero-output prefix and nonzero test result. No whole
+  transcript accumulation: reader chunks at most128KiB; scaled IN-MEMORY limit
+  mutants exercise branch consumers without allocating257MiB and are labelled
+  scaled, not actual full-cap proof.
+  Positive literal prefix supplies all initdb/test/server exit/close0 controls,
+  all six role/channel stream ends, quiescence-sample0/1 passedtrue and admin-ended
+  before finish({outcome:'observed',testCode:0,privateDbQuiescent:true,
+  adminEnded:true,serverClosed:true,productionAuthority:false}). Nonzero test
+  prefix/terminal use7 and must report7; omitted exit/close/EOF/sample/admin
+  controls refuse the same real finish/reader consumer. Exact fields/enums and
+  framing keys are fixed in spec, not configurable test limits.
+- [ ] Add actual fs boundary fault subprocess tests. Wrap builtin write/fsync/
+  close IN MEMORY before import, preserve actual owned files and complete
+  observable writes where claimed. Short write/EINTR/fsync/close uncertainty
+  makes healthy/close false and no newly synthesized positive terminal; reader
+  reports partial tail incomplete. Restoring the boundary cannot revive state.
+- [ ] Implement minimal inert framing/file writer/reader/mirror only after RED.
+  No subprocess,SQL or password access from module. Full-write requirement,
+  fixed caps, private FD identity, separate I/O and completeness burn, fsync
+  checkpoints, per-call bounded reader record results. Run every earlier RED
+  GREEN; coherent missing digest/terminal/size/sticky-state mutants must reach
+  forbidden consumer results, not merely pass source-text assertions.
+- [ ] Real Writable/EventEmitter mirror tests: sync throw, async EPIPE/close,
+  first backpressure disables mirroring exactly once; journal persists first,
+  no child signal/cancellation callback and no unbounded display queue.
+
+### Task5: Wire observed constructor lifecycle without relaxing ownership
+
+- [ ] Extend existing actual wrapper-entry test harness with forbidden subprocess
+  sentinel: journal creation/fsync failure refuses before password/child effects.
+  Keep imports inert and CLI/default/ambientPG guards unchanged. The harness
+  replaces only actual slow effects, not precondition/cleanup/ownership checks.
+- [ ] Capture actual child exit/close into durable controls immediately; raw
+  child results/stream error are observed, not fabricated caller receipts. Test
+  exit-only/nonzero/signal/unknown close and cancellation on real lifecycle
+  consumers. Existing observe/settle/quiescence/deadline functions remain gates.
+- [ ] Wire output redaction BEFORE persistence BEFORE terminal mirroring. Every
+  real per-stream split/full URL/password/truncated-prefix/binary consumer passes
+  through persistence and strict reader; no assertion on a redactor mock.
+  Input/journal failure burns completeness yet drains already-owned children;
+  do not throw out of stream callbacks or infer descendants from directclose.
+- [ ] Journal each quiescence sample and actual admin-end API settlement; only
+  existing complete test-close/private-catalog/backend gate may grant own
+  shutdown. Final observed terminal after known server close; test nonzero
+  preserved, journal close uncertainty prevents wrapper success. Reader never
+  equates terminal observations with the writer's future process exit.
+- [ ] Fresh journal+cluster+package/default-discovery tests, full evals/noemit/
+  contracts/check-only digests/MC/diff/credential scan. Commit scoped clean source;
+  independent exact eight-path source/test/spec/plan review before any invocation.
+
+### Task6: New actual ordinary verification and delivery
+
+- [ ] Obtain exact reviewed pre-effect clearance for ONE fresh ordinary findings
+  invocation at clean committed source. Current plan does NOT invoke anything,
+  adopt old PID, read old private password/SQL or signal/clean old fixtures.
+- [ ] Observe freshidentity, unchanged complete finding graph, exit AND close,
+  both actual catalog/backend samples, driver-end API, captured server normal
+  shutdown/close; inspect entire redacted journal and managed result. A daemon
+  loss with missing final result stays incomplete; no test restart/adoption.
+- [ ] Only actual complete findings success permits reviewed whole npm graph;
+  all default stages and actual closure required, never combine partial runs.
+  Disk/memory/livePG31/zero-owner/HTTP checks before and after; stop at resource
+  safety/new-authority boundary, not at a stale historical blocked flag.
+- [ ] Reviewed normal scoped PR/security/full paginated comments/exacthead
+  delivery; separate fresh clean-main build/merged proof without modifying
+  uncertain old trees. No full npm/Task6A claim until respective outcomes proven.
