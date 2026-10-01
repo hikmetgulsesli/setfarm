@@ -49,7 +49,9 @@ return actual spawnSync results from the real source consumers. No API changes.
 - [x] Run npm run test:internal-production:pure with TMPDIR/DB URLs scrubbed.
   Expect372PASS0FAIL/CANCEL/SKIP; retain actual command/session/output evidence.
 - [ ] Independent read-only diff review; verify only test/spec/plan changed.
-- [ ] Commit with scoped conventional message, build clean branch; record results.
+- [x] Commit with scoped conventional message and run
+  node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit on clean branch.
+  Full build requires clean main equal origin/main and is deferred until delivery.
 - [ ] Push branch, open PR, request available reviewers; inspect actual comments,
   threads and required checks. SHA-bound normal merge only after review/checks.
 - [ ] Preserve writer, failed clean main and private roots. Synchronize a NEW
@@ -66,3 +68,6 @@ return actual spawnSync results from the real source consumers. No API changes.
   8076.733667ms. Both explicit linked-home controls refused without changes.
 - Whole pure group: scrubbed session20582 CLOSED0, 372PASS0FAIL/CANCEL/SKIP,
   23993.750958ms. Production sources and all old assertions remain unchanged.
+- Clean branch build attempt refused at provenance check: HEAD does not equal
+  origin/main. No bypass or output-build claim. Clean noEmit session82690
+  CLOSED0. Ordinary full build remains required on NEW delivered clean main.
