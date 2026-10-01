@@ -228,18 +228,28 @@ or error/ENV serialization, no repair/reopen/adoption/detach/signal fallback.
   transcript accumulation: reader chunks at most128KiB; scaled IN-MEMORY limit
   mutants exercise branch consumers without allocating257MiB and are labelled
   scaled, not actual full-cap proof.
-  Positive literal prefix supplies all initdb/test/server exit/close0 controls,
-  all six role/channel stream ends, quiescence-sample0/1 passedtrue and admin-ended
+  Positive literal prefix supplies the exact causal intent/observation sequence
+  from the spec, all initdb/test/server exit/close0 controls, all six role/channel
+  stream ends, quiescence-sample0/1 passedtrue and admin-ended
   before finish({outcome:'observed',testCode:0,privateDbQuiescent:true,
   adminEnded:true,serverClosed:true,productionAuthority:false}). Nonzero test
   prefix/terminal use7 and must report7; omitted exit/close/EOF/sample/admin
-  controls refuse the same real finish/reader consumer. Exact fields/enums and
+  controls and reordered sample/admin/server events refuse the same real
+  finish/reader consumer. Duplicates, disagreeing PID/code, output after EOF and
+  early server exit remain known diagnostics but cannot revive eligibility.
+  Exact fields/enums and
   framing keys are fixed in spec, not configurable test limits.
 - [ ] Add actual fs boundary fault subprocess tests. Wrap builtin write/fsync/
   close IN MEMORY before import, preserve actual owned files and complete
-  observable writes where claimed. Short write/EINTR/fsync/close uncertainty
-  makes healthy/close false and no newly synthesized positive terminal; reader
-  reports partial tail incomplete. Restoring the boundary cannot revive state.
+  observable writes where claimed. Short write/EINTR uncertainty retains the
+  torn tail and reader reports incomplete. Fsync/close failure makes writer
+  healthy/close false, prevents future positive terminal and cannot revive.
+  Complete bytes (including an earlier terminal) may still be readable after
+  failed fsync or subsequent close: reader cannot infer an undelivered fault or
+  prove future writer FD/process closure. Assert that distinction, not a
+  fictional partial tail. Check immediate journal FD ownership/once-only close
+  on partial construction and identity drift; borrowed directory FD remains
+  usable, and ambiguous close is never retried.
 - [ ] Implement minimal inert framing/file writer/reader/mirror only after RED.
   No subprocess,SQL or password access from module. Full-write requirement,
   fixed caps, private FD identity, separate I/O and completeness burn, fsync

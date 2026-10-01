@@ -155,6 +155,15 @@ dispatch additions. No src/migration/P3/preflight/default graph changes.
   fsync file and parent entry before password or child effects. Creation throws
   only PRIVATE_TEST_JOURNAL_REFUSED, never raw exceptions. No reopening,
   truncating, deleting, reusing or recovery of old paths.
+- directoryFd is BORROWED: never close it. The exclusive journal FD becomes
+  privately owned immediately after open, before fstat/fsync or other fallible
+  construction. Construction failure immediately attempts that owned FD close
+  exactly once. Completeness/order burn only latches ineligibility: retain the
+  owned FD for valid diagnostic controls/refused terminal. I/O uncertainty
+  forbids further writes but retains FD ownership. Explicit final close attempts
+  the owned FD exactly once regardless of burn/identity validity. Ambiguous
+  close is not retried against a potentially reused descriptor. Retain the path;
+  the caller closes its own directory FD.
 - Returned object has output(role,channel,redactedBuffer), control(stage,fields),
   finish(observations), burn(reason), close() and read-only healthy. Roles are
   initdb/server/test, channels stdout/stderr; controls admit only fixed stages
@@ -190,11 +199,29 @@ child-error,stream-end,stream-error,private-db-quiescence,quiescence-sample,
 direct-test-child-closed,admin-close,admin-ended,server-close,
 server-definitely-closed,terminal-unavailable,refused. Field names are limited to
 root,port,serverPid,testPid,childRole,channel,pid,code,signal,sample,passed,
-testsStarted,reason,serverClosed,retained,productionAuthority. Root uses the
+testsStarted,reason,serverClosed,retained,operation,privateDbQuiescent,
+productionAuthority. Root uses the
 fixed prefix; role/channel their enums; IDs positive safe integers; port1024..
-65535 except5432; code null or integer0..255; signal null or a known OS SIG name;
+65535 except5432; code null or integer-4095..255 (negative spawn failures never
+qualify as normal outcomes); signal null or a node:os.constants.signals name;
 sample0/1; flag fields actual booleans. Reason is a fixed journal/cluster/mirror
-reason enum, never raw exception text. Unknown fields/types burn. Reader keeps
+reason enum, never raw exception text or open prefix matching. Closed reasons
+are the existing wrapper's literal knownReasons plus PRIVATE_TEST_CLUSTER_REFUSED,
+PRIVATE_TEST_JOURNAL_REFUSED, journal-io, journal-identity, journal-input,
+journal-limit, journal-framing, journal-order, journal-close, mirror-error,
+mirror-backpressure, mirror-close and mirror-throw. Unknown fields/types burn.
+Exact required fields by stage (productionAuthority:false is always added):
+journal-opened:{root}; private-root-retained:{root,port};
+identity-verified:{root,port,serverPid}; server-definitely-closed:{root,port,code,retained};
+child-exit/child-close:{childRole,pid,code,signal}; child-error:{childRole,reason};
+stream-end:{childRole,channel}; stream-error:{childRole,channel,reason};
+quiescence-sample:{sample,passed}; direct-test-child-closed:{code,privateDbQuiescent};
+terminal-unavailable:{channel,reason};
+refused:{operation,reason,root,testsStarted,serverClosed,retained}.
+operation is one of the fixed constructor stages, including preconditions and
+create-private-root; only refused permits null root. Intent stages and
+admin-ended have no additional fields. No omitted or extra fields are accepted.
+Reader keeps
 bounded per-role exit/close/error/stream-end state and two sample flags, not all
 transcript records. Terminal observations must agree with that retained prefix.
 
@@ -206,6 +233,21 @@ quiescence samples and admin-ended. Refused terminal has exactly
 outcome:'refused',reason,productionAuthority:false; it reports incomplete
 verification, not cleanup permission. Both are fsynced and seal further writes.
 No terminal can report the future wrapper exit or future journal close.
+
+Positive eligibility requires causal ordering, not aggregate flags:
+journal-opened first; initdb intent then exit and definite close0 before server
+start; identity intent/verified before test dispatch; definite normal test close
+before quiescence intent and passing sample0 then sample1; admin-close then
+admin-ended before server-close intent; only then server exit/close0. Each role
+has exactly one exit before exactly one close with agreeing PID/code/signal.
+Both stream ends must precede its close; they may precede exit. Duplicate or
+conflicting exit/close/EOF/sample, output after that stream's EOF or role close,
+child/input error or early server termination makes positive eligibility sticky
+false. Normal code is0..255 with null signal. Initdb/server require0; tests may
+be nonzero and that exact code is retained. Dispatch must follow its intent.
+Known well-typed failure observations remain persistable diagnostic facts even
+when ordering/completeness forbids a positive terminal; they do not revive
+eligibility. Malformed framing/types/sequence stop validated-prefix consumption.
 
 Write each frame once and require the exact synchronous write length. A short
 write/EINTR/exception refuses and retains the partial tail; no guessed retry or
