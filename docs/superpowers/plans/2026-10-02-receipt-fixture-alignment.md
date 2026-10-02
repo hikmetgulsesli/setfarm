@@ -327,3 +327,27 @@ Task7d repeat76686outer0/1P0F11204.078625ms, then explicit out-of-inventory
 backup-absent witness final65924outer0/1P0F11698.028459ms, zero cancel/skip.
 Independent entire exact diff C0/I0/M0 at testSHA
 0b612367c584504dd6b3a11660179be2b7fb3fd124544dbaffaab30df7749071.
+
+## Task 7e: Raw recovery fanout diagnostic phases
+
+Same File Map, actual originalRED57469 cleanup sentinel hidden by raw aggregate.
+
+- [ ] Exact errors assertions and paired crossing/close case first; missing
+  recursive/ordered diagnostics must genuinely RED before wrapper repair.
+- [ ] Raw-route wrapper preserves both catches; derived wrapper forwards all
+  route errors then appends selection/post-raw/owner-close trees in encounter order.
+- [ ] Retain21 cases plus one paired case alone after final fault batch; exact
+  raw outcome/calls/borrowed fences/applicability/reverse/once/FD0 stay enforced.
+- [ ] Focused GREEN, independent actual diff review, causal commit. No broader
+  cleanup/build/host qualification from these test-only projections.
+
+Task7e actual71914outer1 missing diagnostic2393.461958ms; local wrappers
+84380outer0/1P0F2355.505083ms, zero cancel/skip. All22cases including exact
+post-raw primary then owner-close secondary, paired resultnull/closeCount1,
+borrowed fences, raw outcomes/calls/recovery close-last/once/FD0 executed.
+Independent actual diff review and focused adjacent refresh pending.
+
+Task7e adjacent43930outer0/3P0F6457.614916ms, zero cancel/skip. Includes
+unchanged raw-owner matrix and manifest/loaded-runtime binder consumer alongside
+fanout. Independent actual diff C0/I0/M0 at testSHA
+b1002f5b3830ef7e5cd4ed59d0011e736bec846428784b7031b586aa1ee33f5c.

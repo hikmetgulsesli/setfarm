@@ -7901,6 +7901,8 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
   let value: Awaited<ReturnType<typeof observeExactPoisonPostVisibleProgressRawNoWriteV1>> | null = null;
   let outcome: "returned" | "threw" = "returned";
   let message: string | null = null;
+  const projectError = (error: unknown): unknown => Object.freeze({ message: String(error), causes: Object.freeze(error instanceof AggregateError ? error.errors.map(projectError) : []) });
+  const errors: { phase: "operation" | "owner-close"; tree: unknown }[] = [];
   try {
     value = await observeExactPoisonPostVisibleProgressRawNoWriteV1(authority, status, selection);
     if (input.ownership) await value.assertStable();
@@ -7908,13 +7910,14 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
     if (!input.ownership && !input.returnFailure) throw error;
     outcome = "threw";
     message = String(error);
+    errors.push({ phase: "operation", tree: projectError(error) });
   } finally {
     try { if (input.ownership && value !== null) await value.close(); }
-    catch (error) { outcome = "threw"; message ??= String(error); }
+    catch (error) { outcome = "threw"; message ??= String(error); errors.push({ phase: "owner-close", tree: projectError(error) }); }
     finally { Reflect.deleteProperty(globalThis, "__p5cSRawRouteProbeV1"); }
   }
   const rawRecord = value as unknown as Readonly<Record<string,unknown>> | null;
-  return Object.freeze({ outcome, message, value, calls, observedEvidence: rawRecord?.evidence ?? null, observedEffectResult: rawRecord?.effectResult ?? null, observedImmediate: rawRecord?.immediate ?? null, observedNextPairBytesBase64: Buffer.isBuffer(rawRecord?.nextPairBytes) ? (rawRecord!.nextPairBytes as Buffer).toString("base64") : null, childStableCounts: Object.freeze({ ...childStableCounts }), childCloseCounts: Object.freeze({ ...childCloseCounts }), liveChildCloseCounts: childCloseCounts, childCloseOrder, expectedTopology: Object.freeze({ controllerTarget: successorRoot + "/operations/sha256/aa/" + operationHash + "/current-entry-controller.lock", immediateTarget: input.immediateTarget, immediateBytes: input.immediateBytesBase64 }) });
+  return Object.freeze({ outcome, message, errors: Object.freeze(errors), value, calls, observedEvidence: rawRecord?.evidence ?? null, observedEffectResult: rawRecord?.effectResult ?? null, observedImmediate: rawRecord?.immediate ?? null, observedNextPairBytesBase64: Buffer.isBuffer(rawRecord?.nextPairBytes) ? (rawRecord!.nextPairBytes as Buffer).toString("base64") : null, childStableCounts: Object.freeze({ ...childStableCounts }), childCloseCounts: Object.freeze({ ...childCloseCounts }), liveChildCloseCounts: childCloseCounts, childCloseOrder, expectedTopology: Object.freeze({ controllerTarget: successorRoot + "/operations/sha256/aa/" + operationHash + "/current-entry-controller.lock", immediateTarget: input.immediateTarget, immediateBytes: input.immediateBytesBase64 }) });
 }
 
 `
@@ -8118,6 +8121,7 @@ export async function p5cSObservePreSchemaAtRootFixtureV1(input: Readonly<{opera
 `;
   const rawDerivedNestedWrapper = rawRoutePresent
     ? `export async function p5cSRequireProgressRawDerivedNestedAuthoritiesFixtureV1(input: Readonly<{status:Readonly<Record<string,unknown>>;lastValidStatus?:Readonly<Record<string,unknown>>|null;selectionLastValidStatus?:Readonly<Record<string,unknown>>|null;portValues:Readonly<Record<string,unknown>>;immediateTarget:string|null;immediateBytesBase64:string|null;successorRoot:string}>): Promise<Readonly<Record<string,unknown>>> {
+  const projectError = (error: unknown): unknown => Object.freeze({ message: String(error), causes: Object.freeze(error instanceof AggregateError ? error.errors.map(projectError) : []) });
   const statusStable = { calls: 0 };
   const rawStable = { calls: 0 };
   const selectionLastValidStatus = input.selectionLastValidStatus ?? input.lastValidStatus ?? null;
@@ -8134,9 +8138,10 @@ export async function p5cSObservePreSchemaAtRootFixtureV1(input: Readonly<{opera
   try {
     selection = requireExactPoisonPostVisibleProgressRowV1(input.status as InternalProductionCurrentEntryAuthorityStatusV1, input.status.state === "blocked" ? selectionLastValidStatus as InternalProductionCurrentEntryAuthorityStatusV1 : undefined);
   } catch (error) {
-    return Object.freeze({ outcome: "threw", message: String(error), result: null, calls: Object.freeze([]), rawOutcome: "not-called", rawMessage: null, statusStableCalls: 0, rawStableCalls: 0, closeCount: 0, childCloseCounts: Object.freeze({}), childCloseOrder: Object.freeze([]) });
+    return Object.freeze({ outcome: "threw", message: String(error), errors: Object.freeze([{ phase: "selection", tree: projectError(error) }]), result: null, calls: Object.freeze([]), rawOutcome: "not-called", rawMessage: null, statusStableCalls: 0, rawStableCalls: 0, closeCount: 0, childCloseCounts: Object.freeze({}), childCloseOrder: Object.freeze([]) });
   }
   const route = await p5cSObserveProgressRawRouteFixtureV1(Object.freeze({ ...input, statusOwner, ownership: false, returnFailure: true }));
+  const errors: { phase: string; tree: unknown }[] = [...route.errors as readonly { phase: string; tree: unknown }[]];
   const rawOwner = route.value as ExactPoisonPostVisibleProgressRawObservationV1 | null;
   let closeCount = 0;
   let outcome: "returned" | "threw" = route.outcome === "returned" && rawOwner !== null ? "returned" : "threw";
@@ -8151,12 +8156,13 @@ export async function p5cSObservePreSchemaAtRootFixtureV1(input: Readonly<{opera
     } catch (error) {
       outcome = "threw";
       message = String(error);
+      errors.push({ phase: "post-raw", tree: projectError(error) });
     } finally {
       try { closeCount += 1; await rawOwner.close(); }
-      catch (error) { outcome = "threw"; message ??= String(error); }
+      catch (error) { outcome = "threw"; message ??= String(error); errors.push({ phase: "owner-close", tree: projectError(error) }); }
     }
   }
-  return Object.freeze({ outcome, message, result, calls: route.calls, rawOutcome: route.outcome, rawMessage: route.message, statusStableCalls: statusStable.calls, rawStableCalls: rawStable.calls, closeCount, childStableCounts: route.childStableCounts, childCloseCounts: Object.freeze({ ...route.liveChildCloseCounts }), childCloseOrder: Object.freeze([...route.childCloseOrder]) });
+  return Object.freeze({ outcome, message, errors: Object.freeze(errors), result, calls: route.calls, rawOutcome: route.outcome, rawMessage: route.message, statusStableCalls: statusStable.calls, rawStableCalls: rawStable.calls, closeCount, childStableCounts: route.childStableCounts, childCloseCounts: Object.freeze({ ...route.liveChildCloseCounts }), childCloseOrder: Object.freeze([...route.childCloseOrder]) });
 }
 
 export async function p5cSRequireProgressRawDerivedStatusAwaitFixtureV1(input: Readonly<{status:Readonly<Record<string,unknown>>;portValues:Readonly<Record<string,unknown>>;successorRoot:string}>): Promise<Readonly<Record<string,unknown>>> {
@@ -27460,6 +27466,7 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
         make("canary-running:recovery-open-fault", "canary_running/running", recoveryA, recoveryA.terminal, false, undefined, undefined, "raw", false, Object.freeze({ port: recoveryPort, kind: "open" })),
         make("canary-running:recovery-stable-fault", "canary_running/running", recoveryA, recoveryA.terminal, false, undefined, undefined, "raw", false, Object.freeze({ port: recoveryPort, kind: "stable" })),
         make("canary-running:recovery-close-fault", "canary_running/running", recoveryA, recoveryA.terminal, false, undefined, undefined, "post-raw", false, Object.freeze({ port: recoveryPort, kind: "close" }), "returned"),
+        make("canary-running:owner-fence-crossed-and-close-fault", "canary_running/running", recoveryA, recoveryA.terminal, false, "ownerAdmissionFence", recoveryB, "post-raw", false, Object.freeze({ port: recoveryPort, kind: "close" }), "returned"),
       ]);
       const observed: Readonly<Record<string, unknown>>[] = [];
       for (let offset = 0; offset < inputs.length; offset += 3) {
@@ -27506,7 +27513,22 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
           assert.ok(Number(diagnostic.statusStableCalls) >= 1 && Number(diagnostic.rawStableCalls) >= 1,
             `${String(input.label)}: post-raw crossing is inspected only under both borrowed fences`);
         }
-        assert.match(String(diagnostic.message ?? ""), input.valid ? /^$/ : /raw|recovery|terminal|nested|fence|reservation|crossed|missing|source/i);
+        if (input.valid) assert.deepEqual(diagnostic.errors, [], `${String(input.label)}: successful fanout has no caught failure`);
+        const fault = input.fault as undefined | Readonly<{ kind: "open" | "stable" | "close" }>;
+        if (fault) {
+          const leaf = { message: `Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:P5C_S_RAW_CHILD_${fault.kind.toUpperCase()}_FAULT:${recoveryPort}`, causes: [] };
+          const faultError = { phase: fault.kind === "close" ? "owner-close" : "operation", tree: fault.kind === "close" ? {
+            message: "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain", causes: [leaf],
+          } : leaf };
+          assert.deepEqual(diagnostic.errors, String(input.label).includes("crossed-and-close") ? [
+            { phase: "post-raw", tree: { message: "Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:raw-derived recovery-source canary authority is crossed", causes: [] } },
+            faultError,
+          ] : [faultError], `${String(input.label)}: both exact fanout and cleanup error phases survive in encounter order`);
+          if (String(input.label).includes("crossed-and-close")) {
+            assert.equal(diagnostic.result, null, `${String(input.label)}: rejected binder transfers no partial result`);
+            assert.equal(diagnostic.closeCount, 1, `${String(input.label)}: paired failure closes the returned raw owner exactly once`);
+          }
+        } else assert.match(String(diagnostic.message ?? ""), input.valid ? /^$/ : /raw|recovery|terminal|nested|fence|reservation|crossed|missing|source/i);
       }
     } finally {
       removeFixture(root);

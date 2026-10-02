@@ -224,3 +224,20 @@ inode and unchanged observed root names. Keep actual same-path replacement and
 exact restoration. This is causally necessary to test the nominated pointer ABA,
 not generic inventory refusal. Guard identities compare dev/ino/mode, not directory
 mtime; no inventory gate weakening or production change is authorized.
+
+## Causal refinement: raw recovery fanout diagnostics
+
+Actual57469 fanout RED hides the raw owner's cleanup leaf. Preserve recursive
+operation/owner-close errors in the copied raw-route wrapper, then forward every
+entry into its derived binder wrapper. Selection, post-raw binding and final
+owner-close catches append their own phases in encounter order; never retain only
+the first flat message. Success[], exact raw open/stable leaves, close exactly
+cleanup aggregate with selected recovery leaf. Retain21 existing cases, raw
+outcomes/calls, borrowed stability fences, applicability, reverse/once and FD0.
+
+Append one paired status-fence crossing plus recovery-close loss case, alone in
+the next actual child after the original final close-fault batch. Require exact
+post-raw canary-authority-crossed leaf followed by owner-close cleanup aggregate.
+This rejects dropped/overwritten secondary phases. No sticky-latch reset, native,
+SQL, physical-root substitution or production change; synthetic nested-owner
+counters are not independent physical descriptor proof.
