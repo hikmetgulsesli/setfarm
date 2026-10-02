@@ -1,13 +1,70 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, constants, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { chmodSync, closeSync, constants, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, mkdtempSync as lexicalMkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync, type BigIntStats } from "node:fs";
+import { homedir, tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, test as nodeTest, type TestFn } from "node:test";
 
 const sourcePath = path.resolve(import.meta.dirname, "../../src/internal-production/baseline-restart-authority-retirement-v1.ts");
+
+// Normalize only fresh test-owned constructors, never nominated/caller paths.
+function mkdtempSync(prefix: string): string {
+  return realpathSync(lexicalMkdtempSync(prefix));
+}
+
+/** A fresh real-profile root; this is not a retained production capability. */
+function secureHistoricalFixtureRootV1(prefix: string): string {
+  assert.match(prefix, /^setfarm-[a-z-]+-$/);
+  const owner = userInfo(), home = owner.homedir;
+  assert.equal(owner.uid, process.getuid!());
+  assert.equal(path.normalize(home), home);
+  assert.ok(path.isAbsolute(home));
+  const paths = [path.parse(home).root];
+  for (const part of home.slice(paths[0]!.length).split(path.sep).filter(Boolean)) paths.push(path.join(paths.at(-1)!, part));
+  const held: Array<{ target: string; descriptor: number; identity: ReturnType<typeof directoryIdentity> }> = [];
+  function directoryIdentity(stats: BigIntStats): string {
+    assert.ok(stats.isDirectory() && !stats.isSymbolicLink(), "fixture ancestor must be a physical directory");
+    assert.ok(stats.uid === 0n || stats.uid === BigInt(owner.uid), "fixture ancestor must have a trusted owner");
+    assert.equal(stats.mode & 0o022n, 0n, "fixture ancestor must not be group/world writable");
+    return [stats.dev, stats.ino, stats.uid, stats.gid, stats.mode].join(":");
+  }
+  const errors: unknown[] = [];
+  let fixture: string | undefined;
+  try {
+    for (const target of paths) {
+      const before = directoryIdentity(lstatSync(target, { bigint: true }));
+      const descriptor = openSync(target, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      held.push({ target, descriptor, identity: before });
+      assert.equal(directoryIdentity(fstatSync(descriptor, { bigint: true })), before, "opened ancestor must match its original path");
+      assert.equal(directoryIdentity(lstatSync(target, { bigint: true })), before, "ancestor must remain stable after open");
+    }
+    assert.equal(fstatSync(held.at(-1)!.descriptor, { bigint: true }).uid, BigInt(owner.uid), "actual account home must be account-owned");
+    fixture = lexicalMkdtempSync(path.join(home, `.${prefix}`));
+    fixture = realpathSync(fixture);
+    const leaf = lstatSync(fixture, { bigint: true });
+    assert.equal(leaf.uid, BigInt(owner.uid));
+    assert.equal(leaf.mode & 0o7777n, 0o700n, "new profile fixture must be private0700");
+    directoryIdentity(leaf);
+    for (const entry of held) {
+      assert.equal(directoryIdentity(fstatSync(entry.descriptor, { bigint: true })), entry.identity, "held parent identity must survive constructor effects");
+      assert.equal(directoryIdentity(lstatSync(entry.target, { bigint: true })), entry.identity, "parent path must still name its held original");
+    }
+  } catch (error) { errors.push(error); }
+  finally {
+    for (const entry of held.reverse()) {
+      try { closeSync(entry.descriptor); } catch (error) { errors.push(error); }
+    }
+  }
+  if (errors.length) {
+    // Construction/close uncertainty cannot authorize deletion via a changed
+    // parent. Preserve the exact new locator and every cause for owner audit.
+    throw Object.assign(new AggregateError(errors, `historical fixture construction/cleanup failed; retained fixture=${JSON.stringify(fixture ?? null)}`, { cause: errors[0] }), { retainedFixturePath: fixture ?? null });
+  }
+  assert.ok(fixture);
+  return fixture;
+}
 
 function completedChildTests(output: string, name: string): number {
   const lines = output.trimEnd().split(/\r?\n/);
@@ -69,8 +126,15 @@ function createProcessIsolatedTestV1(
   const registered: string[] = [], completed: string[] = [];
   let queue: Promise<void> = Promise.resolve();
   after(() => {
-    assert.equal(registered.length, expectedRegistrations, "complete registration inventory is required");
-    assert.deepEqual(completed, registered, "every registered test must complete in order");
+    try {
+      assert.equal(registered.length, expectedRegistrations, "complete registration inventory is required");
+      assert.deepEqual(completed, registered, "every registered test must complete in order");
+    } catch (error) {
+      // Inherited no-isolation can report a failing hook with an otherwise0
+      // test footer. Incomplete inventory must also fail the process boundary.
+      process.exitCode = 1;
+      throw error;
+    }
   });
   return (name, _body) => {
     assert.ok(typeof name === "string" && name.length > 0 && !/[\r\n#]/.test(name), "one unambiguous test name is required");
@@ -155,7 +219,10 @@ test("isolated test registration rejects missing or duplicate registered names",
     ["test('same', () => {}); test('same', () => {});", 2],
   ] as const) {
     const result = await fixture(body, expected);
-    try { assert.notEqual(result.status, 0, result.stdout); }
+    try {
+      assert.notEqual(result.status, 0, result.stdout);
+      assert.match(result.stdout + result.stderr, /complete registration inventory is required|duplicate isolated test name/);
+    }
     finally { await result.cleanup(); }
   }
 });
@@ -213,6 +280,70 @@ function installWorkspaceLocatorFixtureV1(internal: string, workspace: string): 
 }
 
 test("workspace anchor interrupted close drains untouched descriptors without ambiguous retry", async () => {
+  // Real constructor loss: retain the actual new leaf even when canonicalizing
+  // it loses a response. Extract unchanged helpers; fault only that boundary.
+  {
+    const typescript = await import("typescript");
+    const tree = typescript.createSourceFile("retirement.test.ts", readFileSync(fileURLToPath(import.meta.url), "utf8"), typescript.ScriptTarget.Latest, true);
+    const declarations = ["mkdtempSync", "secureHistoricalFixtureRootV1"].map(name => {
+      const matches = tree.statements.filter(statement => typescript.isFunctionDeclaration(statement) && statement.name?.text === name);
+      assert.equal(matches.length, 1, `exactly one actual constructor ${name}`);
+      return matches[0]!.getText(tree);
+    }).join("\n");
+    const code = typescript.transpileModule(declarations, { compilerOptions: { target: typescript.ScriptTarget.ES2022, module: typescript.ModuleKind.ESNext } }).outputText;
+    const sentinel = Error("FIXTURE_CANONICALIZATION_RESPONSE_LOST");
+    const opened: number[] = [], closed: number[] = [], owned = new Set<number>();
+    const identity = (stats: BigIntStats) => [stats.dev, stats.ino, stats.uid, stats.gid, stats.mode].join(":");
+    const parents = new Map<string, string>();
+    let created: string | undefined, createdIdentity: string | undefined, faultCalls = 0;
+    const constructor = new Function("assert", "path", "userInfo", "process", "lexicalMkdtempSync", "realpathSync", "lstatSync", "fstatSync", "openSync", "closeSync", "constants", `${code}\nreturn secureHistoricalFixtureRootV1;`)(
+      assert, path, userInfo, process, lexicalMkdtempSync,
+      (target: string) => {
+        assert.equal(++faultCalls, 1);
+        created = target;
+        const stats = lstatSync(target, { bigint: true });
+        assert.ok(stats.isDirectory() && !stats.isSymbolicLink());
+        assert.equal(stats.uid, BigInt(userInfo().uid));
+        assert.equal(stats.mode & 0o7777n, 0o700n);
+        createdIdentity = identity(stats);
+        throw sentinel;
+      }, lstatSync, fstatSync,
+      (...args: Parameters<typeof openSync>) => {
+        const fd = openSync(...args);
+        opened.push(fd); owned.add(fd);
+        assert.equal(typeof args[0], "string");
+        parents.set(args[0] as string, identity(fstatSync(fd, { bigint: true })));
+        return fd;
+      }, (fd: number) => {
+        assert.ok(owned.has(fd), "only an owned descriptor may be closed once");
+        closeSync(fd); owned.delete(fd); closed.push(fd);
+      }, constants,
+    ) as (prefix: string) => string;
+    try {
+      let failure: unknown;
+      try { constructor("setfarm-retained-construction-"); } catch (error) { failure = error; }
+      assert.equal(faultCalls, 1);
+      assert.equal(owned.size, 0);
+      assert.deepEqual(closed, [...opened].reverse(), "every real parent descriptor closes once in reverse order");
+      assert.ok(failure instanceof AggregateError);
+      assert.equal(failure.cause, sentinel);
+      assert.deepEqual(failure.errors, [sentinel]);
+      assert.ok(created);
+      assert.equal(Reflect.get(failure, "retainedFixturePath"), created, "a real created leaf must not lose its locator");
+    } finally {
+      if (created !== undefined) {
+        // The fault port independently recorded this constructor-owned leaf.
+        // Never choose a deletion target from its possibly missing error field.
+        for (const [target, original] of parents) assert.equal(identity(lstatSync(target, { bigint: true })), original, `uncertain parent; retain fixture ${created}`);
+        const stats = lstatSync(created, { bigint: true });
+        assert.ok(stats.isDirectory() && !stats.isSymbolicLink());
+        assert.equal(stats.uid, BigInt(userInfo().uid));
+        assert.equal(stats.mode & 0o7777n, 0o700n);
+        assert.equal(identity(stats), createdIdentity, `uncertain leaf; retain fixture ${created}`);
+        rmSync(created, { recursive: true, force: false });
+      }
+    }
+  }
   const fixture = mkdtempSync(path.join(tmpdir(), "setfarm-workspace-close-progress-"));
   const internal = path.join(fixture, "src/internal-production");
   mkdirSync(internal, { recursive: true, mode: 0o700 });
@@ -622,7 +753,7 @@ process.stdout.write('refused');`;
 });
 
 async function createColdEpochGenesisFixtureV1(source = readFileSync(sourcePath, "utf8")) {
-  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-cold-genesis-case-")));
+  const fixture = secureHistoricalFixtureRootV1("setfarm-cold-genesis-case-");
   const modulePath = installRetirementFixture(fixture, source);
   const root = path.join(fixture, "data/internal-production-baseline/restart-authority-retirement-v1");
   const epoch = path.join(root, "epoch-head.json"), lock = path.join(root, "physical-service-restart-authority.transition.lock");
@@ -939,7 +1070,7 @@ test("cold helper frame retains failed-acquisition cleanup before any new frame"
 });
 
 async function exerciseDirectRebindFixtureV1(mode: "response-loss" | "profile-drift" | "ignored" | "dispatch-write" | "receipt-write" | "signal-before" | "frame-intent-replace" | "frame-dispatch-replace" | "frame-receipt-replace" | "direct-helper", spawnFault?: string) {
-  const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), "setfarm-rebind-profile-")));
+  const fixture = secureHistoricalFixtureRootV1("setfarm-rebind-profile-");
   const directChildCleanupPath = path.join(fixture, "direct-child-cleanup-row");
   const actualDirectController = spawnFault?.startsWith("child-main-controller") ?? false;
   const directControllerFault = actualDirectController ? spawnFault!.slice("child-main-controller".length).replace(/^-/, "") : "";
@@ -5856,12 +5987,17 @@ test("P4 retirement rejects insecure authority-store ancestors", async () => {
     const heldRaceRoot = `${raceRoot}.held`;
     const externalRaceRoot = path.join(raceFixture, "external-retirement-store");
     mkdirSync(externalRaceRoot, { mode: 0o700 });
+    let raceCalls = 0;
     Reflect.set(globalThis, "__setfarmP4RetirementDirectoryRaceHook", () => {
+      assert.equal(++raceCalls, 1, "the nominated pre-lock race must run exactly once");
       renameSync(raceRoot, heldRaceRoot);
       symlinkSync(externalRaceRoot, raceRoot);
     });
     try {
       assert.match(String(await captureAcquireFailure(raceFixture)), /directory.*changed|symbolic|identity/i);
+      assert.equal(raceCalls, 1, "an earlier refusal is not pre-lock race coverage");
+      assert.ok(lstatSync(raceRoot).isSymbolicLink());
+      assert.ok(lstatSync(heldRaceRoot).isDirectory());
       assert.throws(
         () => readFileSync(path.join(externalRaceRoot, "physical-service-restart-authority.transition.lock")),
         /ENOENT/,
@@ -5897,7 +6033,7 @@ function closeSync(fd:number){if(fd===measuredLock&&!leaked){leaked=true;return;
     const runner = path.join(fixture, "race.mjs");
     writeFileSync(runner, `
 import assert from 'node:assert/strict';
-import {existsSync,fstatSync,mkdirSync,readdirSync,renameSync,symlinkSync,unlinkSync} from 'node:fs';
+import {existsSync,fstatSync,lstatSync,mkdirSync,readdirSync,renameSync,symlinkSync,unlinkSync} from 'node:fs';
 import path from 'node:path';
 const isolated=await import(${JSON.stringify(moduleUrl)});
 const fixture=${JSON.stringify(fixture)};
@@ -5913,7 +6049,10 @@ const fixture=${JSON.stringify(fixture)};
       catch (error) { if (error.code === "EBADF") return []; throw error; }
     }));
     const descriptorInventoryBefore = liveDescriptorInventory(descriptorNamesBefore);
+    let raceCalls = 0;
     Reflect.set(globalThis, "__setfarmP4RetirementPostLockRaceHook", () => {
+      assert.equal(++raceCalls, 1, 'the nominated post-lock race must run exactly once');
+      assert.equal(existsSync(lock), true, 'the nominated race follows owned lock creation');
       renameSync(root, heldRoot);
       symlinkSync(externalRoot, root);
     });
@@ -5922,6 +6061,9 @@ const fixture=${JSON.stringify(fixture)};
     } finally {
       Reflect.deleteProperty(globalThis, "__setfarmP4RetirementPostLockRaceHook");
     }
+    assert.equal(raceCalls, 1, 'an earlier identity refusal cannot stand in for the nominated post-lock race');
+    assert.equal(lstatSync(root).isSymbolicLink(), true, 'the nominated replacement must actually be present');
+    assert.equal(existsSync(path.join(heldRoot, 'physical-service-restart-authority.transition.lock')), true, 'the original lock is retained beneath the held directory');
     unlinkSync(root);
     renameSync(heldRoot, root);
     const retryLease = await isolated.acquireInternalProductionPhysicalServiceRestartAuthorityTransitionLeaseV1();
@@ -6286,9 +6428,15 @@ async function installCutoverHelperObserverFixture(root: string, retirementModul
   const source = readFileSync(new URL("../../src/internal-production/baseline-deployment-cutover-helper-observation-v1.ts", import.meta.url), "utf8");
   const marker = 'await import("./baseline-restart-authority-retirement-v1.js")';
   assert.equal(source.split(marker).length, 2, "route only the real retirement module to its physical fixture");
+  const workspaceMarker = '"./baseline-workspace-authority-path-v1.js"';
+  assert.equal(source.split(workspaceMarker).length, 2, "route the real workspace dependency exactly once");
+  const canonicalMarker = '"../product-compiler/canonical-json.js"';
+  assert.equal(source.split(canonicalMarker).length, 2, "route the real canonical dependency exactly once");
+  const workspaceUrl = pathToFileURL(path.join(root, "src/internal-production/baseline-workspace-authority-path-v1.ts")).href;
   const file = path.join(root, "cutover-helper-observation.ts");
   writeFileSync(file, source.replace(marker, `await import(${JSON.stringify(retirementModuleUrl)})`)
-    .replace('"../product-compiler/canonical-json.js"', JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href)));
+    .replace(workspaceMarker, JSON.stringify(workspaceUrl))
+    .replace(canonicalMarker, JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href)));
   return (await import(pathToFileURL(file).href)).observeDeploymentCutoverHelperHistoryV1 as () => Promise<Readonly<Record<string, unknown>>>;
 }
 
