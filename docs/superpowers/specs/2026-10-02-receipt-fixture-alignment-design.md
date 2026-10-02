@@ -153,3 +153,31 @@ tree to this copied wrapper catch, retaining message. Cleanup success requires
 exact PRIMARY leaf; cleanup loss requires primary-first aggregate then cleanup
 aggregate containing exact SECONDARY. Keep acquired-owner count1, close1, FD0,
 warmup and unchanged physical tree. Do not modify its passing adjacent consumer.
+
+## Causal refinement: borrowed raw cleanup projection
+
+Actual seven-title replay57469 on25a5ddf7 is1P6F. Start only the borrowed-raw
+close consumer (765.32225ms): production drains Q, raw, status; its wrapper
+flattens the cleanup aggregate, hiding the raw sentinel. Add a local recursive
+errorTree alongside legacy message in this copied pass wrapper. Require the
+literal cleanup-uncertain aggregate with exactly the raw-close leaf, and retain
+all three once-close counts. The fixture owners are synthetic; this test proves
+real production finalizer continuation, not physical FD closure or host safety.
+An omitted owner or lost/extra/wrong cleanup cause must fail. Multiple-cause
+ordering requires its separate pre-PR witnesses, not this single-cause case. No source,
+authority, latch, SQL, native, service or existing-artifact changes.
+
+## Causal refinement: retained NEXT exact cause phases
+
+The same actual replay fails the retained-NEXT close sentinel assertion. Its
+cases already use independent actual children and restore the checked shared
+physical tree. Keep that isolation, FD0, exact value/pair bytes, ABA fences and
+reverse/once/unopened assertions. The copied wrapper must collect both existing
+operation and owner-close catches as ordered recursive trees, never first-error
+flattening. Valid cases require no errors. Open/stable faults require one exact
+operation leaf. Parent-close faults require one owner-close cleanup aggregate;
+member-close faults require the outer cleanup aggregate containing the inner
+member cleanup aggregate and its exact selected leaf. This nesting follows the
+actual independently consumed member owner, not a flattened invented contract.
+Omitted owners or causes, fabricated unopened cleanup, phase/nesting errors and
+leaked descriptors must fail. No production or live-host changes.

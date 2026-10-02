@@ -7668,6 +7668,8 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
   let outcome: "returned" | "threw" = "returned";
   let message: string | null = null;
   let closeCount = 0;
+  const projectError = (error: unknown): unknown => Object.freeze({ message: String(error), causes: Object.freeze(error instanceof AggregateError ? error.errors.map(projectError) : []) });
+  const errors: { phase: "operation" | "owner-close"; tree: unknown }[] = [];
   const physical = { openOrder: [] as string[], stableCounts: {} as Record<string,number>, closeCounts: {} as Record<string,number>, closeOrder: [] as string[], open(stage:string,open:()=>unknown):unknown { physical.openOrder.push(stage); if (input.fault?.stage === stage && input.fault.kind === "open") currentEntryFail("P5C_S_COMPLETED_RETAINED_CHILD_OPEN_FAULT:" + stage); const value = open() as Readonly<Record<string,unknown>> & {assertStable?:()=>void;close?:()=>void}; if (!stage.endsWith("parent")) return value; return Object.freeze({ ...value, assertStable():void { physical.stableCounts[stage] = (physical.stableCounts[stage] ?? 0) + 1; value.assertStable!(); if (input.fault?.stage === stage && input.fault.kind === "stable") currentEntryFail("P5C_S_COMPLETED_RETAINED_CHILD_STABLE_FAULT:" + stage); }, close():void { physical.closeCounts[stage] = (physical.closeCounts[stage] ?? 0) + 1; physical.closeOrder.push(stage); try { value.close!(); } finally { if (input.fault?.stage === stage && input.fault.kind === "close") currentEntryFail("P5C_S_COMPLETED_RETAINED_CHILD_CLOSE_FAULT:" + stage); } } }); }, memberStable(stage:string,stable:()=>void):void { physical.stableCounts[stage] = (physical.stableCounts[stage] ?? 0) + 1; stable(); if (input.fault?.stage === stage && input.fault.kind === "stable") currentEntryFail("P5C_S_COMPLETED_RETAINED_CHILD_STABLE_FAULT:" + stage); }, memberClose(stage:string,close:()=>void):void { physical.closeCounts[stage] = (physical.closeCounts[stage] ?? 0) + 1; physical.closeOrder.push(stage); try { close(); } finally { if (input.fault?.stage === stage && input.fault.kind === "close") currentEntryFail("P5C_S_COMPLETED_RETAINED_CHILD_CLOSE_FAULT:" + stage); } } };
   Reflect.set(globalThis, "__p5cSCompletedRetainedPhysicalProbeV1", physical);
   const contentMutation = input.mutation.startsWith("content-");
@@ -7691,10 +7693,10 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
       mutated = true;
     }
     owner.assertStable();
-  } catch (error) { outcome = "threw"; message = String(error); }
+  } catch (error) { outcome = "threw"; message = String(error); errors.push({ phase: "operation", tree: projectError(error) }); }
   finally {
     try { if (owner !== null) { closeCount += 1; owner.close(); } }
-    catch (error) { outcome = "threw"; message ??= String(error); }
+    catch (error) { outcome = "threw"; message ??= String(error); errors.push({ phase: "owner-close", tree: projectError(error) }); }
     finally {
       Reflect.deleteProperty(globalThis, "__p5cSCompletedRetainedPhysicalProbeV1");
       if (mutated) {
@@ -7703,7 +7705,7 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
       }
     }
   }
-  return Object.freeze({ outcome, message, closeCount, family: owner?.family ?? null, ordinal: owner?.ordinal ?? null, value: owner?.value ?? null, pairBytesBase64: owner?.pairBytes.toString("base64") ?? null, childOpenOrder: Object.freeze([...physical.openOrder]), childStableCounts: Object.freeze({ ...physical.stableCounts }), childCloseCounts: Object.freeze({ ...physical.closeCounts }), childCloseOrder: Object.freeze([...physical.closeOrder]) });
+  return Object.freeze({ outcome, message, errors: Object.freeze(errors), closeCount, family: owner?.family ?? null, ordinal: owner?.ordinal ?? null, value: owner?.value ?? null, pairBytesBase64: owner?.pairBytes.toString("base64") ?? null, childOpenOrder: Object.freeze([...physical.openOrder]), childStableCounts: Object.freeze({ ...physical.stableCounts }), childCloseCounts: Object.freeze({ ...physical.closeCounts }), childCloseOrder: Object.freeze([...physical.closeOrder]) });
 }
 
 `
@@ -9612,6 +9614,7 @@ export function p5cSProjectProgressNestedAuthorityPairFixtureV1(..._args: readon
   const lineage = Object.freeze({ previousPairBytes, currentPairBytes: predecessorBytes, nextPairBytes });
   const closes = { status: 0, raw: 0, q: 0 };
   const target = "/p5c-s-pass-route/operations/sha256/aa/${"a".repeat(64)}/01-current-status.pair.json";
+  const projectError = (error: unknown): unknown => Object.freeze({ message: String(error), causes: Object.freeze(error instanceof AggregateError ? error.errors.map(projectError) : []) });
   const status = Object.freeze({ target, pairBytes: predecessorBytes, status: statusValue, pair: Object.freeze({}), nested: Object.freeze({}), physical: Object.freeze({}), lastValidStatus: null, assertStable(): void {}, close(): void { closes.status += 1; if (input.closeFault === "status") currentEntryFail("P5C_S_STATUS_CLOSE_FAULT"); } }) as unknown as ExactPoisonPostVisibleProgressStatusObservationV1;
   const immediateBytes = input.immediateBytesBase64 === null ? null : Buffer.from(input.immediateBytesBase64, "base64");
   const unexpectedTarget = target.replace("01-current-status", "02-unexpected-ready-publication");
@@ -9644,7 +9647,7 @@ export function p5cSProjectProgressNestedAuthorityPairFixtureV1(..._args: readon
     const embeddedSelection = (record.selection ?? record.rowSelection) as undefined | Readonly<Record<string, unknown>>;
     return Object.freeze({ outcome: "returned", row: record.row ?? embeddedSelection?.row, rawKind: input.rawKind, qState: input.qState, closes, qArguments, qAuthority, expectedQ: Object.freeze({ target, previous: previousPairBytes?.toString("base64") ?? null, current: predecessorBytes.toString("base64"), next: nextPairBytes?.toString("base64") ?? null, evidence: input.evidence }), topology: Object.freeze({ expectedTarget: input.immediateTarget, expectedBytes: input.immediateBytesBase64, publicationState: publication === null ? null : publication.state, publicationTarget: publication === null ? null : durableCandidate ? input.immediateTarget : conflictTarget, publicationBytes: publication === null ? null : durableCandidate ? expectedConflictBytes.toString("base64") : conflictBytes.toString("base64"), writerState: writer === null ? null : writer.state, writerTarget: writer === null ? null : writerTarget, writerBytes: writer === null ? null : (immediateBytes ?? predecessorBytes).toString("base64") }) });
   } catch (error) {
-    return Object.freeze({ outcome: "threw", message: String(error), rawKind: input.rawKind, qState: input.qState, closes, qArguments, qAuthority, expectedQ: Object.freeze({ target, previous: previousPairBytes?.toString("base64") ?? null, current: predecessorBytes.toString("base64"), next: nextPairBytes?.toString("base64") ?? null, evidence: input.evidence }), topology: Object.freeze({ expectedTarget: input.immediateTarget, expectedBytes: input.immediateBytesBase64, publicationState: publication === null ? null : publication.state, publicationTarget: publication === null ? null : durableCandidate ? input.immediateTarget : conflictTarget, publicationBytes: publication === null ? null : durableCandidate ? expectedConflictBytes.toString("base64") : conflictBytes.toString("base64"), writerState: writer === null ? null : writer.state, writerTarget: writer === null ? null : writerTarget, writerBytes: writer === null ? null : (immediateBytes ?? predecessorBytes).toString("base64") }) });
+    return Object.freeze({ outcome: "threw", message: String(error), errorTree: projectError(error), rawKind: input.rawKind, qState: input.qState, closes, qArguments, qAuthority, expectedQ: Object.freeze({ target, previous: previousPairBytes?.toString("base64") ?? null, current: predecessorBytes.toString("base64"), next: nextPairBytes?.toString("base64") ?? null, evidence: input.evidence }), topology: Object.freeze({ expectedTarget: input.immediateTarget, expectedBytes: input.immediateBytesBase64, publicationState: publication === null ? null : publication.state, publicationTarget: publication === null ? null : durableCandidate ? input.immediateTarget : conflictTarget, publicationBytes: publication === null ? null : durableCandidate ? expectedConflictBytes.toString("base64") : conflictBytes.toString("base64"), writerState: writer === null ? null : writer.state, writerTarget: writer === null ? null : writerTarget, writerBytes: writer === null ? null : (immediateBytes ?? predecessorBytes).toString("base64") }) });
   } finally { Reflect.deleteProperty(globalThis, "__p5cSPassRouteProbeV1"); }
 }
 
@@ -32273,7 +32276,10 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       assert.equal(outer.outcome, "returned", "copied pass wrapper captures the production close failure");
       const value = outer.value as Readonly<Record<string, unknown>>;
       assert.equal(value.outcome, "threw");
-      assert.match(String(value.message), /P5C_S_RAW_CLOSE_FAULT/);
+      assert.deepEqual(value.errorTree, {
+        message: "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain",
+        causes: [{ message: "Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:P5C_S_RAW_CLOSE_FAULT", causes: [] }],
+      }, "the production cleanup aggregate retains exactly the borrowed raw close cause");
       assert.deepEqual(value.closes, { status: 1, raw: 1, q: 1 }, "nested finalizers close every other borrowed owner when one close throws");
     } finally {
       removeFixture(root);
@@ -34041,6 +34047,7 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
         assert.equal(observed.descriptorDelta, 0, `${input.label}: locator/content/parent pins close on every path`);
         const diagnostic = observed.value as Readonly<Record<string, unknown>>;
         if (input.mutation === "none") {
+          assert.deepEqual(diagnostic.errors, [], `${input.label}: successful retained ownership has no caught failure`);
           assert.deepEqual({ outcome: diagnostic.outcome, family: diagnostic.family, ordinal: diagnostic.ordinal, value: diagnostic.value, pairBytesBase64: diagnostic.pairBytesBase64, closeCount: diagnostic.closeCount },
             { outcome: "returned", family: input.family, ordinal: input.ordinal, value: input.expected.body, pairBytesBase64: canonicalFixtureRecordV1(input.expected.pair).toString("base64"), closeCount: 1 },
             `${input.label}: owned retained NEXT yields the exact semantic body and canonical pair bytes`);
@@ -34069,7 +34076,14 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
         assert.equal(result.status, 0, result.stderr);
         const observed = JSON.parse(result.stdout) as Readonly<{ value: Readonly<Record<string, unknown>>; descriptorDelta: number }>;
         assert.equal(observed.value.outcome, "threw", `${input.label}: every retained pair/content child lifetime fault is terminal`);
-        assert.match(String(observed.value.message), /P5C_S_COMPLETED_RETAINED_CHILD_(?:OPEN|STABLE|CLOSE)_FAULT/);
+        const leaf = { message: `Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:P5C_S_COMPLETED_RETAINED_CHILD_${input.fault.kind.toUpperCase()}_FAULT:${input.fault.stage}`, causes: [] };
+        const cleanupMessage = "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain";
+        const tree = input.fault.kind !== "close" ? leaf : {
+          message: cleanupMessage,
+          causes: [input.fault.stage.endsWith("member") ? { message: cleanupMessage, causes: [leaf] } : leaf],
+        };
+        assert.deepEqual(observed.value.errors, [{ phase: input.fault.kind === "close" ? "owner-close" : "operation", tree }],
+          `${input.label}: exact retained owner phase and independently owned member cleanup nesting are preserved`);
         const openOrder = observed.value.childOpenOrder as readonly string[];
         const closeOrder = observed.value.childCloseOrder as readonly string[];
         const closeCounts = observed.value.childCloseCounts as Readonly<Record<string, number>>;

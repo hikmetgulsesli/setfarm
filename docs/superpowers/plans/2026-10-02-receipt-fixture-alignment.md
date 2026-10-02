@@ -236,3 +236,39 @@ Adjacent actual-body cleanup/capture refresh88742outer0/132P0F1465.303791ms.
 Next seven exact-title replay57469outer1/1P6F124036.889167ms: composite
 same-realm latch contamination and five cause-flattening groups genuinely RED;
 raw owned-child matrix actually passed. No patch to that passing matrix inferred.
+
+## Task 7a: Borrowed raw cleanup cause projection
+
+Same File Map; scope is the existing passRouteWrapper and single close-fault
+consumer. Original actual RED57469: cleanup aggregate hides raw sentinel.
+
+- [ ] Assert exact literal recursive cleanup tree before wrapper repair; observe
+  missing projection RED, then add child-local projector and catch errorTree.
+- [ ] Keep legacy message and status/raw/Q close1 assertions; no physical FD claim.
+- [ ] Run focused GREEN and independent exact-diff review before causal commit.
+- [ ] Remaining five runtime groups, explicit ordering mutants and fullreceipt
+  still block PR delivery; guarded clean-main build follows reviewed merge only.
+
+## Task 7b: Retained NEXT exact cause phases
+
+Same File Map; actual original RED57469 at the retained-child close assertion.
+
+- [ ] Read actual member/parent lifetime helpers and copied physical probes.
+- [ ] Assert no errors on valid cases and exact phase/cause trees for all12
+  open/stable/close faults; observe missing projection RED before repair.
+- [ ] Add local projector and preserve both catches in encounter order.
+- [ ] Retain real child per case, exact reverse/once/unopened/FD0/tree and ABA.
+- [ ] Focused GREEN and independent exact diff review before causal commit.
+  Member close has two aggregate levels; parent close has one. Neither qualifies
+  fullreceipt/ALL/host cutover or eliminates pending ordering witnesses.
+
+Task7a actual: assertion-first8325outer1 missing projection; wrapper repair
+96764outer0/1P0F1388.299416ms. Requirements M1 clarified: one cause cannot prove
+ordering. Task7b assertion-first42161outer1 missing empty error array;
+minimal two-catch projection55460outer0/1P0F3920.458333ms. All outputs read;
+no cancel/skip. Combined refresh and exact independent review follow before
+commit; these two narrow consumers do not qualify broader execution.
+
+Task7a/7b combined59347outer0/2P0F4316.528708ms, zero cancel/skip.
+Independent actual diff C0/I0/M0 at testSHA
+74ad0a7860681f23d65b2468a07f2642e13572194f7f698a4c6227beced1cced.
