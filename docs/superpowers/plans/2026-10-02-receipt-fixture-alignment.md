@@ -14,7 +14,9 @@ assertions; align hooks to delivered consume-before-close/drain-all cleanup.
 
 - Root sole source/Git writer; agents read-only; one fix/receipt-fixture-alignment branch.
 - Preserve every old root/journal/build/dependency/worktree and user dirty file.
-- No production/package/dependency changes, native/service/DB mutation or guard bypass.
+- No application production/package/dependency changes, native/host-service/primary-DB mutation or guard bypass.
+- Task9 permits only the existing ordinary private test constructor's fixed receipt mode;
+  one fresh owned private cluster requires separate exact-epoch pre-effect review.
 - Original outerUNAVAILABLE/ALLUNQUALIFIED never substitutes for current qualification.
 - Fixed Node26.4.0, unset ambient PG/admin/NODE_OPTIONS/NODE_PATH on focused tests.
 - No protected or host acceptance inferred from copied fixtures or ordinary build.
@@ -23,6 +25,8 @@ assertions; align hooks to delivered consume-before-close/drain-all cleanup.
 
 Modify only tests/internal-production/baseline-post-handoff-receipt-v1.test.ts
 plus this plan and its spec. Consumers already exist; no production interface changes.
+Task9 additionally modifies scripts/run-private-postgres-tests.mjs (fixed mode only)
+and scripts/__tests__/private-postgres-test-cluster.test.js (existing boundaries).
 
 ## Task 1: Exact export ABI
 
@@ -540,3 +544,31 @@ adjacent87533outer0/2P0F31620.821458ms; both zero cancel/skip/todo.
 Independent entire diff C0/I0/M0 at testSHA
 e22d2a81efe7df81290024a7c0adf8c5b40830b4a134252052f6302f1ea74791.
 Root entire test/docs diff read and git diff --check0. Not full receipt/ALL.
+
+## Task 9: Fixed complete receipt mode, before private invocation
+
+Same root writer/branch; causal relation and four-path refinement in spec.
+Consumes planPrivatePostgresTestsV1({root,port,mode}) and existing wrapper CLI.
+Produces receipt mode's immutable exact isolated-runner vector, no new API.
+
+- [ ] Add literal planned receipt vector test; retain other vectors/initdb/server.
+  Add receipt to controlled wrapper boundary cases and independent literal argv:
+  `['--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
+  '--import','tsx','--test','--test-concurrency=1',
+  'tests/internal-production/baseline-post-handoff-receipt-v1.test.ts']`.
+- [ ] Add receipt extra/argument/alias negative CLI tests. Actual RED must be
+  missing fixed mode/dispatch, never loader/setup failure.
+- [ ] Minimal implementation: add receipt to both closed mode sets and fixed
+  planner branch; no main lifecycle/capability/PG/default graph changes.
+- [ ] Run Node26 script cluster and journal suites; controlled normal/nonzero/
+  journal-loss/retained-DB scenarios prove unchanged fail-closed lifecycle.
+- [ ] Independent exact diff review, root full diff/read/contracts/diff check;
+  commit scoped changes. No full receipt qualification yet.
+- [ ] Fresh clean HEAD/tree/dependency/host/resource/primary-readonly preflight,
+  independent per-invocation review of ONE receipt mode; root executes:
+  `/opt/homebrew/Cellar/node/26.4.0/bin/node scripts/run-private-postgres-tests.mjs receipt`
+  with scrubbed PG/Node ambient environment, never a test flag/loader injection.
+- [ ] Track actual outer handle and complete strict journal; require entire
+  receipt suite exit0 plus initdb/test/server exit+close, six EOF, ordered two
+  quiescence samples/admin end/server close and actual outer0. Retain root.
+  Nonzero/new RED gets causal investigation; no focused stitching or adoption.

@@ -20,6 +20,13 @@ underlying scenarios. First slice: exact exports and P4a/Q/resume/contention set
 - Create this spec and same-date receipt-fixture-alignment implementation plan.
 - Production, package/dependencies, generated artifacts, DB/native/services unchanged.
 
+Task9 causal File Map refinement: modify only the ordinary test constructor
+scripts/run-private-postgres-tests.mjs and its existing boundary test
+scripts/__tests__/private-postgres-test-cluster.test.js, plus this spec/plan.
+Application production source, packages, dependencies and host services remain
+unchanged. A NEW constructor-owned private test cluster is ordinary verification,
+not authority to mutate primary PostgreSQL or reuse any old cluster.
+
 ## Contracts
 
 Export inventory:59 total, five existing exact cold ports, exactly one
@@ -370,6 +377,39 @@ A separate status/close baseline/phase-drop pair proves owner-close phase loss
 too: all four child owners close once in reverse order and six post-close methods
 refuse. This is runtime diagnostic transport qualification, not a production
 cause-order mutant, disk-zero or broader acceptance claim.
+
+## Causal verification refinement: fixed complete receipt dispatch
+
+Full changed receipt-suite verification is required before this branch's PR.
+The delivered private constructor accepts only findings/all/readonly-verifiers.
+All additionally requires a guarded clean-main dist build and dispatches unrelated
+test groups; an ad-hoc process/URL override would evade the reviewed constructor.
+Select one closed receipt mode in the existing constructor instead. Standing
+owner authority and the user's instruction to choose and continue cover this
+causally necessary ordinary verification refinement, not unrelated functionality.
+
+Both planner and CLI accept receipt and no extra arguments. Planner returns the
+immutable exact Node argument vector:
+--import, tsx, scripts/run-isolated-postgres-tests.ts, --, node, --import, tsx,
+--test, --test-concurrency=1,
+tests/internal-production/baseline-post-handoff-receipt-v1.test.ts.
+No pattern, arbitrary command/path, npm graph or production override is added.
+Existing findings/all/readonly-verifiers vectors and every precondition, journal,
+credential redaction, identity, captured-child, quiescence and shutdown gate stay
+unchanged. P3's current-byte projection/FD3 authority and own private DB cleanup
+remain the only test runner. Unknown descendant/global filesystem state remains
+unknown; ordinary quiescence never establishes protected admission or cutover.
+
+Test RED before implementation: literal exact planned vector, actual CLI dispatch
+at controlled process/SQL boundaries for normal/nonzero/retained-DB/journal loss,
+and receipt plus extra/malformed modes refused before any native effect. Preserve
+all existing boundary scenarios. These use actual wrapper/journal code but virtual
+PG/password boundaries and cannot qualify a real run. After focused/adjacent
+GREEN and independent exact-source review, commit clean source. Fresh resource/
+host/epoch pre-effect audit must explicitly admit ONE new receipt invocation.
+Retain its root/journal and actual managed outer handle through definite close;
+read the complete journal and suite output. No stitching focused passes, no old
+outer adoption, no success on nonzero, missing EOF or incomplete closure.
 
 Fresh ordinal2 paired case physically closes root, records completion, then
 throws an exact earlier root-close sentinel. Final gated callback must still run;
