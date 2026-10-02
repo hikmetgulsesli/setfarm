@@ -294,3 +294,36 @@ Independent requirements C0/I0/M0; actual effect review pending before commit.
 Task7c final indentation-only refresh36776outer0/1P0F37734.043709ms,
 zero cancel/skip. Independent final exact diff C0/I0/M0 at testSHA
 5449a73bb5eb67093f9b4d69a17a8705796fa1e44182a657267d6bfe06a69c59.
+
+## Task 7d: Recovery graph physical case isolation
+
+Same File Map; original actual RED57469 construction aggregate flattening and
+source-backed shared-child sticky admission contamination.
+
+- [ ] Assert exact ordered phase/cause trees first, observe missing projection RED.
+- [ ] Fresh physical fixture ROOT/seed and one actual child per each14definition.
+- [ ] Local wrapper projector preserves operation/owner-close errors; no latchreset.
+- [ ] Retain exact graph ABI/hash/binding/mutation/tree/domain/release/FD0 checks;
+  exact ENOENT primary target and both nested cleanup sentinels replace flattening.
+- [ ] Focused GREEN and independent exact-diff review before causal commit.
+  Remaining runtime groups/probe mutants/fullreceipt still block delivery.
+
+Task7d reached-fence refinement: isolated3816outer1/5371.938875ms genuinely
+rejects visibility ABA at root-inventory change caused by fixture backup. Move
+that member backup outside observed root but within its fresh private fixture;
+assert equal bytes/different inode/unchanged inventory before exact pointer
+generation refusal. Preserve physical restore/tree/FD0. Root-only test change.
+
+Task7d actual ledger:7322outer1 missing projection1537.945667ms; wrapper-only
+10566outer1 obsolete flat regex1533.075583ms after exact paired tree passed;
+71245outer1 visibility mutation not applied1535.042333ms proves sticky shared
+realm contamination. Fresh14root replay3816 reached inventory confound RED;
+unconfounded pointer ABA repair90009outer0/1P0F11680.734667ms, zero cancel/skip.
+Exact primary OS ENOENT target, ordered aggregates, refusal dictionary, real
+mutation, canonical graph/binding/restore/release/domain/FD0 checks executed.
+Independent final effect review and exact repeat remain pending before commit.
+
+Task7d repeat76686outer0/1P0F11204.078625ms, then explicit out-of-inventory
+backup-absent witness final65924outer0/1P0F11698.028459ms, zero cancel/skip.
+Independent entire exact diff C0/I0/M0 at testSHA
+0b612367c584504dd6b3a11660179be2b7fb3fd124544dbaffaab30df7749071.

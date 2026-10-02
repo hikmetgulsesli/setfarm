@@ -195,3 +195,32 @@ unopened-zero checks. Copied wrapper preserves both operation and owner-close
 catches with ordered recursive trees: valid[], open/stable exact selected leaf,
 close exactly one cleanup aggregate with selected leaf. No DTO-only substitution,
 new import identity alone, latch reset, retry or production change.
+
+## Causal refinement: recovery graph physical case isolation
+
+Original actual replay57469 recovery graph RED hides the missing terminal-run
+primary under an acquisition/cleanup aggregate. Fourteen rows share one child;
+its intentional cleanup uncertainty also blocks later rows. Move only existing
+pure definitions outside the case loop. Materialize each exact graph, crossing
+bait and optional hardlink within a fresh fixture root; invoke one actual child
+per case. Keep all graph canonical hashes, exact 18-key ABI, domain separation,
+projected values, mutation/restoration, release binding/counts and per-child FD0.
+
+Copied wrapper preserves both existing catches as ordered operation/owner-close
+recursive trees. Valid[], nominated plain refusal leaves for crossings/ABA/link,
+missing-target exact OS ENOENT leaf bound to input.missingTarget. Construction
+cleanup loss requires exact primary-first acquisition aggregate then cleanup
+aggregate containing its internal construction sentinel; returned middle close
+requires owner-close cleanup aggregate with returned sentinel. Keep later close
+count witnesses, not first-error suppression. These rows acquire no auxiliary
+external/CAS/Task12 endpoint owners, so no broad finalizer redesign is needed.
+
+Fresh isolated replay3816 exposed a pre-existing visibility-ABA confound: the
+backup beside the pointer adds a name to the observed root, so its inventory
+fence refuses before the pointer-generation fence. Move only that private member
+backup outside the observed recovery root, to the fixture-owned successor-root
+sibling. Before asserting stability, report and require equal bytes, different
+inode and unchanged observed root names. Keep actual same-path replacement and
+exact restoration. This is causally necessary to test the nominated pointer ABA,
+not generic inventory refusal. Guard identities compare dev/ino/mode, not directory
+mtime; no inventory gate weakening or production change is authorized.

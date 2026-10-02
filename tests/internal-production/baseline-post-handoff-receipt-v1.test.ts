@@ -7987,23 +7987,27 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
   const task12Endpoints: ExactPoisonPostVisibleExternalEndpointOwnerV1[] = [];
   const casEndpoints: ExactPoisonPostVisibleExternalEndpointOwnerV1[] = [];
   let outcome:"returned"|"threw"="returned"; let message:string|null=null; let closeCount=0; let mutationApplied=false; let missingApplied=false;
-  const memberBackup=input.mutationTarget+".p5c-s-recovery-owner-aba-backup";
+  const projectError = (error: unknown): unknown => Object.freeze({ message: String(error), causes: Object.freeze(error instanceof AggregateError ? error.errors.map(projectError) : []) });
+  const errors: { phase: "operation" | "owner-close"; tree: unknown }[] = [];
+  const memberBackup=input.successorRoot+".p5c-s-recovery-owner-member-aba-backup";
+  let memberBytesEqual=false; let memberGenerationChanged=false; let visibilityInventoryUnchanged=false;
+  const visibilityInventoryBefore=input.mutation==="visibility-member-aba"?JSON.stringify([...readdirSync(path.dirname(input.mutationTarget))].sort()):null;
   const parentBackup=path.dirname(input.mutationTarget)+".p5c-s-recovery-owner-aba-backup";
   const missingBackup=input.successorRoot+".p5c-s-recovery-owner-missing-backup";
   try {
     if (input.missingTarget){renameSync(input.missingTarget,missingBackup);missingApplied=true;}
     owner=await observeInternalProductionRecoverySourceBootstrapStatusAtRootV1(authority,operation) as unknown as typeof owner;
     if (owner===null) currentEntryFail("P5C_S_RECOVERY_AT_ROOT_OWNER_MISSING");
-    if(input.mutation==="visibility-member-aba"){const bytes=readFileSync(input.mutationTarget);renameSync(input.mutationTarget,memberBackup);writeFileSync(input.mutationTarget,bytes,{flag:"wx",mode:0o600});mutationApplied=true;}
+    if(input.mutation==="visibility-member-aba"){const bytes=readFileSync(input.mutationTarget);renameSync(input.mutationTarget,memberBackup);writeFileSync(input.mutationTarget,bytes,{flag:"wx",mode:0o600});mutationApplied=true;memberBytesEqual=readFileSync(input.mutationTarget).equals(readFileSync(memberBackup));memberGenerationChanged=lstatSync(input.mutationTarget).ino!==lstatSync(memberBackup).ino;visibilityInventoryUnchanged=JSON.stringify([...readdirSync(path.dirname(input.mutationTarget))].sort())===visibilityInventoryBefore;}
     if(input.mutation==="pair-close-parent-aba"){const parent=path.dirname(input.mutationTarget);renameSync(parent,parentBackup);mkdirSync(parent,{mode:0o700});for(const name of readdirSync(parentBackup))linkSync(path.join(parentBackup,name),path.join(parent,name));mutationApplied=true;}
     owner.assertStable();
     if(input.observeExternal){const arrow=EXACT_POISON_POST_VISIBLE_EXTERNAL_ARROWS_V1.find((candidate)=>candidate.family==="recovery-source"&&candidate.ordinal===(input.externalOrdinal??0))!;external=await observeExactPoisonPostVisibleExternalRawPublicationNoWriteV1(authority,operation,arrow,owner.value,null);external.assertStable();owner.assertStable();}
     if(input.observeTask12Only){const ordinal=owner.value.state==="pending-input"?0:owner.value.state==="prepared"?1:owner.value.state==="terminal"?2:-1;if(ordinal<0)currentEntryFail("P5C_S_RECOVERY_TASK12_STATE_UNAVAILABLE");const arrow=EXACT_POISON_POST_VISIBLE_EXTERNAL_ARROWS_V1.find((candidate)=>candidate.family==="recovery-source"&&candidate.ordinal===ordinal)!;const descriptors=EXACT_POISON_POST_VISIBLE_EXTERNAL_ENDPOINT_DESCRIPTORS_V1[\`recovery-source:\${ordinal}:\${arrow.prior}:\${arrow.next}\`]!;for(const descriptor of descriptors.filter((candidate)=>candidate.policy==="task12-receipt")){const endpoint=await observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1(authority,operation,arrow,owner.value,descriptor,null);task12Endpoints.push(endpoint);endpoint.assertStable();owner.assertStable();}}
     if(input.observeCasOnly){const ordinal=owner.value.state==="prepared"?1:owner.value.state==="terminal"?2:-1;if(ordinal<0)currentEntryFail("P5C_S_RECOVERY_CAS_STATE_UNAVAILABLE");const arrow=EXACT_POISON_POST_VISIBLE_EXTERNAL_ARROWS_V1.find((candidate)=>candidate.family==="recovery-source"&&candidate.ordinal===ordinal)!;const descriptors=EXACT_POISON_POST_VISIBLE_EXTERNAL_ENDPOINT_DESCRIPTORS_V1[\`recovery-source:\${ordinal}:\${arrow.prior}:\${arrow.next}\`]!;for(const descriptor of descriptors.filter((candidate)=>candidate.policy==="expected-predecessor-cas")){const endpoint=await observeExactPoisonPostVisibleExpectedPredecessorEndpointNoWriteV1(authority,operation,arrow,owner.value,descriptor);casEndpoints.push(endpoint);endpoint.assertStable();owner.assertStable();}}
-  } catch(error){outcome="threw";message=String(error);}
+  } catch(error){outcome="threw";message=String(error);errors.push({phase:"operation",tree:projectError(error)});}
   finally {
     try { for(let index=casEndpoints.length-1;index>=0;index-=1)casEndpoints[index]!.close();for(let index=task12Endpoints.length-1;index>=0;index-=1)task12Endpoints[index]!.close();if(external!==null)external.close();if(owner!==null){closeCount+=1;owner.close();if(input.closeFault)currentEntryFail("P5C_S_RECOVERY_AT_ROOT_CLOSE_FAULT");} }
-    catch(error){outcome="threw";message??=String(error);}
+    catch(error){outcome="threw";message??=String(error);errors.push({phase:"owner-close",tree:projectError(error)});}
     finally {
       Reflect.deleteProperty(globalThis,"__p5cSRecoveryAtRootProbeV1");
       Reflect.deleteProperty(globalThis,"__p5cSRecoveryAtRootDatabaseProbeV1");
@@ -8013,7 +8017,7 @@ export async function p5cSReadRetainedMigrationFixtureV1(..._args: readonly unkn
     }
   }
   const summarize=(endpoint:ExactPoisonPostVisibleExternalEndpointOwnerV1)=>Object.freeze({material:endpoint.material,role:endpoint.role,policy:endpoint.policy,target:endpoint.target,expectedBytesBase64:endpoint.expectedBytes.toString("base64"),publication:isPlainRecord(endpoint.publication)?endpoint.publication.state:null,writer:isPlainRecord(endpoint.writer)?endpoint.writer.state:null,...(isPlainRecord(endpoint.database)?{database:Object.freeze({state:endpoint.database.state,expectedProjectionBase64:Buffer.isBuffer(endpoint.database.expectedProjection)?endpoint.database.expectedProjection.toString("base64"):null,artifactCount:endpoint.database.artifactCount,laterArtifactCount:endpoint.database.laterArtifactCount})}:{}),...(isPlainRecord(endpoint.cas)?{cas:Object.freeze({state:endpoint.cas.state,route:endpoint.cas.route,predecessorBytesBase64:Buffer.isBuffer(endpoint.cas.predecessorBytes)?endpoint.cas.predecessorBytes.toString("base64"):null,successorBytesBase64:Buffer.isBuffer(endpoint.cas.successorBytes)?endpoint.cas.successorBytes.toString("base64"):null,laterFixedCount:endpoint.cas.laterFixedCount})}:{})});
-  return Object.freeze({outcome,message,value:owner?.value??null,external:external===null?null:Object.freeze({state:external.state,family:external.family,activeEndpointOrdinal:external.activeEndpointOrdinal,current:external.current,endpoints:Object.freeze(external.endpoints.map(summarize))}),task12Endpoints:Object.freeze(task12Endpoints.map(summarize)),casEndpoints:Object.freeze(casEndpoints.map(summarize)),closeCount,releaseCalls:releaseState.calls,releaseInputs:Object.freeze([...releaseState.inputs]),databaseObserverCalls:databaseState.calls,databaseObserverInputs:Object.freeze([...databaseState.inputs]),selectedOperationRef:operationRef,selectedOperationHash:operationHash,mutationApplied,internalCloseCalls:Object.freeze({...releaseProbe.internalCloseCalls}),events:Object.freeze([...releaseProbe.events])});
+  return Object.freeze({outcome,message,errors:Object.freeze(errors),value:owner?.value??null,external:external===null?null:Object.freeze({state:external.state,family:external.family,activeEndpointOrdinal:external.activeEndpointOrdinal,current:external.current,endpoints:Object.freeze(external.endpoints.map(summarize))}),task12Endpoints:Object.freeze(task12Endpoints.map(summarize)),casEndpoints:Object.freeze(casEndpoints.map(summarize)),closeCount,releaseCalls:releaseState.calls,releaseInputs:Object.freeze([...releaseState.inputs]),databaseObserverCalls:databaseState.calls,databaseObserverInputs:Object.freeze([...databaseState.inputs]),selectedOperationRef:operationRef,selectedOperationHash:operationHash,mutationApplied,memberBytesEqual,memberGenerationChanged,visibilityInventoryUnchanged,internalCloseCalls:Object.freeze({...releaseProbe.internalCloseCalls}),events:Object.freeze([...releaseProbe.events])});
 }
 
 `
@@ -27190,27 +27194,27 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
   });
 
   it("P5c-S owns the complete at-root recovery graph through terminal projection and cleanup", async () => {
-    const root = createFixture();
-    try {
-      instrumentPhase5cProgressFixtureV1(root);
-      const status = phase5cSCanonicalProgressStatusFixtureV1("canary_running/running");
-      const definitions = Object.freeze([
-        Object.freeze({ label: "prepared-a", variant: "A" as const, state: "prepared" as const, mutation: "none" as const, fault: "none" as const }),
-        Object.freeze({ label: "terminal-clean-a", variant: "A" as const, state: "terminal" as const, mutation: "none" as const, fault: "none" as const }),
-        Object.freeze({ label: "terminal-clean-b", variant: "B" as const, state: "terminal" as const, mutation: "none" as const, fault: "none" as const }),
-        Object.freeze({ label: "missing-terminal-run", variant: "A" as const, state: "terminal" as const, mutation: "none" as const, fault: "missing" as const }),
-        Object.freeze({ label: "missing-terminal-run-with-cleanup-fault", variant: "B" as const, state: "terminal" as const, mutation: "none" as const, fault: "construction-cleanup" as const }),
-        Object.freeze({ label: "visibility-member-aba", variant: "A" as const, state: "terminal" as const, mutation: "visibility-member-aba" as const, fault: "none" as const }),
-        Object.freeze({ label: "pair-close-parent-aba", variant: "B" as const, state: "terminal" as const, mutation: "pair-close-parent-aba" as const, fault: "none" as const }),
-        Object.freeze({ label: "crossed-release", variant: "A" as const, state: "terminal" as const, mutation: "none" as const, fault: "release" as const }),
-        Object.freeze({ label: "crossed-terminal-source-reservation", variant: "A" as const, state: "terminal" as const, mutation: "none" as const, fault: "source-reservation" as const }),
-        Object.freeze({ label: "crossed-terminal-run-reservation", variant: "B" as const, state: "terminal" as const, mutation: "none" as const, fault: "run-reservation" as const }),
-        Object.freeze({ label: "crossed-pair-close-fence", variant: "A" as const, state: "terminal" as const, mutation: "none" as const, fault: "pair-close-fence" as const }),
-        Object.freeze({ label: "crossed-pair-close-composite", variant: "B" as const, state: "terminal" as const, mutation: "none" as const, fault: "pair-close-composite" as const }),
-        Object.freeze({ label: "fixed-visibility-member-nlink2", variant: "A" as const, state: "terminal" as const, mutation: "none" as const, fault: "nlink2" as const }),
-        Object.freeze({ label: "returned-middle-close-fault", variant: "B" as const, state: "terminal" as const, mutation: "none" as const, fault: "returned-cleanup" as const }),
-      ]);
-      const inputs = definitions.map((definition, index) => {
+    const definitions = Object.freeze([
+      Object.freeze({ label: "prepared-a", variant: "A" as const, state: "prepared" as const, mutation: "none" as const, fault: "none" as const }),
+      Object.freeze({ label: "terminal-clean-a", variant: "A" as const, state: "terminal" as const, mutation: "none" as const, fault: "none" as const }),
+      Object.freeze({ label: "terminal-clean-b", variant: "B" as const, state: "terminal" as const, mutation: "none" as const, fault: "none" as const }),
+      Object.freeze({ label: "missing-terminal-run", variant: "A" as const, state: "terminal" as const, mutation: "none" as const, fault: "missing" as const }),
+      Object.freeze({ label: "missing-terminal-run-with-cleanup-fault", variant: "B" as const, state: "terminal" as const, mutation: "none" as const, fault: "construction-cleanup" as const }),
+      Object.freeze({ label: "visibility-member-aba", variant: "A" as const, state: "terminal" as const, mutation: "visibility-member-aba" as const, fault: "none" as const }),
+      Object.freeze({ label: "pair-close-parent-aba", variant: "B" as const, state: "terminal" as const, mutation: "pair-close-parent-aba" as const, fault: "none" as const }),
+      Object.freeze({ label: "crossed-release", variant: "A" as const, state: "terminal" as const, mutation: "none" as const, fault: "release" as const }),
+      Object.freeze({ label: "crossed-terminal-source-reservation", variant: "A" as const, state: "terminal" as const, mutation: "none" as const, fault: "source-reservation" as const }),
+      Object.freeze({ label: "crossed-terminal-run-reservation", variant: "B" as const, state: "terminal" as const, mutation: "none" as const, fault: "run-reservation" as const }),
+      Object.freeze({ label: "crossed-pair-close-fence", variant: "A" as const, state: "terminal" as const, mutation: "none" as const, fault: "pair-close-fence" as const }),
+      Object.freeze({ label: "crossed-pair-close-composite", variant: "B" as const, state: "terminal" as const, mutation: "none" as const, fault: "pair-close-composite" as const }),
+      Object.freeze({ label: "fixed-visibility-member-nlink2", variant: "A" as const, state: "terminal" as const, mutation: "none" as const, fault: "nlink2" as const }),
+      Object.freeze({ label: "returned-middle-close-fault", variant: "B" as const, state: "terminal" as const, mutation: "none" as const, fault: "returned-cleanup" as const }),
+    ]);
+    for (const [index, definition] of definitions.entries()) {
+      const root = createFixture();
+      try {
+        instrumentPhase5cProgressFixtureV1(root);
+        const status = phase5cSCanonicalProgressStatusFixtureV1("canary_running/running");
         const successorRoot = path.join(path.dirname(root), "data/internal-production-baseline/p5c-s-recovery-at-root", String(index));
         const pairCloseCross = definition.fault === "source-reservation"
           ? "source"
@@ -27280,7 +27284,7 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
           ? phase5cSSeedRecoveryAtRootFixtureV1(path.join(path.dirname(root), "data/internal-production-baseline/p5c-s-recovery-at-root-release-bait", String(index)), definition.variant === "A" ? "B" : "A").release!
           : seeded.release ?? Object.freeze({});
         const mutationTarget = definition.mutation === "pair-close-parent-aba" ? seeded.pairCloseTarget! : seeded.visibilityPointerTarget;
-        return Object.freeze({
+        const input = Object.freeze({
           ...definition,
           status,
           successorRoot,
@@ -27297,20 +27301,39 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
           }),
           treeBefore: filesystemTreeSnapshot(successorRoot),
         });
-      });
-      const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const count=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const rows=[];for(const input of ${JSON.stringify(inputs.map(({ treeBefore: _treeBefore, expected: _expected, expectedReleaseInput: _expectedReleaseInput, ...input }) => input))}){const before=count();const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(input);rows.push({label:input.label,value,descriptorDelta:count()-before})}process.stdout.write(JSON.stringify(rows))})()`);
-      assert.equal(result.status, 0, result.stderr);
-      const observed = JSON.parse(result.stdout) as readonly Readonly<Record<string, unknown>>[];
-      assert.equal(observed.length, inputs.length);
-      for (const [index, input] of inputs.entries()) {
-        const outer = observed[index]!;
+        const { treeBefore: _treeBefore, expected: _expected, expectedReleaseInput: _expectedReleaseInput, ...childInput } = input;
+        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const count=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const before=count();const value=await m.p5cSObserveRecoverySourceAtRootFixtureV1(${JSON.stringify(childInput)});process.stdout.write(JSON.stringify({label:${JSON.stringify(input.label)},value,descriptorDelta:count()-before}))})()`);
+        assert.equal(result.status, 0, result.stderr);
+        const outer = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
         assert.equal(outer.label, input.label);
         assert.equal(outer.descriptorDelta, 0, `${input.label}: every partial or returned recovery owner closes all descriptors`);
         assert.deepEqual(filesystemTreeSnapshot(input.successorRoot), input.treeBefore, `${input.label}: physical recovery graph is restored byte-for-byte after the probe`);
+        assert.equal(existsSync(input.successorRoot + ".p5c-s-recovery-owner-member-aba-backup"), false, `${input.label}: fixture-owned out-of-inventory member backup is restored, not left hidden`);
         const diagnostic = outer.value as Readonly<Record<string, unknown>>;
         const valid = input.fault === "none" && input.mutation === "none";
         assert.equal(diagnostic.outcome, valid ? "returned" : "threw", `${input.label}: the actual owned AtRoot reader accepts only one stable complete graph`);
         assert.equal(diagnostic.mutationApplied, input.mutation !== "none", `${input.label}: each ABA refusal follows the requested physical generation replacement`);
+        if (input.mutation === "visibility-member-aba") assert.deepEqual({ bytesEqual: diagnostic.memberBytesEqual, generationChanged: diagnostic.memberGenerationChanged, inventoryUnchanged: diagnostic.visibilityInventoryUnchanged },
+          { bytesEqual: true, generationChanged: true, inventoryUnchanged: true }, `${input.label}: pointer-generation refusal is not confounded by changed bytes or observed inventory`);
+        const cleanupMessage = "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain";
+        const missingLeaf = { message: `Error: ENOENT: no such file or directory, open '${input.missingTarget}'`, causes: [] };
+        const cleanupTree = { message: cleanupMessage, causes: [{ message: `Error: P5C_S_RECOVERY_AT_ROOT_INTERNAL_CLOSE_FAULT:${input.fault === "construction-cleanup" ? "construction" : "returned"}`, causes: [] }] };
+        const refusalMessages: Readonly<Record<string, string>> = {
+          "visibility-member-aba": "recovery-source visibility pointer changed while held",
+          "pair-close-parent-aba": "Task12 receipt directory chain changed",
+          "release": "recovery-source fence release is crossed",
+          "source-reservation": "recovery-source terminal source run is crossed",
+          "run-reservation": "recovery-source terminal run launch is crossed",
+          "pair-close-fence": "recovery-source target reservation pair-close fence is crossed",
+          "pair-close-composite": "recovery-source target reservation pair-close launch composite is crossed",
+          "nlink2": "recovery-source visibility pointer is not a one-link fixed recovery record",
+        };
+        const tree = input.fault === "missing" ? missingLeaf
+          : input.fault === "construction-cleanup" ? { message: "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt acquisition and cleanup failed", causes: [missingLeaf, cleanupTree] }
+            : input.fault === "returned-cleanup" ? cleanupTree
+              : { message: `Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:${refusalMessages[input.mutation !== "none" ? input.mutation : input.fault]}`, causes: [] };
+        assert.deepEqual(diagnostic.errors, valid ? [] : [{ phase: input.fault === "returned-cleanup" ? "owner-close" : "operation", tree }],
+          `${input.label}: exact recovery refusal and ordered primary/cleanup causes are retained`);
         if (valid || input.fault === "returned-cleanup" || input.mutation !== "none") {
           assert.deepEqual(diagnostic.value, input.expected, `${input.label}: terminal output is projected only from the pinned recovery graph`);
           assert.equal(diagnostic.closeCount, 1, `${input.label}: each returned recovery owner closes exactly once`);
@@ -27327,16 +27350,10 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
         if (input.fault === "returned-cleanup") {
           assert.ok(internalCloseCalls.returned >= 3,
             `${input.label}: a middle returned-owner close fault cannot stop later reverse cleanup`);
-          assert.match(String(diagnostic.message), /P5C_S_RECOVERY_AT_ROOT_INTERNAL_CLOSE_FAULT:returned/,
-            `${input.label}: returned close reports the first internal child cleanup error`);
         }
         if (input.fault === "construction-cleanup") {
           assert.ok(internalCloseCalls.construction >= 3,
             `${input.label}: a middle construction-cleanup fault cannot stop later reverse cleanup`);
-          assert.match(String(diagnostic.message), /ENOENT|no such file|terminal|missing/i,
-            `${input.label}: the primary read failure survives cleanup failures`);
-          assert.doesNotMatch(String(diagnostic.message), /P5C_S_RECOVERY_AT_ROOT_INTERNAL_CLOSE_FAULT/,
-            `${input.label}: cleanup errors never replace the primary construction error`);
         }
         if (input.fault === "source-reservation" || input.fault === "run-reservation" || input.fault === "pair-close-fence" || input.fault === "pair-close-composite" || input.fault === "nlink2") {
           assert.equal(diagnostic.value, null, `${input.label}: a crossed or multiply-linked fixed graph transfers no projected recovery value`);
@@ -27344,10 +27361,10 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
         }
         assert.notEqual((diagnostic.value as Readonly<Record<string, unknown>> | null)?.operationHash, diagnostic.selectedOperationHash,
           `${input.label}: the recovery-bootstrap operation domain never aliases the selected Task12 operation`);
-        if (!valid) assert.match(String(diagnostic.message), /recovery|terminal|release|stable|changed|crossed|fault|member|directory|unavailable/i);
+
+      } finally {
+        removeFixture(root);
       }
-    } finally {
-      removeFixture(root);
     }
   });
 
