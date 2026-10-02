@@ -9032,16 +9032,18 @@ export function p5cSProjectProgressNestedAuthorityPairFixtureV1(..._args: readon
   let opened: Awaited<ReturnType<typeof openExactPoisonPostVisibleProgressStatusV1>> | null = null;
   let outcome: "returned" | "threw" = "returned";
   let message: string | null = null;
+  const projectError = (error: unknown): unknown => Object.freeze({ message: String(error), causes: Object.freeze(error instanceof AggregateError ? error.errors.map(projectError) : []) });
+  const errors: { phase: "operation" | "owner-close"; tree: unknown }[] = [];
   try {
     opened = await openExactPoisonPostVisibleProgressStatusV1(authority);
     opened.assertStable();
-  } catch (error) { outcome = "threw"; message = String(error); }
+  } catch (error) { outcome = "threw"; message = String(error); errors.push({ phase: "operation", tree: projectError(error) }); }
   finally {
     try { opened?.close(); }
-    catch (error) { outcome = "threw"; message ??= String(error); }
+    catch (error) { outcome = "threw"; message ??= String(error); errors.push({ phase: "owner-close", tree: projectError(error) }); }
     finally { Reflect.deleteProperty(globalThis, "__p5cSProgressStatusCompositionProbeV1"); }
   }
-  return Object.freeze({ outcome, message, value: opened, calls, stableCounts: Object.freeze({ ...stableCounts }), closeCounts: Object.freeze({ ...closeCounts }), closeOrder });
+  return Object.freeze({ outcome, message, errors: Object.freeze(errors), value: opened, calls, stableCounts: Object.freeze({ ...stableCounts }), closeCounts: Object.freeze({ ...closeCounts }), closeOrder });
 }
 
 `
@@ -26387,22 +26389,32 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
   });
 
   it("P5c-S retains every file-backed nested route through the composite status lifetime", async () => {
-    const root = createFixture();
-    try {
-      instrumentPhase5cProgressFixtureV1(root);
-      const operationHash = "a".repeat(64);
-      const fileBacked = PHASE5C_S_NESTED_AUTHORITIES_V1.filter((descriptor) => descriptor.recordKind !== null);
-      const rowIndex = (row: string): number => PHASE5C_S_NONBLOCKED_ROWS_V1.findIndex((entry) => entry.row === row);
-      const projectPair = (descriptor: typeof PHASE5C_S_NESTED_AUTHORITIES_V1[number], status: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> => {
-        let cursor: unknown = status;
-        for (const segment of descriptor.sourcePath.split(".")) cursor = (cursor as Readonly<Record<string, unknown>>)[segment];
-        assert.equal(typeof cursor, "object", `${descriptor.name}: canonical composite status exposes its source path`);
-        const source = cursor as Readonly<Record<string, unknown>>;
-        return Object.freeze(Object.fromEntries(descriptor.pairKeys.map((key, index) => [key, source[descriptor.statusKeys[index]!]])));
-      };
-      const inputs: Readonly<Record<string, unknown>>[] = [];
-      const rootRepresentative = new Set<string>();
-      for (const [descriptorIndex, descriptor] of fileBacked.entries()) {
+    const operationHash = "a".repeat(64);
+    const fileBacked = PHASE5C_S_NESTED_AUTHORITIES_V1.filter((descriptor) => descriptor.recordKind !== null);
+    const rowIndex = (row: string): number => PHASE5C_S_NONBLOCKED_ROWS_V1.findIndex((entry) => entry.row === row);
+    const projectPair = (descriptor: typeof PHASE5C_S_NESTED_AUTHORITIES_V1[number], status: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> => {
+      let cursor: unknown = status;
+      for (const segment of descriptor.sourcePath.split(".")) cursor = (cursor as Readonly<Record<string, unknown>>)[segment];
+      assert.equal(typeof cursor, "object", `${descriptor.name}: canonical composite status exposes its source path`);
+      const source = cursor as Readonly<Record<string, unknown>>;
+      return Object.freeze(Object.fromEntries(descriptor.pairKeys.map((key, index) => [key, source[descriptor.statusKeys[index]!]])));
+    };
+    const rootRepresentative = new Set<string>();
+    const definitions: { descriptor: typeof fileBacked[number]; descriptorIndex: number; kind: "valid" | "stable" | "close" | "open" }[] = [];
+    for (const [descriptorIndex, descriptor] of fileBacked.entries()) {
+      definitions.push({ descriptor, descriptorIndex, kind: "valid" }, { descriptor, descriptorIndex, kind: "stable" });
+      const routeKey = descriptor.rootAuthority + ":" + descriptor.sourceKind;
+      if (!rootRepresentative.has(routeKey)) {
+        rootRepresentative.add(routeKey);
+        definitions.push({ descriptor, descriptorIndex, kind: "close" });
+        const applicable = PHASE5C_S_NESTED_AUTHORITIES_V1.filter((candidate) => !candidate.sourceKind.startsWith("raw-derived") && rowIndex(candidate.from) <= rowIndex(descriptor.from));
+        if (applicable.length > 1) definitions.push({ descriptor, descriptorIndex, kind: "open" });
+      }
+    }
+    for (const { descriptor, descriptorIndex, kind } of definitions) {
+      const root = createFixture();
+      try {
+        instrumentPhase5cProgressFixtureV1(root);
         const rawStatus = structuredClone(phase5cSCanonicalProgressStatusFixtureV1(descriptor.from)) as Record<string, unknown>;
         const auditDescriptor = PHASE5C_S_NESTED_AUTHORITIES_V1.find((candidate) => candidate.name === "authorityV3Migration31Audit")!;
         const auditBody = phase5cSNestedSemanticBodyFixtureV1(auditDescriptor);
@@ -26431,24 +26443,10 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
           target: candidate.recordKind === null ? null : `/p5c-s-status-composition/${candidate.name}`,
         })])));
         const base = Object.freeze({ status, successorRoot, values, expectedNames: Object.freeze(applicable.map((candidate) => candidate.name)), selectedName: descriptor.name });
-        inputs.push(Object.freeze({ ...base, label: `${descriptor.name}:status-composite-valid`, valid: true, fault: null }));
-        inputs.push(Object.freeze({ ...base, label: `${descriptor.name}:status-composite-stable-fault`, valid: false, fault: Object.freeze({ name: descriptor.name, kind: "stable" as const }) }));
-        const routeKey = `${descriptor.rootAuthority}:${descriptor.sourceKind}`;
-        if (!rootRepresentative.has(routeKey)) {
-          rootRepresentative.add(routeKey);
-          inputs.push(Object.freeze({ ...base, label: `${descriptor.name}:status-composite-close-fault`, valid: false, fault: Object.freeze({ name: descriptor.name, kind: "close" as const }) }));
-          if (applicable.length > 1) inputs.push(Object.freeze({ ...base, label: `${descriptor.name}:status-composite-open-fault`, valid: false, fault: Object.freeze({ name: descriptor.name, kind: "open" as const }) }));
-        }
-      }
-      const observed: Readonly<Record<string, unknown>>[] = [];
-      for (let offset = 0; offset < inputs.length; offset += 3) {
-        const batch = inputs.slice(offset, offset + 3);
-        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const count=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const baseline=count();const rows=[];for(const input of ${JSON.stringify(batch)}){try{rows.push({label:input.label,outcome:"returned",value:await m.p5cSOpenProgressStatusCompositionFixtureV1(input),descriptorDelta:count()-baseline})}catch(error){rows.push({label:input.label,outcome:"threw",message:String(error),descriptorDelta:count()-baseline})}}process.stdout.write(JSON.stringify(rows))})()`);
+        const input = Object.freeze({ ...base, label: `${descriptor.name}:status-composite-${kind}${kind === "valid" ? "" : "-fault"}`, valid: kind === "valid", fault: kind === "valid" ? null : Object.freeze({ name: descriptor.name, kind }) });
+        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const count=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const baseline=count();try{const value=await m.p5cSOpenProgressStatusCompositionFixtureV1(${JSON.stringify(input)});process.stdout.write(JSON.stringify({outcome:"returned",value,descriptorDelta:count()-baseline}))}catch(error){process.stdout.write(JSON.stringify({outcome:"threw",message:String(error),descriptorDelta:count()-baseline}))}})()`);
         assert.equal(result.status, 0, result.stderr);
-        observed.push(...JSON.parse(result.stdout) as readonly Readonly<Record<string, unknown>>[]);
-      }
-      for (const [index, input] of inputs.entries()) {
-        const outer = observed[index]!;
+        const outer = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
         assert.equal(outer.outcome, "returned", `${String(input.label)}: copied status opener executes rather than a composition stub`);
         assert.equal(outer.descriptorDelta, 0, `${String(input.label)}: fixed status and every nested owner close without FD leakage`);
         const diagnostic = outer.value as Readonly<Record<string, unknown>>;
@@ -26457,24 +26455,32 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
         const calls = diagnostic.calls as readonly string[];
         const selectedName = String(input.selectedName);
         const fault = input.fault as null | Readonly<Record<string, unknown>>;
+        const leaf = { message: `Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:P5C_S_STATUS_NESTED_${String(fault?.kind).toUpperCase()}_FAULT:${selectedName}`, causes: [] };
+        assert.deepEqual(diagnostic.errors, fault === null ? [] : [{
+          phase: fault.kind === "close" ? "owner-close" : "operation",
+          tree: fault.kind === "close" ? { message: "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain", causes: [leaf] } : leaf,
+        }], `${String(input.label)}: exact selected lifetime failure phase and cause are retained`);
         if (fault?.kind === "open") {
           assert.deepEqual(calls, expectedNames.slice(0, expectedNames.indexOf(selectedName) + 1), `${String(input.label)}: construction stops at the selected nested open`);
           const earlier = expectedNames.slice(0, expectedNames.indexOf(selectedName));
           const closes = diagnostic.closeCounts as Readonly<Record<string, number>>;
           assert.equal(earlier.every((name) => closes[name] === 1), true, `${String(input.label)}: partial status construction closes every earlier nested owner`);
+          assert.deepEqual(diagnostic.closeOrder, [...earlier].reverse(), `${input.label}: partial construction releases exactly the reverse acquired prefix`);
+          assert.equal(expectedNames.filter((name) => !earlier.includes(name)).every((name) => (closes[name] ?? 0) === 0), true, `${input.label}: selected and later unopened owners have no cleanup`);
         } else {
           assert.deepEqual(calls, expectedNames, `${String(input.label)}: status dispatches every applicable status-authenticated descriptor exactly once`);
           const closes = diagnostic.closeCounts as Readonly<Record<string, number>>;
           assert.equal(expectedNames.every((name) => closes[name] === 1), true, `${String(input.label)}: status closes every nested owner exactly once through faults`);
           assert.deepEqual(diagnostic.closeOrder, [...expectedNames].reverse(), `${String(input.label)}: status owns reverse close-through-error cleanup`);
+          if (fault?.kind === "stable") assert.ok(Number((diagnostic.stableCounts as Readonly<Record<string, number>>)[selectedName]) >= 1, `${input.label}: selected stability boundary was actually reached`);
           if (input.valid) {
             const stable = diagnostic.stableCounts as Readonly<Record<string, number>>;
             assert.equal(expectedNames.every((name) => stable[name] >= 1), true, `${String(input.label)}: outer status assertStable fences every nested route immediately before return`);
           }
         }
+      } finally {
+        removeFixture(root);
       }
-    } finally {
-      removeFixture(root);
     }
   });
 

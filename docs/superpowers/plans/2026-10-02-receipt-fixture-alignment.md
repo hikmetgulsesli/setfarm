@@ -272,3 +272,25 @@ commit; these two narrow consumers do not qualify broader execution.
 Task7a/7b combined59347outer0/2P0F4316.528708ms, zero cancel/skip.
 Independent actual diff C0/I0/M0 at testSHA
 74ad0a7860681f23d65b2468a07f2642e13572194f7f698a4c6227beced1cced.
+
+## Task 7c: Composite status physical case isolation
+
+Same File Map, actual composite originalRED57469 sticky admission failure.
+
+- [ ] Exact phase/cause assertions first; observe missing projection RED.
+- [ ] Enumerate unchanged valid/stable and representative close/open definitions;
+  fresh physical ROOT+instrument+existing status seeding+one actual child each.
+- [ ] Local projector preserves both catches. Exact reverse-prefix/unopened-zero
+  checks join original calls/order/once/stability/FD0 assertions.
+- [ ] Run focused GREEN and independent effect review, then causal commit.
+  No permanent-latch reset or production change; broader delivery gates remain.
+
+Task7c actual:66099outer1 missing error projection3262.174958ms. Wrapper-only
+75150outer1/3299.497791ms retained exact wrong cleanup-uncertain admission leaf
+after prior close fault; this separately proves required process isolation.
+Fresh physical case repair97973outer0/1P0F37969.132292ms, zero cancel/skip.
+Independent requirements C0/I0/M0; actual effect review pending before commit.
+
+Task7c final indentation-only refresh36776outer0/1P0F37734.043709ms,
+zero cancel/skip. Independent final exact diff C0/I0/M0 at testSHA
+5449a73bb5eb67093f9b4d69a17a8705796fa1e44182a657267d6bfe06a69c59.

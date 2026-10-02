@@ -181,3 +181,17 @@ member cleanup aggregate and its exact selected leaf. This nesting follows the
 actual independently consumed member owner, not a flattened invented contract.
 Omitted owners or causes, fabricated unopened cleanup, phase/nesting errors and
 leaked descriptors must fail. No production or live-host changes.
+
+## Causal refinement: composite physical lifetime case isolation
+
+Actual replay57469 composite RED demonstrates same-child admission refusal after
+the prior close fault permanently latches cleanup uncertainty. Do not reset it.
+Enumerate the existing descriptor and root/source representative cases in the
+same order as pure definitions. Each case gets a fresh physical fixture root,
+unchanged status/content/pair seeding, and one actual child. Remove the private
+fixture only after that child completed. Retain every original value, dispatch,
+stability and FD0 assertion; add open-fault exact reverse-prefix cleanup and
+unopened-zero checks. Copied wrapper preserves both operation and owner-close
+catches with ordered recursive trees: valid[], open/stable exact selected leaf,
+close exactly one cleanup aggregate with selected leaf. No DTO-only substitution,
+new import identity alone, latch reset, retry or production change.
