@@ -361,6 +361,12 @@ FD0 and unchanged exact publications/adjacent status before the harness failure.
 This duration tests containment only; normal pending/order evidence still uses
 the deferred handshake and setImmediate checkpoint, not a timeout heuristic.
 
+Fresh ordinal2 paired case physically closes root, records completion, then
+throws an exact earlier root-close sentinel. Final gated callback must still run;
+after release its existing response sentinel is the second cleanup aggregate
+cause. Keep separate resume-pass and controller-release trees, all original
+error precedence, no latch reset, forced lock cleanup or disk-zero inference.
+
 ## Runtime causal diagnostic counterexamples
 
 Use existing selected-pass isolated helper: fresh seeded root and real child per
@@ -410,9 +416,3 @@ host/epoch pre-effect audit must explicitly admit ONE new receipt invocation.
 Retain its root/journal and actual managed outer handle through definite close;
 read the complete journal and suite output. No stitching focused passes, no old
 outer adoption, no success on nonzero, missing EOF or incomplete closure.
-
-Fresh ordinal2 paired case physically closes root, records completion, then
-throws an exact earlier root-close sentinel. Final gated callback must still run;
-after release its existing response sentinel is the second cleanup aggregate
-cause. Keep separate resume-pass and controller-release trees, all original
-error precedence, no latch reset, forced lock cleanup or disk-zero inference.

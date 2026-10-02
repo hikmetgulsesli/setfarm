@@ -551,18 +551,18 @@ Same root writer/branch; causal relation and four-path refinement in spec.
 Consumes planPrivatePostgresTestsV1({root,port,mode}) and existing wrapper CLI.
 Produces receipt mode's immutable exact isolated-runner vector, no new API.
 
-- [ ] Add literal planned receipt vector test; retain other vectors/initdb/server.
+- [x] Add literal planned receipt vector test; retain other vectors/initdb/server.
   Add receipt to controlled wrapper boundary cases and independent literal argv:
   `['--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
   '--import','tsx','--test','--test-concurrency=1',
   'tests/internal-production/baseline-post-handoff-receipt-v1.test.ts']`.
-- [ ] Add receipt extra/argument/alias negative CLI tests. Actual RED must be
+- [x] Add receipt extra/argument/alias negative CLI tests. Actual RED must be
   missing fixed mode/dispatch, never loader/setup failure.
-- [ ] Minimal implementation: add receipt to both closed mode sets and fixed
+- [x] Minimal implementation: add receipt to both closed mode sets and fixed
   planner branch; no main lifecycle/capability/PG/default graph changes.
-- [ ] Run Node26 script cluster and journal suites; controlled normal/nonzero/
+- [x] Run Node26 script cluster and journal suites; controlled normal/nonzero/
   journal-loss/retained-DB scenarios prove unchanged fail-closed lifecycle.
-- [ ] Independent exact diff review, root full diff/read/contracts/diff check;
+- [x] Independent exact diff review, root full diff/read/contracts/diff check;
   commit scoped changes. No full receipt qualification yet.
 - [ ] Fresh clean HEAD/tree/dependency/host/resource/primary-readonly preflight,
   independent per-invocation review of ONE receipt mode; root executes:
@@ -572,3 +572,14 @@ Produces receipt mode's immutable exact isolated-runner vector, no new API.
   receipt suite exit0 plus initdb/test/server exit+close, six EOF, ordered two
   quiescence samples/admin end/server close and actual outer0. Retain root.
   Nonzero/new RED gets causal investigation; no focused stitching or adoption.
+
+Task9 RED actualouter1/0P3F117.713ms: exact planner missing-mode refusal and
+both normal/nonzero actual CLI missing-mode refusals, no loader failure.
+Minimal fixed-mode implementation after RED. Full cluster+journal47715outer0/
+150P0F12273.224583ms, zero cancel/skip/todo, entire output read. Adjacent package
+90562outer0/4P0F1279.269875ms; tsc59972outer0/no output; version/path/English0.
+Independent design31d3d765 C0/I0/M0 and entire code/test diff C0/I0/M0:
+constructorSHAd968955600c477cec87c572ecbe1986bb4f531b29346224de5dd6fb1ead209bd,
+testSHA909a0ef67a731cef4b1ef54b0ea49595b639ed6ceac0e57ba3225984faaab36d.
+Root complete changed diff read/diffcheck0. Real private receipt not yet invoked;
+clean exact epoch and separate one-invocation clearance still required.
