@@ -241,3 +241,36 @@ post-raw canary-authority-crossed leaf followed by owner-close cleanup aggregate
 This rejects dropped/overwritten secondary phases. No sticky-latch reset, native,
 SQL, physical-root substitution or production change; synthetic nested-owner
 counters are not independent physical descriptor proof.
+
+## Causal refinement: exact pre-schema member cleanup boundary
+
+Actual57469 pre-schema history consumer RED hides cleanup causes. Its existing
+semicolon-spanning closeSync regex also puts the member fault after the whole
+callback vector, not inside the selected member release. Replace only the unique
+literal member-close callback inside the bounded closeResources closure. Real
+closeSync must finish before the local completion record/fault; unchanged member
+guard and final directory owner remain separate production drain-all callbacks.
+Reject absent/duplicate bounds or anchors, never silently retain the old hook.
+
+A new narrow two-case regression uses fresh physical roots and real children,
+with existing sealed ordinal5 seed and missing-authorization variant. The exact
+completed member callback inventories are16 and7, respectively; each completion
+must observe its just-closed descriptor as EBADF, then the nominated ordinal
+throws. FD0 and exact byte-tree restoration remain required. This catches the
+misplaced hook, early response probe, omitted/later cleanup and leaked members.
+
+Wrapper preserves ordered operation/owner-close recursive trees. Both existing
+fault inputs intentionally enable internal member and retained locator failures:
+cleanup causes are internal leaf first, then nested directory cleanup containing
+retained-close leaf. Missing-authorization requires exact target-bound ENOENT
+primary before this two-cause cleanup subtree. Valid[], final authority exact
+fourth-call leaf; retain other existing specific refusal checks and all physical
+generation/inventory/status/FD/tree assertions. No source or guard changes.
+
+Independent Task7f review identified an ordinary-refusal transport gap: phase
+and empty causes alone admit a missing/wrong projected message or empty aggregate.
+Validate the complete operation leaf against the separately retained legacy
+String(error), and explicitly reject aggregate legacy messages. Preserve the
+existing semantic refusal regex. A small checker adjunct must reject wrong/missing
+messages and hidden empty aggregates; this tests transport consistency only, not
+exact semantic qualification of every legacy inventory error or host acceptance.

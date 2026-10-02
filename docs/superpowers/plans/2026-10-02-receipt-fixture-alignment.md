@@ -351,3 +351,43 @@ Task7e adjacent43930outer0/3P0F6457.614916ms, zero cancel/skip. Includes
 unchanged raw-owner matrix and manifest/loaded-runtime binder consumer alongside
 fanout. Independent actual diff C0/I0/M0 at testSHA
 b1002f5b3830ef7e5cd4ed59d0011e736bec846428784b7031b586aa1ee33f5c.
+
+## Task 7f: Exact pre-schema member callback and cause tree
+
+Same File Map; original actualRED57469 plus source-backed semicolon hook defect.
+
+- [ ] Narrow actual two-case inventory/FD/tree regression first; old hook must
+  genuinely RED on missing completed member callbacks before seam repair.
+- [ ] Unique bounded member callback replacement after real close only, record
+  immediate EBADF and ordinal; leave guards/directory callbacks untouched.
+- [ ] Assert exact paired cleanup trees before wrapper projection; missing trees
+  must RED, then preserve both existing catches and all causes/phase order.
+- [ ] Align full existing history consumer with exact paired error trees and
+  count16/7, valid[] and fourth-authority-call leaf. Preserve fresh case roots,
+  all original inventory/generation/value/FD/tree requirements.
+- [ ] Narrow/full consumer GREEN, relevant adjacent refresh, independent exact
+  diff review, causal commit; remaining resume/probe/full-suite gates stay open.
+
+Task7f actual5359outer1 oldhook0vs16callbacks2407.583958ms;34156outer0
+callback/count/EBADF-only1P0F4182.096083ms; exactcause85410outer1missingtree
+2446.769833ms; wrapper61943outer0/1P0F4210.991083ms. Independent unique-boundary
+M1 fixed. Full+narrow92123outer0/2P0F137561.880916ms zero cancel/skip;
+adjacent34103outer0/132P0F1736.313292ms. Independent ordinary-message/empty-
+aggregate M1 remains: assertion checker adjunct RED first then strict full
+transport validation and repeat. Source/guards/old artifacts unchanged.
+
+Resume replay75193outer1/7P2F36892.906959ms zero cancel/skip: nine actually
+selected titles, NOT19. Two fresh-close/paired-material-close cases reach nested
+cause-flattening RED after setup repair; other seven pass. Their repair is next,
+not inferred from historical19setup failures or included in current GREEN claim.
+
+Task7f final51782outer0/3P0F135356.578458ms, zero cancel/skip/todo:
+ordinary-refusal checker33.298833ms, actual member-callback narrow3557.489417ms,
+full physical history131527.240041ms. Checker adjunct genuinely RED first
+670.993083ms on accepted wrong/missing message or hidden empty aggregate, then
+GREEN668.132ms with strict projection consistency; this is not runtime proof.
+Independent entire exact diff C0/I0/M0 at testSHA
+fdd836585030180710aa15d3a972385847c56beb01b3bbc970861f33e7900cc3.
+Root read entire actual test diff; no source, guard, old artifact or host changes.
+Remaining two resume RED cases, actual ordering mutants, full receipt, PR and
+clean-main/host gates still pending; focused runs do not qualify whole ALL.
