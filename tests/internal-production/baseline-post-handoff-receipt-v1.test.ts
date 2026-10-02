@@ -47,9 +47,11 @@ const dbSource = path.join(sourceRoot, "src/db-pg.ts");
 const tsxLoader = import.meta.resolve("tsx");
 function assertColdRecoveryRuntimeExportContractV1(names: readonly (string | undefined)[]): string[] {
   const additions = ["observeInternalProductionColdBootstrapObservationV1", "resolveInternalProductionLegacyFindingPublicationInventoryForMigrationV1", "observeInternalProductionSpawnerLaunchProfileCandidateV1", "observeInternalProductionColdSpawnerHelperBootstrapObservationV1", "resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1"];
-  assert.equal(names.length, 58, "cold recovery adds exactly the five fixed read-only ports");
+  const capture = "observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1";
+  assert.equal(names.length, 59, "cold recovery and diagnostic capture add exactly six fixed read-only ports");
   assert.deepEqual(names.filter((name) => additions.includes(name!)).sort(), [...additions].sort());
-  const historical = names.filter((name): name is string => typeof name === "string" && !additions.includes(name));
+  assert.deepEqual(names.filter((name) => name === capture), [capture], "only the delivered original-owner diagnostic is added");
+  const historical = names.filter((name): name is string => typeof name === "string" && !additions.includes(name) && name !== capture);
   assert.equal(historical.length, 53);
   assert.equal(canonicalHash(historical), "fd89f0cfa3a86ac07655f1fbc6640867ad937bb88b2e9fdebef6327283b665fd",
     "all historical runtime exports remain exactly ordered and unchanged");
@@ -1694,9 +1696,9 @@ function instrumentExactPoisonRecoveryLeafFixtureV1(
     "file fsync",
   );
   replaceOnce(
-    "closeSync(tempDescriptor);\n    tempDescriptor = -1;",
-    "closeSync(tempDescriptor);\n    tempDescriptor = -1; p4ExactPoisonRecoveryLeafBoundaryV1(\"close\");",
-    "temp close and closed-descriptor sentinel",
+    'exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "close");',
+    'exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "close"); p4ExactPoisonRecoveryLeafBoundaryV1("close");',
+    "post-consumption successful temp-close response",
   );
   replaceOnce(
     "linkSync(temp, candidate.target);",
@@ -2149,7 +2151,7 @@ function instrumentExactPoisonTask3WriterContentionLatchFixtureV1(
   const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
   const source = readFileSync(modulePath, "utf8");
   const core = topLevelFunctionRegionV1(source, "resumeExactPoisonQuarantinePublisherCoreV1");
-  const boundary = "  const heldWriter = acquireExactPoisonRecoveryWriterV1();\n  try {\n    heldWriter.assertStable();";
+  const boundary = "  const heldWriter = acquireExactPoisonRecoveryWriterV1();\n  let primaryError: unknown | null = null;\n  try {\n    heldWriter.assertStable();";
   assert.equal(core.split(boundary).length - 1, 1, "task3 contention fixture locates one stable post-acquisition H boundary");
   const latch = `${boundary}
     writeFileSync(${JSON.stringify(acquiredPath)}, String(process.pid) + "\\n", { flag: "a", mode: 0o600 });
@@ -5597,14 +5599,13 @@ ${writerFreshCreate}`);
   source = source.replace(processResult, `  const p5cQProcessProbe = Reflect.get(globalThis, "__p5cExpectedPredecessorCasProbeV1") as undefined | {ambiguousPid?:number};
   if (p5cQProcessProbe?.ambiguousPid === pid) return Object.freeze({ state: "ambiguous" as const });
 ${processResult}`);
-  const writerCloseTail = "            guard.close();\n          }\n        },";
-  assert.equal(source.split(writerCloseTail).length - 1, 1, "P5c-Q instruments the owned target-writer close after its internal guard closes");
-  source = source.replace(writerCloseTail, `            guard.close();
+  const writerOwner = topLevelFunctionRegionV1(source, "acquireTask12ReceiptLocatorWriterV1");
+  const writerCloseTail = "            attemptTask6aReceiptOwnedCleanupV1([\n              () => closeSync(heldDescriptor), () => guard.close(),\n            ], primaryError);";
+  assert.equal(writerOwner.split(writerCloseTail).length - 1, 1, "P5c-Q instruments one successful owned target-writer close after descriptor and guard cleanup");
+  source = source.replace(writerOwner, () => writerOwner.replace(writerCloseTail, `${writerCloseTail}
             const p5cQCloseProbe = Reflect.get(globalThis, "__p5cExpectedPredecessorCasProbeV1") as undefined | {events:string[];writerCloseThrow?:boolean};
             if (p5cQCloseProbe && path.basename(target) === "01-current-status.pair.json") p5cQCloseProbe.events.push("target-writer-close");
-            if (p5cQCloseProbe?.writerCloseThrow && path.basename(target) === "01-current-status.pair.json") throw new Error("P5C_Q_WRITER_CLOSE_FAULT");
-          }
-        },`);
+            if (p5cQCloseProbe?.writerCloseThrow && path.basename(target) === "01-current-status.pair.json") throw new Error("P5C_Q_WRITER_CLOSE_FAULT");`));
   const capabilityDeclaration = "const task12CurrentStatusCasCleanupCapabilitiesV1 = new Map<string, Task12CurrentStatusCasCleanupCapabilityV1>();";
   if (source.includes(capabilityDeclaration)) source = source.replace(capabilityDeclaration, `${capabilityDeclaration}
 export function p5cQFixtureCleanupCapabilitySizeV1(): number { return task12CurrentStatusCasCleanupCapabilitiesV1.size; }`);
@@ -10256,17 +10257,20 @@ ${writerMutationFence}
   const postEffectOwnerRegion = topLevelFunctionRegionV1(source, "openExactPoisonPostVisibleSelectedProgressPassV1");
   const postEffectOwnerHeader = /^async function openExactPoisonPostVisibleSelectedProgressPassV1\([\s\S]*?\):\s*Promise<ExactPoisonPostVisibleSelectedProgressPassOwnerV1>\s*\{/.exec(postEffectOwnerRegion)?.[0];
   assert.ok(postEffectOwnerHeader, "post-effect transport probe bounds the actual selected owner");
-  const cleanupExit = "    if (firstError !== null) throw firstError;";
-  assert.equal(postEffectOwnerRegion.split(cleanupExit).length, 2, "one selected-owner cleanup exit follows all physical closes");
+  const cleanupExit = "      () => rootReader.close(),\n    ]);";
+  assert.equal(postEffectOwnerRegion.split(cleanupExit).length, 2, "one selected-owner aggregate cleanup tail follows all physical closes");
   source = source.replace(postEffectOwnerRegion, postEffectOwnerRegion
     .replace(postEffectOwnerHeader, `${postEffectOwnerHeader}
   const p5cSPostEffectProbe = Reflect.get(globalThis,"__p5cSResumeProbeV1") as undefined | {executePublications?:unknown[];postEffectOwnerOpens:number;postEffectOwnerCloses:number[];freshCloseFault:boolean};
   const p5cSPostEffectOrdinal = p5cSPostEffectProbe?.executePublications ? ++p5cSPostEffectProbe.postEffectOwnerOpens : 0;`)
-    .replace(cleanupExit, `    if (p5cSPostEffectOrdinal !== 0) {
-      p5cSPostEffectProbe!.postEffectOwnerCloses.push(p5cSPostEffectOrdinal);
-      if (p5cSPostEffectOrdinal === 2 && p5cSPostEffectProbe!.freshCloseFault) firstError ??= new Error("P5C_S_POST_EFFECT_CLOSE_FAULT");
-    }
-${cleanupExit}`));
+    .replace(cleanupExit, `      () => rootReader.close(),
+      async () => {
+        if (p5cSPostEffectOrdinal !== 0) {
+          p5cSPostEffectProbe!.postEffectOwnerCloses.push(p5cSPostEffectOrdinal);
+          if (p5cSPostEffectOrdinal === 2 && p5cSPostEffectProbe!.freshCloseFault) throw new Error("P5C_S_POST_EFFECT_CLOSE_FAULT");
+        }
+      },
+    ]);`));
   writeFileSync(modulePath, source);
 
   const startupPath = path.join(root, "src/internal-production/baseline-spawner-startup-admission-v1.ts");
@@ -19141,6 +19145,26 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.equal(typeof loaded.resolveInternalProductionCurrentEntryOperationV1, "function");
   });
 
+  it("rejects missing, duplicate, renamed, extra, and reordered capture export inventories", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const names = [...source.matchAll(/export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z0-9_]+)/g)].map((match) => match[1]);
+    const capture = "observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1";
+    const historical = assertColdRecoveryRuntimeExportContractV1(names);
+    const reordered = [...names];
+    const first = reordered.indexOf(historical[0]!);
+    const second = reordered.indexOf(historical[1]!);
+    [reordered[first], reordered[second]] = [reordered[second]!, reordered[first]!];
+    for (const [label, candidate] of [
+      ["missing capture", names.filter((name) => name !== capture)],
+      ["duplicate capture", [...names, capture]],
+      ["renamed capture", names.map((name) => name === capture ? "observeUnreviewedCaptureNoWriteV1" : name)],
+      ["extra export", [...names, "observeUnreviewedExtraV1"]],
+      ["reordered historical exports", reordered],
+    ] as const) {
+      assert.throws(() => assertColdRecoveryRuntimeExportContractV1(candidate), assert.AssertionError, label);
+    }
+  });
+
   it("P4 freezes exact-poison preselection literals, prepare ordering, and the final selected-store source map", async () => {
     const source = readFileSync(observerSource, "utf8");
     for (const [name, value] of [
@@ -23441,7 +23465,9 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
     assert.equal(historical.split("revalidatePostVisibleCurrentEntryStoreV1(").length - 1, 0, "historical identity never enters current P validation");
 
     const exports = [...source.matchAll(/^export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)|^export\s+type\s+([A-Za-z0-9_]+)/gm)].map((match) => match[1] ?? match[2]);
-    assert.deepEqual(exports.filter((name) => /ExactPoisonPostVisible|PreStatus|PublicationSet|PublicationAuthority|NoWrite/.test(name)), [], "P adds no public observer, result, brand, creator, or publication-set ABI");
+    assert.deepEqual(exports.filter((name) => /ExactPoisonPostVisible|PreStatus|PublicationSet|PublicationAuthority|NoWrite/.test(name)),
+      ["observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1"],
+      "only the separately delivered original-owner diagnostic is public; P adds no observer, result, brand, creator, or publication-set ABI");
     assert.doesNotMatch(source, /process\.env\.[A-Z0-9_]*P5C|globalThis\.__p5c|AsyncLocalStorage<.*SelectedCurrentEntryStoreContextV1/,
       "production P has no environment, global, or ambient-context seam");
   });
