@@ -198,6 +198,18 @@ test('private focused verifier mode dispatches only both real serial integration
   assert.deepEqual(result.server,plan({root,port:55439,mode:'findings'}).server);
   assert.equal(Object.isFrozen(result.test),true);
 });
+test('private receipt mode dispatches only the complete serial receipt through the isolated runner',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const result=plan({root,port:55439,mode:'receipt'});
+  assert.deepEqual(result.test,[
+    '--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
+    '--import','tsx','--test','--test-concurrency=1',
+    'tests/internal-production/baseline-post-handoff-receipt-v1.test.ts',
+  ]);
+  assert.deepEqual(result.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(result.server,plan({root,port:55439,mode:'findings'}).server);
+  assert.equal(Object.isFrozen(result.test),true);
+});
 for(const [label,overrides] of [
   ['live port',{port:5432}],['zero port',{port:0}],['fraction port',{port:55439.5}],
   ['overflow port',{port:65536}],['unknown command',{mode:'build'}],
@@ -327,6 +339,7 @@ test('private server kill failure or timeout never becomes cleanup success',asyn
 
 for(const args of [[],['unknown'],['findings','extra'],
   ['readonly-verifier'],['readonly-verifiers','extra'],
+  ['receipts'],['receipt','extra'],['receipt','--test-name-pattern=other'],['receipt','all'],
   ['readonly-verifiers','--test-name-pattern=other'],['readonly-verifiers','all']]){
   test('private CLI refuses invalid mode '+JSON.stringify(args)+' before child effects',()=>{
     const guard=`import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
@@ -437,7 +450,11 @@ test('captured child binding persists real redactor output before every terminal
 
 // Ordinary Node-only boundary fixture: NO PG process, SQL or password file.
 function wrapperBoundaryFixture(mode,commandMode='findings'){
-  const expectedTestArgs=commandMode==='readonly-verifiers'?[
+  const expectedTestArgs=commandMode==='receipt'?[
+    '--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
+    '--import','tsx','--test','--test-concurrency=1',
+    'tests/internal-production/baseline-post-handoff-receipt-v1.test.ts',
+  ]:commandMode==='readonly-verifiers'?[
     '--import','tsx','--test','--test-concurrency=1',
     'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
     'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts',
@@ -544,7 +561,7 @@ process.once('exit',()=>{original.writeSync(1,Buffer.from('UNIT_BOUNDARY_RESULT 
       NODE_OPTIONS:'--import=data:text/javascript;base64,'+Buffer.from(guard).toString('base64')},
   });
 }
-for(const commandMode of ['findings','all','readonly-verifiers'])
+for(const commandMode of ['findings','all','readonly-verifiers','receipt'])
 for(const mode of commandMode==='all'?['normal']:
   ['normal','nonzero','mirror-error','journal-loss','close-fault','retained-db','cancel','before-server','before-test','attach-server','attach-test','input-error']){
   test('wrapper boundary '+commandMode+' '+mode+' retains ordered observed outcomes without native effects',async()=>{
