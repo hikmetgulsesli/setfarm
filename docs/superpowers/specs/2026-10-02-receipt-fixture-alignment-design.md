@@ -128,3 +128,28 @@ selected-effect reachable-graph denials. No blanket exception for diagnostics.
 Existing source-contract tests remain structural adjuncts, not runtime proof;
 actual-body cleanup/cause/order and copied-owner fault witnesses remain required
 before delivery. No native, SQL, service, old-artifact or build-guard effects.
+
+## Causal refinement: historical P3 cleanup error projection
+
+Atbf332404 the historical retains-original-P3 consumer genuinely fails on the
+close-response-loss case: String(AggregateError) hides its exact historical
+sentinel. Fresh physical root and child already isolate each of seven cases;
+keep that ownership, cold/ABA fences and FD0. Add a child-local recursive error
+tree alongside legacy message, and assert the literal cleanup-uncertain tree
+with exact HISTORICAL_P3_CLOSE_RESPONSE_LOSS leaf. Other mutation outcomes still
+require changed/crossed failure; no broad aggregate-message acceptance.
+
+Add a paired locator-ABA plus completed-close response-loss case, retaining the
+primary as first cause then cleanup aggregate/sentinel. Preserve actual close
+instrumentation after closeSync and prove no FD remains. No production change,
+latch reset, synthetic success or broader root reuse. Further runtime consumers
+are handled only after a fresh exact-title RED, not predicted from old offsets.
+
+The actual prepared/consumed/current-audit Task12 owner consumer now separately
+reproduces outer1: flat PRIMARY expected vs acquisition-and-cleanup aggregate.
+Its four projection/stability x cleanup-loss inputs already have fresh children;
+the shared physical tree is read-only and checked after each input. Add recursive
+tree to this copied wrapper catch, retaining message. Cleanup success requires
+exact PRIMARY leaf; cleanup loss requires primary-first aggregate then cleanup
+aggregate containing exact SECONDARY. Keep acquired-owner count1, close1, FD0,
+warmup and unchanged physical tree. Do not modify its passing adjacent consumer.

@@ -8084,9 +8084,10 @@ export async function p5cSObservePreSchemaAtRootFixtureV1(input: Readonly<{opera
     ? `export async function p5cSObserveTask12PolicyEndpointFixtureV1(input:Readonly<{operation:Readonly<Record<string,unknown>>;successorRoot:string;arrow:Readonly<Record<string,unknown>>;current:Readonly<Record<string,unknown>>;descriptor:Readonly<Record<string,unknown>>}>):Promise<Readonly<Record<string,unknown>>>{
   const operation=input.operation as unknown as InternalProductionCurrentEntryOperationV1;
   const authority=Object.freeze({successorRoot:input.successorRoot,operationDirectory:path.join(input.successorRoot,"operations","sha256",operation.operationHash.slice(0,2),operation.operationHash),successorOperation:operation,assertStable():void{}}) as unknown as ExactPoisonPostVisibleProgressObservationAuthorityV1;
+  const projectError = (error: unknown): unknown => ({message: String(error), causes: error instanceof AggregateError ? error.errors.map(projectError) : []});
   let endpoint:ExactPoisonPostVisibleExternalEndpointOwnerV1|null=null;
   try{endpoint=await observeExactPoisonPostVisibleTask12ReceiptPolicyEndpointNoWriteV1(authority,operation,input.arrow as unknown as ExactPoisonPostVisibleExternalArrowV1,input.current,input.descriptor as unknown as ExactPoisonPostVisibleExternalEndpointDescriptorV1,null);endpoint.assertStable();return Object.freeze({outcome:"returned",message:null,material:endpoint.material,role:endpoint.role,policy:endpoint.policy,target:endpoint.target,expectedBytesBase64:Buffer.isBuffer(endpoint.expectedBytes)?endpoint.expectedBytes.toString("base64"):null,publication:isPlainRecord(endpoint.publication)?endpoint.publication.state:null,writer:isPlainRecord(endpoint.writer)?endpoint.writer.state:null});}
-  catch(error){return Object.freeze({outcome:"threw",message:String(error)});}
+  catch(error){return Object.freeze({outcome:"threw",message:String(error),errorTree:projectError(error)});}
   finally{endpoint?.close();}
 }
 
@@ -21861,7 +21862,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
   });
 
   it("historical predecessor reader retains original P3 and cold identity across awaits", async () => {
-    for (const mutation of ["none", "locator", "record", "operation", "parent", "cold", "close-response-loss"] as const) {
+    for (const mutation of ["none", "locator", "record", "operation", "parent", "cold", "close-response-loss", "locator-and-close-response-loss"] as const) {
       const root = createFixture();
       try {
         installExactCurrentSuccessorGitFixtureV1(root);
@@ -21878,20 +21879,36 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
         const marker = "    const assertColdHistoryStable = await openTask12ColdSpawnerPredecessorHistoryV1(value);";
         assert.equal(source.split(marker).length - 1, 1, "instrument actual reader after asynchronous cold authentication");
         source = source.replace(marker, `${marker}\n    await Reflect.get(globalThis, '__historicalP3AfterAwaitV1')();`);
-        if (mutation === "close-response-loss") {
+        if (mutation.endsWith("close-response-loss")) {
           const reader = topLevelFunctionRegionV1(source, "readHistoricalPreMutationRuntimeAuthorityAtRootV1");
           assert.equal(reader.split("closeSync(pin.descriptor)").length - 1, 1);
           source = source.replace(reader, reader.replace("closeSync(pin.descriptor)", "(() => { closeSync(pin.descriptor); if (path.basename(pin.target) !== '00-pre-mutation-loaded-runtime-service-authority.pair.json') throw new Error('HISTORICAL_P3_CLOSE_RESPONSE_LOSS'); })()"));
         }
         writeFileSync(modulePath, source);
-        const target = mutation === "locator" ? fixture.locator : mutation === "record" ? fixture.record : mutation === "operation" ? path.join(ordinary.store, "current-entry-operation.json") : mutation === "parent" ? path.dirname(fixture.record) : terminal;
-        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import('node:fs');await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts")).href)});const terminal=${JSON.stringify(terminal)},mutation=${JSON.stringify(mutation)},target=${JSON.stringify(target)};globalThis.__nestedColdHistoryV1=()=>{const s=fs.lstatSync(terminal,{bigint:true});return {state:'settled',settlement:{settlementRef:${JSON.stringify(cold.settlementRef)},settlementHash:${JSON.stringify(cold.settlementHash)},serviceCensus:${JSON.stringify(fixture.service)}},settlementIdentity:[s.dev,s.ino,s.uid,s.gid,s.mode,s.nlink,s.size,s.birthtimeNs,s.mtimeNs,s.ctimeNs].map(String)}};globalThis.__historicalP3AfterAwaitV1=async()=>{if(mutation==='none'||mutation==='close-response-loss')return;if(mutation==='parent'){fs.renameSync(target,target+'.old');fs.mkdirSync(target,{mode:0o700});for(const name of fs.readdirSync(target+'.old'))fs.copyFileSync(target+'.old/'+name,target+'/'+name)}else{const bytes=fs.readFileSync(target);fs.renameSync(target,target+'.old');fs.writeFileSync(target,bytes,{mode:0o600})}};const count=()=>fs.readdirSync('/dev/fd').filter(n=>{try{fs.fstatSync(Number(n));return true}catch{return false}}).length;await new Promise(resolve=>setTimeout(resolve,100));const before=count();let outcome='returned',message=null,value=null;try{value=await m.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(${JSON.stringify(ordinary.pair)})}catch(error){outcome='threw';message=String(error)}process.stdout.write(JSON.stringify({outcome,message,value,descriptorDelta:count()-before}))})()`);
+        const target = mutation.startsWith("locator") ? fixture.locator : mutation === "record" ? fixture.record : mutation === "operation" ? path.join(ordinary.store, "current-entry-operation.json") : mutation === "parent" ? path.dirname(fixture.record) : terminal;
+        const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import('node:fs');await import(${JSON.stringify(pathToFileURL(path.join(root, "src/internal-production/baseline-restart-authority-retirement-v1.ts")).href)});const terminal=${JSON.stringify(terminal)},mutation=${JSON.stringify(mutation)},target=${JSON.stringify(target)};globalThis.__nestedColdHistoryV1=()=>{const s=fs.lstatSync(terminal,{bigint:true});return {state:'settled',settlement:{settlementRef:${JSON.stringify(cold.settlementRef)},settlementHash:${JSON.stringify(cold.settlementHash)},serviceCensus:${JSON.stringify(fixture.service)}},settlementIdentity:[s.dev,s.ino,s.uid,s.gid,s.mode,s.nlink,s.size,s.birthtimeNs,s.mtimeNs,s.ctimeNs].map(String)}};globalThis.__historicalP3AfterAwaitV1=async()=>{if(mutation==='none'||mutation==='close-response-loss')return;if(mutation==='parent'){fs.renameSync(target,target+'.old');fs.mkdirSync(target,{mode:0o700});for(const name of fs.readdirSync(target+'.old'))fs.copyFileSync(target+'.old/'+name,target+'/'+name)}else{const bytes=fs.readFileSync(target);fs.renameSync(target,target+'.old');fs.writeFileSync(target,bytes,{mode:0o600})}};const count=()=>fs.readdirSync('/dev/fd').filter(n=>{try{fs.fstatSync(Number(n));return true}catch{return false}}).length;await new Promise(resolve=>setTimeout(resolve,100));const before=count();const projectError=error=>({message:String(error),causes:error instanceof AggregateError?error.errors.map(projectError):[]});let outcome='returned',message=null,value=null,errorTree=null;try{value=await m.resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1(${JSON.stringify(ordinary.pair)})}catch(error){outcome='threw';message=String(error);errorTree=projectError(error)}process.stdout.write(JSON.stringify({outcome,message,value,errorTree,descriptorDelta:count()-before}))})()`);
         assert.equal(result.status, 0, `${mutation}: ${result.stderr}`);
         const observed = JSON.parse(result.stdout);
         assert.equal(observed.outcome, mutation === "none" ? "returned" : "threw", `${mutation}: ${observed.message}`);
         assert.equal(observed.descriptorDelta, 0, `${mutation}: all retained descriptors are closed`);
-        if (mutation === "none") assert.deepEqual(observed.value, fixture.value);
-        else assert.match(observed.message, /changed|crossed|HISTORICAL_P3_CLOSE_RESPONSE_LOSS/);
+        const cleanupTree = {
+          message: "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain",
+          causes: [{ message: "Error: HISTORICAL_P3_CLOSE_RESPONSE_LOSS", causes: [] }],
+        };
+        if (mutation === "none") {
+          assert.deepEqual(observed.value, fixture.value);
+          assert.equal(observed.errorTree, null);
+        } else if (mutation === "close-response-loss") {
+          assert.deepEqual(observed.errorTree, cleanupTree, "completed physical close retains its exact response-loss cause");
+        } else if (mutation === "locator-and-close-response-loss") {
+          assert.deepEqual(observed.errorTree, {
+            message: "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt acquisition and cleanup failed",
+            causes: [
+              { message: "Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:historical predecessor P3 evidence changed while held", causes: [] },
+              cleanupTree,
+            ],
+          }, "locator ABA primary precedes the completed-close response-loss aggregate");
+        } else assert.match(observed.message, /changed|crossed/);
       } finally { removeFixture(root); }
     }
   });
@@ -33832,7 +33849,17 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
         assert.equal(result.status, 0, result.stderr);
         const observedFault = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
         assert.equal(observedFault.outcome, "threw");
-        assert.equal(observedFault.message, "Error: P5C_S_TRANSFER_PRIMARY", "cleanup must preserve the primary construction failure");
+        const primaryTree = { message: "Error: P5C_S_TRANSFER_PRIMARY", causes: [] };
+        assert.deepEqual(observedFault.errorTree, closeFault ? {
+          message: "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt acquisition and cleanup failed",
+          causes: [
+            primaryTree,
+            {
+              message: "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain",
+              causes: [{ message: "Error: P5C_S_TRANSFER_CLOSE_SECONDARY", causes: [] }],
+            },
+          ],
+        } : primaryTree, "failed transfer retains original primary followed by the exact completed-close loss");
         assert.equal(observedFault.openCalls, 1);
         assert.equal(observedFault.closeCalls, 1, `${fault}/${closeFault}: failed transfer closes its actual acquired owner exactly once`);
         assert.equal(observedFault.descriptorDelta, 0, `${fault}/${closeFault}: failed transfer releases every physical descriptor`);

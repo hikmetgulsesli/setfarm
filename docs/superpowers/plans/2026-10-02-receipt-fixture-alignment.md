@@ -202,3 +202,37 @@ Additional prefix-write and relocated-initializer witnesses each actually RED
 before their respective checker repair (outer1,784.830292/785.423916ms).
 Final combined nine consumers plus41-case mutation consumer10P0F/zero cancel+
 skip outer0,1354.484041ms. This is narrow structural/focused qualification only.
+
+## Task 6: Runtime cause projection, one actual RED group at a time
+
+Same test/spec/plan File Map; start historical P3 consumer. Actual replay outer1:
+historical nested-sentinel-loss RED9916.068041ms. Adjacent completed migration-32
+receipt/terminal real-owner title passed1452.348792ms; it is not the later
+prepared/consumed/current-audit transfer title. Never merge their evidence.
+
+- [ ] Historical child projects exact recursive errorTree alongside message.
+- [ ] Close-response-loss asserts exact cleanup aggregate and historical leaf.
+- [ ] Add paired locator-ABA/completed-close loss; assert exact primary-first
+  acquisition/cleanup tree plus unchanged private-root/FD0 checks.
+- [ ] Run RED/GREEN, independent narrow review, then causal commit.
+- [ ] Replay each next actual title before refining its projection/isolation.
+  No predicted production change from an old line number alone.
+- [ ] Actual-body/copied-fixture probe ordering witnesses and full receipt suite
+  remain required before PR; ordinary tests never qualify protected cutover.
+
+Task6 precise transfer replay outer1/0P1F3283.231792ms (body3062.13ms): exact
+prepared/consumed/current-audit title exposes flattened acquisition+cleanup
+aggregate. Scope now includes only this wrapper catch projection and exact four
+conditional error trees; existing fresh children, warmup/open1/close1/FD0/tree
+checks remain. No passing adjacent-title change or production change.
+
+Task6 actual ledger01:53UTC: historical88561outer0/1P0F11894.298542ms;
+combined88343outer0/2P0F15450.04575ms zero cancel+skip. Eight historical
+fresh-root/child cases include real paired locator ABA and completed physical
+close loss; four transfer children preserve warmup/open1/close1/FD0/tree checks.
+Independent combined diff C0/I0/M0 at testSHA
+7e0fc8d4eeb4bfe89f4d08848bd242d9676e94d84bf5dd7e4c7c8063b723b23b.
+Adjacent actual-body cleanup/capture refresh88742outer0/132P0F1465.303791ms.
+Next seven exact-title replay57469outer1/1P6F124036.889167ms: composite
+same-realm latch contamination and five cause-flattening groups genuinely RED;
+raw owned-child matrix actually passed. No patch to that passing matrix inferred.
