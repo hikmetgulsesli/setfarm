@@ -6716,15 +6716,20 @@ ${progressWriterProcessResult}`);
   let outcome = "returned";
   let message: string | null = null;
   const postCloseOutcomes: string[] = [];
+  const projectError = (error: unknown): unknown => Object.freeze({
+    message: String(error),
+    causes: Object.freeze(error instanceof AggregateError ? error.errors.map(projectError) : []),
+  });
+  const errors: {phase: "operation" | "owner-close" | "controller-release"; tree: unknown}[] = [];
   try {
     controller = await acquireTask12ControllerLockV1(context, input.operation.operationHash);
     owner = await openExactPoisonPostVisibleSelectedProgressPassV1(context, input.operation, controller);
     owner.assertContext(context);
     await owner.assertStable();
-  } catch (error) { outcome = "threw"; message = error instanceof Error ? error.stack ?? String(error) : String(error); }
+  } catch (error) { outcome = "threw"; errors.push({phase: "operation", tree: projectError(error)}); message = error instanceof Error ? error.stack ?? String(error) : String(error); }
   finally {
     try { if (owner !== null) await owner.close(); }
-    catch (error) { outcome = "threw"; message ??= String(error); }
+    catch (error) { outcome = "threw"; errors.push({phase: "owner-close", tree: projectError(error)}); message ??= String(error); }
     finally {
       if (owner !== null) {
         for (const use of [async () => owner!.assertContext(context), async () => owner!.assertRootStable(), async () => owner!.assertFilesystemStable(), async () => owner!.assertStableWithoutCurrentStatusCas(), async () => owner!.assertStable(), async () => owner!.close()]) {
@@ -6733,11 +6738,11 @@ ${progressWriterProcessResult}`);
         }
       }
       try { if (controller !== null) releaseTask12ControllerLockV1(controller); }
-      catch (error) { outcome = "threw"; message ??= String(error); }
+      catch (error) { outcome = "threw"; errors.push({phase: "controller-release", tree: projectError(error)}); message ??= String(error); }
       Reflect.deleteProperty(globalThis, "__p5cSSelectedPassPhysicalProbeV1");
     }
   }
-  return Object.freeze({ outcome, message, childOpenCalls: probe.childOpenCalls, childOpenOrder: Object.freeze([...probe.childOpenOrder]), childStableCounts: Object.freeze({ ...probe.childStableCounts }), childCloseCounts: Object.freeze({ ...probe.childCloseCounts }), childCloseOrder: Object.freeze([...probe.childCloseOrder]), postCloseOutcomes: Object.freeze(postCloseOutcomes) });
+  return Object.freeze({ outcome, message, errors: Object.freeze(errors), childOpenCalls: probe.childOpenCalls, childOpenOrder: Object.freeze([...probe.childOpenOrder]), childStableCounts: Object.freeze({ ...probe.childStableCounts }), childCloseCounts: Object.freeze({ ...probe.childCloseCounts }), childCloseOrder: Object.freeze([...probe.childCloseOrder]), postCloseOutcomes: Object.freeze(postCloseOutcomes) });
 }
 
 `
@@ -16489,6 +16494,53 @@ function runFixtureExpressionAsync(root: string, expression: string): Promise<Re
   });
 }
 
+type Phase5cSelectedPassFaultV1 = Readonly<{
+  stage: "operation-directory" | "status" | "raw" | "q";
+  kind: "open" | "stable" | "close";
+}>;
+
+async function runPhase5cSelectedPassIsolatedFaultFixtureV1(
+  faults: readonly Phase5cSelectedPassFaultV1[],
+): Promise<Readonly<Record<string, unknown>>> {
+  const root = createFixture();
+  try {
+    const harness = configurePhase5cZeroProgressFixtureV1(root, true);
+    const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
+    assert.equal(seeded.status, 0, seeded.stderr);
+    assert.equal(JSON.parse(seeded.stdout).outcome, "returned", seeded.stderr);
+    const storeRoot = realpathSync(path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot));
+    const operation = harness.admitted.chain.records.successorOperation.value;
+    const transportPath = path.join(path.dirname(root), ".p5c-isolated-selected-pass.json");
+    fixtureFile(path.dirname(root), ".p5c-isolated-selected-pass.json", `${JSON.stringify(fixtureTransportValueV1(harness.observations))}\n`, 0o600);
+    const result = await runFixtureExpressionAsync(root, `(async()=>{
+      const fs=await import("node:fs");
+      const count=()=>fs.readdirSync("/dev/fd").filter(name=>/^[0-9]+$/.test(name)).length;
+      const before=count();
+      const revive=value=>Array.isArray(value)?value.map(revive):value&&typeof value==="object"
+        ?Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string"
+          ?Buffer.from(value.__p4ExactBufferBase64V1,"base64")
+          :Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)])):value;
+      const values=revive(JSON.parse(fs.readFileSync(${JSON.stringify(transportPath)},"utf8")));
+      const cursors={};
+      const next=kind=>{
+        const sequence=values[kind];
+        if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5C_S_SELECTED_PASS_RAW_KIND_INVALID:"+kind);
+        const cursor=cursors[kind]??0;cursors[kind]=cursor+1;return sequence[cursor%sequence.length];
+      };
+      Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",{next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")});
+      const value=await m.p5cSOpenSelectedProgressPassFixtureV1({storeRoot:${JSON.stringify(storeRoot)},operation:${JSON.stringify(operation)},selectionKind:"successor-progress",faults:${JSON.stringify(faults)}});
+      process.stdout.write(JSON.stringify({...value,descriptorDelta:count()-before}));
+    })()`);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+    assert.equal(observed.descriptorDelta, 0, "each isolated selected-pass fault child releases every physical descriptor");
+    return observed;
+  } finally {
+    removeFixture(root);
+  }
+}
+
 function runPrecompiledRecoveryFixtureExpressionV1(root: string, expression: string): ReturnType<typeof runFixtureExpressionAsync> {
   // These copied modules contain declarations only. Their first lazy imports
   // otherwise leave tsx's asynchronous cache-file writes inside the FD probe.
@@ -24577,13 +24629,14 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       assert.equal(observed.descriptorDelta, 0, "accepted and rejected selected-pass acquisitions release every root/status/raw/Q descriptor");
 
       const faults = (["operation-directory", "status", "raw", "q"] as const).flatMap((stage) => (["open", "stable", "close"] as const).map((kind) => Object.freeze({ stage, kind })));
-      const faultResult = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(fs.readFileSync(${JSON.stringify(transportPath)},"utf8")));const cursors={};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5C_S_SELECTED_PASS_RAW_KIND_INVALID:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;return sequence[cursor%sequence.length]};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",{next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")});const rows=[];for(const fault of ${JSON.stringify(faults)})rows.push({fault,...await m.p5cSOpenSelectedProgressPassFixtureV1({storeRoot:${JSON.stringify(storeRoot)},operation:${JSON.stringify(operation)},selectionKind:"successor-progress",fault})});const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;process.stdout.write(JSON.stringify({rows,descriptorDelta:after-before}))})()`);
-      assert.equal(faultResult.status, 0, faultResult.stderr);
-      const faultObserved = JSON.parse(faultResult.stdout) as Readonly<{ rows: readonly Readonly<Record<string, unknown>>[]; descriptorDelta: number }>;
-      for (const row of faultObserved.rows) {
-        const fault = row.fault as Readonly<{ stage: "operation-directory" | "status" | "raw" | "q"; kind: "open" | "stable" | "close" }>;
+      for (const fault of faults) {
+        const row = await runPhase5cSelectedPassIsolatedFaultFixtureV1([fault]);
         assert.equal(row.outcome, "threw", `${fault.stage}/${fault.kind}: selected-child lifetime fault is terminal`);
-        assert.match(String(row.message), /P5C_S_SELECTED_PASS_CHILD_(?:OPEN|STABLE|CLOSE)_FAULT/);
+        const leaf = { message: `Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:P5C_S_SELECTED_PASS_CHILD_${fault.kind.toUpperCase()}_FAULT:${fault.stage}`, causes: [] };
+        assert.deepEqual(row.errors, fault.kind === "close" ? [
+          { phase: "owner-close", tree: { message: "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain", causes: [leaf] } },
+          { phase: "controller-release", tree: { message: "Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:Task6A receipt cleanup uncertain", causes: [] } },
+        ] : [{ phase: "operation", tree: leaf }], `${fault.stage}/${fault.kind}: exact ordered causes and release phase survive projection`);
         const order = ["operation-directory", "status", "raw", "q"];
         const stageIndex = order.indexOf(fault.stage);
         const opened = fault.kind === "open" ? order.slice(0, stageIndex) : fault.kind === "stable" ? order.slice(0, stageIndex + 1) : order;
@@ -24591,43 +24644,38 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
         const closeCounts = row.childCloseCounts as Readonly<Record<string, number>>;
         assert.equal(opened.every((stage) => closeCounts[stage] === 1), true, `${fault.stage}/${fault.kind}: every opened child closes exactly once through failure`);
         assert.equal(order.filter((stage) => !opened.includes(stage)).every((stage) => (closeCounts[stage] ?? 0) === 0), true, `${fault.stage}/${fault.kind}: unopened children own no fabricated cleanup`);
+        assert.deepEqual(row.postCloseOutcomes, fault.kind === "close" ? ["threw", "threw", "threw", "threw", "threw", "threw"] : [], `${fault.stage}/${fault.kind}: terminal returned owner refuses every post-close method`);
       }
-      assert.equal(faultObserved.descriptorDelta, 0, "selected status/raw/Q open, stable, and close faults preserve the descriptor baseline");
     } finally {
       removeFixture(root);
     }
   });
 
   it("P5c-S preserves selected-owner primary failures through paired reverse-close faults and remains closed", async () => {
-    const root = createFixture();
-    try {
-      const harness = configurePhase5cZeroProgressFixtureV1(root, true);
-      const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
-      assert.equal((JSON.parse(seeded.stdout) as Readonly<Record<string, unknown>>).outcome, "returned", seeded.stderr);
-      const storeRoot = realpathSync(path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot));
-      const operation = harness.admitted.chain.records.successorOperation.value as InternalProductionCurrentEntryOperationV1;
-      const cases = Object.freeze([
-        Object.freeze({ label: "open-primary", faults: Object.freeze([Object.freeze({ stage: "q", kind: "open" }), Object.freeze({ stage: "status", kind: "close" })]), primary: /P5C_S_SELECTED_PASS_CHILD_OPEN_FAULT:q/, opened: Object.freeze(["operation-directory", "status", "raw"]), postClose: false }),
-        Object.freeze({ label: "stable-primary", faults: Object.freeze([Object.freeze({ stage: "raw", kind: "stable" }), Object.freeze({ stage: "status", kind: "close" })]), primary: /P5C_S_SELECTED_PASS_CHILD_STABLE_FAULT:raw/, opened: Object.freeze(["operation-directory", "status", "raw"]), postClose: false }),
-      ] as const);
-      const transportPath = path.join(path.dirname(root), ".p5c-selected-pass-close-observations.json");
-      fixtureFile(path.dirname(root), ".p5c-selected-pass-close-observations.json", `${JSON.stringify(fixtureTransportValueV1(harness.observations))}\n`, 0o600);
-      const result = await runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const before=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(fs.readFileSync(${JSON.stringify(transportPath)},"utf8")));const cursors={};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5C_S_SELECTED_PASS_RAW_KIND_INVALID:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;return sequence[cursor%sequence.length]};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",{next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")});const rows=[];for(const input of ${JSON.stringify(cases.map(({ label, faults }) => ({ label, faults })))})rows.push({label:input.label,...await m.p5cSOpenSelectedProgressPassFixtureV1({storeRoot:${JSON.stringify(storeRoot)},operation:${JSON.stringify(operation)},selectionKind:"successor-progress",faults:input.faults})});const after=fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).length;process.stdout.write(JSON.stringify({rows,descriptorDelta:after-before}))})()`);
-      assert.equal(result.status, 0, result.stderr);
-      const observed = JSON.parse(result.stdout) as Readonly<{ rows: readonly Readonly<Record<string, unknown>>[]; descriptorDelta: number }>;
-      for (const [index, expected] of cases.entries()) {
-        const row = observed.rows[index]!;
-        assert.equal(row.outcome, "threw", `${expected.label}: paired primary/cleanup faults are terminal`);
-        assert.match(String(row.message), expected.primary, `${expected.label}: the first open/stable failure remains authoritative over cleanup failure`);
-        assert.doesNotMatch(String(row.message), /P5C_S_SELECTED_PASS_CHILD_CLOSE_FAULT:status/, `${expected.label}: cleanup failure never replaces the primary`);
-        assert.deepEqual(row.childCloseOrder, [...expected.opened].reverse(), `${expected.label}: cleanup continues in exact reverse order through the injected middle close fault`);
-        const counts = row.childCloseCounts as Readonly<Record<string, number>>;
-        assert.equal(expected.opened.every((stage) => counts[stage] === 1), true, `${expected.label}: every acquired child closes exactly once`);
-        assert.deepEqual(row.postCloseOutcomes, expected.postClose ? ["threw", "threw", "threw", "threw", "threw", "threw"] : [], `${expected.label}: every context/root/filesystem/full/close method rejects after terminal cleanup`);
-      }
-      assert.equal(observed.descriptorDelta, 0, "paired selected-owner failures release every physical descriptor");
-    } finally {
-      removeFixture(root);
+    const cases = [
+      { label: "open-primary", faults: [{ stage: "q", kind: "open" }, { stage: "status", kind: "close" }], primary: "Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:P5C_S_SELECTED_PASS_CHILD_OPEN_FAULT:q", opened: ["operation-directory", "status", "raw"] },
+      { label: "stable-primary", faults: [{ stage: "raw", kind: "stable" }, { stage: "status", kind: "close" }], primary: "Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:P5C_S_SELECTED_PASS_CHILD_STABLE_FAULT:raw", opened: ["operation-directory", "status", "raw"] },
+    ] as const;
+    for (const expected of cases) {
+      const row = await runPhase5cSelectedPassIsolatedFaultFixtureV1(expected.faults);
+      assert.equal(row.outcome, "threw", `${expected.label}: paired primary/cleanup faults are terminal`);
+      assert.deepEqual(row.errors, [
+        { phase: "operation", tree: {
+          message: "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: selected progress acquisition and cleanup failed",
+          causes: [
+            { message: expected.primary, causes: [] },
+            { message: "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain", causes: [
+              { message: "Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:P5C_S_SELECTED_PASS_CHILD_CLOSE_FAULT:status", causes: [] },
+            ] },
+          ],
+        } },
+        { phase: "controller-release", tree: { message: "Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:Task6A receipt cleanup uncertain", causes: [] } },
+      ], `${expected.label}: primary precedes every cleanup cause and the separate controller release refusal`);
+      assert.deepEqual(row.childCloseOrder, [...expected.opened].reverse(), `${expected.label}: cleanup continues in exact reverse order through the injected middle close fault`);
+      const counts = row.childCloseCounts as Readonly<Record<string, number>>;
+      assert.equal(expected.opened.every((stage) => counts[stage] === 1), true, `${expected.label}: every acquired child closes exactly once`);
+      assert.equal(counts.q ?? 0, 0, `${expected.label}: unacquired Q owner has no fabricated cleanup`);
+      assert.deepEqual(row.postCloseOutcomes, [], `${expected.label}: failed acquisition does not fabricate a returned owner`);
     }
   });
 

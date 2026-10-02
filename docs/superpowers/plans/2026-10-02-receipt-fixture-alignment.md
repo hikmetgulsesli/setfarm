@@ -116,3 +116,42 @@ These are nine distinct focused tests across causal cycles, NOT full receipt/ALL
 acceptance. Remaining projection/isolation/static RED plus explicit mutation
 witnesses are unresolved and block PR delivery/broader acceptance. Source-level
 alignment is reviewed; no protected/host/service/DB acceptance follows.
+
+## Task 4: Selected-pass causal projection and fresh physical case isolation
+
+Files: same receipt test and this spec/plan. Production remains unchanged.
+Consumes actual selected-owner18286 aggregate and helper5494–5517; produces
+test-only phase-labelled recursive error trees and independent physical cases.
+
+- [ ] Reproduce both original selected-pass/paired consumers on b6e60434;
+  expect exact nested-sentinel-loss RED, not environment/import failure.
+- [ ] In existing selectedPassOpenWrapper add local recursive projector:
+```ts
+const projectError = (error: unknown): unknown => ({
+  message: String(error),
+  causes: error instanceof AggregateError ? error.errors.map(projectError) : [],
+});
+```
+- [ ] Every existing operation/owner-close/controller-release catch pushes its
+  phase/tree in observation order. Keep legacy message but never drop new tree.
+- [ ] Move12fault/2paired invocations to fresh createFixture/configure/seed root
+  per input and real child. Keep clean6bindings batched; measure FD0 per faultchild.
+- [ ] Assert exact single close aggregate or primary-first paired aggregate and
+  exact separate release-uncertainty leaf, plus old reverse/once/unopened checks.
+- [ ] Assert six postclosed-method refusals for returned close-fault owners;
+  no fabricated postclose owner for acquisition failures. Do not infer diskzero.
+- [ ] Rerun both consumers GREEN; no latchreset/controller unlink workaround.
+- [ ] Independent exact diff review, then causal slice commit with actual outputs.
+  Broader remaining RED/fullreceipt/mutation witnesses still block PR acceptance.
+
+Task4 actual ledger01:21UTC: independent requirements C0/I0/M0 (spec66ac99d3,
+plan2cd57be7); same exact two-consumer effect review C0/I0/M0. Original replay52867
+outer1/0P2F4797.204958ms confirms both expected nested-cause-loss assertions.
+After minimal test-only projection/isolation repair98938 outer0/2P0F/zero cancel
+or skip31156.020417ms: clean six bindings plus12independent fault roots/children,
+and2independent paired roots/children. Exact error phase/cause/order, reverse
+close/once/unopened/post-close refusal and each faultchildFD0 all executed.
+Independent actual diff C0/I0/M0 at testSHA
+f878f1257da5bd3d71ff911f64b5fbc09b19c96acaf896e2d686b4e990461dec.
+Only focused Task4 evidence, no full receipt/ALL, diskzero or protected acceptance.
+Lost-phase/cause/order and P4/Q before-cleanup mutant witnesses still pending.
