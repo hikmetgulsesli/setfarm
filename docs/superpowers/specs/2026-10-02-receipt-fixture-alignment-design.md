@@ -312,3 +312,50 @@ catch/finally. Each fresh physical root/actual child must reach the exact sentin
 and final FD0, yet capture false immediate closure fields. All seven P4 phases
 and Q3/no-temp are exercised independently. Missing import/setup/snapshot does
 not qualify as mutant rejection; only the nominated witness kills it.
+
+## Resume awaited cleanup handshake and paired failures
+
+Retain the five existing absent-frontier cases and their titles. Add bounded
+gated cases using that same physical setup, fresh root and actual child each.
+Actual Q/raw/status/operation-directory/root callbacks record completion only
+after their real close returns/awaits. The final probe snapshots consumed closed
+state and ordered completion labels, signals entry, awaits a child-local deferred
+gate, records completion and then applies the existing response fault.
+
+Ordinal2 gates the fresh-owner caller in advanceTask12CurrentStatusAfterOwnedEffect;
+ordinal1 separately gates the public resume original-owner close. Race actual
+settlement against gate entry; after entry cross one setImmediate checkpoint,
+not a duration-based sleep, and require UNSETTLED while held. Driver finally
+always releases the gate and awaits actual settlement plus observed original
+callback promises. Rejection observers attach to the original returned promises;
+they must not replace, swallow or fabricate the operation's primary error.
+
+Honest copied-only mutants omit final callback, move it before ROOT, remove the
+public ordinal1 caller await, or remove async helper's per-release await. Require
+actual target cleanup/completion, adjacent status/publication, final FD0 and the
+specific missing entry, missing root-at-entry or early settlement witness.
+Import/setup/timeout/leak or unrelated refusal is not a mutation kill. Mutate
+after preparation/instrumentation so no test hook repairs the nominated mutation.
+
+The per-release-await mutant dispatches its final probe before any wrapper has
+completed: exact entry labels[] and early settlement are the nominated violation.
+Every real callback must eventually complete exactly once (unordered only in this
+mutant); the held ordinal2 finishes after ordinal1, exact probe completion[1,2].
+Baseline and all other cases retain ordered release labels and reverse[2,1].
+These counterexamples do not qualify the altered source or relax baseline gates.
+
+Child-local five-second containment watchdog releases the gate if the entry/
+settlement race stalls; expiry is an exact harness failure, never qualification.
+A separate fresh physical case deliberately withholds only the entry notification,
+arms its short containment timer only from actual final callback entry, and
+requires an exact at-expiry closed/full-five snapshot plus unsettled operation.
+Then it requires actual callback/operation drain,
+FD0 and unchanged exact publications/adjacent status before the harness failure.
+This duration tests containment only; normal pending/order evidence still uses
+the deferred handshake and setImmediate checkpoint, not a timeout heuristic.
+
+Fresh ordinal2 paired case physically closes root, records completion, then
+throws an exact earlier root-close sentinel. Final gated callback must still run;
+after release its existing response sentinel is the second cleanup aggregate
+cause. Keep separate resume-pass and controller-release trees, all original
+error precedence, no latch reset, forced lock cleanup or disk-zero inference.

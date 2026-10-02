@@ -1773,6 +1773,28 @@ function moveTask6aResponseProbeBeforeCleanupFixtureV1(root: string, kind: "p4" 
   writeFileSync(modulePath, source.replace(region, () => moved));
 }
 
+type Task6aResumeCleanupMutationFixtureV1 = "omit-tail" | "before-root" | "public-await" | "helper-await";
+function mutateTask6aResumeCleanupFixtureV1(root: string, mutation: Task6aResumeCleanupMutationFixtureV1): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  const source = readFileSync(modulePath, "utf8");
+  const name = mutation === "public-await" ? "resumeInternalProductionCurrentEntryAuthorityV1"
+    : mutation === "helper-await" ? "attemptTask6aReceiptOwnedCleanupAsyncV1"
+      : "openExactPoisonPostVisibleSelectedProgressPassV1";
+  const region = topLevelFunctionRegionV1(source, name);
+  const original = mutation === "public-await" ? "await p5cSObservePublicOwnerClose(passOwner.close());"
+    : mutation === "helper-await" ? "try { await release(); }"
+      : '      () => p5cSFinalCleanupProbe(),\n';
+  assert.equal(region.split(original).length, 2, `${mutation}: one exact nominated copied mutation anchor`);
+  let mutated = region.replace(original, () => mutation === "public-await" ? "p5cSObservePublicOwnerClose(passOwner.close());"
+    : mutation === "helper-await" ? "try { release(); }" : "");
+  if (mutation === "before-root") {
+    const rootClose = '      () => p5cSCompleteActualClose("root", () => rootReader.close()),';
+    assert.equal(mutated.split(rootClose).length, 2, "before-root: one complete actual root callback");
+    mutated = mutated.replace(rootClose, () => `${original}${rootClose}`);
+  }
+  writeFileSync(modulePath, source.replace(region, () => mutated));
+}
+
 function fixtureTransportValueV1(value: unknown): unknown {
   if (Buffer.isBuffer(value)) return Object.freeze({ __p4ExactBufferBase64V1: value.toString("base64") });
   if (Array.isArray(value)) return value.map((entry) => fixtureTransportValueV1(entry));
@@ -10406,36 +10428,78 @@ ${writerMutationFence}
   const postEffectOwnerRegion = topLevelFunctionRegionV1(source, "openExactPoisonPostVisibleSelectedProgressPassV1");
   const postEffectOwnerHeader = /^async function openExactPoisonPostVisibleSelectedProgressPassV1\([\s\S]*?\):\s*Promise<ExactPoisonPostVisibleSelectedProgressPassOwnerV1>\s*\{/.exec(postEffectOwnerRegion)?.[0];
   assert.ok(postEffectOwnerHeader, "post-effect transport probe bounds the actual selected owner");
-  const cleanupExit = "      () => rootReader.close(),\n    ]);";
-  assert.equal(postEffectOwnerRegion.split(cleanupExit).length, 2, "one selected-owner aggregate cleanup tail follows all physical closes");
-  source = source.replace(postEffectOwnerRegion, postEffectOwnerRegion
+  const cleanupVector = `    await attemptTask6aReceiptOwnedCleanupAsyncV1([
+      ...(currentStatusCas === null ? [] : [() => currentStatusCas!.close()]),
+      ...(raw === null ? [] : [() => raw!.close()]),
+      ...(status === null ? [] : [() => status!.close()]),
+      ...(operationDirectoryGuard === null ? [] : [() => operationDirectoryGuard!.close()]),
+      () => rootReader.close(),
+    ]);`;
+  assert.equal(postEffectOwnerRegion.split(cleanupVector).length, 2, "one complete selected-owner cleanup vector owns the physical releases");
+  source = source.replace(postEffectOwnerRegion, () => postEffectOwnerRegion
     .replace(postEffectOwnerHeader, `${postEffectOwnerHeader}
-  const p5cSPostEffectProbe = Reflect.get(globalThis,"__p5cSResumeProbeV1") as undefined | {executePublications?:unknown[];postEffectOwnerOpens:number;postEffectOwnerCloses:number[];freshCloseFault:boolean};
-  const p5cSPostEffectOrdinal = p5cSPostEffectProbe?.executePublications ? ++p5cSPostEffectProbe.postEffectOwnerOpens : 0;`)
-    .replace(cleanupExit, `      () => rootReader.close(),
-      async () => {
-        if (p5cSPostEffectOrdinal !== 0) {
-          p5cSPostEffectProbe!.postEffectOwnerCloses.push(p5cSPostEffectOrdinal);
-          if (p5cSPostEffectOrdinal === 2 && p5cSPostEffectProbe!.freshCloseFault) throw new Error("P5C_S_POST_EFFECT_CLOSE_FAULT");
-        }
-      },
+  const p5cSPostEffectProbe = Reflect.get(globalThis,"__p5cSResumeProbeV1") as undefined | {
+    executePublications?:unknown[];postEffectOwnerOpens:number;postEffectOwnerCloses:number[];freshCloseFault:boolean;
+    rootCloseFault?:boolean;cleanupGateOrdinal?:number;cleanupGateCompleted?:boolean;
+    cleanupCompletions?:{ordinal:number;label:string}[];
+    observeCleanupPromise?:(task:Promise<void>)=>void;
+    enterCleanupGate?:(snapshot:unknown)=>void;awaitCleanupGate?:()=>Promise<void>;
+  };
+  const p5cSPostEffectOrdinal = p5cSPostEffectProbe?.executePublications ? ++p5cSPostEffectProbe.postEffectOwnerOpens : 0;
+  const p5cSObserveCleanupPromise = (task:Promise<void>):Promise<void> => {
+    p5cSPostEffectProbe?.observeCleanupPromise?.(task);
+    return task;
+  };
+  const p5cSCompleteActualClose = (label:string,release:()=>void|Promise<void>):void|Promise<void> => {
+    if (p5cSPostEffectOrdinal === 0) return release();
+    return p5cSObserveCleanupPromise((async()=>{
+      await release();
+      (p5cSPostEffectProbe!.cleanupCompletions ??= []).push({ordinal:p5cSPostEffectOrdinal,label});
+      if (label === "root" && p5cSPostEffectOrdinal === 2 && p5cSPostEffectProbe!.rootCloseFault) throw new Error("P5C_S_ROOT_CLOSE_RESPONSE_FAULT");
+    })());
+  };
+  const p5cSFinalCleanupProbe = ():Promise<void> => p5cSObserveCleanupPromise((async()=>{
+    if (p5cSPostEffectOrdinal !== 0) {
+      if (p5cSPostEffectProbe!.cleanupGateOrdinal === p5cSPostEffectOrdinal) {
+        const completed = (p5cSPostEffectProbe!.cleanupCompletions ?? []).filter(entry=>entry.ordinal === p5cSPostEffectOrdinal).map(entry=>entry.label);
+        p5cSPostEffectProbe!.enterCleanupGate?.({ordinal:p5cSPostEffectOrdinal,closed,completed});
+        await p5cSPostEffectProbe!.awaitCleanupGate?.();
+        p5cSPostEffectProbe!.cleanupGateCompleted = true;
+      }
+      p5cSPostEffectProbe!.postEffectOwnerCloses.push(p5cSPostEffectOrdinal);
+      if (p5cSPostEffectOrdinal === 2 && p5cSPostEffectProbe!.freshCloseFault) throw new Error("P5C_S_POST_EFFECT_CLOSE_FAULT");
+    }
+  })());`)
+    .replace(cleanupVector, () => `    await attemptTask6aReceiptOwnedCleanupAsyncV1([
+      ...(currentStatusCas === null ? [] : [() => p5cSCompleteActualClose("Q", () => currentStatusCas!.close())]),
+      ...(raw === null ? [] : [() => p5cSCompleteActualClose("raw", () => raw!.close())]),
+      ...(status === null ? [] : [() => p5cSCompleteActualClose("status", () => status!.close())]),
+      ...(operationDirectoryGuard === null ? [] : [() => p5cSCompleteActualClose("operation-directory", () => operationDirectoryGuard!.close())]),
+      () => p5cSCompleteActualClose("root", () => rootReader.close()),
+      () => p5cSFinalCleanupProbe(),
     ]);`));
   const diagnosticResumeRegion = topLevelFunctionRegionV1(source, "resumeInternalProductionCurrentEntryAuthorityV1");
   const diagnosticResumeHeader = /^export async function resumeInternalProductionCurrentEntryAuthorityV1\([\s\S]*?\):\s*Promise<InternalProductionCurrentEntryAuthorityStatusV1>\s*\{/.exec(diagnosticResumeRegion)?.[0];
   assert.ok(diagnosticResumeHeader, "resume diagnostics bound the actual public resume function");
   const resumePrimaryCatch = "  } catch (error) {\n    primary = error;\n  }";
   const resumeReleaseCatch = "  try { releaseTask12ControllerLockV1(controllerLock); }\n  catch (error) { primary ??= error; }";
-  for (const anchor of [resumePrimaryCatch, resumeReleaseCatch]) assert.equal(diagnosticResumeRegion.split(anchor).length, 2,
+  const publicOwnerClose = "await passOwner.close();";
+  for (const anchor of [resumePrimaryCatch, resumeReleaseCatch, publicOwnerClose]) assert.equal(diagnosticResumeRegion.split(anchor).length, 2,
     "resume diagnostics require one complete actual catch anchor");
   source = source.replace(diagnosticResumeRegion, () => diagnosticResumeRegion
     .replace(diagnosticResumeHeader, () => `${diagnosticResumeHeader}
   type P5cSResumeErrorTreeV1 = Readonly<{message:string;causes:readonly P5cSResumeErrorTreeV1[]}>;
-  const p5cSResumeDiagnosticProbe = Reflect.get(globalThis,"__p5cSResumeProbeV1") as undefined | {executePublications?:unknown[];resumeErrors?:{phase:string;tree:P5cSResumeErrorTreeV1}[]};
+  const p5cSResumeDiagnosticProbe = Reflect.get(globalThis,"__p5cSResumeProbeV1") as undefined | {executePublications?:unknown[];resumeErrors?:{phase:string;tree:P5cSResumeErrorTreeV1}[];observeCleanupPromise?:(task:Promise<void>)=>void};
   if (p5cSResumeDiagnosticProbe?.executePublications) p5cSResumeDiagnosticProbe.resumeErrors = [];
   const p5cSProjectResumeError = (error:unknown):P5cSResumeErrorTreeV1 => ({message:String(error),causes:error instanceof AggregateError?Array.from(error.errors,p5cSProjectResumeError):[]});
   const p5cSRecordResumeError = (phase:string,error:unknown):void => {
     p5cSResumeDiagnosticProbe?.resumeErrors?.push({phase,tree:p5cSProjectResumeError(error)});
+  };
+  const p5cSObservePublicOwnerClose = (task:Promise<void>):Promise<void> => {
+    p5cSResumeDiagnosticProbe?.observeCleanupPromise?.(task);
+    return task;
   };`)
+    .replace(publicOwnerClose, () => "await p5cSObservePublicOwnerClose(passOwner.close());")
     .replace(resumePrimaryCatch, () => "  } catch (error) {\n    primary = error;\n    p5cSRecordResumeError(\"resume-pass\", error);\n  }")
     .replace(resumeReleaseCatch, () => "  try { releaseTask12ControllerLockV1(controllerLock); }\n  catch (error) { primary ??= error; p5cSRecordResumeError(\"controller-release\", error); }"));
   writeFileSync(modulePath, source);
@@ -14050,7 +14114,42 @@ function runPhase5cZeroProgressFixtureV1(
           : entry === "controller-construction"
             ? `m.p5cSControllerGenerationConstructionFaultFixtureV1(${JSON.stringify(controllerConstructionInput)})`
           : "m.p5cPrepareCurrentEntryFixtureV1()";
-  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const path=await import("node:path");await import(${JSON.stringify(startupModule)});${databaseWarmup}const descriptorCount=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).filter((name)=>{try{fs.fstatSync(Number(name));return true}catch{return false}}).length;await new Promise((resolve)=>setTimeout(resolve,100));const before=descriptorCount();const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(fs.readFileSync(${JSON.stringify(transportPath)},"utf8")));const mutation=${JSON.stringify(mutation)};const cursors={};const z={lowerReturnCalls:0,mutation,transientApplied:false,originalRewriteApplied:false,originalDirectorySwapApplied:false,rootIdentity:null,reviewApplied:false,createdTarget:null};const p={driftTarget:${JSON.stringify(preStatusDriftTarget)},driftApplied:false,driftOriginal:null};const s={dispatcherCalls:0,preStatusPassCalls:0,progressValidatorCalls:0,progressPassCalls:0,equalityCalls:0,qStates:[]};const sr=Array.isArray(values.sResume)&&values.sResume.length>0?Object.assign(values.sResume[0],{prepareCalls:0,executeCalls:0,executeInputs:[],observeCalls:0,resolverCalls:0,advanceStates:[],events:[],faultApplied:false,migrationPrepareCalls:0,retainedMigrationReadCalls:0,completedRetainedReadCalls:0,applyCalls:0,migrationObserveCalls:0,receiptResolveCalls:0,currentAuditResolveCalls:0,auditCalls:0}):null;if(p.driftTarget)p.driftOriginal=fs.readFileSync(p.driftTarget);const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5C_Z_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;if(mutation.kind==="original-rewrite"&&kind==="source"&&!z.originalRewriteApplied){const bytes=fs.readFileSync(mutation.target);fs.writeFileSync(mutation.target,bytes);z.originalRewriteApplied=true}if(mutation.kind==="original-directory-swap"&&kind==="source"&&!z.originalDirectorySwapApplied){fs.renameSync(mutation.target,mutation.backup);fs.mkdirSync(mutation.target,{mode:0o700});for(const name of fs.readdirSync(mutation.backup))fs.copyFileSync(path.join(mutation.backup,name),path.join(mutation.target,name));z.originalDirectorySwapApplied=true}if(kind==="rowTail"&&sr?.rowTailCurrentStatusTarget){const pair=JSON.parse(fs.readFileSync(sr.rowTailCurrentStatusTarget,"utf8"));if(!/^[a-f0-9]{64}$/.test(pair.statusHash))throw Error("P5C_S_DURABLE_ROW_HASH_INVALID");const body=JSON.parse(fs.readFileSync(path.join(sr.rowTailStatusRecordsRoot,pair.statusHash.slice(0,2),pair.statusHash+".json"),"utf8"));if(body.statusRef!==pair.statusRef||body.statusHash!==pair.statusHash||body.state!=="migration_applying"||body.operationHash!==sr.terminal.currentEntryOperation.operationHash)throw Error("P5C_S_DURABLE_ROW_STATUS_CROSSED");const ordinal={prepared:7,consumed:8,receipt_published:9,current_audited:10}[body.migrationApplyingPhase?.phase];const selected=sequence.find(value=>value.database.databasePrefixOrdinal===ordinal);if(!selected)throw Error("P5C_S_DURABLE_ROW_OBSERVATION_MISSING");return selected}return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const shared={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:null};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",shared);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);Reflect.set(globalThis,"__p5cZeroProgressProbeV1",z);Reflect.set(globalThis,"__p5cPreStatusProbeV1",p);Reflect.set(globalThis,"__p5cProgressProbeV1",s);if(sr)Reflect.set(globalThis,"__p5cSResumeProbeV1",sr);const projectError=(error)=>({message:String(error),causes:error instanceof AggregateError?Array.from(error.errors,projectError):[]});let outcome="returned",message=null,value=null,errorTree=null;try{value=await ${call}}catch(error){outcome="threw";message=String(error);errorTree=projectError(error)}finally{if(z.originalDirectorySwapApplied){fs.rmSync(mutation.target,{recursive:true,force:true});fs.renameSync(mutation.backup,mutation.target)}if(z.reviewApplied&&mutation.backup&&!new Set(["f2-selected-post-fresh-replace","f2-redundant-post-fresh-replace","f1-linked-replace"]).has(mutation.kind)){if(mutation.targetType==="hardlink-parent"&&fs.existsSync(mutation.target)&&fs.existsSync(mutation.backup)){for(const name of fs.readdirSync(mutation.target))fs.renameSync(path.join(mutation.target,name),path.join(mutation.backup,name))}fs.rmSync(mutation.target,{recursive:true,force:true});if(fs.existsSync(mutation.backup))fs.renameSync(mutation.backup,mutation.target)}if(z.createdTarget&&fs.existsSync(z.createdTarget))fs.rmSync(z.createdTarget,{recursive:true,force:true});if(p.driftApplied&&p.driftTarget&&p.driftOriginal)fs.writeFileSync(p.driftTarget,p.driftOriginal)}const after=descriptorCount();const {contextIds:_,mainContext:__,...serializable}=shared;process.stdout.write(JSON.stringify({outcome,message,value,errorTree,...serializable,...s,sResume:sr,admissionCalls:admission.admissionCalls,lowerReturnCalls:z.lowerReturnCalls,transientApplied:z.transientApplied,originalRewriteApplied:z.originalRewriteApplied,originalDirectorySwapApplied:z.originalDirectorySwapApplied,reviewApplied:z.reviewApplied,createdTarget:z.createdTarget,rootIdentity:z.rootIdentity,preStatusDriftApplied:p.driftApplied,cursors,descriptorDelta:after-before}))})()`);
+  const gateOrdinal = (observations.sResume?.[0] as Readonly<Record<string, unknown>> | undefined)?.cleanupGateOrdinal;
+  assert.ok(gateOrdinal === undefined || gateOrdinal === null || gateOrdinal === 1 || gateOrdinal === 2, "only the two actual selected owner lifetimes may be gated");
+  assert.ok(gateOrdinal == null || entry === "resume", "cleanup handshake invokes only the actual public resume");
+  const invocation = gateOrdinal == null ? call : `(async()=>{
+    let enterGate,releaseGate;
+    const entered=new Promise(resolve=>{enterGate=resolve});
+    const gate=new Promise(resolve=>{releaseGate=resolve});
+    const observedClosures=[];
+    let operationSettled=false;
+    sr.observeCleanupPromise=(task)=>{task.catch(()=>{});observedClosures.push(task)};
+    sr.cleanupWatchdogExpired=false;
+    sr.awaitCleanupGate=()=>gate;
+    let watchdogTimer,expireWatchdog;
+    const watchdog=new Promise(resolve=>{
+      expireWatchdog=()=>{sr.cleanupWatchdogAtExpiry={operationSettled,snapshot:sr.cleanupGateSnapshot??null};sr.cleanupWatchdogExpired=true;releaseGate();resolve("watchdog")};
+      watchdogTimer=setTimeout(expireWatchdog,5000);
+    });
+    sr.enterCleanupGate=(snapshot)=>{
+      sr.cleanupGateSnapshot=snapshot;
+      if(sr.cleanupWatchdogFixture){clearTimeout(watchdogTimer);watchdogTimer=setTimeout(expireWatchdog,25)}else enterGate();
+    };
+    const settled=(${call}).then(value=>{operationSettled=true;return {outcome:"returned",value}},error=>{operationSettled=true;return {outcome:"threw",error}});
+    try{
+      sr.cleanupGateFirst=await Promise.race([entered.then(()=>"entry"),settled.then(()=>"settled"),watchdog]);
+      if(sr.cleanupGateFirst==="entry")await new Promise(resolve=>setImmediate(resolve));
+      sr.settledWhileCleanupGateHeld=operationSettled;
+    }finally{clearTimeout(watchdogTimer);releaseGate()}
+    const result=await settled;
+    await Promise.allSettled(observedClosures);
+    sr.cleanupOperationOutcome=result.outcome;
+    sr.cleanupOperationValue=result.value??null;
+    if(sr.cleanupWatchdogExpired)throw new Error("P5C_S_CLEANUP_GATE_WATCHDOG");
+    if(result.outcome==="threw")throw result.error;
+    return result.value;
+  })()`;
+  return runFixtureExpressionAsync(root, `(async()=>{const fs=await import("node:fs");const path=await import("node:path");await import(${JSON.stringify(startupModule)});${databaseWarmup}const descriptorCount=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).filter((name)=>{try{fs.fstatSync(Number(name));return true}catch{return false}}).length;await new Promise((resolve)=>setTimeout(resolve,100));const before=descriptorCount();const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(fs.readFileSync(${JSON.stringify(transportPath)},"utf8")));const mutation=${JSON.stringify(mutation)};const cursors={};const z={lowerReturnCalls:0,mutation,transientApplied:false,originalRewriteApplied:false,originalDirectorySwapApplied:false,rootIdentity:null,reviewApplied:false,createdTarget:null};const p={driftTarget:${JSON.stringify(preStatusDriftTarget)},driftApplied:false,driftOriginal:null};const s={dispatcherCalls:0,preStatusPassCalls:0,progressValidatorCalls:0,progressPassCalls:0,equalityCalls:0,qStates:[]};const sr=Array.isArray(values.sResume)&&values.sResume.length>0?Object.assign(values.sResume[0],{prepareCalls:0,executeCalls:0,executeInputs:[],observeCalls:0,resolverCalls:0,advanceStates:[],events:[],faultApplied:false,migrationPrepareCalls:0,retainedMigrationReadCalls:0,completedRetainedReadCalls:0,applyCalls:0,migrationObserveCalls:0,receiptResolveCalls:0,currentAuditResolveCalls:0,auditCalls:0}):null;if(p.driftTarget)p.driftOriginal=fs.readFileSync(p.driftTarget);const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P5C_Z_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;if(mutation.kind==="original-rewrite"&&kind==="source"&&!z.originalRewriteApplied){const bytes=fs.readFileSync(mutation.target);fs.writeFileSync(mutation.target,bytes);z.originalRewriteApplied=true}if(mutation.kind==="original-directory-swap"&&kind==="source"&&!z.originalDirectorySwapApplied){fs.renameSync(mutation.target,mutation.backup);fs.mkdirSync(mutation.target,{mode:0o700});for(const name of fs.readdirSync(mutation.backup))fs.copyFileSync(path.join(mutation.backup,name),path.join(mutation.target,name));z.originalDirectorySwapApplied=true}if(kind==="rowTail"&&sr?.rowTailCurrentStatusTarget){const pair=JSON.parse(fs.readFileSync(sr.rowTailCurrentStatusTarget,"utf8"));if(!/^[a-f0-9]{64}$/.test(pair.statusHash))throw Error("P5C_S_DURABLE_ROW_HASH_INVALID");const body=JSON.parse(fs.readFileSync(path.join(sr.rowTailStatusRecordsRoot,pair.statusHash.slice(0,2),pair.statusHash+".json"),"utf8"));if(body.statusRef!==pair.statusRef||body.statusHash!==pair.statusHash||body.state!=="migration_applying"||body.operationHash!==sr.terminal.currentEntryOperation.operationHash)throw Error("P5C_S_DURABLE_ROW_STATUS_CROSSED");const ordinal={prepared:7,consumed:8,receipt_published:9,current_audited:10}[body.migrationApplyingPhase?.phase];const selected=sequence.find(value=>value.database.databasePrefixOrdinal===ordinal);if(!selected)throw Error("P5C_S_DURABLE_ROW_OBSERVATION_MISSING");return selected}return sequence[cursor%sequence.length]};const admission={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>next("syntheticGit")};const shared={selectorCalls:0,creatorCalls:0,builderCalls:0,helperCalls:0,validatorCalls:0,contextCloseCalls:0,sealHelperCalls:0,writerCalls:0,publisherCalls:0,helperContextId:null,validatorContextId:null,sameContext:null,nextContextId:0,contextIds:new WeakMap(),mainContext:null,fsyncTargets:[],fsyncIdentities:[],events:[],faultStage:null};const durability={events:[],matches:0,fault:null};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",admission);Reflect.set(globalThis,"__p5bStrictCEntryProbeV1",shared);Reflect.set(globalThis,"__p5aExactPoisonDurabilityProbeV1",durability);Reflect.set(globalThis,"__p5cZeroProgressProbeV1",z);Reflect.set(globalThis,"__p5cPreStatusProbeV1",p);Reflect.set(globalThis,"__p5cProgressProbeV1",s);if(sr)Reflect.set(globalThis,"__p5cSResumeProbeV1",sr);const projectError=(error)=>({message:String(error),causes:error instanceof AggregateError?Array.from(error.errors,projectError):[]});let outcome="returned",message=null,value=null,errorTree=null;try{value=await ${invocation}}catch(error){outcome="threw";message=String(error);errorTree=projectError(error)}finally{if(z.originalDirectorySwapApplied){fs.rmSync(mutation.target,{recursive:true,force:true});fs.renameSync(mutation.backup,mutation.target)}if(z.reviewApplied&&mutation.backup&&!new Set(["f2-selected-post-fresh-replace","f2-redundant-post-fresh-replace","f1-linked-replace"]).has(mutation.kind)){if(mutation.targetType==="hardlink-parent"&&fs.existsSync(mutation.target)&&fs.existsSync(mutation.backup)){for(const name of fs.readdirSync(mutation.target))fs.renameSync(path.join(mutation.target,name),path.join(mutation.backup,name))}fs.rmSync(mutation.target,{recursive:true,force:true});if(fs.existsSync(mutation.backup))fs.renameSync(mutation.backup,mutation.target)}if(z.createdTarget&&fs.existsSync(z.createdTarget))fs.rmSync(z.createdTarget,{recursive:true,force:true});if(p.driftApplied&&p.driftTarget&&p.driftOriginal)fs.writeFileSync(p.driftTarget,p.driftOriginal)}const after=descriptorCount();const {contextIds:_,mainContext:__,...serializable}=shared;process.stdout.write(JSON.stringify({outcome,message,value,errorTree,...serializable,...s,sResume:sr,admissionCalls:admission.admissionCalls,lowerReturnCalls:z.lowerReturnCalls,transientApplied:z.transientApplied,originalRewriteApplied:z.originalRewriteApplied,originalDirectorySwapApplied:z.originalDirectorySwapApplied,reviewApplied:z.reviewApplied,createdTarget:z.createdTarget,rootIdentity:z.rootIdentity,preStatusDriftApplied:p.driftApplied,cursors,descriptorDelta:after-before}))})()`);
 }
 
 function phase5cSWithRowTailOrdinalsV1(
@@ -34775,8 +34874,24 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
     }
   });
 
-  for (const fault of ["none", "missing-material", "predecessor-aba", "fresh-close", "missing-material-and-close"] as const) {
-  it(`P5c-S resumes an absent raw pre-schema frontier into one exact adjacent status${fault === "none" ? "" : ` (${fault})`}`, async () => {
+  for (const scenario of [
+    { fault: "none" }, { fault: "missing-material" }, { fault: "predecessor-aba" },
+    { fault: "fresh-close" }, { fault: "missing-material-and-close" },
+    { fault: "none", gateOrdinal: 1, variant: "original-owner" },
+    { fault: "none", gateOrdinal: 2, variant: "fresh-owner" },
+    { fault: "fresh-close", gateOrdinal: 2, variant: "paired-root-and-response", rootCloseFault: true },
+    { fault: "none", gateOrdinal: 2, variant: "omit-tail", mutation: "omit-tail" },
+    { fault: "none", gateOrdinal: 2, variant: "before-root", mutation: "before-root" },
+    { fault: "none", gateOrdinal: 1, variant: "public-await", mutation: "public-await" },
+    { fault: "none", gateOrdinal: 2, variant: "helper-await", mutation: "helper-await" },
+    { fault: "none", gateOrdinal: 2, variant: "watchdog-containment", watchdogFixture: true },
+  ] as readonly Readonly<{
+    fault: "none" | "missing-material" | "predecessor-aba" | "fresh-close" | "missing-material-and-close";
+    gateOrdinal?: 1 | 2; variant?: string; rootCloseFault?: boolean; mutation?: Task6aResumeCleanupMutationFixtureV1; watchdogFixture?: boolean;
+  }>[]) {
+  const { fault } = scenario;
+  it(scenario.variant ? `P5c-S gated resume cleanup ${scenario.variant}`
+    : `P5c-S resumes an absent raw pre-schema frontier into one exact adjacent status${fault === "none" ? "" : ` (${fault})`}`, async () => {
       const root = createFixture();
       try {
         const harness = configurePhase5cZeroProgressFixtureV1(root, true);
@@ -34826,23 +34941,82 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
           postEffectOwnerOpens: 0,
           postEffectOwnerCloses: [],
           freshCloseFault: fault.endsWith("close"),
+          cleanupGateOrdinal: scenario.gateOrdinal ?? null,
+          rootCloseFault: scenario.rootCloseFault ?? false,
+          cleanupWatchdogFixture: scenario.watchdogFixture ?? false,
           terminal,
           observedStatuses: [terminal],
         });
         const observations = Object.freeze({ ...harness.observations, sResume: Object.freeze([resumeProbe]) });
+        if (scenario.mutation) mutateTask6aResumeCleanupFixtureV1(root, scenario.mutation);
         const result = await runPhase5cZeroProgressFixtureV1(root, observations, Object.freeze({ kind: "none" }), "resume");
         assert.equal(result.status, 0, result.stderr);
         const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
         const resume = observed.sResume as Readonly<Record<string, unknown>>;
+        if (scenario.gateOrdinal !== undefined) {
+          if (!scenario.watchdogFixture) assert.equal(resume.cleanupWatchdogExpired, false, "containment expiry never qualifies a normal gate or mutant witness");
+          if (scenario.watchdogFixture) {
+            assert.equal(resume.cleanupWatchdogExpired, true, "containment expiry must be visible and must release the actual pending cleanup");
+            assert.equal(resume.cleanupGateFirst, "watchdog");
+            assert.deepEqual(resume.cleanupWatchdogAtExpiry, {
+              operationSettled: false,
+              snapshot: { ordinal: scenario.gateOrdinal, closed: true, completed: ["Q", "raw", "status", "operation-directory", "root"] },
+            }, "watchdog expiry releases an actually entered pending cleanup, not a gate pre-released before its callback");
+            assert.equal(resume.cleanupGateCompleted, true, "expired handshake drains the actual closure after releasing its gate");
+            assert.equal(resume.cleanupOperationOutcome, "returned", "the controlled expiry does not invent an operation failure");
+          } else if (scenario.mutation === "omit-tail") {
+            assert.equal(resume.cleanupGateFirst, "settled", "omitted final callback settles without entering its gate");
+            assert.equal(resume.cleanupGateSnapshot, undefined, "omitted callback never fabricates a probe entry");
+            assert.equal(resume.cleanupGateCompleted, undefined);
+          } else {
+            if (scenario.mutation !== "public-await" && scenario.mutation !== "helper-await") assert.equal(resume.cleanupGateFirst, "entry",
+              "actual final cleanup probe must be reached before resume settles");
+            assert.equal(resume.settledWhileCleanupGateHeld, scenario.mutation === "public-await" || scenario.mutation === "helper-await",
+              "the nominated missing await, not eventual cleanup, distinguishes early settlement");
+            assert.deepEqual(resume.cleanupGateSnapshot, {
+              ordinal: scenario.gateOrdinal, closed: true,
+              completed: scenario.mutation === "before-root" ? ["Q", "raw", "status", "operation-directory"]
+                : scenario.mutation === "helper-await" ? []
+                : ["Q", "raw", "status", "operation-directory", "root"],
+            }, "the immediate completion sequence distinguishes moved or non-awaited callbacks");
+            assert.equal(resume.cleanupGateCompleted, true, "actual final callback completion is observed after release");
+          }
+          const completions = resume.cleanupCompletions as readonly Readonly<{ ordinal: number; label: string }>[];
+          assert.ok(Array.isArray(completions), "actual cleanup callbacks are observed independently of the final probe");
+          for (const ordinal of [2, 1]) {
+            const labels = completions.filter((entry) => entry.ordinal === ordinal).map((entry) => entry.label);
+            if (scenario.mutation === "helper-await") assert.deepEqual([...labels].sort(),
+              ["Q", "operation-directory", "raw", "root", "status"], "non-awaited mutation still completes each actual release exactly once, not necessarily in order");
+            else assert.deepEqual(labels, ["Q", "raw", "status", "operation-directory", "root"],
+              "both actual owners eventually complete every acquired physical cleanup exactly once in order");
+          }
+        }
         assert.equal(resume.prepareCalls, 1, "exact raw absence permits one fresh authorization");
         assert.equal(resume.executeCalls, 1, "one idempotent execute/recover continuation runs");
         assert.deepEqual(resume.executeInputs, [prepared.authorization], "execute uses the exact fresh authorization bound to status-00");
         assert.equal(resume.postEffectOwnerOpens, fault === "predecessor-aba" ? 1 : 2, "only a stable predecessor allows one fresh same-controller owner");
-        assert.deepEqual(resume.postEffectOwnerCloses, fault === "predecessor-aba" ? [1] : [2, 1], "fresh and original owners close once in reverse lifetime order, including construction failure");
+        assert.deepEqual(resume.postEffectOwnerCloses, fault === "predecessor-aba" ? [1] : scenario.mutation === "omit-tail" ? []
+          : scenario.mutation === "helper-await" ? [1, 2] : [2, 1],
+          "only the nominated omitted or non-awaited probe changes final completion order; normal owners remain reverse and once-only");
         assert.equal(observed.descriptorDelta, 0);
+        if (scenario.watchdogFixture) {
+          assert.equal(observed.outcome, "threw", "containment expiry fails the harness instead of qualifying a mutant");
+          assert.deepEqual(observed.errorTree, { message: "Error: P5C_S_CLEANUP_GATE_WATCHDOG", causes: [] });
+          assert.deepEqual(resume.resumeErrors, [], "the real public operation has no fabricated error phase");
+          const operationValue = resume.cleanupOperationValue as Readonly<Record<string, unknown>>;
+          assert.equal(operationValue.state, "pre_schema_spawner_rebinding");
+          assert.equal((operationValue.preSchemaSpawnerRebindStatusBody as Readonly<Record<string, unknown>>).state, "prepared");
+          assert.notDeepEqual(readFileSync(targets.currentStatus), predecessorBytes, "actual operation still commits exactly one adjacent status");
+          assert.equal(readdirSync(operationDirectory).length, 14);
+          for (const entry of executePublications) assert.equal(readFileSync(entry.target).toString("base64"), entry.bytesBase64);
+          return;
+        }
         const cleanupFailure = {
           message: "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain",
-          causes: [{ message: "Error: P5C_S_POST_EFFECT_CLOSE_FAULT", causes: [] }],
+          causes: [
+            ...(scenario.rootCloseFault ? [{ message: "Error: P5C_S_ROOT_CLOSE_RESPONSE_FAULT", causes: [] }] : []),
+            { message: "Error: P5C_S_POST_EFFECT_CLOSE_FAULT", causes: [] },
+          ],
         };
         const materialFailure = {
           message: `Error: ENOENT: no such file or directory, open '${resumeProbe.materialTarget}'`,

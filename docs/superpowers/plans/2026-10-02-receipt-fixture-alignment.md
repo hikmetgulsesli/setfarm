@@ -452,3 +452,60 @@ testSHA195d332be66b12f44090bb59088d6b308f576bdcdb24f0de92964406034c75cd.
 
 Task8a independent entire exact diff C0/I0/M0 at the same SHA. Commit only this
 test/spec/plan slice; full receipt compatibility and resume mutants remain open.
+
+## Task 8b: Resume awaited physical cleanup and paired cause witnesses
+
+Same File Map. Independent source design separates ordinal2 fresh caller from
+ordinal1 public caller; each case owns its fresh physical root/actual child.
+
+- [ ] Extend existing five-case setup with separately titled gated ordinal1,
+  ordinal2 and paired earlier-root-close variants; missing handshake must RED.
+- [ ] Callback completion observer follows actual awaited Q/raw/status/directory/
+  root releases. Final snapshot requires consumed closed=true and exact sequence.
+- [ ] Deferred entry/release child driver races settlement, crosses setImmediate,
+  proves UNSETTLED while held, releases finally, awaits actual original promises.
+- [ ] Paired root-after-real-close and final response fault must preserve exact
+  ordered two-cause cleanup aggregate and separate controller-release failure.
+- [ ] Four bounded copied runtime mutants after prepare/instrument: omit tail,
+  move before ROOT, remove public caller await, remove helper per-release await.
+  Actual nominated witness rejection plus eventual FD0/status/publication remain.
+- [ ] Focused GREEN, exact adjacent repeat, independent review and causal commit;
+  full receipt shape compatibility/PR/clean-main/qualifying ALL remain pending.
+
+Task8b actual61756outer1/0P3F8624.753292ms missing gated handshake; minimal
+actual callback/child handshake9311outer0/3P0F8513.710416ms (original, fresh,
+paired root-after-real-close plus final response). Four counterexamples35677
+outer1/0P4F11167.327042ms with no-op arrangement; bounded real mutations17119
+outer1/3P1F13209.939ms expose helper no-await snapshot[]; source-backed expectation
+refinement65306outer1/3P1F13160.634208ms exposes exact final-probe[1,2] rather
+than baseline[2,1]. These are nominated timing consequences, not unrelated setup
+errors. Final four4705outer0/4P0F13040.916375ms, zero cancel/skip/todo; baseline
+order stays strict, helper counterexample requires exact entry[]/early settlement,
+eventual unordered exactly-once five closes and exact inverted[1,2].
+
+Independent review C0/I0/M1 requested containment watchdog. Assertion-first
+37225outer1/0P1F3361.846958ms missing expiry; fresh physical containment1550
+outer0/1P0F3315.079167ms. Withheld notification expires, releases actual gate,
+drains real successful operation/closures/FD0/exact14publications/adjacent status,
+then fails harness with exact watchdog leaf, never qualifies altered source.
+Normal gates/mutants require expiryfalse. Final17-title67500 and exact-diff review
+in progress at testSHAc2e94010622c7fc50e135a762e9912f024a94dff41bd48b2edb6f76ee6ad4440.
+
+Candidate combined67500outer0/17P0F58666.92375ms, zero cancel/skip/todo;
+independent C0/I1/M0 finds controlled short timer could expire before actual
+gate entry. This candidate is not final qualification. New at-expiry assertion
+44238outer1/0P1F3403.576709ms missing exact witness. Minimal repair arms the
+short containment timer only at actual suppressed entry; normal5s containment
+still starts before invocation. Exact at-expiry closed/full-five snapshot and
+operation still unsettled (operationSettled:false), then actual drain68046outer0/
+1P0F3359.336625ms. Final refreshed17-consumer run/review pending at testSHA
+696f2d50ec2ba11d56856464361d8b5ff522ba2f0e0635c33fe63768010cb8ec.
+
+Task8b final84237outer0/17P0F58164.281083ms, zero cancel/skip/todo.
+Independent entire exact diff C0/I0/M0 at that same SHA; root read complete
+actual test diff. Both gated owner lifetimes, paired cause order, four honest
+counterexamples and causal watchdog containment executed alongside original nine
+resume consumers. Adjacent refresh pending before commit; not full receipt/ALL.
+
+Task8b adjacent88706outer0/3P0F2669.745625ms, zero cancel/skip/todo: blocked
+runtime no-controller and awaited/retained-order contracts. Same final testSHA.
