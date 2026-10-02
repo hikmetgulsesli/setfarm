@@ -509,3 +509,34 @@ resume consumers. Adjacent refresh pending before commit; not full receipt/ALL.
 
 Task8b adjacent88706outer0/3P0F2669.745625ms, zero cancel/skip/todo: blocked
 runtime no-controller and awaited/retained-order contracts. Same final testSHA.
+
+## Task 8c: Runtime phase/cause/order transport counterexamples
+
+Same File Map; closes explicit first-slice review gap, not a production change.
+
+- [x] Existing isolated selected-pass helper gains optional copied-wrapper
+  transport variant after seed; default unchanged. Assertion-first real-child RED.
+- [x] Four paired q/open+status/close roots/children: baseline, drop-phase,
+  drop-nested-cause, reverse-primary. Exact hand-derived shape and unchanged
+  baseline-checker rejection; physical reverse/once/unopened/post-close/FD0 remain.
+- [x] Two status/close roots/children: baseline and phase-drop; exact owner-close
+  and release trees, reverse four/once and six post-close refusals remain.
+- [x] Source-bound exact-one wrapper anchors; callback replacements only, never
+  mutate parent DTOs/actual catches/guards/cleanup/latch or reset uncertainty.
+- [x] Actual GREEN, relevant adjacent refresh and independent review, commit;
+  then complete receipt verification before PR and guarded clean-main build.
+
+Task8c actual RED90606outer1/0P2F9119.757916ms missing phase mutation;
+phase-only19657outer1/1P1F12074.730167ms missing nested-cause mutation;
+phase+nested7999outer1/1P1F14469.942667ms missing reversed-primary mutation.
+All failed on nominated exact diagnostic-shape assertions after actual physical
+cleanup; no setup/import failure qualified. Implemented each copied projection
+only after its RED. Initial GREEN91526outer0/2P15020.541959ms.
+
+Independent M1: last-declaration region selector alone did not prove uniqueness.
+Added exact wrapper declaration count1 and whole-source region occurrence1,
+retaining exact-one mutation anchor. Final98998outer0/2P0F15064.421833ms;
+adjacent87533outer0/2P0F31620.821458ms; both zero cancel/skip/todo.
+Independent entire diff C0/I0/M0 at testSHA
+e22d2a81efe7df81290024a7c0adf8c5b40830b4a134252052f6302f1ea74791.
+Root entire test/docs diff read and git diff --check0. Not full receipt/ALL.

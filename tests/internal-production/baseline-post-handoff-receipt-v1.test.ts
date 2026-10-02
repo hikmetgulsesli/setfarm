@@ -16762,6 +16762,7 @@ type Phase5cSelectedPassFaultV1 = Readonly<{
 
 async function runPhase5cSelectedPassIsolatedFaultFixtureV1(
   faults: readonly Phase5cSelectedPassFaultV1[],
+  transportMutation: "drop-phase" | "drop-nested-cause" | "reverse-primary" | null = null,
 ): Promise<Readonly<Record<string, unknown>>> {
   const root = createFixture();
   try {
@@ -16769,6 +16770,23 @@ async function runPhase5cSelectedPassIsolatedFaultFixtureV1(
     const seeded = await runPhase5cZeroProgressFixtureV1(root, harness.observations, Object.freeze({ kind: "none" }), "prepare");
     assert.equal(seeded.status, 0, seeded.stderr);
     assert.equal(JSON.parse(seeded.stdout).outcome, "returned", seeded.stderr);
+    if (transportMutation !== null) {
+      const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+      const source = readFileSync(modulePath, "utf8");
+      assert.equal([...source.matchAll(/^export async function p5cSOpenSelectedProgressPassFixtureV1\(/gm)].length, 1,
+        "one exact copied selected-pass wrapper declaration");
+      const wrapper = topLevelFunctionRegionV1(source, "p5cSOpenSelectedProgressPassFixtureV1");
+      assert.equal(source.split(wrapper).length, 2, "one exact copied selected-pass wrapper region");
+      const anchor = transportMutation === "drop-phase" ? "errors: Object.freeze(errors)"
+        : "error instanceof AggregateError ? error.errors.map(projectError) : []";
+      assert.equal(wrapper.split(anchor).length, 2, "one exact selected-pass causal transport anchor");
+      const replacement = transportMutation === "drop-phase" ? "errors: Object.freeze(errors.map(({tree}) => Object.freeze({tree})))"
+        : transportMutation === "drop-nested-cause"
+          ? 'error instanceof AggregateError ? (String(error) === "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain" ? [] : error.errors.map(projectError)) : []'
+          : 'error instanceof AggregateError ? (String(error) === "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: selected progress acquisition and cleanup failed" ? [...error.errors].reverse() : error.errors).map(projectError) : []';
+      const mutated = wrapper.replace(anchor, () => replacement);
+      writeFileSync(modulePath, source.replace(wrapper, () => mutated));
+    }
     const storeRoot = realpathSync(path.join(harness.original.store, harness.admitted.chain.successorStoreRelativeRoot));
     const operation = harness.admitted.chain.records.successorOperation.value;
     const transportPath = path.join(path.dirname(root), ".p5c-isolated-selected-pass.json");
@@ -24955,6 +24973,64 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       assert.equal(expected.opened.every((stage) => counts[stage] === 1), true, `${expected.label}: every acquired child closes exactly once`);
       assert.equal(counts.q ?? 0, 0, `${expected.label}: unacquired Q owner has no fabricated cleanup`);
       assert.deepEqual(row.postCloseOutcomes, [], `${expected.label}: failed acquisition does not fabricate a returned owner`);
+    }
+  });
+
+  it("P5c-S runtime transport rejects lost phases, nested cleanup causes, and reversed primary order", async () => {
+    const primary = { message: "Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:P5C_S_SELECTED_PASS_CHILD_OPEN_FAULT:q", causes: [] };
+    const cleanupMessage = "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain";
+    const cleanup = { message: cleanupMessage, causes: [
+      { message: "Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:P5C_S_SELECTED_PASS_CHILD_CLOSE_FAULT:status", causes: [] },
+    ] };
+    const acquisitionMessage = "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: selected progress acquisition and cleanup failed";
+    const operationTree = { message: acquisitionMessage, causes: [primary, cleanup] };
+    const releaseTree = { message: "Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:Task6A receipt cleanup uncertain", causes: [] };
+    const release = { phase: "controller-release", tree: releaseTree };
+    const baseline = [{ phase: "operation", tree: operationTree }, release];
+    const variants = [
+      { mutation: null, errors: baseline },
+      { mutation: "drop-phase", errors: [{ tree: operationTree }, { tree: releaseTree }] },
+      { mutation: "drop-nested-cause", errors: [{ phase: "operation", tree: { message: acquisitionMessage, causes: [primary, { message: cleanupMessage, causes: [] }] } }, release] },
+      { mutation: "reverse-primary", errors: [{ phase: "operation", tree: { message: acquisitionMessage, causes: [cleanup, primary] } }, release] },
+    ] as const;
+    for (const variant of variants) {
+      const row = await runPhase5cSelectedPassIsolatedFaultFixtureV1([{ stage: "q", kind: "open" }, { stage: "status", kind: "close" }], variant.mutation);
+      assert.equal(row.outcome, "threw");
+      assert.equal(String(row.message).split("\n")[0], acquisitionMessage, "actual primary error is unchanged by diagnostic mutation");
+      assert.deepEqual(row.childOpenOrder, ["operation-directory", "status", "raw", "q"]);
+      assert.deepEqual(row.childCloseOrder, ["raw", "status", "operation-directory"]);
+      assert.deepEqual(row.childCloseCounts, { raw: 1, status: 1, "operation-directory": 1 });
+      assert.deepEqual(row.postCloseOutcomes, []);
+      assert.equal(row.descriptorDelta, 0);
+      assert.deepEqual(row.errors, variant.errors, "actual child executes only the nominated causal transport mutation");
+      const requireBaseline = (): void => assert.deepEqual(row.errors, baseline, "causal transport witness");
+      if (variant.mutation === null) requireBaseline();
+      else assert.throws(requireBaseline, (error: unknown) => error instanceof assert.AssertionError && /causal transport witness/.test(error.message));
+    }
+  });
+
+  it("P5c-S runtime transport rejects owner-close phase loss while every owner stays closed", async () => {
+    const cleanupTree = { message: "AggregateError: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain", causes: [
+      { message: "Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:P5C_S_SELECTED_PASS_CHILD_CLOSE_FAULT:status", causes: [] },
+    ] };
+    const releaseTree = { message: "Error: INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID:Task6A receipt cleanup uncertain", causes: [] };
+    const baseline = [{ phase: "owner-close", tree: cleanupTree }, { phase: "controller-release", tree: releaseTree }];
+    for (const variant of [
+      { mutation: null, errors: baseline },
+      { mutation: "drop-phase", errors: [{ tree: cleanupTree }, { tree: releaseTree }] },
+    ] as const) {
+      const row = await runPhase5cSelectedPassIsolatedFaultFixtureV1([{ stage: "status", kind: "close" }], variant.mutation);
+      assert.equal(row.outcome, "threw");
+      assert.equal(row.message, cleanupTree.message, "actual cleanup failure is unchanged by diagnostic mutation");
+      assert.deepEqual(row.childOpenOrder, ["operation-directory", "status", "raw", "q"]);
+      assert.deepEqual(row.childCloseOrder, ["q", "raw", "status", "operation-directory"]);
+      assert.deepEqual(row.childCloseCounts, { q: 1, raw: 1, status: 1, "operation-directory": 1 });
+      assert.deepEqual(row.postCloseOutcomes, ["threw", "threw", "threw", "threw", "threw", "threw"]);
+      assert.equal(row.descriptorDelta, 0);
+      assert.deepEqual(row.errors, variant.errors, "actual child executes only owner-close phase loss");
+      const requireBaseline = (): void => assert.deepEqual(row.errors, baseline, "owner-close phase transport witness");
+      if (variant.mutation === null) requireBaseline();
+      else assert.throws(requireBaseline, (error: unknown) => error instanceof assert.AssertionError && /owner-close phase transport witness/.test(error.message));
     }
   });
 

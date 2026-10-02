@@ -354,6 +354,23 @@ FD0 and unchanged exact publications/adjacent status before the harness failure.
 This duration tests containment only; normal pending/order evidence still uses
 the deferred handshake and setImmediate checkpoint, not a timeout heuristic.
 
+## Runtime causal diagnostic counterexamples
+
+Use existing selected-pass isolated helper: fresh seeded root and real child per
+paired q/open plus status/close input. Baseline retains exact operation acquisition
+aggregate (primary first, nested cleanup leaf) then controller-release leaf.
+Three uniquely bounded copied-wrapper variants drop phase labels, omit nested
+cleanup cause, or reverse only acquisition aggregate projection. Actual catches,
+callbacks, guards, latch and cause objects stay unchanged; mutate projection in
+the child, never parent parsed DTOs. All retain physical FD0, reverse/once cleanup,
+unopened Q zero and no fabricated returned owner. Require exact corrupted shape
+and assertion rejection by the unchanged hand-literal baseline tree contract.
+
+A separate status/close baseline/phase-drop pair proves owner-close phase loss
+too: all four child owners close once in reverse order and six post-close methods
+refuse. This is runtime diagnostic transport qualification, not a production
+cause-order mutant, disk-zero or broader acceptance claim.
+
 Fresh ordinal2 paired case physically closes root, records completion, then
 throws an exact earlier root-close sentinel. Final gated callback must still run;
 after release its existing response sentinel is the second cleanup aggregate
