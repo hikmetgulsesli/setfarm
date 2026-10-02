@@ -274,3 +274,24 @@ String(error), and explicitly reject aggregate legacy messages. Preserve the
 existing semantic refusal regex. A small checker adjunct must reject wrong/missing
 messages and hidden empty aggregates; this tests transport consistency only, not
 exact semantic qualification of every legacy inventory error or host acceptance.
+
+## Causal refinement: resume primary and controller-release diagnostics
+
+Actual75193 selected nine resume consumers: seven pass, two reach aggregate
+cause flattening. Keep each fresh physical root and actual child. Preserve the
+existing legacy message, committed/predecessor status checks, execution inputs,
+reverse owner lifetime, FD0, and the permanent cleanup-uncertainty latch.
+Add only a child-local recursive outer error tree. Fresh-close requires cleanup
+aggregate containing its exact post-effect leaf; paired missing-material/close
+requires exact target-bound ENOENT then that cleanup subtree. Plain missing
+material remains exact ENOENT; predecessor ABA retains its generation refusal.
+
+Separately observe actual copied public-resume catches without changing any
+assignment, nullish precedence, rethrow, release or control flow. For nominated
+executePublications fixtures, record only the encompassing primary catch as
+resume-pass and the separate controller-release catch. Do not pretend that the
+encompassing catch is specifically effect/owner-close or duplicate its inner
+propagation. Clean success has an empty caught-phase array. This
+exposes the distinct cleanup-uncertain controller-release leaf without inventing
+it as a cause of the primary. No inferred disk-zero from descriptor-zero, manual
+lock deletion, production change or runtime guard bypass.

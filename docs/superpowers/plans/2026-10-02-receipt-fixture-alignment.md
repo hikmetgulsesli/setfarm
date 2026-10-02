@@ -391,3 +391,33 @@ fdd836585030180710aa15d3a972385847c56beb01b3bbc970861f33e7900cc3.
 Root read entire actual test diff; no source, guard, old artifact or host changes.
 Remaining two resume RED cases, actual ordering mutants, full receipt, PR and
 clean-main/host gates still pending; focused runs do not qualify whole ALL.
+
+## Task 7g: Resume recursive primary and independent release phases
+
+Same File Map; causal actual RED75193 two cases, not a new production defect.
+
+- [ ] Assert exact outer trees first and observe missing-projection RED.
+- [ ] Minimal child-local recursive projection, unchanged legacy message and
+  every existing physical publication/generation/call/order/FD check.
+- [ ] Assert separate ordered caught phases first; actual bounded copied public
+  resume catches only, retaining all assignments/??=/rethrows unchanged.
+- [ ] Observe encompassing resume-pass and controller-release independently;
+  do not duplicate inner propagation or mislabel the encompassing catch.
+- [ ] Focused nine-consumer GREEN, relevant adjacent refresh, independent entire
+  diff review and causal commit. Uncertain controller artifacts are not disk-zero;
+  final ordering witnesses/full receipt/PR/clean-main/host gates remain pending.
+
+Task7g actual31604outer1/5P4F35267.782334ms missing projection; projection-only
+52732outer1/7P2F35305.598333ms exposed expected cleanup aggregate message typo
+(actual/source `: receipt cleanup uncertain`, distinct from release leaf
+`:Task6A receipt cleanup uncertain`). Literal correction96686outer0/9P0F
+35148.378459ms. Phase assertion16907outer1/2P3F13164.33875ms missing caught
+diagnostics; minimal bounded observer2366outer0/9P0F35317.973ms, zero cancel,
+skip or todo. Independent entire actual diff C0/I0/M0 at testSHA
+b722b628d7bb984796b17aa8f25d5f6e38bc441ed43c66a810d08367c1fe316d.
+Root read complete test diff; adjacent refresh pending before causal commit.
+
+Task7g adjacent56284outer0/3P0F2660.542792ms, zero cancel/skip/todo: blocked
+status no-controller runtime plus awaited cleanup and retained CAS-order consumers.
+No ready-controller title matched this command; do not invent that coverage.
+Shared additive output shape compatibility still requires complete receipt run.
