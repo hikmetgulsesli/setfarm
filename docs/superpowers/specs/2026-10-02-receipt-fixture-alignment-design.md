@@ -295,3 +295,20 @@ propagation. Clean success has an empty caught-phase array. This
 exposes the distinct cleanup-uncertain controller-release leaf without inventing
 it as a cause of the primary. No inferred disk-zero from descriptor-zero, manual
 lock deletion, production change or runtime guard bypass.
+
+## Actual response-boundary witnesses and honest counterexamples
+
+P4 close response records the consumed temp slot and immediate EBADF of its
+completed descriptor before throwing. Q records heldClosed, immediate held FD
+EBADF, and actual successful guard.close completion before its response fault.
+Existing physical consumers retain frontiers, canonical publication/identities,
+retry/overlay, controller, once-only and final FD0 requirements. Snapshot ordering
+is not inferred from the eventual FD count.
+
+Separate copied-module before-cleanup counterexamples move only the response
+snapshot/fault. P4 moves before slot consumption, preserving the unchanged final
+cleanup; Q moves into its close try after final guard stability, preserving its
+catch/finally. Each fresh physical root/actual child must reach the exact sentinel
+and final FD0, yet capture false immediate closure fields. All seven P4 phases
+and Q3/no-temp are exercised independently. Missing import/setup/snapshot does
+not qualify as mutant rejection; only the nominated witness kills it.

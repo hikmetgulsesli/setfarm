@@ -1697,7 +1697,13 @@ function instrumentExactPoisonRecoveryLeafFixtureV1(
   );
   replaceOnce(
     'exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "close");',
-    'exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "close"); p4ExactPoisonRecoveryLeafBoundaryV1("close");',
+    `exactPoisonRecoveryPublicationFaultV1(phase, ordinal, "close");
+    const p4CloseSnapshotProbe = Reflect.get(globalThis,"__p4ExactPoisonPublisherAdmissionV1") as undefined | {closeSnapshots:{phase:string;ordinal:number;tempConsumed:boolean;descriptorClosed:boolean}[]};
+    let p4ClosedDescriptor = false;
+    try { fstatSync(completedTempDescriptor); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EBADF") throw error; p4ClosedDescriptor = true; }
+    p4CloseSnapshotProbe?.closeSnapshots.push({phase,ordinal,tempConsumed:tempDescriptor === -1,descriptorClosed:p4ClosedDescriptor});
+    p4ExactPoisonRecoveryLeafBoundaryV1("close");`,
     "post-consumption successful temp-close response",
   );
   replaceOnce(
@@ -1746,6 +1752,27 @@ function setExactPoisonRecoveryLeafFaultFixtureV1(
   );
 }
 
+function moveTask6aResponseProbeBeforeCleanupFixtureV1(root: string, kind: "p4" | "q"): void {
+  const modulePath = path.join(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts");
+  const source = readFileSync(modulePath, "utf8");
+  const region = topLevelFunctionRegionV1(source, kind === "p4" ? "publishExactPoisonRecoveryCandidateV1" : "acquireTask12ReceiptLocatorWriterV1");
+  const first = kind === "p4" ? "    const p4CloseSnapshotProbe = " : "            const p5cQCloseProbe = ";
+  const last = kind === "p4" ? '    p4ExactPoisonRecoveryLeafBoundaryV1("close");'
+    : '            if (p5cQCloseProbe?.writerCloseThrow && path.basename(target) === "01-current-status.pair.json") throw new Error("P5C_Q_WRITER_CLOSE_FAULT");';
+  const insertion = kind === "p4" ? "    const completedTempDescriptor = tempDescriptor;"
+    : "            fsyncCurrentEntryDirectory(directory);\n            guard.assertStable();";
+  for (const anchor of [first, last, insertion]) assert.equal(region.split(anchor).length, 2,
+    `${kind}: one exact response block and pre-cleanup insertion anchor`);
+  const start = region.indexOf(first);
+  const end = region.indexOf(last, start) + last.length;
+  const at = region.indexOf(insertion);
+  assert.ok(start >= 0 && end > start && at >= 0 && at < start, `${kind}: counterexample moves only the response block earlier`);
+  const responseBlock = region.slice(start, end);
+  const withoutResponse = region.slice(0, start) + region.slice(end);
+  const moved = withoutResponse.replace(insertion, () => `${insertion}\n${responseBlock}`);
+  writeFileSync(modulePath, source.replace(region, () => moved));
+}
+
 function fixtureTransportValueV1(value: unknown): unknown {
   if (Buffer.isBuffer(value)) return Object.freeze({ __p4ExactBufferBase64V1: value.toString("base64") });
   if (Array.isArray(value)) return value.map((entry) => fixtureTransportValueV1(entry));
@@ -1763,7 +1790,7 @@ function runExactPoisonPublisherCoreFixtureV1(
   const transported = JSON.stringify(fixtureTransportValueV1(observations));
   const transportPath = path.join(path.dirname(root), ".p4-exact-poison-admission.json");
   fixtureFile(path.dirname(root), ".p4-exact-poison-admission.json", `${transported}\n`, 0o600);
-  return runFixtureExpression(root, `(async()=>{const {readFileSync}=await import("node:fs");const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(readFileSync(${JSON.stringify(transportPath)},"utf8")));const cursors={};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P4_EXACT_POISON_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;return sequence[cursor%sequence.length]};const probe={admissionCalls:0,cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>{const fault=${JSON.stringify(gitFault)};if(fault!==null)throw new Error("P4_EXACT_POISON_SYNTHETIC_GIT_"+fault.toUpperCase());return next("syntheticGit")}};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",probe);let outcome="returned",message=null;try{await m.resumeExactPoisonQuarantinePublisherCoreV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,admissionCalls:probe.admissionCalls,cursors:probe.cursors}))})()`);
+  return runFixtureExpression(root, `(async()=>{const fs=await import("node:fs");const {readFileSync}=fs;const descriptorCount=()=>fs.readdirSync("/dev/fd").filter((name)=>/^[0-9]+$/.test(name)).filter((name)=>{try{fs.fstatSync(Number(name));return true}catch{return false}}).length;await new Promise((resolve)=>setTimeout(resolve,100));const before=descriptorCount();const revive=(value)=>{if(Array.isArray(value))return value.map(revive);if(value&&typeof value==="object"){if(Object.keys(value).length===1&&typeof value.__p4ExactBufferBase64V1==="string")return Buffer.from(value.__p4ExactBufferBase64V1,"base64");return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,revive(entry)]))}return value};const values=revive(JSON.parse(readFileSync(${JSON.stringify(transportPath)},"utf8")));const cursors={};const next=(kind)=>{const sequence=values[kind];if(!Array.isArray(sequence)||sequence.length===0)throw new Error("P4_EXACT_POISON_RAW_SEQUENCE_MISSING:"+kind);const cursor=cursors[kind]??0;cursors[kind]=cursor+1;return sequence[cursor%sequence.length]};const probe={admissionCalls:0,closeSnapshots:[],cursors,next,nextPhysical:(..._args)=>next("physical"),nextPhase:(..._args)=>next("phase"),observeSyntheticGit:(..._args)=>{const fault=${JSON.stringify(gitFault)};if(fault!==null)throw new Error("P4_EXACT_POISON_SYNTHETIC_GIT_"+fault.toUpperCase());return next("syntheticGit")}};Reflect.set(globalThis,"__p4ExactPoisonPublisherAdmissionV1",probe);let outcome="returned",message=null;try{await m.resumeExactPoisonQuarantinePublisherCoreV1()}catch(error){outcome="threw";message=String(error)}process.stdout.write(JSON.stringify({outcome,message,admissionCalls:probe.admissionCalls,closeSnapshots:probe.closeSnapshots,cursors:probe.cursors,descriptorDelta:descriptorCount()-before}))})()`);
 }
 
 function exactPoisonTask3ProbeExpressionV1(
@@ -5670,8 +5697,20 @@ ${processResult}`);
   const writerOwner = topLevelFunctionRegionV1(source, "acquireTask12ReceiptLocatorWriterV1");
   const writerCloseTail = "            attemptTask6aReceiptOwnedCleanupV1([\n              () => closeSync(heldDescriptor), () => guard.close(),\n            ], primaryError);";
   assert.equal(writerOwner.split(writerCloseTail).length - 1, 1, "P5c-Q instruments one successful owned target-writer close after descriptor and guard cleanup");
-  source = source.replace(writerOwner, () => writerOwner.replace(writerCloseTail, `${writerCloseTail}
-            const p5cQCloseProbe = Reflect.get(globalThis, "__p5cExpectedPredecessorCasProbeV1") as undefined | {events:string[];writerCloseThrow?:boolean};
+  const writerCloseTry = "          let primaryError: unknown | null = null;\n          try {\n            assertStable();";
+  assert.equal(writerOwner.split(writerCloseTry).length, 2, "P5c-Q bounds one returned writer close try");
+  source = source.replace(writerOwner, () => writerOwner
+    .replace(writerCloseTry, () => "          let primaryError: unknown | null = null;\n          let p5cQGuardCloseCompleted = false;\n          try {\n            assertStable();")
+    .replace(writerCloseTail, () => `            attemptTask6aReceiptOwnedCleanupV1([
+              () => closeSync(heldDescriptor), () => { guard.close(); p5cQGuardCloseCompleted = true; },
+            ], primaryError);
+            const p5cQCloseProbe = Reflect.get(globalThis, "__p5cExpectedPredecessorCasProbeV1") as undefined | {events:string[];writerCloseThrow?:boolean;writerCloseSnapshots?:{heldConsumed:boolean;descriptorClosed:boolean;guardCloseCompleted:boolean}[]};
+            if (p5cQCloseProbe && path.basename(target) === "01-current-status.pair.json") {
+              let descriptorClosed = false;
+              try { fstatSync(heldDescriptor); }
+              catch (error) { if ((error as NodeJS.ErrnoException).code !== "EBADF") throw error; descriptorClosed = true; }
+              (p5cQCloseProbe.writerCloseSnapshots ??= []).push({heldConsumed:heldClosed,descriptorClosed,guardCloseCompleted:p5cQGuardCloseCompleted});
+            }
             if (p5cQCloseProbe && path.basename(target) === "01-current-status.pair.json") p5cQCloseProbe.events.push("target-writer-close");
             if (p5cQCloseProbe?.writerCloseThrow && path.basename(target) === "01-current-status.pair.json") throw new Error("P5C_Q_WRITER_CLOSE_FAULT");`));
   const capabilityDeclaration = "const task12CurrentStatusCasCleanupCapabilitiesV1 = new Map<string, Task12CurrentStatusCasCleanupCapabilityV1>();";
@@ -38564,9 +38603,40 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       assert.equal(observed.outcome, "threw");
       assert.match(String(observed.message), /P5C_Q_WRITER_CLOSE_FAULT/);
       assert.equal(observed.descriptorDelta, 0, "writer, CAS parent guard, fixed pin, and controller close through nested finally");
+      assert.deepEqual(observed.writerCloseSnapshots, [{ heldConsumed: true, descriptorClosed: true, guardCloseCompleted: true }],
+        "the response fault occurs only after the owned descriptor and guard actually completed cleanup");
       assert.equal((observed.events as readonly string[]).filter((event) => event === "target-writer-close").length, 1);
       assert.equal(readdirSync(seeded.paths.directory).some((name) => name.includes("writer.lock")), false);
     } finally { removeFixture(root); }
+  });
+
+  it("P5c-Q-A close response witness rejects early faults despite final FD0", async () => {
+    for (const variant of [
+      { timing: "after-cleanup", snapshot: { heldConsumed: true, descriptorClosed: true, guardCloseCompleted: true } },
+      { timing: "before-cleanup", snapshot: { heldConsumed: false, descriptorClosed: false, guardCloseCompleted: false } },
+    ] as const) {
+      const root = createFixture();
+      try {
+        const seeded = seedPhase5cExpectedPredecessorCasStateV1(root, "Q3", 0);
+        instrumentPhase5cExpectedPredecessorCasFixtureV1(root);
+        if (variant.timing === "before-cleanup") moveTask6aResponseProbeBeforeCleanupFixtureV1(root, "q");
+        const result = await runPhase5cExpectedPredecessorCasFixtureV1(root, seeded, "normalize-held", null, Object.freeze({ writerCloseThrow: true }));
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stderr, "", variant.timing);
+        const observed = JSON.parse(result.stdout) as Readonly<Record<string, unknown>>;
+        assert.equal(observed.outcome, "threw", variant.timing);
+        assert.equal(observed.message, "Error: P5C_Q_WRITER_CLOSE_FAULT", "the actual selected response sentinel is reached");
+        assert.equal(observed.descriptorDelta, 0, "unchanged final cleanup completes in both timing variants");
+        assert.deepEqual(observed.writerCloseSnapshots, [variant.snapshot], "only immediate response timing distinguishes the variants");
+        const requireCompletedSnapshot = (): void => assert.deepEqual(observed.writerCloseSnapshots,
+          [{ heldConsumed: true, descriptorClosed: true, guardCloseCompleted: true }], "response closure witness");
+        if (variant.timing === "after-cleanup") requireCompletedSnapshot();
+        else assert.throws(requireCompletedSnapshot, (error: unknown) => error instanceof assert.AssertionError && /response closure witness/.test(error.message));
+        assert.equal((observed.events as readonly string[]).filter((event) => event === "target-writer-close").length, 1);
+        assert.equal(readFileSync(seeded.paths.target).equals(seeded.successorBytes), true, "both variants reach the actual Q4 pair before their response fault");
+        assert.equal(readdirSync(seeded.paths.directory).some((name) => name.includes("writer.lock")), false);
+      } finally { removeFixture(root); }
+    }
   });
 
   it("P5c-Q-A rejects direct normalization without the real operation controller before filesystem effects", async () => {
@@ -39590,6 +39660,44 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
     });
   }
 
+  it("P4a close response witness rejects pre-consumption faults despite final FD0", () => {
+    for (const phase of EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1) {
+      for (const variant of [
+        { timing: "after-cleanup", tempConsumed: true, descriptorClosed: true },
+        { timing: "before-cleanup", tempConsumed: false, descriptorClosed: false },
+      ] as const) {
+        const root = createFixture();
+        try {
+          const fault = Object.freeze({ phase: phase.phase, ordinal: phase.ordinal, boundary: "close" as const, occurrence: 1 });
+          const harness = configureExactPoisonRecoveryLeafHarnessV1(root, fault, { currentPrerequisites: "distinct" });
+          if (variant.timing === "before-cleanup") moveTask6aResponseProbeBeforeCleanupFixtureV1(root, "p4");
+          const result = runExactPoisonPublisherCoreFixtureV1(root, harness.observations, null);
+          assert.equal(result.status, 0, String(result.stderr));
+          assert.equal(result.stderr, "", `${phase.phase}/${variant.timing}`);
+          const observed = JSON.parse(result.stdout) as Readonly<{
+            outcome: string; message: string; descriptorDelta: number;
+            closeSnapshots: readonly Readonly<{ phase: string; ordinal: number; tempConsumed: boolean; descriptorClosed: boolean }>[];
+          }>;
+          assert.equal(observed.outcome, "threw", variant.timing);
+          assert.equal(observed.message, `Error: P4_EXACT_POISON_RECOVERY_LEAF_FAULT:${phase.phase}:close:1`, "the actual selected response sentinel is reached");
+          assert.equal(observed.descriptorDelta, 0, "unchanged final cleanup completes in both timing variants");
+          assert.ok(Array.isArray(observed.closeSnapshots), "actual immediate response snapshot is transported");
+          const selected = observed.closeSnapshots.filter((snapshot) => snapshot.phase === phase.phase && snapshot.ordinal === phase.ordinal);
+          assert.deepEqual(selected, [{ phase: phase.phase, ordinal: phase.ordinal, tempConsumed: variant.tempConsumed, descriptorClosed: variant.descriptorClosed }],
+            "only immediate response timing distinguishes the variants");
+          const requireCompletedSnapshot = (): void => assert.deepEqual(selected,
+            [{ phase: phase.phase, ordinal: phase.ordinal, tempConsumed: true, descriptorClosed: true }], "response closure witness");
+          if (variant.timing === "after-cleanup") requireCompletedSnapshot();
+          else assert.throws(requireCompletedSnapshot, (error: unknown) => error instanceof assert.AssertionError && /response closure witness/.test(error.message));
+          const after = observeExactOriginalPoisonIdentityV1(harness.original.store);
+          assert.deepEqual(after.inventoryBody, harness.original.inventoryBody);
+          assert.deepEqual(after.predecessorFileIdentities, harness.original.predecessorFileIdentities);
+          assertExactPoisonRecoveryBoundaryFrontierV1(harness.original, harness.admitted.chain, phase, "close");
+        } finally { removeFixture(root); }
+      }
+    }
+  });
+
   for (const phase of EXACT_POISON_RECOVERY_PUBLICATION_PHASES_V1) {
     for (const boundary of EXACT_POISON_RECOVERY_LEAF_BOUNDARIES_V1) {
       it(`P4a exact-poison recovery leaf retries ${phase.phase} after ${boundary} response loss`, () => {
@@ -39613,9 +39721,18 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
           const firstObserved = JSON.parse(first.stdout) as Readonly<{
             outcome: string;
             message: string | null;
+            closeSnapshots: readonly Readonly<{ phase: string; ordinal: number; tempConsumed: boolean; descriptorClosed: boolean }>[];
+            descriptorDelta: number;
           }>;
           assert.equal(firstObserved.outcome, "threw", `${phase.phase}/${boundary}: the injected response loss must interrupt the first core call`);
           assert.match(firstObserved.message ?? "", new RegExp(`P4_EXACT_POISON_RECOVERY_LEAF_FAULT:${phase.phase}:${boundary}:1`));
+          if (boundary === "close") {
+            assert.ok(Array.isArray(firstObserved.closeSnapshots), "close response transports its immediate physical snapshot");
+            assert.deepEqual(firstObserved.closeSnapshots.filter((snapshot) => snapshot.phase === phase.phase && snapshot.ordinal === phase.ordinal),
+              [{ phase: phase.phase, ordinal: phase.ordinal, tempConsumed: true, descriptorClosed: true }],
+              "the selected temp is consumed and physically closed before response loss");
+            assert.equal(firstObserved.descriptorDelta, 0, "response loss drains every physical owned descriptor");
+          }
           const afterFault = observeExactOriginalPoisonIdentityV1(harness.original.store);
           assert.deepEqual(afterFault.inventoryBody, harness.original.inventoryBody, `${phase.phase}/${boundary}: response loss must preserve original inventory`);
           assert.deepEqual(afterFault.predecessorFileIdentities, harness.original.predecessorFileIdentities, `${phase.phase}/${boundary}: response loss must preserve original identities`);

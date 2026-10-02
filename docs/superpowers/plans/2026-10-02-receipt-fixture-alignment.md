@@ -421,3 +421,34 @@ Task7g adjacent56284outer0/3P0F2660.542792ms, zero cancel/skip/todo: blocked
 status no-controller runtime plus awaited cleanup and retained CAS-order consumers.
 No ready-controller title matched this command; do not invent that coverage.
 Shared additive output shape compatibility still requires complete receipt run.
+
+## Task 8a: Actual P4 and Q response-boundary closure witnesses
+
+Same File Map, pending first-slice review requirement; no production changes.
+
+- [ ] Existing seven P4 close consumers and Q3 close consumer require immediate
+  physical closure snapshot first; genuinely RED before hook repair.
+- [ ] P4 records consumed temp slot plus exact EBADF before response fault;
+  child wrapper transports snapshot and warmed actual FD0.
+- [ ] Q records heldClosed, exact EBADF, successful guard.close completion;
+  preserve target restriction and original helper/primary semantics.
+- [ ] Fresh fixture/actual child per after/before variant, all seven P4 phases
+  plus Q3/no-temp. Exact sentinels and final FD0 both variants; only immediate
+  closure predicate rejects before-cleanup, not an import/leak/setup failure.
+- [ ] Actual GREEN and independent exact-diff review before scoped commit.
+  Resume await/order/multi-cause mutants and full receipt remain pending.
+
+Task8a actual13591outer1/0P8F14764.146334ms missing immediate snapshots;
+minimal witnesses84399outer0/8P0F26868.87475ms. Counterexample assertion-first
+75409outer1/0P2F5463.562708ms: unchanged actual sentinels/FD0 reached, but no-op
+timing scaffold still captured true instead of nominated false. Exact bounded
+response-only moves18699outer0/2P0F30508.028959ms, fourteen P4 physical roots /
+children plus two Q roots/children. Final combined88339outer0/10P0F56145.542292ms,
+zero cancel/skip/todo. All seven existing P4 close-response retries and Q close
+consumer retain existing physical/frontier/canonical/identity/overlay/FD checks;
+new before variants reject immediate closure while eventual FD0 still passes.
+Root read entire actual test diff. Independent entire effect review pending;
+testSHA195d332be66b12f44090bb59088d6b308f576bdcdb24f0de92964406034c75cd.
+
+Task8a independent entire exact diff C0/I0/M0 at the same SHA. Commit only this
+test/spec/plan slice; full receipt compatibility and resume mutants remain open.
