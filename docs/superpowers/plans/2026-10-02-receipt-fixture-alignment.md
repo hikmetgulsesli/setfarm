@@ -155,3 +155,50 @@ Independent actual diff C0/I0/M0 at testSHA
 f878f1257da5bd3d71ff911f64b5fbc09b19c96acaf896e2d686b4e990461dec.
 Only focused Task4 evidence, no full receipt/ALL, diskzero or protected acceptance.
 Lost-phase/cause/order and P4/Q before-cleanup mutant witnesses still pending.
+
+## Task 5: Delivered cleanup consumers, exact vectors and inventory
+
+Same File Map; causal necessity is the nine actual static RED consumers at
+2f8887e4 (0P9F, outer1,327.953958ms). Root implements; agents only map/review.
+
+- [ ] Read each complete failing assertion region and bounded delivered body.
+- [ ] Replace obsolete inline first-error/nested-finalizer assertions with exact
+  ordered sync/awaited async callback vectors and construction primary arguments.
+- [ ] Inspect sequential drain-all helper bodies, aggregate ordering and sticky
+  uncertainty; retain all unrelated authority/ABI/no-write assertions.
+- [ ] Fix selected-owner terminal-before-cleanup assertion's vacuous search by
+  bounding returned close and acquisition catch separately.
+- [ ] Add explicit single diagnostic pinned-chain call-site inventory while
+  retaining all nine legacy identifiers and selected-effect graph prohibitions.
+- [ ] Run all nine consumers; classify any newly reached RED before repair.
+- [ ] Independently review exact diff; actual-body/copied-fixture mutation
+  witnesses and remaining runtime failures block broader delivery.
+
+Branch build at2f8887e4 actually refused HEAD!=origin/main. Keep this guard;
+qualifying clean-main build follows reviewed PR merge, never an origin/main
+repoint, dirty-build flag or direct-main commit.
+
+Task5 actual ledger01:40UTC: original nine static consumers0P9F. First alignment
+7P2F exposed nested and retained-next retired finalizers; second7P2F exposed
+selected and raw retired finalizers; exact vectors repaired after reading each
+actual body. Third actual9P0F/zero cancel+skip outer0,1039.873ms; repeated9P0F
+outer0,650.99825ms after helper strengthening. Production stays unchanged.
+
+Independent review found two strictness gaps in unanchored shared-helper fragments
+and literal reset counting. New in-memory mutation consumer actually0P1F on
+accepted interstitial errors.reverse before repair. Entire bounded helper bodies
+are now checked, plus whitespace-tolerant initial-false and exact-three write
+site inventories. Mutant failure-message classification was adjusted only for
+early-return already caught by adjacency, not to accept the mutant. Subsequent
+actual1P0F outer0,895.867041ms. This structural adjunct mutates only in-memory
+source, first positively accepts original checkers and rejects uniquely bounded
+ownership/cause/await/terminal/inventory regressions for corresponding assertions.
+It is not runtime/OS proof; runtime witnesses, remaining failures/fullreceipt and
+actual exact-diff review remain required before PR.
+
+Final Task5 independent review C0/I0/M0 at testSHA
+77a26af9629750234d82a44eb0f52e63bfb8c08ad69890c8cef04d29c13481d3.
+Additional prefix-write and relocated-initializer witnesses each actually RED
+before their respective checker repair (outer1,784.830292/785.423916ms).
+Final combined nine consumers plus41-case mutation consumer10P0F/zero cancel+
+skip outer0,1354.484041ms. This is narrow structural/focused qualification only.

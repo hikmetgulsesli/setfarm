@@ -3847,8 +3847,13 @@ function assertPhase5cSAsyncOwnedLifecycleStaticsV1(source: string): void {
     "P5c-S raw awaits every mixed-lifecycle child at its final aggregate fence");
   assert.match(raw, /completedRetained\s*=\s*await[\s\S]*(?:owned\.push\(\s*completedRetained\s*\)|own\(\s*completedRetained\s*\))/,
     "P5c-S transfers the retained-NEXT owner into the same ordered lifetime as every other raw child");
-  assert.match(raw, /const\s+close\s*=\s*async\s*\(\)\s*:\s*Promise<void>[\s\S]*for\s*\([^)]*owned\.length\s*-\s*1[\s\S]*await\s+owned\[[^\]]+\]!?\.close\(\)/,
+  assert.match(raw, /const\s+close\s*=\s*async\s*\(\)\s*:\s*Promise<void>[\s\S]*await attemptTask6aReceiptOwnedCleanupAsyncV1\(\[\.\.\.owned\]\.reverse\(\)\.map\(\(child\) => \(\) => child\.close\(\)\)\);/,
     "P5c-S awaits one unified reverse cleanup, including downstream before retained-NEXT and every earlier child");
+  assert.equal(raw.split("await attemptTask6aReceiptOwnedCleanupAsyncV1([...owned].reverse().map((child) => () => child.close()));").length - 1, 2,
+    "both returned raw branches await the same reverse drain-all cleanup");
+  assert.match(raw, /catch \(error\) \{\s*await attemptTask6aReceiptOwnedCleanupAsyncV1\(\[\.\.\.owned\]\.reverse\(\)\.map\(\(child\) => \(\) => child\.close\(\)\), error\);\s*throw error;\s*\}/,
+    "raw acquisition forwards the original primary into awaited reverse-all cleanup");
+  assertTask6aReceiptCleanupStaticsV1(source);
   assert.doesNotMatch(raw, /await\s+completedRetained\?\.close\(\)/,
     "retained-NEXT is not separately closed ahead of the later post-effect downstream owner");
   assert.match(raw, /const\s+assertFilesystemStable\s*=\s*\(\)\s*:\s*void[\s\S]*for\s*\([^)]*owned[\s\S]*\.assertFilesystemStable\(\)/,
@@ -3880,7 +3885,7 @@ function assertPhase5cSAsyncOwnedLifecycleStaticsV1(source: string): void {
   const selected = topLevelFunctionRegionV1(source, "openExactPoisonPostVisibleSelectedProgressPassV1");
   assert.match(selected, /const\s+assertStableWithoutCurrentStatusCas\s*=\s*async[\s\S]*await\s+raw\.assertStable\(\)/,
     "P5c-S selected stability awaits its SQL-backed raw owner");
-  assert.match(selected, /const\s+closeResources\s*=\s*async[\s\S]*await\s+raw\.close\(\)[\s\S]*(?:operationDirectoryGuard|rootReader)\.close\(\)/,
+  assert.match(selected, /const closeResources = async \(\): Promise<void> => \{\s*await attemptTask6aReceiptOwnedCleanupAsyncV1\(\[\s*\.\.\.\(currentStatusCas === null \? \[\] : \[\(\) => currentStatusCas!\.close\(\)\]\),\s*\.\.\.\(raw === null \? \[\] : \[\(\) => raw!\.close\(\)\]\),\s*\.\.\.\(status === null \? \[\] : \[\(\) => status!\.close\(\)\]\),\s*\.\.\.\(operationDirectoryGuard === null \? \[\] : \[\(\) => operationDirectoryGuard!\.close\(\)\]\),\s*\(\) => rootReader\.close\(\),\s*\]\);\s*\};/,
     "P5c-S selected cleanup awaits raw before closing synchronous filesystem parents");
   assert.match(selected, /const\s+assertFilesystemStable\s*=\s*\(\)\s*:\s*void[\s\S]*raw\.assertFilesystemStable\(\)/,
     "P5c-S selected synchronous mutation fencing retains the complete raw filesystem generation");
@@ -3898,7 +3903,7 @@ function assertPhase5cSAsyncOwnedLifecycleStaticsV1(source: string): void {
     assert.match(pass, /const\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*await\s+requireExactPoisonPostVisibleProgressRawDerivedNestedAuthoritiesV1\(/,
       "each selected and detached pass awaits raw-derived nested authority while its complete raw owner is live");
   }
-  assert.match(detachedPass, /await\s+raw\.assertStable\(\)[\s\S]*finally[\s\S]*await\s+raw\?\.close\(\)/,
+  assert.match(detachedPass, /await\s+raw\.assertStable\(\)[\s\S]*catch \(error\) \{\s*primary = error;\s*throw error;\s*\} finally \{\s*await attemptTask6aReceiptOwnedCleanupAsyncV1\(\[\s*\.\.\.\(currentStatusCas === null \? \[\] : \[\(\) => currentStatusCas!\.close\(\)\]\),\s*\.\.\.\(raw === null \? \[\] : \[\(\) => raw!\.close\(\)\]\),\s*\.\.\.\(status === null \? \[\] : \[\(\) => status!\.close\(\)\]\),\s*\], primary\);\s*\}/,
     "P5c-S detached A/B pass materialization awaits raw stability and cleanup rather than detaching SQL errors");
 
   const resume = topLevelFunctionRegionV1(source, "resumeInternalProductionCurrentEntryAuthorityV1");
@@ -4369,8 +4374,21 @@ function assertPhase5cSNarrowSelectedEffectResumeStaticsV1(
       { selectedStateRequire: 18, selectedRootOpen: 7 },
       "P5c-S owns selected-state/root primitives at their exact reviewed sites, including both no-write prerequisite builders, migration status context fencing, and the prerequisite-publication fence");
     assert.deepEqual({ pinnedChain: (source.match(/\bopenExactPoisonRecoveryPinnedCommitChainV1\b/g) ?? []).length, detachedProgress: (source.match(/\bobserveExactPoisonPostVisibleProgressPassNoWriteV1\b/g) ?? []).length },
-      { pinnedChain: 9, detachedProgress: 3 },
+      { pinnedChain: 10, detachedProgress: 3 },
       "P5c-S keeps pinned-chain identifiers at the reviewed selector, durability, historical-operation, historical pre-mutation, and two committed-prerequisite fallback sites while progress observation stays detached and exact");
+    for (const caller of [
+      "selectCurrentEntryStoreContextV1",
+      "resolveInternalProductionAuthorityV3Migration31AuditAtCommittedExactPoisonSuccessorV1",
+      "resolveInternalProductionPendingBootstrapHandoffMigrationAtCommittedExactPoisonSuccessorV1",
+      "inspectExactPoisonRecoveryChainBeforeSelectionV1",
+      "openExactPoisonRecoveryPinnedCommitChainV1",
+      "observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1",
+      "durablyAuthenticateSuccessorActivationCommitV1",
+      "resumeExactPoisonQuarantinePublisherCoreV1",
+      "resolveInternalProductionCurrentEntryOperationV1",
+      "resolveInternalProductionHistoricalPreMutationRuntimeAuthorityV1",
+    ]) assert.equal(topLevelFunctionRegionV1(source, caller).split("openExactPoisonRecoveryPinnedCommitChainV1(").length - 1, 1,
+      caller + ": one direct pinned-chain call, or its sole definition, and no alias");
     assert.deepEqual({ processEnv: (source.match(/\bprocess\.env\b/g) ?? []).length, denoEnv: (source.match(/\bDeno\.env\b/g) ?? []).length, bunEnv: (source.match(/\bBun\.env\b/g) ?? []).length, globalThis: (source.match(/\bglobalThis\b/g) ?? []).length, asyncLocal: (source.match(/\bAsyncLocalStorage\b/g) ?? []).length },
       { processEnv: 3, denoEnv: 0, bunEnv: 0, globalThis: 0, asyncLocal: 0 },
       "P5c-S permits only the three reviewed database observation leaves to read the database URL and adds no other ambient channel");
@@ -4449,13 +4467,10 @@ function assertPhase5cSNarrowSelectedEffectResumeStaticsV1(
   const selected = topLevelFunctionRegionV1(source, "openExactPoisonPostVisibleSelectedProgressPassV1");
   const closed = /let\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*false\s*;/.exec(selected)?.[1];
   assert.ok(closed, "P5c-S selected owner binds one private closed guard");
-  const closedAssignment = closed === undefined ? -1 : selected.indexOf(`${closed} = true`);
-  const firstChildClose = Math.min(...["currentStatusCas.close()", "q.close()", "raw.close()", "status.close()", "operationDirectoryGuard.close()", "rootReader.close()"].map((call) => {
-    const index = selected.indexOf(call, closedAssignment);
-    return index < 0 ? Number.MAX_SAFE_INTEGER : index;
-  }));
-  assert.ok(closedAssignment >= 0 && closedAssignment < firstChildClose,
+  assert.match(selected, /const close = async \(\): Promise<void> => \{\s*if \(closed\) currentEntryFail\("selected progress pass owner closed twice"\);\s*closed = true;\s*await closeResources\(\);\s*\};/,
     "P5c-S selected owner becomes terminal before any fallible child cleanup begins");
+  assert.match(selected, /catch \(error\) \{\s*if \(!closed\) \{\s*closed = true;\s*try \{ await closeResources\(\); \}\s*catch \(cleanupError\) \{ throw new AggregateError\(\[error, cleanupError\], "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: selected progress acquisition and cleanup failed"\); \}\s*\}\s*throw error;\s*\}/,
+    "selected acquisition becomes terminal before cleanup and retains primary then cleanup causes");
   assert.ok(closed !== undefined && [...selected.matchAll(new RegExp(`if\\s*\\(\\s*${closed}\\s*\\)`, "g"))].length >= 4,
     "P5c-S selected owner rejects context/root/narrow/aggregate use after close");
   const closeResourcesStart = selected.indexOf("const closeResources =");
@@ -4463,10 +4478,52 @@ function assertPhase5cSNarrowSelectedEffectResumeStaticsV1(
   assert.ok(closeResourcesStart >= 0 && closeResourcesEnd > closeResourcesStart,
     "P5c-S bounds the selected-owner shared reverse-cleanup routine");
   const closeResources = selected.slice(closeResourcesStart, closeResourcesEnd);
-  const reverseCloseTokens = ["currentStatusCas!.close()", "raw.close()", "status!.close()", "operationDirectoryGuard!.close()", "rootReader.close()"] as const;
+  const reverseCloseTokens = ["currentStatusCas!.close()", "raw!.close()", "status!.close()", "operationDirectoryGuard!.close()", "rootReader.close()"] as const;
   const reverseCloseIndexes = reverseCloseTokens.map((token) => closeResources.indexOf(token));
   assert.ok(reverseCloseIndexes.every((index) => index >= 0) && reverseCloseIndexes.every((index, indexInList) => indexInList === 0 || index > reverseCloseIndexes[indexInList - 1]!),
     "P5c-S selected-owner construction and returned close continue exact reverse cleanup through child close faults");
+  assert.match(closeResources, /^const closeResources = async \(\): Promise<void> => \{\s*await attemptTask6aReceiptOwnedCleanupAsyncV1\(\[\s*\.\.\.\(currentStatusCas === null \? \[\] : \[\(\) => currentStatusCas!\.close\(\)\]\),\s*\.\.\.\(raw === null \? \[\] : \[\(\) => raw!\.close\(\)\]\),\s*\.\.\.\(status === null \? \[\] : \[\(\) => status!\.close\(\)\]\),\s*\.\.\.\(operationDirectoryGuard === null \? \[\] : \[\(\) => operationDirectoryGuard!\.close\(\)\]\),\s*\(\) => rootReader\.close\(\),\s*\]\);\s*\};\s*$/,
+    "selected cleanup is exactly the awaited Q/raw/status/directory/root nullable callback vector");
+  assertTask6aReceiptCleanupStaticsV1(source);
+}
+
+function assertTask6aReceiptCleanupStaticsV1(source: string): void {
+  const sync = topLevelFunctionRegionV1(source, "attemptTask6aReceiptOwnedCleanupV1");
+  assert.match(sync, /const errors: unknown\[\] = \[\];\s*for \(const release of releases\) \{\s*try \{ release\(\); \} catch \(error\) \{ task6aReceiptCleanupUncertainV1 = true; errors\.push\(error\); \}\s*\}/,
+    "sync cleanup attempts every callback in order and retains each failure with sticky uncertainty");
+  assert.match(sync, /if \(errors\.length > 0\) \{\s*const cleanupError = new AggregateError\(errors, "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain"\);\s*if \(primaryError !== null\) throw new AggregateError\(\[primaryError, cleanupError\], "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt acquisition and cleanup failed"\);\s*throw cleanupError;\s*\}\s*if \(primaryError !== null\) throw primaryError;/,
+    "sync cleanup retains primary then every ordered cleanup cause, or original primary alone");
+  assert.equal(sync.slice(sync.indexOf("{")).replace(/\s+/g, ""), [
+    "{ const errors: unknown[] = [];",
+    "for (const release of releases) {",
+    "try { release(); } catch (error) { task6aReceiptCleanupUncertainV1 = true; errors.push(error); }",
+    "}",
+    "if (errors.length > 0) {",
+    'const cleanupError = new AggregateError(errors, "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt cleanup uncertain");',
+    'if (primaryError !== null) throw new AggregateError([primaryError, cleanupError], "INTERNAL_PRODUCTION_CURRENT_ENTRY_INVALID: receipt acquisition and cleanup failed");',
+    "throw cleanupError; }",
+    "if (primaryError !== null) throw primaryError; }",
+  ].join("\n").replace(/\s+/g, ""),
+  "exact sync cleanup body cannot hide early exit, cause reordering or uncertainty reset");
+  const asyncCleanup = topLevelFunctionRegionV1(source, "attemptTask6aReceiptOwnedCleanupAsyncV1");
+  assert.match(asyncCleanup, /const errors: unknown\[\] = \[\];\s*for \(const release of releases\) \{\s*try \{ await release\(\); \}\s*catch \(error\) \{ task6aReceiptCleanupUncertainV1 = true; errors\.push\(error\); \}\s*\}\s*attemptTask6aReceiptOwnedCleanupV1\(errors\.map\(\(error\) => \(\) => \{ throw error; \}\), primaryError\);/,
+    "async cleanup sequentially awaits all callbacks and forwards every failure and primary");
+  assert.equal(asyncCleanup.slice(asyncCleanup.indexOf("{")).replace(/\s+/g, ""), [
+    "{ const errors: unknown[] = [];",
+    "for (const release of releases) {",
+    "try { await release(); }",
+    "catch (error) { task6aReceiptCleanupUncertainV1 = true; errors.push(error); } }",
+    "attemptTask6aReceiptOwnedCleanupV1(errors.map((error) => () => { throw error; }), primaryError); }",
+  ].join("\n").replace(/\s+/g, ""),
+  "exact async cleanup body cannot hide early exit, cause reordering or uncertainty reset");
+  assert.equal((source.match(/\btask6aReceiptCleanupUncertainV1\s*=\s*false\b/g) ?? []).length, 1,
+    "receipt uncertainty has only its initial false declaration, never a reset");
+  assert.equal((source.match(/\btask6aReceiptCleanupUncertainV1\s*(?:=(?!=)|(?:\*\*|<<|>>>?|[+\-*/%&|^]|\|\||&&|\?\?)=|\+\+|--)/g) ?? []).length, 3,
+    "receipt uncertainty assignment sites are only initialization and the two exact helper catches");
+  assert.equal((source.match(/(?:\+\+|--)\s*task6aReceiptCleanupUncertainV1\b/g) ?? []).length, 0,
+    "receipt uncertainty has no prefix writes");
+  assert.equal((source.match(/^let task6aReceiptCleanupUncertainV1 = false;$/gm) ?? []).length, 1,
+    "receipt uncertainty keeps its unique private top-level initial declaration");
 }
 
 function assertPhase5cSEntryAuthorityAtRootStaticsV1(source: string): void {
@@ -4571,10 +4628,9 @@ function assertPhase5cSEntryAuthorityAtRootStaticsV1(source: string): void {
     "P5c-S E1 aggregate fence retains authority, operation inventory, locator/content, then operation inventory and authority again");
   const cleanupName = "closeExactPoisonPostVisibleProgressCurrentEntryAuthorityResourcesV1";
   const cleanup = topLevelFunctionRegionV1(source, cleanupName);
-  assert.match(cleanup, /(?:length\s*-\s*1|\.reverse\(\))[\s\S]*try\s*\{[\s\S]*\.close\(\)[\s\S]*catch[\s\S]*(?:firstCloseError|closeError|firstError)/,
+  assert.match(cleanup, /attemptTask6aReceiptOwnedCleanupV1\(\[\.\.\.resources\]\.reverse\(\)\.map\(resource => \(\) => resource\.close\(\)\), primaryError\);/,
     "P5c-S E1 cleanup continues through reverse child close failures");
-  assert.match(cleanup, /primaryError[\s\S]*throw\s+primaryError[\s\S]*(?:firstCloseError|closeError|firstError)[\s\S]*throw/,
-    "P5c-S E1 preserves construction primary errors and otherwise reports the first close error");
+  assertTask6aReceiptCleanupStaticsV1(source);
   assert.match(atRoot, new RegExp(`catch\\s*\\(\\s*([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\)\\s*\\{[\\s\\S]*${cleanupName}\\([^,]+,\\s*\\1\\s*\\)`),
     "P5c-S E1 construction delegates primary-preserving reverse cleanup");
   assert.match(atRoot, new RegExp(`const\\s+close[\\s\\S]*${cleanupName}\\([^,]+,\\s*null\\s*\\)`),
@@ -22695,7 +22751,7 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     }
     assert.match(postVisibleFence, /^async function observeExactPoisonRecoveryPostVisibleZeroFenceV1\(\s*context: ExactPoisonRecoveryPinnedCommitChainV1,\s*admitted\?: ExactPoisonQuarantineAdmissionV1,?\s*\): Promise<void>/);
     assert.doesNotMatch(postVisibleFence, /observeExactPoisonQuarantineAdmissionV1|ExactPoisonRecoveryWriterV1|heldWriter|acquireExactPoisonRecoveryWriterV1|readdirSync|opendirSync/);
-    assert.match(postVisibleFence, /const durableCurrentPrerequisites = exactPoisonRecoveryCurrentPrerequisitesFromPinnedSuccessorV1\(context\);[\s\S]*const currentPrerequisites = admitted\?\.currentPrerequisites \?\? durableCurrentPrerequisites;[\s\S]*assertExactPoisonRecoveryPrerequisitesEqualV1\([\s\S]*currentPrerequisites,[\s\S]*durableCurrentPrerequisites,[\s\S]*const originals = openExactPoisonRecoveryPostVisibleOriginalsV1\(context\);[\s\S]*const operation = exactPoisonRecoveryPinnedRecordFileSnapshotV1\(context\.operation\);[\s\S]*const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1\(operation, originals\.evidence, currentPrerequisites\);[\s\S]*assertExactPoisonQuarantineAdmissionCandidatesEqualV1\(observed\.candidates, expectedCandidates\);[\s\S]*observed\.completeZeroEffectBracketHash !== context\.zeroEffectProof\.completeZeroEffectBracketHash[\s\S]*finally\s*\{\s*originals\.close\(\);\s*\}/, "post-visible validation reuses admitted authority or pinned durable prerequisites, compares detached bracket/exact-seven candidates, and closes all original pins");
+    assert.match(postVisibleFence, /const durableCurrentPrerequisites = exactPoisonRecoveryCurrentPrerequisitesFromPinnedSuccessorV1\(context\);[\s\S]*const currentPrerequisites = admitted\?\.currentPrerequisites \?\? durableCurrentPrerequisites;[\s\S]*assertExactPoisonRecoveryPrerequisitesEqualV1\([\s\S]*currentPrerequisites,[\s\S]*durableCurrentPrerequisites,[\s\S]*const originals = openExactPoisonRecoveryPostVisibleOriginalsV1\(context\);[\s\S]*const operation = exactPoisonRecoveryPinnedRecordFileSnapshotV1\(context\.operation\);[\s\S]*const observed = await observeExactPoisonRecoveryCandidatesNoWriteV1\(operation, originals\.evidence, currentPrerequisites\);[\s\S]*assertExactPoisonQuarantineAdmissionCandidatesEqualV1\(observed\.candidates, expectedCandidates\);[\s\S]*observed\.completeZeroEffectBracketHash !== context\.zeroEffectProof\.completeZeroEffectBracketHash[\s\S]*catch \(error\) \{ primaryError = error; throw error; \}\s*finally\s*\{\s*attemptTask6aReceiptOwnedCleanupV1\(\[\(\) => originals\.close\(\)\], primaryError\);\s*\}/, "post-visible validation reuses admitted authority or pinned durable prerequisites, compares detached bracket/exact-seven candidates, and closes all original pins");
     const pinnedSnapshot = topLevelFunctionRegionV1(source, "exactPoisonRecoveryPinnedRecordFileSnapshotV1");
     assert.match(pinnedSnapshot, /^function exactPoisonRecoveryPinnedRecordFileSnapshotV1\(\s*record: ExactPoisonRecoveryPinnedRecordV1,?\s*\): FileSnapshot/);
     assert.match(pinnedSnapshot, /locator:\s*record\.target/);
@@ -22727,7 +22783,9 @@ function spawnSync(executable: string, args: readonly string[], options: Record<
     assert.match(originals, /context\.zeroEffectProof\.value\.predecessorFileIdentities/);
     assert.match(originals, /context\.dispositionValue\.value\.quarantinedInventory/);
     assert.match(originals, /assertStableOriginals/);
-    assert.match(originals, /for \(let index = .*\.length - 1; index >= 0; index -= 1\)/, "original descriptors close in reverse construction order");
+    assert.match(originals, /closed = true;\s*try \{\s*attemptTask6aReceiptOwnedCleanupV1\(\[\s*\.\.\.\[\.\.\.filePins\]\.reverse\(\)\.map\(\(pin\) => \(\) => closeSync\(pin\.descriptor\)\),\s*\.\.\.\[\.\.\.directoryPins\]\.reverse\(\)\.map\(\(pin\) => \(\) => pin\.close\(\)\),\s*\]\);\s*\} catch \(error\) \{ cleanupError = error; throw error; \}/,
+      "originals become terminal before reverse files then reverse directories and retain cleanup failure");
+    assertTask6aReceiptCleanupStaticsV1(source);
   });
 
   it("P5c-Z validator linearizes only an exact absent operations prefix and returns the literal successor selection", () => {
@@ -30886,18 +30944,17 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
     const pinMemberEnd = opener.indexOf("const assertStable", pinMemberStart);
     assert.ok(pinMemberStart >= 0 && pinMemberEnd > pinMemberStart, "the owner's lazy member-pin closure has exact lexical bounds");
     const pinMemberRegion = opener.slice(pinMemberStart, pinMemberEnd);
-    assert.match(pinMemberRegion, /const\s+descriptor\s*=\s*openSync\([\s\S]*try\s*\{[\s\S]*memberPins\.push\([\s\S]*catch\s*\(error\)[\s\S]*try\s*\{[\s\S]*closeSync\(descriptor\)[\s\S]*catch[\s\S]*throw\s+error/,
-      "a member validation/read failure closes its just-opened descriptor without replacing the primary error with a cleanup failure");
+    assert.match(pinMemberRegion, /const\s+descriptor\s*=\s*openSync\([\s\S]*try\s*\{[\s\S]*memberPins\.push\([\s\S]*catch \(error\) \{\s*attemptTask6aReceiptOwnedCleanupV1\(\[\(\) => closeSync\(descriptor\)\], error\);\s*throw error;\s*\}/,
+      "member validation/read failure closes its local descriptor and retains primary plus cleanup causes");
     assert.doesNotMatch(opener, /directoryMembers\.(?:map|forEach)\([^)]*(?:openSync|pinMember)/,
       "the owner cannot eagerly pin an unvalidated or unbounded directory inventory");
     assert.equal([...opener.matchAll(/\bpinMember\s*\(/g)].length, 0,
       "the opener defines and transfers pinMember but never invokes it before a child validates policy, grammar, and caps");
     assert.match(opener, /assertStable[\s\S]*memberPins[\s\S]*fstatSync\([\s\S]*\.equals\(/,
       "the shared owner final fence revalidates every retained member's metadata and bytes");
-    assert.match(opener, /for\s*\([^)]*memberPins\.length\s*-\s*1[^)]*>=\s*0[^)]*-=\s*1[^)]*\)[\s\S]*closeSync\([\s\S]*guard\.close\(\)/,
-      "owner cleanup closes retained member descriptors in reverse order before the directory-chain guard");
-    assert.match(opener, /for\s*\([^)]*memberPins\.length\s*-\s*1[^)]*\)[\s\S]*try\s*\{[\s\S]*closeSync\([\s\S]*catch[\s\S]*try\s*\{[\s\S]*guard\.close\(\)[\s\S]*catch[\s\S]*(?:first|close)[A-Za-z0-9_$]*Error[\s\S]*throw/i,
-      "owner cleanup preserves its first failure, continues closing the retained prefix, and still closes the directory guard");
+    assert.match(opener, /const closeOwned = \(\): void => \{\s*if \(closed\) currentEntryFail\("Task12 receipt endpoint directory owner closed twice"\);\s*closed = true;\s*attemptTask6aReceiptOwnedCleanupV1\(\[\s*\.\.\.\[\.\.\.memberPins\]\.reverse\(\)\.map\(\(pin\) => \(\) => closeSync\(pin\.descriptor\)\),\s*\(\) => guard\.close\(\),\s*\]\);\s*\};/,
+      "owner becomes terminal before reverse retained member descriptors then guard, attempting all");
+    assertTask6aReceiptCleanupStaticsV1(source);
     const endpointObserver = topLevelFunctionRegionV1(source, "observeExactPoisonPostVisibleTask12ReceiptEndpointNoWriteV1");
     const ownerBinding = new RegExp(`const\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*(?:await\\s+)?${openerName}\\(\\s*target\\s*\\)`).exec(endpointObserver);
     assert.ok(ownerBinding, "the Task12 policy acquires one named directory/absence owner");
@@ -30911,7 +30968,7 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       "the shared external endpoint calls only owned-directory children, never legacy independently-acquiring wrappers");
     assert.match(endpointObserver, new RegExp(`const\\s+assertStable\\s*=\\s*\\(\\)\\s*:\\s*void\\s*=>[\\s\\S]*${owner}\\.assertStable\\(\\)[\\s\\S]*close[\\s\\S]*${owner}\\.close\\(\\)`),
       "the returned policy owner transfers the shared directory fence through its final stability check and cleanup");
-    assert.match(endpointObserver, new RegExp(`catch\\s*\\(error\\)[\\s\\S]*try\\s*\\{[\\s\\S]*${owner}\\.close\\(\\)[\\s\\S]*catch[\\s\\S]*throw\\s+error`),
+    assert.match(endpointObserver, /catch \(error\) \{\s*attemptTask6aReceiptOwnedCleanupV1\(\[\(\) => directoryOwner\.close\(\)\], error\);\s*throw error;\s*\}/,
       "partial endpoint construction closes every retained prefix and guard while preserving its primary failure");
     assert.equal([...endpointObserver.matchAll(new RegExp(`${owner}\\.close\\(\\)`, "g"))].length, 2,
       "the shared owner has exactly the transferred-owner and construction-failure cleanup sites");
@@ -35378,6 +35435,80 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
     assertPhase5cSAsyncOwnedLifecycleStaticsV1(readFileSync(observerSource, "utf8"));
   });
 
+  it("P5c-S cleanup contracts reject lost ownership, causes, awaits, and terminal claims", () => {
+    const source = readFileSync(observerSource, "utf8");
+    const lifecycle = assertPhase5cSAsyncOwnedLifecycleStaticsV1;
+    const selected = (candidate: string): void => assertPhase5cSNarrowSelectedEffectResumeStaticsV1(candidate, "selected-owner-errors");
+    const inventory = (candidate: string): void => assertPhase5cSNarrowSelectedEffectResumeStaticsV1(candidate, "effect-authority");
+    for (const check of [assertTask6aReceiptCleanupStaticsV1, lifecycle, selected, inventory, assertPhase5cSEntryAuthorityAtRootStaticsV1]) check(source);
+    // Uniquely bounded in-memory source mutations exercise structural adjuncts.
+    // They do not execute a mutant, touch an artifact, or prove OS cleanup.
+    const reject = (owner: string, needle: string, replacement: string, check: (candidate: string) => void, why: RegExp, occurrence = 0): void => {
+      const original = topLevelFunctionRegionV1(source, owner);
+      let offset = -needle.length;
+      for (let index = 0; index <= occurrence; index += 1) {
+        offset = original.indexOf(needle, offset + needle.length);
+        assert.ok(offset >= 0, owner + ": mutation must name an actual bounded seam");
+      }
+      const mutated = original.slice(0, offset) + replacement + original.slice(offset + needle.length);
+      assert.notEqual(mutated, original);
+      assert.equal(source.split(original).length - 1, 1, owner + ": exactly one bounded owner");
+      const candidate = source.replace(original, () => mutated);
+      assert.throws(() => check(candidate), (error: unknown) => error instanceof assert.AssertionError && why.test(error.message),
+        owner + ": the corresponding ownership/cause assertion must reject this mutation");
+    };
+    reject("attemptTask6aReceiptOwnedCleanupV1", "errors.push(error);", "errors.push(error); throw error;", assertTask6aReceiptCleanupStaticsV1, /attempts every callback/);
+    reject("attemptTask6aReceiptOwnedCleanupV1", "[primaryError, cleanupError]", "[cleanupError, primaryError]", assertTask6aReceiptCleanupStaticsV1, /retains primary then every ordered/);
+    reject("attemptTask6aReceiptOwnedCleanupV1", "task6aReceiptCleanupUncertainV1 = true;", "", assertTask6aReceiptCleanupStaticsV1, /sticky uncertainty/);
+    reject("attemptTask6aReceiptOwnedCleanupV1", "errors.push(error);", "errors.push(error); task6aReceiptCleanupUncertainV1 = false;", assertTask6aReceiptCleanupStaticsV1, /sticky uncertainty/);
+    reject("attemptTask6aReceiptOwnedCleanupV1", "if (errors.length > 0)", "errors.reverse();\n  if (errors.length > 0)", assertTask6aReceiptCleanupStaticsV1, /exact sync cleanup body/);
+    reject("attemptTask6aReceiptOwnedCleanupV1", "for (const release of releases)", "return;\n  for (const release of releases)", assertTask6aReceiptCleanupStaticsV1, /attempts every callback|exact sync cleanup body/);
+    reject("attemptTask6aReceiptOwnedCleanupV1", "if (errors.length > 0)", "task6aReceiptCleanupUncertainV1=false;\n  if (errors.length > 0)", assertTask6aReceiptCleanupStaticsV1, /exact sync cleanup body/);
+    reject("observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1", "return captured;", "task6aReceiptCleanupUncertainV1=false;\n    return captured;", assertTask6aReceiptCleanupStaticsV1, /only its initial false declaration/);
+    reject("observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1", "return captured;", "task6aReceiptCleanupUncertainV1 &&= false;\n    return captured;", assertTask6aReceiptCleanupStaticsV1, /assignment sites/);
+    reject("observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1", "return captured;", "--task6aReceiptCleanupUncertainV1;\n    return captured;", assertTask6aReceiptCleanupStaticsV1, /no prefix writes/);
+    const declaration = "let task6aReceiptCleanupUncertainV1 = false;";
+    assert.equal(source.split(declaration).length - 1, 1);
+    const diagnostic = topLevelFunctionRegionV1(source, "observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1");
+    const relocated = source.replace(declaration, "let task6aReceiptCleanupUncertainV1;")
+      .replace(diagnostic, () => diagnostic.replace("return captured;", "task6aReceiptCleanupUncertainV1 = false;\n    return captured;"));
+    assert.throws(() => assertTask6aReceiptCleanupStaticsV1(relocated),
+      (error: unknown) => error instanceof assert.AssertionError && /top-level initial declaration/.test(error.message),
+      "a later diagnostic false write cannot replace the private top-level initializer");
+    reject("attemptTask6aReceiptOwnedCleanupAsyncV1", "await release();", "release();", assertTask6aReceiptCleanupStaticsV1, /sequentially awaits all callbacks/);
+    reject("attemptTask6aReceiptOwnedCleanupAsyncV1", "errors.push(error);", "errors.unshift(error);", assertTask6aReceiptCleanupStaticsV1, /sequentially awaits all callbacks/);
+    reject("attemptTask6aReceiptOwnedCleanupAsyncV1", "attemptTask6aReceiptOwnedCleanupV1(errors.map", "errors.reverse();\n  attemptTask6aReceiptOwnedCleanupV1(errors.map", assertTask6aReceiptCleanupStaticsV1, /sequentially awaits all callbacks|exact async cleanup body/);
+    reject("attemptTask6aReceiptOwnedCleanupAsyncV1", "const errors: unknown[] = [];", "return;\n  const errors: unknown[] = [];", assertTask6aReceiptCleanupStaticsV1, /exact async cleanup body/);
+    reject("attemptTask6aReceiptOwnedCleanupAsyncV1", "attemptTask6aReceiptOwnedCleanupV1(errors.map", "task6aReceiptCleanupUncertainV1=false;\n  attemptTask6aReceiptOwnedCleanupV1(errors.map", assertTask6aReceiptCleanupStaticsV1, /sequentially awaits all callbacks|exact async cleanup body/);
+    const rawOwner = "observeExactPoisonPostVisibleProgressRawNoWriteV1";
+    for (const occurrence of [0, 1]) {
+      reject(rawOwner, "[...owned].reverse().map((child) => () => child.close())", "[...owned].map((child) => () => child.close())", lifecycle, /unified reverse cleanup|both returned raw branches/, occurrence);
+      reject(rawOwner, "await attemptTask6aReceiptOwnedCleanupAsyncV1(", "attemptTask6aReceiptOwnedCleanupAsyncV1(", lifecycle, /unified reverse cleanup|both returned raw branches/, occurrence);
+    }
+    reject(rawOwner, "child.close()), error);", "child.close()), null);", lifecycle, /raw acquisition forwards the original primary/);
+    const selectedOwner = "openExactPoisonPostVisibleSelectedProgressPassV1";
+    const callbacks = [
+      "...(currentStatusCas === null ? [] : [() => currentStatusCas!.close()]),",
+      "...(raw === null ? [] : [() => raw!.close()]),",
+      "...(status === null ? [] : [() => status!.close()]),",
+      "...(operationDirectoryGuard === null ? [] : [() => operationDirectoryGuard!.close()]),",
+      "() => rootReader.close(),",
+    ];
+    for (const callback of callbacks) {
+      reject(selectedOwner, callback, "", selected, /reverse cleanup|exactly the awaited/);
+      reject(selectedOwner, callback, callback + "\n" + callback, selected, /exactly the awaited/);
+    }
+    reject(selectedOwner, callbacks[1]! + "\n      " + callbacks[2]!, callbacks[2]! + "\n      " + callbacks[1]!, selected, /reverse cleanup|exactly the awaited/);
+    reject(selectedOwner, "closed = true;\n    await closeResources();", "await closeResources();\n    closed = true;", selected, /becomes terminal before/);
+    reject(selectedOwner, "closed = true;\n      try { await closeResources(); }", "try { await closeResources(); }\n      closed = true;", selected, /acquisition becomes terminal before/);
+    reject(selectedOwner, "[error, cleanupError]", "[cleanupError, error]", selected, /retains primary then cleanup/);
+    const detachedOwner = "observeExactPoisonPostVisibleProgressPassNoWriteV1";
+    for (const callback of callbacks.slice(0, 3)) reject(detachedOwner, callback, "", lifecycle, /detached A\/B pass materialization/);
+    reject(detachedOwner, "], primary);", "], null);", lifecycle, /detached A\/B pass materialization/);
+    reject("closeExactPoisonPostVisibleProgressCurrentEntryAuthorityResourcesV1", "resource.close()), primaryError);", "resource.close()), null);", assertPhase5cSEntryAuthorityAtRootStaticsV1, /E1 cleanup continues/);
+    reject("observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1", "context = await openExactPoisonRecoveryPinnedCommitChainV1();", "const capturedOpen = openExactPoisonRecoveryPinnedCommitChainV1;\n    context = await capturedOpen();", inventory, /one direct pinned-chain call/);
+  });
+
   for (const scope of ["effect-authority", "candidate-advance-authority", "candidate-cas-authority", "resume-controller", "selected-owner-errors"] as const) {
     it(`P5c-S narrowly freezes ${scope} for selected effect execution`, () => {
       assertPhase5cSNarrowSelectedEffectResumeStaticsV1(readFileSync(observerSource, "utf8"), scope);
@@ -35569,8 +35700,11 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       "the generic opener semantically resolves the pinned body before releasing either its member or parent guard");
     assert.match(nestedOpener, /authenticateTask12ReceiptDirectoryChainV1[\s\S]*openExactPoisonRecoveryMemberV1[\s\S]*openExactPoisonRecoveryMemberV1[\s\S]*assertExactPoisonRecoveryPinnedMemberStableV1/,
       "the generic opener retains parent chain, pair, and content pins through its final stable fence");
-    assert.match(nestedOpener, /finally[\s\S]*close/,
-      "partial or complete nested-open failures close every owned descriptor in reverse order");
+    assert.match(nestedOpener, /const close = \(\): void => \{[\s\S]*closed = true;\s*attemptTask6aReceiptOwnedCleanupV1\(\[\s*\.\.\.\(content === null \? \[\] : \[\(\) => closeSync\(content!\.descriptor\)\]\),\s*\.\.\.\(locator === null \? \[\] : \[\(\) => closeSync\(locator!\.descriptor\)\]\),\s*\.\.\.\(parent === null \? \[\] : \[\(\) => parent!\.close\(\)\]\),\s*\]\);\s*\};/,
+      "returned nested owner becomes terminal before exact content/locator/parent cleanup");
+    assert.match(nestedOpener, /catch \(error\) \{\s*closed = true;\s*attemptTask6aReceiptOwnedCleanupV1\(\[\s*\.\.\.\(content === null \? \[\] : \[\(\) => closeSync\(content!\.descriptor\)\]\),\s*\.\.\.\(locator === null \? \[\] : \[\(\) => closeSync\(locator!\.descriptor\)\]\),\s*\.\.\.\(parent === null \? \[\] : \[\(\) => parent!\.close\(\)\]\),\s*\], error\);\s*throw error;\s*\}/,
+      "partial nested acquisition drains the exact nullable reverse vector with its primary");
+    assertTask6aReceiptCleanupStaticsV1(source);
     assert.doesNotMatch(nestedOpener, /readdirSync|opendirSync|selectCurrentEntryStoreContextV1|WithSelectedCurrentEntryStoreContextV1|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
       "the descriptor-driven nested opener is exact-path, pre-mint, and read-only");
     const nestedSemanticBody = topLevelFunctionRegionV1(source, "requireExactPoisonPostVisibleProgressNestedAuthorityBodyV1");
@@ -35734,8 +35868,8 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       "the selected owner retains operation-directory, status/nested/raw, and Q observations through its final stability fence");
     assert.match(selectedPassOpen, /const\s+assertContext\s*=\s*\((?:candidate|observed|selectedContext)[^)]*SelectedCurrentEntryStoreContextV1[^)]*\)\s*:\s*void\s*=>\s*\{[\s\S]*if\s*\(\s*(?:closed|isClosed)\s*\)\s*(?:currentEntryFail|fail)[\s\S]*if\s*\(\s*(?:candidate|observed|selectedContext)\s*!==\s*context\s*\)\s*(?:currentEntryFail|fail)/,
       "the owner keeps its originating opaque handle only in a closure and rejects a crossed handle or use after close");
-    assert.match(selectedPassOpen, /finally[\s\S]*(?:pass\.currentStatusCas|currentStatusCas|q)!?\.close\(\)[\s\S]*raw\.close\(\)[\s\S]*status!?\.close\(\)[\s\S]*operationDirectoryGuard!?\.close\(\)[\s\S]*rootReader\.close\(\)/,
-      "partial construction and completed use close Q, raw, status, operation-directory guard, and selected root authority in exact reverse order");
+    assert.match(selectedPassOpen, /const closeResources = async \(\): Promise<void> => \{\s*await attemptTask6aReceiptOwnedCleanupAsyncV1\(\[\s*\.\.\.\(currentStatusCas === null \? \[\] : \[\(\) => currentStatusCas!\.close\(\)\]\),\s*\.\.\.\(raw === null \? \[\] : \[\(\) => raw!\.close\(\)\]\),\s*\.\.\.\(status === null \? \[\] : \[\(\) => status!\.close\(\)\]\),\s*\.\.\.\(operationDirectoryGuard === null \? \[\] : \[\(\) => operationDirectoryGuard!\.close\(\)\]\),\s*\(\) => rootReader\.close\(\),\s*\]\);\s*\};/,
+      "partial construction and completed use await the exact Q/raw/status/directory/root vector");
     assert.doesNotMatch(selectedPassOpen, /openExactPoisonRecoveryPinnedCommitChainV1|revalidatePostVisibleCurrentEntryStoreProgressV1|selectCurrentEntryStoreContextV1|createSelectedCurrentEntryStoreContextV1|requireSelectedCurrentEntryStoreContextStateV1|selectedCurrentEntryStoreContextStatesV1\.(?:get|set)|as\s+(?:SelectedCurrentEntryPrerequisiteRootReaderV1|ExactPoisonRecoveryPinnedCommitChainV1)|AsyncLocalStorage|process\.env|globalThis/,
       "acquisition reads only the selected root owner's carried binding; it neither casts, performs a second lookup, reuses detached authority, reselects, mints, nor recovers hidden context");
 
@@ -36255,10 +36389,9 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
     const recoveryCloseHelper = topLevelFunctionRegionV1(source, "closeExactPoisonPostVisibleProgressRecoveryResourcesV1");
     assert.match(recoveryCloseHelper.slice(0, recoveryCloseHelper.indexOf("{")), /resources:\s*readonly[\s\S]*primaryError:\s*unknown\s*\|\s*null[\s\S]*:\s*void/,
       "one private cleanup helper receives the complete ordered resource list and an optional primary construction error");
-    assert.match(recoveryCloseHelper, /(?:length\s*-\s*1|\.reverse\(\))[\s\S]*try\s*\{[\s\S]*\.close\(\)[\s\S]*catch[\s\S]*(?:firstCloseError|closeError|firstError)/,
-      "the cleanup helper continues in exact reverse order while retaining only the first child close error");
-    assert.match(recoveryCloseHelper, /if\s*\(\s*primaryError\s*!==\s*null\s*\)[\s\S]*throw\s+primaryError[\s\S]*if\s*\([\s\S]*(?:firstCloseError|closeError|firstError)[\s\S]*throw\s+(?:firstCloseError|closeError|firstError)/,
-      "a primary read/open error wins over cleanup errors, while standalone close reports its first child failure");
+    assert.match(recoveryCloseHelper, /attemptTask6aReceiptOwnedCleanupV1\(\[\.\.\.resources\]\.reverse\(\)\.map\(\(resource\) => \(\) => resource\.close\(\)\), primaryError\);/,
+      "recovery cleanup forwards exact reverse callbacks and construction primary");
+    assertTask6aReceiptCleanupStaticsV1(source);
     assert.match(recoveryAtRoot, /catch\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\)\s*\{[\s\S]*closeExactPoisonPostVisibleProgressRecoveryResourcesV1\([^,]+,\s*\1\s*\)/,
       "a partial AtRoot construction delegates reverse-all cleanup without replacing its primary error");
     assert.match(recoveryAtRoot, /let\s+closed\s*=\s*false[\s\S]*const\s+assertStable[\s\S]*closed[\s\S]*(?:currentEntryFail|fail)[\s\S]*const\s+close[\s\S]*closed[\s\S]*(?:return|currentEntryFail|fail)[\s\S]*closed\s*=\s*true/,
@@ -36511,10 +36644,9 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
     assert.match(preSchemaAtRoot, /authenticateTask12ReceiptDirectoryChainV1\(\s*path\.dirname\(\s*(?:contentTarget|target)\s*\)\s*\)[\s\S]*openExactPoisonRecoveryMemberV1\(\s*(?:contentTarget|target)/,
       "each resolved status/material content generation owns both its canonical parent chain and exact member pin");
     const preSchemaCloseResources = /const\s+closeResources\s*=\s*\([^)]*primary[^)]*\)[\s\S]*?\n\s*\};/.exec(preSchemaAtRoot)?.[0] ?? "";
-    assert.match(preSchemaCloseResources, /for\s*\([^)]*contentResources\.length\s*-\s*1[^)]*index\s*-=/,
-      "one cleanup helper closes every acquired status/material pin in reverse");
-    assert.match(preSchemaCloseResources, /closeSync\([\s\S]*\.guard\.close\(\)[\s\S]*directoryOwner\.close\(\)[\s\S]*if\s*\(primary\s*!==\s*null\)\s*throw\s+primary[\s\S]*firstCloseError/,
-      "the cleanup helper attempts member, guard, and directory cleanup while preserving the primary error");
+    assert.match(preSchemaCloseResources, /attemptTask6aReceiptOwnedCleanupV1\(\[\s*\.\.\.\[\.\.\.contentResources\]\.reverse\(\)\.flatMap\(\(resource\) => \[\s*\(\) => closeSync\(resource\.member\.descriptor\), \(\) => resource\.guard\.close\(\),\s*\]\),\s*\(\) => directoryOwner\.close\(\),\s*\], primary\);/,
+      "pre-schema cleanup reverses resources, member before guard, directory last, preserving primary");
+    assertTask6aReceiptCleanupStaticsV1(source);
     assert.match(preSchemaAtRoot, /catch\s*\(error\)\s*\{[\s\S]*if\s*\(!transferred\)[\s\S]*closeResources\(error\)/,
       "partial construction delegates reverse cleanup with the construction primary");
     assert.match(preSchemaAtRoot, /const\s+close\s*=\s*\(\):\s*void\s*=>[\s\S]*closeResources\(null\)/,
@@ -36626,8 +36758,11 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
     assert.equal(cleanupOrder.every((index) => index >= 0), true, "retained-NEXT cleanup invokes every pair/content owner closer");
     assert.equal(cleanupOrder.every((index, ordinal) => ordinal === 0 || index > cleanupOrder[ordinal - 1]!), true,
       "retained-NEXT closes content member/parent then pair member/parent in exact reverse acquisition order");
-    assert.match(completedRetainedOpen, /assertStable[\s\S]*finally[\s\S]*close\(\)/,
-      "the returned retained-NEXT owner fences every held pair/content parent and closes them on all paths");
+    assert.match(cleanupRegion, /closed = true;\s*attemptTask6aReceiptOwnedCleanupV1\(\[\s*\(\) => closeContentMember\(\), \(\) => contentGuard\.close\(\),\s*\(\) => closePairMember\(\), \(\) => pairGuard\.close\(\),\s*\]\);/,
+      "returned retained-NEXT cleanup becomes terminal before content/member then pair/member owners");
+    assert.match(completedRetainedOpen, /catch \(error\) \{ primaryError = error; throw error; \}\s*finally \{\s*if \(!transferred\) attemptTask6aReceiptOwnedCleanupV1\(\[\.\.\.constructionReleases\]\.reverse\(\), primaryError\);\s*\}/,
+      "only untransferred retained-NEXT construction releases its exact reverse acquired prefix with primary");
+    assertTask6aReceiptCleanupStaticsV1(source);
     assert.doesNotMatch(completedRetainedOpen, /\b(?:target|path|root|directory)\s*:\s*string|process\.env|globalThis|readdirSync|opendirSync|selectCurrentEntryStoreContextV1|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
       "the retained-NEXT opener derives exact locators from frozen operation/family/ordinal authority and cannot scan, reselect, or mutate");
     const rawTypeStart = source.indexOf("type ExactPoisonPostVisibleProgressRawObservationV1 = Readonly<{");
@@ -36732,9 +36867,9 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       "raw transfers retained-NEXT into the unified ordered owner vector while retaining its semantic alias");
     assert.match(raw, /const\s+assertStable\s*=\s*async\s*\(\):\s*Promise<void>[\s\S]*for\s*\([^)]*owned[\s\S]*await\s+[A-Za-z_$][A-Za-z0-9_$]*\.assertStable\(\)/,
       "raw final stability retains the adjacent status and later downstream owner through one aggregate fence");
-    assert.match(raw, /const\s+close\s*=\s*async\s*\(\):\s*Promise<void>\s*=>[\s\S]*for\s*\([^)]*owned\.length\s*-\s*1[\s\S]*await\s+owned\[[^\]]+\][^;]*\.close\(\)/,
+    assert.match(raw, /const close = async \(\): Promise<void> => \{\s*if \(closed\) currentEntryFail\("progress raw observation closed twice"\);\s*closed = true;\s*await attemptTask6aReceiptOwnedCleanupAsyncV1\(\[\.\.\.owned\]\.reverse\(\)\.map\(\(child\) => \(\) => child\.close\(\)\)\);\s*\};/,
       "the transferred raw owner closes the unified vector exactly in reverse construction order");
-    assert.match(raw, /catch\s*\([^)]*\)\s*\{[\s\S]*for\s*\([^)]*owned\.length\s*-\s*1[\s\S]*await\s+owned\[[^\]]+\][^;]*\.close\(\)[\s\S]*throw\s+first/,
+    assert.match(raw, /catch \(error\) \{\s*await attemptTask6aReceiptOwnedCleanupAsyncV1\(\[\.\.\.owned\]\.reverse\(\)\.map\(\(child\) => \(\) => child\.close\(\)\), error\);\s*throw error;\s*\}/,
       "raw construction failure preserves the primary error while closing the unified vector in reverse order");
     assert.doesNotMatch(raw, /completedRetained\?\.close\(\)/,
       "retained-NEXT never bypasses later downstream ownership through a separate early close site");
@@ -37606,7 +37741,7 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
       "no asynchronous gap follows the final status/raw/Q fences");
     const qOwnerBinding = /let\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*Task12CurrentStatusCasForProgressNoWriteObservationV1\s*\|\s*null\s*=\s*null\s*;/.exec(pass);
     assert.ok(qOwnerBinding, "the pass declares a nullable Q owner for partial-open cleanup");
-    assert.match(pass, new RegExp(`finally\\s*\\{[\\s\\S]*try\\s*\\{\\s*${qOwnerBinding[1]}\\?\\.close\\(\\);\\s*\\}\\s*catch[\\s\\S]*try\\s*\\{\\s*await\\s+${rawBinding[1]}\\?\\.close\\(\\);\\s*\\}\\s*catch[\\s\\S]*try\\s*\\{\\s*${statusBinding[1]}\\?\\.close\\(\\);\\s*\\}\\s*catch[\\s\\S]*primary\\s*===\\s*null\\s*&&\\s*cleanupError\\s*!==\\s*null`),
+    assert.match(pass, /catch \(error\) \{\s*primary = error;\s*throw error;\s*\} finally \{\s*await attemptTask6aReceiptOwnedCleanupAsyncV1\(\[\s*\.\.\.\(currentStatusCas === null \? \[\] : \[\(\) => currentStatusCas!\.close\(\)\]\),\s*\.\.\.\(raw === null \? \[\] : \[\(\) => raw!\.close\(\)\]\),\s*\.\.\.\(status === null \? \[\] : \[\(\) => status!\.close\(\)\]\),\s*\], primary\);\s*\}/,
       "reverse finalizers close the S-aware Q owner, then raw, then status while preserving the construction primary");
 
     const passTypeStart = source.indexOf("type ExactPoisonPostVisibleProgressPassV1 = Readonly<{");
@@ -37664,7 +37799,7 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
     const publisher = topLevelFunctionRegionV1(source, "resumeExactPoisonQuarantinePublisherCoreV1");
     assert.match(publisher, /heldWriter\.assertStable\(\);\s*context\.assertStable\(\);\s*await revalidatePostVisibleCurrentEntryStoreV1\(context, admission\);\s*heldWriter\.assertStable\(\);\s*context\.assertStable\(\);/,
       "the held H writer and pinned context bracket both successful and throwing S validation");
-    assert.match(publisher, /finally\s*\{\s*heldWriter\.close\(\);\s*\}/,
+    assert.match(publisher, /catch \(error\) \{\s*primaryError = error;\s*throw error;\s*\} finally\s*\{\s*attemptTask6aReceiptOwnedCleanupV1\(\[\(\) => heldWriter\.close\(\)\], primaryError\);\s*\}/,
       "the sole H writer closes from the publisher finalizer when S throws");
 
     const exports = [...source.matchAll(/^export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)|^export\s+type\s+([A-Za-z0-9_]+)/gm)].map((match) => match[1] ?? match[2]);
@@ -37736,8 +37871,8 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
         `${label}: exactly one reader pre-open and one post-resolve live-authority fence make adapter faultAt3 the true final fence`);
     };
     assertLiveRetainedAuthorityOrder(readPreSchema, "const resolved = await resolver(pair)", "retained pre-schema");
-    assert.match(readPreSchema, /finally\s*\{\s*try\s*\{[\s\S]*closeSync\(member\.descriptor\)[\s\S]*finally\s*\{\s*guard\?\.close\(\)/,
-      "retained locator pin and parent-chain guard close in a nested finalizer");
+    assert.match(readPreSchema, /catch \(error\) \{ primaryError = error; throw error; \}\s*finally \{\s*attemptTask6aReceiptOwnedCleanupV1\(\[\s*\.\.\.\(member === null \? \[\] : \[\(\) => closeSync\(member!\.descriptor\)\]\),\s*\.\.\.\(guard === null \? \[\] : \[\(\) => guard!\.close\(\)\]\),\s*\], primaryError\);\s*\}/,
+      "retained locator member closes before guard, preserving primary and all cleanup causes");
     assert.doesNotMatch(readPreSchema, /\b(?:root|target|path|locator|directory)\s*:\s*string|process\.env|process\[\s*["']env["']\s*\]|globalThis|readdirSync|opendirSync|selectCurrentEntryStoreContextV1|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
       "the pre-schema reader derives its exact locator only from authenticated operation+ordinal authority");
 
@@ -37746,7 +37881,8 @@ export function nested(value){return requireExactPoisonPostVisibleProgressNested
     assert.match(readMigration, /task12MigrationOperationDirectoryV1\([\s\S]*status-0/);
     assert.match(readMigration, /authenticateTask12ReceiptDirectoryChainV1[\s\S]*openExactPoisonRecoveryMemberV1[\s\S]*strictCanonicalRecord[\s\S]*resolveInternalProductionPreManifestMigration32AuthorizationStatusV1[\s\S]*(?:canonicalComparable|canonical)[\s\S]*assertExactPoisonRecoveryPinnedMemberStableV1[\s\S]*(?:guard|directoryChain)\.assertStable\(\)/);
     assertLiveRetainedAuthorityOrder(readMigration, "const resolved = await resolveInternalProductionPreManifestMigration32AuthorizationStatusV1(pair)", "retained migration-32");
-    assert.match(readMigration, /finally\s*\{\s*try\s*\{[\s\S]*closeSync\(member\.descriptor\)[\s\S]*finally\s*\{\s*guard\?\.close\(\)/);
+    assert.match(readMigration, /catch \(error\) \{ primaryError = error; throw error; \}\s*finally \{\s*attemptTask6aReceiptOwnedCleanupV1\(\[\s*\.\.\.\(member === null \? \[\] : \[\(\) => closeSync\(member!\.descriptor\)\]\),\s*\.\.\.\(guard === null \? \[\] : \[\(\) => guard!\.close\(\)\]\),\s*\], primaryError\);\s*\}/);
+    assertTask6aReceiptCleanupStaticsV1(source);
     assert.doesNotMatch(readMigration, /\b(?:root|target|path|locator|directory)\s*:\s*string|process\.env|process\[\s*["']env["']\s*\]|globalThis|readdirSync|opendirSync|selectCurrentEntryStoreContextV1|(?:mkdir|writeFile|appendFile|truncate|chmod|chown|link|symlink|rename|unlink|rm|rmdir)Sync/,
       "the migration reader derives its sharded exact locator only from authenticated operation+ordinal authority");
 

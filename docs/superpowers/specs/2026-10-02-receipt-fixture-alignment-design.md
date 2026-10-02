@@ -104,3 +104,27 @@ omitted controller-release error; skipped/misordered owner close; opened child
 without close; fabricated cleanup of unopened child; leaked FD; poisoned next
 case due to same realm/root. Exact tree literals/order and fresh physical roots
 must reject these, with no production or external effects introduced.
+
+## Causal refinement: delivered cleanup consumers
+
+At2f8887e4 nine existing static consumers actually fail (0P9F, outer1,
+327.953958ms). Their first stacks require removed inline first-error loops or
+nested finalizers, or omit the delivered original-owner diagnostic call site.
+Align only those consumers to the delivered helper contract, not production.
+
+Require exact ordered callback vectors and primary arguments: raw reverse-owned
+async cleanup at both returned closes plus its construction catch; selected
+Q/raw/status/directory/root cleanup; detached Q/raw/status cleanup; E1/recovery
+reverse resources with primary; originals reverse files before reverse parents;
+retained member before guard; Task12 reverse member pins before guard. Inspect
+shared helper bodies for sequential drain-all, ordered causes and sticky latch,
+not merely helper-name presence. Returned selected close must burn closed before
+awaiting cleanup; acquisition cleanup must burn it before the same cleanup.
+
+Pinned-chain inventory must explicitly identify the sole new call inside
+observeInternalProductionTask6aOriginalOwnerReceiptCaptureNoWriteV1, retain the
+nine old identifiers at their original functions, and preserve unchanged
+selected-effect reachable-graph denials. No blanket exception for diagnostics.
+Existing source-contract tests remain structural adjuncts, not runtime proof;
+actual-body cleanup/cause/order and copied-owner fault witnesses remain required
+before delivery. No native, SQL, service, old-artifact or build-guard effects.
