@@ -322,14 +322,14 @@ the exact seven-field counts-only diagnostic from the spec after settlement.
 No production initializer exists. `task6a_origin_parent_require_unburned()` is
 the actual consumer-used zero-argument no-effect permanent-invalid guard.
 
-- [ ] **Step 1: Review design and isolate the sole writer.** Verify fresh clean
+- [x] **Step 1: Review design and isolate the sole writer.** Verify fresh clean
   main d40fa/treecb513, own.git/no alternates, initial four-file SHA agreement,
   no .env/node_modules/dist, ordinary UID and old-pin/resource preservation.
   Create scoped branch `fix/task6a-ordinary-parent-protocol-v2` in a separate
   own clone; no old root rebuild or dependency reuse. Independently review this
   exact spec/plan refinement and commit the docs before source changes.
 
-- [ ] **Step 2: First missing-feature RED.** Put the named test inside existing
+- [x] **Step 2: First missing-feature RED.** Put the named test inside existing
   ordinary-host registration. Assert declaration BEFORE any initializer injection:
 
 ```js
@@ -360,12 +360,12 @@ env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /
   This is not later mutation/security evidence. Undefined function/anchor/syntax/
   queue exceptions cannot substitute for this RED or a semantic mutant kill.
 
-- [ ] **Step 3: Make external ports trustworthy before consumer GREEN.** Extend
+- [x] **Step 3: Make external ports trustworthy before consumer GREEN.** Extend
   existing `systemObject` with parent-only startup/runtime sticky fault state.
   Keep sole final-main removal and install CORE overrides before source eval.
   Fix exact prototypes and caller alias behavior with independent self-witnesses:
   actual caller sysopen handle; actual sysread buffer/raw/count/errno; exact
-  syswrite payload/request/offset/count; fcntl `0 but true` success; raw exact
+  syswrite payload/request/offset/count; binary configuration; fcntl `0 but true` success; raw exact
   readiness timeout-versus-error/throw and pipe-read undef/EINTR/EAGAIN contracts;
   synthetic waitpid `$?`; fake-PID wait/signal never CORE. Harness independently
   owns ordinary real pipes and closes every extra end. Use finite literal queues.
@@ -377,7 +377,7 @@ env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /
   increasing seq/op/original-role/slot/invocation/request/return/errno/bytes/raw
   wait status; fixture cleanup attempts/definite closes are separate facts.
 
-- [ ] **Step 4: Clock RED/GREEN.** Add actual-validator consumers for undefined,
+- [x] **Step 4: Clock RED/GREEN.** Add actual-validator consumers for undefined,
   reference, string-numeric, dual POK/numeric, throw, negative, backward, over1e12,
   numeric NaN and Inf; allow zero/equal/fraction and inclusive1e12. Construct
   POSIX numeric factories and inspect public B flags/classification before
@@ -399,7 +399,16 @@ sub task6a_origin_now {
 }
 ```
 
-- [ ] **Step 5: Private state and once-only ownership.** Beside current private
+Ruling: recheck the admission at every epoch/settlement; inspect both copied PID
+scalars before coercion and bind1..2147483647 to actual target signed32 pid_t
+(SDK sys/_types.h:84 and sys/_types/_pid_t.h:31). Authenticated pre-first-poll
+failure gets one original-only cleanup poll, then unchanged known-live shutdown.
+Reason: initial-only checks permit record drift, and clock failure cannot strand
+an authenticated child. Cost if wrong: ordinary interface/test rework, never a
+native gate waiver. Require drift, PID type/range and early-failure settlement
+denials before completing the slice; the initial missing-feature RED was observed.
+
+- [x] **Step 5: Private state and once-only ownership.** Beside current private
   declarations define absent admission+retained HASH reference, copied original
   PID, five originals, phase/permanent-invalid/cleanup flags, close-attempted/
   definite-close arrays, immutable start/deadline and independent frame/EOF/
@@ -414,7 +423,7 @@ sub task6a_origin_now {
   Each attempted flag precedes the call, false/throw never retries, remaining
   originals still close. Unknown/unauthed/uncertain/reaped PID never signals.
 
-- [ ] **Step 6: Actual FSM GREEN.** Implement setup-empty-EOF+definite-close,
+- [x] **Step 6: Actual FSM GREEN.** Implement setup-empty-EOF+definite-close,
   buffered READY acceptance, literal owned entropy, three32byte unique challenges,
   matching current PONG, entropy definite close before challenge3, full END,
   definite input close before ending, final END/drain/allEOF/exactrawzero/all5
@@ -434,7 +443,7 @@ sub task6a_origin_now {
   Return only the literal diagnostic in Step2 after irreversible settled state.
   Allow eventual clock progress, not an invented fixed poll-attempt cap.
 
-- [ ] **Step 7: Denials and six honest semantic mutants.** Fresh fixture for
+- [x] **Step 7: Denials and six honest semantic mutants.** Fresh fixture for
   each absent/forged/arity/alias/replaced original, every fragment boundary,
   coalesced future/replay/extra/CRLF/NUL/uppercase/63or65hex/partial EOF/221byte
   stdout, one stderr/setup byte, each missing EOF/reap/close, partial write,
@@ -450,7 +459,7 @@ sub task6a_origin_now {
   acceptance, even if final all-close check later refuses. Require positive
   baseline closure and sticky harnessFaultnull before crediting each semantic kill.
 
-- [ ] **Step 8: Adjacent and full ordinary verification.** Run exact new parent
+- [x] **Step 8: Adjacent and full ordinary verification.** Run exact new parent
   and clock consumers, existing metadata-clock tests, child entry, helper captor,
   physical-holder, unsupported-host and actual default-graph leaf consumers.
   Then full actual bootstrap test suite with zero macOS skips, bounded fixed
@@ -472,8 +481,273 @@ git diff --stat d40fa6b9d517bdbb9e466585c86fbd1471c4dfc0
   This closes only ordinary P2a. No installation/root/native/service/DB/fence/
   genesis/32/33/A–E/M1/M2 claim; retain all worktrees/branches/evidence.
 
-Ordinary execution ledger: spec/plan review pending; no consumer/clock RED,
-implementation, test/native/privileged execution or P2a completion yet.
+Ordinary execution ledger, 2026-10-03:
+
+- Reviewed exact specbd7fa279/plan981482ef promoted in scoped docs commit
+  bf96cf3d2a42ff1cfb3626ab29dc46a1dad4cc71; two independent C0/I0/M0 reviews.
+- First consumer RED a6af00 CLOSED1:1FAIL/0SKIP/50.926792ms, actual missing
+  declaration assertion before any initializer. First consumer GREEN is recorded
+  in the superseding11:27UTC ledger below; full Step7 remains pending.
+- Independently reviewed clock-only harness preserved actual validator; genuine
+  2706f8 CLOSED1:16tests/10PASS/6FAIL/0SKIP/379.744334ms. Actual string/dual/
+  reference acceptance, undefined warnings, escaped nominated throw and arity
+  acceptance; four sticky harness-fault controls passed, not false refusals.
+- Minimal reviewed actual-now change then a62441 CLOSED0:16PASS/0SKIP/
+  371.066417ms. No imports/main/launcher change. This is only the clock slice.
+- Fresh resume/source/preservation/resource audit before adjacent invocation
+  26360 naturally CLOSED0/af0b15:121PASS/0FAIL/0SKIP/31183.4575ms, all actual
+  clock/metadata/source/vendor/entry/captor/default-graph selected consumers.
+  Full bootstrap suite was NOT selected; the still-missing parent test excluded.
+- Parent pipe/entropy/ready/prototype harness self-witnesses, real FSM, six
+  coherent mutants, full ordinary review/delivery/build remain pending.
+  No native/protected/service/SQL/P2/P2a/M1/M2 acceptance is implied.
+
+11:00UTC superseding candidate ledger:
+- Foundation10/17/27/30 focusedcases each actual CLOSED0/0SKIP; latest05788b
+  30PASS/0FAIL/0SKIP/482.285708ms. Runtime bridge errors were harness faults,
+  not semantic refusal/mutation evidence; exact prototypes/aliases now witnessed.
+- First actualprivateparent FSM candidate implemented but UNEXECUTED; source
+  review corrected initial-only admission checks and pre-first-poll settlement.
+  RawtypedPID signed32 ruling above refines the same four-file causal contract.
+- Compile-only face33 CLOSED0 syntaxOK; JSsyntax/diffcheck0. Actualsuccess
+  initializer/finiteexternalport fixture remains under independent pre-effect
+  review before the first real consumer invocation. No firstconsumerGREEN yet.
+- Denials, fragmentmatrix, six coherent mutants, full verification, reviewedPR
+  and clean-main delivery still required. Main/native/production gates unchanged.
+
+11:27UTC superseding actual-consumer ledger:
+- Actualconsumer bb226e CLOSED0:1PASS/0FAIL/0SKIP84.175291ms; foundation+consumer
+  983654 CLOSED0:31PASS/0FAIL/0SKIP672.770291ms; sixunauthenticateddenials
+  3cafe0 CLOSED0:6PASS/0FAIL/0SKIP200.539334ms.
+- Independent reviews found raw256 closeassertions counted fixturefinalizer;
+  root corrected to pre-finalizer consumerEvents, exact five original attempts/
+  definite results. Corrected testbde95960...f385/source04393cc...8d9 C0/I0/M0;
+  focused8d05e0 CLOSED0:10PASS/0FAIL/0SKIP361.56175ms. Raw256 refusal, otherwise
+  complete rawzero-mutant diagnostic and actual burn-mutant guard acceptance
+  after refusal/disposal observed. No syntax/queue/harnesserror counted as kill.
+- Finite wait lifetime chooses live32 or closed-input1 only from independently
+  CORE-confirmed physical originalinput closure, never copiedphase/result.
+  Latest test4982f2e...06a adds wrongnonce baseline+actualactive-onlyprefix mutant,
+  UNEXECUTED pending exact review. Four other controls, fault/fragment/ownership
+  matrices, full ordinary suite/review/PR/clean-main remain. No native/protected/
+  service/DB/fence/A-E/P2a/M1/M2 completion implied.
+
+11:55UTC superseding executed-matrix ledger:
+- All six required semanticcontrols observed at exacttestd7e87fed...bdcd/source
+  04393cc...8d9:64babb/15f5c1 CLOSED0:46PASS/0FAIL/0SKIP1239.656875ms.
+  Wrongnonce/raw256/deadline mutants reach complete forbidden diagnostics;
+  burnedguard mutant accepts actual usedguard after refusal/disposal; postreap
+  mutant sends one synthetic TERM only after exactreap/five definitecloses;
+  inputclose mutant records actual END acceptance with physicallylive original
+  input, then stillrefuses/burns/disposes/reaps at the originaldeadline.
+- Failedpostreap791a1a/650c80 were NOT kills. JS stringreplacement corrupted
+  literal Perl$$; TESTONLY callback replacements preserve exactbytes now, with
+  bounded changedshutdown and byte-identicalactualpoll checks. Independent
+  C0/I0/M0 before freshpassing46case run; no productionwaiver/fix.
+- Fullordinarybootstrap4504dc/5faf6a CLOSED0:444PASS/0FAIL/0SKIP52134.245875ms,
+  completeoutput/footerread at d7e87fed. No projectALL/native/privileged claim.
+- Reviewed ac886ccd...78b7 then215nonemptytwochunkboundarycases b05734/1867e0
+  CLOSED0:215PASS/0FAIL/0SKIP5937.17875ms: READY5, PONG1-3 each69, END3;
+  actualpipebytes, fullfinitequeue drainage, exactdiagnostic/closes/counters.
+  No arbitrarymultichunk/native/timing inference.
+- Latesttest7b45dd33...86cf adds11malformed/partialEOF/sidechannelbyte denials,
+  UNEXECUTED pending exactreview. Source04393 unchanged. Remainingownership/
+  error/entropy/reap/deadline matrices and freshfullordinaryreview/delivery/
+  build stillrequired. Step7/8/9 remain open; protected/main gates unchanged.
+
+12:10UTC superseding verification ledger:
+- Exactsource04393ccef9795a0d78f3c9dd96bbb2bdc045e32dfb9505acdfe8711972aac8d9
+  and test9f19726fbe15cd4d050b23de86bba24bfba3e012b0e2faecfdc4056dbcd328b4:
+  fullordinary005e66/1ec3d8/b6ad7d CLOSED0,675PASS/0FAIL/0CANCEL/0SKIP/0TODO,
+  58648.633541ms. Terminal0/finalfooter observed; middle first output chunk
+  outer-display truncated, no full per-line-read claim. Parentfd868b/f98be8
+  CLOSED0:277PASS/0FAIL/0SKIP7610.195791ms, completeoutput/footerread.
+- Reviewed malformed/partialEOF/sidechannel825164 CLOSED0:11P0F0S358.418916ms;
+  earlywait4 and clockC2throw8b2da3 CLOSED0:5P0F0S183.596167ms. Earlier pending/
+  running statements are historical. No managed test session currently running.
+- Step7 remains open for admission/restoration/alias, primitive/entropy errors,
+  all229 partialwrite nominations, missingEOF/reap/uncertainclose and bootstrap
+  expiry/framing matrices. Portselfwitnesses do not replace actualconsumer
+  denials. Step8/9 and delivery/native/service/DB/fence/A-E remain open.
+
+Resumed Step7 admission candidate (not yet executed):
+- Fresh get_goal returned null; standing owner protocol continues the same
+  bounded objective, not a historical blocked lock. Root alone writes.
+- Test940ab35d188365cf645151cdc55cbef8fed31321327460b5a000a85034a4f675 adds
+  25 initial and25 C3-drift cases: four aliases/four owned-peer replacements,
+  five missing keys/extra key, nine PID values/types, copied HASH/absent record.
+  Source04393 unchanged. Independent exact review precedes execution.
+- Ruling: nominate admission-only mutation after external clock C3, restore
+  only its original HASH/fields after consumer disposal and before the repeat
+  baseline. Reason: next actual epoch must reject while cleanup retains sealed
+  originals/PID. Cost if wrong: ordinary fixture rework, no native effect.
+- Original custody snapshots retain record/FH/FD/all13stat values, checked
+  without consulting closed descriptors; no phase/latch/close facts reset.
+  Expected initial0 protocol/PID effects; C3 two consumer clocks/12stat/20fcntl,
+  one sealed live poll plus cleanup raw-zero reap after four definite closes.
+  Restoration must not revive actual consumer/usedguard; repeat effects0.
+  These are proposed coverage, not new production RED/GREEN or Step7 closure.
+
+13:27UTC Step7 admission execution and write candidate:
+- Test940ab35d...f675/source04393 reviewed C0/I0/M0 twice;16d8e6/63d7f6
+  CLOSED0:50PASS/0FAIL/0CANCEL/0SKIP/0TODO1383.909833ms, fulloutput/footerread.
+  Earlier admission UNEXECUTED statement is historical. All50actual denials/
+  originalcustody disposal/restored-record burnedrepeat requirements observed.
+- Test308a1c91d93659468fb403e7cb37ae17980703fbbcc34eaa156c2617d5bdf152 adds
+  all229shortwrite outcomes, six firstwrite undefined/throw/EINTR/EAGAIN/EIO/
+  fullcompletion+freshEIO outcomes. UNEXECUTED pending independent exactreview.
+  Preserve fullcaller75/END4request; nominate physicalCOREshort count, independently
+  read only expected peerprefix, forbidretry/successor; no spontaneousOSfault claim.
+  Fullcompletion+errno distinguishes physicalcompletion from accepted return.
+  All queues are finite independently counted literals. Remaining Step7/8/9 open.
+
+Step7 write execution and primitive candidate:
+- Exacttest308a1c91...f152/source04393 reviewed C0/I0/M0 twice;68c5f8/3ef4e3
+  CLOSED0:235PASS/0FAIL/0CANCEL/0SKIP/0TODO6641.4355ms, fulloutput/footerread.
+  All229short/zero completions and6firstwrite fault outcomes observed at actual
+  consumer. Physical CORE writes are controlled nominations, not spontaneous
+  kernel shortwrite/error evidence. Zero cases do not prove peerbuffer absence.
+- Test463dd414c693ec8099c1d5640eb605b299b2998efe2518679337054ae69e1c06 adds
+  10read/5readiness/10close-response-fault cases UNEXECUTED underexactreview.
+  Physical close precedes false/throw nomination; never a cleanup-complete claim.
+  Late stderr/stdout close cases explicitly require their closes AFTER already
+  observed exactreap; other rows preserve all-close-before-cleanup-reap ordering.
+  Scope unchanged; Step7/8/9 and native/service/DB/fence/A-E remain open.
+
+13:43UTC Step7 primitive/framing verification:
+- Test463dd414...e1c06/source04393:7757e3 CLOSED0,25P0F0S775.21875ms,
+  fulloutput/footerread. Independent C0/I0/M0; secondC0/I0/M1 timeouttitle
+  corrected to distinguish healthyemptyreadiness from subsequentdeadlineexpiry.
+- Testa2e2a3b2fbc3295f04a8d0baf5397c1d4b907e4e83e4fc35964a42d2c3b4ab88
+  adds17framecases; independentC0/I0/M0 then55258d CLOSED0:18P0F0S586.545208ms
+  (includes correctedtimeout). Actual replay/future/initialcoalescedprefix,
+  END-extra/after-END actual221 bytes, malformedEND,5READY/3END actualprefixEOF.
+  Current further exactreview pending. No full Step7/8/9/native qualification.
+
+Step7 finish and remaining configuration port:
+- Exacttest768f9507...4279/source04393 reviewed C0/I0/M0 twice;10ffe1 CLOSED0:
+  9PASS/0FAIL/0SKIP349.059584ms, fulloutput/footerread. Four successful order
+  permutations, three missingEOF denials, protocol-deadline missingreap followed
+  by original-only cleanupreap, bootstrap179->180 clipping observed. Reap-last
+  proves after END bytes/before stdoutEOF, not continuous kernel lifetime.
+- Ruling: extend the existing finite external ports with binmode rather than
+  mock the consumer configuration or add a separate runner. Reason: spec already
+  requires binary/configuration denial, but initial portlist omitted its seam.
+  Cost if wrong: ordinary fixture rework; no new production knob/native authority.
+  Existing four-file File Map remains exact. Root f2384e CLOSED0 independently
+  observes fixed-system CORE::binmode prototype `*;$` before hook installation.
+- Configuration adapter TDD: first add ordinary selfwitness for actual owned
+  input binary configuration, expect missing-adapter failure before adding hook.
+  Then install caller-FH-preserving prototype-checked CORE-delegating port;
+  false/throw only after actual configuration, literal nomination event before
+  response. Fixture setup remains CORE::binmode and is outside consumer traces.
+  Run three adapter selfwitnesses, then ten false/throw actualconsumer cases.
+  Original index0..3:8stat/2consumerclock/2wait/fcntl0,5,10,15; entropy35stat/
+  8consumerclock/8wait/20fcntl. All acquire original custody before configuration,
+  burn, close every genuine original once, then effect-free repeat. Remaining
+  entropy/physicaldrift and fullverification/delivery requirements stay open.
+
+Configuration adapter evidence:
+- Exactfb41dd90...3aa3 independently reviewed RED-only C0/I0/M0. Roota91c90
+  CLOSED1:1FAIL/0SKIP84.859833ms; missingadapter mode produced fixedharness
+  fault255 rather than expected0. This is missing-test-adapter RED, NOT semantic
+  security refusal or a production mutant kill. All acquired fixtureends cleaned.
+- Candidatea3680e7167631369470de6071c5d08675f1be41d907fb2afe59241b5b3c723ef
+  adds literalprototype native/installed checks, ownedFH CORE-delegating binary
+  port, postconfiguration false/throw noms and three selfwitnesses. UNEXECUTED
+  underexactindependentreview; source04393/main unchanged. Need adapterGREEN,
+  healthy actualparent regression then tenconsumerconfiguration denials before
+  claiming coverage. Step7/8/9 still open.
+
+14:19UTC superseding configuration evidence and entropy candidate:
+- Reviewed a3680e/source04393:1f3b9a CLOSED0,4P0F0S158.501542ms; three
+  adapter selfwitnesses and healthy actualconsumer regression. Earlier adapter
+  UNEXECUTED statement historical. Reviewed b92f19d/source04393:1a435f/4529d4
+  CLOSED0,38P0F0C0S0TODO1100.650209ms, fulloutput/footerread. Ten config false/
+  throw and28 original observed-stat drift cases qualify ordinary decisions,
+  never actual native FD replacement. No production source change.
+- Candidate d530704c9e028dabc8c8d6ead538741171593fbde00bf34871653ed430f2f61e
+  adds53 actualconsumer entropy/flags cases UNEXECUTED pending exact reviews.
+  Preidentity4/open3/identity21/read9/flags16. Actual successful CORE config/flag
+  operations precede synthetic false/throw/undefined/bit corruption nominations.
+  Entropy read31 is physical31; reported33 is synthetic after witnessedCORE32,
+  never claimed native read33. Duplicate second raw32 must reject before a second
+  challenge. Fixed synthetic entropy tuples remain ordinary fixtures only.
+- Finite per-role fcntl queues now validate all23 healthy consumer operations;
+  rerun positive/Foundation and semantic controls to catch regressions. Tuple
+  shape and coherent actual retained-FD replacement coverage/acceptance ruling
+  remain required before Step7 closure; Step8/9 also open.
+
+Remaining Step7 shape/rebinding design refinement:
+- Root uses writing-plans to refine the same approved four-file map. Choose an
+  actual owned input-pipe FD rebinding over a fake fileno port or silent coverage
+  waiver. Cost if wrong: ordinary fixture rework only. No production API/effect.
+- First add a missing-adapter selfwitness for `fd-rebinding` and literal actual
+  consumer shape cases. Exact read-only review precedes missing-adapter RED;
+  never count that harness fault as semantic refusal or production mutant kill.
+- Existing stat/lstat ports retain independently captured13-field actual/synthetic
+  tuples, then nominate copied12/14-field returns at original-input second stat
+  or entropy pre/opened/postpath/posthandle seams. Consumer must refuse, burn,
+  once-dispose original custody and settle only sealed PID with repeat effects0.
+- For actual rebinding, duplicate only the live owned input writer with fixed
+  `CORE::open(my $hold,'>&',$input)`, immediately register it in the fixture
+  ledger before inspection; then acquire/register both ends of one fresh pipe.
+  Fixture owns11 ends total. Require independent old/hold identities to match
+  and replacement writer's actual stable identity to differ. If not distinguishable,
+  refuse the fixture; no synthetic inode or alternate filesystem target.
+- A bounded fixture closure at nominated clock C3 performs fixed system
+  `POSIX::dup2(replacement_writer_fd, original_input_fd)` once. Require defined
+  return and fresh errno0 plus independent actual original/hold/replacement
+  stat/fileno checks; do not assume success truthiness or documented C return.
+  Selfwitness records actual return shape before consumer credit. Retained FH,
+  FD, admission and all13 captured custody fields remain unchanged. No restore,
+  reopen, closeflag reset or new production custody acquisition.
+- Expected actualconsumer rebinding denial:2consumer clocks/5stats/2sealed waits,
+  no configuration/readiness/read/write/entropy/signals, original closes input/
+  stdout/stderr/setup once before cleanuprawzero. Fixture old-preservation and
+  replacement-source handles must remain live with unchanged FD/stable identity
+  after consumer and burnedrepeat; fixturefinalizer alone closes those handles.
+  Disposing original FH necessarily closes current replacement binding: spec
+  makes this observable boundary explicit, not a weakened validation gate.
+- Independent design/code review and actual selfwitness/consumer execution still
+  required; no Step7 checkbox or native/Task3 admission follows from this plan.
+
+14:46UTC final ordinary Step7/8 evidence, superseding pending statements:
+- Bootstrap04393ccef9795a0d78f3c9dd96bbb2bdc045e32dfb9505acdfe8711972aac8d9
+  and final test28176bc303369e284eef3810a939c197e98cf5bab527071ae32a3afb6f0a9bfa.
+  No production source change during all recent entropy/flags/shape/rebinding/
+  settled-repeat additions. Source/spec/refined plan independently reviewed.
+- Entropy/flags53:2fe923/7748a4 CLOSED0,53P0F0C0S0TODO1628.629333ms;
+  Foundation/healthy/sixsemantic controls40:1e4b6c/cf8b31 CLOSED0,40P0F0C0S0TODO
+  1213.600458ms at d530704c. Complete outputs/footer read. Earlier UNEXECUTED
+  candidate annotations are historical, not current pending work.
+- Shape/rebinding missing-adapter19660349 RED9ac778 CLOSED1:11F0P0S320.384334ms,
+  fixed harness fault only, not semantic security RED. Reviewed140910c4 GREEN
+  b5a632 CLOSED0:1P0F0S94.673292ms actual SIP POSIX dup2 return4/prototypeNULL,
+  real stable identity difference; c8a6a9 CLOSED0:11P0F0C0S0TODO398.969917ms,
+  actual consumer rebinding and shape10 denials. No custody/reset/native claim.
+- Source-only checklist I1 identified missing settled repetition coverage.
+  Reviewed405ce39c adapter REDb43cda CLOSED1:1F0P0S89.982417ms missing mode,
+  not semantic RED. Reviewed28176bc GREEN8002f9 CLOSED0:1P0F0S100.751083ms;
+  preserves first exact seven-field diagnostic, actual repeated consumer/guard
+  refuse and burn, no new events/reinitialization/reopened handle.
+- Fresh exact source/isolation/resource admission confirms sole mapped writer,
+  own full Git/canonical origin/ordinary UID/no source changes. Independent
+  14:43–14:44 preservation C0/I0/M0 matches admitted own-clone and retained
+  source/build/dependency/output, requested two-file, backup/journal and MC pins.
+  Resources remain healthy. Detailed host/physical measurements stay in the
+  external execution ledgers; this is not global zero-owner or loaded-host proof.
+- Adjacent403950/cbae46 CLOSED0:895P0F0C0S0TODO57100.26ms; full7f3053/6169b9
+  CLOSED0:1118P0F0C0S0TODO73898.952958ms. Both entire outputs read in memory
+  chunks without truncation; natural terminal0/footer observed. All215fragment
+  boundaries/all229partial writes/sixsemantic controls/current matrices rechecked
+  on final exact bytes. No old project ALL rerun/native/protected/SQL effect.
+- Fixed Perl syntaxc6ec67, final JS syntaxd1e4f2, version1d90c3(2.3.79),
+  English82d429(1931), paths5a4911(966), diffeccb45 all CLOSED0. After these
+  evidence-only plan marks, rerun cheap doc/source gates before commit.
+- Steps3/5/7/8 now ordinary-qualified only. Step9 exact reviewed delivery/PR/
+  clean-main build remains open. Protected Task2/Task3/native/M1/M2/fence/DB/
+  service/A–E gates remain unchanged and incomplete; all worktrees retained.
 
 ### Task 3: Reviewed delivery and actual protected rehearsal
 

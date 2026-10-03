@@ -169,13 +169,28 @@ complete stat identity, recorded before fallible configuration. Admission has
 exactly pid/input/stdout/stderr/setup, copied PID value and original handle
 references; it never aliases mutable custody slot objects or the sealed PID.
 Check exact record identity/keys/PID/handle references, distinct live descriptors
-and FIFO identities before protocol effects. Rechecks compare original
+and FIFO identities before protocol effects. Every epoch/settlement also rechecks
+admission reference/keys/copied PID/role references. Both raw PID scalars require
+public numeric flags/no POK before comparison, with finite integral domain
+1..2147483647 (target signed32 pid_t). Valid authentication followed by a
+pre-first-poll clock/deadline failure still permits one sealed-PID cleanup poll;
+only its confirmed live result permits existing bounded shutdown. Absent,
+bad-arity or mismatched admission never authorizes that poll. Rechecks compare original
 dev/inode/type+mode/nlink/UID/GID/rdev (stat fields0..6), not changing pipe
 timestamps/size. Complete13-field capture is retained, not a stable contents
 snapshot. Recheck live original slots;
 definitely closed slots stay historical. Entropy may reuse a definitely closed
 setup FD, but never reset or share that slot's close obligation. A live alias
-does not create a second ownership/close obligation. Replacements are not adopted.
+does not create a second ownership/close obligation. Replacements are not adopted:
+never replace a custody record, select a new handle or use a changed binding for
+protocol. After an externally rebound original FD is observed, disposal still
+closes the retained original handle once; this necessarily closes its current
+kernel binding, not a recoverable historic kernel object. This is not a promise
+to close the historic object through an unavailable descriptor. An ordinary
+test may retain a separate duplication of that old endpoint, but the consumer
+must neither know nor close that fixture-owned preservation handle. Such a
+test proves observed rebinding refusal and original-handle disposal, not native
+origin, numeric-FD drift or continuous pre-observation race exclusion.
 These five obligations never append to existing file/physical/helper ledgers.
 
 Private lifecycle is absent -> starting -> active -> ending -> settled; any
@@ -266,7 +281,7 @@ shutdown-only budgets remain unchanged; no renewed origin validity.
 ### Ordinary real-consumer harness and mutation requirements
 
 Keep `systemObject` and remove only the sole final main call in memory. Before
-actual source eval install finite external clock/sysopen/stat/lstat/fcntl/
+actual source eval install finite external clock/sysopen/stat/lstat/binmode/fcntl/
 readiness/sysread/syswrite/close/waitpid/status/signal/sleep ports; preserve actual
 clock validator, nonce/FSM/deadline/entropy checks, poll and shutdown. Synthetic
 PID ports never delegate to CORE signal/wait. Harness-owned real ordinary pipe
