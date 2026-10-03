@@ -1549,6 +1549,11 @@ No synthetic root:wheel projection. Raw distinct acquisitions are registered
 before inspection/trace; pre-acquisition alias nomination is fixture evidence
 only, NOT the future consumer's unresolved raw-success/alias contract.
 
+The following limits, effect-step descriptions and literal deltas preserve the
+admitted PRE-EXECUTION design checkpoint. Their prediction/pending wording is
+historical, not current status; the actual ordinary evidence below supersedes
+it. The literal snapshots are retained for test-first provenance, not replays.
+
 **Limits and predicted counts:** Current selected map-data leaf11684B.
 Read requests65536, finite actual reads11684/0/11684 with two zero seeks.
 Healthy selected port counts in the literal11-key order are
@@ -1570,17 +1575,17 @@ CORE closure proof; it proves fault containment, never uncertain-native-close
 leak freedom or producer custody. Fixture finalization ignores sticky faults/
 queues, marks each attempt before effects and continues all originals.
 
-- [ ] **Step 1: Commit this exact mapped design before effects.**
+- [x] **Step 1: Commit this exact mapped design before effects.**
   Two exact read-only reviews of both literal deltas, mode/count/trace matrix
   and commands. No source/test implementation or new Perl invocation yet.
-- [ ] **Step 2: Apply ONLY the first test delta below.**
+- [x] **Step 2: Apply ONLY the first test delta below.**
   Fresh ordinary darwin501/501, fixed Node26.4 SHA59cd4f/ApplePerl SHAabda2bfd,
   source4aa unchanged, selected map file11684B and actual candidate review.
   ONE exact healthy command below must naturally fail with the genuine JS
   AssertionError `staged readonly file adapter missing` (undefined vs string).
   The first guard precedes fixture reading and Perl spawn. This is missing
   test-adapter RED only; no production/staged-consumer RED is claimed.
-- [ ] **Step 3: After actual fully read RED, apply ONLY the program delta.**
+- [x] **Step 3: After actual fully read RED, apply ONLY the program delta.**
   Review actual adapter/test before ONE13-case focused command. Require the
   actual literal prototype/IO/registry/alias/closed-queue/trace/closure witnesses,
   zero unexpected harness/compile faults and complete natural exit/output.
@@ -1592,6 +1597,17 @@ queues, marks each attempt before effects and continues all originals.
   Separately owned clean-main normal guarded build and independent artifacts/
   preservation/HTTP checks. No new ALL or staged/protected/native/SQL/service
   qualification. Record actual outcomes in the two existing external ledgers.
+
+Actual ordinary evidence, 2026-10-03: mapped design commit53aae093 after two
+exact corrected-literal reviews; first test-only candidate4ff39f27 produced
+natural exit1 with the genuine missing-adapter assertion (undefined vs string)
+before fixture reads/Perl spawn. Only then the reviewed adapter was applied.
+Exact resulting test3df7bd08/source4aaececb passed13 focused cases (exit0,
+220.773833ms). The separately invoked unfiltered adjacent group naturally
+closed with1145PASS/0FAIL/0CANCEL/0SKIP/0TODO in76548.866667ms; complete output
+was read and source/test/spec/plan pins rechecked unchanged. Two independent
+whole-branch static reviews found C0/I0/M0. All new closure/IO credit remains
+fixture-only; production main still refuses. Step4 delivery/build remains open.
 
 ONE first-stage exact focused command:
 ```bash
