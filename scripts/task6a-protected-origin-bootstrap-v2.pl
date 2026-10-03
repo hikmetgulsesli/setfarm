@@ -795,7 +795,10 @@ sub task6a_origin_capture {
         1;
     };
     my $close_ok=1;
-    for my $fh(@handles) {if(defined(fileno($fh))) {$close_ok=0 unless close($fh);}}
+    for my $fh(@handles) {
+        my $closed=eval {!defined(fileno($fh))||close($fh)};
+        $close_ok=0 unless $closed&&!$@;
+    }
     if(defined($pid)&&$pid>0&&!$reaped&&!$uncertain) {
         eval {task6a_origin_shutdown_helper($pid,\$reaped,\$uncertain,\$status);};
         $uncertain=1 if $@;

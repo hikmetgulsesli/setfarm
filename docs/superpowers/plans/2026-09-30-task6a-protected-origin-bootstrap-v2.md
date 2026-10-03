@@ -1281,7 +1281,8 @@ signal, sleep, path creation/deletion, native, SQL or external tool delegation.
 Out-w preload55B remains admitted but unread; ordinary fixture finalization
 closes remaining originals independently. No host FD census qualification.
 
-Predicted old-source control-flow witnesses, NOT yet observed: consumer pipe2 + census1 = consumerClosed3,
+Historical pre-execution design predictions (not execution evidence):
+consumer pipe2 + census1 = consumerClosed3,
 fixtureClosed6, pendingOriginals6, wait0/pendingWait1, private helper burnedfalse,
 registered1/settled0/unsettled1, helpersSettledfalse; inner nominated exception.
 Expected repair: consumer pipe8+census1=9, fixture0, pendingOriginals0, wait1/
@@ -1302,15 +1303,16 @@ records and rethrows the original inner exception transparently; other modes
 retain their original observer path. Existing denied-exec mapping remains
 documented and is not execution-equivalence proof.
 
-- [ ] **Step 1: Review and commit this mapped causal design before effects.**
+- [x] **Step 1: Review and commit this mapped causal design before effects.**
   Two exact read-only reviews of literal test/source deltas and the ordinary
-  invocation below. No source/test implementation, child or new native effect yet.
-- [ ] **Step 2: Apply ONLY the literal test delta, keep bootstrap04393 unchanged.**
+  invocation below. At this design checkpoint, no source/test implementation,
+  child or new native effect had occurred.
+- [x] **Step 2: Apply ONLY the literal test delta, keep bootstrap04393 unchanged.**
   Review exact actual candidate before ONE focused old-source invocation. Require
   ordinary darwin real/effective UID501, fixed Node26.4 SHA59cd4f, fixed Apple Perl,
   unchanged source and fully read natural terminal. Expect actual JS assertion
   consumerClosed3 versus9, not setup/compile/queue/harness failure.
-- [ ] **Step 3: After causal RED, apply ONLY the literal production delta.**
+- [x] **Step 3: After causal RED, apply ONLY the literal production delta.**
   Independently review exact source/test before ONE same focused invocation.
   Require all repaired original closure, wait, burn and refusal witnesses.
 - [ ] **Step 4: Adjacent verification and delivery.** Fresh complete bootstrap
@@ -1326,8 +1328,9 @@ ONE focused command (root owns launch/poll/natural closure/full output):
 env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged captor cleanup throw closes remaining originals and burns helper$' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
 ```
 
-The following literal deltas are reviewed candidates only, not executed code.
-Test-only delta must precede source delta and actual causal RED.
+Historical pre-execution candidate deltas, preserved as the reviewed design
+snapshot. Their subsequent application and execution are recorded below;
+test-only application preceded actual causal RED and then the source delta.
 
 ```diff
 *** Begin Patch
@@ -1446,6 +1449,37 @@ After actual RED only:
 +    }
 *** End Patch
 ```
+
+Ordinary cleanup execution ledger, 2026-10-03:
+
+- Two corrected design reviews C0/I0/M0; docs-only design commitc7b3939d before
+  implementation. Two exact actual test8ec78703/source04393 reviews C0/I0/M0.
+- Fresh b97fee/217fa9 ordinary darwin501/501, Node26.4 SHA59cd4f, actual fixed
+  Apple Perl SHAabda2bfd and exact source/test/spec/plan pins; diffcheck0.
+- ONE e65546 naturally CLOSED1,1FAIL/0PASS/0CANCEL/0SKIP/114.609875ms;
+  complete output read. Genuine actual consumerClosed3 versus9 assertion RED,
+  after acceptedfalse/refusedtrue/harnessFaultnull checks. No compile/setup/
+  queue fault. Other unexposed old-source predicted fields are NOT credited.
+- Only then apply the reviewed per-handle final eval source delta. Two exact
+  repair source4aaececb/test8ec78703 reviews C0/I0/M0; fresh061108 pins MATCH,
+  diff0. ONE e3d1e4 naturally CLOSED0,1PASS/0FAIL/0SKIP/102.803792ms, complete
+  output read. All assertions executed: consumer9/fixture0/definite9/pending0,
+  one exact synthetic reap, four clocks, permanent helper burn, registered1/
+  settled0/unsettled1, repeated private observations equal, helpersSettledfalse,
+  fixed inner refusal and exact nomination/close-order events. Ordinary repair
+  focused GREEN only.
+- ONE unfiltered bootstrap invocation8f58f6/managed8719 naturally CLOSED0
+  (terminal566904):1132PASS/0FAIL/0CANCEL/0SKIP/0TODO/76352.48175ms.
+  Complete95081B/1142-line output read through EOF. Source4aaececb,
+  test8ec78703, spec24555153 and plan6cfaa51c remained frozen throughout;
+  root post-run hashes MATCH. No repeat invocation or poll after closure.
+  This includes ordinary owned-child cases, not an effect-free/native run.
+- Whole-branch reviewers' historical-wording M1 is resolved by labeling the
+  original predictions and candidate deltas as pre-execution snapshots.
+  Only consumerClosed3 was exposed by actual old-source RED; no other old
+  predicted field is promoted to observed evidence.
+  PR/build and staged/shared-holder/native/loaded-service/cutover proof remain
+  pending.
 
 ### Task 3: Reviewed delivery and actual protected rehearsal
 

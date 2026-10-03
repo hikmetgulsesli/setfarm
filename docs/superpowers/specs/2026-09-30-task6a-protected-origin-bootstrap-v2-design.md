@@ -640,9 +640,11 @@ A single closed ordinary fixture mode nominates false after actual in-r CORE
 closure, then a distinct exception after actual final in-w CORE closure. Fixture
 closure remains independently verified and credited separately from consumer
 closure. Literal clocks4/census15/owned9, synthetic PID/wait only, no readiness/
-read samples or real tool/process/signal/native/DB effect. Predicted old-source3
-consumer/6 fixture closures and absent helper burn are not observed RED yet;
-genuine assertion RED requires actual execution/full output. Repair must show9/0,
+read samples or real tool/process/signal/native/DB effect. Historical
+pre-execution predictions were old-source3 consumer/6 fixture closures and absent
+helper burn. The later execution ledger records actual assertion RED exposing
+only consumerClosed3; the other old predicted fields remain unobserved.
+The repaired assertions require9/0,
 one exact synthetic reap and permanent burn with unsettled helper record.
 
 Only the nominated mode adds a uniquely anchored MEMORY-COPY zero-argument
