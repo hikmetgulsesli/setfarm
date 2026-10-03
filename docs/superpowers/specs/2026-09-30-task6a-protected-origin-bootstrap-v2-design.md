@@ -430,6 +430,15 @@ cleanup is permitted by this ordinary declaration-only slice.
 
 Ordinary positive fixtures use actual owned seekable files/directories and real
 descriptors, while explicitly projecting synthetic root:wheel/policy metadata.
+The lower-captor foundation alone may uniquely map the memory-copy child effect
+site `exec {$tool} $tool,@$args;` to
+`CORE::GLOBAL::exec($tool,$tool,@$args);`, an unconditional denying port. This
+external syntax exception is required because an ordinary-sub override cannot
+parse Perl's native exec block form. It preserves both operands but proves no
+child exec syntax, argv or dispatch equivalence; actual source stays unchanged,
+and synthetic positive-PID parent cases never enter that branch. Declaration
+compile/prototype/load failure is fatal before self-mode containment reporting,
+never semantic refusal or cleanup proof.
 Synthetic archive/policy substitutions must be disclosed as such, never official
 vendor or protected origin. Preserve actual source composition, ACL/capture,
 FD-enumeration, clock and cleanup decisions. Intercept only bounded external
