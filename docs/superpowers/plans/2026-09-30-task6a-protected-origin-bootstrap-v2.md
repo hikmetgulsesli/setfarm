@@ -1208,7 +1208,7 @@ env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /
 ```
 
 - [x] **Step 7: Record this foundation's exact boundary.** Save the observed missing-adapter RED, H1 actual-composition results and all13 outcomes with source/test hashes, full output and natural terminals. Record inspection-fault as two raw unexposed acquisitions with consumer0/fixture2 closure; partial-pipe as4/2/2; overflow as6/4/2. Do not implement or execute staged-owner/shared-holder/throwing-close/mutation recipes in this task. Those require separately literal reviewed subplans before their effects; this foundation alone is not full staged/native admission.
-- [ ] **Step 8: Adjacent verification and scoped delivery.** Complete fresh bootstrap suite on exact final source/test, diff/English/path gates, independent whole-branch review, scoped conventional commit, normal push/PR/current-head feedback/SHA-bound merge and separately admitted own clean-main normal guarded build. No new ALL or staged owner implementation. Record proof in the two existing external ledgers and preserve all roots.
+- [x] **Step 8: Adjacent verification and scoped delivery.** Complete fresh bootstrap suite on exact final source/test, diff/English/path gates, independent whole-branch review, scoped conventional commit, normal push/PR/current-head feedback/SHA-bound merge and separately admitted own clean-main normal guarded build. No new ALL or staged owner implementation. Record proof in the two existing external ledgers and preserve all roots.
 
 **Preflight consistency:** P2a consumes unchanged source04393 and leaves main refused. This task changes only test ports/docs and cannot initialize the proposed staged owner. A later staged task consumes this bridge only after complete admission; future H42 math cannot substitute for H1. Fixture closes in inspection/partial/overflow are never credited to consumer cleanup. Staged ownership, shared throwing-cleanup regression/fix, native/protected origin/compiler/DB fence/loaded service/A–E remain separately gated.
 
@@ -1232,10 +1232,254 @@ Ordinary foundation execution ledger, 2026-10-03:
   remained their previously admitted case-specific scope; this was not an
   effect-free suite or native/protected probe. Post-run source/test/spec/plan
   pins unchanged. English1931/path966 checks passed. No new ALL.
-- Steps1–7 and Step8's adjacent verification qualify. Whole-branch review,
-  normal PR delivery and separately admitted own clean-main guarded build remain
-  pending. No staged owner, throwing/shared-cleanup repair, native origin,
-  compiler/DB fence/loaded-service/cutover/A–E result is inferred.
+- Steps1–8 qualify after two whole-branch reviews C0/I0/M0 and PR268/head99a961fc
+  normal SHA-bound merge d4049110769061889ac7c5327151f18d5766ed54/treee52e8de.
+  Current-head Codex completed/no major findings; GitGuardian success/zero
+  annotations; paginated reviews/inline/threads empty. No formal approval or
+  Copilot/Gemini result inferred. ONE separate own clean-main normal build
+  naturally CLOSED0, actual npm EXIT+CLOSE0/null/spawnErrorfalse and5661 held
+  original inputs revalidated; full output read. Independent postbuild C0/I0/M0
+  all2093 source, locked dependencies/tools, three terminal authorities and
+  all858 outputs/input-output commitments/preservation match. No new ALL.
+  No staged owner, throwing/shared-cleanup repair, native origin, compiler/DB
+  fence/loaded-service/cutover/A–E result is inferred.
+
+
+### Task 2b.2: Ordinary captor throwing-cleanup root regression
+
+**Causal refinement:** Delivered foundation P2b.1 exposes a source gap: an
+exception in capture's final descriptor close loop escapes before helper
+shutdown/accounting and shared physical-failure routing. ACL normalizes the
+exception to refusal, hiding missed original cleanup. This blocks trustworthy
+staged custody, so the smallest root fix is within the same cutover objective.
+The direct fds closedir exception is different: capture already catches it;
+do not include a direct-enumerator normalization change in this repair.
+
+**File Map:** Exactly existing bootstrap/test/this plan/named spec. Base delivered
+main d4049110769061889ac7c5327151f18d5766ed54/treee52e8de. Root is sole writer in
+the new independent cleanup branch; every old root/cache/build stays preserved.
+No source entry, publisher, native module, package/lock, main-opening, staged
+initializer, SQL/fence/service or generated-artifact edit.
+
+**Decision:** Catch each final fileno/close evaluation independently, preserve a
+false/throw as close failure, continue remaining originals and the unchanged
+shutdown/accounting/refusal chain. Never reinterpret a throwing close as definite
+closure. Actual helper settlement must not publish; permanent burn must happen.
+This is a closure-continuation repair, not a changed PID/deadline/signal policy.
+
+The new closed mode physically closes in-r then returns false at body cleanup.
+At final cleanup it physically closes in-w then throws exactly
+TEST_STAGED_CAPTOR_NOMINATED_CLOSE_THROW. Both nominations happen only AFTER the
+independent fixture dispose proves definite CORE closure. They are producer
+failure stimuli, not sticky harness faults. Any actual fixture fault remains
+fatal and cannot be credited as source refusal.
+
+Own four CORE pipe pairs and one read-only CORE opendir remain unchanged.
+Complete synthetic census15, numeric-zero clocks4, synthetic fork424242, exactly
+one available wait424242/raw0, no readiness/sysread samples, no real process,
+signal, sleep, path creation/deletion, native, SQL or external tool delegation.
+Out-w preload55B remains admitted but unread; ordinary fixture finalization
+closes remaining originals independently. No host FD census qualification.
+
+Historical pre-execution design predictions (not execution evidence):
+consumer pipe2 + census1 = consumerClosed3,
+fixtureClosed6, pendingOriginals6, wait0/pendingWait1, private helper burnedfalse,
+registered1/settled0/unsettled1, helpersSettledfalse; inner nominated exception.
+Expected repair: consumer pipe8+census1=9, fixture0, pendingOriginals0, wait1/
+pendingWait0, burnedtrue with the same un-settled record and helpersSettledfalse;
+inner fixed TASK6A_ORIGIN_BOOTSTRAP_REFUSED. Four clocks in either case. Event
+close order is census,in-r,in-w,out-r,out-w,err-r,err-w,setup-r,setup-w on repair.
+A genuine assertion RED qualifies only after actual old-source execution and
+full terminal/output review. A remaining diagnostic wait sample is allowed only in this exact mode before
+the JS RED assertion, so an old-source missed cleanup is not hidden by queue
+fault. The repaired test still asserts zero remaining waits. All read/ready
+queues are empty; unexpected samples/sticky faults/compile errors remain fatal.
+
+Only this mode inserts a zero-argument, uniquely anchored MEMORY-COPY private
+helper observer. It reports bounded counts/JSON booleans, never record/FH/PID
+references or setters. Observe twice before finalizer and require equality.
+Actual ACL/capture/fds/poll/helper decisions stay active. The capture observer
+records and rethrows the original inner exception transparently; other modes
+retain their original observer path. Existing denied-exec mapping remains
+documented and is not execution-equivalence proof.
+
+- [x] **Step 1: Review and commit this mapped causal design before effects.**
+  Two exact read-only reviews of literal test/source deltas and the ordinary
+  invocation below. At this design checkpoint, no source/test implementation,
+  child or new native effect had occurred.
+- [x] **Step 2: Apply ONLY the literal test delta, keep bootstrap04393 unchanged.**
+  Review exact actual candidate before ONE focused old-source invocation. Require
+  ordinary darwin real/effective UID501, fixed Node26.4 SHA59cd4f, fixed Apple Perl,
+  unchanged source and fully read natural terminal. Expect actual JS assertion
+  consumerClosed3 versus9, not setup/compile/queue/harness failure.
+- [x] **Step 3: After causal RED, apply ONLY the literal production delta.**
+  Independently review exact source/test before ONE same focused invocation.
+  Require all repaired original closure, wait, burn and refusal witnesses.
+- [ ] **Step 4: Adjacent verification and delivery.** Fresh complete bootstrap
+  suite on exact source/test, cheap diff/English/path checks, independent whole
+  branch review, scoped conventional commits, normal push/PR/current-head
+  cloud/security/paginated feedback/SHA-bound merge, separately admitted own
+  clean-main normal guarded build, independent artifact/preservation/HTTP
+  evidence. No new ALL/staged/native/SQL/service qualification. Save exact
+  RED/GREEN hashes/terminal/fulloutput in the two existing external ledgers.
+
+ONE focused command (root owns launch/poll/natural closure/full output):
+```bash
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged captor cleanup throw closes remaining originals and burns helper$' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Historical pre-execution candidate deltas, preserved as the reviewed design
+snapshot. Their subsequent application and execution are recorded below;
+test-only application preceded actual causal RED and then the source delta.
+
+```diff
+*** Begin Patch
+*** Update File: scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+@@
+-      my %modes=map {$_=>1} qw(healthy malformed extra-row raw256 census-duplicate census-noncanonical census-eio partial-pipe inspection-fault forbidden forbidden-exec caught-fault overflow);
++      my %modes=map {$_=>1} qw(healthy malformed extra-row raw256 census-duplicate census-noncanonical census-eio partial-pipe inspection-fault forbidden forbidden-exec caught-fault overflow cleanup-close-throw);
+@@
+       my $self=$mode=~/\A(?:partial-pipe|inspection-fault|forbidden|forbidden-exec|caught-fault|overflow)\z/;
++      my $cleanup_throw=$mode eq 'cleanup-close-throw';
+@@
+       my @clock=(0)x($mode eq 'raw256'?6:$mode=~/\Acensus-/||$mode eq 'partial-pipe'||$mode eq 'inspection-fault'||$mode eq 'overflow'?3:7);
++      @clock=(0)x4 if $cleanup_throw;
+@@
+       @wait=() if $mode=~/\Acensus-/||$mode eq 'partial-pipe'||$mode eq 'inspection-fault'||$mode eq 'overflow';
++      @wait=([424242,0]) if $cleanup_throw;
+@@
+       @ready=() if $mode=~/\Acensus-/||$mode eq 'partial-pipe'||$mode eq 'inspection-fault'||$mode eq 'overflow';
++      @ready=() if $cleanup_throw;
+@@
+       my %read=( 'out-r'=>[1,0], 'err-r'=>[0], 'setup-r'=>[0] );
++      $read{$_}=[] for grep {$cleanup_throw} keys %read;
+@@
+       my ($captured,$enumerated);my $load_complete=0;my $setup_error='';
++      my $capture_error='';
+@@
+         local *CORE::GLOBAL::close=sub (;*) {
+           $fail->() unless @_==1;my $r=$identify->($_[0]);
+-          $fail->() if $r->{directory};++$calls{close};return $dispose->($r,0);
++          $fail->() if $r->{directory};++$calls{close};my $closed=$dispose->($r,0);
++          if($cleanup_throw&&($r->{role} eq 'in-r'||$r->{role} eq 'in-w')) {
++            $check->();$fail->() unless $closed&&$r->{closed};
++            $event->(op=>$r->{role} eq 'in-r'?'nominated-false':'nominated-throw',role=>$r->{role});
++            return 0 if $r->{role} eq 'in-r';
++            die "TEST_STAGED_CAPTOR_NOMINATED_CLOSE_THROW\n";
++          }
++          return $closed;
+@@
+             ++$calls{capture};$event->(op=>'capture',role=>'acl');
+-            $captured=$capture->(@_);return $captured;
++            if($cleanup_throw) {
++              my $value=eval {$capture->(@_)};my $error=$@;$capture_error=$error;
++              die $error if length($error);$captured=$value;return $captured;
++            }
++            $captured=$capture->(@_);return $captured;
+@@
+             captured=>$captured,enumerated=>$enumerated,
+             helpersSettled=>task6a_origin_helpers_settled()};$check->();
++          if($cleanup_throw) {
++            $out->{helpersObservation}=test_observe_helpers();$check->();
++            $out->{helpersObservationRepeat}=test_observe_helpers();$check->();
++            $out->{captureError}=$capture_error;
++            $out->{remainingWaits}=scalar(@wait);
++            $out->{originalsPendingBeforeFinalizer}=scalar(grep {!$_->{attempted}&&!$_->{directory}} @owned);
++          }
+@@
+-          unless($mode=~/\Acensus-/) {$fail->() if @wait||@ready;}
++          unless($mode=~/\Acensus-/||$cleanup_throw) {$fail->() if @wait||@ready;}
++          if($cleanup_throw) {$fail->() if @ready||@wait>1||grep {@$_} values %read;}
+@@
+   if(kind==='staged-captor-ports') {
+@@
+     source=replaceOnce(source,'exec {$tool} $tool,@$args;','CORE::GLOBAL::exec($tool,$tool,@$args);');
++    if(record.mode==='cleanup-close-throw') {
++      source=replaceOnce(source,'sub task6a_origin_helpers_settled {',[
++        'sub test_observe_helpers {',
++        '    task6a_origin_refuse() unless @_==0;',
++        '    my $settled=scalar(grep {$_->{settled}} @helper_ledger);',
++        '    return {burned=>$helper_lifecycle_burned?JSON::PP::true:JSON::PP::false,',
++        '        registered=>scalar(@helper_ledger),settled=>$settled,',
++        '        unsettled=>scalar(@helper_ledger)-$settled};',
++        '}',
++        'sub task6a_origin_helpers_settled {',
++      ].join('\n'));
++    }
+@@
+ function stagedCaptorPorts(mode='healthy') {
+@@
+   assert.equal(out.syntheticCensus,true);return out;
+ }
++test('staged captor cleanup throw closes remaining originals and burns helper',()=>{
++  const out=stagedCaptorPorts('cleanup-close-throw');
++  assert.equal(out.harnessFault,null);assert.equal(out.accepted,false);assert.equal(out.refused,true);
++  assert.equal(out.consumerClosed,9);assert.equal(out.fixtureClosed,0);
++  assert.equal(out.ownedCount,9);assert.equal(out.definitelyClosed,9);
++  assert.equal(out.originalsPendingBeforeFinalizer,0);assert.equal(out.remainingWaits,0);
++  assert.equal(out.captureError,'TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n');
++  assert.equal(out.helpersSettled,false);
++  assert.deepEqual(out.helpersObservation,{burned:true,registered:1,settled:0,unsettled:1});
++  assert.deepEqual(out.helpersObservationRepeat,out.helpersObservation);
++  assert.deepEqual(out.calls,{capture:1,pipe:4,binmode:8,fcntl:1,opendir:1,
++    readdir:15,closedir:1,clock:4,fork:1,close:8,wait:1});
++  assert.deepEqual(out.events.filter(e=>e.op==='nominated-false'||e.op==='nominated-throw')
++    .map(e=>[e.op,e.role]),[['nominated-false','in-r'],['nominated-throw','in-w']]);
++  assert.deepEqual(out.events.filter(e=>e.op==='wait')
++    .map(e=>[e.pid,e.result,e.raw]),[[424242,424242,0]]);
++  assert.deepEqual(out.events.filter(e=>e.op==='close-attempt')
++    .map(e=>[e.role,e.owner]),[['census',0],['in-r',0],['in-w',0],['out-r',0],
++      ['out-w',0],['err-r',0],['err-w',0],['setup-r',0],['setup-w',0]]);
++});
+ test('staged captor foundation retains actual ACL capture and original closure',()=>{
+*** End Patch
+```
+
+After actual RED only:
+
+```diff
+*** Begin Patch
+*** Update File: scripts/task6a-protected-origin-bootstrap-v2.pl
+@@
+     my $close_ok=1;
+-    for my $fh(@handles) {if(defined(fileno($fh))) {$close_ok=0 unless close($fh);}}
++    for my $fh(@handles) {
++        my $closed=eval {!defined(fileno($fh))||close($fh)};
++        $close_ok=0 unless $closed&&!$@;
++    }
+*** End Patch
+```
+
+Ordinary cleanup execution ledger, 2026-10-03:
+
+- Two corrected design reviews C0/I0/M0; docs-only design commitc7b3939d before
+  implementation. Two exact actual test8ec78703/source04393 reviews C0/I0/M0.
+- Fresh b97fee/217fa9 ordinary darwin501/501, Node26.4 SHA59cd4f, actual fixed
+  Apple Perl SHAabda2bfd and exact source/test/spec/plan pins; diffcheck0.
+- ONE e65546 naturally CLOSED1,1FAIL/0PASS/0CANCEL/0SKIP/114.609875ms;
+  complete output read. Genuine actual consumerClosed3 versus9 assertion RED,
+  after acceptedfalse/refusedtrue/harnessFaultnull checks. No compile/setup/
+  queue fault. Other unexposed old-source predicted fields are NOT credited.
+- Only then apply the reviewed per-handle final eval source delta. Two exact
+  repair source4aaececb/test8ec78703 reviews C0/I0/M0; fresh061108 pins MATCH,
+  diff0. ONE e3d1e4 naturally CLOSED0,1PASS/0FAIL/0SKIP/102.803792ms, complete
+  output read. All assertions executed: consumer9/fixture0/definite9/pending0,
+  one exact synthetic reap, four clocks, permanent helper burn, registered1/
+  settled0/unsettled1, repeated private observations equal, helpersSettledfalse,
+  fixed inner refusal and exact nomination/close-order events. Ordinary repair
+  focused GREEN only.
+- ONE unfiltered bootstrap invocation8f58f6/managed8719 naturally CLOSED0
+  (terminal566904):1132PASS/0FAIL/0CANCEL/0SKIP/0TODO/76352.48175ms.
+  Complete95081B/1142-line output read through EOF. Source4aaececb,
+  test8ec78703, spec24555153 and plan6cfaa51c remained frozen throughout;
+  root post-run hashes MATCH. No repeat invocation or poll after closure.
+  This includes ordinary owned-child cases, not an effect-free/native run.
+- Whole-branch reviewers' historical-wording M1 is resolved by labeling the
+  original predictions and candidate deltas as pre-execution snapshots.
+  Only consumerClosed3 was exposed by actual old-source RED; no other old
+  predicted field is promoted to observed evidence.
+  PR/build and staged/shared-holder/native/loaded-service/cutover proof remain
+  pending.
 
 ### Task 3: Reviewed delivery and actual protected rehearsal
 

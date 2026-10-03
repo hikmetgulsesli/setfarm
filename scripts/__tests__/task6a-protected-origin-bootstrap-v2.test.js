@@ -153,10 +153,11 @@ const STAGED_CAPTOR_PORT_PROGRAM=String.raw`
       require B; require Errno; require Digest::SHA; require Encode;
       my $fault='';my @owned;my %roles;my @events;my %calls;
       my $mode=$q->{record}{mode};
-      my %modes=map {$_=>1} qw(healthy malformed extra-row raw256 census-duplicate census-noncanonical census-eio partial-pipe inspection-fault forbidden forbidden-exec caught-fault overflow);
+      my %modes=map {$_=>1} qw(healthy malformed extra-row raw256 census-duplicate census-noncanonical census-eio partial-pipe inspection-fault forbidden forbidden-exec caught-fault overflow cleanup-close-throw);
       die "TEST_STAGED_CAPTOR_HARNESS_FAULT\n" unless ref($q->{record}) eq 'HASH'
         &&join(',',sort keys %{$q->{record}}) eq 'mode'&&defined($mode)&&!ref($mode)&&$modes{$mode};
       my $self=$mode=~/\A(?:partial-pipe|inspection-fault|forbidden|forbidden-exec|caught-fault|overflow)\z/;
+      my $cleanup_throw=$mode eq 'cleanup-close-throw';
       my $latch=sub {$fault='TEST_STAGED_CAPTOR_HARNESS_FAULT';return 0;};
       my $fail=sub {$latch->();die "$fault\n";};
       my $check=sub {die "$fault\n" if length($fault);};
@@ -179,13 +180,18 @@ const STAGED_CAPTOR_PORT_PROGRAM=String.raw`
       };
       my @pipe_roles=(['in-r','in-w'],['out-r','out-w'],['err-r','err-w'],['setup-r','setup-w']);
       my @clock=(0)x($mode eq 'raw256'?6:$mode=~/\Acensus-/||$mode eq 'partial-pipe'||$mode eq 'inspection-fault'||$mode eq 'overflow'?3:7);
+      @clock=(0)x4 if $cleanup_throw;
       my @wait=([0,0],[0,0],[0,0],[424242,$mode eq 'raw256'?256:0]);
       @wait=() if $mode=~/\Acensus-/||$mode eq 'partial-pipe'||$mode eq 'inspection-fault'||$mode eq 'overflow';
+      @wait=([424242,0]) if $cleanup_throw;
       my @ready=(['out-r','err-r','setup-r'],['out-r']);
       @ready=() if $mode=~/\Acensus-/||$mode eq 'partial-pipe'||$mode eq 'inspection-fault'||$mode eq 'overflow';
+      @ready=() if $cleanup_throw;
       my %read=( 'out-r'=>[1,0], 'err-r'=>[0], 'setup-r'=>[0] );
+      $read{$_}=[] for grep {$cleanup_throw} keys %read;
       my @census;my $census;my $census_built=0;my $loaded=0;my $selector;
       my ($captured,$enumerated);my $load_complete=0;my $setup_error='';
+      my $capture_error='';
       my $identify=sub {
         my ($fh)=@_;$fail->() unless defined($fh)&&ref($fh);
         for my $r(@owned) {
@@ -325,7 +331,14 @@ const STAGED_CAPTOR_PORT_PROGRAM=String.raw`
         };
         local *CORE::GLOBAL::close=sub (;*) {
           $fail->() unless @_==1;my $r=$identify->($_[0]);
-          $fail->() if $r->{directory};++$calls{close};return $dispose->($r,0);
+          $fail->() if $r->{directory};++$calls{close};my $closed=$dispose->($r,0);
+          if($cleanup_throw&&($r->{role} eq 'in-r'||$r->{role} eq 'in-w')) {
+            $check->();$fail->() unless $closed&&$r->{closed};
+            $event->(op=>$r->{role} eq 'in-r'?'nominated-false':'nominated-throw',role=>$r->{role});
+            return 0 if $r->{role} eq 'in-r';
+            die "TEST_STAGED_CAPTOR_NOMINATED_CLOSE_THROW\n";
+          }
+          return $closed;
         };
         local *CORE::GLOBAL::sysread=sub (*\$$;$) {
           $check->();$fail->() unless @_==3&&ref($_[1]) eq 'SCALAR'&&$_[2]==65536;
@@ -407,6 +420,10 @@ const STAGED_CAPTOR_PORT_PROGRAM=String.raw`
               &&@{$_[1]}==2&&$_[1][0] eq '-lde'&&$_[1][1] eq '/stage/entry.mjs'
               &&$_[2]==2&&$_[3]==4096;
             ++$calls{capture};$event->(op=>'capture',role=>'acl');
+            if($cleanup_throw) {
+              my $value=eval {$capture->(@_)};my $error=$@;$capture_error=$error;
+              die $error if length($error);$captured=$value;return $captured;
+            }
             $captured=$capture->(@_);return $captured;
           };
           my $diagnostic=eval {task6a_origin_acl_free('/stage/entry.mjs')};my $primary=$@;
@@ -420,6 +437,13 @@ const STAGED_CAPTOR_PORT_PROGRAM=String.raw`
             refused=>$refused?JSON::PP::true:JSON::PP::false,diagnostic=>$diagnostic,
             captured=>$captured,enumerated=>$enumerated,
             helpersSettled=>task6a_origin_helpers_settled()};$check->();
+          if($cleanup_throw) {
+            $out->{helpersObservation}=test_observe_helpers();$check->();
+            $out->{helpersObservationRepeat}=test_observe_helpers();$check->();
+            $out->{captureError}=$capture_error;
+            $out->{remainingWaits}=scalar(@wait);
+            $out->{originalsPendingBeforeFinalizer}=scalar(grep {!$_->{attempted}&&!$_->{directory}} @owned);
+          }
           1;
         };my $primary=$@;
         # Independent fixture finalizer: never mutable producer ledgers/receipts.
@@ -440,7 +464,8 @@ const STAGED_CAPTOR_PORT_PROGRAM=String.raw`
         } else {
           die $primary unless $ok;
           $check->();$fail->() if @clock;
-          unless($mode=~/\Acensus-/) {$fail->() if @wait||@ready;}
+          unless($mode=~/\Acensus-/||$cleanup_throw) {$fail->() if @wait||@ready;}
+          if($cleanup_throw) {$fail->() if @ready||@wait>1||grep {@$_} values %read;}
           $out->{harnessFault}=undef;
         }
         $out->{calls}=\%calls;$out->{events}=\@events;
@@ -1463,6 +1488,18 @@ function systemObject(kind,record,expected,{sourceOverride}={}) {
     // Only the denied external exec port changes syntax in this memory copy.
     // Perl's ordinary-sub override cannot parse the original exec block form.
     source=replaceOnce(source,'exec {$tool} $tool,@$args;','CORE::GLOBAL::exec($tool,$tool,@$args);');
+    if(record.mode==='cleanup-close-throw') {
+      source=replaceOnce(source,'sub task6a_origin_helpers_settled {',[
+        'sub test_observe_helpers {',
+        '    task6a_origin_refuse() unless @_==0;',
+        '    my $settled=scalar(grep {$_->{settled}} @helper_ledger);',
+        '    return {burned=>$helper_lifecycle_burned?JSON::PP::true:JSON::PP::false,',
+        '        registered=>scalar(@helper_ledger),settled=>$settled,',
+        '        unsettled=>scalar(@helper_ledger)-$settled};',
+        '}',
+        'sub task6a_origin_helpers_settled {',
+      ].join('\n'));
+    }
   }
   if(kind==='parent-protocol') {
     source=replaceOnce(source,'sub task6a_origin_parent_require_unburned {',String.raw`
@@ -2044,6 +2081,26 @@ function stagedCaptorPorts(mode='healthy') {
   const out=JSON.parse(r.stdout);assert.equal(out.productionAuthority,false);
   assert.equal(out.syntheticCensus,true);return out;
 }
+test('staged captor cleanup throw closes remaining originals and burns helper',()=>{
+  const out=stagedCaptorPorts('cleanup-close-throw');
+  assert.equal(out.harnessFault,null);assert.equal(out.accepted,false);assert.equal(out.refused,true);
+  assert.equal(out.consumerClosed,9);assert.equal(out.fixtureClosed,0);
+  assert.equal(out.ownedCount,9);assert.equal(out.definitelyClosed,9);
+  assert.equal(out.originalsPendingBeforeFinalizer,0);assert.equal(out.remainingWaits,0);
+  assert.equal(out.captureError,'TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n');
+  assert.equal(out.helpersSettled,false);
+  assert.deepEqual(out.helpersObservation,{burned:true,registered:1,settled:0,unsettled:1});
+  assert.deepEqual(out.helpersObservationRepeat,out.helpersObservation);
+  assert.deepEqual(out.calls,{capture:1,pipe:4,binmode:8,fcntl:1,opendir:1,
+    readdir:15,closedir:1,clock:4,fork:1,close:8,wait:1});
+  assert.deepEqual(out.events.filter(e=>e.op==='nominated-false'||e.op==='nominated-throw')
+    .map(e=>[e.op,e.role]),[['nominated-false','in-r'],['nominated-throw','in-w']]);
+  assert.deepEqual(out.events.filter(e=>e.op==='wait')
+    .map(e=>[e.pid,e.result,e.raw]),[[424242,424242,0]]);
+  assert.deepEqual(out.events.filter(e=>e.op==='close-attempt')
+    .map(e=>[e.role,e.owner]),[['census',0],['in-r',0],['in-w',0],['out-r',0],
+      ['out-w',0],['err-r',0],['err-w',0],['setup-r',0],['setup-w',0]]);
+});
 test('staged captor foundation retains actual ACL capture and original closure',()=>{
   const out=stagedCaptorPorts();
   assert.equal(out.harnessFault,null);assert.equal(out.accepted,true);assert.equal(out.refused,false);

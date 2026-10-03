@@ -619,3 +619,45 @@ contract above. No staged implementation/test effect is admitted before its
 literal harness/subplan review. Both slices use ordinary controlled ports only;
 neither clears this protected gate or enables main, publisher, launcher or native
 effects. No change to the source/vendor/import/native or privilege policy follows.
+## Ordinary captor throwing-cleanup continuation
+
+Delivered ordinary foundation exposes capture's final close loop escaping on a
+close exception before shutdown, helper permanent-burn accounting and shared
+physical-failure routing. This is causally necessary to trustworthy staged
+custody, so fix only that continuation gap in bootstrap/test/spec/plan. Keep
+production main refused and no staged initializer/native/SQL/service changes.
+
+Each final fileno/close evaluation is independently exception-contained. A false
+or throwing result permanently marks close failure; all remaining originals are
+still considered, existing helper shutdown executes, no settled record is
+published and existing lifecycle burn/physical-failure/refusal routing remains
+active. A thrown close is never definite-closure proof or reason to retry an
+uncertain original. The separate fds closedir exception is already caught by
+capture and is not this skipped-continuation cause; defer any direct-enumerator
+normalization change.
+
+A single closed ordinary fixture mode nominates false after actual in-r CORE
+closure, then a distinct exception after actual final in-w CORE closure. Fixture
+closure remains independently verified and credited separately from consumer
+closure. Literal clocks4/census15/owned9, synthetic PID/wait only, no readiness/
+read samples or real tool/process/signal/native/DB effect. Historical
+pre-execution predictions were old-source3 consumer/6 fixture closures and absent
+helper burn. The later execution ledger records actual assertion RED exposing
+only consumerClosed3; the other old predicted fields remain unobserved.
+The repaired assertions require9/0,
+one exact synthetic reap and permanent burn with unsettled helper record.
+
+Only the nominated mode adds a uniquely anchored MEMORY-COPY zero-argument
+read-only helper observer: registered/settled/unsettled counts and burned JSON
+boolean. No private record, handle or PID escapes; no setter/initializer or
+production declaration. Repeat observations before finalizer must agree.
+Transparent actual capture observation preserves/rethrows its inner exception;
+all unrelated foundation modes retain their previous observer path. Unused wait
+on old-source RED is diagnostic only; repaired assertions require it consumed.
+Any real sticky fixture fault remains fatal, not a source-refusal success.
+
+The Task2b.2 plan contains complete literal test/source deltas and exact scoped
+RED/GREEN recipe. Two pre-effect exact reviews and actual source assertion RED
+precede the production edit. Adjacent suite/normal reviewed PR/own clean-main
+build and preservation proof are separate delivery gates; none establishes
+staged ownership, protected/native origin or final host cutover.
