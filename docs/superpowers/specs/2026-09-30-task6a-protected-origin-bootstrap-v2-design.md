@@ -142,6 +142,175 @@ Existing observed current33PM/9XS and futureGunzip50PM/12XS inventory is not
 complete lazy/transitive loaded closure; no repeated supposedly missing inventory
 or new native invocation follows from this composition.
 
+## Ordinary declaration-only parent consumer
+
+This separately reviewable P2a slice is an ordinary prerequisite, not the real
+execution edge below. Modify exactly the existing bootstrap, bootstrap test,
+this spec and its implementation plan. Keep main's unconditional refusal,
+helper captor, entry, helpers, import policy, observer, launcher, source/vendor
+staging and protected-effect gates unchanged. No dependency or package change.
+The causal purpose is to make the parent's actual framing/lifetime decisions
+testable before separately admitting protected execution.
+
+Choose separate private custody, admission and lifecycle facts. One mutable
+record would let altered admission entries change disposal targets; a public
+factory/setter would add selection authority. Neither alternative is selected.
+The sole public consumer is `task6a_origin_consume_entry_protocol()` with zero
+arguments. Its private lexical admission starts absent and has no production
+initializer, setter or callback. Therefore this slice cannot select/launch a
+child; a production call without future authentic launcher custody refuses.
+Only a uniquely anchored in-memory test initializer may populate those lexicals.
+That initializer is not written into the production file or executed by main.
+
+Independently retain the original admission HASH reference, copied original PID
+scalar and five fixed original custody slots: input0, stdout1, stderr2, setup3,
+entropy4. Each acquired slot owns its original handle reference, numeric FD and
+complete stat identity, recorded before fallible configuration. Admission has
+exactly pid/input/stdout/stderr/setup, copied PID value and original handle
+references; it never aliases mutable custody slot objects or the sealed PID.
+Check exact record identity/keys/PID/handle references, distinct live descriptors
+and FIFO identities before protocol effects. Rechecks compare original
+dev/inode/type+mode/nlink/UID/GID/rdev (stat fields0..6), not changing pipe
+timestamps/size. Complete13-field capture is retained, not a stable contents
+snapshot. Recheck live original slots;
+definitely closed slots stay historical. Entropy may reuse a definitely closed
+setup FD, but never reset or share that slot's close obligation. A live alias
+does not create a second ownership/close obligation. Replacements are not adopted.
+These five obligations never append to existing file/physical/helper ledgers.
+
+Private lifecycle is absent -> starting -> active -> ending -> settled; any
+failure irreversibly burns it. Store a separate permanent-invalid latch,
+cleanup-started/complete, per-slot close-attempted/definite-close, original
+start/deadline, exact reaped/uncertain/raw-status, pending bytes, input/output
+totals, issued/matched nonces, three EOF facts and END-written/final-END facts.
+`task6a_origin_parent_require_unburned()` is a zero-argument, no-effect internal
+guard actually used by the consumer. Its latch check is the burn-mutation
+witness; it does not initialize custody or admit execution.
+
+Validate actual `task6a_origin_now()` before numeric coercion: zero arguments;
+clock call return/throw captured independently; defined non-reference scalar;
+public numeric IOK/NOK flag and no POK flag; finite, nonnegative, not backward,
+at most1e12 inclusive. Zero, equal samples and fractions are allowed. Commit
+last-clock history only after acceptance. Numeric NaN/Inf test factories must
+produce actual POSIX numeric scalars and independently witness flags/classification
+before the actual validator; JSON strings are not numeric NaN evidence.
+
+Protocol order and literal bounds:
+
+- Compute once `min(original bootstrap deadline, start+45)`. Never renew it.
+- Configure original pipes binary/CLOEXEC/nonblocking, checking each call and
+  original identity. Readiness waits are clamped to remaining time and at most
+  0.01s; reads/writes are separate actual nonblocking operations. No retry of
+  short/zero/undefined/throw/EINTR/EAGAIN write or entropy read.
+- Reset `$!=0` before each readiness call: empty list with zero errno means
+  timeout only; throw/nonzero errno/unknown or duplicate ready handles refuses.
+  Installed IO::Select collapses select errors to an empty list, so empty alone
+  is not a healthy timeout. Pipe sysread undefined/throw/EINTR/EAGAIN refuses
+  without retry; zero is EOF only. Returned count must be an integer within the
+  request and equal raw buffer length; no UTF8-flagged protocol buffers.
+- Setup must have empty EOF and definite close before READY acceptance. READY
+  can be buffered while setup remains open. Setup/stderr read requests at most1;
+  any byte refuses. Stdout requests at most71, total at most220 bytes.
+- Accept exactly READY6, then open literal `/dev/urandom` readonly/nofollow/
+  nonblocking/CLOEXEC. Register successful acquisition immediately, validate
+  actual character-device/rootwheel UID0/GID0 identity and flags. Binary/raw
+  bytes only; compare pre/opened/post-read lstat/fstat dev/inode/rdev/type/mode/
+  nlink/owner against original identity. Configuration/binmode/CLOEXEC/identity
+  failures use the same original custody disposal. No alternate or borrowed FD.
+- Read exactly32 bytes once per challenge, convert to64 lowercase hex in actual
+  consumer and require request32, actual returned count32 and raw buffer length32,
+  with no UTF8 flag, and three distinct nonces. Close entropy definitely before
+  issuing challenge3. Each challenge is75 bytes; END is4; input total229.
+- Accept only current PONG70. Parse an entire returned chunk in its current
+  phase before issuing a successor; unsolicited future/coalesced frames refuse.
+  Partial-frame limits READY5/PONG69/END3. Buffered complete READY6 while waiting
+  for setup is a distinct fact, not an unbounded pending frame.
+- Three matches -> full END write -> definite original input close -> ending,
+  all before the next poll. Final END is accepted only in ending, after the
+  definite input-close prerequisite. Extra bytes/frames and premature EOF refuse.
+- Actual `task6a_origin_poll` uses only sealed original PID/raw wait status.
+  Bracket every readiness, pipe/entropy read and nonterminal write with actual
+  polling/deadline checks before and after, not just the outer loop. The one
+  exception is compound END-write/input-close/enter-ending: check before END,
+  perform full write+definite close+phase change without an intervening poll,
+  then check after entering ending. Any observed exact reap before input close
+  refuses. Polling is sampled and cannot date an unobserved kernel exit between
+  checks; no continuous kernel lifetime proof is supplied by ordinary doubles.
+  Reap before input close refuses. Ending allows exact zero reap before buffered
+  final END drains, but still requires final END, every EOF, all five definite
+  closes, no uncertainty and original deadline before settling.
+
+Failure burns before disposal. Record each original close attempt BEFORE calling
+close; false/throw is uncertainty and never retried, but disposal still attempts
+every other genuinely retained original once. Cleanup does not trust mutable
+admission. Bad initial arity or absent/mismatched admission permits no entropy,
+read/write/readiness/poll/signal or closure of replacements; independently owned
+originals still need once-only disposal. Shutdown is allowed only for an
+authenticated sealed original known-live PID, and uses the existing exact-PID
+5s/TERM2s/KILL2s discipline; reaped or uncertain PID excludes signals. Settled or
+burned repetition produces no new events. Failed disposal stays burned/unsettled.
+
+Set settled BEFORE returning exactly scope `parent-entry-protocol-diagnostic-only`,
+productionAuthority:false, challengeCount3, inputBytes229, outputBytes220,
+handlesClosed5 and reaped:true. No PID/FD/source/path/hash/nonce/token/callback
+is returned. Synthetic wait/entropy/pipe ports prove actual consumer decisions,
+not kernel captured-PID ownership, native entropy/protections or protected cleanup.
+
+The ordinary trust assumption is that external operations return or throw and
+the actual monotonic clock eventually advances. Returning operations plus equal
+clock samples do NOT bound total polling attempts independently. Individual
+request/wait sizes are bounded; no hard syscall cancellation or unconditional
+wall-clock guarantee is claimed. Parent45/bootstrap180/child20 and separate
+shutdown-only budgets remain unchanged; no renewed origin validity.
+
+### Ordinary real-consumer harness and mutation requirements
+
+Keep `systemObject` and remove only the sole final main call in memory. Before
+actual source eval install finite external clock/sysopen/stat/lstat/fcntl/
+readiness/sysread/syswrite/close/waitpid/status/signal/sleep ports; preserve actual
+clock validator, nonce/FSM/deadline/entropy checks, poll and shutdown. Synthetic
+PID ports never delegate to CORE signal/wait. Harness-owned real ordinary pipe
+ends and extra fixture ends have independent finalization, not production custody.
+
+Use a sticky independently retained fixed nonempty harness-fault marker. Latch
+BEFORE unexpected startup/runtime/factory/queue/argument errors. Check it after
+EVERY eval/caught consumer/disposal/negative-guard call, before interpreting
+refusal or JSON or invoking again. Capture eval success separately and `$@`
+immediately. Nominated fault injection is only an exact expected primitive and
+ordinal, and must be reached. Exhaustion cannot become a successful refusal.
+Positive/trace diagnostics require exit0, empty stderr and exact JSON; plain
+refusal requires exit64, empty stdout and exact bootstrap refusal stderr.
+
+Independently witness new Perl override prototypes/caller alias contracts:
+sysopen assigns the actual caller scalar; sysread changes actual caller buffer
+and checks raw bytes/count/request/errno; syswrite checks actual bytes/length/
+offset/full count; fcntl native-zero success is `0 but true`, not false0. Keep
+primitive entry, completion, close attempt, definite close, EOF and reap distinct.
+Trace sequence/roles come from independently sealed test originals, never consumer
+results or mutable admission. Each fixture has literal finite queues/event bounds.
+
+First RED asserts the missing consumer declaration before any initializer anchor,
+then invokes the actual consumer. This missing-feature assertion is only initial
+scaffolding RED, not later semantic/security evidence. Missing anchors, syntax,
+queue failures or undefined functions never count as semantic mutant kills.
+Require fragments at every frame boundary, setup/READY and reap/final-frame
+permutations, each EOF/close, ownership/arity/restoration denial, finite typed
+clock cases, entropy flags/device/drift/size/uniqueness and all partial writes.
+
+Six coherent in-memory actual-source mutations need independent forbidden
+witnesses: omitted current-nonce comparison -> otherwise valid wrong PONG
+diagnostic; omitted permanent burn -> actual used guard accepts after refusal
+and complete disposal with no new events; omitted raw-zero predicate -> nonzero
+exact reap diagnostic; remove ALL and ONLY redundant reaped signal exclusions
+in caller/shutdown -> post-reap synthetic signal attempt (uncertainty exclusions
+remain); deadline renewal -> progress44s/response46s continuation; omitted
+immediate definite-input-close prerequisite -> actual final-END acceptance.
+For the last, inject a test-only observer immediately AFTER the actual acceptance
+assignment in memory; receiving END bytes alone is not acceptance evidence.
+Inventory/pin actual unique source anchors before injection; no production
+callback or decision replacement. A later all-close refusal does not erase the
+forbidden acceptance witness. Ordinary delivery remains separate from native P2.
+
 ## Parent-owned real execution edge
 
 The trusted supervisor owns the actual fork PID and private pipes, drops all
@@ -300,3 +469,7 @@ Before implementation, root must resolve actual protected system core/XS paths,
 exact transport/deadline/process/credential-drop/FD/native-observer behavior and
 write the detailed TDD implementation plan. This is the design contract, not an
 implementation-complete or pre-effect review clearance claim.
+The sole narrow exception is the independently reviewed four-existing-file
+ordinary declaration-only consumer slice specified above, after ordinary P1 and
+MC delivery/serialization gates. Its tests use ordinary controlled ports only;
+it cannot clear this protected gate or enable main, launcher or native effects.

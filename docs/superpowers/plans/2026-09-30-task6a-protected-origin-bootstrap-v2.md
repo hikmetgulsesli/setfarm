@@ -44,6 +44,24 @@
 - Create `tests/execution-attempts/task6a-private-protected-origin.integration.test.ts`: actual independent owner-install invocation/entry/private fixture, explicitly opt-in and gated on delivered package/exact pre-effect clearance. Register only safe default tests; a new opt-in package command is allowed only if needed and source/tests/spec map includes it.
 - Spec/this plan and external checkpoints. No V1/dirty19/default production entry changes.
 
+### Ordinary P2a delta (four existing files only)
+
+Modify only `scripts/task6a-protected-origin-bootstrap-v2.pl`,
+`scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`, this plan and
+its named existing spec. Do not alter entry/helper/map/import-policy/native/
+observer/package/lock/launcher/production main or generated runtime artifacts.
+The source base is delivered main d40fa6b9d517bdbb9e466585c86fbd1471c4dfc0;
+old main/worktrees/dirty2 remain preserved. The ordinary MC telemetry delivery
+has its own PR33/merge5c9e/clean-main-build proof; it admits no live cutover.
+Root alone writes/delivers; parallel reviewers do not execute project tests.
+
+Ruling: separate immutable original custody, initially absent admission and
+irreversible lifecycle state, rather than one mutable record or public factory.
+Reason: altered admission cannot redirect disposal or create execution authority.
+Cost if wrong: ordinary interface/test rework, never a protected-effect waiver.
+The detailed ordinary contract is the spec's new declaration-only section;
+the protected Task2/Task3 checkboxes below remain separate and incomplete.
+
 ### Task 1: Archive and static native denial primitives
 
 **Consumes:** Raw gzip and Node image bytes from the later trusted publisher, never caller provenance. **Produces:** The two exact pure Perl interfaces above.
@@ -294,6 +312,168 @@ Insert exact literals with apply_patch before final review; source identities co
 - [ ] Fork with exact parent-owned PID; child closes unrelated inherited FDs, resets supplementary groups using checked Perl core `$)` assignment (POSIX::setgroups unavailable), checked setgid/setuid, verifies real/effective IDs/groups, then fixed-list `exec {fixedNode} fixedNode,fixedEntry`. Preserve only exact protocol pipes and CLOEXEC setup-error channel; no wrapper or caller code.
 - [ ] Parent uses exact waitpid(pid,WNOHANG) before/after READY/native/source samples and bounded three fresh challenges. Parent owns all identity, immutable source/vendor/native metadata and lifetime; no child JSON authority. Burn on ECHILD/exit/EOF/error/drift/timeout/uncertainclose. Never signal reaped PID or use global child reaper. Actual loaded-image observations must account for readonly logging-cache mapped data without executable/writable exceptions.
 - [ ] End child, wait definite exact reap, recheck full fixture root/descent and cleanup with narrowly scoped validated code; uncertainty retains new fixture. Keep every old fixture/tree untouched. Output private diagnostics, productionAuthorityfalse; no origin token persists after parent releases.
+
+### Task 2a: Ordinary private parent consumer (not protected execution)
+
+**Consumes:** reviewed actual bootstrap declarations; existing actual now/poll/
+shutdown routines; ordinary finite external ports only in the test process.
+**Produces:** zero-argument `task6a_origin_consume_entry_protocol()` returning
+the exact seven-field counts-only diagnostic from the spec after settlement.
+No production initializer exists. `task6a_origin_parent_require_unburned()` is
+the actual consumer-used zero-argument no-effect permanent-invalid guard.
+
+- [ ] **Step 1: Review design and isolate the sole writer.** Verify fresh clean
+  main d40fa/treecb513, own.git/no alternates, initial four-file SHA agreement,
+  no .env/node_modules/dist, ordinary UID and old-pin/resource preservation.
+  Create scoped branch `fix/task6a-ordinary-parent-protocol-v2` in a separate
+  own clone; no old root rebuild or dependency reuse. Independently review this
+  exact spec/plan refinement and commit the docs before source changes.
+
+- [ ] **Step 2: First missing-feature RED.** Put the named test inside existing
+  ordinary-host registration. Assert declaration BEFORE any initializer injection:
+
+```js
+test('Perl parent protocol completes exact bounded transcript',()=>{
+  const source=readFileSync(BOOTSTRAP,'utf8');
+  assert.match(source,/^sub task6a_origin_consume_entry_protocol\s*\{/m,
+    'ordinary parent consumer declaration missing');
+  const r=systemObject('parent-protocol',{mode:'success'},'');
+  assert.equal(r.status,0,r.stderr.toString());
+  assert.equal(r.stderr.length,0);
+  const out=JSON.parse(r.stdout);
+  assert.deepEqual(out.consumer,{scope:'parent-entry-protocol-diagnostic-only',
+    productionAuthority:false,challengeCount:3,inputBytes:229,outputBytes:220,
+    handlesClosed:5,reaped:true});
+  assert.deepEqual(out.writes,[`CHALLENGE ${'1'.repeat(64)}\n`,
+    `CHALLENGE ${'2'.repeat(64)}\n`,`CHALLENGE ${'3'.repeat(64)}\n`,'END\n']);
+  assert.equal(out.harnessFault,null);
+});
+```
+
+  Run fixed Node with scrubbed environment, no loader/dependencies:
+
+```bash
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^Perl parent protocol completes exact bounded transcript$' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+  Expected exactly the missing declaration assertion. Record actual exit/footer.
+  This is not later mutation/security evidence. Undefined function/anchor/syntax/
+  queue exceptions cannot substitute for this RED or a semantic mutant kill.
+
+- [ ] **Step 3: Make external ports trustworthy before consumer GREEN.** Extend
+  existing `systemObject` with parent-only startup/runtime sticky fault state.
+  Keep sole final-main removal and install CORE overrides before source eval.
+  Fix exact prototypes and caller alias behavior with independent self-witnesses:
+  actual caller sysopen handle; actual sysread buffer/raw/count/errno; exact
+  syswrite payload/request/offset/count; fcntl `0 but true` success; raw exact
+  readiness timeout-versus-error/throw and pipe-read undef/EINTR/EAGAIN contracts;
+  synthetic waitpid `$?`; fake-PID wait/signal never CORE. Harness independently
+  owns ordinary real pipes and closes every extra end. Use finite literal queues.
+  Latch unexpected errors BEFORE throw and inspect after EVERY catch/eval before
+  translating exact refusal or success. Check eval's independent success sentinel
+  and immediately captured `$@`. Unknown factory/primitive/queue/argument cases
+  are loud harness failures, not expected status64. Nominated throws require
+  literal primitive+ordinal and actual reachability. Trace records strictly
+  increasing seq/op/original-role/slot/invocation/request/return/errno/bytes/raw
+  wait status; fixture cleanup attempts/definite closes are separate facts.
+
+- [ ] **Step 4: Clock RED/GREEN.** Add actual-validator consumers for undefined,
+  reference, string-numeric, dual POK/numeric, throw, negative, backward, over1e12,
+  numeric NaN and Inf; allow zero/equal/fraction and inclusive1e12. Construct
+  POSIX numeric factories and inspect public B flags/classification before
+  returning samples; never stringify them first. Add unexpected factory and
+  exhausted-clock harness-fault controls. Preserve actual validator in every
+  parent/transport test. Observe genuine invalid-scalar acceptance RED, then:
+
+```perl
+sub task6a_origin_now {
+    task6a_origin_refuse() unless @_==0;
+    my $now;
+    my $ok=eval {$now=Time::HiRes::clock_gettime(Time::HiRes::CLOCK_MONOTONIC());1;};
+    task6a_origin_refuse() unless $ok&&defined($now)&&!ref($now);
+    my $flags=B::svref_2object(\$now)->FLAGS;
+    task6a_origin_refuse() if $flags&B::SVf_POK();
+    task6a_origin_refuse() unless $flags&(B::SVf_IOK()|B::SVf_NOK());
+    task6a_origin_refuse() if $now!=$now||$now<0||$now<$last_clock||$now>1e12;
+    $last_clock=$now;return $now;
+}
+```
+
+- [ ] **Step 5: Private state and once-only ownership.** Beside current private
+  declarations define absent admission+retained HASH reference, copied original
+  PID, five originals, phase/permanent-invalid/cleanup flags, close-attempted/
+  definite-close arrays, immutable start/deadline and independent frame/EOF/
+  reap facts exactly as spec. Add no setter. Pin the unique in-memory test
+  initializer after literal review; test originals before injecting their copied
+  admission. Configure/recheck only original live slots; retained closed slots
+  never become live again or close reused numeric FDs. Entropy acquisition is
+  recorded before configuration. Failure burns before original-only disposal.
+  Preserve raw binary rootwheel entropy and exact pre/opened/post-read lstat/
+  fstat identity/flags/count32/buffer32. Live pipe identity uses stable fields0..6,
+  not transient size/timestamps; retain complete captures for diagnostics.
+  Each attempted flag precedes the call, false/throw never retries, remaining
+  originals still close. Unknown/unauthed/uncertain/reaped PID never signals.
+
+- [ ] **Step 6: Actual FSM GREEN.** Implement setup-empty-EOF+definite-close,
+  buffered READY acceptance, literal owned entropy, three32byte unique challenges,
+  matching current PONG, entropy definite close before challenge3, full END,
+  definite input close before ending, final END/drain/allEOF/exactrawzero/all5
+  definite closes before settled. Parse full chunks before successor effects.
+  Requests/totals/partial buffers/deadlines are the spec's exact literals; no
+  generic runner/captor rewrite. Actual IO::Select construction/membership stay
+  real; external readiness may be substituted. Clear `$!` before readiness;
+  empty+zero errno is timeout only, throw/nonzero errno/unknown or duplicate
+  ready handles refuses. Pipe read undef/throw/EINTR/EAGAIN refuses without retry;
+  zero alone is EOF, count equals raw buffer length and lies within request.
+  Bracket every readiness/read/nonterminal-write (including entropy) with actual
+  exact-PID poll and original-deadline checks before/after. Treat final full
+  END-write/definite-input-close/enter-ending as one compound operation checked
+  before END and after ending, with no intervening poll. Any observed reap before
+  definite input close refuses. This samples lifetime, not an exact kernel-exit
+  timestamp or continuous proof; do not infer that from synthetic wait events.
+  Return only the literal diagnostic in Step2 after irreversible settled state.
+  Allow eventual clock progress, not an invented fixed poll-attempt cap.
+
+- [ ] **Step 7: Denials and six honest semantic mutants.** Fresh fixture for
+  each absent/forged/arity/alias/replaced original, every fragment boundary,
+  coalesced future/replay/extra/CRLF/NUL/uppercase/63or65hex/partial EOF/221byte
+  stdout, one stderr/setup byte, each missing EOF/reap/close, partial write,
+  entropy device/flags/path drift/31or33bytes/duplicate/throw, early/nonzero/
+  undefined/ECHILD/foreign reap, deadline44->46/bootstrap expiry and restored
+  burn/repeat. Original decisions stay real. Inject mutations only after unique
+  actual literal anchor review. Wrong nonce/nonzero reap/deadline renewal must
+  reach otherwise coherent forbidden diagnostics; burn omission must admit the
+  actual used guard after refusal+disposal with zero new events; remove all and
+  only reaped signal exclusions for postreap forbidden synthetic signal witness.
+  Input-close omission must show actual final-END acceptance via observer inserted
+  immediately AFTER its assignment in test-copy bytes; read delivery is not
+  acceptance, even if final all-close check later refuses. Require positive
+  baseline closure and sticky harnessFaultnull before crediting each semantic kill.
+
+- [ ] **Step 8: Adjacent and full ordinary verification.** Run exact new parent
+  and clock consumers, existing metadata-clock tests, child entry, helper captor,
+  physical-holder, unsupported-host and actual default-graph leaf consumers.
+  Then full actual bootstrap test suite with zero macOS skips, bounded fixed
+  command/output and explicit terminal evidence. Source syntax/version/English/
+  path/diff gates must pass. No repeat ALL/native/protected probe is needed.
+
+```bash
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+git diff --check
+git diff --stat d40fa6b9d517bdbb9e466585c86fbd1471c4dfc0
+```
+
+- [ ] **Step 9: Ordinary reviewed delivery.** Exact four-file independent source/
+  test/spec/plan review; record actual RED/GREEN/mutant counts and source pins.
+  Scoped conventional commit/normal push/PR; full paginated actual current-head
+  comments/review/security/threads, normal SHA-bound merge, no bypass/deletion.
+  Fresh own clean-main dependency/build admission and guarded build (never dirty
+  bypass), exact source/build binding and independent old-pin/host preservation.
+  This closes only ordinary P2a. No installation/root/native/service/DB/fence/
+  genesis/32/33/A–E/M1/M2 claim; retain all worktrees/branches/evidence.
+
+Ordinary execution ledger: spec/plan review pending; no consumer/clock RED,
+implementation, test/native/privileged execution or P2a completion yet.
 
 ### Task 3: Reviewed delivery and actual protected rehearsal
 
