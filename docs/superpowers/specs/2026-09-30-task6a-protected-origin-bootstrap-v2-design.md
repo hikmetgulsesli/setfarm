@@ -326,6 +326,133 @@ Inventory/pin actual unique source anchors before injection; no production
 callback or decision replacement. A later all-close refusal does not erase the
 forbidden acceptance witness. Ordinary delivery remains separate from native P2.
 
+## Ordinary declaration-only staged custody: design refinement
+
+The delivered ordinary P2a parent protocol does not hold staged source/vendor
+files. Its five pipe/entropy obligations and the composed Perl holder's exact
+one-file/three-directory ledgers cannot be extended into staging authority.
+This causal next prerequisite uses the same four existing files: bootstrap,
+bootstrap test, this spec and its plan. Main remains unconditional refusal.
+Before code or test effects, review the literal lower-port harness and executable
+subplan. This section fixes the ownership contract, not execution readiness.
+
+Choose one private all-or-refuse six-leaf composition with private per-leaf
+acquisition. All-or-refuse concerns diagnostic publication, not an atomic
+filesystem snapshot. Separate public per-leaf factories would leave complete
+composition to callers; implementing the full publisher/launcher now would also
+cross unresolved protected/native gates. Neither alternative is selected.
+
+The production creator/admission record is initially absent, with no initializer,
+setter, caller root/path/hash/receipt/callback or returned handle. A future,
+separately admitted publisher must privately supply its actual exclusively created
+root identity and authentic source/archive/selected-member byte joins. A copied
+diagnostic cannot supply this record. Ordinary tests may initialize lexicals only
+inside a uniquely anchored memory copy, removing only the sole final main call.
+No test initializer or effect selector is added to the production file.
+
+Three zero-argument operations are proposed:
+`task6a_origin_hold_staged_custody()`,
+`task6a_origin_recheck_staged_custody()` and
+`task6a_origin_release_staged_custody()`.
+Hold/recheck return only `scope:staged-source-vendor-custody-diagnostic-only`,
+`productionAuthority:false`, `fileCount:6` and `directoryCount:6`.
+Release is original-handle disposal, not a validity/origin receipt; its descriptive
+diagnostic adds only `handlesClosed:12` after all twelve definite closes. No
+sourcepath, byte/hash identity, root, PID, FD, token or continuation is returned.
+
+The fixed manifest below is relative to the future creator-owned fresh root;
+these are proposed literals, not files claimed to exist on the host:
+
+| Role | Relative path | Mode | Required authentic join |
+| --- | --- | --- | --- |
+| Archive helper | source/task6a-origin-archive-v2.pm | 0400 | Existing literal Git blob policy |
+| Native helper | source/task6a-origin-native-v2.pm | 0400 | Existing literal Git blob policy |
+| Map helper | source/task6a-origin-map-v2.pm | 0400 | Existing literal Git blob policy |
+| Entry | source/task6a-protected-origin-entry-v2.mjs | 0444 | Existing literal Git blob policy |
+| Official archive | vendor/node-v22.23.1-darwin-arm64.tar.gz | 0400 | Existing fixed official archive SHA256 |
+| Selected Node | vendor/node | 0555 | Unique regular Node member from that same admitted archive and existing native byte policy |
+
+Source leaves retain the existing 2MiB Git-blob bound; archive/selected Node each
+retain 128MiB. Do not enlarge the generic Git metadata size validator to accept
+vendor sizes. File records must join exact role/path/mode/size/SHA256 and the
+actual independently authenticated byte derivation, never a caller-described
+expected hash. Four source policy leaves are the existing reviewed helper/entry
+pins; bootstrap and full system core/XS custody are explicitly outside this
+six-leaf subset. The subset cannot qualify complete origin or tool admission.
+
+Retain exactly six unique ancestry records: `/`, `/private`, `/private/tmp`, the
+creator-owned fresh root, its `source` and its `vendor`. Capture shared ancestors
+once. Root is final root:wheel0711, source/vendor root:wheel0555; existing ancestor
+policy permits only the literal `/private/tmp`01777 exception. Every leaf is
+root:wheel, regular, one-link, exact mode and ACL-free. Root physical identity
+must join the creator's independently retained actual creation record, not merely
+a matching pathname. Hold original record/FH/FD identities separately from
+mutable admission; reject role/count/path/reference replacement and unowned live
+aliases. All acquisitions belong to this new private owner, never old raw ledgers.
+Check retained live FH/FD aliases before adding a distinct acquisition: an alias
+creates no second or borrowed close obligation. Immediately register each
+distinct successfully acquired original after that alias check, before any
+configuration, metadata/hash/ACL check or later fallible acquisition.
+
+Private state is absent -> capturing -> active -> burned/released; an invalid
+latch, disposal-attempted and per-original close-attempted/definite-close facts
+are separate. Keep the alias exception above distinct from original acquisition
+ownership; every distinct success is immediately registered before other checks.
+Capture six unique ancestors, then six leaves. Before active publication and on
+every active recheck, bracket complete held leaf identity/hash/ACL joins with
+complete held ancestry checks; require helper settlement and the unchanged
+bootstrap deadline. These are sampled joins, not directory-content/ABA census,
+hard syscall cancellation or continuous exclusion. Successful acquisition alone
+is not custody acceptance. Any arity/admission/manifest/identity/ACL/helper/clock/
+configuration/size/hash/state failure burns before disposal; input restoration
+and repeated calls cannot revive the owner.
+
+Reuse existing `task6a_origin_file_identity`, `task6a_origin_check_held_file`,
+`task6a_origin_directory_identity` and `task6a_origin_check_directory` validators.
+Do not use `hold_file`, `hold_ancestry`, raw recheck/close functions or the Perl
+composition cleanup to acquire/dispose staged records: those functions consume
+different ownership ledgers. Keep actual `acl_free` and `capture` decisions;
+capture failure retains the existing shared bootstrap/Perl burn-and-cleanup
+gate. The staged outer failure handler independently disposes its own originals
+even when that shared gate already threw. Do not suppress shared invalidation or
+adopt another owner's descriptors to obtain artificial isolation.
+
+Release/disposal bypasses validity, deadline and helper checks. Permanently
+consume the release transition before effects and attempt every original once
+despite another false/throwing close. Mark attempt before calling close and require
+true return plus undefined fileno for definite closure. Uncertainty never grants
+a positive release, reopen, retry or protected-tree deletion. Mutable admission
+or ledger contamination must not redirect cleanup. A test port that physically
+closes before reporting false/throw proves once-only attempts and sticky denial,
+not native uncertain-close leak freedom. No download/publication/staging writes,
+credential change, child execution, native observation or protected filesystem
+cleanup is permitted by this ordinary declaration-only slice.
+
+Ordinary positive fixtures use actual owned seekable files/directories and real
+descriptors, while explicitly projecting synthetic root:wheel/policy metadata.
+The lower-captor foundation alone may uniquely map the memory-copy child effect
+site `exec {$tool} $tool,@$args;` to
+`CORE::GLOBAL::exec($tool,$tool,@$args);`, an unconditional denying port. This
+external syntax exception is required because an ordinary-sub override cannot
+parse Perl's native exec block form. It preserves both operands but proves no
+child exec syntax, argv or dispatch equivalence; actual source stays unchanged,
+and synthetic positive-PID parent cases never enter that branch. Declaration
+compile/prototype/load failure is fatal before self-mode containment reporting,
+never semantic refusal or cleanup proof.
+Synthetic archive/policy substitutions must be disclosed as such, never official
+vendor or protected origin. Preserve actual source composition, ACL/capture,
+FD-enumeration, clock and cleanup decisions. Intercept only bounded external
+ports; deny unknown execution/filesystem/signal/native effects before delegation.
+Use independent fixture ownership, typed finite operation/role queues and a
+sticky fault checked after source eval and every caught call, including disposal
+and repeat. Missing declaration/anchor, syntax, exhausted queue or wrapper fault
+is not semantic RED. First prove lower-port prototype/alias, acquisition,
+FD-enumeration and actual captor lifecycle self-witnesses; only then test stage
+acceptance, every partial acquisition/configuration/close, contamination/drift,
+expiry/restoration/repetition and real forbidden-acceptance mutants. The literal
+helper/clock/read/stat counts and trace cap belong to the reviewed subplan before
+execution; the old parent harness's 512-event limit is not reused by assumption.
+
 ## Parent-owned real execution edge
 
 The trusted supervisor owns the actual fork PID and private pipes, drops all
@@ -484,7 +611,11 @@ Before implementation, root must resolve actual protected system core/XS paths,
 exact transport/deadline/process/credential-drop/FD/native-observer behavior and
 write the detailed TDD implementation plan. This is the design contract, not an
 implementation-complete or pre-effect review clearance claim.
-The sole narrow exception is the independently reviewed four-existing-file
-ordinary declaration-only consumer slice specified above, after ordinary P1 and
-MC delivery/serialization gates. Its tests use ordinary controlled ports only;
-it cannot clear this protected gate or enable main, launcher or native effects.
+The first narrow exception is the independently reviewed four-existing-file
+ordinary declaration-only parent consumer above, after ordinary P1 and MC
+delivery/serialization gates. After its ordinary Step9 delivery/build and fresh
+serialization, the same four files may refine the staged-custody declaration-only
+contract above. No staged implementation/test effect is admitted before its
+literal harness/subplan review. Both slices use ordinary controlled ports only;
+neither clears this protected gate or enables main, publisher, launcher or native
+effects. No change to the source/vendor/import/native or privilege policy follows.

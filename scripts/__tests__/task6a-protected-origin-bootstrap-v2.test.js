@@ -147,6 +147,317 @@ async function entrySession(t,{args=[],options={}}={}) {
 }
 const NONCES=['1'.repeat(64),'2'.repeat(64),'3'.repeat(64)];
 function exchange(nonces=NONCES) {return nonces.map(n=>`CHALLENGE ${n}\n`).join('');}
+const STAGED_CAPTOR_PORT_PROGRAM=String.raw`
+    if($q->{kind} eq 'staged-captor-ports') {
+      require Fcntl; require IO::Select; require POSIX; require Time::HiRes;
+      require B; require Errno; require Digest::SHA; require Encode;
+      my $fault='';my @owned;my %roles;my @events;my %calls;
+      my $mode=$q->{record}{mode};
+      my %modes=map {$_=>1} qw(healthy malformed extra-row raw256 census-duplicate census-noncanonical census-eio partial-pipe inspection-fault forbidden forbidden-exec caught-fault overflow);
+      die "TEST_STAGED_CAPTOR_HARNESS_FAULT\n" unless ref($q->{record}) eq 'HASH'
+        &&join(',',sort keys %{$q->{record}}) eq 'mode'&&defined($mode)&&!ref($mode)&&$modes{$mode};
+      my $self=$mode=~/\A(?:partial-pipe|inspection-fault|forbidden|forbidden-exec|caught-fault|overflow)\z/;
+      my $latch=sub {$fault='TEST_STAGED_CAPTOR_HARNESS_FAULT';return 0;};
+      my $fail=sub {$latch->();die "$fault\n";};
+      my $check=sub {die "$fault\n" if length($fault);};
+      my $event=sub {
+        return 0 if length($fault);
+        my $ok=eval {
+          $fail->() if @events>=8192||@_%2;
+          my %e=(seq=>1+@events,@_);
+          for my $k(keys %e) {
+            $fail->() unless $k=~/\A[a-zA-Z][a-zA-Z0-9]{0,31}\z/;
+            my $v=$e{$k};$fail->() unless defined($v)&&!ref($v);
+            if($k eq 'op'||$k eq 'role') {
+              $fail->() unless $v=~/\A[A-Za-z0-9_.-]+\z/&&length($v)<=($k eq 'op'?32:96);
+            } else {$fail->() unless $v=~/\A[0-9]+\z/&&$v<=2000000000000;}
+          }
+          my $encoded=JSON::PP->new->canonical->utf8->encode(\%e);
+          $fail->() if length($encoded)>512;push @events,\%e;1;
+        };
+        $latch->() unless $ok;return $ok?1:0;
+      };
+      my @pipe_roles=(['in-r','in-w'],['out-r','out-w'],['err-r','err-w'],['setup-r','setup-w']);
+      my @clock=(0)x($mode eq 'raw256'?6:$mode=~/\Acensus-/||$mode eq 'partial-pipe'||$mode eq 'inspection-fault'||$mode eq 'overflow'?3:7);
+      my @wait=([0,0],[0,0],[0,0],[424242,$mode eq 'raw256'?256:0]);
+      @wait=() if $mode=~/\Acensus-/||$mode eq 'partial-pipe'||$mode eq 'inspection-fault'||$mode eq 'overflow';
+      my @ready=(['out-r','err-r','setup-r'],['out-r']);
+      @ready=() if $mode=~/\Acensus-/||$mode eq 'partial-pipe'||$mode eq 'inspection-fault'||$mode eq 'overflow';
+      my %read=( 'out-r'=>[1,0], 'err-r'=>[0], 'setup-r'=>[0] );
+      my @census;my $census;my $census_built=0;my $loaded=0;my $selector;
+      my ($captured,$enumerated);my $load_complete=0;my $setup_error='';
+      my $identify=sub {
+        my ($fh)=@_;$fail->() unless defined($fh)&&ref($fh);
+        for my $r(@owned) {
+          next unless $r->{fh}==$fh;
+          $fail->() if $r->{attempted}||$r->{closed}||!defined(fileno($fh))
+            ||fileno($fh)!=$r->{fd};
+          my @s=CORE::stat($fh);$fail->() unless @s==13;
+          for my $i(0..6) {$fail->() unless $s[$i]==$r->{identity}[$i];}
+          return $r;
+        }
+        $fail->();
+      };
+      my $register=sub {
+        my @records=@_;
+        # Alias rejection precedes registration; all distinct acquisitions are
+        # retained together before any fallible fileno/stat/configuration.
+        for my $r(@records) {
+          for my $other(@owned,@records) {
+            next if $r==$other;$fail->() if $r->{fh}==$other->{fh};
+          }
+        }
+        push @owned,@records;
+        $fail->() if $mode eq 'inspection-fault'&&@owned==2;
+        for my $r(@records) {
+          $r->{fd}=fileno($r->{fh});$fail->() unless defined($r->{fd})&&$r->{fd}>=3;
+          for my $other(@owned) {
+            next if $other==$r;
+            $fail->() if !$other->{closed}&&defined($other->{fd})&&$other->{fd}==$r->{fd};
+          }
+          $r->{identity}=[CORE::stat($r->{fh})];$fail->() unless @{$r->{identity}}==13;
+          $r->{metadataReady}=1;
+          $roles{$r->{role}}=$r;
+          $event->(op=>'acquire',role=>$r->{role},fd=>$r->{fd});
+        }
+      };
+      my $dispose=sub {
+        my ($r,$owner)=@_;return 0 if $r->{attempted};
+        $r->{attempted}=1;$r->{closer}=$owner;
+        # Raw successful CORE acquisitions are private originals before metadata.
+        # Never make their cleanup depend on admission or fallible inspection.
+        if($r->{metadataReady}) {
+          my @s=CORE::stat($r->{fh});
+          unless(defined(fileno($r->{fh}))&&fileno($r->{fh})==$r->{fd}&&@s==13) {
+            $latch->();return 0;
+          }
+          for my $i(0..6) {if($s[$i]!=$r->{identity}[$i]) {$latch->();return 0;}}
+        } else {
+          unless(!$r->{exposed}&&defined($r->{fh})&&ref($r->{fh})&&defined(fileno($r->{fh}))) {
+            $latch->();return 0;
+          }
+        }
+        $event->(op=>'close-attempt',role=>$r->{role},owner=>$owner);
+        $!=0;my $ok=eval {$r->{directory}?CORE::closedir($r->{fh}):CORE::close($r->{fh})};
+        my $error=$@;my $errno=0+$!;
+        $r->{closed}=1 if $ok&&!length($error)&&!defined(fileno($r->{fh}));
+        $event->(op=>'close-result',role=>$r->{role},owner=>$owner,result=>$ok?1:0,
+          definite=>$r->{closed},errno=>$errno);
+        $latch->() unless $r->{closed};return $ok;
+      };
+      my $deny=sub {$event->(op=>'denied',role=>'external');$fail->();};
+      {
+        no warnings qw(redefine once);
+        local *CORE::GLOBAL::pipe=sub (**) {
+          $check->();$fail->() unless @_==2&&@pipe_roles&&!defined($_[0])&&!defined($_[1]);
+          my $names=shift @pipe_roles;
+          CORE::pipe(my $a,my $b) or $fail->();
+          $register->({fh=>$a,role=>$names->[0],attempted=>0,closed=>0},
+            {fh=>$b,role=>$names->[1],attempted=>0,closed=>0});
+          $_[0]=$a;$_[1]=$b;$roles{$names->[0]}{exposed}=1;$roles{$names->[1]}{exposed}=1;
+          ++$calls{pipe};
+          if($names->[0] eq 'out-r') {
+            my $row="-r--r--r-- 1 root wheel 16 Jan 1 2026 /stage/entry.mjs\n";
+            $row="invalid ACL row\n" if $mode eq 'malformed';
+            $row.=" 0: user:ordinary allow read\n" if $mode eq 'extra-row';
+            $!=0;my $n=CORE::syswrite($_[1],$row,length($row));
+            $fail->() unless defined($n)&&$n==length($row)&&!$!;
+            $event->(op=>'fixture-preload',role=>'out-w',length=>$n);
+          }
+          if($mode eq 'partial-pipe'&&$calls{pipe}==2) {$fail->();}
+          if($mode eq 'overflow'&&$calls{pipe}==3) {
+            for(1..8193) {$event->(op=>'overflow',role=>'fixture');}$check->();
+          }
+          return 1;
+        };
+        local *CORE::GLOBAL::binmode=sub (*;$) {
+          $check->();$fail->() unless @_==1;my $r=$identify->($_[0]);
+          $fail->() if $r->{binary}++;++$calls{binmode};
+          my $ok=CORE::binmode($_[0]);$fail->() unless $ok;
+          $event->(op=>'binmode',role=>$r->{role});return $ok;
+        };
+        local *CORE::GLOBAL::fcntl=sub (*$$) {
+          $check->();$fail->() unless @_==3;my $r=$identify->($_[0]);
+          $fail->() unless $r->{role} eq 'setup-w'&&!$calls{fcntl}++
+            &&$_[1]==Fcntl::F_SETFD()&&$_[2]==Fcntl::FD_CLOEXEC();
+          $!=0;my $v=CORE::fcntl($_[0],$_[1],$_[2]);$fail->() unless defined($v)&&!$!;
+          $event->(op=>'fcntl',role=>$r->{role});return $v;
+        };
+        local *CORE::GLOBAL::opendir=sub (*$) {
+          $check->();$fail->() unless @_==2&&!defined($_[0])&&!ref($_[1])&&$_[1] eq '/dev/fd'
+            &&!defined($census)&&@owned==8;
+          # Read-only opening of the fixed system directory acquires only this
+          # directory handle. readdir output below is synthetic, not OS census.
+          CORE::opendir(my $directory,'/dev/fd') or $fail->();
+          $census={fh=>$directory,role=>'census',directory=>1,attempted=>0,closed=>0};
+          $register->($census);$_[0]=$directory;$census->{exposed}=1;++$calls{opendir};return 1;
+        };
+        local *CORE::GLOBAL::readdir=sub (*) {
+          $check->();$fail->() unless @_==1&&!wantarray;
+          my $r=$identify->($_[0]);$fail->() unless $r==$census;
+          unless($census_built) {
+            my %seen;
+            for my $original(@owned) {
+              $identify->($original->{fh});$fail->() if $seen{$original->{fd}}++;
+            }
+            @census=('.', '..','0','1','2',map {"$_->{fd}"} @owned);
+            $census[6]=$census[5] if $mode eq 'census-duplicate';
+            $census[5]='03' if $mode eq 'census-noncanonical';
+            $census_built=1;
+          }
+          my $ordinal=++$calls{readdir};$event->(op=>'readdir',role=>'census',ordinal=>$ordinal);
+          if($mode eq 'census-eio'&&$ordinal==6) {$!=Errno::EIO();return undef;}
+          $!=0;return shift @census;
+        };
+        local *CORE::GLOBAL::closedir=sub (*) {
+          $fail->() unless @_==1;my $r=$identify->($_[0]);$fail->() unless $r==$census;
+          ++$calls{closedir};return $dispose->($r,0);
+        };
+        local *CORE::GLOBAL::fork=sub () {
+          $check->();$fail->() unless @_==0&&!$calls{fork}++&&defined($census)&&$census->{closed};
+          $event->(op=>'fork',role=>'synthetic',pid=>424242);return 424242;
+        };
+        local *CORE::GLOBAL::waitpid=sub ($$) {
+          $check->();$fail->() unless @_==2&&$_[0]==424242&&$_[1]==POSIX::WNOHANG()&&@wait;
+          my $v=shift @wait;++$calls{wait};
+          $event->(op=>'wait',role=>'synthetic',pid=>424242,result=>$v->[0],raw=>$v->[1]);
+          $?=$v->[1];return $v->[0];
+        };
+        local *CORE::GLOBAL::close=sub (;*) {
+          $fail->() unless @_==1;my $r=$identify->($_[0]);
+          $fail->() if $r->{directory};++$calls{close};return $dispose->($r,0);
+        };
+        local *CORE::GLOBAL::sysread=sub (*\$$;$) {
+          $check->();$fail->() unless @_==3&&ref($_[1]) eq 'SCALAR'&&$_[2]==65536;
+          my $buffer_ref=$_[1];$fail->() unless !ref($$buffer_ref)&&$$buffer_ref eq '';
+          my $r=$identify->($_[0]);my $queue=$read{$r->{role}};
+          $fail->() unless ref($queue) eq 'ARRAY'&&@$queue;
+          my $nomination=shift @$queue;
+          $fail->() unless $roles{$r->{role}=~s/-r\z/-w/r}{closed};
+          $!=0;my $n=CORE::sysread($_[0],$$buffer_ref,$_[2]);
+          $fail->() unless defined($n)&&!$!&&!utf8::is_utf8($$buffer_ref)&&$n==length($$buffer_ref);
+          $fail->() unless $nomination?$n>0:$n==0;
+          ++$calls{read};$event->(op=>'read',role=>$r->{role},count=>$n,request=>65536);
+          return $n;
+        };
+        local *IO::Select::can_read=sub {
+          $check->();$fail->() unless @_==2&&ref($_[0]) eq 'IO::Select'&&$_[1]==0.01&&@ready;
+          $selector=$_[0] unless defined($selector);$fail->() unless $_[0]==$selector;
+          my $want=shift @ready;my @members=$_[0]->handles;my %members;
+          $fail->() unless @members==@$want&&$_[0]->count==@$want;
+          for my $fh(@members) {my $r=$identify->($fh);$fail->() if $members{$r->{role}}++;}
+          my @answer;
+          for my $role(@$want) {$fail->() unless $members{$role};push @answer,$roles{$role}{fh};}
+          ++$calls{ready};$event->(op=>'ready',role=>'selector',count=>scalar(@answer));return @answer;
+        };
+        local *Time::HiRes::clock_gettime=sub (;$) {
+          $check->();$fail->() unless @_==1&&$_[0]==Time::HiRes::CLOCK_MONOTONIC()&&@clock;
+          ++$calls{clock};my $v=shift @clock;
+          my $flags=B::svref_2object(\$v)->FLAGS;
+          $fail->() unless $flags&(B::SVf_IOK()|B::SVf_NOK())&&!($flags&B::SVf_POK());
+          $event->(op=>'clock',role=>'monotonic');return $v;
+        };
+        local *CORE::GLOBAL::exec=sub {$event->(op=>'denied-exec',role=>'external');$fail->();};
+        local *CORE::GLOBAL::system=$deny;
+        local *CORE::GLOBAL::readpipe=sub (_) {$deny->();};
+        local *CORE::GLOBAL::kill=sub (@) {$deny->();};
+        local *CORE::GLOBAL::open=sub (*;$@) {$deny->();};
+        local *CORE::GLOBAL::sysopen=sub (*$$;$) {$deny->();};
+        local *CORE::GLOBAL::syswrite=sub (*$;$$) {$deny->();};
+        local *CORE::GLOBAL::chdir=sub (;$) {$deny->();};
+        local *CORE::GLOBAL::unlink=sub (@) {$deny->();};
+        local *CORE::GLOBAL::mkdir=sub (_;$) {$deny->();};
+        local *CORE::GLOBAL::rmdir=sub (_) {$deny->();};
+        local *CORE::GLOBAL::rename=sub ($$) {$deny->();};
+        local *CORE::GLOBAL::stat=sub (;*) {$deny->();};
+        local *CORE::GLOBAL::lstat=sub (;*) {$deny->();};
+        local *CORE::GLOBAL::seek=sub (*$$) {$deny->();};
+        local *CORE::GLOBAL::sysseek=sub (*$$) {$deny->();};
+        local *CORE::GLOBAL::truncate=sub ($$) {$deny->();};
+        local *CORE::GLOBAL::socket=sub (*$$$) {$deny->();};
+        local *CORE::GLOBAL::socketpair=sub (**$$$) {$deny->();};
+        local *CORE::GLOBAL::connect=sub (*$) {$deny->();};
+        local *CORE::GLOBAL::accept=sub (**) {$deny->();};
+        local *IO::Select::can_write=$deny;local *IO::Select::has_exception=$deny;
+        local *Time::HiRes::sleep=$deny;local *POSIX::dup2=$deny;
+        local *POSIX::close=$deny;local *POSIX::_exit=$deny;
+        my %prototypes=(pipe=>'**',opendir=>'*$',readdir=>'*',closedir=>'*',
+          fork=>'',waitpid=>'$$',sysread=>'*\\$$;$',binmode=>'*;$',fcntl=>'*$$',close=>';*');
+        for my $op(sort keys %prototypes) {
+          my $expected=$prototypes{$op};
+          my $installed='CORE::GLOBAL'->can($op);$fail->() unless defined($installed)&&ref($installed) eq 'CODE';
+          my $core=prototype('CORE::'.$op);my $hook=prototype($installed);
+          $fail->() unless defined($core)&&defined($hook)&&$core eq $expected&&$hook eq $expected;
+        }
+        for my $op('exec','system') {
+          my $installed='CORE::GLOBAL'->can($op);
+          $fail->() unless defined($installed)&&ref($installed) eq 'CODE';
+          $fail->() if defined(prototype($installed));
+        }
+        my $source=MIME::Base64::decode_base64($ARGV[0]);
+        my $ok=eval {$loaded=eval($source."\n1;\n");$setup_error=$@;
+          $check->();$fail->() unless $loaded&&!length($setup_error);$load_complete=1;
+          my $capture=\&task6a_origin_capture;my $fds=\&task6a_origin_fds;
+          local *main::task6a_origin_fds=sub {
+            $check->();$fail->() unless @_==0;
+            $enumerated=$fds->();return $enumerated;
+          };
+          local *main::task6a_origin_capture=sub {
+            $check->();$fail->() unless @_==4&&$_[0] eq '/bin/ls'&&ref($_[1]) eq 'ARRAY'
+              &&@{$_[1]}==2&&$_[1][0] eq '-lde'&&$_[1][1] eq '/stage/entry.mjs'
+              &&$_[2]==2&&$_[3]==4096;
+            ++$calls{capture};$event->(op=>'capture',role=>'acl');
+            $captured=$capture->(@_);return $captured;
+          };
+          my $diagnostic=eval {task6a_origin_acl_free('/stage/entry.mjs')};my $primary=$@;
+          if($mode eq 'forbidden') {eval {CORE::GLOBAL::system('/bin/false')};}
+          if($mode eq 'forbidden-exec') {eval {CORE::GLOBAL::exec('/bin/false','/bin/false')};}
+          if($mode eq 'caught-fault') {eval {$fail->()};}
+          $check->();
+          my $refused=!defined($diagnostic)&&$primary eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+          $fail->() unless (!length($primary)&&ref($diagnostic) eq 'HASH')||$refused;
+          $out={accepted=>defined($diagnostic)?JSON::PP::true:JSON::PP::false,
+            refused=>$refused?JSON::PP::true:JSON::PP::false,diagnostic=>$diagnostic,
+            captured=>$captured,enumerated=>$enumerated,
+            helpersSettled=>task6a_origin_helpers_settled()};$check->();
+          1;
+        };my $primary=$@;
+        # Independent fixture finalizer: never mutable producer ledgers/receipts.
+        # Already-attempted uncertain originals are not retried.
+        for my $r(@owned) {
+          next if $r->{attempted};
+          my $closed=eval {$dispose->($r,1)};my $error=$@;
+          $latch->() unless $closed&&!length($error)&&$r->{closed};
+          ++$calls{fixtureClose};
+        }
+        my $definite=grep {$_->{closed}&&!defined(fileno($_->{fh}))} @owned;
+        $latch->() unless $definite==@owned;
+        unless($load_complete) {die length($setup_error)?$setup_error:"$fault\n";}
+        if(length($fault)) {
+          die "$fault\n" unless $self&&$primary eq "$fault\n";
+          $out={accepted=>JSON::PP::false,refused=>JSON::PP::false,diagnostic=>undef,
+            harnessFault=>$fault};
+        } else {
+          die $primary unless $ok;
+          $check->();$fail->() if @clock;
+          unless($mode=~/\Acensus-/) {$fail->() if @wait||@ready;}
+          $out->{harnessFault}=undef;
+        }
+        $out->{calls}=\%calls;$out->{events}=\@events;
+        $out->{ownedCount}=scalar(@owned);$out->{definitelyClosed}=$definite;
+        $out->{consumerClosed}=scalar(grep {$_->{closed}&&$_->{closer}==0} @owned);
+        $out->{fixtureClosed}=scalar(grep {$_->{closed}&&$_->{closer}==1} @owned);
+        $out->{syntheticCensus}=JSON::PP::true;
+        $out->{productionAuthority}=JSON::PP::false;
+        my $metadata=JSON::PP->new->canonical->utf8->encode({map {$_=>$out->{$_}} grep {$_ ne 'events'} keys %$out});
+        die "TEST_STAGED_CAPTOR_HARNESS_FAULT\n" if length($metadata)>16384;
+        my $json=JSON::PP->new->canonical->utf8->encode($out);
+        die "TEST_STAGED_CAPTOR_HARNESS_FAULT\n" if length($json)>8388608;
+        print $json;exit 0;
+      }
+    }
+
+`;
 const PARENT_PORT_PROGRAM=String.raw`
     if($q->{kind} eq 'parent-ports'||$q->{kind} eq 'parent-protocol') {
       require Fcntl; require IO::Select; require POSIX; require Time::HiRes; require B;
@@ -1148,6 +1459,11 @@ function systemObject(kind,record,expected,{sourceOverride}={}) {
   // Load only declarations in the ordinary test process. No production test
   // options/entry points: remove the sole final main call in memory, not on disk.
   let source=replaceOnce(sourceOverride??readFileSync(BOOTSTRAP,'utf8'),'\ntask6a_origin_main();\n','\n');
+  if(kind==='staged-captor-ports') {
+    // Only the denied external exec port changes syntax in this memory copy.
+    // Perl's ordinary-sub override cannot parse the original exec block form.
+    source=replaceOnce(source,'exec {$tool} $tool,@$args;','CORE::GLOBAL::exec($tool,$tool,@$args);');
+  }
   if(kind==='parent-protocol') {
     source=replaceOnce(source,'sub task6a_origin_parent_require_unburned {',String.raw`
 my ($test_saved_admission,%test_saved_fields,@test_saved_custody);
@@ -1263,6 +1579,7 @@ sub task6a_origin_record {`);
     BEGIN { @INC=("/System/Library/Perl/5.34/darwin-thread-multi-2level","/System/Library/Perl/5.34"); }
     use strict; use warnings; use MIME::Base64 (); use JSON::PP ();
     binmode STDIN; local $/; my $q=JSON::PP->new->utf8->decode(<STDIN>); my $out;
+    ${STAGED_CAPTOR_PORT_PROGRAM}
     ${PARENT_PORT_PROGRAM}
     if($q->{kind} eq 'parent-clock') {
       require Time::HiRes; require B; require POSIX;
@@ -1686,7 +2003,7 @@ sub task6a_origin_record {`);
     print JSON::PP->new->canonical->utf8->encode($out);
   `;
   const r=spawnSync('/usr/bin/perl',['-f','-e',program,Buffer.from(source).toString('base64')],{
-    input:JSON.stringify({kind,record,expected}),cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},timeout:record?.fifoRace?500:10000,maxBuffer:65536,
+    input:JSON.stringify({kind,record,expected}),cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},timeout:record?.fifoRace?500:10000,maxBuffer:kind==='staged-captor-ports'?8388608:65536,
   });
   assert.equal(r.error,undefined);assert.equal(r.signal,null);return r;
 }
@@ -1720,6 +2037,82 @@ if(!ordinaryHost()) {
   test('protected archive tests require ordinary macOS UID and fixed Apple Perl',
     {skip:'unsupported host or root test UID; no ambient Perl/root execution fallback'},()=>{});
 } else {
+function stagedCaptorPorts(mode='healthy') {
+  assert.equal(typeof STAGED_CAPTOR_PORT_PROGRAM,'string','staged captor adapter missing');
+  const r=systemObject('staged-captor-ports',{mode},'');
+  assert.equal(r.status,0,r.stderr.toString());assert.equal(r.stderr.length,0);
+  const out=JSON.parse(r.stdout);assert.equal(out.productionAuthority,false);
+  assert.equal(out.syntheticCensus,true);return out;
+}
+test('staged captor foundation retains actual ACL capture and original closure',()=>{
+  const out=stagedCaptorPorts();
+  assert.equal(out.harnessFault,null);assert.equal(out.accepted,true);assert.equal(out.refused,false);
+  assert.deepEqual(out.diagnostic,{scope:'acl-sample-diagnostic-only',productionAuthority:false});
+  assert.deepEqual(out.captured,{out:'-r--r--r-- 1 root wheel 16 Jan 1 2026 /stage/entry.mjs\n',
+    err:'',status:0,pid:424242,reaped:true});
+  assert.equal(out.helpersSettled,true);
+  assert.equal(out.ownedCount,9);assert.equal(out.definitelyClosed,9);
+  assert.equal(out.consumerClosed,9);assert.equal(out.fixtureClosed,0);
+  assert.deepEqual(out.calls,{capture:1,pipe:4,binmode:8,fcntl:1,opendir:1,
+    readdir:15,closedir:1,clock:7,fork:1,close:8,ready:2,read:4,wait:4});
+  const waits=out.events.filter(e=>e.op==='wait');
+  assert.deepEqual(waits.map(e=>[e.pid,e.result,e.raw]),[[424242,0,0],[424242,0,0],
+    [424242,0,0],[424242,424242,0]]);
+  const acquired=out.events.filter(e=>e.op==='acquire');
+  assert.deepEqual(acquired.map(e=>e.role),['in-r','in-w','out-r','out-w','err-r','err-w','setup-r','setup-w','census']);
+  const own=acquired.find(e=>e.role==='census').fd;
+  assert.equal(out.enumerated.includes(own),false);
+  const pipes=acquired.filter(e=>e.role!=='census').map(e=>e.fd);
+  assert.deepEqual(out.enumerated,[0,1,2,...pipes].sort((a,b)=>a-b));
+  assert.deepEqual(out.events.filter(e=>e.op==='read').map(e=>[e.role,e.count,e.request]),
+    [['out-r',55,65536],['err-r',0,65536],['setup-r',0,65536],['out-r',0,65536]]);
+  assert.deepEqual(out.events.filter(e=>e.op==='close-attempt').map(e=>[e.role,e.owner]),
+    [['census',0],['in-r',0],['in-w',0],['out-w',0],['err-w',0],['setup-w',0],
+      ['err-r',0],['setup-r',0],['out-r',0]]);
+});
+
+for(const mode of ['malformed','extra-row','raw256']) {
+  test('staged captor foundation refuses '+mode+' through actual consumer',()=>{
+    const out=stagedCaptorPorts(mode);
+    assert.equal(out.harnessFault,null);assert.equal(out.accepted,false);assert.equal(out.refused,true);
+    assert.equal(out.diagnostic,null);assert.equal(out.helpersSettled,true);
+    assert.equal(out.ownedCount,9);assert.equal(out.definitelyClosed,9);
+    assert.equal(out.consumerClosed,9);assert.equal(out.fixtureClosed,0);
+    assert.equal(out.calls.clock,mode==='raw256'?6:7);assert.equal(out.calls.wait,4);
+    assert.equal(out.calls.close,8);assert.equal(out.calls.closedir,1);
+    if(mode==='raw256') {
+      assert.equal(out.captured,null);
+      const last=out.events.filter(e=>e.op==='wait').at(-1);
+      assert.deepEqual([last.pid,last.result,last.raw],[424242,424242,256]);
+    } else {assert.equal(out.captured.reaped,true);assert.equal(out.captured.status,0);}
+  });
+}
+for(const [mode,count] of [['census-duplicate',7],['census-noncanonical',6],['census-eio',6]]) {
+  test('staged captor foundation refuses '+mode+' before synthetic fork',()=>{
+    const out=stagedCaptorPorts(mode);
+    assert.equal(out.harnessFault,null);assert.equal(out.accepted,false);assert.equal(out.refused,true);
+    assert.equal(out.captured,null);assert.equal(out.enumerated,null);assert.equal(out.helpersSettled,false);
+    assert.equal(out.calls.readdir,count);assert.equal(out.calls.clock,3);
+    assert.equal(out.calls.fork,undefined);assert.equal(out.calls.wait,undefined);
+    assert.equal(out.calls.read,undefined);assert.equal(out.calls.ready,undefined);
+    assert.equal(out.ownedCount,9);assert.equal(out.consumerClosed,9);assert.equal(out.fixtureClosed,0);
+    assert.equal(out.definitelyClosed,9);
+  });
+}
+for(const [mode,owned,consumer,fixture] of [['inspection-fault',2,0,2],['partial-pipe',4,2,2],['overflow',6,4,2],
+    ['forbidden',9,9,0],['forbidden-exec',9,9,0],['caught-fault',9,9,0]]) {
+  test('staged captor foundation classifies '+mode+' as harness fault with original containment',()=>{
+    const out=stagedCaptorPorts(mode);
+    assert.equal(out.harnessFault,'TEST_STAGED_CAPTOR_HARNESS_FAULT');
+    assert.equal(out.accepted,false);assert.equal(out.refused,false);assert.equal(out.diagnostic,null);
+    assert.equal(out.ownedCount,owned);assert.equal(out.definitelyClosed,owned);
+    assert.equal(out.consumerClosed,consumer);assert.equal(out.fixtureClosed,fixture);
+    if(mode==='overflow') {assert.equal(out.events.length,8192);}
+    if(mode==='forbidden') {assert.equal(out.events.filter(e=>e.op==='denied').length,1);}
+    if(mode==='forbidden-exec') {assert.equal(out.events.filter(e=>e.op==='denied-exec').length,1);}
+  });
+}
+
 test('complete map parser consumes actual interleaved grammar without admitting potential code',()=>{
   const r=parseMap(readFileSync(MAP_FIXTURE));assert.equal(r.status,0,r.stderr.toString());assert.equal(r.stderr.length,0);const out=JSON.parse(r.stdout);
   assert.equal(out.scope,'complete-map-format-diagnostic-only');assert.equal(out.productionAuthority,false);
