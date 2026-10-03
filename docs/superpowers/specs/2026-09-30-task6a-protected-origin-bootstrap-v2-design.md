@@ -503,6 +503,53 @@ post-implementation self-witness execution can clear this foundation. Complete
 staged ownership, authentic creator record, H42 composition, shared holder
 failure routing, protected/native and final service cutover remain separate.
 
+
+## Ordinary directory-FH port continuation: design refinement
+
+The delivered seekable-file/DIR-stream foundation does not cover the actual
+ancestry acquisition port: bootstrap uses sysopen with O_DIRECTORY and close,
+not opendir/closedir. This causal next prerequisite extends the existing private
+test bridge only. File Map is the existing bootstrap test, this spec and its
+plan; production bootstrap, main refusal, entry/helpers/map, package/lock,
+creator/admission records and all runtime/native/service gates remain unchanged.
+
+Select the same existing map-data leaf and scripts directory under ordinary
+ownership. Retain real handles and real thirteen-field metadata, never synthetic
+root:wheel policy. Keep existing stream cases distinct and unchanged in behavior.
+A directory-FH profile acquires the existing map file first, then the directory
+through exactly O_RDONLY|O_NOFOLLOW|O_DIRECTORY; it configures CLOEXEC, checks
+actual held/path directory identity and definitely closes with CORE close.
+The fixture order is not the future six-ancestry/six-leaf composition order.
+No directory contents/read/seek census, filesystem creation/write/delete/chmod,
+ACL alteration, external tool/native/SQL or production consumer is admitted.
+
+Keep metadata kind (directory versus regular file) separate from immutable
+original disposal kind (file handle versus DIR stream). Register each actual
+distinct acquisition before fallible inspection, trace or configuration.
+Use the existing sealed original registry, sticky fault and finite typed queues;
+independent disposal consumes its attempt before effects, chooses only the
+original disposal kind and continues all remaining originals. Mutable diagnostic
+or admission data cannot redirect it. Existing DIR streams still use closedir;
+directory file handles use close, never interchange these kernel resources.
+
+Alias nomination must inspect an already retained original before any second
+CORE acquisition, adding no duplicate/borrowed close obligation. This remains
+fixture-only nomination, not proof of the future capsule's pending-success/
+returned-alias ownership seam. Test partial acquisition, metadata/configuration
+failure, wrong path/flags, caught sticky fault, bounded trace overflow and
+false/throwing/post-close-inspection nominations with exact primary evidence.
+False/throw nominations occur only after separate physical closure proof; they
+prove containment, never uncertain-native-close leak freedom.
+
+All resulting JSON is fixture-only: productionAuthority false, consumerInvoked
+false and consumerClosed zero, with no FH/FD/PID/path/hash identity or private
+owner record returned. The lower readonly bridge does not invoke acl_free or
+capture, establish H42 or initialize staged ownership. Complete literal deltas,
+closed modes, independently derived queues/counts/trace caps and exact commands
+must be saved/reviewed in the executable subplan before any new test effect.
+A missing new-adapter assertion may prove test-support RED before fixture IO;
+setup/prototype/compile failure is never staged-consumer RED. Main stays refused.
+
 ## Parent-owned real execution edge
 
 The trusted supervisor owns the actual fork PID and private pipes, drops all

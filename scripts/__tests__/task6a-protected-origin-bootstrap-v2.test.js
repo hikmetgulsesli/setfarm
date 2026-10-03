@@ -152,15 +152,17 @@ const STAGED_FILE_PORT_PROGRAM=String.raw`
     BEGIN { @INC=("/System/Library/Perl/5.34/darwin-thread-multi-2level","/System/Library/Perl/5.34"); }
     use strict; use warnings; use Fcntl (); use JSON::PP (); use Digest::SHA ();
     my ($file_path,$directory_path,$digest,$mode)=@ARGV;
+    my $directory_fh=defined($mode)&&$mode=~s/\Adirectory-fh-//?1:0;
     my %modes=map {$_=>1} qw(healthy partial-acquisition inspection-fault alias forbidden-path forbidden-flags forbidden-exec caught-fault exhausted-read overflow close-false close-throw post-close-inspection-throw);
     die "TEST_STAGED_FILE_PORT_HARNESS_FAULT\n" unless @ARGV==4&&$<!=0&&$<==$>
-      &&defined($mode)&&$modes{$mode}&&defined($directory_path)&&$directory_path=~m{\A/[^\r\n\0]+\z}
+      &&defined($mode)&&($modes{$mode}||($directory_fh&&$mode eq 'configuration-fault'))&&defined($directory_path)&&$directory_path=~m{\A/[^\r\n\0]+\z}
       &&defined($file_path)&&$file_path eq $directory_path.'/task6a-origin-map-v2.pm'
       &&defined($digest)&&$digest=~/\A[a-f0-9]{64}\z/;
     my ($fault,$nominated)=('','');my $alias_witness=0;my @owned;my %roles;my @events;my @close_order;
     my %calls=map {$_=>0} qw(sysopen opendir binmode fcntl stat lstat sysseek sysread fileno close closedir);
-    my %core=(fileOpen=>0,directoryOpen=>0,metadata=>0,fileClose=>0,directoryClose=>0);
-    my @fcntl=([Fcntl::F_GETFL(),0],[Fcntl::F_GETFD(),0],[Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()],[Fcntl::F_GETFD(),0]);
+    my %core=(fileOpen=>0,directoryOpen=>0,directoryFhOpen=>0,metadata=>0,fileClose=>0,directoryClose=>0);
+    my @fcntl=map {['file',@$_]} ([Fcntl::F_GETFL(),0],[Fcntl::F_GETFD(),0],[Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()],[Fcntl::F_GETFD(),0]);
+    push @fcntl,map {['directory',@$_]} ([Fcntl::F_GETFL(),0],[Fcntl::F_GETFD(),0],[Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()],[Fcntl::F_GETFD(),0]) if $directory_fh;
     my @stat=qw(file directory file directory);my @lstat=@stat;my @seek=(0,0);my @read=(11684,0,11684);
     my ($first_length,$eof_length,$second_length)=(undef,undef,undef);my $matched=0;
     my $latch=sub {$fault='TEST_STAGED_FILE_PORT_HARNESS_FAULT';};
@@ -179,12 +181,17 @@ const STAGED_FILE_PORT_PROGRAM=String.raw`
       push @events,$e;return 1;
     };
     my $register=sub {
-      my ($fh,$role,$directory)=@_;
+      my ($fh,$role,$directory,$disposal)=@_;
       # Raw actual acquisition is owned before metadata or trace can fail.
       for my $r(@owned) {$fail->() if $r->{fh}==$fh;}
-      my $r={fh=>$fh,role=>$role,directory=>$directory,attempted=>0,closed=>0};
+      # Original disposal type and FH are private lexical captures, not admission metadata.
+      my $r={fh=>$fh,role=>$role,directory=>$directory,attempted=>0,closed=>0,
+        originalKind=>sub {$disposal;},originalClose=>sub {
+          ++$core{$disposal eq 'dir-stream'?'directoryClose':'fileClose'};
+          return $disposal eq 'dir-stream'?CORE::closedir($fh):CORE::close($fh);
+        }};
       push @owned,$r;$roles{$role}=$r;$event->('acquire',$role);$check->();
-      $nominate->('inspection-fault') if $mode eq 'inspection-fault'&&$role eq 'file';
+      $nominate->('inspection-fault') if $mode eq 'inspection-fault'&&$role eq ($directory_fh?'directory':'file');
       my $fd=CORE::fileno($fh);my @s=CORE::stat($fh);++$core{metadata};
       $fail->() unless defined($fd)&&$fd>=3&&@s==13&&$s[4]==$<
         &&($directory?Fcntl::S_ISDIR($s[2]):Fcntl::S_ISREG($s[2])&&$s[3]==1);
@@ -210,12 +217,11 @@ const STAGED_FILE_PORT_PROGRAM=String.raw`
     my $dispose=sub {
       my ($r)=@_;return 0 if $r->{attempted};
       $r->{attempted}=1;push @close_order,$r->{role};$event->('close-attempt',$r->{role});
-      $!=0;my $ok=eval {$r->{directory}?CORE::closedir($r->{fh}):CORE::close($r->{fh})};my $error=$@;my $errno=0+$!;
-      ++$core{$r->{directory}?'directoryClose':'fileClose'};
+      $!=0;my $ok=eval {$r->{originalClose}->()};my $error=$@;my $errno=0+$!;
       my $end;my $inspected=eval {$end=CORE::fileno($r->{fh});1;};my $inspection_error=$@;
       $r->{closed}=1 if $ok&&!length($error)&&!$errno&&$inspected&&!length($inspection_error)&&!defined($end);
       $event->('close-result',$r->{role});$fail->() unless $r->{closed};
-      if($r->{role} eq 'file'&&$mode=~/\A(?:close-false|close-throw|post-close-inspection-throw)\z/) {
+      if($r->{role} eq ($directory_fh?'directory':'file')&&$mode=~/\A(?:close-false|close-throw|post-close-inspection-throw)\z/) {
         $nominated=$mode;$latch->();
         return 0 if $mode eq 'close-false';
         die "TEST_STAGED_FILE_PORT_NOMINATED_CLOSE_THROW\n" if $mode eq 'close-throw';
@@ -234,24 +240,32 @@ const STAGED_FILE_PORT_PROGRAM=String.raw`
       local *CORE::GLOBAL::sysopen=sub (*$$;$) {
         $check->();++$calls{sysopen};
         $fail->() unless @_==3&&!defined($_[0])&&!ref($_[1])&&!ref($_[2]);
-        if($_[1] ne $file_path) {$event->('denied','path');$nominate->('forbidden-path') if $mode eq 'forbidden-path';$fail->();}
-        my $flags=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK();
+        my $role=$_[1] eq $file_path?'file':$directory_fh&&$_[1] eq $directory_path?'directory':'';
+        unless(length($role)) {$event->('denied','path');$nominate->('forbidden-path') if $mode eq 'forbidden-path';$fail->();}
+        my $flags=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()
+          |($role eq 'directory'?Fcntl::O_DIRECTORY():Fcntl::O_NONBLOCK());
         if($_[2]!=$flags) {$event->('denied','flags');$nominate->('forbidden-flags') if $mode eq 'forbidden-flags';$fail->();}
-        if(defined($roles{file})) {
-          if($mode eq 'alias') {my $candidate=$roles{file}{fh};my $r=$lookup->($candidate,0);
-            $fail->() unless $r==$roles{file}&&CORE::fileno($candidate)==$r->{fd};
-            $alias_witness=1;$event->('alias','file');$nominate->('alias');}
+        if(defined($roles{$role})) {
+          if($mode eq 'alias') {my $candidate=$roles{$role}{fh};my $r=$lookup->($candidate,0);
+            $fail->() unless $role eq ($directory_fh?'directory':'file')
+              &&$r==$roles{$role}&&CORE::fileno($candidate)==$r->{fd};
+            $alias_witness=1;$event->('alias',$role);$nominate->('alias');}
           $fail->();
         }
-        CORE::sysopen(my $fh,$file_path,$flags) or $fail->();++$core{fileOpen};
-        $register->($fh,'file',0);$_[0]=$fh;return 1;
+        if($role eq 'directory') {
+          $fail->() unless defined($roles{file});
+          $nominate->('partial-acquisition') if $mode eq 'partial-acquisition';
+        } else {$fail->() if @owned;}
+        CORE::sysopen(my $fh,$_[1],$flags) or $fail->();
+        ++$core{$role eq 'directory'?'directoryFhOpen':'fileOpen'};
+        $register->($fh,$role,$role eq 'directory'?1:0,'fh');$_[0]=$fh;return 1;
       };
       local *CORE::GLOBAL::opendir=sub (*$) {
-        $check->();++$calls{opendir};$fail->() unless @_==2&&!defined($_[0])&&!ref($_[1])
+        $check->();++$calls{opendir};$fail->() if $directory_fh;$fail->() unless @_==2&&!defined($_[0])&&!ref($_[1])
           &&$_[1] eq $directory_path&&!defined($roles{directory})&&defined($roles{file});
         $nominate->('partial-acquisition') if $mode eq 'partial-acquisition';
         CORE::opendir(my $fh,$directory_path) or $fail->();++$core{directoryOpen};
-        $register->($fh,'directory',1);$_[0]=$fh;return 1;
+        $register->($fh,'directory',1,'dir-stream');$_[0]=$fh;return 1;
       };
       local *CORE::GLOBAL::binmode=sub (*;$) {
         $check->();$fail->() unless @_==1&&$calls{binmode}++==0;
@@ -260,9 +274,12 @@ const STAGED_FILE_PORT_PROGRAM=String.raw`
       };
       local *CORE::GLOBAL::fcntl=sub (*$$) {
         $check->();$fail->() unless @_==3&&@fcntl;my $r=$lookup->($_[0],0);
-        my $want=shift @fcntl;$fail->() unless $r->{role} eq 'file'&&$_[1]==$want->[0]&&$_[2]==$want->[1];
+        my $want=shift @fcntl;$fail->() unless $r->{role} eq $want->[0]&&$_[1]==$want->[1]&&$_[2]==$want->[2];
         $!=0;my $v=CORE::fcntl($_[0],$_[1],$_[2]);$fail->() unless defined($v)&&!$!;
-        ++$calls{fcntl};$event->('fcntl','file');return $v;
+        ++$calls{fcntl};$event->('fcntl',$r->{role});
+        $nominate->('configuration-fault') if $directory_fh&&$mode eq 'configuration-fault'
+          &&$r->{role} eq 'directory'&&$_[1]==Fcntl::F_SETFD();
+        return $v;
       };
       local *CORE::GLOBAL::stat=sub (;*) {
         $check->();$fail->() unless @_==1&&wantarray&&@stat;my $r=$lookup->($_[0],0);
@@ -296,11 +313,11 @@ const STAGED_FILE_PORT_PROGRAM=String.raw`
         ++$calls{fileno};$event->('fileno',$r->{role});return CORE::fileno($_[0]);
       };
       local *CORE::GLOBAL::close=sub (;*) {
-        $fail->() unless @_==1;my $r=$lookup->($_[0],1);$fail->() if $r->{directory};
+        $fail->() unless @_==1;my $r=$lookup->($_[0],1);$fail->() unless $r->{originalKind}->() eq 'fh';
         ++$calls{close};return $dispose->($r);
       };
       local *CORE::GLOBAL::closedir=sub (*) {
-        $fail->() unless @_==1;my $r=$lookup->($_[0],1);$fail->() unless $r->{directory};
+        $fail->() unless @_==1;my $r=$lookup->($_[0],1);$fail->() unless $r->{originalKind}->() eq 'dir-stream';
         ++$calls{closedir};return $dispose->($r);
       };
       local *CORE::GLOBAL::exec=$deny;local *CORE::GLOBAL::system=$deny;
@@ -327,8 +344,11 @@ const STAGED_FILE_PORT_PROGRAM=String.raw`
       $body_ok=eval q{
         my ($file,$directory);my $flags=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK();
         sysopen($file,$file_path,$flags) or $fail->();
-        opendir($directory,$directory_path) or $fail->();
-        if($mode eq 'alias') {my $other;sysopen($other,$file_path,$flags);$fail->();}
+        my $directory_flags=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_DIRECTORY();
+        if($directory_fh) {sysopen($directory,$directory_path,$directory_flags) or $fail->();}
+        else {opendir($directory,$directory_path) or $fail->();}
+        if($mode eq 'alias') {my $other;sysopen($other,$directory_fh?$directory_path:$file_path,
+          $directory_fh?$directory_flags:$flags);$fail->();}
         if($mode eq 'forbidden-path') {my $other;sysopen($other,$file_path.'/unselected',$flags);$fail->();}
         if($mode eq 'forbidden-flags') {my $other;sysopen($other,$file_path,Fcntl::O_WRONLY());$fail->();}
         if($mode eq 'forbidden-exec') {CORE::GLOBAL::exec('/bin/false');$fail->();}
@@ -341,6 +361,15 @@ const STAGED_FILE_PORT_PROGRAM=String.raw`
         my $fd_flags=fcntl($file,Fcntl::F_GETFD(),0);$fail->() unless defined($fd_flags);
         fcntl($file,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()) or $fail->();
         $fd_flags=fcntl($file,Fcntl::F_GETFD(),0);$fail->() unless defined($fd_flags)&&($fd_flags&Fcntl::FD_CLOEXEC());
+        if($directory_fh) {
+          my $directory_fl=fcntl($directory,Fcntl::F_GETFL(),0);
+          $fail->() unless defined($directory_fl)&&($directory_fl&Fcntl::O_ACCMODE())==Fcntl::O_RDONLY();
+          my $directory_fd_flags=fcntl($directory,Fcntl::F_GETFD(),0);
+          $fail->() unless defined($directory_fd_flags);
+          fcntl($directory,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()) or $fail->();
+          $directory_fd_flags=fcntl($directory,Fcntl::F_GETFD(),0);
+          $fail->() unless defined($directory_fd_flags)&&($directory_fd_flags&Fcntl::FD_CLOEXEC());
+        }
         my $fd=fileno($file);$fail->() unless defined($fd)&&$fd>=3;
         my @s=stat($file);@s=lstat($file_path);@s=stat($directory);@s=lstat($directory_path);
         my $position=sysseek($file,0,0);$fail->() unless defined($position)&&$position==0;
@@ -352,7 +381,8 @@ const STAGED_FILE_PORT_PROGRAM=String.raw`
         $fail->() unless Digest::SHA::sha256_hex($bytes) eq $digest;$matched=1;
         @s=stat($file);@s=lstat($file_path);@s=stat($directory);@s=lstat($directory_path);
         if($mode eq 'exhausted-read') {$bytes='';sysread($file,$bytes,65536);$fail->();}
-        close($file) or $check->();closedir($directory) or $check->();
+        if($directory_fh) {close($directory) or $check->();close($file) or $check->();}
+        else {close($file) or $check->();closedir($directory) or $check->();}
         1;
       };
       $primary=$@;
@@ -375,7 +405,8 @@ const STAGED_FILE_PORT_PROGRAM=String.raw`
         :($body_ok&&!length($primary)&&!length($fault)&&!@cleanup_errors
           &&!@fcntl&&!@stat&&!@lstat&&!@seek&&!@read));
     my $out={scope=>'ordinary-staged-file-ports-fixture-only',productionAuthority=>JSON::PP::false,
-      consumerInvoked=>JSON::PP::false,consumerClosed=>0,fixtureClosed=>0+$closed,
+      consumerInvoked=>JSON::PP::false,consumerClosed=>0,
+      directoryFhProfile=>$directory_fh?JSON::PP::true:JSON::PP::false,fixtureClosed=>0+$closed,
       ownedCount=>scalar(@owned),definitelyClosed=>0+$closed,portsReady=>JSON::PP::true,
       harnessFault=>length($fault)?$fault:undef,nominatedFault=>length($nominated)?$nominated:undef,
       containedSelfFault=>$self?JSON::PP::true:JSON::PP::false,
@@ -2313,6 +2344,72 @@ if(!ordinaryHost()) {
   test('protected archive tests require ordinary macOS UID and fixed Apple Perl',
     {skip:'unsupported host or root test UID; no ambient Perl/root execution fallback'},()=>{});
 } else {
+const STAGED_DIRECTORY_FH_CORE_KEYS=['fileOpen','directoryOpen','directoryFhOpen','metadata','fileClose','directoryClose'];
+const STAGED_DIRECTORY_FH_HEALTHY_TRACE=[
+  'acquire:file','acquire:directory','binmode:file',
+  'fcntl:file','fcntl:file','fcntl:file','fcntl:file',
+  'fcntl:directory','fcntl:directory','fcntl:directory','fcntl:directory','fileno:file',
+  'stat:file','lstat:file','stat:directory','lstat:directory',
+  'seek:file','read:file','read:file','seek:file','read:file',
+  'stat:file','lstat:file','stat:directory','lstat:directory',
+  'close-attempt:directory','close-result:directory','close-attempt:file','close-result:file',
+];
+function assertDirectoryFhTrace(out,want) {
+  assert.deepEqual(out.events.map(e=>e.op+':'+e.role),want);
+  assert.deepEqual(out.events.map(e=>e.seq),want.map((_,i)=>i+1));
+  for(const e of out.events) {
+    assert.deepEqual(Object.keys(e).sort(),['op','role','seq']);
+    assert.ok(Buffer.byteLength(JSON.stringify(e))<=512);
+  }
+}
+test('staged directory FH ports retain actual directory handles and close original FH types',()=>{
+  assert.equal(typeof stagedDirectoryFhPorts,'function','staged directory FH adapter missing');
+  const out=stagedDirectoryFhPorts();
+  assert.equal(out.directoryFhProfile,true);assert.equal(out.harnessFault,null);assert.equal(out.nominatedFault,null);
+  assert.equal(out.containedSelfFault,false);assert.equal(out.dataMatched,true);assert.equal(out.aliasWitness,false);
+  assert.equal(out.primaryError,'');assert.deepEqual(out.cleanupErrors,[]);
+  assert.deepEqual([out.firstLength,out.eofLength,out.secondLength],[11684,0,11684]);
+  assert.deepEqual(STAGED_FILE_CALL_KEYS.map(k=>out.calls[k]),[2,0,1,8,4,4,2,3,1,2,0]);
+  assert.deepEqual(STAGED_DIRECTORY_FH_CORE_KEYS.map(k=>out.core[k]),[1,0,1,2,2,0]);
+  assert.deepEqual([out.ownedCount,out.definitelyClosed,out.fixtureClosed],[2,2,2]);
+  assert.deepEqual(out.closeOrder,['directory','file']);
+  assert.deepEqual(out.remaining,{fcntl:0,stat:0,lstat:0,seek:0,read:0});
+  assertDirectoryFhTrace(out,STAGED_DIRECTORY_FH_HEALTHY_TRACE);
+});
+for(const [mode,owned,core,calls,trace,matched,alias,primary,closeOrder,remainingFcntl] of [
+  ['partial-acquisition',1,[1,0,0,1,1,0],[2,0,0,0,0,0,0,0,0,0,0],['acquire:file'],false,false,'fault',['file'],8],
+  ['inspection-fault',2,[1,0,1,1,2,0],[2,0,0,0,0,0,0,0,0,0,0],['acquire:file','acquire:directory'],false,false,'fault',['file','directory'],8],
+  ['alias',2,[1,0,1,2,2,0],[3,0,0,0,0,0,0,0,0,0,0],['acquire:file','acquire:directory','alias:directory'],false,true,'fault',['file','directory'],8],
+  ['forbidden-path',2,[1,0,1,2,2,0],[3,0,0,0,0,0,0,0,0,0,0],['acquire:file','acquire:directory','denied:path'],false,false,'fault',['file','directory'],8],
+  ['forbidden-flags',2,[1,0,1,2,2,0],[3,0,0,0,0,0,0,0,0,0,0],['acquire:file','acquire:directory','denied:flags'],false,false,'fault',['file','directory'],8],
+  ['forbidden-exec',2,[1,0,1,2,2,0],[2,0,0,0,0,0,0,0,0,0,0],['acquire:file','acquire:directory','denied:external'],false,false,'fault',['file','directory'],8],
+  ['caught-fault',2,[1,0,1,2,2,0],[2,0,0,0,0,0,0,0,0,0,0],['acquire:file','acquire:directory'],false,false,'fault',['file','directory'],8],
+  ['configuration-fault',2,[1,0,1,2,2,0],[2,0,1,7,0,0,0,0,0,0,0],STAGED_DIRECTORY_FH_HEALTHY_TRACE.slice(0,10),false,false,'fault',['file','directory'],1],
+  ['exhausted-read',2,[1,0,1,2,2,0],[2,0,1,8,4,4,2,3,1,0,0],STAGED_DIRECTORY_FH_HEALTHY_TRACE.slice(0,25),true,false,'fault',['file','directory'],0],
+  ['overflow',2,[1,0,1,2,2,0],[2,0,0,0,0,0,0,0,0,0,0],['acquire:file','acquire:directory',...Array(94).fill('overflow:fixture')],false,false,'fault',['file','directory'],8],
+  ['close-false',2,[1,0,1,2,2,0],[2,0,1,8,4,4,2,3,1,1,0],STAGED_DIRECTORY_FH_HEALTHY_TRACE.slice(0,27),true,false,'fault',['directory','file'],0],
+  ['close-throw',2,[1,0,1,2,2,0],[2,0,1,8,4,4,2,3,1,1,0],STAGED_DIRECTORY_FH_HEALTHY_TRACE.slice(0,27),true,false,'close',['directory','file'],0],
+  ['post-close-inspection-throw',2,[1,0,1,2,2,0],[2,0,1,8,4,4,2,3,1,1,0],STAGED_DIRECTORY_FH_HEALTHY_TRACE.slice(0,27),true,false,'inspection',['directory','file'],0],
+]) test('staged directory FH ports contain '+mode+' without borrowing or leaking original handles',()=>{
+  assert.equal(typeof stagedDirectoryFhPorts,'function','staged directory FH adapter missing');
+  const out=stagedDirectoryFhPorts(mode);
+  assert.equal(out.directoryFhProfile,true);assert.equal(out.containedSelfFault,true);
+  assert.equal(out.harnessFault,'TEST_STAGED_FILE_PORT_HARNESS_FAULT');assert.equal(out.nominatedFault,mode);
+  assert.equal(out.dataMatched,matched);assert.equal(out.aliasWitness,alias);
+  assert.deepEqual([out.ownedCount,out.definitelyClosed,out.fixtureClosed],[owned,owned,owned]);
+  assert.deepEqual(STAGED_DIRECTORY_FH_CORE_KEYS.map(k=>out.core[k]),core);
+  assert.deepEqual(STAGED_FILE_CALL_KEYS.map(k=>out.calls[k]),calls);
+  assert.deepEqual(out.closeOrder,closeOrder);assert.deepEqual(out.cleanupErrors,[]);
+  assert.equal(out.primaryError,primary==='close'?'TEST_STAGED_FILE_PORT_NOMINATED_CLOSE_THROW\n'
+    :primary==='inspection'?'TEST_STAGED_FILE_PORT_NOMINATED_INSPECTION_THROW\n':'TEST_STAGED_FILE_PORT_HARNESS_FAULT\n');
+  assert.deepEqual(out.remaining,{fcntl:remainingFcntl,stat:matched?0:4,lstat:matched?0:4,seek:matched?0:2,read:matched?0:3});
+  assert.deepEqual([out.firstLength,out.eofLength,out.secondLength],matched?[11684,0,11684]:[null,null,null]);
+  assertDirectoryFhTrace(out,trace);
+});
+function stagedDirectoryFhPorts(mode='healthy') {
+  const out=stagedFilePorts('directory-fh-'+mode);
+  assert.equal(out.directoryFhProfile,true);return out;
+}
 function stagedFilePorts(mode='healthy') {
   assert.equal(typeof STAGED_FILE_PORT_PROGRAM,'string','staged readonly file adapter missing');
   const bytes=readFileSync(MAP);assert.equal(bytes.length,11684,'fixed ordinary map-data fixture changed');
@@ -2325,7 +2422,11 @@ function stagedFilePorts(mode='healthy') {
   assert.equal(r.status,0,r.stderr.toString());assert.equal(r.stderr.length,0);
   const out=JSON.parse(r.stdout);assert.equal(out.scope,'ordinary-staged-file-ports-fixture-only');
   assert.equal(out.productionAuthority,false);assert.equal(out.consumerInvoked,false);
-  assert.equal(out.consumerClosed,0);assert.equal(out.portsReady,true);return out;
+  assert.equal(out.consumerClosed,0);assert.equal(out.portsReady,true);
+  if(!mode.startsWith('directory-fh-')) {
+    assert.equal(out.directoryFhProfile,false);assert.equal(out.core.directoryFhOpen,0);
+  }
+  return out;
 }
 const STAGED_FILE_CALL_KEYS=['sysopen','opendir','binmode','fcntl','stat','lstat','sysseek','sysread','fileno','close','closedir'];
 const STAGED_FILE_CORE_KEYS=['fileOpen','directoryOpen','metadata','fileClose','directoryClose'];

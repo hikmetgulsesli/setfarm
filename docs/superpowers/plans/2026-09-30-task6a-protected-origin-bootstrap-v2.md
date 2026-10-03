@@ -1590,7 +1590,7 @@ queues, marks each attempt before effects and continues all originals.
   actual literal prototype/IO/registry/alias/closed-queue/trace/closure witnesses,
   zero unexpected harness/compile faults and complete natural exit/output.
   Correct unexpected setup failures without promoting them to semantic RED.
-- [ ] **Step 4: Verify and deliver this ordinary prerequisite.**
+- [x] **Step 4: Verify and deliver this ordinary prerequisite.**
   Fresh unfiltered bootstrap group on exact source/test, cheap diff/English/
   path checks, independent whole branch review, scoped conventional commit,
   normal push/PR/exact-head cloud/security/paginated feedback and merge.
@@ -1607,7 +1607,21 @@ Exact resulting test3df7bd08/source4aaececb passed13 focused cases (exit0,
 closed with1145PASS/0FAIL/0CANCEL/0SKIP/0TODO in76548.866667ms; complete output
 was read and source/test/spec/plan pins rechecked unchanged. Two independent
 whole-branch static reviews found C0/I0/M0. All new closure/IO credit remains
-fixture-only; production main still refuses. Step4 delivery/build remains open.
+fixture-only; production main still refuses. Step4 was open at that checkpoint.
+
+Step4 actual completion, 2026-10-03: PR270 delivered exact head a8a4275b after
+two independent whole-branch reviews and exact-head Codex no-major-issues/
+GitGuardian success evidence. Normal merge42c57386 has valid signature,
+parents284f9a43/a8a4275b and tree69fa9f51. A separate own clean-main clone
+fast-forwarded to that merge; one normal guarded build naturally exited and
+closed0 at22:30:08.941Z, with all5661 held inputs revalidated and all original
+closes successful. Build33bfa825-f18d-490d-840c-5050d72be83d produced858 outputs
+and three immutable authority files. Two independent postaudits matched all
+2093 sources, dependencies/npm, exact861-file/47-directory topology, authority
+physical/content pins, converter and empty archive/ledger. Separate original
+files/backups/journal/predecessor preservation and HTTP evidence matched.
+These receipts complete only this ordinary prerequisite; no staged owner,
+authentic creator, protected/native, SQL, service or final cutover is admitted.
 
 ONE first-stage exact focused command:
 ```bash
@@ -1942,6 +1956,748 @@ After actual RED only, second literal delta:
 +const STAGED_CAPTOR_PORT_PROGRAM=String.raw`
 *** End Patch
 ```
+
+### Task 2b.4: Ordinary directory-FH bridge (test-only)
+
+**Goal and causal relation:** Actual ancestry uses sysopen(O_DIRECTORY)/close,
+not opendir/closedir. The delivered thirteen stream/file cases do not prove this
+port type. Extend the private fixture bridge first; bootstrap4aaececb and
+unconditional main refusal remain unchanged. This is ordinary fixture evidence,
+not staged-consumer RED/GREEN, protected ownership, H42 or native admission.
+
+**File Map:** Exactly existing test, this plan and named spec. No production,
+dependency, root owner, ACL, account, service or SQL change. Current sole writer
+root is `/Users/setrox/ai/setrox/.worktrees/setfarm-staged-directory-fh-20261004-v1`, branch
+`fix/task6a-staged-directory-fh-v2`, base42c5738678b69945bae051e1edc2bc4dcfee3f61.
+Original two files and all predecessor roots/cache/evidence stay visible.
+
+**Architecture:** Reuse the existing finite standalone file bridge. New closed
+directory-fh prefix selects two actual user-owned FHs, map then scripts directory.
+Directory metadata kind is separate from original disposal kind. Raw acquired
+original FH and immutable lexical disposal captures enter the private registry
+before metadata/configuration/events can fail. Both FH types use CORE::close;
+old DIR streams use CORE::closedir. No mutable admission/diagnostic field chooses
+the original disposal primitive. All eleven supported prototypes, sticky fault,
+bounded trace and catch-each-original finalizer remain fail-closed. Directory
+FH uses exact O_RDONLY|O_NOFOLLOW|O_DIRECTORY and verified FD_CLOEXEC; no directory
+read/seek/readdir or root:wheel projection. Alias nomination uses the already-held
+directory FH before another actual acquisition, with no second close obligation.
+This does not resolve future pending-raw/returned-alias ownership.
+
+**Literal closed matrix:** Test patch below independently freezes all fourteen
+new profiles, eleven port counts, six CORE counts, original closure order,
+remaining five queues, read lengths, nomination/primary error and exact trace.
+Healthy trace29 and all queues0. Early finalizer runs acquisition order file,
+directory; healthy and late directory-close nominations run directory,file.
+Exhausted-read is dataMatched true but still pre-close: file,directory. Partial
+second acquisition owns only file. Configuration-fault is nominated after actual
+directory F_SETFD, with seven fcntl calls, ten events, one fcntl remaining. Old
+thirteen profiles stay unchanged and additionally require zero directory-FH opens.
+The fcntl queue is four file tuples followed by four directory tuples. Stat and
+lstat each have file,directory,file,directory; seek0,0; reads11684,0,11684.
+Caps96events/512UTF8B per event; overflow includes two acquisitions and94 events.
+False/throw/post-close-inspection nominations occur ONLY after actual physical
+closure: fault containment, not leak freedom under uncertain native close.
+No FH/FD/PID/path/hash/owner-record authority is exported; authorityfalse,
+consumerInvokedfalse and consumerClosed0 remain mandatory.
+
+**Historical pre-effect candidate checkpoint, superseded by the actual execution
+checkpoint below; do not replay its commands.**
+
+**Draft byte identities at that checkpoint (not then observed execution):** Program 17450B
+SHA256c8f20b39812b35350c2bcb59cd8fdba578984d3659f53a727ebdfbc8917df0c2; test-only addition
+5477B SHA2565b3f1a60c9ec672aee6d9f9d9509072258c0a8331ec532ff5254763e72bb337d.
+Two initial read-only literal comparators failed: the first boundary selection
+was wrong and the second omitted the retained initial blank line. Actual source
+and test stayed unchanged. The draft now preserves both initial blank lines;
+no test/prototype execution or source repinning is credited.
+Pre-effect contract review found two Important recipe issues: ambient environment
+in the three commands and delimiter newlines incorrectly rendered as physical
+patch lines. Both are corrected here before any commit/test/source effect:
+all commands use the prior env-i fixed PATH/LANG/LC_ALL; the program patch removes
+and adds physical lines only, preserving one initial blank line and no artificial
+trailing blank. Program bytes/hash stay unchanged. Two independent reviewers
+must admit this corrected exact recipe before effects.
+Setup/prototype/compile failure is never semantic or staged-consumer RED.
+
+- [x] **Step 1 — literal admission/design commit.** Two exact pre-effect C0
+  reviews, root source/test/doc/tool/preservation check, git diff --check.
+  Commit only these two reviewed design docs, no main commit or cleanup.
+- [x] **Step 2 — test-only RED.** Apply the first literal patch only. Fixed Node
+  --check and diff --check; two actual-delta reviews. Run ONCE:
+  `env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged directory FH ports retain actual directory handles and close original FH types$' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`
+  cwd is the fixed branch root above. Expected genuine JS AssertionError:
+  "staged directory FH adapter missing", undefined vs function, BEFORE map read
+  or Perl spawn. Naturally terminal exit1 and full output must be read. This is
+  missing-fixture-adapter RED only; no producer/staged consumer credit.
+- [x] **Step 3 — minimal bridge GREEN.** After causal RED, apply the second
+  literal patch. Syntax/diff checks and two actual-delta reviews; then ONCE:
+  `env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged (directory FH|readonly file) ports ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`
+  Expected27PASS/0FAIL/CANCEL/SKIP/TODO, fourteen new plus thirteen prior profiles.
+  Then ONCE adjacent unfiltered:
+  `env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`
+  Poll only live sessions to natural closure and read every output chunk. Do not
+  rerun predecessor tests/builds or invent observations from literal expectations.
+- [ ] **Step 4 — reviewed delivery and own clean-main build.** Record actual
+  outputs and terminal states; source/test/spec/plan full review and cheapest
+  English/path/diff contracts. Scoped conventional commits, normal push/PR,
+  exact-head cloud/security/full paginated comments/threads/reviews gate, optional
+  Copilot/Gemini once, normal SHA-bound merge without bypass/deletion. Own normal
+  HTTPS clean-main clone and isolated owner cache; freeze actual merged source,
+  npm/tool/dependency/physical pins. Two independently reviewed exact ci/build
+  wrappers before each new effect, normal npm run build with all guards intact.
+  Actual npm exit+close, retained original revalidation, artifact verification
+  and independent post-build/source/HTTP/resource preservation audit required.
+  No ordinary build receipt admits protected/native/loaded service or cutover.
+
+#### Step 2 literal test-only patch
+
+```diff
+*** Begin Patch
+*** Update File: /Users/setrox/ai/setrox/.worktrees/setfarm-staged-directory-fh-20261004-v1/scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+@@
++const STAGED_DIRECTORY_FH_CORE_KEYS=['fileOpen','directoryOpen','directoryFhOpen','metadata','fileClose','directoryClose'];
++const STAGED_DIRECTORY_FH_HEALTHY_TRACE=[
++  'acquire:file','acquire:directory','binmode:file',
++  'fcntl:file','fcntl:file','fcntl:file','fcntl:file',
++  'fcntl:directory','fcntl:directory','fcntl:directory','fcntl:directory','fileno:file',
++  'stat:file','lstat:file','stat:directory','lstat:directory',
++  'seek:file','read:file','read:file','seek:file','read:file',
++  'stat:file','lstat:file','stat:directory','lstat:directory',
++  'close-attempt:directory','close-result:directory','close-attempt:file','close-result:file',
++];
++function assertDirectoryFhTrace(out,want) {
++  assert.deepEqual(out.events.map(e=>e.op+':'+e.role),want);
++  assert.deepEqual(out.events.map(e=>e.seq),want.map((_,i)=>i+1));
++  for(const e of out.events) {
++    assert.deepEqual(Object.keys(e).sort(),['op','role','seq']);
++    assert.ok(Buffer.byteLength(JSON.stringify(e))<=512);
++  }
++}
++test('staged directory FH ports retain actual directory handles and close original FH types',()=>{
++  assert.equal(typeof stagedDirectoryFhPorts,'function','staged directory FH adapter missing');
++  const out=stagedDirectoryFhPorts();
++  assert.equal(out.directoryFhProfile,true);assert.equal(out.harnessFault,null);assert.equal(out.nominatedFault,null);
++  assert.equal(out.containedSelfFault,false);assert.equal(out.dataMatched,true);assert.equal(out.aliasWitness,false);
++  assert.equal(out.primaryError,'');assert.deepEqual(out.cleanupErrors,[]);
++  assert.deepEqual([out.firstLength,out.eofLength,out.secondLength],[11684,0,11684]);
++  assert.deepEqual(STAGED_FILE_CALL_KEYS.map(k=>out.calls[k]),[2,0,1,8,4,4,2,3,1,2,0]);
++  assert.deepEqual(STAGED_DIRECTORY_FH_CORE_KEYS.map(k=>out.core[k]),[1,0,1,2,2,0]);
++  assert.deepEqual([out.ownedCount,out.definitelyClosed,out.fixtureClosed],[2,2,2]);
++  assert.deepEqual(out.closeOrder,['directory','file']);
++  assert.deepEqual(out.remaining,{fcntl:0,stat:0,lstat:0,seek:0,read:0});
++  assertDirectoryFhTrace(out,STAGED_DIRECTORY_FH_HEALTHY_TRACE);
++});
++for(const [mode,owned,core,calls,trace,matched,alias,primary,closeOrder,remainingFcntl] of [
++  ['partial-acquisition',1,[1,0,0,1,1,0],[2,0,0,0,0,0,0,0,0,0,0],['acquire:file'],false,false,'fault',['file'],8],
++  ['inspection-fault',2,[1,0,1,1,2,0],[2,0,0,0,0,0,0,0,0,0,0],['acquire:file','acquire:directory'],false,false,'fault',['file','directory'],8],
++  ['alias',2,[1,0,1,2,2,0],[3,0,0,0,0,0,0,0,0,0,0],['acquire:file','acquire:directory','alias:directory'],false,true,'fault',['file','directory'],8],
++  ['forbidden-path',2,[1,0,1,2,2,0],[3,0,0,0,0,0,0,0,0,0,0],['acquire:file','acquire:directory','denied:path'],false,false,'fault',['file','directory'],8],
++  ['forbidden-flags',2,[1,0,1,2,2,0],[3,0,0,0,0,0,0,0,0,0,0],['acquire:file','acquire:directory','denied:flags'],false,false,'fault',['file','directory'],8],
++  ['forbidden-exec',2,[1,0,1,2,2,0],[2,0,0,0,0,0,0,0,0,0,0],['acquire:file','acquire:directory','denied:external'],false,false,'fault',['file','directory'],8],
++  ['caught-fault',2,[1,0,1,2,2,0],[2,0,0,0,0,0,0,0,0,0,0],['acquire:file','acquire:directory'],false,false,'fault',['file','directory'],8],
++  ['configuration-fault',2,[1,0,1,2,2,0],[2,0,1,7,0,0,0,0,0,0,0],STAGED_DIRECTORY_FH_HEALTHY_TRACE.slice(0,10),false,false,'fault',['file','directory'],1],
++  ['exhausted-read',2,[1,0,1,2,2,0],[2,0,1,8,4,4,2,3,1,0,0],STAGED_DIRECTORY_FH_HEALTHY_TRACE.slice(0,25),true,false,'fault',['file','directory'],0],
++  ['overflow',2,[1,0,1,2,2,0],[2,0,0,0,0,0,0,0,0,0,0],['acquire:file','acquire:directory',...Array(94).fill('overflow:fixture')],false,false,'fault',['file','directory'],8],
++  ['close-false',2,[1,0,1,2,2,0],[2,0,1,8,4,4,2,3,1,1,0],STAGED_DIRECTORY_FH_HEALTHY_TRACE.slice(0,27),true,false,'fault',['directory','file'],0],
++  ['close-throw',2,[1,0,1,2,2,0],[2,0,1,8,4,4,2,3,1,1,0],STAGED_DIRECTORY_FH_HEALTHY_TRACE.slice(0,27),true,false,'close',['directory','file'],0],
++  ['post-close-inspection-throw',2,[1,0,1,2,2,0],[2,0,1,8,4,4,2,3,1,1,0],STAGED_DIRECTORY_FH_HEALTHY_TRACE.slice(0,27),true,false,'inspection',['directory','file'],0],
++]) test('staged directory FH ports contain '+mode+' without borrowing or leaking original handles',()=>{
++  assert.equal(typeof stagedDirectoryFhPorts,'function','staged directory FH adapter missing');
++  const out=stagedDirectoryFhPorts(mode);
++  assert.equal(out.directoryFhProfile,true);assert.equal(out.containedSelfFault,true);
++  assert.equal(out.harnessFault,'TEST_STAGED_FILE_PORT_HARNESS_FAULT');assert.equal(out.nominatedFault,mode);
++  assert.equal(out.dataMatched,matched);assert.equal(out.aliasWitness,alias);
++  assert.deepEqual([out.ownedCount,out.definitelyClosed,out.fixtureClosed],[owned,owned,owned]);
++  assert.deepEqual(STAGED_DIRECTORY_FH_CORE_KEYS.map(k=>out.core[k]),core);
++  assert.deepEqual(STAGED_FILE_CALL_KEYS.map(k=>out.calls[k]),calls);
++  assert.deepEqual(out.closeOrder,closeOrder);assert.deepEqual(out.cleanupErrors,[]);
++  assert.equal(out.primaryError,primary==='close'?'TEST_STAGED_FILE_PORT_NOMINATED_CLOSE_THROW\n'
++    :primary==='inspection'?'TEST_STAGED_FILE_PORT_NOMINATED_INSPECTION_THROW\n':'TEST_STAGED_FILE_PORT_HARNESS_FAULT\n');
++  assert.deepEqual(out.remaining,{fcntl:remainingFcntl,stat:matched?0:4,lstat:matched?0:4,seek:matched?0:2,read:matched?0:3});
++  assert.deepEqual([out.firstLength,out.eofLength,out.secondLength],matched?[11684,0,11684]:[null,null,null]);
++  assertDirectoryFhTrace(out,trace);
++});
+ function stagedFilePorts(mode='healthy') {
+*** End Patch
+```
+
+#### Step 3 literal private bridge patch
+
+```diff
+*** Begin Patch
+*** Update File: /Users/setrox/ai/setrox/.worktrees/setfarm-staged-directory-fh-20261004-v1/scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+@@
+ const STAGED_FILE_PORT_PROGRAM=String.raw`
+-
+-    BEGIN { @INC=("/System/Library/Perl/5.34/darwin-thread-multi-2level","/System/Library/Perl/5.34"); }
+-    use strict; use warnings; use Fcntl (); use JSON::PP (); use Digest::SHA ();
+-    my ($file_path,$directory_path,$digest,$mode)=@ARGV;
+-    my %modes=map {$_=>1} qw(healthy partial-acquisition inspection-fault alias forbidden-path forbidden-flags forbidden-exec caught-fault exhausted-read overflow close-false close-throw post-close-inspection-throw);
+-    die "TEST_STAGED_FILE_PORT_HARNESS_FAULT\n" unless @ARGV==4&&$<!=0&&$<==$>
+-      &&defined($mode)&&$modes{$mode}&&defined($directory_path)&&$directory_path=~m{\A/[^\r\n\0]+\z}
+-      &&defined($file_path)&&$file_path eq $directory_path.'/task6a-origin-map-v2.pm'
+-      &&defined($digest)&&$digest=~/\A[a-f0-9]{64}\z/;
+-    my ($fault,$nominated)=('','');my $alias_witness=0;my @owned;my %roles;my @events;my @close_order;
+-    my %calls=map {$_=>0} qw(sysopen opendir binmode fcntl stat lstat sysseek sysread fileno close closedir);
+-    my %core=(fileOpen=>0,directoryOpen=>0,metadata=>0,fileClose=>0,directoryClose=>0);
+-    my @fcntl=([Fcntl::F_GETFL(),0],[Fcntl::F_GETFD(),0],[Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()],[Fcntl::F_GETFD(),0]);
+-    my @stat=qw(file directory file directory);my @lstat=@stat;my @seek=(0,0);my @read=(11684,0,11684);
+-    my ($first_length,$eof_length,$second_length)=(undef,undef,undef);my $matched=0;
+-    my $latch=sub {$fault='TEST_STAGED_FILE_PORT_HARNESS_FAULT';};
+-    my $fail=sub {$latch->();die "$fault\n";};
+-    my $check=sub {die "$fault\n" if length($fault);};
+-    my $nominate=sub {
+-      my ($kind)=@_;$fail->() unless $kind eq $mode&&!length($nominated);
+-      $nominated=$kind;$fail->();
+-    };
+-    my $event=sub {
+-      return 0 if length($fault);
+-      if(@events>=96) {$latch->();return 0;}
+-      my ($op,$role)=@_;my $e={seq=>1+@events,op=>$op,role=>$role};
+-      unless(defined($op)&&defined($role)&&$op=~/\A[a-z-]{1,32}\z/
+-        &&$role=~/\A[a-z-]{1,32}\z/&&length(JSON::PP->new->canonical->encode($e))<=512) {$latch->();return 0;}
+-      push @events,$e;return 1;
+-    };
+-    my $register=sub {
+-      my ($fh,$role,$directory)=@_;
+-      # Raw actual acquisition is owned before metadata or trace can fail.
+-      for my $r(@owned) {$fail->() if $r->{fh}==$fh;}
+-      my $r={fh=>$fh,role=>$role,directory=>$directory,attempted=>0,closed=>0};
+-      push @owned,$r;$roles{$role}=$r;$event->('acquire',$role);$check->();
+-      $nominate->('inspection-fault') if $mode eq 'inspection-fault'&&$role eq 'file';
+-      my $fd=CORE::fileno($fh);my @s=CORE::stat($fh);++$core{metadata};
+-      $fail->() unless defined($fd)&&$fd>=3&&@s==13&&$s[4]==$<
+-        &&($directory?Fcntl::S_ISDIR($s[2]):Fcntl::S_ISREG($s[2])&&$s[3]==1);
+-      for my $other(@owned) {next if $other==$r;$fail->() if defined($other->{fd})&&$other->{fd}==$fd;}
+-      $r->{fd}=$fd;$r->{identity}=[@s];return $r;
+-    };
+-    my $lookup=sub {
+-      my ($fh,$allow_closed)=@_;$fail->() unless defined($fh)&&ref($fh);
+-      for my $r(@owned) {
+-        next unless $r->{fh}==$fh;
+-        unless($allow_closed) {$fail->() if $r->{attempted}||$r->{closed}
+-          ||!defined(CORE::fileno($fh))||CORE::fileno($fh)!=$r->{fd};}
+-        return $r;
+-      }
+-      $fail->();
+-    };
+-    my $identity=sub {
+-      my ($r,$s)=@_;$fail->() unless ref($s) eq 'ARRAY'&&@$s==13&&ref($r->{identity}) eq 'ARRAY';
+-      for my $i($r->{directory}?(0,1,2,4,5):(0,1,2,3,4,5,7,9,10)) {
+-        $fail->() unless defined($s->[$i])&&$s->[$i]==$r->{identity}[$i];
+-      }
+-    };
+-    my $dispose=sub {
+-      my ($r)=@_;return 0 if $r->{attempted};
+-      $r->{attempted}=1;push @close_order,$r->{role};$event->('close-attempt',$r->{role});
+-      $!=0;my $ok=eval {$r->{directory}?CORE::closedir($r->{fh}):CORE::close($r->{fh})};my $error=$@;my $errno=0+$!;
+-      ++$core{$r->{directory}?'directoryClose':'fileClose'};
+-      my $end;my $inspected=eval {$end=CORE::fileno($r->{fh});1;};my $inspection_error=$@;
+-      $r->{closed}=1 if $ok&&!length($error)&&!$errno&&$inspected&&!length($inspection_error)&&!defined($end);
+-      $event->('close-result',$r->{role});$fail->() unless $r->{closed};
+-      if($r->{role} eq 'file'&&$mode=~/\A(?:close-false|close-throw|post-close-inspection-throw)\z/) {
+-        $nominated=$mode;$latch->();
+-        return 0 if $mode eq 'close-false';
+-        die "TEST_STAGED_FILE_PORT_NOMINATED_CLOSE_THROW\n" if $mode eq 'close-throw';
+-        die "TEST_STAGED_FILE_PORT_NOMINATED_INSPECTION_THROW\n";
+-      }
+-      return 1;
+-    };
+-    my $deny=sub {
+-      $event->('denied','external');
+-      $nominate->('forbidden-exec') if $mode eq 'forbidden-exec';
+-      $fail->();
+-    };
+-    my ($body_ok,$primary);my @cleanup_errors;my $ports_ready=0;
+-    {
+-      no warnings qw(redefine once);
+-      local *CORE::GLOBAL::sysopen=sub (*$$;$) {
+-        $check->();++$calls{sysopen};
+-        $fail->() unless @_==3&&!defined($_[0])&&!ref($_[1])&&!ref($_[2]);
+-        if($_[1] ne $file_path) {$event->('denied','path');$nominate->('forbidden-path') if $mode eq 'forbidden-path';$fail->();}
+-        my $flags=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK();
+-        if($_[2]!=$flags) {$event->('denied','flags');$nominate->('forbidden-flags') if $mode eq 'forbidden-flags';$fail->();}
+-        if(defined($roles{file})) {
+-          if($mode eq 'alias') {my $candidate=$roles{file}{fh};my $r=$lookup->($candidate,0);
+-            $fail->() unless $r==$roles{file}&&CORE::fileno($candidate)==$r->{fd};
+-            $alias_witness=1;$event->('alias','file');$nominate->('alias');}
+-          $fail->();
+-        }
+-        CORE::sysopen(my $fh,$file_path,$flags) or $fail->();++$core{fileOpen};
+-        $register->($fh,'file',0);$_[0]=$fh;return 1;
+-      };
+-      local *CORE::GLOBAL::opendir=sub (*$) {
+-        $check->();++$calls{opendir};$fail->() unless @_==2&&!defined($_[0])&&!ref($_[1])
+-          &&$_[1] eq $directory_path&&!defined($roles{directory})&&defined($roles{file});
+-        $nominate->('partial-acquisition') if $mode eq 'partial-acquisition';
+-        CORE::opendir(my $fh,$directory_path) or $fail->();++$core{directoryOpen};
+-        $register->($fh,'directory',1);$_[0]=$fh;return 1;
+-      };
+-      local *CORE::GLOBAL::binmode=sub (*;$) {
+-        $check->();$fail->() unless @_==1&&$calls{binmode}++==0;
+-        my $r=$lookup->($_[0],0);$fail->() unless $r->{role} eq 'file';
+-        CORE::binmode($_[0]) or $fail->();$event->('binmode','file');return 1;
+-      };
+-      local *CORE::GLOBAL::fcntl=sub (*$$) {
+-        $check->();$fail->() unless @_==3&&@fcntl;my $r=$lookup->($_[0],0);
+-        my $want=shift @fcntl;$fail->() unless $r->{role} eq 'file'&&$_[1]==$want->[0]&&$_[2]==$want->[1];
+-        $!=0;my $v=CORE::fcntl($_[0],$_[1],$_[2]);$fail->() unless defined($v)&&!$!;
+-        ++$calls{fcntl};$event->('fcntl','file');return $v;
+-      };
+-      local *CORE::GLOBAL::stat=sub (;*) {
+-        $check->();$fail->() unless @_==1&&wantarray&&@stat;my $r=$lookup->($_[0],0);
+-        $fail->() unless $r->{role} eq shift(@stat);my @s=CORE::stat($_[0]);$identity->($r,\@s);
+-        ++$calls{stat};$event->('stat',$r->{role});return @s;
+-      };
+-      local *CORE::GLOBAL::lstat=sub (;*) {
+-        $check->();$fail->() unless @_==1&&wantarray&&@lstat&&!ref($_[0]);
+-        my $role=shift @lstat;my $r=$roles{$role};$fail->() unless defined($r)
+-          &&$_[0] eq ($role eq 'file'?$file_path:$directory_path);
+-        my @s=CORE::lstat($_[0]);$identity->($r,\@s);
+-        ++$calls{lstat};$event->('lstat',$role);return @s;
+-      };
+-      local *CORE::GLOBAL::sysseek=sub (*$$) {
+-        $check->();$fail->() unless @_==3&&@seek;my $r=$lookup->($_[0],0);
+-        my $want=shift @seek;$fail->() unless $r->{role} eq 'file'&&$_[1]==$want&&$_[2]==0;
+-        my $v=CORE::sysseek($_[0],$_[1],$_[2]);$fail->() unless defined($v)&&$v==0;
+-        ++$calls{sysseek};$event->('seek','file');return $v;
+-      };
+-      local *CORE::GLOBAL::sysread=sub (*\$$;$) {
+-        $check->();$fail->() unless @_==3&&ref($_[1]) eq 'SCALAR'&&$_[2]==65536;
+-        my $r=$lookup->($_[0],0);$fail->() unless $r->{role} eq 'file';
+-        unless(@read) {$nominate->('exhausted-read') if $mode eq 'exhausted-read';$fail->();}
+-        my $want=shift @read;my $buffer=$_[1];$fail->() unless !ref($$buffer)&&$$buffer eq '';
+-        $!=0;my $n=CORE::sysread($_[0],$$buffer,$_[2]);$fail->() unless defined($n)&&!$!
+-          &&$n==$want&&length($$buffer)==$n&&!utf8::is_utf8($$buffer);
+-        ++$calls{sysread};$event->('read','file');return $n;
+-      };
+-      local *CORE::GLOBAL::fileno=sub (*) {
+-        $check->();$fail->() unless @_==1;my $r=$lookup->($_[0],0);
+-        ++$calls{fileno};$event->('fileno',$r->{role});return CORE::fileno($_[0]);
+-      };
+-      local *CORE::GLOBAL::close=sub (;*) {
+-        $fail->() unless @_==1;my $r=$lookup->($_[0],1);$fail->() if $r->{directory};
+-        ++$calls{close};return $dispose->($r);
+-      };
+-      local *CORE::GLOBAL::closedir=sub (*) {
+-        $fail->() unless @_==1;my $r=$lookup->($_[0],1);$fail->() unless $r->{directory};
+-        ++$calls{closedir};return $dispose->($r);
+-      };
+-      local *CORE::GLOBAL::exec=$deny;local *CORE::GLOBAL::system=$deny;
+-      local *CORE::GLOBAL::open=sub (*;$@) {$deny->();};local *CORE::GLOBAL::syswrite=sub (*$;$$) {$deny->();};
+-      local *CORE::GLOBAL::readdir=sub (*) {$deny->();};local *CORE::GLOBAL::pipe=sub (**) {$deny->();};
+-      local *CORE::GLOBAL::fork=sub () {$deny->();};local *CORE::GLOBAL::waitpid=sub ($$) {$deny->();};
+-      local *CORE::GLOBAL::kill=sub (@) {$deny->();};local *CORE::GLOBAL::readpipe=sub (_) {$deny->();};
+-      local *CORE::GLOBAL::unlink=sub (@) {$deny->();};local *CORE::GLOBAL::mkdir=sub (_;$) {$deny->();};
+-      local *CORE::GLOBAL::rmdir=sub (_) {$deny->();};local *CORE::GLOBAL::rename=sub ($$) {$deny->();};
+-      local *CORE::GLOBAL::chdir=sub (;$) {$deny->();};local *CORE::GLOBAL::truncate=sub ($$) {$deny->();};
+-      local *CORE::GLOBAL::socket=sub (*$$$) {$deny->();};local *CORE::GLOBAL::socketpair=sub (**$$$) {$deny->();};
+-      local *CORE::GLOBAL::connect=sub (*$) {$deny->();};local *CORE::GLOBAL::accept=sub (**) {$deny->();};
+-      my %prototypes=(sysopen=>'*$$;$',opendir=>'*$',
+-        binmode=>'*;$',fcntl=>'*$$',stat=>';*',lstat=>';*',sysseek=>'*$$',
+-        sysread=>'*\$$;$',fileno=>'*',close=>';*',closedir=>'*');
+-      for my $op(sort keys %prototypes) {
+-        my $port='CORE::GLOBAL'->can($op);my $actual=prototype('CORE::'.$op);
+-        $fail->() unless defined($port)&&ref($port) eq 'CODE'&&defined($actual)
+-          &&$actual eq $prototypes{$op}&&defined(prototype($port))&&prototype($port) eq $actual;
+-      }
+-      for my $op(qw(exec system)) {my $port='CORE::GLOBAL'->can($op);
+-        $fail->() unless defined($port)&&ref($port) eq 'CODE'&&!defined(prototype($port));}
+-      $ports_ready=1;
+-      $body_ok=eval q{
+-        my ($file,$directory);my $flags=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK();
+-        sysopen($file,$file_path,$flags) or $fail->();
+-        opendir($directory,$directory_path) or $fail->();
+-        if($mode eq 'alias') {my $other;sysopen($other,$file_path,$flags);$fail->();}
+-        if($mode eq 'forbidden-path') {my $other;sysopen($other,$file_path.'/unselected',$flags);$fail->();}
+-        if($mode eq 'forbidden-flags') {my $other;sysopen($other,$file_path,Fcntl::O_WRONLY());$fail->();}
+-        if($mode eq 'forbidden-exec') {CORE::GLOBAL::exec('/bin/false');$fail->();}
+-        if($mode eq 'caught-fault') {eval {$nominate->('caught-fault');};$check->();}
+-        if($mode eq 'overflow') {for(1..97) {$event->('overflow','fixture');}
+-          $nominated='overflow';$check->();}
+-        binmode($file) or $fail->();
+-        my $fl=fcntl($file,Fcntl::F_GETFL(),0);
+-        $fail->() unless defined($fl)&&($fl&Fcntl::O_ACCMODE())==Fcntl::O_RDONLY()&&($fl&Fcntl::O_NONBLOCK());
+-        my $fd_flags=fcntl($file,Fcntl::F_GETFD(),0);$fail->() unless defined($fd_flags);
+-        fcntl($file,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()) or $fail->();
+-        $fd_flags=fcntl($file,Fcntl::F_GETFD(),0);$fail->() unless defined($fd_flags)&&($fd_flags&Fcntl::FD_CLOEXEC());
+-        my $fd=fileno($file);$fail->() unless defined($fd)&&$fd>=3;
+-        my @s=stat($file);@s=lstat($file_path);@s=stat($directory);@s=lstat($directory_path);
+-        my $position=sysseek($file,0,0);$fail->() unless defined($position)&&$position==0;
+-        my $bytes='';$first_length=sysread($file,$bytes,65536);
+-        $fail->() unless Digest::SHA::sha256_hex($bytes) eq $digest;
+-        $bytes='';$eof_length=sysread($file,$bytes,65536);
+-        $position=sysseek($file,0,0);$fail->() unless defined($position)&&$position==0;
+-        $bytes='';$second_length=sysread($file,$bytes,65536);
+-        $fail->() unless Digest::SHA::sha256_hex($bytes) eq $digest;$matched=1;
+-        @s=stat($file);@s=lstat($file_path);@s=stat($directory);@s=lstat($directory_path);
+-        if($mode eq 'exhausted-read') {$bytes='';sysread($file,$bytes,65536);$fail->();}
+-        close($file) or $check->();closedir($directory) or $check->();
+-        1;
+-      };
+-      $primary=$@;
+-      # Fixture-only finalizer bypasses sticky faults and operation queues.
+-      for my $r(@owned) {
+-        next if $r->{attempted};my $ok=eval {$dispose->($r)};my $error=$@;
+-        unless($ok&&!length($error)&&$r->{closed}) {
+-          $latch->();push @cleanup_errors,length($error)?$error:"TEST_STAGED_FILE_PORT_NOMINATED_CLOSE_FALSE\n";
+-        }
+-      }
+-    }
+-    my $closed=grep {$_->{closed}} @owned;
+-    my $self=$mode ne 'healthy';
+-    my $expected_primary=$mode eq 'close-throw'?"TEST_STAGED_FILE_PORT_NOMINATED_CLOSE_THROW\n"
+-      :$mode eq 'post-close-inspection-throw'?"TEST_STAGED_FILE_PORT_NOMINATED_INSPECTION_THROW\n"
+-      :"TEST_STAGED_FILE_PORT_HARNESS_FAULT\n";
+-    die "TEST_STAGED_FILE_PORT_HARNESS_FAULT\n" unless $ports_ready&&$closed==@owned
+-      &&($self?($nominated eq $mode&&$fault eq 'TEST_STAGED_FILE_PORT_HARNESS_FAULT'
+-        &&($body_ok||$primary eq $expected_primary))
+-        :($body_ok&&!length($primary)&&!length($fault)&&!@cleanup_errors
+-          &&!@fcntl&&!@stat&&!@lstat&&!@seek&&!@read));
+-    my $out={scope=>'ordinary-staged-file-ports-fixture-only',productionAuthority=>JSON::PP::false,
+-      consumerInvoked=>JSON::PP::false,consumerClosed=>0,fixtureClosed=>0+$closed,
+-      ownedCount=>scalar(@owned),definitelyClosed=>0+$closed,portsReady=>JSON::PP::true,
+-      harnessFault=>length($fault)?$fault:undef,nominatedFault=>length($nominated)?$nominated:undef,
+-      containedSelfFault=>$self?JSON::PP::true:JSON::PP::false,
+-      dataMatched=>$matched?JSON::PP::true:JSON::PP::false,
+-      firstLength=>$first_length,eofLength=>$eof_length,secondLength=>$second_length,
+-      aliasWitness=>$alias_witness?JSON::PP::true:JSON::PP::false,primaryError=>$primary,
+-      calls=>\%calls,core=>\%core,closeOrder=>\@close_order,events=>\@events,
+-      cleanupErrors=>\@cleanup_errors,remaining=>{fcntl=>scalar(@fcntl),stat=>scalar(@stat),lstat=>scalar(@lstat),seek=>scalar(@seek),read=>scalar(@read)}};
+-    print JSON::PP->new->canonical->utf8->encode($out);exit 0;
++
++    BEGIN { @INC=("/System/Library/Perl/5.34/darwin-thread-multi-2level","/System/Library/Perl/5.34"); }
++    use strict; use warnings; use Fcntl (); use JSON::PP (); use Digest::SHA ();
++    my ($file_path,$directory_path,$digest,$mode)=@ARGV;
++    my $directory_fh=defined($mode)&&$mode=~s/\Adirectory-fh-//?1:0;
++    my %modes=map {$_=>1} qw(healthy partial-acquisition inspection-fault alias forbidden-path forbidden-flags forbidden-exec caught-fault exhausted-read overflow close-false close-throw post-close-inspection-throw);
++    die "TEST_STAGED_FILE_PORT_HARNESS_FAULT\n" unless @ARGV==4&&$<!=0&&$<==$>
++      &&defined($mode)&&($modes{$mode}||($directory_fh&&$mode eq 'configuration-fault'))&&defined($directory_path)&&$directory_path=~m{\A/[^\r\n\0]+\z}
++      &&defined($file_path)&&$file_path eq $directory_path.'/task6a-origin-map-v2.pm'
++      &&defined($digest)&&$digest=~/\A[a-f0-9]{64}\z/;
++    my ($fault,$nominated)=('','');my $alias_witness=0;my @owned;my %roles;my @events;my @close_order;
++    my %calls=map {$_=>0} qw(sysopen opendir binmode fcntl stat lstat sysseek sysread fileno close closedir);
++    my %core=(fileOpen=>0,directoryOpen=>0,directoryFhOpen=>0,metadata=>0,fileClose=>0,directoryClose=>0);
++    my @fcntl=map {['file',@$_]} ([Fcntl::F_GETFL(),0],[Fcntl::F_GETFD(),0],[Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()],[Fcntl::F_GETFD(),0]);
++    push @fcntl,map {['directory',@$_]} ([Fcntl::F_GETFL(),0],[Fcntl::F_GETFD(),0],[Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()],[Fcntl::F_GETFD(),0]) if $directory_fh;
++    my @stat=qw(file directory file directory);my @lstat=@stat;my @seek=(0,0);my @read=(11684,0,11684);
++    my ($first_length,$eof_length,$second_length)=(undef,undef,undef);my $matched=0;
++    my $latch=sub {$fault='TEST_STAGED_FILE_PORT_HARNESS_FAULT';};
++    my $fail=sub {$latch->();die "$fault\n";};
++    my $check=sub {die "$fault\n" if length($fault);};
++    my $nominate=sub {
++      my ($kind)=@_;$fail->() unless $kind eq $mode&&!length($nominated);
++      $nominated=$kind;$fail->();
++    };
++    my $event=sub {
++      return 0 if length($fault);
++      if(@events>=96) {$latch->();return 0;}
++      my ($op,$role)=@_;my $e={seq=>1+@events,op=>$op,role=>$role};
++      unless(defined($op)&&defined($role)&&$op=~/\A[a-z-]{1,32}\z/
++        &&$role=~/\A[a-z-]{1,32}\z/&&length(JSON::PP->new->canonical->encode($e))<=512) {$latch->();return 0;}
++      push @events,$e;return 1;
++    };
++    my $register=sub {
++      my ($fh,$role,$directory,$disposal)=@_;
++      # Raw actual acquisition is owned before metadata or trace can fail.
++      for my $r(@owned) {$fail->() if $r->{fh}==$fh;}
++      # Original disposal type and FH are private lexical captures, not admission metadata.
++      my $r={fh=>$fh,role=>$role,directory=>$directory,attempted=>0,closed=>0,
++        originalKind=>sub {$disposal;},originalClose=>sub {
++          ++$core{$disposal eq 'dir-stream'?'directoryClose':'fileClose'};
++          return $disposal eq 'dir-stream'?CORE::closedir($fh):CORE::close($fh);
++        }};
++      push @owned,$r;$roles{$role}=$r;$event->('acquire',$role);$check->();
++      $nominate->('inspection-fault') if $mode eq 'inspection-fault'&&$role eq ($directory_fh?'directory':'file');
++      my $fd=CORE::fileno($fh);my @s=CORE::stat($fh);++$core{metadata};
++      $fail->() unless defined($fd)&&$fd>=3&&@s==13&&$s[4]==$<
++        &&($directory?Fcntl::S_ISDIR($s[2]):Fcntl::S_ISREG($s[2])&&$s[3]==1);
++      for my $other(@owned) {next if $other==$r;$fail->() if defined($other->{fd})&&$other->{fd}==$fd;}
++      $r->{fd}=$fd;$r->{identity}=[@s];return $r;
++    };
++    my $lookup=sub {
++      my ($fh,$allow_closed)=@_;$fail->() unless defined($fh)&&ref($fh);
++      for my $r(@owned) {
++        next unless $r->{fh}==$fh;
++        unless($allow_closed) {$fail->() if $r->{attempted}||$r->{closed}
++          ||!defined(CORE::fileno($fh))||CORE::fileno($fh)!=$r->{fd};}
++        return $r;
++      }
++      $fail->();
++    };
++    my $identity=sub {
++      my ($r,$s)=@_;$fail->() unless ref($s) eq 'ARRAY'&&@$s==13&&ref($r->{identity}) eq 'ARRAY';
++      for my $i($r->{directory}?(0,1,2,4,5):(0,1,2,3,4,5,7,9,10)) {
++        $fail->() unless defined($s->[$i])&&$s->[$i]==$r->{identity}[$i];
++      }
++    };
++    my $dispose=sub {
++      my ($r)=@_;return 0 if $r->{attempted};
++      $r->{attempted}=1;push @close_order,$r->{role};$event->('close-attempt',$r->{role});
++      $!=0;my $ok=eval {$r->{originalClose}->()};my $error=$@;my $errno=0+$!;
++      my $end;my $inspected=eval {$end=CORE::fileno($r->{fh});1;};my $inspection_error=$@;
++      $r->{closed}=1 if $ok&&!length($error)&&!$errno&&$inspected&&!length($inspection_error)&&!defined($end);
++      $event->('close-result',$r->{role});$fail->() unless $r->{closed};
++      if($r->{role} eq ($directory_fh?'directory':'file')&&$mode=~/\A(?:close-false|close-throw|post-close-inspection-throw)\z/) {
++        $nominated=$mode;$latch->();
++        return 0 if $mode eq 'close-false';
++        die "TEST_STAGED_FILE_PORT_NOMINATED_CLOSE_THROW\n" if $mode eq 'close-throw';
++        die "TEST_STAGED_FILE_PORT_NOMINATED_INSPECTION_THROW\n";
++      }
++      return 1;
++    };
++    my $deny=sub {
++      $event->('denied','external');
++      $nominate->('forbidden-exec') if $mode eq 'forbidden-exec';
++      $fail->();
++    };
++    my ($body_ok,$primary);my @cleanup_errors;my $ports_ready=0;
++    {
++      no warnings qw(redefine once);
++      local *CORE::GLOBAL::sysopen=sub (*$$;$) {
++        $check->();++$calls{sysopen};
++        $fail->() unless @_==3&&!defined($_[0])&&!ref($_[1])&&!ref($_[2]);
++        my $role=$_[1] eq $file_path?'file':$directory_fh&&$_[1] eq $directory_path?'directory':'';
++        unless(length($role)) {$event->('denied','path');$nominate->('forbidden-path') if $mode eq 'forbidden-path';$fail->();}
++        my $flags=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()
++          |($role eq 'directory'?Fcntl::O_DIRECTORY():Fcntl::O_NONBLOCK());
++        if($_[2]!=$flags) {$event->('denied','flags');$nominate->('forbidden-flags') if $mode eq 'forbidden-flags';$fail->();}
++        if(defined($roles{$role})) {
++          if($mode eq 'alias') {my $candidate=$roles{$role}{fh};my $r=$lookup->($candidate,0);
++            $fail->() unless $role eq ($directory_fh?'directory':'file')
++              &&$r==$roles{$role}&&CORE::fileno($candidate)==$r->{fd};
++            $alias_witness=1;$event->('alias',$role);$nominate->('alias');}
++          $fail->();
++        }
++        if($role eq 'directory') {
++          $fail->() unless defined($roles{file});
++          $nominate->('partial-acquisition') if $mode eq 'partial-acquisition';
++        } else {$fail->() if @owned;}
++        CORE::sysopen(my $fh,$_[1],$flags) or $fail->();
++        ++$core{$role eq 'directory'?'directoryFhOpen':'fileOpen'};
++        $register->($fh,$role,$role eq 'directory'?1:0,'fh');$_[0]=$fh;return 1;
++      };
++      local *CORE::GLOBAL::opendir=sub (*$) {
++        $check->();++$calls{opendir};$fail->() if $directory_fh;$fail->() unless @_==2&&!defined($_[0])&&!ref($_[1])
++          &&$_[1] eq $directory_path&&!defined($roles{directory})&&defined($roles{file});
++        $nominate->('partial-acquisition') if $mode eq 'partial-acquisition';
++        CORE::opendir(my $fh,$directory_path) or $fail->();++$core{directoryOpen};
++        $register->($fh,'directory',1,'dir-stream');$_[0]=$fh;return 1;
++      };
++      local *CORE::GLOBAL::binmode=sub (*;$) {
++        $check->();$fail->() unless @_==1&&$calls{binmode}++==0;
++        my $r=$lookup->($_[0],0);$fail->() unless $r->{role} eq 'file';
++        CORE::binmode($_[0]) or $fail->();$event->('binmode','file');return 1;
++      };
++      local *CORE::GLOBAL::fcntl=sub (*$$) {
++        $check->();$fail->() unless @_==3&&@fcntl;my $r=$lookup->($_[0],0);
++        my $want=shift @fcntl;$fail->() unless $r->{role} eq $want->[0]&&$_[1]==$want->[1]&&$_[2]==$want->[2];
++        $!=0;my $v=CORE::fcntl($_[0],$_[1],$_[2]);$fail->() unless defined($v)&&!$!;
++        ++$calls{fcntl};$event->('fcntl',$r->{role});
++        $nominate->('configuration-fault') if $directory_fh&&$mode eq 'configuration-fault'
++          &&$r->{role} eq 'directory'&&$_[1]==Fcntl::F_SETFD();
++        return $v;
++      };
++      local *CORE::GLOBAL::stat=sub (;*) {
++        $check->();$fail->() unless @_==1&&wantarray&&@stat;my $r=$lookup->($_[0],0);
++        $fail->() unless $r->{role} eq shift(@stat);my @s=CORE::stat($_[0]);$identity->($r,\@s);
++        ++$calls{stat};$event->('stat',$r->{role});return @s;
++      };
++      local *CORE::GLOBAL::lstat=sub (;*) {
++        $check->();$fail->() unless @_==1&&wantarray&&@lstat&&!ref($_[0]);
++        my $role=shift @lstat;my $r=$roles{$role};$fail->() unless defined($r)
++          &&$_[0] eq ($role eq 'file'?$file_path:$directory_path);
++        my @s=CORE::lstat($_[0]);$identity->($r,\@s);
++        ++$calls{lstat};$event->('lstat',$role);return @s;
++      };
++      local *CORE::GLOBAL::sysseek=sub (*$$) {
++        $check->();$fail->() unless @_==3&&@seek;my $r=$lookup->($_[0],0);
++        my $want=shift @seek;$fail->() unless $r->{role} eq 'file'&&$_[1]==$want&&$_[2]==0;
++        my $v=CORE::sysseek($_[0],$_[1],$_[2]);$fail->() unless defined($v)&&$v==0;
++        ++$calls{sysseek};$event->('seek','file');return $v;
++      };
++      local *CORE::GLOBAL::sysread=sub (*\$$;$) {
++        $check->();$fail->() unless @_==3&&ref($_[1]) eq 'SCALAR'&&$_[2]==65536;
++        my $r=$lookup->($_[0],0);$fail->() unless $r->{role} eq 'file';
++        unless(@read) {$nominate->('exhausted-read') if $mode eq 'exhausted-read';$fail->();}
++        my $want=shift @read;my $buffer=$_[1];$fail->() unless !ref($$buffer)&&$$buffer eq '';
++        $!=0;my $n=CORE::sysread($_[0],$$buffer,$_[2]);$fail->() unless defined($n)&&!$!
++          &&$n==$want&&length($$buffer)==$n&&!utf8::is_utf8($$buffer);
++        ++$calls{sysread};$event->('read','file');return $n;
++      };
++      local *CORE::GLOBAL::fileno=sub (*) {
++        $check->();$fail->() unless @_==1;my $r=$lookup->($_[0],0);
++        ++$calls{fileno};$event->('fileno',$r->{role});return CORE::fileno($_[0]);
++      };
++      local *CORE::GLOBAL::close=sub (;*) {
++        $fail->() unless @_==1;my $r=$lookup->($_[0],1);$fail->() unless $r->{originalKind}->() eq 'fh';
++        ++$calls{close};return $dispose->($r);
++      };
++      local *CORE::GLOBAL::closedir=sub (*) {
++        $fail->() unless @_==1;my $r=$lookup->($_[0],1);$fail->() unless $r->{originalKind}->() eq 'dir-stream';
++        ++$calls{closedir};return $dispose->($r);
++      };
++      local *CORE::GLOBAL::exec=$deny;local *CORE::GLOBAL::system=$deny;
++      local *CORE::GLOBAL::open=sub (*;$@) {$deny->();};local *CORE::GLOBAL::syswrite=sub (*$;$$) {$deny->();};
++      local *CORE::GLOBAL::readdir=sub (*) {$deny->();};local *CORE::GLOBAL::pipe=sub (**) {$deny->();};
++      local *CORE::GLOBAL::fork=sub () {$deny->();};local *CORE::GLOBAL::waitpid=sub ($$) {$deny->();};
++      local *CORE::GLOBAL::kill=sub (@) {$deny->();};local *CORE::GLOBAL::readpipe=sub (_) {$deny->();};
++      local *CORE::GLOBAL::unlink=sub (@) {$deny->();};local *CORE::GLOBAL::mkdir=sub (_;$) {$deny->();};
++      local *CORE::GLOBAL::rmdir=sub (_) {$deny->();};local *CORE::GLOBAL::rename=sub ($$) {$deny->();};
++      local *CORE::GLOBAL::chdir=sub (;$) {$deny->();};local *CORE::GLOBAL::truncate=sub ($$) {$deny->();};
++      local *CORE::GLOBAL::socket=sub (*$$$) {$deny->();};local *CORE::GLOBAL::socketpair=sub (**$$$) {$deny->();};
++      local *CORE::GLOBAL::connect=sub (*$) {$deny->();};local *CORE::GLOBAL::accept=sub (**) {$deny->();};
++      my %prototypes=(sysopen=>'*$$;$',opendir=>'*$',
++        binmode=>'*;$',fcntl=>'*$$',stat=>';*',lstat=>';*',sysseek=>'*$$',
++        sysread=>'*\$$;$',fileno=>'*',close=>';*',closedir=>'*');
++      for my $op(sort keys %prototypes) {
++        my $port='CORE::GLOBAL'->can($op);my $actual=prototype('CORE::'.$op);
++        $fail->() unless defined($port)&&ref($port) eq 'CODE'&&defined($actual)
++          &&$actual eq $prototypes{$op}&&defined(prototype($port))&&prototype($port) eq $actual;
++      }
++      for my $op(qw(exec system)) {my $port='CORE::GLOBAL'->can($op);
++        $fail->() unless defined($port)&&ref($port) eq 'CODE'&&!defined(prototype($port));}
++      $ports_ready=1;
++      $body_ok=eval q{
++        my ($file,$directory);my $flags=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK();
++        sysopen($file,$file_path,$flags) or $fail->();
++        my $directory_flags=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_DIRECTORY();
++        if($directory_fh) {sysopen($directory,$directory_path,$directory_flags) or $fail->();}
++        else {opendir($directory,$directory_path) or $fail->();}
++        if($mode eq 'alias') {my $other;sysopen($other,$directory_fh?$directory_path:$file_path,
++          $directory_fh?$directory_flags:$flags);$fail->();}
++        if($mode eq 'forbidden-path') {my $other;sysopen($other,$file_path.'/unselected',$flags);$fail->();}
++        if($mode eq 'forbidden-flags') {my $other;sysopen($other,$file_path,Fcntl::O_WRONLY());$fail->();}
++        if($mode eq 'forbidden-exec') {CORE::GLOBAL::exec('/bin/false');$fail->();}
++        if($mode eq 'caught-fault') {eval {$nominate->('caught-fault');};$check->();}
++        if($mode eq 'overflow') {for(1..97) {$event->('overflow','fixture');}
++          $nominated='overflow';$check->();}
++        binmode($file) or $fail->();
++        my $fl=fcntl($file,Fcntl::F_GETFL(),0);
++        $fail->() unless defined($fl)&&($fl&Fcntl::O_ACCMODE())==Fcntl::O_RDONLY()&&($fl&Fcntl::O_NONBLOCK());
++        my $fd_flags=fcntl($file,Fcntl::F_GETFD(),0);$fail->() unless defined($fd_flags);
++        fcntl($file,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()) or $fail->();
++        $fd_flags=fcntl($file,Fcntl::F_GETFD(),0);$fail->() unless defined($fd_flags)&&($fd_flags&Fcntl::FD_CLOEXEC());
++        if($directory_fh) {
++          my $directory_fl=fcntl($directory,Fcntl::F_GETFL(),0);
++          $fail->() unless defined($directory_fl)&&($directory_fl&Fcntl::O_ACCMODE())==Fcntl::O_RDONLY();
++          my $directory_fd_flags=fcntl($directory,Fcntl::F_GETFD(),0);
++          $fail->() unless defined($directory_fd_flags);
++          fcntl($directory,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()) or $fail->();
++          $directory_fd_flags=fcntl($directory,Fcntl::F_GETFD(),0);
++          $fail->() unless defined($directory_fd_flags)&&($directory_fd_flags&Fcntl::FD_CLOEXEC());
++        }
++        my $fd=fileno($file);$fail->() unless defined($fd)&&$fd>=3;
++        my @s=stat($file);@s=lstat($file_path);@s=stat($directory);@s=lstat($directory_path);
++        my $position=sysseek($file,0,0);$fail->() unless defined($position)&&$position==0;
++        my $bytes='';$first_length=sysread($file,$bytes,65536);
++        $fail->() unless Digest::SHA::sha256_hex($bytes) eq $digest;
++        $bytes='';$eof_length=sysread($file,$bytes,65536);
++        $position=sysseek($file,0,0);$fail->() unless defined($position)&&$position==0;
++        $bytes='';$second_length=sysread($file,$bytes,65536);
++        $fail->() unless Digest::SHA::sha256_hex($bytes) eq $digest;$matched=1;
++        @s=stat($file);@s=lstat($file_path);@s=stat($directory);@s=lstat($directory_path);
++        if($mode eq 'exhausted-read') {$bytes='';sysread($file,$bytes,65536);$fail->();}
++        if($directory_fh) {close($directory) or $check->();close($file) or $check->();}
++        else {close($file) or $check->();closedir($directory) or $check->();}
++        1;
++      };
++      $primary=$@;
++      # Fixture-only finalizer bypasses sticky faults and operation queues.
++      for my $r(@owned) {
++        next if $r->{attempted};my $ok=eval {$dispose->($r)};my $error=$@;
++        unless($ok&&!length($error)&&$r->{closed}) {
++          $latch->();push @cleanup_errors,length($error)?$error:"TEST_STAGED_FILE_PORT_NOMINATED_CLOSE_FALSE\n";
++        }
++      }
++    }
++    my $closed=grep {$_->{closed}} @owned;
++    my $self=$mode ne 'healthy';
++    my $expected_primary=$mode eq 'close-throw'?"TEST_STAGED_FILE_PORT_NOMINATED_CLOSE_THROW\n"
++      :$mode eq 'post-close-inspection-throw'?"TEST_STAGED_FILE_PORT_NOMINATED_INSPECTION_THROW\n"
++      :"TEST_STAGED_FILE_PORT_HARNESS_FAULT\n";
++    die "TEST_STAGED_FILE_PORT_HARNESS_FAULT\n" unless $ports_ready&&$closed==@owned
++      &&($self?($nominated eq $mode&&$fault eq 'TEST_STAGED_FILE_PORT_HARNESS_FAULT'
++        &&($body_ok||$primary eq $expected_primary))
++        :($body_ok&&!length($primary)&&!length($fault)&&!@cleanup_errors
++          &&!@fcntl&&!@stat&&!@lstat&&!@seek&&!@read));
++    my $out={scope=>'ordinary-staged-file-ports-fixture-only',productionAuthority=>JSON::PP::false,
++      consumerInvoked=>JSON::PP::false,consumerClosed=>0,
++      directoryFhProfile=>$directory_fh?JSON::PP::true:JSON::PP::false,fixtureClosed=>0+$closed,
++      ownedCount=>scalar(@owned),definitelyClosed=>0+$closed,portsReady=>JSON::PP::true,
++      harnessFault=>length($fault)?$fault:undef,nominatedFault=>length($nominated)?$nominated:undef,
++      containedSelfFault=>$self?JSON::PP::true:JSON::PP::false,
++      dataMatched=>$matched?JSON::PP::true:JSON::PP::false,
++      firstLength=>$first_length,eofLength=>$eof_length,secondLength=>$second_length,
++      aliasWitness=>$alias_witness?JSON::PP::true:JSON::PP::false,primaryError=>$primary,
++      calls=>\%calls,core=>\%core,closeOrder=>\@close_order,events=>\@events,
++      cleanupErrors=>\@cleanup_errors,remaining=>{fcntl=>scalar(@fcntl),stat=>scalar(@stat),lstat=>scalar(@lstat),seek=>scalar(@seek),read=>scalar(@read)}};
++    print JSON::PP->new->canonical->utf8->encode($out);exit 0;
+ `;
+@@
++function stagedDirectoryFhPorts(mode='healthy') {
++  const out=stagedFilePorts('directory-fh-'+mode);
++  assert.equal(out.directoryFhProfile,true);return out;
++}
+ function stagedFilePorts(mode='healthy') {
+@@
+-  assert.equal(out.consumerClosed,0);assert.equal(out.portsReady,true);return out;
++  assert.equal(out.consumerClosed,0);assert.equal(out.portsReady,true);
++  if(!mode.startsWith('directory-fh-')) {
++    assert.equal(out.directoryFhProfile,false);assert.equal(out.core.directoryFhOpen,0);
++  }
++  return out;
+*** End Patch
+```
+
+#### Actual Task2b.4 execution checkpoint and transport refinement
+
+Design26e54ba76f8940e5d663a95013f362d5f2e16abf/treef7c34.
+Test-onlyb008/306322B and fullbridgeb7a3/308982B both exactly matched literal
+predictions and two independent actual-delta C0 reviews. Source4aa/spec8e9
+unchanged. Syntax/diff3d970c/49daaa0. ONEactualhealthyREDbdb2a4 naturallyCLOSED1,
+full output read: genuine missing-adapter JS AssertionError2335 before helper
+IO/Perl. This is fixture-adapter RED only. ONEfocus752385 naturallyCLOSED0,
+all output read:27PASS0FAIL/CANCEL/SKIP/TODO380.007917ms. Immediate roote848de/
+b7ebff all2093outside-mapped-test Git exact/npm166c6/fixedtools/Perl/MAP/absence
+matched. English/path8a0631 naturally0:1931/966files.
+
+First unfiltered invocation0e8380→e74bb3→42af5b managed91281 naturallyCLOSED0:
+1159PASS0FAIL/CANCEL/SKIP/TODO76707.188125ms. No test failure observed.
+However e74bb3 raw tool output was truncated by327tokens inside the parent
+write-short-completion cases. Its other1031line head/tail and terminal tail
+were retained, but missing bytes cannot be invented or called fully read.
+This invocation is NOT qualified for the complete-output-read gate.
+Do not poll91281 again or rerun any predecessor tests/builds.
+
+Causal transport refinement: one replacement verification invocation of the SAME
+scrubbed unfiltered command above is admitted only after two exact reviews and
+fresh source/tools/preservation/resource preflight. This is necessary because
+the first terminal-success transcript is incomplete, not a product fix or
+semantic RED. No source/test or expected-result change. Root sets BOTH nested
+exec_command/write_stdin max_output_tokens50000, preserves each raw result in
+session memory, and emits only small metadata initially. Then root reads each
+complete preserved output in bounded slices through EOF; outer rendering
+truncation cannot erase the preserved raw bytes. If a raw result contains the
+tool truncation marker, do not credit complete output or blindly retry.
+Root alone polls the new live session to natural closure. No rerun of oldclosed
+sessions, no new logs/fixture files, no native/DB/service/credential effects.
+After actual complete-read positive, record its distinct invocation identity and
+terminal evidence; only that complete transcript satisfies Step3 delivery gate.
+
+Actual replacement08b2f7→fba6bd→fc96f0 managed32974 naturallyCLOSED0:
+1159PASS0FAIL/CANCEL/SKIP/TODO76848.938208ms. Both nonempty raw chunks were
+preserved before rendering; neither contains a tool truncation marker. Root read
+first1031event/diagnostic lines in six bounded pages, then all terminal137lines
+through EOF. Complete joined transcript100117UTF8B/1168lines includes1159actual
+pass events, one existing diagnostic and eight summary lines. NOPOLL32974 and
+NORETEST after closure. Independent pre-effect transport C0 reviews and fresh
+inventory23:12:39–42/root7bab1423:13:06 source/tools/fixture/npm/absence passed.
+Postfull2d657f23:15:01 all2093outside-two-mapped-files Git exact/testb7a3/spec8e9/
+bootstrap4aa/npm166c6/tools/Perl/MAP/absence unchanged. Steps1–3 complete only;
+Step4 reviewed PR delivery and own clean-main build remain pending. No staged
+consumer, creator/protected ownership, H42/native/service/cutover completion.
 
 ### Task 3: Reviewed delivery and actual protected rehearsal
 
