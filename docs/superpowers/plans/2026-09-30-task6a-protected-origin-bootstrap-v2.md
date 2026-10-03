@@ -2001,7 +2001,10 @@ closure: fault containment, not leak freedom under uncertain native close.
 No FH/FD/PID/path/hash/owner-record authority is exported; authorityfalse,
 consumerInvokedfalse and consumerClosed0 remain mandatory.
 
-**Draft byte identities (not observed execution):** Program 17450B
+**Historical pre-effect candidate checkpoint, superseded by the actual execution
+checkpoint below; do not replay its commands.**
+
+**Draft byte identities at that checkpoint (not then observed execution):** Program 17450B
 SHA256c8f20b39812b35350c2bcb59cd8fdba578984d3659f53a727ebdfbc8917df0c2; test-only addition
 5477B SHA2565b3f1a60c9ec672aee6d9f9d9509072258c0a8331ec532ff5254763e72bb337d.
 Two initial read-only literal comparators failed: the first boundary selection
@@ -2017,17 +2020,17 @@ trailing blank. Program bytes/hash stay unchanged. Two independent reviewers
 must admit this corrected exact recipe before effects.
 Setup/prototype/compile failure is never semantic or staged-consumer RED.
 
-- [ ] **Step 1 — literal admission/design commit.** Two exact pre-effect C0
+- [x] **Step 1 — literal admission/design commit.** Two exact pre-effect C0
   reviews, root source/test/doc/tool/preservation check, git diff --check.
   Commit only these two reviewed design docs, no main commit or cleanup.
-- [ ] **Step 2 — test-only RED.** Apply the first literal patch only. Fixed Node
+- [x] **Step 2 — test-only RED.** Apply the first literal patch only. Fixed Node
   --check and diff --check; two actual-delta reviews. Run ONCE:
   `env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged directory FH ports retain actual directory handles and close original FH types$' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`
   cwd is the fixed branch root above. Expected genuine JS AssertionError:
   "staged directory FH adapter missing", undefined vs function, BEFORE map read
   or Perl spawn. Naturally terminal exit1 and full output must be read. This is
   missing-fixture-adapter RED only; no producer/staged consumer credit.
-- [ ] **Step 3 — minimal bridge GREEN.** After causal RED, apply the second
+- [x] **Step 3 — minimal bridge GREEN.** After causal RED, apply the second
   literal patch. Syntax/diff checks and two actual-delta reviews; then ONCE:
   `env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged (directory FH|readonly file) ports ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`
   Expected27PASS/0FAIL/CANCEL/SKIP/TODO, fourteen new plus thirteen prior profiles.
@@ -2647,6 +2650,54 @@ Setup/prototype/compile failure is never semantic or staged-consumer RED.
 +  return out;
 *** End Patch
 ```
+
+#### Actual Task2b.4 execution checkpoint and transport refinement
+
+Design26e54ba76f8940e5d663a95013f362d5f2e16abf/treef7c34.
+Test-onlyb008/306322B and fullbridgeb7a3/308982B both exactly matched literal
+predictions and two independent actual-delta C0 reviews. Source4aa/spec8e9
+unchanged. Syntax/diff3d970c/49daaa0. ONEactualhealthyREDbdb2a4 naturallyCLOSED1,
+full output read: genuine missing-adapter JS AssertionError2335 before helper
+IO/Perl. This is fixture-adapter RED only. ONEfocus752385 naturallyCLOSED0,
+all output read:27PASS0FAIL/CANCEL/SKIP/TODO380.007917ms. Immediate roote848de/
+b7ebff all2093outside-mapped-test Git exact/npm166c6/fixedtools/Perl/MAP/absence
+matched. English/path8a0631 naturally0:1931/966files.
+
+First unfiltered invocation0e8380→e74bb3→42af5b managed91281 naturallyCLOSED0:
+1159PASS0FAIL/CANCEL/SKIP/TODO76707.188125ms. No test failure observed.
+However e74bb3 raw tool output was truncated by327tokens inside the parent
+write-short-completion cases. Its other1031line head/tail and terminal tail
+were retained, but missing bytes cannot be invented or called fully read.
+This invocation is NOT qualified for the complete-output-read gate.
+Do not poll91281 again or rerun any predecessor tests/builds.
+
+Causal transport refinement: one replacement verification invocation of the SAME
+scrubbed unfiltered command above is admitted only after two exact reviews and
+fresh source/tools/preservation/resource preflight. This is necessary because
+the first terminal-success transcript is incomplete, not a product fix or
+semantic RED. No source/test or expected-result change. Root sets BOTH nested
+exec_command/write_stdin max_output_tokens50000, preserves each raw result in
+session memory, and emits only small metadata initially. Then root reads each
+complete preserved output in bounded slices through EOF; outer rendering
+truncation cannot erase the preserved raw bytes. If a raw result contains the
+tool truncation marker, do not credit complete output or blindly retry.
+Root alone polls the new live session to natural closure. No rerun of oldclosed
+sessions, no new logs/fixture files, no native/DB/service/credential effects.
+After actual complete-read positive, record its distinct invocation identity and
+terminal evidence; only that complete transcript satisfies Step3 delivery gate.
+
+Actual replacement08b2f7→fba6bd→fc96f0 managed32974 naturallyCLOSED0:
+1159PASS0FAIL/CANCEL/SKIP/TODO76848.938208ms. Both nonempty raw chunks were
+preserved before rendering; neither contains a tool truncation marker. Root read
+first1031event/diagnostic lines in six bounded pages, then all terminal137lines
+through EOF. Complete joined transcript100117UTF8B/1168lines includes1159actual
+pass events, one existing diagnostic and eight summary lines. NOPOLL32974 and
+NORETEST after closure. Independent pre-effect transport C0 reviews and fresh
+inventory23:12:39–42/root7bab1423:13:06 source/tools/fixture/npm/absence passed.
+Postfull2d657f23:15:01 all2093outside-two-mapped-files Git exact/testb7a3/spec8e9/
+bootstrap4aa/npm166c6/tools/Perl/MAP/absence unchanged. Steps1–3 complete only;
+Step4 reviewed PR delivery and own clean-main build remain pending. No staged
+consumer, creator/protected ownership, H42/native/service/cutover completion.
 
 ### Task 3: Reviewed delivery and actual protected rehearsal
 
