@@ -453,6 +453,56 @@ expiry/restoration/repetition and real forbidden-acceptance mutants. The literal
 helper/clock/read/stat counts and trace cap belong to the reviewed subplan before
 execution; the old parent harness's 512-event limit is not reused by assumption.
 
+## Ordinary read-only seekable-file/directory port foundation
+
+The actual captor foundation and its delivered throwing-cleanup repair do not
+provide the file/seek/stat ports required by the proposed staged composition.
+The next bounded prerequisite is test-only: independently prove a closed
+read-only file/DIR bridge before evaluating any staged consumer. Production
+bootstrap declarations, admission state, main and all existing owner ledgers
+remain unchanged. The existing four-file map is retained; this slice changes
+only the test and its existing spec/plan.
+
+Select one existing reviewed map-helper file and its scripts directory as
+ordinary backing data. Acquire fresh actual read-only handles, not old owner
+handles. Read helper bytes as data only, never require/eval/import that helper.
+No new fixture file/root, filesystem write/delete, chmod/ACL change, subprocess
+other than the fixed ordinary test Perl, native inspection or SQL is needed.
+The backing path and byte digest are private test fixture locators, not source,
+vendor or protected-origin authentication. No synthetic root:wheel metadata
+is needed for this foundation, and no six-leaf/six-ancestry acceptance is claimed.
+
+The adapter's private original registry must record every distinct actual CORE
+acquisition before fallible metadata/configuration/trace inspection. Aliases
+nominate an already retained handle before new CORE acquisition and create no
+second disposal obligation. Explicitly distinguish this fixture self-witness
+from the still-unresolved future consumer's pending-raw-acquisition/alias contract.
+Original disposal is independent of mutable diagnostics, queues and sticky
+fault state; mark attempts before CORE close/closedir, contain each failure,
+continue all remaining originals and never retry an uncertain original.
+Consumer versus fixture closure remains separate: no production consumer is
+invoked in this foundation, so all original closure credit is fixture-only.
+
+Closed ports must verify their actual CORE prototypes before execution, match
+the exact nominated file/DIR role and argument shapes before delegation, and use
+finite typed operation queues. Real CORE seek/read/stat and definite original
+closure supply IO evidence; nominated failures after an independently proven
+close supply only fault-containment evidence. Unknown path/operation, queue
+exhaustion, compile/prototype failure, caught sticky fault and trace overflow
+cannot become semantic source refusal. Neither a missing future declaration
+nor a harness setup failure counts as consumer RED.
+
+Use a dedicated test-only kind instead of widening the captor's deny-all
+filesystem port or adopting raw/Perl ledgers. No production initializer, public
+factory, caller path/hash/receipt/callback, private handle or PID is exported.
+Root must first save/review the complete literal adapter/test delta, mode
+matrix, operation counts, trace bound and invocation in the executable subplan;
+then commit the mapped design before effects. A genuine missing-adapter JS
+assertion may precede implementation without spawning Perl. Only actual
+post-implementation self-witness execution can clear this foundation. Complete
+staged ownership, authentic creator record, H42 composition, shared holder
+failure routing, protected/native and final service cutover remain separate.
+
 ## Parent-owned real execution edge
 
 The trusted supervisor owns the actual fork PID and private pipes, drops all
