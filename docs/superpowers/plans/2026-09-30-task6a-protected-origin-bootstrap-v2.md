@@ -472,7 +472,7 @@ git diff --check
 git diff --stat d40fa6b9d517bdbb9e466585c86fbd1471c4dfc0
 ```
 
-- [ ] **Step 9: Ordinary reviewed delivery.** Exact four-file independent source/
+- [x] **Step 9: Ordinary reviewed delivery.** Exact four-file independent source/
   test/spec/plan review; record actual RED/GREEN/mutant counts and source pins.
   Scoped conventional commit/normal push/PR; full paginated actual current-head
   comments/review/security/threads, normal SHA-bound merge, no bypass/deletion.
@@ -482,6 +482,24 @@ git diff --stat d40fa6b9d517bdbb9e466585c86fbd1471c4dfc0
   genesis/32/33/A–E/M1/M2 claim; retain all worktrees/branches/evidence.
 
 Ordinary execution ledger, 2026-10-03:
+
+- Ordinary P2a Steps1–9 closed at exact source04393cce/test28176bc. Full1118 and
+  adjacent895 actual PASS/0FAIL/0SKIP, complete outputs and natural terminal0
+  observed. Final independent exact four-file reviews C0/I0/M0. PR267 exacthead
+  88f1aa315566a202781a783b5624a9a91047df85 delivered normally; current-head Codex
+  Completed plus actual bot +1 supports no findings, not formal approval;
+  GitGuardian SUCCESS/zero annotations and full paginated feedback clear.
+  Optional Copilot/Gemini approval was not observed or inferred.
+- Normal SHA-bound merge ca86623fb13d29a01a3e45c27a0cf7d315b32276 has exact
+  parents d40fa6b9/88f1aa3 and reviewed treea9c62512. Separate full own clean-main
+  clone, one locked ignore-scripts install, independently admitted fresh source/
+  tools/dependencies/preservation, then ONE normal pre/build/post guarded build.
+  Actual npmEXIT0/CLOSE0/null/spawnErrorfalse and outer0 observed; full terminal
+  output read. Display2.3.79+ca86623f, input660d06e3f6306ea98e3de825b0692ae81f37feb759ad302fb998688d293e9f14,
+  outputTree033a76deae2fce44ca3f5df9492582ddcffd5da5c8bd26eaebff899964217f73.
+  Independent complete858-output/three-artifact/source binding and old-pin/host
+  preservation C0/I0/M0. All roots/branches/evidence retained; no old ALL rerun,
+  main direct commit, native/SQL/credential/service/fence/cutover admission.
 
 - Reviewed exact specbd7fa279/plan981482ef promoted in scoped docs commit
   bf96cf3d2a42ff1cfb3626ab29dc46a1dad4cc71; two independent C0/I0/M0 reviews.
