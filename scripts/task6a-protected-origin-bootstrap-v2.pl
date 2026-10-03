@@ -16,8 +16,14 @@ use Time::HiRes ();
 
 my $last_clock=0;
 sub task6a_origin_now {
-    my $now=Time::HiRes::clock_gettime(Time::HiRes::CLOCK_MONOTONIC());
-    task6a_origin_refuse() if $now!=$now||$now<$last_clock||$now>1e12;
+    task6a_origin_refuse() unless @_==0;
+    my $now;
+    my $ok=eval {$now=Time::HiRes::clock_gettime(Time::HiRes::CLOCK_MONOTONIC());1;};
+    task6a_origin_refuse() unless $ok&&defined($now)&&!ref($now);
+    my $flags=B::svref_2object(\$now)->FLAGS;
+    task6a_origin_refuse() if $flags&B::SVf_POK();
+    task6a_origin_refuse() unless $flags&(B::SVf_IOK()|B::SVf_NOK());
+    task6a_origin_refuse() if $now!=$now||$now<0||$now<$last_clock||$now>1e12;
     $last_clock=$now;return $now;
 }
 my $bootstrap_deadline=task6a_origin_now()+180;
@@ -35,6 +41,258 @@ my $physical_cleanup_ok=0;
 my $physical_file;
 my @physical_directories;
 my @physical_owned_handles;
+
+# No production initializer: only a future separately admitted launcher may
+# establish custody. Ordinary tests initialize a uniquely anchored memory copy.
+my ($parent_admission,$parent_original_admission,$parent_original_pid);
+my @parent_originals;
+my $parent_phase='absent';
+my $parent_invalid=0;
+my ($parent_cleanup_started,$parent_cleanup_complete)=(0,0);
+my (@parent_close_attempted,@parent_definitely_closed);
+my ($parent_start,$parent_deadline);
+my ($parent_authenticated,$parent_known_live,$parent_reaped,$parent_uncertain)=(0,0,0,0);
+my $parent_raw_status;
+my ($parent_pending,$parent_input_bytes,$parent_output_bytes)=('',0,0);
+my @parent_nonces;
+my ($parent_matched,$parent_ready,$parent_end_written,$parent_final_end)=(0,0,0,0);
+my @parent_eof;
+
+my $parent_same_identity=sub {
+    my ($original,$observed)=@_;
+    task6a_origin_refuse() unless ref($original) eq 'ARRAY'&&ref($observed) eq 'ARRAY'
+        &&@$original==13&&@$observed==13;
+    for my $field(0..6) {
+        task6a_origin_refuse() unless defined($original->[$field])&&defined($observed->[$field])
+            &&$original->[$field]==$observed->[$field];
+    }
+};
+my $parent_recheck_originals=sub {
+    my %fds;
+    for my $index(0..$#parent_originals) {
+        my $record=$parent_originals[$index];next unless defined($record);
+        next if $parent_definitely_closed[$index];
+        my $fh=$record->{fh};my $fd=defined($fh)?fileno($fh):undef;
+        task6a_origin_refuse() unless defined($fd)&&defined($record->{fd})&&$fd==$record->{fd}&&!$fds{$fd}++;
+        my @now=stat($fh);$parent_same_identity->($record->{identity},\@now);
+        task6a_origin_refuse() unless $index==4?Fcntl::S_ISCHR($now[2]):Fcntl::S_ISFIFO($now[2]);
+    }
+};
+my $parent_close=sub {
+    my ($index)=@_;
+    task6a_origin_refuse() if $parent_close_attempted[$index]||$parent_definitely_closed[$index];
+    my $record=$parent_originals[$index];task6a_origin_refuse() unless defined($record)&&defined($record->{fh});
+    $parent_close_attempted[$index]=1;
+    my $ok=eval {close($record->{fh})};my $error=$@;
+    task6a_origin_refuse() unless $ok&&!length($error)&&!defined(fileno($record->{fh}));
+    $parent_definitely_closed[$index]=1;
+};
+my $parent_dispose=sub {
+    return if $parent_cleanup_started;
+    $parent_cleanup_started=1;my $closed=1;
+    for my $index(0..$#parent_originals) {
+        next unless defined($parent_originals[$index]);
+        next if $parent_definitely_closed[$index];
+        if($parent_close_attempted[$index]) {$closed=0;next;}
+        my $ok=eval {$parent_close->($index);1;};my $error=$@;
+        $closed=0 unless $ok&&!length($error)&&$parent_definitely_closed[$index];
+    }
+    if($parent_authenticated&&!$parent_reaped&&!$parent_uncertain) {
+        # Valid custody may fail before its first epoch poll. Cleanup observes
+        # ONLY this authenticated sealed PID, never an admission field.
+        my $ok=eval {task6a_origin_poll($parent_original_pid,\$parent_reaped,\$parent_uncertain,\$parent_raw_status);1;};
+        my $error=$@;$parent_uncertain=1 unless $ok&&!length($error);
+        $parent_known_live=!$parent_reaped&&!$parent_uncertain;
+    }
+    if($parent_authenticated&&$parent_known_live&&!$parent_reaped&&!$parent_uncertain) {
+        my $ok=eval {task6a_origin_shutdown_helper($parent_original_pid,\$parent_reaped,\$parent_uncertain,\$parent_raw_status);1;};
+        my $error=$@;$parent_uncertain=1 unless $ok&&!length($error);
+    }
+    $parent_cleanup_complete=$closed&&(!$parent_authenticated||($parent_reaped&&!$parent_uncertain));
+};
+my $parent_check_admission=sub {
+    task6a_origin_refuse() unless ref($parent_admission) eq 'HASH'&&ref($parent_original_admission) eq 'HASH'
+        &&$parent_admission==$parent_original_admission
+        &&join(',',sort keys %$parent_admission) eq 'input,pid,setup,stderr,stdout';
+    # Target pid_t is signed32. Inspect raw flags BEFORE coercive equality,
+    # including the independently copied PID in the admission record.
+    for my $pid($parent_original_pid,$parent_admission->{pid}) {
+        task6a_origin_refuse() unless defined($pid)&&!ref($pid);
+        my $flags=B::svref_2object(\$pid)->FLAGS;
+        task6a_origin_refuse() if $flags&B::SVf_POK();
+        task6a_origin_refuse() unless ($flags&(B::SVf_IOK()|B::SVf_NOK()))
+            &&$pid>=1&&$pid<=2147483647&&$pid==int($pid);
+    }
+    task6a_origin_refuse() unless $parent_admission->{pid}==$parent_original_pid;
+    my @names=('input','stdout','stderr','setup');
+    for my $index(0..3) {
+        my $original=$parent_originals[$index];my $selected=$parent_admission->{$names[$index]};
+        task6a_origin_refuse() unless ref($original) eq 'HASH'&&defined($original->{fh})
+            &&defined($selected)&&ref($selected)&&$selected==$original->{fh};
+    }
+};
+my $parent_epoch=sub {
+    task6a_origin_parent_require_unburned();
+    $parent_check_admission->();
+    my $now=task6a_origin_now();task6a_origin_refuse() unless defined($parent_deadline)&&$now<$parent_deadline;
+    my $ok=eval {task6a_origin_poll($parent_original_pid,\$parent_reaped,\$parent_uncertain,\$parent_raw_status);1;};
+    my $error=$@;$parent_uncertain=1 unless $ok&&!length($error);
+    task6a_origin_refuse() if $parent_uncertain;
+    if($parent_reaped) {
+        task6a_origin_refuse() unless $parent_definitely_closed[0]
+            &&defined($parent_raw_status)&&$parent_raw_status==0;
+        $parent_known_live=0;
+    } else {$parent_known_live=1;}
+    $parent_recheck_originals->();return $now;
+};
+my $parent_write=sub {
+    my ($bytes,$terminal)=@_;$parent_epoch->();
+    task6a_origin_refuse() unless defined($bytes)&&!ref($bytes)&&!utf8::is_utf8($bytes)
+        &&length($bytes)>0&&$parent_input_bytes+length($bytes)<=229;
+    my ($count,$errno);my $ok=eval {$!=0;
+        $count=syswrite($parent_originals[0]{fh},$bytes,length($bytes));$errno=0+$!;1;};my $error=$@;
+    task6a_origin_refuse() unless $ok&&!length($error)&&defined($count)&&$count==length($bytes)&&$errno==0;
+    $parent_input_bytes+=$count;$parent_epoch->() unless $terminal;
+};
+my $parent_entropy=sub {
+    unless(defined($parent_originals[4])) {
+        my @before=lstat('/dev/urandom');
+        task6a_origin_refuse() unless @before==13&&Fcntl::S_ISCHR($before[2])&&$before[3]==1&&$before[4]==0&&$before[5]==0;
+        my $fh;
+        sysopen($fh,'/dev/urandom',Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK()) or task6a_origin_refuse();
+        # A live alias is not a new acquisition or a second close obligation.
+        for my $index(0..3) {
+            next if $parent_definitely_closed[$index];
+            my $old=$parent_originals[$index]{fh};
+            task6a_origin_refuse() if $fh==$old
+                ||(defined(fileno($fh))&&defined(fileno($old))&&fileno($fh)==fileno($old));
+        }
+        $parent_originals[4]={fh=>$fh};
+        $parent_originals[4]{fd}=fileno($fh);
+        my @opened=stat($fh);$parent_originals[4]{identity}=\@opened;
+        $parent_same_identity->(\@before,\@opened);
+        binmode($fh) or task6a_origin_refuse();
+        fcntl($fh,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()) or task6a_origin_refuse();
+        my $flags=fcntl($fh,Fcntl::F_GETFL(),0);my $descriptor=fcntl($fh,Fcntl::F_GETFD(),0);
+        task6a_origin_refuse() unless defined($flags)&&($flags&Fcntl::O_ACCMODE())==Fcntl::O_RDONLY()
+            &&($flags&Fcntl::O_NONBLOCK())&&defined($descriptor)&&($descriptor&Fcntl::FD_CLOEXEC());
+    }
+    my $record=$parent_originals[4];$parent_epoch->();
+    my ($count,$errno);my $bytes='';
+    my $ok=eval {$!=0;$count=sysread($record->{fh},$bytes,32);$errno=0+$!;1;};my $error=$@;
+    task6a_origin_refuse() unless $ok&&!length($error)&&defined($count)&&$count==32&&$errno==0
+        &&!utf8::is_utf8($bytes)&&length($bytes)==32;
+    $parent_epoch->();
+    $parent_same_identity->($record->{identity},[lstat('/dev/urandom')]);
+    $parent_same_identity->($record->{identity},[stat($record->{fh})]);
+    my $nonce=unpack('H*',$bytes);
+    task6a_origin_refuse() unless $nonce =~ /\A[0-9a-f]{64}\z/;
+    for my $old(@parent_nonces) {task6a_origin_refuse() if $old eq $nonce;}
+    $parent_close->(4) if @parent_nonces==2;
+    return $nonce;
+};
+
+sub task6a_origin_parent_require_unburned {
+    task6a_origin_refuse() unless @_==0&&!$parent_invalid;
+    return JSON::PP::true;
+}
+sub task6a_origin_consume_entry_protocol {
+    my $arity=@_;my $diagnostic;
+    my $ok=eval {
+        task6a_origin_parent_require_unburned();
+        task6a_origin_refuse() unless $arity==0&&$parent_phase eq 'absent'&&@parent_originals==4;
+        $parent_check_admission->();
+        $parent_recheck_originals->();$parent_authenticated=1;$parent_phase='starting';
+        $parent_start=task6a_origin_now();$parent_deadline=$parent_start+45;
+        $parent_deadline=$bootstrap_deadline if $bootstrap_deadline<$parent_deadline;
+        $parent_epoch->();
+        for my $index(0..3) {
+            my $fh=$parent_originals[$index]{fh};binmode($fh) or task6a_origin_refuse();
+            fcntl($fh,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()) or task6a_origin_refuse();
+            my $flags=fcntl($fh,Fcntl::F_GETFL(),0);task6a_origin_refuse() unless defined($flags);
+            fcntl($fh,Fcntl::F_SETFL(),$flags|Fcntl::O_NONBLOCK()) or task6a_origin_refuse();
+            my $actual=fcntl($fh,Fcntl::F_GETFL(),0);my $descriptor=fcntl($fh,Fcntl::F_GETFD(),0);
+            task6a_origin_refuse() unless defined($actual)&&($actual&Fcntl::O_NONBLOCK())
+                &&defined($descriptor)&&($descriptor&Fcntl::FD_CLOEXEC());
+        }
+        $parent_recheck_originals->();$parent_phase='active';
+        my $selector=IO::Select->new(map {$parent_originals[$_]{fh}} (1,2,3));
+        while(1) {
+            my $now=$parent_epoch->();
+            if($parent_phase eq 'ending'&&$parent_final_end&&$parent_eof[1]&&$parent_eof[2]&&$parent_eof[3]
+                &&$parent_reaped&&!$parent_uncertain&&defined($parent_raw_status)&&$parent_raw_status==0) {
+                task6a_origin_refuse() unless @parent_originals==5&&$parent_input_bytes==229&&$parent_output_bytes==220
+                    &&@parent_nonces==3&&$parent_matched==3;
+                for my $index(0..4) {task6a_origin_refuse() unless $parent_definitely_closed[$index];}
+                $parent_phase='settled';$parent_cleanup_started=1;$parent_cleanup_complete=1;
+                $diagnostic={scope=>'parent-entry-protocol-diagnostic-only',productionAuthority=>JSON::PP::false,
+                    challengeCount=>3,inputBytes=>229,outputBytes=>220,handlesClosed=>5,reaped=>JSON::PP::true};
+                last;
+            }
+            my $wait=$parent_deadline-$now;$wait=0.01 if $wait>0.01;
+            my (@ready,$errno);my $ready_ok=eval {$!=0;@ready=$selector->can_read($wait);$errno=0+$!;1;};my $ready_error=$@;
+            task6a_origin_refuse() unless $ready_ok&&!length($ready_error)&&$errno==0;
+            $parent_epoch->();my %ready;
+            for my $fh(@ready) {
+                my $found;
+                for my $index(1,2,3) {
+                    next if $parent_definitely_closed[$index];
+                    $found=$index if ref($fh)&&$fh==$parent_originals[$index]{fh};
+                }
+                task6a_origin_refuse() unless defined($found)&&!$ready{$found}++&&$selector->exists($fh);
+            }
+            for my $index(3,2,1) {
+                next unless $ready{$index};$parent_epoch->();
+                my $buffer='';my ($count,$read_errno);my $request=$index==1?71:1;
+                my $read_ok=eval {$!=0;$count=sysread($parent_originals[$index]{fh},$buffer,$request);$read_errno=0+$!;1;};
+                my $read_error=$@;
+                task6a_origin_refuse() unless $read_ok&&!length($read_error)&&defined($count)&&!ref($count)
+                    &&$count>=0&&$count==int($count)&&$count<=$request&&$read_errno==0
+                    &&!utf8::is_utf8($buffer)&&length($buffer)==$count;
+                $parent_epoch->();
+                if($count==0) {
+                    task6a_origin_refuse() if $index==1&&(!$parent_final_end||$parent_phase ne 'ending');
+                    $parent_eof[$index]=1;$selector->remove($parent_originals[$index]{fh});$parent_close->($index);
+                    next;
+                }
+                task6a_origin_refuse() unless $index==1&&!$parent_final_end;
+                $parent_output_bytes+=$count;task6a_origin_refuse() if $parent_output_bytes>220;
+                $parent_pending.=$buffer;
+                my $expected;
+                if(!$parent_ready) {$expected="READY\n";}
+                elsif($parent_phase eq 'ending') {
+                    task6a_origin_refuse() unless $parent_end_written&&$parent_definitely_closed[0];$expected="END\n";
+                } else {
+                    task6a_origin_refuse() unless @parent_nonces==$parent_matched+1;
+                    $expected='PONG '.$parent_nonces[$parent_matched]."\n";
+                }
+                task6a_origin_refuse() unless length($parent_pending)<=length($expected)&&index($expected,$parent_pending)==0;
+                if(length($parent_pending)==length($expected)) {
+                    if(!$parent_ready) {next;}
+                    if($parent_phase eq 'ending') {$parent_final_end=1;}
+                    else {++$parent_matched;}
+                    $parent_pending='';
+                }
+            }
+            if(!$parent_ready&&$parent_pending eq "READY\n"&&$parent_eof[3]&&$parent_definitely_closed[3]) {
+                $parent_ready=1;$parent_pending='';
+            }
+            if($parent_ready&&$parent_phase eq 'active'&&$parent_matched==@parent_nonces) {
+                if($parent_matched==3) {
+                    $parent_write->("END\n",1);$parent_end_written=1;
+                    $parent_close->(0);$parent_phase='ending';$parent_epoch->();
+                } else {
+                    my $nonce=$parent_entropy->();$parent_write->('CHALLENGE '.$nonce."\n",0);
+                    push @parent_nonces,$nonce;
+                }
+            }
+            Time::HiRes::sleep($wait) unless $selector->count()||$parent_reaped;
+        }
+        1;
+    };my $primary=$@;
+    if(!$ok) {$parent_invalid=1;$parent_dispose->();task6a_origin_refuse();}
+    return $diagnostic;
+}
 
 sub task6a_origin_helpers_settled {
     task6a_origin_refuse() unless @_==0;
