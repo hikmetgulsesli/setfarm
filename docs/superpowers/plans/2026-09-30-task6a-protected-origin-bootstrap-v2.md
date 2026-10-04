@@ -2720,6 +2720,906 @@ Closed test/build sessions were not rerun or repolled. This completes Task2b.4
 only. Actual staged declarations, authentic creator/publisher, complete core/XS,
 native, SQL, service and final cutover retain separate uncompleted gates.
 
+### Task 2b.5: Actual staged owner — literal preparation checkpoint
+
+**Goal:** Implement the three private zero-argument staged operations, not a
+second adapter, while leaving the production admission absent and main refused.
+
+**Files:** Existing bootstrap, its existing test, this plan and its named spec.
+Base ordinary merge3e94dad9; committed design3ea41372. Preserve all earlier
+roots, builds, caches, journal and the original two files. Root is the only writer.
+
+**Interfaces:** `task6a_origin_hold_staged_custody()`,
+`task6a_origin_recheck_staged_custody()` and
+`task6a_origin_release_staged_custody()` consume no arguments and export only
+the diagnostic fields fixed by the spec. No producer, initializer, callback,
+path/hash setter, returned descriptor or production entry is added.
+
+This checkpoint is source-only preparation, NOT an executable subplan admission.
+The complete source literal, combined dispatcher, finite queues, exact initializer
+and negative-prefix witnesses must receive two independent reviews before any
+new test or declaration execution. Do not interpret the counts below as observed
+runtime results or replay any closed predecessor invocation.
+
+- [x] Read actual validators/capture/FD parser and the existing test dispatch.
+- [x] Obtain two independent read-only contract/count investigations.
+- [ ] Freeze complete source/test/initializer/trace literals and self-review.
+- [ ] Two independent exact-candidate reviews and fresh preservation preflight.
+- [ ] Observe genuine missing-actual-declarations RED before fixture setup.
+- [ ] Implement the actual consumer, then positive/negative/mutation GREEN.
+- [ ] Whole branch review, complete-output tests, normal PR delivery/own-main
+  build and two preservation/artifact postaudits. No protected or service effect.
+
+#### Source-derived healthy accounting
+
+Select six nonempty ordinary fixture leaves, each at most65536B. Do not silently
+change this premise when selecting backing files. New guards are exactly hold
+entry, hold completion, recheck entry and recheck completion; all compare the
+unchanged bootstrap deadline. Release has zero validity clocks/helpers. Existing
+held-file validation runs once during acquisition and twice in each complete
+hold/recheck epoch: five validations per leaf. Directory validation runs once
+immediately after each acquisition and twice in each complete epoch: five per
+directory. These are validator invocations, not atomic snapshot claims.
+
+| Operation | Hand-derived healthy count | Scope |
+| --- | ---: | --- |
+| Startup clock | 1 | Existing bootstrap initialization |
+| Captor clocks | 252 | 42 helpers times6 |
+| Directory-validator clocks | 60 | 30 checks times2 |
+| Held-file-validator clocks | 90 | 30 checks times3, one-chunk nonempty leaves |
+| New boundary clocks | 4 | Hold/recheck entry/completion only |
+| Whole clocks | 407 | Conditional on the exact literals above |
+| Staged sysopen | 12 | Six directory FHs then six file FHs |
+| Pipe acquisitions | 168 | 42 helpers times4 pairs;336 FHs |
+| Census DIR acquisitions | 42 | One per helper; not a directory FH |
+| Owned originals | 390 | 12+336+42; hidden rescue accounted separately |
+| Census readdir | 1083 | Sum(15+S), S=1..6 then36 times12 |
+| Synthetic waits/readiness/forks | 168/84/42 | Never kernel child actions |
+| Actual pipe reads | 168 | Data,stderrEOF,setupEOF,stdoutEOF per helper |
+| Validator stat/lstat | 120/120 | Acquisition inspections are additional |
+| File seeks/reads | 30/60 | Actual seek/data/EOF; no nominated byte receipt |
+
+Do not count acquisition metadata twice or infer its final totals before the
+actual source literal is fixed. Four fcntls per staged original would contribute
+48 to the42 existing setup fcntls, hence90; six staged binary modes plus336 pipe
+modes would give342. Six directory and six file pre-open lstat calls would give
+132 total lstat. These three totals remain conditional on the selected exact
+configuration/acquisition implementation, not independently observed facts.
+For larger leaves, add five clocks per additional65536B chunk per leaf. More
+retained originals change every helper census; the ordinary positive initializes
+no old parent/file/directory/Perl owner. A foreign-owner negative must explicitly
+account for its extra original and must not inherit the positive counts.
+
+#### Combined dispatcher placement and ownership rules
+
+Select one new closed `staged-custody` branch/constant beside the existing captor
+program, interpolated before competing branches in `systemObject`. Preserve old
+standalone constants and old kinds. Extend the8MiB output allowance only for this
+closed kind; keep scrubbed environment, Apple Perl, ordinary UID refusal, sole
+main removal and timeout unchanged. Apply only the uniquely anchored denied-exec
+memory syntax mapping already admitted for captor tests. Do not nest CORE hooks,
+replace `acl_free`/capture outcomes, or execute the old adapter as a child.
+
+The dispatcher has one independent original registry for staged FHs, current
+helper pipes, current census DIR and fixture-only hidden acquisitions. Before
+each helper, initialize its four pipe-pair roles, four waits, two readiness
+rounds, read queues, selector, census entries and setup-fcntl ordinal. All queues
+are finite and typed. Retain closed history for accounting but enumerate only
+currently live originals and the current census DIR. Verify selector membership
+using actual IO::Select handles/count/removal. Primitive fixture lookups use
+CORE::fileno internally; the ported source fileno wrapper must also recognize
+known definitely closed originals during the existing final close loop.
+
+Do not reuse `@owned==8`, single-fork or single-fcntl assertions from the old
+one-helper program. Its ordinary register/lookup currently performs value and
+fileno operations before any B guard; malformed-handle nominations therefore
+need a callback-free pre-value branch, not a blind copy of that lookup.
+
+Acquisition nominees distinguish: distinct exposed success; exposed false;
+exposed throw; same-reference alias; known live-FD alias; unknown/tied/magical/
+overloaded binding; ordinary undefined output; and raw CORE success hidden
+before output assignment. Seal every distinct exposed native original before
+metadata/configuration/trace. Hidden originals stay in the fixture rescue
+registry and never increase consumerClosed. A failed acquisition burns even
+when an exposed native original is definitely cleaned up. Unknown ownership
+never grants positive release or leak-freedom. No borrowed alias receives its
+own close obligation.
+
+#### Admission and callback-free guard implementation requirements
+
+B-check the original scalar cell before accessing its value. For containers,
+require a plain reference cell, then native unblessed/unmagical PVHV/PVAV before
+keys/indexing; validate exact keys and every nested scalar cell before coercion.
+For a pending FH, a plain undefined cell means no exposed original. Otherwise
+require B::IV with ROK, native B::GV and native B::IO. Cell/GV reject mask
+0x00f00000; IO rejects0x00e00000 and all MAGIC. Native IO's object bit alone is
+legitimate. No candidate methods, indirect names, tied lookup or caller classifier.
+Only then may CORE::fileno and native-reference/live-FD comparisons run.
+
+Check the admitted object/array/row references as well as exact key sets,
+ordered roles, root path, creation identity and byte strings. Copy expectations
+once independently after initial guarded validation; never regenerate hashes
+from mutable admission during recheck. Four source bytes join the unchanged Git
+blob pins via literal blob framing. Vendor bytes join the unchanged official
+SHA256 pin. Selected archiveRef joins the original vendor object; actual selected
+byte derivation still belongs to a later authentic private producer.
+
+Alias checks must include already retained staged originals and known other
+bootstrap owners. The exact set is `@parent_originals` (including entropy slot4),
+`@physical_owned_handles`, and actual FH bindings from `@file_ledger` and
+`@directory_ledger`, with overlaps deduplicated. Never use `$parent_admission`,
+stored FD/identity/path/hash values, historical closed FD numbers or caller
+census entries as ownership. Validate the actual bindings before comparison and
+inspect actual live FDs through CORE. A contaminated or uninspectable known-owner
+registry refuses before a new acquisition. Freeze its reference set for this
+owner; retain strong references but acquire no borrowed disposal obligation.
+
+The current captor's pipe `@handles` is invocation-local, not in
+`@helper_ledger`; that ledger supplies PID/settlement facts only. Require actual
+helpers settled before stage acquisition and prohibit reentrant acquisition
+during a capture. The ordinary positive initializes no such older owner; a
+negative foreign-owner fixture is separately bounded and must preserve its own
+owner's cleanup obligation.
+
+A plain native FH is not proof of arbitrary foreign ownership. Trusted native
+sysopen provenance and lower-port corruption remain distinct. The independent
+dispatcher records actual CORE acquisition/exposure/hiding as fixture-integrity
+evidence, never as a producer token. Representation plus fileno cannot classify
+an arbitrary unknown native FH nominated by a corrupted primitive as newly
+owned. Do not claim generic resistance to arbitrary Perl-op replacement or a
+global ownership census. Known other-owner reference/live-FD aliases refuse
+without staged close; unknown provenance remains uncertain/nonpositive. Cleanup
+closes its lexically captured original/primitive, never a mutable metadata FH.
+Mark attempt before close, catch each failure and continue. If an original has
+become magical, record uncertainty rather than invoke a tied callback; all other
+sealed originals still receive their attempt. Close plus actual undefined
+CORE::fileno is necessary for a positive definite-close fact. Release bypasses
+validity clocks, admission, helpers and deadline but never this ownership guard.
+
+Required negative witnesses include tied output cell, tied GV/IO, blessed or
+overloaded binding, indirect handle name, plain non-FH reference, exposed alias,
+exposed false/throw and hidden raw rescue. Each malformed binding must prove zero
+candidate callbacks, rather than merely observing a final refusal. Known-native
+positive must pass so an always-refusing guard cannot satisfy the suite.
+
+#### Literal callback-free shape predicates — unexecuted candidate
+
+Place the following private predicates immediately before the current private
+parent-admission declaration. They are a component of the forthcoming complete
+source literal, not a standalone adapter deliverable or permission to execute.
+Their closures receive references manufactured by this private implementation,
+never caller-provided classifier callbacks. Shape rejection uses the existing
+canonical refusal. The enclosing pending-acquisition handler must separately
+retain classification uncertainty; catching this refusal alone is insufficient.
+
+```perl
+my $staged_plain_cell=sub {
+    my ($cell)=@_;
+    my $sv=B::svref_2object($cell);
+    task6a_origin_refuse() if $sv->FLAGS & 0x00f00000;
+    # No candidate value has been accessed yet. B object dispatch is on the
+    # installed introspection object, never on the candidate.
+    return $sv;
+};
+my $staged_scalar=sub {
+    my ($cell)=@_;
+    my $sv=$staged_plain_cell->($cell);
+    task6a_origin_refuse() if $sv->FLAGS & B::SVf_ROK();
+    task6a_origin_refuse() unless defined($$cell);
+    return $$cell;
+};
+my $staged_container=sub {
+    my ($cell,$kind)=@_;
+    my $sv=$staged_plain_cell->($cell);
+    task6a_origin_refuse() unless ref($sv) eq 'B::IV'
+        &&($sv->FLAGS & B::SVf_ROK());
+    my $rv=$sv->RV;
+    task6a_origin_refuse() unless ref($rv) eq $kind;
+    task6a_origin_refuse() if $rv->FLAGS & 0x00f00000;
+    my $magic=$rv->MAGIC;
+    task6a_origin_refuse() if defined($magic);
+    return $$cell;
+};
+my $staged_vector=sub {
+    my ($reference)=@_;
+    # reference is manufactured privately with \@vector. Inspect the original
+    # AV before length/index/iteration; taking its reference does not FETCH it.
+    my $av=B::svref_2object($reference);
+    task6a_origin_refuse() unless ref($av) eq 'B::AV';
+    task6a_origin_refuse() if $av->FLAGS & 0x00f00000;
+    my $magic=$av->MAGIC;
+    task6a_origin_refuse() if defined($magic);
+};
+my $staged_native_fh=sub {
+    my ($cell,$allow_empty)=@_;
+    my $sv=$staged_plain_cell->($cell);
+    unless($sv->FLAGS & B::SVf_ROK()) {
+        return 0 if $allow_empty&&!defined($$cell);
+        task6a_origin_refuse();
+    }
+    task6a_origin_refuse() unless ref($sv) eq 'B::IV';
+    my $gv=$sv->RV;
+    task6a_origin_refuse() unless ref($gv) eq 'B::GV';
+    task6a_origin_refuse() if $gv->FLAGS & 0x00f00000;
+    my $gv_magic=$gv->MAGIC;
+    task6a_origin_refuse() if defined($gv_magic);
+    my $io=$gv->IO;
+    task6a_origin_refuse() unless ref($io) eq 'B::IO';
+    # Ordinary native IO has SVs_OBJECT. Magic, not that bit, admits FILENO
+    # callbacks; the scalar and GV object bits were already rejected above.
+    task6a_origin_refuse() if $io->FLAGS & 0x00e00000;
+    my $io_magic=$io->MAGIC;
+    task6a_origin_refuse() if defined($io_magic);
+    return 1;
+};
+```
+
+These literals deliberately do not call candidate `ref`, comparisons, FILENO,
+methods or stringification before the shape gate. Scalar/container operations
+after the gate still need real negative callback counters. Do not claim the
+single previous native diagnostic proved `SVf_ROK`, empty-cell handling,
+container MAGIC handling or these complete predicates. In particular the guard
+is not provenance: a plain native foreign FH can satisfy this predicate and must
+still be rejected by the private native acquisition/known-owner alias contract.
+
+The complete source candidate must add an absent admission, independently
+retained references/scalars/byte commitments, pending-output handling, sealed
+cleanup closures, known other-owner alias checks, six ancestry/six-leaf
+acquisition, actual epoch validators and all three zero-argument declarations.
+Do not insert these predicates alone into production or call this slice GREEN.
+
+#### Literal private admission reader — unexecuted candidate
+
+Append this component after the shape predicates. Runtime class arguments are
+`B::HV`/`B::AV`, not C SV-type names. The fixed ordered roles are
+`archive-helper`, `native-helper`, `map-helper`, `entry`. The future private
+producer and the memory-only fixture must both use these exact inert role labels.
+The reader does not authenticate selected-member derivation or acquire any FH.
+
+```perl
+my $staged_admission;
+my $staged_snapshot;
+my $staged_phase='absent';
+my ($staged_invalid,$staged_uncertain,$staged_disposal_started)=(0,0,0);
+my (@staged_files,@staged_directories,@staged_originals,@staged_foreign,@staged_pending);
+my @staged_policy=(
+    ['archive-helper','source/task6a-origin-archive-v2.pm',
+        'da1fd458fcaba775be5ba09ef88157b5ee48dbda',0400],
+    ['native-helper','source/task6a-origin-native-v2.pm',
+        '59e1ae8de38cf2083a0294c55454083840eb47f1',0400],
+    ['map-helper','source/task6a-origin-map-v2.pm',
+        '9719bf4f3676b43b7858e3cabe3cee3e679120f8',0400],
+    ['entry','source/task6a-protected-origin-entry-v2.mjs',
+        'e53be63cdcdf286dc89adbec9770668b1fdb9cc7',0444],
+);
+my $staged_vendor_pin='ef28d8fab2c0e4314522d4bb1b7173270aa3937e93b92cb7de79c112ac1fa953';
+my $staged_keys=sub {
+    my ($hash,$literal)=@_;
+    task6a_origin_refuse() unless join(',',sort keys %$hash) eq $literal;
+};
+my $staged_bytes=sub {
+    my ($cell,$limit)=@_;
+    my $sv=$staged_plain_cell->($cell);
+    task6a_origin_refuse() unless ($sv->FLAGS & B::SVf_POK())
+        &&!($sv->FLAGS & B::SVf_ROK());
+    my $bytes=$staged_scalar->($cell);
+    task6a_origin_refuse() if utf8::is_utf8($bytes);
+    task6a_origin_refuse() unless length($bytes)>0&&length($bytes)<=$limit;
+    return $bytes;
+};
+my $staged_read_admission=sub {
+    my $admit=$staged_container->(\$staged_admission,'B::HV');
+    $staged_keys->($admit,'creator,selected,sources,vendor');
+    my $creator=$staged_container->(\($admit->{creator}),'B::HV');
+    $staged_keys->($creator,'creationIdentity,rootPath');
+    my $root=$staged_scalar->(\($creator->{rootPath}));
+    task6a_origin_refuse() unless !utf8::is_utf8($root)&&length($root)<=1024
+        &&$root =~ m{\A/private/tmp/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z};
+    my $creation=$staged_container->(\($creator->{creationIdentity}),'B::AV');
+    task6a_origin_refuse() unless @$creation==13;
+    my @creation;
+    for my $index(0..12) {
+        my $cell=\($creation->[$index]);
+        my $sv=$staged_plain_cell->($cell);
+        task6a_origin_refuse() if $sv->FLAGS & (B::SVf_ROK()|B::SVf_POK());
+        task6a_origin_refuse() unless $sv->FLAGS & B::SVf_IOK();
+        my $value=$staged_scalar->($cell);
+        task6a_origin_refuse() unless $value>=0&&$value<=9223372036854775807;
+        push @creation,$value;
+    }
+    task6a_origin_refuse() unless Fcntl::S_ISDIR($creation[2])
+        &&$creation[4]==0&&$creation[5]==0;
+    my $sources=$staged_container->(\($admit->{sources}),'B::AV');
+    task6a_origin_refuse() unless @$sources==4;
+    my @refs=($admit,$creator,$creation,$sources);
+    my @values=($root,@creation);
+    my @bytes;
+    for my $index(0..3) {
+        my $row=$staged_container->(\($sources->[$index]),'B::HV');
+        $staged_keys->($row,'bytes,gitBlobSha,relativePath,role');
+        my $role=$staged_scalar->(\($row->{role}));
+        my $path=$staged_scalar->(\($row->{relativePath}));
+        my $sha=$staged_scalar->(\($row->{gitBlobSha}));
+        task6a_origin_refuse() unless $role eq $staged_policy[$index][0]
+            &&$path eq $staged_policy[$index][1]&&$sha eq $staged_policy[$index][2];
+        my $body=$staged_bytes->(\($row->{bytes}),2097152);
+        push @refs,$row;push @values,$role,$path,$sha,$body;push @bytes,$body;
+    }
+    my $vendor=$staged_container->(\($admit->{vendor}),'B::HV');
+    $staged_keys->($vendor,'bytes,filename');
+    my $filename=$staged_scalar->(\($vendor->{filename}));
+    task6a_origin_refuse() unless $filename eq 'node-v22.23.1-darwin-arm64.tar.gz';
+    my $archive=$staged_bytes->(\($vendor->{bytes}),134217728);
+    my $selected=$staged_container->(\($admit->{selected}),'B::HV');
+    $staged_keys->($selected,'archiveRef,bytes,memberName');
+    my $archive_ref=$staged_container->(\($selected->{archiveRef}),'B::HV');
+    task6a_origin_refuse() unless $archive_ref==$vendor;
+    my $member=$staged_scalar->(\($selected->{memberName}));
+    task6a_origin_refuse() unless $member eq 'node-v22.23.1-darwin-arm64/bin/node';
+    my $native=$staged_bytes->(\($selected->{bytes}),134217728);
+    push @refs,$vendor,$selected,$archive_ref;
+    push @values,$filename,$archive,$member,$native;
+    push @bytes,$archive,$native;
+    return {refs=>\@refs,values=>\@values,root=>$root,creation=>\@creation,bytes=>\@bytes};
+};
+my $staged_check_admission=sub {
+    my $now=$staged_read_admission->();
+    task6a_origin_refuse() unless defined($staged_snapshot)
+        &&@{$now->{refs}}==@{$staged_snapshot->{refs}}
+        &&@{$now->{values}}==@{$staged_snapshot->{values}};
+    for my $index(0..$#{$now->{refs}}) {
+        # A retained original may have been mutated after current admission
+        # replaced it. Validate both sides before any reference comparison.
+        my $kind=($index==2||$index==3)?'B::AV':'B::HV';
+        $staged_container->(\($staged_snapshot->{refs}[$index]),$kind);
+        task6a_origin_refuse() unless $now->{refs}[$index]==$staged_snapshot->{refs}[$index];
+    }
+    for my $index(0..$#{$now->{values}}) {
+        $staged_scalar->(\($staged_snapshot->{values}[$index]));
+        task6a_origin_refuse() unless $now->{values}[$index] eq $staged_snapshot->{values}[$index];
+    }
+};
+my $staged_freeze_admission=sub {
+    task6a_origin_refuse() if defined($staged_snapshot);
+    my $now=$staged_read_admission->();
+    for my $index(0..3) {
+        my $bytes=$now->{bytes}[$index];
+        task6a_origin_refuse() unless Digest::SHA::sha1_hex(
+            'blob '.length($bytes)."\0".$bytes) eq $staged_policy[$index][2];
+    }
+    task6a_origin_refuse() unless Digest::SHA::sha256_hex($now->{bytes}[4]) eq $staged_vendor_pin;
+    # Capture expectations once; later read_admission validates current values
+    # against these copies, never regenerating the record's expected hashes.
+    $staged_snapshot={refs=>[@{$now->{refs}}],values=>[@{$now->{values}}],
+        root=>$now->{root},creation=>[@{$now->{creation}}],files=>[]};
+    my @relative=(map {$_->[1]} @staged_policy);
+    push @relative,'vendor/node-v22.23.1-darwin-arm64.tar.gz','vendor/node';
+    my @modes=(map {$_->[3]} @staged_policy);
+    push @modes,0400,0555;
+    for my $index(0..5) {
+        my $bytes=$now->{bytes}[$index];
+        push @{$staged_snapshot->{files}},{path=>$now->{root}.'/'.$relative[$index],
+            mode=>$modes[$index],size=>length($bytes),sha256=>Digest::SHA::sha256_hex($bytes)};
+    }
+};
+```
+
+No body is parsed/executed/imported here. Source/vendor/native authenticity is
+conditional on the later actual private producer; this reader enforces literal
+pins and retained joins, not producer custody. Ordinary fixtures substitute only
+the new uniquely anchored staged vendor-pin constant in memory and explicitly
+back selected bytes with inert ordinary data. Do not describe a synthetic member
+label as real gzip extraction or official-native derivation.
+
+Pre-execution review found two causal gaps and the literals above address both:
+byte fields require original-cell POK before any length/coercion, and retained
+reference shapes are revalidated even after current admission replaces them.
+Required witnesses add integer byte-data rejection and replace-current plus
+bless/magic the retained original with zero candidate callbacks. These are not
+already executed negative results.
+
+#### Literal original-owner and disposal component — unexecuted candidate
+
+Place this component after the existing parent protocol declarations and before
+`task6a_origin_helpers_settled`; this makes the existing private parent custody
+lexicals available without changing that protocol. No closure below is exported.
+Native output classification is representation/live-alias exclusion under the
+trusted native-open premise, not a global arbitrary-primitive provenance proof.
+
+```perl
+my $staged_freeze_foreign=sub {
+    task6a_origin_refuse() if @staged_foreign;
+    my @bindings;
+    for my $records(\@parent_originals,\@file_ledger,\@directory_ledger) {
+        $staged_vector->($records);
+        for my $index(0..$#$records) {
+            my $cell=\($records->[$index]);
+            my $sv=$staged_plain_cell->($cell);
+            next unless defined($$cell);
+            my $row=$staged_container->($cell,'B::HV');
+            task6a_origin_refuse() unless exists($row->{fh});
+            my $binding=\($row->{fh});
+            my $present=$staged_native_fh->($binding,1);
+            push @bindings,$$binding if $present;
+        }
+    }
+    $staged_vector->(\@physical_owned_handles);
+    for my $index(0..$#physical_owned_handles) {
+        my $cell=\($physical_owned_handles[$index]);
+        $staged_native_fh->($cell,0);
+        push @bindings,$$cell;
+    }
+    for my $fh(@bindings) {
+        $staged_native_fh->(\$fh,0);
+        next if grep {$_->{fh}==$fh} @staged_foreign;
+        my $fd=CORE::fileno($fh);
+        push @staged_foreign,{fh=>$fh,fd=>$fd};
+    }
+};
+my $staged_seal=sub {
+    my ($cell)=@_;
+    my ($present,$fh,$fd);my $proven_alias=0;
+    my $classified=eval {
+        $present=$staged_native_fh->($cell,1);
+        if($present) {
+            # Copy/fileno only after the original-cell native shape guard.
+            $fh=$$cell;$fd=CORE::fileno($fh);
+            task6a_origin_refuse() unless defined($fd)&&$fd>=3;
+            for my $foreign(@staged_foreign) {
+                my $original=$foreign->{fh};
+                $staged_native_fh->(\$original,0);
+                my $live=CORE::fileno($original);
+                if($fh==$original||(defined($live)&&$live==$fd)) {
+                    $proven_alias=1;task6a_origin_refuse();
+                }
+                task6a_origin_refuse() if defined($live)&&defined($foreign->{fd})
+                    &&$live!=$foreign->{fd};
+            }
+            for my $sealed(@staged_originals) {
+                my ($original,$original_fd,$attempted,$closed)=$sealed->('binding');
+                $staged_native_fh->(\$original,0);
+                my $live=CORE::fileno($original);
+                if($fh==$original||(defined($live)&&$live==$fd)) {
+                    $proven_alias=1;task6a_origin_refuse();
+                }
+                task6a_origin_refuse() if defined($live)&&$live!=$original_fd;
+            }
+        }
+        1;
+    };
+    my $classification_error=$@;
+    unless($classified&&!length($classification_error)) {
+        # Incomplete classification is not a proven borrowed alias. Never
+        # independently close that uncertain pending boundary.
+        $staged_uncertain=1 unless $proven_alias;
+        task6a_origin_refuse();
+    }
+    return undef unless $present;
+    my ($attempted,$closed)=(0,0);
+    # The primitive is selected and captured now. No mutable record chooses
+    # the FH, disposal kind or primitive at cleanup time.
+    my $original_close=sub {close($fh)};
+    my $sealed=sub {
+        my ($op)=@_;
+        return ($fh,$fd,$attempted,$closed) if $op eq 'binding';
+        return $closed if $op eq 'closed';
+        task6a_origin_refuse() unless $op eq 'dispose'&&!$attempted;
+        $attempted=1;
+        my $safe=eval {
+            $staged_native_fh->(\$fh,0);
+            my $live=CORE::fileno($fh);
+            task6a_origin_refuse() unless defined($live)&&$live==$fd;
+            1;
+        };my $safety_error=$@;
+        return 0 unless $safe&&!length($safety_error);
+        my $ok=eval {$original_close->()};my $close_error=$@;
+        my $end;
+        my $inspected=eval {$staged_native_fh->(\$fh,0);$end=CORE::fileno($fh);1;};
+        my $inspection_error=$@;
+        $closed=1 if $ok&&!length($close_error)&&$inspected
+            &&!length($inspection_error)&&!defined($end);
+        return $closed;
+    };
+    # Register before any config/stat/hash/clock/ACL/trace operation.
+    push @staged_originals,$sealed;
+    return $sealed;
+};
+my $staged_dispose=sub {
+    return 0 if $staged_disposal_started;
+    $staged_disposal_started=1;
+    my $all=1;
+    for my $sealed(@staged_originals) {
+        my $ok=eval {$sealed->('dispose')};my $error=$@;
+        $all=0 unless $ok&&!length($error);
+    }
+    $staged_uncertain=1 unless $all;
+    return $all&&!$staged_uncertain;
+};
+my $staged_burn=sub {
+    $staged_invalid=1;$staged_phase='burned';
+    unless($staged_disposal_started) {
+        my $ok=eval {$staged_dispose->()};my $error=$@;
+        $staged_uncertain=1 unless $ok&&!length($error);
+    }
+    task6a_origin_refuse();
+};
+```
+
+This component is still incomplete as an executable candidate: freeze_foreign
+requires independently reviewed binding retention/failure ordering, and the
+combined dispatcher must prove exposed-native/alias/hidden cases without
+inventing a producer token. Foreign records own no new close obligation.
+Unknown pending shapes mark uncertainty; stage burn attempts all already sealed
+originals once. A later physically closed but false/throwing nominee yields no
+definite consumer close and no positive release. `closed` facts are private,
+never used instead of actual live FD inspection during alias exclusion.
+
+#### Literal acquisition, epochs and three operations — unexecuted candidate
+
+Append these private closures and declarations immediately after the preceding
+owner/disposal component. Do not insert any initializer or change production
+main. The four boundary clock sites are explicit below; release calls none.
+The entire candidate still requires the combined test literal and exact review.
+
+Executable-registry boundary: `@staged_originals`, `@staged_record_checks`,
+`@staged_foreign` and `@staged_pending` are private implementation custody/
+expectation registries, not mutable caller admission or metadata. Production
+exports neither their references nor their executable entries. Fixture mutation
+helpers may modify only the admitted record graph and `@staged_files`/
+`@staged_directories` metadata and retained graph objects specified in the
+negative matrix. They must not replace/tie these executable registries or sealed
+closure entries, mutate their captured expectation values, or replace cleanup
+primitives. Such a rewrite is a source/harness mutation, not a runtime metadata
+contamination negative. No resistance to arbitrary private Perl-op/closure
+replacement is claimed. The independent fixture finalizer retains its own
+sealed registry and remains unaffected by any admitted metadata mutation.
+
+Burn/dispose never gates original cleanup on metadata-vector validity. Tied
+files/directories are rejected before traversal by the validity path; all sealed
+original disposal closures are still attempted independently. A safety test may
+not obtain success by mutating the private disposal traversal itself. Any future
+proposal that makes a custody registry externally reachable changes this
+boundary and requires a separate immutable-original implementation/refinement.
+
+Mid-port metadata mutation has a precise scope: the fixture may tie/bless/replace
+admission or metadata containers/scalar cells, including a metadata FH cell
+replacement. It may not tie/bless/magic the SHARED sealed original GV/IO while
+an unchanged validator is already executing. Fresh views intentionally retain
+that actual native FH, not an equivalent second handle. Arbitrary port callbacks
+that mutate its native IO during clock/stat/read are outside the trusted native
+primitive boundary and cannot be called a zero-callback source witness. Pending
+tied/overloaded nominations use no actual native FD. A sealed original becoming
+uninspectable at a guard/disposal boundary remains uncertainty, never a positive
+release; do not claim native leak-freedom for it. Any future in-validator original
+GV/IO mutation test needs a separate source-native-operation refinement and real
+rescue/preservation design before admission, not a silent validator mock.
+
+```perl
+my @staged_record_checks;
+my $staged_guard_partial=sub {
+    task6a_origin_refuse() if $staged_invalid||$staged_uncertain||$staged_disposal_started;
+    $staged_vector->(\@staged_directories);$staged_vector->(\@staged_files);
+    $staged_vector->(\@staged_originals);$staged_vector->(\@staged_record_checks);
+};
+my $staged_configure=sub {
+    my ($fh,$directory)=@_;
+    $staged_native_fh->(\$fh,0);
+    my $flags=fcntl($fh,Fcntl::F_GETFL(),0);
+    task6a_origin_refuse() unless defined($flags)&&!ref($flags)
+        &&($flags & Fcntl::O_ACCMODE())==Fcntl::O_RDONLY();
+    task6a_origin_refuse() unless $directory||($flags & Fcntl::O_NONBLOCK());
+    my $before=fcntl($fh,Fcntl::F_GETFD(),0);
+    task6a_origin_refuse() unless defined($before)&&!ref($before)
+        &&($before & ~Fcntl::FD_CLOEXEC())==0;
+    my $set=fcntl($fh,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC());
+    task6a_origin_refuse() unless defined($set)&&$set;
+    my $after=fcntl($fh,Fcntl::F_GETFD(),0);
+    task6a_origin_refuse() unless defined($after)&&!ref($after)
+        &&$after==Fcntl::FD_CLOEXEC();
+    binmode($fh) or task6a_origin_refuse() unless $directory;
+};
+my $staged_acquire=sub {
+    my ($path,$flags)=@_;
+    my $pending;
+    # Retain the ORIGINAL cell before opening, including unknown/magical output
+    # boundaries. Dropping a last native reference must not become implicit
+    # disposal after classification failed. Never read this slot via a callback.
+    push @staged_pending,\$pending;
+    my $returned;
+    my $open_ok=eval {$returned=sysopen($pending,$path,$flags);1;};
+    my $open_error=$@;
+    # Preserve return/exception before any clock, trace or metadata callback.
+    # Classify the actual output even after false or an exposed assignment/throw.
+    my $sealed=$staged_seal->(\$pending);
+    $staged_plain_cell->(\$returned);
+    task6a_origin_refuse() unless $open_ok&&!length($open_error)
+        &&defined($returned)&&!ref($returned)&&$returned&&defined($sealed);
+    return $sealed;
+};
+my $staged_record=sub {
+    my ($sealed,$path,$identity,$hash,$directory)=@_;
+    my ($fh,$fd)=$sealed->('binding');
+    my @expected=@$identity;
+    my $original_identity=[@expected];
+    my $record={path=>$path,identity=>$original_identity,fh=>$fh};
+    $record->{sha256}=$hash unless $directory;
+    my $check=sub {
+        my ($cell)=@_;
+        my $now=$staged_container->($cell,'B::HV');
+        $staged_container->(\$record,'B::HV');
+        task6a_origin_refuse() unless $now==$record;
+        $staged_keys->($now,$directory?'fh,identity,path':'fh,identity,path,sha256');
+        my $actual_path=$staged_scalar->(\($now->{path}));
+        task6a_origin_refuse() unless $actual_path eq $path;
+        unless($directory) {
+            my $actual_hash=$staged_scalar->(\($now->{sha256}));
+            task6a_origin_refuse() unless $actual_hash eq $hash;
+        }
+        $staged_native_fh->(\($now->{fh}),0);
+        $staged_native_fh->(\$fh,0);
+        task6a_origin_refuse() unless $now->{fh}==$fh
+            &&defined(CORE::fileno($fh))&&CORE::fileno($fh)==$fd;
+        my $tuple=$staged_container->(\($now->{identity}),'B::AV');
+        $staged_container->(\$original_identity,'B::AV');
+        task6a_origin_refuse() unless $tuple==$original_identity&&@$tuple==13;
+        for my $index(0..12) {
+            my $tuple_cell=\($tuple->[$index]);
+            my $sv=$staged_plain_cell->($tuple_cell);
+            task6a_origin_refuse() unless ($sv->FLAGS & B::SVf_IOK())
+                &&!($sv->FLAGS & (B::SVf_ROK()|B::SVf_POK()));
+            my $value=$staged_scalar->($tuple_cell);
+            task6a_origin_refuse() unless $value==$expected[$index];
+        }
+        # Validators get a fresh immutable-expectation view, not mutable
+        # admission/record fields that a later port callback could change.
+        my $view={path=>$path,identity=>[@expected],fh=>$fh};
+        $view->{sha256}=$hash unless $directory;
+        return $view;
+    };
+    push @staged_record_checks,$check;
+    return $record;
+};
+my $staged_require_live=sub {
+    task6a_origin_refuse() if $staged_invalid||$staged_uncertain||$staged_disposal_started;
+    $staged_vector->(\@staged_directories);$staged_vector->(\@staged_files);
+    $staged_vector->(\@staged_originals);$staged_vector->(\@staged_record_checks);
+    task6a_origin_refuse() unless task6a_origin_helpers_settled();
+    $staged_check_admission->();
+    task6a_origin_refuse() unless @staged_directories==6&&@staged_files==6
+        &&@staged_originals==12&&@staged_record_checks==12;
+    for my $index(0..5) {
+        $staged_record_checks[$index]->(\($staged_directories[$index]));
+        $staged_record_checks[$index+6]->(\($staged_files[$index]));
+    }
+};
+my $staged_epoch=sub {
+    $staged_require_live->();
+    for my $index(0..5) {
+        $staged_require_live->();
+        my $view=$staged_record_checks[$index]->(\($staged_directories[$index]));
+        task6a_origin_check_directory($view);
+    }
+    for my $index(0..5) {
+        $staged_require_live->();
+        my $view=$staged_record_checks[$index+6]->(\($staged_files[$index]));
+        task6a_origin_check_held_file($view);
+        $staged_require_live->();
+        $view=$staged_record_checks[$index+6]->(\($staged_files[$index]));
+        task6a_origin_acl_free($view->{path});
+        $staged_require_live->();
+        $view=$staged_record_checks[$index+6]->(\($staged_files[$index]));
+        task6a_origin_check_held_file($view);
+    }
+    for my $index(0..5) {
+        $staged_require_live->();
+        my $view=$staged_record_checks[$index]->(\($staged_directories[$index]));
+        task6a_origin_check_directory($view);
+    }
+    $staged_require_live->();
+};
+my $staged_diagnostic=sub {
+    return {scope=>'staged-source-vendor-custody-diagnostic-only',
+        productionAuthority=>JSON::PP::false,fileCount=>6,directoryCount=>6};
+};
+sub task6a_origin_hold_staged_custody {
+    my $ok=eval {
+        task6a_origin_refuse() unless @_==0&&$staged_phase eq 'absent'
+            &&!$staged_invalid&&!$staged_disposal_started;
+        $staged_phase='capturing';
+        # Boundary guard1: hold entry; do not renew bootstrap_deadline.
+        task6a_origin_refuse() unless task6a_origin_now()<$bootstrap_deadline;
+        task6a_origin_refuse() unless task6a_origin_helpers_settled();
+        $staged_freeze_admission->();$staged_freeze_foreign->();
+        my $root=$staged_snapshot->{root};
+        my @paths=('/','/private','/private/tmp',$root,$root.'/source',$root.'/vendor');
+        for my $index(0..5) {
+            $staged_guard_partial->();
+            my $path=$paths[$index];my @before=lstat($path);
+            task6a_origin_refuse() unless @before==13&&Fcntl::S_ISDIR($before[2])
+                &&$before[4]==0&&$before[5]==0;
+            my $mode=$before[2]&07777;
+            task6a_origin_refuse() unless $index==2?$mode==01777
+                :$index==3?$mode==0711:$index>=4?$mode==0555
+                :($mode==0755||$mode==0711||$mode==0700||$mode==0555);
+            if($index==3) {
+                for my $field(0,1,4,5) {
+                    task6a_origin_refuse() unless $before[$field]==$staged_snapshot->{creation}[$field];
+                }
+            }
+            my $sealed=$staged_acquire->($path,
+                Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_DIRECTORY());
+            my ($fh)=$sealed->('binding');$staged_configure->($fh,1);
+            $staged_guard_partial->();
+            my $record=$staged_record->($sealed,$path,\@before,undef,1);
+            $staged_guard_partial->();
+            push @staged_directories,$record;
+            $staged_guard_partial->();
+            my $view=$staged_record_checks[$index]->(\($staged_directories[$index]));
+            task6a_origin_check_directory($view);
+            $staged_guard_partial->();
+        }
+        for my $expected(@{$staged_snapshot->{files}}) {
+            $staged_guard_partial->();
+            my $path=$expected->{path};my @before=lstat($path);
+            task6a_origin_refuse() unless @before==13&&Fcntl::S_ISREG($before[2])
+                &&($before[2]&07777)==$expected->{mode}&&$before[3]==1
+                &&$before[4]==0&&$before[5]==0&&$before[7]==$expected->{size};
+            my $sealed=$staged_acquire->($path,
+                Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK());
+            my ($fh)=$sealed->('binding');$staged_configure->($fh,0);
+            $staged_guard_partial->();
+            my $record=$staged_record->($sealed,$path,\@before,$expected->{sha256},0);
+            $staged_guard_partial->();
+            push @staged_files,$record;
+            $staged_guard_partial->();
+            my $index=$#staged_files;
+            my $view=$staged_record_checks[$index+6]->(\($staged_files[$index]));
+            task6a_origin_check_held_file($view);
+            $staged_guard_partial->();
+        }
+        $staged_epoch->();
+        # Boundary guard2: hold completion, after actual helper settlement.
+        task6a_origin_refuse() unless task6a_origin_now()<$bootstrap_deadline;
+        $staged_require_live->();$staged_phase='active';1;
+    };my $primary=$@;
+    $staged_burn->() unless $ok&&!length($primary);
+    return $staged_diagnostic->();
+}
+sub task6a_origin_recheck_staged_custody {
+    my $ok=eval {
+        task6a_origin_refuse() unless @_==0&&$staged_phase eq 'active';
+        $staged_require_live->();
+        # Boundary guard3: recheck entry.
+        task6a_origin_refuse() unless task6a_origin_now()<$bootstrap_deadline;
+        $staged_epoch->();
+        # Boundary guard4: recheck completion.
+        task6a_origin_refuse() unless task6a_origin_now()<$bootstrap_deadline;
+        $staged_require_live->();1;
+    };my $primary=$@;
+    $staged_burn->() unless $ok&&!length($primary);
+    return $staged_diagnostic->();
+}
+sub task6a_origin_release_staged_custody {
+    # No validity/admission/helper/deadline operation in release.
+    unless(@_==0&&$staged_phase eq 'active'&&!$staged_invalid
+        &&!$staged_uncertain&&!$staged_disposal_started) {$staged_burn->();}
+    $staged_phase='released';
+    my $ok=eval {$staged_dispose->()};my $primary=$@;
+    $staged_burn->() unless $ok&&!length($primary)&&@staged_originals==12
+        &&!grep {!$_->('closed')} @staged_originals;
+    my $diagnostic=$staged_diagnostic->();$diagnostic->{handlesClosed}=12;
+    return $diagnostic;
+}
+```
+
+Mandatory review includes Perl precedence at the mode ternary and conditional
+binmode, native positive post-close IO shape, every failed/throwing open with
+assigned output, all private-record replacement/magic cases and the absence of
+any production initializer. Record metadata guards above validate retained
+original containers before reference comparison just as admission guards do.
+This candidate is not yet cleared for insertion or compilation. Any source
+refinement updates the exact literal and its counts before executable review.
+
+#### Fixed fixture mapping and independently derived epoch prefixes
+
+The literal combined dispatcher will use these existing, distinct, one-link,
+nonempty, one-chunk backing files. No fixture file or directory is created:
+
+| Logical leaf | Existing backing file | Exact bytes |
+| --- | --- | ---: |
+| source/task6a-origin-archive-v2.pm | scripts/task6a-origin-archive-v2.pm | 5864 |
+| source/task6a-origin-native-v2.pm | scripts/task6a-origin-native-v2.pm | 3347 |
+| source/task6a-origin-map-v2.pm | scripts/task6a-origin-map-v2.pm | 11684 |
+| source/task6a-protected-origin-entry-v2.mjs | scripts/task6a-protected-origin-entry-v2.mjs | 1933 |
+| vendor/node-v22.23.1-darwin-arm64.tar.gz | package.json | 22734 |
+| vendor/node | README.md | 7454 |
+
+The last two are inert SYNTHETIC archive/selected data, not gzip/Mach-O or real
+member derivation. Source bytes retain their actual unchanged Git frame pins.
+The private staged vendor constant alone is substituted in memory with the
+SHA256 of the ordinary package bytes. The selected archiveRef is the same
+fixture vendor object; no authentic producer result is invented.
+
+Logical root is the fixed inert `/private/tmp/task6a-staged-memory-fixture`.
+Its path is never actually opened. The dispatcher maps it to the already owned
+capsule source root; logical source/vendor map to its existing scripts/docs
+directories. Literal `/`, `/private`, `/private/tmp` map to themselves. Physical
+file/ancestry geometry of this ordinary fixture is not a protected tree join:
+vendor backing files are outside its mapped docs directory. Projected logical
+ancestry, owner and modes are explicitly synthetic. Actual ordinary physical
+identities, seekable file bytes/FHs, reads, seeks, pipe reads and close results
+remain real. Do not attribute protected ancestry or official byte authenticity
+to this fixture.
+
+Freeze and verify backing identities/hashes before the complete reviewed
+invocation. Node must assert actual three-declaration presence before reading
+any backing bytes, constructing this initializer or spawning Perl. Thus missing
+declarations yield a genuine setup-independent missing-consumer RED; after
+implementation the actual three calls, not text presence, carry the acceptance
+and state/cleanup assertions. Missing source anchor, compile, prototype, queue
+or JSON failure remains fatal, not a nominated semantic refusal.
+
+Healthy ported counts add source fileno1110 (42 times25 plus60 validator calls),
+staged/pipe close348, closedir42, fcntl90, binmode342, stat120, lstat132,
+sysseek30, sysread228, pipes168, opendir42, readdir1083, fork42, wait168,
+readiness84, sysopen12 and clock407. `CORE::fileno` inside private shape/owner
+checks and preloaded IO::Select is NOT part of the1110 ported count; never label
+it whole-program fileno. No actual CORE readdir, kernel fork/wait/kill or external
+helper runs. Event cap8192 remains conditional on the exact event encoding:
+ported operations total4448 before acquire/preload/disposal instrumentation;
+full source/event trace must be bounded explicitly before execution.
+
+Hand-derived clock prefixes, independent of actual implementation execution:
+
+| Boundary | Cumulative clock calls | Completed helpers | Acquired originals |
+| --- | ---: | ---: | ---: |
+| Startup and hold entry | 2 | 0 | 0 |
+| Six immediate ancestor samples | 50 | 6 | 60 |
+| Six initial leaf validators | 68 | 6 | 66 |
+| Hold leading ancestry bracket | 116 | 12 | 120 |
+| Hold six leaf brackets | 188 | 18 | 174 |
+| Hold trailing ancestry bracket | 236 | 24 | 228 |
+| Hold completion | 237 | 24 | 228 |
+| Recheck entry | 238 | 24 | 228 |
+| Recheck leading ancestry bracket | 286 | 30 | 282 |
+| Recheck six leaf brackets | 358 | 36 | 336 |
+| Recheck trailing ancestry bracket | 406 | 42 | 390 |
+| Recheck completion | 407 | 42 | 390 |
+
+Each helper contributes9 original obligations already disposed by the real
+captor/parser path, while stage originals remain held until release/burn. Hold
+completion therefore has216 helper originals plus12 staged; the full sequence
+has378 plus12. A release adds twelve source close calls, zero clocks/helpers.
+An expiry at237 refuses before hold publication; expiry at238 refuses before
+the recheck epoch; expiry at407 refuses before successful recheck publication.
+After failure or successful release, retries must add no validity/open/helper
+effects. Restoration is a nomination only, never renewed owner authority.
+
+#### Causal existing vendor-test anchor refinement
+
+The private capsule will carry the same official archive pin already used by
+`get_vendor`. Existing `syntheticVendorSource` uses bare-hash `replaceOnce`, so a
+second legitimate policy occurrence would fail setup before the real vendor
+consumer. Keep old production policy and all expectations unchanged. Select this
+exact test-only replacement before adding the new policy occurrence:
+
+```javascript
+function syntheticVendorSource() {
+  // Ordinary test only: replace the existing transport's exact policy site.
+  // A distinct staged-owner policy occurrence must retain its official pin.
+  const source=readFileSync(BOOTSTRAP,'utf8');
+  const site=`my $pin='${VENDOR_PIN}';`;
+  return replaceOnce(source,site,`my $pin='${SYNTHETIC_VENDOR_HASH}';`);
+}
+```
+
+This is not a weakening of unique-anchor checks: the complete transport policy
+site remains required exactly once. The capsule fixture's synthetic archive pin
+must use a different uniquely anchored private constant and disclose synthetic
+archive/selected bytes. No broad replaceAll, policy fallback or on-disk fixture.
+Run existing vendor positives/denials under their unchanged byte/parser path
+after the reviewed complete recipe, not as a substitute for actual staged RED.
+
 ### Task 3: Reviewed delivery and actual protected rehearsal
 
 - [ ] Run full focused pure/protocol tests, sourceTS/syntax/version/English/path/frozen migration/MC/diff contracts. Independent exact all-source/test/spec/plan review. Ordinary feature build obeys unchanged main guard.
