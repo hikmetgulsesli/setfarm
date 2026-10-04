@@ -758,3 +758,149 @@ RED/GREEN recipe. Two pre-effect exact reviews and actual source assertion RED
 precede the production edit. Adjacent suite/normal reviewed PR/own clean-main
 build and preservation proof are separate delivery gates; none establishes
 staged ownership, protected/native origin or final host cutover.
+
+## Actual staged-custody capsule: pending-original refinement
+
+The next deliverable is the three real declaration-only staged operations, not
+another standalone adapter. The File Map stays bootstrap, its existing test,
+this spec and its existing plan. Production main remains unconditional refusal;
+no production creator initializer, publisher, loader, privilege, native, SQL or
+service effect is added. Delivered Task2b.4 directory-FH evidence is a prerequisite
+only; it does not establish creator custody or this consumer's cleanup.
+
+Select a private absent creator/authentication admission and separately retained
+original-cleanup closures. A future independently admitted creator must join its
+actual exclusively created root to authentic four-policy-source bytes, official
+archive bytes and the unique selected native member before privately initializing
+this record. Neither an observer diagnostic nor a copied transport receipt is an
+initializer. No caller supplies paths, hashes, setters, continuation callbacks or
+handles to the three zero-argument declarations. All authentic creator/publisher
+and complete system-core/native admission work remains a subsequent gate.
+
+The private admission shape is exactly `{creator,sources,vendor,selected}`:
+creator has `{rootPath,creationIdentity}` with a retained thirteen-field actual
+creation identity; sources is the fixed ordered four-record array, each with
+`{role,relativePath,gitBlobSha,bytes}`; vendor has `{filename,bytes}`; selected has
+`{archiveRef,memberName,bytes}`. The selected archiveRef is the exact vendor record
+reference, not an equivalent copy. MemberName is the existing literal
+`node-v22.23.1-darwin-arm64/bin/node`. Retain original object/array/row references
+and exact keys/order/scalar values separately from independently copied expected
+byte strings and derived size/hash commitments. Derived expectations do not read
+mutable admission after capture. Four source blob framing/pins and the official
+archive pin stay unchanged. The selected-member byte derivation must belong to the
+private future authentic producer, never merely to an asserted member label.
+These declarations do not implement or certify that future producer.
+
+RootPath is a bounded canonical immediate child of `/private/tmp`, without dot
+components, separators inside its final component, NUL/newline or Unicode
+ambiguity. The final root:wheel0711 root must match retained creation dev/inode/
+UID/GID, while creation-time and final directory modes remain distinct facts.
+Source/vendor are the fixed root-relative directories, not caller selections.
+Keep the six-leaf modes, one-link/ACL/deadline/size policy and six unique ancestry
+records specified above. Validate references, key sets, ordered roles and retained
+scalar joins before acceptance and on every recheck; restoration never revives
+a consumed or invalid owner. Source/vendor/entry/native authenticity is not
+inferred from ordinary synthetic metadata projection.
+
+Before every open, allocate one private pending slot with a fresh initially
+undefined lexical output cell. Catch the open separately, preserving its return
+and exception before any trace, clock, metadata, configuration or helper callback.
+Classify every exposed filled output cell even when the adapter returns false or
+throws after assignment; a distinct exposed FH is still sealed for cleanup, but
+the failed invocation burns and never becomes successful acquisition acceptance.
+Before reading or comparing an output-cell value, establish callback-free native
+scalar/GV/IO shape through the already loaded B introspection primitives. Pending
+and sealed inputs must be actual native FH references, not indirect names, tied
+handles, magical output cells or overloaded bindings. Mere ref equality or use of
+CORE::fileno is insufficient: Perl 5.34 permits a tied handle FILENO method.
+Reject unknown shapes as permanently uncertain without calling their comparison,
+fileno or close methods. The exact non-callback type/flag/magic guard and native
+positive/tied/magical/overload denial witnesses belong to the literal subplan;
+this prose is not a proven guard. The narrow owned native-shape diagnostic is
+fact gathering only, not acceptance of an arbitrary returned foreign handle.
+Known original-reference aliases create no second disposal obligation. Only after
+that shape gate, select a narrowly trusted builtin `CORE::fileno` step on both
+the pending FH and sealed still-live originals; synthetic observers cannot
+provide this ownership fact. Verify each sealed live FD against its original
+captured FD; refuse a known live FD alias without independently closing it.
+Immediately transfer each classified distinct returned original into a sealed
+cleanup closure before any other fallible work. Disposal kind is lexically
+captured: all twelve staged objects are FHs and use close, not closedir.
+Mutable admission or staged metadata never chooses the cleanup FH or primitive.
+
+If pending ownership cannot be classified, burn permanently, retain that
+uncertainty, attempt every already sealed original and publish no positive release
+or leak-freedom claim. Do not independently close a possibly borrowed alias.
+This is an explicit uncertain boundary, not a successful custody state. A real
+fresh native sysopen success yields its returned live FH; lower-port corruptions
+must not silently strengthen that native guarantee. No validity retry or tree
+deletion is admitted by uncertainty.
+
+The combined test dispatcher must distinguish exposed distinct success, exposed
+known live alias and raw CORE success hidden by an adapter before output-cell
+assignment. Exposed distinct originals are consumer obligations. Aliases remain
+the already owned obligation. Hidden raw originals belong to an independent
+fixture rescue registry; they are excluded from consumerClosed even if the final
+actual descriptor census is zero. No hidden-original rescue is consumer cleanup
+proof. Fault/false/throw nominations after definite physical close prove attempts
+and sticky refusal only, not native uncertain-close leak freedom.
+
+Select acquisition order: acquire/configure/check each of the six ancestors in
+order, then acquire/configure/hash-check each of the six leaves. Each complete
+hold/recheck epoch checks all six ancestors, checks each leaf before and after its
+actual ACL/captor sample, then checks all six ancestors again. Initial six
+ancestor ACL samples plus hold epoch eighteen give twenty-four samples; recheck
+adds eighteen. Release performs no ACL/helper/clock validity operation. Shared
+capture invalidation and Perl-owner failure routing remain intact; staged failure
+cleanup independently attempts its sealed originals even after shared failure.
+Consume state and mark each original attempt before effects, continue all sealed
+originals despite false/throw, and require true close plus actual undefined fileno
+before any positive twelve-handle release diagnostic.
+
+Ordinary fixtures disclose synthetic creator/protected policy/vendor/native
+projections. They keep actual owned seekable files, actual FHs, actual reads and
+seeks, actual pipe reads, IO::Select membership and actual ACL/capture decisions.
+One bounded combined dispatcher owns staged FHs, captor pipes and census DIR
+streams; nested competing CORE hooks are forbidden. Each helper gets fresh finite
+queues and roles; its synthetic census includes only currently live originals,
+not closed historical records. Closed FD-number reuse is not a live alias.
+No child is executed; synthetic positive PIDs never enter the child branch.
+Unknown effects are denied before delegation and the sticky harness fault remains
+fatal across caught calls and cleanup.
+
+Source-derived healthy helper counts are six clocks, four synthetic waits,
+two readiness samples, four actual reads, four pipes/eight binmodes/one setup
+fcntl, one synthetic fork, eight pipe closes and one census closedir. Startup
+adds one clock once. Forty-two helpers add 336 pipe FHs and 42 census DIR streams;
+with twelve staged FHs this is 390 originals. With the selected immediate ancestor
+checks, helper census reads total 1083 when no additional retained owner is
+initialized. Existing directory validators add sixty clocks; five checks per
+leaf add `5*sum(ceil(bytes/65536)+2)` clocks for nonempty leaves. New capsule entry/
+epoch guards and exact fixture bytes must be added explicitly to the literal
+plan; 402 is not a whole-program count. Counts are source-only derivations here,
+not observed tests or execution admission. Full literal source/test/queue/trace
+and negative-prefix recipe plus two independent pre-effect reviews must precede
+any new declaration or test execution.
+
+Primary references for the callback/indirect-name distinction are the fixed
+[Perl 5.34 tied-handle contract](https://perldoc.perl.org/5.34.0/perltie#Tying-FileHandles)
+and [Perl 5.34 fileno contract](https://perldoc.perl.org/5.34.0/functions/fileno).
+They establish the risk, not the installed native FH shape or a complete guard.
+
+The separately reviewed one-FH native shape diagnostic naturally closed0 and
+definitely closed its original. It observed cell B::IV FLAGS2049, glob B::GV
+FLAGS32777 with no MAGIC and IO B::IO FLAGS1048591 with no MAGIC. These are
+ordinary native-shape facts, not a callback-denial or staged-custody test.
+Select the following pre-value guard for the forthcoming literal implementation:
+inspect the original output cell by reference with B before defined/ref/string/
+numeric comparison of its value; require native B::IV reference shape and ROK,
+reject blessed/magical scalar cells; inspect its RV as B::GV, reject a blessed
+or magical GV; require its IO slot to be B::IO with no magic flags or MAGIC.
+Use the installed flag distinction: cell/GV exclude SVs_OBJECT and all three
+SVs_GMG/SMG/RMG flags (mask0x00f00000); IO excludes the magic-only mask0x00e00000.
+The native IO slot's ordinary SVs_OBJECT bit alone is not an overloaded FH
+binding and is not rejected. No IO object conversion, tied object lookup,
+method invocation on the candidate or caller-provided classification callback.
+Only after this gate may actual CORE::fileno and native reference/FD comparisons
+run. B operations and exact negative witnesses still require the complete
+literal two-reviewed recipe; this selection is not already proven execution.

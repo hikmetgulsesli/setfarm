@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {existsSync,readFileSync,mkdtempSync,unlinkSync,rmdirSync} from 'node:fs';
+import {existsSync,lstatSync,readFileSync,mkdtempSync,unlinkSync,rmdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {spawn,spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
@@ -417,6 +417,1378 @@ const STAGED_FILE_PORT_PROGRAM=String.raw`
       cleanupErrors=>\@cleanup_errors,remaining=>{fcntl=>scalar(@fcntl),stat=>scalar(@stat),lstat=>scalar(@lstat),seek=>scalar(@seek),read=>scalar(@read)}};
     print JSON::PP->new->canonical->utf8->encode($out);exit 0;
 `;
+const STAGED_CUSTODY_PROGRAM=String.raw`
+    if($q->{kind} eq 'staged-custody') {
+      require Fcntl;require B;require IO::Select;require POSIX;require Time::HiRes;
+      require Digest::SHA;require Encode;require Errno;
+      my $fault='';my (@grammar,@jobs,@owned,@events);my (%roles,%calls);
+      my $latch=sub {$fault='TEST_STAGED_CUSTODY_HARNESS_FAULT';return 0;};
+      my $fail=sub {$latch->();die "$fault\n";};
+      my $check=sub {die "$fault\n" if length($fault);};
+      my $r=$q->{record};
+      $fail->() unless ref($r) eq 'HASH'
+        &&join(',',sort keys %$r) eq 'backings,mode,root,slot';
+      my ($mode,$slot,$root)=@$r{qw(mode slot root)};
+      my %modes=map {$_=>1} qw(healthy absent arity premature-recheck premature-release open-undefined open-false open-throw unknown-cell unknown-handle unknown-blessed-glob unknown-overloaded unknown-indirect unknown-scalar-ref unknown-array unknown-hash unknown-coderef close-false close-throw admission-undef admission-array admission-extra admission-missing-creator admission-root admission-creation-short admission-creation-string admission-creation-owner admission-creation-type admission-source-count admission-source-order admission-source-numeric admission-source-policy admission-source-bytes-0 admission-source-bytes-1 admission-source-bytes-2 admission-source-bytes-3 admission-vendor-bytes admission-selected-detached admission-selected-member boundary-expiry-hold-entry boundary-expiry-hold-complete boundary-expiry-recheck-entry boundary-expiry-recheck-complete boundary-throw-hold-entry boundary-throw-hold-complete boundary-throw-recheck-entry boundary-throw-recheck-complete metadata-dir-short metadata-file-short metadata-dir-record-copy metadata-file-record-copy metadata-dir-tuple-copy metadata-file-tuple-copy metadata-dir-path metadata-file-path metadata-file-tuple-value metadata-file-hash metadata-dir-fh-empty metadata-file-fh-empty metadata-dir-fh-alias metadata-file-fh-alias partial-tied-dir partial-tied-file h7-acl-plus h7-raw256 config-dir-getfl-undefined config-dir-getfl-throw config-dir-getfl-access config-dir-prefd-undefined config-dir-prefd-throw config-dir-prefd-extra config-dir-setfd-false config-dir-setfd-throw config-dir-postfd-undefined config-dir-postfd-throw config-dir-postfd-missing config-file-getfl-undefined config-file-getfl-throw config-file-getfl-access config-file-getfl-nonblock config-file-prefd-undefined config-file-prefd-throw config-file-prefd-extra config-file-setfd-false config-file-setfd-throw config-file-postfd-undefined config-file-postfd-throw config-file-postfd-missing config-file-binmode-false config-file-binmode-throw file-byte-xor-denied file-byte-xor-mutant magic-dir-array magic-dir-record magic-dir-tuple magic-dir-path magic-dir-fh magic-dir-retained-record magic-dir-retained-tuple magic-file-array magic-file-record magic-file-tuple magic-file-path magic-file-fh magic-file-retained-record magic-file-retained-tuple magic-file-hash magic-file-element drift-copy-admission drift-copy-creator drift-copy-creation drift-copy-sources drift-copy-source-0 drift-copy-source-1 drift-copy-source-2 drift-copy-source-3 drift-copy-vendor drift-copy-selected drift-selected-detached drift-root drift-creation-inode drift-source-bytes-0 drift-source-bytes-1 drift-source-bytes-2 drift-source-bytes-3 drift-vendor-bytes drift-selected-bytes drift-extra amagic-current-admission amagic-current-creator amagic-current-creation amagic-current-sources amagic-current-source-0 amagic-current-source-1 amagic-current-source-2 amagic-current-source-3 amagic-current-vendor amagic-current-selected amagic-retained-admission amagic-retained-creator amagic-retained-creation amagic-retained-sources amagic-retained-source-0 amagic-retained-source-1 amagic-retained-source-2 amagic-retained-source-3 amagic-retained-vendor amagic-retained-selected foreign-parent foreign-physical foreign-file foreign-directory hidden-open-undefined active-hold-again active-recheck-arity active-release-arity foreign-fd-alias staged-reference-alias identity-dir-pre-shape identity-file-pre-type identity-dir-open-owner identity-file-open-inode identity-dir-post-device identity-file-post-size shared-unsettled-baseline shared-unsettled-mutant epoch-acl-baseline epoch-acl-mutant once-primitive-baseline once-primitive-mutant);
+      $fail->() unless defined($mode)&&!ref($mode)&&$modes{$mode}
+        &&defined($slot)&&!ref($slot)&&$slot>=0&&$slot<=12&&$slot==int($slot)
+        &&($mode=~/\A(?:open|close)-/ ? $slot>=1 : $slot==0)
+        &&defined($root)&&!ref($root)&&$root=~m{\A/[A-Za-z0-9._/-]+\z};
+      my %fixture_modes=map {$_=>1} qw(foreign-parent foreign-physical foreign-file foreign-directory hidden-open-undefined foreign-fd-alias);
+      my ($fixture_original,$fixture_record,$fixture_alias);my $raw_acquisitions=0;
+      my %identity_profiles=(
+        'identity-dir-pre-shape'=>['lstat','d0',1,0,0,'shape'],
+        'identity-file-pre-type'=>['lstat','f0',1,6,6,'type'],
+        'identity-dir-open-owner'=>['stat','d0',1,0,1,'owner'],
+        'identity-file-open-inode'=>['stat','f0',1,6,7,'inode'],
+        'identity-dir-post-device'=>['stat','d0',2,1,1,'device'],
+        'identity-file-post-size'=>['stat','f0',5,13,12,'size'],
+      );
+      my $identity_profile=$identity_profiles{$mode};
+      my $logical='/private/tmp/task6a-staged-memory-fixture';
+      my @directory_paths=('/','/private','/private/tmp',$logical,$logical.'/source',$logical.'/vendor');
+      my @actual_dirs=('/','/private','/private/tmp',$root,$root.'/scripts',$root.'/docs');
+      my @leaf_rel=qw(source/task6a-origin-archive-v2.pm source/task6a-origin-native-v2.pm source/task6a-origin-map-v2.pm source/task6a-protected-origin-entry-v2.mjs vendor/node-v22.23.1-darwin-arm64.tar.gz vendor/node);
+      my @backing_rel=qw(scripts/task6a-origin-archive-v2.pm scripts/task6a-origin-native-v2.pm scripts/task6a-origin-map-v2.pm scripts/task6a-protected-origin-entry-v2.mjs package.json README.md);
+      my @sizes=(5864,3347,11684,1933,22734,7454);
+      my @permissions=(0400,0400,0400,0444,0400,0555);
+      my @blobs=qw(da1fd458fcaba775be5ba09ef88157b5ee48dbda 59e1ae8de38cf2083a0294c55454083840eb47f1 9719bf4f3676b43b7858e3cabe3cee3e679120f8 e53be63cdcdf286dc89adbec9770668b1fdb9cc7);
+      my (%paths,@bodies,%physical_seen);
+      $fail->() unless ref($r->{backings}) eq 'ARRAY'&&@{$r->{backings}}==6;
+      for my $index(0..5) {
+        my $path=$directory_paths[$index];my $actual=$actual_dirs[$index];
+        my @s=CORE::lstat($actual);$fail->() unless @s==13&&Fcntl::S_ISDIR($s[2]);
+        my $permission=$index==2?01777:$index==3?0711:$index>=4?0555:($s[2]&07777);
+        $paths{$path}={actual=>$actual,identity=>[@s],directory=>1,permission=>$permission,role=>'d'.$index};
+      }
+      for my $index(0..5) {
+        my $b=$r->{backings}[$index];
+        $fail->() unless ref($b) eq 'HASH'
+          &&join(',',sort keys %$b) eq 'bytes,dev,ino,logical,path,sha256,size'
+          &&$b->{logical} eq $leaf_rel[$index]&&$b->{path} eq $root.'/'.$backing_rel[$index]
+          &&$b->{size}==$sizes[$index]&&!ref($b->{bytes})&&!ref($b->{sha256})
+          &&$b->{sha256}=~/\A[a-f0-9]{64}\z/;
+        my @s=CORE::lstat($b->{path});
+        $fail->() unless @s==13&&Fcntl::S_ISREG($s[2])&&$s[3]==1
+          &&"$s[0]" eq $b->{dev}&&"$s[1]" eq $b->{ino}&&$s[7]==$sizes[$index]
+          &&!$physical_seen{"$s[0]:$s[1]"}++;
+        my $body=MIME::Base64::decode_base64($b->{bytes});
+        $fail->() unless MIME::Base64::encode_base64($body,'') eq $b->{bytes}
+          &&length($body)==$sizes[$index]&&!utf8::is_utf8($body)
+          &&Digest::SHA::sha256_hex($body) eq $b->{sha256};
+        if($index<4) {$fail->() unless Digest::SHA::sha1_hex('blob '.length($body)."\0".$body) eq $blobs[$index];}
+        $paths{$logical.'/'.$leaf_rel[$index]}={actual=>$b->{path},identity=>[@s],
+          directory=>0,permission=>$permissions[$index],role=>'f'.$index,body=>$body};
+        push @bodies,$body;
+      }
+      $fail->() unless Digest::SHA::sha256_hex($bodies[4]) eq 'bf6cedd405c26f5f933e45436d8ec84b2780297377bb44f40deb6c44a91f6a6e'
+        &&Digest::SHA::sha256_hex($bodies[5]) eq '14a6a8f44d6531560feca82404d64d46ff259585fd74b7ea7d9d2b3ae62efd0e';
+      my $project=sub {
+        my ($p,$s)=@_;$fail->() unless ref($s) eq 'ARRAY'&&@$s==13;
+        my @result=@$s;$result[2]=($result[2]&~07777)|$p->{permission};
+        $result[4]=0;$result[5]=0;return \@result;
+      };
+      my $creation=$project->($paths{$logical},$paths{$logical}{identity});
+      $creation->[2]=($creation->[2]&~07777)|0700;
+      my @source_roles=qw(archive-helper native-helper map-helper entry);
+      my $vendor={filename=>'node-v22.23.1-darwin-arm64.tar.gz',bytes=>$bodies[4]};
+      my $fixture_admission={creator=>{rootPath=>$logical,creationIdentity=>$creation},
+        sources=>[map {+{role=>$source_roles[$_],relativePath=>$leaf_rel[$_],
+          gitBlobSha=>$blobs[$_],bytes=>$bodies[$_]}} (0..3)],
+        vendor=>$vendor,selected=>{archiveRef=>$vendor,
+          memberName=>'node-v22.23.1-darwin-arm64/bin/node',bytes=>$bodies[5]}};
+      if($mode=~/\Aadmission-/) {
+        my $a=$fixture_admission;
+        if($mode eq 'admission-undef') {$fixture_admission=undef;}
+        elsif($mode eq 'admission-array') {$fixture_admission=[];}
+        elsif($mode eq 'admission-extra') {$a->{extra}=0;}
+        elsif($mode eq 'admission-missing-creator') {delete $a->{creator};}
+        elsif($mode eq 'admission-root') {$a->{creator}{rootPath}='/private/tmp//bad';}
+        elsif($mode eq 'admission-creation-short') {pop @{$a->{creator}{creationIdentity}};}
+        elsif($mode eq 'admission-creation-string') {
+          $a->{creator}{creationIdentity}[4]='0';
+          my $sv=B::svref_2object(\($a->{creator}{creationIdentity}[4]));
+          $fail->() unless ($sv->FLAGS&B::SVf_POK())&&!($sv->FLAGS&B::SVf_IOK());
+        }
+        elsif($mode eq 'admission-creation-owner') {$a->{creator}{creationIdentity}[4]=1;}
+        elsif($mode eq 'admission-creation-type') {
+          $a->{creator}{creationIdentity}[2]=($a->{creator}{creationIdentity}[2]&07777)|0100000;
+        }
+        elsif($mode eq 'admission-source-count') {pop @{$a->{sources}};}
+        elsif($mode eq 'admission-source-order') {@{$a->{sources}}[0,1]=@{$a->{sources}}[1,0];}
+        elsif($mode eq 'admission-source-numeric') {$a->{sources}[0]{bytes}=1;}
+        elsif($mode eq 'admission-source-policy') {$a->{sources}[0]{gitBlobSha}='0'x40;}
+        elsif($mode=~/\Aadmission-source-bytes-([0-3])\z/) {
+          my $i=0+$1;my $body=\($a->{sources}[$i]{bytes});
+          substr($$body,0,1)=chr(ord(substr($$body,0,1))^1);
+        }
+        elsif($mode eq 'admission-vendor-bytes') {
+          my $body=\($a->{vendor}{bytes});substr($$body,0,1)=chr(ord(substr($$body,0,1))^1);
+        }
+        elsif($mode eq 'admission-selected-detached') {$a->{selected}{archiveRef}={%{$a->{vendor}}};}
+        elsif($mode eq 'admission-selected-member') {$a->{selected}{memberName}='node-v22.23.1-darwin-arm64/bin/not-node';}
+        else {$fail->();}
+      }
+      my %configuration=(
+        'config-dir-getfl-undefined'=>['d0','getfl',1,'undefined'],
+        'config-dir-getfl-throw'=>['d0','getfl',1,'throw'],
+        'config-dir-getfl-access'=>['d0','getfl',1,'access'],
+        'config-dir-prefd-undefined'=>['d0','prefd',2,'undefined'],
+        'config-dir-prefd-throw'=>['d0','prefd',2,'throw'],
+        'config-dir-prefd-extra'=>['d0','prefd',2,'extra'],
+        'config-dir-setfd-false'=>['d0','setfd',3,'false'],
+        'config-dir-setfd-throw'=>['d0','setfd',3,'throw'],
+        'config-dir-postfd-undefined'=>['d0','postfd',4,'undefined'],
+        'config-dir-postfd-throw'=>['d0','postfd',4,'throw'],
+        'config-dir-postfd-missing'=>['d0','postfd',4,'missing'],
+        'config-file-getfl-undefined'=>['f0','getfl',1,'undefined'],
+        'config-file-getfl-throw'=>['f0','getfl',1,'throw'],
+        'config-file-getfl-access'=>['f0','getfl',1,'access'],
+        'config-file-getfl-nonblock'=>['f0','getfl',1,'nonblock'],
+        'config-file-prefd-undefined'=>['f0','prefd',2,'undefined'],
+        'config-file-prefd-throw'=>['f0','prefd',2,'throw'],
+        'config-file-prefd-extra'=>['f0','prefd',2,'extra'],
+        'config-file-setfd-false'=>['f0','setfd',3,'false'],
+        'config-file-setfd-throw'=>['f0','setfd',3,'throw'],
+        'config-file-postfd-undefined'=>['f0','postfd',4,'undefined'],
+        'config-file-postfd-throw'=>['f0','postfd',4,'throw'],
+        'config-file-postfd-missing'=>['f0','postfd',4,'missing'],
+        'config-file-binmode-false'=>['f0','binmode',4,'false'],
+        'config-file-binmode-throw'=>['f0','binmode',4,'throw'],
+      );
+      my $configuration_profile=$configuration{$mode};
+      my @configuration_queue;
+      if(defined($configuration_profile)) {
+        my @all=([Fcntl::F_GETFL(),0],[Fcntl::F_GETFD(),0],
+          [Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()],[Fcntl::F_GETFD(),0]);
+        @configuration_queue=map {[@$_]} @all[0..$configuration_profile->[2]-1];
+      }
+      my %boundary=(
+        'boundary-expiry-hold-entry'=>[2,0,0],
+        'boundary-expiry-hold-complete'=>[237,24,12],
+        'boundary-expiry-recheck-entry'=>[238,24,12],
+        'boundary-expiry-recheck-complete'=>[407,42,12],
+        'boundary-throw-hold-entry'=>[2,0,0],
+        'boundary-throw-hold-complete'=>[237,24,12],
+        'boundary-throw-recheck-entry'=>[238,24,12],
+        'boundary-throw-recheck-complete'=>[407,42,12],
+      );
+      my $emit=sub {push @grammar,[@_];};
+      my $h=0;my $stage_count=0;
+      my $helper_grammar=sub {
+        my ($path)=@_;my $prefix='h'.(++$h);
+        push @jobs,{prefix=>$prefix,path=>$path,stageCount=>$stage_count};
+        $emit->('clock',$prefix) for 1..2;
+        $emit->('pipe',$prefix.'.'.$_) for qw(in out err setup);
+        for my $name(qw(in-r in-w out-r out-w err-r err-w setup-r setup-w)) {
+          $emit->('binmode',$prefix.'.'.$name);$emit->('fileno',$prefix.'.'.$name);
+        }
+        $emit->('fcntl',$prefix.'.setup-w');
+        $emit->('opendir',$prefix.'.census');$emit->('fileno',$prefix.'.census');
+        $emit->('readdir',$prefix.'.census') for 1..(15+$stage_count);
+        $emit->('closedir',$prefix.'.census');$emit->('fileno',$prefix.'.setup-w');
+        $emit->('clock',$prefix);$emit->('fork',$prefix);
+        $emit->('close',$prefix.'.'.$_) for qw(in-r in-w out-w err-w setup-w);
+        $emit->('fileno',$prefix.'.'.$_) for qw(out-r err-r setup-r);
+        $emit->('wait',$prefix);$emit->('clock',$prefix);$emit->('ready',$prefix);
+        for my $name(qw(out-r err-r setup-r)) {
+          $emit->('fileno',$prefix.'.'.$name);$emit->('read',$prefix.'.'.$name);
+          $emit->('close',$prefix.'.'.$name) unless $name eq 'out-r';
+        }
+        $emit->('wait',$prefix);$emit->('wait',$prefix);
+        $emit->('clock',$prefix);$emit->('ready',$prefix);
+        $emit->('fileno',$prefix.'.out-r');$emit->('read',$prefix.'.out-r');
+        $emit->('close',$prefix.'.out-r');$emit->('wait',$prefix);$emit->('clock',$prefix);
+        $emit->('fileno',$prefix.'.'.$_) for qw(in-r in-w out-r out-w err-r err-w setup-r setup-w);
+      };
+      my $unsettled_grammar=sub {
+        $fail->() unless $h==24&&$stage_count==12;
+        my $prefix='h'.(++$h);
+        push @jobs,{prefix=>$prefix,path=>'/',stageCount=>12,cleanup=>1};
+        $emit->('clock',$prefix) for 1..2;
+        $emit->('pipe',$prefix.'.'.$_) for qw(in out err setup);
+        for my $name(qw(in-r in-w out-r out-w err-r err-w setup-r setup-w)) {
+          $emit->('binmode',$prefix.'.'.$name);$emit->('fileno',$prefix.'.'.$name);
+        }
+        $emit->('fcntl',$prefix.'.setup-w');
+        $emit->('opendir',$prefix.'.census');$emit->('fileno',$prefix.'.census');
+        $emit->('readdir',$prefix.'.census') for 1..27;
+        $emit->('closedir',$prefix.'.census');$emit->('fileno',$prefix.'.setup-w');
+        $emit->('clock',$prefix);$emit->('fork',$prefix);
+        $emit->('close',$prefix.'.in-r');
+        for my $name(qw(in-r in-w out-r out-w err-r err-w setup-r setup-w)) {
+          $emit->('fileno',$prefix.'.'.$name);
+          $emit->('close',$prefix.'.'.$name) unless $name eq 'in-r';
+        }
+        $emit->('wait',$prefix);
+      };
+      my $dir_grammar=sub {
+        my ($i)=@_;my $role='d'.$i;
+        $emit->('fileno',$role);$emit->('clock','stage');$emit->('stat',$role);$emit->('lstat',$role);
+        $helper_grammar->($directory_paths[$i]);
+        $emit->('stat',$role);$emit->('lstat',$role);$emit->('clock','stage');
+      };
+      my $file_grammar=sub {
+        my ($i)=@_;my $role='f'.$i;
+        $emit->('fileno',$role);$emit->('stat',$role);$emit->('lstat',$role);$emit->('seek',$role);
+        $emit->('clock','stage');$emit->('read',$role);$emit->('clock','stage');$emit->('read',$role);
+        $emit->('stat',$role);$emit->('lstat',$role);$emit->('clock','stage');
+      };
+      my $epoch_grammar=sub {
+        $dir_grammar->($_) for 0..5;
+        for my $i(0..5) {$file_grammar->($i);$helper_grammar->($logical.'/'.$leaf_rel[$i]);$file_grammar->($i);}
+        $dir_grammar->($_) for 0..5;
+      };
+      $emit->('clock','startup');
+      if($mode eq 'absent'||$mode=~/\Aadmission-/) {$emit->('clock','stage');}
+      elsif($mode=~/\Aunknown-/) {
+        $emit->('clock','stage');$emit->('lstat','d0');$emit->('sysopen','d0');
+      }
+      elsif($fixture_modes{$mode}) {
+        $emit->('clock','stage');$emit->('lstat','d0');$emit->('sysopen','d0');
+      }
+      elsif($mode eq 'staged-reference-alias') {
+        $emit->('clock','stage');$emit->('lstat','d0');$emit->('sysopen','d0');
+        ++$stage_count;$emit->('fcntl','d0') for 1..4;$dir_grammar->(0);
+        $emit->('lstat','d1');$emit->('sysopen','d1');$emit->('close','d0');
+      }
+      elsif(defined($configuration_profile)) {
+        my $target=$configuration_profile->[0] eq 'd0'?1:7;
+        $emit->('clock','stage');
+        for my $n(1..$target) {
+          my $role=$n<=6?'d'.($n-1):'f'.($n-7);
+          $emit->('lstat',$role);$emit->('sysopen',$role);++$stage_count;
+          $emit->('fcntl',$role) for 1..($n==$target?$configuration_profile->[2]:4);
+          if($n==$target) {$emit->('binmode',$role) if $configuration_profile->[1] eq 'binmode';last;}
+          $dir_grammar->($n-1);
+        }
+        for my $n(1..$stage_count) {$emit->('close',$n<=6?'d'.($n-1):'f0');}
+      }
+      elsif($mode eq 'partial-tied-dir'||$mode eq 'partial-tied-file') {
+        my $target=$mode eq 'partial-tied-dir'?1:7;
+        $emit->('clock','stage');
+        for my $n(1..$target) {
+          my $role=$n<=6?'d'.($n-1):'f'.($n-7);
+          $emit->('lstat',$role);$emit->('sysopen',$role);
+          ++$stage_count;$emit->('fcntl',$role) for 1..4;
+          if($n==$target) {$emit->('binmode',$role) if $n>6;last;}
+          $dir_grammar->($n-1);
+        }
+        for my $n(1..$stage_count) {$emit->('close','d'.($n-1)) if $n<=6;$emit->('close','f0') if $n==7;}
+      }
+      elsif($mode eq 'healthy'||$mode=~/\A(?:open|close)-/||exists($boundary{$mode})||$mode=~/\Ametadata-/||$mode eq 'h7-acl-plus'||$mode eq 'h7-raw256'||$mode eq 'file-byte-xor-denied'||$mode eq 'file-byte-xor-mutant'||$mode=~/\Amagic-/||$mode=~/\Adrift-/||$mode=~/\Aamagic-/||$mode=~/\Aactive-/||defined($identity_profile)||$mode=~/\Ashared-unsettled-(?:baseline|mutant)\z/||$mode=~/\Aepoch-acl-(?:baseline|mutant)\z/||$mode=~/\Aonce-primitive-(?:baseline|mutant)\z/) {
+        $emit->('clock','stage');
+        for my $n(1..12) {
+          my $role=$n<=6?'d'.($n-1):'f'.($n-7);
+          $emit->('lstat',$role);$emit->('sysopen',$role);
+          if($mode=~/\Aopen-/&&$n==$slot) {++$stage_count unless $mode eq 'open-undefined';last;}
+          ++$stage_count;$emit->('fcntl',$role) for 1..4;
+          if($n<=6) {$dir_grammar->($n-1);}
+          else {$emit->('binmode',$role);$file_grammar->($n-7);}
+        }
+        if($mode eq 'healthy'||$mode=~/\Aclose-/||exists($boundary{$mode})||$mode=~/\Ametadata-/||$mode eq 'h7-acl-plus'||$mode eq 'h7-raw256'||$mode eq 'file-byte-xor-denied'||$mode eq 'file-byte-xor-mutant'||$mode=~/\Amagic-/||$mode=~/\Adrift-/||$mode=~/\Aamagic-/||$mode=~/\Aactive-/||defined($identity_profile)||$mode=~/\Ashared-unsettled-(?:baseline|mutant)\z/||$mode=~/\Aepoch-acl-(?:baseline|mutant)\z/||$mode=~/\Aonce-primitive-(?:baseline|mutant)\z/) {
+          $epoch_grammar->();$emit->('clock','stage');
+          $unsettled_grammar->() if $mode=~/\Ashared-unsettled-(?:baseline|mutant)\z/;
+          $emit->('clock','stage');
+          $epoch_grammar->();$emit->('clock','stage');
+        }
+        for my $n(1..$stage_count) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+      if($mode eq 'shared-unsettled-baseline') {
+        my @prefix;my $found=0;
+        for my $g(@grammar) {
+          push @prefix,$g;
+          if($g->[0] eq 'wait'&&$g->[1] eq 'h25') {$found=1;last;}
+        }
+        $fail->() unless $found&&@jobs==43;
+        @grammar=@prefix;splice @jobs,25;
+        $emit->('close',$_) for qw(d0 d1 d2 d3 d4 d5 f0 f1 f2 f3 f4 f5);
+      }
+      if($mode eq 'epoch-acl-baseline') {
+        my @prefix;my $end=0;
+        for my $g(@grammar) {
+          push @prefix,$g;
+          last if $g->[0] eq 'fileno'&&$g->[1] eq 'h25.setup-w'&&++$end==3;
+        }
+        $fail->() unless $end==3&&@jobs==42;
+        @grammar=@prefix;splice @jobs,25;
+        $emit->('close',$_) for qw(d0 d1 d2 d3 d4 d5 f0 f1 f2 f3 f4 f5);
+      }
+      if($mode eq 'once-primitive-mutant') {
+        my @next;my $found=0;
+        for my $g(@grammar) {
+          push @next,$g;
+          if($g->[0] eq 'close'&&$g->[1] eq 'd0') {
+            $fail->() if $found++;push @next,['close','d0'];
+          }
+        }
+        $fail->() unless $found==1&&@jobs==42;@grammar=@next;
+      }
+      if(exists($boundary{$mode})) {
+        my ($target,$helpers,$stage)=@{$boundary{$mode}};
+        my @prefix;my $clocks=0;
+        for my $g(@grammar) {
+          push @prefix,$g;++$clocks if $g->[0] eq 'clock';
+          last if $clocks==$target;
+        }
+        $fail->() unless $clocks==$target&&@jobs==42;
+        @grammar=@prefix;splice @jobs,$helpers;
+        for my $n(1..$stage) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+      if($mode=~/\Ametadata-/) {
+        my @prefix;my $clocks=0;
+        for my $g(@grammar) {
+          push @prefix,$g;++$clocks if $g->[0] eq 'clock';last if $clocks==237;
+        }
+        $fail->() unless $clocks==237&&@jobs==42;
+        @grammar=@prefix;splice @jobs,24;
+        for my $n(1..12) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+      if($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256') {
+        my @prefix;my ($end,$success_clock)=(0,0);
+        for my $g(@grammar) {
+          if($mode eq 'h7-raw256'&&$g->[0] eq 'clock'&&$g->[1] eq 'h7') {
+            ++$success_clock;next if $success_clock==6;
+          }
+          push @prefix,$g;
+          if($g->[0] eq 'fileno'&&$g->[1] eq 'h7.setup-w') {last if ++$end==3;}
+        }
+        $fail->() unless $end==3&&@jobs==42
+          &&($mode ne 'h7-raw256'||$success_clock==6);
+        @grammar=@prefix;splice @jobs,7;
+        for my $n(1..12) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+      if($mode eq 'file-byte-xor-denied') {
+        my @prefix;my $reads=0;
+        for my $g(@grammar) {
+          push @prefix,$g;
+          last if $g->[0] eq 'read'&&$g->[1] eq 'f0'&&++$reads==2;
+        }
+        $fail->() unless $reads==2&&@jobs==42;
+        @grammar=@prefix;splice @jobs,6;
+        for my $n(1..7) {$emit->('close',$n<=6?'d'.($n-1):'f0');}
+      }
+      if($mode=~/\Amagic-/) {
+        my @prefix;my $clocks=0;
+        for my $g(@grammar) {
+          push @prefix,$g;++$clocks if $g->[0] eq 'clock';last if $clocks==237;
+        }
+        $fail->() unless $clocks==237&&@jobs==42;
+        @grammar=@prefix;splice @jobs,24;
+        for my $n(1..12) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+      if($mode=~/\Adrift-/) {
+        my @prefix;my $clocks=0;
+        for my $g(@grammar) {
+          push @prefix,$g;++$clocks if $g->[0] eq 'clock';last if $clocks==237;
+        }
+        $fail->() unless $clocks==237&&@jobs==42;
+        @grammar=@prefix;splice @jobs,24;
+        for my $n(1..12) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+      if($mode=~/\Aamagic-/) {
+        my @prefix;my $clocks=0;
+        for my $g(@grammar) {
+          push @prefix,$g;++$clocks if $g->[0] eq 'clock';last if $clocks==237;
+        }
+        $fail->() unless $clocks==237&&@jobs==42;
+        @grammar=@prefix;splice @jobs,24;
+        for my $n(1..12) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+      if($mode=~/\Aactive-/) {
+        my @prefix;my $clocks=0;
+        for my $g(@grammar) {
+          push @prefix,$g;++$clocks if $g->[0] eq 'clock';last if $clocks==237;
+        }
+        $fail->() unless $clocks==237&&@jobs==42;
+        @grammar=@prefix;splice @jobs,24;
+        for my $n(1..12) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+      if(defined($identity_profile)) {
+        my @prefix;my $ordinal=0;
+        for my $g(@grammar) {
+          push @prefix,$g;
+          if($g->[0] eq $identity_profile->[0]&&$g->[1] eq $identity_profile->[1]) {
+            ++$ordinal;last if $ordinal==$identity_profile->[2];
+          }
+        }
+        $fail->() unless $ordinal==$identity_profile->[2]&&@jobs==42;
+        @grammar=@prefix;splice @jobs,$identity_profile->[3];
+        for my $n(1..$identity_profile->[4]) {
+          $emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));
+        }
+      }
+      my $take=sub {
+        my ($op,$role)=@_;$check->();$fail->() unless @grammar;
+        my $want=shift @grammar;$fail->() unless $want->[0] eq $op&&$want->[1] eq $role;
+        ++$calls{$op};
+        $fail->() if @events>=8192;
+        my $event={seq=>1+@events,op=>$op,role=>$role};
+        $fail->() if length(JSON::PP->new->canonical->utf8->encode($event))>512;
+        push @events,$event;
+      };
+      my $same_physical=sub {
+        my ($old,$now,$kind)=@_;$fail->() unless @$old==13&&@$now==13;
+        $fail->() unless $kind eq 'file'||$kind eq 'directory'||$kind eq 'pipe';
+        my @fields=$kind eq 'pipe'?(0..6):$kind eq 'directory'?(0,1,2,4,5):(0,1,2,3,4,5,7,9,10);
+        for my $i(@fields) {$fail->() unless $old->[$i]==$now->[$i];}
+      };
+      my $register=sub {
+        my ($fh,$role,$dir_stream,$path,$fixture_only)=@_;
+        $fixture_only=defined($fixture_only)?$fixture_only:0;
+        # Retain raw acquisition, immutable attribution and disposer before inspection.
+        my $o={fh=>$fh,role=>$role,dirStream=>$dir_stream,path=>$path,attempted=>0,closed=>0,
+          fixtureOnly=>sub {$fixture_only},
+          originalClose=>sub {$dir_stream?CORE::closedir($fh):CORE::close($fh)}};
+        push @owned,$o;
+        my $fd=CORE::fileno($fh);$fail->() unless defined($fd)&&$fd>=3;
+        for my $other(@owned) {
+          next if $other==$o;$fail->() if $other->{fh}==$fh
+            ||(!$other->{closed}&&defined($other->{fd})&&$other->{fd}==$fd);
+        }
+        $o->{fd}=$fd;$o->{identity}=[CORE::stat($fh)];$fail->() unless @{$o->{identity}}==13;
+        $roles{$role}=$o;return $o;
+      };
+      my $lookup=sub {
+        my ($cell,$closed_allowed)=@_;
+        # Inspect the ORIGINAL operand cell before candidate FETCH/comparison.
+        my $sv=B::svref_2object($cell);
+        $fail->() if $sv->FLAGS&0x00f00000;
+        $fail->() unless ref($sv) eq 'B::IV'&&($sv->FLAGS&B::SVf_ROK());
+        my $gv=$sv->RV;$fail->() unless ref($gv) eq 'B::GV';
+        $fail->() if $gv->FLAGS&0x00f00000;
+        my $gm=$gv->MAGIC;$fail->() if defined($gm);
+        my $io=$gv->IO;$fail->() unless ref($io) eq 'B::IO';
+        $fail->() if $io->FLAGS&0x00e00000;
+        my $im=$io->MAGIC;$fail->() if defined($im);
+        my $fh=$$cell;
+        for my $o(@owned) {
+          next unless $o->{fh}==$fh;my $fd=CORE::fileno($fh);
+          if($o->{closed}) {$fail->() unless $closed_allowed&&!defined($fd);return $o;}
+          $fail->() if $o->{attempted}||!defined($fd)||$fd!=$o->{fd};
+          my $kind=$o->{path}?($o->{path}{directory}?'directory':'file'):($o->{dirStream}?'directory':'pipe');
+          $same_physical->($o->{identity},[CORE::stat($fh)],$kind);
+          return $o;
+        }
+        $fail->();
+      };
+      my $dispose=sub {
+        my ($o,$fixture)=@_;
+        $fail->() if exists($o->{fixtureOnly})&&$o->{fixtureOnly}->()&&!$fixture;
+        return 0 if $o->{attempted};
+        $o->{attempted}=1;$o->{fixture}=$fixture;
+        $!=0;my $ok=eval {$o->{originalClose}->()};
+        my $error=$@;my $errno=0+$!;
+        $o->{closed}=1 if $ok&&!length($error)&&!$errno&&!defined(CORE::fileno($o->{fh}));
+        $latch->() unless $o->{closed};return $o->{closed};
+      };
+      my ($job,$selector,$census);my (@pipe_names,@wait,@ready,@census_names);my %reads;
+      my $helper_enter=sub {
+        my ($path)=@_;$check->();$fail->() unless @jobs&&!defined($job);
+        $job=shift @jobs;$fail->() unless $job->{path} eq $path;
+        @pipe_names=qw(in out err setup);@wait=([0,0],[0,0],[0,0],[424242,0]);
+        @ready=(['out-r','err-r','setup-r'],['out-r']);
+        %reads=('out-r'=>[1,0],'err-r'=>[0],'setup-r'=>[0]);
+        if($job->{cleanup}) {
+          $fail->() unless $mode=~/\Ashared-unsettled-(?:baseline|mutant)\z/
+            &&$job->{prefix} eq 'h25'&&$job->{path} eq '/'&&$job->{stageCount}==12;
+          @wait=([424242,0]);@ready=();%reads=();
+        }
+        $selector=undef;$census=undef;@census_names=();
+      };
+      my $helper_leave=sub {
+        $check->();$fail->() if @pipe_names||@wait||@ready||@census_names||grep {@$_} values %reads;
+        $fail->() unless defined($job)&&defined($census)&&$census->{closed};
+        for my $name(qw(in-r in-w out-r out-w err-r err-w setup-r setup-w)) {
+          my $o=$roles{$job->{prefix}.'.'.$name};$fail->() unless defined($o)&&$o->{closed}&&!defined(CORE::fileno($o->{fh}));
+        }
+        $job=undef;
+      };
+      my $deny=sub {$latch->();die "$fault\n";};
+      my $open_ordinal=0;
+      require Symbol;require overload;
+      my $partial_counts={factory=>0,untie=>0,destroy=>0,callbacks=>{
+        map {$_=>0} qw(FETCHSIZE FETCH STORE STORESIZE EXTEND PUSH POP SHIFT UNSHIFT CLEAR EXISTS DELETE)}};
+      my $partial_nominated=0;
+      my %callbacks=map {$_=>0} qw(FETCH STORE FILENO CLOSE READ PRINT PRINTF WRITE READLINE GETC SEEK TELL EOF BINMODE CALL string numeric bool compare);
+      my %factory=(scalar=>0,handle=>0);
+      my %finalization=(untie=>0,destroy=>0);
+      my $counts={callbacks=>\%callbacks,factory=>\%factory,finalization=>\%finalization};
+      my ($nominee_cell,$nominee_glob,$nominee_shape,$before_callbacks,$after_finalization);
+      my $classes=<<'TEST_STAGED_CLASSES';
+package TestStagedScalar;
+sub TIESCALAR {my ($class,$counts)=@_;++$counts->{factory}{scalar};bless {counts=>$counts},$class;}
+sub deny {my ($self,$name)=@_;++$self->{counts}{callbacks}{$name};die "TEST_STAGED_CANDIDATE_CALLBACK\n";}
+sub FETCH {$_[0]->deny('FETCH');}
+sub STORE {$_[0]->deny('STORE');}
+sub UNTIE {++$_[0]{counts}{finalization}{untie};}
+sub DESTROY {++$_[0]{counts}{finalization}{destroy};}
+package TestStagedHandle;
+sub TIEHANDLE {my ($class,$counts)=@_;++$counts->{factory}{handle};bless {counts=>$counts},$class;}
+sub deny {my ($self,$name)=@_;++$self->{counts}{callbacks}{$name};die "TEST_STAGED_CANDIDATE_CALLBACK\n";}
+sub FILENO {$_[0]->deny('FILENO');}
+sub CLOSE {$_[0]->deny('CLOSE');}
+sub READ {$_[0]->deny('READ');}
+sub PRINT {$_[0]->deny('PRINT');}
+sub PRINTF {$_[0]->deny('PRINTF');}
+sub WRITE {$_[0]->deny('WRITE');}
+sub READLINE {$_[0]->deny('READLINE');}
+sub GETC {$_[0]->deny('GETC');}
+sub SEEK {$_[0]->deny('SEEK');}
+sub TELL {$_[0]->deny('TELL');}
+sub EOF {$_[0]->deny('EOF');}
+sub BINMODE {$_[0]->deny('BINMODE');}
+sub UNTIE {++$_[0]{counts}{finalization}{untie};}
+sub DESTROY {++$_[0]{counts}{finalization}{destroy};}
+package TestStagedPartialArray;
+sub TIEARRAY {my ($class,$counts)=@_;++$counts->{factory};bless {counts=>$counts},$class;}
+sub deny {my ($self,$name)=@_;++$self->{counts}{callbacks}{$name};die "TEST_STAGED_PARTIAL_CALLBACK\n";}
+sub FETCHSIZE {$_[0]->deny('FETCHSIZE');}
+sub FETCH {$_[0]->deny('FETCH');}
+sub STORE {$_[0]->deny('STORE');}
+sub STORESIZE {$_[0]->deny('STORESIZE');}
+sub EXTEND {$_[0]->deny('EXTEND');}
+sub PUSH {$_[0]->deny('PUSH');}
+sub POP {$_[0]->deny('POP');}
+sub SHIFT {$_[0]->deny('SHIFT');}
+sub UNSHIFT {$_[0]->deny('UNSHIFT');}
+sub CLEAR {$_[0]->deny('CLEAR');}
+sub EXISTS {$_[0]->deny('EXISTS');}
+sub DELETE {$_[0]->deny('DELETE');}
+sub UNTIE {++$_[0]{counts}{untie};}
+sub DESTROY {++$_[0]{counts}{destroy};}
+package TestStagedMetadataHash;
+our @ISA=('TestStagedPartialArray');
+sub TIEHASH {my ($class,$counts)=@_;++$counts->{factory};bless {counts=>$counts},$class;}
+sub FIRSTKEY {$_[0]->deny('FIRSTKEY');}
+sub NEXTKEY {$_[0]->deny('NEXTKEY');}
+sub SCALAR {$_[0]->deny('SCALAR');}
+package TestStagedMetadataScalar;
+our @ISA=('TestStagedPartialArray');
+sub TIESCALAR {my ($class,$counts)=@_;++$counts->{factory};bless {counts=>$counts},$class;}
+package TestStagedOverloaded;
+use overload
+    '""'=>sub {++$_[0]{counts}{callbacks}{string};die "TEST_STAGED_CANDIDATE_CALLBACK\n";},
+    '0+'=>sub {++$_[0]{counts}{callbacks}{numeric};die "TEST_STAGED_CANDIDATE_CALLBACK\n";},
+    'bool'=>sub {++$_[0]{counts}{callbacks}{bool};die "TEST_STAGED_CANDIDATE_CALLBACK\n";},
+    '=='=>sub {++$_[0]{counts}{callbacks}{compare};die "TEST_STAGED_CANDIDATE_CALLBACK\n";},
+    fallback=>0;
+sub DESTROY {++$_[0]{counts}{finalization}{destroy};}
+package main;
+1;
+TEST_STAGED_CLASSES
+      my $classes_ok=eval $classes;my $classes_error=$@;
+      $fail->() unless $classes_ok&&!length($classes_error);
+      my $shape=sub {
+        my ($cell)=@_;my $sv=B::svref_2object($cell);
+        my $out={cellClass=>ref($sv),cellFlags=>0+$sv->FLAGS};
+        if($sv->FLAGS&B::SVf_ROK()) {
+          my $rv=$sv->RV;$out->{rvClass}=ref($rv);$out->{rvFlags}=0+$rv->FLAGS;
+          if(ref($rv) eq 'B::GV') {
+            my $magic=$rv->MAGIC;$out->{gvMagic}=defined($magic)?1:0;
+            my $io=$rv->IO;$out->{ioClass}=ref($io);
+            if(ref($io) eq 'B::IO') {
+              $out->{ioFlags}=0+$io->FLAGS;my $im=$io->MAGIC;$out->{ioMagic}=defined($im)?1:0;
+            }
+          }
+        }
+        return $out;
+      };
+      my $alias_native=sub {
+        my ($cell)=@_;my $s=$shape->($cell);
+        $fail->() unless $s->{cellClass} eq 'B::IV'&&($s->{cellFlags}&B::SVf_ROK())
+          &&!($s->{cellFlags}&0x00f00000)&&$s->{rvClass} eq 'B::GV'
+          &&!($s->{rvFlags}&0x00f00000)&&!$s->{gvMagic}
+          &&$s->{ioClass} eq 'B::IO'&&!($s->{ioFlags}&0x00e00000)&&!$s->{ioMagic};
+        return 1;
+      };
+      my $nominate=sub {
+        my ($cell)=@_;$fail->() unless $open_ordinal==1&&!defined($nominee_cell)&&!@owned;
+        $nominee_cell=$cell; # retain ORIGINAL pending cell before nomination
+        if($mode eq 'unknown-cell') {
+          tie $$cell,'TestStagedScalar',$counts;
+          # No candidate VALUE access after tying this original alias.
+        } elsif($mode eq 'unknown-handle'||$mode eq 'unknown-blessed-glob') {
+          my $g=Symbol::gensym();$nominee_glob=$g;
+          if($mode eq 'unknown-handle') {tie *$g,'TestStagedHandle',$counts;}
+          else {bless $g,'TestStagedBlessedGlob';}
+          $$cell=$g;
+        } elsif($mode eq 'unknown-overloaded') {$$cell=bless {counts=>$counts},'TestStagedOverloaded';}
+        elsif($mode eq 'unknown-indirect') {$$cell='TEST_STAGED_UNOPENED_HANDLE';}
+        elsif($mode eq 'unknown-scalar-ref') {my $value=0;$$cell=\$value;}
+        elsif($mode eq 'unknown-array') {$$cell=[];}
+        elsif($mode eq 'unknown-hash') {$$cell={};}
+        elsif($mode eq 'unknown-coderef') {$$cell=sub {++$callbacks{CALL};die "TEST_STAGED_CANDIDATE_CALLBACK\n";};}
+        else {$fail->();}
+        $nominee_shape=$shape->($cell);
+        $fail->() unless ref($nominee_shape) eq 'HASH';
+        $fail->() if grep {$_} values %callbacks;
+        if($mode eq 'unknown-cell') {
+          $fail->() unless $factory{scalar}==1&&($nominee_shape->{cellFlags}&0x00e00000);
+        } elsif($mode eq 'unknown-handle') {
+          $fail->() unless $factory{handle}==1&&$nominee_shape->{rvClass} eq 'B::GV'
+            &&($nominee_shape->{gvMagic}||($nominee_shape->{ioFlags}//0)&0x00e00000||$nominee_shape->{ioMagic});
+        }
+        return 1;
+      };
+      my ($loaded,$setup_error,$body_ok,$primary);my $load_complete=0;my $outcomes={};
+      my $helpers=0;my $repeat_delta;
+      my %identity_seen;
+      my $identity_project=sub {
+        my ($op,$p,$physical)=@_;my $copy=$project->($p,$physical);
+        return $copy unless defined($identity_profile);
+        my $ordinal=++$identity_seen{$op.':'.$p->{role}};
+        return $copy unless $op eq $identity_profile->[0]&&$p->{role} eq $identity_profile->[1]
+          &&$ordinal==$identity_profile->[2];
+        $fail->() if exists($outcomes->{identityNomination});
+        $fail->() unless @$physical==13&&@$copy==13;
+        if($mode eq 'identity-dir-post-device'||$mode eq 'identity-file-post-size') {
+          $fail->() unless !defined($job)&&$helpers==$identity_profile->[3]
+            &&task6a_origin_helpers_settled();
+        }
+        my ($field,$before,$after);
+        if($identity_profile->[5] eq 'shape') {
+          $field='length';$before=scalar(@$copy);pop @$copy;$after=scalar(@$copy);
+        } elsif($identity_profile->[5] eq 'type') {
+          $field='type';$before=$copy->[2];
+          $fail->() unless Fcntl::S_ISREG($before);
+          $copy->[2]=($before&07777)|0040000;$after=$copy->[2];
+          $fail->() unless Fcntl::S_ISDIR($after);
+        } else {
+          my %fields=(owner=>4,inode=>1,device=>0,size=>7);
+          my $index=$fields{$identity_profile->[5]};$fail->() unless defined($index);
+          $field=$identity_profile->[5];$before=$copy->[$index];
+          ++$copy->[$index];$after=$copy->[$index];
+        }
+        $outcomes->{identityNomination}={op=>''.$op,role=>''.$p->{role},ordinal=>0+$ordinal,
+          field=>''.$field,before=>0+$before,after=>0+$after,
+          actualTupleLength=>0+scalar(@$physical),returnedTupleLength=>0+scalar(@$copy),
+          settledHelpers=>0+$helpers,actualCoreMetadata=>JSON::PP::true};
+        return $copy;
+      };
+      {
+        no warnings qw(redefine once);
+        local *CORE::GLOBAL::sysopen=sub (*$$;$) {
+          $check->();$fail->() unless @_==3&&!defined($_[0])&&!ref($_[1])&&!ref($_[2]);
+          my $p=$paths{$_[1]};$fail->() unless defined($p);
+          my $flags=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()
+            |($p->{directory}?Fcntl::O_DIRECTORY():Fcntl::O_NONBLOCK());
+          $fail->() unless $_[2]==$flags&&!exists($roles{$p->{role}});
+          $take->('sysopen',$p->{role});++$open_ordinal;
+          if($mode=~/\Aunknown-/) {$nominate->(\($_[0]));return 1;}
+          if($mode eq 'staged-reference-alias'&&$open_ordinal==2) {
+            my $old=$roles{'d0'};$fail->() unless defined($old)&&$p->{role} eq 'd1'
+              &&!$old->{attempted}&&!$old->{closed};
+            $alias_native->(\($old->{fh}));
+            my $live=CORE::fileno($old->{fh});$fail->() unless defined($live)&&$live==$old->{fd};
+            $_[0]=$old->{fh};
+            $alias_native->(\($_[0]));$fail->() unless $_[0]==$old->{fh};
+            $outcomes->{stagedAliasNomination}={sameRef=>JSON::PP::true,sameFd=>JSON::PP::true,
+              newRawAcquisition=>JSON::PP::false};
+            return 1;
+          }
+          if($fixture_modes{$mode}) {
+            $fail->() unless $open_ordinal==1&&$p->{role} eq 'd0';
+            if($mode eq 'hidden-open-undefined') {
+              CORE::sysopen(my $raw,$p->{actual},$flags) or $fail->();
+              ++$raw_acquisitions;
+              $fixture_record=$register->($raw,'fixture-hidden',0,$p,1);
+              $fixture_original=$raw;
+              $same_physical->($p->{identity},$fixture_record->{identity},'directory');
+              $fail->() if defined($_[0]);return 0;
+            }
+            $fail->() unless defined($fixture_original)&&defined($fixture_record)
+              &&$raw_acquisitions==1&&$fixture_record->{fixtureOnly}->();
+            $_[0]=$mode eq 'foreign-fd-alias'?$fixture_alias:$fixture_original;
+            return 1;
+          }
+          return 0 if $mode eq 'open-undefined'&&$open_ordinal==$slot;
+          CORE::sysopen(my $fh,$p->{actual},$flags) or $fail->();
+          my $o=$register->($fh,$p->{role},0,$p);
+          $same_physical->($p->{identity},$o->{identity},$p->{directory}?'directory':'file');
+          $o->{fcntlQueue}=[[Fcntl::F_GETFL(),0],[Fcntl::F_GETFD(),0],
+            [Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()],[Fcntl::F_GETFD(),0]];
+          if(defined($configuration_profile)&&$p->{role} eq $configuration_profile->[0]) {
+            $o->{fcntlQueue}=[map {[@$_]} @configuration_queue];
+          }
+          $_[0]=$fh;$o->{exposed}=1;
+          return 0 if $mode eq 'open-false'&&$open_ordinal==$slot;
+          die "TEST_STAGED_NOMINATED_OPEN_THROW\n" if $mode eq 'open-throw'&&$open_ordinal==$slot;
+          return 1;
+        };
+        local *CORE::GLOBAL::pipe=sub (**) {
+          $check->();$fail->() unless @_==2&&!defined($_[0])&&!defined($_[1])
+            &&defined($job)&&@pipe_names;
+          my $name=shift @pipe_names;my $prefix=$job->{prefix}.'.'.$name;
+          $take->('pipe',$prefix);
+          CORE::pipe(my $a,my $b) or $fail->();
+          # Both originals survive a failure while registering either member.
+          my $oa={fh=>$a,role=>$prefix.'-r',dirStream=>0,attempted=>0,closed=>0,
+            originalClose=>sub {CORE::close($a)}};
+          my $ob={fh=>$b,role=>$prefix.'-w',dirStream=>0,attempted=>0,closed=>0,
+            originalClose=>sub {CORE::close($b)}};
+          push @owned,$oa,$ob;
+          for my $o($oa,$ob) {
+            $o->{fd}=CORE::fileno($o->{fh});$o->{identity}=[CORE::stat($o->{fh})];
+            $fail->() unless defined($o->{fd})&&$o->{fd}>=3&&@{$o->{identity}}==13
+              &&Fcntl::S_ISFIFO($o->{identity}[2]);
+            for my $other(@owned) {
+              next if $other==$o;$fail->() if $other->{fh}==$o->{fh}
+                ||(!$other->{closed}&&defined($other->{fd})&&$other->{fd}==$o->{fd});
+            }
+            $roles{$o->{role}}=$o;
+          }
+          $_[0]=$a;$_[1]=$b;$oa->{exposed}=1;$ob->{exposed}=1;
+          if($name eq 'out') {
+            my $marker=(($mode eq 'h7-acl-plus'&&$job->{prefix} eq 'h7')
+              ||($mode=~/\Aepoch-acl-(?:baseline|mutant)\z/&&$job->{prefix} eq 'h25'))?'+':'';
+            my $row="-r--r--r--".$marker." 1 root wheel 16 Jan 1 2026 ".$job->{path}."\n";
+            if(($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256')&&$job->{prefix} eq 'h7') {
+              $fail->() unless $job->{path} eq '/'&&!exists($outcomes->{h7PipeRow});
+              $outcomes->{h7PipeRow}={bytes=>0+length($row),row=>''.$row};
+            }
+            if($mode=~/\Aepoch-acl-(?:baseline|mutant)\z/&&$job->{prefix} eq 'h25') {
+              $fail->() unless $job->{path} eq '/'&&length($row)==41
+                &&!exists($outcomes->{epochAclPipeRow});
+              $outcomes->{epochAclPipeRow}={bytes=>0+length($row),row=>''.$row};
+            }
+            $!=0;my $n=CORE::syswrite($b,$row,length($row));
+            $fail->() unless defined($n)&&$n==length($row)&&!$!;
+          }
+          return 1;
+        };
+        local *CORE::GLOBAL::binmode=sub (*;$) {
+          $check->();$fail->() unless @_==1;my $o=$lookup->(\($_[0]),0);
+          $take->('binmode',$o->{role});$fail->() if $o->{binary}++;
+          CORE::binmode($o->{fh}) or $fail->();
+          if(defined($configuration_profile)&&$configuration_profile->[1] eq 'binmode'
+              &&$o->{role} eq $configuration_profile->[0]) {
+            $fail->() unless !@{$o->{fcntlQueue}}&&!exists($outcomes->{configurationNomination});
+            my ($role,$cut,$ordinal,$kind)=@$configuration_profile;
+            $outcomes->{configurationNomination}={role=>''.$role,cut=>''.$cut,ordinal=>0+$ordinal,
+              kind=>''.$kind,actualCoreCompleted=>JSON::PP::true};
+            die "TEST_STAGED_NOMINATED_CONFIGURATION_THROW\n" if $kind eq 'throw';
+            $fail->() unless $kind eq 'false';return 0;
+          }
+          return 1;
+        };
+        local *CORE::GLOBAL::fcntl=sub (*$$) {
+          $check->();$fail->() unless @_==3;my $o=$lookup->(\($_[0]),0);
+          $take->('fcntl',$o->{role});
+          if($o->{path}) {
+            $fail->() unless @{$o->{fcntlQueue}};my $want=shift @{$o->{fcntlQueue}};
+            $fail->() unless $_[1]==$want->[0]&&$_[2]==$want->[1];
+          } else {
+            $fail->() unless defined($job)&&$o->{role} eq $job->{prefix}.'.setup-w'
+              &&!$o->{configured}++&&$_[1]==Fcntl::F_SETFD()&&$_[2]==Fcntl::FD_CLOEXEC();
+          }
+          $!=0;my $v=CORE::fcntl($o->{fh},$_[1],$_[2]);
+          $fail->() unless defined($v)&&!$!;
+          if(defined($configuration_profile)&&$o->{role} eq $configuration_profile->[0]
+              &&!@{$o->{fcntlQueue}}&&$configuration_profile->[1] ne 'binmode') {
+            my ($role,$cut,$ordinal,$kind)=@$configuration_profile;
+            $fail->() if exists($outcomes->{configurationNomination});
+            $outcomes->{configurationNomination}={role=>''.$role,cut=>''.$cut,ordinal=>0+$ordinal,
+              kind=>''.$kind,actualCoreCompleted=>JSON::PP::true};
+            return undef if $kind eq 'undefined';
+            die "TEST_STAGED_NOMINATED_CONFIGURATION_THROW\n" if $kind eq 'throw';
+            return 0 if $kind eq 'false'||$kind eq 'missing';
+            return ($v&~Fcntl::O_ACCMODE())|Fcntl::O_WRONLY() if $kind eq 'access';
+            return $v&~Fcntl::O_NONBLOCK() if $kind eq 'nonblock';
+            return $v|(Fcntl::FD_CLOEXEC()<<1) if $kind eq 'extra';
+            $fail->();
+          }
+          if(($mode eq 'partial-tied-dir'&&$o->{role} eq 'd0'
+              ||$mode eq 'partial-tied-file'&&$o->{role} eq 'f0')
+              &&$o->{path}&&!@{$o->{fcntlQueue}}) {
+            $fail->() unless $_[1]==Fcntl::F_GETFD()&&!$partial_nominated++;
+            test_tie_staged_partial();
+          }
+          return $v;
+        };
+        local *CORE::GLOBAL::stat=sub (;*) {
+          $check->();$fail->() unless @_==1&&wantarray;my $o=$lookup->(\($_[0]),0);
+          $fail->() unless $o->{path};$take->('stat',$o->{role});
+          my @s=CORE::stat($o->{fh});$same_physical->($o->{path}{identity},\@s,$o->{path}{directory}?'directory':'file');
+          return @{$identity_project->('stat',$o->{path},\@s)};
+        };
+        local *CORE::GLOBAL::lstat=sub (;*) {
+          $check->();$fail->() unless @_==1&&wantarray&&!ref($_[0]);
+          my $p=$paths{$_[0]};$fail->() unless defined($p);$take->('lstat',$p->{role});
+          my @s=CORE::lstat($p->{actual});$same_physical->($p->{identity},\@s,$p->{directory}?'directory':'file');
+          return @{$identity_project->('lstat',$p,\@s)};
+        };
+        local *CORE::GLOBAL::sysseek=sub (*$$) {
+          $check->();$fail->() unless @_==3;my $o=$lookup->(\($_[0]),0);
+          $fail->() unless $o->{path}&&!$o->{path}{directory}&&$_[1]==0&&$_[2]==0;
+          $take->('seek',$o->{role});$fail->() if $o->{readQueue}&&@{$o->{readQueue}};
+          $o->{readQueue}=[length($o->{path}{body}),0];
+          my $v=CORE::sysseek($o->{fh},0,0);$fail->() unless defined($v)&&$v==0;return $v;
+        };
+        local *CORE::GLOBAL::sysread=sub (*\$$;$) {
+          $check->();$fail->() unless @_==3&&ref($_[1]) eq 'SCALAR'&&$_[2]==65536;
+          my $buffer=$_[1];$fail->() unless !ref($$buffer)&&$$buffer eq '';
+          my $o=$lookup->(\($_[0]),0);$take->('read',$o->{role});
+          my ($want,$pipe_read);
+          if($o->{path}) {
+            $fail->() unless !$o->{path}{directory}&&$o->{readQueue}&&@{$o->{readQueue}};
+            $want=shift @{$o->{readQueue}};
+          } else {
+            $fail->() unless defined($job)&&$o->{role}=~/\A\Q$job->{prefix}\E\.(out-r|err-r|setup-r)\z/;
+            my $name=$1;my $queue=$reads{$name};$fail->() unless ref($queue) eq 'ARRAY'&&@$queue;
+            $want=shift @$queue;$pipe_read=1;
+            my $write=$name=~s/-r\z/-w/r;
+            $fail->() unless $roles{$job->{prefix}.'.'.$write}{closed};
+          }
+          $!=0;my $n=CORE::sysread($o->{fh},$$buffer,65536);
+          $fail->() unless defined($n)&&!$!&&!utf8::is_utf8($$buffer)&&$n==length($$buffer);
+          $fail->() unless $pipe_read?($want?$n>0:$n==0):$n==$want;
+          if(($mode eq 'file-byte-xor-denied'||$mode eq 'file-byte-xor-mutant')
+              &&$o->{role} eq 'f0'&&!exists($outcomes->{byteNomination})) {
+            $fail->() unless !defined($job)&&!$pipe_read&&$calls{read}==25
+              &&$n==5864&&$$buffer eq $bodies[0]&&ord(substr($$buffer,0,1))==112;
+            my $before=Digest::SHA::sha256_hex($$buffer);
+            substr($$buffer,0,1)=chr(ord(substr($$buffer,0,1))^1);
+            $fail->() unless length($$buffer)==$n&&substr($$buffer,1) eq substr($bodies[0],1)
+              &&ord(substr($$buffer,0,1))==113;
+            $outcomes->{byteNomination}={role=>'f0',readOrdinal=>25,bytes=>0+$n,
+              beforeFirstByte=>112,afterFirstByte=>113,beforeSha256=>$before,
+              afterSha256=>Digest::SHA::sha256_hex($$buffer),
+              actualCoreRead=>JSON::PP::true,remainderUnchanged=>JSON::PP::true};
+          }
+          if($mode=~/\Aepoch-acl-(?:baseline|mutant)\z/&&defined($job)
+              &&$job->{prefix} eq 'h25'&&$o->{role} eq 'h25.out-r') {
+            push @{$outcomes->{epochAclActualReads}}, {bytes=>0+$n,body=>''.$$buffer};
+          }
+          if(($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256')&&defined($job)
+              &&$job->{prefix} eq 'h7'&&$o->{role} eq 'h7.out-r') {
+            push @{$outcomes->{h7ActualReads}}, {bytes=>0+$n,body=>''.$$buffer};
+          }
+          return $n;
+        };
+        local *CORE::GLOBAL::fileno=sub (*) {
+          $check->();$fail->() unless @_==1;my $o=$lookup->(\($_[0]),1);
+          $take->('fileno',$o->{role});return CORE::fileno($o->{fh});
+        };
+        local *CORE::GLOBAL::close=sub (;*) {
+          $fail->() unless @_==1;
+          my $o=$lookup->(\($_[0]),$mode eq 'once-primitive-mutant'?1:0);
+          if($mode eq 'once-primitive-mutant'&&$o->{closed}) {
+            $fail->() unless $o->{role} eq 'd0'&&$o==$roles{d0}&&!$o->{dirStream}
+              &&$o->{attempted}&&!defined(CORE::fileno($o->{fh}))
+              &&@owned==390&&$helpers==42&&!defined($job)&&!@jobs
+              &&@events&&$events[-1]{op} eq 'close'&&$events[-1]{role} eq 'd0'
+              &&!exists($outcomes->{duplicatePrimitive});
+            $outcomes->{duplicatePrimitive}={role=>'d0',allowanceConsumed=>JSON::PP::true};
+            $take->('close','d0');
+            my @warnings;my ($second,$ok,$error,$errno);
+            {
+              local $SIG{__WARN__}=sub {
+                $fail->() unless @_==1&&!ref($_[0])&&!utf8::is_utf8($_[0])
+                  &&length($_[0])<=256&&@warnings==0
+                  &&$_[0]=~/\Aclose\(\) on unopened filehandle [^\x00-\x1f\x7f]{1,96} at -e line [1-9][0-9]{0,5}\.\n\z/;
+                push @warnings,''.$_[0];
+              };
+              $!=0;$ok=eval {$second=$o->{originalClose}->();1;};
+              $error=$@;$errno=0+$!;
+            }
+            $check->();$fail->() unless $ok&&!length($error)&&!$second
+              &&$o->{attempted}&&$o->{closed}&&!defined(CORE::fileno($o->{fh}));
+            @{$outcomes->{duplicatePrimitive}}{qw(actualCoreReturnedFalse filenoUndefined
+              firstPhysicalClosed warningCount errno)}=(JSON::PP::true,JSON::PP::true,
+              JSON::PP::true,0+scalar(@warnings),$errno);
+            $outcomes->{duplicatePrimitive}{warnings}=\@warnings;
+            return $second;
+          }
+          $fail->() if $o->{dirStream};$take->('close',$o->{role});
+          my $closed=$dispose->($o,0);
+          if($mode=~/\Ashared-unsettled-(?:baseline|mutant)\z/
+              &&($o->{role} eq 'h25.in-r'||$o->{role} eq 'h25.in-w')) {
+            $fail->() unless defined($job)&&$job->{cleanup}&&$closed&&$o->{closed}
+              &&$o->{attempted}&&!defined(CORE::fileno($o->{fh}));
+            $outcomes->{sharedCloseNominations}//=[];
+            push @{$outcomes->{sharedCloseNominations}},{role=>''.$o->{role},
+              physicallyClosedBeforeThrow=>JSON::PP::true};
+            die "TEST_STAGED_SHARED_CLOSE_THROW\n";
+          }
+          if($mode=~/\Aclose-/&&defined($o->{path})) {
+            my $n=$o->{role}=~/\Ad([0-5])\z/?1+$1:$o->{role}=~/\Af([0-5])\z/?7+$1:0;
+            $fail->() unless $n>=1&&$n<=12&&$closed&&$o->{closed}
+              &&$o->{attempted}&&!defined(CORE::fileno($o->{fh}));
+            if($n==$slot) {
+              $fail->() if exists($outcomes->{nominatedClose});
+              $outcomes->{nominatedClose}={role=>''.$o->{role},slot=>0+$n,
+                kind=>''.$mode,physicallyClosedBeforeResponse=>JSON::PP::true};
+              return 0 if $mode eq 'close-false';
+              die "TEST_STAGED_NOMINATED_CLOSE_THROW\n";
+            }
+          }
+          return $closed;
+        };
+        local *CORE::GLOBAL::opendir=sub (*$) {
+          $check->();$fail->() unless @_==2&&!defined($_[0])&&!ref($_[1])
+            &&$_[1] eq '/dev/fd'&&defined($job)&&!defined($census)&&!@pipe_names;
+          my $role=$job->{prefix}.'.census';$take->('opendir',$role);
+          CORE::opendir(my $fh,'/dev/fd') or $fail->();
+          $census=$register->($fh,$role,1,undef);$_[0]=$fh;$census->{exposed}=1;
+          my @live=grep {!$_->{closed}} @owned;
+          $fail->() unless @live==$job->{stageCount}+9;
+          my %fds;
+          for my $o(@live) {$lookup->(\($o->{fh}),0);$fail->() if $fds{$o->{fd}}++;}
+          @census_names=('.', '..','0','1','2',map {"$_->{fd}"} @live);
+          return 1;
+        };
+        local *CORE::GLOBAL::readdir=sub (*) {
+          $check->();$fail->() unless @_==1&&!wantarray&&defined($census);
+          my $o=$lookup->(\($_[0]),0);$fail->() unless $o==$census;
+          $take->('readdir',$o->{role});$!=0;return shift @census_names;
+        };
+        local *CORE::GLOBAL::closedir=sub (*) {
+          $fail->() unless @_==1;my $o=$lookup->(\($_[0]),0);
+          $fail->() unless $o->{dirStream}&&defined($census)&&$o==$census&&!@census_names;
+          $take->('closedir',$o->{role});return $dispose->($o,0);
+        };
+        local *CORE::GLOBAL::fork=sub () {
+          $check->();$fail->() unless @_==0&&defined($job)&&defined($census)&&$census->{closed};
+          $take->('fork',$job->{prefix});return 424242;
+        };
+        local *CORE::GLOBAL::waitpid=sub ($$) {
+          $check->();$fail->() unless @_==2&&$_[0]==424242&&$_[1]==POSIX::WNOHANG()
+            &&defined($job)&&@wait;
+          $take->('wait',$job->{prefix});my $v=shift @wait;
+          if($mode eq 'h7-raw256'&&$job->{prefix} eq 'h7'&&!@wait) {
+            $fail->() unless $v->[0]==424242&&$v->[1]==0&&!exists($outcomes->{h7StatusNomination});
+            $outcomes->{h7StatusNomination}={pid=>424242,rawStatus=>256};
+            $v=[424242,256];
+          }
+          $?=$v->[1];return $v->[0];
+        };
+        local *IO::Select::can_read=sub {
+          $check->();$fail->() unless @_==2&&ref($_[0]) eq 'IO::Select'&&$_[1]==0.01&&defined($job)&&@ready;
+          $take->('ready',$job->{prefix});$selector=$_[0] unless defined($selector);
+          $fail->() unless $_[0]==$selector;my $want=shift @ready;my @members=$_[0]->handles;
+          $fail->() unless @members==@$want&&$_[0]->count==@$want;my %members;
+          for my $fh(@members) {my $o=$lookup->(\$fh,0);$fail->() if $members{$o->{role}}++;}
+          my @answer;
+          for my $name(@$want) {
+            my $role=$job->{prefix}.'.'.$name;$fail->() unless $members{$role};push @answer,$roles{$role}{fh};
+          }
+          return @answer;
+        };
+        local *Time::HiRes::clock_gettime=sub (;$) {
+          $check->();$fail->() unless @_==1&&$_[0]==Time::HiRes::CLOCK_MONOTONIC();
+          my $role=defined($job)?$job->{prefix}:!$calls{clock}?'startup':'stage';
+          $take->('clock',$role);
+          if(exists($boundary{$mode})&&$calls{clock}==$boundary{$mode}[0]) {
+            $fail->() unless $role eq 'stage'&&!defined($job)
+              &&!exists($outcomes->{boundaryNomination});
+            $outcomes->{boundaryNomination}={clock=>0+$calls{clock},mode=>''.$mode};
+            die "TEST_STAGED_NOMINATED_CLOCK_THROW\n" if $mode=~/\Aboundary-throw-/;
+            return 180;
+          }
+          return 0;
+        };
+        local *CORE::GLOBAL::exec=$deny;local *CORE::GLOBAL::system=$deny;
+        local *CORE::GLOBAL::open=sub (*;$@) {$deny->();};local *CORE::GLOBAL::syswrite=sub (*$;$$) {$deny->();};
+        local *CORE::GLOBAL::readpipe=sub (_) {$deny->();};local *CORE::GLOBAL::kill=sub (@) {$deny->();};
+        local *CORE::GLOBAL::chdir=sub (;$) {$deny->();};local *CORE::GLOBAL::unlink=sub (@) {$deny->();};
+        local *CORE::GLOBAL::mkdir=sub (_;$) {$deny->();};local *CORE::GLOBAL::rmdir=sub (_) {$deny->();};
+        local *CORE::GLOBAL::rename=sub ($$) {$deny->();};local *CORE::GLOBAL::seek=sub (*$$) {$deny->();};
+        local *CORE::GLOBAL::truncate=sub ($$) {$deny->();};local *CORE::GLOBAL::socket=sub (*$$$) {$deny->();};
+        local *CORE::GLOBAL::socketpair=sub (**$$$) {$deny->();};local *CORE::GLOBAL::connect=sub (*$) {$deny->();};
+        local *CORE::GLOBAL::accept=sub (**) {$deny->();};
+        local *IO::Select::can_write=$deny;local *IO::Select::has_exception=$deny;
+        local *Time::HiRes::sleep=$deny;local *POSIX::dup2=$deny;local *POSIX::close=$deny;local *POSIX::_exit=$deny;
+        my %prototypes=(sysopen=>'*$$;$',pipe=>'**',binmode=>'*;$',fcntl=>'*$$',stat=>';*',
+          lstat=>';*',sysseek=>'*$$',sysread=>'*\\$$;$',fileno=>'*',close=>';*',
+          opendir=>'*$',readdir=>'*',closedir=>'*',fork=>'',waitpid=>'$$');
+        for my $op(sort keys %prototypes) {
+          my $port='CORE::GLOBAL'->can($op);my $core=prototype('CORE::'.$op);
+          $fail->() unless defined($port)&&ref($port) eq 'CODE'&&defined($core)
+            &&$core eq $prototypes{$op}&&defined(prototype($port))&&prototype($port) eq $core;
+        }
+        for my $op(qw(exec system)) {my $port='CORE::GLOBAL'->can($op);
+          $fail->() unless defined($port)&&ref($port) eq 'CODE'&&!defined(prototype($port));}
+        my $source=MIME::Base64::decode_base64($ARGV[0]);
+        $body_ok=eval {
+          if($fixture_modes{$mode}&&$mode ne 'hidden-open-undefined') {
+            my $p=$paths{$logical.'/'.$leaf_rel[2]};
+            $fail->() unless defined($p)&&$p->{role} eq 'f2'&&!@owned&&!$raw_acquisitions;
+            my $flags=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK();
+            CORE::sysopen(my $raw,$p->{actual},$flags) or $fail->();
+            ++$raw_acquisitions;
+            $fixture_record=$register->($raw,'fixture-foreign',0,$p,1);
+            $fixture_original=$raw;
+            $same_physical->($p->{identity},$fixture_record->{identity},'file');
+          }
+          if($mode eq 'foreign-fd-alias') {
+            $fail->() unless defined($fixture_original)&&defined($fixture_record)&&$raw_acquisitions==1;
+            $fixture_alias=Symbol::gensym();
+            *{$fixture_alias}=*{$fixture_original}{IO};
+            $alias_native->(\$fixture_original);$alias_native->(\$fixture_alias);
+            $fail->() if $fixture_alias==$fixture_original;
+            my $old_io=B::svref_2object(\$fixture_original)->RV->IO;
+            my $new_io=B::svref_2object(\$fixture_alias)->RV->IO;
+            $fail->() unless $$old_io==$$new_io;
+            my $original_fd=CORE::fileno($fixture_original);my $alias_fd=CORE::fileno($fixture_alias);
+            $fail->() unless defined($original_fd)&&$original_fd>=3&&defined($alias_fd)
+              &&$alias_fd==$original_fd&&$original_fd==$fixture_record->{fd};
+            $same_physical->($fixture_record->{identity},[CORE::stat($fixture_alias)],'file');
+            $outcomes->{fdAliasBeforeConsumer}={nativeShapes=>JSON::PP::true,
+              distinctGv=>JSON::PP::true,sameIo=>JSON::PP::true,sameFd=>JSON::PP::true,
+              sameRef=>JSON::PP::false,rawAcquisitions=>0+$raw_acquisitions};
+          }
+          $loaded=eval($source."\n1;\n");$setup_error=$@;$check->();
+          $fail->() unless $loaded&&!length($setup_error);$load_complete=1;
+          my $capture=\&task6a_origin_capture;
+          local *main::task6a_origin_capture=sub {
+            $check->();$fail->() unless @_==4&&$_[0] eq '/bin/ls'
+              &&ref($_[1]) eq 'ARRAY'&&@{$_[1]}==2&&$_[1][0] eq '-lde'
+              &&$_[2]==2&&$_[3]==4096;
+            $helper_enter->($_[1][1]);++$helpers;
+            my $value;my $ok=eval {$value=$capture->(@_);1;};my $error=$@;$check->();
+            if($mode=~/\Ashared-unsettled-(?:baseline|mutant)\z/&&$helpers==25) {
+              $fail->() unless defined($job)&&$job->{cleanup}&&$job->{prefix} eq 'h25'
+                &&!$ok&&!defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+              $outcomes->{sharedCaptorOutcome}={returned=>JSON::PP::false,
+                canonicalRefusal=>JSON::PP::true};
+            } elsif(($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256')&&$helpers==7) {
+              $fail->() unless defined($job)&&$job->{prefix} eq 'h7'&&$job->{path} eq '/';
+              if($mode eq 'h7-raw256') {
+                $fail->() unless !$ok&&!defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+              } else {
+                $fail->() unless $ok&&!length($error)&&ref($value) eq 'HASH'
+                  &&$value->{out} eq "-r--r--r--+ 1 root wheel 16 Jan 1 2026 /\n"
+                  &&$value->{err} eq ''&&$value->{status}==0&&$value->{pid}==424242
+                  &&JSON::PP::is_bool($value->{reaped})&&$value->{reaped};
+              }
+              $outcomes->{h7CaptorOutcome}={returned=>$ok?JSON::PP::true:JSON::PP::false,
+                canonicalRefusal=>$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n"?JSON::PP::true:JSON::PP::false};
+            } else {$fail->() unless $ok&&!length($error)&&ref($value) eq 'HASH';}
+            if($mode=~/\Aepoch-acl-(?:baseline|mutant)\z/&&$helpers==25) {
+              $fail->() unless $ok&&!length($error)&&defined($job)&&$job->{prefix} eq 'h25'
+                &&$job->{path} eq '/'&&ref($value) eq 'HASH'
+                &&$value->{out} eq "-r--r--r--+ 1 root wheel 16 Jan 1 2026 /\n"
+                &&$value->{err} eq ''&&$value->{status}==0&&$value->{pid}==424242
+                &&JSON::PP::is_bool($value->{reaped})&&$value->{reaped};
+              $outcomes->{epochAclCaptorOutcome}={returned=>JSON::PP::true,
+                out=>''.$value->{out},err=>''.$value->{err},status=>0+$value->{status},
+                reaped=>$value->{reaped}};
+            }
+            $helper_leave->();$check->();
+            if($mode=~/\Aepoch-acl-(?:baseline|mutant)\z/&&$helpers==25) {
+              $outcomes->{epochAclDrain}={jobCleared=>!defined($job)?JSON::PP::true:JSON::PP::false,
+                helpersSettled=>task6a_origin_helpers_settled()};
+            }
+            if(($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256')&&$helpers==7) {
+              $outcomes->{h7Drain}={jobCleared=>!defined($job)?JSON::PP::true:JSON::PP::false,
+                helpersSettled=>task6a_origin_helpers_settled()};
+            }
+            die $error unless $ok;return $value;
+          };
+          my $operation=$mode eq 'premature-recheck'?'recheck':$mode eq 'premature-release'?'release':'hold';
+          my %operations=(hold=>\&task6a_origin_hold_staged_custody,
+            recheck=>\&task6a_origin_recheck_staged_custody,release=>\&task6a_origin_release_staged_custody);
+          my $value=eval {$mode eq 'arity'?$operations{$operation}->(1):$operations{$operation}->()};
+          my $error=$@;$check->();
+          my $refused=!defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+          $fail->() unless $refused||(!length($error)&&ref($value) eq 'HASH');
+          $outcomes->{refused}=$refused?JSON::PP::true:JSON::PP::false;
+          $outcomes->{$operation}=$value;
+          if(defined($identity_profile)) {
+            $fail->() unless $refused&&exists($outcomes->{identityNomination});
+            $outcomes->{sourceAfterIdentityRefusal}=test_observe_staged_custody();
+          }
+          if($mode eq 'staged-reference-alias') {
+            $fail->() unless $refused&&exists($outcomes->{stagedAliasNomination});
+            $outcomes->{sourceAfterStagedAliasRefusal}=test_observe_staged_custody();
+          }
+          if($fixture_modes{$mode}) {
+            $fail->() unless $refused;
+            $outcomes->{sourceAfterFixtureRefusal}=test_observe_staged_custody();
+          }
+          if($mode=~/\Aadmission-/) {$outcomes->{sourceAfterAdmissionRefusal}=test_observe_staged_custody();}
+          if(defined($configuration_profile)) {
+            $fail->() unless $refused&&exists($outcomes->{configurationNomination});
+            $outcomes->{sourceAfterConfigurationRefusal}=test_observe_staged_custody();
+            my $o=$roles{$configuration_profile->[0]};
+            $fail->() unless defined($o)&&!@{$o->{fcntlQueue}};
+            $outcomes->{configurationQueueRemaining}=0+@{$o->{fcntlQueue}};
+          }
+          if($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256') {
+            $fail->() unless $refused&&$helpers==7;
+            $outcomes->{sourceAfterH7Refusal}=test_observe_staged_custody();
+          }
+          if($mode eq 'partial-tied-dir'||$mode eq 'partial-tied-file') {
+            $fail->() unless $refused&&$partial_nominated==1&&$partial_counts->{factory}==1;
+            $outcomes->{sourceAfterPartialRefusal}=test_observe_staged_custody();
+            $outcomes->{partialCallbacksBeforeRepeats}={%{$partial_counts->{callbacks}}};
+          }
+          if($mode eq 'healthy'||$mode eq 'file-byte-xor-mutant'||$mode=~/\Aonce-primitive-(?:baseline|mutant)\z/) {
+            $fail->() if $refused;$outcomes->{recheck}=$operations{recheck}->();
+            $outcomes->{release}=$operations{release}->();$check->();
+          } elsif($mode=~/\Aclose-/) {
+            $fail->() if $refused;$outcomes->{recheck}=$operations{recheck}->();$check->();
+            $outcomes->{sourceBeforeRelease}=test_observe_staged_custody();
+            my $release=eval {$operations{release}->()};my $release_error=$@;$check->();
+            my $release_refused=!defined($release)&&$release_error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            $fail->() unless $release_refused||(!length($release_error)&&ref($release) eq 'HASH');
+            $outcomes->{releaseRefused}=$release_refused?JSON::PP::true:JSON::PP::false;
+            $outcomes->{release}=$release;
+            $outcomes->{sourceAfterRelease}=test_observe_staged_custody();
+          } elsif(exists($boundary{$mode})) {
+            if($mode=~/-recheck-/) {
+              $fail->() if $refused;
+              my $value=eval {$operations{recheck}->()};my $error=$@;$check->();
+              $fail->() unless !defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+              $outcomes->{recheck}=undef;$outcomes->{recheckRefused}=JSON::PP::true;
+            } else {$fail->() unless $refused;}
+            $outcomes->{sourceAfterBoundary}=test_observe_staged_custody();
+          } elsif($mode=~/\Ametadata-/) {
+            $fail->() if $refused;
+            $outcomes->{sourceBeforeMetadata}=test_observe_staged_custody();
+            $outcomes->{metadataMutation}=test_change_staged_metadata();
+            my $value=eval {$operations{recheck}->()};my $error=$@;$check->();
+            $fail->() unless !defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            $outcomes->{recheck}=undef;$outcomes->{recheckRefused}=JSON::PP::true;
+            $outcomes->{sourceAfterMetadataRefusal}=test_observe_staged_custody();
+            $outcomes->{metadataRestoration}=test_restore_staged_metadata();
+            $outcomes->{sourceAfterMetadataRestoration}=test_observe_staged_custody();
+          } elsif($mode=~/\Amagic-/) {
+            $fail->() if $refused;
+            $outcomes->{sourceBeforeMagic}=test_observe_staged_custody();
+            $outcomes->{magicMutation}=test_change_staged_magic();
+            my $value=eval {$operations{recheck}->()};my $error=$@;$check->();
+            $fail->() unless !defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            $outcomes->{recheck}=undef;$outcomes->{recheckRefused}=JSON::PP::true;
+            $outcomes->{sourceAfterMagicRefusal}=test_observe_staged_custody();
+            $outcomes->{magicAfterRefusal}=test_observe_staged_magic();
+            my $before=scalar(@events);
+            for my $name(qw(hold recheck release)) {
+              my $again=eval {$operations{$name}->()};my $error=$@;$check->();
+              $fail->() unless !defined($again)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            }
+            $outcomes->{magicTiedRepeatDelta}=scalar(@events)-$before;
+            $fail->() if $outcomes->{magicTiedRepeatDelta};
+            $outcomes->{sourceAfterMagicTiedRepeats}=test_observe_staged_custody();
+            $outcomes->{magicBeforeUntie}=test_observe_staged_magic();
+            $outcomes->{magicRestoration}=test_restore_staged_magic();
+            $outcomes->{sourceAfterMagicRestoration}=test_observe_staged_custody();
+            $outcomes->{magicAfterUntie}=test_observe_staged_magic();
+          } elsif($mode=~/\Adrift-/) {
+            $fail->() if $refused;
+            $outcomes->{sourceBeforeAdmissionDrift}=test_observe_staged_custody();
+            $outcomes->{admissionDriftMutation}=test_change_staged_admission();
+            my $value=eval {$operations{recheck}->()};my $error=$@;$check->();
+            $fail->() unless !defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            $outcomes->{recheck}=undef;$outcomes->{recheckRefused}=JSON::PP::true;
+            $outcomes->{sourceAfterAdmissionDrift}=test_observe_staged_custody();
+            $outcomes->{admissionDriftRestoration}=test_restore_staged_admission();
+            $outcomes->{sourceAfterAdmissionDriftRestore}=test_observe_staged_custody();
+          } elsif($mode=~/\Aamagic-/) {
+            $fail->() if $refused;
+            $outcomes->{sourceBeforeAdmissionMagic}=test_observe_staged_custody();
+            $outcomes->{admissionMagicMutation}=test_change_staged_admission_magic();
+            my $value=eval {$operations{recheck}->()};my $error=$@;$check->();
+            $fail->() unless !defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            $outcomes->{recheck}=undef;$outcomes->{recheckRefused}=JSON::PP::true;
+            $outcomes->{sourceAfterAdmissionMagicRefusal}=test_observe_staged_custody();
+            $outcomes->{admissionMagicAfterRefusal}=test_observe_staged_admission_magic();
+            my $before=scalar(@events);
+            for my $name(qw(hold recheck release)) {
+              my $again=eval {$operations{$name}->()};my $error=$@;$check->();
+              $fail->() unless !defined($again)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            }
+            $outcomes->{admissionMagicTiedRepeatDelta}=scalar(@events)-$before;
+            $fail->() if $outcomes->{admissionMagicTiedRepeatDelta};
+            $outcomes->{sourceAfterAdmissionMagicTiedRepeats}=test_observe_staged_custody();
+            $outcomes->{admissionMagicBeforeUntie}=test_observe_staged_admission_magic();
+            $outcomes->{admissionMagicRestoration}=test_restore_staged_admission_magic();
+            $outcomes->{sourceAfterAdmissionMagicRestoration}=test_observe_staged_custody();
+            $outcomes->{admissionMagicAfterUntie}=test_observe_staged_admission_magic();
+          } elsif($mode=~/\Ashared-unsettled-(?:baseline|mutant)\z/) {
+            $fail->() if $refused;
+            $outcomes->{sharedBeforeFailure}=test_observe_staged_helpers();
+            my $extra=eval {task6a_origin_capture('/bin/ls',['-lde','/'],2,4096)};
+            my $extra_error=$@;$check->();
+            $fail->() unless !defined($extra)&&$extra_error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n"
+              &&!defined($job)&&$helpers==25;
+            $outcomes->{sharedAfterFailure}=test_observe_staged_helpers();
+            $outcomes->{sharedStageAfterFailure}=test_observe_staged_custody();
+            my $value=eval {$operations{recheck}->()};my $error=$@;$check->();
+            my $denied=!defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            $fail->() unless $denied||(!length($error)&&ref($value) eq 'HASH');
+            $outcomes->{recheck}=$value;
+            $outcomes->{recheckRefused}=$denied?JSON::PP::true:JSON::PP::false;
+            $outcomes->{sharedAfterRecheck}=test_observe_staged_helpers();
+            $outcomes->{sharedStageAfterRecheck}=test_observe_staged_custody();
+            if(!$denied) {$outcomes->{release}=$operations{release}->();$check->();}
+            $outcomes->{sharedAfterCleanup}=test_observe_staged_custody();
+          } elsif($mode=~/\Aepoch-acl-(?:baseline|mutant)\z/) {
+            $fail->() if $refused;
+            $outcomes->{epochAclBeforeRecheck}=test_observe_staged_custody();
+            my $value=eval {$operations{recheck}->()};my $error=$@;$check->();
+            my $denied=!defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            $fail->() unless $denied||(!length($error)&&ref($value) eq 'HASH');
+            $outcomes->{recheck}=$value;
+            $outcomes->{recheckRefused}=$denied?JSON::PP::true:JSON::PP::false;
+            $outcomes->{epochAclAfterRecheck}=test_observe_staged_custody();
+            if(!$denied) {$outcomes->{release}=$operations{release}->();$check->();}
+            $outcomes->{epochAclAfterCleanup}=test_observe_staged_custody();
+          } elsif($mode=~/\Aactive-/) {
+            $fail->() if $refused;
+            $outcomes->{sourceBeforeActiveMisuse}=test_observe_staged_custody();
+            my %nominees=('active-hold-again'=>['hold',0],
+              'active-recheck-arity'=>['recheck',1],'active-release-arity'=>['release',1]);
+            my $nominee=$nominees{$mode};$fail->() unless defined($nominee);
+            my $value=eval {$nominee->[1]?$operations{$nominee->[0]}->(1):$operations{$nominee->[0]}->()};
+            my $error=$@;$check->();
+            $fail->() unless !defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            $outcomes->{activeMisuse}={operation=>''.$nominee->[0],arity=>0+$nominee->[1],
+              refused=>JSON::PP::true};
+            $outcomes->{sourceAfterActiveMisuse}=test_observe_staged_custody();
+          } else {$fail->() unless $refused;}
+          if($mode=~/\Aonce-primitive-(?:baseline|mutant)\z/) {
+            $outcomes->{onceAfterCleanup}=test_observe_staged_custody();
+          }
+          if($mode eq 'file-byte-xor-denied'||$mode eq 'file-byte-xor-mutant') {
+            $fail->() unless exists($outcomes->{byteNomination});
+            $outcomes->{sourceAfterByteOperation}=test_observe_staged_custody();
+          }
+          my $before=scalar(@events);
+          for my $name(qw(hold recheck release)) {
+            my $again=eval {$operations{$name}->()};my $again_error=$@;$check->();
+            $fail->() unless !defined($again)&&$again_error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+          }
+          $repeat_delta=scalar(@events)-$before;$fail->() if $repeat_delta;
+          if($mode=~/\Aonce-primitive-(?:baseline|mutant)\z/) {
+            $outcomes->{onceAfterRepeats}=test_observe_staged_custody();
+          }
+          if($mode=~/\Aepoch-acl-(?:baseline|mutant)\z/) {
+            $outcomes->{epochAclAfterRepeats}=test_observe_staged_custody();
+          }
+          if($mode=~/\Ashared-unsettled-(?:baseline|mutant)\z/) {
+            $outcomes->{sharedAfterRepeats}=test_observe_staged_custody();
+          }
+          if(defined($identity_profile)) {
+            $outcomes->{sourceAfterIdentityRepeats}=test_observe_staged_custody();
+          }
+          if($mode eq 'staged-reference-alias') {
+            $outcomes->{sourceAfterStagedAliasRepeats}=test_observe_staged_custody();
+          }
+          if($mode=~/\Aactive-/) {
+            $outcomes->{sourceAfterActiveMisuseRepeats}=test_observe_staged_custody();
+          }
+          if($mode=~/\Aamagic-/) {
+            $outcomes->{sourceAfterAdmissionMagicRepeats}=test_observe_staged_custody();
+            $outcomes->{admissionMagicAfterRestoredRepeats}=test_observe_staged_admission_magic();
+          }
+          if($mode=~/\Adrift-/) {
+            $outcomes->{sourceAfterAdmissionDriftRepeats}=test_observe_staged_custody();
+          }
+          if($mode=~/\Amagic-/) {
+            $outcomes->{sourceAfterMagicRepeats}=test_observe_staged_custody();
+            $outcomes->{magicAfterRestoredRepeats}=test_observe_staged_magic();
+          }
+          if($mode eq 'file-byte-xor-denied'||$mode eq 'file-byte-xor-mutant') {
+            $outcomes->{sourceAfterByteRepeats}=test_observe_staged_custody();
+          }
+          if(defined($configuration_profile)) {
+            $outcomes->{sourceAfterConfigurationRepeats}=test_observe_staged_custody();
+          }
+          if($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256') {
+            $outcomes->{sourceAfterH7Repeats}=test_observe_staged_custody();
+          }
+          if($mode eq 'partial-tied-dir'||$mode eq 'partial-tied-file') {
+            $outcomes->{sourceAfterPartialRepeats}=test_observe_staged_custody();
+            $outcomes->{partialCallbacksBeforeFinalizer}={%{$partial_counts->{callbacks}}};
+            $outcomes->{partialFactoryCount}=0+$partial_counts->{factory};
+            test_untie_staged_partial();
+            $outcomes->{partialFinalization}={untie=>0+$partial_counts->{untie},destroy=>0+$partial_counts->{destroy}};
+            $outcomes->{partialCallbacksAfterFinalizer}={%{$partial_counts->{callbacks}}};
+          }
+          if($mode=~/\Ametadata-/) {$outcomes->{sourceAfterMetadataRepeats}=test_observe_staged_custody();}
+          if(exists($boundary{$mode})) {$outcomes->{sourceAfterBoundaryRepeats}=test_observe_staged_custody();}
+          if($mode=~/\Aadmission-/) {$outcomes->{sourceAfterAdmissionRepeats}=test_observe_staged_custody();}
+          if($mode=~/\Aclose-/) {$outcomes->{sourceAfterRepeats}=test_observe_staged_custody();}
+          $fail->() if @grammar||@jobs||defined($job);
+          if($mode=~/\Aunknown-/) {
+            $fail->() unless defined($nominee_cell)&&defined($nominee_shape)&&!@owned;
+            $before_callbacks={%callbacks};
+            if($mode eq 'unknown-cell') {untie $$nominee_cell;}
+            elsif($mode eq 'unknown-handle') {untie *$nominee_glob;}
+            $after_finalization={%finalization};
+            $outcomes->{nomineeShape}={%$nominee_shape};
+            $outcomes->{candidateCallbacksBeforeFinalizer}=$before_callbacks;
+            $outcomes->{factoryCounts}={%factory};
+            $outcomes->{memoryFinalizationCounts}=$after_finalization;
+          }
+          if($fixture_modes{$mode}) {
+            $fail->() unless @owned==1&&$raw_acquisitions==1&&defined($fixture_record)
+              &&$owned[0]==$fixture_record&&$fixture_record->{fixtureOnly}->()
+              &&!$fixture_record->{attempted}&&!$fixture_record->{closed}
+              &&defined($fixture_original)&&$fixture_original==$fixture_record->{fh};
+            my $live=CORE::fileno($fixture_original);
+            $fail->() unless defined($live)&&$live==$fixture_record->{fd};
+            my $kind=$mode eq 'hidden-open-undefined'?'directory':'file';
+            $same_physical->($fixture_record->{identity},[CORE::stat($fixture_original)],$kind);
+            if($mode eq 'foreign-fd-alias') {
+              $alias_native->(\$fixture_original);$alias_native->(\$fixture_alias);
+              $fail->() if $fixture_alias==$fixture_original;
+              my $other=CORE::fileno($fixture_alias);
+              $fail->() unless defined($other)&&$other==$live;
+              $same_physical->($fixture_record->{identity},[CORE::stat($fixture_alias)],'file');
+              $outcomes->{fdAliasBeforeRescue}={bothLive=>JSON::PP::true,
+                distinctGv=>JSON::PP::true,sameFd=>JSON::PP::true};
+            }
+            $outcomes->{fixtureOwnerBeforeRescue}={live=>JSON::PP::true,sameFd=>JSON::PP::true,
+              sameIdentity=>JSON::PP::true,attempted=>0,closed=>0};
+            $outcomes->{rawAcquisitions}=0+$raw_acquisitions;
+            $outcomes->{sourceAfterFixtureRepeats}=test_observe_staged_custody();
+          }
+          1;
+        };
+        $primary=$@;
+        # Separate fixture rescue never creates consumer definite-close evidence.
+        for my $o(@owned) {next if $o->{attempted};eval {$dispose->($o,1)};$latch->() if $@;}
+        die length($setup_error)?$setup_error:"$fault\n" unless $load_complete;
+        $check->();die $primary unless $body_ok;
+      }
+      if($mode eq 'foreign-fd-alias') {
+        $alias_native->(\$fixture_original);$alias_native->(\$fixture_alias);
+        $fail->() if defined(CORE::fileno($fixture_original))||defined(CORE::fileno($fixture_alias));
+        $outcomes->{fdAliasAfterRescue}={bothUndefined=>JSON::PP::true,
+          originalAttempts=>0+$fixture_record->{attempted},
+          rawAcquisitions=>0+$raw_acquisitions};
+      }
+      my $definite=grep {$_->{closed}&&!defined(CORE::fileno($_->{fh}))} @owned;
+      my $fixture_closed=grep {$_->{closed}&&$_->{fixture}} @owned;
+      $fail->() unless $definite==@owned;
+      if($fixture_modes{$mode}) {
+        $fail->() unless @owned==1&&$raw_acquisitions==1&&$fixture_closed==1
+          &&defined($outcomes->{fixtureOwnerBeforeRescue})&&$outcomes->{fixtureOwnerBeforeRescue}{live}
+          &&$helpers==0&&defined($repeat_delta)&&$repeat_delta==0&&!@grammar;
+      } else {$fail->() if $fixture_closed;}
+      my $stage_closed=grep {$_->{closed}&&$_->{path}
+        &&!(exists($_->{fixtureOnly})&&$_->{fixtureOnly}->())} @owned;
+      if($fixture_modes{$mode}) {
+        $fail->() if $stage_closed||$definite-$stage_closed-$fixture_closed;
+        $outcomes->{consumerClosed}=0+($definite-$fixture_closed);
+      }
+      my $out={%$outcomes,harnessFault=>undef,productionAuthority=>JSON::PP::false,
+        scope=>'ordinary-staged-custody-consumer-fixture-only',
+        syntheticGeometry=>JSON::PP::true,syntheticVendorAndSelected=>JSON::PP::true,
+        helpers=>$helpers,ownedCount=>scalar(@owned),definitelyClosed=>0+$definite,
+        stageClosed=>0+$stage_closed,helperClosed=>$definite-$stage_closed-$fixture_closed,
+        fixtureClosed=>0+$fixture_closed,remainingOperations=>scalar(@grammar),
+        repeatEffectDelta=>$repeat_delta,calls=>\%calls,events=>\@events};
+      my $metadata=JSON::PP->new->canonical->utf8->encode({map {$_=>$out->{$_}} grep {$_ ne 'events'} keys %$out});
+      $fail->() if length($metadata)>16384;
+      my $json=JSON::PP->new->canonical->utf8->encode($out);$fail->() if length($json)>8388608;
+      print $json;exit 0;
+    }
+`;
+
 const STAGED_CAPTOR_PORT_PROGRAM=String.raw`
     if($q->{kind} eq 'staged-captor-ports') {
       require Fcntl; require IO::Select; require POSIX; require Time::HiRes;
@@ -1754,6 +3126,297 @@ function systemObject(kind,record,expected,{sourceOverride}={}) {
   // Load only declarations in the ordinary test process. No production test
   // options/entry points: remove the sole final main call in memory, not on disk.
   let source=replaceOnce(sourceOverride??readFileSync(BOOTSTRAP,'utf8'),'\ntask6a_origin_main();\n','\n');
+  if(kind==='staged-custody') {
+    source=replaceOnce(source,'exec {$tool} $tool,@$args;',
+      'CORE::GLOBAL::exec($tool,$tool,@$args);');
+    source=replaceOnce(source,
+      "my $staged_vendor_pin='ef28d8fab2c0e4314522d4bb1b7173270aa3937e93b92cb7de79c112ac1fa953';",
+      "my $staged_vendor_pin='bf6cedd405c26f5f933e45436d8ec84b2780297377bb44f40deb6c44a91f6a6e';");
+    source=replaceOnce(source,'sub task6a_origin_hold_staged_custody {',String.raw`
+  if($mode ne 'absent') {$staged_admission=$fixture_admission;}
+  if($mode eq 'foreign-parent') {push @parent_originals,{fh=>$fixture_original};}
+  elsif($mode eq 'foreign-physical') {push @physical_owned_handles,$fixture_original;}
+  elsif($mode eq 'foreign-file') {push @file_ledger,{fh=>$fixture_original};}
+  elsif($mode eq 'foreign-directory') {push @directory_ledger,{fh=>$fixture_original};}
+  elsif($mode eq 'foreign-fd-alias') {push @physical_owned_handles,$fixture_original;}
+  my @test_metadata_saved;my ($test_metadata_changed,$test_metadata_restored)=(0,0);
+  sub test_change_staged_metadata {
+    $fail->() unless @_==0&&$staged_phase eq 'active'&&!$test_metadata_changed;
+    my %allowed=map {$_=>1} qw(metadata-dir-short metadata-file-short metadata-dir-record-copy metadata-file-record-copy metadata-dir-tuple-copy metadata-file-tuple-copy metadata-dir-path metadata-file-path metadata-file-tuple-value metadata-file-hash metadata-dir-fh-empty metadata-file-fh-empty metadata-dir-fh-alias metadata-file-fh-alias);
+    $fail->() unless $allowed{$mode}&&@staged_directories==6&&@staged_files==6;
+    @test_metadata_saved=map {
+      [map {+{record=>$_,fields=>{%$_},tuple=>[@{$_->{identity}}]}} @$_]
+    } (\@staged_directories,\@staged_files);
+    my $rows=$mode=~/\Ametadata-dir-/ ? \@staged_directories:\@staged_files;
+    my $old=$rows->[0];my $change;
+    if($mode=~/-short\z/) {pop @$rows;$change=@$rows==5;}
+    elsif($mode=~/-record-copy\z/) {
+      $rows->[0]={%$old};$change=$rows->[0]!=$old&&$rows->[0]{fh}==$old->{fh};
+    }
+    elsif($mode=~/-tuple-copy\z/) {
+      my $tuple=$old->{identity};$old->{identity}=[@$tuple];
+      $change=$old->{identity}!=$tuple&&@{$old->{identity}}==13;
+    }
+    elsif($mode=~/-path\z/) {$old->{path}='/private/tmp/metadata-wrong';$change=$old->{path} eq '/private/tmp/metadata-wrong';}
+    elsif($mode eq 'metadata-file-tuple-value') {
+      my $was=$old->{identity}[1];++$old->{identity}[1];$change=$old->{identity}[1]==$was+1;
+    }
+    elsif($mode eq 'metadata-file-hash') {$old->{sha256}='0'x64;$change=$old->{sha256} eq '0'x64;}
+    elsif($mode=~/-fh-empty\z/) {$old->{fh}=undef;$change=!defined($old->{fh});}
+    elsif($mode=~/-fh-alias\z/) {$old->{fh}=$rows->[1]{fh};$change=$old->{fh}==$rows->[1]{fh};}
+    else {$fail->();}
+    $fail->() unless $change;$test_metadata_changed=1;
+    return {mode=>''.$mode,changed=>JSON::PP::true};
+  }
+  sub test_restore_staged_metadata {
+    $fail->() unless @_==0&&$test_metadata_changed&&!$test_metadata_restored
+      &&$staged_phase eq 'burned'&&@test_metadata_saved==2;
+    my @rows=(\@staged_directories,\@staged_files);
+    for my $i(0..1) {
+      $fail->() unless @{$test_metadata_saved[$i]}==6;
+      @{$rows[$i]}=map {$_->{record}} @{$test_metadata_saved[$i]};
+      for my $saved(@{$test_metadata_saved[$i]}) {
+        %{$saved->{record}}=%{$saved->{fields}};
+        @{$saved->{record}{identity}}=@{$saved->{tuple}};
+      }
+    }
+    $test_metadata_restored=1;return {restored=>JSON::PP::true};
+  }
+  my ($test_magic_target,$test_magic_kind);
+  my $test_magic_counts={factory=>0,untie=>0,destroy=>0,callbacks=>{
+    map {$_=>0} qw(FETCHSIZE FETCH STORE STORESIZE EXTEND PUSH POP SHIFT UNSHIFT CLEAR EXISTS DELETE FIRSTKEY NEXTKEY SCALAR)}};
+  sub test_change_staged_magic {
+    $fail->() unless @_==0&&$staged_phase eq 'active'&&!$test_metadata_changed
+      &&!defined($test_magic_target)&&!$test_magic_counts->{factory};
+    my %allowed=map {$_=>1} qw(magic-dir-array magic-dir-record magic-dir-tuple magic-dir-path magic-dir-fh magic-dir-retained-record magic-dir-retained-tuple magic-file-array magic-file-record magic-file-tuple magic-file-path magic-file-fh magic-file-retained-record magic-file-retained-tuple magic-file-hash magic-file-element);
+    $fail->() unless $allowed{$mode}&&@staged_directories==6&&@staged_files==6;
+    # Prepare all strong native FH/container/value references before any tie.
+    @test_metadata_saved=map {
+      [map {+{record=>$_,fields=>{%$_},tuple=>[@{$_->{identity}}]}} @$_]
+    } (\@staged_directories,\@staged_files);
+    my $rows=$mode=~/\Amagic-dir-/ ? \@staged_directories:\@staged_files;
+    my $old=$rows->[0];my $target;my $kind;
+    if($mode=~/-array\z/) {$target=$rows;$kind='array';}
+    elsif($mode=~/-retained-record\z/) {
+      $rows->[0]={%$old};$target=$old;$kind='hash';
+    }
+    elsif($mode=~/-retained-tuple\z/) {
+      $target=$old->{identity};$old->{identity}=[@$target];$kind='array';
+    }
+    elsif($mode=~/-record\z/) {$target=$old;$kind='hash';}
+    elsif($mode=~/-tuple\z/) {$target=$old->{identity};$kind='array';}
+    elsif($mode=~/-path\z/) {$target=\($old->{path});$kind='scalar';}
+    elsif($mode=~/-fh\z/) {$target=\($old->{fh});$kind='scalar';}
+    elsif($mode eq 'magic-file-hash') {$target=\($old->{sha256});$kind='scalar';}
+    elsif($mode eq 'magic-file-element') {$target=\($old->{identity}[0]);$kind='scalar';}
+    else {$fail->();}
+    $test_magic_target=$target;$test_magic_kind=$kind;$test_metadata_changed=1;
+    if($kind eq 'array') {tie @$target,'TestStagedPartialArray',$test_magic_counts;}
+    elsif($kind eq 'hash') {tie %$target,'TestStagedMetadataHash',$test_magic_counts;}
+    else {tie $$target,'TestStagedMetadataScalar',$test_magic_counts;}
+    my $sv=B::svref_2object($target);
+    $fail->() unless $test_magic_counts->{factory}==1&&($sv->FLAGS&0x00f00000);
+    return {mode=>''.$mode,changed=>JSON::PP::true};
+  }
+  sub test_observe_staged_magic {
+    $fail->() unless @_==0;
+    return {factory=>0+$test_magic_counts->{factory},untie=>0+$test_magic_counts->{untie},
+      destroy=>0+$test_magic_counts->{destroy},callbacks=>{%{$test_magic_counts->{callbacks}}}};
+  }
+  sub test_restore_staged_magic {
+    $fail->() unless @_==0&&$staged_phase eq 'burned'&&defined($test_magic_target)
+      &&$test_magic_counts->{factory}==1&&!$test_magic_counts->{untie};
+    if($test_magic_kind eq 'array') {untie @$test_magic_target;}
+    elsif($test_magic_kind eq 'hash') {untie %$test_magic_target;}
+    elsif($test_magic_kind eq 'scalar') {untie $$test_magic_target;}
+    else {$fail->();}
+    $fail->() unless $test_magic_counts->{untie}==1&&$test_magic_counts->{destroy}==1;
+    $test_magic_target=undef;
+    return test_restore_staged_metadata();
+  }
+  my ($test_drift_admission,$test_drift_creation,$test_drift_sources);
+  my (@test_drift_hashes,@test_drift_creation_values,@test_drift_source_members);
+  my ($test_drift_changed,$test_drift_restored)=(0,0);
+  sub test_change_staged_admission {
+    $fail->() unless @_==0&&$staged_phase eq 'active'&&!$test_drift_changed;
+    my %allowed=map {$_=>1} qw(drift-copy-admission drift-copy-creator drift-copy-creation drift-copy-sources drift-copy-source-0 drift-copy-source-1 drift-copy-source-2 drift-copy-source-3 drift-copy-vendor drift-copy-selected drift-selected-detached drift-root drift-creation-inode drift-source-bytes-0 drift-source-bytes-1 drift-source-bytes-2 drift-source-bytes-3 drift-vendor-bytes drift-selected-bytes drift-extra);
+    $fail->() unless $allowed{$mode};
+    my $a=$staged_admission;my $creator=$a->{creator};my $sources=$a->{sources};
+    $test_drift_admission=$a;$test_drift_creation=$creator->{creationIdentity};
+    $test_drift_sources=$sources;
+    @test_drift_creation_values=@$test_drift_creation;
+    @test_drift_source_members=@$sources;
+    @test_drift_hashes=map {+{record=>$_,fields=>{%$_}}}
+      ($a,$creator,@$sources,$a->{vendor},$a->{selected});
+    my $changed;
+    if($mode eq 'drift-copy-admission') {$staged_admission={%$a};$changed=$staged_admission!=$a;}
+    elsif($mode eq 'drift-copy-creator') {$a->{creator}={%$creator};$changed=$a->{creator}!=$creator;}
+    elsif($mode eq 'drift-copy-creation') {
+      $creator->{creationIdentity}=[@$test_drift_creation];
+      $changed=$creator->{creationIdentity}!=$test_drift_creation;
+    }
+    elsif($mode eq 'drift-copy-sources') {$a->{sources}=[@$sources];$changed=$a->{sources}!=$sources;}
+    elsif($mode=~/\Adrift-copy-source-([0-3])\z/) {
+      my $i=0+$1;my $old=$sources->[$i];$sources->[$i]={%$old};$changed=$sources->[$i]!=$old;
+    }
+    elsif($mode eq 'drift-copy-vendor') {
+      my $old=$a->{vendor};$a->{vendor}={%$old};$a->{selected}{archiveRef}=$a->{vendor};
+      $changed=$a->{vendor}!=$old&&$a->{selected}{archiveRef}==$a->{vendor};
+    }
+    elsif($mode eq 'drift-copy-selected') {
+      my $old=$a->{selected};$a->{selected}={%$old};$changed=$a->{selected}!=$old;
+    }
+    elsif($mode eq 'drift-selected-detached') {
+      $a->{selected}{archiveRef}={%{$a->{vendor}}};$changed=$a->{selected}{archiveRef}!=$a->{vendor};
+    }
+    elsif($mode eq 'drift-root') {
+      $creator->{rootPath}='/private/tmp/task6a-staged-other';
+      $changed=$creator->{rootPath} ne $logical;
+    }
+    elsif($mode eq 'drift-creation-inode') {
+      ++$test_drift_creation->[1];$changed=$test_drift_creation->[1]==$test_drift_creation_values[1]+1;
+    }
+    elsif($mode=~/\Adrift-source-bytes-([0-3])\z/) {
+      my $cell=\($sources->[0+$1]{bytes});my $before=ord(substr($$cell,0,1));
+      substr($$cell,0,1)=chr($before^1);$changed=ord(substr($$cell,0,1))==($before^1);
+    }
+    elsif($mode eq 'drift-vendor-bytes'||$mode eq 'drift-selected-bytes') {
+      my $row=$mode eq 'drift-vendor-bytes'?$a->{vendor}:$a->{selected};
+      my $cell=\($row->{bytes});my $before=ord(substr($$cell,0,1));
+      substr($$cell,0,1)=chr($before^1);$changed=ord(substr($$cell,0,1))==($before^1);
+    }
+    elsif($mode eq 'drift-extra') {$a->{extra}=1;$changed=exists($a->{extra});}
+    else {$fail->();}
+    $fail->() unless $changed;$test_drift_changed=1;
+    return {mode=>''.$mode,changed=>JSON::PP::true};
+  }
+  sub test_restore_staged_admission {
+    $fail->() unless @_==0&&$staged_phase eq 'burned'&&$test_drift_changed
+      &&!$test_drift_restored&&@test_drift_hashes==8&&@test_drift_source_members==4
+      &&@test_drift_creation_values==13;
+    $staged_admission=$test_drift_admission;
+    for my $saved(@test_drift_hashes) {%{$saved->{record}}=%{$saved->{fields}};}
+    @$test_drift_sources=@test_drift_source_members;
+    @$test_drift_creation=@test_drift_creation_values;
+    $fail->() unless $staged_admission==$test_drift_admission;
+    for my $saved(@test_drift_hashes) {
+      my $now=$saved->{record};my $old=$saved->{fields};
+      $fail->() unless join(',',sort keys %$now) eq join(',',sort keys %$old);
+      for my $key(keys %$old) {
+        $fail->() unless ref($old->{$key})?$now->{$key}==$old->{$key}:$now->{$key} eq $old->{$key};
+      }
+    }
+    $fail->() unless @$test_drift_sources==4&&@$test_drift_creation==13;
+    for my $i(0..3) {$fail->() unless $test_drift_sources->[$i]==$test_drift_source_members[$i];}
+    for my $i(0..12) {$fail->() unless $test_drift_creation->[$i]==$test_drift_creation_values[$i];}
+    $test_drift_restored=1;return {restored=>JSON::PP::true};
+  }
+  my ($test_admission_magic_target,$test_admission_magic_kind);
+  my $test_admission_magic_counts={factory=>0,untie=>0,destroy=>0,callbacks=>{
+    map {$_=>0} qw(FETCHSIZE FETCH STORE STORESIZE EXTEND PUSH POP SHIFT UNSHIFT CLEAR EXISTS DELETE FIRSTKEY NEXTKEY SCALAR)}};
+  sub test_change_staged_admission_magic {
+    $fail->() unless @_==0&&$staged_phase eq 'active'&&!$test_drift_changed
+      &&!defined($test_admission_magic_target)&&!$test_admission_magic_counts->{factory};
+    my %allowed=map {$_=>1} qw(amagic-current-admission amagic-current-creator amagic-current-creation amagic-current-sources amagic-current-source-0 amagic-current-source-1 amagic-current-source-2 amagic-current-source-3 amagic-current-vendor amagic-current-selected amagic-retained-admission amagic-retained-creator amagic-retained-creation amagic-retained-sources amagic-retained-source-0 amagic-retained-source-1 amagic-retained-source-2 amagic-retained-source-3 amagic-retained-vendor amagic-retained-selected);
+    $fail->() unless $allowed{$mode};
+    # Save the entire original public graph before tying any current or retained cell.
+    my $a=$staged_admission;my $creator=$a->{creator};my $sources=$a->{sources};
+    $test_drift_admission=$a;$test_drift_creation=$creator->{creationIdentity};
+    $test_drift_sources=$sources;
+    @test_drift_creation_values=@$test_drift_creation;
+    @test_drift_source_members=@$sources;
+    @test_drift_hashes=map {+{record=>$_,fields=>{%$_}}}
+      ($a,$creator,@$sources,$a->{vendor},$a->{selected});
+    $fail->() unless $mode=~/\Aamagic-(current|retained)-(.+)\z/;
+    my ($which,$part)=($1,$2);my ($target,$kind);
+    if($part eq 'admission') {
+      $target=$a;$kind='hash';$staged_admission={%$a} if $which eq 'retained';
+    } elsif($part eq 'creator') {
+      $target=$creator;$kind='hash';$a->{creator}={%$creator} if $which eq 'retained';
+    } elsif($part eq 'creation') {
+      $target=$test_drift_creation;$kind='array';
+      $creator->{creationIdentity}=[@$target] if $which eq 'retained';
+    } elsif($part eq 'sources') {
+      $target=$sources;$kind='array';$a->{sources}=[@$sources] if $which eq 'retained';
+    } elsif($part=~/\Asource-([0-3])\z/) {
+      my $i=0+$1;$target=$sources->[$i];$kind='hash';
+      $sources->[$i]={%$target} if $which eq 'retained';
+    } elsif($part eq 'vendor') {
+      $target=$a->{vendor};$kind='hash';
+      if($which eq 'retained') {$a->{vendor}={%$target};$a->{selected}{archiveRef}=$a->{vendor};}
+    } elsif($part eq 'selected') {
+      $target=$a->{selected};$kind='hash';$a->{selected}={%$target} if $which eq 'retained';
+    } else {$fail->();}
+    $test_admission_magic_target=$target;$test_admission_magic_kind=$kind;
+    $test_drift_changed=1;
+    if($kind eq 'array') {tie @$target,'TestStagedPartialArray',$test_admission_magic_counts;}
+    elsif($kind eq 'hash') {tie %$target,'TestStagedMetadataHash',$test_admission_magic_counts;}
+    else {$fail->();}
+    my $sv=B::svref_2object($target);
+    $fail->() unless $test_admission_magic_counts->{factory}==1&&($sv->FLAGS&0x00f00000);
+    return {mode=>''.$mode,changed=>JSON::PP::true};
+  }
+  sub test_observe_staged_admission_magic {
+    $fail->() unless @_==0;
+    return {factory=>0+$test_admission_magic_counts->{factory},
+      untie=>0+$test_admission_magic_counts->{untie},destroy=>0+$test_admission_magic_counts->{destroy},
+      callbacks=>{%{$test_admission_magic_counts->{callbacks}}}};
+  }
+  sub test_restore_staged_admission_magic {
+    $fail->() unless @_==0&&$staged_phase eq 'burned'&&defined($test_admission_magic_target)
+      &&$test_admission_magic_counts->{factory}==1&&!$test_admission_magic_counts->{untie};
+    if($test_admission_magic_kind eq 'array') {untie @$test_admission_magic_target;}
+    elsif($test_admission_magic_kind eq 'hash') {untie %$test_admission_magic_target;}
+    else {$fail->();}
+    $fail->() unless $test_admission_magic_counts->{untie}==1&&$test_admission_magic_counts->{destroy}==1;
+    $test_admission_magic_target=undef;
+    return test_restore_staged_admission();
+  }
+  sub test_observe_staged_helpers {
+    task6a_origin_refuse() unless @_==0;
+    my $settled=scalar(grep {$_->{settled}} @helper_ledger);
+    return {burned=>$helper_lifecycle_burned?JSON::PP::true:JSON::PP::false,
+      registered=>0+scalar(@helper_ledger),settled=>0+$settled,
+      unsettled=>0+scalar(@helper_ledger)-$settled,
+      helpersSettled=>task6a_origin_helpers_settled(),
+      physicalOwnsLedgers=>$physical_owns_ledgers?JSON::PP::true:JSON::PP::false};
+  }
+  sub test_tie_staged_partial {
+    $fail->() unless @_==0&&$staged_phase eq 'capturing'&&$partial_nominated==1
+      &&!$partial_counts->{factory};
+    my $rows;
+    if($mode eq 'partial-tied-dir') {$rows=\@staged_directories;}
+    elsif($mode eq 'partial-tied-file') {$rows=\@staged_files;}
+    else {$fail->();}
+    tie @$rows,'TestStagedPartialArray',$partial_counts;
+    my $av=B::svref_2object($rows);my $magic=$av->MAGIC;
+    $fail->() unless ref($av) eq 'B::AV'&&$partial_counts->{factory}==1
+      &&(($av->FLAGS&0x00f00000)||defined($magic));
+  }
+  sub test_untie_staged_partial {
+    $fail->() unless @_==0&&$partial_nominated==1&&$partial_counts->{factory}==1
+      &&!$partial_counts->{untie}&&$staged_phase eq 'burned';
+    if($mode eq 'partial-tied-dir') {untie @staged_directories;}
+    elsif($mode eq 'partial-tied-file') {untie @staged_files;}
+    else {$fail->();}
+    $fail->() unless $partial_counts->{untie}==1;
+  }
+  sub test_observe_staged_custody {
+    task6a_origin_refuse() unless @_==0;
+    $staged_vector->(\@staged_originals);
+    my ($attempted,$closed)=(0,0);my @closed_flags;
+    for my $sealed(@staged_originals) {
+      my @binding=$sealed->('binding');
+      $attempted+=($binding[2]?1:0);$closed+=($binding[3]?1:0);
+      push @closed_flags,$binding[3]?1:0;
+    }
+    return {phase=>''.$staged_phase,invalid=>0+$staged_invalid,
+      uncertain=>0+$staged_uncertain,disposalStarted=>0+$staged_disposal_started,
+      sealedClosureCount=>0+scalar(@staged_originals),
+      attemptedCount=>0+$attempted,privateClosedCount=>0+$closed,closedFlags=>\@closed_flags};
+  }
+  sub task6a_origin_hold_staged_custody {`);
+  }
   if(kind==='staged-captor-ports') {
     // Only the denied external exec port changes syntax in this memory copy.
     // Perl's ordinary-sub override cannot parse the original exec block form.
@@ -1886,6 +3549,7 @@ sub task6a_origin_record {`);
     BEGIN { @INC=("/System/Library/Perl/5.34/darwin-thread-multi-2level","/System/Library/Perl/5.34"); }
     use strict; use warnings; use MIME::Base64 (); use JSON::PP ();
     binmode STDIN; local $/; my $q=JSON::PP->new->utf8->decode(<STDIN>); my $out;
+    ${STAGED_CUSTODY_PROGRAM}
     ${STAGED_CAPTOR_PORT_PROGRAM}
     ${PARENT_PORT_PROGRAM}
     if($q->{kind} eq 'parent-clock') {
@@ -2309,8 +3973,21 @@ sub task6a_origin_record {`);
     } else {die "unknown test kind";}
     print JSON::PP->new->canonical->utf8->encode($out);
   `;
-  const r=spawnSync('/usr/bin/perl',['-f','-e',program,Buffer.from(source).toString('base64')],{
-    input:JSON.stringify({kind,record,expected}),cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},timeout:record?.fifoRace?500:10000,maxBuffer:kind==='staged-captor-ports'?8388608:65536,
+  const argv=['-f','-e',program,Buffer.from(source).toString('base64')];
+  const env={PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'};
+  const input=JSON.stringify({kind,record,expected});
+  if(kind==='staged-custody') {
+    // Observed host ARG_MAX is 1048576. Reserve 262144 bytes for kernel/pointer
+    // overhead; count ACTUAL final UTF8 argv/env strings, not source estimates.
+    const byteTotal=Buffer.byteLength('/usr/bin/perl')+1
+      +argv.reduce((n,v)=>n+Buffer.byteLength(v)+1,0)
+      +Object.entries(env).reduce((n,[k,v])=>n+Buffer.byteLength(k+'='+v)+1,0);
+    assert.ok(byteTotal<=786432,'staged custody argv budget exceeded');
+    assert.ok(Buffer.byteLength(input)<=262144,'staged custody stdin budget exceeded');
+  }
+  const r=spawnSync('/usr/bin/perl',argv,{
+    input,cwd:'/',env,timeout:record?.fifoRace?500:10000,
+    maxBuffer:['staged-captor-ports','staged-custody'].includes(kind)?8388608:65536,
   });
   assert.equal(r.error,undefined);assert.equal(r.signal,null);return r;
 }
@@ -2344,6 +4021,741 @@ if(!ordinaryHost()) {
   test('protected archive tests require ordinary macOS UID and fixed Apple Perl',
     {skip:'unsupported host or root test UID; no ambient Perl/root execution fallback'},()=>{});
 } else {
+const STAGED_EXPOSED_OPEN_PREFIXES=[
+  // N,clocks,helpers,stage closes,all originals,total ported operations
+  [1,2,0,1,1,5],
+  [2,10,1,2,11,100],
+  [3,18,2,3,21,196],
+  [4,26,3,4,31,293],
+  [5,34,4,5,41,391],
+  [6,42,5,6,51,490],
+  [7,50,6,7,61,590],
+  [8,53,6,8,62,609],
+  [9,56,6,9,63,628],
+  [10,59,6,10,64,647],
+  [11,62,6,11,65,666],
+  [12,65,6,12,66,685],
+];
+const STAGED_CUSTODY_BACKINGS=[
+  ['source/task6a-origin-archive-v2.pm','scripts/task6a-origin-archive-v2.pm',5864,'da1fd458fcaba775be5ba09ef88157b5ee48dbda'],
+  ['source/task6a-origin-native-v2.pm','scripts/task6a-origin-native-v2.pm',3347,'59e1ae8de38cf2083a0294c55454083840eb47f1'],
+  ['source/task6a-origin-map-v2.pm','scripts/task6a-origin-map-v2.pm',11684,'9719bf4f3676b43b7858e3cabe3cee3e679120f8'],
+  ['source/task6a-protected-origin-entry-v2.mjs','scripts/task6a-protected-origin-entry-v2.mjs',1933,'e53be63cdcdf286dc89adbec9770668b1fdb9cc7'],
+  ['vendor/node-v22.23.1-darwin-arm64.tar.gz','package.json',22734,null],
+  ['vendor/node','README.md',7454,null],
+];
+function stagedCustody(mode='healthy',slot=0,{sourceOverride}={}) {
+  const source=sourceOverride??readFileSync(BOOTSTRAP,'utf8');
+  for(const name of ['hold','recheck','release']) {
+    assert.equal(source.split('sub task6a_origin_'+name+'_staged_custody {').length,2,
+      'staged custody consumer missing: '+name);
+  }
+  const root=fileURLToPath(new URL('../../',import.meta.url)).replace(/\/$/,'');
+  const backings=STAGED_CUSTODY_BACKINGS.map(([logical,relative,size,blob])=>{
+    const path=root+'/'+relative;
+    const before=lstatSync(path,{bigint:true});
+    assert.ok(before.isFile()&&!before.isSymbolicLink());
+    assert.equal(before.nlink,1n);assert.equal(before.size,BigInt(size));
+    const bytes=readFileSync(path);const after=lstatSync(path,{bigint:true});
+    for(const key of ['dev','ino','mode','nlink','uid','gid','size','mtimeNs','ctimeNs'])
+      assert.equal(after[key],before[key]);
+    if(blob!==null) assert.equal(createHash('sha1')
+      .update(Buffer.concat([Buffer.from('blob '+bytes.length+'\0'),bytes])).digest('hex'),blob);
+    return {logical,path,size,dev:String(before.dev),ino:String(before.ino),
+      sha256:createHash('sha256').update(bytes).digest('hex'),bytes:bytes.toString('base64')};
+  });
+  assert.equal(backings[4].sha256,'bf6cedd405c26f5f933e45436d8ec84b2780297377bb44f40deb6c44a91f6a6e');
+  const actual=systemObject('staged-custody',{mode,slot,root,backings},undefined,{sourceOverride:source});
+  assert.equal(actual.status,0,actual.stderr.toString());
+  assert.equal(actual.stderr.length,0);const value=JSON.parse(actual.stdout.toString());
+  assert.equal(value.harnessFault,null);assert.equal(value.productionAuthority,false);
+  assert.equal(value.remainingOperations,0);
+  if(['foreign-parent','foreign-physical','foreign-file','foreign-directory','hidden-open-undefined','foreign-fd-alias'].includes(mode)) {
+    assert.equal(slot,0);
+    assert.deepEqual([value.rawAcquisitions,value.ownedCount,value.definitelyClosed,value.fixtureClosed,
+      value.consumerClosed,value.stageClosed,value.helperClosed],[1,1,1,1,0,0,0]);
+    assert.deepEqual(value.fixtureOwnerBeforeRescue,{live:true,sameFd:true,sameIdentity:true,
+      attempted:0,closed:0});
+  } else assert.equal(value.fixtureClosed,0);
+  assert.equal(value.definitelyClosed,value.ownedCount);
+  assert.equal(value.repeatEffectDelta,0);return value;
+}
+test('staged custody actual consumer holds, rechecks and releases twelve originals',()=>{
+  const r=stagedCustody();
+  const diagnostic={scope:'staged-source-vendor-custody-diagnostic-only',
+    productionAuthority:false,fileCount:6,directoryCount:6};
+  assert.deepEqual(r.hold,diagnostic);assert.deepEqual(r.recheck,diagnostic);
+  assert.deepEqual(r.release,{...diagnostic,handlesClosed:12});
+  assert.equal(r.refused,false);assert.equal(r.ownedCount,390);
+  assert.equal(r.stageClosed,12);assert.equal(r.helperClosed,378);
+  assert.deepEqual(r.calls,{binmode:342,clock:407,close:348,closedir:42,fcntl:90,
+    fileno:1110,fork:42,lstat:132,opendir:42,pipe:168,read:228,readdir:1083,
+    ready:84,seek:30,stat:120,sysopen:12,wait:168});
+});
+
+for(const mode of ['absent','arity','premature-recheck','premature-release'])
+  test('staged custody actual consumer refuses '+mode+' without acquisition',()=>{
+    const r=stagedCustody(mode);assert.equal(r.refused,true);
+    assert.equal(r.ownedCount,0);assert.equal(r.calls.clock,mode==='absent'?2:1);
+  });
+for(const mode of ['open-undefined','open-false','open-throw'])
+  for(const [slot,clocks,helpers,stageCloses,allOriginals,portedTotal] of STAGED_EXPOSED_OPEN_PREFIXES)
+    // Independent literal prefix table; not the consumer's trace builder.
+    for(const want of [{slot,clocks,helpers,stageCloses,allOriginals,portedTotal}])
+    test('staged custody actual consumer disposes '+mode+' slot '+want.slot,()=>{
+      const r=stagedCustody(mode,want.slot);assert.equal(r.refused,true);
+      assert.equal(r.calls.sysopen,want.slot);assert.equal(r.calls.clock,want.clocks);
+      assert.equal(r.helpers,want.helpers);
+      const exposed=mode!=='open-undefined';
+      assert.equal(r.stageClosed,want.stageCloses-(exposed?0:1));
+      assert.equal(r.ownedCount,want.allOriginals-(exposed?0:1));
+      if(exposed) assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),want.portedTotal);
+    });
+const STAGED_CALLBACK_ZERO={FETCH:0,STORE:0,FILENO:0,CLOSE:0,READ:0,PRINT:0,PRINTF:0,
+  WRITE:0,READLINE:0,GETC:0,SEEK:0,TELL:0,EOF:0,BINMODE:0,CALL:0,string:0,numeric:0,bool:0,compare:0};
+for(const mode of ['unknown-cell','unknown-handle','unknown-blessed-glob','unknown-overloaded',
+  'unknown-indirect','unknown-scalar-ref','unknown-array','unknown-hash','unknown-coderef'])
+  test('staged custody malformed nominee rejects '+mode+' without callback or FD',()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,true);assert.equal(r.ownedCount,0);assert.equal(r.stageClosed,0);
+    assert.equal(r.helperClosed,0);assert.equal(r.helpers,0);
+    assert.deepEqual(r.calls,{clock:2,lstat:1,sysopen:1});
+    assert.deepEqual(r.candidateCallbacksBeforeFinalizer,STAGED_CALLBACK_ZERO);
+    assert.deepEqual(r.factoryCounts,{scalar:mode==='unknown-cell'?1:0,handle:mode==='unknown-handle'?1:0});
+  });
+test('staged custody malformed nominee catches removal of pre-value cell magic guard',()=>{
+  const source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),
+    '    task6a_origin_refuse() if $sv->FLAGS & 0x00f00000;','');
+  const r=stagedCustody('unknown-cell',0,{sourceOverride:source});
+  assert.equal(r.refused,true);assert.equal(r.ownedCount,0);assert.equal(r.helpers,0);
+  assert.deepEqual(r.calls,{clock:2,lstat:1,sysopen:1});
+  assert.deepEqual(r.candidateCallbacksBeforeFinalizer,{...STAGED_CALLBACK_ZERO,FETCH:1});
+  assert.throws(()=>assert.deepEqual(r.candidateCallbacksBeforeFinalizer,STAGED_CALLBACK_ZERO),
+    {code:'ERR_ASSERTION'});
+});
+const STAGED_CLOSE_CALLS={binmode:342,clock:407,close:348,closedir:42,fcntl:90,
+  fileno:1110,fork:42,lstat:132,opendir:42,pipe:168,read:228,readdir:1083,
+  ready:84,seek:30,stat:120,sysopen:12,wait:168};
+const STAGED_CLOSE_ROLES=['d0','d1','d2','d3','d4','d5','f0','f1','f2','f3','f4','f5'];
+function assertStagedClosePhysical(r,mode,slot) {
+  assert.equal(r.refused,false);
+  assert.deepEqual(r.calls,STAGED_CLOSE_CALLS);
+  assert.deepEqual([r.ownedCount,r.stageClosed,r.helperClosed],[390,12,378]);
+  assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+    STAGED_CLOSE_ROLES);
+  assert.deepEqual(r.nominatedClose,{role:STAGED_CLOSE_ROLES[slot-1],slot,kind:mode,
+    physicallyClosedBeforeResponse:true});
+  assert.deepEqual(r.sourceBeforeRelease,{phase:'active',invalid:0,uncertain:0,disposalStarted:0,
+    sealedClosureCount:12,attemptedCount:0,privateClosedCount:0,closedFlags:[0,0,0,0,0,0,0,0,0,0,0,0]});
+}
+function assertStagedCloseUncertain(r,slot) {
+  assert.equal(r.releaseRefused,true);assert.equal(r.release,null);
+  const flags=[1,1,1,1,1,1,1,1,1,1,1,1];flags[slot-1]=0;
+  assert.deepEqual(r.sourceAfterRelease,{phase:'burned',invalid:1,uncertain:1,disposalStarted:1,
+    sealedClosureCount:12,attemptedCount:12,privateClosedCount:11,closedFlags:flags});
+  assert.deepEqual(r.sourceAfterRepeats,r.sourceAfterRelease);
+}
+for(const mode of ['close-false','close-throw'])
+  for(let slot=1;slot<=12;slot++)
+    test('staged custody uncertain close attempts all originals for '+mode+' slot '+slot,()=>{
+      const r=stagedCustody(mode,slot);
+      assertStagedClosePhysical(r,mode,slot);assertStagedCloseUncertain(r,slot);
+    });
+for(const mode of ['close-false','close-throw'])
+  test('staged custody uncertain close catches false definite-closure mutant for '+mode,()=>{
+    const source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),
+      '$closed=1 if $ok&&!length($close_error)&&$inspected',
+      '$closed=1 if $inspected');
+    const r=stagedCustody(mode,1,{sourceOverride:source});
+    assertStagedClosePhysical(r,mode,1);
+    assert.equal(r.releaseRefused,false);
+    assert.deepEqual(r.release,{scope:'staged-source-vendor-custody-diagnostic-only',
+      productionAuthority:false,fileCount:6,directoryCount:6,handlesClosed:12});
+    assert.deepEqual(r.sourceAfterRelease,{phase:'released',invalid:0,uncertain:0,disposalStarted:1,
+      sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:[1,1,1,1,1,1,1,1,1,1,1,1]});
+    assert.throws(()=>assertStagedCloseUncertain(r,1),{code:'ERR_ASSERTION'});
+  });
+for(const mode of ['admission-undef','admission-array','admission-extra','admission-missing-creator',
+  'admission-root','admission-creation-short','admission-creation-string','admission-creation-owner',
+  'admission-creation-type','admission-source-count','admission-source-order','admission-source-numeric',
+  'admission-source-policy','admission-source-bytes-0','admission-source-bytes-1','admission-source-bytes-2',
+  'admission-source-bytes-3','admission-vendor-bytes','admission-selected-detached','admission-selected-member'])
+  test('staged custody admission negative rejects '+mode+' before any stage open',()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,true);assert.equal(r.hold,null);
+    assert.deepEqual(r.calls,{clock:2});
+    assert.deepEqual([r.ownedCount,r.stageClosed,r.helperClosed,r.helpers],[0,0,0,0]);
+    assert.deepEqual(r.sourceAfterAdmissionRefusal,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:0,attemptedCount:0,privateClosedCount:0,closedFlags:[]});
+    assert.deepEqual(r.sourceAfterAdmissionRepeats,r.sourceAfterAdmissionRefusal);
+  });
+const STAGED_HALF_BOUNDARY_CALLS={binmode:198,clock:237,close:204,closedir:24,fcntl:72,
+  fileno:636,fork:24,lstat:84,opendir:24,pipe:96,read:132,readdir:597,
+  ready:48,seek:18,stat:72,sysopen:12,wait:96};
+for(const kind of ['expiry','throw'])
+  for(const [part,clock,helpers,stage,originals,total] of [
+    ['hold-entry',2,0,0,0,2],['hold-complete',237,24,12,228,2574],
+    ['recheck-entry',238,24,12,228,2575],['recheck-complete',407,42,12,390,4448]])
+    test('staged custody boundary refuses '+kind+' at '+part,()=>{
+      const mode='boundary-'+kind+'-'+part,r=stagedCustody(mode);
+      assert.deepEqual(r.boundaryNomination,{clock,mode});
+      assert.equal(r.helpers,helpers);
+      assert.deepEqual([r.ownedCount,r.stageClosed,r.helperClosed],[originals,stage,originals-stage]);
+      const calls=clock===2?{clock:2}:clock===407?STAGED_CLOSE_CALLS:{...STAGED_HALF_BOUNDARY_CALLS,clock};
+      assert.deepEqual(r.calls,calls);
+      assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),total);
+      if(part.startsWith('hold-')) {assert.equal(r.refused,true);assert.equal(r.hold,null);}
+      else {assert.equal(r.refused,false);assert.equal(r.recheckRefused,true);assert.equal(r.recheck,null);}
+      assert.deepEqual(r.sourceAfterBoundary,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+        sealedClosureCount:stage,attemptedCount:stage,privateClosedCount:stage,
+        closedFlags:stage?[1,1,1,1,1,1,1,1,1,1,1,1]:[]});
+      assert.deepEqual(r.sourceAfterBoundaryRepeats,r.sourceAfterBoundary);
+    });
+for(const mode of ['metadata-dir-short','metadata-file-short','metadata-dir-record-copy','metadata-file-record-copy',
+  'metadata-dir-tuple-copy','metadata-file-tuple-copy','metadata-dir-path','metadata-file-path',
+  'metadata-file-tuple-value','metadata-file-hash','metadata-dir-fh-empty','metadata-file-fh-empty',
+  'metadata-dir-fh-alias','metadata-file-fh-alias'])
+  test('staged custody metadata corruption burns irreversibly for '+mode,()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,false);assert.equal(r.recheckRefused,true);assert.equal(r.recheck,null);
+    assert.deepEqual(r.metadataMutation,{mode,changed:true});assert.deepEqual(r.metadataRestoration,{restored:true});
+    assert.deepEqual(r.calls,STAGED_HALF_BOUNDARY_CALLS);
+    assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),2574);
+    assert.equal(r.helpers,24);assert.deepEqual([r.ownedCount,r.stageClosed,r.helperClosed],[228,12,216]);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),STAGED_CLOSE_ROLES);
+    assert.deepEqual(r.sourceBeforeMetadata,{phase:'active',invalid:0,uncertain:0,disposalStarted:0,
+      sealedClosureCount:12,attemptedCount:0,privateClosedCount:0,closedFlags:[0,0,0,0,0,0,0,0,0,0,0,0]});
+    assert.deepEqual(r.sourceAfterMetadataRefusal,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:[1,1,1,1,1,1,1,1,1,1,1,1]});
+    assert.deepEqual(r.sourceAfterMetadataRestoration,r.sourceAfterMetadataRefusal);
+    assert.deepEqual(r.sourceAfterMetadataRepeats,r.sourceAfterMetadataRefusal);
+  });
+const STAGED_PARTIAL_CALLBACK_ZERO={FETCHSIZE:0,FETCH:0,STORE:0,STORESIZE:0,EXTEND:0,
+  PUSH:0,POP:0,SHIFT:0,UNSHIFT:0,CLEAR:0,EXISTS:0,DELETE:0};
+function assertStagedPartialPhysical(r,part) {
+  const stage=part==='dir'?1:7;
+  assert.equal(r.refused,true);assert.equal(r.hold,null);
+  assert.equal(r.partialFactoryCount,1);
+  assert.deepEqual(r.partialFinalization,{untie:1,destroy:1});
+  const calls=part==='dir'?{clock:2,lstat:1,sysopen:1,fcntl:4,close:1}:
+    {binmode:49,clock:50,close:55,closedir:6,fcntl:34,fileno:156,fork:6,
+      lstat:19,opendir:6,pipe:24,read:24,readdir:111,ready:12,stat:12,sysopen:7,wait:24};
+  assert.deepEqual(r.calls,calls);
+  assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),part==='dir'?9:595);
+  assert.equal(r.helpers,part==='dir'?0:6);
+  assert.deepEqual([r.ownedCount,r.stageClosed,r.helperClosed],part==='dir'?[1,1,0]:[61,7,54]);
+  assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+    STAGED_CLOSE_ROLES.slice(0,stage));
+  assert.deepEqual(r.sourceAfterPartialRefusal,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+    sealedClosureCount:stage,attemptedCount:stage,privateClosedCount:stage,closedFlags:Array(stage).fill(1)});
+  assert.deepEqual(r.sourceAfterPartialRepeats,r.sourceAfterPartialRefusal);
+  assert.deepEqual(r.partialCallbacksBeforeRepeats,r.partialCallbacksBeforeFinalizer);
+  assert.deepEqual(r.partialCallbacksAfterFinalizer,r.partialCallbacksBeforeFinalizer);
+}
+for(const part of ['dir','file']) {
+  test('staged custody partial tied array refuses '+part+' before public-vector access',()=>{
+    const r=stagedCustody('partial-tied-'+part);assertStagedPartialPhysical(r,part);
+    assert.deepEqual(r.partialCallbacksBeforeFinalizer,STAGED_PARTIAL_CALLBACK_ZERO);
+  });
+  test('staged custody partial tied array detects misplaced '+part+' guard mutant',()=>{
+    const configure=part==='dir'?'1':'0',expected=part==='dir'?'undef,1':'$expected->{sha256},0';
+    const old='            my ($fh)=$sealed->(\'binding\');$staged_configure->($fh,'+configure+');\n'
+      +'            $staged_guard_partial->();\n'
+      +'            my $record=$staged_record->($sealed,$path,\\@before,'+expected+');\n'
+      +'            $staged_guard_partial->();';
+    const next='            my ($fh)=$sealed->(\'binding\');$staged_configure->($fh,'+configure+');\n'
+      +'            my $record=$staged_record->($sealed,$path,\\@before,'+expected+');';
+    const source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),old,next);
+    const r=stagedCustody('partial-tied-'+part,0,{sourceOverride:source});
+    assertStagedPartialPhysical(r,part);
+    assert.deepEqual(r.partialCallbacksBeforeFinalizer,{...STAGED_PARTIAL_CALLBACK_ZERO,PUSH:1});
+    assert.throws(()=>assert.deepEqual(r.partialCallbacksBeforeFinalizer,STAGED_PARTIAL_CALLBACK_ZERO),
+      {code:'ERR_ASSERTION'});
+  });
+}
+const STAGED_H7_CALLS={binmode:62,clock:75,close:68,closedir:7,fcntl:55,fileno:188,
+  fork:7,lstat:37,opendir:7,pipe:28,read:40,readdir:138,ready:14,seek:6,stat:25,sysopen:12,wait:28};
+for(const mode of ['h7-acl-plus','h7-raw256'])
+  test('staged custody h7 refusal drains actual captor for '+mode,()=>{
+    const r=stagedCustody(mode),plus=mode==='h7-acl-plus';
+    assert.equal(r.refused,true);assert.equal(r.hold,null);
+    assert.deepEqual(r.calls,{...STAGED_H7_CALLS,clock:plus?75:74});
+    assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),plus?797:796);
+    assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed],[7,75,12,63]);
+    const row='-r--r--r--'+(plus?'+':'')+' 1 root wheel 16 Jan 1 2026 /\n';
+    assert.deepEqual(r.h7PipeRow,{bytes:plus?41:40,row});
+    assert.deepEqual(r.h7ActualReads,[{bytes:plus?41:40,body:row},{bytes:0,body:''}]);
+    assert.deepEqual(r.h7CaptorOutcome,{returned:plus,canonicalRefusal:!plus});
+    assert.deepEqual(r.h7Drain,{jobCleared:true,helpersSettled:true});
+    if(plus) assert.equal(r.h7StatusNomination,undefined);
+    else assert.deepEqual(r.h7StatusNomination,{pid:424242,rawStatus:256});
+    assert.deepEqual(r.sourceAfterH7Refusal,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:Array(12).fill(1)});
+    assert.deepEqual(r.sourceAfterH7Repeats,r.sourceAfterH7Refusal);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+      STAGED_CLOSE_ROLES);
+  });
+const STAGED_CONFIGURATION_CASES=[
+  ['config-dir-getfl-undefined','dir','getfl',1,'undefined'],
+  ['config-dir-getfl-throw','dir','getfl',1,'throw'],
+  ['config-dir-getfl-access','dir','getfl',1,'access'],
+  ['config-dir-prefd-undefined','dir','prefd',2,'undefined'],
+  ['config-dir-prefd-throw','dir','prefd',2,'throw'],
+  ['config-dir-prefd-extra','dir','prefd',2,'extra'],
+  ['config-dir-setfd-false','dir','setfd',3,'false'],
+  ['config-dir-setfd-throw','dir','setfd',3,'throw'],
+  ['config-dir-postfd-undefined','dir','postfd',4,'undefined'],
+  ['config-dir-postfd-throw','dir','postfd',4,'throw'],
+  ['config-dir-postfd-missing','dir','postfd',4,'missing'],
+  ['config-file-getfl-undefined','file','getfl',1,'undefined'],
+  ['config-file-getfl-throw','file','getfl',1,'throw'],
+  ['config-file-getfl-access','file','getfl',1,'access'],
+  ['config-file-getfl-nonblock','file','getfl',1,'nonblock'],
+  ['config-file-prefd-undefined','file','prefd',2,'undefined'],
+  ['config-file-prefd-throw','file','prefd',2,'throw'],
+  ['config-file-prefd-extra','file','prefd',2,'extra'],
+  ['config-file-setfd-false','file','setfd',3,'false'],
+  ['config-file-setfd-throw','file','setfd',3,'throw'],
+  ['config-file-postfd-undefined','file','postfd',4,'undefined'],
+  ['config-file-postfd-throw','file','postfd',4,'throw'],
+  ['config-file-postfd-missing','file','postfd',4,'missing'],
+  ['config-file-binmode-false','file','binmode',4,'false'],
+  ['config-file-binmode-throw','file','binmode',4,'throw'],
+];
+for(const [mode,part,cut,k,kind] of STAGED_CONFIGURATION_CASES)
+  test('staged custody configuration denial disposes '+mode,()=>{
+    const r=stagedCustody(mode),stage=part==='dir'?1:7,bin=cut==='binmode';
+    assert.equal(r.refused,true);assert.equal(r.hold,null);
+    assert.deepEqual(r.configurationNomination,{role:part==='dir'?'d0':'f0',cut,ordinal:k,kind,
+      actualCoreCompleted:true});
+    assert.equal(r.configurationQueueRemaining,0);
+    const calls=part==='dir'?{clock:2,lstat:1,sysopen:1,fcntl:k,close:1}:
+      {binmode:bin?49:48,clock:50,close:55,closedir:6,fcntl:30+k,fileno:156,fork:6,
+        lstat:19,opendir:6,pipe:24,read:24,readdir:111,ready:12,stat:12,sysopen:7,wait:24};
+    assert.deepEqual(r.calls,calls);
+    assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),part==='dir'?5+k:590+k+(bin?1:0));
+    assert.equal(r.helpers,part==='dir'?0:6);
+    assert.deepEqual([r.ownedCount,r.stageClosed,r.helperClosed],part==='dir'?[1,1,0]:[61,7,54]);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+      STAGED_CLOSE_ROLES.slice(0,stage));
+    assert.deepEqual(r.sourceAfterConfigurationRefusal,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:stage,attemptedCount:stage,privateClosedCount:stage,closedFlags:Array(stage).fill(1)});
+    assert.deepEqual(r.sourceAfterConfigurationRepeats,r.sourceAfterConfigurationRefusal);
+  });
+
+function assertStagedByteNomination(r) {
+  assert.deepEqual(r.byteNomination,{
+    role:'f0',readOrdinal:25,bytes:5864,beforeFirstByte:112,afterFirstByte:113,
+    beforeSha256:'85d8949dbcee9687b1d3f554edb6e39003394cb2fb125d64c50964daa1a04ff0',
+    afterSha256:'ad8d8e9c43ebc67036de34379ea2e12658bbe2027314bd523fe29e942e633055',actualCoreRead:true,remainderUnchanged:true});
+  assert.match(r.byteNomination.afterSha256,/^[a-f0-9]{64}$/);
+  assert.notEqual(r.byteNomination.afterSha256,r.byteNomination.beforeSha256);
+}
+test('staged custody byte hash rejects altered consumer-visible actual read',()=>{
+  const r=stagedCustody('file-byte-xor-denied');assertStagedByteNomination(r);
+  assert.equal(r.refused,true);assert.equal(r.hold,null);
+  assert.deepEqual(r.calls,{binmode:49,clock:52,close:55,closedir:6,fcntl:34,fileno:157,
+    fork:6,lstat:20,opendir:6,pipe:24,read:26,readdir:111,ready:12,seek:1,stat:13,sysopen:7,wait:24});
+  assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),603);
+  assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed],[6,61,7,54]);
+  assert.deepEqual(r.sourceAfterByteOperation,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+    sealedClosureCount:7,attemptedCount:7,privateClosedCount:7,closedFlags:Array(7).fill(1)});
+  assert.deepEqual(r.sourceAfterByteRepeats,r.sourceAfterByteOperation);
+});
+test('staged custody byte hash detects coherent digest-comparison removal',()=>{
+  const source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),
+    '    task6a_origin_refuse() unless $length==$record->{identity}[7]&&$digest->hexdigest eq $record->{sha256};',
+    '    task6a_origin_refuse() unless $length==$record->{identity}[7];');
+  const r=stagedCustody('file-byte-xor-mutant',0,{sourceOverride:source});assertStagedByteNomination(r);
+  assert.equal(r.refused,false);assert.deepEqual(r.calls,STAGED_CLOSE_CALLS);
+  assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed],[42,390,12,378]);
+  const diagnostic={scope:'staged-source-vendor-custody-diagnostic-only',
+    productionAuthority:false,fileCount:6,directoryCount:6};
+  assert.deepEqual(r.hold,diagnostic);assert.deepEqual(r.recheck,diagnostic);
+  assert.deepEqual(r.release,{...diagnostic,handlesClosed:12});
+  assert.deepEqual(r.sourceAfterByteOperation,{phase:'released',invalid:0,uncertain:0,disposalStarted:1,
+    sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:Array(12).fill(1)});
+  assert.deepEqual(r.sourceAfterByteRepeats,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+    sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:Array(12).fill(1)});
+  assert.throws(()=>assert.equal(r.refused,true),{code:'ERR_ASSERTION'});
+});
+const STAGED_METADATA_MAGIC_MODES=[
+  'magic-dir-array',
+  'magic-dir-record',
+  'magic-dir-tuple',
+  'magic-dir-path',
+  'magic-dir-fh',
+  'magic-dir-retained-record',
+  'magic-dir-retained-tuple',
+  'magic-file-array',
+  'magic-file-record',
+  'magic-file-tuple',
+  'magic-file-path',
+  'magic-file-fh',
+  'magic-file-retained-record',
+  'magic-file-retained-tuple',
+  'magic-file-hash',
+  'magic-file-element',
+];
+const STAGED_METADATA_MAGIC_ZERO={FETCHSIZE:0,FETCH:0,STORE:0,STORESIZE:0,EXTEND:0,
+  PUSH:0,POP:0,SHIFT:0,UNSHIFT:0,CLEAR:0,EXISTS:0,DELETE:0,FIRSTKEY:0,NEXTKEY:0,SCALAR:0};
+for(const mode of STAGED_METADATA_MAGIC_MODES)
+  test('staged custody metadata magic rejects original graph for '+mode,()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,false);assert.equal(r.recheckRefused,true);assert.equal(r.recheck,null);
+    assert.deepEqual(r.magicMutation,{mode,changed:true});assert.deepEqual(r.magicRestoration,{restored:true});
+    assert.deepEqual(r.calls,STAGED_HALF_BOUNDARY_CALLS);
+    assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),2574);
+    assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed],[24,228,12,216]);
+    assert.equal(r.magicTiedRepeatDelta,0);
+    assert.deepEqual(r.sourceBeforeMagic,{phase:'active',invalid:0,uncertain:0,disposalStarted:0,
+      sealedClosureCount:12,attemptedCount:0,privateClosedCount:0,closedFlags:Array(12).fill(0)});
+    const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:Array(12).fill(1)};
+    for(const state of ['sourceAfterMagicRefusal','sourceAfterMagicTiedRepeats',
+      'sourceAfterMagicRestoration','sourceAfterMagicRepeats']) assert.deepEqual(r[state],burned);
+    const tied={factory:1,untie:0,destroy:0,callbacks:STAGED_METADATA_MAGIC_ZERO};
+    assert.deepEqual(r.magicAfterRefusal,tied);assert.deepEqual(r.magicBeforeUntie,tied);
+    const untied={factory:1,untie:1,destroy:1,callbacks:STAGED_METADATA_MAGIC_ZERO};
+    assert.deepEqual(r.magicAfterUntie,untied);assert.deepEqual(r.magicAfterRestoredRepeats,untied);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+      STAGED_CLOSE_ROLES);
+  });
+
+const STAGED_ADMISSION_DRIFT_MODES=[
+  'drift-copy-admission',
+  'drift-copy-creator',
+  'drift-copy-creation',
+  'drift-copy-sources',
+  'drift-copy-source-0',
+  'drift-copy-source-1',
+  'drift-copy-source-2',
+  'drift-copy-source-3',
+  'drift-copy-vendor',
+  'drift-copy-selected',
+  'drift-selected-detached',
+  'drift-root',
+  'drift-creation-inode',
+  'drift-source-bytes-0',
+  'drift-source-bytes-1',
+  'drift-source-bytes-2',
+  'drift-source-bytes-3',
+  'drift-vendor-bytes',
+  'drift-selected-bytes',
+  'drift-extra',
+];
+for(const mode of STAGED_ADMISSION_DRIFT_MODES)
+  test('staged custody admission drift rejects changed graph for '+mode,()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,false);assert.equal(r.recheckRefused,true);assert.equal(r.recheck,null);
+    assert.deepEqual(r.admissionDriftMutation,{mode,changed:true});
+    assert.deepEqual(r.admissionDriftRestoration,{restored:true});
+    assert.deepEqual(r.calls,STAGED_HALF_BOUNDARY_CALLS);
+    assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),2574);
+    assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed],[24,228,12,216]);
+    assert.deepEqual(r.sourceBeforeAdmissionDrift,{phase:'active',invalid:0,uncertain:0,disposalStarted:0,
+      sealedClosureCount:12,attemptedCount:0,privateClosedCount:0,closedFlags:Array(12).fill(0)});
+    const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:Array(12).fill(1)};
+    for(const state of ['sourceAfterAdmissionDrift','sourceAfterAdmissionDriftRestore',
+      'sourceAfterAdmissionDriftRepeats']) assert.deepEqual(r[state],burned);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+      STAGED_CLOSE_ROLES);
+  });
+
+const STAGED_ADMISSION_MAGIC_MODES=[
+  'amagic-current-admission',
+  'amagic-current-creator',
+  'amagic-current-creation',
+  'amagic-current-sources',
+  'amagic-current-source-0',
+  'amagic-current-source-1',
+  'amagic-current-source-2',
+  'amagic-current-source-3',
+  'amagic-current-vendor',
+  'amagic-current-selected',
+  'amagic-retained-admission',
+  'amagic-retained-creator',
+  'amagic-retained-creation',
+  'amagic-retained-sources',
+  'amagic-retained-source-0',
+  'amagic-retained-source-1',
+  'amagic-retained-source-2',
+  'amagic-retained-source-3',
+  'amagic-retained-vendor',
+  'amagic-retained-selected',
+];
+for(const mode of STAGED_ADMISSION_MAGIC_MODES)
+  test('staged custody admission magic rejects original graph for '+mode,()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,false);assert.equal(r.recheckRefused,true);assert.equal(r.recheck,null);
+    assert.deepEqual(r.admissionMagicMutation,{mode,changed:true});
+    assert.deepEqual(r.admissionMagicRestoration,{restored:true});
+    assert.deepEqual(r.calls,STAGED_HALF_BOUNDARY_CALLS);
+    assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),2574);
+    assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed],[24,228,12,216]);
+    assert.equal(r.admissionMagicTiedRepeatDelta,0);
+    assert.deepEqual(r.sourceBeforeAdmissionMagic,{phase:'active',invalid:0,uncertain:0,disposalStarted:0,
+      sealedClosureCount:12,attemptedCount:0,privateClosedCount:0,closedFlags:Array(12).fill(0)});
+    const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:Array(12).fill(1)};
+    for(const state of ['sourceAfterAdmissionMagicRefusal','sourceAfterAdmissionMagicTiedRepeats',
+      'sourceAfterAdmissionMagicRestoration','sourceAfterAdmissionMagicRepeats'])
+      assert.deepEqual(r[state],burned);
+    const tied={factory:1,untie:0,destroy:0,callbacks:STAGED_METADATA_MAGIC_ZERO};
+    assert.deepEqual(r.admissionMagicAfterRefusal,tied);assert.deepEqual(r.admissionMagicBeforeUntie,tied);
+    const untied={factory:1,untie:1,destroy:1,callbacks:STAGED_METADATA_MAGIC_ZERO};
+    assert.deepEqual(r.admissionMagicAfterUntie,untied);
+    assert.deepEqual(r.admissionMagicAfterRestoredRepeats,untied);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+      STAGED_CLOSE_ROLES);
+  });
+const STAGED_FIXTURE_ONLY_MODES=[
+  'foreign-parent','foreign-physical','foreign-file','foreign-directory','hidden-open-undefined',
+];
+for(const mode of STAGED_FIXTURE_ONLY_MODES)
+  test('staged custody fixture ownership rejects borrower or hidden original '+mode,()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,true);assert.equal(r.hold,null);
+    assert.deepEqual(r.calls,{clock:2,lstat:1,sysopen:1});
+    assert.equal(r.events.length,4);
+    assert.deepEqual(r.events.map(e=>e.op+':'+e.role),
+      ['clock:startup','clock:stage','lstat:d0','sysopen:d0']);
+    assert.deepEqual([r.helpers,r.rawAcquisitions,r.ownedCount,r.definitelyClosed,
+      r.fixtureClosed,r.consumerClosed,r.stageClosed,r.helperClosed],[0,1,1,1,1,0,0,0]);
+    assert.deepEqual(r.fixtureOwnerBeforeRescue,{live:true,sameFd:true,sameIdentity:true,
+      attempted:0,closed:0});
+    const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:0,attemptedCount:0,privateClosedCount:0,closedFlags:[]};
+    assert.deepEqual(r.sourceAfterFixtureRefusal,burned);
+    assert.deepEqual(r.sourceAfterFixtureRepeats,burned);
+    assert.equal(r.repeatEffectDelta,0);assert.equal(r.remainingOperations,0);
+  });
+
+for(const [mode,operation,arity] of [
+  ['active-hold-again','hold',0],['active-recheck-arity','recheck',1],['active-release-arity','release',1],
+])
+  test('staged custody active entry refuses '+mode,()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,false);
+    assert.deepEqual(r.activeMisuse,{operation,arity,refused:true});
+    assert.deepEqual(r.calls,STAGED_HALF_BOUNDARY_CALLS);
+    assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),2574);
+    assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed],[24,228,12,216]);
+    assert.deepEqual(r.sourceBeforeActiveMisuse,{phase:'active',invalid:0,uncertain:0,disposalStarted:0,
+      sealedClosureCount:12,attemptedCount:0,privateClosedCount:0,closedFlags:Array(12).fill(0)});
+    const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:Array(12).fill(1)};
+    assert.deepEqual(r.sourceAfterActiveMisuse,burned);
+    assert.deepEqual(r.sourceAfterActiveMisuseRepeats,burned);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+      STAGED_CLOSE_ROLES);
+    assert.equal(r.repeatEffectDelta,0);
+  });
+
+test('staged custody live fd alias rejects distinct GV without a second owner',()=>{
+  const r=stagedCustody('foreign-fd-alias');
+  assert.equal(r.refused,true);assert.equal(r.hold,null);
+  assert.deepEqual(r.fdAliasBeforeConsumer,{nativeShapes:true,distinctGv:true,sameIo:true,
+    sameFd:true,sameRef:false,rawAcquisitions:1});
+  assert.deepEqual(r.fdAliasBeforeRescue,{bothLive:true,distinctGv:true,sameFd:true});
+  assert.deepEqual(r.fdAliasAfterRescue,{bothUndefined:true,originalAttempts:1,rawAcquisitions:1});
+  assert.deepEqual(r.calls,{clock:2,lstat:1,sysopen:1});assert.equal(r.events.length,4);
+  assert.deepEqual([r.helpers,r.rawAcquisitions,r.ownedCount,r.definitelyClosed,
+    r.fixtureClosed,r.consumerClosed,r.stageClosed,r.helperClosed],[0,1,1,1,1,0,0,0]);
+  const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+    sealedClosureCount:0,attemptedCount:0,privateClosedCount:0,closedFlags:[]};
+  assert.deepEqual(r.sourceAfterFixtureRefusal,burned);
+  assert.deepEqual(r.sourceAfterFixtureRepeats,burned);
+  assert.equal(r.repeatEffectDelta,0);
+});
+test('staged custody live fd alias rejects an already sealed original reference',()=>{
+  const r=stagedCustody('staged-reference-alias');
+  assert.equal(r.refused,true);assert.equal(r.hold,null);
+  assert.deepEqual(r.stagedAliasNomination,{sameRef:true,sameFd:true,newRawAcquisition:false});
+  assert.deepEqual(r.calls,{binmode:8,clock:10,close:9,closedir:1,fcntl:5,fileno:26,
+    fork:1,lstat:4,opendir:1,pipe:4,read:4,readdir:16,ready:2,stat:2,sysopen:2,wait:4});
+  assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),99);
+  assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed,r.fixtureClosed],[1,10,1,9,0]);
+  const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+    sealedClosureCount:1,attemptedCount:1,privateClosedCount:1,closedFlags:[1]};
+  assert.deepEqual(r.sourceAfterStagedAliasRefusal,burned);
+  assert.deepEqual(r.sourceAfterStagedAliasRepeats,burned);
+  assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role))
+    .map(e=>e.role),['d0']);
+  assert.equal(r.repeatEffectDelta,0);
+});
+
+const STAGED_IDENTITY_DENIALS=[
+  ['identity-dir-pre-shape','lstat','d0',1,'length',2,0,0,0,3],
+  ['identity-file-pre-type','lstat','f0',1,'type',50,6,6,60,588],
+  ['identity-dir-open-owner','stat','d0',1,'owner',3,0,1,1,12],
+  ['identity-file-open-inode','stat','f0',1,'inode',50,6,7,61,597],
+  ['identity-dir-post-device','stat','d0',2,'device',9,1,1,10,95],
+  ['identity-file-post-size','stat','f0',5,'size',125,13,12,129,1400],
+];
+for(const [mode,op,role,ordinal,field,clock,helpers,stage,owned,ports] of STAGED_IDENTITY_DENIALS)
+  test('staged custody identity refuses projected drift '+mode,()=>{
+    const r=stagedCustody(mode);assert.equal(r.refused,true);assert.equal(r.hold,null);
+    const n=r.identityNomination;
+    assert.deepEqual(Object.keys(n).sort(),['op','role','ordinal','field','before','after',
+      'actualTupleLength','returnedTupleLength','settledHelpers','actualCoreMetadata'].sort());
+    assert.deepEqual([n.op,n.role,n.ordinal,n.field,n.actualTupleLength,n.settledHelpers,
+      n.actualCoreMetadata],[op,role,ordinal,field,13,helpers,true]);
+    assert.equal(n.returnedTupleLength,field==='length'?12:13);
+    if(field==='length') assert.deepEqual([n.before,n.after],[13,12]);
+    else if(field==='type') assert.deepEqual([n.before&0o170000,n.after&0o170000],[0o100000,0o40000]);
+    else {
+      assert.ok(Number.isSafeInteger(n.before)&&Number.isSafeInteger(n.after));
+      assert.equal(n.after,n.before+1);if(field==='owner') assert.deepEqual([n.before,n.after],[0,1]);
+    }
+    assert.equal(r.calls.clock,clock);
+    assert.equal(Object.values(r.calls).reduce((v,n)=>v+n,0),ports);
+    assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed,r.fixtureClosed],
+      [helpers,owned,stage,helpers*9,0]);
+    const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:stage,attemptedCount:stage,privateClosedCount:stage,
+      closedFlags:Array(stage).fill(1)};
+    assert.deepEqual(r.sourceAfterIdentityRefusal,burned);
+    assert.deepEqual(r.sourceAfterIdentityRepeats,burned);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role))
+      .map(e=>e.role),STAGED_CLOSE_ROLES.slice(0,stage));
+    assert.equal(r.repeatEffectDelta,0);
+    if(field==='size') assert.deepEqual(r.calls,{binmode:110,clock:125,close:116,closedir:13,
+      fcntl:61,fileno:345,fork:13,lstat:50,opendir:13,pipe:52,read:66,readdir:300,ready:26,
+      seek:7,stat:39,sysopen:12,wait:52});
+  });
+
+function stagedSharedRegistry(registered,settled,burned) {
+  return {burned,registered,settled,unsettled:registered-settled,
+    helpersSettled:!burned&&registered===settled,physicalOwnsLedgers:false};
+}
+function stagedSharedState(phase,invalid,closed) {
+  return {phase,invalid,uncertain:0,disposalStarted:closed?1:0,sealedClosureCount:12,
+    attemptedCount:closed?12:0,privateClosedCount:closed?12:0,closedFlags:Array(12).fill(closed?1:0)};
+}
+function assertStagedSharedEvidence(r,mutant) {
+  assert.equal(r.refused,false);
+  assert.deepEqual(r.sharedBeforeFailure,stagedSharedRegistry(24,24,false));
+  assert.deepEqual(r.sharedAfterFailure,stagedSharedRegistry(25,24,true));
+  assert.deepEqual(r.sharedCaptorOutcome,{returned:false,canonicalRefusal:true});
+  assert.deepEqual(r.sharedCloseNominations,[
+    {role:'h25.in-r',physicallyClosedBeforeThrow:true},
+    {role:'h25.in-w',physicallyClosedBeforeThrow:true}]);
+  assert.deepEqual(r.sharedStageAfterFailure,stagedSharedState('active',0,false));
+  assert.deepEqual(r.sharedAfterRecheck,stagedSharedRegistry(mutant?43:25,mutant?42:24,true));
+  assert.deepEqual(r.sharedStageAfterRecheck,stagedSharedState(mutant?'active':'burned',mutant?0:1,!mutant));
+  assert.deepEqual(r.sharedAfterCleanup,stagedSharedState(mutant?'released':'burned',mutant?0:1,true));
+  assert.deepEqual(r.sharedAfterRepeats,stagedSharedState('burned',1,true));
+  assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed,r.fixtureClosed],
+    mutant?[43,399,12,387,0]:[25,237,12,225,0]);
+  assert.deepEqual(r.calls,mutant?
+    {binmode:350,clock:410,close:356,closedir:43,fcntl:91,fileno:1128,fork:43,lstat:132,
+      opendir:43,pipe:172,read:228,readdir:1110,ready:84,seek:30,stat:120,sysopen:12,wait:169}:
+    {binmode:206,clock:240,close:212,closedir:25,fcntl:73,fileno:654,fork:25,lstat:84,
+      opendir:25,pipe:100,read:132,readdir:624,ready:48,seek:18,stat:72,sysopen:12,wait:97});
+  assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),mutant?4521:2647);
+}
+test('staged custody shared unsettled refuses a physically drained burned helper',()=>{
+  const r=stagedCustody('shared-unsettled-baseline');assertStagedSharedEvidence(r,false);
+  assert.equal(r.recheckRefused,true);assert.equal(r.recheck,null);
+});
+test('staged custody shared unsettled detects coherent settlement-guard removal',()=>{
+  const old=String.raw`my $staged_require_live=sub {
+    task6a_origin_refuse() if $staged_invalid||$staged_uncertain||$staged_disposal_started;
+    $staged_vector->(\@staged_directories);$staged_vector->(\@staged_files);
+    $staged_vector->(\@staged_originals);$staged_vector->(\@staged_record_checks);
+    task6a_origin_refuse() unless task6a_origin_helpers_settled();
+    $staged_check_admission->();`;
+  const source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),old,
+    old.replace('    task6a_origin_refuse() unless task6a_origin_helpers_settled();\n',''));
+  const r=stagedCustody('shared-unsettled-mutant',0,{sourceOverride:source});
+  assertStagedSharedEvidence(r,true);
+  const diagnostic={scope:'staged-source-vendor-custody-diagnostic-only',
+    productionAuthority:false,fileCount:6,directoryCount:6};
+  assert.deepEqual(r.recheck,diagnostic);
+  assert.deepEqual(r.release,{...diagnostic,handlesClosed:12});
+  assert.throws(()=>assert.equal(r.recheckRefused,true),{code:'ERR_ASSERTION'});
+});
+
+function assertStagedEpochAclEvidence(r,mutant) {
+  const row="-r--r--r--+ 1 root wheel 16 Jan 1 2026 /\n";
+  assert.equal(r.refused,false);
+  assert.deepEqual(r.epochAclPipeRow,{bytes:41,row});
+  assert.deepEqual(r.epochAclActualReads,[{bytes:41,body:row},{bytes:0,body:''}]);
+  assert.deepEqual(r.epochAclCaptorOutcome,{returned:true,out:row,err:'',status:0,reaped:true});
+  assert.deepEqual(r.epochAclDrain,{jobCleared:true,helpersSettled:true});
+  assert.deepEqual(r.epochAclBeforeRecheck,stagedSharedState('active',0,false));
+  assert.deepEqual(r.epochAclAfterRecheck,stagedSharedState(mutant?'active':'burned',mutant?0:1,!mutant));
+  assert.deepEqual(r.epochAclAfterCleanup,stagedSharedState(mutant?'released':'burned',mutant?0:1,true));
+  assert.deepEqual(r.epochAclAfterRepeats,stagedSharedState('burned',1,true));
+  assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed,r.fixtureClosed],
+    mutant?[42,390,12,378,0]:[25,237,12,225,0]);
+  assert.deepEqual(r.calls,mutant?STAGED_CLOSE_CALLS:
+    {binmode:206,clock:245,close:212,closedir:25,fcntl:73,fileno:662,fork:25,lstat:85,
+      opendir:25,pipe:100,read:136,readdir:624,ready:50,seek:18,stat:73,sysopen:12,wait:100});
+  assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),mutant?4448:2671);
+}
+test('staged custody epoch ACL rejects actual captured plus row during recheck',()=>{
+  const r=stagedCustody('epoch-acl-baseline');assertStagedEpochAclEvidence(r,false);
+  assert.equal(r.recheckRefused,true);assert.equal(r.recheck,null);
+});
+test('staged custody epoch ACL detects coherent plus-accepting predicate mutant',()=>{
+  const old=String.raw`    task6a_origin_refuse() unless $r->{out} =~ /\A[d-][rwxStTs-]{9}\@?[ ]+`;
+  const source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),old,
+    old.replace(String.raw`\@?`,String.raw`[\@+]?`));
+  const r=stagedCustody('epoch-acl-mutant',0,{sourceOverride:source});
+  assertStagedEpochAclEvidence(r,true);
+  const diagnostic={scope:'staged-source-vendor-custody-diagnostic-only',
+    productionAuthority:false,fileCount:6,directoryCount:6};
+  assert.deepEqual(r.recheck,diagnostic);
+  assert.deepEqual(r.release,{...diagnostic,handlesClosed:12});
+  assert.throws(()=>assert.equal(r.recheckRefused,true),{code:'ERR_ASSERTION'});
+});
+
+function assertStagedPrimitivePhysical(r,mutant) {
+  const diagnostic={scope:'staged-source-vendor-custody-diagnostic-only',
+    productionAuthority:false,fileCount:6,directoryCount:6};
+  assert.equal(r.refused,false);assert.deepEqual(r.hold,diagnostic);assert.deepEqual(r.recheck,diagnostic);
+  assert.deepEqual(r.release,{...diagnostic,handlesClosed:12});
+  assert.deepEqual(r.calls,{...STAGED_CLOSE_CALLS,close:mutant?349:348});
+  assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),mutant?4449:4448);
+  assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed,r.fixtureClosed],[42,390,12,378,0]);
+  assert.deepEqual(r.onceAfterCleanup,stagedSharedState('released',0,true));
+  assert.deepEqual(r.onceAfterRepeats,stagedSharedState('burned',1,true));
+  const roles=r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role);
+  assert.deepEqual(roles,mutant?['d0',...STAGED_CLOSE_ROLES]:STAGED_CLOSE_ROLES);
+  return roles.length;
+}
+test('staged custody primitive once closes each captured original exactly once',()=>{
+  const r=stagedCustody('once-primitive-baseline');
+  assert.equal(assertStagedPrimitivePhysical(r,false),12);
+  assert.equal(Object.hasOwn(r,'duplicatePrimitive'),false);
+});
+test('staged custody primitive once detects coherent double-call captured primitive',()=>{
+  const source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),
+    '    my $original_close=sub {close($fh)};',
+    String.raw`    my $test_double_close=!@staged_originals;
+    my $original_close=sub {
+        my $first=close($fh);close($fh) if $test_double_close;return $first;
+    };`);
+  const r=stagedCustody('once-primitive-mutant',0,{sourceOverride:source});
+  const actual=assertStagedPrimitivePhysical(r,true);
+  const n=r.duplicatePrimitive;
+  assert.deepEqual(Object.keys(n).sort(),['role','allowanceConsumed','actualCoreReturnedFalse',
+    'filenoUndefined','firstPhysicalClosed','warningCount','errno','warnings'].sort());
+  assert.deepEqual([n.role,n.allowanceConsumed,n.actualCoreReturnedFalse,n.filenoUndefined,n.firstPhysicalClosed],
+    ['d0',true,true,true,true]);
+  assert.ok(Number.isSafeInteger(n.errno)&&n.errno>=0);
+  assert.ok(n.warningCount===0||n.warningCount===1);assert.equal(n.warnings.length,n.warningCount);
+  for(const w of n.warnings) {
+    assert.ok(Buffer.byteLength(w)<=256);
+    assert.match(w,/^close\(\) on unopened filehandle [^\x00-\x1f\x7f]{1,96} at -e line [1-9][0-9]{0,5}\.\n$/);
+  }
+  assert.equal(actual,13);
+  assert.throws(()=>assert.equal(actual,12),{code:'ERR_ASSERTION'});
+});
+
 const STAGED_DIRECTORY_FH_CORE_KEYS=['fileOpen','directoryOpen','directoryFhOpen','metadata','fileClose','directoryClose'];
 const STAGED_DIRECTORY_FH_HEALTHY_TRACE=[
   'acquire:file','acquire:directory','binmode:file',
@@ -4350,10 +6762,11 @@ function vendorResponses(hash=VENDOR_PIN) {
   return [vendorResponse('/SHASUMS256.txt',`${hash}  ${VENDOR_FILE}\n`),vendorResponse('/'+VENDOR_FILE,SYNTHETIC_VENDOR)];
 }
 function syntheticVendorSource() {
-  // Ordinary test only: substitute admitted pin IN MEMORY to exercise real
-  // checksum/byte/parser flow with coherent synthetic gzip, never vendor proof.
+  // Ordinary test only: replace the existing transport's exact policy site.
+  // A distinct staged-owner policy occurrence must retain its official pin.
   const source=readFileSync(BOOTSTRAP,'utf8');
-  return source.includes(VENDOR_PIN)?replaceOnce(source,VENDOR_PIN,SYNTHETIC_VENDOR_HASH):source;
+  const site=`my $pin='${VENDOR_PIN}';`;
+  return replaceOnce(source,site,`my $pin='${SYNTHETIC_VENDOR_HASH}';`);
 }
 test('system vendor transport retains actual raw gzip and independent checksum joins under synthetic pin only',()=>{
   const r=systemObject('vendor',{responses:vendorResponses(SYNTHETIC_VENDOR_HASH)},'',{sourceOverride:syntheticVendorSource()});

@@ -294,6 +294,525 @@ sub task6a_origin_consume_entry_protocol {
     return $diagnostic;
 }
 
+my $staged_plain_cell=sub {
+    my ($cell)=@_;
+    my $sv=B::svref_2object($cell);
+    task6a_origin_refuse() if $sv->FLAGS & 0x00f00000;
+    # No candidate value has been accessed yet. B object dispatch is on the
+    # installed introspection object, never on the candidate.
+    return $sv;
+};
+my $staged_scalar=sub {
+    my ($cell)=@_;
+    my $sv=$staged_plain_cell->($cell);
+    task6a_origin_refuse() if $sv->FLAGS & B::SVf_ROK();
+    task6a_origin_refuse() unless defined($$cell);
+    return $$cell;
+};
+my $staged_container=sub {
+    my ($cell,$kind)=@_;
+    my $sv=$staged_plain_cell->($cell);
+    task6a_origin_refuse() unless ref($sv) eq 'B::IV'
+        &&($sv->FLAGS & B::SVf_ROK());
+    my $rv=$sv->RV;
+    task6a_origin_refuse() unless ref($rv) eq $kind;
+    task6a_origin_refuse() if $rv->FLAGS & 0x00f00000;
+    my $magic=$rv->MAGIC;
+    task6a_origin_refuse() if defined($magic);
+    return $$cell;
+};
+my $staged_vector=sub {
+    my ($reference)=@_;
+    # reference is manufactured privately with \@vector. Inspect the original
+    # AV before length/index/iteration; taking its reference does not FETCH it.
+    my $av=B::svref_2object($reference);
+    task6a_origin_refuse() unless ref($av) eq 'B::AV';
+    task6a_origin_refuse() if $av->FLAGS & 0x00f00000;
+    my $magic=$av->MAGIC;
+    task6a_origin_refuse() if defined($magic);
+};
+my $staged_native_fh=sub {
+    my ($cell,$allow_empty)=@_;
+    my $sv=$staged_plain_cell->($cell);
+    unless($sv->FLAGS & B::SVf_ROK()) {
+        return 0 if $allow_empty&&!defined($$cell);
+        task6a_origin_refuse();
+    }
+    task6a_origin_refuse() unless ref($sv) eq 'B::IV';
+    my $gv=$sv->RV;
+    task6a_origin_refuse() unless ref($gv) eq 'B::GV';
+    task6a_origin_refuse() if $gv->FLAGS & 0x00f00000;
+    my $gv_magic=$gv->MAGIC;
+    task6a_origin_refuse() if defined($gv_magic);
+    my $io=$gv->IO;
+    task6a_origin_refuse() unless ref($io) eq 'B::IO';
+    # Ordinary native IO has SVs_OBJECT. Magic, not that bit, admits FILENO
+    # callbacks; the scalar and GV object bits were already rejected above.
+    task6a_origin_refuse() if $io->FLAGS & 0x00e00000;
+    my $io_magic=$io->MAGIC;
+    task6a_origin_refuse() if defined($io_magic);
+    return 1;
+};
+
+my $staged_admission;
+my $staged_snapshot;
+my $staged_phase='absent';
+my ($staged_invalid,$staged_uncertain,$staged_disposal_started)=(0,0,0);
+my (@staged_files,@staged_directories,@staged_originals,@staged_foreign,@staged_pending);
+my @staged_policy=(
+    ['archive-helper','source/task6a-origin-archive-v2.pm',
+        'da1fd458fcaba775be5ba09ef88157b5ee48dbda',0400],
+    ['native-helper','source/task6a-origin-native-v2.pm',
+        '59e1ae8de38cf2083a0294c55454083840eb47f1',0400],
+    ['map-helper','source/task6a-origin-map-v2.pm',
+        '9719bf4f3676b43b7858e3cabe3cee3e679120f8',0400],
+    ['entry','source/task6a-protected-origin-entry-v2.mjs',
+        'e53be63cdcdf286dc89adbec9770668b1fdb9cc7',0444],
+);
+my $staged_vendor_pin='ef28d8fab2c0e4314522d4bb1b7173270aa3937e93b92cb7de79c112ac1fa953';
+my $staged_keys=sub {
+    my ($hash,$literal)=@_;
+    task6a_origin_refuse() unless join(',',sort keys %$hash) eq $literal;
+};
+my $staged_bytes=sub {
+    my ($cell,$limit)=@_;
+    my $sv=$staged_plain_cell->($cell);
+    task6a_origin_refuse() unless ($sv->FLAGS & B::SVf_POK())
+        &&!($sv->FLAGS & B::SVf_ROK());
+    my $bytes=$staged_scalar->($cell);
+    task6a_origin_refuse() if utf8::is_utf8($bytes);
+    task6a_origin_refuse() unless length($bytes)>0&&length($bytes)<=$limit;
+    return $bytes;
+};
+my $staged_read_admission=sub {
+    my $admit=$staged_container->(\$staged_admission,'B::HV');
+    $staged_keys->($admit,'creator,selected,sources,vendor');
+    my $creator=$staged_container->(\($admit->{creator}),'B::HV');
+    $staged_keys->($creator,'creationIdentity,rootPath');
+    my $root=$staged_scalar->(\($creator->{rootPath}));
+    task6a_origin_refuse() unless !utf8::is_utf8($root)&&length($root)<=1024
+        &&$root =~ m{\A/private/tmp/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\z};
+    my $creation=$staged_container->(\($creator->{creationIdentity}),'B::AV');
+    task6a_origin_refuse() unless @$creation==13;
+    my @creation;
+    for my $index(0..12) {
+        my $cell=\($creation->[$index]);
+        my $sv=$staged_plain_cell->($cell);
+        task6a_origin_refuse() if $sv->FLAGS & (B::SVf_ROK()|B::SVf_POK());
+        task6a_origin_refuse() unless $sv->FLAGS & B::SVf_IOK();
+        my $value=$staged_scalar->($cell);
+        task6a_origin_refuse() unless $value>=0&&$value<=9223372036854775807;
+        push @creation,$value;
+    }
+    task6a_origin_refuse() unless Fcntl::S_ISDIR($creation[2])
+        &&$creation[4]==0&&$creation[5]==0;
+    my $sources=$staged_container->(\($admit->{sources}),'B::AV');
+    task6a_origin_refuse() unless @$sources==4;
+    my @refs=($admit,$creator,$creation,$sources);
+    my @values=($root,@creation);
+    my @bytes;
+    for my $index(0..3) {
+        my $row=$staged_container->(\($sources->[$index]),'B::HV');
+        $staged_keys->($row,'bytes,gitBlobSha,relativePath,role');
+        my $role=$staged_scalar->(\($row->{role}));
+        my $path=$staged_scalar->(\($row->{relativePath}));
+        my $sha=$staged_scalar->(\($row->{gitBlobSha}));
+        task6a_origin_refuse() unless $role eq $staged_policy[$index][0]
+            &&$path eq $staged_policy[$index][1]&&$sha eq $staged_policy[$index][2];
+        my $body=$staged_bytes->(\($row->{bytes}),2097152);
+        push @refs,$row;push @values,$role,$path,$sha,$body;push @bytes,$body;
+    }
+    my $vendor=$staged_container->(\($admit->{vendor}),'B::HV');
+    $staged_keys->($vendor,'bytes,filename');
+    my $filename=$staged_scalar->(\($vendor->{filename}));
+    task6a_origin_refuse() unless $filename eq 'node-v22.23.1-darwin-arm64.tar.gz';
+    my $archive=$staged_bytes->(\($vendor->{bytes}),134217728);
+    my $selected=$staged_container->(\($admit->{selected}),'B::HV');
+    $staged_keys->($selected,'archiveRef,bytes,memberName');
+    my $archive_ref=$staged_container->(\($selected->{archiveRef}),'B::HV');
+    task6a_origin_refuse() unless $archive_ref==$vendor;
+    my $member=$staged_scalar->(\($selected->{memberName}));
+    task6a_origin_refuse() unless $member eq 'node-v22.23.1-darwin-arm64/bin/node';
+    my $native=$staged_bytes->(\($selected->{bytes}),134217728);
+    push @refs,$vendor,$selected,$archive_ref;
+    push @values,$filename,$archive,$member,$native;
+    push @bytes,$archive,$native;
+    return {refs=>\@refs,values=>\@values,root=>$root,creation=>\@creation,bytes=>\@bytes};
+};
+my $staged_check_admission=sub {
+    my $now=$staged_read_admission->();
+    task6a_origin_refuse() unless defined($staged_snapshot)
+        &&@{$now->{refs}}==@{$staged_snapshot->{refs}}
+        &&@{$now->{values}}==@{$staged_snapshot->{values}};
+    for my $index(0..$#{$now->{refs}}) {
+        # A retained original may have been mutated after current admission
+        # replaced it. Validate both sides before any reference comparison.
+        my $kind=($index==2||$index==3)?'B::AV':'B::HV';
+        $staged_container->(\($staged_snapshot->{refs}[$index]),$kind);
+        task6a_origin_refuse() unless $now->{refs}[$index]==$staged_snapshot->{refs}[$index];
+    }
+    for my $index(0..$#{$now->{values}}) {
+        $staged_scalar->(\($staged_snapshot->{values}[$index]));
+        task6a_origin_refuse() unless $now->{values}[$index] eq $staged_snapshot->{values}[$index];
+    }
+};
+my $staged_freeze_admission=sub {
+    task6a_origin_refuse() if defined($staged_snapshot);
+    my $now=$staged_read_admission->();
+    for my $index(0..3) {
+        my $bytes=$now->{bytes}[$index];
+        task6a_origin_refuse() unless Digest::SHA::sha1_hex(
+            'blob '.length($bytes)."\0".$bytes) eq $staged_policy[$index][2];
+    }
+    task6a_origin_refuse() unless Digest::SHA::sha256_hex($now->{bytes}[4]) eq $staged_vendor_pin;
+    # Capture expectations once; later read_admission validates current values
+    # against these copies, never regenerating the record's expected hashes.
+    $staged_snapshot={refs=>[@{$now->{refs}}],values=>[@{$now->{values}}],
+        root=>$now->{root},creation=>[@{$now->{creation}}],files=>[]};
+    my @relative=(map {$_->[1]} @staged_policy);
+    push @relative,'vendor/node-v22.23.1-darwin-arm64.tar.gz','vendor/node';
+    my @modes=(map {$_->[3]} @staged_policy);
+    push @modes,0400,0555;
+    for my $index(0..5) {
+        my $bytes=$now->{bytes}[$index];
+        push @{$staged_snapshot->{files}},{path=>$now->{root}.'/'.$relative[$index],
+            mode=>$modes[$index],size=>length($bytes),sha256=>Digest::SHA::sha256_hex($bytes)};
+    }
+};
+
+my $staged_freeze_foreign=sub {
+    task6a_origin_refuse() if @staged_foreign;
+    my @bindings;
+    for my $records(\@parent_originals,\@file_ledger,\@directory_ledger) {
+        $staged_vector->($records);
+        for my $index(0..$#$records) {
+            my $cell=\($records->[$index]);
+            my $sv=$staged_plain_cell->($cell);
+            next unless defined($$cell);
+            my $row=$staged_container->($cell,'B::HV');
+            task6a_origin_refuse() unless exists($row->{fh});
+            my $binding=\($row->{fh});
+            my $present=$staged_native_fh->($binding,1);
+            push @bindings,$$binding if $present;
+        }
+    }
+    $staged_vector->(\@physical_owned_handles);
+    for my $index(0..$#physical_owned_handles) {
+        my $cell=\($physical_owned_handles[$index]);
+        $staged_native_fh->($cell,0);
+        push @bindings,$$cell;
+    }
+    for my $fh(@bindings) {
+        $staged_native_fh->(\$fh,0);
+        next if grep {$_->{fh}==$fh} @staged_foreign;
+        my $fd=CORE::fileno($fh);
+        push @staged_foreign,{fh=>$fh,fd=>$fd};
+    }
+};
+my $staged_seal=sub {
+    my ($cell)=@_;
+    my ($present,$fh,$fd);my $proven_alias=0;
+    my $classified=eval {
+        $present=$staged_native_fh->($cell,1);
+        if($present) {
+            # Copy/fileno only after the original-cell native shape guard.
+            $fh=$$cell;$fd=CORE::fileno($fh);
+            task6a_origin_refuse() unless defined($fd)&&$fd>=3;
+            for my $foreign(@staged_foreign) {
+                my $original=$foreign->{fh};
+                $staged_native_fh->(\$original,0);
+                my $live=CORE::fileno($original);
+                if($fh==$original||(defined($live)&&$live==$fd)) {
+                    $proven_alias=1;task6a_origin_refuse();
+                }
+                task6a_origin_refuse() if defined($live)&&defined($foreign->{fd})
+                    &&$live!=$foreign->{fd};
+            }
+            for my $sealed(@staged_originals) {
+                my ($original,$original_fd,$attempted,$closed)=$sealed->('binding');
+                $staged_native_fh->(\$original,0);
+                my $live=CORE::fileno($original);
+                if($fh==$original||(defined($live)&&$live==$fd)) {
+                    $proven_alias=1;task6a_origin_refuse();
+                }
+                task6a_origin_refuse() if defined($live)&&$live!=$original_fd;
+            }
+        }
+        1;
+    };
+    my $classification_error=$@;
+    unless($classified&&!length($classification_error)) {
+        # Incomplete classification is not a proven borrowed alias. Never
+        # independently close that uncertain pending boundary.
+        $staged_uncertain=1 unless $proven_alias;
+        task6a_origin_refuse();
+    }
+    return undef unless $present;
+    my ($attempted,$closed)=(0,0);
+    # The primitive is selected and captured now. No mutable record chooses
+    # the FH, disposal kind or primitive at cleanup time.
+    my $original_close=sub {close($fh)};
+    my $sealed=sub {
+        my ($op)=@_;
+        return ($fh,$fd,$attempted,$closed) if $op eq 'binding';
+        return $closed if $op eq 'closed';
+        task6a_origin_refuse() unless $op eq 'dispose'&&!$attempted;
+        $attempted=1;
+        my $safe=eval {
+            $staged_native_fh->(\$fh,0);
+            my $live=CORE::fileno($fh);
+            task6a_origin_refuse() unless defined($live)&&$live==$fd;
+            1;
+        };my $safety_error=$@;
+        return 0 unless $safe&&!length($safety_error);
+        my $ok=eval {$original_close->()};my $close_error=$@;
+        my $end;
+        my $inspected=eval {$staged_native_fh->(\$fh,0);$end=CORE::fileno($fh);1;};
+        my $inspection_error=$@;
+        $closed=1 if $ok&&!length($close_error)&&$inspected
+            &&!length($inspection_error)&&!defined($end);
+        return $closed;
+    };
+    # Register before any config/stat/hash/clock/ACL/trace operation.
+    push @staged_originals,$sealed;
+    return $sealed;
+};
+my $staged_dispose=sub {
+    return 0 if $staged_disposal_started;
+    $staged_disposal_started=1;
+    my $all=1;
+    for my $sealed(@staged_originals) {
+        my $ok=eval {$sealed->('dispose')};my $error=$@;
+        $all=0 unless $ok&&!length($error);
+    }
+    $staged_uncertain=1 unless $all;
+    return $all&&!$staged_uncertain;
+};
+my $staged_burn=sub {
+    $staged_invalid=1;$staged_phase='burned';
+    unless($staged_disposal_started) {
+        my $ok=eval {$staged_dispose->()};my $error=$@;
+        $staged_uncertain=1 unless $ok&&!length($error);
+    }
+    task6a_origin_refuse();
+};
+
+my @staged_record_checks;
+my $staged_guard_partial=sub {
+    task6a_origin_refuse() if $staged_invalid||$staged_uncertain||$staged_disposal_started;
+    $staged_vector->(\@staged_directories);$staged_vector->(\@staged_files);
+    $staged_vector->(\@staged_originals);$staged_vector->(\@staged_record_checks);
+};
+my $staged_configure=sub {
+    my ($fh,$directory)=@_;
+    $staged_native_fh->(\$fh,0);
+    my $flags=fcntl($fh,Fcntl::F_GETFL(),0);
+    task6a_origin_refuse() unless defined($flags)&&!ref($flags)
+        &&($flags & Fcntl::O_ACCMODE())==Fcntl::O_RDONLY();
+    task6a_origin_refuse() unless $directory||($flags & Fcntl::O_NONBLOCK());
+    my $before=fcntl($fh,Fcntl::F_GETFD(),0);
+    task6a_origin_refuse() unless defined($before)&&!ref($before)
+        &&($before & ~Fcntl::FD_CLOEXEC())==0;
+    my $set=fcntl($fh,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC());
+    task6a_origin_refuse() unless defined($set)&&$set;
+    my $after=fcntl($fh,Fcntl::F_GETFD(),0);
+    task6a_origin_refuse() unless defined($after)&&!ref($after)
+        &&$after==Fcntl::FD_CLOEXEC();
+    binmode($fh) or task6a_origin_refuse() unless $directory;
+};
+my $staged_acquire=sub {
+    my ($path,$flags)=@_;
+    my $pending;
+    # Retain the ORIGINAL cell before opening, including unknown/magical output
+    # boundaries. Dropping a last native reference must not become implicit
+    # disposal after classification failed. Never read this slot via a callback.
+    push @staged_pending,\$pending;
+    my $returned;
+    my $open_ok=eval {$returned=sysopen($pending,$path,$flags);1;};
+    my $open_error=$@;
+    # Preserve return/exception before any clock, trace or metadata callback.
+    # Classify the actual output even after false or an exposed assignment/throw.
+    my $sealed=$staged_seal->(\$pending);
+    $staged_plain_cell->(\$returned);
+    task6a_origin_refuse() unless $open_ok&&!length($open_error)
+        &&defined($returned)&&!ref($returned)&&$returned&&defined($sealed);
+    return $sealed;
+};
+my $staged_record=sub {
+    my ($sealed,$path,$identity,$hash,$directory)=@_;
+    my ($fh,$fd)=$sealed->('binding');
+    my @expected=@$identity;
+    my $original_identity=[@expected];
+    my $record={path=>$path,identity=>$original_identity,fh=>$fh};
+    $record->{sha256}=$hash unless $directory;
+    my $check=sub {
+        my ($cell)=@_;
+        my $now=$staged_container->($cell,'B::HV');
+        $staged_container->(\$record,'B::HV');
+        task6a_origin_refuse() unless $now==$record;
+        $staged_keys->($now,$directory?'fh,identity,path':'fh,identity,path,sha256');
+        my $actual_path=$staged_scalar->(\($now->{path}));
+        task6a_origin_refuse() unless $actual_path eq $path;
+        unless($directory) {
+            my $actual_hash=$staged_scalar->(\($now->{sha256}));
+            task6a_origin_refuse() unless $actual_hash eq $hash;
+        }
+        $staged_native_fh->(\($now->{fh}),0);
+        $staged_native_fh->(\$fh,0);
+        task6a_origin_refuse() unless $now->{fh}==$fh
+            &&defined(CORE::fileno($fh))&&CORE::fileno($fh)==$fd;
+        my $tuple=$staged_container->(\($now->{identity}),'B::AV');
+        $staged_container->(\$original_identity,'B::AV');
+        task6a_origin_refuse() unless $tuple==$original_identity&&@$tuple==13;
+        for my $index(0..12) {
+            my $tuple_cell=\($tuple->[$index]);
+            my $sv=$staged_plain_cell->($tuple_cell);
+            task6a_origin_refuse() unless ($sv->FLAGS & B::SVf_IOK())
+                &&!($sv->FLAGS & (B::SVf_ROK()|B::SVf_POK()));
+            my $value=$staged_scalar->($tuple_cell);
+            task6a_origin_refuse() unless $value==$expected[$index];
+        }
+        # Validators get a fresh immutable-expectation view, not mutable
+        # admission/record fields that a later port callback could change.
+        my $view={path=>$path,identity=>[@expected],fh=>$fh};
+        $view->{sha256}=$hash unless $directory;
+        return $view;
+    };
+    push @staged_record_checks,$check;
+    return $record;
+};
+my $staged_require_live=sub {
+    task6a_origin_refuse() if $staged_invalid||$staged_uncertain||$staged_disposal_started;
+    $staged_vector->(\@staged_directories);$staged_vector->(\@staged_files);
+    $staged_vector->(\@staged_originals);$staged_vector->(\@staged_record_checks);
+    task6a_origin_refuse() unless task6a_origin_helpers_settled();
+    $staged_check_admission->();
+    task6a_origin_refuse() unless @staged_directories==6&&@staged_files==6
+        &&@staged_originals==12&&@staged_record_checks==12;
+    for my $index(0..5) {
+        $staged_record_checks[$index]->(\($staged_directories[$index]));
+        $staged_record_checks[$index+6]->(\($staged_files[$index]));
+    }
+};
+my $staged_epoch=sub {
+    $staged_require_live->();
+    for my $index(0..5) {
+        $staged_require_live->();
+        my $view=$staged_record_checks[$index]->(\($staged_directories[$index]));
+        task6a_origin_check_directory($view);
+    }
+    for my $index(0..5) {
+        $staged_require_live->();
+        my $view=$staged_record_checks[$index+6]->(\($staged_files[$index]));
+        task6a_origin_check_held_file($view);
+        $staged_require_live->();
+        $view=$staged_record_checks[$index+6]->(\($staged_files[$index]));
+        task6a_origin_acl_free($view->{path});
+        $staged_require_live->();
+        $view=$staged_record_checks[$index+6]->(\($staged_files[$index]));
+        task6a_origin_check_held_file($view);
+    }
+    for my $index(0..5) {
+        $staged_require_live->();
+        my $view=$staged_record_checks[$index]->(\($staged_directories[$index]));
+        task6a_origin_check_directory($view);
+    }
+    $staged_require_live->();
+};
+my $staged_diagnostic=sub {
+    return {scope=>'staged-source-vendor-custody-diagnostic-only',
+        productionAuthority=>JSON::PP::false,fileCount=>6,directoryCount=>6};
+};
+sub task6a_origin_hold_staged_custody {
+    my $ok=eval {
+        task6a_origin_refuse() unless @_==0&&$staged_phase eq 'absent'
+            &&!$staged_invalid&&!$staged_disposal_started;
+        $staged_phase='capturing';
+        # Boundary guard1: hold entry; do not renew bootstrap_deadline.
+        task6a_origin_refuse() unless task6a_origin_now()<$bootstrap_deadline;
+        task6a_origin_refuse() unless task6a_origin_helpers_settled();
+        $staged_freeze_admission->();$staged_freeze_foreign->();
+        my $root=$staged_snapshot->{root};
+        my @paths=('/','/private','/private/tmp',$root,$root.'/source',$root.'/vendor');
+        for my $index(0..5) {
+            $staged_guard_partial->();
+            my $path=$paths[$index];my @before=lstat($path);
+            task6a_origin_refuse() unless @before==13&&Fcntl::S_ISDIR($before[2])
+                &&$before[4]==0&&$before[5]==0;
+            my $mode=$before[2]&07777;
+            task6a_origin_refuse() unless $index==2?$mode==01777
+                :$index==3?$mode==0711:$index>=4?$mode==0555
+                :($mode==0755||$mode==0711||$mode==0700||$mode==0555);
+            if($index==3) {
+                for my $field(0,1,4,5) {
+                    task6a_origin_refuse() unless $before[$field]==$staged_snapshot->{creation}[$field];
+                }
+            }
+            my $sealed=$staged_acquire->($path,
+                Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_DIRECTORY());
+            my ($fh)=$sealed->('binding');$staged_configure->($fh,1);
+            $staged_guard_partial->();
+            my $record=$staged_record->($sealed,$path,\@before,undef,1);
+            $staged_guard_partial->();
+            push @staged_directories,$record;
+            $staged_guard_partial->();
+            my $view=$staged_record_checks[$index]->(\($staged_directories[$index]));
+            task6a_origin_check_directory($view);
+            $staged_guard_partial->();
+        }
+        for my $expected(@{$staged_snapshot->{files}}) {
+            $staged_guard_partial->();
+            my $path=$expected->{path};my @before=lstat($path);
+            task6a_origin_refuse() unless @before==13&&Fcntl::S_ISREG($before[2])
+                &&($before[2]&07777)==$expected->{mode}&&$before[3]==1
+                &&$before[4]==0&&$before[5]==0&&$before[7]==$expected->{size};
+            my $sealed=$staged_acquire->($path,
+                Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK());
+            my ($fh)=$sealed->('binding');$staged_configure->($fh,0);
+            $staged_guard_partial->();
+            my $record=$staged_record->($sealed,$path,\@before,$expected->{sha256},0);
+            $staged_guard_partial->();
+            push @staged_files,$record;
+            $staged_guard_partial->();
+            my $index=$#staged_files;
+            my $view=$staged_record_checks[$index+6]->(\($staged_files[$index]));
+            task6a_origin_check_held_file($view);
+            $staged_guard_partial->();
+        }
+        $staged_epoch->();
+        # Boundary guard2: hold completion, after actual helper settlement.
+        task6a_origin_refuse() unless task6a_origin_now()<$bootstrap_deadline;
+        $staged_require_live->();$staged_phase='active';1;
+    };my $primary=$@;
+    $staged_burn->() unless $ok&&!length($primary);
+    return $staged_diagnostic->();
+}
+sub task6a_origin_recheck_staged_custody {
+    my $ok=eval {
+        task6a_origin_refuse() unless @_==0&&$staged_phase eq 'active';
+        $staged_require_live->();
+        # Boundary guard3: recheck entry.
+        task6a_origin_refuse() unless task6a_origin_now()<$bootstrap_deadline;
+        $staged_epoch->();
+        # Boundary guard4: recheck completion.
+        task6a_origin_refuse() unless task6a_origin_now()<$bootstrap_deadline;
+        $staged_require_live->();1;
+    };my $primary=$@;
+    $staged_burn->() unless $ok&&!length($primary);
+    return $staged_diagnostic->();
+}
+sub task6a_origin_release_staged_custody {
+    # No validity/admission/helper/deadline operation in release.
+    unless(@_==0&&$staged_phase eq 'active'&&!$staged_invalid
+        &&!$staged_uncertain&&!$staged_disposal_started) {$staged_burn->();}
+    $staged_phase='released';
+    my $ok=eval {$staged_dispose->()};my $primary=$@;
+    $staged_burn->() unless $ok&&!length($primary)&&@staged_originals==12
+        &&!grep {!$_->('closed')} @staged_originals;
+    my $diagnostic=$staged_diagnostic->();$diagnostic->{handlesClosed}=12;
+    return $diagnostic;
+}
+
 sub task6a_origin_helpers_settled {
     task6a_origin_refuse() unless @_==0;
     return JSON::PP::false if $helper_lifecycle_burned;
