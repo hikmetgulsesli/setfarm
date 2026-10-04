@@ -15,11 +15,204 @@
 - Root sole writer; preserve all old worktrees/branches, failed fixtures and dirty19.
 - Initial owner admission is explicit and independent; generic rootcopy/hash/JSON is not origin.
 - Zero runtime caller selection; fixed system tools/source policy/GitHub/official Node routes.
-- Fix first Perl BEGIN @INC to exactly the two SIP5.34 roots before imports; scrub external env and use -f. No default Library/Network/Updates/Extras modules.
+- Actual entry first refuses with zero modules; declaration-only memory tests retain exactly the two ordered SIP5.34 roots before imports, scrub external env and use -f. No default Library/Network/Updates/Extras modules or production cold-gate opening.
 - Compressed128MiB/expanded512MiB/members20000/selectedNode128MiB bounds; no unrelated archive extraction, root Node, npm, Git or generated installer execution.
 - No source/vendor download or privileged effect until separately reviewed exact delivered package and invocation; no unmerged feature called delivered.
 - Private diagnostics only, productionAuthorityfalse. No compiler/fence/genesis/32/33/admission/live-selector effect or guard bypass.
 - Actual parent PID/private pipes/definite reap, not child JSON, determines lifetime and cleanup. Uncertainty preserves exact fresh fixture.
+
+## Cold-entry root fix: bounded implementation plan, 2026-10-04
+
+**Goal:** Make the already closed real bootstrap refuse before its first
+candidate module resolution; do not manufacture a positive P2 receipt.
+
+**Causal refinement:** Current first-BEGIN sets `@INC` but imports execute before
+final-main refusal. The actual entry must not load the yet-unadmitted PM/XS
+closure merely to refuse. Downstream manifest/capsule checks cannot fix this.
+
+**File Map:** Modify only bootstrap, its existing test, named spec and this plan.
+No entry/helper/map/observer/package/lock/source-policy/creator/launcher changes.
+Root alone writes/delivers; independent agents read/review. Preserve every old
+root/build/cache/branch and the original two files. Start from delivered
+c886bebd49b2961359d7289515cd540e0296f259 in the independent clone
+`.worktrees/setfarm-cold-entry-refusal-20261005-v1`, branch
+`fix/task6a-cold-entry-refusal-v2`. No installs are needed for these builtin
+Node/system-Perl tests. Build preparation/delivery is a separate reviewed gate.
+
+**Interfaces:** No new production callable interface. Real-file invocation is
+fixed `/usr/bin/perl -f scripts/task6a-protected-origin-bootstrap-v2.pl` with
+zero extra arguments, ordinary UID and `{PATH:/usr/bin:/bin,LANG:C,LC_ALL:C}`.
+It emits canonical refusal and exits2. Existing `systemObject` retains its
+signature and memory-only declaration role; it additionally removes the unique
+prefix cold block before removing the unique final main call.
+
+Steps1–5 below retain the completed pre-execution recipe, including its historical
+test-data-only and expected-RED wording. The execution receipt records actual
+installed source and outcomes; do not replay those closed invocations. Step6
+remains prospective until its delivery evidence is recorded externally.
+
+- [x] **Step 1: Add the behavioral RED test before changing production.**
+
+In the existing test, add the literal cold block and probe below. The block is
+test data at this step, not installed into production. Put the function with
+the other test helpers and the test inside the existing ordinary-host branch.
+
+```javascript
+const COLD_ENTRY_GUARD=String.raw`# Cold entry stays closed before any candidate PM/XS import.
+BEGIN {
+    CORE::print STDERR "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+    CORE::exit(2);
+}
+`;
+function coldEntryProbe(source) {
+  assert.ok(ordinaryHost(),'cold entry probe requires ordinary macOS UID');
+  const candidate=replaceOnce(source,
+    "    @INC=('/System/Library/Perl/5.34/darwin-thread-multi-2level',\n        '/System/Library/Perl/5.34');",
+    String.raw`    @INC=(sub {CORE::print STDOUT "TEST_FORBIDDEN_IMPORT\n";
+        CORE::die "TEST_FORBIDDEN_IMPORT\n";});`);
+  assert.ok(Buffer.byteLength(candidate)<=131072,'cold probe source bound');
+  const r=spawnSync('/usr/bin/perl',['-f','-e',
+    'binmode STDIN; local $/; my $source=<STDIN>; eval $source; if($@){print STDERR $@;exit 64;}exit 0;'],{
+    input:candidate,cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+    timeout:3000,maxBuffer:65536,
+  });
+  assert.equal(r.error,undefined);assert.equal(r.signal,null);return r;
+}
+test('cold bootstrap refuses before first module resolution',()=>{
+  const r=coldEntryProbe(readFileSync(BOOTSTRAP,'utf8'));
+  assert.equal(r.status,2,'entry reached candidate imports before refusal: '+r.stdout+r.stderr);
+  assert.equal(r.stdout.length,0);
+  assert.equal(r.stderr.toString(),'TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n');
+});
+```
+
+- [x] **Step 2: Run the one RED and read its complete natural terminal.**
+
+```bash
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^cold bootstrap refuses before first module resolution$' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Expected: assertion failure, actual64 versus required2, and actual forbidden
+module-resolution witness. An anchor/compile/timeout error is not the RED.
+
+- [x] **Step 3: Install the minimal production cold block, then adapt declarations.**
+
+Prefix the bootstrap with exactly `COLD_ENTRY_GUARD` above. In `systemObject`,
+replace the existing single source/main-removal assignment with:
+
+```javascript
+  const original=sourceOverride??readFileSync(BOOTSTRAP,'utf8');
+  assert.ok(original.startsWith(COLD_ENTRY_GUARD),'cold entry must be source prefix');
+  let source=replaceOnce(original,COLD_ENTRY_GUARD,'');
+  source=replaceOnce(source,'\ntask6a_origin_main();\n','\n');
+```
+
+The real-disk default refusal test now loops over `[]` and `['-c']` before the
+fixed filename and requires exact `r.status===2` instead of merely nonzero; its
+exact stdout/stderr assertions remain unchanged. No other
+declarations, ports, predicates, queues or positive diagnostic expectations change.
+
+- [x] **Step 4: Add and execute two semantic mutation controls.**
+
+```javascript
+for(const mode of ['omitted','after-first-import'])
+  test('cold bootstrap exposes '+mode+' guard mutant',()=>{
+    let source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),COLD_ENTRY_GUARD,'');
+    if(mode==='after-first-import')
+      source=replaceOnce(source,'use strict;\n','use strict;\n'+COLD_ENTRY_GUARD);
+    const r=coldEntryProbe(source);
+    assert.equal(r.status,64);
+    assert.equal(r.stdout.toString(),'TEST_FORBIDDEN_IMPORT\n');
+    assert.match(r.stderr.toString(),/^TEST_FORBIDDEN_IMPORT\n/);
+    assert.doesNotMatch(r.stderr.toString(),/TASK6A_ORIGIN_BOOTSTRAP_REFUSED/);
+  });
+```
+
+Run the Step2 command with pattern
+`^(cold bootstrap |ordinary system supervisor refuses before source acquisition or private staging$)`.
+Expected four PASS, zero failures/skips; original entry never resolves a candidate
+module and both coherent mutants demonstrably do. No mutation writes a file.
+
+Add one separate compile-only declaration test; it removes ONLY the prefix
+guard, keeps final main, and uses STDIN without writing a source copy:
+
+```javascript
+test('cold bootstrap declarations retain separate syntax verification',()=>{
+  const original=readFileSync(BOOTSTRAP,'utf8');
+  assert.ok(original.startsWith(COLD_ENTRY_GUARD));
+  const source=replaceOnce(original,COLD_ENTRY_GUARD,'');
+  const r=spawnSync('/usr/bin/perl',['-f','-c'],{
+    input:source,cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+    timeout:3000,maxBuffer:65536,
+  });
+  assert.equal(r.error,undefined);assert.equal(r.signal,null);assert.equal(r.status,0);
+  assert.equal(r.stdout.length,0);assert.equal(r.stderr.toString(),'- syntax OK\n');
+});
+```
+
+The focused pattern above now requires five PASS. This ordinary compile-only
+check can import the fixed SIP modules but does not run top-level clock/main or
+runtime external operations. It does not admit privileged module/native trust.
+
+- [x] **Step 5: Proportionally verify the complete ordinary declaration suite.**
+
+```bash
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+git diff --check
+```
+
+Read every output chunk through natural exit/close; zero failures/skips required.
+This is a new source epoch, not replay of prior closed sessions. Ordinary existing
+owned-child/synthetic external ports remain the same; no real native observer,
+privileged invocation, SQL, services or private ALL. Syntax-check the Node test
+with fixed Node `--check`. The actual disk Perl `-c` intentionally refuses;
+the separate guard-stripped STDIN `-c` test and full ordinary memory-only suite
+verify declaration compilation, not the disk refusal exit.
+
+- [ ] **Step 6: Independent exact-diff review, normal PR and clean-main build.**
+
+Use requesting-code-review and verification-before-completion. Review the four
+files against c886, source hashes, actual RED/GREEN/raw complete terminals and
+memory-only removal; resolve C/I findings before delivery. Root alone stages the
+four mapped files, makes a conventional fix commit, pushes without force and
+opens a normal PR to main. Request existing review integrations once, read actual
+feedback/security checks and use SHA-bound normal merge with no admin/delete.
+Preserve the branch/clone. Freeze delivered source; separately admit a fresh
+clean-main build recipe with owned cache/tmp/empty-env directories and unchanged
+source/dependency/npm/retention guards before executing it. Do not reuse old
+managed sessions, invoke native/private ALL or select a service. Host verification
+records HTTP3080/18789 and3333 truth, original-two hashes and preservation.
+Completion here means only cold-entry fix delivery, never P2/native/cutover.
+
+### Cold-entry execution receipt, 2026-10-04 22:05 UTC
+
+Executed spec589cf50e and pre-execution planc7034ecf were independently reviewed
+C0/I0/M0 before effects. Baseline5637df closed0/1PASS. ONE actual old-source
+RED e6acf3 closed1: assertion64!=2 and actual TEST_FORBIDDEN_IMPORT stdout/stderr;
+source434a6a7c/testd8268bf2, complete output read. Pre/postb44c0e/d808b8 full2093
+inputs unchanged. No anchor, timeout or setup failure was credited as the RED.
+Minimal source15dce34f51dc2ffdf7c07b2890c6c53d96791d55bef6360ffd0f0e2c61d051f1
+and test6dafb2cb9df8cabe22be73dea4765b5fc62bacc461f4351597c43d4f4395e369
+passed independent actual-delta reviews. ONE focus e9ce2f closed0:5PASS/zero
+FAIL/CANCEL/SKIP/TODO112.099792ms, including real disk normal/-c refusal,
+separate guard-stripped syntax and actual omitted/late import controls.
+
+ONE unfiltered ordinary suite cdf10b/session92132 -> natural33d0d3 CLOSED0:
+1393PASS/zeroFAIL/CANCEL/SKIP/TODO115955.504833ms. All four raw chunks retained
+before rendering; complete121544UTF8B/118740characters/1403splitlines bind SHA256
+4045f2aff5a1c766bc59f7b59e6ae7bb7dd08258aae5a17518a07192a17da1fb.
+All1393pass lines/8footer lines and the single existing actual FD-rebinding
+diagnostic were individually classified; zero unknown/truncation markers.
+Initial read-only analyzer rejected an assumed8 informational-line count because
+the existing diagnostic makes9; corrected classification, not a test failure or
+test replay. Rootpostb7eee7 at22:04:41 C0 matches full2093/70062057B/physicalb3bbdd,
+source/test/tools exact and no deps/dist/.setfarm/environment files.
+Nodechecka05cc6/diff460d44 C0; versiona9c77d2.3.79/Englishc047c31931/pathc6bc89966
+C0. No protected invocation/native-observer/privateALL/DB/live-service effect or
+native qualification. Ordinary module compilation may load SIP XS code.
+NOREPOLL92132/NOREPLAY.
+This receipt changes only plan progress/evidence, not the executed recipe.
+Step6 review/PR/clean-main-build/host delivery remains open until actually proven.
 
 ## File Map and interfaces
 

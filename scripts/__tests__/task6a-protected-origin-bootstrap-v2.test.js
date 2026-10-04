@@ -14,6 +14,12 @@ const MAP_FIXTURE=new URL('./fixtures/task6a-origin-vmmap-interleaved-v2.txt',im
 const ENTRY=new URL('../task6a-protected-origin-entry-v2.mjs',import.meta.url);
 const BOOTSTRAP=new URL('../task6a-protected-origin-bootstrap-v2.pl',import.meta.url);
 const RECON=new URL('../task6a-origin-observer-recon-v2.mjs',import.meta.url);
+const COLD_ENTRY_GUARD=String.raw`# Cold entry stays closed before any candidate PM/XS import.
+BEGIN {
+    CORE::print STDERR "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+    CORE::exit(2);
+}
+`;
 const BODY=Buffer.from('literal selected bytes');
 function ordinaryHost() {
   return process.platform==='darwin'&&typeof process.getuid==='function'&&typeof process.geteuid==='function'
@@ -80,6 +86,20 @@ function replaceOnce(source,from,to) {
   // Memory-copy Perl is literal bytes: JS replacement tokens such as $$ must
   // not silently turn scalar-reference dereferences into truthy references.
   return source.replace(from,()=>to);
+}
+function coldEntryProbe(source) {
+  assert.ok(ordinaryHost(),'cold entry probe requires ordinary macOS UID');
+  const candidate=replaceOnce(source,
+    "    @INC=('/System/Library/Perl/5.34/darwin-thread-multi-2level',\n        '/System/Library/Perl/5.34');",
+    String.raw`    @INC=(sub {CORE::print STDOUT "TEST_FORBIDDEN_IMPORT\n";
+        CORE::die "TEST_FORBIDDEN_IMPORT\n";});`);
+  assert.ok(Buffer.byteLength(candidate)<=131072,'cold probe source bound');
+  const r=spawnSync('/usr/bin/perl',['-f','-e',
+    'binmode STDIN; local $/; my $source=<STDIN>; eval $source; if($@){print STDERR $@;exit 64;}exit 0;'],{
+    input:candidate,cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+    timeout:3000,maxBuffer:65536,
+  });
+  assert.equal(r.error,undefined);assert.equal(r.signal,null);return r;
 }
 function command(kind,name,{offset=kind===0xe?12:24}={}) {
   const size=Math.ceil((offset+Buffer.byteLength(name)+1)/8)*8;
@@ -3124,8 +3144,12 @@ function systemObject(kind,record,expected,{sourceOverride}={}) {
   assert.ok(ordinaryHost(),'mutable test declarations require an ordinary macOS real/effective UID');
   assert.ok(existsSync(BOOTSTRAP),'system supervisor implementation missing');
   // Load only declarations in the ordinary test process. No production test
-  // options/entry points: remove the sole final main call in memory, not on disk.
-  let source=replaceOnce(sourceOverride??readFileSync(BOOTSTRAP,'utf8'),'\ntask6a_origin_main();\n','\n');
+  // options/entry points: remove only the unique cold prefix and sole final
+  // main call in memory, never on disk.
+  const original=sourceOverride??readFileSync(BOOTSTRAP,'utf8');
+  assert.ok(original.startsWith(COLD_ENTRY_GUARD),'cold entry must be source prefix');
+  let source=replaceOnce(original,COLD_ENTRY_GUARD,'');
+  source=replaceOnce(source,'\ntask6a_origin_main();\n','\n');
   if(kind==='staged-custody') {
     source=replaceOnce(source,'exec {$tool} $tool,@$args;',
       'CORE::GLOBAL::exec($tool,$tool,@$args);');
@@ -6521,11 +6545,41 @@ test('private entry lifetime deadline does not renew after a valid challenge',{t
   assert.equal(r.code,2);assert.equal(r.signal,null);assert.ok(elapsed>=19500&&elapsed<24000,`fixed deadline elapsed ${elapsed}`);
   assert.equal(r.err,'TASK6A_ORIGIN_ENTRY_REFUSED\n');
 });
+test('cold bootstrap refuses before first module resolution',()=>{
+  const r=coldEntryProbe(readFileSync(BOOTSTRAP,'utf8'));
+  assert.equal(r.status,2,'entry reached candidate imports before refusal: '+r.stdout+r.stderr);
+  assert.equal(r.stdout.length,0);
+  assert.equal(r.stderr.toString(),'TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n');
+});
+for(const mode of ['omitted','after-first-import'])
+  test('cold bootstrap exposes '+mode+' guard mutant',()=>{
+    let source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),COLD_ENTRY_GUARD,'');
+    if(mode==='after-first-import')
+      source=replaceOnce(source,'use strict;\n','use strict;\n'+COLD_ENTRY_GUARD);
+    const r=coldEntryProbe(source);
+    assert.equal(r.status,64);
+    assert.equal(r.stdout.toString(),'TEST_FORBIDDEN_IMPORT\n');
+    assert.match(r.stderr.toString(),/^TEST_FORBIDDEN_IMPORT\n/);
+    assert.doesNotMatch(r.stderr.toString(),/TASK6A_ORIGIN_BOOTSTRAP_REFUSED/);
+  });
+test('cold bootstrap declarations retain separate syntax verification',()=>{
+  const original=readFileSync(BOOTSTRAP,'utf8');
+  assert.ok(original.startsWith(COLD_ENTRY_GUARD));
+  const source=replaceOnce(original,COLD_ENTRY_GUARD,'');
+  const r=spawnSync('/usr/bin/perl',['-f','-c'],{
+    input:source,cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+    timeout:3000,maxBuffer:65536,
+  });
+  assert.equal(r.error,undefined);assert.equal(r.signal,null);assert.equal(r.status,0);
+  assert.equal(r.stdout.length,0);assert.equal(r.stderr.toString(),'- syntax OK\n');
+});
 test('ordinary system supervisor refuses before source acquisition or private staging',()=>{
   assert.ok(existsSync(BOOTSTRAP),'system supervisor implementation missing');
-  const r=spawnSync('/usr/bin/perl',['-f',fileURLToPath(BOOTSTRAP)],{cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},timeout:3000,maxBuffer:65536});
-  assert.equal(r.error,undefined);assert.equal(r.signal,null);assert.notEqual(r.status,0);
-  assert.equal(r.stdout.length,0);assert.equal(r.stderr.toString(),'TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n');
+  for(const flags of [[],['-c']]) {
+    const r=spawnSync('/usr/bin/perl',['-f',...flags,fileURLToPath(BOOTSTRAP)],{cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},timeout:3000,maxBuffer:65536});
+    assert.equal(r.error,undefined);assert.equal(r.signal,null);assert.equal(r.status,2);
+    assert.equal(r.stdout.length,0);assert.equal(r.stderr.toString(),'TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n');
+  }
 });
 test('ordinary observer exploration refuses caller PID selection before any child effects',()=>{
   assert.ok(existsSync(RECON),'owned observer exploration implementation missing');
