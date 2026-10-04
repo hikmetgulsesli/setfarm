@@ -8,6 +8,54 @@ witness, continuous DB/OS writer exclusion, genesis or migration32/33. Preserve
 all V1 stores, retained worktrees, dirty19 and unconditional V2 admission refusal.
 Root is the sole writer and delivery owner; independent reviewers are read-only.
 
+## Cold-entry refusal before candidate imports
+
+Current ordinary delivery does not admit protected execution. The previous
+final-main refusal still allowed the preceding `use` statements to execute B,
+JSON, Encode and their transitive XS code. Move the negative boundary to the
+first compile-time action: an unconditional `BEGIN` uses only `CORE::print`
+to emit `TASK6A_ORIGIN_BOOTSTRAP_REFUSED` and one LF on STDERR, then
+`CORE::exit(2)`. It precedes the existing ordered SIP-root assignment and every
+module import. It does not call a later declaration or inspect UID, arguments,
+environment, a receipt, a callback or a mutable admission. Failure to write
+STDERR still cannot permit imports: exit remains unconditional.
+
+This is a fail-closed root fix, not a new trust verifier or execution gate that
+can be opened. No privileged invocation, native observer, protected installation,
+source/vendor download, credential change or service cutover is authorized.
+The existing final main refusal and all declaration policies remain unchanged.
+An ordinary graph verifier after imports cannot establish initial interpreter
+trust; full pre-interpreter owner/native admission remains an independent gate.
+"Zero modules" here means no bootstrap module import under the fixed scrubbed
+invocation. It does not authenticate interpreter/dyld startup or caller-preloaded
+code.
+
+Use the existing four-file map only: bootstrap, its test, this spec and its plan.
+The ordinary `systemObject` harness checks that the exact cold block is the
+source prefix, removes that unique block and the sole final main call ONLY in
+memory, then applies the existing finite external ports. No on-disk opening,
+production initializer, export, test argument or environment switch is added.
+The historical "remove only final main" harness requirements below are amended
+by this narrowly specified additional memory-only removal.
+
+Regression evidence must execute the actual disk entry with system Perl under
+the existing ordinary macOS/scrubbed-environment scope and require exit2, no
+stdout and exact canonical stderr. A separate memory-copy probe changes only
+the existing SIP-root assignment into an `@INC` resolution hook that records
+`TEST_FORBIDDEN_IMPORT` and throws before loading a module. Keep the actual cold
+block untouched. The real entry must exit before that hook is called. Removing
+the cold block or moving it after the first `use strict` must reach the forbidden
+hook in actual Perl evaluation; compile/anchor/transport failures are not
+semantic evidence. The probe has no imports, file writes, child helper, signal,
+native observation or positive origin output. Existing declaration tests still
+compile and exercise the complete memory-only source after the two removals.
+Actual `perl -c` on the disk entry is deliberately refused, not a syntax pass.
+Separately feed the exact source with only the cold block removed to fixed
+ordinary `/usr/bin/perl -f -c` on STDIN, require exit0 and exact syntax-success
+stderr. Keep final main present: syntax mode does not execute it. This separate
+ordinary compile-only invocation may load the fixed SIP modules; it supplies no
+privileged trust or origin evidence.
+
 The initial trust edge is an explicitly admitted trusted-owner invocation of
 exact independently reviewed **delivered** bootstrap program bytes using fixed
 Apple system tools and a scrubbed environment. It is not a sourcepath argument,
@@ -280,7 +328,8 @@ shutdown-only budgets remain unchanged; no renewed origin validity.
 
 ### Ordinary real-consumer harness and mutation requirements
 
-Keep `systemObject` and remove only the sole final main call in memory. Before
+Keep `systemObject` and remove the uniquely anchored cold-entry block and the
+sole final main call only in memory, as specified above. Before
 actual source eval install finite external clock/sysopen/stat/lstat/binmode/fcntl/
 readiness/sysread/syswrite/close/waitpid/status/signal/sleep ports; preserve actual
 clock validator, nonce/FSM/deadline/entropy checks, poll and shutdown. Synthetic
@@ -347,7 +396,8 @@ setter, caller root/path/hash/receipt/callback or returned handle. A future,
 separately admitted publisher must privately supply its actual exclusively created
 root identity and authentic source/archive/selected-member byte joins. A copied
 diagnostic cannot supply this record. Ordinary tests may initialize lexicals only
-inside a uniquely anchored memory copy, removing only the sole final main call.
+inside a uniquely anchored memory copy, removing the cold-entry block and the
+sole final main call only in memory, as specified above.
 No test initializer or effect selector is added to the production file.
 
 Three zero-argument operations are proposed:
