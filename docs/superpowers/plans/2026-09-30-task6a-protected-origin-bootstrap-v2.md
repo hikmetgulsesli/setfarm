@@ -21,15 +21,15 @@ File Map:
 
 ### N1: Reviewed source contract and test-support RED
 
-- [ ] Independently review exact spec/plan and causal File Map; root self-review
+- [x] Independently review exact spec/plan and causal File Map; root self-review
   rejects any positive authority, ambiguous after-exit audit or caller selection.
-- [ ] Stage/commit only these reviewed docs on the new isolated ordinary branch.
-- [ ] Write the first behavior test for actual compiled CLI refusal of an extra
+- [x] Stage/commit only these reviewed docs on the new isolated ordinary branch.
+- [x] Write the first behavior test for actual compiled CLI refusal of an extra
   argument, exact exit2/empty stdout/canonical stderr and no entry-start witness.
   Derive literal expectations independently; do not grep C source.
   A missing new C program yields an unavailable test-support result before
   compiler execution; it is not a semantic native/kernel witness.
-- [ ] Execute this one test and capture expected failing assertion before C code.
+- [x] Execute this one test and capture expected failing assertion before C code.
   Label it test-support RED, never P2/native RED.
 
 First consumer expectation:
@@ -43,6 +43,29 @@ assert.equal(actual.entryStarted, false);
 invokeOwnedProbe is test-only support: read the fixed C source, return unavailable
 when absent, otherwise use only the separately admitted compiler/owned fixture.
 It never supplies a public production PID/path/callback.
+
+N1 actual receipt (do not replay): docs commit90247896; test-support RED555c47
+naturally exit1, source-unavailable/null versus required2, no compiler/native
+effect. Minimal C67897663 only unconditionally prints refusal and returns2;
+it does not yet discriminate argc/UID or own a child/NAME right. Strict TDD
+ruling: implement only this refusal until further real behavior tests fail.
+
+Reviewed test77705235 uses fresh private same-source fixture, separately
+calibrated identical startup-witness entry bytes, fixed held tools/SDK settings/
+libSystem stub, separate no-default-config object/link recipes, explicit linker
+`-Z`/absolute stub, natural exit+close/both EOF and ordered original/cleanup
+failures. No auto-kill or hard wall-clock guarantee. All fixture artifacts stay.
+Root fresh534571/bb7fb2 matched source/tools/originals; memory59% free, throttle0.
+One bf1312/session32440 → da5447 naturally CLOSED0: 1PASS, zero other statuses,
+1415.473417ms; compile/link0, witness2, original C2/canonical refusal/no entry
+marker. Original descriptors checked and closed before the test could pass.
+Ordinary fixture `/private/tmp/setfarm-native-name-test.EdrKBA` object70fc8c2d/
+binaryb9b27940; calibration `/private/tmp/setfarm-native-name-witness.HngQYi`.
+This is actual ordinary refusal evidence, NOT NAME/protected/P2 acceptance.
+Independent post-run8c0365/4005bc0/b97b6a0 C0/I0/M0 confirmed exact artifact
+bytes, no refusal-fixture startup marker, original tool/source/dirty-file/journal
+preservation; current private directory identities were observed, not invented
+as cross-epoch equalities. No compiler/test/native replay occurred in that audit.
 
 ### N2: Minimal fixed parent implementation, no invocation before effect review
 
