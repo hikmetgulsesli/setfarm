@@ -1,5 +1,107 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## Ordinary native NAME identity viability implementation subplan
+
+**Goal:** Determine actual ordinary own-Node NAME/audit binding support without
+CONTROL, target VM mutation or protected-origin authority.
+**Architecture:** One fixed C parent owns its actual Node child, private pipes,
+exclusive reap and one NAME right. Compare opaque audits while child is live;
+then definitely close protocol, child and original right. Keep bootstrap refused.
+**Spec:** docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md,
+section Ordinary native NAME identity viability slice.
+**Tech:** C11/Darwin NAME APIs, existing builtin Node entry, ordinary Node tests.
+**Status:** Source plan only; compiler/native effects are not yet admitted.
+
+File Map:
+- Create scripts/task6a-origin-native-name-v2.c: private fixed ordinary parent.
+- Create scripts/__tests__/task6a-origin-native-name-v2.test.js: real CLI/protocol/
+  identity/closure behavior using owned ordinary fixtures and compiled source.
+- Modify the existing named protected spec and this plan only.
+- No edits to bootstrap/entry/map/native helpers, packages, DB, services or old roots.
+
+### N1: Reviewed source contract and test-support RED
+
+- [ ] Independently review exact spec/plan and causal File Map; root self-review
+  rejects any positive authority, ambiguous after-exit audit or caller selection.
+- [ ] Stage/commit only these reviewed docs on the new isolated ordinary branch.
+- [ ] Write the first behavior test for actual compiled CLI refusal of an extra
+  argument, exact exit2/empty stdout/canonical stderr and no entry-start witness.
+  Derive literal expectations independently; do not grep C source.
+  A missing new C program yields an unavailable test-support result before
+  compiler execution; it is not a semantic native/kernel witness.
+- [ ] Execute this one test and capture expected failing assertion before C code.
+  Label it test-support RED, never P2/native RED.
+
+First consumer expectation:
+```javascript
+const actual = await invokeOwnedProbe(['unexpected']);
+assert.equal(actual.code, 2);
+assert.equal(actual.stdout, '');
+assert.equal(actual.stderr, 'TASK6A_NATIVE_NAME_PROBE_REFUSED\n');
+assert.equal(actual.entryStarted, false);
+```
+invokeOwnedProbe is test-only support: read the fixed C source, return unavailable
+when absent, otherwise use only the separately admitted compiler/owned fixture.
+It never supplies a public production PID/path/callback.
+
+### N2: Minimal fixed parent implementation, no invocation before effect review
+
+- [ ] Add C main with argc/ordinary-UID refusal before pipes/spawn; no public
+  options. Fixed Node and source-adjacent entry, explicit scrubbed child env.
+- [ ] Add checked pipe/file-action setup and closed inherited descriptors;
+  require non-autoreaping SIGCHLD and own exactly one PID.
+- [ ] Implement bounded READY/challenge/PONG loop and original child state.
+  Native operations use only local retained birth, not message-reported identity.
+- [ ] Implement the single original NAME acquisition/PID/audit checks:
+```c
+mach_port_t name = MACH_PORT_NULL;
+audit_token_t first = {0}, second = {0};
+mach_msg_type_number_t count = TASK_AUDIT_TOKEN_COUNT;
+/* child is the locally captured, still-unreaped direct spawn PID */
+kern_return_t rc = task_name_for_pid(mach_task_self(), child, &name);
+/* require rc success, valid original owned send right before PID/token calls */
+rc = task_info(name, TASK_AUDIT_TOKEN, (task_info_t)&first, &count);
+/* require exact count; compare full second token after PONG3 BEFORE END */
+```
+  This excerpt is a source obligation, not an executable native recipe.
+- [ ] Implement sticky burn, checked partial writes/drains, END/input close,
+  exact exit/reap/no-after-reap signals and once-only NAME disposal with primary
+  and cleanup failures retained. No exit-after-uncertain-child positive result.
+- [ ] Default result schema never permits production/native/protected authority.
+
+### N3: Exact compiler/test effect review and ordinary behavior GREEN
+
+- [ ] Independently inspect complete source/test delta and each real dependency
+  effect. Save exact source/tool/SDK/output pins, compile/link argv/env, private
+  directory identities and resource floor before any compiler run.
+- [ ] Review compiler-only object recipe first: fixed CLT clang, no default
+  configs, arm64 SDK26.5/resource21, integrated assembly, no modules/LTO/ambient
+  headers, -std=c11 -O0 -Wall -Wextra -Werror; output only fresh owned private path.
+- [ ] Separately fix/review linker path/search/dependencies and automatic local
+  ad-hoc signature; no external signing/notarization or provenance admission.
+- [ ] Only after exact compiler/native effect C0, run one actual argument GREEN.
+- [ ] Add/run real owned fixture cases: no child on refusal; missing/malformed/
+  fragmented/excess READY/PONG/END; short/extra output, stderr, EOF, nonzero exit,
+  deadline and cleanup. Each test names the broken branch/side effect it catches.
+  Preserve unavailable/synthetic support separately from actual kernel evidence.
+- [ ] Test actual default source+entry NAME path once after exact effect review:
+  outcome supportedNAME/unqualified or explicit NAME/identity/protocol/cleanup
+  refusal, complete raw exit/close/EOF and final original input/retention checks.
+  Zero success credit for counts/path/PID alone; no CONTROL/map inference.
+
+### N4: Scoped reviewed delivery, separate acceptance
+
+- [ ] Focused tests/static contracts and proportional build checks from actual
+  current bytes; do not replay frozen full ALL or old build/test sessions.
+- [ ] Independent complete diff review, ordinary scoped commits/push/PR with
+  exact-head bot feedback, normal SHA-bound merge only.
+- [ ] New independent clean-main build and artifact/host/retention verification,
+  preserving every old source/build/worktree and original two files.
+- [ ] Record actual narrow outcome; P2 protected owner/control/maps/root invocation,
+  P3/P4/P5/cutover/B/C/D/E remain independently gated.
+
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Root executes inline as the only writer; agents inspect/review read-only.
 
 **Goal:** Prove a genuine delivered protected private MJS entry, official vendor Node and actual parent-owned unprivileged execution without granting production authority.

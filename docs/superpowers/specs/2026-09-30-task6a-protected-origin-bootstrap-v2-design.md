@@ -1,5 +1,90 @@
 # Task6A protected private source-entry bootstrap v2
 
+## Ordinary native NAME identity viability slice
+
+This separately reviewed ordinary diagnostic supplies the first actual native
+process-object identity feasibility evidence needed by P2. It does not admit
+CONTROL, an observer, protected origin, a compiler, complete native closure,
+root invocation, continuous exclusion, VM changes or service/DB effects.
+The existing bootstrap cold guard and final-main refusal stay unchanged.
+The prior prospective CONTROL/Node-autoreaper design is not an admitted recipe.
+
+Four-file map: create scripts/task6a-origin-native-name-v2.c and
+scripts/__tests__/task6a-origin-native-name-v2.test.js; refine only this spec
+and its existing named plan. No production selector, Node flag, helper module,
+UID/group change, root install, access/DeveloperMode/entitlement change or
+privileged invocation. Root is sole writer; independent agents read/review.
+
+The fixed C parent is an ordinary non-root process. It accepts no caller
+arguments, PID, source path, environment configuration or continuation.
+Refuse argc!=1, root or mismatched real/effective UID before creating a child.
+The nominated ordinary Node is the reviewed installed26.4.0 tool, not vendor
+or root-admitted Node. Its only program is the existing adjacent fixed builtin
+entry; the exact compile recipe supplies an absolute source filename so the
+adjacent locator is fixed by that reviewed source placement. No current-directory
+lookup, shell, caller flag, preload, Node options or inherited privileged FD.
+The child uses a literal scrubbed environment and private standard pipes.
+Compile/test fixture source placements are explicitly ordinary test-only.
+
+The C parent owns exactly one actual direct spawn PID and its private pipes.
+It is the exclusive reaper: no SIGCHLD ignore, SA_NOCLDWAIT, other wait/reaper
+or status consumption may release that PID before final native operations.
+A successful waitpid(WNOHANG) consumes status: permanently mark reaped and
+forbid all later PID-native operations and signals. Exact birth plus retained
+unreaped PID prevents reuse; PPID/path sampling alone would not supply that edge.
+
+After actual READY, attempt task_name_for_pid exactly once. Require success and
+a non-null/non-dead owned send right; do not treat success-with-null as support.
+Use pid_for_task on that original NAME right and require the captured child PID.
+Retrieve TASK_AUDIT_TOKEN via task_info on the same original right, requiring
+success and the exact TASK_AUDIT_TOKEN_COUNT. Treat the complete initialized token
+as opaque bytes; do not construct, decode, serialize or export an identity token.
+Hold the original NAME right and first token through exactly three fresh distinct
+challenge/PONG exchanges. Compare a second token after PONG3 while input remains
+open, BEFORE writing END or closing input. An unreaped PID does not keep its
+task active: do not require a successful query after the final END/exit.
+
+After the live comparison, write END and close child input; capture final END,
+complete stdout/stderr EOF, actual exit and definite exact reap. Retain the NAME
+until this lifecycle closes; attempt its disposition once and preserve errors.
+Failure/deadline/early exit burns further native operations. No task_for_pid,
+CONTROL conversion, suspend, Mach VM query/protect/lockdown, signal-based identity
+or authority substitution, or alternative target is permitted by this slice.
+Any parent-only SIGPIPE handling or spawn signal mask/default setup requires
+explicit review for checked IO and must preserve child behavior, visible errors
+and exclusive reap discipline. Actual protocol/no-after-reap
+cleanup behavior must be tested, not certified by source strings.
+
+The protocol has a nonrenewable3s parent budget and bounded buffers. Cleanup has
+separate nonrenewable graceful/TERM/KILL/wait budgets, never extending validity.
+These bounds assume ordinary scheduling and kernel-call return: absence of the
+inspected taskgated upcall is not proof of a hard3s syscall deadline.
+Owner loss/timeout containment, inherited descriptor closure and definite
+settlement require exact literal review before any compilation/native invocation.
+The unchanged running entry's20s timer/EOF behavior depends on its event loop;
+it is not a kernel fence or unconditional target-termination guarantee.
+Unknown settlement preserves artifacts and remains failed/unqualified.
+
+Successful output is only diagnostic supportedNAME/unqualified, with literal
+productionAuthority:false, completeNativeClosure:false, protectedOrigin:false.
+It exports no right, PID or audit bytes as authority. NAME support does not
+establish CONTROL usability, map identity/MAX coverage or initial load trust.
+Denial/invalid right/count/drift/protocol/cleanup outcomes stay distinct.
+Published XNU12377.121.6 supports the inspected NAME/token routing; actual host
+12377.121.10 differs and remains to be tested. Never promote upstream source
+inspection or an ordinary compile result into exact-host/P2 acceptance.
+
+Before compiler effects, separately review the fixed ordinary CLT clang21,
+explicit physical SDK26.5/resource/include roots, integrated assembler, fixed
+linker/search paths, actual static dependency/config discovery and output custody.
+No compiler shim, HOME/DEVELOPER_DIR/default config, caller flags/response files,
+ambient include/deployment paths or existing cache/output reuse. Local ordinary
+Apple Silicon linking may produce an automatic ad-hoc output signature; this is
+not an external signing identity, notarization or distribution authorization.
+Compiler/helper/native transitive closure remains unqualified for protected use.
+Only fresh owned private outputs are created; retain unknown artifacts.
+
+
 ## Objective and trust boundary
 
 Build a genuine protected private source-entry rehearsal prerequisite for the
