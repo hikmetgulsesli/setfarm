@@ -3595,6 +3595,4363 @@ the recheck epoch; expiry at407 refuses before successful recheck publication.
 After failure or successful release, retries must add no validity/open/helper
 effects. Restoration is a nomination only, never renewed owner authority.
 
+#### Combined harness validity grammar — unexecuted literal queue candidate
+
+Independent read-only count investigations agree on the following actual-port
+grammar. This fixes ordering and source-prefix expectations; it is not the
+complete dispatcher/initializer or an execution admission. Queue construction
+is independent of runtime trace/outcome. No expectation is regenerated from
+events observed from the consumer.
+
+`Vdir(i)` emits ported `fileno,clock,stat,lstat,H(i),stat,lstat,clock`.
+`Vfile(i)` emits `fileno,stat,lstat,sysseek(0),clock,sysread(data),clock,
+sysread(EOF),stat,lstat,clock`. These definitions depend on the fixed nonempty
+one-chunk bytes above. All physical reads remain actual CORE reads; a nomination
+cannot fabricate returned data or an accepted captor DTO.
+
+Each H uses a fresh current batch and the exact capture grammar:
+
+```text
+clock,clock
+pipe(in),pipe(stdout),pipe(stderr),pipe(setup)
+eight [binmode,fileno] in pair-acquisition order
+fcntl(setup-w,F_SETFD,FD_CLOEXEC)
+opendir(census),fileno(census),readdir repeated15+liveStage,closedir(census)
+fileno(setup-w),clock,fork(synthetic positive424242)
+close(in-r),close(in-w),close(stdout-w),close(stderr-w),close(setup-w)
+fileno(stdout-r),fileno(stderr-r),fileno(setup-r)
+wait(0),clock,readiness(stdout-r,stderr-r,setup-r)
+fileno(stdout-r),sysread(data)
+fileno(stderr-r),sysread(EOF),close(stderr-r)
+fileno(setup-r),sysread(EOF),close(setup-r)
+wait(0)
+wait(0),clock,readiness(stdout-r)
+fileno(stdout-r),sysread(EOF),close(stdout-r)
+wait(424242,raw0),clock
+eight final-cleanup filenos in original acquisition order
+```
+
+No final-close call is repeated for already closed pipes. Those final source
+filenos must return actual undefined values for known closed originals. All
+queue lookup/classification internals use CORE inspection, not their own port
+hooks. IO::Select members/count/removal remain real, while only readiness and
+positive PID/wait samples are nominated. Neither fork nor wait reaches the
+kernel. Census uses currently live originals plus its own DIR; closed historical
+FD reuse is legitimate and must not trip an alias assertion.
+
+The whole healthy grammar is startup, hold-entry, six directory acquisitions
+with immediate Vdir, six file acquisitions with immediate Vfile, epoch,
+hold-completion, recheck-entry, epoch, recheck-completion, twelve staged closes.
+Epoch is six Vdir, six Vfile/H/Vfile, six Vdir. Validity queues and original
+disposal are separate: sticky faults may forbid further validity delegation
+but never prevent the independent original finalizer from attempting its known
+sealed originals. A caught harness fault remains fatal after source eval/calls/
+cleanup/repeat. Actual source canonical refusal alone cannot contain an unknown
+operation, prototype/load failure, exhausted queue or trace overflow.
+
+For an exposed DISTINCT real native FH followed by false at one-based open N,
+freeze the following JS table as the independent expected prefix. Throw after
+the same exposed assignment has identical ordinary port counts. No later config
+or validator runs on the failed Nth original; all N stage originals are disposed.
+
+```javascript
+const STAGED_EXPOSED_OPEN_PREFIXES=[
+  // N,clocks,helpers,stage closes,all originals,total ported operations
+  [1,2,0,1,1,5],
+  [2,10,1,2,11,100],
+  [3,18,2,3,21,196],
+  [4,26,3,4,31,293],
+  [5,34,4,5,41,391],
+  [6,42,5,6,51,490],
+  [7,50,6,7,61,590],
+  [8,53,6,8,62,609],
+  [9,56,6,9,63,628],
+  [10,59,6,10,64,647],
+  [11,62,6,11,65,666],
+  [12,65,6,12,66,685],
+];
+```
+
+For detailed prefix assertions, d=min(N-1,6), f=max(N-7,0) hand-derive:
+fileno26d+f; close8d+N; closedir/opendir/fork d; fcntl4(N-1)+d;
+binmode8d+f; stat2(d+f); lstatN+2(d+f); seek f; read4d+2f;
+pipe4d; readdir15d+d(d+1)/2; wait4d; readiness2d; sysopenN.
+These formulas describe nominated source ports including burn's original
+disposal, not unported CORE inspections, fixture construction or implicit
+destruction. Undefined/malformed/alias outputs add NO Nth staged disposal
+obligation. Hidden successful raw acquisition adds a fixture-only obligation,
+not consumerClosed. Borrowed-alias survival must be measured independently.
+
+#### Closed mandatory witness families — still no execution admission
+
+The complete initializer/dispatcher and each case's nomination/trace must be
+fixed before invocation. Select a closed family matrix, not a Cartesian product
+or a catch-all intentional-failure mode. A harness fault is never product RED.
+
+| Family | Required witnesses | Observable requirement |
+| --- | --- | --- |
+| Entry/positive | Missing actual3 declarations; healthy hold/recheck/release; each repeat after release; early recheck/release; nonzero arity; second hold while active | RED before backing reads/initializer/Perl; exact diagnostics; irreversible consumption; no repeated effects |
+| Admission | Container/key/order/role/path/creation joins; reference copy/replacement; numeric bytes; source/archive commitment; selected archiveRef; retained-original magic after replacement | Zero callbacks, copied expectations unchanged, no acquisition after initial rejection |
+| Acquisition | All12 undefined outputs, exposed false and exposed throw | Exact frozen prefixes; all distinct exposed native originals sealed before failure |
+| Ownership | Same staged original; each known foreign-owner registry; genuine live-FD alias | No second/borrowed close; borrowed original still live; no false fileno nomination |
+| Unknown shape | Tied output cell, tied unopened glob, blessed/overloaded binding, indirect name and non-FH references | Permanent uncertainty, zero consumer candidate callbacks, no positive release |
+| Hidden raw | CORE acquisition hidden before output assignment | Independent fixture rescue; consumerClosed excludes hidden native FH |
+| Config/identity | Access mode, CLOEXEC, binmode, pre/open/post identity/tuple, size/hash and actual ACL/captor refusal | Exact nominated failure, no suppressed real validator outcome |
+| Metadata | Partial/full tied files/directories; record/tuple/path/hash/FH-cell replacement; retained-object magic | No PUSH/FETCH/FETCHSIZE/overload; validation views isolated; disposal unaffected |
+| Budget/shared | Expiry237,238,407; actual captor refusal/throwing cleanup/unsettled helper | No publication past boundary; all sealed staged attempts continue |
+| Disposal | False and throw at each of12 stage originals | Twelve attempts, no retry, no false/throw definite-close diagnostic |
+| Restoration | Restore denied admission/metadata then repeat | Canonical refusal, zero new validity/open/helper/disposal effects |
+
+Malformed first-open constructors create no native descriptor: memory-only tied
+scalar, tied unopened private glob, blessed unopened glob/plain reference,
+indirect name or plain array/hash/scalar/coderef. Fixture TIESCALAR/TIEHANDLE
+construction counters are separate from consumer callback counters. Independently
+inspect each nominee's actual B shape before exposing it; do not assume tied
+magic resides in a particular GV/IO slot. Snapshot FETCH/STORE/FILENO/CLOSE/READ/
+overload counters BEFORE fixture untie/destruction: all consumer counters must
+be zero. No open/sysopen/pipe/socket constructs a malformed nominee.
+
+Output keeps canonical accepted/refused operation, sticky harnessFault,
+actual/exposed/hidden acquisitions, stage/helper attempts and definite closes,
+borrowed survival, pre-finalizer callbacks/live originals, fixture rescue and
+repeat-effect delta separate. A zero final FD count after fixture rescue is not
+consumer cleanup proof. Semantic mutants must have coherent finite queues and
+actual forbidden-acceptance/effect witnesses; compile/load/queue failures do not
+kill a mutant. Minimum independent mutation targets are shape rejection,
+metadata-vector guard, a byte check, an ACL/epoch sample and original once-only
+disposal. Their complete exact anchors/candidate queues remain part of the
+uncompleted literal harness gate, not already satisfied mutation evidence.
+
+#### Combined consumer recipe: first executable TDD cycle (not admitted yet)
+
+The mandatory witness matrix above remains the delivery gate. Implement it in
+test-first cycles rather than claiming an adapter is a consumer. This first
+cycle contains the complete combined harness, the actual three operations,
+healthy/absent/arity/premature/repeat behavior, and every undefined/exposed-false/
+exposed-throw acquisition slot. No source insertion, compile or child execution
+is admitted until two exact reviews of this literal cycle and a fresh
+preservation check. Later metadata/alias/magic/deadline/close and coherent-mutant
+cycles remain mandatory BEFORE commit/push/PR/build of the implementation.
+
+The combined harness consumes an independently constructed finite operation
+grammar. Each operation carries its fixed role; wrong order, argument,
+unregistered FH, queue underflow, incomplete queue, setup failure, or sticky
+fault is fatal. An expected semantic refusal never contains a harness fault.
+No operation expectation is derived from the observed trace. The first-cycle
+negative grammar is the exact acquisition prefix plus disposal, not a healthy
+trace accepted with arbitrary unused operations.
+
+The following JavaScript helper is added to the existing ordinary-host test
+block. Extend the existing fs import with lstatSync. Declaration assertions
+precede every backing-byte read, initializer construction and Perl child.
+The source passed to systemObject is the full production declarations, NOT a
+standalone capsule replacement. Root remains the only writer.
+
+```javascript
+const STAGED_CUSTODY_BACKINGS=[
+  ['source/task6a-origin-archive-v2.pm','scripts/task6a-origin-archive-v2.pm',5864,'da1fd458fcaba775be5ba09ef88157b5ee48dbda'],
+  ['source/task6a-origin-native-v2.pm','scripts/task6a-origin-native-v2.pm',3347,'59e1ae8de38cf2083a0294c55454083840eb47f1'],
+  ['source/task6a-origin-map-v2.pm','scripts/task6a-origin-map-v2.pm',11684,'9719bf4f3676b43b7858e3cabe3cee3e679120f8'],
+  ['source/task6a-protected-origin-entry-v2.mjs','scripts/task6a-protected-origin-entry-v2.mjs',1933,'e53be63cdcdf286dc89adbec9770668b1fdb9cc7'],
+  ['vendor/node-v22.23.1-darwin-arm64.tar.gz','package.json',22734,null],
+  ['vendor/node','README.md',7454,null],
+];
+function stagedCustody(mode='healthy',slot=0,{sourceOverride}={}) {
+  const source=sourceOverride??readFileSync(BOOTSTRAP,'utf8');
+  for(const name of ['hold','recheck','release']) {
+    assert.equal(source.split('sub task6a_origin_'+name+'_staged_custody {').length,2,
+      'staged custody consumer missing: '+name);
+  }
+  const root=fileURLToPath(new URL('../../',import.meta.url)).replace(/\/$/,'');
+  const backings=STAGED_CUSTODY_BACKINGS.map(([logical,relative,size,blob])=>{
+    const path=root+'/'+relative;
+    const before=lstatSync(path,{bigint:true});
+    assert.ok(before.isFile()&&!before.isSymbolicLink());
+    assert.equal(before.nlink,1n);assert.equal(before.size,BigInt(size));
+    const bytes=readFileSync(path);const after=lstatSync(path,{bigint:true});
+    for(const key of ['dev','ino','mode','nlink','uid','gid','size','mtimeNs','ctimeNs'])
+      assert.equal(after[key],before[key]);
+    if(blob!==null) assert.equal(createHash('sha1')
+      .update(Buffer.concat([Buffer.from('blob '+bytes.length+'\0'),bytes])).digest('hex'),blob);
+    return {logical,path,size,dev:String(before.dev),ino:String(before.ino),
+      sha256:createHash('sha256').update(bytes).digest('hex'),bytes:bytes.toString('base64')};
+  });
+  assert.equal(backings[4].sha256,'bf6cedd405c26f5f933e45436d8ec84b2780297377bb44f40deb6c44a91f6a6e');
+  const actual=systemObject('staged-custody',{mode,slot,root,backings},undefined,{sourceOverride:source});
+  assert.equal(actual.status,0,actual.stderr.toString());
+  assert.equal(actual.stderr.length,0);const value=JSON.parse(actual.stdout.toString());
+  assert.equal(value.harnessFault,null);assert.equal(value.productionAuthority,false);
+  assert.equal(value.remainingOperations,0);assert.equal(value.fixtureClosed,0);
+  assert.equal(value.definitelyClosed,value.ownedCount);
+  assert.equal(value.repeatEffectDelta,0);return value;
+}
+test('staged custody actual consumer holds, rechecks and releases twelve originals',()=>{
+  const r=stagedCustody();
+  const diagnostic={scope:'staged-source-vendor-custody-diagnostic-only',
+    productionAuthority:false,fileCount:6,directoryCount:6};
+  assert.deepEqual(r.hold,diagnostic);assert.deepEqual(r.recheck,diagnostic);
+  assert.deepEqual(r.release,{...diagnostic,handlesClosed:12});
+  assert.equal(r.refused,false);assert.equal(r.ownedCount,390);
+  assert.equal(r.stageClosed,12);assert.equal(r.helperClosed,378);
+  assert.deepEqual(r.calls,{binmode:342,clock:407,close:348,closedir:42,fcntl:90,
+    fileno:1110,fork:42,lstat:132,opendir:42,pipe:168,read:228,readdir:1083,
+    ready:84,seek:30,stat:120,sysopen:12,wait:168});
+});
+for(const mode of ['absent','arity','premature-recheck','premature-release'])
+  test('staged custody actual consumer refuses '+mode+' without acquisition',()=>{
+    const r=stagedCustody(mode);assert.equal(r.refused,true);
+    assert.equal(r.ownedCount,0);assert.equal(r.calls.clock,mode==='absent'?2:1);
+  });
+for(const mode of ['open-undefined','open-false','open-throw'])
+  for(const [slot,clocks,helpers,stageCloses,allOriginals,portedTotal] of STAGED_EXPOSED_OPEN_PREFIXES)
+    // Independent literal prefix table; not the consumer's trace builder.
+    for(const want of [{slot,clocks,helpers,stageCloses,allOriginals,portedTotal}])
+    test('staged custody actual consumer disposes '+mode+' slot '+want.slot,()=>{
+      const r=stagedCustody(mode,want.slot);assert.equal(r.refused,true);
+      assert.equal(r.calls.sysopen,want.slot);assert.equal(r.calls.clock,want.clocks);
+      assert.equal(r.helpers,want.helpers);
+      const exposed=mode!=='open-undefined';
+      assert.equal(r.stageClosed,want.stageCloses-(exposed?0:1));
+      assert.equal(r.ownedCount,want.allOriginals-(exposed?0:1));
+      if(exposed) assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),want.portedTotal);
+    });
+```
+
+The package hash above must be checked against the fixed existing backing
+BEFORE review admission; a transcription discrepancy is a plan defect, not an
+excuse to accept caller-provided commitments. This literal is not executed.
+
+#### Combined consumer dispatcher literal — grammar and private originals
+
+Add this as STAGED_CUSTODY_PROGRAM=String.raw followed by a template literal,
+and interpolate it before STAGED_CAPTOR_PORT_PROGRAM in systemObject. This is
+one dispatcher, not nested lower-port adapters. All text remains unexecuted.
+
+```perl
+    if($q->{kind} eq 'staged-custody') {
+      require Fcntl;require B;require IO::Select;require POSIX;require Time::HiRes;
+      require Digest::SHA;require Encode;require Errno;
+      my $fault='';my (@grammar,@jobs,@owned,@events);my (%roles,%calls);
+      my $latch=sub {$fault='TEST_STAGED_CUSTODY_HARNESS_FAULT';return 0;};
+      my $fail=sub {$latch->();die "$fault\n";};
+      my $check=sub {die "$fault\n" if length($fault);};
+      my $r=$q->{record};
+      $fail->() unless ref($r) eq 'HASH'
+        &&join(',',sort keys %$r) eq 'backings,mode,root,slot';
+      my ($mode,$slot,$root)=@$r{qw(mode slot root)};
+      my %modes=map {$_=>1} qw(healthy absent arity premature-recheck premature-release open-undefined open-false open-throw);
+      $fail->() unless defined($mode)&&!ref($mode)&&$modes{$mode}
+        &&defined($slot)&&!ref($slot)&&$slot>=0&&$slot<=12&&$slot==int($slot)
+        &&($mode=~/\Aopen-/ ? $slot>=1 : $slot==0)
+        &&defined($root)&&!ref($root)&&$root=~m{\A/[A-Za-z0-9._/-]+\z};
+      my $logical='/private/tmp/task6a-staged-memory-fixture';
+      my @directory_paths=('/','/private','/private/tmp',$logical,$logical.'/source',$logical.'/vendor');
+      my @actual_dirs=('/','/private','/private/tmp',$root,$root.'/scripts',$root.'/docs');
+      my @leaf_rel=qw(source/task6a-origin-archive-v2.pm source/task6a-origin-native-v2.pm source/task6a-origin-map-v2.pm source/task6a-protected-origin-entry-v2.mjs vendor/node-v22.23.1-darwin-arm64.tar.gz vendor/node);
+      my @backing_rel=qw(scripts/task6a-origin-archive-v2.pm scripts/task6a-origin-native-v2.pm scripts/task6a-origin-map-v2.pm scripts/task6a-protected-origin-entry-v2.mjs package.json README.md);
+      my @sizes=(5864,3347,11684,1933,22734,7454);
+      my @permissions=(0400,0400,0400,0444,0400,0555);
+      my @blobs=qw(da1fd458fcaba775be5ba09ef88157b5ee48dbda 59e1ae8de38cf2083a0294c55454083840eb47f1 9719bf4f3676b43b7858e3cabe3cee3e679120f8 e53be63cdcdf286dc89adbec9770668b1fdb9cc7);
+      my (%paths,@bodies,%physical_seen);
+      $fail->() unless ref($r->{backings}) eq 'ARRAY'&&@{$r->{backings}}==6;
+      for my $index(0..5) {
+        my $path=$directory_paths[$index];my $actual=$actual_dirs[$index];
+        my @s=CORE::lstat($actual);$fail->() unless @s==13&&Fcntl::S_ISDIR($s[2]);
+        my $permission=$index==2?01777:$index==3?0711:$index>=4?0555:($s[2]&07777);
+        $paths{$path}={actual=>$actual,identity=>[@s],directory=>1,permission=>$permission,role=>'d'.$index};
+      }
+      for my $index(0..5) {
+        my $b=$r->{backings}[$index];
+        $fail->() unless ref($b) eq 'HASH'
+          &&join(',',sort keys %$b) eq 'bytes,dev,ino,logical,path,sha256,size'
+          &&$b->{logical} eq $leaf_rel[$index]&&$b->{path} eq $root.'/'.$backing_rel[$index]
+          &&$b->{size}==$sizes[$index]&&!ref($b->{bytes})&&!ref($b->{sha256})
+          &&$b->{sha256}=~/\A[a-f0-9]{64}\z/;
+        my @s=CORE::lstat($b->{path});
+        $fail->() unless @s==13&&Fcntl::S_ISREG($s[2])&&$s[3]==1
+          &&"$s[0]" eq $b->{dev}&&"$s[1]" eq $b->{ino}&&$s[7]==$sizes[$index]
+          &&!$physical_seen{"$s[0]:$s[1]"}++;
+        my $body=MIME::Base64::decode_base64($b->{bytes});
+        $fail->() unless MIME::Base64::encode_base64($body,'') eq $b->{bytes}
+          &&length($body)==$sizes[$index]&&!utf8::is_utf8($body)
+          &&Digest::SHA::sha256_hex($body) eq $b->{sha256};
+        if($index<4) {$fail->() unless Digest::SHA::sha1_hex('blob '.length($body)."\0".$body) eq $blobs[$index];}
+        $paths{$logical.'/'.$leaf_rel[$index]}={actual=>$b->{path},identity=>[@s],
+          directory=>0,permission=>$permissions[$index],role=>'f'.$index,body=>$body};
+        push @bodies,$body;
+      }
+      $fail->() unless Digest::SHA::sha256_hex($bodies[4]) eq 'bf6cedd405c26f5f933e45436d8ec84b2780297377bb44f40deb6c44a91f6a6e'
+        &&Digest::SHA::sha256_hex($bodies[5]) eq '14a6a8f44d6531560feca82404d64d46ff259585fd74b7ea7d9d2b3ae62efd0e';
+      my $project=sub {
+        my ($p,$s)=@_;$fail->() unless ref($s) eq 'ARRAY'&&@$s==13;
+        my @result=@$s;$result[2]=($result[2]&~07777)|$p->{permission};
+        $result[4]=0;$result[5]=0;return \@result;
+      };
+      my $creation=$project->($paths{$logical},$paths{$logical}{identity});
+      $creation->[2]=($creation->[2]&~07777)|0700;
+      my @source_roles=qw(archive-helper native-helper map-helper entry);
+      my $vendor={filename=>'node-v22.23.1-darwin-arm64.tar.gz',bytes=>$bodies[4]};
+      my $fixture_admission={creator=>{rootPath=>$logical,creationIdentity=>$creation},
+        sources=>[map {+{role=>$source_roles[$_],relativePath=>$leaf_rel[$_],
+          gitBlobSha=>$blobs[$_],bytes=>$bodies[$_]}} (0..3)],
+        vendor=>$vendor,selected=>{archiveRef=>$vendor,
+          memberName=>'node-v22.23.1-darwin-arm64/bin/node',bytes=>$bodies[5]}};
+      my $emit=sub {push @grammar,[@_];};
+      my $h=0;my $stage_count=0;
+      my $helper_grammar=sub {
+        my ($path)=@_;my $prefix='h'.(++$h);
+        push @jobs,{prefix=>$prefix,path=>$path,stageCount=>$stage_count};
+        $emit->('clock',$prefix) for 1..2;
+        $emit->('pipe',$prefix.'.'.$_) for qw(in out err setup);
+        for my $name(qw(in-r in-w out-r out-w err-r err-w setup-r setup-w)) {
+          $emit->('binmode',$prefix.'.'.$name);$emit->('fileno',$prefix.'.'.$name);
+        }
+        $emit->('fcntl',$prefix.'.setup-w');
+        $emit->('opendir',$prefix.'.census');$emit->('fileno',$prefix.'.census');
+        $emit->('readdir',$prefix.'.census') for 1..(15+$stage_count);
+        $emit->('closedir',$prefix.'.census');$emit->('fileno',$prefix.'.setup-w');
+        $emit->('clock',$prefix);$emit->('fork',$prefix);
+        $emit->('close',$prefix.'.'.$_) for qw(in-r in-w out-w err-w setup-w);
+        $emit->('fileno',$prefix.'.'.$_) for qw(out-r err-r setup-r);
+        $emit->('wait',$prefix);$emit->('clock',$prefix);$emit->('ready',$prefix);
+        for my $name(qw(out-r err-r setup-r)) {
+          $emit->('fileno',$prefix.'.'.$name);$emit->('read',$prefix.'.'.$name);
+          $emit->('close',$prefix.'.'.$name) unless $name eq 'out-r';
+        }
+        $emit->('wait',$prefix);$emit->('wait',$prefix);
+        $emit->('clock',$prefix);$emit->('ready',$prefix);
+        $emit->('fileno',$prefix.'.out-r');$emit->('read',$prefix.'.out-r');
+        $emit->('close',$prefix.'.out-r');$emit->('wait',$prefix);$emit->('clock',$prefix);
+        $emit->('fileno',$prefix.'.'.$_) for qw(in-r in-w out-r out-w err-r err-w setup-r setup-w);
+      };
+      my $dir_grammar=sub {
+        my ($i)=@_;my $role='d'.$i;
+        $emit->('fileno',$role);$emit->('clock','stage');$emit->('stat',$role);$emit->('lstat',$role);
+        $helper_grammar->($directory_paths[$i]);
+        $emit->('stat',$role);$emit->('lstat',$role);$emit->('clock','stage');
+      };
+      my $file_grammar=sub {
+        my ($i)=@_;my $role='f'.$i;
+        $emit->('fileno',$role);$emit->('stat',$role);$emit->('lstat',$role);$emit->('seek',$role);
+        $emit->('clock','stage');$emit->('read',$role);$emit->('clock','stage');$emit->('read',$role);
+        $emit->('stat',$role);$emit->('lstat',$role);$emit->('clock','stage');
+      };
+      my $epoch_grammar=sub {
+        $dir_grammar->($_) for 0..5;
+        for my $i(0..5) {$file_grammar->($i);$helper_grammar->($logical.'/'.$leaf_rel[$i]);$file_grammar->($i);}
+        $dir_grammar->($_) for 0..5;
+      };
+      $emit->('clock','startup');
+      if($mode eq 'absent') {$emit->('clock','stage');}
+      elsif($mode eq 'healthy'||$mode=~/\Aopen-/) {
+        $emit->('clock','stage');
+        for my $n(1..12) {
+          my $role=$n<=6?'d'.($n-1):'f'.($n-7);
+          $emit->('lstat',$role);$emit->('sysopen',$role);
+          if($mode=~/\Aopen-/&&$n==$slot) {++$stage_count unless $mode eq 'open-undefined';last;}
+          ++$stage_count;$emit->('fcntl',$role) for 1..4;
+          if($n<=6) {$dir_grammar->($n-1);}
+          else {$emit->('binmode',$role);$file_grammar->($n-7);}
+        }
+        if($mode eq 'healthy') {
+          $epoch_grammar->();$emit->('clock','stage');$emit->('clock','stage');
+          $epoch_grammar->();$emit->('clock','stage');
+        }
+        for my $n(1..$stage_count) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+      my $take=sub {
+        my ($op,$role)=@_;$check->();$fail->() unless @grammar;
+        my $want=shift @grammar;$fail->() unless $want->[0] eq $op&&$want->[1] eq $role;
+        ++$calls{$op};
+        $fail->() if @events>=8192;
+        my $event={seq=>1+@events,op=>$op,role=>$role};
+        $fail->() if length(JSON::PP->new->canonical->utf8->encode($event))>512;
+        push @events,$event;
+      };
+      my $same_physical=sub {
+        my ($old,$now,$kind)=@_;$fail->() unless @$old==13&&@$now==13;
+        $fail->() unless $kind eq 'file'||$kind eq 'directory'||$kind eq 'pipe';
+        my @fields=$kind eq 'pipe'?(0..6):$kind eq 'directory'?(0,1,2,4,5):(0,1,2,3,4,5,7,9,10);
+        for my $i(@fields) {$fail->() unless $old->[$i]==$now->[$i];}
+      };
+      my $register=sub {
+        my ($fh,$role,$dir_stream,$path)=@_;
+        # Retain the actual raw acquisition BEFORE fallible metadata.
+        my $o={fh=>$fh,role=>$role,dirStream=>$dir_stream,path=>$path,attempted=>0,closed=>0,
+          originalClose=>sub {$dir_stream?CORE::closedir($fh):CORE::close($fh)}};
+        push @owned,$o;
+        my $fd=CORE::fileno($fh);$fail->() unless defined($fd)&&$fd>=3;
+        for my $other(@owned) {
+          next if $other==$o;$fail->() if $other->{fh}==$fh
+            ||(!$other->{closed}&&defined($other->{fd})&&$other->{fd}==$fd);
+        }
+        $o->{fd}=$fd;$o->{identity}=[CORE::stat($fh)];$fail->() unless @{$o->{identity}}==13;
+        $roles{$role}=$o;return $o;
+      };
+      my $lookup=sub {
+        my ($cell,$closed_allowed)=@_;
+        # Inspect the ORIGINAL operand cell before candidate FETCH/comparison.
+        my $sv=B::svref_2object($cell);
+        $fail->() if $sv->FLAGS&0x00f00000;
+        $fail->() unless ref($sv) eq 'B::IV'&&($sv->FLAGS&B::SVf_ROK());
+        my $gv=$sv->RV;$fail->() unless ref($gv) eq 'B::GV';
+        $fail->() if $gv->FLAGS&0x00f00000;
+        my $gm=$gv->MAGIC;$fail->() if defined($gm);
+        my $io=$gv->IO;$fail->() unless ref($io) eq 'B::IO';
+        $fail->() if $io->FLAGS&0x00e00000;
+        my $im=$io->MAGIC;$fail->() if defined($im);
+        my $fh=$$cell;
+        for my $o(@owned) {
+          next unless $o->{fh}==$fh;my $fd=CORE::fileno($fh);
+          if($o->{closed}) {$fail->() unless $closed_allowed&&!defined($fd);return $o;}
+          $fail->() if $o->{attempted}||!defined($fd)||$fd!=$o->{fd};
+          my $kind=$o->{path}?($o->{path}{directory}?'directory':'file'):($o->{dirStream}?'directory':'pipe');
+          $same_physical->($o->{identity},[CORE::stat($fh)],$kind);
+          return $o;
+        }
+        $fail->();
+      };
+      my $dispose=sub {
+        my ($o,$fixture)=@_;return 0 if $o->{attempted};
+        $o->{attempted}=1;$o->{fixture}=$fixture;
+        $!=0;my $ok=eval {$o->{originalClose}->()};
+        my $error=$@;my $errno=0+$!;
+        $o->{closed}=1 if $ok&&!length($error)&&!$errno&&!defined(CORE::fileno($o->{fh}));
+        $latch->() unless $o->{closed};return $o->{closed};
+      };
+      my ($job,$selector,$census);my (@pipe_names,@wait,@ready,@census_names);my %reads;
+      my $helper_enter=sub {
+        my ($path)=@_;$check->();$fail->() unless @jobs&&!defined($job);
+        $job=shift @jobs;$fail->() unless $job->{path} eq $path;
+        @pipe_names=qw(in out err setup);@wait=([0,0],[0,0],[0,0],[424242,0]);
+        @ready=(['out-r','err-r','setup-r'],['out-r']);
+        %reads=('out-r'=>[1,0],'err-r'=>[0],'setup-r'=>[0]);
+        $selector=undef;$census=undef;@census_names=();
+      };
+      my $helper_leave=sub {
+        $check->();$fail->() if @pipe_names||@wait||@ready||@census_names||grep {@$_} values %reads;
+        $fail->() unless defined($job)&&defined($census)&&$census->{closed};
+        for my $name(qw(in-r in-w out-r out-w err-r err-w setup-r setup-w)) {
+          my $o=$roles{$job->{prefix}.'.'.$name};$fail->() unless defined($o)&&$o->{closed}&&!defined(CORE::fileno($o->{fh}));
+        }
+        $job=undef;
+      };
+      my $deny=sub {$latch->();die "$fault\n";};
+```
+
+#### Combined consumer dispatcher literal — sole port layer and execution
+
+Continue the SAME template literal directly after the previous block:
+
+```perl
+      my ($loaded,$setup_error,$body_ok,$primary);my $load_complete=0;my $outcomes={};
+      my $open_ordinal=0;my $helpers=0;my $repeat_delta;
+      {
+        no warnings qw(redefine once);
+        local *CORE::GLOBAL::sysopen=sub (*$$;$) {
+          $check->();$fail->() unless @_==3&&!defined($_[0])&&!ref($_[1])&&!ref($_[2]);
+          my $p=$paths{$_[1]};$fail->() unless defined($p);
+          my $flags=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()
+            |($p->{directory}?Fcntl::O_DIRECTORY():Fcntl::O_NONBLOCK());
+          $fail->() unless $_[2]==$flags&&!exists($roles{$p->{role}});
+          $take->('sysopen',$p->{role});++$open_ordinal;
+          return 0 if $mode eq 'open-undefined'&&$open_ordinal==$slot;
+          CORE::sysopen(my $fh,$p->{actual},$flags) or $fail->();
+          my $o=$register->($fh,$p->{role},0,$p);
+          $same_physical->($p->{identity},$o->{identity},$p->{directory}?'directory':'file');
+          $o->{fcntlQueue}=[[Fcntl::F_GETFL(),0],[Fcntl::F_GETFD(),0],
+            [Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()],[Fcntl::F_GETFD(),0]];
+          $_[0]=$fh;$o->{exposed}=1;
+          return 0 if $mode eq 'open-false'&&$open_ordinal==$slot;
+          die "TEST_STAGED_NOMINATED_OPEN_THROW\n" if $mode eq 'open-throw'&&$open_ordinal==$slot;
+          return 1;
+        };
+        local *CORE::GLOBAL::pipe=sub (**) {
+          $check->();$fail->() unless @_==2&&!defined($_[0])&&!defined($_[1])
+            &&defined($job)&&@pipe_names;
+          my $name=shift @pipe_names;my $prefix=$job->{prefix}.'.'.$name;
+          $take->('pipe',$prefix);
+          CORE::pipe(my $a,my $b) or $fail->();
+          # Both originals survive a failure while registering either member.
+          my $oa={fh=>$a,role=>$prefix.'-r',dirStream=>0,attempted=>0,closed=>0,
+            originalClose=>sub {CORE::close($a)}};
+          my $ob={fh=>$b,role=>$prefix.'-w',dirStream=>0,attempted=>0,closed=>0,
+            originalClose=>sub {CORE::close($b)}};
+          push @owned,$oa,$ob;
+          for my $o($oa,$ob) {
+            $o->{fd}=CORE::fileno($o->{fh});$o->{identity}=[CORE::stat($o->{fh})];
+            $fail->() unless defined($o->{fd})&&$o->{fd}>=3&&@{$o->{identity}}==13
+              &&Fcntl::S_ISFIFO($o->{identity}[2]);
+            for my $other(@owned) {
+              next if $other==$o;$fail->() if $other->{fh}==$o->{fh}
+                ||(!$other->{closed}&&defined($other->{fd})&&$other->{fd}==$o->{fd});
+            }
+            $roles{$o->{role}}=$o;
+          }
+          $_[0]=$a;$_[1]=$b;$oa->{exposed}=1;$ob->{exposed}=1;
+          if($name eq 'out') {
+            my $row="-r--r--r-- 1 root wheel 16 Jan 1 2026 ".$job->{path}."\n";
+            $!=0;my $n=CORE::syswrite($b,$row,length($row));
+            $fail->() unless defined($n)&&$n==length($row)&&!$!;
+          }
+          return 1;
+        };
+        local *CORE::GLOBAL::binmode=sub (*;$) {
+          $check->();$fail->() unless @_==1;my $o=$lookup->(\($_[0]),0);
+          $take->('binmode',$o->{role});$fail->() if $o->{binary}++;
+          CORE::binmode($o->{fh}) or $fail->();return 1;
+        };
+        local *CORE::GLOBAL::fcntl=sub (*$$) {
+          $check->();$fail->() unless @_==3;my $o=$lookup->(\($_[0]),0);
+          $take->('fcntl',$o->{role});
+          if($o->{path}) {
+            $fail->() unless @{$o->{fcntlQueue}};my $want=shift @{$o->{fcntlQueue}};
+            $fail->() unless $_[1]==$want->[0]&&$_[2]==$want->[1];
+          } else {
+            $fail->() unless defined($job)&&$o->{role} eq $job->{prefix}.'.setup-w'
+              &&!$o->{configured}++&&$_[1]==Fcntl::F_SETFD()&&$_[2]==Fcntl::FD_CLOEXEC();
+          }
+          $!=0;my $v=CORE::fcntl($o->{fh},$_[1],$_[2]);
+          $fail->() unless defined($v)&&!$!;return $v;
+        };
+        local *CORE::GLOBAL::stat=sub (;*) {
+          $check->();$fail->() unless @_==1&&wantarray;my $o=$lookup->(\($_[0]),0);
+          $fail->() unless $o->{path};$take->('stat',$o->{role});
+          my @s=CORE::stat($o->{fh});$same_physical->($o->{path}{identity},\@s,$o->{path}{directory}?'directory':'file');
+          return @{$project->($o->{path},\@s)};
+        };
+        local *CORE::GLOBAL::lstat=sub (;*) {
+          $check->();$fail->() unless @_==1&&wantarray&&!ref($_[0]);
+          my $p=$paths{$_[0]};$fail->() unless defined($p);$take->('lstat',$p->{role});
+          my @s=CORE::lstat($p->{actual});$same_physical->($p->{identity},\@s,$p->{directory}?'directory':'file');
+          return @{$project->($p,\@s)};
+        };
+        local *CORE::GLOBAL::sysseek=sub (*$$) {
+          $check->();$fail->() unless @_==3;my $o=$lookup->(\($_[0]),0);
+          $fail->() unless $o->{path}&&!$o->{path}{directory}&&$_[1]==0&&$_[2]==0;
+          $take->('seek',$o->{role});$fail->() if $o->{readQueue}&&@{$o->{readQueue}};
+          $o->{readQueue}=[length($o->{path}{body}),0];
+          my $v=CORE::sysseek($o->{fh},0,0);$fail->() unless defined($v)&&$v==0;return $v;
+        };
+        local *CORE::GLOBAL::sysread=sub (*\$$;$) {
+          $check->();$fail->() unless @_==3&&ref($_[1]) eq 'SCALAR'&&$_[2]==65536;
+          my $buffer=$_[1];$fail->() unless !ref($$buffer)&&$$buffer eq '';
+          my $o=$lookup->(\($_[0]),0);$take->('read',$o->{role});
+          my ($want,$pipe_read);
+          if($o->{path}) {
+            $fail->() unless !$o->{path}{directory}&&$o->{readQueue}&&@{$o->{readQueue}};
+            $want=shift @{$o->{readQueue}};
+          } else {
+            $fail->() unless defined($job)&&$o->{role}=~/\A\Q$job->{prefix}\E\.(out-r|err-r|setup-r)\z/;
+            my $name=$1;my $queue=$reads{$name};$fail->() unless ref($queue) eq 'ARRAY'&&@$queue;
+            $want=shift @$queue;$pipe_read=1;
+            my $write=$name=~s/-r\z/-w/r;
+            $fail->() unless $roles{$job->{prefix}.'.'.$write}{closed};
+          }
+          $!=0;my $n=CORE::sysread($o->{fh},$$buffer,65536);
+          $fail->() unless defined($n)&&!$!&&!utf8::is_utf8($$buffer)&&$n==length($$buffer);
+          $fail->() unless $pipe_read?($want?$n>0:$n==0):$n==$want;
+          return $n;
+        };
+        local *CORE::GLOBAL::fileno=sub (*) {
+          $check->();$fail->() unless @_==1;my $o=$lookup->(\($_[0]),1);
+          $take->('fileno',$o->{role});return CORE::fileno($o->{fh});
+        };
+        local *CORE::GLOBAL::close=sub (;*) {
+          $fail->() unless @_==1;my $o=$lookup->(\($_[0]),0);
+          $fail->() if $o->{dirStream};$take->('close',$o->{role});return $dispose->($o,0);
+        };
+        local *CORE::GLOBAL::opendir=sub (*$) {
+          $check->();$fail->() unless @_==2&&!defined($_[0])&&!ref($_[1])
+            &&$_[1] eq '/dev/fd'&&defined($job)&&!defined($census)&&!@pipe_names;
+          my $role=$job->{prefix}.'.census';$take->('opendir',$role);
+          CORE::opendir(my $fh,'/dev/fd') or $fail->();
+          $census=$register->($fh,$role,1,undef);$_[0]=$fh;$census->{exposed}=1;
+          my @live=grep {!$_->{closed}} @owned;
+          $fail->() unless @live==$job->{stageCount}+9;
+          my %fds;
+          for my $o(@live) {$lookup->(\($o->{fh}),0);$fail->() if $fds{$o->{fd}}++;}
+          @census_names=('.', '..','0','1','2',map {"$_->{fd}"} @live);
+          return 1;
+        };
+        local *CORE::GLOBAL::readdir=sub (*) {
+          $check->();$fail->() unless @_==1&&!wantarray&&defined($census);
+          my $o=$lookup->(\($_[0]),0);$fail->() unless $o==$census;
+          $take->('readdir',$o->{role});$!=0;return shift @census_names;
+        };
+        local *CORE::GLOBAL::closedir=sub (*) {
+          $fail->() unless @_==1;my $o=$lookup->(\($_[0]),0);
+          $fail->() unless $o->{dirStream}&&defined($census)&&$o==$census&&!@census_names;
+          $take->('closedir',$o->{role});return $dispose->($o,0);
+        };
+        local *CORE::GLOBAL::fork=sub () {
+          $check->();$fail->() unless @_==0&&defined($job)&&defined($census)&&$census->{closed};
+          $take->('fork',$job->{prefix});return 424242;
+        };
+        local *CORE::GLOBAL::waitpid=sub ($$) {
+          $check->();$fail->() unless @_==2&&$_[0]==424242&&$_[1]==POSIX::WNOHANG()
+            &&defined($job)&&@wait;
+          $take->('wait',$job->{prefix});my $v=shift @wait;$?=$v->[1];return $v->[0];
+        };
+        local *IO::Select::can_read=sub {
+          $check->();$fail->() unless @_==2&&ref($_[0]) eq 'IO::Select'&&$_[1]==0.01&&defined($job)&&@ready;
+          $take->('ready',$job->{prefix});$selector=$_[0] unless defined($selector);
+          $fail->() unless $_[0]==$selector;my $want=shift @ready;my @members=$_[0]->handles;
+          $fail->() unless @members==@$want&&$_[0]->count==@$want;my %members;
+          for my $fh(@members) {my $o=$lookup->(\$fh,0);$fail->() if $members{$o->{role}}++;}
+          my @answer;
+          for my $name(@$want) {
+            my $role=$job->{prefix}.'.'.$name;$fail->() unless $members{$role};push @answer,$roles{$role}{fh};
+          }
+          return @answer;
+        };
+        local *Time::HiRes::clock_gettime=sub (;$) {
+          $check->();$fail->() unless @_==1&&$_[0]==Time::HiRes::CLOCK_MONOTONIC();
+          my $role=defined($job)?$job->{prefix}:!$calls{clock}?'startup':'stage';
+          $take->('clock',$role);return 0;
+        };
+        local *CORE::GLOBAL::exec=$deny;local *CORE::GLOBAL::system=$deny;
+        local *CORE::GLOBAL::open=sub (*;$@) {$deny->();};local *CORE::GLOBAL::syswrite=sub (*$;$$) {$deny->();};
+        local *CORE::GLOBAL::readpipe=sub (_) {$deny->();};local *CORE::GLOBAL::kill=sub (@) {$deny->();};
+        local *CORE::GLOBAL::chdir=sub (;$) {$deny->();};local *CORE::GLOBAL::unlink=sub (@) {$deny->();};
+        local *CORE::GLOBAL::mkdir=sub (_;$) {$deny->();};local *CORE::GLOBAL::rmdir=sub (_) {$deny->();};
+        local *CORE::GLOBAL::rename=sub ($$) {$deny->();};local *CORE::GLOBAL::seek=sub (*$$) {$deny->();};
+        local *CORE::GLOBAL::truncate=sub ($$) {$deny->();};local *CORE::GLOBAL::socket=sub (*$$$) {$deny->();};
+        local *CORE::GLOBAL::socketpair=sub (**$$$) {$deny->();};local *CORE::GLOBAL::connect=sub (*$) {$deny->();};
+        local *CORE::GLOBAL::accept=sub (**) {$deny->();};
+        local *IO::Select::can_write=$deny;local *IO::Select::has_exception=$deny;
+        local *Time::HiRes::sleep=$deny;local *POSIX::dup2=$deny;local *POSIX::close=$deny;local *POSIX::_exit=$deny;
+        my %prototypes=(sysopen=>'*$$;$',pipe=>'**',binmode=>'*;$',fcntl=>'*$$',stat=>';*',
+          lstat=>';*',sysseek=>'*$$',sysread=>'*\\$$;$',fileno=>'*',close=>';*',
+          opendir=>'*$',readdir=>'*',closedir=>'*',fork=>'',waitpid=>'$$');
+        for my $op(sort keys %prototypes) {
+          my $port='CORE::GLOBAL'->can($op);my $core=prototype('CORE::'.$op);
+          $fail->() unless defined($port)&&ref($port) eq 'CODE'&&defined($core)
+            &&$core eq $prototypes{$op}&&defined(prototype($port))&&prototype($port) eq $core;
+        }
+        for my $op(qw(exec system)) {my $port='CORE::GLOBAL'->can($op);
+          $fail->() unless defined($port)&&ref($port) eq 'CODE'&&!defined(prototype($port));}
+        my $source=MIME::Base64::decode_base64($ARGV[0]);
+        $body_ok=eval {
+          $loaded=eval($source."\n1;\n");$setup_error=$@;$check->();
+          $fail->() unless $loaded&&!length($setup_error);$load_complete=1;
+          my $capture=\&task6a_origin_capture;
+          local *main::task6a_origin_capture=sub {
+            $check->();$fail->() unless @_==4&&$_[0] eq '/bin/ls'
+              &&ref($_[1]) eq 'ARRAY'&&@{$_[1]}==2&&$_[1][0] eq '-lde'
+              &&$_[2]==2&&$_[3]==4096;
+            $helper_enter->($_[1][1]);++$helpers;
+            my $value=$capture->(@_);$check->();$helper_leave->();return $value;
+          };
+          my $operation=$mode eq 'premature-recheck'?'recheck':$mode eq 'premature-release'?'release':'hold';
+          my %operations=(hold=>\&task6a_origin_hold_staged_custody,
+            recheck=>\&task6a_origin_recheck_staged_custody,release=>\&task6a_origin_release_staged_custody);
+          my $value=eval {$mode eq 'arity'?$operations{$operation}->(1):$operations{$operation}->()};
+          my $error=$@;$check->();
+          my $refused=!defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+          $fail->() unless $refused||(!length($error)&&ref($value) eq 'HASH');
+          $outcomes->{refused}=$refused?JSON::PP::true:JSON::PP::false;
+          $outcomes->{$operation}=$value;
+          if($mode eq 'healthy') {
+            $fail->() if $refused;$outcomes->{recheck}=$operations{recheck}->();
+            $outcomes->{release}=$operations{release}->();$check->();
+          } else {$fail->() unless $refused;}
+          my $before=scalar(@events);
+          for my $name(qw(hold recheck release)) {
+            my $again=eval {$operations{$name}->()};my $again_error=$@;$check->();
+            $fail->() unless !defined($again)&&$again_error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+          }
+          $repeat_delta=scalar(@events)-$before;$fail->() if $repeat_delta;
+          $fail->() if @grammar||@jobs||defined($job);1;
+        };
+        $primary=$@;
+        # Separate fixture rescue never creates consumer definite-close evidence.
+        for my $o(@owned) {next if $o->{attempted};eval {$dispose->($o,1)};$latch->() if $@;}
+        die length($setup_error)?$setup_error:"$fault\n" unless $load_complete;
+        $check->();die $primary unless $body_ok;
+      }
+      my $definite=grep {$_->{closed}&&!defined(CORE::fileno($_->{fh}))} @owned;
+      my $fixture_closed=grep {$_->{closed}&&$_->{fixture}} @owned;
+      $fail->() unless $definite==@owned&&!$fixture_closed;
+      my $stage_closed=grep {$_->{closed}&&$_->{path}} @owned;
+      my $out={%$outcomes,harnessFault=>undef,productionAuthority=>JSON::PP::false,
+        scope=>'ordinary-staged-custody-consumer-fixture-only',
+        syntheticGeometry=>JSON::PP::true,syntheticVendorAndSelected=>JSON::PP::true,
+        helpers=>$helpers,ownedCount=>scalar(@owned),definitelyClosed=>0+$definite,
+        stageClosed=>0+$stage_closed,helperClosed=>$definite-$stage_closed,
+        fixtureClosed=>0+$fixture_closed,remainingOperations=>scalar(@grammar),
+        repeatEffectDelta=>$repeat_delta,calls=>\%calls,events=>\@events};
+      my $metadata=JSON::PP->new->canonical->utf8->encode({map {$_=>$out->{$_}} grep {$_ ne 'events'} keys %$out});
+      $fail->() if length($metadata)>16384;
+      my $json=JSON::PP->new->canonical->utf8->encode($out);$fail->() if length($json)>8388608;
+      print $json;exit 0;
+    }
+```
+
+#### Combined consumer memory mapping and invocation bounds
+
+Extend only systemObject's closed-kind source mapping and payload interpolation.
+Do not change its ordinary-host/root refusal, sole-main removal, scrubbed env,
+fixed Apple Perl, cwd or timeout. The memory-only admission assignment is not an
+exported initializer or production setter:
+
+```javascript
+if(kind==='staged-custody') {
+  source=replaceOnce(source,'exec {$tool} $tool,@$args;',
+    'CORE::GLOBAL::exec($tool,$tool,@$args);');
+  source=replaceOnce(source,
+    "my $staged_vendor_pin='ef28d8fab2c0e4314522d4bb1b7173270aa3937e93b92cb7de79c112ac1fa953';",
+    "my $staged_vendor_pin='bf6cedd405c26f5f933e45436d8ec84b2780297377bb44f40deb6c44a91f6a6e';");
+  source=replaceOnce(source,'sub task6a_origin_hold_staged_custody {',String.raw`
+if($mode ne 'absent') {$staged_admission=$fixture_admission;}
+sub task6a_origin_hold_staged_custody {`);
+}
+```
+
+In program interpolate STAGED_CUSTODY_PROGRAM immediately before the current
+STAGED_CAPTOR_PORT_PROGRAM interpolation. Before the existing spawn, replace
+the current source-argument construction with the following shared construction;
+the byte limit and stdin bound apply ONLY to the new closed kind:
+
+```javascript
+const argv=['-f','-e',program,Buffer.from(source).toString('base64')];
+const env={PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'};
+const input=JSON.stringify({kind,record,expected});
+if(kind==='staged-custody') {
+  // Observed host ARG_MAX is 1048576. Reserve 262144 bytes for kernel/pointer
+  // overhead; count ACTUAL final UTF8 argv/env strings, not source estimates.
+  const byteTotal=Buffer.byteLength('/usr/bin/perl')+1
+    +argv.reduce((n,v)=>n+Buffer.byteLength(v)+1,0)
+    +Object.entries(env).reduce((n,[k,v])=>n+Buffer.byteLength(k+'='+v)+1,0);
+  assert.ok(byteTotal<=786432,'staged custody argv budget exceeded');
+  assert.ok(Buffer.byteLength(input)<=262144,'staged custody stdin budget exceeded');
+}
+const r=spawnSync('/usr/bin/perl',argv,{
+  input,cwd:'/',env,timeout:record?.fifoRace?500:10000,
+  maxBuffer:['staged-captor-ports','staged-custody'].includes(kind)?8388608:65536,
+});
+```
+
+First-cycle execution order (each child consumes only its own frozen grammar):
+
+- [ ] Two exact independent pre-effect reviews; resolve C/I findings.
+- [ ] Fresh preservation/tool/source/test checks; confirm ARG_MAX1048576.
+- [ ] Add only fs import, literal prefix table/helper and first healthy test.
+  Run fixed Node with --test-name-pattern selecting EXACT first test.
+  Expect the JavaScript assertion "staged custody consumer missing: hold".
+  No Perl, backing-byte read, initializer, lower port or fixture acquisition.
+- [ ] After observed causal RED, add combined constant/mapping/bounds and actual
+  production capsule from the four source blocks. Keep final main unchanged.
+- [ ] Add the remaining first-cycle test registrations. Check syntax/diff and
+  review the ACTUAL source/test delta before the first Perl child.
+- [ ] Run all tests matching "staged custody actual consumer", read complete
+  output and natural terminal. Healthy407/H42/390 and 36 exact failed-open
+  profiles are expectations until that run, NOT existing results.
+- [ ] Continue the remaining mandatory negative/mutation cycles BEFORE any
+  implementation delivery. No protected staging/native/loaded/cutover claim.
+
+Exact first-cycle commands (run from
+/Users/setrox/ai/setrox/.worktrees/setfarm-staged-custody-capsule-20261004-v1):
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --check scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody actual consumer holds, rechecks and releases twelve originals$' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody actual consumer ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+The second command is the single causal RED BEFORE source insertion; the third
+is the41-case first-cycle verification AFTER actual source/test review. Preserve
+all raw outputs/natural terminals. Use no build/runtime-guard bypass or ambient
+Node/Perl fallback. Do not rerun closed predecessor invocations.
+
+Source-only self-review: code steps have literal content and stable anchors;
+first-cycle queues are defined by the four grammar productions and exact
+prefix cut; the source insertion joins parent custody lexicals and leaves main
+refusal unchanged; old vendor transport uses its causal unique-policy anchor.
+Initial package-pin transcription was corrected against actual shasum to
+bf6cedd405c26f5f933e45436d8ec84b2780297377bb44f40deb6c44a91f6a6e.
+This correction was docs-only and preceded all execution. No setup failure
+counts as RED. Later matrix literals remain unfinished and prevent delivery,
+not safe first-cycle progress.
+
+#### First actual consumer cycle — observed, closed, no replay
+
+Actual RED5c77e8 CLOSED1 was the missing hold assertion before fixtures/Perl.
+After both exact actual-delta C0/I0/M0 reviews, root0212de CLOSED0 preflight
+01:48:06 preserved all2093 inputs/tools/npm and all old roots. ONE approved
+41-profile invocation0089e6 yielded managed87334; root alone polled it once:
+b86dbf naturallyCLOSED0, full836-token output,41PASS/0FAIL/CANCEL/SKIP/TODO,
+2609.491375ms. NO further poll87334/replay of this first invocation.
+Actual healthy assertions proved407 clocks/H42 port grammar,390 physical
+originals/12 stage+378 helper definite closes, full queue drain and repeat0.
+All12 undefined,12 exposed-false and12 exposed-throw prefixes passed separately.
+Rootpost4390fa CLOSED0 01:49:34 source434a6a/testca826/spec1f26/planf576,
+all2093/69713582B/physical26b7d17e4a90f2167af8fad52e6d502ad71b5405d6baedefbe39be38942a5170.
+Independent post01:51:20–01:52:13 C0/I0/M0 allretained/cacheidentities/
+originaltwo/backups/journal/canonicalclean; disk8358316KiBfree97%,62%memoryfree,
+no thermalwarning; HTTP3080/18789200,3333knownrefused. No native/protected or
+service qualification. Implementation remains uncommitted until full matrix.
+
+#### Next closed cycle: malformed first-open nominees and real callback mutant
+
+This is an UNEXECUTED candidate test-only delta. Production434a6a stays unchanged.
+Add exactly nine closed mode names to the combined dispatch mode list:
+unknown-cell, unknown-handle, unknown-blessed-glob, unknown-overloaded,
+unknown-indirect, unknown-scalar-ref, unknown-array, unknown-hash, unknown-coderef.
+They retain slot0 and use exactly FOUR operations: startup clock, hold clock,
+lstat d0, sysopen d0. No CORE file/pipe/DIR acquisition constructs a nominee,
+and no close/config/helper/readiness/wait follows. This is not native leak-freedom
+for a malformed real-FD object. Node backing-byte preflight is separate ordinary
+read-only fixture IO, not a nominee FD acquisition.
+
+Preload fixed Symbol and overload ONLY inside the new closed branch before
+hook installation. Main independently read installed Symbol.pm101–107 and
+perltie.pod903–908: gensym makes an anonymous GLOB without IO; tie *glob differs
+from tying its scalar reference. Do not use geniosym, select, open, pipe, socket,
+fileno or close to manufacture or finalize these nominees.
+
+Append this literal after the combined branch's existing deny closure and before
+the local port layer. Classes are trusted fixture-only bytes, never production
+declarations or caller-provided code. Class compilation/load failure is fatal:
+
+```perl
+      my $open_ordinal=0;
+      require Symbol;require overload;
+      my %callbacks=map {$_=>0} qw(FETCH STORE FILENO CLOSE READ PRINT PRINTF WRITE READLINE GETC SEEK TELL EOF BINMODE CALL string numeric bool compare);
+      my %factory=(scalar=>0,handle=>0);
+      my %finalization=(untie=>0,destroy=>0);
+      my $counts={callbacks=>\%callbacks,factory=>\%factory,finalization=>\%finalization};
+      my ($nominee_cell,$nominee_glob,$nominee_shape,$before_callbacks,$after_finalization);
+      my $classes=<<'TEST_STAGED_CLASSES';
+package TestStagedScalar;
+sub TIESCALAR {my ($class,$counts)=@_;++$counts->{factory}{scalar};bless {counts=>$counts},$class;}
+sub deny {my ($self,$name)=@_;++$self->{counts}{callbacks}{$name};die "TEST_STAGED_CANDIDATE_CALLBACK\n";}
+sub FETCH {$_[0]->deny('FETCH');}
+sub STORE {$_[0]->deny('STORE');}
+sub UNTIE {++$_[0]{counts}{finalization}{untie};}
+sub DESTROY {++$_[0]{counts}{finalization}{destroy};}
+package TestStagedHandle;
+sub TIEHANDLE {my ($class,$counts)=@_;++$counts->{factory}{handle};bless {counts=>$counts},$class;}
+sub deny {my ($self,$name)=@_;++$self->{counts}{callbacks}{$name};die "TEST_STAGED_CANDIDATE_CALLBACK\n";}
+sub FILENO {$_[0]->deny('FILENO');}
+sub CLOSE {$_[0]->deny('CLOSE');}
+sub READ {$_[0]->deny('READ');}
+sub PRINT {$_[0]->deny('PRINT');}
+sub PRINTF {$_[0]->deny('PRINTF');}
+sub WRITE {$_[0]->deny('WRITE');}
+sub READLINE {$_[0]->deny('READLINE');}
+sub GETC {$_[0]->deny('GETC');}
+sub SEEK {$_[0]->deny('SEEK');}
+sub TELL {$_[0]->deny('TELL');}
+sub EOF {$_[0]->deny('EOF');}
+sub BINMODE {$_[0]->deny('BINMODE');}
+sub UNTIE {++$_[0]{counts}{finalization}{untie};}
+sub DESTROY {++$_[0]{counts}{finalization}{destroy};}
+package TestStagedOverloaded;
+use overload
+    '""'=>sub {++$_[0]{counts}{callbacks}{string};die "TEST_STAGED_CANDIDATE_CALLBACK\n";},
+    '0+'=>sub {++$_[0]{counts}{callbacks}{numeric};die "TEST_STAGED_CANDIDATE_CALLBACK\n";},
+    'bool'=>sub {++$_[0]{counts}{callbacks}{bool};die "TEST_STAGED_CANDIDATE_CALLBACK\n";},
+    '=='=>sub {++$_[0]{counts}{callbacks}{compare};die "TEST_STAGED_CANDIDATE_CALLBACK\n";},
+    fallback=>0;
+sub DESTROY {++$_[0]{counts}{finalization}{destroy};}
+package main;
+1;
+TEST_STAGED_CLASSES
+      my $classes_ok=eval $classes;my $classes_error=$@;
+      $fail->() unless $classes_ok&&!length($classes_error);
+      my $shape=sub {
+        my ($cell)=@_;my $sv=B::svref_2object($cell);
+        my $out={cellClass=>ref($sv),cellFlags=>0+$sv->FLAGS};
+        if($sv->FLAGS&B::SVf_ROK()) {
+          my $rv=$sv->RV;$out->{rvClass}=ref($rv);$out->{rvFlags}=0+$rv->FLAGS;
+          if(ref($rv) eq 'B::GV') {
+            my $magic=$rv->MAGIC;$out->{gvMagic}=defined($magic)?1:0;
+            my $io=$rv->IO;$out->{ioClass}=ref($io);
+            if(ref($io) eq 'B::IO') {
+              $out->{ioFlags}=0+$io->FLAGS;my $im=$io->MAGIC;$out->{ioMagic}=defined($im)?1:0;
+            }
+          }
+        }
+        return $out;
+      };
+      my $nominate=sub {
+        my ($cell)=@_;$fail->() unless $open_ordinal==1&&!defined($nominee_cell)&&!@owned;
+        $nominee_cell=$cell; # retain ORIGINAL pending cell before nomination
+        if($mode eq 'unknown-cell') {
+          tie $$cell,'TestStagedScalar',$counts;
+          # No candidate VALUE access after tying this original alias.
+        } elsif($mode eq 'unknown-handle'||$mode eq 'unknown-blessed-glob') {
+          my $g=Symbol::gensym();$nominee_glob=$g;
+          if($mode eq 'unknown-handle') {tie *$g,'TestStagedHandle',$counts;}
+          else {bless $g,'TestStagedBlessedGlob';}
+          $$cell=$g;
+        } elsif($mode eq 'unknown-overloaded') {$$cell=bless {counts=>$counts},'TestStagedOverloaded';}
+        elsif($mode eq 'unknown-indirect') {$$cell='TEST_STAGED_UNOPENED_HANDLE';}
+        elsif($mode eq 'unknown-scalar-ref') {my $value=0;$$cell=\$value;}
+        elsif($mode eq 'unknown-array') {$$cell=[];}
+        elsif($mode eq 'unknown-hash') {$$cell={};}
+        elsif($mode eq 'unknown-coderef') {$$cell=sub {++$callbacks{CALL};die "TEST_STAGED_CANDIDATE_CALLBACK\n";};}
+        else {$fail->();}
+        $nominee_shape=$shape->($cell);
+        $fail->() unless ref($nominee_shape) eq 'HASH';
+        $fail->() if grep {$_} values %callbacks;
+        if($mode eq 'unknown-cell') {
+          $fail->() unless $factory{scalar}==1&&($nominee_shape->{cellFlags}&0x00e00000);
+        } elsif($mode eq 'unknown-handle') {
+          $fail->() unless $factory{handle}==1&&$nominee_shape->{rvClass} eq 'B::GV'
+            &&($nominee_shape->{gvMagic}||($nominee_shape->{ioFlags}//0)&0x00e00000||$nominee_shape->{ioMagic});
+        }
+        return 1;
+      };
+```
+
+The existing following-layer line is replaced EXACTLY from
+`my $open_ordinal=0;my $helpers=0;my $repeat_delta;` to
+`my $helpers=0;my $repeat_delta;`. The ordinal is now initialized once before
+the fixture constructor closures; no duplicate lexical shadows it.
+In grammar, immediately after absent branch and before healthy/open branch add:
+
+```perl
+      elsif($mode=~/\Aunknown-/) {
+        $emit->('clock','stage');$emit->('lstat','d0');$emit->('sysopen','d0');
+      }
+```
+
+In sysopen, immediately after take('sysopen',role) and ++open_ordinal, BEFORE
+undefined nomination/CORE acquisition, add:
+
+```perl
+          if($mode=~/\Aunknown-/) {$nominate->(\($_[0]));return 1;}
+```
+
+After actual refusal/repeat checks and complete queue drain, BEFORE fixture FD
+finalization, add the following memory-only finalizer. Never serialize a nominee
+or B object, never call nominee fileno/close, and snapshot consumer callbacks
+before untie/destruction. Memory finalization is not source definite-close:
+
+```perl
+          if($mode=~/\Aunknown-/) {
+            $fail->() unless defined($nominee_cell)&&defined($nominee_shape)&&!@owned;
+            $before_callbacks={%callbacks};
+            if($mode eq 'unknown-cell') {untie $$nominee_cell;}
+            elsif($mode eq 'unknown-handle') {untie *$nominee_glob;}
+            $after_finalization={%finalization};
+            $outcomes->{nomineeShape}={%$nominee_shape};
+            $outcomes->{candidateCallbacksBeforeFinalizer}=$before_callbacks;
+            $outcomes->{factoryCounts}={%factory};
+            $outcomes->{memoryFinalizationCounts}=$after_finalization;
+          }
+```
+
+Do NOT reject nonzero callbacks inside this harness's final output: that would
+turn the coherent source mutant into a harness fault. Node's semantic assertion
+below owns that verdict. Constructor-time callbacks remain a factory/setup fault.
+
+Append these ten tests in the ordinary-host branch. The regression target is
+original-cell magic access before value, not a source-text change detector:
+
+```javascript
+const STAGED_CALLBACK_ZERO={FETCH:0,STORE:0,FILENO:0,CLOSE:0,READ:0,PRINT:0,PRINTF:0,
+  WRITE:0,READLINE:0,GETC:0,SEEK:0,TELL:0,EOF:0,BINMODE:0,CALL:0,string:0,numeric:0,bool:0,compare:0};
+for(const mode of ['unknown-cell','unknown-handle','unknown-blessed-glob','unknown-overloaded',
+  'unknown-indirect','unknown-scalar-ref','unknown-array','unknown-hash','unknown-coderef'])
+  test('staged custody malformed nominee rejects '+mode+' without callback or FD',()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,true);assert.equal(r.ownedCount,0);assert.equal(r.stageClosed,0);
+    assert.equal(r.helperClosed,0);assert.equal(r.helpers,0);
+    assert.deepEqual(r.calls,{clock:2,lstat:1,sysopen:1});
+    assert.deepEqual(r.candidateCallbacksBeforeFinalizer,STAGED_CALLBACK_ZERO);
+    assert.deepEqual(r.factoryCounts,{scalar:mode==='unknown-cell'?1:0,handle:mode==='unknown-handle'?1:0});
+  });
+test('staged custody malformed nominee catches removal of pre-value cell magic guard',()=>{
+  const source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),
+    '    task6a_origin_refuse() if $sv->FLAGS & 0x00f00000;','');
+  const r=stagedCustody('unknown-cell',0,{sourceOverride:source});
+  assert.equal(r.refused,true);assert.equal(r.ownedCount,0);assert.equal(r.helpers,0);
+  assert.deepEqual(r.calls,{clock:2,lstat:1,sysopen:1});
+  assert.deepEqual(r.candidateCallbacksBeforeFinalizer,{...STAGED_CALLBACK_ZERO,FETCH:1});
+  assert.throws(()=>assert.deepEqual(r.candidateCallbacksBeforeFinalizer,STAGED_CALLBACK_ZERO),
+    {code:'ERR_ASSERTION'});
+});
+```
+
+Exact next-cycle command, same fixed cwd as the first cycle:
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody malformed nominee ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Two exact pre-effect reviews, actual test-delta review, syntax/diff and fresh
+preservation gates precede this new ten-profile invocation. Compile/setup/shape/
+queue faults never count as negative success or mutant kill. Production stays
+434a6a; if actual evidence finds a production gap, write a causal RED before its
+smallest source fix. No replay87334, no implementation delivery before fullmatrix.
+
+#### Malformed nominee cycle — observed terminal and preserved inputs
+
+ONE reviewed malformed focusa2ec3c naturallyCLOSED0, full274-token output:
+10PASS/0FAIL/CANCEL/SKIP/TODO605.665292ms. Nine candidates refused without
+callbacks/FD; guard removal yielded real FETCH1, canonical refusal/four ports.
+No replay. Root5ece92 CLOSED0 02:11:10 all2093/69732297B/
+physical00ebe0f38ce0a02694a66a5e6fe536113cf794f737c12b40881463a08b5ae90f;
+source434/test0f64/planb7a/spec1f26/tools/npm unchanged. Independentpre02:09:50–
+02:10:25 C0/I0/M0 retainedcomparators/originaltwo/journal/canonicalclean.
+Ordinary fixture behavior only; no native/protected/service admission.
+
+#### Next closed cycle: all twelve false/throw stage-close responses
+
+UNEXECUTED test-only candidate. Production434 unchanged. Adds24 baseline cases
+and TWO coherent sealed-close mutants. No new files/production setters/exports.
+Physically close each original using captured CORE primitive and check closure
+BEFORE nominating false/exception; only one selected STAGE role. Helpers retain
+successful responses. Sticky faults remain for physical/grammar failures.
+Full healthy407 clocks/H42/390 originals/4448 operations: hold, recheck, twelve
+stage closes in acquisition order, no release clocks. Regression target: response
+uncertainty mistaken for definite closure, disposal early exit or resurrection.
+Two mutants remove only return/exception prerequisite for private definite
+closure, retaining post-close inspection, then falsely publish release success.
+Driver exposes outcome to Node, not a harness fault.
+
+File: scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js only.
+Extend closed mode list with close-false close-throw. Replace slot validation:
+
+```perl
+        &&($mode=~/\A(?:open|close)-/ ? $slot>=1 : $slot==0)
+```
+
+Replace grammar outer healthy/open condition and inner healthy condition:
+
+```perl
+      elsif($mode eq 'healthy'||$mode=~/\A(?:open|close)-/) {
+```
+
+```perl
+        if($mode eq 'healthy'||$mode=~/\Aclose-/) {
+```
+
+Replace combined close port body exactly (same ;* prototype):
+
+```perl
+        local *CORE::GLOBAL::close=sub (;*) {
+          $fail->() unless @_==1;my $o=$lookup->(\($_[0]),0);
+          $fail->() if $o->{dirStream};$take->('close',$o->{role});
+          my $closed=$dispose->($o,0);
+          if($mode=~/\Aclose-/&&defined($o->{path})) {
+            my $n=$o->{role}=~/\Ad([0-5])\z/?1+$1:$o->{role}=~/\Af([0-5])\z/?7+$1:0;
+            $fail->() unless $n>=1&&$n<=12&&$closed&&$o->{closed}
+              &&$o->{attempted}&&!defined(CORE::fileno($o->{fh}));
+            if($n==$slot) {
+              $fail->() if exists($outcomes->{nominatedClose});
+              $outcomes->{nominatedClose}={role=>''.$o->{role},slot=>0+$n,
+                kind=>''.$mode,physicallyClosedBeforeResponse=>JSON::PP::true};
+              return 0 if $mode eq 'close-false';
+              die "TEST_STAGED_NOMINATED_CLOSE_THROW\n";
+            }
+          }
+          return $closed;
+        };
+```
+
+Extend EXISTING unique hold-declaration memory replacement: after admission
+assignment, before restored hold declaration, insert this observer. Only fresh
+primitive scalar/array copies escape; no FH/FD/CV/ledger reference or mutation.
+
+```perl
+  sub test_observe_staged_custody {
+    task6a_origin_refuse() unless @_==0;
+    $staged_vector->(\@staged_originals);
+    my ($attempted,$closed)=(0,0);my @closed_flags;
+    for my $sealed(@staged_originals) {
+      my @binding=$sealed->('binding');
+      $attempted+=($binding[2]?1:0);$closed+=($binding[3]?1:0);
+      push @closed_flags,$binding[3]?1:0;
+    }
+    return {phase=>''.$staged_phase,invalid=>0+$staged_invalid,
+      uncertain=>0+$staged_uncertain,disposalStarted=>0+$staged_disposal_started,
+      sealedClosureCount=>0+scalar(@staged_originals),
+      attemptedCount=>0+$attempted,privateClosedCount=>0+$closed,closedFlags=>\@closed_flags};
+  }
+```
+
+Replace combined driver's healthy-only block. Canonical release refusal is
+asserted by Node; coherent false-success remains observable. Setup/initialhold/
+recheck faults remain fatal. Snapshot BEFORE repeats can themselves burn:
+
+```perl
+          if($mode eq 'healthy') {
+            $fail->() if $refused;$outcomes->{recheck}=$operations{recheck}->();
+            $outcomes->{release}=$operations{release}->();$check->();
+          } elsif($mode=~/\Aclose-/) {
+            $fail->() if $refused;$outcomes->{recheck}=$operations{recheck}->();$check->();
+            $outcomes->{sourceBeforeRelease}=test_observe_staged_custody();
+            my $release=eval {$operations{release}->()};my $release_error=$@;$check->();
+            my $release_refused=!defined($release)&&$release_error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            $fail->() unless $release_refused||(!length($release_error)&&ref($release) eq 'HASH');
+            $outcomes->{releaseRefused}=$release_refused?JSON::PP::true:JSON::PP::false;
+            $outcomes->{release}=$release;
+            $outcomes->{sourceAfterRelease}=test_observe_staged_custody();
+          } else {$fail->() unless $refused;}
+```
+
+After existing repeat delta assertion, before queue drain, insert:
+
+```perl
+          if($mode=~/\Aclose-/) {$outcomes->{sourceAfterRepeats}=test_observe_staged_custody();}
+```
+
+Append26 ordinary-host tests. Independent literal counts/flags, acquisition order,
+primitive physical-first witness. Common wrapper requires complete queue and
+no fixture retry. Mutants memory-only, production on-disk434 unchanged:
+
+```javascript
+const STAGED_CLOSE_CALLS={binmode:342,clock:407,close:348,closedir:42,fcntl:90,
+  fileno:1110,fork:42,lstat:132,opendir:42,pipe:168,read:228,readdir:1083,
+  ready:84,seek:30,stat:120,sysopen:12,wait:168};
+const STAGED_CLOSE_ROLES=['d0','d1','d2','d3','d4','d5','f0','f1','f2','f3','f4','f5'];
+function assertStagedClosePhysical(r,mode,slot) {
+  assert.equal(r.refused,false);
+  assert.deepEqual(r.calls,STAGED_CLOSE_CALLS);
+  assert.deepEqual([r.ownedCount,r.stageClosed,r.helperClosed],[390,12,378]);
+  assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+    STAGED_CLOSE_ROLES);
+  assert.deepEqual(r.nominatedClose,{role:STAGED_CLOSE_ROLES[slot-1],slot,kind:mode,
+    physicallyClosedBeforeResponse:true});
+  assert.deepEqual(r.sourceBeforeRelease,{phase:'active',invalid:0,uncertain:0,disposalStarted:0,
+    sealedClosureCount:12,attemptedCount:0,privateClosedCount:0,closedFlags:[0,0,0,0,0,0,0,0,0,0,0,0]});
+}
+function assertStagedCloseUncertain(r,slot) {
+  assert.equal(r.releaseRefused,true);assert.equal(r.release,null);
+  const flags=[1,1,1,1,1,1,1,1,1,1,1,1];flags[slot-1]=0;
+  assert.deepEqual(r.sourceAfterRelease,{phase:'burned',invalid:1,uncertain:1,disposalStarted:1,
+    sealedClosureCount:12,attemptedCount:12,privateClosedCount:11,closedFlags:flags});
+  assert.deepEqual(r.sourceAfterRepeats,r.sourceAfterRelease);
+}
+for(const mode of ['close-false','close-throw'])
+  for(let slot=1;slot<=12;slot++)
+    test('staged custody uncertain close attempts all originals for '+mode+' slot '+slot,()=>{
+      const r=stagedCustody(mode,slot);
+      assertStagedClosePhysical(r,mode,slot);assertStagedCloseUncertain(r,slot);
+    });
+for(const mode of ['close-false','close-throw'])
+  test('staged custody uncertain close catches false definite-closure mutant for '+mode,()=>{
+    const source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),
+      '$closed=1 if $ok&&!length($close_error)&&$inspected',
+      '$closed=1 if $inspected');
+    const r=stagedCustody(mode,1,{sourceOverride:source});
+    assertStagedClosePhysical(r,mode,1);
+    assert.equal(r.releaseRefused,false);
+    assert.deepEqual(r.release,{scope:'staged-source-vendor-custody-diagnostic-only',
+      productionAuthority:false,fileCount:6,directoryCount:6,handlesClosed:12});
+    assert.deepEqual(r.sourceAfterRelease,{phase:'released',invalid:0,uncertain:0,disposalStarted:1,
+      sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:[1,1,1,1,1,1,1,1,1,1,1,1]});
+    assert.throws(()=>assertStagedCloseUncertain(r,1),{code:'ERR_ASSERTION'});
+  });
+```
+
+ONE next command after both literal/actualreviews, syntax/diff/fresh source/tool/
+retention/resource gates, fixed ownroot cwd:
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody uncertain close ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Setup/compile/grammar/census/cleanup faults earn no semantic credit. No native/
+protected-owner/cutover qualification. Remaining matrix blocks sourcecommit/
+PR/build/delivery. No replay first41/malformed10. One first draft orchestration
+SyntaxError occurred before any nested tool; no file mutation/effect/testcredit.
+
+#### Close response cycle — observed terminal and preserved inputs
+
+ONE reviewed focus5c36a6 yielded9192; rootpoll1fd3b4 naturallyCLOSED0/full658tokens,
+26PASS/0FAIL/CANCEL/SKIP/TODO5197.2295ms. NOPOLL9192/no replay. Baselines all12
+attempts/12physical stagecloses/11private definite flags; release burns before
+repeats. Two coherent mutants exposed positiveDTO/private12 flags and Nodekill.
+Rootpost7b67f1 CLOSED0 02:21:32 same2093/69745948B/
+physicalbd1cebb9e4c0611f944a99534ad1b6b25306fbc334261c739325abfda80b8530.
+Independentpre02:20:45–48 C0/I0/M0 retainedcomparators/originaltwo/journal/
+canonicalclean. Source434/teste8e/planfaa1/spec1f26 unchanged.
+Ordinary behavioral qualification only. Fullmatrix stillunfinished.
+
+#### Next closed cycle: twenty plain admission negatives before any stage open
+
+UNEXECUTED test-only delta; production434 stays unchanged. Fresh fixture graph
+ONLY: do not mutate actual backing files, source pins, snapshots, registries,
+grammar expectations or stickyfault. All20 slot0, canonical hold refusal with
+startupclock+holdclock ONLY; zero lstat/sysopen/helper/config/read/close/FD.
+Decline selected-content bitflip: no initial independent native-member commitment.
+Creation dev/ino physical join and snapshot drift/tied-admission are later cycles.
+No mutant in this cycle: removing early guard with only2clock continuation would
+be a harness kill, not coherent semantic kill.
+
+Extend combined closed modes with the following exact twenty names:
+
+```perl
+admission-undef admission-array admission-extra admission-missing-creator admission-root admission-creation-short admission-creation-string admission-creation-owner admission-creation-type admission-source-count admission-source-order admission-source-numeric admission-source-policy admission-source-bytes-0 admission-source-bytes-1 admission-source-bytes-2 admission-source-bytes-3 admission-vendor-bytes admission-selected-detached admission-selected-member
+```
+
+After fresh fixture_admission construction, BEFORE my $emit, insert:
+
+```perl
+      if($mode=~/\Aadmission-/) {
+        my $a=$fixture_admission;
+        if($mode eq 'admission-undef') {$fixture_admission=undef;}
+        elsif($mode eq 'admission-array') {$fixture_admission=[];}
+        elsif($mode eq 'admission-extra') {$a->{extra}=0;}
+        elsif($mode eq 'admission-missing-creator') {delete $a->{creator};}
+        elsif($mode eq 'admission-root') {$a->{creator}{rootPath}='/private/tmp//bad';}
+        elsif($mode eq 'admission-creation-short') {pop @{$a->{creator}{creationIdentity}};}
+        elsif($mode eq 'admission-creation-string') {
+          $a->{creator}{creationIdentity}[4]='0';
+          my $sv=B::svref_2object(\($a->{creator}{creationIdentity}[4]));
+          $fail->() unless ($sv->FLAGS&B::SVf_POK())&&!($sv->FLAGS&B::SVf_IOK());
+        }
+        elsif($mode eq 'admission-creation-owner') {$a->{creator}{creationIdentity}[4]=1;}
+        elsif($mode eq 'admission-creation-type') {
+          $a->{creator}{creationIdentity}[2]=($a->{creator}{creationIdentity}[2]&07777)|0100000;
+        }
+        elsif($mode eq 'admission-source-count') {pop @{$a->{sources}};}
+        elsif($mode eq 'admission-source-order') {@{$a->{sources}}[0,1]=@{$a->{sources}}[1,0];}
+        elsif($mode eq 'admission-source-numeric') {$a->{sources}[0]{bytes}=1;}
+        elsif($mode eq 'admission-source-policy') {$a->{sources}[0]{gitBlobSha}='0'x40;}
+        elsif($mode=~/\Aadmission-source-bytes-([0-3])\z/) {
+          my $i=0+$1;my $body=\($a->{sources}[$i]{bytes});
+          substr($$body,0,1)=chr(ord(substr($$body,0,1))^1);
+        }
+        elsif($mode eq 'admission-vendor-bytes') {
+          my $body=\($a->{vendor}{bytes});substr($$body,0,1)=chr(ord(substr($$body,0,1))^1);
+        }
+        elsif($mode eq 'admission-selected-detached') {$a->{selected}{archiveRef}={%{$a->{vendor}}};}
+        elsif($mode eq 'admission-selected-member') {$a->{selected}{memberName}='node-v22.23.1-darwin-arm64/bin/not-node';}
+        else {$fail->();}
+      }
+```
+
+Replace combined grammar absent condition with:
+
+```perl
+      if($mode eq 'absent'||$mode=~/\Aadmission-/) {$emit->('clock','stage');}
+```
+
+After first outcomes hold value assignment, BEFORE healthy/close branch, insert:
+
+```perl
+          if($mode=~/\Aadmission-/) {$outcomes->{sourceAfterAdmissionRefusal}=test_observe_staged_custody();}
+```
+
+After repeat delta assertion, before complete queue drain (in addition to existing
+close observer), insert:
+
+```perl
+          if($mode=~/\Aadmission-/) {$outcomes->{sourceAfterAdmissionRepeats}=test_observe_staged_custody();}
+```
+
+Append twenty ordinary-host tests. Named realistic break: relaxed plain shape,
+numeric provenance, source Git-frame/body pin, vendor body pin or detached archive
+reference passes early admission. Literal2clock profile is independent of source.
+Setup/compile/factory/queue failure gets no negative credit:
+
+```javascript
+for(const mode of ['admission-undef','admission-array','admission-extra','admission-missing-creator',
+  'admission-root','admission-creation-short','admission-creation-string','admission-creation-owner',
+  'admission-creation-type','admission-source-count','admission-source-order','admission-source-numeric',
+  'admission-source-policy','admission-source-bytes-0','admission-source-bytes-1','admission-source-bytes-2',
+  'admission-source-bytes-3','admission-vendor-bytes','admission-selected-detached','admission-selected-member'])
+  test('staged custody admission negative rejects '+mode+' before any stage open',()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,true);assert.equal(r.hold,null);
+    assert.deepEqual(r.calls,{clock:2});
+    assert.deepEqual([r.ownedCount,r.stageClosed,r.helperClosed,r.helpers],[0,0,0,0]);
+    assert.deepEqual(r.sourceAfterAdmissionRefusal,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:0,attemptedCount:0,privateClosedCount:0,closedFlags:[]});
+    assert.deepEqual(r.sourceAfterAdmissionRepeats,r.sourceAfterAdmissionRefusal);
+  });
+```
+
+Exact ONE next command fixed ownroot cwd after two literal/actual reviews and
+syntax/diff/fresh source/tool/preservation/resource gates:
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody admission negative ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Only source/test/plan mappedchanges; no sourcecommit/PR/build before fullmatrix,
+no native/protected origin/member/globalowner/service qualification. Preserve
+alloldroots/evidence and twooriginaldirtyfiles. No oldtest/build replay.
+
+#### Admission cycle — closed; next boundary clock cycle
+
+Admission20 cee7f2→fef7fd managed57549 naturallyCLOSED0/full554tokens:
+20PASS/0FAIL/CANCEL/SKIP/TODO1143.973042ms. NOPOLL57549/no replay.
+Roota63c4d CLOSED0 02:28:08 same2093/69756437B/
+physical5a8d751fd5d5a758d0dd2e41241c55ba1892c3ea71a34b102f43a654589d08e2.
+Independentpre02:27:14–17 C0/I0/M0 allretainedcomparators; source434/test3321/
+plan43ac/spec1f26 unchanged. Ordinary behavioral qualification only.
+
+#### Next closed cycle: eight boundary expiry/clock exceptions
+
+UNEXECUTED test-only delta, production434 unchanged. Add these eight names to
+combined closed mode enum. After valid fixture admission, before grammar emit,
+insert the fixed independent boundary table (clock,completedhelpers,stagecount):
+
+```perl
+      my %boundary=(
+        'boundary-expiry-hold-entry'=>[2,0,0],
+        'boundary-expiry-hold-complete'=>[237,24,12],
+        'boundary-expiry-recheck-entry'=>[238,24,12],
+        'boundary-expiry-recheck-complete'=>[407,42,12],
+        'boundary-throw-hold-entry'=>[2,0,0],
+        'boundary-throw-hold-complete'=>[237,24,12],
+        'boundary-throw-recheck-entry'=>[238,24,12],
+        'boundary-throw-recheck-complete'=>[407,42,12],
+      );
+```
+
+Extend outer grammar healthy/open/close condition with
+||exists($boundary{$mode}); extend its inner healthy/close full-epoch condition
+with the same existence condition. BEFORE my $take, construct the predetermined
+prefix below. Never discard grammar/jobs after observing source refusal:
+
+```perl
+      if(exists($boundary{$mode})) {
+        my ($target,$helpers,$stage)=@{$boundary{$mode}};
+        my @prefix;my $clocks=0;
+        for my $g(@grammar) {
+          push @prefix,$g;++$clocks if $g->[0] eq 'clock';
+          last if $clocks==$target;
+        }
+        $fail->() unless $clocks==$target&&@jobs==42;
+        @grammar=@prefix;splice @jobs,$helpers;
+        for my $n(1..$stage) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+```
+
+Replace the combined clock port's unique take-and-return0 line with:
+
+```perl
+          $take->('clock',$role);
+          if(exists($boundary{$mode})&&$calls{clock}==$boundary{$mode}[0]) {
+            $fail->() unless $role eq 'stage'&&!defined($job)
+              &&!exists($outcomes->{boundaryNomination});
+            $outcomes->{boundaryNomination}={clock=>0+$calls{clock},mode=>''.$mode};
+            die "TEST_STAGED_NOMINATED_CLOCK_THROW\n" if $mode=~/\Aboundary-throw-/;
+            return 180;
+          }
+          return 0;
+```
+
+Startup remains0: actual bootstrap deadline180. Nominated numeric180 is equality,
+not later time; no renewed deadline. Add this driver elsif between close and
+existing else-refused. Initial hold may be refused only for hold-boundary modes;
+for recheck modes require actual hold success then canonical recheck refusal.
+Snapshot failed-operation state BEFORE repeats; preserve no positive recheck:
+
+```perl
+          } elsif(exists($boundary{$mode})) {
+            if($mode=~/-recheck-/) {
+              $fail->() if $refused;
+              my $value=eval {$operations{recheck}->()};my $error=$@;$check->();
+              $fail->() unless !defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+              $outcomes->{recheck}=undef;$outcomes->{recheckRefused}=JSON::PP::true;
+            } else {$fail->() unless $refused;}
+            $outcomes->{sourceAfterBoundary}=test_observe_staged_custody();
+```
+
+This literal ends before the existing final } else {$fail->() unless $refused;};
+keep that closing line, making one closed elsif chain. After repeat assertion,
+before queue drain add:
+
+```perl
+          if(exists($boundary{$mode})) {$outcomes->{sourceAfterBoundaryRepeats}=test_observe_staged_custody();}
+```
+
+Append eight ordinary-host tests with independent literal vectors. Regression:
+deadline equality or thrown clock accepted, deadline renewed or helper activity
+during disposal. Counts below independently derived BEFORE execution. No mutant
+claim: guard removal with this closed prefix would be setup/queue fault.
+
+```javascript
+const STAGED_HALF_BOUNDARY_CALLS={binmode:198,clock:237,close:204,closedir:24,fcntl:72,
+  fileno:636,fork:24,lstat:84,opendir:24,pipe:96,read:132,readdir:597,
+  ready:48,seek:18,stat:72,sysopen:12,wait:96};
+for(const kind of ['expiry','throw'])
+  for(const [part,clock,helpers,stage,originals,total] of [
+    ['hold-entry',2,0,0,0,2],['hold-complete',237,24,12,228,2574],
+    ['recheck-entry',238,24,12,228,2575],['recheck-complete',407,42,12,390,4448]])
+    test('staged custody boundary refuses '+kind+' at '+part,()=>{
+      const mode='boundary-'+kind+'-'+part,r=stagedCustody(mode);
+      assert.deepEqual(r.boundaryNomination,{clock,mode});
+      assert.equal(r.helpers,helpers);
+      assert.deepEqual([r.ownedCount,r.stageClosed,r.helperClosed],[originals,stage,originals-stage]);
+      const calls=clock===2?{clock:2}:clock===407?STAGED_CLOSE_CALLS:{...STAGED_HALF_BOUNDARY_CALLS,clock};
+      assert.deepEqual(r.calls,calls);
+      assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),total);
+      if(part.startsWith('hold-')) {assert.equal(r.refused,true);assert.equal(r.hold,null);}
+      else {assert.equal(r.refused,false);assert.equal(r.recheckRefused,true);assert.equal(r.recheck,null);}
+      assert.deepEqual(r.sourceAfterBoundary,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+        sealedClosureCount:stage,attemptedCount:stage,privateClosedCount:stage,
+        closedFlags:stage?[1,1,1,1,1,1,1,1,1,1,1,1]:[]});
+      assert.deepEqual(r.sourceAfterBoundaryRepeats,r.sourceAfterBoundary);
+    });
+```
+
+ONE next command fixed ownroot cwd after both literal/actual reviews and fresh
+syntax/diff/source/tool/retention/resource gates:
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody boundary ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Remaining metadata/foreign/config/ACL/captor/coherentmutants matrix prevents
+delivery; no authentic native/protectedowner/member/cutover claim. No replay
+closed invocations; preserve alloldroots/originaldirtytwo. Root only writer.
+
+#### Boundary cycle — observed closed terminal
+
+ONE boundary focus2ce9b2 naturallyCLOSED0/full178tokens8PASS/0FAIL/CANCEL/SKIP/
+TODO1068.192584ms, no managedsession/no replay. Rootpostf81d66 CLOSED0
+02:38:22 all2093/69766424B/physical2094e2d0f0d80d4f58e163091d24b5f12f1a5f566d9e023c63f10b4fffbe4b37,
+source434/test3cf2/plan02a904/spec1f26/tools/npm/absences unchanged.
+Independentpre02:37:30–33 C0/I0/M0 allretainedcomparators. Resourceaudit02:39:
+~7.76GiBfree; shortsessionlogs+8KiB/workspacelogs+data+ownclone sizes unchanged,
+earlier191220KiBdrop UNATTRIBUTED. Test-only continuation with monitoring;
+no newclone/CI/build admission/cleanup from this observation.
+
+#### Next closed cycle: fourteen plain metadata corruptions and restoration
+
+UNEXECUTED test-only delta. Source434 unchanged. Add fourteen names below to
+closed combined enum. Only public @staged_directories/@staged_files/record fields
+change after actual successfulhold. Never mutate nativeGV/IO, sealed originals,
+private checkers, snapshots/admission/expectation/cleanup registries. Saved public
+records exist only in trusted test memory and never escape. No tied/callback/
+partial-acquisition proof in this cycle; no coherentmutantkill credit.
+
+```perl
+metadata-dir-short metadata-file-short metadata-dir-record-copy metadata-file-record-copy metadata-dir-tuple-copy metadata-file-tuple-copy metadata-dir-path metadata-file-path metadata-file-tuple-value metadata-file-hash metadata-dir-fh-empty metadata-file-fh-empty metadata-dir-fh-alias metadata-file-fh-alias
+```
+
+After fixture admission assignment, BEFORE existing observer, insert these
+memory-only helpers. Guard fixture construction, report only primitive witnesses;
+restore only the same public graph after refusal, never source state/registries:
+
+```perl
+  my @test_metadata_saved;my ($test_metadata_changed,$test_metadata_restored)=(0,0);
+  sub test_change_staged_metadata {
+    $fail->() unless @_==0&&$staged_phase eq 'active'&&!$test_metadata_changed;
+    my %allowed=map {$_=>1} qw(metadata-dir-short metadata-file-short metadata-dir-record-copy metadata-file-record-copy metadata-dir-tuple-copy metadata-file-tuple-copy metadata-dir-path metadata-file-path metadata-file-tuple-value metadata-file-hash metadata-dir-fh-empty metadata-file-fh-empty metadata-dir-fh-alias metadata-file-fh-alias);
+    $fail->() unless $allowed{$mode}&&@staged_directories==6&&@staged_files==6;
+    @test_metadata_saved=map {
+      [map {+{record=>$_,fields=>{%$_},tuple=>[@{$_->{identity}}]}} @$_]
+    } (\@staged_directories,\@staged_files);
+    my $rows=$mode=~/\Ametadata-dir-/ ? \@staged_directories:\@staged_files;
+    my $old=$rows->[0];my $change;
+    if($mode=~/-short\z/) {pop @$rows;$change=@$rows==5;}
+    elsif($mode=~/-record-copy\z/) {
+      $rows->[0]={%$old};$change=$rows->[0]!=$old&&$rows->[0]{fh}==$old->{fh};
+    }
+    elsif($mode=~/-tuple-copy\z/) {
+      my $tuple=$old->{identity};$old->{identity}=[@$tuple];
+      $change=$old->{identity}!=$tuple&&@{$old->{identity}}==13;
+    }
+    elsif($mode=~/-path\z/) {$old->{path}='/private/tmp/metadata-wrong';$change=$old->{path} eq '/private/tmp/metadata-wrong';}
+    elsif($mode eq 'metadata-file-tuple-value') {
+      my $was=$old->{identity}[1];++$old->{identity}[1];$change=$old->{identity}[1]==$was+1;
+    }
+    elsif($mode eq 'metadata-file-hash') {$old->{sha256}='0'x64;$change=$old->{sha256} eq '0'x64;}
+    elsif($mode=~/-fh-empty\z/) {$old->{fh}=undef;$change=!defined($old->{fh});}
+    elsif($mode=~/-fh-alias\z/) {$old->{fh}=$rows->[1]{fh};$change=$old->{fh}==$rows->[1]{fh};}
+    else {$fail->();}
+    $fail->() unless $change;$test_metadata_changed=1;
+    return {mode=>''.$mode,changed=>JSON::PP::true};
+  }
+  sub test_restore_staged_metadata {
+    $fail->() unless @_==0&&$test_metadata_changed&&!$test_metadata_restored
+      &&$staged_phase eq 'burned'&&@test_metadata_saved==2;
+    my @rows=(\@staged_directories,\@staged_files);
+    for my $i(0..1) {
+      $fail->() unless @{$test_metadata_saved[$i]}==6;
+      @{$rows[$i]}=map {$_->{record}} @{$test_metadata_saved[$i]};
+      for my $saved(@{$test_metadata_saved[$i]}) {
+        %{$saved->{record}}=%{$saved->{fields}};
+        @{$saved->{record}{identity}}=@{$saved->{tuple}};
+      }
+    }
+    $test_metadata_restored=1;return {restored=>JSON::PP::true};
+  }
+```
+
+Extend outer grammar healthy/open/close/boundary condition with
+||$mode=~/\Ametadata-/; extend inner full-epoch condition likewise. The following
+prefix helper is inserted BEFORE my $take, AFTER boundary-prefix block. Build a
+fixed237clock/H24 prefix BEFOREeffects, followed twelve closes. Admission and
+metadata expectation records never derive from mutation results:
+
+```perl
+      if($mode=~/\Ametadata-/) {
+        my @prefix;my $clocks=0;
+        for my $g(@grammar) {
+          push @prefix,$g;++$clocks if $g->[0] eq 'clock';last if $clocks==237;
+        }
+        $fail->() unless $clocks==237&&@jobs==42;
+        @grammar=@prefix;splice @jobs,24;
+        for my $n(1..12) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+```
+
+Insert this elsif BETWEEN boundary driver block and retained final else-refused.
+Actual recheck validates metadata BEFORE reading its entry clock (source793).
+Snapshot immediately after refusal; restore public graph; source state must remain
+burned before repeats. No test setter for invalid/uncertain/disposal/source phase:
+
+```perl
+          } elsif($mode=~/\Ametadata-/) {
+            $fail->() if $refused;
+            $outcomes->{sourceBeforeMetadata}=test_observe_staged_custody();
+            $outcomes->{metadataMutation}=test_change_staged_metadata();
+            my $value=eval {$operations{recheck}->()};my $error=$@;$check->();
+            $fail->() unless !defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            $outcomes->{recheck}=undef;$outcomes->{recheckRefused}=JSON::PP::true;
+            $outcomes->{sourceAfterMetadataRefusal}=test_observe_staged_custody();
+            $outcomes->{metadataRestoration}=test_restore_staged_metadata();
+            $outcomes->{sourceAfterMetadataRestoration}=test_observe_staged_custody();
+```
+
+Keep existing final } else line. After existing repeat delta assertion insert:
+
+```perl
+          if($mode=~/\Ametadata-/) {$outcomes->{sourceAfterMetadataRepeats}=test_observe_staged_custody();}
+```
+
+Append fourteen ordinary-host cases. Breaks caught: record/tuple/ledger continuity,
+immutable path/hash/tuple/FH expectations relaxed or public restoration resurrects
+source state. Independent hold237/H24 profile2574ops/228originals below:
+
+```javascript
+for(const mode of ['metadata-dir-short','metadata-file-short','metadata-dir-record-copy','metadata-file-record-copy',
+  'metadata-dir-tuple-copy','metadata-file-tuple-copy','metadata-dir-path','metadata-file-path',
+  'metadata-file-tuple-value','metadata-file-hash','metadata-dir-fh-empty','metadata-file-fh-empty',
+  'metadata-dir-fh-alias','metadata-file-fh-alias'])
+  test('staged custody metadata corruption burns irreversibly for '+mode,()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,false);assert.equal(r.recheckRefused,true);assert.equal(r.recheck,null);
+    assert.deepEqual(r.metadataMutation,{mode,changed:true});assert.deepEqual(r.metadataRestoration,{restored:true});
+    assert.deepEqual(r.calls,STAGED_HALF_BOUNDARY_CALLS);
+    assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),2574);
+    assert.equal(r.helpers,24);assert.deepEqual([r.ownedCount,r.stageClosed,r.helperClosed],[228,12,216]);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),STAGED_CLOSE_ROLES);
+    assert.deepEqual(r.sourceBeforeMetadata,{phase:'active',invalid:0,uncertain:0,disposalStarted:0,
+      sealedClosureCount:12,attemptedCount:0,privateClosedCount:0,closedFlags:[0,0,0,0,0,0,0,0,0,0,0,0]});
+    assert.deepEqual(r.sourceAfterMetadataRefusal,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:[1,1,1,1,1,1,1,1,1,1,1,1]});
+    assert.deepEqual(r.sourceAfterMetadataRestoration,r.sourceAfterMetadataRefusal);
+    assert.deepEqual(r.sourceAfterMetadataRepeats,r.sourceAfterMetadataRefusal);
+  });
+```
+
+ONE next command only after both literal/actualreviews and syntax/diff/fresh
+source/tool/preservation/resource gates, same ownroot cwd:
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody metadata corruption ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+No sourcecommit/PR/build/delivery before remainingmatrix. No authentic native/
+protected origin/hostACL/globalowner/member/service proof. Preserve oldroots/
+originaldirtytwo; no replay closed invocations. Root solewriter/no modelchange.
+
+#### Next closed cycle: partial tied public AV regression and placement mutants
+
+Current-source audit at exact source434 disproves the proposed missing-guard
+hypothesis: directory post-configure/pre-push guards754/756 and file772/774
+already exist; guard_partial603 inspects original AVs with B before access.
+No production edit, duplicate guard, genuine source RED or regression claim
+is warranted. Four UNEXECUTED test-only cases: actual dir/file baselines and
+two explicit uniquely anchored in-memory placement mutants. Causal relation:
+complete the mandatory partial-acquisition callback exclusion matrix of Task2b.5,
+not a new feature or protected/native execution claim.
+
+Closed enum additions; slot remains0:
+```perl
+partial-tied-dir partial-tied-file
+```
+
+Before existing healthy/open/close/boundary/metadata grammar branch, insert
+this independently predetermined partial prefix. No grammar learned from effects:
+```perl
+      elsif($mode eq 'partial-tied-dir'||$mode eq 'partial-tied-file') {
+        my $target=$mode eq 'partial-tied-dir'?1:7;
+        $emit->('clock','stage');
+        for my $n(1..$target) {
+          my $role=$n<=6?'d'.($n-1):'f'.($n-7);
+          $emit->('lstat',$role);$emit->('sysopen',$role);
+          ++$stage_count;$emit->('fcntl',$role) for 1..4;
+          if($n==$target) {$emit->('binmode',$role) if $n>6;last;}
+          $dir_grammar->($n-1);
+        }
+        for my $n(1..$stage_count) {$emit->('close','d'.($n-1)) if $n<=6;$emit->('close','f0') if $n==7;}
+      }
+```
+
+Before existing callbacks declaration, insert separate counters (does not alter
+existing malformed nominees' factory/callback schemas):
+```perl
+      my $partial_counts={factory=>0,untie=>0,destroy=>0,callbacks=>{
+        map {$_=>0} qw(FETCHSIZE FETCH STORE STORESIZE EXTEND PUSH POP SHIFT UNSHIFT CLEAR EXISTS DELETE)}};
+      my $partial_nominated=0;
+```
+
+Before TestStagedOverloaded package, insert this memory-only TIEARRAY class.
+Constructor, callbacks and finalization count separately; callback increments
+precede throw. No candidate callback may run under unchanged source434.
+```perl
+package TestStagedPartialArray;
+sub TIEARRAY {my ($class,$counts)=@_;++$counts->{factory};bless {counts=>$counts},$class;}
+sub deny {my ($self,$name)=@_;++$self->{counts}{callbacks}{$name};die "TEST_STAGED_PARTIAL_CALLBACK\n";}
+sub FETCHSIZE {$_[0]->deny('FETCHSIZE');}
+sub FETCH {$_[0]->deny('FETCH');}
+sub STORE {$_[0]->deny('STORE');}
+sub STORESIZE {$_[0]->deny('STORESIZE');}
+sub EXTEND {$_[0]->deny('EXTEND');}
+sub PUSH {$_[0]->deny('PUSH');}
+sub POP {$_[0]->deny('POP');}
+sub SHIFT {$_[0]->deny('SHIFT');}
+sub UNSHIFT {$_[0]->deny('UNSHIFT');}
+sub CLEAR {$_[0]->deny('CLEAR');}
+sub EXISTS {$_[0]->deny('EXISTS');}
+sub DELETE {$_[0]->deny('DELETE');}
+sub UNTIE {++$_[0]{counts}{untie};}
+sub DESTROY {++$_[0]{counts}{destroy};}
+```
+
+Replace only unique fcntl port success-return line with the following. Actual
+CORE::fcntl happens first, unchanged return value reaches source. Only last
+F_GETFD at d0/f0 hooks. No public AV access from binmode or port:
+```perl
+          $fail->() unless defined($v)&&!$!;
+          if(($mode eq 'partial-tied-dir'&&$o->{role} eq 'd0'
+              ||$mode eq 'partial-tied-file'&&$o->{role} eq 'f0')
+              &&$o->{path}&&!@{$o->{fcntlQueue}}) {
+            $fail->() unless $_[1]==Fcntl::F_GETFD()&&!$partial_nominated++;
+            test_tie_staged_partial();
+          }
+          return $v;
+```
+
+Insert memory-only functions before existing observer. They may tie only actual
+public AV, never private custody/checkers/CVs/snapshot. Inspect original AV
+through B only. Untie only after burned-state and pre-finalizer witnesses:
+```perl
+  sub test_tie_staged_partial {
+    $fail->() unless @_==0&&$staged_phase eq 'capturing'&&$partial_nominated==1
+      &&!$partial_counts->{factory};
+    my $rows;
+    if($mode eq 'partial-tied-dir') {$rows=\@staged_directories;}
+    elsif($mode eq 'partial-tied-file') {$rows=\@staged_files;}
+    else {$fail->();}
+    tie @$rows,'TestStagedPartialArray',$partial_counts;
+    my $av=B::svref_2object($rows);my $magic=$av->MAGIC;
+    $fail->() unless ref($av) eq 'B::AV'&&$partial_counts->{factory}==1
+      &&(($av->FLAGS&0x00f00000)||defined($magic));
+  }
+  sub test_untie_staged_partial {
+    $fail->() unless @_==0&&$partial_nominated==1&&$partial_counts->{factory}==1
+      &&!$partial_counts->{untie}&&$staged_phase eq 'burned';
+    if($mode eq 'partial-tied-dir') {untie @staged_directories;}
+    elsif($mode eq 'partial-tied-file') {untie @staged_files;}
+    else {$fail->();}
+    $fail->() unless $partial_counts->{untie}==1;
+  }
+```
+
+Immediately after operation result and existing admission-refusal observation:
+```perl
+          if($mode eq 'partial-tied-dir'||$mode eq 'partial-tied-file') {
+            $fail->() unless $refused&&$partial_nominated==1&&$partial_counts->{factory}==1;
+            $outcomes->{sourceAfterPartialRefusal}=test_observe_staged_custody();
+            $outcomes->{partialCallbacksBeforeRepeats}={%{$partial_counts->{callbacks}}};
+          }
+```
+
+Immediately after repeat-delta assertion, before other repeat observations:
+```perl
+          if($mode eq 'partial-tied-dir'||$mode eq 'partial-tied-file') {
+            $outcomes->{sourceAfterPartialRepeats}=test_observe_staged_custody();
+            $outcomes->{partialCallbacksBeforeFinalizer}={%{$partial_counts->{callbacks}}};
+            $outcomes->{partialFactoryCount}=0+$partial_counts->{factory};
+            test_untie_staged_partial();
+            $outcomes->{partialFinalization}={untie=>0+$partial_counts->{untie},destroy=>0+$partial_counts->{destroy}};
+            $outcomes->{partialCallbacksAfterFinalizer}={%{$partial_counts->{callbacks}}};
+          }
+```
+
+Insert tests before STAGED_DIRECTORY_FH_CORE_KEYS:
+```javascript
+const STAGED_PARTIAL_CALLBACK_ZERO={FETCHSIZE:0,FETCH:0,STORE:0,STORESIZE:0,EXTEND:0,
+  PUSH:0,POP:0,SHIFT:0,UNSHIFT:0,CLEAR:0,EXISTS:0,DELETE:0};
+function assertStagedPartialPhysical(r,part) {
+  const stage=part==='dir'?1:7;
+  assert.equal(r.refused,true);assert.equal(r.hold,null);
+  assert.equal(r.partialFactoryCount,1);
+  assert.deepEqual(r.partialFinalization,{untie:1,destroy:1});
+  const calls=part==='dir'?{clock:2,lstat:1,sysopen:1,fcntl:4,close:1}:
+    {binmode:49,clock:50,close:55,closedir:6,fcntl:34,fileno:156,fork:6,
+      lstat:19,opendir:6,pipe:24,read:24,readdir:111,ready:12,stat:12,sysopen:7,wait:24};
+  assert.deepEqual(r.calls,calls);
+  assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),part==='dir'?9:595);
+  assert.equal(r.helpers,part==='dir'?0:6);
+  assert.deepEqual([r.ownedCount,r.stageClosed,r.helperClosed],part==='dir'?[1,1,0]:[61,7,54]);
+  assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+    STAGED_CLOSE_ROLES.slice(0,stage));
+  assert.deepEqual(r.sourceAfterPartialRefusal,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+    sealedClosureCount:stage,attemptedCount:stage,privateClosedCount:stage,closedFlags:Array(stage).fill(1)});
+  assert.deepEqual(r.sourceAfterPartialRepeats,r.sourceAfterPartialRefusal);
+  assert.deepEqual(r.partialCallbacksBeforeRepeats,r.partialCallbacksBeforeFinalizer);
+  assert.deepEqual(r.partialCallbacksAfterFinalizer,r.partialCallbacksBeforeFinalizer);
+}
+for(const part of ['dir','file']) {
+  test('staged custody partial tied array refuses '+part+' before public-vector access',()=>{
+    const r=stagedCustody('partial-tied-'+part);assertStagedPartialPhysical(r,part);
+    assert.deepEqual(r.partialCallbacksBeforeFinalizer,STAGED_PARTIAL_CALLBACK_ZERO);
+  });
+  test('staged custody partial tied array detects misplaced '+part+' guard mutant',()=>{
+    const configure=part==='dir'?'1':'0',expected=part==='dir'?'undef,1':'$expected->{sha256},0';
+    const old='            my ($fh)=$sealed->(\'binding\');$staged_configure->($fh,'+configure+');\n'
+      +'            $staged_guard_partial->();\n'
+      +'            my $record=$staged_record->($sealed,$path,\\@before,'+expected+');\n'
+      +'            $staged_guard_partial->();';
+    const next='            my ($fh)=$sealed->(\'binding\');$staged_configure->($fh,'+configure+');\n'
+      +'            my $record=$staged_record->($sealed,$path,\\@before,'+expected+');';
+    const source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),old,next);
+    const r=stagedCustody('partial-tied-'+part,0,{sourceOverride:source});
+    assertStagedPartialPhysical(r,part);
+    assert.deepEqual(r.partialCallbacksBeforeFinalizer,{...STAGED_PARTIAL_CALLBACK_ZERO,PUSH:1});
+    assert.throws(()=>assert.deepEqual(r.partialCallbacksBeforeFinalizer,STAGED_PARTIAL_CALLBACK_ZERO),
+      {code:'ERR_ASSERTION'});
+  });
+}
+```
+
+One exact planned focus after both literal and actual-delta independent reviews,
+Node check/diff check and fresh root/independent retention/resource/HTTP admission:
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody partial tied array ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Expected dir vector9ports/clock2/H0/native1; file595ports/clock50/H6/native61
+(7staged+54helper). Private closure state before untie/repeats must be
+burned/invalid1/uncertain0/disposal1, attempted+closed1 or7; fixtureClosed0;
+all queues drain and repeats have zero effects. Unchanged baseline callback0.
+Each placement mutant removes ONLY BOTH post-configure/pre-push guard calls at
+one unique path, retains all other guards, actually reaches tied PUSH1, then
+canonical refusal. Node callback-zero assertion must detect the violation;
+compile/prototype/queue faults are not semantic evidence. No source-on-disk edits,
+B guard weakening, original handle mutation, fd-number disposal, new files,
+external helper/kernel fork/wait/signals, DB/native/service/cutover effects.
+All previous terminals stay closed; no replay/poll.
+
+#### Partial tied AV cycle — observed closed terminal
+
+ONE focus26719a naturallyCLOSED0/full117tokens4PASS/0FAIL/CANCEL/SKIP/TODO
+330.119541ms; no managedsession/no replay. Both literals+actualdelta reviews
+C0/I0/M0. Actualsource434 baselines callback0; both scoped memoryplacement
+mutants actualPUSH1 detected by Node semantic assertion, no harnessFault.
+Nativeoriginals1/61 allclosed; privateburn invalid1/uncertain0/disposal1,
+repeatszero/stateunchanged; source434 unchanged. Rootpre24143e03:17:46 and
+post e7d6fa03:18:39 same2093/69797679B/physicalb021aed391c442a1bf7e3c645c0384e791efc3dfb47dd4f977cedd73bb0d9cce,
+planb976/testa129/spec1f26/tools/npm/absences exact. Independentpre03:17:59–
+03:18:02C0 allretainedcomparators, disk8337116KiBfree97%,61%memory,
+HTTP3080/18789200/3333knownrefused. Thisresume82focusedpasses(78+4), NOT
+fullsuite/fullmatrix/native/origin/cutovercomplete; no sourcefix/commit/PR/build.
+
+#### Next closed cycle: H7 actual ACL and raw-status refusals
+
+UNEXECUTED test-only two-case delta under unchanged source434. H7 is first
+hold-epoch ACL helper for / after all twelve staged originals. Real owned stdout
+pipe carries literal plus/normal row; actual CORE sysread returns bytes unchanged.
+No source DTO fabrication, external helper, kernel fork/wait/signal or production
+authority. Raw wait nomination only [424242,256] at H7 fourth finite wait.
+Both still require complete helper cleanup before transparent wrapper rethrows;
+lifecycle settlement is independently observed, not native execution proof.
+
+Append closed enum names (slot0):
+```perl
+h7-acl-plus h7-raw256
+```
+
+Extend BOTH existing full healthy grammar conditions to include these exact two
+names, then insert this prefix before my $take (construct before effects):
+```perl
+      if($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256') {
+        my @prefix;my ($end,$success_clock)=(0,0);
+        for my $g(@grammar) {
+          if($mode eq 'h7-raw256'&&$g->[0] eq 'clock'&&$g->[1] eq 'h7') {
+            ++$success_clock;next if $success_clock==6;
+          }
+          push @prefix,$g;
+          if($g->[0] eq 'fileno'&&$g->[1] eq 'h7.setup-w') {last if ++$end==3;}
+        }
+        $fail->() unless $end==3&&@jobs==42
+          &&($mode ne 'h7-raw256'||$success_clock==6);
+        @grammar=@prefix;splice @jobs,7;
+        for my $n(1..12) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+```
+
+Replace only existing pipe row construction with:
+```perl
+            my $marker=$mode eq 'h7-acl-plus'&&$job->{prefix} eq 'h7'?'+':'';
+            my $row="-r--r--r--".$marker." 1 root wheel 16 Jan 1 2026 ".$job->{path}."\n";
+            if(($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256')&&$job->{prefix} eq 'h7') {
+              $fail->() unless $job->{path} eq '/'&&!exists($outcomes->{h7PipeRow});
+              $outcomes->{h7PipeRow}={bytes=>0+length($row),row=>''.$row};
+            }
+```
+
+Insert after actual sysread and its existing expected byte/EOF checks, before
+return$n. Actual bytes, including EOF, are witnessed; no nominated read output:
+```perl
+          if(($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256')&&defined($job)
+              &&$job->{prefix} eq 'h7'&&$o->{role} eq 'h7.out-r') {
+            push @{$outcomes->{h7ActualReads}}, {bytes=>0+$n,body=>''.$$buffer};
+          }
+```
+
+Replace only exact combined wait take/status/return line:
+```perl
+          $take->('wait',$job->{prefix});my $v=shift @wait;
+          if($mode eq 'h7-raw256'&&$job->{prefix} eq 'h7'&&!@wait) {
+            $fail->() unless $v->[0]==424242&&$v->[1]==0&&!exists($outcomes->{h7StatusNomination});
+            $outcomes->{h7StatusNomination}={pid=>424242,rawStatus=>256};
+            $v=[424242,256];
+          }
+          $?=$v->[1];return $v->[0];
+```
+
+Replace only transparent capture wrapper invocation after existing validated
+arguments/helper_enter. Catch source captor error, independently validate/drain
+all finite queues/actual originals before clearing job, then rethrow unchanged.
+Every unplanned error remains harnessFault—not canonical expected-case credit.
+```perl
+            my $value;my $ok=eval {$value=$capture->(@_);1;};my $error=$@;$check->();
+            if(($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256')&&$helpers==7) {
+              $fail->() unless defined($job)&&$job->{prefix} eq 'h7'&&$job->{path} eq '/';
+              if($mode eq 'h7-raw256') {
+                $fail->() unless !$ok&&!defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+              } else {
+                $fail->() unless $ok&&!length($error)&&ref($value) eq 'HASH'
+                  &&$value->{out} eq "-r--r--r--+ 1 root wheel 16 Jan 1 2026 /\n"
+                  &&$value->{err} eq ''&&$value->{status}==0&&$value->{pid}==424242
+                  &&JSON::PP::is_bool($value->{reaped})&&$value->{reaped};
+              }
+              $outcomes->{h7CaptorOutcome}={returned=>$ok?JSON::PP::true:JSON::PP::false,
+                canonicalRefusal=>$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n"?JSON::PP::true:JSON::PP::false};
+            } else {$fail->() unless $ok&&!length($error)&&ref($value) eq 'HASH';}
+            $helper_leave->();$check->();
+            if(($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256')&&$helpers==7) {
+              $outcomes->{h7Drain}={jobCleared=>!defined($job)?JSON::PP::true:JSON::PP::false,
+                helpersSettled=>task6a_origin_helpers_settled()};
+            }
+            die $error unless $ok;return $value;
+```
+
+Immediately after existing admission-refusal observation:
+```perl
+          if($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256') {
+            $fail->() unless $refused&&$helpers==7;
+            $outcomes->{sourceAfterH7Refusal}=test_observe_staged_custody();
+          }
+```
+
+Immediately after repeat-delta assertion:
+```perl
+          if($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256') {
+            $outcomes->{sourceAfterH7Repeats}=test_observe_staged_custody();
+          }
+```
+
+Before STAGED_DIRECTORY_FH_CORE_KEYS:
+```javascript
+const STAGED_H7_CALLS={binmode:62,clock:75,close:68,closedir:7,fcntl:55,fileno:188,
+  fork:7,lstat:37,opendir:7,pipe:28,read:40,readdir:138,ready:14,seek:6,stat:25,sysopen:12,wait:28};
+for(const mode of ['h7-acl-plus','h7-raw256'])
+  test('staged custody h7 refusal drains actual captor for '+mode,()=>{
+    const r=stagedCustody(mode),plus=mode==='h7-acl-plus';
+    assert.equal(r.refused,true);assert.equal(r.hold,null);
+    assert.deepEqual(r.calls,{...STAGED_H7_CALLS,clock:plus?75:74});
+    assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),plus?797:796);
+    assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed],[7,75,12,63]);
+    const row='-r--r--r--'+(plus?'+':'')+' 1 root wheel 16 Jan 1 2026 /\n';
+    assert.deepEqual(r.h7PipeRow,{bytes:plus?41:40,row});
+    assert.deepEqual(r.h7ActualReads,[{bytes:plus?41:40,body:row},{bytes:0,body:''}]);
+    assert.deepEqual(r.h7CaptorOutcome,{returned:plus,canonicalRefusal:!plus});
+    assert.deepEqual(r.h7Drain,{jobCleared:true,helpersSettled:true});
+    if(plus) assert.equal(r.h7StatusNomination,undefined);
+    else assert.deepEqual(r.h7StatusNomination,{pid:424242,rawStatus:256});
+    assert.deepEqual(r.sourceAfterH7Refusal,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:Array(12).fill(1)});
+    assert.deepEqual(r.sourceAfterH7Repeats,r.sourceAfterH7Refusal);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+      STAGED_CLOSE_ROLES);
+  });
+```
+
+ONE exact future focus only after two literal+actual reviews, syntax/diff,
+fresh root all-source/tools and independent preservation/resource/HTTP admission:
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody h7 refusal ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Independent expected vectors797/796ports, clock75/74,H7,75physical originals
+=12stage+63helper. Both actualhold refuse, burn invalid1/uncertain0/disposal1,
+all12 private originals attempted/closed; repeatszero and stateunchanged.
+ACL-plus actualcaptor success unchangedDTO must then fail source ACLregex.
+Raw256 actualcaptor canonicalrefusal occurs before only H7 sixth(success)clock;
+all8 cleanup filenos still occur, helperrecord settled true/lifecycle notburned.
+No mutationkill/native/lifecycle-uncertainty/admission/fullmatrix completion credit.
+
+#### H7 ACL/captor cycle — observed closed terminal
+
+ONE focusa5753e naturallyCLOSED0/full69tokens2PASS/0FAIL/CANCEL/SKIP/TODO
+222.120792ms; no managedsession/no replay. Both literal+actualreviewsC0.
+Actualpipe/read41/40bytes+EOF; ACLplus unchangedactualcaptorDTOsuccess then
+sourceACLrefusal; raw256 actualcaptorcanonicalrefusal beforeonlyH7successclock.
+Both completehelperdrain/actualhelpersSettledtrue; no lifecycleuncertainty claim.
+Vectors797/796ports/C75/74/H7/75physicaloriginals(12stage+63helper)allclosed,
+privateburn invalid1/uncertain0/disposal1/12attempted+closed/repeatzero.
+Rootpre73705e03:22:21/postc277e9CLOSED0 03:23:51 same2093/69811070B/
+physical8cc8a034d7574f9a931fe5b1bc283092b74d281f45d1e099f3c21878d0ed3979,
+source434/test2e512/planacaa/spec1f26/tools/npm/absences exact.
+Independentpre03:22:51–54C0 allretainedcomparators/originaltwo/canonicalclean,
+8330972KiBfree97%,61%memory/HTTP3080+18789200/3333knownrefused.
+Thisresume84newfocusedpasses(78+4+2), NOT fullcurrent-suite/fullmatrix/native/
+origin/cutovercomplete; no sourcefix/commit/PR/build/rollout. Config25 next
+UNEXECUTED literal; prior focus receipts closed/no replay/poll.
+
+#### Next closed cycle: twenty-five original configuration refusals
+
+UNEXECUTED test-only delta, source434 unchanged. Causal relation: complete required
+configuration/CLOEXEC/binmode denial part of Task2b.5 actual staged-consumer matrix.
+Only first d0/f0 responses nominated AFTER successful actual CORE configuration.
+All acquisition/sealing/original cleanup code stays actual. No fd-number close,
+new syscall delegation, native/protected authority, guard bypass or source edit.
+
+Append these exact25 names to closed mode enum; slot0:
+```perl
+config-dir-getfl-undefined config-dir-getfl-throw config-dir-getfl-access config-dir-prefd-undefined config-dir-prefd-throw config-dir-prefd-extra config-dir-setfd-false config-dir-setfd-throw config-dir-postfd-undefined config-dir-postfd-throw config-dir-postfd-missing config-file-getfl-undefined config-file-getfl-throw config-file-getfl-access config-file-getfl-nonblock config-file-prefd-undefined config-file-prefd-throw config-file-prefd-extra config-file-setfd-false config-file-setfd-throw config-file-postfd-undefined config-file-postfd-throw config-file-postfd-missing config-file-binmode-false config-file-binmode-throw
+```
+
+Before existing boundary table, insert this fixed mode map and planned selected
+fcntl queues. Queue prefix chosen BEFORE any fixture acquisition/effect; other
+staged originals retain existing four commands. Zero valid GETFL/GETFD values
+are NOT false-result denials. Selectedfile NONBLOCK absence is distinct from
+wrong access and final CLOEXEC absence:
+```perl
+      my %configuration=(
+        'config-dir-getfl-undefined'=>['d0','getfl',1,'undefined'],
+        'config-dir-getfl-throw'=>['d0','getfl',1,'throw'],
+        'config-dir-getfl-access'=>['d0','getfl',1,'access'],
+        'config-dir-prefd-undefined'=>['d0','prefd',2,'undefined'],
+        'config-dir-prefd-throw'=>['d0','prefd',2,'throw'],
+        'config-dir-prefd-extra'=>['d0','prefd',2,'extra'],
+        'config-dir-setfd-false'=>['d0','setfd',3,'false'],
+        'config-dir-setfd-throw'=>['d0','setfd',3,'throw'],
+        'config-dir-postfd-undefined'=>['d0','postfd',4,'undefined'],
+        'config-dir-postfd-throw'=>['d0','postfd',4,'throw'],
+        'config-dir-postfd-missing'=>['d0','postfd',4,'missing'],
+        'config-file-getfl-undefined'=>['f0','getfl',1,'undefined'],
+        'config-file-getfl-throw'=>['f0','getfl',1,'throw'],
+        'config-file-getfl-access'=>['f0','getfl',1,'access'],
+        'config-file-getfl-nonblock'=>['f0','getfl',1,'nonblock'],
+        'config-file-prefd-undefined'=>['f0','prefd',2,'undefined'],
+        'config-file-prefd-throw'=>['f0','prefd',2,'throw'],
+        'config-file-prefd-extra'=>['f0','prefd',2,'extra'],
+        'config-file-setfd-false'=>['f0','setfd',3,'false'],
+        'config-file-setfd-throw'=>['f0','setfd',3,'throw'],
+        'config-file-postfd-undefined'=>['f0','postfd',4,'undefined'],
+        'config-file-postfd-throw'=>['f0','postfd',4,'throw'],
+        'config-file-postfd-missing'=>['f0','postfd',4,'missing'],
+        'config-file-binmode-false'=>['f0','binmode',4,'false'],
+        'config-file-binmode-throw'=>['f0','binmode',4,'throw'],
+      );
+      my $configuration_profile=$configuration{$mode};
+      my @configuration_queue;
+      if(defined($configuration_profile)) {
+        my @all=([Fcntl::F_GETFL(),0],[Fcntl::F_GETFD(),0],
+          [Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()],[Fcntl::F_GETFD(),0]);
+        @configuration_queue=map {[@$_]} @all[0..$configuration_profile->[2]-1];
+      }
+```
+
+Before existing partial-tied grammar branch:
+```perl
+      elsif(defined($configuration_profile)) {
+        my $target=$configuration_profile->[0] eq 'd0'?1:7;
+        $emit->('clock','stage');
+        for my $n(1..$target) {
+          my $role=$n<=6?'d'.($n-1):'f'.($n-7);
+          $emit->('lstat',$role);$emit->('sysopen',$role);++$stage_count;
+          $emit->('fcntl',$role) for 1..($n==$target?$configuration_profile->[2]:4);
+          if($n==$target) {$emit->('binmode',$role) if $configuration_profile->[1] eq 'binmode';last;}
+          $dir_grammar->($n-1);
+        }
+        for my $n(1..$stage_count) {$emit->('close',$n<=6?'d'.($n-1):'f0');}
+      }
+```
+
+After existing newly registered stage fcntlQueue initialization, before exposing
+FH through caller original cell:
+```perl
+          if(defined($configuration_profile)&&$p->{role} eq $configuration_profile->[0]) {
+            $o->{fcntlQueue}=[map {[@$_]} @configuration_queue];
+          }
+```
+
+After successful actual CORE::fcntl check, before existing partial tied hook:
+```perl
+          if(defined($configuration_profile)&&$o->{role} eq $configuration_profile->[0]
+              &&!@{$o->{fcntlQueue}}&&$configuration_profile->[1] ne 'binmode') {
+            my ($role,$cut,$ordinal,$kind)=@$configuration_profile;
+            $fail->() if exists($outcomes->{configurationNomination});
+            $outcomes->{configurationNomination}={role=>''.$role,cut=>''.$cut,ordinal=>0+$ordinal,
+              kind=>''.$kind,actualCoreCompleted=>JSON::PP::true};
+            return undef if $kind eq 'undefined';
+            die "TEST_STAGED_NOMINATED_CONFIGURATION_THROW\n" if $kind eq 'throw';
+            return 0 if $kind eq 'false'||$kind eq 'missing';
+            return ($v&~Fcntl::O_ACCMODE())|Fcntl::O_WRONLY() if $kind eq 'access';
+            return $v&~Fcntl::O_NONBLOCK() if $kind eq 'nonblock';
+            return $v|(Fcntl::FD_CLOEXEC()<<1) if $kind eq 'extra';
+            $fail->();
+          }
+```
+
+Replace combined binmode port final CORE+return line only:
+```perl
+          CORE::binmode($o->{fh}) or $fail->();
+          if(defined($configuration_profile)&&$configuration_profile->[1] eq 'binmode'
+              &&$o->{role} eq $configuration_profile->[0]) {
+            $fail->() unless !@{$o->{fcntlQueue}}&&!exists($outcomes->{configurationNomination});
+            my ($role,$cut,$ordinal,$kind)=@$configuration_profile;
+            $outcomes->{configurationNomination}={role=>''.$role,cut=>''.$cut,ordinal=>0+$ordinal,
+              kind=>''.$kind,actualCoreCompleted=>JSON::PP::true};
+            die "TEST_STAGED_NOMINATED_CONFIGURATION_THROW\n" if $kind eq 'throw';
+            $fail->() unless $kind eq 'false';return 0;
+          }
+          return 1;
+```
+
+Immediately after existing admission-refusal observation:
+```perl
+          if(defined($configuration_profile)) {
+            $fail->() unless $refused&&exists($outcomes->{configurationNomination});
+            $outcomes->{sourceAfterConfigurationRefusal}=test_observe_staged_custody();
+            my $o=$roles{$configuration_profile->[0]};
+            $fail->() unless defined($o)&&!@{$o->{fcntlQueue}};
+            $outcomes->{configurationQueueRemaining}=0+@{$o->{fcntlQueue}};
+          }
+```
+
+Immediately after repeat-delta assertion:
+```perl
+          if(defined($configuration_profile)) {
+            $outcomes->{sourceAfterConfigurationRepeats}=test_observe_staged_custody();
+          }
+```
+
+Before STAGED_DIRECTORY_FH_CORE_KEYS:
+```javascript
+const STAGED_CONFIGURATION_CASES=[
+  ['config-dir-getfl-undefined','dir','getfl',1,'undefined'],
+  ['config-dir-getfl-throw','dir','getfl',1,'throw'],
+  ['config-dir-getfl-access','dir','getfl',1,'access'],
+  ['config-dir-prefd-undefined','dir','prefd',2,'undefined'],
+  ['config-dir-prefd-throw','dir','prefd',2,'throw'],
+  ['config-dir-prefd-extra','dir','prefd',2,'extra'],
+  ['config-dir-setfd-false','dir','setfd',3,'false'],
+  ['config-dir-setfd-throw','dir','setfd',3,'throw'],
+  ['config-dir-postfd-undefined','dir','postfd',4,'undefined'],
+  ['config-dir-postfd-throw','dir','postfd',4,'throw'],
+  ['config-dir-postfd-missing','dir','postfd',4,'missing'],
+  ['config-file-getfl-undefined','file','getfl',1,'undefined'],
+  ['config-file-getfl-throw','file','getfl',1,'throw'],
+  ['config-file-getfl-access','file','getfl',1,'access'],
+  ['config-file-getfl-nonblock','file','getfl',1,'nonblock'],
+  ['config-file-prefd-undefined','file','prefd',2,'undefined'],
+  ['config-file-prefd-throw','file','prefd',2,'throw'],
+  ['config-file-prefd-extra','file','prefd',2,'extra'],
+  ['config-file-setfd-false','file','setfd',3,'false'],
+  ['config-file-setfd-throw','file','setfd',3,'throw'],
+  ['config-file-postfd-undefined','file','postfd',4,'undefined'],
+  ['config-file-postfd-throw','file','postfd',4,'throw'],
+  ['config-file-postfd-missing','file','postfd',4,'missing'],
+  ['config-file-binmode-false','file','binmode',4,'false'],
+  ['config-file-binmode-throw','file','binmode',4,'throw'],
+];
+for(const [mode,part,cut,k,kind] of STAGED_CONFIGURATION_CASES)
+  test('staged custody configuration denial disposes '+mode,()=>{
+    const r=stagedCustody(mode),stage=part==='dir'?1:7,bin=cut==='binmode';
+    assert.equal(r.refused,true);assert.equal(r.hold,null);
+    assert.deepEqual(r.configurationNomination,{role:part==='dir'?'d0':'f0',cut,ordinal:k,kind,
+      actualCoreCompleted:true});
+    assert.equal(r.configurationQueueRemaining,0);
+    const calls=part==='dir'?{clock:2,lstat:1,sysopen:1,fcntl:k,close:1}:
+      {binmode:bin?49:48,clock:50,close:55,closedir:6,fcntl:30+k,fileno:156,fork:6,
+        lstat:19,opendir:6,pipe:24,read:24,readdir:111,ready:12,stat:12,sysopen:7,wait:24};
+    assert.deepEqual(r.calls,calls);
+    assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),part==='dir'?5+k:590+k+(bin?1:0));
+    assert.equal(r.helpers,part==='dir'?0:6);
+    assert.deepEqual([r.ownedCount,r.stageClosed,r.helperClosed],part==='dir'?[1,1,0]:[61,7,54]);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+      STAGED_CLOSE_ROLES.slice(0,stage));
+    assert.deepEqual(r.sourceAfterConfigurationRefusal,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:stage,attemptedCount:stage,privateClosedCount:stage,closedFlags:Array(stage).fill(1)});
+    assert.deepEqual(r.sourceAfterConfigurationRepeats,r.sourceAfterConfigurationRefusal);
+  });
+
+```
+
+One future focus only after both literal+actual reviews, syntax/diff and fresh
+root/alltools/independent preservation/resource/HTTP gates:
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody configuration denial ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Independent expected dir6/7/8/9ports; file591/592/593/594/595ports, H0/H6,
+physical1/61(7stage+54helper), privateattempted/closed1/7. Consumerpermanent
+burn invalid1/uncertain0/disposal1 precedes repeats; no positiveholdDTO. All finite
+queues empty, fixture0, sourceclosealloriginals; repeatzero/stateunchanged.
+Unexpected CORE/setup/prototype/grammar failure is sticky harnessFault, never
+semantic denial credit. No leftoverqueue deletion after refusal or nominee learned
+from run. No coherentguardmutationkill claim (prefix harnesskill is unqualified).
+
+#### Configuration cycle — observed closed terminal
+
+ONE focus4c3ee7→590fec managed80050 naturallyCLOSED0/full578tokens25PASS/
+0FAIL/CANCEL/SKIP/TODO1639.35825ms. NOPOLL80050/NOREPLAY. Literal+actual
+reviewsbothC0, Node57c59a/diffda8450CLOSED0. Firstpatch453755 atomicverification
+failure frombackwardhunkorder; correctedreadonlyextractor7b1f79 same10blocks
+beforeactualapply. Diagnostic only/no semanticRED/replay.
+Actual25 wrong/undefined/false/throw config nominees all canonicalholdrefusal;
+CORE effects occur first. Originalprivate1/7 allattempted+closed, native1/61,
+finitequeuesdrained withoutpost-refusaldeletion, permanentburn/zero repeats.
+Rootprebaf2b7 03:31:04/postccf7ce CLOSED0 03:32:02 same2093/69831670B/
+physicalf939126684a073131ff613837e668be150cdfe67fce6be3bae77ebf9e562cf92,
+source434/testaa502/plan41e5/spec1f26/tools/npm/absences exact.
+Independentpre03:31:31–34C0 allretainedcomparators/originaltwo/journal/canonical,
+8327592KiBfree97%,61%memory/HTTP3080+18789200/3333knownrefused.
+Thisresume109newfocusedpasses(78+4+2+25), NOT fullcurrent-suite/fullmatrix/
+origin/native/cutovercomplete; no sourcefix/commit/PR/build/rollout. Nextsafe
+readonlyresearch: active/retainedmetadata magic + coherentactualbyte/hashmutant.
+
+#### Next closed cycle: actual read byte denial and coherent digest mutant
+
+UNEXECUTED test-only two-case delta; source434 unchanged. Causal relation:
+required file-byte/hash negative + coherent guard-removal evidence for Task2b.5.
+This is corrupt consumer-visible byte nomination AFTER real CORE read, NOT
+physical backing corruption; no filewrite or protected/native authority.
+
+Closed enum additions slot0:
+```perl
+file-byte-xor-denied file-byte-xor-mutant
+```
+
+Extend BOTH existing full healthy grammar conditions with these exact names.
+After other prefix constructors, before my $take, baseline only:
+```perl
+      if($mode eq 'file-byte-xor-denied') {
+        my @prefix;my $reads=0;
+        for my $g(@grammar) {
+          push @prefix,$g;
+          last if $g->[0] eq 'read'&&$g->[1] eq 'f0'&&++$reads==2;
+        }
+        $fail->() unless $reads==2&&@jobs==42;
+        @grammar=@prefix;splice @jobs,6;
+        for my $n(1..7) {$emit->('close',$n<=6?'d'.($n-1):'f0');}
+      }
+```
+
+After actual CORE::sysread and BOTHexistingactualcount/expected-byte-EOF checks,
+BEFORE H7readwitness and return$n, insert this closed nominee. First positivef0
+actualreadordinal25/5864bytes equals independently pinned archive bytes; exactly
+byte0 XOR1, allremainingbytes/count/length unchanged. Never mutate backing/expectation
+or helperpipe output; subsequentread/EOF/recheckreads remain actual unchanged:
+```perl
+          if(($mode eq 'file-byte-xor-denied'||$mode eq 'file-byte-xor-mutant')
+              &&$o->{role} eq 'f0'&&!exists($outcomes->{byteNomination})) {
+            $fail->() unless !defined($job)&&!$pipe_read&&$calls{read}==25
+              &&$n==5864&&$$buffer eq $bodies[0]&&ord(substr($$buffer,0,1))==112;
+            my $before=Digest::SHA::sha256_hex($$buffer);
+            substr($$buffer,0,1)=chr(ord(substr($$buffer,0,1))^1);
+            $fail->() unless length($$buffer)==$n&&substr($$buffer,1) eq substr($bodies[0],1)
+              &&ord(substr($$buffer,0,1))==113;
+            $outcomes->{byteNomination}={role=>'f0',readOrdinal=>25,bytes=>0+$n,
+              beforeFirstByte=>112,afterFirstByte=>113,beforeSha256=>$before,
+              afterSha256=>Digest::SHA::sha256_hex($$buffer),
+              actualCoreRead=>JSON::PP::true,remainderUnchanged=>JSON::PP::true};
+          }
+```
+
+Extend actual driver's healthy branch ONLY to file-byte-xor-mutant as well, so
+actualpositiveDTO/recheck/release are exposed—not killed by expectedrefusal.
+After existing driver branches, before my $before=scalar(@events):
+```perl
+          if($mode eq 'file-byte-xor-denied'||$mode eq 'file-byte-xor-mutant') {
+            $fail->() unless exists($outcomes->{byteNomination});
+            $outcomes->{sourceAfterByteOperation}=test_observe_staged_custody();
+          }
+```
+
+Immediately after repeat-delta assertion:
+```perl
+          if($mode eq 'file-byte-xor-denied'||$mode eq 'file-byte-xor-mutant') {
+            $outcomes->{sourceAfterByteRepeats}=test_observe_staged_custody();
+          }
+```
+
+Before STAGED_DIRECTORY_FH_CORE_KEYS:
+```javascript
+function assertStagedByteNomination(r) {
+  assert.deepEqual(r.byteNomination,{
+    role:'f0',readOrdinal:25,bytes:5864,beforeFirstByte:112,afterFirstByte:113,
+    beforeSha256:'85d8949dbcee9687b1d3f554edb6e39003394cb2fb125d64c50964daa1a04ff0',
+    afterSha256:'ad8d8e9c43ebc67036de34379ea2e12658bbe2027314bd523fe29e942e633055',actualCoreRead:true,remainderUnchanged:true});
+  assert.match(r.byteNomination.afterSha256,/^[a-f0-9]{64}$/);
+  assert.notEqual(r.byteNomination.afterSha256,r.byteNomination.beforeSha256);
+}
+test('staged custody byte hash rejects altered consumer-visible actual read',()=>{
+  const r=stagedCustody('file-byte-xor-denied');assertStagedByteNomination(r);
+  assert.equal(r.refused,true);assert.equal(r.hold,null);
+  assert.deepEqual(r.calls,{binmode:49,clock:52,close:55,closedir:6,fcntl:34,fileno:157,
+    fork:6,lstat:20,opendir:6,pipe:24,read:26,readdir:111,ready:12,seek:1,stat:13,sysopen:7,wait:24});
+  assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),603);
+  assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed],[6,61,7,54]);
+  assert.deepEqual(r.sourceAfterByteOperation,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+    sealedClosureCount:7,attemptedCount:7,privateClosedCount:7,closedFlags:Array(7).fill(1)});
+  assert.deepEqual(r.sourceAfterByteRepeats,r.sourceAfterByteOperation);
+});
+test('staged custody byte hash detects coherent digest-comparison removal',()=>{
+  const source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),
+    '    task6a_origin_refuse() unless $length==$record->{identity}[7]&&$digest->hexdigest eq $record->{sha256};',
+    '    task6a_origin_refuse() unless $length==$record->{identity}[7];');
+  const r=stagedCustody('file-byte-xor-mutant',0,{sourceOverride:source});assertStagedByteNomination(r);
+  assert.equal(r.refused,false);assert.deepEqual(r.calls,STAGED_CLOSE_CALLS);
+  assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed],[42,390,12,378]);
+  const diagnostic={scope:'staged-source-vendor-custody-diagnostic-only',
+    productionAuthority:false,fileCount:6,directoryCount:6};
+  assert.deepEqual(r.hold,diagnostic);assert.deepEqual(r.recheck,diagnostic);
+  assert.deepEqual(r.release,{...diagnostic,handlesClosed:12});
+  assert.deepEqual(r.sourceAfterByteOperation,{phase:'released',invalid:0,uncertain:0,disposalStarted:1,
+    sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:Array(12).fill(1)});
+  assert.deepEqual(r.sourceAfterByteRepeats,{phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+    sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:Array(12).fill(1)});
+  assert.throws(()=>assert.equal(r.refused,true),{code:'ERR_ASSERTION'});
+});
+```
+
+One future exact focus after literal+actual independentreviews/syntax/diff/fresh
+rootallsource/tools + independentpreservation/resource/HTTP admission:
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody byte hash ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Independent baseline vector603ports/C52/H6/61originals(7stage+54helper).
+Prefix cuts AFTERf0secondreadEOF, NOTbefore atclock52. All7privateoriginals
+attempted/closed; burnedinvalid1/uncertain0/disposal1/repeatszero/fixture0.
+Mutant removesONLY uniquely anchored actual held-file digest comparison, retains
+length/digestaccumulation/prepostidentity/deadlines. Separate fullfinitegrammar
+407clocks/42helpers/390originals/4448ports must complete actualpositivehold/recheck/
+release and cleanup; Node semantic acceptance assertion detects violation.
+No compile/prototype/prefix-harnessfail/mutant-positiveDTO can confer authority.
+Pure readonly95a837 CLOSED0 before-effect hash witness:
+5864byte archive112→113, SHA85d8949dbcee9687b1d3f554edb6e39003394cb2fb125d64c50964daa1a04ff0
+→ad8d8e9c43ebc67036de34379ea2e12658bbe2027314bd523fe29e942e633055.
+Allpriorcyclesclosed/no replay/poll; active/retainedmetadata16 remains nextresearch,
+no new sourcecommit/PR/build/DB/native/service/cutover effect here.
+
+#### Byte/hash cycle — observed closed terminal
+
+ONE focus9fd284 naturallyCLOSED0/full73tokens2PASS/0FAIL/CANCEL/SKIP/TODO
+334.632917ms; no managedsession/no replay. FirstedddliteralsBOTHC0/I1/M0:
+sharedstateequality incorrectlycoveredreleasedmutant. Corrected003abafliteral
+BEFOREtestpatch/effects; bothcorrectedliteral+actualb0f799reviewsC0.
+ActualCOREreadthen112→113XOR witnessed5864B/original85d894/changedad8d8e hash;
+backingunchanged. BaselineEOFcut603/C52/H6/61originals allclosed/private7burn.
+Coherentdigest-onlymutant actualpositivehold/recheck/release full4448/C407/H42/
+390originals allclosed, forbiddenacceptanceNodeoracle detected. Releasedstate
+before repeats preservedasreceipt; repeat changesphaseburned/invalid1 butzero
+new effects/all12closebindingsstilldefinite. No harnesskill/sourcefix/nativeclaim.
+Rootpre44bd34 03:42:01/poste0fe70 CLOSED0 03:43:56 same2093/69844717B/
+physicalc7d3a584b77238ca8c79202e968fd48708ba293dbf82ca7130e55f490841dbf2,
+source434/testb0f799/plan003abaf/spec1f26/tools/npm/absences exact.
+Independentpre03:42:27–30C0 allretainedcomparators/originaltwo/journal/canonical,
+8333288KiBfree97%,61%memory/HTTP3080+18789200/3333knownrefused.
+Thisresume111newfocusedpasses(78+4+2+25+2), NOT fullcurrent-suite/fullmatrix/
+origin/native/cutovercomplete; no sourcecommit/PR/build/rollout. Next16metadata
+magic cases UNEXECUTED test-only literal; allprevioussessionsclosed/no replay.
+
+#### Next closed cycle: sixteen active and retained metadata magic denials
+
+UNEXECUTED test-only delta; unchanged source434. Causal relation: required
+original/retained metadata magic and restoration coverage of Task2b.5. Only
+previously public AV/HV/scalar/tuple references may be tied; private sealedoriginals,
+nativeGV/IO, checkers/CVs, snapshot and admission remain untouched. No newsourcefix,
+isolatedmutantkill, native/protected/production authority or wholematrix claim.
+
+Append closed16 mode names, slot0:
+```perl
+magic-dir-array magic-dir-record magic-dir-tuple magic-dir-path magic-dir-fh magic-dir-retained-record magic-dir-retained-tuple magic-file-array magic-file-record magic-file-tuple magic-file-path magic-file-fh magic-file-retained-record magic-file-retained-tuple magic-file-hash magic-file-element
+```
+
+Before TestStagedOverloaded package in existing combined memoryclass heredoc,
+insert these closed scalar/hash classes. They inherit separate counter/deny/
+UNTIE/DESTROY and shared named callbacks from existing TestStagedPartialArray;
+array uses that existing class directly with its OWN new counts. No tiedobject
+reference is retained, candidate callbacks increment BEFOREthrow:
+```perl
+package TestStagedMetadataHash;
+our @ISA=('TestStagedPartialArray');
+sub TIEHASH {my ($class,$counts)=@_;++$counts->{factory};bless {counts=>$counts},$class;}
+sub FIRSTKEY {$_[0]->deny('FIRSTKEY');}
+sub NEXTKEY {$_[0]->deny('NEXTKEY');}
+sub SCALAR {$_[0]->deny('SCALAR');}
+package TestStagedMetadataScalar;
+our @ISA=('TestStagedPartialArray');
+sub TIESCALAR {my ($class,$counts)=@_;++$counts->{factory};bless {counts=>$counts},$class;}
+```
+
+In source-memory-only initializer, BEFORE existing test_tie_staged_partial,
+insert these helper declarations. Save ALL public fields/tuples/strongFH refs
+BEFOREtie; manufacture targetreferences and plain replacements while stillplain.
+Retainedrecord/tuple cases replacepublicslot first, then tie previously public
+originalHV/AV so actual retained-container guard must reject BEFOREcomparison.
+Originalfieldties targetscalarcell, never nativeGV/IO. Originalarray/hash
+contents may vanish on tying but savedpublicgraph holds originals/values and
+nativeFH custody remains private. Never traverse target aftertie. BFLAGS inspect
+originaltarget only; trustedfixture observation returns primitive counters only.
+Untie EXACTtarget after refusal and while-tied repeats/callbacksnapshots, then
+existing restoration copies savedpublicgraph; no phase/closure reset:
+```perl
+  my ($test_magic_target,$test_magic_kind);
+  my $test_magic_counts={factory=>0,untie=>0,destroy=>0,callbacks=>{
+    map {$_=>0} qw(FETCHSIZE FETCH STORE STORESIZE EXTEND PUSH POP SHIFT UNSHIFT CLEAR EXISTS DELETE FIRSTKEY NEXTKEY SCALAR)}};
+  sub test_change_staged_magic {
+    $fail->() unless @_==0&&$staged_phase eq 'active'&&!$test_metadata_changed
+      &&!defined($test_magic_target)&&!$test_magic_counts->{factory};
+    my %allowed=map {$_=>1} qw(magic-dir-array magic-dir-record magic-dir-tuple magic-dir-path magic-dir-fh magic-dir-retained-record magic-dir-retained-tuple magic-file-array magic-file-record magic-file-tuple magic-file-path magic-file-fh magic-file-retained-record magic-file-retained-tuple magic-file-hash magic-file-element);
+    $fail->() unless $allowed{$mode}&&@staged_directories==6&&@staged_files==6;
+    # Prepare all strong native FH/container/value references before any tie.
+    @test_metadata_saved=map {
+      [map {+{record=>$_,fields=>{%$_},tuple=>[@{$_->{identity}}]}} @$_]
+    } (\@staged_directories,\@staged_files);
+    my $rows=$mode=~/\Amagic-dir-/ ? \@staged_directories:\@staged_files;
+    my $old=$rows->[0];my $target;my $kind;
+    if($mode=~/-array\z/) {$target=$rows;$kind='array';}
+    elsif($mode=~/-retained-record\z/) {
+      $rows->[0]={%$old};$target=$old;$kind='hash';
+    }
+    elsif($mode=~/-retained-tuple\z/) {
+      $target=$old->{identity};$old->{identity}=[@$target];$kind='array';
+    }
+    elsif($mode=~/-record\z/) {$target=$old;$kind='hash';}
+    elsif($mode=~/-tuple\z/) {$target=$old->{identity};$kind='array';}
+    elsif($mode=~/-path\z/) {$target=\($old->{path});$kind='scalar';}
+    elsif($mode=~/-fh\z/) {$target=\($old->{fh});$kind='scalar';}
+    elsif($mode eq 'magic-file-hash') {$target=\($old->{sha256});$kind='scalar';}
+    elsif($mode eq 'magic-file-element') {$target=\($old->{identity}[0]);$kind='scalar';}
+    else {$fail->();}
+    $test_magic_target=$target;$test_magic_kind=$kind;$test_metadata_changed=1;
+    if($kind eq 'array') {tie @$target,'TestStagedPartialArray',$test_magic_counts;}
+    elsif($kind eq 'hash') {tie %$target,'TestStagedMetadataHash',$test_magic_counts;}
+    else {tie $$target,'TestStagedMetadataScalar',$test_magic_counts;}
+    my $sv=B::svref_2object($target);
+    $fail->() unless $test_magic_counts->{factory}==1&&($sv->FLAGS&0x00f00000);
+    return {mode=>''.$mode,changed=>JSON::PP::true};
+  }
+  sub test_observe_staged_magic {
+    $fail->() unless @_==0;
+    return {factory=>0+$test_magic_counts->{factory},untie=>0+$test_magic_counts->{untie},
+      destroy=>0+$test_magic_counts->{destroy},callbacks=>{%{$test_magic_counts->{callbacks}}}};
+  }
+  sub test_restore_staged_magic {
+    $fail->() unless @_==0&&$staged_phase eq 'burned'&&defined($test_magic_target)
+      &&$test_magic_counts->{factory}==1&&!$test_magic_counts->{untie};
+    if($test_magic_kind eq 'array') {untie @$test_magic_target;}
+    elsif($test_magic_kind eq 'hash') {untie %$test_magic_target;}
+    elsif($test_magic_kind eq 'scalar') {untie $$test_magic_target;}
+    else {$fail->();}
+    $fail->() unless $test_magic_counts->{untie}==1&&$test_magic_counts->{destroy}==1;
+    $test_magic_target=undef;
+    return test_restore_staged_metadata();
+  }
+```
+
+Extend BOTH full healthy grammar conditions with this exact Perl clause:
+```perl
+$mode=~/\Amagic-/
+```
+BEFORE my $take, independently predetermined completedhold prefix:
+```perl
+      if($mode=~/\Amagic-/) {
+        my @prefix;my $clocks=0;
+        for my $g(@grammar) {
+          push @prefix,$g;++$clocks if $g->[0] eq 'clock';last if $clocks==237;
+        }
+        $fail->() unless $clocks==237&&@jobs==42;
+        @grammar=@prefix;splice @jobs,24;
+        for my $n(1..12) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+```
+
+BEFORE existing outer driver final }else{$failunlessrefused} + my$before line,
+insert this branch (following original }else closes it). Realhold succeeds,
+actualrecheck must refuse; snapshot BEFOREuntie, repeat whiletied withzeroeffects,
+then untie/restoration and unchangedsourceburn observation:
+```perl
+          } elsif($mode=~/\Amagic-/) {
+            $fail->() if $refused;
+            $outcomes->{sourceBeforeMagic}=test_observe_staged_custody();
+            $outcomes->{magicMutation}=test_change_staged_magic();
+            my $value=eval {$operations{recheck}->()};my $error=$@;$check->();
+            $fail->() unless !defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            $outcomes->{recheck}=undef;$outcomes->{recheckRefused}=JSON::PP::true;
+            $outcomes->{sourceAfterMagicRefusal}=test_observe_staged_custody();
+            $outcomes->{magicAfterRefusal}=test_observe_staged_magic();
+            my $before=scalar(@events);
+            for my $name(qw(hold recheck release)) {
+              my $again=eval {$operations{$name}->()};my $error=$@;$check->();
+              $fail->() unless !defined($again)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            }
+            $outcomes->{magicTiedRepeatDelta}=scalar(@events)-$before;
+            $fail->() if $outcomes->{magicTiedRepeatDelta};
+            $outcomes->{sourceAfterMagicTiedRepeats}=test_observe_staged_custody();
+            $outcomes->{magicBeforeUntie}=test_observe_staged_magic();
+            $outcomes->{magicRestoration}=test_restore_staged_magic();
+            $outcomes->{sourceAfterMagicRestoration}=test_observe_staged_custody();
+            $outcomes->{magicAfterUntie}=test_observe_staged_magic();
+```
+
+Immediately after common repeat-delta assertion (the second repeat group occurs
+AFTERrestore; no metadata fixture callbacks permitted at either group):
+```perl
+          if($mode=~/\Amagic-/) {
+            $outcomes->{sourceAfterMagicRepeats}=test_observe_staged_custody();
+            $outcomes->{magicAfterRestoredRepeats}=test_observe_staged_magic();
+          }
+```
+
+Before STAGED_DIRECTORY_FH_CORE_KEYS:
+```javascript
+const STAGED_METADATA_MAGIC_MODES=[
+  'magic-dir-array',
+  'magic-dir-record',
+  'magic-dir-tuple',
+  'magic-dir-path',
+  'magic-dir-fh',
+  'magic-dir-retained-record',
+  'magic-dir-retained-tuple',
+  'magic-file-array',
+  'magic-file-record',
+  'magic-file-tuple',
+  'magic-file-path',
+  'magic-file-fh',
+  'magic-file-retained-record',
+  'magic-file-retained-tuple',
+  'magic-file-hash',
+  'magic-file-element',
+];
+const STAGED_METADATA_MAGIC_ZERO={FETCHSIZE:0,FETCH:0,STORE:0,STORESIZE:0,EXTEND:0,
+  PUSH:0,POP:0,SHIFT:0,UNSHIFT:0,CLEAR:0,EXISTS:0,DELETE:0,FIRSTKEY:0,NEXTKEY:0,SCALAR:0};
+for(const mode of STAGED_METADATA_MAGIC_MODES)
+  test('staged custody metadata magic rejects original graph for '+mode,()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,false);assert.equal(r.recheckRefused,true);assert.equal(r.recheck,null);
+    assert.deepEqual(r.magicMutation,{mode,changed:true});assert.deepEqual(r.magicRestoration,{restored:true});
+    assert.deepEqual(r.calls,STAGED_HALF_BOUNDARY_CALLS);
+    assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),2574);
+    assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed],[24,228,12,216]);
+    assert.equal(r.magicTiedRepeatDelta,0);
+    assert.deepEqual(r.sourceBeforeMagic,{phase:'active',invalid:0,uncertain:0,disposalStarted:0,
+      sealedClosureCount:12,attemptedCount:0,privateClosedCount:0,closedFlags:Array(12).fill(0)});
+    const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:Array(12).fill(1)};
+    for(const state of ['sourceAfterMagicRefusal','sourceAfterMagicTiedRepeats',
+      'sourceAfterMagicRestoration','sourceAfterMagicRepeats']) assert.deepEqual(r[state],burned);
+    const tied={factory:1,untie:0,destroy:0,callbacks:STAGED_METADATA_MAGIC_ZERO};
+    assert.deepEqual(r.magicAfterRefusal,tied);assert.deepEqual(r.magicBeforeUntie,tied);
+    const untied={factory:1,untie:1,destroy:1,callbacks:STAGED_METADATA_MAGIC_ZERO};
+    assert.deepEqual(r.magicAfterUntie,untied);assert.deepEqual(r.magicAfterRestoredRepeats,untied);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+      STAGED_CLOSE_ROLES);
+  });
+
+```
+
+ONE future exactfocus after both literal+actual independentreviews/syntax/diff/
+freshrootallsource+tools+independentpreservation/resource/HTTP admission:
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody metadata magic ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Independentexpected C237/H24/2574ports/228originals(12stage+216helper), no recheck
+clock because actualrequire_live checks originals first. All12 privateoriginals
+attempted+closed; burn invalid1/uncertain0/disposal1 BEFOREuntie/repeats. Exactly
+factory1/candidatecallback0 whiletied; UNTIE1/DESTROY1 onlyfixturefinalization.
+Restoration and bothrepeatgroups zero effects/no resurrection; fixtureClosed0.
+Any compile/prototype/queue/factory/setup/cleanupfault remains harnessFault, no
+semanticdenial credit. Previouslycompletedordinary/native distinction unchanged.
+
+#### Metadata magic cycle — observed closed terminal
+
+ONE focus9670cc→cc4820 managed55270 naturallyCLOSED0/full407tokens16PASS/
+0FAIL/CANCEL/SKIP/TODO2130.242583ms. NOPOLL55270/NOREPLAY. Initiald443 master
+C0/I1/M0 doubled-backslashgrammarprose; contractC0missedit. CorrectedBEFORE
+patch/effects through06a thenexplicitfenced8c809literal; BOTHcorrectedliteral
++actual3718reviewsC0. Actualsource434 unchanged; callback0 whiletied/refused/
+whiletiedrepeat; factory1 then exacttargetUNTIE1/DESTROY1; savedpublicgraph
+restoration didnotresetprivateburn/closedbindings; secondrepeatgroupzeroeffects.
+All16C237/H24/2574ports/228originals(12stage+216helper), all12privateattempted+
+closed/burninvalid1/uncertain0/disposal1/fixture0. No sourcefix/isolatedmutantclaim.
+Freshuserresume10:25UTCget_goalnull (no inferrednewgoal), canonicalreposclean,
+stalehistorynotblock; noeffectsbetween03:43byte2 andfresh10:31magic16. Root
+freshliteralpre7e3e32/alltools/2093proof; actualpref29357 10:31:02/post418fc3
+CLOSED0 10:31:53 same2093/69866126B/physical632f3524a39afd9f8119968d17ba70591b99690a5e4b6add25ed9bc47a6115b6,
+source434/test3718/plan8c809/spec1f26/tools/npm/absences exact.
+Independentactualpre10:31:02–05C0 allretainedcomparators/originaltwo/journal/
+canonical;7755772KiBfree97%,59%memory/HTTP3080+18789200/3333knownrefused.
+Postgap583516KiBdiskdropUNATTRIBUTED; selectedworkspace/session/log sizeaudit
+shortstableexceptsessions+4KiB, notwholevolume explanation. No cleanup/deletion.
+Thisresume127newfocusedpasses(78+4+2+25+2+16), 49newcasesinthislogicalturn;
+NOT fullcurrent-suite/fullmatrix/origin/native/cutovercomplete. Sourceuncommitted/
+noPR/build/rollout. Nextsafe readonlyresearch: admissiondrift/refcontinuity/
+retainedmagic, foreignactualsameFH/hiddenCore/genuineFDaliasconstructor, actual
+pre-postidentity andcoherentmetadata/ACL/onceclose mutants. Allsessionsclosed.
+
+#### Next closed cycle: twenty plain admission drift and continuity denials
+
+UNEXECUTED test-only delta, source434 unchanged. Required Task2b.5 admission
+drift/ref-continuity/restoration coverage; currentoriginalpublicinput graph only.
+No private snapshot/expectation/checker/nativeGVIO/original-custody mutation.
+Ten equalcopies, detachedarchivejoin, validroot/rawintegerinode changes, six
+same-length byteXORs andextrakey. No isolatedguardmutationkill/nativeauthority.
+
+Append exact20 closedmode names (slot0):
+```perl
+drift-copy-admission drift-copy-creator drift-copy-creation drift-copy-sources drift-copy-source-0 drift-copy-source-1 drift-copy-source-2 drift-copy-source-3 drift-copy-vendor drift-copy-selected drift-selected-detached drift-root drift-creation-inode drift-source-bytes-0 drift-source-bytes-1 drift-source-bytes-2 drift-source-bytes-3 drift-vendor-bytes drift-selected-bytes drift-extra
+```
+
+Source-memory initializer: BEFORE existing test_tie_staged_partial, insert these
+trustedfixture declarations. Capture wholeoriginal graph/fields/rawbytes/numbers/
+members/refs beforemutation. Topcopy nominates current $staged_admission binding
+ONLY in reviewed memorytest—no production setter. Vendorcopy repairs current
+selected.archiveRef to copiedvendor so currentjoin succeeds; snapshotreference
+comparison must reject. Restore originalbinding/allfields/arrays afterburn and
+independently compare restored refs/values against savedpublicgraph, not source
+snapshot. No expected-hash regeneration or privatephase/custody reset:
+```perl
+  my ($test_drift_admission,$test_drift_creation,$test_drift_sources);
+  my (@test_drift_hashes,@test_drift_creation_values,@test_drift_source_members);
+  my ($test_drift_changed,$test_drift_restored)=(0,0);
+  sub test_change_staged_admission {
+    $fail->() unless @_==0&&$staged_phase eq 'active'&&!$test_drift_changed;
+    my %allowed=map {$_=>1} qw(drift-copy-admission drift-copy-creator drift-copy-creation drift-copy-sources drift-copy-source-0 drift-copy-source-1 drift-copy-source-2 drift-copy-source-3 drift-copy-vendor drift-copy-selected drift-selected-detached drift-root drift-creation-inode drift-source-bytes-0 drift-source-bytes-1 drift-source-bytes-2 drift-source-bytes-3 drift-vendor-bytes drift-selected-bytes drift-extra);
+    $fail->() unless $allowed{$mode};
+    my $a=$staged_admission;my $creator=$a->{creator};my $sources=$a->{sources};
+    $test_drift_admission=$a;$test_drift_creation=$creator->{creationIdentity};
+    $test_drift_sources=$sources;
+    @test_drift_creation_values=@$test_drift_creation;
+    @test_drift_source_members=@$sources;
+    @test_drift_hashes=map {+{record=>$_,fields=>{%$_}}}
+      ($a,$creator,@$sources,$a->{vendor},$a->{selected});
+    my $changed;
+    if($mode eq 'drift-copy-admission') {$staged_admission={%$a};$changed=$staged_admission!=$a;}
+    elsif($mode eq 'drift-copy-creator') {$a->{creator}={%$creator};$changed=$a->{creator}!=$creator;}
+    elsif($mode eq 'drift-copy-creation') {
+      $creator->{creationIdentity}=[@$test_drift_creation];
+      $changed=$creator->{creationIdentity}!=$test_drift_creation;
+    }
+    elsif($mode eq 'drift-copy-sources') {$a->{sources}=[@$sources];$changed=$a->{sources}!=$sources;}
+    elsif($mode=~/\Adrift-copy-source-([0-3])\z/) {
+      my $i=0+$1;my $old=$sources->[$i];$sources->[$i]={%$old};$changed=$sources->[$i]!=$old;
+    }
+    elsif($mode eq 'drift-copy-vendor') {
+      my $old=$a->{vendor};$a->{vendor}={%$old};$a->{selected}{archiveRef}=$a->{vendor};
+      $changed=$a->{vendor}!=$old&&$a->{selected}{archiveRef}==$a->{vendor};
+    }
+    elsif($mode eq 'drift-copy-selected') {
+      my $old=$a->{selected};$a->{selected}={%$old};$changed=$a->{selected}!=$old;
+    }
+    elsif($mode eq 'drift-selected-detached') {
+      $a->{selected}{archiveRef}={%{$a->{vendor}}};$changed=$a->{selected}{archiveRef}!=$a->{vendor};
+    }
+    elsif($mode eq 'drift-root') {
+      $creator->{rootPath}='/private/tmp/task6a-staged-other';
+      $changed=$creator->{rootPath} ne $logical;
+    }
+    elsif($mode eq 'drift-creation-inode') {
+      ++$test_drift_creation->[1];$changed=$test_drift_creation->[1]==$test_drift_creation_values[1]+1;
+    }
+    elsif($mode=~/\Adrift-source-bytes-([0-3])\z/) {
+      my $cell=\($sources->[0+$1]{bytes});my $before=ord(substr($$cell,0,1));
+      substr($$cell,0,1)=chr($before^1);$changed=ord(substr($$cell,0,1))==($before^1);
+    }
+    elsif($mode eq 'drift-vendor-bytes'||$mode eq 'drift-selected-bytes') {
+      my $row=$mode eq 'drift-vendor-bytes'?$a->{vendor}:$a->{selected};
+      my $cell=\($row->{bytes});my $before=ord(substr($$cell,0,1));
+      substr($$cell,0,1)=chr($before^1);$changed=ord(substr($$cell,0,1))==($before^1);
+    }
+    elsif($mode eq 'drift-extra') {$a->{extra}=1;$changed=exists($a->{extra});}
+    else {$fail->();}
+    $fail->() unless $changed;$test_drift_changed=1;
+    return {mode=>''.$mode,changed=>JSON::PP::true};
+  }
+  sub test_restore_staged_admission {
+    $fail->() unless @_==0&&$staged_phase eq 'burned'&&$test_drift_changed
+      &&!$test_drift_restored&&@test_drift_hashes==8&&@test_drift_source_members==4
+      &&@test_drift_creation_values==13;
+    $staged_admission=$test_drift_admission;
+    for my $saved(@test_drift_hashes) {%{$saved->{record}}=%{$saved->{fields}};}
+    @$test_drift_sources=@test_drift_source_members;
+    @$test_drift_creation=@test_drift_creation_values;
+    $fail->() unless $staged_admission==$test_drift_admission;
+    for my $saved(@test_drift_hashes) {
+      my $now=$saved->{record};my $old=$saved->{fields};
+      $fail->() unless join(',',sort keys %$now) eq join(',',sort keys %$old);
+      for my $key(keys %$old) {
+        $fail->() unless ref($old->{$key})?$now->{$key}==$old->{$key}:$now->{$key} eq $old->{$key};
+      }
+    }
+    $fail->() unless @$test_drift_sources==4&&@$test_drift_creation==13;
+    for my $i(0..3) {$fail->() unless $test_drift_sources->[$i]==$test_drift_source_members[$i];}
+    for my $i(0..12) {$fail->() unless $test_drift_creation->[$i]==$test_drift_creation_values[$i];}
+    $test_drift_restored=1;return {restored=>JSON::PP::true};
+  }
+```
+
+Extend BOTH full healthy grammar conditions with this exact Perl clause:
+```perl
+$mode=~/\Adrift-/
+```
+
+BEFORE my$take, fixedcompletedhold prefix chosen beforeeffects:
+```perl
+      if($mode=~/\Adrift-/) {
+        my @prefix;my $clocks=0;
+        for my $g(@grammar) {
+          push @prefix,$g;++$clocks if $g->[0] eq 'clock';last if $clocks==237;
+        }
+        $fail->() unless $clocks==237&&@jobs==42;
+        @grammar=@prefix;splice @jobs,24;
+        for my $n(1..12) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+```
+
+BEFORE existing outerfinal }else{$failunlessrefused}, insert branch below,
+retainingoriginal }else closingline afterwards. Realhold then nomination;
+actualrecheck canonicalrefusal BEFOREentryclock, privateobserver BEFORErestore,
+savedgraphrestore then sameburnobserver:
+```perl
+          } elsif($mode=~/\Adrift-/) {
+            $fail->() if $refused;
+            $outcomes->{sourceBeforeAdmissionDrift}=test_observe_staged_custody();
+            $outcomes->{admissionDriftMutation}=test_change_staged_admission();
+            my $value=eval {$operations{recheck}->()};my $error=$@;$check->();
+            $fail->() unless !defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            $outcomes->{recheck}=undef;$outcomes->{recheckRefused}=JSON::PP::true;
+            $outcomes->{sourceAfterAdmissionDrift}=test_observe_staged_custody();
+            $outcomes->{admissionDriftRestoration}=test_restore_staged_admission();
+            $outcomes->{sourceAfterAdmissionDriftRestore}=test_observe_staged_custody();
+```
+
+Immediately after common repeat-delta assertion:
+```perl
+          if($mode=~/\Adrift-/) {
+            $outcomes->{sourceAfterAdmissionDriftRepeats}=test_observe_staged_custody();
+          }
+```
+
+BEFORE STAGED_DIRECTORY_FH_CORE_KEYS:
+```javascript
+const STAGED_ADMISSION_DRIFT_MODES=[
+  'drift-copy-admission',
+  'drift-copy-creator',
+  'drift-copy-creation',
+  'drift-copy-sources',
+  'drift-copy-source-0',
+  'drift-copy-source-1',
+  'drift-copy-source-2',
+  'drift-copy-source-3',
+  'drift-copy-vendor',
+  'drift-copy-selected',
+  'drift-selected-detached',
+  'drift-root',
+  'drift-creation-inode',
+  'drift-source-bytes-0',
+  'drift-source-bytes-1',
+  'drift-source-bytes-2',
+  'drift-source-bytes-3',
+  'drift-vendor-bytes',
+  'drift-selected-bytes',
+  'drift-extra',
+];
+for(const mode of STAGED_ADMISSION_DRIFT_MODES)
+  test('staged custody admission drift rejects changed graph for '+mode,()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,false);assert.equal(r.recheckRefused,true);assert.equal(r.recheck,null);
+    assert.deepEqual(r.admissionDriftMutation,{mode,changed:true});
+    assert.deepEqual(r.admissionDriftRestoration,{restored:true});
+    assert.deepEqual(r.calls,STAGED_HALF_BOUNDARY_CALLS);
+    assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),2574);
+    assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed],[24,228,12,216]);
+    assert.deepEqual(r.sourceBeforeAdmissionDrift,{phase:'active',invalid:0,uncertain:0,disposalStarted:0,
+      sealedClosureCount:12,attemptedCount:0,privateClosedCount:0,closedFlags:Array(12).fill(0)});
+    const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:Array(12).fill(1)};
+    for(const state of ['sourceAfterAdmissionDrift','sourceAfterAdmissionDriftRestore',
+      'sourceAfterAdmissionDriftRepeats']) assert.deepEqual(r[state],burned);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+      STAGED_CLOSE_ROLES);
+  });
+
+```
+
+ONE future exactfocus only after BOTHliteral+actualreviews/syntax/diff/fresh
+root+tools and independentpreservation/resource/HTTP admission. No replay of
+closedoldfocusedruns and no clone/CI/build whilediskdiagnosis unresolved:
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody admission drift ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+All20 expected C237/H24/2574ports/228originals(12stage+216helper)alreadyclosed;
+private12attempted/closed/burninvalid1/uncertain0/disposal1/fixture0. Restoration
+cannot resurrect; threerepeatszeroeffects and unchangedsourceburn. Copies are
+equal plain containers, so no candidatecallbacks in this batch; admissionmagic
+current/retained10targets+10copies remains subsequentUNEXECUTED work.
+Any helper/prototype/queue/setup/cleanupfault remains harnessFault, no REDcredit.
+Physicalbackings/sourcepins unchanged; modifiedadmission bytes are notphysical
+filecorruption. No sourcecommit/PR/build/native/DB/service/cutover outcome here.
+
+#### Closed twenty plain admission drift cases, 2026-10-04 11:01 UTC
+
+Root applied only reviewed test blocks after BOTH literal C0/I0/M0; source434
+unchanged. Syntax24ba3b/diffdc51c3 CLOSED0; actual test
+b6dbba1398f2611b3229bbd2bb90a6dc984a6b9e51c5cc33250e1a5edd258766,
+408145B. BOTH actual-delta reviews C0/I0/M0; exact reverse-in-memory review
+recovered prior3718, no unrelated change. ONE prescribed focus af3313 naturally
+CLOSED0/full505tokens20PASS/0FAIL/CANCEL/SKIP/TODO2634.53075ms; no managed
+session and NOREPLAY. Setup/grammar faults were not represented as semantic RED.
+
+Root pre58fd1b11:01:56/postc5424e11:01:59 CLOSED0:
+2093tracked/69887017B/physical
+32375b4cdc75d24f182647798bbd48b180d983ab53d5471cf3903bc485d00555;
+plan3d458/source434/testb6 exact, npm1957 files/tools pinned, no ownroot
+deps/dist/.setfarm/config residue. Independent inventory10:56:52–55 C0:
+all retained comparators/original two/backups/journal/tool pins matched;
+2090 other tracked files Git-exact. Disk7737316KiBfree97%, memory59%free,
+no thermal warning; root refresh10:57 available7736944KiB/memory60%;
+HTTP3080/18789200,3333knownrefused. Root11:00 original two SHA pins matched.
+Preservation/resource evidence is not production behavior qualification.
+
+All20 actual rechecks refuse before C238 at C237/H24/2574ports/228physical
+originals; private12attempted/12closed, fixture0. Equal copies preserve the
+vendor join where required, so reference continuity—not a broken archive join—
+is exercised. Saved original public graph is independently restored, not private
+expectations/snapshot; phase remains burned invalid1/uncertain0/disposal1.
+Three actual repeats create zero effects and cannot resurrect custody.
+
+Closed disjoint resume focuses now total147passes (prior78 +new69), not a
+current full-suite/current combined-run claim. This cycle adds20; no source
+commit/push/PR/build/native/DB/service/cutover qualification. All original
+files/retained worktrees/evidence remain visible and untouched.
+
+#### Next closed cycle: twenty current and retained admission magic denials
+
+This ordinary test-only cycle follows closed drift20. Exact source434 and all
+private captured expectations/original closures stay unchanged. Each of ten
+unique original public admission containers is nominated once as current and
+once after its current public position receives a byte/value-equal plain copy:
+admissionHV, creatorHV, creationIdentityAV, sourcesAV, four sourceHV, vendorHV,
+selectedHV. archiveRef is the same vendor identity, not an eleventh target.
+The retained vendor copy repairs selected.archiveRef to the current vendor so
+the current graph remains joined. A retained top admission copy changes only
+the trusted memory helper's current staged_admission binding, not merely the
+fixture binding; no production setter is added.
+
+Helpers are source-memory-only additions before test_tie_staged_partial,
+after the already admitted public restoration helper. Save original references,
+eight hashes/fields/bytes, four source members and thirteen numeric creation
+values BEFORE any tie. No private snapshot/expectation/checker/closure/original
+mutation or regeneration. A separate flat primitive callback ledger uses the
+already reviewed closed tied AV/HV classes. Exactly one target tie/factory;
+no candidate traversal after tie. Only the guarded actual consumer decides.
+
+Closed mode inventory addition:
+
+```perl
+amagic-current-admission amagic-current-creator amagic-current-creation amagic-current-sources amagic-current-source-0 amagic-current-source-1 amagic-current-source-2 amagic-current-source-3 amagic-current-vendor amagic-current-selected amagic-retained-admission amagic-retained-creator amagic-retained-creation amagic-retained-sources amagic-retained-source-0 amagic-retained-source-1 amagic-retained-source-2 amagic-retained-source-3 amagic-retained-vendor amagic-retained-selected
+```
+
+Memory helpers:
+
+```perl
+  my ($test_admission_magic_target,$test_admission_magic_kind);
+  my $test_admission_magic_counts={factory=>0,untie=>0,destroy=>0,callbacks=>{
+    map {$_=>0} qw(FETCHSIZE FETCH STORE STORESIZE EXTEND PUSH POP SHIFT UNSHIFT CLEAR EXISTS DELETE FIRSTKEY NEXTKEY SCALAR)}};
+  sub test_change_staged_admission_magic {
+    $fail->() unless @_==0&&$staged_phase eq 'active'&&!$test_drift_changed
+      &&!defined($test_admission_magic_target)&&!$test_admission_magic_counts->{factory};
+    my %allowed=map {$_=>1} qw(amagic-current-admission amagic-current-creator amagic-current-creation amagic-current-sources amagic-current-source-0 amagic-current-source-1 amagic-current-source-2 amagic-current-source-3 amagic-current-vendor amagic-current-selected amagic-retained-admission amagic-retained-creator amagic-retained-creation amagic-retained-sources amagic-retained-source-0 amagic-retained-source-1 amagic-retained-source-2 amagic-retained-source-3 amagic-retained-vendor amagic-retained-selected);
+    $fail->() unless $allowed{$mode};
+    # Save the entire original public graph before tying any current or retained cell.
+    my $a=$staged_admission;my $creator=$a->{creator};my $sources=$a->{sources};
+    $test_drift_admission=$a;$test_drift_creation=$creator->{creationIdentity};
+    $test_drift_sources=$sources;
+    @test_drift_creation_values=@$test_drift_creation;
+    @test_drift_source_members=@$sources;
+    @test_drift_hashes=map {+{record=>$_,fields=>{%$_}}}
+      ($a,$creator,@$sources,$a->{vendor},$a->{selected});
+    $fail->() unless $mode=~/\Aamagic-(current|retained)-(.+)\z/;
+    my ($which,$part)=($1,$2);my ($target,$kind);
+    if($part eq 'admission') {
+      $target=$a;$kind='hash';$staged_admission={%$a} if $which eq 'retained';
+    } elsif($part eq 'creator') {
+      $target=$creator;$kind='hash';$a->{creator}={%$creator} if $which eq 'retained';
+    } elsif($part eq 'creation') {
+      $target=$test_drift_creation;$kind='array';
+      $creator->{creationIdentity}=[@$target] if $which eq 'retained';
+    } elsif($part eq 'sources') {
+      $target=$sources;$kind='array';$a->{sources}=[@$sources] if $which eq 'retained';
+    } elsif($part=~/\Asource-([0-3])\z/) {
+      my $i=0+$1;$target=$sources->[$i];$kind='hash';
+      $sources->[$i]={%$target} if $which eq 'retained';
+    } elsif($part eq 'vendor') {
+      $target=$a->{vendor};$kind='hash';
+      if($which eq 'retained') {$a->{vendor}={%$target};$a->{selected}{archiveRef}=$a->{vendor};}
+    } elsif($part eq 'selected') {
+      $target=$a->{selected};$kind='hash';$a->{selected}={%$target} if $which eq 'retained';
+    } else {$fail->();}
+    $test_admission_magic_target=$target;$test_admission_magic_kind=$kind;
+    $test_drift_changed=1;
+    if($kind eq 'array') {tie @$target,'TestStagedPartialArray',$test_admission_magic_counts;}
+    elsif($kind eq 'hash') {tie %$target,'TestStagedMetadataHash',$test_admission_magic_counts;}
+    else {$fail->();}
+    my $sv=B::svref_2object($target);
+    $fail->() unless $test_admission_magic_counts->{factory}==1&&($sv->FLAGS&0x00f00000);
+    return {mode=>''.$mode,changed=>JSON::PP::true};
+  }
+  sub test_observe_staged_admission_magic {
+    $fail->() unless @_==0;
+    return {factory=>0+$test_admission_magic_counts->{factory},
+      untie=>0+$test_admission_magic_counts->{untie},destroy=>0+$test_admission_magic_counts->{destroy},
+      callbacks=>{%{$test_admission_magic_counts->{callbacks}}}};
+  }
+  sub test_restore_staged_admission_magic {
+    $fail->() unless @_==0&&$staged_phase eq 'burned'&&defined($test_admission_magic_target)
+      &&$test_admission_magic_counts->{factory}==1&&!$test_admission_magic_counts->{untie};
+    if($test_admission_magic_kind eq 'array') {untie @$test_admission_magic_target;}
+    elsif($test_admission_magic_kind eq 'hash') {untie %$test_admission_magic_target;}
+    else {$fail->();}
+    $fail->() unless $test_admission_magic_counts->{untie}==1&&$test_admission_magic_counts->{destroy}==1;
+    $test_admission_magic_target=undef;
+    return test_restore_staged_admission();
+  }
+```
+
+Append this exact clause to both existing full healthy grammar predicates;
+no generic mode admission or queue fallback:
+
+```perl
+$mode=~/\Aamagic-/
+```
+
+The predetermined prefix is fixed BEFORE acquisitions: healthy grammar through
+completed hold C237/H24, then all twelve stage closes. No runtime queue erasure
+after a refusal. Insert before my take=sub:
+
+```perl
+      if($mode=~/\Aamagic-/) {
+        my @prefix;my $clocks=0;
+        for my $g(@grammar) {
+          push @prefix,$g;++$clocks if $g->[0] eq 'clock';last if $clocks==237;
+        }
+        $fail->() unless $clocks==237&&@jobs==42;
+        @grammar=@prefix;splice @jobs,24;
+        for my $n(1..12) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+```
+
+Insert this driver branch immediately before the final ordinary refusal branch.
+Actual hold succeeds, target tie happens, actual recheck must canonically refuse
+before C238. Capture private burn and flat callbacks, repeat all three actual
+consumers WHILE STILL TIED with zero effects/callbacks; only then untie the exact
+target. Verify UNTIE1/DESTROY1, restore the original public graph via the already
+reviewed independently validated public restoration (no private state reset),
+and observe the same burn:
+
+```perl
+          } elsif($mode=~/\Aamagic-/) {
+            $fail->() if $refused;
+            $outcomes->{sourceBeforeAdmissionMagic}=test_observe_staged_custody();
+            $outcomes->{admissionMagicMutation}=test_change_staged_admission_magic();
+            my $value=eval {$operations{recheck}->()};my $error=$@;$check->();
+            $fail->() unless !defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            $outcomes->{recheck}=undef;$outcomes->{recheckRefused}=JSON::PP::true;
+            $outcomes->{sourceAfterAdmissionMagicRefusal}=test_observe_staged_custody();
+            $outcomes->{admissionMagicAfterRefusal}=test_observe_staged_admission_magic();
+            my $before=scalar(@events);
+            for my $name(qw(hold recheck release)) {
+              my $again=eval {$operations{$name}->()};my $error=$@;$check->();
+              $fail->() unless !defined($again)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            }
+            $outcomes->{admissionMagicTiedRepeatDelta}=scalar(@events)-$before;
+            $fail->() if $outcomes->{admissionMagicTiedRepeatDelta};
+            $outcomes->{sourceAfterAdmissionMagicTiedRepeats}=test_observe_staged_custody();
+            $outcomes->{admissionMagicBeforeUntie}=test_observe_staged_admission_magic();
+            $outcomes->{admissionMagicRestoration}=test_restore_staged_admission_magic();
+            $outcomes->{sourceAfterAdmissionMagicRestoration}=test_observe_staged_custody();
+            $outcomes->{admissionMagicAfterUntie}=test_observe_staged_admission_magic();
+```
+
+After common zero-effect hold/recheck/release repeats observe:
+
+```perl
+          if($mode=~/\Aamagic-/) {
+            $outcomes->{sourceAfterAdmissionMagicRepeats}=test_observe_staged_custody();
+            $outcomes->{admissionMagicAfterRestoredRepeats}=test_observe_staged_admission_magic();
+          }
+```
+
+All twenty actual guarded cases have C237/H24/2574 ports, physical228 originals
+(12 stage +216 helper), private12 attempts/12 definite closes, fixture0,
+burned invalid1/uncertain0/disposal1. Constructor1; all15 callbacks zero before
+refusal, while-tied repeats, untie and restored repeats. These are actual guarded
+consumer tests, not isolated magic mutants/native/privileged provenance proof.
+Existing source/plain-cell/vector mutants retain their separate receipts.
+
+Insert exact Node oracles before STAGED_DIRECTORY_FH_CORE_KEYS:
+
+```javascript
+const STAGED_ADMISSION_MAGIC_MODES=[
+  'amagic-current-admission',
+  'amagic-current-creator',
+  'amagic-current-creation',
+  'amagic-current-sources',
+  'amagic-current-source-0',
+  'amagic-current-source-1',
+  'amagic-current-source-2',
+  'amagic-current-source-3',
+  'amagic-current-vendor',
+  'amagic-current-selected',
+  'amagic-retained-admission',
+  'amagic-retained-creator',
+  'amagic-retained-creation',
+  'amagic-retained-sources',
+  'amagic-retained-source-0',
+  'amagic-retained-source-1',
+  'amagic-retained-source-2',
+  'amagic-retained-source-3',
+  'amagic-retained-vendor',
+  'amagic-retained-selected',
+];
+for(const mode of STAGED_ADMISSION_MAGIC_MODES)
+  test('staged custody admission magic rejects original graph for '+mode,()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,false);assert.equal(r.recheckRefused,true);assert.equal(r.recheck,null);
+    assert.deepEqual(r.admissionMagicMutation,{mode,changed:true});
+    assert.deepEqual(r.admissionMagicRestoration,{restored:true});
+    assert.deepEqual(r.calls,STAGED_HALF_BOUNDARY_CALLS);
+    assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),2574);
+    assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed],[24,228,12,216]);
+    assert.equal(r.admissionMagicTiedRepeatDelta,0);
+    assert.deepEqual(r.sourceBeforeAdmissionMagic,{phase:'active',invalid:0,uncertain:0,disposalStarted:0,
+      sealedClosureCount:12,attemptedCount:0,privateClosedCount:0,closedFlags:Array(12).fill(0)});
+    const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:Array(12).fill(1)};
+    for(const state of ['sourceAfterAdmissionMagicRefusal','sourceAfterAdmissionMagicTiedRepeats',
+      'sourceAfterAdmissionMagicRestoration','sourceAfterAdmissionMagicRepeats'])
+      assert.deepEqual(r[state],burned);
+    const tied={factory:1,untie:0,destroy:0,callbacks:STAGED_METADATA_MAGIC_ZERO};
+    assert.deepEqual(r.admissionMagicAfterRefusal,tied);assert.deepEqual(r.admissionMagicBeforeUntie,tied);
+    const untied={factory:1,untie:1,destroy:1,callbacks:STAGED_METADATA_MAGIC_ZERO};
+    assert.deepEqual(r.admissionMagicAfterUntie,untied);
+    assert.deepEqual(r.admissionMagicAfterRestoredRepeats,untied);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+      STAGED_CLOSE_ROLES);
+  });
+```
+
+Single focused execution only AFTER both literal and actual-delta C0 reviews,
+syntax/diff and fresh exact-source/Git/npm/tools/retained-tree/resource/HTTP gates:
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody admission magic ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Natural complete terminal output and exact rootpost are required. Setup/compile/
+queue faults are not semantic RED. No partial delivery/build/native/service/DB
+qualification; retain every prior closed receipt and original dirty file.
+
+#### Closed twenty current and retained admission magic cases, 2026-10-04 11:06 UTC
+
+Root applied the exact eight-fence plan7f44 after BOTH literal C0/I0/M0.
+Syntax88e4b4/diff029d94 CLOSED0. Actual test
+c8b96c045d78dab026f07437c054983dff0bc3bef4f35840e75a34bd771c2c27,
+417326B; BOTH actual-delta C0 reviews reversed only additions in memory and
+recovered testb6 exactly. Source434 remains unchanged.
+
+ONE prescribed focus6409b8 naturallyCLOSED0/full535tokens20PASS/0FAIL/CANCEL/
+SKIP/TODO2647.553875ms; no managed session/NOREPLAY. Rootpre8949fa11:06:39/
+post3e874d11:06:43 same2093/69910953B/physical
+a4715153f1954a2487534d895bb17615574731778f3def06dce658514f26d15e;
+plan7f/testc8/source434/spec1f26/tools/npm/absences exact.
+Independent boundedgate11:06:04–05 C0 all current/originaltwo/backups/journal/
+canonical/tools matched; prior10:56 full retained comparison remains prior,
+not falsely retimestamped. Disk7731260KiBfree97%,memory59%free/throttled0/
+no thermal warning; HTTP3080+18789200,3333knownrefused.
+
+All20actualrechecks reject current or retained magical original containers
+before C238: C237/H24/2574ports/228physicaloriginals/12privateattempted+closed/
+fixture0. Tied repeats have callback0/effect0; factory1 followed exacttarget
+UNTIE1/DESTROY1. Independently saved public graph restores original bindings,
+bytes/fields/members/creation values without regenerating private expectations.
+Private phase remains burned invalid1/uncertain0/disposal1 after both repeat
+groups. No isolated-mutant/native/originalGVIOmutation claim.
+
+Closed disjoint resume focuses total167passes=prior78+new89, not current
+combined-suite/fullmatrix. This cycle adds20; no commit/push/PR/build/native/DB/
+service/cutover effect or qualification. Every retained worktree/evidence and
+original file is preserved.
+
+#### Finite remaining ordinary capsule matrix audit
+
+Independent read-only review traced remaining requirements to this approved
+plan3685–3724 and spec774–874. After drift20 and admissionmagic20, do NOT expand
+to a slots x fields x phases Cartesian suite. Remaining distinct requirements:
+foreign same-FH parent/physical/file/directory inputs plus hidden raw original;
+same staged-original alias; genuine live-FD alias with separately reviewed safe
+wrapper retirement; second hold while active and active recheck/release arity;
+representative staged pre/open/post stat/lstat identity/tuple/size failures;
+shared captor throwing-cleanup/unsettled invalidation; ACL/epoch and once-only
+original disposal semantic controls. Parent/entropy tests do not certify staged
+identity validators; current definite-close mutants are not once-only controls.
+A same-FD wrapper candidate via documented CORE open '<&=' is preparation only:
+no alias experiment is admitted without one physical obligation, no allocation/
+reuse window and independently reviewed exact cleanup/self-witness.
+
+Authentic creator/staging writes/downloads/official extraction/credential-drop/
+child/native execution/protected cleanup remain subsequent separate gates.
+No current ordinary test receipt authorizes those effects. Complete mandatory
+ordinary matrix then full verification/reviews/delivery; no partial delivery.
+
+#### Next closed cycle: four foreign same-FH denials and one hidden acquisition
+
+Root-only test changes; source434 stays unchanged. Four foreign profiles nominate
+ONE actual readonly MAP FH into exactly one existing public owner-input registry
+(parent/physical/file/directory) in the memory-only source initializer, then
+the first sysopen exposes the SAME borrowed native FH without a second physical
+acquisition. These registries are fixture inputs, not authenticated complete
+parent/physical owners. Hidden profile actually CORE opens first d0, immediately
+registers the raw original as fixture-only, keeps caller cell undefined and
+returns0. No native exec, real child, writes, duplication, POSIX integer close,
+descriptor reassignment or borrowed original disposal is admitted.
+
+All profiles slot0, existing finite mode validation remains. Append names to
+the exact mode allowlist; insert inventory/strong references immediately after
+mode validation before logical paths:
+
+```perl
+foreign-parent foreign-physical foreign-file foreign-directory hidden-open-undefined
+```
+
+```perl
+      my %fixture_modes=map {$_=>1} qw(foreign-parent foreign-physical foreign-file foreign-directory hidden-open-undefined);
+      my ($fixture_original,$fixture_record);my $raw_acquisitions=0;
+```
+
+Replace only the unknown grammar predicate with
+unknown OR fixture_modes, or insert this exact branch after it. Both forms emit
+the fixed four-operation startup clock/stage clock/lstatd0/sysopend0 prefix;
+no helper jobs or source closes. Use the separate exact branch below:
+
+```perl
+      elsif($fixture_modes{$mode}) {
+        $emit->('clock','stage');$emit->('lstat','d0');$emit->('sysopen','d0');
+      }
+```
+
+Replace the register header through initial push with this exact beginning. Caller arguments are only fixed primitive0/default or1, never candidate-supplied; attribution is captured in an inaccessible lexical closure along with original CORE disposer. No validation or fallible metadata between successful acquisition and raw registry push. Existing fd/stat/role checks follow unchanged; rescue traverses already-pushed raw registry even if register fails before returning its record:
+
+```perl
+      my $register=sub {
+        my ($fh,$role,$dir_stream,$path,$fixture_only)=@_;
+        $fixture_only=defined($fixture_only)?$fixture_only:0;
+        # Retain raw acquisition, immutable attribution and disposer before inspection.
+        my $o={fh=>$fh,role=>$role,dirStream=>$dir_stream,path=>$path,attempted=>0,closed=>0,
+          fixtureOnly=>sub {$fixture_only},
+          originalClose=>sub {$dir_stream?CORE::closedir($fh):CORE::close($fh)}};
+        push @owned,$o;
+```
+
+Replace the dispose argument/attempt header. Fixture-only consumer routing is denied BEFORE delegation; this is harness containment, not a semantic mutant oracle. Old pipe records without attribution remain default consumer originals:
+
+```perl
+        my ($o,$fixture)=@_;
+        $fail->() if exists($o->{fixtureOnly})&&$o->{fixtureOnly}->()&&!$fixture;
+        return 0 if $o->{attempted};
+```
+
+Insert sysopen branch after unknown nomination but BEFORE ordinary open-undefined/CORE acquisition. Existing op/flags/path checks and event are unchanged; exactly firstd0 is admitted. Hidden metadata inspection happens only after raw record with original disposer has been pushed:
+
+```perl
+          if($fixture_modes{$mode}) {
+            $fail->() unless $open_ordinal==1&&$p->{role} eq 'd0';
+            if($mode eq 'hidden-open-undefined') {
+              CORE::sysopen(my $raw,$p->{actual},$flags) or $fail->();
+              ++$raw_acquisitions;
+              $fixture_record=$register->($raw,'fixture-hidden',0,$p,1);
+              $fixture_original=$raw;
+              $same_physical->($p->{identity},$fixture_record->{identity},'directory');
+              $fail->() if defined($_[0]);return 0;
+            }
+            $fail->() unless defined($fixture_original)&&defined($fixture_record)
+              &&$raw_acquisitions==1&&$fixture_record->{fixtureOnly}->();
+            $_[0]=$fixture_original;return 1;
+          }
+```
+
+Insert constructor INSIDE body_ok eval immediately before source eval, never outside its rescue coverage. Selected MAP metadata/mode/class checked BEFORE CORE acquisition. Source loading, helper initialization or post-register inspection faults still reach preserved fixture rescue and remain failures, not semantic RED:
+
+```perl
+          if($fixture_modes{$mode}&&$mode ne 'hidden-open-undefined') {
+            my $p=$paths{$logical.'/'.$leaf_rel[2]};
+            $fail->() unless defined($p)&&$p->{role} eq 'f2'&&!@owned&&!$raw_acquisitions;
+            my $flags=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK();
+            CORE::sysopen(my $raw,$p->{actual},$flags) or $fail->();
+            ++$raw_acquisitions;
+            $fixture_record=$register->($raw,'fixture-foreign',0,$p,1);
+            $fixture_original=$raw;
+            $same_physical->($p->{identity},$fixture_record->{identity},'file');
+          }
+```
+
+Insert these memory-only nominations immediately after staged_admission assignment. No other source owner registry is edited and no actual owner authority is inferred:
+
+```perl
+  if($mode eq 'foreign-parent') {push @parent_originals,{fh=>$fixture_original};}
+  elsif($mode eq 'foreign-physical') {push @physical_owned_handles,$fixture_original;}
+  elsif($mode eq 'foreign-file') {push @file_ledger,{fh=>$fixture_original};}
+  elsif($mode eq 'foreign-directory') {push @directory_ledger,{fh=>$fixture_original};}
+```
+
+After initial actual hold refusal/outcome assignment, record source private observer state without exporting FH/FD/CV. Existing final ordinary-refusal branch and common actual three repeats remain unchanged:
+
+```perl
+          if($fixture_modes{$mode}) {
+            $fail->() unless $refused;
+            $outcomes->{sourceAfterFixtureRefusal}=test_observe_staged_custody();
+          }
+```
+
+After common repeats/queue check/unknown finalization, immediately before body success1, witness original still live with captured actual CORE fd and independent physical identity; zero attempted/closed counts. Metadata inspection failure still goes through rescue and fails the harness:
+
+```perl
+          if($fixture_modes{$mode}) {
+            $fail->() unless @owned==1&&$raw_acquisitions==1&&defined($fixture_record)
+              &&$owned[0]==$fixture_record&&$fixture_record->{fixtureOnly}->()
+              &&!$fixture_record->{attempted}&&!$fixture_record->{closed}
+              &&defined($fixture_original)&&$fixture_original==$fixture_record->{fh};
+            my $live=CORE::fileno($fixture_original);
+            $fail->() unless defined($live)&&$live==$fixture_record->{fd};
+            my $kind=$mode eq 'hidden-open-undefined'?'directory':'file';
+            $same_physical->($fixture_record->{identity},[CORE::stat($fixture_original)],$kind);
+            $outcomes->{fixtureOwnerBeforeRescue}={live=>JSON::PP::true,sameFd=>JSON::PP::true,
+              sameIdentity=>JSON::PP::true,attempted=>0,closed=>0};
+            $outcomes->{rawAcquisitions}=0+$raw_acquisitions;
+            $outcomes->{sourceAfterFixtureRepeats}=test_observe_staged_custody();
+          }
+```
+
+The existing finalizer's once-only original CORE disposer stays unchanged. Replace
+footer definite/fixture/stage checks with this exact block. Hidden path truthiness
+MUST NOT create stageClosed credit. Raw fixture-only classification is captured
+before inspection and consulted independently of mutable staged/parent metadata.
+
+```perl
+      $fail->() unless $definite==@owned;
+      if($fixture_modes{$mode}) {
+        $fail->() unless @owned==1&&$raw_acquisitions==1&&$fixture_closed==1
+          &&defined($outcomes->{fixtureOwnerBeforeRescue})&&$outcomes->{fixtureOwnerBeforeRescue}{live}
+          &&$helpers==0&&defined($repeat_delta)&&$repeat_delta==0&&!@grammar;
+      } else {$fail->() if $fixture_closed;}
+      my $stage_closed=grep {$_->{closed}&&$_->{path}
+        &&!(exists($_->{fixtureOnly})&&$_->{fixtureOnly}->())} @owned;
+      if($fixture_modes{$mode}) {
+        $fail->() if $stage_closed||$definite-$stage_closed-$fixture_closed;
+        $outcomes->{consumerClosed}=0+($definite-$fixture_closed);
+      }
+```
+
+In the output change ONLY helperClosed arithmetic to exclude fixture closures:
+
+```perl
+helperClosed=>$definite-$stage_closed-$fixture_closed,
+```
+
+Replace the Node wrapper's remainingOperations/fixtureClosed assertions with
+this exact five-name exception. All old profiles retain fixtureClosed0; no
+prefix matcher, generic positive cleanup tolerance or census-only proof:
+
+```javascript
+  assert.equal(value.remainingOperations,0);
+  if(['foreign-parent','foreign-physical','foreign-file','foreign-directory','hidden-open-undefined'].includes(mode)) {
+    assert.equal(slot,0);
+    assert.deepEqual([value.rawAcquisitions,value.ownedCount,value.definitelyClosed,value.fixtureClosed,
+      value.consumerClosed,value.stageClosed,value.helperClosed],[1,1,1,1,0,0,0]);
+    assert.deepEqual(value.fixtureOwnerBeforeRescue,{live:true,sameFd:true,sameIdentity:true,
+      attempted:0,closed:0});
+  } else assert.equal(value.fixtureClosed,0);
+```
+
+Insert these tests before STAGED_DIRECTORY_FH_CORE_KEYS:
+
+```javascript
+const STAGED_FIXTURE_ONLY_MODES=[
+  'foreign-parent','foreign-physical','foreign-file','foreign-directory','hidden-open-undefined',
+];
+for(const mode of STAGED_FIXTURE_ONLY_MODES)
+  test('staged custody fixture ownership rejects borrower or hidden original '+mode,()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,true);assert.equal(r.hold,null);
+    assert.deepEqual(r.calls,{clock:2,lstat:1,sysopen:1});
+    assert.equal(r.events.length,4);
+    assert.deepEqual(r.events.map(e=>e.op+':'+e.role),
+      ['clock:startup','clock:stage','lstat:d0','sysopen:d0']);
+    assert.deepEqual([r.helpers,r.rawAcquisitions,r.ownedCount,r.definitelyClosed,
+      r.fixtureClosed,r.consumerClosed,r.stageClosed,r.helperClosed],[0,1,1,1,1,0,0,0]);
+    assert.deepEqual(r.fixtureOwnerBeforeRescue,{live:true,sameFd:true,sameIdentity:true,
+      attempted:0,closed:0});
+    const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:0,attemptedCount:0,privateClosedCount:0,closedFlags:[]};
+    assert.deepEqual(r.sourceAfterFixtureRefusal,burned);
+    assert.deepEqual(r.sourceAfterFixtureRepeats,burned);
+    assert.equal(r.repeatEffectDelta,0);assert.equal(r.remainingOperations,0);
+  });
+```
+
+Each actual hold canonically refuses; source zero sealed/attempted/closed handles,
+burnedinvalid1/uncertain0/disposal1, repeats zero effects. Immediately before
+fixture rescue the original is still live/unattempted/unclosed; after natural
+rescue rawAcquisitions=ownedCount=definitelyClosed=fixtureClosed=1, all consumer/
+stage/helper close counts0. Definite fixture closure is not consumer closure,
+native qualification or hidden-original leak-freedom claim. Constructor, compile,
+shape/prototype/queue/inspection faults fail closed, never behavioral passes.
+
+One exact focus only after both literal and actual-delta reviews C0, syntax/diff
+and fresh Git/all-source/npm/tools/retained/originals/resource/HTTP gates:
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody fixture ownership ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Read full natural terminal and exact rootpost; no repeated old sessions/tests.
+Genuine distinct-GV same-live-FD alias/staged-original alias remain separate
+unadmitted work. No partial delivery/build/native/credential/DB/service effect.
+
+#### Closed foreign same-FH4 and hidden raw1, 2026-10-04 11:18 UTC
+
+BOTH literal956 C0/I0/M0. Initial apply atomically refused a partial source-load
+line anchor; hash754ffe confirmed priorc8 untouched. This was neither mutation
+nor semantic RED. Corrected read-only extractor97bfb5 enforces complete-line
+anchors, retains load/setup/check suffix, and root applies exact fifteen fences.
+Syntax38b965/diff02e9e3 CLOSED0. Actualtest
+50301c40f56d8dbd41391f73f7d3678f8bdce32683ef889eb300146fd7dc7a41,
+423071B. BOTH actual C0 reviews reverse exact changes/separator to priorc8.
+
+ONE prescribed focus269860 naturallyCLOSED0/full159tokens5PASS/0FAIL/CANCEL/
+SKIP/TODO398.436708ms; no managedsession/NOREPLAY. Rootpre1cd36c11:18:22/
+post1a71cd11:18:23 same2093/69931624B/physical
+7836fb6a32d36549aa5dfdfc98b83db1ed141ae1bcab0cf35bc28d65e4fe01d1;
+source434/test503/plan956/spec1f26/npm/tools/absences exact.
+Independent boundedgate11:15:03–04C0 current/originaltwo/backups/journal/
+canonical/tool keypins matched; disk7729884KiBfree97%,memory60%free/throttled0/
+no thermal warning; HTTP3080+18789200,3333knownrefused. Prior10:56 full
+historical comparison not replayed/retimestamped.
+
+All five actual hold refusals consume clock2/lstat1/sysopen1, fourevents/H0/
+sourceclose0/private0sealed/0attempted/0closed, burninvalid1uncertain0disposal1.
+Before fixture rescue ONE raw original remains actually live, same actual CORE
+FD and independently checked physicalidentity, attempted0closed0. Three actual
+repeats have zeroeffects and sameburn. Exactly once original CORE fixture rescue
+definitely closes ONE: rawAcquisitions=ownedCount=definitelyClosed=fixtureClosed=1;
+consumerClosed=stageClosed=helperClosed=0. Hidden path truthiness produces no
+stage credit. Old profiles retain fixtureClosed0. No hidden-rescue consumer/native/
+leak-freedom claim, duplicate-FD constructor, integer close or real child.
+
+Closed disjoint resume172focusedpasses=prior78+new94, not full currentcombined
+suite/fullmatrix. No commit/push/PR/build/native/DB/service/cutover effect.
+Same staged-original/genuine live-FD aliases remain mandatory subsequent cases;
+IO-only distinct-GV/shared-IO construction is documented research only, unexecuted.
+
+#### Next closed cycle: three active entry misuse denials
+
+Root-only test extension; source434 unchanged. Complete healthy actual hold
+then nominate a zero-argument second hold WHILE ACTIVE or a one-argument active
+recheck/release. Existing initial hold(1)/premature tests do not cover these
+three distinct entry paths. No fixture mutation/port-fault/private reset.
+
+Append only these exact names to finite mode inventory:
+
+```perl
+active-hold-again active-recheck-arity active-release-arity
+```
+
+Append this exact clause to both healthy grammar predicates:
+
+```perl
+$mode=~/\Aactive-/
+```
+
+Predetermine completed hold C237/H24 plus twelve closes before any effect:
+
+```perl
+      if($mode=~/\Aactive-/) {
+        my @prefix;my $clocks=0;
+        for my $g(@grammar) {
+          push @prefix,$g;++$clocks if $g->[0] eq 'clock';last if $clocks==237;
+        }
+        $fail->() unless $clocks==237&&@jobs==42;
+        @grammar=@prefix;splice @jobs,24;
+        for my $n(1..12) {$emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));}
+      }
+```
+
+Insert before final ordinary refusal driver branch; call actual consumer, catch
+canonical refusal, inspect private burn. No replacement operation or fake DTO:
+
+```perl
+          } elsif($mode=~/\Aactive-/) {
+            $fail->() if $refused;
+            $outcomes->{sourceBeforeActiveMisuse}=test_observe_staged_custody();
+            my %nominees=('active-hold-again'=>['hold',0],
+              'active-recheck-arity'=>['recheck',1],'active-release-arity'=>['release',1]);
+            my $nominee=$nominees{$mode};$fail->() unless defined($nominee);
+            my $value=eval {$nominee->[1]?$operations{$nominee->[0]}->(1):$operations{$nominee->[0]}->()};
+            my $error=$@;$check->();
+            $fail->() unless !defined($value)&&$error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+            $outcomes->{activeMisuse}={operation=>''.$nominee->[0],arity=>0+$nominee->[1],
+              refused=>JSON::PP::true};
+            $outcomes->{sourceAfterActiveMisuse}=test_observe_staged_custody();
+```
+
+After common three zero-effect actual repeats observe sameburn:
+
+```perl
+          if($mode=~/\Aactive-/) {
+            $outcomes->{sourceAfterActiveMisuseRepeats}=test_observe_staged_custody();
+          }
+```
+
+Insert exact Node checks before STAGED_DIRECTORY_FH_CORE_KEYS:
+
+```javascript
+for(const [mode,operation,arity] of [
+  ['active-hold-again','hold',0],['active-recheck-arity','recheck',1],['active-release-arity','release',1],
+])
+  test('staged custody active entry refuses '+mode,()=>{
+    const r=stagedCustody(mode);
+    assert.equal(r.refused,false);
+    assert.deepEqual(r.activeMisuse,{operation,arity,refused:true});
+    assert.deepEqual(r.calls,STAGED_HALF_BOUNDARY_CALLS);
+    assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),2574);
+    assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed],[24,228,12,216]);
+    assert.deepEqual(r.sourceBeforeActiveMisuse,{phase:'active',invalid:0,uncertain:0,disposalStarted:0,
+      sealedClosureCount:12,attemptedCount:0,privateClosedCount:0,closedFlags:Array(12).fill(0)});
+    const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:12,attemptedCount:12,privateClosedCount:12,closedFlags:Array(12).fill(1)};
+    assert.deepEqual(r.sourceAfterActiveMisuse,burned);
+    assert.deepEqual(r.sourceAfterActiveMisuseRepeats,burned);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role),
+      STAGED_CLOSE_ROLES);
+    assert.equal(r.repeatEffectDelta,0);
+  });
+```
+
+All three C237/H24/2574ports/228originals/12privateattempted+closed/fixture0.
+Second hold and both arity errors must burn before disposition; no recheck
+entry C238/helper/native operation; common repeats cannot resurrect custody.
+
+Single exact focus after BOTH literal+actual C0 reviews, syntax/diff and fresh
+all-source/Git/tools/npm/preservation/resource/HTTP gates:
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody active entry ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Full natural terminal and exact postgate required; setup/queue/compile faults
+are not semanticRED. No partial delivery/build/native/DB/service cutover claim.
+
+#### Closed three active entry misuse cases, 2026-10-04 11:22 UTC
+
+BOTH literaleeca C0/I0/M0, exact readonlyextractor6780ee sevenfences/rootapply.
+Syntax20d3e8/diff20a702 CLOSED0. Actualtest
+734b5aebe9d3476b55f477e2bb4857cab51a2c737a3cf5ccce255d3ad806db82,
+425738B. BOTH actual reviews C0 reverse exact additions/separator to prior503.
+Source434 unchanged.
+
+ONE prescribed focus2760cb naturallyCLOSED0/full85tokens3PASS/0FAIL/CANCEL/
+SKIP/TODO460.559792ms/no managedsession/NOREPLAY.
+Rootpre73be2f11:22:43/postb8b32c11:22:44 same2093/69940870B/physical
+b6ffbebc1f3ad1cc800b5db362d428ae9eb649cb7b427cfda8c67cb9912d20a8;
+planeeca/test734/source434/spec1f26/npm/tools/absences exact.
+Independent boundedgate11:22:06–07C0 current/originaltwo/backups/journal/
+canonical/toolkeypins matched; disk7742532KiBfree97%,memory60%free/throttled0/
+no thermal warning; HTTP3080+18789200,3333knownrefused. Prior10:56fullretained
+comparison stays prior, not retimestamped.
+
+Healthy actual hold followed by hold()again/recheck(1)/release(1) all canonically
+refuse before C238 at C237/H24/2574ports/228originals/12privateattempted+closed/
+fixture0. Phaseburnedinvalid1uncertain0disposal1 persists, actual repeatszero.
+Closed disjoint resume175focusedpasses=prior78+new97, not currentcombinedsuite/
+fullmatrix. This cycle adds3. No commit/push/PR/build/native/DB/service/cutover
+effect or qualification; all retained worktrees/evidence/originalfiles preserved.
+
+#### Safe alias constructor research, unexecuted
+
+Main read installed Symbol.pm1–115, perlref.pod230–276, perlmod.pod144–181
+and perlfunc.pod4795–4835 after independent read-only research. IO-slot-only
+assignment into Symbol::gensym's genuine distinct anonymous GV references the
+existing IO rather than using fdopen '<&=' or full-glob synonym. Candidate:
+Symbol::gensym then *alias = *original{IO}. This is SOURCE INFERENCE ONLY.
+No constructor run, B predicate proof, FD alias run or cleanup proof yet.
+
+The next reviewed literal must independently establish native original/alias
+cell→GV→IO callback-free guard; distinct GV refs and false same-reference
+comparison; identical actual IO and equal still-live COREfileno≥3; one raw
+physical acquisition/no alias registration or second close obligation; borrowed
+original remains live through source refusal/repeats; exactly one captured
+original COREclose makes BOTH actualfilenos undefined while strong references
+remain retained. No descriptor allocation/rebinding/reuse window, integer close,
+borrowed close, destructor-as-cleanup or private checker replacement. Source
+uncertain0/private0sealed plus distinct-reference/equal-FD witness distinguishes
+the actual same-FD alias denial from malformed/same-FH refusal. Failure of any
+independent self-witness fails fixture, not semanticRED/nativequalification.
+
+#### Next closed cycle: two actual live alias denials
+
+Source434 unchanged; root-only test extension. Local primary installed docs and
+independent static count review support the candidate but prove no runtime facts.
+One new profile returns a distinct genuine Symbol::gensym GV whose IO-only slot
+references the existing actual MAP IO (NOT full-glob synonym, '<&=' fdopen,
+dup/dup2, integerclose or rebinding). One profile returns an already sealed d0
+FH unchanged at second staged sysopen. Both have only ONE staged/foreign physical
+obligation for the aliased FD; neither creates a second original/disposer.
+
+Append these exact names to global finite mode inventory:
+
+```perl
+foreign-fd-alias staged-reference-alias
+```
+
+Only foreign-fd-alias is added to exact fixture-only classification and its Node
+exception. Replace those two exact allowlists from five names with six names,
+never a prefix/fallback. Extend the existing fixture lexical declaration only:
+
+```perl
+my %fixture_modes=map {$_=>1} qw(foreign-parent foreign-physical foreign-file foreign-directory hidden-open-undefined foreign-fd-alias);
+my ($fixture_original,$fixture_record,$fixture_alias);my $raw_acquisitions=0;
+```
+
+Insert this independent native-shape helper after shape and before nominate. It uses installed B introspection, no candidate method/fileno/comparison until exact scalar/GV/IO mask/magic checks have succeeded. It never exports or replaces source private checkers:
+
+```perl
+      my $alias_native=sub {
+        my ($cell)=@_;my $s=$shape->($cell);
+        $fail->() unless $s->{cellClass} eq 'B::IV'&&($s->{cellFlags}&B::SVf_ROK())
+          &&!($s->{cellFlags}&0x00f00000)&&$s->{rvClass} eq 'B::GV'
+          &&!($s->{rvFlags}&0x00f00000)&&!$s->{gvMagic}
+          &&$s->{ioClass} eq 'B::IO'&&!($s->{ioFlags}&0x00e00000)&&!$s->{ioMagic};
+        return 1;
+      };
+```
+
+Insert grammar branch after fixture-only grammar and before configuration branch. Fixed second-open alias prefix: C10/H1/99ports, actual10 originals=1stage+8pipes+1DIR; no second acquisition/register. One original stage close and no fixture close:
+
+```perl
+      elsif($mode eq 'staged-reference-alias') {
+        $emit->('clock','stage');$emit->('lstat','d0');$emit->('sysopen','d0');
+        ++$stage_count;$emit->('fcntl','d0') for 1..4;$dir_grammar->(0);
+        $emit->('lstat','d1');$emit->('sysopen','d1');$emit->('close','d0');
+      }
+```
+
+Insert this sysopen nomination after the unknown nomination and before fixture-only branch. First d0 uses ordinary physical acquisition/capture; second d1 output receives that exact still-live original, without new CORE call or registration:
+
+```perl
+          if($mode eq 'staged-reference-alias'&&$open_ordinal==2) {
+            my $old=$roles{'d0'};$fail->() unless defined($old)&&$p->{role} eq 'd1'
+              &&!$old->{attempted}&&!$old->{closed};
+            $alias_native->(\($old->{fh}));
+            my $live=CORE::fileno($old->{fh});$fail->() unless defined($live)&&$live==$old->{fd};
+            $_[0]=$old->{fh};
+            $alias_native->(\($_[0]));$fail->() unless $_[0]==$old->{fh};
+            $outcomes->{stagedAliasNomination}={sameRef=>JSON::PP::true,sameFd=>JSON::PP::true,
+              newRawAcquisition=>JSON::PP::false};
+            return 1;
+          }
+```
+
+In the existing fixture-only sysopen branch replace ONLY the final
+original assignment/return with this exact selection; existing first-d0/record
+validation stays unchanged:
+
+```perl
+$_[0]=$mode eq 'foreign-fd-alias'?$fixture_alias:$fixture_original;
+return 1;
+```
+
+Inside body_ok eval AFTER the existing protected raw foreign constructor and BEFORE source load, insert this exact IO-slot constructor/self-witness. Hold both strong GV references through original rescue and post-close inspection. B IO objects are installed introspection objects; their scalar referent pointers are compared internally, never emitted or rounded in Node:
+
+```perl
+          if($mode eq 'foreign-fd-alias') {
+            $fail->() unless defined($fixture_original)&&defined($fixture_record)&&$raw_acquisitions==1;
+            $fixture_alias=Symbol::gensym();
+            *{$fixture_alias}=*{$fixture_original}{IO};
+            $alias_native->(\$fixture_original);$alias_native->(\$fixture_alias);
+            $fail->() if $fixture_alias==$fixture_original;
+            my $old_io=B::svref_2object(\$fixture_original)->RV->IO;
+            my $new_io=B::svref_2object(\$fixture_alias)->RV->IO;
+            $fail->() unless $$old_io==$$new_io;
+            my $original_fd=CORE::fileno($fixture_original);my $alias_fd=CORE::fileno($fixture_alias);
+            $fail->() unless defined($original_fd)&&$original_fd>=3&&defined($alias_fd)
+              &&$alias_fd==$original_fd&&$original_fd==$fixture_record->{fd};
+            $same_physical->($fixture_record->{identity},[CORE::stat($fixture_alias)],'file');
+            $outcomes->{fdAliasBeforeConsumer}={nativeShapes=>JSON::PP::true,
+              distinctGv=>JSON::PP::true,sameIo=>JSON::PP::true,sameFd=>JSON::PP::true,
+              sameRef=>JSON::PP::false,rawAcquisitions=>0+$raw_acquisitions};
+          }
+```
+
+Append one memory initializer elseif after foreign-directory nomination. Only the existing raw original is nominated as physical-owner input; alias is NOT separately registered. This is a fixture input, not authentic complete owner authority:
+
+```perl
+  elsif($mode eq 'foreign-fd-alias') {push @physical_owned_handles,$fixture_original;}
+```
+
+After initial actual hold outcome, inspect private source state for staged-reference alias. Actual canonical refusal/observed uncertainty0 plus distinctref/equalFD facts identify alias denial; malformed shapes cannot earn this oracle:
+
+```perl
+          if($mode eq 'staged-reference-alias') {
+            $fail->() unless $refused&&exists($outcomes->{stagedAliasNomination});
+            $outcomes->{sourceAfterStagedAliasRefusal}=test_observe_staged_custody();
+          }
+```
+
+After common three actual zero-effect repeats, observe same burn for staged-reference case:
+
+```perl
+          if($mode eq 'staged-reference-alias') {
+            $outcomes->{sourceAfterStagedAliasRepeats}=test_observe_staged_custody();
+          }
+```
+
+In existing pre-rescue fixture witness, after original live/identity proof and before body success, add this exact foreign-FD peer witness. Both must remain live after source refusal and repeats, no independent alias close:
+
+```perl
+            if($mode eq 'foreign-fd-alias') {
+              $alias_native->(\$fixture_original);$alias_native->(\$fixture_alias);
+              $fail->() if $fixture_alias==$fixture_original;
+              my $other=CORE::fileno($fixture_alias);
+              $fail->() unless defined($other)&&$other==$live;
+              $same_physical->($fixture_record->{identity},[CORE::stat($fixture_alias)],'file');
+              $outcomes->{fdAliasBeforeRescue}={bothLive=>JSON::PP::true,
+                distinctGv=>JSON::PP::true,sameFd=>JSON::PP::true};
+            }
+```
+
+After source-body/rescue block and BEFORE footer definite count, inspect both retained GVs after EXACTLY ONE original captured COREclose. Shared IO must make both actual filenos undefined. Any failed self-witness fails fixture, not semanticRED/positiveprovenance:
+
+```perl
+      if($mode eq 'foreign-fd-alias') {
+        $alias_native->(\$fixture_original);$alias_native->(\$fixture_alias);
+        $fail->() if defined(CORE::fileno($fixture_original))||defined(CORE::fileno($fixture_alias));
+        $outcomes->{fdAliasAfterRescue}={bothUndefined=>JSON::PP::true,
+          originalAttempts=>0+$fixture_record->{attempted},
+          rawAcquisitions=>0+$raw_acquisitions};
+      }
+```
+
+Node wrapper's exact named exception becomes:
+
+```javascript
+['foreign-parent','foreign-physical','foreign-file','foreign-directory','hidden-open-undefined','foreign-fd-alias'].includes(mode)
+```
+
+Existing raw/owned/definite/fixture1 and consumer/stage/helper0 tuple plus pre-rescue
+identity witness remains unchanged. All other old profiles retain fixture0.
+Foreign-FD case has C2/H0/fourports/onefixture-original/private0sealed/attempted/
+closed/burninvalid1uncertain0disposal1. Actualsame-reference expression is false;
+actualFD equal and sharedB IOpointer/actualphysicalidentity checked independently.
+No sourcebranch/checker modification is needed: uncertainty0 and untouched
+source seal logic establish proven known alias rather than shape failure.
+
+Insert exact two oracles before STAGED_DIRECTORY_FH_CORE_KEYS:
+
+```javascript
+test('staged custody live fd alias rejects distinct GV without a second owner',()=>{
+  const r=stagedCustody('foreign-fd-alias');
+  assert.equal(r.refused,true);assert.equal(r.hold,null);
+  assert.deepEqual(r.fdAliasBeforeConsumer,{nativeShapes:true,distinctGv:true,sameIo:true,
+    sameFd:true,sameRef:false,rawAcquisitions:1});
+  assert.deepEqual(r.fdAliasBeforeRescue,{bothLive:true,distinctGv:true,sameFd:true});
+  assert.deepEqual(r.fdAliasAfterRescue,{bothUndefined:true,originalAttempts:1,rawAcquisitions:1});
+  assert.deepEqual(r.calls,{clock:2,lstat:1,sysopen:1});assert.equal(r.events.length,4);
+  assert.deepEqual([r.helpers,r.rawAcquisitions,r.ownedCount,r.definitelyClosed,
+    r.fixtureClosed,r.consumerClosed,r.stageClosed,r.helperClosed],[0,1,1,1,1,0,0,0]);
+  const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+    sealedClosureCount:0,attemptedCount:0,privateClosedCount:0,closedFlags:[]};
+  assert.deepEqual(r.sourceAfterFixtureRefusal,burned);
+  assert.deepEqual(r.sourceAfterFixtureRepeats,burned);
+  assert.equal(r.repeatEffectDelta,0);
+});
+test('staged custody live fd alias rejects an already sealed original reference',()=>{
+  const r=stagedCustody('staged-reference-alias');
+  assert.equal(r.refused,true);assert.equal(r.hold,null);
+  assert.deepEqual(r.stagedAliasNomination,{sameRef:true,sameFd:true,newRawAcquisition:false});
+  assert.deepEqual(r.calls,{binmode:8,clock:10,close:9,closedir:1,fcntl:5,fileno:26,
+    fork:1,lstat:4,opendir:1,pipe:4,read:4,readdir:16,ready:2,stat:2,sysopen:2,wait:4});
+  assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),99);
+  assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed,r.fixtureClosed],[1,10,1,9,0]);
+  const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+    sealedClosureCount:1,attemptedCount:1,privateClosedCount:1,closedFlags:[1]};
+  assert.deepEqual(r.sourceAfterStagedAliasRefusal,burned);
+  assert.deepEqual(r.sourceAfterStagedAliasRepeats,burned);
+  assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role))
+    .map(e=>e.role),['d0']);
+  assert.equal(r.repeatEffectDelta,0);
+});
+```
+
+Fixed staged alias call vector is independent literal static review:
+binmode8 clock10 close9 closedir1 fcntl5 fileno26 fork1 lstat4 opendir1
+pipe4 read4 readdir16 ready2 stat2 sysopen2 wait4 =99.
+Source private stage count1/attempt1/closed1; helper9/fixture0; no second
+obligation. Foreign raw physical obligation1 stays fixture-only, originalclose1
+invalidates both GVs. Runtimeconstructor/shape/close facts are still UNPROVEN.
+
+Single exact focus only AFTER BOTH literal+actual C0 reviews, syntax/diff and
+fresh all-source/Git/npm/tools/retention/resource/HTTP gates:
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody live fd alias ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Full natural terminal and rootpost required. Failure is retained; no fallback
+constructor/duplicate close/borrowed source cleanup/fixture-credit relaxation/
+nativeeffects are authorized. No prior closed fiveprofile replay or partial
+delivery/PR/build/service/DB/nativequalification here.
+
+#### Closed two actual live alias cases, 2026-10-04 11:36 UTC
+
+BOTH literal a246 C0/I0/M0; read-onlyextractor1b5088 exact15fences/rootapply.
+Syntax4e7947/diffa25b05 CLOSED0. Actualtest
+9fcc940d2917e074deeb7781f02fd3a8b53c0af2a5c8c58e7d9cef1e828815f0,
+431981B. BOTH actualdelta reviews C0 reverse exact additions/replacements/
+separator to prior734. Source434 unchanged.
+
+ONE prescribed focus489cc3 naturallyCLOSED0/full75tokens2PASS/0FAIL/CANCEL/
+SKIP/TODO202.529042ms/no managedsession/NOREPLAY.
+Rootpref005ee11:36:31/posta34fdb11:36:32 same2093/69961744B/physical
+efa9de3284952d952fa88ec4b8177bcde2603c75d0f479c5ad918222210e91b7;
+plana246/test9fcc/source434/spec1f26/npm/tools/absences exact.
+Independent boundedgate11:35:37–38 C0 current/originaltwo/backups/journal/
+canonical/toolkeypins exact;disk7727188KiBfree97%,memory60%free/throttled0/
+no thermal warning; HTTP3080+18789200,3333knownrefused. Prior10:56 full
+historical comparison not replayed or retimestamped.
+
+Foreign-FD actual self-witness qualified ordinary constructor facts: original/
+distinctgensymGV bothpass exactindependent B cell/GV/IO guards, actualsameRef
+false/sharedB IOpointer/equalCOREliveFD/actualphysicalidentity. Sourceprivate
+uncertain0/0sealed/0attempted/0closed distinguishes proven FDalias denial
+rather than malformed/ref-equal refusal. Both peers remain live through source
+refusal/repeats; ONE captured fixture-original COREclose makes BOTH actualfilenos
+undefined with strong GVrefs stillheld. raw/owned/definite/fixture1, consumer/
+stage/helper0; C2/H0/fourports. No fdopen/dup/dup2/rebind/integerclose/aliasregister/
+second-disposer/destructor-credit. This is ordinary sharedIO constructor and
+consumer FD-comparison qualification, NOT distinctIO/staleFD/privilegedproof.
+
+Second staged sysopen actually returns existing sealed d0 without acquisition/
+registration. C10/H1/exact99vector; 10physicaloriginals=1stage+8pipes+1DIR,
+private1attempted/closed; sourceonlyclosesd0 once, helper9/fixture0, burnt
+invalid1uncertain0disposal1. Commonactualrepeatszeroeffects forboth profiles.
+
+Closed disjointresume177focusedpasses=prior78+new99, not currentcombinedsuite/
+fullmatrix. This cycleadds2; no commit/push/PR/build/native/DB/service/cutover
+effect/qualification. All retained worktrees/originalfiles/evidence preserved.
+Both ordinary alias requirements now have closed focused evidence; identity6,
+unsettled/sharedcleanup, ACL/epoch and original once-only semanticcontrols remain.
+
+#### Next closed cycle: six staged identity tuple and size denials
+
+Root-only tests/source434 unchanged. Six fixed representatives exercise staged
+pre/open/post validator paths, not parent/entropy contracts, actual filesystem
+drift, or a fields x phases x slots expansion. Only a fresh projected COPY of
+actual verified thirteen-field CORE metadata is nominated; physical registry,
+backing bytes, private expectations and original tuples remain unchanged.
+
+Append exact names to closed mode inventory:
+
+```perl
+identity-dir-pre-shape identity-file-pre-type identity-dir-open-owner identity-file-open-inode identity-dir-post-device identity-file-post-size
+```
+
+Insert profile table before healthy grammar construction; all modes retain slot0:
+
+```perl
+      my %identity_profiles=(
+        'identity-dir-pre-shape'=>['lstat','d0',1,0,0,'shape'],
+        'identity-file-pre-type'=>['lstat','f0',1,6,6,'type'],
+        'identity-dir-open-owner'=>['stat','d0',1,0,1,'owner'],
+        'identity-file-open-inode'=>['stat','f0',1,6,7,'inode'],
+        'identity-dir-post-device'=>['stat','d0',2,1,1,'device'],
+        'identity-file-post-size'=>['stat','f0',5,13,12,'size'],
+      );
+      my $identity_profile=$identity_profiles{$mode};
+```
+
+Append ONLY this predicate to both complete healthy grammar clauses:
+
+```perl
+defined($identity_profile)
+```
+
+Before effects, trim the constructed finite healthy grammar at exact selected
+operation/role/ordinal, retain fixed0/6/0/6/1/13 helper jobs, then append fixed
+0/6/1/7/1/12 source-original closes. No after-refusal queue erasure:
+
+```perl
+      if(defined($identity_profile)) {
+        my @prefix;my $ordinal=0;
+        for my $g(@grammar) {
+          push @prefix,$g;
+          if($g->[0] eq $identity_profile->[0]&&$g->[1] eq $identity_profile->[1]) {
+            ++$ordinal;last if $ordinal==$identity_profile->[2];
+          }
+        }
+        $fail->() unless $ordinal==$identity_profile->[2]&&@jobs==42;
+        @grammar=@prefix;splice @jobs,$identity_profile->[3];
+        for my $n(1..$identity_profile->[4]) {
+          $emit->('close',$n<=6?'d'.($n-1):'f'.($n-7));
+        }
+      }
+```
+
+Insert helper after helpers/repeat_delta declaration, before override block.
+Actual stat/lstat and independent physical tuple checks run BEFORE this helper.
+It changes a fresh projected copy and exports only primitive metadata witnesses.
+Post-helper d0 stat2 requires H1 settled; f0 stat5 requires H13 settled. f0stat2
+is post-read, NOT after-helper and cannot substitute for required stat5 case:
+
+```perl
+      my %identity_seen;
+      my $identity_project=sub {
+        my ($op,$p,$physical)=@_;my $copy=$project->($p,$physical);
+        return $copy unless defined($identity_profile);
+        my $ordinal=++$identity_seen{$op.':'.$p->{role}};
+        return $copy unless $op eq $identity_profile->[0]&&$p->{role} eq $identity_profile->[1]
+          &&$ordinal==$identity_profile->[2];
+        $fail->() if exists($outcomes->{identityNomination});
+        $fail->() unless @$physical==13&&@$copy==13;
+        if($mode eq 'identity-dir-post-device'||$mode eq 'identity-file-post-size') {
+          $fail->() unless !defined($job)&&$helpers==$identity_profile->[3]
+            &&task6a_origin_helpers_settled();
+        }
+        my ($field,$before,$after);
+        if($identity_profile->[5] eq 'shape') {
+          $field='length';$before=scalar(@$copy);pop @$copy;$after=scalar(@$copy);
+        } elsif($identity_profile->[5] eq 'type') {
+          $field='type';$before=$copy->[2];
+          $fail->() unless Fcntl::S_ISREG($before);
+          $copy->[2]=($before&07777)|0040000;$after=$copy->[2];
+          $fail->() unless Fcntl::S_ISDIR($after);
+        } else {
+          my %fields=(owner=>4,inode=>1,device=>0,size=>7);
+          my $index=$fields{$identity_profile->[5]};$fail->() unless defined($index);
+          $field=$identity_profile->[5];$before=$copy->[$index];
+          ++$copy->[$index];$after=$copy->[$index];
+        }
+        $outcomes->{identityNomination}={op=>''.$op,role=>''.$p->{role},ordinal=>0+$ordinal,
+          field=>''.$field,before=>0+$before,after=>0+$after,
+          actualTupleLength=>0+scalar(@$physical),returnedTupleLength=>0+scalar(@$copy),
+          settledHelpers=>0+$helpers,actualCoreMetadata=>JSON::PP::true};
+        return $copy;
+      };
+```
+
+Replace only the final projected return lines within the uniquely bounded
+staged stat and lstat overrides respectively; actual CORE metadata and
+same_physical checks remain unchanged:
+
+```perl
+return @{$identity_project->('stat',$o->{path},\@s)};
+return @{$identity_project->('lstat',$p,\@s)};
+```
+
+After initial hold outcome and canonical refusal inspect private state:
+
+```perl
+          if(defined($identity_profile)) {
+            $fail->() unless $refused&&exists($outcomes->{identityNomination});
+            $outcomes->{sourceAfterIdentityRefusal}=test_observe_staged_custody();
+          }
+```
+
+After existing actual zero-effect repeats observe same private burn:
+
+```perl
+          if(defined($identity_profile)) {
+            $outcomes->{sourceAfterIdentityRepeats}=test_observe_staged_custody();
+          }
+```
+
+Independent source-derived literal prefix table:
+dirpre tuple13→12 C2/H0/stage0/owned0/ports3;
+filepre REG→DIR C50/H6/stage6/owned60/ports588;
+diropen UID0→1 C3/H0/stage1/owned1/ports12;
+fileopen inode+1 C50/H6/stage7/owned61/ports597;
+dirpostH1 device+1 C9/H1/stage1/owned10/ports95;
+filepostH13 size+1 C125/H13/stage12/owned129/ports1400.
+Last full vector110binmode/125clock/116close/13closedir/61fcntl/345fileno/
+13fork/50lstat/13opendir/52pipe/66read/300readdir/26ready/7seek/39stat/
+12sysopen/52wait. Prefix derives from acquisition689/C68 +leadingdir594/C48
++firstf0check11/C3 +H13helper92/C6 +posthelperfileno/stat2 +12closes.
+
+Insert exact Node assertions before STAGED_DIRECTORY_FH_CORE_KEYS:
+
+```javascript
+const STAGED_IDENTITY_DENIALS=[
+  ['identity-dir-pre-shape','lstat','d0',1,'length',2,0,0,0,3],
+  ['identity-file-pre-type','lstat','f0',1,'type',50,6,6,60,588],
+  ['identity-dir-open-owner','stat','d0',1,'owner',3,0,1,1,12],
+  ['identity-file-open-inode','stat','f0',1,'inode',50,6,7,61,597],
+  ['identity-dir-post-device','stat','d0',2,'device',9,1,1,10,95],
+  ['identity-file-post-size','stat','f0',5,'size',125,13,12,129,1400],
+];
+for(const [mode,op,role,ordinal,field,clock,helpers,stage,owned,ports] of STAGED_IDENTITY_DENIALS)
+  test('staged custody identity refuses projected drift '+mode,()=>{
+    const r=stagedCustody(mode);assert.equal(r.refused,true);assert.equal(r.hold,null);
+    const n=r.identityNomination;
+    assert.deepEqual(Object.keys(n).sort(),['op','role','ordinal','field','before','after',
+      'actualTupleLength','returnedTupleLength','settledHelpers','actualCoreMetadata'].sort());
+    assert.deepEqual([n.op,n.role,n.ordinal,n.field,n.actualTupleLength,n.settledHelpers,
+      n.actualCoreMetadata],[op,role,ordinal,field,13,helpers,true]);
+    assert.equal(n.returnedTupleLength,field==='length'?12:13);
+    if(field==='length') assert.deepEqual([n.before,n.after],[13,12]);
+    else if(field==='type') assert.deepEqual([n.before&0o170000,n.after&0o170000],[0o100000,0o40000]);
+    else {
+      assert.ok(Number.isSafeInteger(n.before)&&Number.isSafeInteger(n.after));
+      assert.equal(n.after,n.before+1);if(field==='owner') assert.deepEqual([n.before,n.after],[0,1]);
+    }
+    assert.equal(r.calls.clock,clock);
+    assert.equal(Object.values(r.calls).reduce((v,n)=>v+n,0),ports);
+    assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed,r.fixtureClosed],
+      [helpers,owned,stage,helpers*9,0]);
+    const burned={phase:'burned',invalid:1,uncertain:0,disposalStarted:1,
+      sealedClosureCount:stage,attemptedCount:stage,privateClosedCount:stage,
+      closedFlags:Array(stage).fill(1)};
+    assert.deepEqual(r.sourceAfterIdentityRefusal,burned);
+    assert.deepEqual(r.sourceAfterIdentityRepeats,burned);
+    assert.deepEqual(r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role))
+      .map(e=>e.role),STAGED_CLOSE_ROLES.slice(0,stage));
+    assert.equal(r.repeatEffectDelta,0);
+    if(field==='size') assert.deepEqual(r.calls,{binmode:110,clock:125,close:116,closedir:13,
+      fcntl:61,fileno:345,fork:13,lstat:50,opendir:13,pipe:52,read:66,readdir:300,ready:26,
+      seek:7,stat:39,sysopen:12,wait:52});
+  });
+```
+
+Actual canonical refusal yields burnedinvalid1uncertain0disposal1; private
+sealed/attempted/closed count equals selected stage count, physical originals
+all closed, fixture0 and actual repeats0. No DTO can stand in for metadata.
+
+Single exact focus after BOTH literal+actual C0 reviews, syntax/diff and fresh
+all-source/Git/npm/tools/retention/resource/HTTP checks:
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody identity ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+Read natural full terminal and rootpost. Setup/compile/queue faults notsemanticRED;
+no current combinedsuite/fullmatrix/delivery/native/protectedorigin/cutover claim.
+
+#### Closed six staged identity cases, 2026-10-04 11:49 UTC
+
+BOTH literal9929 C0/I0/M0; extractor4fd791/rootapply exacttenfences.
+Syntax787623/diff7b5945 CLOSED0. Actualtest
+9b9af5603ab400b382b933d3edd7fe60778d4e06a77b19777b214c0b027bb809,
+437882B; BOTH actualdelta reviews C0 reverse exact changes/separator to9fcc.
+Source434 unchanged.
+
+ONE prescribed focusbefb7e naturallyCLOSED0/full163tokens6PASS/0FAIL/CANCEL/
+SKIP/TODO515.462333ms/no managedsession/NOREPLAY.
+Rootpre2ad48211:49:38/post6e1db211:49:39 same2093/69979284B/physical
+8f7a495c675835a36fa44493880b3cb8a6bb04489c2982b5c7628355d97a7f37;
+plan9929/test9b9/source434/spec1f26/npm/tools/absences exact.
+Independent boundedgate11:48:39–40C0 current/originaltwo/backups/journal/
+canonical/toolkeypins matched;7728924KiBfree97%,memory60%free/throttled0/
+no thermal warning; HTTP3080+18789200,3333knownrefused. Prior10:56fullretained
+comparison stays prior, not repeated/retimestamped.
+
+Actual CORE+physical metadata remains valid; only fresh projected copies change.
+Six exact pre/open/post role/ordinal denials matched fixed prefixes and actual
+private cleanup; postH1d0stat2 andpostH13f0stat5 require clearedjob+settledhelpers.
+Filepostfullvector1400 matched. All physical originals definitelyclosed,
+fixture0/private attempted+closed selected0/6/1/7/1/12, burnedinvalid1uncertain0/
+disposal1, actual repeatszero. Copied-response denial is not filesystemdrift,
+native/protected or credential proof.
+
+Closed disjointresume183focusedpasses=prior78+new105; this latest continuation
+56newcases. NOT currentcombinedsuite/fullmatrix. No commit/push/PR/build/native/
+DB/service/cutovereffects; allretained/originalfiles/evidence preserved.
+Remaining ordinary distinct requirements: sharedhelper throwingcleanup/unsettled
+state and actual badstate acceptancecontrol; ACL/epochcontrol; original captured
+primitive-call-once control. Optional isolated disposal-started/attempted guard
+removal is NOT silently claimed by primitive-call control.
+
+#### Next closed cycle: shared unsettled helper baseline and coherent guard mutant
+
+UNEXECUTED exact source-derived recipe. Root sole writer; no disk production source
+change. Current test9b9/source434/plan293a are predecessor pins. No new fullmatrix claim.
+
+After actual healthy hold C237/H24, invoke actual captor H25 with its real pipe and
+census acquisitions. Its first parent in-r close throws AFTER real CORE closure;
+cleanup in-w close also throws AFTER real CORE closure. Remaining six pipes close
+normally. Immediate exact-PID/raw0 synthetic reap drains the helper without clock,
+selector/readiness/read/signal effects. Physical closure cannot settle the source
+registry: before24/24/0 clear; after25/24/1 burned. Preserve source canonical refusal
+through catch/drain/rethrow. No private reset, fake success or fixture rescue.
+
+Baseline actual recheck refuses before its entry clock. Vector2647/C240/H25/237
+originals includes all12stage+225helper definitely closed; private12closed/burned.
+Memory-only mutant removes solely the helpers_settled clause from the uniquely
+anchored staged_require_live prefix, keeping hold-entry and every other guard.
+Actual recheck returns while registry43/42/1 remains burned. Vector4521/C410/H43/
+399originals includes12stage+387helper, all closed by subsequent actual release.
+Observe bad registry before release; release is cleanup-only, not badstate oracle.
+Node requires actual returned diagnostic and catches forbidden acceptance, not
+compile/queue/setup failure. Both actual repeat misuse paths burn with zero effects.
+No native/protectedowner/credential/realPID/production authority qualification.
+
+The following readonly extractor is the complete executable candidate recipe.
+It pins the prior test and requires unique complete-line ordered anchors for13
+hunks. It only emits a patch; root applies that literal using apply_patch after
+BOTH independent literal C0/I0/M0 reviews. JSON-escaped snippets are exact bytes.
+
+```javascript
+import fs from 'node:fs';import crypto from 'node:crypto';
+const root="/Users/setrox/ai/setrox/.worktrees/setfarm-staged-custody-capsule-20261004-v1";
+const test=fs.readFileSync(root+'/scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js','utf8');
+const hash=s=>crypto.createHash('sha256').update(s).digest('hex');
+if(hash(test)!=='9b9af5603ab400b382b933d3edd7fe60778d4e06a77b19777b214c0b027bb809')throw Error('test pin');
+const b={
+  "specialGrammar": "      my $unsettled_grammar=sub {\n        $fail->() unless $h==24&&$stage_count==12;\n        my $prefix='h'.(++$h);\n        push @jobs,{prefix=>$prefix,path=>'/',stageCount=>12,cleanup=>1};\n        $emit->('clock',$prefix) for 1..2;\n        $emit->('pipe',$prefix.'.'.$_) for qw(in out err setup);\n        for my $name(qw(in-r in-w out-r out-w err-r err-w setup-r setup-w)) {\n          $emit->('binmode',$prefix.'.'.$name);$emit->('fileno',$prefix.'.'.$name);\n        }\n        $emit->('fcntl',$prefix.'.setup-w');\n        $emit->('opendir',$prefix.'.census');$emit->('fileno',$prefix.'.census');\n        $emit->('readdir',$prefix.'.census') for 1..27;\n        $emit->('closedir',$prefix.'.census');$emit->('fileno',$prefix.'.setup-w');\n        $emit->('clock',$prefix);$emit->('fork',$prefix);\n        $emit->('close',$prefix.'.in-r');\n        for my $name(qw(in-r in-w out-r out-w err-r err-w setup-r setup-w)) {\n          $emit->('fileno',$prefix.'.'.$name);\n          $emit->('close',$prefix.'.'.$name) unless $name eq 'in-r';\n        }\n        $emit->('wait',$prefix);\n      };",
+  "prefix": "      if($mode eq 'shared-unsettled-baseline') {\n        my @prefix;my $found=0;\n        for my $g(@grammar) {\n          push @prefix,$g;\n          if($g->[0] eq 'wait'&&$g->[1] eq 'h25') {$found=1;last;}\n        }\n        $fail->() unless $found&&@jobs==43;\n        @grammar=@prefix;splice @jobs,25;\n        $emit->('close',$_) for qw(d0 d1 d2 d3 d4 d5 f0 f1 f2 f3 f4 f5);\n      }",
+  "enter": "        if($job->{cleanup}) {\n          $fail->() unless $mode=~/\\Ashared-unsettled-(?:baseline|mutant)\\z/\n            &&$job->{prefix} eq 'h25'&&$job->{path} eq '/'&&$job->{stageCount}==12;\n          @wait=([424242,0]);@ready=();%reads=();\n        }",
+  "close": "          if($mode=~/\\Ashared-unsettled-(?:baseline|mutant)\\z/\n              &&($o->{role} eq 'h25.in-r'||$o->{role} eq 'h25.in-w')) {\n            $fail->() unless defined($job)&&$job->{cleanup}&&$closed&&$o->{closed}\n              &&$o->{attempted}&&!defined(CORE::fileno($o->{fh}));\n            $outcomes->{sharedCloseNominations}//=[];\n            push @{$outcomes->{sharedCloseNominations}},{role=>''.$o->{role},\n              physicallyClosedBeforeThrow=>JSON::PP::true};\n            die \"TEST_STAGED_SHARED_CLOSE_THROW\\n\";\n          }",
+  "capture": "            if($mode=~/\\Ashared-unsettled-(?:baseline|mutant)\\z/&&$helpers==25) {\n              $fail->() unless defined($job)&&$job->{cleanup}&&$job->{prefix} eq 'h25'\n                &&!$ok&&!defined($value)&&$error eq \"TASK6A_ORIGIN_BOOTSTRAP_REFUSED\\n\";\n              $outcomes->{sharedCaptorOutcome}={returned=>JSON::PP::false,\n                canonicalRefusal=>JSON::PP::true};\n            } elsif(($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256')&&$helpers==7) {",
+  "driver": "          } elsif($mode=~/\\Ashared-unsettled-(?:baseline|mutant)\\z/) {\n            $fail->() if $refused;\n            $outcomes->{sharedBeforeFailure}=test_observe_staged_helpers();\n            my $extra=eval {task6a_origin_capture('/bin/ls',['-lde','/'],2,4096)};\n            my $extra_error=$@;$check->();\n            $fail->() unless !defined($extra)&&$extra_error eq \"TASK6A_ORIGIN_BOOTSTRAP_REFUSED\\n\"\n              &&!defined($job)&&$helpers==25;\n            $outcomes->{sharedAfterFailure}=test_observe_staged_helpers();\n            $outcomes->{sharedStageAfterFailure}=test_observe_staged_custody();\n            my $value=eval {$operations{recheck}->()};my $error=$@;$check->();\n            my $denied=!defined($value)&&$error eq \"TASK6A_ORIGIN_BOOTSTRAP_REFUSED\\n\";\n            $fail->() unless $denied||(!length($error)&&ref($value) eq 'HASH');\n            $outcomes->{recheck}=$value;\n            $outcomes->{recheckRefused}=$denied?JSON::PP::true:JSON::PP::false;\n            $outcomes->{sharedAfterRecheck}=test_observe_staged_helpers();\n            $outcomes->{sharedStageAfterRecheck}=test_observe_staged_custody();\n            if(!$denied) {$outcomes->{release}=$operations{release}->();$check->();}\n            $outcomes->{sharedAfterCleanup}=test_observe_staged_custody();",
+  "observer": "  sub test_observe_staged_helpers {\n    task6a_origin_refuse() unless @_==0;\n    my $settled=scalar(grep {$_->{settled}} @helper_ledger);\n    return {burned=>$helper_lifecycle_burned?JSON::PP::true:JSON::PP::false,\n      registered=>0+scalar(@helper_ledger),settled=>0+$settled,\n      unsettled=>0+scalar(@helper_ledger)-$settled,\n      helpersSettled=>task6a_origin_helpers_settled(),\n      physicalOwnsLedgers=>$physical_owns_ledgers?JSON::PP::true:JSON::PP::false};\n  }",
+  "tests": "\nfunction stagedSharedRegistry(registered,settled,burned) {\n  return {burned,registered,settled,unsettled:registered-settled,\n    helpersSettled:!burned&&registered===settled,physicalOwnsLedgers:false};\n}\nfunction stagedSharedState(phase,invalid,closed) {\n  return {phase,invalid,uncertain:0,disposalStarted:closed?1:0,sealedClosureCount:12,\n    attemptedCount:closed?12:0,privateClosedCount:closed?12:0,closedFlags:Array(12).fill(closed?1:0)};\n}\nfunction assertStagedSharedEvidence(r,mutant) {\n  assert.equal(r.refused,false);\n  assert.deepEqual(r.sharedBeforeFailure,stagedSharedRegistry(24,24,false));\n  assert.deepEqual(r.sharedAfterFailure,stagedSharedRegistry(25,24,true));\n  assert.deepEqual(r.sharedCaptorOutcome,{returned:false,canonicalRefusal:true});\n  assert.deepEqual(r.sharedCloseNominations,[\n    {role:'h25.in-r',physicallyClosedBeforeThrow:true},\n    {role:'h25.in-w',physicallyClosedBeforeThrow:true}]);\n  assert.deepEqual(r.sharedStageAfterFailure,stagedSharedState('active',0,false));\n  assert.deepEqual(r.sharedAfterRecheck,stagedSharedRegistry(mutant?43:25,mutant?42:24,true));\n  assert.deepEqual(r.sharedStageAfterRecheck,stagedSharedState(mutant?'active':'burned',mutant?0:1,!mutant));\n  assert.deepEqual(r.sharedAfterCleanup,stagedSharedState(mutant?'released':'burned',mutant?0:1,true));\n  assert.deepEqual(r.sharedAfterRepeats,stagedSharedState('burned',1,true));\n  assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed,r.fixtureClosed],\n    mutant?[43,399,12,387,0]:[25,237,12,225,0]);\n  assert.deepEqual(r.calls,mutant?\n    {binmode:350,clock:410,close:356,closedir:43,fcntl:91,fileno:1128,fork:43,lstat:132,\n      opendir:43,pipe:172,read:228,readdir:1110,ready:84,seek:30,stat:120,sysopen:12,wait:169}:\n    {binmode:206,clock:240,close:212,closedir:25,fcntl:73,fileno:654,fork:25,lstat:84,\n      opendir:25,pipe:100,read:132,readdir:624,ready:48,seek:18,stat:72,sysopen:12,wait:97});\n  assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),mutant?4521:2647);\n}\ntest('staged custody shared unsettled refuses a physically drained burned helper',()=>{\n  const r=stagedCustody('shared-unsettled-baseline');assertStagedSharedEvidence(r,false);\n  assert.equal(r.recheckRefused,true);assert.equal(r.recheck,null);\n});\ntest('staged custody shared unsettled detects coherent settlement-guard removal',()=>{\n  const old=String.raw`my $staged_require_live=sub {\n    task6a_origin_refuse() if $staged_invalid||$staged_uncertain||$staged_disposal_started;\n    $staged_vector->(\\@staged_directories);$staged_vector->(\\@staged_files);\n    $staged_vector->(\\@staged_originals);$staged_vector->(\\@staged_record_checks);\n    task6a_origin_refuse() unless task6a_origin_helpers_settled();\n    $staged_check_admission->();`;\n  const source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),old,\n    old.replace('    task6a_origin_refuse() unless task6a_origin_helpers_settled();\\n',''));\n  const r=stagedCustody('shared-unsettled-mutant',0,{sourceOverride:source});\n  assertStagedSharedEvidence(r,true);\n  const diagnostic={scope:'staged-source-vendor-custody-diagnostic-only',\n    productionAuthority:false,fileCount:6,directoryCount:6};\n  assert.deepEqual(r.recheck,diagnostic);\n  assert.deepEqual(r.release,{...diagnostic,handlesClosed:12});\n  assert.throws(()=>assert.equal(r.recheckRefused,true),{code:'ERR_ASSERTION'});\n});\n"
+};
+let patch='*** Begin Patch\n*** Update File: '+root+'/scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js\n';let last=-1;
+function hunk(old,next){if(test.split(old).length!==2||!test.includes('\n'+old+'\n'))throw Error('unique complete:'+old);const p=test.indexOf(old);if(p<=last)throw Error('order');last=p;patch+='@@\n-'+old.replaceAll('\n','\n-')+'\n+'+next.replaceAll('\n','\n+')+'\n';}
+function line(prefix){const a=test.split('\n').filter(x=>x.startsWith(prefix));if(a.length!==1)throw Error('line count');return a[0];}
+const modes=line('      my %modes=map {$_=>1} qw(healthy absent arity premature-recheck');
+hunk(modes,modes.slice(0,-2)+' shared-unsettled-baseline shared-unsettled-mutant);');
+const dir='      my $dir_grammar=sub {';
+hunk(dir,b.specialGrammar+'\n'+dir);
+const full=line("      elsif($mode eq 'healthy'||$mode=~/\\A(?:open|close)-/");
+hunk(full,full.slice(0,-3)+"||$mode=~/\\Ashared-unsettled-(?:baseline|mutant)\\z/) {");
+const again=line("        if($mode eq 'healthy'||$mode=~/\\Aclose-/");
+hunk(again,again.slice(0,-3)+"||$mode=~/\\Ashared-unsettled-(?:baseline|mutant)\\z/) {");
+const epoch="          $epoch_grammar->();$emit->('clock','stage');$emit->('clock','stage');";
+hunk(epoch,"          $epoch_grammar->();$emit->('clock','stage');\n          $unsettled_grammar->() if $mode=~/\\Ashared-unsettled-(?:baseline|mutant)\\z/;\n          $emit->('clock','stage');");
+const boundary='      if(exists($boundary{$mode})) {\n        my ($target,$helpers,$stage)=@{$boundary{$mode}};';
+hunk(boundary,b.prefix+'\n'+boundary);
+const enter="        %reads=('out-r'=>[1,0],'err-r'=>[0],'setup-r'=>[0]);";
+hunk(enter,enter+'\n'+b.enter);
+const close='          my $closed=$dispose->($o,0);';
+hunk(close,close+'\n'+b.close);
+const capture="            if(($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256')&&$helpers==7) {";
+const capturePair=capture+"\n              $fail->() unless defined($job)&&$job->{prefix} eq 'h7'&&$job->{path} eq '/';";
+hunk(capturePair,b.capture+"\n              $fail->() unless defined($job)&&$job->{prefix} eq 'h7'&&$job->{path} eq '/';");
+const active="          } elsif($mode=~/\\Aactive-/) {";
+hunk(active,b.driver+'\n'+active);
+const repeat='          $repeat_delta=scalar(@events)-$before;$fail->() if $repeat_delta;';
+hunk(repeat,repeat+"\n          if($mode=~/\\Ashared-unsettled-(?:baseline|mutant)\\z/) {\n            $outcomes->{sharedAfterRepeats}=test_observe_staged_custody();\n          }");
+const observer='  sub test_tie_staged_partial {';
+hunk(observer,b.observer+'\n'+observer);
+const testAnchor="const STAGED_DIRECTORY_FH_CORE_KEYS=['fileOpen','directoryOpen','directoryFhOpen','metadata','fileClose','directoryClose'];";
+hunk(testAnchor,b.tests.trim()+'\n\n'+testAnchor);
+patch+='*** End Patch\n';
+console.log(JSON.stringify({patch,sha256:hash(patch),hunks:13,oldTest:hash(test)}));
+```
+
+After exact rootapply: syntax/diff, BOTH actualdelta C0 reviews, fresh all-source/
+Git/npm/tools/retention/resource/HTTP prechecks, then ONE focus below. Read natural
+full terminal and exact postchecks before any completion assertion. No replay.
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody shared unsettled ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+#### Closed shared unsettled helper pair, 2026-10-04 12:11 UTC
+
+BOTH corrected literal1a0 C0/I0/M0 and BOTH actualdelta C0 exactreverse13hunks
+to9b9. Readonlyextract71c805 patch74f8/rootapply once; syntax/diffd00d10 CLOSED0.
+Preliminary readonlyextractc4681d stopped on substringcount before testmutation/
+effects; complete-line anchor corrected, no semanticRED/replay claimed.
+Actualtest92d47e7dc3e01cb5564029996560bd51ef4b3cf7d0ac21eff9bdec1c38522a57,
+446048B/source434 unchanged.
+
+ONE exactfocusb1e54c naturallyCLOSED0/full75tokens2PASS/0FAIL/CANCEL/SKIP/TODO
+421.343ms/no managedsession/NOREPLAY. Rootpre9f7b4e12:11:48.714/
+post04af6812:11:49.535 same2093/70003366B/physical
+40e7aefe205a8c0349d8e3d23b5b33b1dadf308500317f513188d2f933747aa1.
+Exact plan1a0/test92d/source434/spec1f26/npm/tools/absences matched.
+
+Independent bounded appliedgate12:11:10–11 C0 pins/originaltwo/backups/journal/
+canonical/BigIntSIPPerl/npm/toolkeys matched;7707828KiBfree97%,memory60%/
+throttled0/no recordedthermalwarning. HTTP3080+18789200;3333separateexit7 known
+refusal, not successfulHTTP. Prior10:56fullretainedcomparison remains historical.
+
+Actual paired postphysicalclose throws preserved canonical captor refusal and
+finite physical queue drain. Registry25/24/1 stayed burned despite9helper
+originals closed. Baseline actualrecheck refused before entryclock C241;
+C240/H25/2647/237orig, private12attempt+closed/burn/repeats0.
+Only uniquely anchored stagedhelpers_settled clause removed in memory:
+actualpositive recheck reached Node with registry43/42/1 stillburned, thenactual
+release closed12; C410/H43/4521/399orig/private12/released→burned/repeats0.
+Forbiddenacceptance caught independent Nodeexpectedrefusalassertion; notqueuekill,
+cleanup-onlyrelease DTO, fixture rescue or physicalclosure-as-settlement credit.
+No sourcefix/native/protectedowner/production/fullmatrix authority claimed.
+
+Closed disjointresume185focusedpasses=prior78+new107; latest continuation58newcases.
+Remaining finite ordinary matrix: ACL/epochcontrol and capturedoriginal primitive
+call-oncecontrol; optional isolated disposal/attemptguard removal NOTclaimed.
+
+#### Next closed cycle: actual epoch ACL plus row baseline and coherent predicate mutant
+
+UNEXECUTED exact recipe. Root solewriter; disk source434 unchanged. Test92d is
+predecessor. Actual healthyhold C237/H24; only first genuine recheck helperH25
+at '/' gets41B row "-r--r--r--+ 1 root wheel 16 Jan 1 2026 /\n" in its actual
+stdoutpipe. Witness actual COREread41 andEOF0, unchanged captor rawstatus0/
+stderr empty/reapedtrue; record helper_leave cleared+settled before ACLvalidator.
+
+Baseline actualACLpredicate refuses before directorypoststat: C245/H25/2671ports/
+237originals=12stage+225helper, all closed; private12closed/burned/repeats0.
+Memory-only uniquely anchored ACL regexp permits '+' only; no epochguard/captor/
+rawstatus/path/fullrow/native/digest change. Actualpositive recheck diagnostic
+reaches Node before naturalrelease; unchanged healthy C407/H42/4448/390originals.
+Nodeexpectedrefusal oracle catches semanticbadrow acceptance after valid cleanup.
+Released→burned on repeats is recorded honestly. Not actualfilesystemACL, native,
+protectedowner, credentialdrop or production authority qualification.
+
+Complete readonly candidate extractor below emits11ordered unique complete-line
+hunks after predecessorhash check. Root applies exactoutput only after BOTH
+independent literal C0/I0/M0; then syntax/diff, BOTHactualdelta reviews andfresh
+allsource/Git/npm/tools/retention/resources/HTTP checks precede ONEexactfocus.
+No sharedpair replay; no currentcombinedsuite/fullmatrix/delivery claims.
+
+```javascript
+import fs from 'node:fs';import crypto from 'node:crypto';
+const root="/Users/setrox/ai/setrox/.worktrees/setfarm-staged-custody-capsule-20261004-v1";
+const test=fs.readFileSync(root+'/scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js','utf8');
+const hash=s=>crypto.createHash('sha256').update(s).digest('hex');
+if(hash(test)!=='92d47e7dc3e01cb5564029996560bd51ef4b3cf7d0ac21eff9bdec1c38522a57')throw Error('test pin');
+const b={
+  "prefix": "      if($mode eq 'epoch-acl-baseline') {\n        my @prefix;my $end=0;\n        for my $g(@grammar) {\n          push @prefix,$g;\n          last if $g->[0] eq 'fileno'&&$g->[1] eq 'h25.setup-w'&&++$end==3;\n        }\n        $fail->() unless $end==3&&@jobs==42;\n        @grammar=@prefix;splice @jobs,25;\n        $emit->('close',$_) for qw(d0 d1 d2 d3 d4 d5 f0 f1 f2 f3 f4 f5);\n      }",
+  "pipe": "            if($mode=~/\\Aepoch-acl-(?:baseline|mutant)\\z/&&$job->{prefix} eq 'h25') {\n              $fail->() unless $job->{path} eq '/'&&length($row)==41\n                &&!exists($outcomes->{epochAclPipeRow});\n              $outcomes->{epochAclPipeRow}={bytes=>0+length($row),row=>''.$row};\n            }",
+  "read": "          if($mode=~/\\Aepoch-acl-(?:baseline|mutant)\\z/&&defined($job)\n              &&$job->{prefix} eq 'h25'&&$o->{role} eq 'h25.out-r') {\n            push @{$outcomes->{epochAclActualReads}}, {bytes=>0+$n,body=>''.$$buffer};\n          }",
+  "capture": "            if($mode=~/\\Aepoch-acl-(?:baseline|mutant)\\z/&&$helpers==25) {\n              $fail->() unless $ok&&!length($error)&&defined($job)&&$job->{prefix} eq 'h25'\n                &&$job->{path} eq '/'&&ref($value) eq 'HASH'\n                &&$value->{out} eq \"-r--r--r--+ 1 root wheel 16 Jan 1 2026 /\\n\"\n                &&$value->{err} eq ''&&$value->{status}==0&&$value->{pid}==424242\n                &&JSON::PP::is_bool($value->{reaped})&&$value->{reaped};\n              $outcomes->{epochAclCaptorOutcome}={returned=>JSON::PP::true,\n                out=>''.$value->{out},err=>''.$value->{err},status=>0+$value->{status},\n                reaped=>$value->{reaped}};\n            }",
+  "drain": "            if($mode=~/\\Aepoch-acl-(?:baseline|mutant)\\z/&&$helpers==25) {\n              $outcomes->{epochAclDrain}={jobCleared=>!defined($job)?JSON::PP::true:JSON::PP::false,\n                helpersSettled=>task6a_origin_helpers_settled()};\n            }",
+  "driver": "          } elsif($mode=~/\\Aepoch-acl-(?:baseline|mutant)\\z/) {\n            $fail->() if $refused;\n            $outcomes->{epochAclBeforeRecheck}=test_observe_staged_custody();\n            my $value=eval {$operations{recheck}->()};my $error=$@;$check->();\n            my $denied=!defined($value)&&$error eq \"TASK6A_ORIGIN_BOOTSTRAP_REFUSED\\n\";\n            $fail->() unless $denied||(!length($error)&&ref($value) eq 'HASH');\n            $outcomes->{recheck}=$value;\n            $outcomes->{recheckRefused}=$denied?JSON::PP::true:JSON::PP::false;\n            $outcomes->{epochAclAfterRecheck}=test_observe_staged_custody();\n            if(!$denied) {$outcomes->{release}=$operations{release}->();$check->();}\n            $outcomes->{epochAclAfterCleanup}=test_observe_staged_custody();",
+  "tests": "\nfunction assertStagedEpochAclEvidence(r,mutant) {\n  const row=\"-r--r--r--+ 1 root wheel 16 Jan 1 2026 /\\n\";\n  assert.equal(r.refused,false);\n  assert.deepEqual(r.epochAclPipeRow,{bytes:41,row});\n  assert.deepEqual(r.epochAclActualReads,[{bytes:41,body:row},{bytes:0,body:''}]);\n  assert.deepEqual(r.epochAclCaptorOutcome,{returned:true,out:row,err:'',status:0,reaped:true});\n  assert.deepEqual(r.epochAclDrain,{jobCleared:true,helpersSettled:true});\n  assert.deepEqual(r.epochAclBeforeRecheck,stagedSharedState('active',0,false));\n  assert.deepEqual(r.epochAclAfterRecheck,stagedSharedState(mutant?'active':'burned',mutant?0:1,!mutant));\n  assert.deepEqual(r.epochAclAfterCleanup,stagedSharedState(mutant?'released':'burned',mutant?0:1,true));\n  assert.deepEqual(r.epochAclAfterRepeats,stagedSharedState('burned',1,true));\n  assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed,r.fixtureClosed],\n    mutant?[42,390,12,378,0]:[25,237,12,225,0]);\n  assert.deepEqual(r.calls,mutant?STAGED_CLOSE_CALLS:\n    {binmode:206,clock:245,close:212,closedir:25,fcntl:73,fileno:662,fork:25,lstat:85,\n      opendir:25,pipe:100,read:136,readdir:624,ready:50,seek:18,stat:73,sysopen:12,wait:100});\n  assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),mutant?4448:2671);\n}\ntest('staged custody epoch ACL rejects actual captured plus row during recheck',()=>{\n  const r=stagedCustody('epoch-acl-baseline');assertStagedEpochAclEvidence(r,false);\n  assert.equal(r.recheckRefused,true);assert.equal(r.recheck,null);\n});\ntest('staged custody epoch ACL detects coherent plus-accepting predicate mutant',()=>{\n  const old=String.raw`    task6a_origin_refuse() unless $r->{out} =~ /\\A[d-][rwxStTs-]{9}\\@?[ ]+`;\n  const source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),old,\n    old.replace(String.raw`\\@?`,String.raw`[\\@+]?`));\n  const r=stagedCustody('epoch-acl-mutant',0,{sourceOverride:source});\n  assertStagedEpochAclEvidence(r,true);\n  const diagnostic={scope:'staged-source-vendor-custody-diagnostic-only',\n    productionAuthority:false,fileCount:6,directoryCount:6};\n  assert.deepEqual(r.recheck,diagnostic);\n  assert.deepEqual(r.release,{...diagnostic,handlesClosed:12});\n  assert.throws(()=>assert.equal(r.recheckRefused,true),{code:'ERR_ASSERTION'});\n});\n"
+};
+let patch='*** Begin Patch\n*** Update File: '+root+'/scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js\n';let last=-1,count=0;
+function hunk(old,next){if(test.split(old).length!==2||!test.includes('\n'+old+'\n'))throw Error('unique complete:'+old);const p=test.indexOf(old);if(p<=last)throw Error('order');last=p;++count;patch+='@@\n-'+old.replaceAll('\n','\n-')+'\n+'+next.replaceAll('\n','\n+')+'\n';}
+function line(prefix){const a=test.split('\n').filter(x=>x.startsWith(prefix));if(a.length!==1)throw Error('line count');return a[0];}
+const modes=line('      my %modes=map {$_=>1} qw(healthy absent arity premature-recheck');
+hunk(modes,modes.slice(0,-2)+' epoch-acl-baseline epoch-acl-mutant);');
+const full=line("      elsif($mode eq 'healthy'||$mode=~/\\A(?:open|close)-/");
+hunk(full,full.slice(0,-3)+"||$mode=~/\\Aepoch-acl-(?:baseline|mutant)\\z/) {");
+const again=line("        if($mode eq 'healthy'||$mode=~/\\Aclose-/");
+hunk(again,again.slice(0,-3)+"||$mode=~/\\Aepoch-acl-(?:baseline|mutant)\\z/) {");
+const boundary='      if(exists($boundary{$mode})) {\n        my ($target,$helpers,$stage)=@{$boundary{$mode}};';
+hunk(boundary,b.prefix+'\n'+boundary);
+const marker="            my $marker=$mode eq 'h7-acl-plus'&&$job->{prefix} eq 'h7'?'+':'';";
+hunk(marker,"            my $marker=(($mode eq 'h7-acl-plus'&&$job->{prefix} eq 'h7')\n              ||($mode=~/\\Aepoch-acl-(?:baseline|mutant)\\z/&&$job->{prefix} eq 'h25'))?'+':'';");
+const pipe="            $!=0;my $n=CORE::syswrite($b,$row,length($row));";
+hunk(pipe,b.pipe+'\n'+pipe);
+const read="          if(($mode eq 'h7-acl-plus'||$mode eq 'h7-raw256')&&defined($job)\n              &&$job->{prefix} eq 'h7'&&$o->{role} eq 'h7.out-r') {";
+hunk(read,b.read+'\n'+read);
+const leave='            $helper_leave->();$check->();';
+hunk(leave,b.capture+'\n'+leave+'\n'+b.drain);
+const active="          } elsif($mode=~/\\Aactive-/) {";
+hunk(active,b.driver+'\n'+active);
+const repeat='          $repeat_delta=scalar(@events)-$before;$fail->() if $repeat_delta;';
+hunk(repeat,repeat+"\n          if($mode=~/\\Aepoch-acl-(?:baseline|mutant)\\z/) {\n            $outcomes->{epochAclAfterRepeats}=test_observe_staged_custody();\n          }");
+const testAnchor="const STAGED_DIRECTORY_FH_CORE_KEYS=['fileOpen','directoryOpen','directoryFhOpen','metadata','fileClose','directoryClose'];";
+hunk(testAnchor,b.tests.trim()+'\n\n'+testAnchor);
+if(count!==11)throw Error('hunks');patch+='*** End Patch\n';
+console.log(JSON.stringify({patch,sha256:hash(patch),hunks:count,oldTest:hash(test)}));
+```
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody epoch ACL ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+#### Closed actual epoch ACL pair, 2026-10-04 20:28 UTC
+
+BOTH literal5b2d and BOTH actualdelta0824 C0/I0/M0; reverseexact11hunks to92d.
+Readonlyextract8d971c patchc051/rootapply once; syntax/diff788597 CLOSED0.
+Actualtest0824da1d82a1090e768f7a7be00ecea1c38549cb5ae460d21a74ded438ba0085,
+451327B/source434 unchanged.
+ONE exactfocus6eb538 naturallyCLOSED0/full75tokens2PASS/0FAIL/CANCEL/SKIP/TODO
+442.528833ms/no managedsession/NOREPLAY. Rootpre38834020:28:14.585/
+post9dbc8820:28:15.418 same2093/70020691B/physical
+f6c6c189f61eb05d0d98b8ed87e7f8b2008e967055062a20161378827d9ed615.
+Exact executedplan5b2d/test0824/source434/spec1f26/npm/tools/absences matched.
+
+Wallclockgap12:14→20:27 is NOT continuouswork/preservation proof. Freshroot
+2d524d20:27:27 andindependentboundedgate20:27:39–40 C0 pins/originaltwo/backups/
+journal/canonical/BigIntSIPPerl/npm/toolkeys matched;7689248KiBfree97%,
+memory58%/throttled0/no recordedthermalwarning;HTTP3080+18789200/3333separate
+exit7knownrefusal. Prior10:56fullhistoricalcomparison remains prior.
+
+Actual H25stdout COREread41 plus EOF0/captor status0/stderr empty/reapedtrue and
+sourcehelpersettled before ACLdecision were independently witnessed. Baseline
+C245/H25/2671/237originals/private12closed burned refused; only uniquely anchored
+optionalACLmarker changed in memory thenactualpositive recheck reached Node,
+C407/H42/4448/390originals/private12closed byactualrelease, released→burned
+repeatszero. Nodeexpectedrefusal assertion caught forbidden ACLplusacceptance.
+No realfilesystemACL/native/credential/protectedowner/production qualification.
+
+Closed disjointresume187focuspasses=prior78+new109; continuation60newcases.
+Remaining finite ordinary matrix: capturedoriginal primitive-call-once2; optional
+isolated attempt/disposal-startedguard mutants NOT silently qualified.
+
+#### Next closed cycle: captured original primitive-call-once baseline and mutant
+
+UNEXECUTED finite final ordinary-matrix pair. Root solewriter; currenttest0824/
+source434 are predecessor. Baselineactualhealthyhold/recheck/release unchanged:
+C407/H42/4448ports/390originals/private12attempt+closed, stagedprimitive12.
+
+Memory-only uniquely anchored original_close capture site choosesfirstd0 CV,
+calls actual port twice and returnsfirsttrue result; no attempt/disposalguard
+removal or on-disk sourcechange. Predetermined grammar admits exactlyone extra
+ADJACENT close:d0 ONLYmutant. Closedoperand branch available ONLYmutant; existing
+native cell/GV/IO lookup retainsoriginal and requires definitefirstphysicalclose/
+attempt+actualCOREfilenoundef. Require390owned/H42/nojob/jobs, priorclose:d0 and
+no prior one-use nomination; consumeallowance BEFOREdelegation. No reacquisition,
+FDnumberclose/fdopen/alias/neworiginal/privateattemptreset/fixturecredit.
+
+Second call invokes actualcaptured COREdisposer, not guardeddispose. Capture
+actualfalse result/error/fresherrno andfilenoundef; physicalclosecount stays12.
+Local __WARN__ hook ONLYaround this one call admits0or1 boundedplain≤256B exact
+documented unopened diagnostic+fixed -e location; allotherwarnings stickyfatal.
+Installed perldiag1708–1710 andperlvar638–645 read byroot419c6c. Warningemission/
+errno value are observations, not mandatorydocs-derivedoracle or autolearning.
+Source releaseactuallyreturns12 while primitiveevents13. IndependentNodeonce
+oracle specificallyrejects13 AFTERphysicalcleanup; notqueue/compilefailure.
+Mutant4449ports differsONLYclose349vs348; C407/H42/390physicaloriginals unchanged.
+Repeatreleased→burned honest/zeroeffects. This qualifiescapturedprimitivecall-once
+control, NOT isolatedattempt/disposal-startedguard removal, native/protectedowner/
+credentials/realPID/production authority/fullmatrix combinedexecution.
+
+Readonly complete extractor emits9ordered unique complete-line hunks afterpin.
+BOTH independent literal C0/I0/M0 thenrootapplyexactoutput; syntax/diff+BOTHactual
+delta reviews+freshallsource/Git/npm/tools/retention/resources/HTTP precedeONEfocus.
+No replayofclosedshared/ACLpairs. Thenordinarymatrixinventory/combinedverification/
+fullreview/filemap/delivery remain distinct mandatory steps.
+
+```javascript
+import fs from 'node:fs';import crypto from 'node:crypto';
+const root="/Users/setrox/ai/setrox/.worktrees/setfarm-staged-custody-capsule-20261004-v1";
+const test=fs.readFileSync(root+'/scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js','utf8');
+const hash=s=>crypto.createHash('sha256').update(s).digest('hex');
+if(hash(test)!=='0824da1d82a1090e768f7a7be00ecea1c38549cb5ae460d21a74ded438ba0085')throw Error('test pin');
+const b={
+  "grammar": "      if($mode eq 'once-primitive-mutant') {\n        my @next;my $found=0;\n        for my $g(@grammar) {\n          push @next,$g;\n          if($g->[0] eq 'close'&&$g->[1] eq 'd0') {\n            $fail->() if $found++;push @next,['close','d0'];\n          }\n        }\n        $fail->() unless $found==1&&@jobs==42;@grammar=@next;\n      }",
+  "close": "          my $o=$lookup->(\\($_[0]),$mode eq 'once-primitive-mutant'?1:0);\n          if($mode eq 'once-primitive-mutant'&&$o->{closed}) {\n            $fail->() unless $o->{role} eq 'd0'&&$o==$roles{d0}&&!$o->{dirStream}\n              &&$o->{attempted}&&!defined(CORE::fileno($o->{fh}))\n              &&@owned==390&&$helpers==42&&!defined($job)&&!@jobs\n              &&@events&&$events[-1]{op} eq 'close'&&$events[-1]{role} eq 'd0'\n              &&!exists($outcomes->{duplicatePrimitive});\n            $outcomes->{duplicatePrimitive}={role=>'d0',allowanceConsumed=>JSON::PP::true};\n            $take->('close','d0');\n            my @warnings;my ($second,$ok,$error,$errno);\n            {\n              local $SIG{__WARN__}=sub {\n                $fail->() unless @_==1&&!ref($_[0])&&!utf8::is_utf8($_[0])\n                  &&length($_[0])<=256&&@warnings==0\n                  &&$_[0]=~/\\Aclose\\(\\) on unopened filehandle [^\\x00-\\x1f\\x7f]{1,96} at -e line [1-9][0-9]{0,5}\\.\\n\\z/;\n                push @warnings,''.$_[0];\n              };\n              $!=0;$ok=eval {$second=$o->{originalClose}->();1;};\n              $error=$@;$errno=0+$!;\n            }\n            $check->();$fail->() unless $ok&&!length($error)&&!$second\n              &&$o->{attempted}&&$o->{closed}&&!defined(CORE::fileno($o->{fh}));\n            @{$outcomes->{duplicatePrimitive}}{qw(actualCoreReturnedFalse filenoUndefined\n              firstPhysicalClosed warningCount errno)}=(JSON::PP::true,JSON::PP::true,\n              JSON::PP::true,0+scalar(@warnings),$errno);\n            $outcomes->{duplicatePrimitive}{warnings}=\\@warnings;\n            return $second;\n          }",
+  "snapshot": "          if($mode=~/\\Aonce-primitive-(?:baseline|mutant)\\z/) {\n            $outcomes->{onceAfterCleanup}=test_observe_staged_custody();\n          }",
+  "repeat": "          if($mode=~/\\Aonce-primitive-(?:baseline|mutant)\\z/) {\n            $outcomes->{onceAfterRepeats}=test_observe_staged_custody();\n          }",
+  "tests": "\nfunction assertStagedPrimitivePhysical(r,mutant) {\n  const diagnostic={scope:'staged-source-vendor-custody-diagnostic-only',\n    productionAuthority:false,fileCount:6,directoryCount:6};\n  assert.equal(r.refused,false);assert.deepEqual(r.hold,diagnostic);assert.deepEqual(r.recheck,diagnostic);\n  assert.deepEqual(r.release,{...diagnostic,handlesClosed:12});\n  assert.deepEqual(r.calls,{...STAGED_CLOSE_CALLS,close:mutant?349:348});\n  assert.equal(Object.values(r.calls).reduce((n,v)=>n+v,0),mutant?4449:4448);\n  assert.deepEqual([r.helpers,r.ownedCount,r.stageClosed,r.helperClosed,r.fixtureClosed],[42,390,12,378,0]);\n  assert.deepEqual(r.onceAfterCleanup,stagedSharedState('released',0,true));\n  assert.deepEqual(r.onceAfterRepeats,stagedSharedState('burned',1,true));\n  const roles=r.events.filter(e=>e.op==='close'&&STAGED_CLOSE_ROLES.includes(e.role)).map(e=>e.role);\n  assert.deepEqual(roles,mutant?['d0',...STAGED_CLOSE_ROLES]:STAGED_CLOSE_ROLES);\n  return roles.length;\n}\ntest('staged custody primitive once closes each captured original exactly once',()=>{\n  const r=stagedCustody('once-primitive-baseline');\n  assert.equal(assertStagedPrimitivePhysical(r,false),12);\n  assert.equal(Object.hasOwn(r,'duplicatePrimitive'),false);\n});\ntest('staged custody primitive once detects coherent double-call captured primitive',()=>{\n  const source=replaceOnce(readFileSync(BOOTSTRAP,'utf8'),\n    '    my $original_close=sub {close($fh)};',\n    String.raw`    my $test_double_close=!@staged_originals;\n    my $original_close=sub {\n        my $first=close($fh);close($fh) if $test_double_close;return $first;\n    };`);\n  const r=stagedCustody('once-primitive-mutant',0,{sourceOverride:source});\n  const actual=assertStagedPrimitivePhysical(r,true);\n  const n=r.duplicatePrimitive;\n  assert.deepEqual(Object.keys(n).sort(),['role','allowanceConsumed','actualCoreReturnedFalse',\n    'filenoUndefined','firstPhysicalClosed','warningCount','errno','warnings'].sort());\n  assert.deepEqual([n.role,n.allowanceConsumed,n.actualCoreReturnedFalse,n.filenoUndefined,n.firstPhysicalClosed],\n    ['d0',true,true,true,true]);\n  assert.ok(Number.isSafeInteger(n.errno)&&n.errno>=0);\n  assert.ok(n.warningCount===0||n.warningCount===1);assert.equal(n.warnings.length,n.warningCount);\n  for(const w of n.warnings) {\n    assert.ok(Buffer.byteLength(w)<=256);\n    assert.match(w,/^close\\(\\) on unopened filehandle [^\\x00-\\x1f\\x7f]{1,96} at -e line [1-9][0-9]{0,5}\\.\\n$/);\n  }\n  assert.equal(actual,13);\n  assert.throws(()=>assert.equal(actual,12),{code:'ERR_ASSERTION'});\n});\n"
+};
+let patch='*** Begin Patch\n*** Update File: '+root+'/scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js\n';let last=-1,count=0;
+function hunk(old,next){if(test.split(old).length!==2||!test.includes('\n'+old+'\n'))throw Error('unique complete:'+old);const p=test.indexOf(old);if(p<=last)throw Error('order');last=p;++count;patch+='@@\n-'+old.replaceAll('\n','\n-')+'\n+'+next.replaceAll('\n','\n+')+'\n';}
+function line(prefix){const a=test.split('\n').filter(x=>x.startsWith(prefix));if(a.length!==1)throw Error('line count');return a[0];}
+const modes=line('      my %modes=map {$_=>1} qw(healthy absent arity premature-recheck');
+hunk(modes,modes.slice(0,-2)+' once-primitive-baseline once-primitive-mutant);');
+const full=line("      elsif($mode eq 'healthy'||$mode=~/\\A(?:open|close)-/");
+hunk(full,full.slice(0,-3)+"||$mode=~/\\Aonce-primitive-(?:baseline|mutant)\\z/) {");
+const again=line("        if($mode eq 'healthy'||$mode=~/\\Aclose-/");
+hunk(again,again.slice(0,-3)+"||$mode=~/\\Aonce-primitive-(?:baseline|mutant)\\z/) {");
+const boundary='      if(exists($boundary{$mode})) {\n        my ($target,$helpers,$stage)=@{$boundary{$mode}};';
+hunk(boundary,b.grammar+'\n'+boundary);
+const close='          $fail->() unless @_==1;my $o=$lookup->(\\($_[0]),0);\n          $fail->() if $o->{dirStream};$take->(\'close\',$o->{role});';
+hunk(close,'          $fail->() unless @_==1;\n'+b.close+'\n          $fail->() if $o->{dirStream};$take->(\'close\',$o->{role});');
+const driver="          if($mode eq 'healthy'||$mode eq 'file-byte-xor-mutant') {";
+hunk(driver,driver.slice(0,-3)+"||$mode=~/\\Aonce-primitive-(?:baseline|mutant)\\z/) {");
+const snapshot="          if($mode eq 'file-byte-xor-denied'||$mode eq 'file-byte-xor-mutant') {\n            $fail->() unless exists($outcomes->{byteNomination});";
+hunk(snapshot,b.snapshot+'\n'+snapshot);
+const repeat='          $repeat_delta=scalar(@events)-$before;$fail->() if $repeat_delta;';
+hunk(repeat,repeat+'\n'+b.repeat);
+const testAnchor="const STAGED_DIRECTORY_FH_CORE_KEYS=['fileOpen','directoryOpen','directoryFhOpen','metadata','fileClose','directoryClose'];";
+hunk(testAnchor,b.tests.trim()+'\n\n'+testAnchor);
+if(count!==9)throw Error('hunks');patch+='*** End Patch\n';
+console.log(JSON.stringify({patch,sha256:hash(patch),hunks:count,oldTest:hash(test)}));
+```
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody primitive once ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+```
+
+#### Closed captured original primitive-call-once pair, 2026-10-04 20:35 UTC
+
+BOTH literal799e and BOTH actualdelta7077 C0/I0/M0; reverseexact9hunks to0824.
+Readonlyextracta6d1b1 patchdadc/rootapply once; syntax/diff4651fb CLOSED0.
+Actualtest7077a597bff1760c68872744453835edd970815b93d5f90c7ae0461721d41b7a,
+456326B/source434 unchanged.
+ONE exactfocus257571 naturallyCLOSED0/full76tokens2PASS/0FAIL/CANCEL/SKIP/TODO
+488.477208ms/no managedsession/NOREPLAY. Rootpre924d2e20:35:29.645/
+post97c89520:35:30.570 same2093/70037900B/physical
+49be02dd419ec15f4fb6f8b0791581af77d11db73fdef23efbe5c376430f3d81.
+Exact executedplan799e/test7077/source434/spec1f26/npm/tools/absences matched.
+
+Independent bounded20:34:54–55gateC0 originals/backups/journal/canonical/toolpins
+includingBigIntSIPPerl/npm exact;7484344KiBfree97%,memory58%/throttled0/no
+recordedthermalwarning. Disk204904KiB below20:27 in7min, attributionUNKNOWN;
+this admits boundednondiskpair only, NOTclone/CI/build. HTTP3080+18789200;
+3333separateexit7knownrefusal. Historicalfullretention10:56 stays historical.
+
+Actualhealthybaseline C407/H42/4448/390physicaloriginals/private12closed had12
+stagedprimitiveevents. Memoryonlycapturedfirstd0 CVdoublecalls actualport and
+returnsfirsttrue; strictone-useadjacentclosednativeGV actuallyinvoked original
+COREdisposer secondfalse withfilenoundef. Privateattempts/physicalstageclosure
+still12; actualrelease returned12 whileprimitiveevents13. IndependentNode
+expected12 assertion caught extraeffect afterrealcleanup. Mutant4449differsonly
+close349vs348; scopedwarningobservations valid0/1; repeatszero/released→burned.
+No fixture/alias/reusedFD/isolatedattemptguard/native/production credit.
+
+Independentfiniteinventory foundall11requiredfamilies and5minimumsemantic
+targets represented; once2nowhasactualreceipt. Disjointresume189focusedpasses=
+prior78+new111; originalfirstcycle41 separate; arithmetic230custodycases.
+NOT currentcombined230/unfiltered/fullmatrix/delivery/native/cutover proof.
+
+#### Current-source ordinary matrix closure and verification gate
+
+File Map remains exactly existing bootstrap/test/thisplan/namedspec. Source adds
+only threezeroarg diagnosticcapsule operations andprivate immutablecustody/
+admission/burn/disposal internals; productionmain still unconditionalrefusal and
+no initializer exported. TestsyntheticVendorSource selects uniquely bound old
+transportpolicy site so secondlegitimateofficialcapsulepin doesnotcreate
+setupcollision. No entry/helper/map/import-policy/native/observer/package/lock/
+launcher/TS/runtime/DB/service change. Scopedbranch/source remains solewriter.
+This relationship is causally necessary for eventualpositiveworktreeownership
+cutover; ordinarydiagnostics are not installedowner authority.
+
+Finiteinventory source-derived case counts (notruntimeproof):
+entry/acquisition41; malformed10; uncertainclose26; admission20; boundary8;
+metadata14; partialtied4; H7captor2; configuration25; byte2; metadatamagic16;
+admissiondrift20; admissionmagic20; foreign+hidden5; active3; livealias2;
+identity6; shared2; epochACL2; capturedprimitive2. Total230.
+Minimumsemanticmutants shapeactualFETCH1, metadatavectoractualPUSH1, bytebadread
+acceptance, ACLplusactualrecheckacceptance, primitiveextraactualclose arepresent.
+Optionalisolatedattempt/disposal-startedguard removal is explicitly notclaimed.
+No newCartesianvariants/taskscope are introduced.
+
+Recorded pre-execution gate (closed by the receipt below): TWO independent exactcurrentallfourfile reviews
+(source/test/spec/plan+base3e94/head d5bc), syntax/diff andfresh source/Git/npm/tools/
+originaltwo/retention/resource/HTTP preflight precede commandsbelow. Resourcegate
+must usecurrenttime; externaldiskgrowth unknown, no cleanup or stalebuildcredit.
+RunONE current-source combined230 first, readnaturalcompleteoutput/footer and
+exactpostchecks. ThenONE current-source unfiltered bootstrapfile (predicted1389
+from prior1159+new230; runtimefooterauthoritative) includesadjacentpure/vendor/
+parent/captor regressions. This is newintegrationverification, not replaying old
+closedinvocations orrequalifyingtheirhistoricalreceipts. Combined230 uses readonly
+originalFHs/pipes plus synthetic helperPID, no helperexec. Unfiltered retains
+existing case-specific owned ordinary fixtures: one tinyowned FIFO/tmpdir with
+exactmember/nonrecursivecleanup; fixedallowlistedls/curl--version/invalid-option
+and ownedPerl probes; own actualordinarychild and syntheticPerlobserver output
+substitution at deniedvmmapedge; boundedsignals/TERM/STOP/KILL only within each
+testcase's own retainedprocess tree (target/helper andfixtureparent cancellation),
+with original actualwait/close invariants preserved.
+Those effects are not realvmmap/nativeobserver/protectedowner/live-service proof.
+No npmtest/privateDB/credential/protectedfixture/genuinevmmapobserver/live-service
+effects are admitted bythesecommands; no signal to foreign/existing servicePID.
+
+Transport: root sets nestedexec_command ANDwrite_stdin max_output_tokens50000,
+preserves everyrawresult infunctions store BEFORErendering, emitsonlysmallmetadata,
+thenreads complete preservedrawoutput inboundedpages throughEOF. No rawtool
+truncation marker credited. Rootalonepolls only NEW live session to naturalclosed;
+doNOTpollpriorclosed sessions. Each toolwait≤30s; commentary≤60s. No transcript
+fixture/filewrite needed. Ifunexpectedtest/transport/harness failure occurs,
+preserveactualevidence andclassify; no silentretry/autoqueuelearning.
+Aftereachnaturalcomplete-readC0, exactrootpostchecks; recorddistinctinvocation,
+rawUTF8length/hash/line/passcounts/footer. Completeoutputbeforecompletionassertion.
+
+Thendefaultversion/English/path checks, safe fixedSIPPerl+Node syntax anddiff.
+SourceTS/frozenmigration/MC-contract checks require separatelyadmitted locked
+ignore-scriptsCI/deps/freshstoragebudget afterscopedcommit. Unchanged build guard
+requires clean branchmain withHEAD==origin/main; no pre-merge featurebuild is
+admitted. PR/cloud/security/threadchecks, normalSHAmerge, post-merge cleanmain
+guardedbuild/actualhostproof remain subsequentseparate gates. No dirtybuildoverride,
+branchselector substitution or runtimeguardbypass.
+
+```sh
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^staged custody ' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --check scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node scripts/check-version-contract.mjs
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node scripts/check-english-contract.mjs
+env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node scripts/check-path-contract.mjs
+env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C /usr/bin/perl -f -c scripts/task6a-protected-origin-bootstrap-v2.pl
+git diff --check
+```
+
+#### Current-source ordinary matrix actually closed, 2026-10-04 20:56 UTC
+
+The admitted four-file review and command recipe above were executed once.
+Both independent whole-file reviews bound source434a6a7c, test7077a597,
+spec1f26f90d and executed plan3c871aa0 to base3e94dad9/head d5bc1fa8;
+no source/test/spec change followed those reviews or either matrix invocation.
+
+Combined invocation153b39/session30263 naturally closed b0854e exit0:
+230PASS, zeroFAIL/CANCEL/SKIP/TODO, 25418.905083ms. Complete output was read
+through EOF: 21267UTF8bytes, 238lines, 230actual pass events, SHA256
+3d14d518ec2bbc0a312d4f22ed739979ff2b9d4284f49bac8d12a6ae1556ca4a.
+Root pre365bb7/post1377b2 matched all2093inputs/70045279bytes/physicalpin
+9d25d39551bd8a0d5bf78c27bd2f7cf881d9f4cbfa22e653128db2eebb8d4908.
+
+Unfiltered invocationfbdcf0/session1660 returned dfb5dc plus natural terminal
+f5e88e exit0: 1389PASS, zeroFAIL/CANCEL/SKIP/TODO, 116021.034292ms.
+Both complete raw chunks were retained before rendering and read through EOF:
+121289UTF8bytes, 1398lines, 1389actual pass events, SHA256
+472a6b707ed6938337664f760f8001715af66549b98dd9c4f7ff7f68345f5221.
+No tool truncation marker occurred; four test titles contain the word
+"truncated" as an intentional input-denial case, not missing tool output.
+Root pre0e43fa/post754f02 at20:56:42.749UTC matched the same exact all-source
+physical pin, selected hashes, root/Git identities, npm/tool pins and absence
+of node_modules/dist/.setfarm. Neither closed session may be polled/replayed.
+
+Node syntax/diff and scrubbed fixed-SIP Perl syntax were exit0 (636328);
+versioncontract2.3.79 (ef4e20), English1931files (d881a5) and path966files
+(da7079) were exit0. These are scoped ordinary verification, not default
+npmtest/private-DB, protected owner, actual vmmap or live rollout evidence.
+This receipt-only plan change requires a final independent delta review before
+the scoped commit. Locked ignore-scripts dependency admission, TS/frozen/MC
+checks, exact-head PR gates, normal merge and separate clean-main build remain.
+The unchanged builder main/clean/origin guard remains mandatory.
+
+
 #### Causal existing vendor-test anchor refinement
 
 The private capsule will carry the same official archive pin already used by
