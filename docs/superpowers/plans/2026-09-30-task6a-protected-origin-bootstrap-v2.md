@@ -2038,7 +2038,7 @@ Setup/prototype/compile failure is never semantic or staged-consumer RED.
   `env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`
   Poll only live sessions to natural closure and read every output chunk. Do not
   rerun predecessor tests/builds or invent observations from literal expectations.
-- [ ] **Step 4 — reviewed delivery and own clean-main build.** Record actual
+- [x] **Step 4 — reviewed delivery and own clean-main build.** Record actual
   outputs and terminal states; source/test/spec/plan full review and cheapest
   English/path/diff contracts. Scoped conventional commits, normal push/PR,
   exact-head cloud/security/full paginated comments/threads/reviews gate, optional
@@ -2696,8 +2696,29 @@ NORETEST after closure. Independent pre-effect transport C0 reviews and fresh
 inventory23:12:39–42/root7bab1423:13:06 source/tools/fixture/npm/absence passed.
 Postfull2d657f23:15:01 all2093outside-two-mapped-files Git exact/testb7a3/spec8e9/
 bootstrap4aa/npm166c6/tools/Perl/MAP/absence unchanged. Steps1–3 complete only;
-Step4 reviewed PR delivery and own clean-main build remain pending. No staged
-consumer, creator/protected ownership, H42/native/service/cutover completion.
+Step4 remained open at that checkpoint. Its later actual ordinary completion is
+recorded below; this does not close any staged/protected/native/operational gate.
+
+Step4 actual completion: exact head d6f649ec was delivered through PR271 after
+two independent whole-branch C0 reviews, complete actual Codex no-major-issues
+feedback and successful GitGuardian zero-annotation checks. Normal SHA-bound
+merge3e94dad9 has valid signature, parents42c57386/d6f649ec and tree2a449c2d.
+A separate owned clean-main clone fast-forwarded to that exact merge. One scoped
+locked ignore-scripts CI naturally closed0; sixteen installed versions matched
+the lock and platform-incompatible optional packages remained correctly absent.
+Two independent reviews of the exact build wrapper and fresh preservation/resource/
+source/dependency/tool gates admitted one normal guarded build. Actual npm exit
+AND close0/null occurred at2026-10-03T23:39:50.713Z; all5661 held originals were
+revalidated and outer finalization closed without errors. Build
+ead4c226-5f4b-4e89-a108-2bc15d41d4aa produced858 outputs/47directories/exact861
+regular files including three immutable authority files. Independent master and
+inventory postaudits reproduced source, dependencies/npm, all output bytes/modes,
+authority physical pins, Git-derived input and actual output commitments, converter and
+empty archive/ledgers. Original two files, prior roots/cache/builds and journal
+remained preserved; HTTP3080/18789 were200 while3333 retained its known refusal.
+Closed test/build sessions were not rerun or repolled. This completes Task2b.4
+only. Actual staged declarations, authentic creator/publisher, complete core/XS,
+native, SQL, service and final cutover retain separate uncompleted gates.
 
 ### Task 3: Reviewed delivery and actual protected rehearsal
 
