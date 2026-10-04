@@ -46,7 +46,12 @@ It emits canonical refusal and exits2. Existing `systemObject` retains its
 signature and memory-only declaration role; it additionally removes the unique
 prefix cold block before removing the unique final main call.
 
-- [ ] **Step 1: Add the behavioral RED test before changing production.**
+Steps1–5 below retain the completed pre-execution recipe, including its historical
+test-data-only and expected-RED wording. The execution receipt records actual
+installed source and outcomes; do not replay those closed invocations. Step6
+remains prospective until its delivery evidence is recorded externally.
+
+- [x] **Step 1: Add the behavioral RED test before changing production.**
 
 In the existing test, add the literal cold block and probe below. The block is
 test data at this step, not installed into production. Put the function with
@@ -81,7 +86,7 @@ test('cold bootstrap refuses before first module resolution',()=>{
 });
 ```
 
-- [ ] **Step 2: Run the one RED and read its complete natural terminal.**
+- [x] **Step 2: Run the one RED and read its complete natural terminal.**
 
 ```bash
 env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='^cold bootstrap refuses before first module resolution$' scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
@@ -90,7 +95,7 @@ env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /
 Expected: assertion failure, actual64 versus required2, and actual forbidden
 module-resolution witness. An anchor/compile/timeout error is not the RED.
 
-- [ ] **Step 3: Install the minimal production cold block, then adapt declarations.**
+- [x] **Step 3: Install the minimal production cold block, then adapt declarations.**
 
 Prefix the bootstrap with exactly `COLD_ENTRY_GUARD` above. In `systemObject`,
 replace the existing single source/main-removal assignment with:
@@ -107,7 +112,7 @@ fixed filename and requires exact `r.status===2` instead of merely nonzero; its
 exact stdout/stderr assertions remain unchanged. No other
 declarations, ports, predicates, queues or positive diagnostic expectations change.
 
-- [ ] **Step 4: Add and execute two semantic mutation controls.**
+- [x] **Step 4: Add and execute two semantic mutation controls.**
 
 ```javascript
 for(const mode of ['omitted','after-first-import'])
@@ -149,7 +154,7 @@ The focused pattern above now requires five PASS. This ordinary compile-only
 check can import the fixed SIP modules but does not run top-level clock/main or
 runtime external operations. It does not admit privileged module/native trust.
 
-- [ ] **Step 5: Proportionally verify the complete ordinary declaration suite.**
+- [x] **Step 5: Proportionally verify the complete ordinary declaration suite.**
 
 ```bash
 env -i PATH=/opt/homebrew/Cellar/node/26.4.0/bin:/usr/bin:/bin LANG=C LC_ALL=C /opt/homebrew/Cellar/node/26.4.0/bin/node --test scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js
@@ -178,6 +183,36 @@ source/dependency/npm/retention guards before executing it. Do not reuse old
 managed sessions, invoke native/private ALL or select a service. Host verification
 records HTTP3080/18789 and3333 truth, original-two hashes and preservation.
 Completion here means only cold-entry fix delivery, never P2/native/cutover.
+
+### Cold-entry execution receipt, 2026-10-04 22:05 UTC
+
+Executed spec589cf50e and pre-execution planc7034ecf were independently reviewed
+C0/I0/M0 before effects. Baseline5637df closed0/1PASS. ONE actual old-source
+RED e6acf3 closed1: assertion64!=2 and actual TEST_FORBIDDEN_IMPORT stdout/stderr;
+source434a6a7c/testd8268bf2, complete output read. Pre/postb44c0e/d808b8 full2093
+inputs unchanged. No anchor, timeout or setup failure was credited as the RED.
+Minimal source15dce34f51dc2ffdf7c07b2890c6c53d96791d55bef6360ffd0f0e2c61d051f1
+and test6dafb2cb9df8cabe22be73dea4765b5fc62bacc461f4351597c43d4f4395e369
+passed independent actual-delta reviews. ONE focus e9ce2f closed0:5PASS/zero
+FAIL/CANCEL/SKIP/TODO112.099792ms, including real disk normal/-c refusal,
+separate guard-stripped syntax and actual omitted/late import controls.
+
+ONE unfiltered ordinary suite cdf10b/session92132 -> natural33d0d3 CLOSED0:
+1393PASS/zeroFAIL/CANCEL/SKIP/TODO115955.504833ms. All four raw chunks retained
+before rendering; complete121544UTF8B/118740characters/1403splitlines bind SHA256
+4045f2aff5a1c766bc59f7b59e6ae7bb7dd08258aae5a17518a07192a17da1fb.
+All1393pass lines/8footer lines and the single existing actual FD-rebinding
+diagnostic were individually classified; zero unknown/truncation markers.
+Initial read-only analyzer rejected an assumed8 informational-line count because
+the existing diagnostic makes9; corrected classification, not a test failure or
+test replay. Rootpostb7eee7 at22:04:41 C0 matches full2093/70062057B/physicalb3bbdd,
+source/test/tools exact and no deps/dist/.setfarm/environment files.
+Nodechecka05cc6/diff460d44 C0; versiona9c77d2.3.79/Englishc047c31931/pathc6bc89966
+C0. No protected invocation/native-observer/privateALL/DB/live-service effect or
+native qualification. Ordinary module compilation may load SIP XS code.
+NOREPOLL92132/NOREPLAY.
+This receipt changes only plan progress/evidence, not the executed recipe.
+Step6 review/PR/clean-main-build/host delivery remains open until actually proven.
 
 ## File Map and interfaces
 

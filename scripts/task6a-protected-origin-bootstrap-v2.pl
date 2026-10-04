@@ -1,3 +1,8 @@
+# Cold entry stays closed before any candidate PM/XS import.
+BEGIN {
+    CORE::print STDERR "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
+    CORE::exit(2);
+}
 BEGIN {
     @INC=('/System/Library/Perl/5.34/darwin-thread-multi-2level',
         '/System/Library/Perl/5.34');
