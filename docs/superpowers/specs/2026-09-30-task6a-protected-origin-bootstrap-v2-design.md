@@ -10,8 +10,8 @@ test43ec, separate finite15 passes at C7deb/testb2fc and default16SKIP evidence;
 never replace these with an all-pass/positive statement. Bot request acceptance,
 silence, quota or green security checks do not certify acquisition/CONTROL/P2.
 The initial published checkpoint contains four task-port source/test/spec/plan
-files. A separately reviewed S1 update extends the next draft map to those four
-plus the three inert source/test files below; this is still incomplete feedback,
+files. The reviewed S1 checkpoint23f36357 extends the published draft map to those
+four plus the three inert source/test files below; this is still incomplete feedback,
 not T4 delivery. Publish no local operational logs/journals/credentials/
 artifacts/cluster data. Existing review integrations
 may be requested once as review-only, without new paid activation, coding-agent
@@ -48,7 +48,7 @@ S1 File Map, in addition to these existing named spec/plan:
   closed opt-in real ABI tests, independent native witness and causal mutants.
 
 The three source/test files were created locally after the missing-source RED.
-The published draft's four-file map stays historical; the prospective next
+The initial draft's four-file map stays historical; the published S1 checkpoint's
 aggregate map is seven. No operational journal, local manifest, binary or
 fixture is published.
 
@@ -284,6 +284,68 @@ and independent foreign CONTROL viability. No experiment may claim these from
 the installed SDK or published kernel source. Published xnu12377.121.6 is not
 running12377.121.10 host policy/teardown proof. Source-only contract review is
 the next step; no executable implementation/effect is admitted by this text.
+
+### Bounded source-only message-error findings: not executable clearance
+
+This audit refines the existing complete-error gate; it does not close it.
+Freeze the header destination disposition separately from the descriptor's
+COPY_SEND. The following published .121.6 accounting is NOT an installed-host
+error allowlist or proof that every returned resource is observable:
+
+| Phase | Source-supported distinction |
+| --- | --- |
+| COPY_SEND copy-in | Original sender user reference remains; a copied reference enters the message. |
+| Descriptor copy-in failure | Copied message resources are cleaned; COPY_SEND originals must not be disposed as moved rights. |
+| Successful queueing | Message owns its copied references; sender retains COPY_SEND originals. |
+| Post-copy-in send failure | Pseudo-receive handles destination and descriptor separately; partial failures are possible. |
+| Pseudo-copyout | Existing names can gain another user reference; saturation suppresses the increment. Equal names are not equal obligations. |
+| Normal receive | A valid live SEND descriptor is copied out/coalesced under the same reference-count/saturation rules; destination is consumed specially and reports the existing receive name, not an extra send reference. |
+| Receive body error | Some resources may already be transferred; error does not imply nothing was received. |
+| Buffer copy-back failure | Namespace installation may precede incomplete/unreported returned names and dispositions. Exact cleanup cannot be inferred. |
+
+The decisive unsupported inference is "timeout/interruption without shortage
+bits means the returned resource list is complete." Published kernel
+mach_msg_receive_pseudo calls ipc_kmsg_copyout_pseudo, then discards the return
+from ipc_kmsg_put_to_user. That final copy-back can fail after namespace
+references were installed. Preserve this uncertainty; do not guess a name,
+deallocate the borrowed self baseline or call unchecked mach_msg_destroy a
+cleanup receipt. COPY_SEND copy-in and coalesced copyout need distinct ledgers.
+[Send/pseudo-receive](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/ipc/mach_msg.c#L610),
+[Copyout/copy-back](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/ipc/ipc_kmsg.c#L4293),
+[COPY_SEND copy-in](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/ipc/ipc_right.c#L2316),
+[Copyout coalescing/saturation](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/ipc/ipc_right.c#L2568-L2681),
+[Destination consumption](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/ipc/ipc_object.c#L1093).
+
+Omitting OOL descriptors eliminates only message-body OOL allocations, not the
+registered lookup's separate VM or wrapper obligations. Published lookup
+allocates before its RPC and ignores VM-deallocation status on RPC failure.
+The public wrapper's interruption retries, auxiliary/vector transport and
+unchecked destructor remain in scope; no private trap bypass is proposed.
+[Lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/libsyscall/mach/task.c#L81),
+[Wrapper](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/libsyscall/mach/mach_msg.c#L72).
+
+Unknown ownership may enter sticky RETAINED_FAILED_OWNER, not CLOSED or PASS.
+Burn every positive observation/retry, preserve original buffers and known
+resources, and retain the implicated original parent/child while settlement
+or obligations remain uncertain. Checked known dispositions remain once-only;
+actual receiver join precedes target-status consumption. Retention is containment,
+not complete disposal, hard-bounded termination, zero-owner or cutover evidence.
+At most one admitted attempt/retained owner is allowed in any future recipe;
+resource admission and external-owner-death limitations must be explicit.
+
+Next research choice: isolate ordinary registered-channel continuity with a
+noncomplex fixed-payload message, no task-self descriptor, reply/voucher NULL.
+This is narrower than implementing the complex task-right channel or repeating
+NAME/TFP facts. It removes task-self transfer/movability from that question but
+does not remove header, lookup VM, stash restoration, wrapper or join obligations.
+Continuity would require actual postexec callback communication reaching the
+original owned receive right, independently supplied nonce, authenticated live
+original-child sender and checked successful-path cleanup. Omitted registration
+must fail that same independent oracle; slot names or child JSON are insufficient.
+An uncertain outcome must remain retained failure, never an expected-refusal PASS.
+Only a literal resource/phase/error/settlement contract is next. No source file,
+compiler/addon invocation or executable recipe is admitted by this research.
+All complete-custody/startup/movability/foreign-CONTROL/P2/T4 gates remain open.
 
 ### Source-only prerequisite findings: acquisition is not CONTROL
 

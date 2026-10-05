@@ -27,8 +27,8 @@ the ordinary instrumented S1 sample, not transport/CONTROL/protected/P2 or T4.
 - Create `scripts/__tests__/task6a-origin-native-cooperative-initializer-v2.test.js`.
 - Modify only this named plan and its named spec for the causal refinement.
 - Existing task-port C7deb/testb2fc/builtin entry stay unchanged. The initial
-  published draft checkpoint is4; the current local aggregate is7, and the next
-  draft update will publish7.
+  published draft checkpoint is4; published S1 checkpoint23f36357 and the current
+  aggregate are7. This remains incomplete draft feedback.
 - Default opt-out has no native effects; opt-in exactly
   `SETFARM_TASK6A_NATIVE_INERT_INITIALIZER_TEST=1` in the test process only.
 - No Mach/ports/TFP/query/threads, target/path/provider selectors, policy/security/
@@ -186,9 +186,18 @@ the ordinary instrumented S1 sample, not transport/CONTROL/protected/P2 or T4.
   exact5+5+1 inventories, original/derived entry and compiled-source hashes,
   literal traces/currentheldstat/path/allclose; no replay or immutable original
   object/addon/trace commitment. Preserve the warning failure and original RED.
-- [ ] Scoped conventional checkpoint and normal draft-branch update after fresh
+- [x] Scoped conventional checkpoint and normal draft-branch update after fresh
   held/preservation/exposure checks. Do not mark ready/merge/rebuild/rollout from
   S1 or replay the retained genuineFAIL5. Full-channel and T4 gates remain open.
+  Final paired C0/I0/M0 at plan3cfec8e8/specf883759d; root syntax/diff/version/
+  English1934/paths969 and fullheld7/scoped exposure checks pass. Scoped commit
+  23f36357e8109d25f863c102796e7c19d0b18624/tree7873d2f8/parent6c2225 contains
+  EXACT5 delta files675+/31-. Normal push f83665 and existing DRAFT275 body edit
+  8ead6a CLOSED0. Root4f08f6/independent81bc9d,d41b40 confirms actual OPEN/
+  DRAFTtrue/head23f36357/baseae5/exact7files3910+/7-. Final7eac81/76b5d3/50d316
+  confirms cleanroot/index, source pins, preserved originals/journal/tools/CLI.
+  Current security check SUCCESS is not acquisition/CONTROL/P2 acceptance;
+  historical Codex feedback applies only to d589, no current-head review proven.
 
 ## Feedback-only draft checkpoint — not positive-path delivery
 
@@ -200,7 +209,7 @@ native experiment. Strict genuine acceptance remains unmet; green cloud checks,
 bot comments, accepted review requests or silence cannot reopen that gate.
 
 **File Map:** Initial published checkpoint has four files: task-port C/test and
-these named spec/plan. A separately reviewed S1 update extends the next draft to
+these named spec/plan. Published S1 checkpoint23f36357 extends the draft to
 those four plus its three inert source/test files (seven total), still incomplete.
 No external operational log/journal, credentials, runtime artifacts or retained
 cluster data are staged/published. Normal push only; no force/history rewrite,
@@ -283,6 +292,26 @@ does not open genuine-positive/T4delivery/CONTROL/protected/P2 gates.
   non-monitor backing starts true, not presumed false from DevToolsSecurity.
   Record these distinctions in the spec's Source-only prerequisite findings.
   This does not close any actual-host/complete-custody/executable-design gate.
+- [x] Bounded primary-source error audit records COPY_SEND baseline versus copied
+  message refs, coalesced pseudo-return urefs/saturation, descriptor/header
+  receive distinctions, partial body errors and unobservable copy-back. Root
+  personally read full relevant .121.6 C contexts; both independent read-only
+  design assessments support only conservative retained-failure containment.
+  Published pseudo-receive discards final copy-back status after namespace
+  installation; lookup suppresses VM-cleanup status on RPC failure. No generic
+  error=>empty/closed rule, unchecked destructor, retry or running-host inference.
+  Source-only File Map stays this plan/spec; all five code/test pins unchanged.
+- [ ] Review the next literal noncomplex continuity-only research contract:
+  explicit header disposition, NULL reply/voucher, fixed nonce/payload/bounds/
+  interrupt options; each receive/send/lookup occurrence and VM/stash obligation;
+  checked successful clearing/restoration/disposal/join before reap; every
+  unproven phase burns acceptance into RETAINED_FAILED_OWNER without retry or
+  owner exit. At most one admitted attempt/retained owner, explicit resource/
+  deadline/external-death assumptions. Actual postexec original-channel receipt
+  plus authenticated live original-child sender and successful cleanup is the
+  only continuity oracle; omitted-registration control must fail that same
+  oracle, not compilation/harness. No task-self descriptor/CONTROL/P2 claim.
+  This step is docs-only; no implementation file or effect recipe is admitted.
 - [ ] Determine whether the complete send/receive error table and postexec
   registration/loader continuity permit a separately scoped executable design.
   If not, record the precise unsupported contract and continue only safe source
