@@ -19,6 +19,126 @@ assignment, provider/branch/access changes or automatically acting on proposals.
 Exact-head feedback and every suggested implementation/effect require their
 own evidence and scoped review. All positive/merge/runtime gates remain closed.
 
+## S7 separately bounded pure END producer proposal
+
+S6 ordinary initialNONCE extraction/sensitivity and scoped draft delivery are
+complete at2349e944/exactcloudbodyc91cde, still OPEN/DRAFT eleven files. All live
+owner/CONTROL/P2 gates remain open. Next causal prerequisite is the frozen END
+byte producer; choose it separately from a nonce-bound END decoder (two missing
+symbols/two independent sensitivities at once) and from a generic multi-frame
+API (unnecessary dispatch/cross-kind surface). Standing owner instruction selects
+the smallest causal slice without routine approval; root remains sole writer.
+The initial SOURCE/DESIGN nomination was not test/effect admission; subsequent
+test authoring was separately reviewed and source-gated as recorded below.
+
+Exact File Map modifies existing frame C/test and named plan/spec, aggregate
+eleven. Preserve original60-line3028-byte C prefix and allfour historical literal
+drivers (S3a4dc/S4a860fc/S51b7b/S63e862521); otherseven code/test pins unchanged.
+New proposed interface, not an existing frozen symbol:
+
+```c
+unsigned sf_continuity_encode_end_v2(uint8_t *end_frame, size_t capacity,
+                                    const uint8_t nonce[16]);
+```
+
+Return0/refusal without output writes or nonce access, or1/exact encoded bytes.
+Check both pointers and exact32 before caller-memory access. Non-NULL readable16/
+writable32 storage validity is a caller precondition; snapshot all16 nonce bytes
+BEFORE ALL output writes to support valid overlap at output0/8/16. Separate nonce
+storage stays unchanged. Write exactly32 bytes SFENDV2!/BEversion2/fourreserved
+zero/inputnonce16. Accept arbitrary payload bytes; no entropy/freshness/secrecy/
+provenance/replay claim. No heap/I/O/Node/Mach/signal/cancel/channel/deadline/
+custody mutation, END write/consumption/dispatcher or shutdown effect.
+Return1 is only byte production, never permission to send END, close a pipe,
+release an obligation or terminate. Future P_END still requires known local
+closure, receiver join/authentication and the original live-child check. Even
+valid nonce-bound END cannot dispose or exit an uncertain retained owner.
+
+Independent END_DRIVER fixes full literal pattern/zero/ff END outputs and separate
+input nonce literals. Never call a production builder/decoder for expectations.
+Baseline48 calls:36 NULL/capacity refusals (NULLout/nonce,0..31,33,SIZE_MAX), each
+requires unchanged34-byte output arena and16-byte nonce;12 successes cover each
+nonce fixture separately and overlaps0/8/16. All success probes require return1/
+canaries/separate nonce unchanged and ALL32 output bytes matching literal frame.
+Owned-copy control changes ONLY unique end_frame[15]=0 to1. Specific71 requires
+all36 refusals, then return1/intact canaries/input and ALL31 other bytes before
+reserved15=1 instead0. Generic setup/compiler/link/signal/storage/output failure
+is nonpositive; this control stops on first accepted call, not all12 mutation
+coverage. Original C/test/status/NONCE functions/drivers never mutate.
+
+New absent-or1 SETFARM_TASK6A_NATIVE_CONTINUITY_END_TEST mutually exclusive with
+S3/S4/S5/S6. Default10SKIP/0PASS no input/fixture/child acquisition. Closed helper
+modes end-baseline/end-reserved select separate literal END driver/case map;
+add producer to failed-link receipt branch. Missing-function RED must have actual
+two compile0/link1 solely missing sf_continuity_encode_end_v2/no otherundefined/
+warnings/no image/inspection/driver, complete FIRST4artifact/source/test/tool/
+channel commitments and99distinct99checkedcloses BEFORE unchangedlink0assert
+fails. Only independently qualified actual RED permits minimal implementation.
+Baseline and reservedcontrol separately need paired actual-source/effect reviews,
+fresh current11/original85-header/seven-absence/tool/preservation/resource gates,
+unchanged strong-stack two-compiles/one explicitSystem-link/stricttwo guardimports/
+one directSystem inspection BEFORE driver, FIRST5artifact/source/test/tool material
+commitments/100distinct100checkedcloses/naturalexit-close/signalNULL/bothEOF/
+emptychannels. Retain original fixtures and roots; audit ONLYnew respective
+fixture, never replay accepted S6/S5/S4/S3/S2/S1/genuine samples or fullmatrix.
+Mutable-host samples/post-audits are not continuous/immutable/runtimeTCB proof.
+Syntax/default-off/version/English/path/diff/scoped exposure/current11/preservation/
+pairedfinal review admit at most root scoped4commit/normalpush/existingDRAFT275
+body update, not ready/merge/cleanmainbuild/rollout/channel/CONTROL/P2. Genuine
+kernelFAIL5 and sticky uncertainty remain visible and nonpositive.
+
+Paired source/design C0/I0/M0 at plan525c9bba/spec95b29fb9 and fresh source-only
+c1ff11 held16/rereads/materialpath/checked16closes/current11/preservation22dirs/
+resources5009396KiB98%/memory66%/noheat admitted actual test authoring only.
+Actual test0b17b528/966lines53463B has separate3134-byte literalEND_DRIVER96d4c863;
+at this authoring epoch Cae609f68 has no END producer. Root143fdf syntax0/b108a1
+diff0/644ae5 default10SKIP0PASS0FAIL42.471625ms, no input/fixture/child acquisition.
+17b148 original C/allfour historical drivers byte-identical. RED/effects remain
+separately reviewed/gated; default skips are not END production acceptance.
+
+Paired ACTUAL RED-only C0/I0/M0 and fresh6fb62d full109-original-input/
+preservation/resource gate preceded ONEd40e36 CLOSED1:1FAIL/0PASS/0SKIP
+1038.60125ms. Actualtwo compile0/link1 solelymissing sf_continuity_encode_end_v2/
+no warnings/otherundefined/image/inspection/driver. FIRST4artifact/source/test/
+tool/channel commitments precede unchangedlink0assert and99distinct99checked
+closes; fixture1spYq4/dir216289755 retained,10atimechanges separate. Independent
+ONLYnewRED131181 heldsix originals/rereads twice/allfirstmaterial/path/hash/
+checkedonce6closes/exactfourinventory+directory matched. Only afterward root
+appended14lines minimal producer, current C8a1eea16/74lines3777B/original3028-
+byte prefix identical, actual test0b17 unchanged. At this post-RED epoch baseline
+and control still need separate actual-source/effect reviews and fresh gates;
+no END transmission/shutdown/channel authority follows. Never replay RED or
+accepted historical samples.
+
+Subsequent paired actual-source/baseline-only C0/I0/M0 and freshc7d52b at
+20:47:16UTC held109 original inputs/rereads/materialpath/109checkedcloses/
+current11/original85headers/sevenabsences/tools/preservation56dirs before ONE
+c4af90 CLOSED0:1PASS/0FAIL/0SKIP1616.222958ms. Actual2compile0/link0/exacttwo
+guardimports/directSystem1356 BEFOREdriver0/all48literalcalls, naturalexit-close/
+signalNULL/bothEOF/emptychannels/100distinct100checkedcloses. FullFIRSTfive
+artifact/source/test/tool commitments retained; fixturec9heNS/dir216289908/
+501:0m700,13atimechanges separate/noninvariant. IndependentONLYnewbaseline
+e1813a C0/I0/M0 heldfiveartifacts+C/test+durableoriginal/eightdistinctFDs/
+rereadstwice/allFIRSTmaterial/path/hash/8checkedoncecloses/exactinventory+
+directory matched. Currentconsistency only, notretroTCB/control permission.
+
+Separate paired actualCONTROL-only C0/I0/M0 and fresh16dc48 at20:54:37UTC
+held109 originalinputs/rereads/materialpath/109checkedoncecloses/current11/
+original85/sevenabsences/tools/preservation56dirs/resources5205104KiB98%/
+memory65%/noheat preceded ONE51240c CLOSED0:1PASS/0FAIL/0SKIP1594.174583ms.
+Actual2compile0/link0/NMexacttwo guards/directSystem1356 BEFOREdriver71:
+reserved15one only after36refusals/return1/canaries/input/all31otherbytes.
+Naturalexit-close/signalNULL/bothEOF/emptychannels/100distinct100checkedcloses/
+FIRSTfive fullcommitments retained; fixtureUoMFjR/dir216290158/501:0m700,
+14atimechanges separate. IndependentONLYcontrol522eaa C0/I0/M0 heldfiveartifacts+
+C/test+durableoriginal/eightdistinctFDs/rereadstwice/allFIRSTmaterial/path/hash/
+8checkedoncecloses/exactinventory+directory matched; candidatef9462ab9 exactly
+source withONLYuniqueownedreserved15zero->one. Notgenericfailure/all12control
+coverage/immutableTCB. Rootsyntax/default10SKIP0PASS0FAIL/noacquisition/version/
+English/path/diff checks passed. Finalpairedsource/deliveryreview and fresh
+currentinput/preservation/resource/exposure gate remain before scoped4commit/
+normalpush/existingOPEN DRAFT275body. No ENDsend/shutdown/channel/CONTROL/P2.
+
 ## S6 separately bounded pure initial nonce extractor proposal
 
 S5's ordinary producer/sensitivity checkpoint is delivered to existing DRAFT275
@@ -148,7 +268,8 @@ original C/test/prefix/literaldriver unchanged. Narrow sensitivity, not exhausti
 mutation coverage or runtime authority/TCB. Final41ce4a syntax0/03da97 default
 8SKIP0PASS0FAIL42.16025ms(no acquisition)/91eefa version2.3.79/4672ee English1936/
 08af6a paths971/652290diff0. Final scoped review/currentinventory/draft-only
-delivery remain pending; no ready/merge/build/rollout/channel/CONTROL/P2credit.
+delivery completed at2349e944/exactcloudbodyc91cde; earlier pending wording is
+the precommit epoch. No ready/merge/build/rollout/channel/CONTROL/P2credit.
 
 ## S5 separately bounded pure nonce producer proposal
 

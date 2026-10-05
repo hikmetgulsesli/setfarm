@@ -58,3 +58,17 @@ unsigned sf_continuity_decode_nonce_v2(const uint8_t *bytes, size_t length,
     for (size_t i = 0; i < 16; i++) nonce_out[i] = snapshot[i];
     return 1;
 }
+
+/* Pure END bytes; never permission to send, release or terminate an owner. */
+unsigned sf_continuity_encode_end_v2(uint8_t *end_frame, size_t capacity,
+                                    const uint8_t nonce[16]) {
+    static const uint8_t magic[8] = {'S','F','E','N','D','V','2','!'};
+    uint8_t snapshot[16];
+    if (end_frame == NULL || nonce == NULL || capacity != 32) return 0;
+    for (size_t i = 0; i < 16; i++) snapshot[i] = nonce[i];
+    for (size_t i = 0; i < 8; i++) end_frame[i] = magic[i];
+    end_frame[8] = 0; end_frame[9] = 0; end_frame[10] = 0; end_frame[11] = 2;
+    end_frame[12] = 0; end_frame[13] = 0; end_frame[14] = 0; end_frame[15] = 0;
+    for (size_t i = 0; i < 16; i++) end_frame[16 + i] = snapshot[i];
+    return 1;
+}

@@ -1,5 +1,191 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S7 pure END producer implementation plan
+
+> **For agentic workers:** Root implements inline and remains sole writer;
+> independent agents are read-only researchers/reviewers, never delivery/effects.
+
+**Goal:** Produce the frozen END frame without shutdown or ownership authority.
+**Architecture:** One appended pure C producer after real missing-function RED;
+one separate independent literal driver in the existing builtin Node test.
+**Tech Stack:** Existing fixed installed CLT/Public SDK C11/Node, no new header.
+**Spec:** Named design, S7 separately bounded pure END producer proposal.
+**Status:** Paired source/design C0/I0/M0 and fresh source-onlyc1ff11 admitted
+actual test authoring. Test0b17b528/966lines53463B and separate3134-byte END_DRIVER
+96d4c863 now exist; at this authoring epoch Cae609f68 has no END producer.
+Paired actual-test RED-only review/fresh109 gate preceded REDd40e36/audit131181.
+Only afterward root appended14lines minimal producer, C8a1eea16/74lines3777B,
+original3028-byte prefix intact. Paired baseline reviews/freshc7d52b preceded
+ONE baselinec4af90/audite1813a. Separate pairedcontrolreviews/fresh16dc48
+preceded control51240c/audit522eaa; ordinary bytes/specific sensitivity only.
+Scoped draft delivery pending; no END transmission/shutdown authority.
+
+### Global constraints / File Map / interface
+
+- Modify existing frame C/test and named plan/spec only, aggregate eleven.
+  Preserve original60line3028B C prefix/allfour historical drivers/other7pins.
+- New unsigned sf_continuity_encode_end_v2(uint8_t *,size_t,const uint8_t[16]);
+  NULL/exact32 BEFORE access, return0/unchanged output or1/bytes only; valid
+  caller writable32/readable16; snapshot16 BEFORE allwrites/overlap0/8/16.
+  Exact SFENDV2!/BE2/fourzeroreserved/originalnonce16. No I/O/heap/nativechannel/
+  Node/Mach/cancel/signal/custody/cleanup/ENDconsumption/shutdown/deadline effect.
+- Future END permission remains knownclosure/join/authenticate/livechild only;
+  uncertainowner staysretained evenvalid END. No byte-predicate authority.
+- New absent-or1 SETFARM_TASK6A_NATIVE_CONTINUITY_END_TEST, oneof5flags;
+  default10SKIP0PASS no acquisition. Original85headers/sevenabsences/toolpins/
+  strongstack/oncecloses/fixturepreservation unchanged. No acceptedcase replay.
+
+### Task S7a: independent literal oracle and actual missing-encoder RED
+
+- [x] Paired SOURCE/design review and fresh16-current-input/preservation/resource
+  gate before root actual test authoring. Cae609f60/test386851 remain unchanged.
+  Plan525c9bba/spec95b29fb9 pairedC0/I0/M0;freshc1ff11 held16/rereads/materialpath/
+  checked16closes/current11/preservation22dirs/resources5009396KiB98%/memory66%/
+  throttled0/noheat. This admits test authoring only, not native effects.
+- [x] Add separate END_CASES and END_DRIVER. Independent full literals:
+
+  ```c
+  static const uint8_t patterned[16]={
+    0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+    0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+  };
+  static const uint8_t zero[16]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+  static const uint8_t ff[16]={
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+  };
+  static const uint8_t pattern_frame[32]={
+    'S','F','E','N','D','V','2','!',0,0,0,2,0,0,0,0,
+    0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+    0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+  };
+  static const uint8_t zero_frame[32]={
+    'S','F','E','N','D','V','2','!',0,0,0,2,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  };
+  static const uint8_t ff_frame[32]={
+    'S','F','E','N','D','V','2','!',0,0,0,2,0,0,0,0,
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+  };
+  ```
+
+  Declare exact new API/include onlystddef/stdint. Refusal helper owns arena34/
+  snapshot34 and input16 initialized patterned; call NULLout/NULLnonce,0..31/
+  33/SIZE_MAX, verify all34+16 unchanged/return0 (36calls). Accepted helper owns
+  arena34/canaries0xa5/input16 from independent suppliedliteral. Non-overlap or
+  embed nonce at output+0/+8/+16. Require canaries/input/return1, ALL31 output
+  bytes except15 vs full literal BEFORE reservedbyte check:
+
+  ```c
+  for (size_t i=0; i<32; i++) if (i!=15 && out[i]!=expected[i]) return 72;
+  if (out[15]!=expected[15]) return out[15]==1 ? 71 : 72;
+  ```
+
+  Exactly12 successes pattern/zero/ff each separate+3overlaps; baseline48calls.
+  Code71 onlyfirstacceptedcall after36refusals/specificreserved1, notall12control
+  coverage. Other returns/storage/canary faults non71. New test names:
+  'continuity END encoder produces only literal bound frames' and
+  'continuity END encoder oracle rejects reserved-byte mutation'. Add closed
+  end-baseline/end-reserved modes/newflag/mutualexclusion/driver+casedispatch/
+  failed-linkbranch. Mutation unique end_frame[15] = 0; to1 in ownedcopy ONLY.
+  Syntax/diff/default10SKIP0PASS, allfourhistoricaldrivers/C unchanged.
+  Root143fdf syntax0/b108a1 diff0/644ae5 default10SKIP/0PASS/0FAIL42.471625ms
+  no acquisition.17b148 C/allfourhistoricaldrivers byte-identical; separate
+  literalEND_DRIVER3134B SHA96d4c8638914f7143039056fdd52a748c1018c41d95b0c0ce638c9fc0c063397.
+- [x] Paired COMPLETE actualtest/C RED-only review +fresh109-original-input gate
+  precede ONE serial fixed anchored RED:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_END_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity END encoder produces only literal bound frames$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Requireactual2compile0/link1 solelymissingnewENDencoder/no warnings/other
+  undefined/image/inspection/driver/full FIRST4artifact/source/test/tool/channel
+  commitments/99distinct99checkedcloses BEFORE unchangedlink0assertfails.
+  Save fulloriginaloutside repo; independent ONLYnewRED artifact audit.
+  Historical completed command, never replay it. Paired ACTUAL RED-only C0/I0/M0
+  at Cae/test0b17/planb57d9471/spec8c3706c5 and fresh6fb62d held109/rereads/
+  materialpath/checked109closes/current11/original85headers/sevenabsences/tools/
+  preservation56dirs/graph60headers109edgesoutside0/resources5201632KiB98%/
+  memory65%/noheat preceded ONEd40e36 CLOSED1:1FAIL/0PASS/0SKIP1038.60125ms/
+  case995.624333. Actual2compile0/link1solemissingENDencoder/no warnings/other
+  undefined/image/inspection/driver; FIRST4artifact/source/test/tool/channel
+  commitments BEFOREunchangedlink0assert/99distinct99checkedcloses. Fixture
+  1spYq4/dir216289755/501:0m700 retained;10atimechanges separate/noninvariant.
+  IndependentONLYnewRED131181 heldsix originals/rereads twice/allfirstmaterial/
+  path/hash/checkedonce6closes/exact4inventory+directory matched; missingfeature only.
+
+### Task S7b: minimal producer, separate baseline/control, draft checkpoint
+
+- [x] After ONLYqualified original RED append minimal pure encoder:
+
+  ```c
+  unsigned sf_continuity_encode_end_v2(uint8_t *end_frame, size_t capacity,
+                                      const uint8_t nonce[16]) {
+      static const uint8_t magic[8] = {'S','F','E','N','D','V','2','!'};
+      uint8_t snapshot[16];
+      if (end_frame == NULL || nonce == NULL || capacity != 32) return 0;
+      for (size_t i = 0; i < 16; i++) snapshot[i] = nonce[i];
+      for (size_t i = 0; i < 8; i++) end_frame[i] = magic[i];
+      end_frame[8] = 0; end_frame[9] = 0; end_frame[10] = 0; end_frame[11] = 2;
+      end_frame[12] = 0; end_frame[13] = 0; end_frame[14] = 0; end_frame[15] = 0;
+      for (size_t i = 0; i < 16; i++) end_frame[16 + i] = snapshot[i];
+      return 1;
+  }
+  ```
+
+  Root appended only14lines after131181; current C8a1eea16/74lines3777B,
+  original3028-byte prefix identical0b95f0; actual test0b17 remains unchanged.
+
+- [x] Separate pairedactualsource/effect review/fresh109gate precede ONEnew
+  baseline atimplementedepoch(sameanchoredcommand,notREDreplay). Require
+  driver0/all48calls/2compile0/link0/NMexact2guards/directSystemBEFOREdriver/
+  FIRST5artifact/source/test/tool/fullmaterialcommitments/100distinct100checked
+  closes/naturalexit-close/signalNULL/bothEOF/emptychannels. IndependentONLYnew
+  baselineartifactualaudit. No acceptedoldsample/fullmatrixreplay.
+  Paired actual-source/baseline-only C0/I0/M0 and freshc7d52b at20:47:16UTC
+  held109 originals/rereads/materialpath/109checkedcloses/current11/original85/
+  sevenabsences/tools/preservation56dirs preceded ONEc4af90 CLOSED0:
+  1PASS/0FAIL/0SKIP1616.222958ms/case1573.368625. Actual2compile0/link0/
+  exact2guardimports/directSystem1356 BEFOREdriver0/all48literalcalls/
+  naturalexit-close/signalNULL/bothEOF/emptychannels/100distinct100checkedcloses.
+  FullFIRST5artifact/source/test/tool commitments retained in private original;
+  fixturec9heNS/dir216289908/501:0m700;13atimechanges separate/noninvariant.
+  IndependentONLYnewbaseline e1813a C0/I0/M0 at20:54:35UTC heldfiveartifacts+
+  C/test+durableoriginal/eightdistinctFDs/rereadstwice/allFIRSTmaterial/path/hash/
+  checkedonce8closes/exactinventory+directory/driver96d4/prefixae matched.
+  Currentconsistency only, notretroTCB. This audit admits no control by itself.
+- [x] Separate pairedcontrol-only review/fresh109gate precede ONE:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_END_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity END encoder oracle rejects reserved-byte mutation$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Requireuniqueownedreserved15zero->one/specificdriver71 AFTER36refusals and
+  return1/canaries/input/31otherbytes; genericfailurecannotPASS. SameFIRST5
+  commitments/100checkedcloses/naturalsettlement; independentONLYcontrolaudit.
+  Historical completed command, never replay. Paired actualCONTROL-only C0/I0/M0
+  and fresh16dc48 20:54:37UTC held109/rereads/materialpath/109checkedoncecloses/
+  current11/original85/sevenabsences/tools/preservation56dirs/resources5205104
+  KiB98%/memory65%/noheat preceded ONE51240c CLOSED0:1PASS/0FAIL/0SKIP
+  1594.174583ms/case1549.973. Actual2compile0/link0/NMexact2guards/directSystem
+  1356 BEFOREdriver71/onlyreserved15one after36refusals+return1+canaries+input+
+  all31otherbytes; emptychannels/signalNULL/bothEOF/naturalexit-close/
+  100distinct100checkedcloses/FIRST5fullcommitments. FixtureUoMFjR/dir216290158/
+  501:0m700 retained;14atimechanges separate/noninvariant. IndependentONLYcontrol
+  522eaa C0/I0/M0 at20:57:24UTC heldfiveartifacts+C/test+durableoriginal/eight
+  distinctFDs/rereadstwice/allFIRSTmaterial/path/hash/8checkedoncecloses/
+  exactinventory+directory matched; candidatef9462ab9 onlyuniqueowned15zero->one.
+  Specificsensitivity/currentconsistency only, notENDsend/immutableTCB authority.
+- [ ] Finalsyntax/default10SKIP0PASS/version/English/path/diff/current11/prefix/
+  fourhistoricaldrivers/other7pins/originaltwo/journalHASHONLY/CLIbuild/resources/
+  exposure/pairedreview before root scoped4commit/normalpush/OPEN DRAFT275body.
+  No ready/merge/build/rollout/ENDdispatcher/nativechannel/CONTROL/P2permission.
+  Root49d427syntax0/0ec1c4version2.3.79/1b5130English1936/1687b3paths971/diff0;
+  default2fa65810SKIP/0PASS/0FAIL41.829375ms/noacquisition. Pairedfinalsource/
+  delivery review and freshcurrent11/preservation/resource/exposure gate pending.
+
 ## S6 pure initial nonce extractor implementation plan
 
 > **For agentic workers:** Root implements inline and remains sole writer.
@@ -17,8 +203,9 @@ Paired actual-test RED-only review and fresh109 gate preceded missing-function
 REDcc8fef and independent original-artifact audit9220cc. Only afterward root
 appended the minimal15-line decoder; Cae609f68/60lines3028B preserves original
 2277-byte S5 prefix. Separate baseline8ad726/independent auditb76704 and specific
-control ddd832/audit6038b6 qualify ordinary extraction/sensitivity only. Final
-draft-only review/currentinventory/delivery remain pending; channel gates stay open.
+control ddd832/audit6038b6 qualify ordinary extraction/sensitivity only. Scoped
+draft delivery completed2349e944/exactcloudbodyc91cde; earlier delivery-pending
+wording below describes precommit epoch. Channel gates stay open.
 
 ### Global constraints / File Map / interface
 

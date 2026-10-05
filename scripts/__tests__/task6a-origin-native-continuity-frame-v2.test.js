@@ -19,7 +19,10 @@ const nonceEnabled=nonceFlag==='1';
 const nonceDecoderFlag=process.env.SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_DECODER_TEST;
 assert.ok(nonceDecoderFlag===undefined || nonceDecoderFlag==='1','closed nonce decoder opt-in');
 const nonceDecoderEnabled=nonceDecoderFlag==='1';
-assert.ok([enabled,encoderEnabled,nonceEnabled,nonceDecoderEnabled].filter(Boolean).length<=1,
+const endFlag=process.env.SETFARM_TASK6A_NATIVE_CONTINUITY_END_TEST;
+assert.ok(endFlag===undefined || endFlag==='1','closed continuity END opt-in');
+const endEnabled=endFlag==='1';
+assert.ok([enabled,encoderEnabled,nonceEnabled,nonceDecoderEnabled,endEnabled].filter(Boolean).length<=1,
   'one separately reviewed recipe only');
 const sourcePath=fileURLToPath(new URL('../task6a-origin-native-continuity-frame-v2.c',import.meta.url));
 const selfPath=fileURLToPath(import.meta.url);
@@ -532,6 +535,90 @@ int main(void) {
   return reserved_one();
 }
 `;
+// END bytes only; never permission to send, release or terminate an owner.
+const END_CASES=Object.freeze({
+  0:'all-literal-end-cases-and-storage-boundaries',
+  10:'null-output',11:'null-nonce',12:'short-capacity',13:'extra-capacity',
+  14:'size-max-capacity',71:'only-end-reserved-byte-mutated-to-one',
+  72:'other-output-byte-or-reserved-failure',80:'encoder-return',
+  90:'storage-mutation',91:'output-canary',
+});
+const END_DRIVER = String.raw`
+#include <stddef.h>
+#include <stdint.h>
+unsigned sf_continuity_encode_end_v2(uint8_t *,size_t,const uint8_t[16]);
+static const uint8_t patterned[16]={
+  0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+  0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+};
+static const uint8_t zero[16]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+static const uint8_t ff[16]={
+  0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+  0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+};
+static const uint8_t pattern_frame[32]={
+  'S','F','E','N','D','V','2','!',0,0,0,2,0,0,0,0,
+  0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+  0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+};
+static const uint8_t zero_frame[32]={
+  'S','F','E','N','D','V','2','!',0,0,0,2,0,0,0,0,
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+};
+static const uint8_t ff_frame[32]={
+  'S','F','E','N','D','V','2','!',0,0,0,2,0,0,0,0,
+  0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+  0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+};
+static int refused(size_t capacity,int null_out,int null_nonce,int diagnostic) {
+  uint8_t arena[34],saved[34],input[16];
+  for(size_t i=0;i<34;i++)arena[i]=saved[i]=0xa5;
+  for(size_t i=0;i<16;i++)input[i]=patterned[i];
+  unsigned actual=sf_continuity_encode_end_v2(null_out?NULL:arena+1,capacity,
+                                            null_nonce?NULL:input);
+  for(size_t i=0;i<34;i++)if(arena[i]!=saved[i])return 90;
+  for(size_t i=0;i<16;i++)if(input[i]!=patterned[i])return 90;
+  return actual==0?0:diagnostic;
+}
+/* All storage has known valid extent; -1 is separate, 0/8/16 overlap. */
+static int encoded(const uint8_t supplied[16],const uint8_t expected[32],int overlap) {
+  uint8_t arena[34],input[16];
+  for(size_t i=0;i<34;i++)arena[i]=0xa5;
+  for(size_t i=0;i<16;i++)input[i]=supplied[i];
+  uint8_t *out=arena+1;
+  const uint8_t *source=input;
+  if(overlap>=0){
+    for(size_t i=0;i<16;i++)out[(size_t)overlap+i]=supplied[i];
+    source=out+(size_t)overlap;
+  }
+  unsigned actual=sf_continuity_encode_end_v2(out,32,source);
+  if(arena[0]!=0xa5 || arena[33]!=0xa5)return 91;
+  for(size_t i=0;i<16;i++)if(input[i]!=supplied[i])return 90;
+  if(actual!=1)return 80;
+  /* All31 other bytes precede the ONLY reserved-byte fault code. */
+  for(size_t i=0;i<32;i++)if(i!=15 && out[i]!=expected[i])return 72;
+  if(out[15]!=expected[15])return out[15]==1?71:72;
+  return 0;
+}
+#define REFUSE(capacity,null_out,null_nonce,diagnostic) do { \
+  int result=refused(capacity,null_out,null_nonce,diagnostic); \
+  if(result!=0)return result; \
+} while(0)
+#define ENCODE(supplied,expected,overlap) do { \
+  int result=encoded(supplied,expected,overlap); \
+  if(result!=0)return result; \
+} while(0)
+int main(void) {
+  REFUSE(32,1,0,10);REFUSE(32,0,1,11);
+  for(size_t capacity=0;capacity<32;capacity++)REFUSE(capacity,0,0,12);
+  REFUSE(33,0,0,13);REFUSE(SIZE_MAX,0,0,14);
+  ENCODE(patterned,pattern_frame,-1);ENCODE(zero,zero_frame,-1);ENCODE(ff,ff_frame,-1);
+  ENCODE(patterned,pattern_frame,0);ENCODE(patterned,pattern_frame,8);ENCODE(patterned,pattern_frame,16);
+  ENCODE(zero,zero_frame,0);ENCODE(zero,zero_frame,8);ENCODE(zero,zero_frame,16);
+  ENCODE(ff,ff_frame,0);ENCODE(ff,ff_frame,8);ENCODE(ff,ff_frame,16);
+  return 0;
+}
+`;
 const MATERIAL = ['dev','ino','uid','gid','mode','nlink','size','mtimeNs','ctimeNs'];
 function same(a,b) { return MATERIAL.every(key=>a[key]===b[key]); }
 function digest(fd,size) {
@@ -624,12 +711,14 @@ function artifact(item) {
 }
 async function invokeFrame(mode) {
   assert.ok(['baseline','nonce-omission','encode-baseline','encode-version',
-    'nonce-baseline','nonce-reserved','nonce-decode-baseline','nonce-decode-reserved'].includes(mode));
+    'nonce-baseline','nonce-reserved','nonce-decode-baseline','nonce-decode-reserved',
+    'end-baseline','end-reserved'].includes(mode));
   const encoder=mode==='encode-baseline'||mode==='encode-version';
   const nonce=mode==='nonce-baseline'||mode==='nonce-reserved';
   const nonceDecoder=mode==='nonce-decode-baseline'||mode==='nonce-decode-reserved';
-  const selectedDriver=nonceDecoder?NONCE_DECODE_DRIVER:nonce?NONCE_DRIVER:encoder?ENCODER_DRIVER:DRIVER;
-  const selectedCases=nonceDecoder?NONCE_DECODE_CASES:nonce?NONCE_CASES:encoder?ENCODER_CASES:CASES;
+  const endEncoder=mode==='end-baseline'||mode==='end-reserved';
+  const selectedDriver=endEncoder?END_DRIVER:nonceDecoder?NONCE_DECODE_DRIVER:nonce?NONCE_DRIVER:encoder?ENCODER_DRIVER:DRIVER;
+  const selectedCases=endEncoder?END_CASES:nonceDecoder?NONCE_DECODE_CASES:nonce?NONCE_CASES:encoder?ENCODER_CASES:CASES;
   const held=[],checks=[],failures=[];let result,closed=0;
   try {
     let source;
@@ -686,6 +775,11 @@ async function invokeFrame(mode) {
       assert.equal(candidate.split(anchor).length,2,'unique nonce decoder reserved-one mutation');
       candidate=candidate.replace(anchor,'if (bytes[15] != 0 && bytes[15] != 1) return 0;');
     }
+    if(mode==='end-reserved'){
+      const anchor='end_frame[15] = 0;';
+      assert.equal(candidate.split(anchor).length,2,'unique END reserved mutation');
+      candidate=candidate.replace(anchor,'end_frame[15] = 1;');
+    }
     const dir=fs.mkdtempSync('/private/tmp/setfarm-continuity-frame.');
     fs.chmodSync(dir,0o700);const fixtureStat=directoryGuard(dir,checks,true);
     const candidateCopy=dir+'/candidate.c',driverCopy=dir+'/driver.c';
@@ -718,7 +812,7 @@ async function invokeFrame(mode) {
       '-fno-lto','-nostdlib','-Wl,-Z','-Wl,-syslibroot,'+SDK,
       candidateObject,driverObject,SDK+'/usr/lib/libSystem.B.tbd','-o',binary],dir);
     let importsResult=null,dependencyResult=null,driver=null;
-    if((encoder||nonce||nonceDecoder)&&link.code!==0){
+    if((encoder||nonce||nonceDecoder||endEncoder)&&link.code!==0){
       // Preserve actual failed-link channels and original artifacts BEFORE
       // the consuming test's unchanged link0 assertion. Never execute/inspect.
       const noImage=()=>checkAbsent(binary);noImage();checks.push(noImage);
@@ -847,5 +941,26 @@ test('continuity nonce decoder oracle rejects reserved-one acceptance',{skip:!no
   assert.equal(actual.availability,'frame-observed');
   assert.deepEqual(actual.driver,{code:71,signal:null,eof:[true,true],stdout:'',stderr:''});
   assert.equal(actual.case,'only-reserved-one-accepted-with-exact-nonce');
+  assert.equal(actual.receipt.checkedInputCloses,actual.receipt.inputCount);
+});
+
+// Break caught: wrong END layout, pre-access validation or overlap snapshot.
+test('continuity END encoder produces only literal bound frames',{skip:!endEnabled},async t=>{
+  const actual=await invokeFrame('end-baseline');
+  t.diagnostic(JSON.stringify(actual));
+  requireZero(actual.link,'actual END encoder link must succeed');
+  assert.equal(actual.availability,'frame-observed');
+  assert.deepEqual(actual.driver,{code:0,signal:null,eof:[true,true],stdout:'',stderr:''});
+  assert.equal(actual.case,'all-literal-end-cases-and-storage-boundaries');
+  assert.equal(actual.receipt.checkedInputCloses,actual.receipt.inputCount);
+});
+// Break caught: only reserved1, after refusal/return/storage/all31 other checks.
+test('continuity END encoder oracle rejects reserved-byte mutation',{skip:!endEnabled},async t=>{
+  const actual=await invokeFrame('end-reserved');
+  t.diagnostic(JSON.stringify(actual));
+  requireZero(actual.link,'actual END encoder control link must succeed');
+  assert.equal(actual.availability,'frame-observed');
+  assert.deepEqual(actual.driver,{code:71,signal:null,eof:[true,true],stdout:'',stderr:''});
+  assert.equal(actual.case,'only-end-reserved-byte-mutated-to-one');
   assert.equal(actual.receipt.checkedInputCloses,actual.receipt.inputCount);
 });
