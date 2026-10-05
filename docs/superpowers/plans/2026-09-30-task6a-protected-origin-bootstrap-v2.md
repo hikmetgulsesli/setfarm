@@ -1,5 +1,50 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## Source-only runtime-initialization channel research gate
+
+> Root is the sole writer. Independent workers review/research read-only.
+> This is a research gate, not a native implementation or effect recipe.
+
+**Goal:** Decide whether a separately reviewed postexec initializer/channel
+design has a complete, fail-closed acquisition contract without policy changes.
+**Architecture:** One fixed ordinary owning parent, one private inherited
+registered initialization channel, postexec-only self-right and authenticated
+message custody. Do not replace or relabel the genuine task_for_pid FAIL5.
+**Tech Stack:** Published Apple XNU/Mach contracts, installed SDK and fixed Node
+metadata only at this stage; no addon, new loader/compiler or native experiment.
+**Spec:** Existing named spec, Source-only runtime-initialization channel candidate.
+**File Map:** Modify ONLY this plan and its existing named spec for research.
+C7deb/testb2fc/delivered NAME/entry/bootstrap/maps, packages/DB/services/selectors
+and every retained root/build/fixture/journal/originaltwo remain unchanged.
+**Status:** Checkpoint82272c9b is locally committed/clean, unmerged. This research
+does not open genuine-positive/T4delivery/CONTROL/protected/P2 gates.
+
+- [x] Read primary installed three-slot registration contracts and published
+  userspace wrapper; identify per-slot copied references and separate VM allocation.
+  Empty baseline means exactly3NULL, not count0. Lookup errors suppress cleanup
+  status and cannot prove ownership absent.
+- [x] Read primary published self-port policy/message ownership/foreign CONTROL
+  contracts. INFO_EXT is receive-only; no supported immovable-send inspection
+  was established. COPY_SEND can guard-fault; received dispositions transform;
+  pseudo-receive can rename returned resources. Published .6 is not host .10.
+- [x] Compare unchanged failed TFP path, separate postexec initialization and host
+  policy change; choose only source-only separate-initializer research. Reject
+  preexec task substitution and no policy/permission/security/guard changes.
+- [x] Record proposed message/authentication/lifetime/disposition invariants in
+  the named spec; retain every uncertainty and the new initializer TCB boundary.
+- [ ] Independent full contract review: exact three-slot baseline/refusal/restore,
+  per-occurrence right and VM accounting, sender borrow/COPY_SEND, transformed
+  receiver ownership, audit trailer bounds/authentication, no hidden retry,
+  live unreaped generation, late cleanup and unknown-owner retention. Record
+  findings; fix source-only ambiguities before calling this research gate closed.
+- [ ] Determine whether the complete send/receive error table and postexec
+  registration/loader continuity permit a separately scoped executable design.
+  If not, record the precise unsupported contract and continue only safe source
+  research; do not fill the gap with unchecked destruction or fabricated closure.
+  If supported, present and review that complete design and exact new source/test
+  File Map/TCB/compiler/loader/control recipes before implementation. This gate
+  contains no admitted source-code/native invocation or blanket future clearance.
+
 ## Ordinary direct-parent task-port acquisition implementation subplan
 
 > **For agentic workers:** Root executes inline as the sole source/Git/effect

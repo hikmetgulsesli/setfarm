@@ -1,5 +1,99 @@
 # Task6A protected private source-entry bootstrap v2
 
+## Source-only runtime-initialization channel candidate
+
+Status: research contract only. The scoped acquisition checkpoint82272c9b is
+unmerged and its genuine task_for_pid gate remains FAIL5. This candidate does
+not retry/replace that experiment, admit new native code/effects or qualify
+CONTROL/protected/P2. Current refinement changes only this spec and its existing
+plan. An executable design needs a separately complete source/test/File Map,
+ownership error table, exact compiler/loader recipe and independent review
+before any source implementation or effect. No addon or new executable exists.
+
+The causal question is whether a separately reviewed run-time initializer inside
+the already-execed fixed Node can transfer its CURRENT self right to its actual
+isolated owning parent through one private inherited ordinary IPC channel.
+This adds addon/loader/compiler/native-message TCB; it cannot make that TCB or
+foreign CONTROL available by assertion. The existing fixed builtin entry must
+not be modified or silently relabelled as this different initializer.
+
+Architecture alternatives: retain the observed task_for_pid failure without
+retries; examine a cooperative postexec initializer as a separate diagnostic;
+or change host security policy. Choose only source research of the cooperative
+initializer. Host policy changes are outside standing authority. A preexec
+self right is rejected because its task generation is not proven to survive
+exec; explicit special-port injection expands the spawn contract and is not
+chosen. No bootstrap/TASK_ACCESS/debug/exception replacement, hardening opt-out,
+SIP/credential/access-control/privilege/service change or target selection.
+
+Proposed ownership rules, not an admitted effect recipe:
+
+- One ordinary isolated C owner exclusively births/observes/reaps its fixed Node
+  child. One private receive channel stays owned until any receiver request has
+  actually returned and joined. Main alone owns waits/signals/failure ledger;
+  no sibling or public PID/path/options selector is added.
+- Registered ports are run-time-initialization facilities, not general ongoing
+  transport. Restrict every lookup/register to the isolated caller's own task.
+  Require exactly three NULL baseline slots; refuse any preexisting nonempty
+  registration, do not replace it. Temporarily install one private channel plus
+  two NULL slots. Check zeroing of all three after child creation and independently
+  verify restoration; never infer count0 from an empty stash.
+- Each lookup-returned valid slot owns one copied user reference, including
+  repeated names. Account by occurrence, not unique name. The three-slot VM
+  allocation is a separate original obligation. Latch each disposition before
+  its sole checked call. Lookup failure is uncertain: the userspace wrapper
+  suppresses VM cleanup status, so error/NULL is not proof of no allocation.
+  Failed/ambiguous ownership retains a failed owner, not rescue or closure.
+- Only a postexec Node initializer may borrow its current mach_task_self right
+  and attempt one fixed-message COPY_SEND. Never deallocate that borrowed self
+  reference. No TFP fallback/retry, preexec handoff or later target generation.
+  INFO_EXT receive flags do not inspect immovable-send status; an attempted
+  immovable COPY_SEND can raise a fatal guard. No movability claim or guard
+  suppression follows from third-party macOS policy defaults.
+- Review exactly one complex port descriptor, fixed message ID/version and
+  bounded payload, no reply/voucher/OOL body, one independently supplied nonce,
+  the exact private receiving channel and requested kernel audit trailer.
+  Validate kernel-transformed received disposition rather than requiring sender
+  COPY_SEND bytes after receipt. Bounds-check aligned trailer offset/size before
+  access. Use documented BSM field accessors; retain full opaque audit bytes.
+- Register received original resources before fallible authentication. Require
+  exact sender/UID/PID generation while the original child remains live/unreaped,
+  candidate PID binding and candidate audit equal to the kernel sender trailer,
+  then original three live challenges and second stable audit BEFORE END.
+  No PID/right/audit bytes become exported authority. Receiving a right does not
+  establish foreign CONTROL conversion, usable lockdown or VM/map admission.
+- Keep the original receive buffer. Define checked per-resource disposal and
+  error-specific partial-copyout accounting BEFORE accepting executable design.
+  Failed send pseudo-receive may change resource names; do not blindly destroy
+  the original send buffer. mach_msg_destroy returns no checked cleanup status
+  and cannot certify closure. No walking untrusted descriptor counts, rewriting
+  and destroying the same candidate twice, or ignoring unknown copied resources.
+- One nonrenewable deadline; burn forbids acquisition/authentication/positive
+  observations but permits once-only local dispositions, draining and cleanup
+  of the original known-unreaped child. Consume its status only after actual
+  receiver-request join; observed-dead/uncertain excludes signals. No receiver
+  cancellation/detachment/owner exit substitutes for settlement. Proposed bounded
+  send/receive waits still do not prove hard syscall return. Review interrupt
+  options explicitly: the userspace wrapper otherwise automatically retries
+  interrupted sends/receives. One application call is not a one-kernel-call
+  witness. Pending requests/unknown cleanup keep failed ownership visible.
+
+Required unresolved gates: actual registered-channel continuity across exec
+into this fixed Node build; actual self-right movability; complete send/receive
+error ownership/checked cleanup; exact new initializer/compiler/loader closure;
+and independent foreign CONTROL viability. No experiment may claim these from
+the installed SDK or published kernel source. Published xnu12377.121.6 is not
+running12377.121.10 host policy/teardown proof. Source-only contract review is
+the next step; no executable implementation/effect is admitted by this text.
+
+Primary contracts inspected by root and independent reviewers:
+[registration purpose](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/man/mach_ports_register.html),
+[userspace lookup/register](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/libsyscall/mach/task.c#L59),
+[message ownership](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/man/mach_msg.html),
+[unchecked destructor and interrupted-call retries](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/libsyscall/mach/mach_msg.c),
+[self-port policy](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/kern/task.c#L960),
+[foreign CONTROL gate](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/kern/ipc_tt.c#L2307).
+
 ## Ordinary direct-parent task-port acquisition slice
 
 Status: ordinary refusal and finite synthetic-request lifecycle checkpoints.
