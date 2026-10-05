@@ -16,7 +16,8 @@ tests and the unchanged delivered builtin entry; no added packages.
 **Spec:** docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md,
 section
 Ordinary direct-parent task-port acquisition slice.
-**Status:** Source-only spec/plan. No new C/test, compiler or native experiment.
+**Status:** T1 refusal-only C/test checkpoint verified below. T2–T4 remain open;
+no request thread, task_for_pid capability experiment or protected admission.
 
 ### Global constraints and File Map
 
@@ -61,9 +62,9 @@ invokeOwnedTaskPortProbe(args,stage='execute',fixture='delivered',control='none'
 returns settled code/stdout/stderr/entryStarted plus original fixture custody.
 Args are only [] or ['unexpected']; no helper export or production selector.
 
-- [ ] Review source-only design and exact four-file map; self-review scope,
+- [x] Review source-only design and exact four-file map; self-review scope,
   ambiguity, caller selection and false authority. Commit only reviewed docs.
-- [ ] Add the literal refusal consumer, enabled only in test mode refusal:
+- [x] Add the literal refusal consumer, enabled only in test mode refusal:
 ```javascript
 const actual = await invokeOwnedTaskPortProbe(['unexpected']);
 assert.equal(actual.code, 2);
@@ -73,9 +74,9 @@ assert.equal(actual.entryStarted, false);
 ```
   Before C exists the helper returns explicitly source-unavailable/null without
   compiling; source-unavailable is test-support RED, not a kernel witness.
-- [ ] Execute only that test with the new source absent; preserve failing raw
+- [x] Execute only that test with the new source absent; preserve failing raw
   assertion and prove no compiler/native effect. Do not manufacture code2.
-- [ ] Add only the minimal refusal justified by this RED:
+- [x] Add only the minimal refusal justified by this RED:
 ```c
 #include <stdio.h>
 int main(void) {
@@ -83,14 +84,36 @@ int main(void) {
     return 2;
 }
 ```
-- [ ] Adapt actual test support from the delivered NAME test's held regular
+- [x] Adapt actual test support from the delivered NAME test's held regular
   inputs, fixed tool/SDK/resource, fresh directory identity, calibrated startup
   marker, separate object/link and exact natural exit+close/bothEOF finalizers.
   Rename SOURCE/test interface/output literal only initially; no native wrapper,
   pthread or fixture mutation is admitted by this refusal step.
-- [ ] Review full literal helper/source/compile/link/dependency/env/output recipe
+- [x] Review full literal helper/source/compile/link/dependency/env/output recipe
   twice, record exact pins/fresh preservation/resources, then run one refusal
   GREEN. Missing support is not a semantic pass. Commit reviewed refusal slice.
+
+T1 receipt: docs365479a31c8ad9f3d81abd89c646abb629eabb2f committed only after
+two independent reviews. Absent-source f6e9b5 CLOSED1,38.873709ms, actualnull
+versus literal2/source-unavailable, before adding C. This is support RED only.
+Minimal refusalC104b49361ce264aade761b9409ce04c2676a19b3b81d629be34be8f62db972ce,
+testb813bea38d67e84d1be125bcadf6cd69f26b19db8e0832d3394a84cfe9c4cfec passed
+two full literal/effect C0 reviews after correcting stream setup: errors latch
+and await original close, never release held inputs from early Promise reject.
+Inventory e97868/af32f2/b37728 and rootb18b05 fresh pins/resources preceded ONE
+argvGREEN1503ff naturally CLOSED0,1PASS/0FAIL/0SKIP863.371666ms. Compiler0,
+linker0, calibrationNode2, actual C2/empty stdout/canonical refusal stderr,
+no probe entry-start marker; original exit+close/bothEOF/finalheld/allclose.
+Fixture /private/tmp/setfarm-native-task-port-test.yeWJqi retained source104b,
+object752d0188ae4ca07a7c5e081173798124aaecb81c53e7f965bb37db1ed37bdeda,
+binary55fb703930d4ea72a33b78cacd8fa770a785291312d847bdf9bcdc53db817abc,
+entry42b2bb659ff4174613a0b707477e310afb2249967c84a84a8d38082f714224da.
+Calibration /private/tmp/setfarm-native-task-port-witness.yK0jmi retained same
+entry and actual marker d450ae291ad1e5d6cfe2513659ad7dbd7bc63744f01ff17d318da399df1edba9.
+Root4c590e post at02:22:08 UTC verified exact six artifact files/two private
+directories/noextras/no probe marker,held6final/allclosed; independent post
+audit is separate. Default2f9efa1SKIP/0PASS40.728667ms, version2.3.79,
+English1933/path968/diff0. No thread/Mach/CONTROL/protected credit or replay.
 
 ### T2: Thread/lifecycle consumer RED and minimal owner implementation
 
