@@ -17,8 +17,9 @@ tests and the unchanged delivered builtin entry; no added packages.
 section
 Ordinary direct-parent task-port acquisition slice.
 **Status:** T1 refusal, T2 synthetic lifecycle and finite T3 controls verified
-below in separate pinned batches. Strict nominal/genuine T3 and T4 remain open;
-no genuine task_for_pid experiment or protected admission.
+below in separate pinned batches. ONE genuine own-child request returned actual
+kernel failure5; strict nominal remains FAIL, not skipped. Positive-path T3 and
+T4 remain open; no CONTROL or protected admission and no permission changes.
 
 ### Global constraints and File Map
 
@@ -373,19 +374,252 @@ assert.deepEqual(actualEligibility, [true, false, true]);
   can result from the deliberately broken test copy. This is semantic control.
 - [ ] Review each finite effect pattern and execute only new/affected cases.
   Keep untested genuine uncertainty/external owner-death paths explicit.
-- [ ] Add strict nominal request consumer under mode1. It requires exactly one
+#### Historical design sequence — superseded, not replay instructions
+
+The following nominal/postjoin/phase/observer design paragraphs record the
+sequence already executed at the separately pinned receipts below. References
+to restoring uncompiled drafts or running RED/GREEN/one genuine request are
+historical only; they authorize no restoration, retry, compile or native effect.
+Current state is C7deb/testb2fc: genuine nominal failed5, local cleanup passed;
+only a newly reviewed finite regression recipe may be admitted separately.
+
+Strict nominal consumer contract refinement: first use the existing
+synthetic-failure control under test-process mode1, verifying actual lifecycle
+facts before demanding the positive DTO. Its expected actual code2-vs0 RED is
+consumer-contract evidence only, not causal coverage of successful acquisition.
+After the separately justified postjoin path and exact review, the SAME consumer
+may be connected to a newly reviewed genuine-request copy for ONE real request.
+No synthetic failure can establish positive-path GREEN or genuine capability.
+
+Exact canonical positive diagnostic, independently required by the consumer:
+```json
+{"schema":"setfarm.task6a-native-task-port-diagnostic.v2","outcome":"task-for-pid-right/unqualified","requestAttempted":true,"requestThreadJoined":true,"taskRightBound":true,"auditStable":true,"challengesCompleted":3,"inputBytes":229,"outputBytes":220,"childReaped":true,"childExitCode":0,"childSignal":null,"stdoutEof":true,"stderrEof":true,"taskRightDisposed":true,"controlUsable":false,"productionAuthority":false,"completeNativeClosure":false,"protectedOrigin":false}
+```
+Require actual code0/empty stderr, exactly one <=2048B JSON line, exact scalar/
+key set and canonical bytes (no duplicate/contradictory fields). Raw primitive
+trace remains independent; it must eventually establish actual one request,
+original candidate, checked join before type/PID/two exact-count opaque audits,
+three distinct complete challenges, audit2 before END/inputclose, target normal0/
+EOF/reap/six closes and successful once original-right disposal. No token/PID/
+port values or positive CONTROL claim appear in DTO.
+
+Postjoin source refinement after consumer-contract RED: register original right
+before classification as before; only checked joined/on-time statusSUCCESS/valid
+candidate sets private result_ready. Failed/late candidates retain cleanup-only
+once disposal. Accepted right remains owned through guarded protocol/actual
+settlement, then once local disposal. Latch protocol_started before entering.
+Forward guard requires checked join, exact owner right, result_ready, unchanged
+deadline, unburned owner and original live/unreaped/certain child. Bracket local
+SEND/non-dead type, pid_for_task, each exact-count full opaque audit, entropy,
+reads and writes before/after; no task_name_for_pid/reacquisition/query on burn.
+Reuse only delivered NAME frame/write/nonce/audit structure, replacing ALL
+consuming observe_child/settle calls with existing WNOWAIT/gated settlement.
+Use existing relative backoff and bounded pipes, no new poll/dependency path.
+Three unique32B nonces =>3x75B input/3x70B PONG; audit2 beforeEND. Only after
+successful END write mark terminal beforeinputclose/ENDread. Expected death in
+terminal phase burns request admission but does not invent early-live failure;
+no forward queries in terminal. Final actual join/reap/status0/EOF/stderr0/
+input229/output220/protocolcomplete/disposal-success/finaldeadline/no-failures
+all required before canonical unqualified diagnostic. No postjoin kernel-call
+hard bound or continuous monitoring is claimed. ProductionC draft requires new
+paired full source/effect review and fresh gates before any compile/native call.
+
+Three source-review phase findings receive focused RED-before-fix controls on
+the uncompiled postjoin draft66e7c5 (restore the root's unverified c1d0 bracket
+draft first; no user changes reverted):
+
+- forward-observer-expiry: scratch pure main calls actual forward_ready with
+  literal eligible owner fields and initialized atomics. Only this private copy
+  redirects CLOCK_MONOTONIC to1s, then a labelled synthetic zero-event WNOWAIT
+  boundary advances it to4s across original3s deadline. No child/thread/Mach/PID
+  operation occurs. Require code0/empty stderr, exactly one labelled synthetic
+  observer event and literal [false,true,true] (deny,burn,deadline cause).
+  Unfixed guard is expected to return [true,false,false]. This is a pure clock
+  boundary contract, not actual waitid latency or genuine child ownership.
+- preterminal-stdout-eof: scratch pure main opens three actual pipes, closes
+  five original ends, calls actual drain_stream on the remaining stdout reader
+  with its writer really closed, then finalizes all original slots once. No
+  target/thread/Mach call. Require code0/empty stderr, actual three acquisitions/
+  six closes/one stdoutEOF only, literal [true,true,true,true] (burn,EOF,slot
+  consumed,early-stdout-eof cause). Unfixed draft returns [false,true,true,false].
+- ready-extra: closed private Node fixture waits stdin EOF or20s fallback and
+  emits one READY newline plusX write. Pin unchanged delivered entry separately,
+  label ready-extra-builtin-test. Require no request/thread creation, actual
+  childexit2/reap/EOF/six once closes/faultzero, protocol-frame refusal and an
+  independent read witness of the actual seven bytes before admission. Unfixed
+  draft accepts six bytes and creates a thread before later unexpected-output;
+  target remains alive before parent closes input, eliminating early-exit bypass.
+
+Only these three REDs compile/run after exact paired source/effect review/fresh
+gates; all task_for_pid uses remain synthetic/null. Then minimal production
+fixes: fresh clock after live observer and stderr drain before forward I/O;
+born/outputEOF guard, burn nonterminal stdout EOF, preserve terminal expectedEOF;
+READY reads bounded whole chunks and rejects excess bytes before create, with
+fresh deadline brackets. Re-run only affected controls after new review, record
+actual RED/GREEN channels/artifacts. No genuine request or positive-path GREEN
+is established by these finite controls.
+
+- [x] Add strict nominal request consumer under mode1. It requires exactly one
   diagnostic line and literal false authority flags, actual request/binding,
   three challenges, stable opaque audits, joined thread/reaped child/EOF/disposal.
   The helper records raw settled target channels; JSON alone cannot certify order.
-- [ ] Paired complete source/effect review, fresh physical input/tool/SDK/private
+- [x] Paired complete source/effect review, fresh physical input/tool/SDK/private
   output/resource/originals/journal gates, then ONE genuine ordinary own-child
   task_for_pid experiment. Real denial must fail nominal, never skip/fallback.
   Record denial as capability evidence rather than edit security/policy to pass.
   A late/pending request remains failed/unqualified and retains its owner.
+- [ ] Establish genuine positive-path acceptance. The observed kernel failure
+  does not satisfy this step or justify changing host security/privilege/policy.
+
+Genuine observer refinement, ordinary own-child only: add closed test-copy
+control genuine-request and connect mode1's existing exact nominal DTO consumer
+to it only after new full paired source/effect review. Real wrapper definitions
+precede macro redirection; an atomic once-request latch delegates task_for_pid
+only captured spawned PID/self, no synthetic success or retry. Keep actual
+status/candidate unchanged and private; only read worker-written fields after
+successful actual join. Main-only independent original-candidate registry,
+deadline/owner-burn capture and quotas type1/PID1/audit2/disposal1 block wrong
+right/self, expired/burned/dead/reaped/uncertain forward operations. Disposal
+consumes original attempt before realcall and remains allowed for cleanup after
+burn/reap. Actual native errors/late returns remain actual, not harness success.
+
+Observe real private input/output pipe bytes independently: READY, three unique
+CHALLENGE frames, matching PONGs, second exact-count opaque stable audit BEFORE
+END write/inputclose, END response afterclose. Bound buffers/tickets and verify
+actual229/220 totals; do not copy producer's counters as authority. Record
+actualnormal0/reap/bothEOF/six original closes and once successful original
+disposal. Never export PID/port/token bytes in DTO. Sticky independent faults
+are distinct from actual kernel failures. Completion/unknown-owner retention
+remain unchanged; no rescue/forcedkill/timeoutclosure.
+
+New genuine trace oracle replaces synthetic/code2 lifecycle oracle for this
+consumer; strict19-field DTO assertion remains unchanged. ONE real selected
+invocation only after exact complete test/C/compile/link/effect review and fresh
+originalsource/tools/SDK/resources. Any real denial fails nominal; no skip,
+fallback, policy/security/credential/root change, CONTROL/VM/map operation or
+protected/P2 admission. Existing13 passes retain their originaltestabfc pin;
+new observer does not silently retroactively qualify a changed helper matrix.
+
+#### Closed experiment receipts — original pins, no replay
+
+Current-source finite phase receipts: exact consumer testabfc634351c4048ac7b8ac26ee8281a7cf5b3bdff989460a47bf8179190b158e
+first ran with draft C66e:3f4307 CLOSED1,3FAIL2047.865542ms. Actual clock crossing
+allowed forward work, actual pipe EOF did not burn, and coalesced READY extra
+byte allowed creation. Minimal C7deb4988a7c17d1c09b8119b9da8586919038047f4a158d79edfbb45d574d1c2
+repairs only fresh-clock bracket, preterminal EOF burn and whole READY chunk;
+same oracles a490ff CLOSED0,3PASS2019.191583ms. Post e3b820 checked21original
+files/6dirs/all original closes. Current-C affected9,acf697/session11892->c34a5c
+CLOSED0,9PASS19055.830708ms; separate argv692d5e CLOSED0,1PASS626.019292ms.
+Post9557f4 checked69originalfiles/20dirs/all held-final bytes/paths/closes. These
+13passes are separate batches at C7deb/testabfc/plan22e, NOT one exhaustive
+matrix and NOT retroactive verification of the changed genuine observer.
+
+Nominal historical consumer-contract RED4b1cbf at C6f7c4/test834/plan3b was
+synthetic failure/null, actual parent2 vs required0. It is NOT genuine kernel
+denial or causal positive-path GREEN. New genuine observer test
+43ec12a8b6a05505d5217f9451023f4b658bb84b71de719495689b1acdae3453
+has actual once-request, join-synchronized original candidate registry, native
+query/disposal quotas and independent wire/audit/closure oracle. Full paired
+C0/I0/M0 reviews and fresh37d65d physical/resource/preservation gate plus root
+db02ac pins admitted only one scrubbed, anchored mode1/concurrency1 invocation.
+6661a3/session10561->c46c8e CLOSED1: actual compile/link0/calibration2, genuine
+task_for_pid status5/invalid candidate, parent2/empty stdout. Worker-return then
+successful actual join before reap, normal child2/bothEOF/sixFDcloses/fault0.
+Strict nominal0PASS/1FAIL/0SKIP1121.021667ms at genuine-status-0. No native
+type/PID/audit/disposal or positive exchange occurred; denial5 was primary and
+entry refusal/earlyEOF after inputclose secondary. Independent765dd4 CLOSED0
+at04:40:22.278 checked7originalfiles/2dirs, full held-final bytes/stat/path/dir
+inventories and all checked closes; trace1c3887 confirms one actual failure5,
+join-before-reap/normal2/EOF2/sixcloses and zero query/disposal/faults. All
+original inputs, two dirty files, backups, journal and old CLI retained.
+All original artifacts/raw receipt retained in the external master ledger;
+closed sessions must not be repolled or replayed. No further native effect is
+admitted. Source-only alternative feasibility may be investigated; any new
+design/file map/fixture/effect needs its own review and fresh gates. Positive
+protocol/CONTROL/protected/P2 remain unqualified, not a code-fix mandate.
+
+Remaining finite coverage refinement (not positive acquisition): the actual
+failure returned no valid candidate, so it cannot witness local disposal of a
+candidate returned with an API error or after burn. The smallest causal tests
+can create ONE fresh local MACH_PORT_RIGHT_DEAD_NAME reference in the worker,
+return synthetic KERN_FAILURE with that valid numeric name and exercise actual
+production candidate registration and once mach_port_deallocate after checked
+join. It is not a task right, genuine Tfp or CONTROL support. A delayed variant
+uses the existing finite3.2s synthetic wait, then allocates only locally; no
+target PID operation occurs after the delay. Original generation remains
+unreaped until actual join. Keep source C unchanged; tests only add closed
+local-candidate-error/local-candidate-late controls and explicit private labels.
+Worker latches one local allocation before delegating, records actual result,
+initializes NULL, and main reads candidate only after realjoin. Main latches
+one original deallocation before delegation, permits local cleanup after
+burn/death but no type/PID/audit/TFP/forward wire actions. No aliases, reallocation,
+retry, fabricated-success or fixture rescue. Allocation/cleanup failure must
+remain a failed diagnostic. Source disposition omission must fail independent
+trace assertions; no new production behavior is implemented for these tests.
+Treat EVERY unproven allocation error, including NULL output/MIG response
+failure, as sticky unknown ownership; no definite-failure status allowlist is
+admitted. After realjoin main reports the actual allocation status/uncertainty,
+then atexit retains the failed owner rather than publishing closure. This
+conservative correction addresses independent source review I1 before effects;
+not an actual observed kernel failure or a production-code repair.
+Require full source/effect review and fresh gates before either selected local
+experiment; no effect is admitted by this design text. These two coverage
+checks cannot repair host denial or satisfy genuine-positive T3/T4/P2.
+
+Local cleanup coverage receipt (existing behavior, no new production fix):
+faeed1/session38140->3efc38 CLOSED0,2PASS4928.8935ms at C7deb/test
+b2fc65797aac521aa5282b94034cb0a4fa478e753a36b2c5441830e3717f49e9,
+plan22ff/specc54. Both actual fresh local one-uref allocations and once original
+deallocations succeeded after checked join, before target reap. Immediate
+synthetic error classified denial5; delayed synthetic error classified burn,
+with target inputclose/death/EOFs before local allocation/join. Both childnormal2,
+pipe3/sixclose/EOF2/reap1 and fault0; zero TFP/type/PID/audit/forward/unknown/rescue.
+Independent original1c203a read then32d601 CLOSED0 at05:02:05.997 verified
+14originalfiles/4dirs, full held-final stat/path/bytes/inventories and all closes.
+Traceb5bf1537/f066b6db match original nominated receipts. a75d36/47a9db/cfd11b/
+db90f8/ddf2fa at05:02:24 pins/originals/journal/oldCLI/tools/headers preserved;
+disk6635092KiB/memory59/throttle0/nothermal. Unknown allocation/join retention
+is conservatively reviewed source, not an executed finite uncertainty proof.
+Prior13controlled passes remain at testabfc. The current-helper finite regression
+receipt below separately verifies the affected12 plus argv at testb2fc; local2
+remain their original closed current-test receipts, not replayed. Genuine nominal
+remains actualfailure5 at test43ec, not a pass.
+
+Current-helper regression checkpoint: both complete independent source/effect
+reviews C0/I0/M0 at C7deb/testb2fc/plane53b/spec5c9 after the historical-label M1
+fix. Fresh16f8a9 held pins/root/HEAD/exact4M/absences/allclose and0afde9/501948/
+212c47 resources at05:16:20.797 preceded only exact anchored finite12 lifecycle
+selector and separate anchored argv refusal. ecb995/session72718->0cf261 CLOSED0,
+12PASS/0FAIL/0SKIP21040.572666ms; argv286c5e CLOSED0,1PASS711.764666ms. Do not
+poll72718 again. Each actual compile/link0 and startup calibration2; fixed
+source/test/helper, private retained artifacts and natural exit/close/bothEOF.
+Pure predicates/clock remain explicitly synthetic; stdout EOF uses actual pipes;
+normal/delayed/create/early-exit/budget/READY and precise omission-mutant oracles
+observe their original finite lifecycle. No genuine TFP, local allocation,
+forward native queries, unknown-owner injection or security/policy effect.
+Independent41c5fe read ORIGINAL raw FIRST;5059bf CLOSED0 at05:19:06.087 checked
+90originalfiles/26private dirs, exact nominated hashes, full held-final byte/
+stat/path/inventories and all checked closes. All13targetmarkers absent and
+13real14B calibration markers match; actual traces/oracles/fault0 retained.
+1aac45/de0b65/6d829f/025669/b53345 source/HEAD/originals/backups/journal/oldCLI/
+tool/SDK/header custody unchanged. Disk6615372KiB/memory59/throttle0/nothermal.
+Fresh static927dec/c89acb/ffe9cd0, default136794 only16SKIP/0PASS43.658334ms,
+version97ef15 2.3.79, English0bda88 1933 and patha835c3 968 all pass. An earlier
+mistyped nonexistent version-script command0db2f4 failed MODULE_NOT_FOUND and
+was corrected by reading package.json's actual check:version recipe; it is not
+a test/source failure or a passed check. No full npm/PG/ALL/build/host rollout.
+These are separate12+argv+local2 finite receipts at current C7deb/testb2fc,
+not a single all16 matrix or genuine positive/uncertainty/protected proof.
+
+No positive-path merge/delivery is admitted. An honest reviewed checkpoint may
+be committed on the existing scoped branch while all genuine-positive/P2 gates
+remain open; this must not be represented as implementation or project completion.
+Any changed-helper verification uses a newly reviewed finite selector/fresh
+artifacts, never replays old closed receipts or the genuine kernel failure.
 
 ### T4: Narrow delivery and next independent gate
 
-- [ ] Record actual finite matrix and remaining uncertainty/owner-death coverage;
+- [x] Record actual finite matrix and remaining uncertainty/owner-death coverage;
   static version/English/path/diff and default opt-out checks. No full npm/PG/ALL
   replay from a builtin C/test/docs change.
 - [ ] Independent full diff reviews, scoped conventional commits/push/PR,

@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <mach/mach.h>
+#include <mach/task_info.h>
 #include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
@@ -11,13 +12,14 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
-/* Ordinary acquisition lifecycle checkpoint; always unqualified/refused. */
+/* Ordinary acquisition diagnostic only; never CONTROL or protected authority. */
 enum Admission { READY, IN_FLIGHT, BURNED, BURNED_IN_FLIGHT };
 struct Request {
     pid_t child;
@@ -36,10 +38,12 @@ struct owner {
     int born, reaped, status, burned, child_uncertain, observed_dead;
     int input, output, error;
     int output_eof, error_eof;
-    size_t output_bytes, error_bytes;
+    size_t input_bytes, output_bytes, error_bytes;
     uint64_t deadline;
     mach_port_t task_port;
     int task_port_owned;
+    int task_port_disposed, result_ready, protocol_started, terminal;
+    int task_right_bound, audit_stable, challenges_completed, protocol_complete;
     struct failure failures[32];
     size_t failure_count;
     int failure_overflow;
@@ -162,6 +166,7 @@ static void drain_stream(struct owner *o, int *slot, int *eof, size_t *total, in
         else fail(o, "unexpected-output", 0);
     } else if (count == 0) {
         *eof = 1; close_owned(o, slot);
+        if (!is_error && !o->terminal) fail(o, "early-stdout-eof", 0);
     } else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
         fail(o, is_error ? "stderr-read" : "stdout-read", errno);
         close_owned(o, slot);
@@ -171,15 +176,19 @@ static void drain_stream(struct owner *o, int *slot, int *eof, size_t *total, in
 static int read_ready(struct owner *o) {
     char frame[6];
     size_t used = 0;
-    while (!o->burned && on_time(o) && observe_target(o, 1)) {
+    while (!o->burned && on_time(o) && observe_target(o, 1) && on_time(o)) {
         drain_stream(o, &o->error, &o->error_eof, &o->error_bytes, 1);
-        if (o->burned) break;
-        ssize_t count = read(o->output, frame + used, sizeof frame - used);
+        if (o->burned || !on_time(o)) break;
+        char bytes[256];
+        ssize_t count = read(o->output, bytes, sizeof bytes);
         if (count > 0) {
-            used += (size_t)count; o->output_bytes += (size_t)count;
+            o->output_bytes += (size_t)count;
+            if ((size_t)count > sizeof frame - used) { fail(o, "protocol-frame", 0); return 0; }
+            memcpy(frame + used, bytes, (size_t)count);
+            used += (size_t)count;
             if (used == sizeof frame) {
                 if (memcmp(frame, "READY\n", sizeof frame)) fail(o, "protocol-frame", 0);
-                return !o->burned && on_time(o) && observe_target(o, 1);
+                return !o->burned && on_time(o) && observe_target(o, 1) && on_time(o);
             }
         } else if (count == 0) {
             o->output_eof = 1; close_owned(o, &o->output); fail(o, "ready-eof", 0);
@@ -189,6 +198,126 @@ static int read_ready(struct owner *o) {
         if (!o->burned) backoff(o);
     }
     return 0;
+}
+
+/* No forward target operation is allowed after burn, death or consumption. */
+static int forward_ready(struct owner *o) {
+    if (!o->born || !o->thread_joined || !o->task_port_owned || !o->result_ready ||
+        o->terminal || o->reaped || o->child_uncertain || o->observed_dead || o->output_eof) {
+        fail(o, "forward-owner", 0); return 0;
+    }
+    return on_time(o) && observe_target(o, 1) && on_time(o);
+}
+
+static int read_frame(struct owner *o, const char *expected, size_t length, int live) {
+    size_t used = 0;
+    while (used < length) {
+        if (live) {
+            if (!forward_ready(o)) return 0;
+        } else if (!on_time(o) || !observe_target(o, 0) || !on_time(o)) return 0;
+        drain_stream(o, &o->error, &o->error_eof, &o->error_bytes, 1);
+        if (o->burned || o->output < 0) return 0;
+        if (live ? !forward_ready(o) : !on_time(o)) return 0;
+        char bytes[256];
+        ssize_t count = read(o->output, bytes, sizeof bytes);
+        if (count > 0) {
+            if (o->output_bytes > 4096 - (size_t)count) {
+                fail(o, "output-limit", 0); return 0;
+            }
+            o->output_bytes += (size_t)count;
+            if ((size_t)count > length - used || memcmp(bytes, expected + used, (size_t)count)) {
+                fail(o, "protocol-frame", 0); return 0;
+            }
+            used += (size_t)count;
+        } else if (count == 0) {
+            o->output_eof = 1; close_owned(o, &o->output);
+            fail(o, "early-stdout-eof", 0); return 0;
+        } else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+            fail(o, "stdout-read", errno); return 0;
+        } else backoff(o);
+    }
+    return live ? forward_ready(o) : on_time(o);
+}
+
+static int write_input(struct owner *o, const char *bytes, size_t length) {
+    size_t used = 0;
+    while (used < length) {
+        if (!forward_ready(o) || o->input < 0) return 0;
+        drain_stream(o, &o->error, &o->error_eof, &o->error_bytes, 1);
+        if (o->burned || !forward_ready(o)) return 0;
+        ssize_t count = write(o->input, bytes + used, length - used);
+        if (count > 0) {
+            if (o->input_bytes > 229 - (size_t)count) {
+                fail(o, "input-limit", 0); return 0;
+            }
+            used += (size_t)count; o->input_bytes += (size_t)count;
+        } else if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+            backoff(o);
+        else { fail(o, "stdin-write", count < 0 ? errno : 0); return 0; }
+    }
+    return forward_ready(o);
+}
+
+static int audit_right(struct owner *o, audit_token_t *audit) {
+    if (!forward_ready(o)) return 0;
+    mach_msg_type_number_t count = TASK_AUDIT_TOKEN_COUNT;
+    kern_return_t rc = task_info(o->task_port, TASK_AUDIT_TOKEN, (task_info_t)audit, &count);
+    int timely = forward_ready(o);
+    if (rc != KERN_SUCCESS) { fail(o, "audit-query-failed", rc); return 0; }
+    if (count != TASK_AUDIT_TOKEN_COUNT) { fail(o, "audit-count-mismatch", 0); return 0; }
+    return timely;
+}
+
+static int bind_task_right(struct owner *o, audit_token_t *first) {
+    if (!forward_ready(o)) return 0;
+    mach_port_type_t type = 0;
+    kern_return_t rc = mach_port_type(mach_task_self(), o->task_port, &type);
+    int timely = forward_ready(o);
+    if (rc != KERN_SUCCESS || !(type & MACH_PORT_TYPE_SEND) || (type & MACH_PORT_TYPE_DEAD_NAME)) {
+        fail(o, "invalid-task-type", rc); return 0;
+    }
+    if (!timely || !forward_ready(o)) return 0;
+    int pid = 0;
+    rc = pid_for_task(o->task_port, &pid);
+    timely = forward_ready(o);
+    if (rc != KERN_SUCCESS || pid != o->child) { fail(o, "task-pid-mismatch", rc); return 0; }
+    if (!timely || !audit_right(o, first)) return 0;
+    o->task_right_bound = 1;
+    return 1;
+}
+
+static void complete_protocol(struct owner *o) {
+    audit_token_t first = {0}, second = {0};
+    if (!bind_task_right(o, &first)) return;
+    char nonces[3][65] = {{0}};
+    for (size_t i = 0; i < 3; i++) {
+        if (!forward_ready(o)) return;
+        unsigned char random[32];
+        arc4random_buf(random, sizeof random);
+        if (!forward_ready(o)) return;
+        const char hex[] = "0123456789abcdef";
+        for (size_t j = 0; j < 32; j++) {
+            nonces[i][j * 2] = hex[random[j] >> 4];
+            nonces[i][j * 2 + 1] = hex[random[j] & 15];
+        }
+        for (size_t j = 0; j < i; j++)
+            if (!memcmp(nonces[i], nonces[j], 65)) { fail(o, "duplicate-challenge", 0); return; }
+        char challenge[76], pong[71];
+        if (snprintf(challenge, sizeof challenge, "CHALLENGE %s\n", nonces[i]) != 75 ||
+            snprintf(pong, sizeof pong, "PONG %s\n", nonces[i]) != 70) {
+            fail(o, "challenge-format", 0); return;
+        }
+        if (!write_input(o, challenge, 75) || !read_frame(o, pong, 70, 1)) return;
+        o->challenges_completed++;
+    }
+    if (!audit_right(o, &second)) return;
+    if (memcmp(&first, &second, sizeof first)) { fail(o, "audit-drift", 0); return; }
+    o->audit_stable = 1;
+    if (!write_input(o, "END\n", 4)) return;
+    o->terminal = 1;
+    close_owned(o, &o->input);
+    if (o->burned || !read_frame(o, "END\n", 4, 0)) return;
+    o->protocol_complete = 1;
 }
 
 static int setup_child(struct owner *o, const char *entry) {
@@ -297,6 +426,7 @@ static void dispose_task_port(struct owner *o) {
     o->task_port_owned = 0; o->task_port = MACH_PORT_NULL;
     kern_return_t rc = mach_port_deallocate(mach_task_self(), original);
     if (rc != KERN_SUCCESS) record_failure(o, "task-port-dispose", rc, (int)original);
+    else o->task_port_disposed = 1;
 }
 
 static void join_request(struct owner *o) {
@@ -318,9 +448,9 @@ static void join_request(struct owner *o) {
         fail(o, "request-unavailable", o->request.unavailable_reason);
     else if (o->request.status != KERN_SUCCESS) fail(o, "task-port-denied", o->request.status);
     else if (!o->task_port_owned) fail(o, "invalid-task-port", 0);
-    else fail(o, "task-port-unqualified", 0);
-    /* This checkpoint has no forward binding/audit/protocol success path. */
-    dispose_task_port(o);
+    else o->result_ready = 1;
+    /* Failed/late candidates permit local cleanup only; accepted originals stay owned. */
+    if (!o->result_ready) dispose_task_port(o);
 }
 
 static void signal_target(struct owner *o, int signal) {
@@ -364,11 +494,15 @@ int main(int argc, char **argv) {
     for (;;) {
         uint64_t now = now_ns();
         if (!now || now >= o.deadline) fail(&o, now ? "protocol-deadline" : "protocol-clock", 0);
-        (void)observe_target(&o, !o.burned);
+        (void)observe_target(&o, !o.burned && !o.terminal);
         drain_stream(&o, &o.output, &o.output_eof, &o.output_bytes, 0);
         drain_stream(&o, &o.error, &o.error_eof, &o.error_bytes, 1);
         join_request(&o);
-        if (o.burned || !o.thread_created) {
+        if (o.result_ready && !o.protocol_started && !o.burned) {
+            o.protocol_started = 1;
+            complete_protocol(&o);
+        }
+        if (o.burned || !o.thread_created || o.terminal) {
             close_owned(&o, &o.input);
             /* Cleanup grace begins after actual input close, not before join. */
             uint64_t cleanup_now = now_ns();
@@ -396,11 +530,32 @@ int main(int argc, char **argv) {
     }
     dispose_task_port(&o);
     if (o.born && (!o.reaped || !o.output_eof || !o.error_eof)) fail(&o, "child-lifecycle", 0);
+    if (!o.burned) {
+        (void)on_time(&o);
+        if (!o.request.attempted || !o.thread_joined || !o.result_ready ||
+            !o.protocol_started || !o.terminal || !o.protocol_complete ||
+            !o.task_right_bound || !o.audit_stable || o.challenges_completed != 3 ||
+            !o.task_port_disposed || !o.born || !o.reaped || !WIFEXITED(o.status) ||
+            WEXITSTATUS(o.status) != 0 || !o.output_eof || !o.error_eof ||
+            o.input_bytes != 229 || o.output_bytes != 220 || o.error_bytes != 0)
+            fail(&o, "acquisition-protocol-incomplete", 0);
+    }
     for (size_t i = 0; i < o.failure_count; i++)
         (void)fprintf(stderr, "TASK6A_NATIVE_TASK_PORT_PROBE_FAILED %s %d resource=%d observations=%llu\n",
             o.failures[i].operation, o.failures[i].code, o.failures[i].resource,
             (unsigned long long)o.failures[i].observations);
     if (o.failure_overflow)
         (void)fputs("TASK6A_NATIVE_TASK_PORT_PROBE_FAILURE_RECORD_OVERFLOW\n", stderr);
-    return 2;
+    if (o.burned || o.failure_count || o.failure_overflow) return 2;
+    const char diagnostic[] =
+        "{\"schema\":\"setfarm.task6a-native-task-port-diagnostic.v2\","
+        "\"outcome\":\"task-for-pid-right/unqualified\",\"requestAttempted\":true,"
+        "\"requestThreadJoined\":true,\"taskRightBound\":true,\"auditStable\":true,"
+        "\"challengesCompleted\":3,\"inputBytes\":229,\"outputBytes\":220,"
+        "\"childReaped\":true,\"childExitCode\":0,\"childSignal\":null,"
+        "\"stdoutEof\":true,\"stderrEof\":true,\"taskRightDisposed\":true,"
+        "\"controlUsable\":false,\"productionAuthority\":false,"
+        "\"completeNativeClosure\":false,\"protectedOrigin\":false}\n";
+    if (fputs(diagnostic, stdout) == EOF || fflush(stdout) != 0) return 2;
+    return 0;
 }

@@ -9,6 +9,7 @@ const SOURCE = new URL('../task6a-origin-native-task-port-v2.c', import.meta.url
 // Explicit test-process-only opt-in; never ambient native execution in a glob.
 const REFUSAL_TEST_ENABLED = process.env.SETFARM_TASK6A_NATIVE_TASK_PORT_TEST === 'refusal';
 const LIFECYCLE_TEST_ENABLED = process.env.SETFARM_TASK6A_NATIVE_TASK_PORT_TEST === 'lifecycle';
+const NOMINAL_TEST_ENABLED = process.env.SETFARM_TASK6A_NATIVE_TASK_PORT_TEST === '1';
 const DELIVERED_ENTRY = new URL('../task6a-protected-origin-entry-v2.mjs', import.meta.url);
 const CLANG = '/Library/Developer/CommandLineTools/usr/bin/clang';
 const LD = '/Library/Developer/CommandLineTools/usr/bin/ld';
@@ -20,20 +21,29 @@ const ENTRY = "import {writeFileSync} from 'node:fs';\n" +
   "writeFileSync(new URL('./entry-started', import.meta.url), 'entry started\\n', {flag:'wx',mode:0o600});\n" +
   "process.exit(2);\n";
 const EARLY_EXIT_ENTRY = "import process from 'node:process';\nprocess.exit(2);\n";
+const READY_EXTRA_ENTRY = "import process from 'node:process';\n" +
+  "import {setTimeout,clearTimeout} from 'node:timers';\n" +
+  "const timer=setTimeout(()=>process.exit(2),20000);\n" +
+  "process.stdin.on('end',()=>{clearTimeout(timer);process.exit(2)});\n" +
+  "process.stdin.on('error',()=>process.exit(2));process.stdin.resume();\n" +
+  "process.stdout.on('error',()=>process.exit(2));process.stdout.write('READY\\nX');\n";
 const CONTROLS = ['none', 'synthetic-failure', 'delayed-synthetic-failure',
   'join-eligibility', 'delayed-no-consume-gate', 'create-failure',
   'burn-before-admission', 'early-target-exit', 'post-join-budget',
-  'post-join-no-budget-gate'];
+  'post-join-no-budget-gate', 'forward-observer-expiry', 'preterminal-stdout-eof', 'ready-extra',
+  'genuine-request', 'local-candidate-error', 'local-candidate-late'];
 
-// Closed ordinary test-copy instrumentation. No target Mach operation occurs:
-// the request shim returns explicitly synthetic KERN_FAILURE/MACH_PORT_NULL.
-// Real spawn, thread, join, wait, read and close calls precede macro redirection.
+// Closed ordinary test-copy instrumentation. Only genuine-request delegates
+// one actual own-child request. Local-candidate controls allocate a local dead
+// name only, never a task right. Other controls return synthetic failure/null.
+// Typed real calls precede macros; none of this is production authority.
 const LIFECYCLE_PREFIX = String.raw`
 #define _DARWIN_C_SOURCE 1
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <mach/mach.h>
+#include <mach/task_info.h>
 #include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
@@ -55,6 +65,13 @@ static bool probe_create_attempted, probe_created, probe_join_attempted, probe_j
 static bool probe_observed_dead, probe_uncertain;
 static uint64_t probe_join_deadline;
 static bool probe_join_was_unburned;
+static bool probe_clock_advanced;
+static void probe_bad(void);
+static __attribute__((unused)) int probe_synthetic_clock(clockid_t kind, struct timespec *value) {
+    if (kind != CLOCK_MONOTONIC) { probe_bad(); errno = EINVAL; return -1; }
+    value->tv_sec = probe_clock_advanced ? 4 : 1; value->tv_nsec = 0;
+    return 0;
+}
 static void *(*probe_start)(void *);
 static void *probe_argument;
 static int probe_fds[6], probe_closed[6];
@@ -69,6 +86,203 @@ static void probe_event(const char *event) {
 static void probe_bad(void) {
     atomic_store_explicit(&probe_fault, true, memory_order_release);
     probe_event("harness-fault");
+}
+#if PROBE_LOCAL_CANDIDATE
+static atomic_bool probe_local_allocation_attempted;
+static mach_port_name_t probe_local_candidate;
+static kern_return_t probe_local_allocation_status = KERN_FAILURE;
+static bool probe_local_owned, probe_local_dispose_attempted, probe_local_uncertain;
+static kern_return_t probe_local_forbid_type(mach_port_name_t self,
+    mach_port_name_t right, mach_port_type_t *type) {
+    (void)self; (void)right; (void)type;
+    probe_bad(); probe_event("local-forbidden-type-call"); return KERN_FAILURE;
+}
+static kern_return_t probe_local_forbid_pid(mach_port_name_t right, int *pid) {
+    (void)right; (void)pid;
+    probe_bad(); probe_event("local-forbidden-pid-call"); return KERN_FAILURE;
+}
+static kern_return_t probe_local_forbid_info(mach_port_name_t right, task_flavor_t flavor,
+    task_info_t info, mach_msg_type_number_t *count) {
+    (void)right; (void)flavor; (void)info; (void)count;
+    probe_bad(); probe_event("local-forbidden-audit-call"); return KERN_FAILURE;
+}
+static kern_return_t probe_local_dispose(mach_port_name_t self, mach_port_name_t candidate) {
+    // Read worker-owned fields only after successful real join; local cleanup
+    // is allowed after burn/death/reap. It is not a forward target operation.
+    if (!probe_joined || self != mach_task_self() || !probe_local_owned ||
+        !MACH_PORT_VALID(candidate) || candidate != probe_local_candidate ||
+        probe_local_dispose_attempted) { probe_bad(); return KERN_FAILURE; }
+    probe_local_dispose_attempted = true;
+    probe_event("local-original-dispose-call");
+    kern_return_t rc = mach_port_deallocate(self, candidate);
+    if (rc == KERN_SUCCESS) {
+        probe_local_owned = false; probe_event("local-original-disposed");
+    } else probe_event("local-original-dispose-failed");
+    return rc;
+}
+#endif
+#if PROBE_GENUINE
+static atomic_bool probe_request_attempted;
+static uint64_t probe_deadline;
+static bool probe_burned;
+// Worker writes these; main reads only after successful real pthread_join.
+static mach_port_name_t probe_candidate;
+static kern_return_t probe_request_status;
+static char probe_status_event[64];
+static unsigned probe_types, probe_pids, probe_audits, probe_disposals;
+static bool probe_type_valid, probe_pid_valid, probe_audit_valid, probe_audit_stable;
+static audit_token_t probe_first_audit;
+static char probe_input_frame[75], probe_output_frame[70], probe_nonces[3][64];
+static size_t probe_input_used, probe_output_used, probe_input_total, probe_output_total;
+static unsigned probe_challenges, probe_pongs;
+static bool probe_ready, probe_end_written, probe_end_read;
+static bool probe_within_budget(void) {
+    struct timespec now;
+    return probe_deadline && clock_gettime(CLOCK_MONOTONIC, &now) == 0 &&
+        (uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec < probe_deadline;
+}
+static bool probe_forward(mach_port_name_t right) {
+    // Short circuit before touching worker results: join, not done, synchronizes.
+    if (!probe_joined || probe_burned || probe_observed_dead || probe_uncertain ||
+        atomic_load_explicit(&probe_reaped, memory_order_acquire) || probe_disposals ||
+        !probe_within_budget() || !MACH_PORT_VALID(probe_candidate) ||
+        right != probe_candidate || probe_request_status != KERN_SUCCESS || probe_end_written) {
+        probe_bad(); return false;
+    }
+    return true;
+}
+static void probe_query_return(void) {
+    if (!probe_within_budget()) probe_event("native-return-after-budget");
+}
+static kern_return_t probe_type(mach_port_name_t self, mach_port_name_t right,
+    mach_port_type_t *type) {
+    if (!probe_forward(right) || self != mach_task_self() || probe_types || !type) {
+        probe_bad(); return KERN_FAILURE;
+    }
+    probe_types++; probe_event("type-call");
+    kern_return_t rc = mach_port_type(self, right, type);
+    probe_query_return();
+    if (rc == KERN_SUCCESS && (*type & MACH_PORT_TYPE_SEND) && !(*type & MACH_PORT_TYPE_DEAD_NAME)) {
+        probe_type_valid = true; probe_event("type-send-valid");
+    } else probe_event("type-not-qualified");
+    return rc;
+}
+static kern_return_t probe_pid(mach_port_name_t right, int *pid) {
+    if (!probe_forward(right) || !probe_type_valid || probe_pids || !pid) {
+        probe_bad(); return KERN_FAILURE;
+    }
+    probe_pids++; probe_event("pid-call");
+    kern_return_t rc = pid_for_task(right, pid);
+    probe_query_return();
+    if (rc == KERN_SUCCESS && *pid == probe_child) {
+        probe_pid_valid = true; probe_event("pid-matches-original-child");
+    } else probe_event("pid-not-qualified");
+    return rc;
+}
+static kern_return_t probe_info(mach_port_name_t right, task_flavor_t flavor,
+    task_info_t info, mach_msg_type_number_t *count) {
+    if (!probe_forward(right) || !probe_pid_valid || flavor != TASK_AUDIT_TOKEN ||
+        !info || !count || *count != TASK_AUDIT_TOKEN_COUNT || probe_audits >= 2 ||
+        (probe_audits == 1 && (!probe_audit_valid || probe_pongs != 3))) {
+        probe_bad(); return KERN_FAILURE;
+    }
+    unsigned index = probe_audits++;
+    probe_event(index ? "audit-second-call" : "audit-first-call");
+    kern_return_t rc = task_info(right, flavor, info, count);
+    probe_query_return();
+    if (rc == KERN_SUCCESS && *count == TASK_AUDIT_TOKEN_COUNT) {
+        if (!index) {
+            memcpy(&probe_first_audit, info, sizeof probe_first_audit);
+            probe_audit_valid = true; probe_event("audit-first-valid");
+        } else if (!memcmp(&probe_first_audit, info, sizeof probe_first_audit)) {
+            probe_audit_stable = true; probe_event("audit-second-stable");
+        } else probe_event("audit-drift-observed");
+    } else probe_event("audit-not-qualified");
+    return rc;
+}
+static kern_return_t probe_dispose(mach_port_name_t self, mach_port_name_t right) {
+    // Cleanup is local and allowed after burn/death/reap; never forward-qualified.
+    if (!probe_joined || self != mach_task_self() || !MACH_PORT_VALID(probe_candidate) ||
+        right != probe_candidate || probe_disposals) { probe_bad(); return KERN_FAILURE; }
+    probe_disposals++; probe_event("original-right-dispose-call");
+    kern_return_t rc = mach_port_deallocate(self, right);
+    probe_event(rc == KERN_SUCCESS ? "original-right-disposed" : "original-right-dispose-failed");
+    return rc;
+}
+static void probe_wire_input(const char *bytes, size_t length) {
+    if (length > 229 - probe_input_total || probe_end_written) { probe_bad(); return; }
+    probe_input_total += length;
+    for (size_t i = 0; i < length; i++) {
+        size_t wanted = probe_challenges < 3 ? 75 : 4;
+        if (probe_input_used >= wanted) { probe_bad(); return; }
+        probe_input_frame[probe_input_used++] = bytes[i];
+        if (probe_input_used != wanted) continue;
+        if (probe_challenges < 3) {
+            if (probe_challenges != probe_pongs || !probe_audit_valid || probe_audits != 1 ||
+                memcmp(probe_input_frame, "CHALLENGE ", 10) || probe_input_frame[74] != '\n') {
+                probe_bad(); return;
+            }
+            for (size_t j = 10; j < 74; j++) if (!strchr("0123456789abcdef", probe_input_frame[j]) ||
+                probe_input_frame[j] == '\0') { probe_bad(); return; }
+            for (unsigned j = 0; j < probe_challenges; j++)
+                if (!memcmp(probe_nonces[j], probe_input_frame + 10, 64)) { probe_bad(); return; }
+            memcpy(probe_nonces[probe_challenges++], probe_input_frame + 10, 64);
+            probe_event("wire-challenge");
+        } else {
+            if (probe_pongs != 3 || !probe_audit_stable || probe_audits != 2 ||
+                memcmp(probe_input_frame, "END\n", 4)) { probe_bad(); return; }
+            probe_end_written = true; probe_event("wire-end-written");
+        }
+        probe_input_used = 0;
+    }
+}
+static void probe_wire_output(const char *bytes, size_t length) {
+    if (length > 220 - probe_output_total || probe_end_read) { probe_bad(); return; }
+    probe_output_total += length;
+    for (size_t i = 0; i < length; i++) {
+        size_t wanted = !probe_ready ? 6 : probe_pongs < 3 ? 70 : 4;
+        if (probe_output_used >= wanted) { probe_bad(); return; }
+        probe_output_frame[probe_output_used++] = bytes[i];
+        if (probe_output_used != wanted) continue;
+        if (!probe_ready) {
+            if (memcmp(probe_output_frame, "READY\n", 6)) { probe_bad(); return; }
+            probe_ready = true; probe_event("wire-ready");
+        } else if (probe_pongs < 3) {
+            if (probe_challenges != probe_pongs + 1 || memcmp(probe_output_frame, "PONG ", 5) ||
+                memcmp(probe_output_frame + 5, probe_nonces[probe_pongs], 64) ||
+                probe_output_frame[69] != '\n') { probe_bad(); return; }
+            probe_pongs++; probe_event("wire-pong");
+        } else {
+            if (!probe_end_written || !probe_closed[1] || memcmp(probe_output_frame, "END\n", 4)) {
+                probe_bad(); return;
+            }
+            probe_end_read = true; probe_event("wire-end-read");
+        }
+        probe_output_used = 0;
+    }
+}
+static ssize_t probe_write(int fd, const void *bytes, size_t length) {
+    if (probe_fd_count != 6 || fd != probe_fds[1] || probe_closed[1] ||
+        !probe_joined || !probe_forward(probe_candidate) || !probe_audit_valid || !length ||
+        length > (probe_challenges < 3 ? 75 : 4) - probe_input_used ||
+        (probe_challenges < 3 ? probe_challenges != probe_pongs :
+            (!probe_audit_stable || probe_pongs != 3))) {
+        probe_bad(); errno = EINVAL; return -1;
+    }
+    ssize_t rc = write(fd, bytes, length); int saved = errno;
+    if (rc > 0) probe_wire_input(bytes, (size_t)rc);
+    probe_query_return(); errno = saved; return rc;
+}
+#endif
+static __attribute__((unused)) int probe_expiring_waitid(idtype_t kind, id_t child,
+    siginfo_t *info, int flags) {
+    if (kind != P_PID || child != 2 || flags != (WEXITED | WNOHANG | WNOWAIT)) {
+        probe_bad(); errno = EINVAL; return -1;
+    }
+    memset(info, 0, sizeof *info);
+    probe_clock_advanced = true;
+    probe_event("synthetic-observer-expiry");
+    return 0;
 }
 static void *probe_start_thread(void *unused) {
     (void)unused;
@@ -103,6 +317,13 @@ static __attribute__((unused)) int probe_join(pthread_t thread, void **result) {
     }
     int rc = pthread_join(thread, result);
     if (!rc) { probe_joined = true; probe_event("actual-join-success"); }
+#if PROBE_LOCAL_CANDIDATE
+    if (!rc && probe_local_uncertain) {
+        probe_event("local-allocation-ownership-uncertain");
+        if (fprintf(stderr, "TASK6A_TEST_LOCAL_ALLOCATION_UNCERTAIN %d\n",
+            probe_local_allocation_status) < 0 || fflush(stderr) != 0) probe_bad();
+    }
+#endif
     if (!rc && PROBE_JOIN_DELAYED) {
         struct timespec left = {3, 200000000}, now;
         while (nanosleep(&left, &left) != 0) {
@@ -123,6 +344,19 @@ static __attribute__((unused)) kern_return_t probe_request(mach_port_name_t self
         probe_bad(); probe_event("after-reap-target-call");
         *returned = MACH_PORT_NULL; return KERN_FAILURE;
     }
+#if PROBE_GENUINE
+    if (!returned || !probe_ready || atomic_exchange_explicit(&probe_request_attempted,
+        true, memory_order_acq_rel)) { probe_bad(); return KERN_FAILURE; }
+    probe_event("genuine-request");
+    kern_return_t rc = task_for_pid(self, child, returned);
+    probe_candidate = *returned; probe_request_status = rc;
+    if (snprintf(probe_status_event, sizeof probe_status_event, "genuine-status-%d", rc) < 0)
+        probe_bad();
+    else probe_event(probe_status_event);
+    probe_event(MACH_PORT_VALID(*returned) ? "genuine-candidate-valid" : "genuine-candidate-invalid");
+    probe_event("genuine-return");
+    return rc;
+#else
     probe_event("synthetic-request");
     if (PROBE_DELAYED) {
         struct timespec left = {3, 200000000};
@@ -130,8 +364,32 @@ static __attribute__((unused)) kern_return_t probe_request(mach_port_name_t self
             if (errno != EINTR) { probe_event("delay-failed"); break; }
         }
     }
+#if PROBE_LOCAL_CANDIDATE
+    // Only local namespace work follows the finite delay; never another PID op.
+    if (atomic_exchange_explicit(&probe_local_allocation_attempted, true,
+        memory_order_acq_rel)) { probe_bad(); *returned = MACH_PORT_NULL; return KERN_FAILURE; }
+    probe_event("local-dead-name-allocation-call");
+    mach_port_name_t local = MACH_PORT_NULL;
+    kern_return_t rc = mach_port_allocate(self, MACH_PORT_RIGHT_DEAD_NAME, &local);
+    probe_local_allocation_status = rc;
+    if (rc != KERN_SUCCESS || !MACH_PORT_VALID(local)) {
+        probe_event("local-allocation-failed");
+        // A failed MIG reply plus NULL output is not proof of no allocation.
+        // No status allowlist is admitted: retain every unproven ownership case.
+        probe_local_uncertain = true;
+        *returned = MACH_PORT_NULL; return KERN_FAILURE;
+    }
+    // Independent ownership registration immediately after actual success.
+    probe_local_candidate = local; probe_local_owned = true;
+    probe_event("local-dead-name-owned");
+    *returned = local;
+    probe_event("local-candidate-synthetic-error");
+    return KERN_FAILURE;
+#else
     *returned = MACH_PORT_NULL;
     return KERN_FAILURE;
+#endif
+#endif
 }
 static __attribute__((unused)) int probe_spawn(pid_t *pid, const char *path,
     const posix_spawn_file_actions_t *actions, const posix_spawnattr_t *attributes,
@@ -180,6 +438,7 @@ static __attribute__((unused)) pid_t probe_waitpid(pid_t pid, int *status, int f
         atomic_store_explicit(&probe_reaped, true, memory_order_release);
         probe_event("target-reap");
         if (WIFEXITED(*status) && WEXITSTATUS(*status) == 2) probe_event("target-exit-2");
+        if (WIFEXITED(*status) && WEXITSTATUS(*status) == 0) probe_event("target-exit-0");
     } else if ((rc < 0 && saved != EINTR) || rc > 0) { probe_uncertain = true; probe_bad(); }
     errno = saved; return rc;
 }
@@ -207,6 +466,12 @@ static __attribute__((unused)) ssize_t probe_read(int fd, void *bytes, size_t le
         probe_bad(); errno = EBADF; return -1;
     }
     ssize_t rc = read(fd, bytes, length); int saved = errno;
+#if PROBE_GENUINE
+    if (rc > 0 && fd == probe_fds[2]) probe_wire_output(bytes, (size_t)rc);
+    if (rc > 0 && fd == probe_fds[4]) probe_event("actual-child-stderr");
+#endif
+    if (PROBE_READY_EXTRA && rc == 7 && !memcmp(bytes, "READY\nX", 7))
+        probe_event("ready-extra-chunk");
     if (rc == 0 && probe_fd_count == 6) {
         if (fd == probe_fds[2]) probe_event("stdout-eof");
         else if (fd == probe_fds[4]) probe_event("stderr-eof");
@@ -230,6 +495,18 @@ static void probe_finish(void) {
         const struct timespec pause = {0, 50000000};
         for (;;) (void)nanosleep(&pause, NULL);
     }
+#if PROBE_LOCAL_CANDIDATE
+    if (probe_joined && probe_local_uncertain) {
+        const struct timespec pause = {0, 50000000};
+        for (;;) (void)nanosleep(&pause, NULL);
+    }
+    if (probe_joined && probe_local_owned && !probe_local_dispose_attempted) probe_bad();
+#endif
+#if PROBE_GENUINE
+    if (probe_joined && MACH_PORT_VALID(probe_candidate) && !probe_disposals) probe_bad();
+    if (probe_input_total == 229 && probe_input_used == 0) probe_event("wire-input-229");
+    if (probe_output_total == 220 && probe_output_used == 0) probe_event("wire-output-220");
+#endif
     FILE *trace = fopen("native-trace", "wx");
     if (!trace) { (void)fputs("TASK6A_TEST_TRACE_FAILED\n", stderr); return; }
     int failed = 0;
@@ -260,12 +537,42 @@ static __attribute__((constructor)) void probe_initialize(void) {
 #define close probe_close
 #define read probe_read
 #define kill probe_kill
+#if PROBE_LOCAL_CANDIDATE
+#define mach_port_deallocate probe_local_dispose
+#define mach_port_type probe_local_forbid_type
+#define pid_for_task probe_local_forbid_pid
+#define task_info probe_local_forbid_info
+#endif
+#if PROBE_GENUINE
+#define mach_port_type probe_type
+#define pid_for_task probe_pid
+#define task_info probe_info
+#define mach_port_deallocate probe_dispose
+#define write probe_write
+#endif
+#if PROBE_FORWARD_CLOCK
+#define clock_gettime probe_synthetic_clock
+#endif
 `;
 
 function instrumentLifecycle(original, control) {
   assert.ok(CONTROLS.includes(control));
   if (control === 'none') return original;
   let body = original.toString();
+  if (control === 'genuine-request') {
+    const deadline = 'o.request.deadline_ns = o.deadline;';
+    const burn = 'o->burned = 1;';
+    assert.equal(body.split(deadline).length, 2, 'unique immutable deadline capture');
+    assert.equal(body.split(burn).length, 2, 'unique main-owner burn capture');
+    body = body.replace(deadline, deadline + '\n        probe_deadline = o.deadline;')
+      .replace(burn, burn + '\n    probe_burned = true;');
+  }
+  if (control === 'forward-observer-expiry') {
+    const observe = 'int rc = waitid(P_PID, (id_t)o->child, &info, WEXITED | WNOHANG | WNOWAIT);';
+    assert.equal(body.split(observe).length, 2, 'unique synthetic observer boundary');
+    body = body.replace(observe,
+      'int rc = probe_expiring_waitid(P_PID, (id_t)o->child, &info, WEXITED | WNOHANG | WNOWAIT);');
+  }
   if (control === 'delayed-no-consume-gate') {
     // Deliberately break only status consumption, not the main exit predicate.
     // The fake request performs no PID operation after its finite delay.
@@ -322,11 +629,55 @@ int main(void) {
 }
 `;
   }
+  if (control === 'forward-observer-expiry') {
+    pureMain = String.raw`
+#undef main
+int main(void) {
+    struct owner owner = {.born = 1, .child = 2, .thread_joined = true,
+        .task_port_owned = 1, .result_ready = 1, .deadline = UINT64_C(3000000000)};
+    atomic_init(&owner.request.admission, READY);
+    atomic_init(&owner.request.done, false);
+    bool allowed = forward_ready(&owner);
+    bool deadline_cause = owner.failure_count == 1 &&
+        !strcmp(owner.failures[0].operation, "protocol-deadline");
+    return printf("[%s,%s,%s]\n", allowed ? "true" : "false",
+        owner.burned ? "true" : "false", deadline_cause ? "true" : "false") < 0 ? 2 : 0;
+}
+`;
+  }
+  if (control === 'preterminal-stdout-eof') {
+    pureMain = String.raw`
+#undef main
+int main(void) {
+    struct owner owner = {.input = -1, .output = -1, .error = -1};
+    atomic_init(&owner.request.admission, READY);
+    atomic_init(&owner.request.done, false);
+    int ends[6] = {-1, -1, -1, -1, -1, -1}, result = 2;
+    for (size_t i = 0; i < 3; i++) if (pipe(ends + i * 2) != 0) goto done;
+    owner.output = ends[2]; ends[2] = -1;
+    for (size_t i = 0; i < 6; i++) close_owned(&owner, ends + i);
+    drain_stream(&owner, &owner.output, &owner.output_eof, &owner.output_bytes, 0);
+    bool eof_cause = owner.failure_count == 1 &&
+        !strcmp(owner.failures[0].operation, "early-stdout-eof");
+    result = printf("[%s,%s,%s,%s]\n", owner.burned ? "true" : "false",
+        owner.output_eof ? "true" : "false", owner.output < 0 ? "true" : "false",
+        eof_cause ? "true" : "false") < 0 ? 2 : 0;
+done:
+    for (size_t i = 0; i < 6; i++) close_owned(&owner, ends + i);
+    close_owned(&owner, &owner.output);
+    return result;
+}
+`;
+  }
   if (pureMain) body = '#define main taskport_production_main\n' + body + pureMain;
-  const delayed = ['delayed-synthetic-failure', 'delayed-no-consume-gate'].includes(control);
+  const delayed = ['delayed-synthetic-failure', 'delayed-no-consume-gate', 'local-candidate-late'].includes(control);
   return Buffer.from(LIFECYCLE_PREFIX.replaceAll('PROBE_DELAYED', delayed ? '1' : '0')
+    .replaceAll('PROBE_GENUINE', control === 'genuine-request' ? '1' : '0')
+    .replaceAll('PROBE_LOCAL_CANDIDATE', control.startsWith('local-candidate-') ? '1' : '0')
     .replaceAll('PROBE_CREATE_FAILED', control === 'create-failure' ? '1' : '0')
-    .replaceAll('PROBE_JOIN_DELAYED', postJoin ? '1' : '0') + '\n' + body);
+    .replaceAll('PROBE_JOIN_DELAYED', postJoin ? '1' : '0')
+    .replaceAll('PROBE_READY_EXTRA', control === 'ready-extra' ? '1' : '0')
+    .replaceAll('PROBE_FORWARD_CLOCK', control === 'forward-observer-expiry' ? '1' : '0') + '\n' + body);
 }
 
 function sameStat(a, b) {
@@ -454,9 +805,10 @@ function settled(command, args, cwd) {
 async function invokeOwnedTaskPortProbe(args, stage = 'execute', fixture = 'delivered', control = 'none') {
   assert.ok(args.length === 0 || (args.length === 1 && args[0] === 'unexpected'));
   assert.equal(stage, 'execute');
-  assert.ok(['delivered', 'early-exit'].includes(fixture));
+  assert.ok(['delivered', 'early-exit', 'ready-extra'].includes(fixture));
   assert.ok(CONTROLS.includes(control));
   assert.equal(fixture === 'early-exit', control === 'early-target-exit');
+  assert.equal(fixture === 'ready-extra', control === 'ready-extra');
   if (args.length) assert.equal(control, 'none');
   else assert.notEqual(control, 'none');
   const held = [], directories = [], symlinks = [];
@@ -491,6 +843,13 @@ async function invokeOwnedTaskPortProbe(args, stage = 'execute', fixture = 'deli
     assert.equal(JSON.parse(settings.bytes).MinimalDisplayName, '26.5');
     held.push(holdRegular(SDK + '/usr/lib/libSystem.B.tbd',
       '20cfce043f11a083e2eb6111efe3579919a8082fa4cc912a7bd839af2010ec57', 0));
+    if (control.startsWith('local-candidate-')) {
+      for (const [path, hash] of [
+        ['/usr/include/mach/mach_port.h', 'c088bfd374e15020d6c0eadc43031d06a8fb05bfa5d1b1828d65d28618717a0f'],
+        ['/usr/include/mach/mach_port.defs', 'f0a51838fbec52fe636068bf909f32edb5b5ffd3e2cc7fda2686220cd63d07f9'],
+        ['/usr/include/mach/port.h', 'e4d48a100252a8d07ef5221e4cac1ea727fb975271a8382e0a6faf121c5c8a56'],
+      ]) held.push(holdRegular(SDK + path, hash, 0));
+    }
     if (control !== 'none') {
       const path = SDK + '/usr/include/pthread.h';
       const stat = fs.lstatSync(path, {bigint: true});
@@ -524,6 +883,7 @@ async function invokeOwnedTaskPortProbe(args, stage = 'execute', fixture = 'deli
     const fixtureEntry = directory + '/task6a-protected-origin-entry-v2.mjs';
     const compiledBytes = instrumentLifecycle(held[0].bytes, control);
     const entryBytes = fixture === 'early-exit' ? Buffer.from(EARLY_EXIT_ENTRY)
+      : fixture === 'ready-extra' ? Buffer.from(READY_EXTRA_ENTRY)
       : deliveredEntry ? deliveredEntry.bytes : Buffer.from(ENTRY);
     fs.writeFileSync(source, compiledBytes, {flag: 'wx', mode: 0o600});
     fs.writeFileSync(fixtureEntry, entryBytes, {flag: 'wx', mode: 0o600});
@@ -576,6 +936,7 @@ async function invokeOwnedTaskPortProbe(args, stage = 'execute', fixture = 'deli
         witnessExit: observed.code, definiteExitCloseAndBothEof: true,
         actualExitCode: actual.code, actualStdout: actual.stdout, actualStderr: actual.stderr,
         entryKind: fixture === 'early-exit' ? 'early-exit-builtin-test'
+          : fixture === 'ready-extra' ? 'ready-extra-builtin-test'
           : deliveredEntry ? 'exact-delivered-builtin' : 'startup-witness',
         ...(trace === null ? {} : {trace, traceHash: sha256(trace)}),
         productionAuthority: false, controlUsable: false,
@@ -772,6 +1133,134 @@ test('ordinary task-port oracle rejects omitted post-join budget check',
     {code: 'ERR_ASSERTION', message: /post-join expiry must burn request result/});
 });
 
+test('ordinary task-port forward guard refuses observer crossing deadline',
+  {skip: !LIFECYCLE_TEST_ENABLED}, async t => {
+  const actual = await invokeOwnedTaskPortProbe([], 'execute', 'delivered', 'forward-observer-expiry');
+  t.diagnostic(JSON.stringify(actual.evidence));
+  assert.equal(actual.code, 0);
+  assert.equal(actual.stderr, '');
+  assert.equal(actual.trace, 'synthetic-observer-expiry\n');
+  assert.equal(actual.stdout, '[false,true,true]\n');
+});
+
+test('ordinary task-port drain burns actual stdout EOF before terminal phase',
+  {skip: !LIFECYCLE_TEST_ENABLED}, async t => {
+  const actual = await invokeOwnedTaskPortProbe([], 'execute', 'delivered', 'preterminal-stdout-eof');
+  t.diagnostic(JSON.stringify(actual.evidence));
+  assert.equal(actual.code, 0);
+  assert.equal(actual.stderr, '');
+  const events = actual.trace.trim().split('\n');
+  assert.equal(events.filter(event => event === 'pipe').length, 3);
+  assert.equal(events.filter(event => event === 'pipe-close').length, 5);
+  assert.equal(events.filter(event => event === 'input-close').length, 1);
+  assert.equal(events.filter(event => event === 'stdout-eof').length, 1);
+  assert.equal(events.length, 10, 'only actual pipe acquisition/EOF/disposition events');
+  assert.equal(actual.stdout, '[true,true,true,true]\n');
+});
+
+test('ordinary task-port READY admission refuses coalesced extra byte before create',
+  {skip: !LIFECYCLE_TEST_ENABLED}, async t => {
+  const actual = await invokeOwnedTaskPortProbe([], 'execute', 'ready-extra', 'ready-extra');
+  t.diagnostic(JSON.stringify(actual.evidence));
+  assertNoRequestLifecycle(actual, false);
+  assert.match(actual.stderr, /^TASK6A_NATIVE_TASK_PORT_PROBE_FAILED protocol-frame /m);
+  assert.equal(actual.trace.split('\n').filter(event => event === 'ready-extra-chunk').length, 1);
+  assert.equal(actual.evidence.entryKind, 'ready-extra-builtin-test');
+});
+
+function assertNominal(actual) {
+  assert.equal(actual.code, 0, 'nominal acquisition must really succeed: ' + actual.stderr);
+  assert.equal(actual.stderr, '');
+  assert.ok(Buffer.byteLength(actual.stdout) <= 2048);
+  assert.equal(actual.stdout.split('\n').length, 2, 'exactly one diagnostic line');
+  assert.ok(actual.stdout.endsWith('\n'));
+  const expected = {
+    schema: 'setfarm.task6a-native-task-port-diagnostic.v2',
+    outcome: 'task-for-pid-right/unqualified',
+    requestAttempted: true,
+    requestThreadJoined: true,
+    taskRightBound: true,
+    auditStable: true,
+    challengesCompleted: 3,
+    inputBytes: 229,
+    outputBytes: 220,
+    childReaped: true,
+    childExitCode: 0,
+    childSignal: null,
+    stdoutEof: true,
+    stderrEof: true,
+    taskRightDisposed: true,
+    controlUsable: false,
+    productionAuthority: false,
+    completeNativeClosure: false,
+    protectedOrigin: false,
+  };
+  assert.deepEqual(JSON.parse(actual.stdout), expected);
+  assert.equal(actual.stdout, JSON.stringify(expected) + '\n',
+    'fixed diagnostic must not contain duplicate or contradictory fields');
+}
+
+function assertGenuineTrace(actual) {
+  const events = actual.trace.trim().split('\n').filter(Boolean);
+  const count = name => events.filter(event => event === name).length;
+  const once = name => {
+    assert.equal(count(name), 1, name);
+    return events.indexOf(name);
+  };
+  for (const name of ['harness-fault', 'sticky-harness-fault', 'trace-overflow',
+    'trace-unpublished', 'after-reap-target-call', 'synthetic-request', 'delay-failed'])
+    assert.equal(count(name), 0, name);
+  assert.ok(!actual.stderr.includes('TASK6A_TEST_TRACE_FAILED'));
+  assert.ok(!actual.stderr.includes('TASK6A_NATIVE_TASK_PORT_PROBE_FAILURE_RECORD_OVERFLOW'));
+  // Physical request/cleanup facts must be checked even when the host denies.
+  once('target-spawn'); once('create-request'); once('create-success'); once('worker-enter');
+  assert.ok(once('wire-ready') < once('genuine-request'));
+  assert.ok(once('genuine-request') < once('genuine-return'));
+  assert.ok(once('genuine-return') < once('worker-return'));
+  assert.ok(once('worker-return') < once('actual-join-success'));
+  assert.ok(once('actual-join-success') < once('target-reap'));
+  once('stdout-eof'); once('stderr-eof'); once('input-close');
+  assert.equal(count('pipe'), 3);
+  assert.equal(count('pipe-close'), 5);
+  // Actual kernel denial remains a failure, not unavailable support or a skip.
+  once('genuine-status-0'); once('genuine-candidate-valid');
+  assert.equal(count('genuine-candidate-invalid'), 0);
+  for (const name of ['native-return-after-budget', 'type-not-qualified', 'pid-not-qualified',
+    'audit-not-qualified', 'audit-drift-observed', 'actual-child-stderr',
+    'original-right-dispose-failed', 'signal-term', 'signal-kill', 'target-exit-2'])
+    assert.equal(count(name), 0, name);
+  const order = ['actual-join-success', 'type-call', 'type-send-valid', 'pid-call',
+    'pid-matches-original-child', 'audit-first-call', 'audit-first-valid',
+    'audit-second-call', 'audit-second-stable', 'wire-end-written', 'input-close', 'wire-end-read'];
+  for (let i = 1; i < order.length; i++)
+    assert.ok(once(order[i - 1]) < once(order[i]), order[i]);
+  assert.equal(count('wire-challenge'), 3);
+  assert.equal(count('wire-pong'), 3);
+  let previous = once('audit-first-valid');
+  for (let i = 0; i < 3; i++) {
+    const challenge = events.indexOf('wire-challenge', previous + 1);
+    const pong = events.indexOf('wire-pong', challenge + 1);
+    assert.ok(challenge > previous && pong > challenge, 'three actual ordered matching exchanges');
+    previous = pong;
+  }
+  assert.ok(previous < once('audit-second-call'));
+  assert.ok(once('wire-end-read') < once('stdout-eof'));
+  once('target-exit-0'); once('wire-input-229'); once('wire-output-220');
+  for (const name of ['target-reap', 'stdout-eof', 'stderr-eof'])
+    assert.ok(once(name) < once('original-right-dispose-call'), 'settlement before original disposition');
+  assert.ok(once('original-right-dispose-call') < once('original-right-disposed'));
+}
+
+// Catches fabricated positive DTO, pre-join queries, mismatched wire/audit, early
+// reap and missing original disposition. Only one real own-child kernel request.
+test('ordinary task-port nominal acquisition contract requires full unqualified result',
+  {skip: !NOMINAL_TEST_ENABLED}, async t => {
+  const actual = await invokeOwnedTaskPortProbe([], 'execute', 'delivered', 'genuine-request');
+  t.diagnostic(JSON.stringify(actual.evidence));
+  assertGenuineTrace(actual);
+  assertNominal(actual);
+});
+
 for (const [control, delayed] of [['synthetic-failure', false], ['delayed-synthetic-failure', true]]) {
   // Catches missing owner lifecycle or consuming child status before real join.
   // Synthetic failure is never kernel acquisition or capability-denial evidence.
@@ -780,5 +1269,39 @@ for (const [control, delayed] of [['synthetic-failure', false], ['delayed-synthe
     const actual = await invokeOwnedTaskPortProbe([], 'execute', 'delivered', control);
     t.diagnostic(JSON.stringify(actual.evidence));
     assertLifecycle(actual, delayed);
+  });
+}
+
+// Names the existing production break: not registering a valid candidate on
+// error/late return, or omitting/repeating local disposition, must fail. This
+// tests existing cleanup, not a new fix or fabricated task-right capability.
+for (const control of ['local-candidate-error', 'local-candidate-late']) {
+  test('ordinary task-port owner disposes original local reference under ' + control,
+    {skip: !LIFECYCLE_TEST_ENABLED}, async t => {
+    const actual = await invokeOwnedTaskPortProbe([], 'execute', 'delivered', control);
+    t.diagnostic(JSON.stringify(actual.evidence));
+    assertLifecycle(actual, control === 'local-candidate-late');
+    const events = actual.trace.trim().split('\n');
+    const once = name => {
+      assert.equal(events.filter(event => event === name).length, 1, name);
+      return events.indexOf(name);
+    };
+    const order = ['local-dead-name-allocation-call', 'local-dead-name-owned',
+      'local-candidate-synthetic-error', 'worker-return', 'actual-join-success',
+      'local-original-dispose-call', 'local-original-disposed', 'target-reap'];
+    for (let i = 1; i < order.length; i++)
+      assert.ok(once(order[i - 1]) < once(order[i]), order[i]);
+    for (const name of ['local-allocation-failed', 'local-original-dispose-failed',
+      'local-allocation-ownership-uncertain',
+      'genuine-request', 'genuine-return', 'type-call', 'pid-call',
+      'audit-first-call', 'audit-second-call', 'wire-challenge', 'wire-pong',
+      'local-forbidden-type-call', 'local-forbidden-pid-call', 'local-forbidden-audit-call'])
+      assert.equal(events.filter(event => event === name).length, 0, name);
+    assert.equal(events.filter(event => event === 'target-exit-2').length, 1);
+    if (control === 'local-candidate-late') {
+      assert.match(actual.stderr, /^TASK6A_NATIVE_TASK_PORT_PROBE_FAILED request-burned /m);
+      assert.doesNotMatch(actual.stderr, /^TASK6A_NATIVE_TASK_PORT_PROBE_FAILED task-port-denied /m);
+      assert.ok(once('input-close') < once('local-dead-name-allocation-call'));
+    } else assert.match(actual.stderr, /^TASK6A_NATIVE_TASK_PORT_PROBE_FAILED task-port-denied 5 /m);
   });
 }

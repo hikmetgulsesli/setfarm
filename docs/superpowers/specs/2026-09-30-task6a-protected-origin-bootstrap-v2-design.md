@@ -9,7 +9,32 @@ nominated no-created-thread cleanup, sequential burn-before-admission, actual
 early target exit and post-real-join expiry plus its precise omission mutant.
 These are separate closed batches at their recorded source/test pins, not an
 exhaustive current-source matrix or concurrent/failed-join uncertainty proof.
-No genuine task_for_pid capability experiment or protected admission. The delivered
+Finite phase controls subsequently repaired deadline-crossing forward admission,
+preterminal stdout EOF and coalesced READY extra bytes through actual3FAIL RED
+then3PASS GREEN. Affected9+separate argv also passed at C7deb/testabfc, in separate
+pinned batches. The later genuine observer test43ec is not retroactively covered
+by those passes. ONE genuine own-child task_for_pid experiment c46c8e naturally
+closed with actual kernel failure5/invalid candidate; strict nominal is FAIL,
+not a skip or unavailable support. Its real worker returned and joined before
+the target's single normal2 reap, bothEOF and six original FD closes, fault0.
+No positive protocol/native query/disposal was observed. No policy/security/
+privilege change or retry is admitted. Positive-path support, CONTROL and
+protected admission remain open; independent765dd4 checked all7originalfiles/
+2dirs with held-final byte/stat/path/inventory checks and checked closes.
+Source-only ordinary alternatives may be investigated, not invented as an
+admitted recipe or used to bypass this failure.
+Current helper testb2fc was subsequently reviewed and verified through separate
+finite12 and argv invocations (12PASS21040.572666ms +1PASS711.764666ms), while
+its original local2 cleanup receipt remains separate and unreplayed. Independent
+5059bf checked all90neworiginalfiles/26dirs against original nominated raw,
+full held-final bytes/stat/path/inventories and all checked closes; fault0.
+This is finite15 coverage at the same C/test pins across separate batches, not
+an all16 nominal matrix, unknown-owner/failed-join proof or genuine acceptance.
+Strict genuine actualfailure5 remains unchanged; positive-path delivery/merge,
+CONTROL/protected/T4/P2 remain unqualified. Only an honest incomplete reviewed
+checkpoint on the existing branch is admitted; no fresh genuine retry, policy
+change, native addon or source-alternative effect follows from these passes.
+The delivered
 ordinary NAME slice PR274 is complete at main
 ae5a7b0e56e999255c4beb6937ea63e563f930e8. Its actual NAME support is not
 CONTROL availability. This next causal P2 experiment asks whether one ordinary
@@ -137,6 +162,30 @@ Sources (inspected public raw source, not a third-party issue as authority):
 - https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/kern_exit.c
 
 ### Verification and effect admission
+
+Remaining local-candidate coverage is explicitly synthetic: two closed controls
+can allocate exactly one fresh local MACH_PORT_RIGHT_DEAD_NAME user reference,
+return a valid candidate with synthetic failure (immediate or after finite3.2s
+delay), and observe actual production once-only mach_port_deallocate after real
+join. These are not task rights, genuine Tfp/CONTROL, positive protocol or a fix
+for denial5. No alias/reallocation/rescue/retry is allowed. Worker registers
+actual successful allocation immediately; main only reads it after actualjoin.
+Latch both allocation/disposal attempts before delegation. Every unproven
+allocation error, including NULL output/MIG failure, remains unknown ownership:
+no definite-failure allowlist is admitted. Main reports the actual error after
+realjoin and retains the failed owner, never closure. Deallocation errors
+must fail the fixture. Zero TFP/type/PID/audit/forward operations, actual exclusive
+target generation and final child/EOF/FD closure remain required. Preserve pins
+for installed mach_port header/defs/port contract before and after; full paired
+literal source/effect review and fresh gates precede either experiment. This
+coverage cannot satisfy the genuine-positive gate or authorize T4/P2 delivery.
+Actual two local controls subsequently passed in3efc38 at unchanged C7deb/test
+b2fc, with successful once original deallocation after checked join/before
+target reap, normal2/EOFs/sixclose/fault0 and no genuine TFP/query/forward action.
+Independent32d601 held14originalfiles/4dirs against original receipts and checked
+all final bytes/stat/path/inventories/closes. These are synthetic local cleanup
+facts only; unproven allocation/actual unknown-join retention remains source-
+reviewed, not finite execution proof. Positive path stays unqualified/unmerged.
 
 First use behavior-driven refusal and pure lifecycle test copies with literal
 oracles for no consuming reap before join, bounded pending cleanup, admission
