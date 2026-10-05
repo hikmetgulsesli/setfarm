@@ -347,6 +347,147 @@ Only a literal resource/phase/error/settlement contract is next. No source file,
 compiler/addon invocation or executable recipe is admitted by this research.
 All complete-custody/startup/movability/foreign-CONTROL/P2/T4 gates remain open.
 
+### Literal plain-message continuity research contract — no executable admission
+
+Purpose: distinguish inherited-channel continuity through real Node startup from
+task-self transfer. This research consumes the completed inert S1 observation,
+not a task right. It produces only a prospective ordinary continuity/absence
+classification. No native source, test, build or invocation is authorized here;
+the child retention dispatcher, independent witnesses and exact implementation
+File Map/compiler/loader/effect recipes remain separate reviewed prerequisites.
+Current File Map is ONLY this named spec and its named plan; five C/CJS/test
+files, all existing runtime interfaces and every retained artifact stay unchanged.
+
+Choose descriptor-free continuity research over the full complex task-right
+channel (movability/CONTROL still unresolved) or another inert callback sample
+(would not answer continuity). Header ownership still exists. Use only installed
+public mach_ports_register/lookup and mach_msg interfaces; never declare private
+_kernelrpc_*3 or trap entry points to evade wrapper uncertainty. The installed
+public task.h declares wrapper names; task.defs selects different interfaces
+under LIBSYSCALL_INTERFACE. Its legacy public reply type is not proof of the
+installed MIG backend. Published kernel register3 uses no caller VM allocation;
+do not invent one from its older comment. Lookup has a separate VM allocation.
+[Interface branches](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/mach/task.defs#L135),
+[Registry operations](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/kern/ipc_tt.c#L2162),
+[Public wrappers](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/libsyscall/mach/task.c#L59).
+
+#### Frozen prospective message and resource vocabulary
+
+- One original ordinary C owner, exactly one fixed Node child and one joinable
+  receiver request. No unrelated birth during temporary parent registration.
+  This is an owner-created isolated fixture, not a public target or standalone
+  permission to clear somebody else's preexisting registration.
+- One parent-owned receive right R and separately acquired original send
+  reference S. Parent baseline must be exactly3NULL. Register [S,NULL,NULL]
+  only for original child birth, then restore and independently verify3NULL.
+- Kp and Kc denote kernel parent/child stash references, not user references to
+  deallocate by guessed names. Parent restoration does not clear Kc. Seal every
+  successful lookup's original VM and each valid returned slot by occurrence
+  before fallible semantic validation, including unexpected/repeated slots.
+  Require count3 and acquisition layout [valid L,NULL,NULL]. Unexpected count/
+  layout burns acceptance with all acquired obligations retained; if a readable
+  bounded array extent is not established, retain unknown slot obligations
+  without walking an untrusted count. Retain L across child stash clearing.
+  Each verification lookup owns new VM and any unexpectedly returned references.
+- Minimal successful-path lookup VM ledger is four originals: Vp-baseline,
+  Vp-restoration, Vc-acquisition, Vc-clear-verification. There is no installation
+  verification lookup in this proposal. Adding any lookup adds its own occurrence
+  and VM entries; repeated names never merge the occurrence ledger.
+- Header uses COPY_SEND of L, local reply and voucher NULL, no COMPLEX bit,
+  no descriptors/OOL body. Freeze ID0x53464332 and a bounded payload containing
+  the fixed version and one independently owner-supplied 16-byte nonce. Nonce
+  arrives through the original owned input pipe, not argv/env/JS-produced JSON.
+  Exact ABI size/alignment/trailer capacity must be reviewed before executable
+  design; a size guessed from these prose fields is not admitted.
+- D denotes the transient copied header reference. Successful send does not
+  consume L. On failed post-copy-in send, D may be pseudo-returned/coalesced;
+  unobservable copy-back means retained uncertainty, not guessed disposal.
+- Explicit public MACH_SEND_INTERRUPT and MACH_RCV_INTERRUPT accompany their
+  respective timeout options. One application send/receive is not represented
+  as a proved one-trap call. Wrapper auxiliary/vector and installed backend
+  paths remain explicit limitations, not silently removed by NULL voucher.
+- One original monotonic deadline applies to the whole attempt; check remaining
+  validity before/after fallible operations. No timeout renewal, positive
+  observations after burn, or hard-return guarantee. Predetermined checked
+  cleanup and actual settlement may continue after burn.
+
+#### Phase/resource FSM
+
+| Phase | Sole admissible progression / custody |
+| --- | --- |
+| P_BASELINE | Own-task lookup succeeds with exactly3NULL; seal then checked-free Vp-baseline. |
+| P_CHANNEL | Acquire/seal R/S and original pipes; register [S,NULL,NULL] successfully. |
+| P_BORN | Capture the original child; clear parent stash; successful new3NULL lookup and checked Vp-restoration disposal. |
+| C_LOOKED_UP | Real postexec callback reads the independent nonce and successful own-task lookup; seal Vc and every valid returned occurrence before validation; require count3 and [valid L,NULL,NULL], otherwise retain acquired/unknown obligations. |
+| C_STASH_CLEARED | Successful own-task3NULL registration and separate3NULL verification; checked disposal of Vc-clear-verification; keep L. |
+| C_SENT | Exactly one logical noncomplex header COPY_SEND using L; only actual success advances. |
+| P_RECEIVED | Original receiver captures actual result/buffer and publishes completion; owner does not read captured fields or authenticate while receiver is unjoined. |
+| C_LOCAL_CLOSED | Once-only checked disposal of L and Vc; native local-closed rendezvous; child remains alive awaiting original END. |
+| P_RECEIVER_JOINED | Original receiver returned and successful sole join occurred; only then may owner read its captured result/buffer. |
+| P_AUTHENTICATED | Owner validates actual receipt on original R, exact bounds/header/nonce and aligned bounded kernel audit trailer; fresh original-child live/unreaped check precedes END. |
+| P_END | Send original END only for a known locally closed path; never use pipe closure/END to force an uncertain child out. |
+| P_SETTLED | Natural child exit, both EOFs, exclusive reap, checked original pipe/R/S cleanup and parent stash closure all known. Only this path can classify ordinary continuity. |
+| RETAINED_FAILED_OWNER | Any unproven mutation/reference/VM/status/channel/settlement permanently burns acceptance; retain original obligations, no retry/guessed cleanup/automatic owner exit. |
+
+Owner reads/authenticates captured receiver data only after actual successful
+join. Receiver authentication must precede END while the original child is live,
+not merely unreaped after death. A fast child that exits immediately after send
+cannot establish that requirement. Child local cleanup and parent receiver
+receipt may progress concurrently; do not require a misleading global order
+between them. Actual receiver join always precedes child-status consumption.
+Known resources permit their predetermined once-only checked dispositions after
+burn, but unknown ownership does not permit an exit/death substitute for cleanup.
+At most one attempt or retained owner may be admitted; another case cannot start
+until the prior original owner/resources are definitely settled. External death
+and unreturned kernel calls remain explicit nonpositive limitations.
+
+#### Native result rendezvous and child retention
+
+One original private result pipe has a fixed child native-writer endpoint and
+parent-held reader. Register both ends before fallible setup, close every unused
+duplicate exactly once and preserve original bindings. Define only these native
+result states, none exporting positive authority:
+
+- LOCAL_CLOSED_AFTER_SEND: actual send success followed by all known child
+  reference/VM/stash dispositions; await original END while still live.
+- KNOWN_LOCAL_CLOSED_REFUSAL: successful all-NULL lookup and checked VM disposal,
+  no send or registration mutation; await original END for finite settlement.
+- UNCERTAIN_RETAINED_FAILURE: an unproven operation or disposition; sticky burn
+  and retain the native callback/owner, with no ordinary JS throw-and-exit or
+  S1 _Exit72 fallthrough while Mach obligations remain uncertain.
+
+The executable proposal must freeze one bounded exact binary frame, complete
+checked write/once-only endpoint close, phase bindings and the child-side
+low-resource retention dispatcher before code is admitted. Partial frame,
+write/close failure, absence, EOF or child JSON cannot establish local closure.
+The result record is synchronization, not an independent cleanup certificate.
+Independent typed real primitive witnesses must establish each actual call,
+result and once-only disposition. A callback retaining uncertainty must not
+fall through to Node shutdown; original owner death is not secretly converted
+into successful settlement. Parent preserves original receive/status ownership
+on an uncertain/missing frame, not automatic signalling/reaping or success.
+
+#### Finite known-absence control and acceptance boundary
+
+The omitted-registration derivative omits only the parent's stash installation
+for the original child. Keep original R/S, pipes, receiver and literal positive
+oracle. Child successful lookup3NULL plus checked VM disposal yields known
+absence; no child send or stash mutation follows. Parent must receive the
+specifically classified no-message timeout and actually join. Only complete
+native known-refusal rendezvous plus checked parent stash/channel/pipe cleanup,
+original END and natural child EOF/status settlement can close this control.
+The unchanged positive continuity oracle must reject missing receipt precisely;
+that sensitivity, not timeout or an unknown refusal, is the control's acceptance.
+
+Every RPC/message/disposal result outside its proved phase classification remains
+retained failure. In particular, hidden lookup VM cleanup, post-copy-in header
+copy-back, interrupted/unreturned receive and incomplete result frames cannot
+be expected-refusal PASS. Successful ordinary continuity would require real
+postexec receipt/authentication, independent native cleanup witnesses and final
+known settlement; it still establishes no task-self transfer, immovable-send
+property, foreign CONTROL, immutable startup TCB, protected origin, zero-owner
+cutover or P2. Full executable/effect and all positive platform gates remain open.
+
 ### Source-only prerequisite findings: acquisition is not CONTROL
 
 Bounded published-source inspection supports registered-slot inheritance through

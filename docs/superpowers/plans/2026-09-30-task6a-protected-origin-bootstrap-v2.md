@@ -301,8 +301,11 @@ does not open genuine-positive/T4delivery/CONTROL/protected/P2 gates.
   installation; lookup suppresses VM-cleanup status on RPC failure. No generic
   error=>empty/closed rule, unchecked destructor, retry or running-host inference.
   Source-only File Map stays this plan/spec; all five code/test pins unchanged.
-- [ ] Review the next literal noncomplex continuity-only research contract:
-  explicit header disposition, NULL reply/voucher, fixed nonce/payload/bounds/
+- [ ] Independently review the written literal noncomplex continuity-only
+  research contract in the named spec: P_BASELINE/P_CHANNEL/P_BORN,
+  C_LOOKED_UP/C_STASH_CLEARED/C_SENT, P_RECEIVED/C_LOCAL_CLOSED,
+  P_RECEIVER_JOINED/P_AUTHENTICATED/P_END/P_SETTLED and sticky RETAINED_FAILED_OWNER.
+  Require explicit header disposition, NULL reply/voucher, fixed nonce/payload/bounds/
   interrupt options; each receive/send/lookup occurrence and VM/stash obligation;
   checked successful clearing/restoration/disposal/join before reap; every
   unproven phase burns acceptance into RETAINED_FAILED_OWNER without retry or
@@ -311,7 +314,23 @@ does not open genuine-positive/T4delivery/CONTROL/protected/P2 gates.
   plus authenticated live original-child sender and successful cleanup is the
   only continuity oracle; omitted-registration control must fail that same
   oracle, not compilation/harness. No task-self descriptor/CONTROL/P2 claim.
-  This step is docs-only; no implementation file or effect recipe is admitted.
+  Native result states are LOCAL_CLOSED_AFTER_SEND,
+  KNOWN_LOCAL_CLOSED_REFUSAL and UNCERTAIN_RETAINED_FAILURE; the record alone
+  cannot certify cleanup. Child remains live awaiting original END after known
+  local closure. Unknown callback ownership forbids JS/S1_Exit fallthrough;
+  the literal native retention dispatcher and binary-frame/ABI/primitive-witness
+  recipes remain required before a separately reviewed executable proposal.
+  Successful path has four separate lookup VM originals and sealed R/S/L/Kp/Kc/D
+  distinctions. Seal every valid lookup slot occurrence and original VM before
+  semantic validation; require acquisition count3/[valid L,NULL,NULL]. Unexpected
+  slots/counts retain all acquired/unknown obligations without an unbounded walk.
+  Owner reads captured receiver fields/authenticates only after actual join;
+  fresh original-child live/unreaped check precedes END.
+  Known all-NULL semantic absence is finite only after complete
+  checked local/parent closure and actual receiver join/natural child settlement;
+  unknown RPC/headercopyback/disposal/frame errors are never expected PASS.
+  This step is docs-only, ONLY plan/spec File Map; no implementation file,
+  compiler/addon invocation or effect recipe is admitted.
 - [ ] Determine whether the complete send/receive error table and postexec
   registration/loader continuity permit a separately scoped executable design.
   If not, record the precise unsupported contract and continue only safe source
