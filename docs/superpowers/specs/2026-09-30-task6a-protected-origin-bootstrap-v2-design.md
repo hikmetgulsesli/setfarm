@@ -19,6 +19,115 @@ assignment, provider/branch/access changes or automatically acting on proposals.
 Exact-head feedback and every suggested implementation/effect require their
 own evidence and scoped review. All positive/merge/runtime gates remain closed.
 
+## S2 separately bounded syntax-only layout prerequisite
+
+Measured status: real missing-source RED59a658 preceded the typedef candidate.
+First tool acquisition db21c6 refused on an overly small generic100MB bound,
+before fixture/compiler effects. The correction pins clang's exact290664032-byte
+size/streaming limit while bounding other inputs to1MiB, with all original
+hash/inode/ownership/closure checks unchanged. Separate corrected baseline60a4ad
+and payload31 control0bd1dd each passed; actual compiler results were0 and1
+respectively, with the control's sole SFCNT_PAYLOAD_SIZE_32 error. Original
+source/copy/tool/header-nomination commitments, natural exit/close/bothEOF and
+91distinct input descriptors/91checked closes are recorded. Independent92e3fd/
+52c5b1 inspect only their respective original one-file fixtures, never replay.
+This closes ordinary compiler-layout/sensitivity measurement only. No runtime
+message/codec/BSM parsing, full compiler/Node TCB, retention, CONTROL or P2 proof.
+The initial published seven-file map remains historical; current S2 source map
+is nine, with draft update/review still required. All five prior code/test pins
+and retained roots/builds/native samples/original dirty files stay unchanged.
+
+This causal prerequisite answers only whether the nominated compiler/public SDK
+accepts the prospective USER arm64 message layout. Alternatives are source prose
+alone (no compiled ABI observation), a linked/running Mach helper (unnecessary
+ownership effects), or syntax-only C checks. Choose syntax-only; it implements
+neither transport nor retention. Its exception admits no link, binary/addon load,
+Mach call, foreign CONTROL, signal injection or protected/P2/runtime integration.
+Standing owner authority covers the bounded diagnostic, subject to independent
+exact source/test/input/command review before any compiler invocation.
+
+S2 File Map, separate from the unchanged S1/task-port files:
+
+- Create scripts/task6a-origin-native-continuity-abi-v2.c: only public includes
+  and two layout typedefs; no functions, globals, callbacks or runtime calls.
+- Create scripts/__tests__/task6a-origin-native-continuity-abi-v2.test.js:
+  default-off owned syntax-only characterization and one payload-length mutant.
+- Modify only this named spec/plan for the causal refinement. The published
+  draft's current seven-file map stays historical; a delivered S2 aggregate would
+  be nine, with no local operational ledger/manifest/binary/fixture published.
+
+Candidate C includes mach/message.h, stddef.h and stdint.h, defines
+sf_continuity_message_v2 as header plus uint8_t payload[32] and
+sf_continuity_frame_v2 as uint8_t[32]. Independent test-copy suffix, not the
+candidate, supplies literal _Static_assert checks for USER header24 and offsets
+0/4/8/12/16/20, payload offset24 and length32, frame32, message56, natural_t4,
+audit-trailer52/audit-offset20 and round_msg(message)+audit108. Empty/missing
+typedefs must fail compilation; the oracle does not merely grep source text.
+Use mach_msg_audit_trailer_t, not the ordinary8-byte trailer. Exclude libbsm.h
+and accessor-signature assertions deliberately: this measures layout only, not
+BSM parsing, a linked image, codec bytes, receipt or runtime message behaviour.
+Fail before qualification on KERNEL, __MVS__ or a non-Apple/non-arm64 target.
+
+Test opt-in is exactly SETFARM_TASK6A_NATIVE_CONTINUITY_ABI_TEST=1; unset means
+two SKIPs with no source/fixture/CLT acquisition. Other nonempty values refuse.
+Consume only closed baseline and payload31 modes. Missing candidate returns
+source-unavailable BEFORE CLT/fixture/child creation; the anchored baseline's
+source-unavailable versus syntax-observed assertion is the real initial RED.
+Only after that original result and source review may the minimal C be created.
+Baseline requires actual compiler exit0, empty stdout/stderr, both actual EOFs,
+matching natural exit/close without signal and successful final checks/closes.
+The separate mutant changes ONLY the unique payload[32] declaration to[31];
+the identical independent suffix must then produce exactly one static-assert
+error labelled SFCNT_PAYLOAD_SIZE_32 and one-error summary, exit1/no warnings/
+stdout. Generic compiler/setup/transport failure is not mutant acceptance.
+This catches the real padding trap: sizeof(message) can remain56 at payload31.
+
+Compiler argv is closed: fixed CLT clang, --no-default-config,
+--target=arm64-apple-macos26.5, exact clang21 resource-dir/MacOSX26.5 isysroot,
+-nostdinc with resource/include then SDK/usr/include, -fno-modules,
+-fno-implicit-modules, -fno-implicit-module-maps, -std=c11, -O0,
+-Wall/-Wextra/-Werror, -fsyntax-only, -x c and exactly one owned C copy.
+No -c/-o/-E/link/as/ld, caller -D/-U/-include/paths/options, framework search,
+precompiled headers, module caches, install, node-gyp or loader alteration.
+Compile environment is exactly PATH=/usr/bin:/bin, LANG=C, LC_ALL=C and owned
+fixture TMPDIR. Original test runner also starts under env-i and fixed Node.
+Only one original compiler child per separately anchored case, serially.
+
+Input nomination is the independently recorded85-header literal-include
+superset rooted ONLY in the exact resource/SDK include roots. It includes
+inactive headers; it is not Clang's observed used-header set. Encode its literal
+path/inode/size/mode/SHA256 rows in the test, hold all original regular UID0,
+nlink1/non-group/world-writable files and reread/check original metadata/path
+before/after invocation. No macro includes, resolved escapes or in-root symlinks
+were found by the bounded source derivation; don't discover and auto-admit new
+headers from compiler output. Preserve seven exact absences: both roots'
+AvailabilityInternalPrivate.h, AvailabilityProhibitedInternal.h and
+__xnu_libcxx_sentinel.h, plus SDK/stdarg.h. They cover five optional/inactive
+include branches; check the same absences before/after, not continuous absence.
+Unexpected macro/header/search input refuses. Review the complete test/suffix,
+nomination and command before invoking any compiler.
+
+Hold original candidate/test/clang/SDKSettings and fixed Node inputs using
+positional original-FD reads, not pathname reopening; record source/copy/tool/
+header nomination hashes and fixture binding in the original result. Check
+material file metadata/path, distinct original descriptors and directory
+bindings; read-atime is reported separately, not mutation proof. Fixture is
+fresh0700 with exactly one exclusive0600 C copy, retained without cleanup/delete.
+Install child error/exit/close ownership handlers before fallible stream setup;
+aggregate transport/check/close faults, bound both outputs to1MiB, await actual
+natural settlement, and never qualify on a partial result or synthetic status.
+Every original input FD gets one checked close even after an assertion failure.
+Emit the original result only after successful checks/closure; post-hoc hashes
+cannot fill missing original commitments. No object/binary/runtime trace exists.
+
+SDK/header/compiler/root bindings are ordinary mutable-host measurement, not
+immutable continuous compiler/Node/system-dyld TCB. Selected Node inputs do not
+prove whole Node startup closure. No full-custody/CONTROL/P2 gate is weakened
+or closed by this layout diagnostic. All five prior code/test pins stay unchanged.
+S2 source and each baseline/mutant invocation require fresh proportional review
+and resource checks; broad native effects and the retained-owner dispatcher
+remain outside this exception.
+
 ## Source-only runtime-initialization channel candidate
 
 ### S1 separately bounded inert Node-API load/refusal prerequisite

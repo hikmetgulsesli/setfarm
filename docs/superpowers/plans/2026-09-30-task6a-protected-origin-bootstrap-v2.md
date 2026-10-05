@@ -1,5 +1,174 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S2 syntax-only layout prerequisite implementation plan
+
+> Root remains the sole source/Git/effect writer; parallel agents only inspect
+> source/inputs and review independently. No repeated routine approval menu.
+
+**Goal:** Characterize the nominated public USER arm64 layout without runtime
+Mach, link, addon, signal, retention or CONTROL/P2 effects.
+**Architecture:** Candidate declares only the two layout typedefs; independent
+test-copy suffix checks literal ABI assertions via fixed syntax-only clang.
+**Tech Stack:** Installed CLT clang21/MacOSX26.5 public C headers; fixed Node26.4,
+builtin node:test; no package/dependency install.
+**Spec:** This named design, S2 separately bounded syntax-only layout prerequisite.
+**Status:** Original missing-source RED59a658 observed; minimal C/test now exist.
+First baseline acquisition refused at db21c6 before fixture/compiler creation;
+after the reviewed exact-size correction, separate baseline60a4ad and payload31
+control0bd1dd passed. This qualifies ordinary compiler layout/sensitivity only,
+not runtime message/BSM/complete TCB/retention/CONTROL/P2 or draft delivery.
+
+### File Map / exact interfaces / constraints
+
+- Create scripts/task6a-origin-native-continuity-abi-v2.c: includes only
+  mach/message.h, stddef.h, stdint.h; produces sf_continuity_message_v2
+  (mach_msg_header_t header plus uint8_t payload[32]) and
+  sf_continuity_frame_v2 (uint8_t[32]); no runtime function/global.
+- Create scripts/__tests__/task6a-origin-native-continuity-abi-v2.test.js:
+  consumes ONLY baseline/payload31 modes; produces syntax-observed with actual
+  compiler status/EOF/settlement and original source/copy/input/fixture commitments,
+  or source-unavailable before any compiler/fixture effect.
+- Modify only named spec/plan; prior five code/test files remain unchanged.
+  Current published draft map7 stays historical; delivered S2 map would be9.
+- Exact opt-in SETFARM_TASK6A_NATIVE_CONTINUITY_ABI_TEST=1; default two SKIPs
+  with no input/helper acquisition. Malformed opt-in refuses, no caller selectors.
+- Public layout only: no libbsm signature/link/receipt/codec or TCB proof;
+  full channel/retention/CONTROL/protected/P2 gates stay open.
+- Candidate and independent suffix are held into one fresh0700 fixture's sole
+  exclusive0600 C copy. No object/binary/cache/trace, installation or deletion.
+- Use the independently recorded85-header literal superset, seven exact
+  guarded-include absences and fixed compiler/SDK/resource inputs from S2 spec.
+  Original positional FD checks/once closes, directory bindings and owned-child
+  natural exit/close/both EOFs are mandatory; no missing receipts filled later.
+
+### Task S2a: review design, write real missing-source RED test
+
+S2a and the completed S2b invocations below are historical execution records,
+not new continuation/replay instructions. The original accepted baseline and
+payload31 case must not be replayed in this completion loop. Only the remaining
+unchecked delivery/default-opt-out verification step is prospective; any new
+diagnostic needs its separately scoped source/effect recipe.
+
+- [x] Independently review exact S2 File Map, primitive-free scope, input
+  nomination and command/oracles. Review actual complete test/suffix/transport
+  before effects; no implicit clearance from this plan.
+- [x] Write the test first. Independent suffix literally checks:
+
+  ```c
+  _Static_assert(sizeof(mach_msg_header_t)==24,"SFCNT_HEADER_SIZE_24");
+  _Static_assert(sizeof(((sf_continuity_message_v2 *)0)->payload)==32,
+                 "SFCNT_PAYLOAD_SIZE_32");
+  _Static_assert(offsetof(sf_continuity_message_v2,payload)==24,
+                 "SFCNT_PAYLOAD_OFFSET_24");
+  _Static_assert(sizeof(sf_continuity_message_v2)==56,"SFCNT_MESSAGE_SIZE_56");
+  _Static_assert(sizeof(sf_continuity_frame_v2)==32,"SFCNT_FRAME_SIZE_32");
+  _Static_assert(sizeof(mach_msg_audit_trailer_t)==52,"SFCNT_AUDIT_SIZE_52");
+  _Static_assert(offsetof(mach_msg_audit_trailer_t,msgh_audit)==20,
+                 "SFCNT_AUDIT_OFFSET_20");
+  _Static_assert(sizeof(natural_t)==4,"SFCNT_NATURAL_SIZE_4");
+  _Static_assert(round_msg(sizeof(sf_continuity_message_v2))+
+                 sizeof(mach_msg_audit_trailer_t)==108,"SFCNT_CAPACITY_108");
+  ```
+
+  Add six independent header offset assertions with literal0/4/8/12/16/20;
+  reject KERNEL/__MVS__/non-Apple/non-arm64 before qualification. Define the
+  complete closed held-input/settlement helper in this test, not production.
+  Baseline consumer is assert.equal(actual.availability,'syntax-observed'),
+  then literal compiler0/empty outputs/natural settlement checks. Missing C
+  therefore fails for missing behaviour without acquiring CLT/fixture/child.
+- [x] Nominate exact test/source absence and run ONLY anchored RED:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_ABI_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity ABI compiles the independent user-layout oracle$' scripts/__tests__/task6a-origin-native-continuity-abi-v2.test.js
+  ```
+
+  Preserve actual1FAIL/0PASS source-unavailable result; no compiler effect.
+  Original59a658 CLOSED1:1FAIL/0PASS/0SKIP42.644042ms at test7b5064ef,
+  assertion actualsource-unavailable versus syntax-observed. Paired RED-only
+  C0/I0/M0 and fresh independent351879 held93/checkedallcloses/85originalrows/
+  7absences plus rootc4f60e preceded this single invocation. No CLT/fixture/child.
+
+### Task S2b: minimal typedefs, reviewed syntax-only GREEN and sensitivity
+
+- [x] After original RED, create only:
+
+  ```c
+  #include <mach/message.h>
+  #include <stddef.h>
+  #include <stdint.h>
+  typedef struct {
+      mach_msg_header_t header;
+      uint8_t payload[32];
+  } sf_continuity_message_v2;
+  typedef uint8_t sf_continuity_frame_v2[32];
+  ```
+
+  Candidate33431bd8 created after original59a658. Future-helper review identified
+  incomplete original compiler-result emission and missing explicit distinct-FD/
+  separately reported read-atime checks. Root adds only these test-copy witnesses;
+  the independent oracle,85nomination rows, command and production typedefs stay
+  unchanged. Complete current-source/effect review was separately performed below.
+  Paired complete baseline source/effect review C0/I0/M0 at C33431/testf55ec /
+  planb6947/spec5a93 plus independent53ac70 full94held/checkedcloses/preservation/
+  resource gates preceded original db21c6 CLOSED1:1FAIL/0PASS/0SKIP44.643666ms.
+  Its generic100MB input bound rejected the already nominated290664032-byte
+  clang before fixture/compiler acquisition. Root confirms unchanged inode14827087
+  and exact byte size; narrows other inputs to1MiB and adds an exact clang size
+  pin plus that file's streaming bound. Hash/inode/owner/mode/material/close
+  checks and the oracle/command are unchanged. This is a causal harness correction,
+  not a successful layout result or an accepted-baseline replay. Fresh complete
+  current-source/effect/physical gates were required before corrected baseline
+  and were closed by the separately recorded reviews/receipts below.
+
+- [x] Independently review complete candidate/test/suffix/header nomination,
+  seven absences, checked ownership and this closed argv before effects:
+
+  ```text
+  CLANG --no-default-config --target=arm64-apple-macos26.5
+  -resource-dir RESOURCE -isysroot SDK -nostdinc
+  -isystem RESOURCE/include -isystem SDK/usr/include
+  -fno-modules -fno-implicit-modules -fno-implicit-module-maps
+  -std=c11 -O0 -Wall -Wextra -Werror -fsyntax-only -x c OWNED_COPY
+  ```
+
+  CLANG/RESOURCE/SDK are the fixed S2 spec paths, not caller parameters; compile
+  env exactly PATH=/usr/bin:/bin,LANG=C,LC_ALL=C,TMPDIR=owned fixture. No linker,
+  -c/-o/-E, native binary/load, implicit configuration, modules or extra include.
+  Paired corrected C0/I0/M0 at C33431/test1ee9/plan a329/spec5a93; fresh
+  independent88b521/8e63a3/38b984 validates94held inputs,85original nomination
+  rows/seven absences/exact pinned tools/preservation and resource health.
+- [x] After fresh source/resource gates, run anchored baseline ONCE and preserve
+  original complete result. It requires compiler0/empty outputs/all original
+  commitments, natural settlement/checks/once closes. Diagnose any failure;
+  do not silently repeat or weaken assertions.
+  Actual60a4ad CLOSED0:1PASS/0FAIL/0SKIP525.094958ms. Original compiler0,
+  signalnull/both EOFs/empty stdoutstderr;91distinct inputs/91checked closes.
+  Original source33431/test1ee9/clangf305 and85-header nomination55e1f4b0
+  committed in the first result, plus1693-byte copy SHA49bb28d2 and inode.
+  Independent92e3fd verifies ONLYthe original baseline fixture and exact one-file
+  inventory/current held consistency/literal source+oracle bytes. Additional
+  metadata is current-read evidence, not a retroactive original commitment.
+- [x] Separately review and run ONLY payload31 control ONCE, same runner/env
+  except anchored test-name 'continuity ABI rejects the padded payload-length mutant'.
+  Change only unique payload[32] declaration to[31], not independent oracle.
+  Require actual compiler1/empty stdout/exactly one static-assert error labelled
+  SFCNT_PAYLOAD_SIZE_32/one-error summary/no warnings plus complete original
+  settlement/checks/closes. Generic failure cannot pass. Keep original fixture.
+  Paired control C0/I0/M0, baseline audit92e3fd and fresh f5e06d/f5d399/d0e9b3/
+  b86011/resource gates preceded ONE0bd1dd CLOSED0:1PASS/0FAIL/0SKIP522.3485ms.
+  Actual compiler1 emits exactly SFCNT_PAYLOAD_SIZE_32 and31==32 note with
+  one-error summary, no warning/othererror/stdout; both EOFs/natural settlement/
+  91distinct inputs/91checked closes. Original1693-byte copy SHA b38cb646 and
+  inode/header nomination committed in the first result. No baseline replay.
+  Independent52c5b1 verifies ONLYthe new control fixture's original binding/
+  bytes/exact one-file inventory and source mutation plus unchanged oracle.
+  Three audit FD closes are distinct from the original91; extra metadata is
+  current-read evidence, not an immutable/cross-epoch TCB proof.
+- [ ] Verify default two SKIPs (opt-out only), syntax/diff/version/English/path
+  contracts, exact nine-file aggregate and scoped exposure; independently
+  review before ordinary commit/push to the existing DRAFT275. No ready/merge,
+  clean-main build, host rollout or other native clearance follows from S2.
+
 ## S1 inert Node-API prerequisite implementation plan
 
 > Root executes inline as sole writer/delivery/effect owner. Parallel workers
