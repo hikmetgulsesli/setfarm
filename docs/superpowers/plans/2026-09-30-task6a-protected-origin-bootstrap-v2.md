@@ -301,7 +301,7 @@ does not open genuine-positive/T4delivery/CONTROL/protected/P2 gates.
   installation; lookup suppresses VM-cleanup status on RPC failure. No generic
   error=>empty/closed rule, unchecked destructor, retry or running-host inference.
   Source-only File Map stays this plan/spec; all five code/test pins unchanged.
-- [ ] Independently review the written literal noncomplex continuity-only
+- [x] Independently review the written literal noncomplex continuity-only
   research contract in the named spec: P_BASELINE/P_CHANNEL/P_BORN,
   C_LOOKED_UP/C_STASH_CLEARED/C_SENT, P_RECEIVED/C_LOCAL_CLOSED,
   P_RECEIVER_JOINED/P_AUTHENTICATED/P_END/P_SETTLED and sticky RETAINED_FAILED_OWNER.
@@ -331,6 +331,27 @@ does not open genuine-positive/T4delivery/CONTROL/protected/P2 gates.
   unknown RPC/headercopyback/disposal/frame errors are never expected PASS.
   This step is docs-only, ONLY plan/spec File Map; no implementation file,
   compiler/addon invocation or effect recipe is admitted.
+  Paired final C0/I0/M0 before source-only checkpoint292c79ba after an I1 fix:
+  seal every valid lookup occurrence and original VM before semantic validation;
+  actual receiver join precedes owner buffer inspection/authentication. This
+  closes that literal source-contract review only, not executable admission.
+- [ ] Independently review the additional explicit32-byte frame layouts,
+  56-byte prospective user message and52-byte audit trailer/108-byte capacity;
+  keep received-header transformation distinct from sent COPY_SEND. Require
+  explicit payload-length assertion because padding can hide32-to31 drift.
+  Public BSM parsing remains a separate future linked dependency; layout-only
+  characterization cannot close it. Compare normal pre-acquisition private-pipe
+  wait with the unresolved FD/error/cancellation fallback and unchanged-mask
+  signal-wait source path; never label poll/nanosleep allocation-free by assumption.
+  Current File Map stays ONLY plan/spec; no code/compiler/native effect admitted.
+  Preferred next source wait is original-thread unchanged-mask public sigsuspend
+  after checked public cancellation disable/save. Prove no intervening mask
+  mutation; no signals/handlers/security changes. Retained wait returns never
+  renew acceptance/acquisition or permit owner exit. Restore saved cancellation
+  only after every thread-owned resource/receiver/child has definitely settled;
+  pending cancellation can make restoration nonreturning. Published contracts
+  are not installed backend/handler closure; finite zero-Mach witnesses and the
+  full executable/effect review remain open.
 - [ ] Determine whether the complete send/receive error table and postexec
   registration/loader continuity permit a separately scoped executable design.
   If not, record the precise unsupported contract and continue only safe source

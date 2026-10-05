@@ -411,6 +411,53 @@ do not invent one from its older comment. Lookup has a separate VM allocation.
   observations after burn, or hard-return guarantee. Predetermined checked
   cleanup and actual settlement may continue after burn.
 
+#### Prospective byte ABI and exact receipt boundary
+
+The installed public header declares a24-byte user mach_msg_header_t and a
+52-byte mach_msg_audit_trailer_t. These are source expectations, not an observed
+compiler/runtime ABI. Freeze the payload and all three pipe frames as explicit
+byte arrays, not native-struct serialization:
+
+| Object | Bytes0..7 | Bytes8..11 | Bytes12..15 | Bytes16..31 |
+| --- | --- | --- | --- | --- |
+| Mach payload | ASCII SFCNTV2! | big-endian2 | zero | original owner nonce |
+| Nonce input | ASCII SFNONC2! | big-endian2 | zero | original owner nonce |
+| Native status | ASCII SFSTAT2! | big-endian2 | state1/2/3 | original owner nonce |
+| END input | ASCII SFENDV2! | big-endian2 | zero | original owner nonce |
+
+Status1 means LOCAL_CLOSED_AFTER_SEND,2 means KNOWN_LOCAL_CLOSED_REFUSAL and3
+means UNCERTAIN_RETAINED_FAILURE; encode the state big-endian. No frame exports
+a PID, task name, ownership certificate or positive authority. Native callback
+alone consumes nonce/END input; no competing Node stdin reader. Complete bounded
+reads/writes may advance after partial progress without repeating a Mach attempt
+or renewing the original deadline. EOF, wrong magic/version/nonce/state, extra
+bytes and failed frame write/once-only close remain nonpositive. A3 frame cannot
+be required to succeed in order to retain an uncertain owner.
+
+Prospective compile checks must establish header offsets0/4/8/12/16/20,
+payload offset24 and length32, message size56, natural_t size4, audit offset20
+within the52-byte audit trailer and aligned receive capacity108. Assert payload
+length separately:31 bytes can retain a56-byte padded struct and would otherwise
+escape the oracle. Require actual receive success and actual receiver join
+before inspecting captured fields. First require msgh_size56; only then compute
+bounded round_msg(size) and trailer location. Require FORMAT_0 and exactly52
+trailer bytes, then copy the opaque audit token into aligned storage. Use public
+audit_token_to_pid/euid/ruid accessors against the independently established
+original-child PID and UID contract. Extracting pidversion without an independent
+baseline adds no generation proof. Never index token.val; the future runtime
+recipe must explicitly qualify libbsm. Layout-only compiler characterization
+would establish no accessor signature, linked image or actual audit parsing.
+
+Send header is COPY_SEND destination L, NULL local/voucher, fixed ID0x53464332
+and no COMPLEX bit. Received header is different: require local R, NULL remote/
+voucher, remote disposition0 and local PORT_SEND, the same ID and exact size.
+Freeze other bits to0 for this narrow prospective oracle; never ignore arbitrary
+bits or quietly reuse the sender COPY_SEND header comparison. An unexpected
+header burns acceptance and retains every acquired/unknown obligation, rather
+than guessing disposal from its untrusted fields. Published normal copyout
+swaps destination/reply positions and consumes the destination reference.
+[Normal header copyout](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/ipc/ipc_kmsg.c#L3521).
+
 #### Phase/resource FSM
 
 | Phase | Sole admissible progression / custody |
@@ -466,6 +513,76 @@ result and once-only disposition. A callback retaining uncertainty must not
 fall through to Node shutdown; original owner death is not secretly converted
 into successful settlement. Parent preserves original receive/status ownership
 on an uncertain/missing frame, not automatic signalling/reaping or success.
+
+#### Low-resource holder source comparison — fallback still unqualified
+
+Empty-FD poll is not allocation-free: the published implementation allocates a
+kqueue even for nfds0 and can fail EAGAIN. Public read is cancellation-aware.
+A separately prepared private retention pipe is a normal wait candidate, not an
+assumed infallible poll/nanosleep backend. Each native owner must acquire and
+register both original endpoints before uncertain Mach operations, check distinct
+bindings and blocking F_GETFL (zero is valid), preserve descriptor flags when
+establishing/verification-checking CLOEXEC, and keep both ends native-private.
+The child prepares its own pipe postexec, not an inherited parent holder. No
+writes, Node/libuv handles, exports, shared cleanup, duplication or descriptor
+rebinding; same-owner retained writer avoids peer-death EOF only while its
+original binding remains valid. FD privacy is a trusted-program requirement,
+not process-internal capability isolation.
+
+Retention must run synchronously on the original callback/owner thread; a
+background holder cannot prevent the main Node thread from exiting. One fixed
+byte and the sealed reader suffice on the normal empty blocking path. Published
+pipe_read uses existing pipe locks and interruptible kernel sleep, not a new
+user Mach clock/semaphore/kqueue call. EINTR may repeat only that wait; no
+acquisition, disposal, validity renewal, logging, callback, JS throw/return or
+automatic exit. Data/EOF/EAGAIN/EBADF/other errors latch bounded sticky failure.
+They do not justify repeatedly reading a possibly reused descriptor or claiming
+low-resource behaviour from a busy-spin. A justified non-returning fallback and
+public thread cancellation setup remain required before executable admission.
+No private read_nocancel or signal-policy/security change may fill the gap.
+External death, unreturned calls and CPU bounds under signal storms remain
+explicit limitations.
+[Read cancellation/stack UIO](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/sys_generic.c#L349),
+[Empty-pipe wait](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/sys_pipe.c#L749),
+[Close/drain](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/sys_pipe.c#L1304),
+[Poll allocation](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/sys_generic.c#L1684).
+
+These are published .121.6/installed-header contracts, not actual running .121.10
+or libSystem/Node closure. This comparison changes only the source proposal;
+no retained-owner experiment, compiler, addon load or broader native effect follows.
+
+The preferred next source candidate is FD-independent public sigsuspend with
+the original invocation thread's unchanged mask, not pause or repeated reads of
+an invalid/rebound descriptor. Before any acquisition, checked public
+pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,&saved) must succeed and save only
+ENABLE/DISABLE. Capture the same thread's original mask through a checked public
+NULL-set examination into valid immutable native storage; no intervening mask
+mutation, new blocked signals, handlers, cancellation-type or security changes.
+The published wrapper copies that mask by value; the kernel saves/restores the
+old mask and waits interruptibly without a timeout. This supports normal sleep
+under the preserved-thread/mask assumptions, not an installed-runtime guarantee.
+
+Every returned wait remains burned: documented -1/EINTR repeats only the same
+wait; any unexpected result latches one bounded cause and never becomes success,
+JS return, acquisition retry, guessed disposal or owner exit. No original FD is
+re-read after its binding becomes uncertain. Existing signal handlers may still
+allocate, mutate state or terminate; storms/unexpected persistent errors have no
+hard CPU bound. Thus neither zero transitive Mach activity nor guaranteed survival
+is proved. No signal injection or retained-owner experiment is admitted.
+
+Saved cancellation state may be restored only after EVERY original obligation
+of that thread is definitely closed/settled, including pipes/receiver/child where
+applicable, not just Mach/VM. Re-enabling may act on pending cancellation and
+need not return. Never restore in retained uncertainty or unconditionally enable
+when the saved state was disabled. A returning restoration must have a checked
+result/previous disabled state; failure is nonqualifying. Public declarations and
+published implementations are source support only; exact imports, mask capture,
+handler/backend closure and finite zero-Mach witness/control recipes still need
+their own executable review.
+[Public signal-wait wrapper](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/libsyscall/wrappers/sigsuspend-base.c),
+[Mask examination/wait](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/kern_sig.c#L793),
+[Per-thread cancellation contract](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/man/pthread_setcancelstate.3),
+[Cancellation setter](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/src/pthread_cancelable.c#L115).
 
 #### Finite known-absence control and acceptance boundary
 
