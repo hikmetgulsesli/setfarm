@@ -1,5 +1,21 @@
 # Task6A protected private source-entry bootstrap v2
 
+## Feedback-only draft review boundary
+
+Standing owner authority and the independent aggregate source review permit
+normal scoped branch push plus ONE explicitly DRAFT, incomplete review PR.
+This is not positive-path delivery: no ready promotion, merge, clean-main build,
+rollout or new native effect is admitted. Preserve actual genuineFAIL5 at
+test43ec, separate finite15 passes at C7deb/testb2fc and default16SKIP evidence;
+never replace these with an all-pass/positive statement. Bot request acceptance,
+silence, quota or green security checks do not certify acquisition/CONTROL/P2.
+Publish only the four mapped source/test/spec/plan files, not local operational
+logs/journals/credentials/artifacts/cluster data. Existing review integrations
+may be requested once as review-only, without new paid activation, coding-agent
+assignment, provider/branch/access changes or automatically acting on proposals.
+Exact-head feedback and every suggested implementation/effect require their
+own evidence and scoped review. All positive/merge/runtime gates remain closed.
+
 ## Source-only runtime-initialization channel candidate
 
 Status: research contract only. The scoped acquisition checkpoint82272c9b is
@@ -51,7 +67,8 @@ Proposed ownership rules, not an admitted effect recipe:
   immovable COPY_SEND can raise a fatal guard. No movability claim or guard
   suppression follows from third-party macOS policy defaults.
 - Review exactly one complex port descriptor, fixed message ID/version and
-  bounded payload, no reply/voucher/OOL body, one independently supplied nonce,
+  bounded payload, no reply/caller-supplied voucher/OOL body, one independently
+  supplied nonce,
   the exact private receiving channel and requested kernel audit trailer.
   Validate kernel-transformed received disposition rather than requiring sender
   COPY_SEND bytes after receipt. Bounds-check aligned trailer offset/size before
@@ -77,6 +94,11 @@ Proposed ownership rules, not an admitted effect recipe:
   options explicitly: the userspace wrapper otherwise automatically retries
   interrupted sends/receives. One application call is not a one-kernel-call
   witness. Pending requests/unknown cleanup keep failed ownership visible.
+  No caller voucher does not prove zero hidden auxiliary transport: published
+  mach_msg_overwrite calls voucher_mach_msg_fill_aux and may use vector transport.
+  That wrapper path stays in the proposed new TCB; do not assume it absent or
+  invent private mach_msg2/trap/security-flag declarations to bypass it. The
+  inspected installed SDK public include tree exposed no mach_msg2/MACH64 API.
 
 Required unresolved gates: actual registered-channel continuity across exec
 into this fixed Node build; actual self-right movability; complete send/receive

@@ -1,5 +1,40 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## Feedback-only draft checkpoint — not positive-path delivery
+
+Root may normally push this existing scoped branch and open ONE explicitly
+DRAFT PR against main for independent feedback on the incomplete diagnostic.
+This bounded review handoff is separate from T4 delivery below. It does not
+permit ready-for-review promotion, merge, clean-main build, rollout or a new
+native experiment. Strict genuine acceptance remains unmet; green cloud checks,
+bot comments, accepted review requests or silence cannot reopen that gate.
+
+**File Map:** Same four files: task-port C/test and these named spec/plan.
+No external operational log/journal, credentials, runtime artifacts or retained
+cluster data are staged/published. Normal push only; no force/history rewrite,
+main write, branch-protection/access/provider configuration or paid activation.
+
+- [x] Complete independent aggregate source/test/docs review of baseae5a7b0e
+  through0872e09c. C7deb/testb2fc/current research docs match. Both C0/I0/M0
+  assessments permit only an honest incomplete feedback draft, after this
+  refinement is reviewed. Exact source/verification pins remain in receipts.
+- [ ] Review this exact refinement/body and public four-file exposure, fresh
+  HEAD/index/worktree/remote/preservation/resource gates, then normal scoped push
+  and one DRAFT PR. Verify actual returned PR/head/base/draft state and file map.
+- [ ] State prominently in the PR: genuine nominal actualFAIL5 at test43ec,
+  finite15 passed in separate batches at C7deb/testb2fc, default16SKIP is opt-out
+  only, implementation incomplete. No full-matrix/native-uncertainty/CONTROL/
+  protected/P2/clean-main/host rollout or all-tests-pass claim.
+- [ ] Request existing review integrations once only if available as ordinary
+  review feedback, never coding-agent assignment/new settings/paid activation.
+  Record actual current-head checks/comments/reviews/threads with full pagination;
+  quota/absence/accepted request is not response or formalAPPROVED. Review any
+  suggested code/native verification separately before applying it.
+- [ ] Keep the PR draft and T4 delivery unchecked. Continue safe source research
+  or scoped reviewed fixes; no native retry, permission change, automatic
+  advancement or merger from draft feedback. The genuine-positive gate remains
+  separately required before positive-path delivery can be considered.
+
 ## Source-only runtime-initialization channel research gate
 
 > Root is the sole writer. Independent workers review/research read-only.
@@ -32,11 +67,14 @@ does not open genuine-positive/T4delivery/CONTROL/protected/P2 gates.
   preexec task substitution and no policy/permission/security/guard changes.
 - [x] Record proposed message/authentication/lifetime/disposition invariants in
   the named spec; retain every uncertainty and the new initializer TCB boundary.
-- [ ] Independent full contract review: exact three-slot baseline/refusal/restore,
+- [x] Independent full contract review: exact three-slot baseline/refusal/restore,
   per-occurrence right and VM accounting, sender borrow/COPY_SEND, transformed
   receiver ownership, audit trailer bounds/authentication, no hidden retry,
   live unreaped generation, late cleanup and unknown-owner retention. Record
   findings; fix source-only ambiguities before calling this research gate closed.
+  Paired C0/I0/M0 at plan9e9fae/speca3e after burn-cleanup M1 clarification,
+  before source-only docs commit0872e09c. This closes contract review ONLY;
+  the next complete-error/continuity/executable-design decision remains open.
 - [ ] Determine whether the complete send/receive error table and postexec
   registration/loader continuity permit a separately scoped executable design.
   If not, record the precise unsupported contract and continue only safe source
@@ -151,11 +189,11 @@ Inventory e97868/af32f2/b37728 and rootb18b05 fresh pins/resources preceded ONE
 argvGREEN1503ff naturally CLOSED0,1PASS/0FAIL/0SKIP863.371666ms. Compiler0,
 linker0, calibrationNode2, actual C2/empty stdout/canonical refusal stderr,
 no probe entry-start marker; original exit+close/bothEOF/finalheld/allclose.
-Fixture /private/tmp/setfarm-native-task-port-test.yeWJqi retained source104b,
+Original refusal fixture receipt1503ff retained source104b,
 object752d0188ae4ca07a7c5e081173798124aaecb81c53e7f965bb37db1ed37bdeda,
 binary55fb703930d4ea72a33b78cacd8fa770a785291312d847bdf9bcdc53db817abc,
 entry42b2bb659ff4174613a0b707477e310afb2249967c84a84a8d38082f714224da.
-Calibration /private/tmp/setfarm-native-task-port-witness.yK0jmi retained same
+Original startup calibration retained same
 entry and actual marker d450ae291ad1e5d6cfe2513659ad7dbd7bc63744f01ff17d318da399df1edba9.
 Root4c590e post at02:22:08 UTC verified exact six artifact files/two private
 directories/noextras/no probe marker,held6final/allclosed; independent post
@@ -285,7 +323,7 @@ each witness actualoncebirth/create/workerreturn/join/reap, bothEOF and six once
 pipe dispositions with all nominated harnessfaults0; join-before-reap in both,
 delayed death-before-join. a7a1e9/0889d3/fb10b5 currentinputs/originaltwo/journal/
 tool/oldCLI keys preserved; disk6686612KiBfree/memory59%/no thermal. Full raw
-receipts retained in workspace logs/2026-10-02-setfarm-completion-master-plan.md.
+receipts retained in the owner-local completion evidence ledger.
 cfca11 version2.3.79/English1933/path968/diff0/default3SKIP0PASS41.983459ms.
 Always-unqualified owner still has no successful binding/audit/challenge path.
 This finite matrix does not cover every uncertainty/create/join/external-death
@@ -1002,7 +1040,7 @@ Independent post-host inventory confirmed originaltwo/journal/tools/old CLI
 selector preserved: MC3080/api/projects200, gateway18789200, dashboard3333
 refused000/exit7, not restarted or repointed. Default merged test409322 had
 23SKIP/0PASS (not native acceptance). Full raw receipts and exact wrappers are
-retained in logs/2026-10-02-setfarm-completion-master-plan.md at workspace root.
+retained in the owner-local completion evidence ledger.
 These are closed historical invocations, not instructions to replay them.
 
 
