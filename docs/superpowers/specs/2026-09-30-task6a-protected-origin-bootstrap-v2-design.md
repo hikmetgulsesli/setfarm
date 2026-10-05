@@ -19,6 +19,110 @@ assignment, provider/branch/access changes or automatically acting on proposals.
 Exact-head feedback and every suggested implementation/effect require their
 own evidence and scoped review. All positive/merge/runtime gates remain closed.
 
+## S3 separately bounded pure native-status decoder proposal
+
+S2 is delivered at draft head a4f83db2 with its nine-file map; its original
+baseline/control samples are historical and must not be replayed. S3 is a
+distinct causal prerequisite for the fixed native-status rendezvous. Real RED
+a4f158 preceded the minimal C96d1503b/testb0321da7 source. Separate original
+baseline99317b and nonce-control9356e0 each passed their own strict oracles after
+paired exact source/effect reviews and fresh input/preservation/resource gates.
+This closes ordinary decoder behaviour/sensitivity measurement only; scoped
+eleven-file draft delivery/review is still due. No runtime channel, retention
+dispatcher, cleanup certificate, usable CONTROL or protected/P2 authority.
+
+Baseline: actual two compiles/link exit0 and empty outputs, inspected exactly
+___stack_chk_fail/___stack_chk_guard plus direct libSystem; actual driver0,
+signalNULL/bothEOF/natural exit/close,100distinct inputs/100checked closes.
+First result commits source/test, both copies/objects/binary hashes/inodes/sizes/
+modes/mtime/ctime and original fixture binding. Nonce omission modifies only
+the owned candidate comparison; the same independent driver reaches actual
+code71/wrong-nonce-accepted-as-state1, not a generic failure. Same compile/link/
+inspection/settlement/100original-FD closure requirements passed. No baseline
+replay. Original outputs/artifacts are retained locally, never published here;
+post-audits establish current held consistency, not continuous immutable TCB.
+
+Choose a standalone pure C decoder with an independent ordinary C driver.
+Syntax-only assertions cannot observe function behaviour; a JavaScript decoder
+would exercise a different implementation. A full native channel would add
+unnecessary ownership effects before this byte boundary is measured.
+
+Prospective File Map adds only scripts/task6a-origin-native-continuity-frame-v2.c
+and scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js, plus this
+existing spec/plan. All seven delivered code/test files stay unchanged, including
+S2's typedef-only file; the prospective aggregate becomes eleven, not delivered
+until verified. No generated artifact or local operational ledger is published.
+
+Exact API, with public stddef.h/stdint.h types:
+
+```c
+unsigned sf_continuity_decode_status_v2(const uint8_t *bytes, size_t length,
+                                       const uint8_t expected_nonce[16]);
+```
+
+Return only0 for refusal or1/2/3 for a parsed state. Check both pointers and
+length==32 before any dereference. Non-NULL bytes must designate32 readable
+bytes when length32; expected_nonce must designate16 readable bytes. C array
+parameters decay to pointers; NULL checks do not establish object extent.
+Use bounded unsigned-byte comparisons, no casts/native struct serialization,
+unaligned loads or signed shifts. Require eight literal SFSTAT2! bytes, version
+00 00 00 02, state00 00 00 {1,2,3}, and all16 expected nonce bytes. No allocation,
+I/O, callback, Mach, signals, deadlines, owner/resource mutation or authority
+output. Accepted parsing remains synchronization only, never cleanup proof.
+
+Independent driver fixtures are literal32-byte arrays for states1/2/3 and nonce
+00 11 22 33 44 55 66 77 88 99 aa bb cc dd ee ff. Call the actual separately
+compiled decoder; do not derive expectations using candidate helpers. Require
+NULL pointer refusals, every short length0..31, length33/SIZE_MAX, each magic
+and version-byte error, each high state-byte error, state0/4/255 and all16 nonce
+position mismatches. Every invalid fixture has literal expected0. Preserve the
+input fixture/nonce around calls to catch unauthorized mutation. Source storage
+is valid for each call; no deliberately invalid non-NULL pointer dereference.
+
+The driver has no output calls; it returns0 only after all baseline assertions.
+Distinct bounded exit codes identify failed groups. Reserve71 exclusively for
+wrong-nonce input being accepted as state1 after all preceding non-nonce checks
+passed; another unexpected state uses72. The separately reviewed control omits
+only the nonce comparison in the owned candidate copy, keeping the independent
+driver and all other checks unchanged. Require actual natural code71, empty
+outputs, signalNULL and bothEOFs; setup/compiler/link/crash/generic failure is
+not sensitivity. Actual original results must include the unambiguous case map.
+
+Default opt-out two SKIPs acquires no source/tool/fixture/child; exact opt-in is
+SETFARM_TASK6A_NATIVE_CONTINUITY_FRAME_TEST=1, other values refuse. Only separately
+anchored baseline and nonce-omission cases; no caller paths/options/selectors.
+Missing-source RED asserts source-unavailable versus frame-observed before tool
+or fixture acquisition, then minimal candidate follows original RED.
+
+Compile candidate and independent driver as distinct translation units using
+the fixed S2 CLANG/RESOURCE/SDK, resource include then SDK include, no-default-
+config, arm64 macOS26.5, integrated assembler, nostdinc, no modules/implicit
+modules/module maps, no LTO, explicit fstack-protector-strong, C11/O0/Wall/Wextra/
+Werror, -c and exact owned outputs.
+Link via the fixed CLT LD through clang, nostdlib/-Z/exact syslibroot, the two
+original objects and exact SDK/usr/lib/libSystem.B.tbd, one owned executable.
+Omit deprecated redundant undefined-error flag; installed ld defaults to error.
+No bundle, addon, libnode link, dynamic lookup, -U, rpath, policy/signing change,
+framework/library search, disabled stack protection or ignored warning.
+Inspect actual imports/dependencies before executing: direct dependency exactly
+/usr/lib/libSystem.B.dylib; compiler protection imports remain enabled. Nominate
+exactly ___stack_chk_fail/___stack_chk_guard from the stack-buffer driver; complete
+source/driver review must verify this nomination before effects. Unexpected
+imports or absence of nominated protection refuse before driver execution.
+Direct linkage never proves libSystem re-exports/dyld/whole runtime TCB closure.
+
+Hold exact candidate/test, public include nomination, fixed Node/compiler/LD/
+nm/otool, SDKSettings/manual/stub, both owned copies/objects and executable through
+positional rereads, material metadata/path/checked once closes and original
+owned-child natural exit/close/both EOFs. Reuse S2's reviewed conservative85-row
+superset and seven absences only if fresh independent inspection confirms the
+new include graph is contained; no importing/running the S2 test or replaying it.
+Record original copy/object/binary hashes, inodes/bytes, fixture binding and
+actual compiler/link/import/dependency/driver results before returning. Fresh0700
+fixture has exactly five owned files; retain it visibly on every outcome.
+No immutable/compiler/system startup closure claim; resources and complete
+source/test/argv/input/driver review precede each separately bounded invocation.
+
 ## S2 separately bounded syntax-only layout prerequisite
 
 Measured status: real missing-source RED59a658 preceded the typedef candidate.
@@ -33,8 +137,8 @@ source/copy/tool/header-nomination commitments, natural exit/close/bothEOF and
 52c5b1 inspect only their respective original one-file fixtures, never replay.
 This closes ordinary compiler-layout/sensitivity measurement only. No runtime
 message/codec/BSM parsing, full compiler/Node TCB, retention, CONTROL or P2 proof.
-The initial published seven-file map remains historical; current S2 source map
-is nine, with draft update/review still required. All five prior code/test pins
+The initial published seven-file map remains historical; S2's nine-file map was
+reviewed and delivered to existing draft275 at a4f83db2. All five prior code/test pins
 and retained roots/builds/native samples/original dirty files stay unchanged.
 
 This causal prerequisite answers only whether the nominated compiler/public SDK
@@ -53,8 +157,8 @@ S2 File Map, separate from the unchanged S1/task-port files:
 - Create scripts/__tests__/task6a-origin-native-continuity-abi-v2.test.js:
   default-off owned syntax-only characterization and one payload-length mutant.
 - Modify only this named spec/plan for the causal refinement. The published
-  draft's current seven-file map stays historical; a delivered S2 aggregate would
-  be nine, with no local operational ledger/manifest/binary/fixture published.
+  draft's earlier seven-file map stays historical; delivered S2 aggregate is
+  nine, with no local operational ledger/manifest/binary/fixture published.
 
 Candidate C includes mach/message.h, stddef.h and stdint.h, defines
 sf_continuity_message_v2 as header plus uint8_t payload[32] and

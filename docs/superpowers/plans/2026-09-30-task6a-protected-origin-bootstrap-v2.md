@@ -1,5 +1,174 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S3 pure native-status decoder implementation plan
+
+> Root is the sole source/Git/effect writer; independent agents remain read-only.
+> This is a new scoped recipe, never a replay of accepted S1/S2/native samples.
+
+**Goal:** Parse the fixed32-byte native-status frame without producing authority.
+**Architecture:** One pure C decoder; a separate independently literal C driver
+calls its real implementation. No channel/retention/CONTROL or host integration.
+**Tech Stack:** Fixed installed CLT/Public SDK C11; builtin Node test, no install.
+**Spec:** Named design, S3 separately bounded pure native-status decoder proposal.
+**Status:** Real missing-source RED a4f158 preceded minimal source; separate
+baseline99317b and nonce-control9356e0 passed their strict ordinary decoder
+oracles. Final scoped draft review/delivery remains due, not runtime qualification.
+
+### Exact File Map / interfaces / constraints
+
+- Create scripts/task6a-origin-native-continuity-frame-v2.c; consumes public
+  stddef/stdint and valid caller-owned byte storage; produces only unsigned
+  sf_continuity_decode_status_v2(const uint8_t *,size_t,const uint8_t[16]).
+- Create scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js;
+  independent literal driver, closed baseline/nonce-omission modes, default2SKIP.
+- Modify only named plan/spec. Seven delivered code/test pins stay unchanged;
+  draft275's delivered nine-file map stays historical, prospective map eleven.
+- API returns0/refusal orstate1/2/3 only, no I/O/allocation/Mach/signals/resource
+  mutation. Parsing is not cleanup, ownership, retained dispatcher or P2 proof.
+- Exact opt-in SETFARM_TASK6A_NATIVE_CONTINUITY_FRAME_TEST=1 and fixed env-i Node;
+  serial anchored single cases. No ALL/new native-owner experiment/TFP retry.
+- Hold exact inputs/artifacts; retain one fresh0700 five-file fixture per case,
+  original checked natural settlements/rereads/once closes; no artifact deletion.
+
+### Task S3a: design review and independent missing-source RED
+
+- [x] Review complete source-only spec/plan including fixed decoder API, caller
+  storage preconditions, all byte checks, independent fixtures and exact effect
+  bounds. This review admits test authoring only, not compile/link/driver effects.
+  Paired C0/I0/M0 at plan2096fa9d/spec359a0a9b preceded test authoring.
+- [x] Write the test first. Its independent driver prototype is:
+
+  ```c
+  unsigned sf_continuity_decode_status_v2(const uint8_t *, size_t,
+                                         const uint8_t expected_nonce[16]);
+  static const uint8_t nonce[16] = {
+    0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+    0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+  };
+  static const uint8_t one[32] = {
+    'S','F','S','T','A','T','2','!',0,0,0,2,0,0,0,1,
+    0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+    0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+  };
+  /* State2 and3 are separate literal arrays, not production-generated values. */
+  ```
+
+  Driver calls actual separately compiled API with literal expected1/2/3;
+  NULL/short0..31/long33/SIZE_MAX/magic8/version4/highstate3/state0,4,255/
+  nonce16 cases expect0. Use valid32/33-byte storage and16-byte expected nonce;
+  check input immutability independently around every call. Failure exits are
+  distinct groups, with71 ONLYwrongnonce accepted asstate1 after preceding
+  groups passed,72 for another wrongnonce state. No driver output/system calls.
+  Test baseline asserts availability frame-observed before driver0; missing C
+  returns source-unavailable before any CLT/fixture/compiler child acquisition.
+- [x] Independently review the complete actual test/driver and missing-source
+  branch; freshly nominate held test and absent candidate, preservation/resources.
+  Run only this RED once, preserve original FAIL/no compiler/fixture evidence:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_FRAME_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity status decoder accepts only exact bound frames$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Historical invocation, not a continuation replay instruction. Paired RED-only
+  C0/I0/M0 at testb0321da7/plan653ee6ec/spec2bbdd54d; independent748628 fullheld10/
+  checked10closes/candidateENOENT,478694exposure0/85ac67 originaltwo preservation/
+  resources6193260KiBfree98%/mem58/nothermal. ONE a4f158 CLOSED1 records
+  1FAIL/0PASS/0SKIP43.094792ms, actualsource-unavailable versusframe-observed.
+  No CLT/header/fixture/compiler/link/driver acquisition. Original output retained.
+
+### Task S3b: minimal decoder and separately reviewed ordinary measurements
+
+The checked S3a/S3b commands below are historical completed invocations, not
+continuation replay instructions. Do not repeat accepted baseline/control cases.
+Only the unchecked default-opt-out/delivery step is prospective; any new source
+behaviour needs its own reviewed recipe, not implicit effects from this record.
+
+- [x] Only after original missing-source RED, create minimal production code:
+
+  ```c
+  #include <stddef.h>
+  #include <stdint.h>
+  unsigned sf_continuity_decode_status_v2(const uint8_t *bytes, size_t length,
+                                         const uint8_t expected_nonce[16]) {
+      static const uint8_t magic[8] = {'S','F','S','T','A','T','2','!'};
+      if (bytes == NULL || expected_nonce == NULL || length != 32) return 0;
+      for (size_t i = 0; i < 8; i++) if (bytes[i] != magic[i]) return 0;
+      if (bytes[8] || bytes[9] || bytes[10] || bytes[11] != 2 ||
+          bytes[12] || bytes[13] || bytes[14] ||
+          bytes[15] < 1 || bytes[15] > 3) return 0;
+      for (size_t i = 0; i < 16; i++)
+          if (bytes[16 + i] != expected_nonce[i]) return 0;
+      return bytes[15];
+  }
+  ```
+
+- [x] Independently review complete candidate/test/driver, fresh input include
+  graph containment, exact compiler/link/image inspection argv, allowed imports
+  and original artifact/child closure before effects. Compile exactly twice:
+
+  ```text
+  CLANG --no-default-config --target=arm64-apple-macos26.5
+  -resource-dir RESOURCE -isysroot SDK -integrated-as -nostdinc
+  -isystem RESOURCE/include -isystem SDK/usr/include
+  -fno-modules -fno-implicit-modules -fno-implicit-module-maps
+  -fno-lto -fstack-protector-strong -std=c11 -O0 -Wall -Wextra -Werror
+  -c COPY -o OBJECT
+  ```
+
+  COPY/OBJECT are candidate.c/candidate.o then driver.c/driver.o under the one
+  original fixture. Link exactly once with the fixed CLT LD:
+
+  ```text
+  CLANG --no-default-config --target=arm64-apple-macos26.5
+  -resource-dir RESOURCE -isysroot SDK --ld-path=LD -fno-lto -nostdlib
+  -Wl,-Z -Wl,-syslibroot,SDK candidate.o driver.o
+  SDK/usr/lib/libSystem.B.tbd -o decoder
+  ```
+
+  All child envs exactly PATH=/usr/bin:/bin,LANG=C,LC_ALL=C,TMPDIR=owned fixture.
+  Each compile/link must actualexit0/emptyoutputs/signalNULL/bothEOF/close;
+  inspect actual nm -uj decoder and otool -L decoder with strict output grammar
+  and exact ___stack_chk_fail/___stack_chk_guard protection imports/only direct
+  libSystem dependency before running
+  decoder with no arguments. Preserve stack protection; no dynamic lookup,
+  extra source/object/library/search/sign policy. Execute no uninspected image.
+  Paired baseline C0/I0/M0 at C96d1503b/testb0321da7/plan9c8afa9f/spec2bbdd54d;
+  fresh927e04 holds96=11sources+85originalheaders/allcheckedcloses,86f17e lexical
+  include containment60headers/109edges,6c8ae1tools/5194c3manual/f75d91preservation.
+  Original85manifest/sevenabsences unchanged; no compiler-used/fullTCB inference.
+  Resource6177628KiBfree98%/mem58/nothermal; rootd8cca4 originalsource/test checks.
+- [x] After fresh complete baseline source/effect/physical/resource review, run
+  the same anchored baseline once; require actual driver0 with full original
+  source/copy/object/binary/tool commitments, settlements/checks/closes. Preserve
+  any failed setup/result as failure; diagnose causally, never blind-repeat.
+  ONE9ce151/session12903->99317b CLOSED0:1PASS0FAIL0SKIP1674.32775ms. Actual
+  two compiles/link0, emptyoutputs/signalNULL/bothEOF; exact two stack imports,
+  directSystem1356, actualdriver0. Firstresult commits source/test/driver/two
+  copies/objects/binary hashes/inodes/sizes/modes/mtime/ctime and fixture binding,
+  headerNom55e1f4b0/85rows/sevenabsences/100distinctinputs100checkedcloses.
+  Independent4a1427 audits ONLYnew five-file baseline fixture and two pinned
+  source inputs/full7checkedcloses/source+literaldriver consistency, no replay.
+- [x] Separately review nonce-omission: change ONLYunique nonce comparison in
+  owned candidate copy, independent driver unchanged. Fresh gate then one case
+  anchored 'continuity status oracle rejects nonce-comparison omission'. Require
+  actual driver71/emptyoutputs/signalNULL/bothEOF and all original commitments/
+  checked closes. Setup/compiler/link/generic failures cannot pass. No baseline
+  replay and no acceptance of mutated production source.
+  Paired control-only C0/I0/M0 at the same C/test/doc pins; baseline audit4a1427
+  plus freshc7b239 held96/e21f8dtools/e24588preservation/bebd94manual gates;
+  resource6357888KiBfree97%/mem59/nothermal. ONE33b3b2/session1807->9356e0
+  CLOSED0:1PASS0FAIL0SKIP1616.845708ms. Actual two compiles/link0/same strict
+  inspection; actualdriver71/signalNULL/bothEOF/emptyoutputs, exactwrongnonce
+  acceptance case,100distinctinputs100checkedcloses and all original artifact
+  commitments. Same independent driver, original production C unchanged.
+  Independent4d69b0 audits ONLYnew five-file control fixture and two pinned
+  sources/full7checkedcloses/unique mutation+unchanged literaldriver. Additional
+  within-read evidence is not an immutable continuous TCB claim. No baseline
+  or other accepted-case replay; no broad native, service or database effects.
+- [ ] Verify default2SKIP/syntax/contracts/diff/exact prospective eleven-file
+  scope; independently review before normal existingDRAFT commit/push/update.
+  No ready/merge/build/rollout/native-channel clearance follows from this slice.
+
 ## S2 syntax-only layout prerequisite implementation plan
 
 > Root remains the sole source/Git/effect writer; parallel agents only inspect
@@ -16,7 +185,8 @@ builtin node:test; no package/dependency install.
 First baseline acquisition refused at db21c6 before fixture/compiler creation;
 after the reviewed exact-size correction, separate baseline60a4ad and payload31
 control0bd1dd passed. This qualifies ordinary compiler layout/sensitivity only,
-not runtime message/BSM/complete TCB/retention/CONTROL/P2 or draft delivery.
+not runtime message/BSM/complete TCB/retention/CONTROL/P2. Scoped draft delivery
+was independently reviewed and completed at a4f83db2, without gate promotion.
 
 ### File Map / exact interfaces / constraints
 
@@ -29,7 +199,7 @@ not runtime message/BSM/complete TCB/retention/CONTROL/P2 or draft delivery.
   compiler status/EOF/settlement and original source/copy/input/fixture commitments,
   or source-unavailable before any compiler/fixture effect.
 - Modify only named spec/plan; prior five code/test files remain unchanged.
-  Current published draft map7 stays historical; delivered S2 map would be9.
+  Earlier published draft map7 stays historical; delivered S2 map is9 at a4f83db2.
 - Exact opt-in SETFARM_TASK6A_NATIVE_CONTINUITY_ABI_TEST=1; default two SKIPs
   with no input/helper acquisition. Malformed opt-in refuses, no caller selectors.
 - Public layout only: no libbsm signature/link/receipt/codec or TCB proof;
@@ -45,8 +215,8 @@ not runtime message/BSM/complete TCB/retention/CONTROL/P2 or draft delivery.
 
 S2a and the completed S2b invocations below are historical execution records,
 not new continuation/replay instructions. The original accepted baseline and
-payload31 case must not be replayed in this completion loop. Only the remaining
-unchecked delivery/default-opt-out verification step is prospective; any new
+payload31 case must not be replayed in this completion loop. The completed
+delivery/default-opt-out verification is also historical; any new
 diagnostic needs its separately scoped source/effect recipe.
 
 - [x] Independently review exact S2 File Map, primitive-free scope, input
@@ -164,10 +334,14 @@ diagnostic needs its separately scoped source/effect recipe.
   bytes/exact one-file inventory and source mutation plus unchanged oracle.
   Three audit FD closes are distinct from the original91; extra metadata is
   current-read evidence, not an immutable/cross-epoch TCB proof.
-- [ ] Verify default two SKIPs (opt-out only), syntax/diff/version/English/path
+- [x] Verify default two SKIPs (opt-out only), syntax/diff/version/English/path
   contracts, exact nine-file aggregate and scoped exposure; independently
   review before ordinary commit/push to the existing DRAFT275. No ready/merge,
   clean-main build, host rollout or other native clearance follows from S2.
+  Root787586 records default2SKIP0PASS0FAIL41.163959ms, syntax/contracts/diff0;
+  paired source review and fresh f420d7/08b41c preservation/resource checks passed.
+  Actual640e84 commits four598+/0- files at a4f83db2; reviewed normal push and
+  exact-head PR/body verification5d1e9b confirms OPEN/DRAFT/nine4897+/7-.
 
 ## S1 inert Node-API prerequisite implementation plan
 
