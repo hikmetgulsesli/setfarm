@@ -1,5 +1,245 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## Ordinary direct-parent task-port acquisition implementation subplan
+
+> **For agentic workers:** Root executes inline as the sole source/Git/effect
+> writer. Parallel workers perform read-only investigation and independent
+> review; no delegated edits, deliveries or native effects. Steps use checkboxes.
+
+**Goal:** Observe actual task_for_pid result availability for the fixed ordinary
+parent's own Node child without admitting usable CONTROL or protected origin.
+**Architecture:** One fixed C parent owns the target and its exclusive reap.
+One joinable pthread makes the sole request; main monitors/drains and retains
+target status until checked join. A late request never qualifies anything.
+**Tech Stack:** C11 atomics, Darwin pthread/Mach/wait APIs, builtin Node26.4.0
+tests and the unchanged delivered builtin entry; no added packages.
+**Spec:** docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md,
+section
+Ordinary direct-parent task-port acquisition slice.
+**Status:** Source-only spec/plan. No new C/test, compiler or native experiment.
+
+### Global constraints and File Map
+
+- Base delivered mainae5a7b0e56e999255c4beb6937ea63e563f930e8/tree96bfaba0.
+  Isolated independent clone .worktrees/setfarm-native-control-capability-20261005-v1,
+  branchfix/task6a-native-control-capability-v1; old NAME and build roots retained.
+- Create scripts/task6a-origin-native-task-port-v2.c: one ordinary owning parent
+  and its joinable request thread, not a sibling worker/public target consumer.
+- Create scripts/__tests__/task6a-origin-native-task-port-v2.test.js: builtin-only
+  closed ordinary fixtures, actual lifecycle controls and independent oracles.
+- Modify only this plan and its existing named protected design. Delivered NAME,
+  entry/bootstrap/map helpers, packages, DB, services and selectors unchanged.
+- Extra argv/root/UID mismatch refuse before pipe/thread/spawn. No caller
+  PID/path/options/configuration, credential/policy/security change or root effect.
+- Fixed Node26.4.0 + adjacent entrybbcf752e; scrubbed environment/private pipes.
+  Main alone owns birth/waits/signals/failure ledger; worker never touches them.
+- READY/IN_FLIGHT/BURNED/BURNED_IN_FLIGHT admission; strong CAS with exhaustive
+  state handling. An admitted call is not retractable and may enter kernel after
+  burn. Preserve its captured target generation until actual thread settlement.
+- Main uses only exact WEXITED|WNOHANG|WNOWAIT death observation before join;
+  no consuming reap unless !thread_created || checked_join_success.
+- Completion release/acquire plus successful sole pthread_join before reading
+  returned fields/consuming status/owner exit. No cancellation/detachment/kill
+  or invented timeout closure. Unknown settlement retains failed bounded owner.
+- Nonrenewable3s validity, bounded buffers/50ms pending backoff. Main post-join
+  port queries still assume kernel return; no hard bound/continuous monitoring.
+- Register non-null/non-dead returned candidate before classification, even on
+  API error; burned returns allow once local disposal only, no forward queries.
+- Positive outcome task-for-pid-right/unqualified; productionAuthority,
+  controlUsable, completeNativeClosure, protectedOrigin all literalfalse.
+- No lockdown/suspend/VM/maps/native closure, P2/genesis/32/33/service cutover.
+- Default tests visibly skip. Closed test-process opt-ins never reach children:
+  refusal, compile, lifecycle, 1. No broad native glob invocation or frozen replay.
+- Retain every fresh fixture/failed output/old root/build/journal/originaltwo.
+  Compiler/native/CI/build recipes require separate exact-source/effect review.
+
+### T1: Reviewed refusal consumer and actual ordinary refusal
+
+**Files:** new test, new C, existing spec/plan only.
+**Interface:** test-private
+invokeOwnedTaskPortProbe(args,stage='execute',fixture='delivered',control='none')
+returns settled code/stdout/stderr/entryStarted plus original fixture custody.
+Args are only [] or ['unexpected']; no helper export or production selector.
+
+- [ ] Review source-only design and exact four-file map; self-review scope,
+  ambiguity, caller selection and false authority. Commit only reviewed docs.
+- [ ] Add the literal refusal consumer, enabled only in test mode refusal:
+```javascript
+const actual = await invokeOwnedTaskPortProbe(['unexpected']);
+assert.equal(actual.code, 2);
+assert.equal(actual.stdout, '');
+assert.equal(actual.stderr, 'TASK6A_NATIVE_TASK_PORT_PROBE_REFUSED\n');
+assert.equal(actual.entryStarted, false);
+```
+  Before C exists the helper returns explicitly source-unavailable/null without
+  compiling; source-unavailable is test-support RED, not a kernel witness.
+- [ ] Execute only that test with the new source absent; preserve failing raw
+  assertion and prove no compiler/native effect. Do not manufacture code2.
+- [ ] Add only the minimal refusal justified by this RED:
+```c
+#include <stdio.h>
+int main(void) {
+    fputs("TASK6A_NATIVE_TASK_PORT_PROBE_REFUSED\n", stderr);
+    return 2;
+}
+```
+- [ ] Adapt actual test support from the delivered NAME test's held regular
+  inputs, fixed tool/SDK/resource, fresh directory identity, calibrated startup
+  marker, separate object/link and exact natural exit+close/bothEOF finalizers.
+  Rename SOURCE/test interface/output literal only initially; no native wrapper,
+  pthread or fixture mutation is admitted by this refusal step.
+- [ ] Review full literal helper/source/compile/link/dependency/env/output recipe
+  twice, record exact pins/fresh preservation/resources, then run one refusal
+  GREEN. Missing support is not a semantic pass. Commit reviewed refusal slice.
+
+### T2: Thread/lifecycle consumer RED and minimal owner implementation
+
+**Files:** same C/test/spec/plan.
+**Interfaces:** C-local request result publication and owner eligibility:
+```c
+#include <mach/mach.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <sys/types.h>
+enum Admission { READY, IN_FLIGHT, BURNED, BURNED_IN_FLIGHT };
+struct Request {
+    pid_t child;
+    mach_port_t self;
+    uint64_t deadline_ns;
+    atomic_int admission;
+    atomic_bool done;
+    bool attempted;
+    int unavailable_reason;
+    kern_return_t status;
+    mach_port_t returned;
+};
+struct failure {
+    const char *operation;
+    int code, resource;
+    uint64_t observations;
+};
+struct owner {
+    pid_t child;
+    int born, reaped, status, burned, child_uncertain, observed_dead;
+    int input, output, error;
+    int output_eof, error_eof;
+    size_t output_bytes, error_bytes;
+    uint64_t deadline;
+    mach_port_t task_port;
+    int task_port_owned;
+    struct failure failures[32];
+    size_t failure_count;
+    int failure_overflow;
+    pthread_t request_thread;
+    bool thread_created, thread_join_attempted, thread_joined;
+    struct Request request;
+};
+/* child/self/deadline are immutable after pthread_create.
+ * Result fields are worker-only until release(done), acquire(done), checked join.
+ * Main alone mutates owner fields outside request; initialize thread booleans
+ * false, FD slots -1, task_port MACH_PORT_NULL and both atomics explicitly.
+ * thread_joined becomes true only after the sole pthread_join returned zero.
+ */
+static bool can_consume_target_status(const struct owner *o) {
+    return !o->thread_created || o->thread_joined;
+}
+```
+  This extends the delivered NAME owner's finite ledger/pipe lifetime record
+  with observed-death and actual request-thread state, replacing NAME-right
+  fields with task_port/task_port_owned. It is not a DTO/public authority.
+
+- [ ] Add one closed test-copy lifecycle control whose request shim returns an
+  explicitly synthetic failure without a target Mach call. Require actual
+  pthread creation/termination/join and actual child exit/EOF/reap/pipe custody.
+  A second closed finite delayed shim must cross the original validity budget:
+  main must observe child death without consuming it, join, then actually reap.
+  The shim never fabricates an acquired right or successful disposal.
+- [ ] Define independent trace oracle using thread-safe per-event publication,
+  not the old unsynchronized trace counter. Require partial ordering, not a
+  scheduler-dependent total order:
+```javascript
+assert.ok(event('create-request') < event('worker-enter'));
+assert.ok(event('worker-return') < event('actual-join-success'));
+assert.ok(event('actual-join-success') < event('target-reap'));
+assert.equal(count('target-reap'), 1);
+assert.equal(count('after-reap-target-call'), 0);
+assert.equal(actual.stdout, '');
+assert.equal(actual.code, 2);
+```
+  event/count consume primitive retained trace from actual test-copy operations.
+  create-request is the trace event immediately BEFORE the actual pthread_create
+  attempt. Record distinct create-success only after its actual zero return;
+  assert count('create-success')===1, but do not order that event before worker
+  entry because the worker may run before pthread_create returns. Trace sequence
+  numbers/publication must be synchronized independently of owner/result state.
+  No native-call or protected credit follows from the synthetic request shim.
+- [ ] Paired literal/effect review precedes compiler/thread/child invocation.
+  Run affected lifecycle consumer against refusal-only C as actual behavioral
+  RED: it lacks birth/thread/join/reap events. Preserve artifacts/raw result.
+- [ ] Implement only source obligations justified by these consumers: fixed
+  ordinary argc/UID checks; checked child/pipes/spawn/signal setup; immutable
+  request; exhaustive strong-CAS admission/burn; one request function; pending
+  non-consuming waitid; bounded streams/cleanup; done+sole join; guarded target
+  consumption and original right registration/once disposal. Reuse NAME's
+  finite protocol/failure ledger only after separating its pre-join wait path.
+- [ ] Extend declarations/compiler review with exact pthread/atomic headers and
+  actual libSystem exports. No ambient -lpthread/default search/config/helper.
+  Review full new source and test-copy transforms before affected GREENs.
+- [ ] Run the finite lifecycle controls, preserve actual operations/traces/raw
+  parent exit/close/EOF and independently audit artifacts. No real taskgated
+  delay or capability result is inferred. Commit only after full diff review.
+
+### T3: Independent negative controls and one genuine request
+
+**Files:** same four-file map; no runtime integration.
+
+- [ ] Add actual finite create-failure-before-real-create test copy, normal
+  join-before-reap baseline, delayed admitted request, burn-before-admission,
+  early target EOF/exit and post-join budget checks. Nominate synthetic responses
+  explicitly; actual kernel denial/disposal cannot be fabricated.
+- [ ] Cover join-failure eligibility initially through a finite pure lifecycle
+  copy using the actual can_consume_target_status helper and literal truth table:
+```javascript
+assert.deepEqual(actualEligibility, [true, false, true]);
+// no created thread; created+unjoined; created+successfully joined
+```
+  This is predicate coverage, NOT an actual failed pthread_join or complete
+  retained-owner behavioral witness. No genuinely unjoined owner is killed.
+  Any future nominated join error after actual successful join requires its own
+  independently proven physical settlement/fixture-rescue recipe before effects;
+  do not silently implement rescue in the production C program.
+- [ ] Inject a test-only omitted join-before-reap gate in a finite delayed
+  lifecycle copy. Its actual early consume must be rejected by the same ordering
+  oracle. No task_for_pid executes in this mutant, so no unrelated PID lookup
+  can result from the deliberately broken test copy. This is semantic control.
+- [ ] Review each finite effect pattern and execute only new/affected cases.
+  Keep untested genuine uncertainty/external owner-death paths explicit.
+- [ ] Add strict nominal request consumer under mode1. It requires exactly one
+  diagnostic line and literal false authority flags, actual request/binding,
+  three challenges, stable opaque audits, joined thread/reaped child/EOF/disposal.
+  The helper records raw settled target channels; JSON alone cannot certify order.
+- [ ] Paired complete source/effect review, fresh physical input/tool/SDK/private
+  output/resource/originals/journal gates, then ONE genuine ordinary own-child
+  task_for_pid experiment. Real denial must fail nominal, never skip/fallback.
+  Record denial as capability evidence rather than edit security/policy to pass.
+  A late/pending request remains failed/unqualified and retains its owner.
+
+### T4: Narrow delivery and next independent gate
+
+- [ ] Record actual finite matrix and remaining uncertainty/owner-death coverage;
+  static version/English/path/diff and default opt-out checks. No full npm/PG/ALL
+  replay from a builtin C/test/docs change.
+- [ ] Independent full diff reviews, scoped conventional commits/push/PR,
+  exact-head cloud/security/latefeedback gates and normal SHA-bound merge.
+- [ ] New independent clean-main no-script CI, normal guarded build, original
+  input/output/artifact/retention/host verification; retain all old roots/builds.
+- [ ] Outcome is acquisition-only. Any CONTROL-consuming lockdown/VM/map/initial
+  trusted-loader/root/protected/P2/genesis/service/cutover step is separately
+  designed/reviewed; no task-port JSON reopens those gates.
+
 ## Ordinary native NAME identity viability implementation subplan
 
 **Goal:** Determine actual ordinary own-Node NAME/audit binding support without
@@ -12,7 +252,8 @@ section Ordinary native NAME identity viability slice.
 **Tech:** C11/Darwin NAME APIs, existing builtin Node entry, ordinary Node tests.
 **Status:** Ordinary implementation and the finite current-source 22-case
 host matrix are verified in separate closed batches. Final independent review,
-reviewed PR delivery and a new clean-main build remain open. No exhaustive
+PR274 delivery, new clean-main build and artifact/host checks are closed below.
+No exhaustive
 uncertainty/root-UID coverage, protected/P2 or cutover admission.
 
 The pre-effect recipes below are retained historical design records, not new
@@ -239,8 +480,9 @@ Actual final14c7538a/session73105→2a8e22 CLOSED0:
 14-case gates and fresh994f27. CurrentC aggregate2+5+1+14=22 native cases,
 not one22-test run, exhaustive uncertainty/root-UID coverage or full npm/DB
 suite. No old ALL/privatePG/build replay. Native compile occurs in each fixture;
-separate pure compile-only current-C run is unnecessary. Reviewed PR delivery,
-clean-main build and host verification remain open; no protected/P2 admission.
+separate pure compile-only current-C run is unnecessary. This pre-delivery
+receipt's formerly open delivery/build/host steps are closed by N4 below;
+no protected/P2 admission.
 
 First actual nominal receipt eb7047 naturally CLOSED0 (do not replay):
 source5db27dcb/test1185aefe, strict positive1PASS/zeroFAIL/CANCEL/SKIP/TODO,
@@ -301,14 +543,32 @@ still requires paired exact-source review and fresh root checks.
 - [x] Focused current-source matrix and default opt-out/static contracts:
   1bfbdc23SKIP/0PASS46.313958ms;119137 version2.3.79, English1932files,
   paths967files and diff-check exit0. Skips are not native acceptance.
-- [ ] Proportional clean committed-source build checks; do not replay frozen
+- [x] Proportional clean committed-source build checks; do not replay frozen
   full ALL or old build/test sessions.
-- [ ] Independent complete diff review, ordinary scoped commits/push/PR with
+- [x] Independent complete diff review, ordinary scoped commits/push/PR with
   exact-head bot feedback, normal SHA-bound merge only.
-- [ ] New independent clean-main build and artifact/host/retention verification,
+- [x] New independent clean-main build and artifact/host/retention verification,
   preserving every old source/build/worktree and original two files.
-- [ ] Record actual narrow outcome; P2 protected owner/control/maps/root invocation,
+- [x] Record actual narrow outcome; P2 protected owner/control/maps/root invocation,
   P3/P4/P5/cutover/B/C/D/E remain independently gated.
+
+N4 closed 2026-10-05 01:46 UTC: feature087b465fa315755887aa9f8a529d45fd8508d9f8
+passed two complete independent reviews and exact-head Codex completion with no
+major findings; GitGuardian passed. PR274 merged normally at01:33:27 UTC as
+ae5a7b0e56e999255c4beb6937ea63e563f930e8/tree96bfaba0. Gemini/Copilot completion
+is not credited. Fresh independent clean-main clone retained all old roots.
+ONE no-script CI f7eaa4/session20616->ca9586 CLOSED0 and ONE normal guarded
+build d88949/session12418->fea2cd->dfbd36 CLOSED0 at01:42:53.035 UTC;
+buildc0c1820b-08d9-45cb-a4fe-25657d16fa46. Root artifact9698b6 and independent
+full artifact review01:45:08–52 C0 verified2095Git inputs,858build outputs,
+three immutable authorities and empty retention ledgers;6524 held inputs final
+stable/all closed. Output942a56728bf6d434786247f31a79b96cc4047534461fe30f35862a502778aa93.
+Independent post-host inventory confirmed originaltwo/journal/tools/old CLI
+selector preserved: MC3080/api/projects200, gateway18789200, dashboard3333
+refused000/exit7, not restarted or repointed. Default merged test409322 had
+23SKIP/0PASS (not native acceptance). Full raw receipts and exact wrappers are
+retained in logs/2026-10-02-setfarm-completion-master-plan.md at workspace root.
+These are closed historical invocations, not instructions to replay them.
 
 
 

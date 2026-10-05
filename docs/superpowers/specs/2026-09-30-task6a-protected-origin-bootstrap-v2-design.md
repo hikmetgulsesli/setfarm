@@ -1,5 +1,163 @@
 # Task6A protected private source-entry bootstrap v2
 
+## Ordinary direct-parent task-port acquisition slice
+
+Status: source-only design, not a compiled/native invocation or protected
+admission. The delivered ordinary NAME slice PR274 is complete at main
+ae5a7b0e56e999255c4beb6937ea63e563f930e8. Its actual NAME support is not
+CONTROL availability. This next causal P2 experiment asks whether one ordinary
+direct parent can obtain a valid task_for_pid result for its actual own Node
+child without changing host security, privilege, policy or production guards.
+
+Four-file map: create scripts/task6a-origin-native-task-port-v2.c and
+scripts/__tests__/task6a-origin-native-task-port-v2.test.js; refine only this
+named spec and its named plan. Do not modify the delivered NAME diagnostic,
+entry/bootstrap/map helpers, packages, live selectors, DB or old roots.
+Root alone writes/delivers. All retained roots/builds/failed artifacts and the
+original two dirty files remain visible and intact.
+
+### Architecture choice and scope
+
+Choose one ordinary fixed C owning process with one joinable request pthread.
+Only the main thread owns child birth, pipes, failure ledger, signals and reap.
+The request thread has one immutable locally captured PID and private result
+slot; it makes at most one task_for_pid call. It never reaps, signals, runs a
+protocol, publishes output or chooses another target.
+
+Rejected alternatives: a Node owner cannot supply this exclusive native reap
+contract; a separately spawned C worker can survive owner loss and use a PID
+after reparent/reap; post-fork Mach/pthread/library work lacks an admitted
+async-signal-safe closure. A synchronous call in the sole monitoring thread
+could block its deadline observation. No private-PID transport or sibling-target
+claim is carried forward from the earlier unadmitted CONTROL proposal.
+
+The program takes no caller argv/PID/path/options/configuration. Refuse extra
+arguments, root and real/effective UID mismatch before any pipe/thread/spawn.
+Use the same fixed ordinary Node26.4.0 and adjacent delivered builtin entry as
+the NAME diagnostic, literal scrubbed child environment, private standard pipes,
+checked spawn actions and CLOEXEC_DEFAULT. No library import flags or public
+test switch enter the C interface. Source-adjacent location is fixed by the
+separately reviewed absolute compiler source placement, not a cwd lookup.
+
+### Request admission, publication and lifetime
+
+Use C11 atomic admission states READY, IN_FLIGHT, BURNED and BURNED_IN_FLIGHT.
+Worker CAS READY->IN_FLIGHT competes with main's burn of READY->BURNED.
+Once admitted, main may change IN_FLIGHT->BURNED_IN_FLIGHT; it cannot retract
+that call or promise its kernel-entry instant preceded burn. The captured target
+generation stays reserved through the admitted request and checked join.
+Worker checks the original monotonic deadline before admission. Clock failure
+or a failed admission yields no native call, and a separately tagged unavailable
+result rather than a synthetic kernel return. Never retry after burn.
+
+The immutable request contains captured child PID and self task port. Worker
+alone writes attempted/status/returned-right fields. It initializes the right
+slot to MACH_PORT_NULL, calls task_for_pid at most once, stores the actual return,
+then release-publishes completion as its last result write and returns.
+Main acquire-loads completion, then performs exactly one checked pthread_join
+before inspecting result fields, reaping the target or returning from main.
+A completion flag alone is not thread settlement. Creation failure means no
+thread exists: consuming target reap is permitted only when no request thread
+was ever created, or after successful checked join. This does not waive child
+ownership/exit/EOF/disposition checks. Join failure/uncertainty preserves a failed owner, not detachment
+or an invented joined state. No pthread_cancel, pthread_detach, pthread_exit of
+the main owner, _exit, process kill or timeout handler substitutes for joining.
+
+While request lifetime is pending, clear siginfo_t and use only exact
+waitid(P_PID,captured_pid,...,WEXITED|WNOHANG|WNOWAIT) for child death observation.
+Require matching PID and a genuine exit kind; zero PID means no returned event.
+Observed death burns validity and forbids signals. Unexpected identity or wait
+ownership failure is sticky uncertainty and forbids further PID operations.
+Never use broad waits or a competing reaper. Consuming waitpid for the captured
+target is allowed only when no request thread was ever created, or after checked
+successful join; an attempted/failed join is not sufficient.
+Never configure SIGCHLD ignore/SA_NOCLDWAIT or allow a competing child reaper.
+The existing NAME observe_child/settle helpers therefore cannot be copied
+unchanged into the pre-join phase.
+
+Main keeps bounded nonblocking streams and a nonrenewable three-second validity
+budget. Expiry burns qualification, closes input and contains only the known
+original unconsumed child through separately bounded grace/TERM/KILL phases.
+Do not signal an observed-dead or uncertain child. Continue draining without
+consuming target status while the request is pending. A blocked request retains
+the failed C owner, waitable child status and original resources indefinitely,
+with bounded buffers/50ms backoff; no hard three-second return or reclamation
+guarantee is claimed. Do not kill the owner to make a test finish.
+
+After successful join, register every non-null/non-dead returned candidate name as an original
+cleanup obligation before fallible result classification, even if the API
+returned failure. A late/burned return allows once local disposal only: no PID,
+audit or positive classification. Consume the disposition slot before one
+mach_port_deallocate attempt; retain any disposition error separately from
+capability denial. A dead/null name is not a valid acquired send right.
+
+Only an on-time genuine successful return can continue to local right type,
+pid_for_task and exact-count full opaque audit validation, three distinct nonce
+exchanges, second live audit BEFORE END/input EOF, exact END/EOF/status/reap and
+once original-right disposal. These post-join queries remain conditional on
+ordinary kernel-call return, as in the delivered NAME diagnostic; continuous
+deadline monitoring during those synchronous queries is NOT claimed. Sample
+the unchanged deadline after completion, after join and before/after forward
+calls. No query exports audit bytes, PID or a right as authority.
+
+### What the result does and does not establish
+
+Successful output names task-for-pid-right/unqualified, not usable CONTROL.
+It records actual attempt/right binding/protocol/thread join/child reap/EOF/
+disposition with productionAuthority:false, controlUsable:false,
+completeNativeClosure:false and protectedOrigin:false. This slice performs no
+CONTROL-consuming lockdown, suspend, VM operation or mapping query. A valid
+returned task right and NAME-flavor audit query cannot prove a subsequent
+CONTROL conversion would be allowed. Actual denial/null/dead/count/drift/
+deadline/cleanup failures remain distinct and cannot turn nominal acceptance
+into skip, fallback or policy changes.
+
+Primary published XNU12377.121.6 kern_proc.c5865–6011 binds/retains the selected
+task before the possible taskgated upcall at5960; NAME follows a separate route.
+ipc_tt.c converts task_for_pid's result with CONTROL flavor, but its foreign
+CONTROL conversion policy is a distinct constraint. kern_exit.c1761–1762 and
+proc_exit2299/childdrain2527 support reasoning about last-thread termination and
+later child cleanup. These are upstream source observations, NOT exact running
+12377.121.10 teardown proof, external-owner-death containment or permission.
+An externally killed owner cannot be called definitely settled merely from
+topology or a source comment. Compiler/dyld/thread startup and full pre-import
+Perl trust remain independently unqualified; P2 is not opened by this result.
+
+Sources (inspected public raw source, not a third-party issue as authority):
+
+- https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/kern_proc.c
+- https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/kern/ipc_tt.c
+- https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/kern_exit.c
+
+### Verification and effect admission
+
+First use behavior-driven refusal and pure lifecycle test copies with literal
+oracles for no consuming reap before join, bounded pending cleanup, admission
+versus burn, late returned-right disposal, join failure and primary/secondary
+cause retention. An actual joined pthread with a deliberately delayed test
+request is not a genuine blocked taskgated/kernel experiment; label it correctly.
+Any mutation control must exercise the independent oracle, not source-string
+certification. Never fabricate a genuine kernel acquisition or disposal.
+Main burn must exhaustively arbitrate every admission state using strong CAS,
+never a spurious/lost transition permitting expired READY work. A finite pure
+lifecycle copy may test the join-failure state without creating an unknown live
+thread. Any future nominated error after actual successful join is synthetic;
+its fixture-only rescue requires separate literal review and independently
+proven actual thread/target settlement, never production recovery credit.
+Do not execute a genuinely uncertain join path and then kill its owner.
+
+Keep new tests default-skipped with explicit test-process-only compile/native
+opt-ins omitted from every child environment. Reuse reviewed ordinary custody,
+fixed tool/SDK/resource/link recipes and natural exit+close/bothEOF helpers only
+after exact adaptation review. pthread/atomic headers, real libSystem exports,
+object/link recipes, all source/entry/input/output pins, retained directories
+and fresh resource/preservation checks precede any compiler/native effect.
+One genuine capability experiment is separately reviewed after source/tests:
+denial must fail the nominal oracle and remain actual capability evidence, not
+a software fix mandate. Unknown settlement retains original artifacts/owner.
+Normal reviewed PR/clean-main build/host delivery is separate from native or
+protected qualification. No frozen ALL/private-PG/build/test replay.
+
 ## Ordinary native NAME identity viability slice
 
 This separately reviewed ordinary diagnostic supplies the first actual native
