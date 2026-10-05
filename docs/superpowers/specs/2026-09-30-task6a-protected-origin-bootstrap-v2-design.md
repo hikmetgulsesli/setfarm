@@ -2,9 +2,10 @@
 
 ## Ordinary direct-parent task-port acquisition slice
 
-Status: design plus an ordinary refusal-only checkpoint. Only the argument
-refusal has been compiled/executed; no pthread/task_for_pid capability experiment
-or protected admission. The delivered ordinary NAME slice PR274 is complete at main
+Status: ordinary refusal and finite synthetic-request lifecycle checkpoints.
+Actual own-child/thread/join/reap were observed in two synthetic cases; no
+genuine task_for_pid capability experiment or protected admission. The delivered
+ordinary NAME slice PR274 is complete at main
 ae5a7b0e56e999255c4beb6937ea63e563f930e8. Its actual NAME support is not
 CONTROL availability. This next causal P2 experiment asks whether one ordinary
 direct parent can obtain a valid task_for_pid result for its actual own Node

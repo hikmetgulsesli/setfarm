@@ -8,6 +8,8 @@ import test from 'node:test';
 const SOURCE = new URL('../task6a-origin-native-task-port-v2.c', import.meta.url);
 // Explicit test-process-only opt-in; never ambient native execution in a glob.
 const REFUSAL_TEST_ENABLED = process.env.SETFARM_TASK6A_NATIVE_TASK_PORT_TEST === 'refusal';
+const LIFECYCLE_TEST_ENABLED = process.env.SETFARM_TASK6A_NATIVE_TASK_PORT_TEST === 'lifecycle';
+const DELIVERED_ENTRY = new URL('../task6a-protected-origin-entry-v2.mjs', import.meta.url);
 const CLANG = '/Library/Developer/CommandLineTools/usr/bin/clang';
 const LD = '/Library/Developer/CommandLineTools/usr/bin/ld';
 const NODE = '/opt/homebrew/Cellar/node/26.4.0/bin/node';
@@ -17,6 +19,227 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const ENTRY = "import {writeFileSync} from 'node:fs';\n" +
   "writeFileSync(new URL('./entry-started', import.meta.url), 'entry started\\n', {flag:'wx',mode:0o600});\n" +
   "process.exit(2);\n";
+
+// Closed ordinary test-copy instrumentation. No target Mach operation occurs:
+// the request shim returns explicitly synthetic KERN_FAILURE/MACH_PORT_NULL.
+// Real spawn, thread, join, wait, read and close calls precede macro redirection.
+const LIFECYCLE_PREFIX = String.raw`
+#define _DARWIN_C_SOURCE 1
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <mach/mach.h>
+#include <pthread.h>
+#include <signal.h>
+#include <spawn.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+static _Atomic(const char *) probe_events[128];
+static atomic_uint probe_event_count;
+static atomic_bool probe_overflow, probe_reaped, probe_fault;
+static pid_t probe_child;
+static pthread_t probe_thread;
+static bool probe_create_attempted, probe_created, probe_join_attempted, probe_joined;
+static bool probe_observed_dead, probe_uncertain;
+static void *(*probe_start)(void *);
+static void *probe_argument;
+static int probe_fds[6], probe_closed[6];
+static unsigned probe_fd_count;
+static void probe_event(const char *event) {
+    int saved = errno;
+    unsigned slot = atomic_fetch_add_explicit(&probe_event_count, 1, memory_order_relaxed);
+    if (slot < 128) atomic_store_explicit(&probe_events[slot], event, memory_order_release);
+    else atomic_store_explicit(&probe_overflow, true, memory_order_release);
+    errno = saved;
+}
+static void probe_bad(void) {
+    atomic_store_explicit(&probe_fault, true, memory_order_release);
+    probe_event("harness-fault");
+}
+static void *probe_start_thread(void *unused) {
+    (void)unused;
+    probe_event("worker-enter");
+    void *result = probe_start(probe_argument);
+    probe_event("worker-return");
+    return result;
+}
+static __attribute__((unused)) int probe_create(pthread_t *thread, const pthread_attr_t *attr,
+    void *(*start)(void *), void *argument) {
+    if (probe_create_attempted || attr != NULL) { probe_bad(); return EINVAL; }
+    probe_create_attempted = true;
+    probe_start = start; probe_argument = argument;
+    probe_event("create-request");
+    int result = pthread_create(thread, attr, probe_start_thread, NULL);
+    if (!result) { probe_thread = *thread; probe_created = true; probe_event("create-success"); }
+    return result;
+}
+static __attribute__((unused)) int probe_join(pthread_t thread, void **result) {
+    if (!probe_created || probe_join_attempted || !pthread_equal(thread, probe_thread)) {
+        probe_bad(); return EINVAL;
+    }
+    probe_join_attempted = true;
+    int rc = pthread_join(thread, result);
+    if (!rc) { probe_joined = true; probe_event("actual-join-success"); }
+    return rc;
+}
+static __attribute__((unused)) kern_return_t probe_request(mach_port_name_t self, int child,
+    mach_port_name_t *returned) {
+    if (!probe_child || child != probe_child || self != mach_task_self() ||
+        atomic_load_explicit(&probe_reaped, memory_order_acquire)) {
+        probe_bad(); probe_event("after-reap-target-call");
+        *returned = MACH_PORT_NULL; return KERN_FAILURE;
+    }
+    probe_event("synthetic-request");
+    if (PROBE_DELAYED) {
+        struct timespec left = {3, 200000000};
+        while (nanosleep(&left, &left) != 0) {
+            if (errno != EINTR) { probe_event("delay-failed"); break; }
+        }
+    }
+    *returned = MACH_PORT_NULL;
+    return KERN_FAILURE;
+}
+static __attribute__((unused)) int probe_spawn(pid_t *pid, const char *path,
+    const posix_spawn_file_actions_t *actions, const posix_spawnattr_t *attributes,
+    char *const argv[], char *const env[]) {
+    const char *compiled_source = __FILE__;
+    const char *slash = strrchr(compiled_source, '/');
+    char entry[PATH_MAX];
+    const char suffix[] = "/task6a-protected-origin-entry-v2.mjs";
+    if (!slash || (size_t)(slash - compiled_source) + sizeof suffix > sizeof entry) {
+        probe_bad(); return EINVAL;
+    }
+    size_t length = (size_t)(slash - compiled_source);
+    memcpy(entry, compiled_source, length); memcpy(entry + length, suffix, sizeof suffix);
+    if (probe_child || strcmp(path, "/opt/homebrew/Cellar/node/26.4.0/bin/node") ||
+        strcmp(argv[0], path) || strcmp(argv[1], entry) || argv[2] ||
+        strcmp(env[0], "PATH=/usr/bin:/bin") || strcmp(env[1], "LANG=C") ||
+        strcmp(env[2], "LC_ALL=C") || env[3]) { probe_bad(); return EINVAL; }
+    int rc = posix_spawn(pid, path, actions, attributes, argv, env);
+    if (!rc && *pid > 1) { probe_child = *pid; probe_event("target-spawn"); }
+    return rc;
+}
+static __attribute__((unused)) int probe_waitid(idtype_t kind, id_t pid,
+    siginfo_t *info, int flags) {
+    if (kind != P_PID || !probe_child || pid != (id_t)probe_child ||
+        flags != (WEXITED | WNOHANG | WNOWAIT) ||
+        atomic_load_explicit(&probe_reaped, memory_order_acquire)) {
+        probe_bad(); errno = ECHILD; return -1;
+    }
+    int rc = waitid(kind, pid, info, flags), saved = errno;
+    if (!rc && info->si_pid == probe_child &&
+        (info->si_code == CLD_EXITED || info->si_code == CLD_KILLED || info->si_code == CLD_DUMPED)) {
+        probe_observed_dead = true;
+        probe_event("target-dead-observed");
+    } else if ((!rc && info->si_pid != 0) || (rc != 0 && saved != EINTR)) {
+        probe_uncertain = true; probe_bad();
+    }
+    errno = saved; return rc;
+}
+static __attribute__((unused)) pid_t probe_waitpid(pid_t pid, int *status, int flags) {
+    if (!probe_child || pid != probe_child || flags != WNOHANG ||
+        atomic_load_explicit(&probe_reaped, memory_order_acquire)) {
+        probe_bad(); errno = ECHILD; return -1;
+    }
+    pid_t rc = waitpid(pid, status, flags); int saved = errno;
+    if (rc == probe_child) {
+        atomic_store_explicit(&probe_reaped, true, memory_order_release);
+        probe_event("target-reap");
+    } else if ((rc < 0 && saved != EINTR) || rc > 0) { probe_uncertain = true; probe_bad(); }
+    errno = saved; return rc;
+}
+static __attribute__((unused)) int probe_pipe(int pair[2]) {
+    if (probe_fd_count > 4) { probe_bad(); errno = EMFILE; return -1; }
+    int rc = pipe(pair), saved = errno;
+    if (!rc) {
+        probe_fds[probe_fd_count++] = pair[0]; probe_fds[probe_fd_count++] = pair[1];
+        probe_event("pipe");
+    }
+    errno = saved; return rc;
+}
+static __attribute__((unused)) int probe_close(int fd) {
+    for (unsigned i = 0; i < probe_fd_count; i++) if (probe_fds[i] == fd) {
+        if (probe_closed[i]++) { probe_bad(); errno = EBADF; return -1; }
+        int rc = close(fd), saved = errno;
+        if (!rc) probe_event(i == 1 ? "input-close" : "pipe-close");
+        errno = saved; return rc;
+    }
+    probe_bad(); errno = EBADF; return -1;
+}
+static __attribute__((unused)) ssize_t probe_read(int fd, void *bytes, size_t length) {
+    if (probe_fd_count != 6 ||
+        !((fd == probe_fds[2] && !probe_closed[2]) || (fd == probe_fds[4] && !probe_closed[4]))) {
+        probe_bad(); errno = EBADF; return -1;
+    }
+    ssize_t rc = read(fd, bytes, length); int saved = errno;
+    if (rc == 0 && probe_fd_count == 6) {
+        if (fd == probe_fds[2]) probe_event("stdout-eof");
+        else if (fd == probe_fds[4]) probe_event("stderr-eof");
+    }
+    errno = saved; return rc;
+}
+static __attribute__((unused)) int probe_kill(pid_t pid, int signal) {
+    if (!probe_child || pid != probe_child || probe_uncertain || probe_observed_dead ||
+        atomic_load_explicit(&probe_reaped, memory_order_acquire) ||
+        (signal != SIGTERM && signal != SIGKILL)) {
+        probe_bad(); probe_event("after-reap-target-call"); errno = ESRCH; return -1;
+    }
+    int rc = kill(pid, signal), saved = errno;
+    if (!rc) probe_event(signal == SIGTERM ? "signal-term" : "signal-kill");
+    errno = saved; return rc;
+}
+static void probe_finish(void) {
+    // Never manufacture settlement by exiting an actually unjoined owner.
+    if ((probe_created && !probe_joined) || (probe_child &&
+        !atomic_load_explicit(&probe_reaped, memory_order_acquire))) {
+        const struct timespec pause = {0, 50000000};
+        for (;;) (void)nanosleep(&pause, NULL);
+    }
+    FILE *trace = fopen("native-trace", "wx");
+    if (!trace) { (void)fputs("TASK6A_TEST_TRACE_FAILED\n", stderr); return; }
+    int failed = 0;
+    unsigned count = atomic_load_explicit(&probe_event_count, memory_order_acquire);
+    if (count > 128 || atomic_load_explicit(&probe_overflow, memory_order_acquire)) {
+        if (fputs("trace-overflow\n", trace) == EOF) failed = 1;
+    }
+    if (atomic_load_explicit(&probe_fault, memory_order_acquire)) {
+        if (fputs("sticky-harness-fault\n", trace) == EOF) failed = 1;
+    }
+    for (unsigned i = 0; i < count && i < 128; i++) {
+        const char *event = atomic_load_explicit(&probe_events[i], memory_order_acquire);
+        if (fprintf(trace, "%s\n", event ? event : "trace-unpublished") < 0) failed = 1;
+    }
+    if (fclose(trace) != 0) failed = 1;
+    if (failed) (void)fputs("TASK6A_TEST_TRACE_FAILED\n", stderr);
+}
+static __attribute__((constructor)) void probe_initialize(void) {
+    if (atexit(probe_finish) != 0) abort();
+}
+#define pthread_create probe_create
+#define pthread_join probe_join
+#define task_for_pid probe_request
+#define posix_spawn probe_spawn
+#define waitid probe_waitid
+#define waitpid probe_waitpid
+#define pipe probe_pipe
+#define close probe_close
+#define read probe_read
+#define kill probe_kill
+`;
+
+function instrumentLifecycle(original, control) {
+  assert.ok(['none', 'synthetic-failure', 'delayed-synthetic-failure'].includes(control));
+  if (control === 'none') return original;
+  return Buffer.from(LIFECYCLE_PREFIX.replaceAll('PROBE_DELAYED',
+    control === 'delayed-synthetic-failure' ? '1' : '0') + '\n' + original.toString());
+}
 
 function sameStat(a, b) {
   return ['dev', 'ino', 'uid', 'gid', 'mode', 'nlink', 'size', 'mtimeNs', 'ctimeNs']
@@ -141,11 +364,14 @@ function settled(command, args, cwd) {
 }
 
 async function invokeOwnedTaskPortProbe(args, stage = 'execute', fixture = 'delivered', control = 'none') {
-  assert.deepEqual(args, ['unexpected']);
+  assert.ok(args.length === 0 || (args.length === 1 && args[0] === 'unexpected'));
   assert.equal(stage, 'execute');
   assert.equal(fixture, 'delivered');
-  assert.equal(control, 'none');
-  const held = [], directories = [];
+  assert.ok(['none', 'synthetic-failure', 'delayed-synthetic-failure'].includes(control));
+  if (args.length) assert.equal(control, 'none');
+  else assert.notEqual(control, 'none');
+  const held = [], directories = [], symlinks = [];
+  let atomicHeaderAbsent = false;
   let primary = null;
   try {
     held.push(holdRegular(fileURLToPath(SOURCE), null, 501));
@@ -176,16 +402,43 @@ async function invokeOwnedTaskPortProbe(args, stage = 'execute', fixture = 'deli
     assert.equal(JSON.parse(settings.bytes).MinimalDisplayName, '26.5');
     held.push(holdRegular(SDK + '/usr/lib/libSystem.B.tbd',
       '20cfce043f11a083e2eb6111efe3579919a8082fa4cc912a7bd839af2010ec57', 0));
+    if (control !== 'none') {
+      const path = SDK + '/usr/include/pthread.h';
+      const stat = fs.lstatSync(path, {bigint: true});
+      assert.ok(stat.isSymbolicLink());
+      assert.equal(stat.uid, 0n); assert.equal(stat.gid, 0n); assert.equal(stat.nlink, 1n);
+      assert.equal(fs.readlinkSync(path), 'pthread/pthread.h');
+      assert.equal(fs.realpathSync(path), SDK + '/usr/include/pthread/pthread.h');
+      symlinks.push({path, stat});
+      checkSystemDirectory(SDK + '/usr/include/pthread');
+      held.push(holdRegular(SDK + '/usr/include/pthread/pthread.h',
+        '9d621c730d1d96b600893b0e3e4c45822a24d565e7b6b166973c41a6a2eb02e7', 0));
+      held.push(holdRegular(SDK + '/usr/include/sys/wait.h',
+        'b77f7dd6f592eba8b0d51c15c7b975472fdad50c12ea296f74f062cbf98dcbf7', 0));
+      held.push(holdRegular(RESOURCE + '/include/stdatomic.h',
+        '728b690f127fc85faa32b9031e3a0019da92f77db92ca91b749571e45617a9ea', 0));
+      // Prevent include_next from selecting an unreviewed SDK atomic header.
+      assert.throws(() => fs.lstatSync(SDK + '/usr/include/stdatomic.h'), {code: 'ENOENT'});
+      atomicHeaderAbsent = true;
+    }
+    let deliveredEntry = null;
+    if (args.length === 0) {
+      deliveredEntry = holdRegular(fileURLToPath(DELIVERED_ENTRY),
+        'bbcf752ef274b04c2b8bb99434d0a738de0b3aa9ce8c85aa0476eec4351560b7', 501);
+      held.push(deliveredEntry);
+    }
     const directory = fs.mkdtempSync('/private/tmp/setfarm-native-task-port-test.');
     fs.chmodSync(directory, 0o700);
     directories.push({path: directory, stat: checkPrivateDirectory(directory)});
     const source = directory + '/task6a-origin-native-task-port-v2.c';
     const object = directory + '/probe.o', binary = directory + '/probe';
     const fixtureEntry = directory + '/task6a-protected-origin-entry-v2.mjs';
-    fs.writeFileSync(source, held[0].bytes, {flag: 'wx', mode: 0o600});
-    fs.writeFileSync(fixtureEntry, ENTRY, {flag: 'wx', mode: 0o600});
-    held.push(holdRegular(source, sha256(held[0].bytes), 501));
-    held.push(holdRegular(fixtureEntry, sha256(ENTRY), 501));
+    const compiledBytes = instrumentLifecycle(held[0].bytes, control);
+    const entryBytes = deliveredEntry ? deliveredEntry.bytes : Buffer.from(ENTRY);
+    fs.writeFileSync(source, compiledBytes, {flag: 'wx', mode: 0o600});
+    fs.writeFileSync(fixtureEntry, entryBytes, {flag: 'wx', mode: 0o600});
+    held.push(holdRegular(source, sha256(compiledBytes), 501));
+    held.push(holdRegular(fixtureEntry, sha256(entryBytes), 501));
     const compile = await settled(CLANG, [
       '--no-default-config', '--target=arm64-apple-macos26.5',
       '-resource-dir', RESOURCE, '-isysroot', SDK, '-integrated-as',
@@ -215,14 +468,25 @@ async function invokeOwnedTaskPortProbe(args, stage = 'execute', fixture = 'deli
     const binaryInput = holdRegular(binary, null, 501);
     held.push(binaryInput);
     const actual = await settled(binary, args, directory);
+    let trace = null;
+    if (control !== 'none') {
+      const traceInput = holdRegular(directory + '/native-trace', null, 501);
+      held.push(traceInput);
+      assert.ok(traceInput.bytes.length <= 8192);
+      trace = traceInput.bytes.toString();
+    }
     return {
-      ...actual, availability: 'executed-ordinary', entryStarted: entryStarted(directory, held),
+      ...actual, trace, availability: 'executed-ordinary',
+      entryStarted: args.length ? entryStarted(directory, held) : null,
       evidence: {
         directory, calibration, sourceHash: sha256(held[0].bytes),
         objectHash: sha256(objectInput.bytes), binaryHash: sha256(binaryInput.bytes),
-        entryHash: sha256(ENTRY), compilerExit: compile.code, linkerExit: link.code,
+        compiledSourceHash: sha256(compiledBytes), instrumented: control !== 'none', control,
+        entryHash: sha256(entryBytes), compilerExit: compile.code, linkerExit: link.code,
         witnessExit: observed.code, definiteExitCloseAndBothEof: true,
-        entryKind: 'startup-witness', productionAuthority: false, controlUsable: false,
+        entryKind: deliveredEntry ? 'exact-delivered-builtin' : 'startup-witness',
+        ...(trace === null ? {} : {trace, traceHash: sha256(trace)}),
+        productionAuthority: false, controlUsable: false,
         completeNativeClosure: false, protectedOrigin: false,
       },
     };
@@ -232,6 +496,17 @@ async function invokeOwnedTaskPortProbe(args, stage = 'execute', fixture = 'deli
   } finally {
     // Retain original fresh artifacts on every outcome; check all, close all.
     const errors = [];
+    for (const link of symlinks) {
+      try {
+        assert.ok(sameStat(link.stat, fs.lstatSync(link.path, {bigint: true})));
+        assert.equal(fs.readlinkSync(link.path), 'pthread/pthread.h');
+        assert.equal(fs.realpathSync(link.path), SDK + '/usr/include/pthread/pthread.h');
+      } catch (error) { errors.push(error); }
+    }
+    if (atomicHeaderAbsent) {
+      try { assert.throws(() => fs.lstatSync(SDK + '/usr/include/stdatomic.h'), {code: 'ENOENT'}); }
+      catch (error) { errors.push(error); }
+    }
     for (const directory of directories) {
       try { checkPrivateDirectory(directory.path, directory.stat); }
       catch (error) { errors.push(error); }
@@ -260,6 +535,52 @@ test('ordinary native task-port parent refuses an extra argument before entry st
   if (actual.evidence) t.diagnostic(JSON.stringify(actual.evidence));
   assert.equal(actual.code, 2, 'actual support: ' + actual.availability);
   assert.equal(actual.stdout, '');
+  assert.ok(!actual.stderr.includes('TASK6A_TEST_TRACE_FAILED'), 'trace output failed');
   assert.equal(actual.stderr, 'TASK6A_NATIVE_TASK_PORT_PROBE_REFUSED\n');
   assert.equal(actual.entryStarted, false);
 });
+
+function assertLifecycle(actual, delayed) {
+  const events = actual.trace.trim().split('\n').filter(Boolean);
+  const count = name => events.filter(event => event === name).length;
+  const event = name => {
+    assert.ok(events.includes(name), 'missing actual lifecycle event: ' + name);
+    return events.indexOf(name);
+  };
+  assert.equal(actual.code, 2);
+  assert.equal(actual.stdout, '');
+  assert.ok(!actual.stderr.includes('TASK6A_TEST_TRACE_FAILED'), 'trace output failed');
+  assert.equal(count('target-spawn'), 1);
+  assert.equal(count('create-success'), 1);
+  assert.equal(count('create-request'), 1);
+  assert.equal(count('worker-enter'), 1);
+  assert.equal(count('worker-return'), 1);
+  assert.equal(count('actual-join-success'), 1);
+  assert.ok(event('create-request') < event('worker-enter'));
+  assert.ok(event('worker-return') < event('actual-join-success'));
+  assert.ok(event('actual-join-success') < event('target-reap'));
+  assert.equal(count('synthetic-request'), 1);
+  assert.equal(count('target-reap'), 1);
+  assert.equal(count('after-reap-target-call'), 0);
+  assert.equal(count('trace-overflow'), 0);
+  assert.equal(count('trace-unpublished'), 0);
+  assert.equal(count('delay-failed'), 0);
+  assert.equal(count('harness-fault'), 0);
+  assert.equal(count('sticky-harness-fault'), 0);
+  assert.equal(count('stdout-eof'), 1);
+  assert.equal(count('stderr-eof'), 1);
+  assert.equal(count('input-close'), 1);
+  assert.equal(count('pipe-close'), 5);
+  if (delayed) assert.ok(event('target-dead-observed') < event('actual-join-success'));
+}
+
+for (const [control, delayed] of [['synthetic-failure', false], ['delayed-synthetic-failure', true]]) {
+  // Catches missing owner lifecycle or consuming child status before real join.
+  // Synthetic failure is never kernel acquisition or capability-denial evidence.
+  test('ordinary task-port owner joins before reap under ' + control,
+    {skip: !LIFECYCLE_TEST_ENABLED}, async t => {
+    const actual = await invokeOwnedTaskPortProbe([], 'execute', 'delivered', control);
+    t.diagnostic(JSON.stringify(actual.evidence));
+    assertLifecycle(actual, delayed);
+  });
+}

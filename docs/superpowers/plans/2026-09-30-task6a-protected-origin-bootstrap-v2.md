@@ -16,8 +16,8 @@ tests and the unchanged delivered builtin entry; no added packages.
 **Spec:** docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md,
 section
 Ordinary direct-parent task-port acquisition slice.
-**Status:** T1 refusal-only C/test checkpoint verified below. T2–T4 remain open;
-no request thread, task_for_pid capability experiment or protected admission.
+**Status:** T1 refusal and T2 finite synthetic-request lifecycle verified below.
+T3–T4 remain open; no genuine task_for_pid experiment or protected admission.
 
 ### Global constraints and File Map
 
@@ -174,13 +174,13 @@ static bool can_consume_target_status(const struct owner *o) {
   with observed-death and actual request-thread state, replacing NAME-right
   fields with task_port/task_port_owned. It is not a DTO/public authority.
 
-- [ ] Add one closed test-copy lifecycle control whose request shim returns an
+- [x] Add one closed test-copy lifecycle control whose request shim returns an
   explicitly synthetic failure without a target Mach call. Require actual
   pthread creation/termination/join and actual child exit/EOF/reap/pipe custody.
   A second closed finite delayed shim must cross the original validity budget:
   main must observe child death without consuming it, join, then actually reap.
   The shim never fabricates an acquired right or successful disposal.
-- [ ] Define independent trace oracle using thread-safe per-event publication,
+- [x] Define independent trace oracle using thread-safe per-event publication,
   not the old unsynchronized trace counter. Require partial ordering, not a
   scheduler-dependent total order:
 ```javascript
@@ -199,21 +199,50 @@ assert.equal(actual.code, 2);
   entry because the worker may run before pthread_create returns. Trace sequence
   numbers/publication must be synchronized independently of owner/result state.
   No native-call or protected credit follows from the synthetic request shim.
-- [ ] Paired literal/effect review precedes compiler/thread/child invocation.
+- [x] Paired literal/effect review precedes compiler/thread/child invocation.
   Run affected lifecycle consumer against refusal-only C as actual behavioral
   RED: it lacks birth/thread/join/reap events. Preserve artifacts/raw result.
-- [ ] Implement only source obligations justified by these consumers: fixed
+- [x] Implement only source obligations justified by these consumers: fixed
   ordinary argc/UID checks; checked child/pipes/spawn/signal setup; immutable
   request; exhaustive strong-CAS admission/burn; one request function; pending
   non-consuming waitid; bounded streams/cleanup; done+sole join; guarded target
   consumption and original right registration/once disposal. Reuse NAME's
   finite protocol/failure ledger only after separating its pre-join wait path.
-- [ ] Extend declarations/compiler review with exact pthread/atomic headers and
+- [x] Extend declarations/compiler review with exact pthread/atomic headers and
   actual libSystem exports. No ambient -lpthread/default search/config/helper.
   Review full new source and test-copy transforms before affected GREENs.
-- [ ] Run the finite lifecycle controls, preserve actual operations/traces/raw
+- [x] Run the finite lifecycle controls, preserve actual operations/traces/raw
   parent exit/close/EOF and independently audit artifacts. No real taskgated
   delay or capability result is inferred. Commit only after full diff review.
+
+T2 receipt: actual behavioral RED63343c CLOSED1,800.004709ms BEFORE owner C;
+compile/link0, actual refusal2/valid emptytrace, literal target-spawn0!==1.
+Independent post9be23c exact7artifacts C0; no compiler failure used as RED.
+C6f7c4c983806b20aeef8c9543fa1e03a52acbb7e5d2f366a9aa2493b0bc4970b and
+testef5e5cc029b001078e4e4535ab3e4e5f95da8f5576e03e1c0d065480ec29f78b
+passed paired full literal source/effect C0. Cleanup relative anchor corrected
+to fresh clock AFTER input close/join; header9d621c/b77f7d/728b69 held, pthread
+symlink and SDK atomic-header absence rechecked. Fresh92bee2/2b7974/cccc46/
+2add91 and root225000 physical/resource/preservation gates preceded effects.
+ONE two-case97a6af/session89272->bf0f0e naturally CLOSED0,2PASS4864.632125ms:
+normal actualcreate/workerreturn/checkedjoin then targetreap; delayed actual
+non-consuming death/EOF beforeworkerreturn/join/reap. No genuine task_for_pid:
+request shim returns synthetic KERN_FAILURE/null, no candidate disposal.
+Separate changed-source argv e382b5 CLOSED0,1PASS700.165917ms, actualrefusal2/
+empty stdout/canonical stderr/no entrymarker, beforepipe/thread/target work.
+Independent1d2559 at02:59:22.886 C0 checked original20artifact hashes/modes,
+six private700 directories/exact inventories/no target markers/three calibrated
+markers. Trace84a77cc54185228adc6e5be1ba6ea46bc190ac443b0acffc0aa8cd3cbaab91fa
+and4991d15e41c7146ba1ab80e632ffe15243d5390fe88d071e6696042e689dc488
+each witness actualoncebirth/create/workerreturn/join/reap, bothEOF and six once
+pipe dispositions with all nominated harnessfaults0; join-before-reap in both,
+delayed death-before-join. a7a1e9/0889d3/fb10b5 currentinputs/originaltwo/journal/
+tool/oldCLI keys preserved; disk6686612KiBfree/memory59%/no thermal. Full raw
+receipts retained in workspace logs/2026-10-02-setfarm-completion-master-plan.md.
+cfca11 version2.3.79/English1933/path968/diff0/default3SKIP0PASS41.983459ms.
+Always-unqualified owner still has no successful binding/audit/challenge path.
+This finite matrix does not cover every uncertainty/create/join/external-death
+path. T3 controls, genuine capability and T4 delivery remain separately gated.
 
 ### T3: Independent negative controls and one genuine request
 
