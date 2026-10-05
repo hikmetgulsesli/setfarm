@@ -18,16 +18,25 @@ main write, branch-protection/access/provider configuration or paid activation.
   through0872e09c. C7deb/testb2fc/current research docs match. Both C0/I0/M0
   assessments permit only an honest incomplete feedback draft, after this
   refinement is reviewed. Exact source/verification pins remain in receipts.
-- [ ] Review this exact refinement/body and public four-file exposure, fresh
+- [x] Review this exact refinement/body and public four-file exposure, fresh
   HEAD/index/worktree/remote/preservation/resource gates, then normal scoped push
   and one DRAFT PR. Verify actual returned PR/head/base/draft state and file map.
-- [ ] State prominently in the PR: genuine nominal actualFAIL5 at test43ec,
+  Paired C0/I0/M0 at plan3207ef17/specd818e433; scoped docs commitd589ae1d.
+  Normal push d6a5c3 and ONE draft create019f4a CLOSED0. Actual PR275
+  b159cc/ebdd8a confirms OPEN/DRAFTtrue/head d589ae1d/baseae5a7b0e/exact4files.
+  This is a historical feedback checkpoint, not qualification of later heads.
+- [x] State prominently in the PR: genuine nominal actualFAIL5 at test43ec,
   finite15 passed in separate batches at C7deb/testb2fc, default16SKIP is opt-out
   only, implementation incomplete. No full-matrix/native-uncertainty/CONTROL/
   protected/P2/clean-main/host rollout or all-tests-pass claim.
-- [ ] Request existing review integrations once only if available as ordinary
+- [x] Request existing review integrations once only if available as ordinary
   review feedback, never coding-agent assignment/new settings/paid activation.
-  Record actual current-head checks/comments/reviews/threads with full pagination;
+  Copilot CLI request aefea6 returned0 but actual reviewer/timeline absent;
+  Codex request ec5089/comment5996758004 and Gemini97101f/comment5996758515.
+  No retries. No actual Copilot/Gemini response or formalAPPROVED inferred.
+- [ ] Settle actual current-head feedback with fully paginated checks/comments/
+  reviews/threads and explicit head association. At14:44UTC on d589ae1d,
+  Codex RUNNING, GitGuardian SUCCESS, formalreviews/threads empty; not settled.
   quota/absence/accepted request is not response or formalAPPROVED. Review any
   suggested code/native verification separately before applying it.
 - [ ] Keep the PR draft and T4 delivery unchecked. Continue safe source research
@@ -75,6 +84,13 @@ does not open genuine-positive/T4delivery/CONTROL/protected/P2 gates.
   Paired C0/I0/M0 at plan9e9fae/speca3e after burn-cleanup M1 clarification,
   before source-only docs commit0872e09c. This closes contract review ONLY;
   the next complete-error/continuity/executable-design decision remains open.
+- [x] Bounded primary-source prerequisite audit: published spawn/exec slot
+  inheritance is supported, installed full startup continuity is not proven;
+  current SEND/PID/audit facts do not exercise foreign CONTROL. Published
+  conversion policy is conditional on a kernel-managed predicate whose
+  non-monitor backing starts true, not presumed false from DevToolsSecurity.
+  Record these distinctions in the spec's Source-only prerequisite findings.
+  This does not close any actual-host/complete-custody/executable-design gate.
 - [ ] Determine whether the complete send/receive error table and postexec
   registration/loader continuity permit a separately scoped executable design.
   If not, record the precise unsupported contract and continue only safe source

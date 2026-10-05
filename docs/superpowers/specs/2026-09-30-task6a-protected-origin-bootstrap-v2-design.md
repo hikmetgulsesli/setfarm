@@ -108,6 +108,47 @@ the installed SDK or published kernel source. Published xnu12377.121.6 is not
 running12377.121.10 host policy/teardown proof. Source-only contract review is
 the next step; no executable implementation/effect is admitted by this text.
 
+### Source-only prerequisite findings: acquisition is not CONTROL
+
+Bounded published-source inspection supports registered-slot inheritance through
+the spawn/exec task-creation chain: fork_create_child passes the parent task into
+task_create_internal, which calls ipc_task_init; that initializer copies each
+registered slot. Exec still creates a replacement task. This supports researching
+channel continuity, NOT substituting the preexec self right or claiming actual
+continuity through this installed Node and its whole startup dependency closure.
+Lookup clones the stashed references; it does not consume or clear the stash.
+Parent restoration does not clear the child's independently inherited slots.
+[Task creation](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/kern_fork.c#L442),
+[IPC initialization](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/kern/ipc_tt.c#L255).
+
+The current diagnostic's SEND-type/PID/audit observations are not foreign CONTROL
+tests. Published pid_for_task uses NAME conversion with task evaluation skipped;
+task_info_from_user selects NAME for TASK_AUDIT_TOKEN. Ordinary map conversion
+instead requests CONTROL and invokes task_conversion_eval. Receiving a self right
+does not remove that conversion policy; a live foreign CONTROL translation is
+rejected when developer_mode_state is false, without a parent/same-UID exception.
+[PID conversion](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/kern_proc.c#L5688),
+[Audit dispatch](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/kern/task.c#L6426),
+[CONTROL policy](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/kern/ipc_tt.c#L2307).
+
+Do not assume that predicate is false on this host: the published non-monitor
+implementation initializes its backing state true; the generic accessor reads
+the selected kernel-managed backing and returns false for an unset pointer.
+DevToolsSecurity disabled, support/configuration bits and AMFI policy are not
+established substitutes. The bounded public-interface inspection established no
+documented read-only exact-predicate query. Running .121.10 backend/value and the
+cause of the retained genuine failure5 remain unknown, not inferred from .6.
+[Non-monitor backing](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/code_signing/xnu.c#L72),
+[Predicate read](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/kern_codesigning.c#L508).
+
+Decision: retain separate acquisition, complete error-custody, startup/loader,
+movability and foreign CONTROL gates. Do not add an initializer merely to repeat
+NAME-level facts or call transport success a P2 unlock. Source support warrants
+continued bounded research, not a host-policy change, invented private query,
+new addon implementation or native experiment. A future executable proposal
+must identify its distinct observation and complete the existing reviewed recipe
+and custody prerequisites first. The builtin entry and actual FAIL5 stay intact.
+
 Primary contracts inspected by root and independent reviewers:
 [registration purpose](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/man/mach_ports_register.html),
 [userspace lookup/register](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/libsyscall/mach/task.c#L59),
