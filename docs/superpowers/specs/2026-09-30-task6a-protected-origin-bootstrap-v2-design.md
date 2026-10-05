@@ -18,6 +18,141 @@ own evidence and scoped review. All positive/merge/runtime gates remain closed.
 
 ## Source-only runtime-initialization channel candidate
 
+### S1 separately bounded inert Node-API load/refusal prerequisite
+
+This is a causal prerequisite to the candidate below, not its implementation.
+Do not conflate a functioning native ABI seam with a transport, task right,
+foreign CONTROL operation, complete loader closure or protected-origin/P2 proof.
+The channel's complete custody/continuity/movability/CONTROL gates remain closed.
+The retained task-port C/test and delivered builtin entry remain unchanged.
+Only this S1 design may permit the following inert effects after its exact
+source/test/compiler/loader recipe receives independent read-only review.
+The channel's prohibition on new executable effects otherwise remains in force.
+
+Alternatives considered: retain source research only (no installed ABI evidence),
+implement the whole Mach channel now (unresolved ownership and startup gates),
+or first measure an inert native callback. Choose the last, using standing
+owner authority for a bounded reversible diagnostic with no host-policy change.
+No new package, node-gyp, npm install, target selector or service integration.
+
+Prospective S1 File Map, in addition to these existing named spec/plan:
+
+- Create `scripts/task6a-origin-native-cooperative-initializer-v2.c`: one inert
+  native callback and symbol-based Node-API registration, no transport.
+- Create `scripts/task6a-origin-native-cooperative-entry-v2.cjs`: fixed adjacent
+  addon load, one callback invocation and actual native-error presentation.
+- Create `scripts/__tests__/task6a-origin-native-cooperative-initializer-v2.test.js`:
+  closed opt-in real ABI tests, independent native witness and causal mutants.
+
+Until created, these are prospective paths, not actual PR files. The current
+draft's four-file map stays historical; after creation the aggregate map is
+seven. No operational journal, local manifest, binary or fixture is published.
+
+Native interface: define `NAPI_VERSION 8`, use `NAPI_MODULE_INIT()` from the
+installed public headers, and expose only the two default-visible symbols
+`napi_register_module_v1` and `node_api_module_get_api_version_v1` (returns8).
+Registration calls `napi_create_function` with name `initialize`, length10,
+one static callback and NULL callback data, then `napi_set_named_property` on
+the original exports. It returns that same exports object. Never invoke the
+callback during registration/loader-lock scope. Callback ignores its info,
+calls `napi_throw_error(env, "ORIGIN_COOPERATIVE_TRANSPORT_UNAVAILABLE",
+"cooperative transport unavailable")`, then returns NULL. Each of these three
+calls must return `napi_ok`; otherwise `_Exit(72)` terminates only the owned
+inert child. Exit72, missing trace or loader/setup failure cannot qualify S1.
+Production imports are exactly these three Node-API functions plus `_Exit`
+from libSystem; no Mach/TFP/registration/query/message/thread/cleanup-hook API.
+Exit here settles no Mach obligation: this component creates none.
+
+Entry interface: extra argv refuses before loading, stderr
+`cooperative initializer argv refused\n`, exitCode2. Otherwise require only
+`./initializer.node` directly in CJS; no caller path/options, loader override,
+search flags or preload. Require stays outside the callback-error catch.
+Require exactly one own key `initialize`, a function, before invoking once.
+Missing/malformed export or returned-without-error is a distinct noncanonical
+refusal. Catch accepts only an Error with the fixed native code and string
+message; print the ACTUAL `error.message + "\n"`, not a JavaScript copy of the
+expected native literal, and set exitCode2. An unexpected exception is rethrown.
+No readiness token, success JSON, task name, PID, audit or right is exported.
+
+Independent test-only C prefix includes the real public headers BEFORE defining
+typed wrappers for all three calls. Each wrapper delegates the real function;
+no synthetic return status. The create wrapper captures the actual production
+callback and supplies a trampoline to the real create function. The trampoline
+records entry, calls the captured callback unchanged, records its NULL result
+and returns it. Track env/exports/function/name/data correspondence and statuses;
+require exactly create0 -> set0 -> callback-entry -> throw0 -> callback-return,
+one of each, with no overflow/sticky fault. The test copy, not production, writes
+one bounded checked `wx` native trace on atexit, checking every write and fclose.
+Any trace failure is noncanonical stderr and test failure. `_Exit(72)` bypasses
+atexit and therefore cannot accidentally satisfy the complete trace oracle.
+Structural trace parsing must accept the omission control's valid create/set-only
+trace without inventing a fault. The unchanged Node oracle checks actual
+callbackEntries before complete semantic sequence/count assertions, yielding
+the precise native-callback-entry failure for omission.
+
+At each real delegate and both addon entry exports, test-only `dladdr` must
+return a nonzero result, nonnull filename/base and the exact held image identity
+(realpath and device/inode plus held bytes/metadata checks). If symbol identity
+is asserted, require exact address/name; nearest/null symbols are not identity.
+No dlsym, custom loader or dlopen_preflight. This adds reviewed libSystem
+imports to the instrumented derivative ONLY, distinct from production imports.
+Do not claim the instrumented binary is the unmodified production binary.
+
+Fixed compile recipe: CLT clang/ld, MacOSX26.5 SDK and clang21 resource tree
+already pinned by the task-port recipe; C11, O0, Wall/Wextra/Werror, no modules,
+no LTO, hidden visibility, nostdinc with only the exact Node public-header
+directory and SDK/resource include trees. Fixed explicit link: bundle,
+undefined-error, nostdlib, `-Z`, exact syslibroot, owned object, held Cellar
+libnode147 and SDK libSystem.B.tbd. No undefined-dynamic-lookup, `-L`/`-l`,
+added rpath, install-name rewrite, private dylib copy or signing/policy change.
+Both compiler and clang-driven linker use `--no-default-config` and explicit
+`--target=arm64-apple-macos26.5`; scrubbed env alone does not exclude clang's
+on-disk default configuration.
+Inspect actual Mach-O exports/imports/dependencies before loading; reject extras.
+The libnode LC_ID uses `/opt/homebrew/opt/node/lib/libnode.147.dylib`: specifying
+its Cellar link input does NOT freeze runtime resolution. Pin the recorded
+non-system file/symlink closure before/after and check actual delegate origins.
+Homebrew's group-writable ancestors and six system-cache paths remain explicit
+limitations. This is an ordinary measured sample, not immutable/continuous
+origin, an exhaustive dyld TCB certificate or a P2 receipt.
+
+Effects are confined to a fresh UID501-owned private0700 fixture: checked wx0600
+source/entry copies, objects, addon and trace, all retained. Hold source/test,
+compiler/linker/SDK anchors, installed Node/header/non-system image closure and
+produced artifacts. Read/hash originals before copying; repeat held reads,
+fstat/path/symlink checks and checked closes after natural child settlement.
+The owner observes original exit and close, both EOFs, bounded1MiB output and
+aggregates primary plus cleanup errors. No uncertain child kill/delete, replay
+of prior receipts, renewed timeout, detached work or synthesized close. Defaults
+skip native cases without CLT/child/addon effects. Explicit test-only opt-in is
+`SETFARM_TASK6A_NATIVE_INERT_INITIALIZER_TEST=1`; it is not a runtime authority.
+
+S1 acceptance is four separately identified behavioral tests:
+
+1. Real baseline load/refusal, Node exit2, empty stdout, exact actual native
+   stderr, independent complete native trace and delegate/addon image checks.
+2. Entry omission mutant prints that same stderr/exit2 without calling the
+   callback: the unchanged oracle must fail specifically `native-callback-entry`.
+3. C literal mutant changes only the thrown message: actual entry stderr must
+   change and unchanged oracle fail specifically `native-error-message`.
+4. Extra argv refuses before load in a fresh fixture with no addon; verify
+   canonical argv stderr/exit2/empty stdout and absence of native trace.
+
+Missing production sources yield an explicit source-unavailable result before
+fixture/compiler/loader acquisition. First baseline assertion must be RED for
+that missing behavior, not a syntax error. Only then implement the minimal C/CJS
+and rerun the same real oracle. Exact test source and each effect recipe need
+read-only review before invocation. Passing S1 leaves every channel/CONTROL/
+protected/P2/T4/ready/merge/clean-main/rollout gate open.
+
+Primary Node26.4 sources explain why returning NULL at registration alone is
+not a load refusal (original exports may remain), and why a callback's pending
+native exception reaches its caller. Inspect actual installed ABI separately;
+published sources are supporting contracts, not runtime evidence.
+[Node loader](https://github.com/nodejs/node/blob/v26.4.0/src/node_binding.cc),
+[Node-API registration](https://github.com/nodejs/node/blob/v26.4.0/src/node_api.cc),
+[Native callback and throw](https://github.com/nodejs/node/blob/v26.4.0/src/js_native_api_v8.cc).
+
 Status: research contract only. The scoped acquisition checkpoint82272c9b is
 unmerged and its genuine task_for_pid gate remains FAIL5. This candidate does
 not retry/replace that experiment, admit new native code/effects or qualify

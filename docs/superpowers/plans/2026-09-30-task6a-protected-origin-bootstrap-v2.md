@@ -1,5 +1,141 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S1 inert Node-API prerequisite implementation plan
+
+> Root executes inline as sole writer/delivery/effect owner. Parallel workers
+> independently inspect source and effect recipes read-only. Standing owner
+> authority selects this bounded diagnostic; no repeated routine approval menu.
+
+**Goal:** Measure actual native ABI/load/callback refusal without transferring
+or inspecting a task right or admitting CONTROL/protected-origin/P2.
+**Architecture:** One fixed owned Node child loads one adjacent C addon and
+calls one inert native callback. Real typed test-copy delegates independently
+record callback execution; canonical JavaScript text alone is insufficient.
+**Tech Stack:** Public Node-API8 C headers, fixed Node26.4/libnode147, CLT clang/ld,
+MacOSX26.5 SDK, builtin node:test; no package installation or node-gyp.
+**Spec:** Existing named design, S1 separately bounded inert Node-API prerequisite.
+**Status:** Design-only until exact review. No S1 source/test or addon exists.
+
+### Global constraints / File Map / interfaces
+
+- Create `scripts/task6a-origin-native-cooperative-initializer-v2.c`.
+- Create `scripts/task6a-origin-native-cooperative-entry-v2.cjs`.
+- Create `scripts/__tests__/task6a-origin-native-cooperative-initializer-v2.test.js`.
+- Modify only this named plan and its named spec for the causal refinement.
+- Existing task-port C7deb/testb2fc/builtin entry stay unchanged. Aggregate future
+  branch map is7, current draft actual map remains4 until creation.
+- Default opt-out has no native effects; opt-in exactly
+  `SETFARM_TASK6A_NATIVE_INERT_INITIALIZER_TEST=1` in the test process only.
+- No Mach/ports/TFP/query/threads, target/path/provider selectors, policy/security/
+  credentials/service/DB changes or new runtime integration. All current gates
+  and roots/builds/fixtures/journal/original dirty files are preserved.
+- Production consumes a napi_env and original napi_value exports at the standard
+  NAPI_MODULE_INIT interface; produces only initialize(). It always throws the
+  fixed native unavailable error, never transport/readiness or positive authority.
+- NAPI_VERSION8; production imports create_function/set_named_property/throw_error
+  plus libSystem `_Exit`. NAPI failure => owned child exit72, never acceptance.
+- Entry prints actual native error.message, extra argv refuses BEFORE require.
+- Instrumentation delegates actual NAPI functions, records actual callback entry
+  and return plus image identity, never a mock status or JS self-certification.
+
+### Task S1a: exact design review, then real missing-behavior RED
+
+- [ ] Self-review this design for contradiction with the full-channel no-effect
+  gate; keep only the inert exception explicit. Independent read-only reviewers
+  inspect all new file responsibilities, status checks, loader identity,
+  resource custody and four behavioral oracles. Review is not an effect run.
+- [ ] Write the new test first. Its closed helper holds original sources first;
+  missing source returns `{availability:'source-unavailable'}` before fixture,
+  CLT, Node child or addon acquisition. Baseline assertion is:
+
+  ```js
+  const actual = await invokeInertInitializer('baseline');
+  assert.equal(actual.availability, 'inert-native-observed');
+  assert.equal(actual.code, 2);
+  assert.equal(actual.stdout, '');
+  assert.equal(actual.stderr, 'cooperative transport unavailable\n',
+    'native-error-message');
+  assert.equal(actual.trace.callbackEntries, 1, 'native-callback-entry');
+  ```
+
+  Native helper consumes only the closed baseline/omission/native-message/argv
+  modes. Build test-copy prefix with actual typed delegates/trampoline, no source
+  body callback marker substitute. Exact prefix/helper/command/environment and
+  ownership recipe receive independent review before any invocation.
+- [ ] Run anchored RED only after test-source review:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_INERT_INITIALIZER_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^inert native initializer delegates actual callback and refuses$' scripts/__tests__/task6a-origin-native-cooperative-initializer-v2.test.js
+  ```
+
+  Invoke from the sole isolated writer root, serially, with no other native
+  effect batch active. env -i excludes NODE_OPTIONS/preloads and ambient loader
+  selectors before even the test runner starts. All owned helper children also
+  use fixed scrubbed PATH/LANG/LC_ALL and fixture-local TMPDIR.
+  Expected one assertion FAIL: actual source-unavailable vs inert-native-observed;
+  no syntax error, compiler or loader effects. Preserve the original closed
+  result. Do not fabricate GREEN, skip the missing behavior or weaken the oracle.
+
+### Task S1b: minimal inert native implementation / checked measured GREEN
+
+- [ ] Implement only the native registration/callback and fixed entry described
+  in the spec after RED. Native control flow is exactly:
+
+  ```c
+  if (napi_create_function(env, "initialize", 10, initializer_refuse,
+                          NULL, &fn) != napi_ok) _Exit(72);
+  if (napi_set_named_property(env, exports, "initialize", fn) != napi_ok)
+      _Exit(72);
+  return exports;
+  /* initializer_refuse, called later by JS, not during registration: */
+  if (napi_throw_error(env, "ORIGIN_COOPERATIVE_TRANSPORT_UNAVAILABLE",
+                       "cooperative transport unavailable") != napi_ok)
+      _Exit(72);
+  return NULL;
+  ```
+
+  No extra native API, test knob or source-owned file write. JS guards argv and
+  sole initialize export, require is outside callback catch, invokes once and
+  prints actual native message. Unexpected load/setup exceptions cannot match.
+- [ ] Review exact complete source/test and effects before compiler/addon use.
+  Compile argv: `--no-default-config --target=arm64-apple-macos26.5
+  -std=c11 -O0 -Wall -Wextra -Werror -fno-modules -fno-lto
+  -fvisibility=hidden -nostdinc -isystem NODE_HEADERS -isystem RESOURCE/include
+  -isystem SDK/usr/include -isysroot SDK -c OWNED_C -o OWNED_OBJECT`.
+  Link through fixed clang with explicit fixed LD,
+  `--no-default-config --target=arm64-apple-macos26.5 -bundle -fno-lto -nostdlib
+  -Wl,-Z -Wl,-undefined,error -Wl,-syslibroot,SDK OWNED_OBJECT CELLAR_LIBNODE
+  SDK/usr/lib/libSystem.B.tbd -o OWNED_ADDON`.
+  Constants are the already pinned CLT/SDK/resource paths and exact Cellar
+  Node26.4/libnode147; no ambient search inputs. Separate derivative prefix
+  imports from production. Inspect actual exports/imports/dependency load
+  commands before load; errors/extra symbols refuse.
+- [ ] Fresh physical/resource/preservation gate, then run the SAME anchored
+  baseline command. Require original compile/link0, Node2, stdout empty,
+  actual canonical stderr, checked native order/count/status/image trace,
+  both EOF/original close and all held reread/stat/path/checked closes.
+  Retain all fixtures, sources/objects/addon/trace and original output. No force
+  kill, deletion, uncertain disposal, original-receipt replay or host mutation.
+
+### Task S1c: independent oracle sensitivity and scoped checkpoint
+
+- [ ] Write/run one closed omission control: actual module still loads and
+  registers initialize, modified entry never invokes it yet prints canonical
+  stderr/exit2. Parse its structurally valid create/set-only trace without
+  helper faults; unchanged baseline oracle checks callbackEntries before full
+  semantic order/count checks and must fail native-callback-entry only.
+- [ ] Write/run one closed C-message control: change native thrown literal,
+  original entry stays byte-identical. Real stderr changes; unchanged oracle
+  must fail native-error-message, while callback/status/image facts remain real.
+- [ ] Write/run extra-argv refusal with no addon file: expected argv stderr,
+  Node2/empty stdout/no native trace, independently verified before-load refusal.
+- [ ] Confirm default opt-out, syntax/diff/version/English/path contracts and
+  independent source/test review on exact pins. Native outcomes are ordinary
+  measured S1 only, not native transport/CONTROL/P2/full matrix approval.
+- [ ] Scoped conventional checkpoint and normal draft-branch update after fresh
+  held/preservation/exposure checks. Do not mark ready/merge/rebuild/rollout from
+  S1 or replay the retained genuineFAIL5. Full-channel and T4 gates remain open.
+
 ## Feedback-only draft checkpoint — not positive-path delivery
 
 Root may normally push this existing scoped branch and open ONE explicitly
