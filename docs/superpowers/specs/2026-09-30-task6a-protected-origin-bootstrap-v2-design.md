@@ -55,6 +55,33 @@ explicit review for checked IO and must preserve child behavior, visible errors
 and exclusive reap discipline. Actual protocol/no-after-reap
 cleanup behavior must be tested, not certified by source strings.
 
+Ordinary test-copy instrumentation may wrap actual spawn/wait/NAME calls after
+SDK declarations, preserving the real effects/results and exclusive reaper.
+Latch genuine reap independently before returning to the source. Test-only
+post-settlement attempt controls must be blocked before delegating with a
+consumed PID/right. An independently literal event oracle requires real spawn,
+NAME/type/PID/two audits, six original pipe closes, exact reap and one original
+local NAME disposition. Trace only primitive events; keep a bounded in-memory
+record and exclusively create a fixed adjacent trace after settlement. Check
+every original trace write/close and retain artifacts. Instrumented-copy hashes
+remain distinct from production source; no protected authority follows.
+
+Burn separates observation from shutdown: after failure/expiry no further
+NAME/PID/audit observation may qualify anything. Cleanup may signal ONLY the
+original directly spawned, still-unreaped child; exclusive wait ownership
+prevents that PID being reused. Reaped is permanent and forbids every later
+target signal/native observation. Once-only disposition of the already held
+original NAME right is local cleanup, not another target observation.
+Cleanup budgets never renew validity. If a cleanup budget expires, retain the
+failure and ownership while awaiting definite reap; never return success or
+pretend an uncertain child is closed. No hard kernel-return guarantee is made.
+Check observed cleanup expiry before a completed-loop break, so a late return
+cannot erase the expired budget. Completed but late closure stays failed with
+cleanup-deadline-unqualified; print UNSETTLED only while reap/EOF is incomplete.
+An ordinary test may delay returning an already genuine reap, never fabricate
+exit or keep a live child beyond SIGKILL. Such a witness proves attribution of
+late observation, not late kernel exit or a hard scheduling/termination bound.
+
 The protocol has a nonrenewable3s parent budget and bounded buffers. Cleanup has
 separate nonrenewable graceful/TERM/KILL/wait budgets, never extending validity.
 These bounds assume ordinary scheduling and kernel-call return: absence of the
@@ -71,7 +98,8 @@ It exports no right, PID or audit bytes as authority. NAME support does not
 establish CONTROL usability, map identity/MAX coverage or initial load trust.
 Denial/invalid right/count/drift/protocol/cleanup outcomes stay distinct.
 Published XNU12377.121.6 supports the inspected NAME/token routing; actual host
-12377.121.10 differs and remains to be tested. Never promote upstream source
+12377.121.10 differs; the first ordinary actual NAME/audit witness eb7047 passed
+on that host on2026-10-05, without protected qualification. Never promote upstream source
 inspection or an ordinary compile result into exact-host/P2 acceptance.
 
 Before compiler effects, separately review the fixed ordinary CLT clang21,

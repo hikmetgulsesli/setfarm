@@ -10,7 +10,14 @@ then definitely close protocol, child and original right. Keep bootstrap refused
 **Spec:** docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md,
 section Ordinary native NAME identity viability slice.
 **Tech:** C11/Darwin NAME APIs, existing builtin Node entry, ordinary Node tests.
-**Status:** Source plan only; compiler/native effects are not yet admitted.
+**Status:** Ordinary implementation and the finite current-source 22-case
+host matrix are verified in separate closed batches. Final independent review,
+reviewed PR delivery and a new clean-main build remain open. No exhaustive
+uncertainty/root-UID coverage, protected/P2 or cutover admission.
+
+The pre-effect recipes below are retained historical design records, not new
+execution instructions. Their dated receipts supersede prospective source
+versions and open-control wording. Do not replay closed historical invocations.
 
 File Map:
 - Create scripts/task6a-origin-native-name-v2.c: private fixed ordinary parent.
@@ -69,13 +76,28 @@ as cross-epoch equalities. No compiler/test/native replay occurred in that audit
 
 ### N2: Minimal fixed parent implementation, no invocation before effect review
 
-- [ ] Add C main with argc/ordinary-UID refusal before pipes/spawn; no public
+Next test refinement: the broad `test:scripts` glob includes this new file, so
+native/compiler effects require the explicit test-only
+`SETFARM_TASK6A_NATIVE_NAME_TEST=1` opt-in. Absence means visibly skipped native
+tests, never acceptance. Every spawned environment omits that variable. Only
+the test's closed argv set []/['unexpected'] is admitted, not a C caller selector.
+The [] fixture uses held, exact delivered entrybbcf752e bytes without prepending
+callbacks or mutating production entry. Its literal consumer contract is one
+bounded JSON line with schemasetfarm.task6a-native-name-diagnostic.v2 and
+outcome supportedNAME/unqualified; NAME/audit/challenge/reap/EOF/disposition
+fields must demonstrate complete ordinary success, with all three authority
+flags false. Refusal or actual NAME denial MUST fail the nominal assertion,
+never become GREEN/skip/fallback. Historical sourceC67897663 unconditionally
+refused; the narrowly reviewed [] test supplied semantic consumer RED first.
+This test-only opt-in causal refinement does not alter bootstrap/native policy.
+
+- [x] Add C main with argc/ordinary-UID refusal before pipes/spawn; no public
   options. Fixed Node and source-adjacent entry, explicit scrubbed child env.
-- [ ] Add checked pipe/file-action setup and closed inherited descriptors;
+- [x] Add checked pipe/file-action setup and closed inherited descriptors;
   require non-autoreaping SIGCHLD and own exactly one PID.
-- [ ] Implement bounded READY/challenge/PONG loop and original child state.
+- [x] Implement bounded READY/challenge/PONG loop and original child state.
   Native operations use only local retained birth, not message-reported identity.
-- [ ] Implement the single original NAME acquisition/PID/audit checks:
+- [x] Implement the single original NAME acquisition/PID/audit checks:
 ```c
 mach_port_t name = MACH_PORT_NULL;
 audit_token_t first = {0}, second = {0};
@@ -87,35 +109,200 @@ rc = task_info(name, TASK_AUDIT_TOKEN, (task_info_t)&first, &count);
 /* require exact count; compare full second token after PONG3 BEFORE END */
 ```
   This excerpt is a source obligation, not an executable native recipe.
-- [ ] Implement sticky burn, checked partial writes/drains, END/input close,
+- [x] Implement sticky burn, checked partial writes/drains, END/input close,
   exact exit/reap/no-after-reap signals and once-only NAME disposal with primary
   and cleanup failures retained. No exit-after-uncertain-child positive result.
-- [ ] Default result schema never permits production/native/protected authority.
+- [x] Default result schema never permits production/native/protected authority.
 
 ### N3: Exact compiler/test effect review and ordinary behavior GREEN
 
-- [ ] Independently inspect complete source/test delta and each real dependency
+Post-reap test-copy control design (root-only, before new effects):
+- Preserve production C5db27 unchanged. Insert wrappers after all SDK headers
+  and before the unique ordinary-diagnostic comment; define real wrapper bodies
+  before redirect macros. Closed modes: baseline/post-reap-kill/post-reap-audit.
+- Record actual successful fixed spawn birth and matching real waitpid reap
+  before returning. Preserve errno; never synthesize a live/reaped task. Reject
+  target calls after reap/uncertainty before kernel delegation, before inspecting
+  a consumed NAME. Permit original local NAME disposal exactly once.
+- Retain bounded primitive ordered events in memory; trace only after settle
+  and the optional mutant. Create the source-adjacent trace exclusively,
+  no-follow/CLOEXEC/mode0600, checked writes and one checked original close.
+  No identifiers/audit values are exported; no trace FD enters the child.
+- Parent holds final trace bytes after natural close/EOF. Baseline independently
+  requires one spawn/NAME/type/PID, two live audits, actual reap, six original
+  pipe closes and one successful disposal with no faults/blocked calls.
+  Each injected-after-settle control requires exactly one blocked attempt after
+  actual reap, zero native/signal delegation thereafter and the same lifecycle.
+- These are post-reap attempt-injection controls, not real post-reap syscalls,
+  exhaustive uncertainty evidence, compiler authority or protected/P2 closure.
+  Exact instrumentation and effect review remains mandatory before compilation.
+
+Actual control receipt5d35d0/session76873→b18a6a CLOSED0, 2026-10-05:
+3PASS/zeroFAIL/CANCEL/SKIP/TODO2216.354125ms; corrected test8ecaecce/C5db27
+paired pre-effect C0/I0/M0. Real baseline acquired NAME, queried type/PID/two
+audits, closed all six original pipe FDs, actually reaped then disposed NAME.
+Two distinct fresh test copies injected kill/audit after settle; their traces
+contain exactly one blocked attempt after reap/dispose and no delegation. The
+independent baseline oracle rejects each mutant trace. MBiUZB/j9jAsr/dXXIz6 and
+their three calibration roots are retained. This does not establish exhaustive
+uncertainty handling, actual post-reap syscalls, protected origin or P2 closure.
+
+Next closed result-fault matrix, before effects: PID mismatch, first/second
+audit count, second opaque audit drift and disposal response failure. Each
+test-copy wrapper first requires genuine successful matching native output,
+then alters only that returned result and records exactly one nomination.
+Disposition must actually consume the original right before reporting synthetic
+failure. No real-kernel-denial claim, fake reap, NAME leak or fallback. Require
+source exit2/empty success output/nominated cause, expected native prefix,
+six closes, actual reap and one genuine disposition. Pre-reap cleanup signals
+may be visible; target calls after reap never delegate. A sixth fresh copy
+retains second-token drift but omits only the comparison: otherwise nominal
+success must be rejected by the same independent negative oracle. This is
+semantic mutation control, not a source-string acceptance test. Review all
+literal transforms and new effect pattern before any compiler/native execution.
+
+Actual returned-result receiptccd039/session11438→07b5cb CLOSED0:
+6PASS/zeroFAIL/CANCEL/SKIP/TODO4170.087666ms; test153cd1a3/C5db27 paired
+effect review and fresh8d0572 gate. PID/first-count/second-count/drift/disposal
+response each refused; actual real-call prefix, nomination, six closes, exact
+reap and genuine original disposal were required. Full settled C channels
+preserved primary and secondary causes in the external raw receipt. The sixth
+comparison-omission copy actually succeeded despite injected drift; the same
+negative oracle rejected it. These are synthetic result faults/semantic control,
+not genuine kernel denial, an actual stable-token mutant or protected/P2 credit.
+
+Causal root refinement before remaining lifecycle matrix: review found settle
+breaks on reap+bothEOF before its cleanup-final expiry check. A late-returning
+genuine reap can omit cleanup-deadline-unqualified while protocol3s still holds.
+Add one closed quiet wrong-READY test copy: omit only its fixed refusal stderr
+write; require all6 actual WRONG bytes consumed before settle, zero child stderr
+and one genuine EOF read per output channel. This avoids buffered stderr making
+the old loop incomplete and recording expiry for an unrelated scheduling path.
+Instrument entry into settle, latch actual
+kernel reap independently, then delay that already-reaped return1500ms. Nominate
+only if measured cleanup elapsed exceeds1350ms while protocol is below3s.
+No fabricated status or PID/native calls during/after delay. Require the cleanup
+expiry cause alongside existing refusal/once-only closure. Capture causal RED
+against C5db27 before changing source; then move the existing expiry check before
+the completed-loop break, preserving budgets/signals/guard/ownership. Same four
+File Map files only; this is necessary to this owner's advertised deadline
+failure attribution, not permission for hard syscall bounds or protected origin.
+Re-review corrected bytes and run affected closure plus a fresh genuine nominal
+witness on changed source, rather than replaying historical C5db27 evidence.
+
+Actual causalREDe85388/session47693→b80078 CLOSED1, 1FAIL2505.287959ms:
+test15d3137d/C5db27 paired exact review and freshbd0106 gate. Six original
+closes, zero child stderr, both actual EOFs, genuine reap and measured exact
+cleanup expiry below3s all passed before the final assertion. C emitted only
+protocol-frame/child-lifecycle and omitted cleanup-deadline-unqualified.
+CDYPBM/0BVTJG artifacts retained; no NAME acquired. This demonstrates omission,
+not an actual positive result or late kernel exit. Source repair follows RED.
+
+Actual repairGREEN323f15/session12141→0d3032 CLOSED0:
+2PASS/zeroFAIL/CANCEL/SKIP/TODO3053.312208ms C0e6b37/test7b46b400, paired
+exact-delta reviews and fresh75734c gate. New-byte genuine nominal Fo2t1d
+passed; quiet late-reap1z1cj2 retained expiry alongside primary/lifecycle causes
+and excluded UNSETTLED after actual complete closure. All original artifacts
+retained. This repairs observed budget attribution, not a hard kernel deadline.
+
+Final finite lifecycle matrix design (C stays0e6b37): real stdout reads/input
+writes capped1 with positive-call/byte totals220/229; partial READY READ followed
+by stdout EOF while stdin/timer remain live; wrong final ENX4; final END+X;
+valid protocol followed by actual exit7; and suppressed stdin-end response with
+TERM handler installed before READY, requiring actual TERM/KILL success and
+actual SIGKILL reap. All copied entries and trace wrappers remain test-only.
+Record real IO totals/EOF, exit7/SIGKILL status and original six closes/reap/
+applicable disposition. Extra output rejects by protocol-frame or extra-stdout,
+depending actual read grouping. Escalation proves owned settlement, not expiry
+or a hard bound; late-return RED/GREEN separately covers expiry attribution.
+No descendants/external pipe holders, fabricated reap or new original C change.
+Exact literal/effect review precedes the six-case pattern; keep artifacts.
+
+Actual firstIO79949a/session46361→de4908 CLOSED1:5PASS/1FAIL10265.337708ms
+C0e6b37/test15d2d876. Fragmentation220/229, wrong END, extra byte, actualexit7
+and successful TERM/KILL +SIGKILL-reap passed; partialREADY4 instead observed
+protocol-deadline because Writable.end did not physically close stdout. Correct
+only that test copy to builtin fs.writeSync(1,READ)/closeSync(1), retaining
+stdin/timer. This is fixture refinement, no production fix/oracle relaxation.
+One changed-fixture rerun after exact review; do not replay the five passed.
+
+Actual changedpartiale5f5d2 CLOSED0 1PASS838.082833ms C0e6/test19297813:
+paired tiny-delta reviews and freshe889df gate. Genuine READ4/physicalEOF occurred
+before input-close/reap; C refused early-stdout-eof, with secondary causes kept.
+Original six closes/EOF2/reap/custody passed; ZO44hx/0wpkFx retained. No C change,
+NAME acquisition or replay of five passed IO cases. Final14 earlier cases
+requalified changedC0e6 (argv4entry3boundary5result1semantic), excluding already
+verified genuine nominal/late-reap/IO and compile-only; no old-source replay.
+
+Actual final14c7538a/session73105→2a8e22 CLOSED0:
+14PASS/zeroFAIL/CANCEL/SKIP/TODO11949.473792ms C0e6/test19297813 after paired
+14-case gates and fresh994f27. CurrentC aggregate2+5+1+14=22 native cases,
+not one22-test run, exhaustive uncertainty/root-UID coverage or full npm/DB
+suite. No old ALL/privatePG/build replay. Native compile occurs in each fixture;
+separate pure compile-only current-C run is unnecessary. Reviewed PR delivery,
+clean-main build and host verification remain open; no protected/P2 admission.
+
+First actual nominal receipt eb7047 naturally CLOSED0 (do not replay):
+source5db27dcb/test1185aefe, strict positive1PASS/zeroFAIL/CANCEL/SKIP/TODO,
+884.766167ms. Paired full source/effect C0 and freshd7c48f/root resources gates
+preceded the ONE experiment. Original C owns fixed ordinary Node; actual READY,
+NAME/type/PID, first full audit,3challenge/PONG, second audit BEFORE END,
+END/EOF/exact exit0/reap and original NAME disposition met the literal consumer
+contract. This is ordinary NAME feasibility only, not protected/P2 acceptance.
+Held fixture `/private/tmp/setfarm-native-name-test.Vdl2Se` objectb2f11ab1/
+binary551967a9; calibration `/private/tmp/setfarm-native-name-witness.2QrQZ3`.
+Independent post aea7e4/11b3a9/46143a C0 checked retained bytes, all2091 untouched
+existing files, original two/backups/journal/tools/selectors. Process-onlyd12af0
+found no cwd bound to these fixtures, NOT exact historical-generation absence.
+
+Next four CLOSED owned entry-copy fixtures (C remains exact5db27dcb): replace
+READY with WRONG -> protocol-frame; guaranteed different PONGnonce ->
+protocol-frame; Q on stderr -> child-stderr; suppress READY -> protocol-deadline.
+Require actual exit2/empty stdout/nominated cause and complete original close/
+EOF/custody. Extra causes remain visible. These are owned mutated-entry tests,
+never the genuine delivered entry witness. Review exact bytes/effects before
+running. Fragmentation/no-after-reap mutation controls and remaining lifecycle
+matrix still block qualification/delivery; JSON alone cannot prove native order.
+
+Actual compiler-only receipt b67e24 naturally CLOSED0 (do not replay):
+source5db27dcb/test1185aefe, 1PASS/zeroFAIL/CANCEL/SKIP/TODO625.325625ms.
+Fresh owned fixture `/private/tmp/setfarm-native-name-test.FeU5Uv` contains only
+exact C, exact delivered entry and object067888cc; linked:false and
+nativeProgramExecuted:false. Fixed clang -c completed with empty outputs;
+original exit+close/both EOF and common directory/SDK/held-file/all-close
+finalizers passed. No calibration, linker, binary, target or Mach operation.
+Compiler mode is the closed test-only opt-in value `compile`, separate from
+the native value1; every child environment omits it. This is ordinary compile
+evidence, not native behavior. ONE nominal native effect gate is separate and
+still requires paired exact-source review and fresh root checks.
+
+- [x] Independently inspect complete source/test delta and each real dependency
   effect. Save exact source/tool/SDK/output pins, compile/link argv/env, private
   directory identities and resource floor before any compiler run.
-- [ ] Review compiler-only object recipe first: fixed CLT clang, no default
+- [x] Review compiler-only object recipe first: fixed CLT clang, no default
   configs, arm64 SDK26.5/resource21, integrated assembly, no modules/LTO/ambient
   headers, -std=c11 -O0 -Wall -Wextra -Werror; output only fresh owned private path.
-- [ ] Separately fix/review linker path/search/dependencies and automatic local
+- [x] Separately fix/review linker path/search/dependencies and automatic local
   ad-hoc signature; no external signing/notarization or provenance admission.
-- [ ] Only after exact compiler/native effect C0, run one actual argument GREEN.
-- [ ] Add/run real owned fixture cases: no child on refusal; missing/malformed/
-  fragmented/excess READY/PONG/END; short/extra output, stderr, EOF, nonzero exit,
-  deadline and cleanup. Each test names the broken branch/side effect it catches.
+- [x] Only after exact compiler/native effect C0, run one actual argument GREEN.
+- [x] Add/run the finite reviewed matrix: no entry on argv refusal; wrong
+  READY/PONG, suppressed READY, fragmented IO, partial READY/EOF, malformed END,
+  excess final output, stderr, nonzero exit, protocol expiry and owned cleanup.
+  This is finite coverage, not every malformed frame/uncertainty/UID branch.
+  Each test names the broken branch/side effect it catches.
   Preserve unavailable/synthetic support separately from actual kernel evidence.
-- [ ] Test actual default source+entry NAME path once after exact effect review:
+- [x] Test actual default source+entry NAME path once after exact effect review:
   outcome supportedNAME/unqualified or explicit NAME/identity/protocol/cleanup
   refusal, complete raw exit/close/EOF and final original input/retention checks.
   Zero success credit for counts/path/PID alone; no CONTROL/map inference.
 
 ### N4: Scoped reviewed delivery, separate acceptance
 
-- [ ] Focused tests/static contracts and proportional build checks from actual
-  current bytes; do not replay frozen full ALL or old build/test sessions.
+- [x] Focused current-source matrix and default opt-out/static contracts:
+  1bfbdc23SKIP/0PASS46.313958ms;119137 version2.3.79, English1932files,
+  paths967files and diff-check exit0. Skips are not native acceptance.
+- [ ] Proportional clean committed-source build checks; do not replay frozen
+  full ALL or old build/test sessions.
 - [ ] Independent complete diff review, ordinary scoped commits/push/PR with
   exact-head bot feedback, normal SHA-bound merge only.
 - [ ] New independent clean-main build and artifact/host/retention verification,
