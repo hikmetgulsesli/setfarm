@@ -1,5 +1,253 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S9 finite actual-callback guard implementation plan
+
+> **For agentic workers:** Root implements inline, sole writer; independent
+> agents research/review read-only. No delegated effects or delivery.
+
+**Goal:** Characterize checked cancellation save/disable, NULL-set mask capture
+and saved-state restoration in the actual inert callback, without owner release.
+**Architecture:** One finite acquisition-free production guard block plus a
+separate actual primitive-witness fragment/consumer in the existing S1 test.
+Keep retained-owner restoration/retention/channel FSM separate and unqualified.
+**Tech Stack:** Existing builtin Node tests, fixed installed CLT/SDK/public C11;
+no install or private API.
+**Spec:** Named design, S9 separately bounded finite callback guard transaction.
+**Status:** Paired written design/source gate admitted test authoring only;
+Actual RED6a5ff7/audit6660cc qualified at testcbe89b44/Ccbafba3d. Only afterward
+root added the minimal finite guard, C6267af24/36lines1373B. Testf7a62495/
+1023lines65623B differs only by two-line historical S1 source-epoch refusal.
+Paired actual source/disabled-baseline review/freshf4f12d preceded ONE successful
+disabled baseline d47de7; independent ONLYnewbaseline auditcad2da qualified it.
+Separate paired enabled-characterization review/fresh636def preceded ONE
+successful returning-enabled sample14ada7; independent audit8b6ddd qualified
+only the returning API transaction. Separately reviewed ONE omission control
+1fe3f3 passed after fresh72d3d7; independent ONLYnewcontrol audit19c9b8 qualifies
+specific whole-block omission sensitivity only.
+No safe re-enable/owner qualification or delivery yet.
+S8 delivered d511f06f, exact cloud
+954df5 OPEN/DRAFT275 eleven files. Earlier S8 pending text is precommit history.
+
+### Global constraints / File Map / interfaces
+
+- Only initializer C/test and named plan/spec, four within aggregate eleven.
+  Preserve historical PREFIX/SUFFIX/four S1 test bodies and do not replay them;
+  preserve entry/frame/all six drivers/task-port/ABI/retained roots/original two.
+- No candidate resource acquisition or owner reentry. Cancellation disable is
+  a restoration obligation, not zero obligations. EVERY-original-obligation
+  retained-owner boundary remains unchanged; S9 does not certify it or safe
+  ENABLE restoration. _Exit72 only nonqualifying finite diagnostic abort.
+- Real successful valid save -> real NULL-set query -> exactly one saved-state
+  restoration even if query failed -> restoration0/previousDISABLE -> query0
+  -> canonical real NAPI refusal. Never consume failed outputs/retry/guess.
+- Fixture preparation/restoration separately recorded, actual public calls,
+  same original invocation thread; no trace FD until callback/harness finished.
+- No fabricated errors, signal/cancel injection, mask/type/handler mutation,
+  accepted replay, service/DB/security/access changes, ready promotion or merge.
+
+### Task S9a: nominate inputs and write the actual behavioural RED
+
+- [x] Paired actual written-design review resolves finite-transaction scope and
+  error contract; root self-review includes contradiction and placeholder scan.
+  Fresh current11/preservation5/resource gate precedes test authoring only.
+  Reviewed plan522dcfe8/spec63727f7f: paired C0/I0/M1; important scope/order
+  findings closed. Rootb0d977 SOURCE-only21:54:42.832-.845UTC errors[]/16held/
+  fullrereads/materialpath/16checkedoncecloses/22ancestors/preservationmatched.
+  Resources3f2bf3 8458708KiB96%/memory66%/noheat. Only duplicated-word nit
+  corrected below; no C/test/helper authoring or native-effect admission yet.
+- [x] Freeze combined public header/source graph, SDK pthread.h alias, feature
+  macro order, tool/image/selector rows and exact prospective imports. Original
+  85 unchanged; new headers separately nominated, not admitted by incidental
+  inclusion. Derive counts from actual helper (S1 image/header30, selectors38).
+  Paired complete actual recipe/measuredplan a9b6ae24/specccf1e15b C0/I0/M0;
+  fresh source-only1dea29 at22:09:39UTC held252/252checkedcloses/123ancestors/
+  40aliases/8absences/current11+preserve5+IMAGE30+tools7+public199/errors[].
+  Combined conservative graph190/483/outside0; four conditional edges remain
+  unresolved, not compiler-used or backend closure. This gate preceded RED only.
+- [x] Add closed absent-or1 guard flag mutually exclusive with inert flag,
+  separate guard instrumentation/trace parser/consumer/helper and three cases.
+  Keep historical strings/bodies byte-identical. New typed delegates call real
+  APIs; no mock status or opaque-mask equality. No FD opened in guarded interval.
+  Own-copy omission delimiters must identify exactly one production block.
+- [x] Consumer checks natural settlement and canonical original NAPI refusal
+  first; valid empty production events produce only specific missing-guard
+  rejection. Require actual preparation/production/harness order, state values,
+  checked returns and same thread; distinguish generic faults from omission.
+  Inner guard-enter/guard-leave markers are distinct: unchanged outer historical
+  entry -> actual preparation -> guard-enter -> production3 -> guard-leave ->
+  harness restoration -> unchanged outer historical return. Do not change PREFIX
+  or conflate trace ordering. Behavioural expectation example:
+
+  ```js
+  assertBaseline(result); // unchanged real NAPI/refusal prerequisite
+  assertGuardTransaction(result.guard, 'disabled');
+  // Require real fixture prep, production disable/query/restore and fixture
+  // restoration. Empty production list throws only GuardWitnessMissing.
+  ```
+
+- [x] Add full FIRST copy/object/addon/both-trace/source/test/tools/images/header
+  commitments BEFORE semantic assertions, exact positional rereads/materialpath
+  bindings/checked-once-close counters and complete child channels. Review full
+  actual helper/recipe, not an outline. Strong stack guards remain enabled.
+  Actual helper: four original source/entry/self/frame-inventory inputs,
+  30 IMAGE rows (Node executable included), seven tools/settings/System/manual,
+  199 public headers =240 distinct base FDs; six successful owned artifacts
+  (entry/source/object/addon/native trace/guard trace) =246 checked-once closes.
+  No duplicates/implicit S1 counts. Eight explicit absences include SDKstdbool.h;
+  38 Homebrew selectors plus one SDKpthread alias. Strict original85 DATA
+  extraction only from pinned frameTest54575/hash55e1, no import/evaluation;
+  literal new114 hashcd580f87 and22 fixed644 exceptions. Actual recipe one
+  compile, one explicit bundle link, two NM calls, OTOOL and original Node child.
+  Exact two exports/nineteen imports checked before callback; all four real
+  pthread function-address image witnesses expect exactly libsystem_pthread,
+  based on installed pthread/System TBD source researchddf2e9/3effee, not kernel
+  alternative/backend/shared-cache hash proof. Observe images before preparation.
+  FIRST artifacts acquired before stage assertions, receipt emitted after
+  original rereads/all closes BEFORE canonical callback/guard consumer; natural
+  child exit-close/EOF2/NULLsignal/complete bounded channels. No accepted replay.
+- [x] Actual syntaxac3497/diff8b9b08 and default17cce4 CLOSED0: seven SKIP,
+  zero PASS/FAIL/CANCEL41.599167ms/no acquisition. Ccbaf unchanged; preliminary
+  fragment5dfefee8 review C0/I0/M0; historical71f3b8 PREFIX/SUFFIX/four bodies
+  byte-identical. e41a3a114 rows/exactcd580f87; inventory10196a five held/rereads/
+  five checked closes/direct includes only original7+pthread/signal.
+- [x] Syntax/diff/default-only checks: seven SKIP/zero PASS/no acquisition.
+  Paired actual complete test/C RED-only review plus fresh full nominated-input
+  gate before ONE anchored real missing-guard RED on unchanged Ccbafba3d:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CALLBACK_GUARD_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^native callback guard restores an actually disabled saved state$' scripts/__tests__/task6a-origin-native-cooperative-initializer-v2.test.js
+  ```
+
+  Require actual compile/link/load/callback/canonical refusal/natural settlement
+  and full FIRST evidence before the unchanged missing-guard assertion fails.
+  Save full original privately; independently audit only the new RED artifacts.
+  No production implementation before qualified actual behavioural RED.
+  Completed ONEbf50ab session6932 ->6a5ff7 CLOSED1:0PASS1FAIL0SKIP/CANCEL,
+  2331.600458ms/case2288.210333, SOLE GuardWitnessMissing after actual callback
+  canonical refusal. ONEcompile0/link0/exact NM19+2/direct System1356 before
+  originalNode2/nullsignal/naturalexitclose/EOF2/empty stdout/canonical stderr;
+  FIRSTsix fullartifact/source/test/tool/image/header/selector/processchannel
+  commitments/246distinct246checkedcloses/failures[] BEFORE consumer. Full
+  original retained privately; only new fixtureokCzX4/dir216309907 remains.
+  IndependentONLYnewRED audit6660cc22:12:46.922-.927UTC held9 originals/
+  fullhashes/tworereads/FIRSTmaterialpath/9checkedoncecloses/errors[]; six-file
+  exactinventory/compiledderivative/realNAPI5/provider4 exactpthread/guard prep,
+  enter,leave,harness restoration only/zero production operations. Qualifies
+  missing guard only, not restoration safety/TCB/retained-owner/CONTROL/P2.
+
+### Task S9b: minimal guard, independent cases and draft checkpoint
+
+- [x] After qualified RED, add public includes and exactly one uniquely
+  delimited guard block inside initializer_refuse, before canonical refusal:
+
+  ```c
+  int saved, previous;
+  sigset_t original_mask;
+  if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &saved) != 0) _Exit(72);
+  if (saved != PTHREAD_CANCEL_ENABLE && saved != PTHREAD_CANCEL_DISABLE) _Exit(72);
+  int mask_result = pthread_sigmask(SIG_SETMASK, NULL, &original_mask);
+  if (pthread_setcancelstate(saved, &previous) != 0 ||
+      previous != PTHREAD_CANCEL_DISABLE) _Exit(72);
+  if (mask_result != 0) _Exit(72);
+  ```
+
+  No new acquisition/wait/retention/function interface. Preserve registration
+  and canonical NAPI refusal. Failed query output never consumed; restore once.
+  Root14c352 C6267af24/36lines1373B, +14lines including public includes/macros,
+  exact unique guard delimiters and acquisition-free diagnostic scope comment.
+  Registration/canonical refusal unchanged. C/test unchanged until6660cc.
+  Causally necessary test-utility safety refinement: historical S1 opt-in must
+  refuse non-Ccbaf source immediately after holding original source/entry,
+  BEFORE tools/fixture/compile, rather than compile new pthread source under
+  its old unnominated-header recipe. Two-line hash epoch check only, reviewed
+  C0/I0/M0; preserve PREFIX/SUFFIX/four bodies and new guard helper/consumer.
+  Qualified RED stays historical at testcbe89; no replay/retroactive repinning.
+  Current testf7a62495/1023lines65623B; legacy rejection source-reviewed only,
+  not a replayed dynamic coverage claim. Subsequent source/effects reviewed anew.
+- [x] Separately review actual source/disabled baseline effect, fresh input
+  gate, execute ONE new implemented epoch disabled baseline (same anchor,
+  not RED replay); require exact real witnesses/full FIRST/natural settlement.
+  Independently audit only that new receipt/artifacts.
+  Paired actual C626/testf7/planfbd830d2/spec2be09cd6 C0/I0/M0; freshf4f12d
+  22:17:03.808-04.230UTC errors[]/252distinctoriginalFDs/rereads/materialpath/
+  252checkedoncecloses/123ancestors/40alias/8absences/current11+preserve5/
+  IMAGE30/tools7/public199; materialef82a4bd/alias0aee4491. Resources8443364KiB
+  96%/memory66%/noheat. Root5b9338syntax0/f8ae39default7SKIP0PASS0FAIL/CANCEL
+  41.680041ms/3f1a67onlytwolegacyassertlines recover exactREDtestcbe89.
+  ONEc89998session42747 ->d47de7 CLOSED0:1PASS0FAIL0SKIP/CANCEL2304.140875ms/
+  case2261.086208. Actualcompile0/link0/exact2exports19imports/directSystem1356
+  BEFORE Node2 naturalexitclose/nullsignal/EOF2/empty stdout/canonicalstderr;
+  FIRSTsix fullartifact/source/test/tool/image/header/selector/processchannel
+  commitments/246distinct246checkedcloses/failures[] BEFORE unchangedconsumer.
+  NewfixturevZtQIS/dir216310653 retained; original private receipt saved. Actual
+  disabled production transaction only; independentONLYnewbaseline auditcad2da
+  22:20:40.286-.292UTC errors[]/9heldoriginalFDs/full positionalhashes/rereads/
+  FIRSTmaterialpath/ninecheckedoncecloses/exactsixinventory/compiledderivative.
+  Actualsevenevents/production disable saved0/query0 NULL/restore0 previous0;
+  fixtureincomingENABLE1 separatelyrestored0/previous0. NAPI5/provider4 intact.
+  Qualifies savedDISABLE transaction only; no safe re-enable/retained-owner credit.
+- [x] Separate actual enabled-characterization review/input gate/ONE exact
+  'native callback guard characterizes returning enabled restoration'. Require
+  returning savedENABLE restore only, not safe re-enable/pendingcancel proof;
+  abnormal/nonreturning execution cannot qualify. Independently audit new sample.
+  Paired C626/testf7/planc3fa9ad2/specdbd68ee2 C0/I0/M0; fresh636def at
+  22:22:53.750-54.134UTC errors[]/252originalFDs/rereads/materialpath/252once
+  closes/123ancestors/40aliases/8absences/current11+preserve5+public199/IMAGE30/
+  tools7; material7d413254/alias0aee4491/resources8438640KiB96%/memory66%/noheat.
+  Earlier360254 source-only presentation truncated; complete636def is effect
+  gate, not a repeated native sample. ONE3d9e18session65925 ->14ada7 CLOSED0:
+  1PASS0FAIL0SKIP/CANCEL2357.56975ms/case2308.952833. Actualcompile/link0,
+  NMexact19+2/directSystem1356 BEFORE originalNode2/naturalexitclose/NULLsignal/
+  EOF2/empty stdout/canonicalstderr/FIRSTsix/fullsource-test-tool-image-header-
+  selector/processchannels/246distinct246checkedcloses/failures[] BEFORE oracle.
+  NewfixtureymJIyE/dir216310804 retained; original saved privately. Only returning
+  ENABLE transaction, no pending-cancel absence/safe re-enable/owner proof.
+  IndependentONLYnewenabled audit8b6ddd22:25:26.488-.495UTC errors[]/nineheld/
+  positionalhashes/rereads/FIRSTmaterialpath/nineoncecloses/exactsixinventory/
+  compiledPREP1derivative/NAPI5/provider4 matched. Actualpreparation1/production
+  disable0 saved1/query0NULL/restore1previous0; harnessincomingENABLE1 restored
+  separately1previous1. Returning transaction only; no control effect yet.
+- [x] Separate omission review/input gate/ONE exact
+  'native callback guard oracle rejects guard-block omission'. Own-copy omit
+  only production guard block; original NAPI/refusal/settlement first; specific
+  GuardWitnessMissing from unchanged consumer, no generic fault accepted.
+  Independently audit new sample; never replay historical accepted cases.
+  Paired C626/testf7/plan8691d195/spec514b00c2 C0/I0/M0; fresh72d3d7 at
+  22:32:39.657-40.038UTC errors[]/252held/distinct/full positional rereads/
+  materialpath/252checkedoncecloses/123ancestors/40aliases/8absences/current11+
+  preserve5+public199/IMAGE30/tools7. Material3c7b3ef9/alias0aee4491; resources
+  8431800KiB available/memory66%/no thermal warning. Earlierc01d57 was a shell
+  parse diagnostic on the read-only gate text, before any native effect; corrected
+  full72d3d7 is the gate. ONE8a8b35session85044 ->1fe3f3 CLOSED0:
+  1PASS0FAIL0SKIP/CANCEL2278.7935ms/case2235.715458. Fixed compile/link0,
+  NMexact19+2/directSystem1356 BEFORE Node2 naturalexitclose/NULLsignal/EOF2/
+  canonicalstderr; fullFIRSTsix/246distinct246oncecloses/failures[] BEFORE oracle.
+  Owned mutant796B/hash6da05ac4 removes only the unique guard block; original
+  includes/macro/NAPI refusal and instrumentation remain unchanged. Actual
+  provider4/same-thread preparation/enter/leave/harness restoration with no
+  production calls precede the specific GuardWitnessMissing rejection. No
+  generic compile/link/provider/thread/partial trace fault qualifies. Full
+  original retained privately; only newfixture0ooFNj/dir216311179 retained,
+  independent ONLYnewcontrol audit19c9b8 at22:40:03.399-.405UTC errors[]/nine
+  distinct held originals/full positional hashes/two rereads/FIRSTmaterialpath/
+  ninecheckedoncecloses/exact six-file inventory/directory identity/compiled
+  PREFIX+PREP0+GUARD_PREFIX+796B mutant+SUFFIX matched; NAPI5/provider4/guard
+  prep-enter-leave-harnessrestore and zero production calls intact. This is whole-block sensitivity,
+  not individual failure-branch, safe re-enable, retention or owner proof.
+- [ ] Update measured named docs; focused default/syntax/version/English/path/
+  diff checks, full final source/diff/preservation/public-exposure review and
+  fresh gate before root scoped commit/normal push/existing DRAFT275 update.
+  Verify actual cloud head/body. No ready/merge/build/rollout/owner authority.
+  Measured docs updated after qualified19c9b8. Root788ae7syntax0/856f0b default
+  sevenSKIP0PASS0FAIL/CANCEL42.309208ms/no acquisition; ed33b3/fdb791diff0/
+  78a3f3version2.3.79/193722English1936files/2a5221paths971files all0. Prior
+  aggregate-code/preservation/public-exposure/body reviews C0/I0/M0 are scoped
+  observations, not silently carried to new doc pins. Final paired review and
+  fresh complete252 delivery gate precede four-file staging/normal delivery.
+- [ ] Continue causally into separately designed retained-owner error ledger
+  and owned channel/receiver/join/auth/live-child-beforeEND; S9 is not retention,
+  CONTROL, P2 or cutover closure. Preserve genuine FAIL5 and unresolved gates.
+
 ## S8 pure nonce-bound END decoder implementation plan
 
 > **For agentic workers:** Root implements inline and remains sole writer;
