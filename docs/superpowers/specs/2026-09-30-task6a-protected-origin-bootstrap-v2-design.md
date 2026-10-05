@@ -19,6 +19,122 @@ assignment, provider/branch/access changes or automatically acting on proposals.
 Exact-head feedback and every suggested implementation/effect require their
 own evidence and scoped review. All positive/merge/runtime gates remain closed.
 
+## S4 separately bounded pure status producer proposal
+
+S3's eleven-file draft checkpoint was delivered at acdf31d4. Its accepted
+decoder baseline/control cases are historical, not replay instructions. S4 adds
+the missing pure producer of the same native-status frame; it still installs no
+native rendezvous, callback, cancellation/retention dispatcher or Mach channel.
+The initial source/design nomination admitted test authoring only after review;
+all compiler/link/driver invocations retain separate exact-source gates. Original
+RED189506 is independently qualified; minimal encoder was appended only
+afterward. Separate baselinec80fb5 and version-controlc6a622 passed their strict
+ordinary producer oracles, with independent audits43236b/c7b567 matching original
+commitments. Scoped draft delivery remains separate from all positive native gates.
+
+Choose one encoder in the existing frame C file and its existing builtin test.
+Literal output checks exercise the real producer. Encoder/decoder round trips
+alone could share a byte-order/magic defect; a full channel experiment would add
+unnecessary ownership effects. File Map modifies ONLYexisting frame C/test and
+this named spec/plan; aggregate stays eleven. Other seven code/test files and
+the original16-line decoder implementation remain unchanged. No generated
+binary/fixture/journal or operational ledger is published.
+
+```c
+unsigned sf_continuity_encode_status_v2(uint8_t *out, size_t capacity,
+                                       unsigned state, const uint8_t nonce[16]);
+```
+
+Return0/refusal or1/encoded, never an owner/cleanup certificate. Require both
+pointers, exact capacity32 and state1..3 before any access or write; rejected
+arguments leave caller output untouched and do not read the nonce. Valid out
+must designate32 writable bytes and nonce16 readable bytes; C pointer validity
+and object extent are caller preconditions. No allocation, I/O, callbacks,
+Mach, signals, custody mutation or deadline renewal. Accepted output writes
+exactly32 bytes: SFSTAT2!, version00 00 00 02, state00 00 00 {1,2,3}, nonce16.
+Snapshot all16 nonce bytes into local storage BEFORE any output write, so valid
+overlap is supported without pointer-order/address assumptions. For overlap,
+output writes can change the nonce's backing bytes; the encoded value must be
+its pre-write snapshot. With separate storage nonce is unchanged. A stack
+snapshot is ordinary memory use, not an infallible low-resource retention claim.
+Failure to encode state3 must never prevent retaining an uncertain native owner.
+
+Independent encoder driver uses the three full literal32-byte state fixtures,
+not candidate helpers or decoder round trips. Exercise state1/2/3, NULL pointers,
+every non32 capacity0..31 plus33/SIZE_MAX, state0/4/255/unsigned maximum
+(driver uses ~0u without admitting an additional limits header), unchanged
+output/nonce on refusal, nonce immutability with separate storage, exact write
+boundary using sentinel bytes around a32-byte region, and supported overlap
+where nonce begins at out, out+8 or out+16. All overlapping objects have valid
+declared extent, no deliberately invalid non-NULL pointer experiments.
+
+The driver returns0 only after its literal cases pass. Reserve71 ONLYfor the
+encoded version byte being1 rather than literal2, after return1, canaries,
+non-overlap nonce and ALL31 non-version output bytes match the independent
+fixture, including the state and encoded nonce. Check those31 before permitting
+version71; trailing corruption cannot qualify as a version-only fault. Other mismatches get
+distinct non71 failure codes. Separately reviewed control changes only unique
+encoder assignment out[11]=2 to1 in the owned candidate copy, keeping decoder,
+all other encoder checks and the literal driver unchanged. Require actual
+driver71/natural exit/close/signalNULL/bothEOF/empty outputs; setup/compiler/
+link/crash/generic failures cannot count as sensitivity.
+
+Exact new opt-in SETFARM_TASK6A_NATIVE_CONTINUITY_FRAME_ENCODER_TEST=1; malformed
+values refuse, default two additional SKIPs/no inputs or children. Existing S3
+flag/cases remain independently default-off; refuse both opt-ins together. New
+anchored tests exercise only the new encoder driver, never the accepted S3
+decoder driver. Reuse the reviewed S3 compile/link/inspection/input/settlement
+recipe and helpers without loosening their checks. Missing-function RED is real
+link refusal for the sole undefined encoder symbol: candidate decoder already
+exists, independent driver calls the missing encoder, two compiles succeed then
+link fails before executable/inspection/driver execution. The test's unchanged
+link0 requirement makes this RED; generic compile/setup failure is not accepted
+as that evidence. Retain the original four-file failed-link fixture visibly.
+
+Paired actual-test RED-only reviews at C96d1503b/test0d8c4351 and fresh c150a3
+109-original-input/checked-close audit preceded ONE189506 CLOSED1:1FAIL/0PASS/
+0SKIP1026.601916ms. Both compiles0, link1 sole undefined encoder, raw original
+channels and original four artifact/source/test/tool commitments emitted before
+the unchanged link0 assertion. No executable/inspection/driver, original99
+distinct99checkedcloses. Fixture LGd5iU/dirino216284847 remains visible. Independent
+e04e95 full six-held-input reread/materialpath/checked-close audit matches the
+first original commitments and exact four-file inventory. This qualifies only
+the missing-feature RED, not producer behavior or retroactive immutable TCB.
+
+Only after original missing-symbol RED may minimal encoder code be appended.
+Review complete changed source/test/helper/driver, input containment, fixed
+strong stack protection and exact two guard imports/directSystem dependency
+before ONE baseline. Then separate mutation review/input/resources precede
+ONE version control. Each new case uses its own fresh fixture and commits all
+original source/copy/object/binary/tool/result metadata before checked closure.
+S3/S2/S1/native accepted cases are not rerun. These effects remain ordinary
+producer measurement, not full compiler/dyld/Node TCB or runtime custody/P2.
+
+Paired current-source baseline-only C0/I0/M0 and fresh06de2d full109-input/
+checked-close audit preceded ONEc80fb5 CLOSED0:1PASS/0FAIL/0SKIP1687.9725ms.
+Both compiles0/link0, exactly two stack-guard imports/directSystem1356, then
+driver0/all52literal producer calls/emptychannels/naturalexit-close/bothEOF.
+Five original artifacts/source/test/tools metadata committed before100distinct
+100checkedcloses; fixture2oJyu9/dir216286531 retained. Independent43236b ONLYnew
+baseline five artifacts+C/test/rereads twice/materialpath/all original commitments/
+seven checked closes matched. No baseline replay or native authority credit.
+
+Separate paired control-only C0/I0/M0 at Caff/test0d8/plan13bd/spec5b658 and
+fresh7d7341 full109-input/preservation/resource gate preceded ONEc6a622 CLOSED0:
+1PASS/0FAIL/0SKIP1588.949875ms. Onlyownedcandidate version assignment changed2
+to1; originalC/test/decoder/driver unchanged. Two compile0/link0/exact guards/
+directSystem1356 before actual specificdriver71/emptychannels/signalNULL/
+naturalexit-close/bothEOF/100distinct100checkedcloses. Five first artifact/source/
+test/tool commitments emitted; controlfixture83NCTY/dir216286674 retained.
+Independentc7b567 ONLYnewcontrol five artifacts+C/test/rereads twice/materialpath/
+all original commitments/seven checked closes/exact single mutation matched.
+Version-only sensitivity is qualified, not exhaustive corruption, immutable TCB,
+native channel, custody, retained owner, foreign CONTROL, P2 or host cutover.
+Checked commands/cases above are historical and must never be replayed.
+Default-off delivery check9a3487 reports4SKIP/0PASS/0FAIL41.311ms; syntax,
+version2.3.79/English1936/path971/diff checks pass. Opt-out is not acceptance;
+final source-only review and scoped draft commit/push remain separate steps.
+
 ## S3 separately bounded pure native-status decoder proposal
 
 S2 is delivered at draft head a4f83db2 with its nine-file map; its original
@@ -28,7 +144,7 @@ a4f158 preceded the minimal C96d1503b/testb0321da7 source. Separate original
 baseline99317b and nonce-control9356e0 each passed their own strict oracles after
 paired exact source/effect reviews and fresh input/preservation/resource gates.
 This closes ordinary decoder behaviour/sensitivity measurement only; scoped
-eleven-file draft delivery/review is still due. No runtime channel, retention
+eleven-file draft delivery/review completed at acdf31d4. No runtime channel, retention
 dispatcher, cleanup certificate, usable CONTROL or protected/P2 authority.
 
 Baseline: actual two compiles/link exit0 and empty outputs, inspected exactly
@@ -47,11 +163,11 @@ Syntax-only assertions cannot observe function behaviour; a JavaScript decoder
 would exercise a different implementation. A full native channel would add
 unnecessary ownership effects before this byte boundary is measured.
 
-Prospective File Map adds only scripts/task6a-origin-native-continuity-frame-v2.c
+Delivered S3 File Map adds only scripts/task6a-origin-native-continuity-frame-v2.c
 and scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js, plus this
 existing spec/plan. All seven delivered code/test files stay unchanged, including
-S2's typedef-only file; the prospective aggregate becomes eleven, not delivered
-until verified. No generated artifact or local operational ledger is published.
+S2's typedef-only file; the aggregate is eleven, verified and delivered at
+acdf31d4. No generated artifact or local operational ledger is published.
 
 Exact API, with public stddef.h/stdint.h types:
 

@@ -1,5 +1,167 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S4 pure status producer implementation plan
+
+> Root remains the sole source/Git/effect writer. Independent reviewers are
+> read-only; no menu/repeated approval or implicit native effect admission.
+
+**Goal:** Produce the exact native-status frame without exporting authority.
+**Architecture:** Append one pure encoder to frame C; independent literal C
+driver in its builtin test. Existing decoder and accepted S3 driver stay unchanged.
+**Tech Stack:** Fixed installed C11 CLT/Public SDK and builtin Node; no install.
+**Spec:** Named design, S4 separately bounded pure status producer proposal.
+**Status:** Original missing-encoder link RED189506 qualified; minimal encoder
+appended only afterward. Separate baselinec80fb5 and version-controlc6a622 passed
+their strict ordinary producer oracles; independent audits43236b/c7b567 match
+original commitments. Final scoped draft-only review/delivery gate remains;
+this is not native-channel, CONTROL, P2, clean-main or host qualification.
+
+### File Map / exact interface / constraints
+
+- Modify scripts/task6a-origin-native-continuity-frame-v2.c by appending ONLY
+  unsigned sf_continuity_encode_status_v2(uint8_t *,size_t,unsigned,const uint8_t[16]).
+- Modify scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js with
+  new closed opt-in, independent literal encoder driver and two new anchored
+  cases. Existing S3 driver/decoder cases remain unchanged and never replayed.
+- Modify only this named plan/spec. Aggregate stays eleven; other seven
+  code/test files and original16-line decoder bytes stay unchanged.
+- Only0/refusal or1/encoded; exact32/state1..3/valid caller storage. Rejections
+  do not access caller output/nonce; success writes32 and snapshots nonce first.
+- No I/O/allocation/Mach/callback/signal/retention/controller/service/DB effect.
+  Stack memory, loader/runtime/compiler TCB and state3 uncertain retention are
+  explicitly not qualified by pure encoding. Never require state3 write success
+  to keep an uncertain owner alive.
+- New exact SETFARM_TASK6A_NATIVE_CONTINUITY_FRAME_ENCODER_TEST=1; default2extra
+  SKIPs/no inputs; reject malformed/both-opt-ins. Fixed env-i Node, serial
+  anchored new cases only, no S3/S2/S1/genuine replay or ALL matrix.
+
+### Task S4a: independent producer oracle and missing-symbol RED
+
+- [x] Independently review exact design/interface/overlap/storage conditions,
+  File Map and test/effect boundaries before test authoring.
+- [x] Add a separate literal encoder driver. Declare exact encoder prototype;
+  expected three32-byte frames are independent full arrays:
+
+  ```c
+  static const uint8_t one[32] = {
+    'S','F','S','T','A','T','2','!',0,0,0,2,0,0,0,1,
+    0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+    0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+  };
+  /* Two separate literal arrays differ only at the literal state2/state3 byte. */
+  ```
+
+  No decoder call/roundtrip oracle. Driver fixtures cover every spec case,
+  literal expected0/1, sentinel boundaries and refusal/separate-nonce immutability.
+  Overlap out/out+8/out+16 expects the original pre-write nonce snapshot. Driver71
+  ONLYversion byte1 after return1/canaries/nonce and ALL31 other output bytes,
+  including state/encoded nonce, match the independent fixture. Those31 checks
+  precede version71; trailing corruption must produce a non71 failure. Other failure
+  codes must not reach control acceptance. No explicit driver output/system calls.
+  Add cases 'continuity status encoder produces only literal bound frames' and
+  'continuity status encoder oracle rejects version-byte mutation'. Keep S3
+  DRIVER literal byte-identical and select it only for historical S3 cases.
+- [x] Review COMPLETE actual test/encoder driver/helper and original missing
+  function before effects; fresh all source/input/tool/preservation/resource gates.
+  Missing-function RED uses reviewed S3 exact two compiles/one link, candidate
+  lacks encoder, driver references it, link produces sole undefined encoder
+  symbol. Require real compile0/link1/that exact cause/no executable/driver;
+  test's unchanged link0 assertion fails. Preserve original four owned files.
+  Only run the new anchored baseline once under the new opt-in:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_FRAME_ENCODER_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity status encoder produces only literal bound frames$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Completed historical RED invocation, never replay it. Paired actual-test
+  C0/I0/M0 at C96d1503b/test0d8c4351/plan449bc7f/spec236fe65; independent
+  c150a3 holds109 originals/checked109closes (11sources+85originalheaders+
+  tools/documents/preservation), seven absences and lexical60headers/109edges.
+  Original two files, journalhashonly and oldCLI unchanged; disk6005648KiB98%,
+  memory64%/throttled0/nothermal. ONE189506 CLOSED1 records1FAIL/0PASS/0SKIP
+  1026.601916ms/case984.135125: two compile0; link1 sole undefined encoder
+  referenced by driver refused/encoded. No warnings/other undefined symbols,
+  executable/inspection/driver; full original four artifacts/source/test/tools
+  hashes/inodes/bytes/modes/mtime/ctime/channels emitted before link0 assertion.
+  Fixture /private/tmp/setfarm-continuity-frame.LGd5iU remains visible, dirino
+  216284847/501:0m700. Runtime99distinct99checkedcloses; readatime changes
+  separate/noninvariant. Independent e04e95 audits ONLYnewRED four artifacts+
+  originalC/test via six held descriptors/full rereads/materialpath/checked
+  six closes. C96/test0d8/drivera860fc match original commitments. No replay,
+  retroactive immutable TCB or GREEN/control/channel/CONTROL/P2 credit.
+
+### Task S4b: minimal producer and separately reviewed measurements
+
+The checked RED/baseline/control steps are historical completed invocations.
+Never replay accepted S4/S3/S2/S1/genuine samples for this completion loop.
+Remaining unchecked delivery verification is default-off/static only.
+
+- [x] Only after original missing-symbol RED, append minimal implementation:
+
+  ```c
+  unsigned sf_continuity_encode_status_v2(uint8_t *out, size_t capacity,
+                                         unsigned state, const uint8_t nonce[16]) {
+      static const uint8_t magic[8] = {'S','F','S','T','A','T','2','!'};
+      uint8_t snapshot[16];
+      if (out == NULL || nonce == NULL || capacity != 32 ||
+          state < 1 || state > 3) return 0;
+      for (size_t i = 0; i < 16; i++) snapshot[i] = nonce[i];
+      for (size_t i = 0; i < 8; i++) out[i] = magic[i];
+      out[8] = 0; out[9] = 0; out[10] = 0; out[11] = 2;
+      out[12] = 0; out[13] = 0; out[14] = 0; out[15] = (uint8_t)state;
+      for (size_t i = 0; i < 16; i++) out[16 + i] = snapshot[i];
+      return 1;
+  }
+  ```
+
+- [x] Review whole current source/test/driver and unchanged original decoder;
+  refresh input containment, two compiles/one link/strict two-stack-import/
+  directSystem inspection recipe and original artifact/child settlement gates.
+  One reviewed new baseline requires actual driver0, empty channels, natural
+  exit/close/signalNULL/bothEOF, all original metadata/checked once closes.
+  Paired C0/I0/M0 at Caff322f6/test0d8c4351/plan1c92851a/spec5a7b9863;
+  fresh06de2d holds109originals/checked109closes/sevenabsences/85originalheaders,
+  same tools/preservation/root identities, lexical60headers/109edges contained;
+  root114988 pins/diff0. Disk5256348KiB98%, memory63%/throttled0/nothermal.
+  ONEnewbaselinec80fb5 CLOSED0:1PASS/0FAIL/0SKIP1687.9725ms/case1647.036625,
+  actualtwo compile0/link0/empty channels; exact two stack-guard imports and
+  only directSystem1356 before actualdriver0/all52literal calls, signalNULL/
+  naturalexit-close/bothEOF/100distinct100checkedcloses. Freshfixture
+  /private/tmp/setfarm-continuity-frame.2oJyu9 dir216286531/501:0m700, allfive
+  artifact/source/test/tool original commitments emitted first;13readatime
+  changes separate/noninvariant. Independent43236b audits ONLYnewbaseline five
+  artifacts+C/test via seven held descriptors/rereads twice/materialpath/all
+  original commitments/checked seven closes. Exact five-file inventory and
+  originalC/test/decoder/driver match; ordinary producer qualification only.
+  Do not replay this accepted baseline or infer channel/cleanup/CONTROL/P2.
+- [x] Separately review ONLYunique out[11]=2 to1 owned-copy mutation. Literal
+  encoder driver unchanged; fresh input/tool/preservation/resource gates then
+  one new version-control case, actual specificdriver71, not generic failure.
+  No original production mutation or accepted-case replay; retain fixture.
+  Paired C0/I0/M0 at unchangedCaff322f6/test0d8c4351/plan13bd185b/spec5b658751
+  and fresh7d7341 full109-input/reread/materialpath/checked109closes/85original
+  headers/sevenabsences/tools/preservation/resources5251916KiB98%/memory63%/
+  throttled0/nothermal preceded ONEc6a622 CLOSED0:1PASS/0FAIL/0SKIP1588.949875ms/
+  case1547.824708. Actualtwo compile0/link0/exact two guards/directSystem1356,
+  actualdriver71 only-version-byte-mutated-to-one: all40 refusals then return1,
+  intact canaries/nonce and all31 other output bytes precede version1. Empty
+  outputs/signalNULL/naturalexit-close/bothEOF/100distinct100checkedcloses.
+  Freshfixture /private/tmp/setfarm-continuity-frame.83NCTY dir216286674/501:0m700,
+  all five original artifact/source/test/tool commitments emitted first;13
+  readatime changes separate/noninvariant. Independentc7b567 ONLYnewcontrol
+  five artifacts+C/test/rereads twice/materialpath/all first commitments/seven
+  checked closes/exact inventory/unique version mutation+unchangeddriver matched.
+  Original production source/test/decoder stay unchanged. This qualifies the
+  specific version mutation only, not exhaustive corruption or immutable TCB.
+- [x] Verify default4SKIP/0PASS opt-out only, syntax/contracts/diff/unchanged
+  seven other code pins/original16-line decoder bytes/current eleven-file scope. Independent
+  review precedes normal scoped existingDRAFT commit/push/body update. No
+  ready/merge/build/native-channel/cutover/host rollout credit.
+  Root6d5e34 syntax0;9a3487 default4SKIP/0PASS/0FAIL41.311ms;56b81b version2.3.79,
+  b4c9c6 English1936,d5eef5 paths971;7fd953 diff0/indexempty/exact4M/HEADacdf.
+  Skips are opt-out only, never producer acceptance. Final independent review
+  and ordinary scoped DRAFT commit/push/body update remain delivery steps.
+
 ## S3 pure native-status decoder implementation plan
 
 > Root is the sole source/Git/effect writer; independent agents remain read-only.
@@ -12,7 +174,7 @@ calls its real implementation. No channel/retention/CONTROL or host integration.
 **Spec:** Named design, S3 separately bounded pure native-status decoder proposal.
 **Status:** Real missing-source RED a4f158 preceded minimal source; separate
 baseline99317b and nonce-control9356e0 passed their strict ordinary decoder
-oracles. Final scoped draft review/delivery remains due, not runtime qualification.
+oracles. Scoped draft review/delivery completed at acdf31d4, not runtime qualification.
 
 ### Exact File Map / interfaces / constraints
 
@@ -22,7 +184,7 @@ oracles. Final scoped draft review/delivery remains due, not runtime qualificati
 - Create scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js;
   independent literal driver, closed baseline/nonce-omission modes, default2SKIP.
 - Modify only named plan/spec. Seven delivered code/test pins stay unchanged;
-  draft275's delivered nine-file map stays historical, prospective map eleven.
+  draft275's earlier nine-file map stays historical; S3 delivered eleven at acdf31d4.
 - API returns0/refusal orstate1/2/3 only, no I/O/allocation/Mach/signals/resource
   mutation. Parsing is not cleanup, ownership, retained dispatcher or P2 proof.
 - Exact opt-in SETFARM_TASK6A_NATIVE_CONTINUITY_FRAME_TEST=1 and fixed env-i Node;
@@ -80,8 +242,8 @@ oracles. Final scoped draft review/delivery remains due, not runtime qualificati
 
 The checked S3a/S3b commands below are historical completed invocations, not
 continuation replay instructions. Do not repeat accepted baseline/control cases.
-Only the unchecked default-opt-out/delivery step is prospective; any new source
-behaviour needs its own reviewed recipe, not implicit effects from this record.
+All S3 default-opt-out/delivery steps are completed and historical as well.
+New S4 unchecked steps have their own recipes; no implicit effects from S3.
 
 - [x] Only after original missing-source RED, create minimal production code:
 
@@ -165,9 +327,13 @@ behaviour needs its own reviewed recipe, not implicit effects from this record.
   sources/full7checkedcloses/unique mutation+unchanged literaldriver. Additional
   within-read evidence is not an immutable continuous TCB claim. No baseline
   or other accepted-case replay; no broad native, service or database effects.
-- [ ] Verify default2SKIP/syntax/contracts/diff/exact prospective eleven-file
+- [x] Verify default2SKIP/syntax/contracts/diff/exact prospective eleven-file
   scope; independently review before normal existingDRAFT commit/push/update.
   No ready/merge/build/rollout/native-channel clearance follows from this slice.
+  Historical delivery5705ca default2SKIP0PASS0FAIL42.033833ms/syntax/contracts0,
+  paired final C0/I0/M0/dc947f held11/checkcloses/exposure0/fresh originaltwo keys.
+  Root47b2ce creates acdf31d4/four735+/9-; reviewed normalpush and finalcloud
+  4869f1 verify OPEN/DRAFT275/exactacdf/baseae5/eleven5623+/7-/expectedbody.
 
 ## S2 syntax-only layout prerequisite implementation plan
 

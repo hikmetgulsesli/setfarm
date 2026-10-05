@@ -10,6 +10,10 @@ import test from 'node:test';
 const flag=process.env.SETFARM_TASK6A_NATIVE_CONTINUITY_FRAME_TEST;
 assert.ok(flag===undefined || flag==='1','closed continuity frame opt-in');
 const enabled=flag==='1';
+const encoderFlag=process.env.SETFARM_TASK6A_NATIVE_CONTINUITY_FRAME_ENCODER_TEST;
+assert.ok(encoderFlag===undefined || encoderFlag==='1','closed continuity encoder opt-in');
+const encoderEnabled=encoderFlag==='1';
+assert.equal(enabled&&encoderEnabled,false,'one separately reviewed recipe only');
 const sourcePath=fileURLToPath(new URL('../task6a-origin-native-continuity-frame-v2.c',import.meta.url));
 const selfPath=fileURLToPath(import.meta.url);
 const CLT='/Library/Developer/CommandLineTools';
@@ -208,6 +212,88 @@ int main(void) {
   return 0;
 }
 `;
+// Independent producer fixtures; no decoder call or roundtrip expectation.
+const ENCODER_CASES=Object.freeze({
+  0:'all-literal-encoder-cases-and-storage-boundaries',
+  10:'null-output',11:'null-nonce',12:'short-capacity',13:'extra-capacity',
+  14:'size-max-capacity',20:'invalid-state',
+  71:'only-version-byte-mutated-to-one',72:'other-output-byte-or-version-failure',
+  80:'encoder-return',90:'storage-mutation',91:'output-canary',
+});
+const ENCODER_DRIVER = String.raw`
+#include <stddef.h>
+#include <stdint.h>
+unsigned sf_continuity_encode_status_v2(uint8_t *,size_t,unsigned,const uint8_t[16]);
+static const uint8_t nonce[16]={
+  0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+  0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+};
+static const uint8_t one[32]={
+  'S','F','S','T','A','T','2','!',0,0,0,2,0,0,0,1,
+  0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+  0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+};
+static const uint8_t two[32]={
+  'S','F','S','T','A','T','2','!',0,0,0,2,0,0,0,2,
+  0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+  0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+};
+static const uint8_t three[32]={
+  'S','F','S','T','A','T','2','!',0,0,0,2,0,0,0,3,
+  0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+  0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+};
+static int refused(size_t capacity,unsigned state,int null_out,int null_nonce,int diagnostic) {
+  uint8_t arena[34],saved[34],input[16];
+  for(size_t i=0;i<34;i++)arena[i]=saved[i]=0xa5;
+  for(size_t i=0;i<16;i++)input[i]=nonce[i];
+  unsigned actual=sf_continuity_encode_status_v2(null_out?NULL:arena+1,capacity,
+                                               state,null_nonce?NULL:input);
+  for(size_t i=0;i<34;i++)if(arena[i]!=saved[i])return 90;
+  for(size_t i=0;i<16;i++)if(input[i]!=nonce[i])return 90;
+  return actual==0?0:diagnostic;
+}
+/* overlap=-1 means separate nonce; 0/8/16 use valid arena-owned storage. */
+static int encoded(unsigned state,const uint8_t expected[32],int overlap) {
+  uint8_t arena[34],input[16];
+  for(size_t i=0;i<34;i++)arena[i]=0xa5;
+  for(size_t i=0;i<16;i++)input[i]=nonce[i];
+  uint8_t *out=arena+1;
+  const uint8_t *source=input;
+  if(overlap>=0){
+    for(size_t i=0;i<16;i++)out[(size_t)overlap+i]=nonce[i];
+    source=out+(size_t)overlap;
+  }
+  unsigned actual=sf_continuity_encode_status_v2(out,32,state,source);
+  if(arena[0]!=0xa5 || arena[33]!=0xa5)return 91;
+  for(size_t i=0;i<16;i++)if(input[i]!=nonce[i])return 90;
+  if(actual!=1)return 80;
+  /* Check ALL31 other bytes before admitting the specific version failure. */
+  for(size_t i=0;i<32;i++)if(i!=11 && out[i]!=expected[i])return 72;
+  if(out[11]!=expected[11])return out[11]==1?71:72;
+  return 0;
+}
+#define REFUSE(capacity,state,null_out,null_nonce,diagnostic) do { \
+  int result=refused(capacity,state,null_out,null_nonce,diagnostic); \
+  if(result!=0)return result; \
+} while(0)
+#define ENCODE(state,expected,overlap) do { \
+  int result=encoded(state,expected,overlap); \
+  if(result!=0)return result; \
+} while(0)
+int main(void) {
+  REFUSE(32,1,1,0,10);REFUSE(32,1,0,1,11);
+  for(size_t capacity=0;capacity<32;capacity++)REFUSE(capacity,1,0,0,12);
+  REFUSE(33,1,0,0,13);REFUSE(SIZE_MAX,1,0,0,14);
+  REFUSE(32,0,0,0,20);REFUSE(32,4,0,0,20);
+  REFUSE(32,255,0,0,20);REFUSE(32,~0u,0,0,20);
+  ENCODE(1,one,-1);ENCODE(2,two,-1);ENCODE(3,three,-1);
+  ENCODE(1,one,0);ENCODE(1,one,8);ENCODE(1,one,16);
+  ENCODE(2,two,0);ENCODE(2,two,8);ENCODE(2,two,16);
+  ENCODE(3,three,0);ENCODE(3,three,8);ENCODE(3,three,16);
+  return 0;
+}
+`;
 const MATERIAL = ['dev','ino','uid','gid','mode','nlink','size','mtimeNs','ctimeNs'];
 function same(a,b) { return MATERIAL.every(key=>a[key]===b[key]); }
 function digest(fd,size) {
@@ -299,7 +385,10 @@ function artifact(item) {
     mtimeNs:String(stat.mtimeNs),ctimeNs:String(stat.ctimeNs)};
 }
 async function invokeFrame(mode) {
-  assert.ok(mode==='baseline'||mode==='nonce-omission');
+  assert.ok(['baseline','nonce-omission','encode-baseline','encode-version'].includes(mode));
+  const encoder=mode==='encode-baseline'||mode==='encode-version';
+  const selectedDriver=encoder?ENCODER_DRIVER:DRIVER;
+  const selectedCases=encoder?ENCODER_CASES:CASES;
   const held=[],checks=[],failures=[];let result,closed=0;
   try {
     let source;
@@ -341,12 +430,17 @@ async function invokeFrame(mode) {
       assert.equal(candidate.split(anchor).length,2,'unique nonce-comparison mutation');
       candidate=candidate.replace(anchor,'(void)expected_nonce[i];');
     }
+    if(mode==='encode-version'){
+      const anchor='out[11] = 2;';
+      assert.equal(candidate.split(anchor).length,2,'unique encoder version mutation');
+      candidate=candidate.replace(anchor,'out[11] = 1;');
+    }
     const dir=fs.mkdtempSync('/private/tmp/setfarm-continuity-frame.');
     fs.chmodSync(dir,0o700);const fixtureStat=directoryGuard(dir,checks,true);
     const candidateCopy=dir+'/candidate.c',driverCopy=dir+'/driver.c';
     const candidateObject=dir+'/candidate.o',driverObject=dir+'/driver.o',binary=dir+'/decoder';
     const copies=[];
-    for(const [filename,body]of[[candidateCopy,candidate],[driverCopy,DRIVER]]){
+    for(const [filename,body]of[[candidateCopy,candidate],[driverCopy,selectedDriver]]){
       const bytes=Buffer.from(body);fs.writeFileSync(filename,bytes,{flag:'wx',mode:0o600});
       const owned=hold(filename,{uid:501,sha:sha256(bytes),mode:0o600});
       held.push(owned);copies.push(owned);
@@ -372,14 +466,23 @@ async function invokeFrame(mode) {
       '-resource-dir',RESOURCE,'-isysroot',SDK,'--ld-path='+LD,
       '-fno-lto','-nostdlib','-Wl,-Z','-Wl,-syslibroot,'+SDK,
       candidateObject,driverObject,SDK+'/usr/lib/libSystem.B.tbd','-o',binary],dir);
+    let importsResult=null,dependencyResult=null,driver=null;
+    if(encoder&&link.code!==0){
+      // Preserve actual failed-link channels and original artifacts BEFORE
+      // the consuming test's unchanged link0 assertion. Never execute/inspect.
+      const noImage=()=>checkAbsent(binary);noImage();checks.push(noImage);
+      const inventory=()=>assert.deepEqual(fs.readdirSync(dir).sort(),
+        ['candidate.c','candidate.o','driver.c','driver.o']);
+      inventory();checks.push(inventory);precheck();
+    }else{
     requireZero(link,'actual link');const image=hold(binary,{uid:501});held.push(image);
     assert.ok((image.stat.mode&0o100n)!==0n,'owned executable');precheck();
-    const importsResult=await settled(NM,['-uj',binary],dir);
+    importsResult=await settled(NM,['-uj',binary],dir);
     assert.equal(importsResult.code,0);assert.equal(importsResult.signal,null);
     assert.deepEqual(importsResult.eof,[true,true]);assert.equal(importsResult.stderr,'');
     const imports=importsResult.stdout.trim().split('\n').sort();
     assert.deepEqual(imports,['___stack_chk_fail','___stack_chk_guard'],'exact protection imports');
-    const dependencyResult=await settled(OTOOL,['-L',binary],dir);
+    dependencyResult=await settled(OTOOL,['-L',binary],dir);
     assert.equal(dependencyResult.code,0);assert.equal(dependencyResult.signal,null);
     assert.deepEqual(dependencyResult.eof,[true,true]);assert.equal(dependencyResult.stderr,'');
     const lines=dependencyResult.stdout.trim().split('\n');
@@ -387,18 +490,20 @@ async function invokeFrame(mode) {
     assert.equal(lines.length,1,'one direct dependency');
     assert.match(lines[0],/^\s+\/usr\/lib\/libSystem\.B\.dylib \(compatibility version [0-9.]+, current version [0-9.]+\)$/);
     precheck();
-    const driver=await settled(binary,[],dir);
+    driver=await settled(binary,[],dir);
     assert.deepEqual(fs.readdirSync(dir).sort(),
       ['candidate.c','candidate.o','decoder','driver.c','driver.o']);
-    result={availability:'frame-observed',compile,link,importsResult,dependencyResult,
-      driver,case:CASES[driver.code]??'unknown-driver-code',caseMap:CASES,
+    }
+    result={availability:driver===null?'frame-link-refused':'frame-observed',compile,link,importsResult,dependencyResult,
+      driver,case:driver===null?'not-executed':selectedCases[driver.code]??'unknown-driver-code',caseMap:selectedCases,
       receipt:{mode,dir,fixture:{dev:String(fixtureStat.dev),ino:String(fixtureStat.ino),
         uid:String(fixtureStat.uid),gid:String(fixtureStat.gid),mode:Number(fixtureStat.mode&0o777n)},
         source:artifact(source),test:artifact(self),artifacts:held.filter(item=>item.filename.startsWith(dir+'/')).map(artifact),
         tools:held.filter(item=>toolRows.some(row=>row[0]===item.filename)).map(artifact),
         inputCount:held.length,headerCount:85,absences:7,
-        headerNominationHash:sha256(HEADER_ROWS+'\n'),driverHash:sha256(DRIVER),
-        limitation:'ordinary mutable-host decoder sample; no cleanup/channel/retention/whole runtime TCB/CONTROL/P2 proof'}};
+        headerNominationHash:sha256(HEADER_ROWS+'\n'),driverHash:sha256(selectedDriver),
+        imageCreated:driver!==null,inspectionExecuted:driver!==null,driverExecuted:driver!==null,
+        limitation:'ordinary mutable-host codec sample; no cleanup/channel/retention/whole runtime TCB/CONTROL/P2 proof'}};
   }catch(error){failures.push(error);}
   finally{
     for(const check of checks)try{check();}catch(error){failures.push(error);}
@@ -428,5 +533,26 @@ test('continuity status oracle rejects nonce-comparison omission',{skip:!enabled
   t.diagnostic(JSON.stringify(actual));
   assert.deepEqual(actual.driver,{code:71,signal:null,eof:[true,true],stdout:'',stderr:''});
   assert.equal(actual.case,'wrong-nonce-accepted-as-state1');
+  assert.equal(actual.receipt.checkedInputCloses,actual.receipt.inputCount);
+});
+
+// Break caught: wrong validation, layout or pre-write overlap snapshot.
+test('continuity status encoder produces only literal bound frames',{skip:!encoderEnabled},async t=>{
+  const actual=await invokeFrame('encode-baseline');
+  t.diagnostic(JSON.stringify(actual));
+  requireZero(actual.link,'actual encoder link must succeed');
+  assert.equal(actual.availability,'frame-observed');
+  assert.deepEqual(actual.driver,{code:0,signal:null,eof:[true,true],stdout:'',stderr:''});
+  assert.equal(actual.case,'all-literal-encoder-cases-and-storage-boundaries');
+  assert.equal(actual.receipt.checkedInputCloses,actual.receipt.inputCount);
+});
+// Break caught: only the version-byte mutation, not generic/trailing corruption.
+test('continuity status encoder oracle rejects version-byte mutation',{skip:!encoderEnabled},async t=>{
+  const actual=await invokeFrame('encode-version');
+  t.diagnostic(JSON.stringify(actual));
+  requireZero(actual.link,'actual encoder control link must succeed');
+  assert.equal(actual.availability,'frame-observed');
+  assert.deepEqual(actual.driver,{code:71,signal:null,eof:[true,true],stdout:'',stderr:''});
+  assert.equal(actual.case,'only-version-byte-mutated-to-one');
   assert.equal(actual.receipt.checkedInputCloses,actual.receipt.inputCount);
 });
