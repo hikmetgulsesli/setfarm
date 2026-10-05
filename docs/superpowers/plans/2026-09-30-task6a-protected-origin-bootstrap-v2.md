@@ -16,8 +16,9 @@ tests and the unchanged delivered builtin entry; no added packages.
 **Spec:** docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md,
 section
 Ordinary direct-parent task-port acquisition slice.
-**Status:** T1 refusal and T2 finite synthetic-request lifecycle verified below.
-T3–T4 remain open; no genuine task_for_pid experiment or protected admission.
+**Status:** T1 refusal, T2 synthetic lifecycle and finite T3 controls verified
+below in separate pinned batches. Strict nominal/genuine T3 and T4 remain open;
+no genuine task_for_pid experiment or protected admission.
 
 ### Global constraints and File Map
 
@@ -248,11 +249,114 @@ path. T3 controls, genuine capability and T4 delivery remain separately gated.
 
 **Files:** same four-file map; no runtime integration.
 
-- [ ] Add actual finite create-failure-before-real-create test copy, normal
+Initial T3 control pair uses the unchanged always-unqualified T2 owner, not a
+new positive path. The helper accepts two additional closed test-copy controls:
+join-eligibility and delayed-no-consume-gate, only under lifecycle test opt-in.
+No production argv/environment selector or actual failed join is introduced.
+
+- join-eligibility renames only the scratch copy's main to
+  taskport_production_main, appends a zero-input main that calls the actual
+  can_consume_target_status helper with literal field states, then prints its
+  three booleans. No production main, spawn, thread or target call runs. The
+  shared test-only finalizer writes a valid empty trace. Require code0,
+  stderr empty, JSON stdout exactly [true,false,true] and trace empty. This is
+  predicate coverage only, not failed pthread_join or retained-owner evidence.
+- delayed-no-consume-gate uses the finite delayed synthetic request shim.
+  Remove ONLY !can_consume_target_status(o) from consume_target_status's guard
+  in the private C copy. Do NOT alter can_consume_target_status itself or the
+  main completed-break guard: those retain main until actual successful join.
+  Actual waitpid may consume early, but the worker never delegates task_for_pid
+  and performs no PID operation after the synthetic delay. Keep independent
+  reap/signals registry; all birth/thread/EOF/once-close/fault facts must pass.
+  The SAME normal oracle must then reject precisely join-before-reap ordering,
+  using message "actual join must precede target reap". Require an actual
+  completed join before fixture exit, never kill/exit an unknown owner.
+
+Exact semantic-mutation anchor in the current C copy:
+```c
+if (!o->born || o->reaped || o->child_uncertain || !can_consume_target_status(o)) return;
+```
+Replace only that unique line with:
+```c
+if (!o->born || o->reaped || o->child_uncertain) return;
+```
+Pair-review full transforms/primitive oracles and fresh gates before compiling
+or executing either new control. Preserve original outputs/artifacts and
+distinguish pure predicate from actual synthetic-thread semantic evidence.
+
+Initial pair receipt 2026-10-05: test2530/C6f7c4/plan0a91 full paired C0/I0/M0;
+fresh f6fee0/efa17a/d3d5ec/8f6be9 root/head62896/tools/headers/originals/journal
+gates closed. ONE selected ordinary run0939c5 naturally CLOSED0, two passes,
+no failures/skips,4705.937625ms. Predicate C0/[true,false,true]/empty stderr and
+trace; mutant actual target-reap BEFORE worker-return BEFORE actual join,
+normal facts/faultzero satisfied before precise ordering rejection. All original
+raw retained in external completion ledger. Independent99e7e6 post CLOSED0:
+14 nominated artifact hashes/four private directories, full held final bytes/
+stat/path/all closed, exact inventories/no target marker/two calibration markers;
+1cb92f/f6a388/0ce6ed source/originals/tools/selector preserved. Disk6680420KiB,
+memory59%/throttle0/no thermal. This closes only predicate and semantic control,
+not actual failed join, unknown settlement, genuine request or T3 completion.
+
+Historical pre-effect design for the five finite T3 controls, selected after
+two independent source-only investigations. Its then-required exact test/effect
+review and execution are closed by the receipt below; this is not a replay
+instruction:
+
+- create-failure: probe_create retains its once-attempt guard, emits
+  create-request/create-synthetic-failure and returns EAGAIN before real create.
+  Actual production main must record request-create, close input, drain both
+  actual EOFs and consume target once; zero worker/request/join/create-success.
+- burn-before-admission: pure scratch main, explicitly initialized atomics,
+  checked monotonic future deadline. Call actual burn_request on READY, then
+  actual request_task_port synchronously. Literal results attempted=false,
+  done=true, unavailable_reason=3, admission=BURNED, null/KERN_FAILURE; empty
+  trace/stderr. No child/thread or concurrent race is claimed.
+- early-target-exit: closed helper fixture early-exit only paired with this
+  control; private entry bytes exactly import process from 'node:process';
+  newline process.exit(2); newline. Pin delivered entry separately, do not label
+  this scratch entry exact-delivered. Require actual birth/EOF/reap/six closes,
+  no thread/request/join, and ready-eof or early-child-exit (scheduler-dependent).
+- post-join-budget: test wrapper performs actual checked join, records it,
+  then waits finite3.2s before returning success. Scratch copy captures actual
+  owner's deadline/unburned state immediately before its real pthread_join;
+  wrapper independently samples CLOCK_MONOTONIC before join and after delay.
+  Require pre-join-within-budget and join-return-after-budget primitive events,
+  actual join < join-delay-complete < input-close < target-reap. Same lifecycle
+  oracle requires all once/faultzero/EOF facts; classification oracle requires
+  request-burned and forbids request-unavailable/denied/invalid/unqualified.
+- post-join-no-budget-gate: same finite physical join/delay, replace ONLY unique
+  int timely = on_time(o); with int timely = !o->burned; in scratch C. Later main
+  expiry must not mask omission: require task-port-denied from synthetic failure,
+  then SAME specific oracle rejects 'post-join expiry must burn request result'.
+  No forward queries or genuine task_for_pid/candidate/disposal occurs.
+
+All new flags/transforms/fixture enum remain private test code, not production
+selectors. Main exit predicate and unknown-owner retention remain unchanged.
+Only new selected cases execute; retain all original outputs/artifacts and
+distinguish nominated failure/sequential admission/expiry semantics from kernel
+capability, concurrent admission, failed join or protected authority evidence.
+
+Five-control receipt: final paired test5ae0/plane60/C6f7c4 C0/I0/M0 and fresh
+1d9d07/e24397 gates preceded ONE91f0e4 CLOSED0,5PASS/0FAIL/0SKIP10088.042083ms.
+Create failure actual request-create35 + secondary child-stderr; pure burn
+[false,true,3,true,true,true]; early exit actual normal2/early-child-exit cause.
+Both postjoin traces prewithin < actualjoin < delaycomplete < returnafter <
+inputclose < reap. Baseline request-burned0; mutant task-port-denied5 and SAME
+precise expiry oracle rejection. Full original parent channels/hash receipts
+retained externally. Independent1ef9ed03:28:45.986 audited35ORIGINAL files/
+10private dirs, full held final/stat/path/one-link/modes/inventories/allclosed;
+no targetmarkers, five real calibrationmarkers. Earlyfixture53B05a7b2 literal,
+othersbbcf unchanged; burnemptytrace. 399bb3/1a57d3/31d24e source/originals/
+journal/tools/selector stable. Disk6667976KiB/memory60%/throttle0/no thermal.
+No real Mach request/candidate/disposal or positive/protected evidence. This
+batch does not retroactively claim a current-pin all-ten-test native run; T2
+and initial pair retain their exact historical pins/receipts, defaultskip only.
+
+- [x] Add actual finite create-failure-before-real-create test copy, normal
   join-before-reap baseline, delayed admitted request, burn-before-admission,
   early target EOF/exit and post-join budget checks. Nominate synthetic responses
   explicitly; actual kernel denial/disposal cannot be fabricated.
-- [ ] Cover join-failure eligibility initially through a finite pure lifecycle
+- [x] Cover join-failure eligibility initially through a finite pure lifecycle
   copy using the actual can_consume_target_status helper and literal truth table:
 ```javascript
 assert.deepEqual(actualEligibility, [true, false, true]);
@@ -263,7 +367,7 @@ assert.deepEqual(actualEligibility, [true, false, true]);
   Any future nominated join error after actual successful join requires its own
   independently proven physical settlement/fixture-rescue recipe before effects;
   do not silently implement rescue in the production C program.
-- [ ] Inject a test-only omitted join-before-reap gate in a finite delayed
+- [x] Inject a test-only omitted join-before-reap gate in a finite delayed
   lifecycle copy. Its actual early consume must be rejected by the same ordering
   oracle. No task_for_pid executes in this mutant, so no unrelated PID lookup
   can result from the deliberately broken test copy. This is semantic control.

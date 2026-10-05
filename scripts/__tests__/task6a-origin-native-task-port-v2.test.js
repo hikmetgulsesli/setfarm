@@ -19,6 +19,11 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const ENTRY = "import {writeFileSync} from 'node:fs';\n" +
   "writeFileSync(new URL('./entry-started', import.meta.url), 'entry started\\n', {flag:'wx',mode:0o600});\n" +
   "process.exit(2);\n";
+const EARLY_EXIT_ENTRY = "import process from 'node:process';\nprocess.exit(2);\n";
+const CONTROLS = ['none', 'synthetic-failure', 'delayed-synthetic-failure',
+  'join-eligibility', 'delayed-no-consume-gate', 'create-failure',
+  'burn-before-admission', 'early-target-exit', 'post-join-budget',
+  'post-join-no-budget-gate'];
 
 // Closed ordinary test-copy instrumentation. No target Mach operation occurs:
 // the request shim returns explicitly synthetic KERN_FAILURE/MACH_PORT_NULL.
@@ -48,6 +53,8 @@ static pid_t probe_child;
 static pthread_t probe_thread;
 static bool probe_create_attempted, probe_created, probe_join_attempted, probe_joined;
 static bool probe_observed_dead, probe_uncertain;
+static uint64_t probe_join_deadline;
+static bool probe_join_was_unburned;
 static void *(*probe_start)(void *);
 static void *probe_argument;
 static int probe_fds[6], probe_closed[6];
@@ -76,6 +83,7 @@ static __attribute__((unused)) int probe_create(pthread_t *thread, const pthread
     probe_create_attempted = true;
     probe_start = start; probe_argument = argument;
     probe_event("create-request");
+    if (PROBE_CREATE_FAILED) { probe_event("create-synthetic-failure"); return EAGAIN; }
     int result = pthread_create(thread, attr, probe_start_thread, NULL);
     if (!result) { probe_thread = *thread; probe_created = true; probe_event("create-success"); }
     return result;
@@ -85,8 +93,27 @@ static __attribute__((unused)) int probe_join(pthread_t thread, void **result) {
         probe_bad(); return EINVAL;
     }
     probe_join_attempted = true;
+    if (PROBE_JOIN_DELAYED) {
+        struct timespec now;
+        if (!probe_join_was_unburned || !probe_join_deadline ||
+            clock_gettime(CLOCK_MONOTONIC, &now) != 0 ||
+            (uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec >= probe_join_deadline)
+            probe_bad();
+        else probe_event("pre-join-within-budget");
+    }
     int rc = pthread_join(thread, result);
     if (!rc) { probe_joined = true; probe_event("actual-join-success"); }
+    if (!rc && PROBE_JOIN_DELAYED) {
+        struct timespec left = {3, 200000000}, now;
+        while (nanosleep(&left, &left) != 0) {
+            if (errno != EINTR) { probe_event("delay-failed"); break; }
+        }
+        probe_event("join-delay-complete");
+        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0 ||
+            (uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec < probe_join_deadline)
+            probe_bad();
+        else probe_event("join-return-after-budget");
+    }
     return rc;
 }
 static __attribute__((unused)) kern_return_t probe_request(mach_port_name_t self, int child,
@@ -152,6 +179,7 @@ static __attribute__((unused)) pid_t probe_waitpid(pid_t pid, int *status, int f
     if (rc == probe_child) {
         atomic_store_explicit(&probe_reaped, true, memory_order_release);
         probe_event("target-reap");
+        if (WIFEXITED(*status) && WEXITSTATUS(*status) == 2) probe_event("target-exit-2");
     } else if ((rc < 0 && saved != EINTR) || rc > 0) { probe_uncertain = true; probe_bad(); }
     errno = saved; return rc;
 }
@@ -235,10 +263,70 @@ static __attribute__((constructor)) void probe_initialize(void) {
 `;
 
 function instrumentLifecycle(original, control) {
-  assert.ok(['none', 'synthetic-failure', 'delayed-synthetic-failure'].includes(control));
+  assert.ok(CONTROLS.includes(control));
   if (control === 'none') return original;
-  return Buffer.from(LIFECYCLE_PREFIX.replaceAll('PROBE_DELAYED',
-    control === 'delayed-synthetic-failure' ? '1' : '0') + '\n' + original.toString());
+  let body = original.toString();
+  if (control === 'delayed-no-consume-gate') {
+    // Deliberately break only status consumption, not the main exit predicate.
+    // The fake request performs no PID operation after its finite delay.
+    const guard = 'if (!o->born || o->reaped || o->child_uncertain || !can_consume_target_status(o)) return;';
+    assert.equal(body.split(guard).length, 2, 'unique consumption mutation anchor');
+    body = body.replace(guard, 'if (!o->born || o->reaped || o->child_uncertain) return;');
+  }
+  const postJoin = ['post-join-budget', 'post-join-no-budget-gate'].includes(control);
+  if (postJoin) {
+    const join = 'int rc = pthread_join(o->request_thread, NULL);';
+    assert.equal(body.split(join).length, 2, 'unique original join capture');
+    body = body.replace(join, 'probe_join_deadline = o->deadline;\n' +
+      '    probe_join_was_unburned = !o->burned;\n    ' + join);
+  }
+  if (control === 'post-join-no-budget-gate') {
+    const check = 'int timely = on_time(o);';
+    assert.equal(body.split(check).length, 2, 'unique post-join budget mutation anchor');
+    body = body.replace(check, 'int timely = !o->burned;');
+  }
+  let pureMain = '';
+  if (control === 'join-eligibility') {
+    pureMain = String.raw`
+#undef main
+int main(void) {
+    struct owner owner = {0};
+    bool no_thread = can_consume_target_status(&owner);
+    owner.thread_created = true;
+    bool unjoined = can_consume_target_status(&owner);
+    owner.thread_joined = true;
+    bool joined = can_consume_target_status(&owner);
+    return printf("[%s,%s,%s]\n", no_thread ? "true" : "false",
+        unjoined ? "true" : "false", joined ? "true" : "false") < 0 ? 2 : 0;
+}
+`;
+  }
+  if (control === 'burn-before-admission') {
+    pureMain = String.raw`
+#undef main
+int main(void) {
+    struct owner owner = {0};
+    atomic_init(&owner.request.admission, READY);
+    atomic_init(&owner.request.done, false);
+    uint64_t start = now_ns();
+    if (!start || start > UINT64_MAX - UINT64_C(3000000000)) return 2;
+    owner.request.deadline_ns = start + UINT64_C(3000000000);
+    burn_request(&owner);
+    (void)request_task_port(&owner.request);
+    return printf("[%s,%s,%d,%s,%s,%s]\n", owner.request.attempted ? "true" : "false",
+        atomic_load_explicit(&owner.request.done, memory_order_acquire) ? "true" : "false",
+        owner.request.unavailable_reason,
+        atomic_load_explicit(&owner.request.admission, memory_order_acquire) == BURNED ? "true" : "false",
+        owner.request.returned == MACH_PORT_NULL ? "true" : "false",
+        owner.request.status == KERN_FAILURE ? "true" : "false") < 0 ? 2 : 0;
+}
+`;
+  }
+  if (pureMain) body = '#define main taskport_production_main\n' + body + pureMain;
+  const delayed = ['delayed-synthetic-failure', 'delayed-no-consume-gate'].includes(control);
+  return Buffer.from(LIFECYCLE_PREFIX.replaceAll('PROBE_DELAYED', delayed ? '1' : '0')
+    .replaceAll('PROBE_CREATE_FAILED', control === 'create-failure' ? '1' : '0')
+    .replaceAll('PROBE_JOIN_DELAYED', postJoin ? '1' : '0') + '\n' + body);
 }
 
 function sameStat(a, b) {
@@ -366,8 +454,9 @@ function settled(command, args, cwd) {
 async function invokeOwnedTaskPortProbe(args, stage = 'execute', fixture = 'delivered', control = 'none') {
   assert.ok(args.length === 0 || (args.length === 1 && args[0] === 'unexpected'));
   assert.equal(stage, 'execute');
-  assert.equal(fixture, 'delivered');
-  assert.ok(['none', 'synthetic-failure', 'delayed-synthetic-failure'].includes(control));
+  assert.ok(['delivered', 'early-exit'].includes(fixture));
+  assert.ok(CONTROLS.includes(control));
+  assert.equal(fixture === 'early-exit', control === 'early-target-exit');
   if (args.length) assert.equal(control, 'none');
   else assert.notEqual(control, 'none');
   const held = [], directories = [], symlinks = [];
@@ -434,7 +523,8 @@ async function invokeOwnedTaskPortProbe(args, stage = 'execute', fixture = 'deli
     const object = directory + '/probe.o', binary = directory + '/probe';
     const fixtureEntry = directory + '/task6a-protected-origin-entry-v2.mjs';
     const compiledBytes = instrumentLifecycle(held[0].bytes, control);
-    const entryBytes = deliveredEntry ? deliveredEntry.bytes : Buffer.from(ENTRY);
+    const entryBytes = fixture === 'early-exit' ? Buffer.from(EARLY_EXIT_ENTRY)
+      : deliveredEntry ? deliveredEntry.bytes : Buffer.from(ENTRY);
     fs.writeFileSync(source, compiledBytes, {flag: 'wx', mode: 0o600});
     fs.writeFileSync(fixtureEntry, entryBytes, {flag: 'wx', mode: 0o600});
     held.push(holdRegular(source, sha256(compiledBytes), 501));
@@ -484,7 +574,9 @@ async function invokeOwnedTaskPortProbe(args, stage = 'execute', fixture = 'deli
         compiledSourceHash: sha256(compiledBytes), instrumented: control !== 'none', control,
         entryHash: sha256(entryBytes), compilerExit: compile.code, linkerExit: link.code,
         witnessExit: observed.code, definiteExitCloseAndBothEof: true,
-        entryKind: deliveredEntry ? 'exact-delivered-builtin' : 'startup-witness',
+        actualExitCode: actual.code, actualStdout: actual.stdout, actualStderr: actual.stderr,
+        entryKind: fixture === 'early-exit' ? 'early-exit-builtin-test'
+          : deliveredEntry ? 'exact-delivered-builtin' : 'startup-witness',
         ...(trace === null ? {} : {trace, traceHash: sha256(trace)}),
         productionAuthority: false, controlUsable: false,
         completeNativeClosure: false, protectedOrigin: false,
@@ -556,9 +648,6 @@ function assertLifecycle(actual, delayed) {
   assert.equal(count('worker-enter'), 1);
   assert.equal(count('worker-return'), 1);
   assert.equal(count('actual-join-success'), 1);
-  assert.ok(event('create-request') < event('worker-enter'));
-  assert.ok(event('worker-return') < event('actual-join-success'));
-  assert.ok(event('actual-join-success') < event('target-reap'));
   assert.equal(count('synthetic-request'), 1);
   assert.equal(count('target-reap'), 1);
   assert.equal(count('after-reap-target-call'), 0);
@@ -572,7 +661,116 @@ function assertLifecycle(actual, delayed) {
   assert.equal(count('input-close'), 1);
   assert.equal(count('pipe-close'), 5);
   if (delayed) assert.ok(event('target-dead-observed') < event('actual-join-success'));
+  assert.ok(event('create-request') < event('worker-enter'));
+  assert.ok(event('worker-return') < event('actual-join-success'));
+  assert.ok(event('actual-join-success') < event('target-reap'),
+    'actual join must precede target reap');
 }
+
+// Catches allowing a created but unjoined owner to consume target status.
+// Pure predicate coverage only: production main and thread/spawn never run.
+test('ordinary task-port consumption eligibility requires settled request',
+  {skip: !LIFECYCLE_TEST_ENABLED}, async t => {
+  const actual = await invokeOwnedTaskPortProbe([], 'execute', 'delivered', 'join-eligibility');
+  t.diagnostic(JSON.stringify(actual.evidence));
+  assert.equal(actual.code, 0);
+  assert.equal(actual.stdout, '[true,false,true]\n');
+  assert.deepEqual(JSON.parse(actual.stdout), [true, false, true]);
+  assert.equal(actual.stderr, '');
+  assert.equal(actual.trace, '');
+});
+
+// Actual early waitpid consumption must fail the same normal ordering oracle.
+// Independent lifecycle/fault facts are checked before its precise rejection.
+test('ordinary task-port oracle rejects early reap in delayed consumption mutant',
+  {skip: !LIFECYCLE_TEST_ENABLED}, async t => {
+  const actual = await invokeOwnedTaskPortProbe([], 'execute', 'delivered', 'delayed-no-consume-gate');
+  t.diagnostic(JSON.stringify(actual.evidence));
+  assert.throws(() => assertLifecycle(actual, true),
+    {code: 'ERR_ASSERTION', message: /actual join must precede target reap/});
+});
+
+function assertNoRequestLifecycle(actual, createFailure) {
+  const events = actual.trace.trim().split('\n').filter(Boolean);
+  const count = name => events.filter(event => event === name).length;
+  assert.equal(actual.code, 2);
+  assert.equal(actual.stdout, '');
+  assert.ok(!actual.stderr.includes('TASK6A_TEST_TRACE_FAILED'));
+  assert.ok(!actual.stderr.includes('TASK6A_NATIVE_TASK_PORT_PROBE_FAILURE_RECORD_OVERFLOW'));
+  for (const name of ['target-spawn', 'target-reap', 'stdout-eof', 'stderr-eof',
+    'input-close', 'target-exit-2']) assert.equal(count(name), 1, name);
+  assert.equal(count('pipe'), 3);
+  assert.equal(count('pipe-close'), 5);
+  assert.equal(count('create-request'), createFailure ? 1 : 0);
+  assert.equal(count('create-synthetic-failure'), createFailure ? 1 : 0);
+  for (const name of ['create-success', 'worker-enter', 'worker-return',
+    'synthetic-request', 'actual-join-success', 'after-reap-target-call',
+    'trace-overflow', 'trace-unpublished', 'delay-failed', 'harness-fault',
+    'sticky-harness-fault']) assert.equal(count(name), 0, name);
+}
+
+// Catches waiting for a nonexistent thread or skipping no-thread child cleanup.
+test('ordinary task-port owner settles target after nominated create failure',
+  {skip: !LIFECYCLE_TEST_ENABLED}, async t => {
+  const actual = await invokeOwnedTaskPortProbe([], 'execute', 'delivered', 'create-failure');
+  t.diagnostic(JSON.stringify(actual.evidence));
+  assertNoRequestLifecycle(actual, true);
+  assert.match(actual.stderr, /^TASK6A_NATIVE_TASK_PORT_PROBE_FAILED request-create /m);
+});
+
+// Catches admitting the actual worker after sequential READY-to-BURNED transition.
+// No thread/race/target is created; this is not concurrent arbitration evidence.
+test('ordinary task-port worker refuses admission after prior burn',
+  {skip: !LIFECYCLE_TEST_ENABLED}, async t => {
+  const actual = await invokeOwnedTaskPortProbe([], 'execute', 'delivered', 'burn-before-admission');
+  t.diagnostic(JSON.stringify(actual.evidence));
+  assert.equal(actual.code, 0);
+  assert.equal(actual.stdout, '[false,true,3,true,true,true]\n');
+  assert.equal(actual.stderr, '');
+  assert.equal(actual.trace, '');
+});
+
+// Catches creating a request after actual EOF/death before READY.
+test('ordinary task-port owner refuses early target exit before request creation',
+  {skip: !LIFECYCLE_TEST_ENABLED}, async t => {
+  const actual = await invokeOwnedTaskPortProbe([], 'execute', 'early-exit', 'early-target-exit');
+  t.diagnostic(JSON.stringify(actual.evidence));
+  assertNoRequestLifecycle(actual, false);
+  assert.match(actual.stderr, /^TASK6A_NATIVE_TASK_PORT_PROBE_FAILED (ready-eof|early-child-exit) /m);
+  assert.equal(actual.evidence.entryKind, 'early-exit-builtin-test');
+});
+
+function assertPostJoinExpiry(actual) {
+  assertLifecycle(actual, false);
+  const events = actual.trace.trim().split('\n');
+  for (const name of ['pre-join-within-budget', 'join-delay-complete', 'join-return-after-budget'])
+    assert.equal(events.filter(event => event === name).length, 1, name);
+  const order = ['pre-join-within-budget', 'actual-join-success', 'join-delay-complete',
+    'join-return-after-budget', 'input-close', 'target-reap'];
+  for (let i = 1; i < order.length; i++)
+    assert.ok(events.indexOf(order[i - 1]) < events.indexOf(order[i]), order[i]);
+  assert.match(actual.stderr, /^TASK6A_NATIVE_TASK_PORT_PROBE_FAILED request-burned /m,
+    'post-join expiry must burn request result');
+  assert.doesNotMatch(actual.stderr,
+    /^TASK6A_NATIVE_TASK_PORT_PROBE_FAILED (request-unavailable|task-port-denied|invalid-task-port|task-port-unqualified) /m);
+}
+
+// Catches using a pre-join time sample to classify a result returned after expiry.
+test('ordinary task-port owner burns result after physical join crosses deadline',
+  {skip: !LIFECYCLE_TEST_ENABLED}, async t => {
+  const actual = await invokeOwnedTaskPortProbe([], 'execute', 'delivered', 'post-join-budget');
+  t.diagnostic(JSON.stringify(actual.evidence));
+  assertPostJoinExpiry(actual);
+});
+
+test('ordinary task-port oracle rejects omitted post-join budget check',
+  {skip: !LIFECYCLE_TEST_ENABLED}, async t => {
+  const actual = await invokeOwnedTaskPortProbe([], 'execute', 'delivered', 'post-join-no-budget-gate');
+  t.diagnostic(JSON.stringify(actual.evidence));
+  assert.match(actual.stderr, /^TASK6A_NATIVE_TASK_PORT_PROBE_FAILED task-port-denied /m);
+  assert.throws(() => assertPostJoinExpiry(actual),
+    {code: 'ERR_ASSERTION', message: /post-join expiry must burn request result/});
+});
 
 for (const [control, delayed] of [['synthetic-failure', false], ['delayed-synthetic-failure', true]]) {
   // Catches missing owner lifecycle or consuming child status before real join.

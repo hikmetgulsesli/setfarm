@@ -3,8 +3,13 @@
 ## Ordinary direct-parent task-port acquisition slice
 
 Status: ordinary refusal and finite synthetic-request lifecycle checkpoints.
-Actual own-child/thread/join/reap were observed in two synthetic cases; no
-genuine task_for_pid capability experiment or protected admission. The delivered
+Actual own-child/thread/join/reap were observed in two synthetic cases. Additional
+T3 controls verified pure join eligibility, actual early-reap oracle rejection,
+nominated no-created-thread cleanup, sequential burn-before-admission, actual
+early target exit and post-real-join expiry plus its precise omission mutant.
+These are separate closed batches at their recorded source/test pins, not an
+exhaustive current-source matrix or concurrent/failed-join uncertainty proof.
+No genuine task_for_pid capability experiment or protected admission. The delivered
 ordinary NAME slice PR274 is complete at main
 ae5a7b0e56e999255c4beb6937ea63e563f930e8. Its actual NAME support is not
 CONTROL availability. This next causal P2 experiment asks whether one ordinary
