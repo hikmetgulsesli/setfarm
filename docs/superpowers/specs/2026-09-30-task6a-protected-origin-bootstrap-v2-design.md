@@ -19,6 +19,137 @@ assignment, provider/branch/access changes or automatically acting on proposals.
 Exact-head feedback and every suggested implementation/effect require their
 own evidence and scoped review. All positive/merge/runtime gates remain closed.
 
+## S6 separately bounded pure initial nonce extractor proposal
+
+S5's ordinary producer/sensitivity checkpoint is delivered to existing DRAFT275
+at a674ba94, with exact OPEN/DRAFT eleven-file cloud/body verificationbc1552.
+No positive native gate follows. The next causal prerequisite is consuming the
+fixed initial NONCE frame without I/O or authority. Choose one pure extractor,
+not an END codec (later shutdown-sensitive phase) or generic multi-kind parser
+(unnecessary dispatch/cross-kind surface). Standing owner instruction chooses
+the smallest causal design without routine reconfirmation; root remains sole
+writer, independent agents read-only. This section initially admits no test
+authoring, compilation, link, binary or channel effect until source/design review
+and fresh preservation gate. Every later effect has a separate actual-source gate.
+
+Exact File Map modifies the existing frame C/test and this named spec/plan;
+aggregate eleven. Preserve original45-line2277-byte C prefix, S3 DRIVERa4dc,
+S4 ENCODER_DRIVERa860fc, S5 NONCE_DRIVER1b7b and all other seven code/test pins.
+At the S6 nomination epoch, C6e3b10aa had no initial nonce decoder: its existing
+expected_nonce matcher is for STATUS. New API, not an already frozen function signature:
+
+```c
+unsigned sf_continuity_decode_nonce_v2(const uint8_t *bytes, size_t length,
+                                      uint8_t nonce_out[16]);
+```
+
+Return0/refused with all output unchanged; return1/structurally valid extraction,
+never authenticated origin or ownership. Check both pointers and exact32 BEFORE
+any caller-memory access. Non-NULL storage validity/extent is caller supplied:
+readable32-byte input/writable16-byte output. Validate all16 header bytes against
+SFNONC2!/BE2/fourzeroreserved, then snapshot all16 payload bytes BEFORE any write
+and write exactly16 output bytes. Separate input remains unchanged. For valid
+overlap output=input+0/+8/+16, only the output region may change; aliased input
+immutability is not claimed. Refused overlaps leave the whole arena unchanged.
+Accept arbitrary payload values without an expected nonce baseline: initial
+extraction establishes no provenance, freshness, secrecy or replay protection.
+Future channel must independently qualify owner-supplied input provenance and
+later status/END nonce binding. Existing wrong-nonce-nonpositive rules remain.
+No heap/I/O/Node/Mach/cancellation/signal/channel/custody/cleanup/deadline/END
+or shutdown effect. Return1 is never permission to acquire, release or exit.
+
+Independent literal decoder driver fixes full pattern/zero/ff NONCE frames and
+separate16-byte nonce expectations; never use production encoding or roundtrip.
+Baseline90 calls:36 NULL/exact-length refusals;8 magic-byte corruptions and4
+version-byte corruptions; one little-endian version; reserved12/13/14 each1/255;
+reserved15=255; STATUS and END substitutions; three reserved12=1 refusals with
+valid output overlap0/8/16;12 accepted pattern/zero/ff cases (separate+three
+overlaps);16 accepted payload changes (each index replaced with independent
+literal ff/ee/dd/cc/bb/aa/99/88/77/66/55/44/33/22/11/00); finally reserved15=1.
+Every refusal verifies all separate input/output or whole overlap arena unchanged.
+Every acceptance verifies return1/exact independent expected16, canaries and
+whole arena equals pre-call snapshot with ONLY intended16-byte output replaced.
+The final reserved15=1 probe uses separate buffers: baseline requires return0/
+entire output unchanged. Specific control71 requires return1/exact expected16/
+input unchanged/canaries intact. Check return/output in this special probe before
+classifying refusal storage, so correct mutant extraction is specific71 rather
+than generic output mutation. Any other error gets non71. Control runs all89
+preceding calls before this single last fault; not exhaustive mutation coverage.
+
+Owned-copy control weakens ONLY unique `if (bytes[15] != 0) return 0;` rejection,
+replacing it with `if (bytes[15] != 0 && bytes[15] != 1) return 0;`. Thus the
+preceding reserved15=255 refusal still passes; only value1 gains acceptance.
+Omitting the entire check would fail that earlier255 probe generically, not
+produce the specific71. No original source/test/other checks change.
+New exact absent-or1 SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_DECODER_TEST, mutually
+exclusive with S3/S4/S5. Default8SKIP/0PASS, no acquisition. Closed helper modes
+nonce-decode-baseline/nonce-decode-reserved select a separate literal driver/case
+map. Add failure receipt branch for this missing-function decoder so actual two
+compile0/link1 sole missing decoder/no image/inspection/driver/99checkedcloses
+is emitted BEFORE unchanged link0assert. No sourcegrep/mock missing-code oracle.
+After independently qualified RED append only minimal pure decoder. Baseline
+and specific control separately require paired actual-source/effect review,
+fresh original85-header/seven-absence/tool/preservation/resource gates, fixed
+strong-stack two-compile/one explicitSystem-link/strict2guardimports/one direct
+System inspection before driver, complete FIRST five-artifact/source/test/tool
+commitments and100distinct100checkedcloses/natural settlement. Retain fixtures.
+Only respective new artifacts may be post-audited; never replay accepted S5/S4/
+S3/S2/S1/genuine samples or the full native matrix. Post-audits are consistency,
+not continuous/immutable/compiler-used runtime TCB. Final syntax/default-off/
+version/English/path/diff/current11/preservation/review gates admit at most a
+scoped root commit/push/existingDRAFT275 update; no ready/merge/build/rollout/
+native channel/CONTROL/P2. Genuine kernelFAIL5 and all owner gates remain open.
+
+Paired source/design C0/I0/M0 at planbca97baf/spec43aba and fresh source-only
+2d7ca9 held16/rereads/materialpath/checked16closes/current11/preservation22dirs/
+resources5225804KiB98%/memory66%/noheat admitted actual test authoring only.
+Actual test38619c8d/851lines48027B contains separate literal5983-byte driver
+3e862521; original C6e3b10aa has no initial nonce decoder. Root30f260 syntax0/
+4b11e1 diff0/6499d0 default8SKIP/0PASS/0FAIL42.639708ms, no input/fixture/child
+acquisition. 4e0a99 original C and allthree historical drivers byte-identical.
+Default skips are not extraction acceptance. Separate paired ACTUAL RED-only
+C0/I0/M0 and freshf20328 full109-original-input/preservation/resource gate
+preceded ONEcc8fef CLOSED1:1FAIL/0PASS/0SKIP1023.979709ms. Actualtwo compile0/
+link1 SOLEmissing sf_continuity_decode_nonce_v2/no warnings/otherundefined/
+image/inspection/driver. FIRST4artifact/source/test/tool/channel commitments
+precede unchangedlink0assert and99distinct99checkedcloses. Fixture9vDZdE/
+dir216288800 retained;10atimechanges separate/noninvariant. Independent ONLYnew
+RED9220cc heldsix originals/rereads twice/allfirstmaterial/path/hash commitments/
+checkedonce6closes/exactfourinventory+directory matched. Only afterward root
+appended15lines minimal pure extractor; current Cae609f68/60lines3028B preserves
+original2277-byte prefix, actual test38619c8d unchanged. At that post-RED epoch,
+baseline/control still needed separate actual-source/effect reviews and fresh
+gates; their later measured outcomes follow below. No channel or authority follows.
+Never replay original RED or accepted cases.
+
+Paired BASELINE-only actual-source C0/I0/M0 and freshcafa7c full109-original-input/
+preservation/resource gate preceded ONE8ad726 CLOSED0:1PASS/0FAIL/0SKIP
+1616.090041ms. Actualtwo compile0/link0/exacttwo guards/directSystem1356 before
+driver0/all90literalcalls/naturalexit-close/signalNULL/bothEOF/emptychannels/
+100distinct100checkedcloses. Complete FIRST5artifact/source/test/tool commitments;
+fixtureLiUv6l/dir216288952 retained,13atimechanges separate/noninvariant. Original
+Cae609f68/test386 unchanged; independent ONLYnewbaselineb76704 heldseven original
+FDs/rereads twice/allfirstmaterial/path/hash/checkedonce7closes/exactinventory/
+directory+2277prefix matched. This is
+ordinary structural extraction, not nonce provenance/binding/entropy/channel/
+cleanup/CONTROL/P2 or immutable runtime TCB. Accepted baseline never replayed;
+control was separately reviewed/gated as follows.
+
+Paired CONTROL-only C0/I0/M0 and freshf5a397 full109-original-input/preservation/
+resource gate preceded ONEddd832 CLOSED0:1PASS/0FAIL/0SKIP1596.682708ms. Actual
+two compile0/link0/exacttwo guards/directSystem1356 before driver71 only-reserved-
+one-accepted-with-exact-nonce after89 preceding calls; naturalexit-close/signal
+NULL/bothEOF/emptychannels/100distinct100checkedcloses. Complete FIRST5artifact/
+source/test/tool commitments; fixturep00fOI/dir216289012 retained,13atimechanges
+separate/noninvariant. Independent ONLYnewcontrol6038b6 heldseven originalFDs/
+rereads twice/allfirstmaterial/path/hash/checkedonce7closes/exactinventory/
+directory matched. Candidate differs ONLY unique reserved15 condition exempts1;
+original C/test/prefix/literaldriver unchanged. Narrow sensitivity, not exhaustive
+mutation coverage or runtime authority/TCB. Final41ce4a syntax0/03da97 default
+8SKIP0PASS0FAIL42.16025ms(no acquisition)/91eefa version2.3.79/4672ee English1936/
+08af6a paths971/652290diff0. Final scoped review/currentinventory/draft-only
+delivery remain pending; no ready/merge/build/rollout/channel/CONTROL/P2credit.
+
 ## S5 separately bounded pure nonce producer proposal
 
 S4 ordinary status production/sensitivity and scoped draft delivery are complete
@@ -40,7 +171,8 @@ retained. Minimal nonce producer was appended only afterward. New baseline and
 reserved-control were separately gated. New baselineba57aa now passed its
 ordinary producer oracle and independent artifact audit7a7523. Separate control
 54de11 passed its specific reserved-byte oracle and independent artifact
-auditdabbb9. Scoped draft delivery still requires final review/current inventory.
+auditdabbb9. Scoped draft delivery completed at a674ba94 with exact cloud/body
+verificationbc1552; earlier delivery-pending wording is the precommit epoch.
 No native authority credit follows.
 
 Exact File Map remains existing frame C/test and this named plan/spec, aggregate

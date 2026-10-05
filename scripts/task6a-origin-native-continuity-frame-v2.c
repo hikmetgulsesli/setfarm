@@ -43,3 +43,18 @@ unsigned sf_continuity_encode_nonce_v2(uint8_t *nonce_frame, size_t capacity,
     for (size_t i = 0; i < 16; i++) nonce_frame[16 + i] = snapshot[i];
     return 1;
 }
+
+/* Structural NONCE extraction only; no provenance or channel authority. */
+unsigned sf_continuity_decode_nonce_v2(const uint8_t *bytes, size_t length,
+                                      uint8_t nonce_out[16]) {
+    static const uint8_t magic[8] = {'S','F','N','O','N','C','2','!'};
+    uint8_t snapshot[16];
+    if (bytes == NULL || nonce_out == NULL || length != 32) return 0;
+    for (size_t i = 0; i < 8; i++) if (bytes[i] != magic[i]) return 0;
+    if (bytes[8] || bytes[9] || bytes[10] || bytes[11] != 2 ||
+        bytes[12] || bytes[13] || bytes[14]) return 0;
+    if (bytes[15] != 0) return 0;
+    for (size_t i = 0; i < 16; i++) snapshot[i] = bytes[16 + i];
+    for (size_t i = 0; i < 16; i++) nonce_out[i] = snapshot[i];
+    return 1;
+}

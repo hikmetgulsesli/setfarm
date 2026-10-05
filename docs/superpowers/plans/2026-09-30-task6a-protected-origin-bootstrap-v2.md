@@ -1,5 +1,199 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S6 pure initial nonce extractor implementation plan
+
+> **For agentic workers:** Root implements inline and remains sole writer.
+> Independent agents are read-only researchers/reviewers, never delivery/effects.
+
+**Goal:** Extract the exact initial NONCE frame without I/O or authority.
+**Architecture:** Append one pure C decoder after real missing-function RED;
+add one separate independent literal driver to the existing builtin test.
+**Tech Stack:** Fixed installed CLT/Public SDK C11/builtin Node, no new header.
+**Spec:** Named design's S6 pure initial nonce extractor section.
+**Status:** Paired source/design C0/I0/M0 and fresh source-only2d7ca9 admitted
+test authoring only. Actual test38619c8d/851lines48027B with independent5983-byte
+driver3e862521 was authored while C6e3b10aa had no initial nonce decoder.
+Paired actual-test RED-only review and fresh109 gate preceded missing-function
+REDcc8fef and independent original-artifact audit9220cc. Only afterward root
+appended the minimal15-line decoder; Cae609f68/60lines3028B preserves original
+2277-byte S5 prefix. Separate baseline8ad726/independent auditb76704 and specific
+control ddd832/audit6038b6 qualify ordinary extraction/sensitivity only. Final
+draft-only review/currentinventory/delivery remain pending; channel gates stay open.
+
+### Global constraints / File Map / interface
+
+- Modify only existing frame C/test and named plan/spec, aggregate eleven.
+  Preserve C45lines2277B prefix/S3a4dc/S4a860fc/S51b7b drivers/otherseven pins.
+- New unsigned sf_continuity_decode_nonce_v2(const uint8_t *,size_t,uint8_t[16]).
+  Refuse0/unchanged output, success1/structural extraction only. Both pointers/
+  exact32 before accesses; valid readable32/writable16 caller storage. Validate
+  ALL16 header bytes; snapshot payload16 beforeALLwrites. Write16 only; overlap
+  0/8/16 supported. Arbitrary payload, no expected baseline/provenance authority.
+- No I/O/heap/Node/Mach/signal/cancel/channel/custody/cleanup/END/deadline effects.
+  Existing wrong-nonce rules persist for future independently bound channel.
+- New absent-or1 SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_DECODER_TEST, oneof4flags;
+  default8SKIP0PASS no acquisition. Existing recipe/85originalheaders/sevenabsent/
+  tools/strongstack/oncecloses/retainedroots/twooriginalfiles/journal unchanged.
+- No historical accepted sample/full native matrix replay; root sole writer.
+
+### Task S6a: independent literal oracle and actual missing-function RED
+
+- [x] Paired read-only whole-design/source review and fresh source-only current11/
+  preservation/resource gate before root actual test authoring.
+  Reviewed planbca97baf/spec43aba;2d7ca9 held16/rereads/materialpath/checked16
+  closes/current11/preservation22dirs/resources5225804KiB98%/memory66%/noheat.
+  Prior7fbc41 olddoc-epoch mismatch retained; explicit newdoc nomination only.
+- [x] Add NONCE_DECODE_CASES and separate NONCE_DECODE_DRIVER using exact full
+  pattern/zero/ff frames and independent nonce literals from S6 design. Declare
+  only new API; include stddef/stdint. Driver helpers own known extents, not
+  malformed lengths: separate input33/output18 and overlap arena34. Refused
+  calls compare all input/output/arena to snapshots. Accepted overlap expected
+  arena starts as snapshot then substitutes literal expected16 at output offset;
+  compare ALL34 bytes, not just canaries. Output=input+0/+8/+16 is valid extent.
+  Build exactly90 baseline calls described in spec, reserved15=1 LAST after89.
+  The independent payload replacement table is:
+
+  ```c
+  static const uint8_t replacements[16]={
+    0xff,0xee,0xdd,0xcc,0xbb,0xaa,0x99,0x88,
+    0x77,0x66,0x55,0x44,0x33,0x22,0x11,0x00
+  };
+  ```
+
+  Special final probe must classify solely:
+
+  ```c
+  static int reserved_one(void) {
+    uint8_t input[32],saved[32],arena[18];
+    for (size_t i=0; i<32; i++) input[i]=pattern_frame[i];
+    input[15]=1;
+    for (size_t i=0; i<32; i++) saved[i]=input[i];
+    for (size_t i=0; i<18; i++) arena[i]=0xa5;
+    unsigned actual=sf_continuity_decode_nonce_v2(input,32,arena+1);
+    for (size_t i=0; i<32; i++) if (input[i]!=saved[i]) return 90;
+    if (arena[0]!=0xa5 || arena[17]!=0xa5) return 90;
+    if (actual==0) {
+      for (size_t i=0; i<18; i++) if (arena[i]!=0xa5) return 90;
+      return 0;
+    }
+    if (actual!=1) return 80;
+    for (size_t i=0; i<16; i++) if (arena[1+i]!=patterned[i]) return 72;
+    return 71;
+  }
+  ```
+
+  pattern_frame/patterned are the full independent literals fixed in S5a above,
+  copied into the new standalone driver, never obtained from production code.
+  Normal accepted/refused helpers return0 only when
+  all literal behavior matches; every generic discrepancy is non71. New tests:
+  'continuity nonce decoder extracts only exact input frames' and
+  'continuity nonce decoder oracle rejects reserved-one acceptance'. Add exact
+  closed modes nonce-decode-baseline/nonce-decode-reserved, select new driver/map;
+  add missing-link receipt branch alongside existing encoder/nonce branches.
+  Mutation unique `if (bytes[15] != 0) return 0;` to
+  `if (bytes[15] != 0 && bytes[15] != 1) return 0;` only in owned candidate.
+  This preserves preceding reserved15=255 refusal; complete omission would fail
+  generically there. Existing C/drivers remain unchanged while authoring test.
+  Root30f260 syntax0/4b11e1 diff0;6499d0 default8SKIP/0PASS/0FAIL42.639708ms
+  no acquisition. 4e0a99 original C and allthree historical drivers byte-identical;
+  new independent driver5983B SHA3e86252188b03662b3198c145c6fff6f3e1ae73ee58e3259571ac9667b964bca.
+- [x] Verify syntax/diff/default8SKIP0PASS no acquisition; paired COMPLETE actual
+  test/helper/driver/source RED-only review and fresh109-original-input gate.
+  Run only this anchored serial RED once:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_DECODER_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity nonce decoder extracts only exact input frames$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Actualtwo compile0/link1 sole undefined decoder/no warnings/otherundefined,
+  no image/inspection/driver; complete originalfourartifact/channel/source/test/
+  tool commitments/99distinct99checkedcloses BEFORE unchanged link0assert fails.
+  Save durable original outside repo; independent ONLYnewRED artifact audit.
+  Historical completed command, never replay it. Paired ACTUAL RED-only C0/I0/M0
+  at C6e/test386/plan2a1c546b/speca8bfc572 and freshf20328 held109/rereads/
+  materialpath/checked109closes/current11/original85headers/sevenabsences/tools/
+  preservation56dirs/graph60headers109edgesoutside0/resources5218776KiB98%/
+  memory65%/noheat preceded ONEcc8fef CLOSED1:1FAIL/0PASS/0SKIP1023.979709ms/
+  case982.849125. Bothcompile0/link1 solemissingnonce decoder/no warnings/other
+  undefined/image/inspection/driver. Complete FIRST4artifact/source/test/tool/
+  channel commitments before unchangedlink0assert/99distinct99checkedcloses.
+  Fixture9vDZdE/dir216288800/501:0m700 retained;10atimechanges separate.
+  Independent ONLYnewRED9220cc heldsix originals/rereads twice/allfirstmaterial/
+  path/hash commitments/checkedonce6closes/exactfourinventory+directory matched.
+  This qualifies missingfeature only; no immutable runtime TCB claim.
+
+### Task S6b: minimal extractor, separate baseline/control and draft delivery
+
+- [x] Only after qualified actual RED append minimal implementation:
+
+  ```c
+  unsigned sf_continuity_decode_nonce_v2(const uint8_t *bytes, size_t length,
+                                        uint8_t nonce_out[16]) {
+      static const uint8_t magic[8] = {'S','F','N','O','N','C','2','!'};
+      uint8_t snapshot[16];
+      if (bytes == NULL || nonce_out == NULL || length != 32) return 0;
+      for (size_t i = 0; i < 8; i++) if (bytes[i] != magic[i]) return 0;
+      if (bytes[8] || bytes[9] || bytes[10] || bytes[11] != 2 ||
+          bytes[12] || bytes[13] || bytes[14]) return 0;
+      if (bytes[15] != 0) return 0;
+      for (size_t i = 0; i < 16; i++) snapshot[i] = bytes[16 + i];
+      for (size_t i = 0; i < 16; i++) nonce_out[i] = snapshot[i];
+      return 1;
+  }
+  ```
+
+  Root appended only15lines after9220cc; current Cae609f68/60lines3028B,
+  original2277-byte prefix unchanged. Actual test38619c8d remains unchanged.
+
+- [x] Separate paired actualsource/effect review and fresh109 gate precede ONEnew
+  baseline at implemented epoch (same anchored command, not RED-epoch replay).
+  Require90calls/driver0/two compile0/link0/exact2guards/directSystem BEFORE
+  driver/emptychannels/naturalexit-close/signalNULL/bothEOF/firstfiveartifacts/
+  100distinct100checkedcloses. Independent ONLYnewbaseline originalartifact audit.
+  Paired C0/I0/M0 at Cae609f68/test386/plan24b4af49/spec750b9422 and freshcafa7c
+  held109/rereads/materialpath/checked109closes/current11/original85headers/
+  sevenabsences/tools/preservation56dirs/graph60headers109edgesoutside0/
+  resources5210792KiB98%/memory65%/noheat preceded ONE8ad726 CLOSED0:
+  1PASS/0FAIL/0SKIP1616.090041ms/case1573.906709. Actualtwo compile0/link0/
+  exacttwo guards/directSystem1356 before driver0/all90literalcalls; natural
+  exit-close/signalNULL/bothEOF/emptychannels/100distinct100checkedcloses.
+  Complete FIRST5artifact/source/test/tool commitments; fixtureLiUv6l/
+  dir216288952/501:0m700 retained,13atimechanges separate/noninvariant.
+  Independent ONLYnewbaseline b76704 heldseven originals/rereads twice/allfirst
+  material/path/hash commitments/checkedonce7closes/exactfiveinventory+directory
+  matched; original2277prefix/literaldriver unchanged. Accepted baseline never replayed.
+- [x] Separate paired control-only review and fresh109 gate precede ONE:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_DECODER_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity nonce decoder oracle rejects reserved-one acceptance$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Require specific driver71 ONLY after preceding89 calls, original C/test
+  unchanged/unique reserved-one weakening/fivefirstartifacts/100checkedcloses/naturalsettlement;
+  independent ONLYnewcontrol audit. No other generic failure qualifies.
+  Historical completed command, never replay it. Paired CONTROL-only C0/I0/M0
+  at Cae/test386/plan257d8984/spec92100f01 and freshf5a397 held109/rereads/
+  materialpath/checked109closes/current11/original85headers/sevenabsences/tools/
+  preservation56dirs/graph60headers109edgesoutside0/resources5207528KiB98%/
+  memory66%/noheat preceded ONEddd832 CLOSED0:1PASS/0FAIL/0SKIP1596.682708ms/
+  case1554.803667. Two compile0/link0/exacttwo guards/directSystem1356 before
+  driver71/only-reserved-one-accepted-with-exact-nonce after89precedingcalls;
+  naturalexit-close/signalNULL/bothEOF/emptychannels/100distinct100checkedcloses.
+  Complete FIRST5artifact/source/test/tool commitments; fixturep00fOI/
+  dir216289012/501:0m700 retained,13atimechanges separate/noninvariant.
+  Independent ONLYnewcontrol6038b6 heldseven originals/rereads twice/allfirst
+  material/path/hash commitments/checkedonce7closes/exactfiveinventory+directory
+  matched; owned candidate differs ONLY unique reserved15 condition exempts1.
+  Original C/test/prefix/literaldriver unchanged; narrow sensitivity only, not
+  exhaustivemutation/immutableTCB/channel/END/CONTROL/P2credit.
+- [x] Syntax/default8SKIP0PASS/version/English/path/diff checks:41ce4a syntax0,
+  03da97 default8SKIP/0PASS/0FAIL42.16025ms no acquisition;91eefa version2.3.79/
+  4672ee English1936/08af6a paths971/652290diff0. Originalprefix/drivers unchanged.
+- [ ] Fresh current11/prefix/drivers/
+  originaltwo/journalhashonly/CLIbuild/resources/exposure checks and pairedfinal
+  review precede scoped4file root commit/normalpush/existingDRAFT275bodyupdate.
+  No ready/merge/cleanmainbuild/rollout/owner/channel/CONTROL/P2 admission.
+
 ## S5 pure nonce producer implementation plan
 
 > **For agentic workers:** Root implements inline and remains sole writer;
@@ -16,7 +210,8 @@ c820c0. Minimal nonce encoder was appended only afterward; the original31-line/
 1509-byte S4 prefix stays unchanged. New baselineba57aa passed its ordinary
 producer oracle and independent artifact audit7a7523. Separate control54de11
 passed its specific reserved-byte oracle and independent artifact auditdabbb9.
-Scoped draft delivery remains gated on final review/current inventory.
+Scoped draft delivery completed at a674ba94 with exact cloud/bodybc1552;
+earlier delivery-pending wording below describes the precommit epoch.
 
 ### Global constraints / File Map / interface
 

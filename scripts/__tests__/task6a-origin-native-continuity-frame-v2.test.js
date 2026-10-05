@@ -16,7 +16,10 @@ const encoderEnabled=encoderFlag==='1';
 const nonceFlag=process.env.SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_TEST;
 assert.ok(nonceFlag===undefined || nonceFlag==='1','closed continuity nonce opt-in');
 const nonceEnabled=nonceFlag==='1';
-assert.ok([enabled,encoderEnabled,nonceEnabled].filter(Boolean).length<=1,
+const nonceDecoderFlag=process.env.SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_DECODER_TEST;
+assert.ok(nonceDecoderFlag===undefined || nonceDecoderFlag==='1','closed nonce decoder opt-in');
+const nonceDecoderEnabled=nonceDecoderFlag==='1';
+assert.ok([enabled,encoderEnabled,nonceEnabled,nonceDecoderEnabled].filter(Boolean).length<=1,
   'one separately reviewed recipe only');
 const sourcePath=fileURLToPath(new URL('../task6a-origin-native-continuity-frame-v2.c',import.meta.url));
 const selfPath=fileURLToPath(import.meta.url);
@@ -382,6 +385,153 @@ int main(void) {
   return 0;
 }
 `;
+// Structural extraction only, never initial nonce provenance or END authority.
+const NONCE_DECODE_CASES=Object.freeze({
+  0:'all-literal-nonce-decode-cases-and-storage-boundaries',
+  10:'null-input',11:'null-output',12:'short-length',13:'extra-length',
+  14:'size-max-length',20:'magic',21:'version',22:'little-endian-version',
+  23:'reserved',24:'frame-kind',25:'overlap-refusal',
+  71:'only-reserved-one-accepted-with-exact-nonce',72:'nonce-output',
+  80:'decoder-return',90:'storage-mutation',91:'output-canary',
+});
+const NONCE_DECODE_DRIVER = String.raw`
+#include <stddef.h>
+#include <stdint.h>
+unsigned sf_continuity_decode_nonce_v2(const uint8_t *,size_t,uint8_t[16]);
+static const uint8_t patterned[16]={
+  0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+  0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+};
+static const uint8_t zero[16]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+static const uint8_t ff[16]={
+  0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+  0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+};
+static const uint8_t pattern_frame[32]={
+  'S','F','N','O','N','C','2','!',0,0,0,2,0,0,0,0,
+  0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+  0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+};
+static const uint8_t zero_frame[32]={
+  'S','F','N','O','N','C','2','!',0,0,0,2,0,0,0,0,
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+};
+static const uint8_t ff_frame[32]={
+  'S','F','N','O','N','C','2','!',0,0,0,2,0,0,0,0,
+  0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+  0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+};
+static const uint8_t status_frame[32]={
+  'S','F','S','T','A','T','2','!',0,0,0,2,0,0,0,1,
+  0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+  0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+};
+static const uint8_t end_frame[32]={
+  'S','F','E','N','D','V','2','!',0,0,0,2,0,0,0,0,
+  0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+  0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+};
+static const uint8_t replacements[16]={
+  0xff,0xee,0xdd,0xcc,0xbb,0xaa,0x99,0x88,
+  0x77,0x66,0x55,0x44,0x33,0x22,0x11,0x00
+};
+/* Known storage extent33, not the potentially malformed length. */
+static int refused(const uint8_t supplied[32],size_t length,
+                   int null_input,int null_out,int diagnostic) {
+  uint8_t input[33],saved[33],arena[18];
+  for(size_t i=0;i<33;i++)input[i]=saved[i]=i<32?supplied[i]:0xa5;
+  for(size_t i=0;i<18;i++)arena[i]=0xa5;
+  unsigned actual=sf_continuity_decode_nonce_v2(null_input?NULL:input,length,
+                                              null_out?NULL:arena+1);
+  for(size_t i=0;i<33;i++)if(input[i]!=saved[i])return 90;
+  for(size_t i=0;i<18;i++)if(arena[i]!=0xa5)return 90;
+  return actual==0?0:diagnostic;
+}
+/* Separate or valid input+0/+8/+16. Compare entire arena, not just canaries. */
+static int overlap_probe(const uint8_t supplied[32],const uint8_t expected[16],
+                         size_t offset,unsigned want,int diagnostic) {
+  uint8_t arena[34],desired[34];
+  for(size_t i=0;i<34;i++)arena[i]=0xa5;
+  for(size_t i=0;i<32;i++)arena[1+i]=supplied[i];
+  for(size_t i=0;i<34;i++)desired[i]=arena[i];
+  if(want==1)for(size_t i=0;i<16;i++)desired[1+offset+i]=expected[i];
+  unsigned actual=sf_continuity_decode_nonce_v2(arena+1,32,arena+1+offset);
+  for(size_t i=0;i<34;i++)if(arena[i]!=desired[i])return 90;
+  return actual==want?0:diagnostic;
+}
+static int extracted(const uint8_t supplied[32],const uint8_t expected[16]) {
+  uint8_t input[32],saved[32],arena[18];
+  for(size_t i=0;i<32;i++)input[i]=saved[i]=supplied[i];
+  for(size_t i=0;i<18;i++)arena[i]=0xa5;
+  unsigned actual=sf_continuity_decode_nonce_v2(input,32,arena+1);
+  for(size_t i=0;i<32;i++)if(input[i]!=saved[i])return 90;
+  if(arena[0]!=0xa5 || arena[17]!=0xa5)return 91;
+  if(actual!=1)return 80;
+  for(size_t i=0;i<16;i++)if(arena[1+i]!=expected[i])return 72;
+  return 0;
+}
+/* LAST: generic refusal-output mutation must not mask exact mutant71. */
+static int reserved_one(void) {
+  uint8_t input[32],saved[32],arena[18];
+  for(size_t i=0;i<32;i++)input[i]=pattern_frame[i];
+  input[15]=1;
+  for(size_t i=0;i<32;i++)saved[i]=input[i];
+  for(size_t i=0;i<18;i++)arena[i]=0xa5;
+  unsigned actual=sf_continuity_decode_nonce_v2(input,32,arena+1);
+  for(size_t i=0;i<32;i++)if(input[i]!=saved[i])return 90;
+  if(arena[0]!=0xa5 || arena[17]!=0xa5)return 90;
+  if(actual==0){
+    for(size_t i=0;i<18;i++)if(arena[i]!=0xa5)return 90;
+    return 0;
+  }
+  if(actual!=1)return 80;
+  for(size_t i=0;i<16;i++)if(arena[1+i]!=patterned[i])return 72;
+  return 71;
+}
+#define CHECK(expression) do { int result=(expression); if(result!=0)return result; } while(0)
+int main(void) {
+  CHECK(refused(pattern_frame,32,1,0,10));CHECK(refused(pattern_frame,32,0,1,11));
+  for(size_t length=0;length<32;length++)CHECK(refused(pattern_frame,length,0,0,12));
+  CHECK(refused(pattern_frame,33,0,0,13));CHECK(refused(pattern_frame,SIZE_MAX,0,0,14));
+  uint8_t mutated[32],expected[16];
+  for(size_t at=0;at<12;at++){
+    for(size_t i=0;i<32;i++)mutated[i]=pattern_frame[i];
+    mutated[at]^=0xff;
+    CHECK(refused(mutated,32,0,0,at<8?20:21));
+  }
+  for(size_t i=0;i<32;i++)mutated[i]=pattern_frame[i];
+  mutated[8]=2;mutated[11]=0;CHECK(refused(mutated,32,0,0,22));
+  for(size_t at=12;at<15;at++)for(unsigned value=1;value<=255;value+=254){
+    for(size_t i=0;i<32;i++)mutated[i]=pattern_frame[i];
+    mutated[at]=(uint8_t)value;CHECK(refused(mutated,32,0,0,23));
+  }
+  for(size_t i=0;i<32;i++)mutated[i]=pattern_frame[i];
+  mutated[15]=255;CHECK(refused(mutated,32,0,0,23));
+  CHECK(refused(status_frame,32,0,0,24));CHECK(refused(end_frame,32,0,0,24));
+  for(size_t i=0;i<32;i++)mutated[i]=pattern_frame[i];
+  mutated[12]=1;
+  CHECK(overlap_probe(mutated,patterned,0,0,25));
+  CHECK(overlap_probe(mutated,patterned,8,0,25));
+  CHECK(overlap_probe(mutated,patterned,16,0,25));
+  CHECK(extracted(pattern_frame,patterned));CHECK(extracted(zero_frame,zero));CHECK(extracted(ff_frame,ff));
+  CHECK(overlap_probe(pattern_frame,patterned,0,1,80));
+  CHECK(overlap_probe(pattern_frame,patterned,8,1,80));
+  CHECK(overlap_probe(pattern_frame,patterned,16,1,80));
+  CHECK(overlap_probe(zero_frame,zero,0,1,80));
+  CHECK(overlap_probe(zero_frame,zero,8,1,80));
+  CHECK(overlap_probe(zero_frame,zero,16,1,80));
+  CHECK(overlap_probe(ff_frame,ff,0,1,80));
+  CHECK(overlap_probe(ff_frame,ff,8,1,80));
+  CHECK(overlap_probe(ff_frame,ff,16,1,80));
+  for(size_t at=0;at<16;at++){
+    for(size_t i=0;i<32;i++)mutated[i]=pattern_frame[i];
+    for(size_t i=0;i<16;i++)expected[i]=patterned[i];
+    mutated[16+at]=replacements[at];expected[at]=replacements[at];
+    CHECK(extracted(mutated,expected));
+  }
+  return reserved_one();
+}
+`;
 const MATERIAL = ['dev','ino','uid','gid','mode','nlink','size','mtimeNs','ctimeNs'];
 function same(a,b) { return MATERIAL.every(key=>a[key]===b[key]); }
 function digest(fd,size) {
@@ -474,11 +624,12 @@ function artifact(item) {
 }
 async function invokeFrame(mode) {
   assert.ok(['baseline','nonce-omission','encode-baseline','encode-version',
-    'nonce-baseline','nonce-reserved'].includes(mode));
+    'nonce-baseline','nonce-reserved','nonce-decode-baseline','nonce-decode-reserved'].includes(mode));
   const encoder=mode==='encode-baseline'||mode==='encode-version';
   const nonce=mode==='nonce-baseline'||mode==='nonce-reserved';
-  const selectedDriver=nonce?NONCE_DRIVER:encoder?ENCODER_DRIVER:DRIVER;
-  const selectedCases=nonce?NONCE_CASES:encoder?ENCODER_CASES:CASES;
+  const nonceDecoder=mode==='nonce-decode-baseline'||mode==='nonce-decode-reserved';
+  const selectedDriver=nonceDecoder?NONCE_DECODE_DRIVER:nonce?NONCE_DRIVER:encoder?ENCODER_DRIVER:DRIVER;
+  const selectedCases=nonceDecoder?NONCE_DECODE_CASES:nonce?NONCE_CASES:encoder?ENCODER_CASES:CASES;
   const held=[],checks=[],failures=[];let result,closed=0;
   try {
     let source;
@@ -530,6 +681,11 @@ async function invokeFrame(mode) {
       assert.equal(candidate.split(anchor).length,2,'unique nonce reserved mutation');
       candidate=candidate.replace(anchor,'nonce_frame[15] = 1;');
     }
+    if(mode==='nonce-decode-reserved'){
+      const anchor='if (bytes[15] != 0) return 0;';
+      assert.equal(candidate.split(anchor).length,2,'unique nonce decoder reserved-one mutation');
+      candidate=candidate.replace(anchor,'if (bytes[15] != 0 && bytes[15] != 1) return 0;');
+    }
     const dir=fs.mkdtempSync('/private/tmp/setfarm-continuity-frame.');
     fs.chmodSync(dir,0o700);const fixtureStat=directoryGuard(dir,checks,true);
     const candidateCopy=dir+'/candidate.c',driverCopy=dir+'/driver.c';
@@ -562,7 +718,7 @@ async function invokeFrame(mode) {
       '-fno-lto','-nostdlib','-Wl,-Z','-Wl,-syslibroot,'+SDK,
       candidateObject,driverObject,SDK+'/usr/lib/libSystem.B.tbd','-o',binary],dir);
     let importsResult=null,dependencyResult=null,driver=null;
-    if((encoder||nonce)&&link.code!==0){
+    if((encoder||nonce||nonceDecoder)&&link.code!==0){
       // Preserve actual failed-link channels and original artifacts BEFORE
       // the consuming test's unchanged link0 assertion. Never execute/inspect.
       const noImage=()=>checkAbsent(binary);noImage();checks.push(noImage);
@@ -670,5 +826,26 @@ test('continuity nonce encoder oracle rejects reserved-byte mutation',{skip:!non
   assert.equal(actual.availability,'frame-observed');
   assert.deepEqual(actual.driver,{code:71,signal:null,eof:[true,true],stdout:'',stderr:''});
   assert.equal(actual.case,'only-reserved-byte-mutated-to-one');
+  assert.equal(actual.receipt.checkedInputCloses,actual.receipt.inputCount);
+});
+
+// Break caught: malformed header acceptance, wrong extraction or overlap corruption.
+test('continuity nonce decoder extracts only exact input frames',{skip:!nonceDecoderEnabled},async t=>{
+  const actual=await invokeFrame('nonce-decode-baseline');
+  t.diagnostic(JSON.stringify(actual));
+  requireZero(actual.link,'actual nonce decoder link must succeed');
+  assert.equal(actual.availability,'frame-observed');
+  assert.deepEqual(actual.driver,{code:0,signal:null,eof:[true,true],stdout:'',stderr:''});
+  assert.equal(actual.case,'all-literal-nonce-decode-cases-and-storage-boundaries');
+  assert.equal(actual.receipt.checkedInputCloses,actual.receipt.inputCount);
+});
+// Break caught: only malformed reserved1 accepted with exact extraction after89 calls.
+test('continuity nonce decoder oracle rejects reserved-one acceptance',{skip:!nonceDecoderEnabled},async t=>{
+  const actual=await invokeFrame('nonce-decode-reserved');
+  t.diagnostic(JSON.stringify(actual));
+  requireZero(actual.link,'actual nonce decoder control link must succeed');
+  assert.equal(actual.availability,'frame-observed');
+  assert.deepEqual(actual.driver,{code:71,signal:null,eof:[true,true],stdout:'',stderr:''});
+  assert.equal(actual.case,'only-reserved-one-accepted-with-exact-nonce');
   assert.equal(actual.receipt.checkedInputCloses,actual.receipt.inputCount);
 });
