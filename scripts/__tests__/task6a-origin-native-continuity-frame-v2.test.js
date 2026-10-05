@@ -22,7 +22,10 @@ const nonceDecoderEnabled=nonceDecoderFlag==='1';
 const endFlag=process.env.SETFARM_TASK6A_NATIVE_CONTINUITY_END_TEST;
 assert.ok(endFlag===undefined || endFlag==='1','closed continuity END opt-in');
 const endEnabled=endFlag==='1';
-assert.ok([enabled,encoderEnabled,nonceEnabled,nonceDecoderEnabled,endEnabled].filter(Boolean).length<=1,
+const endDecoderFlag=process.env.SETFARM_TASK6A_NATIVE_CONTINUITY_END_DECODER_TEST;
+assert.ok(endDecoderFlag===undefined || endDecoderFlag==='1','closed END decoder opt-in');
+const endDecoderEnabled=endDecoderFlag==='1';
+assert.ok([enabled,encoderEnabled,nonceEnabled,nonceDecoderEnabled,endEnabled,endDecoderEnabled].filter(Boolean).length<=1,
   'one separately reviewed recipe only');
 const sourcePath=fileURLToPath(new URL('../task6a-origin-native-continuity-frame-v2.c',import.meta.url));
 const selfPath=fileURLToPath(import.meta.url);
@@ -619,6 +622,108 @@ int main(void) {
   return 0;
 }
 `;
+// Read-only END matching; alias byte safety is not independent owner binding.
+const END_DECODE_CASES=Object.freeze({
+  0:'all-literal-end-binding-cases-and-storage-boundaries',
+  10:'null-frame',11:'null-expected-nonce',12:'short-length',13:'extra-length',
+  14:'size-max-length',20:'wrong-magic-accepted',21:'wrong-version-accepted',
+  22:'little-endian-version-accepted',23:'reserved-byte-accepted',24:'wrong-kind-accepted',
+  30:'literal-match-refused',31:'alias-byte-safety-refused',
+  71:'only-wrong-expected-end-nonce-accepted',72:'non-boolean-decoder-return',
+  90:'storage-mutation',91:'input-canary',
+});
+const END_DECODE_DRIVER = String.raw`
+#include <stddef.h>
+#include <stdint.h>
+unsigned sf_continuity_decode_end_v2(const uint8_t *,size_t,const uint8_t[16]);
+static const uint8_t patterned[16]={
+  0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+  0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+};
+static const uint8_t zero[16]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+static const uint8_t ff[16]={
+  0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+  0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+};
+static const uint8_t pattern_frame[32]={
+  'S','F','E','N','D','V','2','!',0,0,0,2,0,0,0,0,
+  0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+  0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+};
+static const uint8_t zero_frame[32]={
+  'S','F','E','N','D','V','2','!',0,0,0,2,0,0,0,0,
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+};
+static const uint8_t ff_frame[32]={
+  'S','F','E','N','D','V','2','!',0,0,0,2,0,0,0,0,
+  0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+  0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+};
+static const uint8_t nonce_frame[32]={
+  'S','F','N','O','N','C','2','!',0,0,0,2,0,0,0,0,
+  0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+  0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+};
+static const uint8_t status_frame[32]={
+  'S','F','S','T','A','T','2','!',0,0,0,2,0,0,0,1,
+  0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+  0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+};
+/* Always compare known complete storage, never trust reported length. */
+static int probe(const uint8_t supplied[32],const uint8_t expected[16],
+                 size_t length,int null_frame,int null_nonce,int alias,
+                 unsigned wanted,int diagnostic) {
+  uint8_t frame[34],saved_frame[34],nonce[18],saved_nonce[18];
+  for(size_t i=0;i<34;i++)frame[i]=0xa5;
+  for(size_t i=0;i<18;i++)nonce[i]=0xa5;
+  for(size_t i=0;i<32;i++)frame[1+i]=supplied[i];
+  for(size_t i=0;i<16;i++)nonce[1+i]=expected[i];
+  for(size_t i=0;i<34;i++)saved_frame[i]=frame[i];
+  for(size_t i=0;i<18;i++)saved_nonce[i]=nonce[i];
+  const uint8_t *bound=alias?frame+17:nonce+1;
+  unsigned actual=sf_continuity_decode_end_v2(null_frame?NULL:frame+1,length,
+                                            null_nonce?NULL:bound);
+  if(frame[0]!=0xa5 || frame[33]!=0xa5 || nonce[0]!=0xa5 || nonce[17]!=0xa5)return 91;
+  for(size_t i=0;i<34;i++)if(frame[i]!=saved_frame[i])return 90;
+  for(size_t i=0;i<18;i++)if(nonce[i]!=saved_nonce[i])return 90;
+  if(actual==wanted)return 0;
+  if(actual>1)return 72;
+  return diagnostic; /* 71 only wanted0/actual1 on first wrong expectation. */
+}
+#define CHECK(expression) do { int result=(expression); if(result!=0)return result; } while(0)
+#define REFUSE(frame,length,null_frame,null_nonce,diagnostic) \
+  CHECK(probe(frame,patterned,length,null_frame,null_nonce,0,0,diagnostic))
+int main(void) {
+  REFUSE(pattern_frame,32,1,0,10);REFUSE(pattern_frame,32,0,1,11);
+  for(size_t length=0;length<32;length++)REFUSE(pattern_frame,length,0,0,12);
+  REFUSE(pattern_frame,33,0,0,13);REFUSE(pattern_frame,SIZE_MAX,0,0,14);
+  uint8_t changed[32],wrong_expected[16];
+  for(size_t at=0;at<12;at++){
+    for(size_t i=0;i<32;i++)changed[i]=pattern_frame[i];
+    changed[at]^=1;
+    REFUSE(changed,32,0,0,at<8?20:21);
+  }
+  for(size_t i=0;i<32;i++)changed[i]=pattern_frame[i];
+  changed[8]=2;changed[11]=0;REFUSE(changed,32,0,0,22);
+  for(size_t at=12;at<16;at++)for(unsigned value=1;value<=255;value+=254){
+    for(size_t i=0;i<32;i++)changed[i]=pattern_frame[i];
+    changed[at]=(uint8_t)value;REFUSE(changed,32,0,0,23);
+  }
+  REFUSE(nonce_frame,32,0,0,24);REFUSE(status_frame,32,0,0,24);
+  CHECK(probe(pattern_frame,patterned,32,0,0,0,1,30));
+  CHECK(probe(zero_frame,zero,32,0,0,0,1,30));
+  CHECK(probe(ff_frame,ff,32,0,0,0,1,30));
+  /* Alias comparison is tautological: byte safety only, not owner binding. */
+  CHECK(probe(pattern_frame,patterned,32,0,0,1,1,31));
+  /* First mismatch is call64, AFTER63 successful non-mismatch probes. */
+  for(size_t at=0;at<16;at++){
+    for(size_t i=0;i<16;i++)wrong_expected[i]=patterned[i];
+    wrong_expected[at]^=1;
+    CHECK(probe(pattern_frame,wrong_expected,32,0,0,0,0,71));
+  }
+  return 0;
+}
+`;
 const MATERIAL = ['dev','ino','uid','gid','mode','nlink','size','mtimeNs','ctimeNs'];
 function same(a,b) { return MATERIAL.every(key=>a[key]===b[key]); }
 function digest(fd,size) {
@@ -712,13 +817,14 @@ function artifact(item) {
 async function invokeFrame(mode) {
   assert.ok(['baseline','nonce-omission','encode-baseline','encode-version',
     'nonce-baseline','nonce-reserved','nonce-decode-baseline','nonce-decode-reserved',
-    'end-baseline','end-reserved'].includes(mode));
+    'end-baseline','end-reserved','end-decode-baseline','end-decode-nonce-omission'].includes(mode));
   const encoder=mode==='encode-baseline'||mode==='encode-version';
   const nonce=mode==='nonce-baseline'||mode==='nonce-reserved';
   const nonceDecoder=mode==='nonce-decode-baseline'||mode==='nonce-decode-reserved';
   const endEncoder=mode==='end-baseline'||mode==='end-reserved';
-  const selectedDriver=endEncoder?END_DRIVER:nonceDecoder?NONCE_DECODE_DRIVER:nonce?NONCE_DRIVER:encoder?ENCODER_DRIVER:DRIVER;
-  const selectedCases=endEncoder?END_CASES:nonceDecoder?NONCE_DECODE_CASES:nonce?NONCE_CASES:encoder?ENCODER_CASES:CASES;
+  const endDecoder=mode==='end-decode-baseline'||mode==='end-decode-nonce-omission';
+  const selectedDriver=endDecoder?END_DECODE_DRIVER:endEncoder?END_DRIVER:nonceDecoder?NONCE_DECODE_DRIVER:nonce?NONCE_DRIVER:encoder?ENCODER_DRIVER:DRIVER;
+  const selectedCases=endDecoder?END_DECODE_CASES:endEncoder?END_CASES:nonceDecoder?NONCE_DECODE_CASES:nonce?NONCE_CASES:encoder?ENCODER_CASES:CASES;
   const held=[],checks=[],failures=[];let result,closed=0;
   try {
     let source;
@@ -780,6 +886,11 @@ async function invokeFrame(mode) {
       assert.equal(candidate.split(anchor).length,2,'unique END reserved mutation');
       candidate=candidate.replace(anchor,'end_frame[15] = 1;');
     }
+    if(mode==='end-decode-nonce-omission'){
+      const anchor='if (end_bytes[16 + i] != expected_nonce[i]) return 0;';
+      assert.equal(candidate.split(anchor).length,2,'unique END nonce-comparison mutation');
+      candidate=candidate.replace(anchor,'(void)expected_nonce[i];');
+    }
     const dir=fs.mkdtempSync('/private/tmp/setfarm-continuity-frame.');
     fs.chmodSync(dir,0o700);const fixtureStat=directoryGuard(dir,checks,true);
     const candidateCopy=dir+'/candidate.c',driverCopy=dir+'/driver.c';
@@ -812,7 +923,7 @@ async function invokeFrame(mode) {
       '-fno-lto','-nostdlib','-Wl,-Z','-Wl,-syslibroot,'+SDK,
       candidateObject,driverObject,SDK+'/usr/lib/libSystem.B.tbd','-o',binary],dir);
     let importsResult=null,dependencyResult=null,driver=null;
-    if((encoder||nonce||nonceDecoder||endEncoder)&&link.code!==0){
+    if((encoder||nonce||nonceDecoder||endEncoder||endDecoder)&&link.code!==0){
       // Preserve actual failed-link channels and original artifacts BEFORE
       // the consuming test's unchanged link0 assertion. Never execute/inspect.
       const noImage=()=>checkAbsent(binary);noImage();checks.push(noImage);
@@ -962,5 +1073,26 @@ test('continuity END encoder oracle rejects reserved-byte mutation',{skip:!endEn
   assert.equal(actual.availability,'frame-observed');
   assert.deepEqual(actual.driver,{code:71,signal:null,eof:[true,true],stdout:'',stderr:''});
   assert.equal(actual.case,'only-end-reserved-byte-mutated-to-one');
+  assert.equal(actual.receipt.checkedInputCloses,actual.receipt.inputCount);
+});
+
+// Break caught: malformed END bytes, non-boolean return or wrong bound nonce.
+test('continuity END decoder accepts only exact bound frames',{skip:!endDecoderEnabled},async t=>{
+  const actual=await invokeFrame('end-decode-baseline');
+  t.diagnostic(JSON.stringify(actual));
+  requireZero(actual.link,'actual END decoder link must succeed');
+  assert.equal(actual.availability,'frame-observed');
+  assert.deepEqual(actual.driver,{code:0,signal:null,eof:[true,true],stdout:'',stderr:''});
+  assert.equal(actual.case,'all-literal-end-binding-cases-and-storage-boundaries');
+  assert.equal(actual.receipt.checkedInputCloses,actual.receipt.inputCount);
+});
+// Break caught: actual1 on first wrong expectation after63 intact probes.
+test('continuity END decoder oracle rejects nonce-comparison omission',{skip:!endDecoderEnabled},async t=>{
+  const actual=await invokeFrame('end-decode-nonce-omission');
+  t.diagnostic(JSON.stringify(actual));
+  requireZero(actual.link,'actual END decoder control link must succeed');
+  assert.equal(actual.availability,'frame-observed');
+  assert.deepEqual(actual.driver,{code:71,signal:null,eof:[true,true],stdout:'',stderr:''});
+  assert.equal(actual.case,'only-wrong-expected-end-nonce-accepted');
   assert.equal(actual.receipt.checkedInputCloses,actual.receipt.inputCount);
 });

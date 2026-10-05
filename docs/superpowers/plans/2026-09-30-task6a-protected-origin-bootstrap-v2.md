@@ -1,5 +1,147 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S8 pure nonce-bound END decoder implementation plan
+
+> **For agentic workers:** Root implements inline and remains sole writer;
+> independent agents research/review read-only, never delivery/effects.
+
+**Goal:** Match frozen END bytes against supplied nonce without owner authority.
+**Architecture:** One appended pure C predicate after real missing-function RED;
+one separate independent literal driver in existing builtin Node test.
+**Tech Stack:** Existing fixed installed CLT/Public SDK C11/Node; no new header.
+**Spec:** Named design, S8 separately bounded nonce-bound END decoder proposal.
+**Status:** Paired SOURCE/design C0/I0/M0 and fresh78722c admitted test authoring
+only. Actualtest54575f8e/1098lines60175B with independent4012-byte END_DECODE_DRIVER
+2f1eb4bb was authored while C8a1eea16 lacked the decoder. Paired actual-test
+RED-only reviews/freshecc0c1 preceded REDbc3e80/auditba215f. Only afterward root
+appended13lines minimal decoder, C314eb004/87lines4510B/original3777prefix intact.
+Paired baseline reviews/freshc9c07d preceded ONEbaseline4df659/audit364ace.
+Separate pairedcontrolreviews/fresh004169 preceded control1f7d89/audite76b65;
+ordinarybytebinding/specificsensitivity only. Scoped draft delivery pending.
+
+### Global constraints / File Map / interface
+
+- Modify only existing frame C/test and named plan/spec, aggregate eleven.
+  Preserve original74line3777B C prefix/allfive historical drivers/other7pins/
+  originaltwo/retainedroots/builds/fixtures/journalHASHONLY/CLI selector.
+- New unsigned sf_continuity_decode_end_v2(const uint8_t *end_bytes,size_t,
+  const uint8_t expected_nonce[16]); NULL/exact32 BEFORE caller access; valid
+  readable32/readable16 caller storage. SFENDV2!/BE2/allfourreservedzero/all16
+  nonceequal, exactly0/1; no writes/output/snapshot/I/O/heap/nativeeffects.
+  Payloadalias+16 onlybytesafety, futureindependentownerbaseline notderivedEND.
+  No ENDsend/shutdown/unknownownerrelease/join/auth/channel/CONTROL/P2 authority.
+- New absent-or1 SETFARM_TASK6A_NATIVE_CONTINUITY_END_DECODER_TEST oneof6 flags;
+  default12SKIP0PASS/noacquisition.
+  Original85headers/sevenabsences/tools/strongstack/oncecloses unchanged.
+  No acceptedcase/fullmatrix/genuine replay or new bot/security/service effects.
+
+### Task S8a: independent literal oracle and actual missing-decoder RED
+
+- [x] Paired SOURCE/design review +fresh16-current-input/preservation/resource
+  gate before root actual test authoring; C8a/test0b17 remain unchanged.
+  Plan67db00da/specabdc9bae pairedC0/I0/M0;fresh78722c at21:06:17UTC held16/
+  rereads/materialpath/16checkedoncecloses/current11/preservation22dirs/exact
+  2docsM187+/3-/indexempty/originalC/test/fivedrivers/other7/preservationmatched.
+  Resources8385952KiB97%/memory66%/throttled0/noheat; source-only noteffectclearance.
+- [x] Add separate END_DECODE_CASES/END_DECODE_DRIVER/new closedflag and modes
+  end-decode-baseline/end-decode-nonce-omission/failed-linkbranch extension.
+  Exact test names: 'continuity END decoder accepts only exact bound frames'
+  and 'continuity END decoder oracle rejects nonce-comparison omission'.
+  Independently fix full32-byte END pattern/zero/ff literals and separate16-byte
+  nonce literals, plus NONCE and STATUS1 wrong-kind literals; no roundtrip.
+  Probe helper owns framearena34/expectedarena18/canaries0xa5/fullsnapshots:
+  always initialize known storage, choose callerNULL/alias flags only at call,
+  require both entirearenas unchanged before classifyingreturn. Exactly0 on
+  refusals/exactly1 onmatches; actual>1 returnsnon71code72, canary/storage faults
+  non71. Firstwrongexpected returns71 onlywanted0/actual1/intactallstorage.
+  Main strict79callorder: NULLframe/NULLexpected+length0..31/33/SIZE_MAX=36;
+  magic8/version4/littleendian1/reserved8(each12..15 separately1/255)/wrongkind2
+  =59; pattern/zero/ffmatches=62; payloadalias+16=63;16wrongexpectednonce XOR1
+  =79. EACHwrongexpected resetsfromindependentpatternliteral, frameunchanged.
+  Aliasnotindependentbinding; STATUS1notisolatedmagic; observationsnotreadproof.
+  MutationONLYunique 'if (end_bytes[16 + i] != expected_nonce[i]) return 0;'
+  to '(void)expected_nonce[i];' inownedcopy. Firstmismatchcall64after63probes,
+  notall16controlcoverage. Syntax/diff/default12SKIP0PASS/noacquisition;
+  C/allfive historical drivers byte-identical before actual RED.
+  Rootd924acsyntax0/fcd912diff0/636314default12SKIP0PASS0FAIL44.422458ms/
+  noacquisition. Actualtest54575f8e1098lines60175B; newEND_DECODE_DRIVER4012B
+  SHA2f1eb4bbcf7794fe218610cf3c1280ee9362e6af09efdf142e1715f6a5b808f5.
+  31e722 originalC/allfivehistoricaldrivers byte-identical; no END implementation.
+- [x] Paired COMPLETE actualtest/C RED-only review and fresh109-original-input/
+  preservation/resource gate precede ONE serial anchored actual missing decoder:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_END_DECODER_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity END decoder accepts only exact bound frames$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Require2compile0/link1 solelymissingdecoder/nootherundefined/warnings/image/
+  inspection/driver/FIRSTfourfullartifact/source/test/tool/channelcommitments/
+  99distinct99checkedcloses BEFOREunchangedlink0assertfails. Savefulloriginal
+  outside repo; independentONLYnewRED artifact audit. No sourcegrep/mockRED.
+  Historical completed command, never replay. Paired actualRED-only C0/I0/M0
+  and freshecc0c1 at21:11:07UTC held109originals/rereads/materialpath/109checked
+  oncecloses/current11/original85/sevenabsences/tools/preservation56dirs/
+  resources8385596KiB97%/memory66%/noheat preceded ONEbc3e80 CLOSED1:
+  1FAIL/0PASS/0SKIP1044.047416ms/case999.770792. Actualtwo compile0/link1 SOLE
+  missing _sf_continuity_decode_end_v2 referenced_probe/nootherundefined/warnings/
+  image/inspection/driver/FIRSTfourfullcommitments/99distinct99checkedcloses.
+  FixtureihN3GL/dir216290856/501:0m700 retained;10atimechanges separate.
+  IndependentONLYnewREDba215f C0/I0/M0 at21:13:11UTC heldfourartifacts+C/test+
+  durableoriginal/sevendistinctFDs/rereadstwice/allFIRSTmaterial/path/hash/
+  7checkedoncecloses/exactinventory+directory/executableabsence/literal4012driver
+  matched. Qualifiesactualmissingfeature only/currentnotretroTCB.
+
+### Task S8b: minimal predicate, separate baseline/control, draft checkpoint
+
+- [x] Only after qualifiedactualRED append minimal pure decoder: static8magic,
+  NULL/exact32 guard;8magicchecks; BE2/fourzeroreservedchecks;16noncecompare
+  withuniqueend_bytesanchor;return1. Preserve original3777-byte C prefix.
+  Root appended only13lines afterba215f; currentC314eb00487lines4510B;900016
+  original3777-byte prefix hashes8a1eea16 and is byte-identical; test54575unchanged.
+- [x] Separate pairedactualsource/effect review/fresh109gate precede ONEnew
+  implementedepoch baseline (sameanchoredcommand, not RED replay). Require
+  driver0/all79calls/fixed2compile0/link0/NMexact2guards/directSystemBEFOREdriver/
+  FIRSTfivefullcommitments/100distinct100checkedcloses/naturalexit-close/
+  signalNULL/bothEOF/emptychannels; independentONLYnewbaseline audit.
+  Paired actual-source/baseline-only C0/I0/M0 and freshc9c07d at21:17:32UTC
+  held109 originals/rereads/materialpath/109checkedoncecloses/current11/original85/
+  sevenabsences/tools/preservation56dirs/resources8375052KiB97%/memory66%/noheat
+  preceded ONE4df659 CLOSED0:1PASS/0FAIL/0SKIP1606.855084ms/case1564.531917.
+  Actual2compile0/link0/NMexact2guards/directSystem1356 BEFOREdriver0/all79calls/
+  FIRSTfivefullcommitments/100distinct100checkedcloses/naturalexit-close/
+  signalNULL/bothEOF/emptychannels. FixtureQyGZgg/dir216291105/501:0m700 retained;
+  13atimechanges separate/noninvariant. IndependentONLYnewbaseline364ace C0/I0/M0
+  at21:20:40UTC heldfiveartifacts+C/test+durableoriginal/eightdistinctFDs/
+  rereadstwice/allFIRSTmaterial/path/hash/8checkedoncecloses/exactinventory+
+  directory/literal4012driver/prefix3777 matched; currentconsistency notretroTCB.
+- [x] Separate pairedcontrol-only review/fresh109gate precede ONE:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_END_DECODER_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity END decoder oracle rejects nonce-comparison omission$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Requireuniqueownedcompareomission/specificdriver71 AFTER63probes/firstwrong
+  expectednonce acceptedexactly1/allstorageunchanged; genericfailurenonpositive.
+  SameFIRSTfivefullcommitments/100checkedcloses/naturalsettlement/ONLYcontrolaudit.
+  Historical completed command, never replay. Paired CONTROL-only C0/I0/M0
+  and fresh004169 at21:21:14UTC held109originals/rereads/materialpath/109checked
+  oncecloses/current11/original85/sevenabsences/tools/preservation56dirs/
+  resources8370932KiB97%/memory67%/noheat preceded ONE1f7d89 CLOSED0:
+  1PASS/0FAIL/0SKIP1605.700917ms/case1561.2355. Actualtwo compile0/link0/exacttwo
+  guardimports/directSystem1356 BEFOREdriver71/actual1firstwrongexpected AFTER63
+  intactprobes/fullarenas+canaries unchanged; FIRSTfivefullcommitments/
+  100distinct100checkedcloses/naturalexit-close/signalNULL/bothEOF/emptychannels.
+  FixtureW0aoTE/dir216291270/501:0m700 retained;13atimechangesnoninvariant.
+  IndependentONLYcontrol e76b65 C0/I0/M0 at21:24:24UTC heldfiveartifacts+C/test+
+  durableoriginal/eightdistinctFDs/rereadstwice/allFIRSTmaterial/path/hash/
+  8checkedoncecloses/exactinventory+directory/literal4012driver matched;
+  candidate4481B/d0b4e6a2 onlyuniqueENDcomparisonomission/prefix3777STATUSintact.
+  Narrowfirstmismatchsensitivity/currentconsistency only, notall16/immutableTCB.
+- [ ] Finalsyntax/default12SKIP0PASS/version/English/path/diff/current11/prefix/
+  fivehistoricaldrivers/other7/originaltwo/journalHASHONLY/CLIbuild/resources/
+  exposure/pairedreview before root scoped4commit/normalpush/OPEN DRAFT275body.
+  No ready/merge/build/rollout/ENDdispatcher/retention/channel/CONTROL/P2.
+
 ## S7 pure END producer implementation plan
 
 > **For agentic workers:** Root implements inline and remains sole writer;
@@ -18,7 +160,9 @@ Only afterward root appended14lines minimal producer, C8a1eea16/74lines3777B,
 original3028-byte prefix intact. Paired baseline reviews/freshc7d52b preceded
 ONE baselinec4af90/audite1813a. Separate pairedcontrolreviews/fresh16dc48
 preceded control51240c/audit522eaa; ordinary bytes/specific sensitivity only.
-Scoped draft delivery pending; no END transmission/shutdown authority.
+Scoped draft delivery completedadab380a/exactcloudbodya573f6; delivery-pending
+wording below describes precommit epoch, not currentstatus. No END transmission/
+shutdown authority follows.
 
 ### Global constraints / File Map / interface
 

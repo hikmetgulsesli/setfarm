@@ -72,3 +72,16 @@ unsigned sf_continuity_encode_end_v2(uint8_t *end_frame, size_t capacity,
     for (size_t i = 0; i < 16; i++) end_frame[16 + i] = snapshot[i];
     return 1;
 }
+
+/* Pure END matching; never authorize release or exit of an uncertain owner. */
+unsigned sf_continuity_decode_end_v2(const uint8_t *end_bytes, size_t length,
+                                    const uint8_t expected_nonce[16]) {
+    static const uint8_t magic[8] = {'S','F','E','N','D','V','2','!'};
+    if (end_bytes == NULL || expected_nonce == NULL || length != 32) return 0;
+    for (size_t i = 0; i < 8; i++) if (end_bytes[i] != magic[i]) return 0;
+    if (end_bytes[8] || end_bytes[9] || end_bytes[10] || end_bytes[11] != 2 ||
+        end_bytes[12] || end_bytes[13] || end_bytes[14] || end_bytes[15]) return 0;
+    for (size_t i = 0; i < 16; i++)
+        if (end_bytes[16 + i] != expected_nonce[i]) return 0;
+    return 1;
+}

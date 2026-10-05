@@ -19,6 +19,152 @@ assignment, provider/branch/access changes or automatically acting on proposals.
 Exact-head feedback and every suggested implementation/effect require their
 own evidence and scoped review. All positive/merge/runtime gates remain closed.
 
+## S8 separately bounded pure nonce-bound END decoder proposal
+
+S7 ordinary END production/specific reserved-byte sensitivity and scoped draft
+delivery completed at adab380a/exactcloudbodya573f6, OPEN/DRAFT eleven files.
+Next causal prerequisite is checking the frozen END bytes against a separately
+supplied expected nonce. Choose one pure predicate, not a generic dispatcher or
+combined codec/channel/termination implementation: those add cross-kind and
+ownership effects without resolving this one missing-symbol/control boundary.
+Standing owner instruction selects this bounded prerequisite; root sole writer.
+This SOURCE/DESIGN nomination admits no actual test authoring or native effect
+before paired design review and fresh current-input/preservation/resource gate.
+
+Exact File Map modifies existing frame C/test and named plan/spec, aggregate
+eleven; preserve original74-line3777-byte C prefix and allfive historical literal
+drivers, otherseven code/test pins, originaltwo/retainedroots/builds/journal/CLI.
+New proposed interface, not an already frozen symbol:
+
+```c
+unsigned sf_continuity_decode_end_v2(const uint8_t *end_bytes, size_t length,
+                                    const uint8_t expected_nonce[16]);
+```
+
+Return exactly0/refusal or1/bytes match supplied expectation. Both pointers and
+exact32 must be checked BEFORE caller access. Valid readable32/readable16 caller
+storage is a precondition, not pointer authentication. Require ALL eight magic
+bytes SFENDV2!, BEversion2, four reserved zeros and all16 nonce bytes. No writes,
+snapshot/output/heap/I/O/Node/Mach/signal/cancel/channel/custody/cleanup/deadline
+effect is needed. Valid expected_nonce alias at end_bytes+16 is byte-safe only:
+its comparison is tautological, not independent binding. Future owner supplies
+its independently stored original nonce, never derives it from this END frame.
+Return1 grants no entropy/provenance/replay/custody/ENDsend/termination authority.
+Even valid independently bound END cannot release or terminate an uncertain
+owner; receiver join/authentication/live-child/knownlocalclosure gates persist.
+
+Independent END_DECODE_DRIVER fixes full pattern/zero/ff END frame literals and
+separate nonce literals, plus literal NONCE and STATUS1 wrong-kind frames. No
+production builder/decoder/roundtrip expectations. Exactly79 baseline calls:
+36 pointer/length refusals (NULLframe/NULLexpected,0..31,33,SIZE_MAX),8 single
+magic corruptions,4 single version corruptions,1 little-endian version,8 single
+reserved corruptions (each byte12..15 separately1/255),2 wrong-kind refusals
+make59;3 literal matches make62;1 valid payload alias makes63;16 wrong expected
+nonce probes make79. Reset expected nonce from independent pattern literal
+before EACH single-byte XOR1; leave frame unchanged; require exactly0. Every
+probe owns writable frame arena34/expected arena18 with edge canaries and full
+pre-call snapshots. Verify both entire known arenas unchanged, regardless of
+reported length or NULL call flags; oracle never dereferences a NULL argument.
+Exactly1 required on matches;2/3 are invalid, not truthy success. STATUS1 has
+nonzero reserved bytes as well as wrong magic: cross-kind refusal, not isolated
+magic proof. Eight single-magic probes isolate the byte checks. Immutability
+observations detect writes, not forbidden reads; pre-access ordering relies on
+actual source review plus bounded cases, not exhaustive memory-access proof.
+
+Owned-copy control omits ONLY unique comparison:
+
+```c
+if (end_bytes[16 + i] != expected_nonce[i]) return 0;
+```
+
+Replace with (void)expected_nonce[i]; only in retained candidate copy, never
+production C/status matcher/test/literal driver. Specific driver71 occurs ONLY
+when first wrong expectation is incorrectly accepted with exactly1, after63
+preceding successful probes and unchanged frame/expected/canaries. Other returns,
+storage faults, setup/compiler/link/crash failures are non71. The control stops
+at call64, not all16 mismatch mutation coverage. Proposed helper logic:
+
+```c
+/* First verify full known arenas/canaries against pre-call snapshots. */
+if (actual == wanted) return 0;
+if (actual > 1) return 72;
+return diagnostic; /* 71 only wanted0/actual1, first wrong expectation. */
+```
+
+New absent-or1 SETFARM_TASK6A_NATIVE_CONTINUITY_END_DECODER_TEST, oneof6 flags;
+default12SKIP/0PASS/no acquisition. Closed end-decode-baseline and
+end-decode-nonce-omission modes select new independent driver/case map; extend
+failed-link receipt branch without relaxing assertions. Before implementation,
+ONE anchored real RED must produce actualtwo compile0/link1 solely missing new
+decoder/no warnings/otherundefined/no executable/inspection/driver; FIRSTfour
+artifact/source/test/tool/fullchannel commitments/99distinct99checkedcloses
+BEFORE unchangedlink0assertfails. Independent ONLYnewRED audit required.
+Then append minimal pure C only; separate baseline/control each need paired
+actual-source/effect review and fresh original85headers/sevenabsences/tools/
+current11/preservation/resource gates. Fixed strong-stack two compiles/one
+explicitSystem link/exacttwo guardimports/directSystem inspection BEFOREdriver,
+FIRSTfive fullcommitments/100distinct100checkedcloses/naturalexit-close/
+signalNULL/bothEOF/emptychannels and ONLYnew respective artifact audits persist.
+Never replay accepted S7/S6/S5/S4/S3/S2/S1/genuine samples or fullmatrix.
+Final syntax/default-off/version/English/path/diff/exposure/pairedreview/current
+preservation gates allow only scoped4commit/normalpush/existingOPEN DRAFT275body.
+No ready/merge/build/rollout/channel/retention/CONTROL/P2 authority follows.
+
+Paired SOURCE/design C0/I0/M0 at plan67db00da/specabdc9bae and fresh78722c
+21:06:17UTC held16 currentinputs/preservation/rereads/materialpath/16checked
+oncecloses/22ancestors/resources8385952KiB97%/memory66%/throttled0/noheat
+admitted actual test authoring only. Actualtest54575f8e/1098lines60175B has
+separate4012-byte END_DECODE_DRIVER2f1eb4bb; C8a1eea16 still has no END decoder.
+Rootd924acsyntax0/fcd912diff0/636314default12SKIP0PASS0FAIL44.422458ms, no input/
+fixture/child acquisition.31e722 originalC/allfivehistoricaldrivers byte-identical.
+Default skips are not acceptance; actual-test RED-only reviews/fresh109gate and
+actual qualified missing-function RED still precede implementation/effects.
+
+Subsequent paired COMPLETE ACTUAL RED-only C0/I0/M0 and freshecc0c1 at21:11:07
+UTC held109 originals/rereads/materialpath/109checkedoncecloses/current11/
+original85/sevenabsences/tools/preservation56dirs/resources8385596KiB97%/
+memory66%/noheat preceded ONEbc3e80 CLOSED1:1FAIL/0PASS/0SKIP1044.047416ms.
+Actualtwo compile0/link1 solelymissing _sf_continuity_decode_end_v2 referenced
+_probe/nootherundefined/warnings/noimage/inspection/driver/FIRSTfourfullartifact/
+source/test/tool/channelcommitments/99distinct99checkedcloses BEFOREunchanged
+link0assertfails. FixtureihN3GL/dir216290856 retained;10atimechanges separate.
+IndependentONLYnewREDba215f C0/I0/M0 heldfourartifacts+C/test+durableoriginal/
+sevendistinctFDs/rereadstwice/allFIRSTmaterial/path/hash/7checkedoncecloses/
+exactinventory+directory/noimage/literal4012driver matched. Currentconsistency,
+notretroTCB. Only afterward rootappended13lines minimal pure decoder, current
+C314eb00487lines4510B/original3777-byte prefix byte-identical8a1eea16; test54575
+unchanged. At this post-RED epoch baseline/control still require separate actual
+source/effect reviews and fresh gates; no ENDsend/shutdown/channel authority.
+
+Subsequent paired actual-source/baseline-only C0/I0/M0 and freshc9c07d at
+21:17:32UTC held109 originals/rereads/materialpath/109checkedoncecloses/current11/
+original85/sevenabsences/tools/preservation56dirs/resources8375052KiB97%/
+memory66%/noheat before ONE4df659 CLOSED0:1PASS/0FAIL/0SKIP1606.855084ms.
+Actualtwo compile0/link0/NMexacttwo guards/directSystem1356 BEFOREdriver0/all79
+literalcalls/FIRSTfivefullcommitments/100distinct100checkedcloses/naturalexit-close/
+signalNULL/bothEOF/emptychannels. FixtureQyGZgg/dir216291105/501:0m700 retained;
+13atimechanges separate/noninvariant. IndependentONLYnewbaseline364ace C0/I0/M0
+heldfiveartifacts+C/test+durableoriginal/eightdistinctFDs/rereadstwice/allFIRST
+material/path/hash/8checkedoncecloses/exactinventory+directory/literal4012driver/
+prefix3777 matched. Currentconsistency only, notretroTCB/control permission.
+
+Separate paired CONTROL-only C0/I0/M0 and fresh004169 at21:21:14UTC held109
+originals/rereads/materialpath/109checkedoncecloses/current11/original85/
+sevenabsences/tools/preservation56dirs/resources8370932KiB97%/memory67%/noheat
+preceded ONE1f7d89 CLOSED0:1PASS/0FAIL/0SKIP1605.700917ms. Actualtwo compile0/
+link0/exacttwo guards/directSystem1356 BEFOREdriver71/firstwrongexpectednonce
+acceptedexactly1 AFTER63intactprobes/fullarenas+canaries unchanged. FIRSTfive
+fullcommitments/100distinct100checkedcloses/naturalexit-close/signalNULL/bothEOF/
+emptychannels; fixtureW0aoTE/dir216291270/501:0m700 retained;13atimechanges
+noninvariant. IndependentONLYcontrol e76b65 C0/I0/M0 heldfiveartifacts+C/test+
+durableoriginal/eightdistinctFDs/rereadstwice/allFIRSTmaterial/path/hash/
+8checkedoncecloses/exactinventory+directory/literal4012driver matched. Candidate
+4481B/d0b4e6a2 preciselyuniqueENDcomparisonomission, original3777prefix/STATUS
+intact; notall16mutationcoverage/genericfailure/retroTCB. Finalstatic/default-off/
+pairedsource/deliveryreview and fresh currentinput/preservation/resource/exposure
+gates precede scoped4commit/normalpush/existingOPEN DRAFT275body; broader gates
+remain open. Even valid nonce-bound END never disposes an uncertain owner.
+
 ## S7 separately bounded pure END producer proposal
 
 S6 ordinary initialNONCE extraction/sensitivity and scoped draft delivery are
@@ -135,8 +281,9 @@ C/test+durableoriginal/eightdistinctFDs/rereadstwice/allFIRSTmaterial/path/hash/
 8checkedoncecloses/exactinventory+directory matched; candidatef9462ab9 exactly
 source withONLYuniqueownedreserved15zero->one. Notgenericfailure/all12control
 coverage/immutableTCB. Rootsyntax/default10SKIP0PASS0FAIL/noacquisition/version/
-English/path/diff checks passed. Finalpairedsource/deliveryreview and fresh
-currentinput/preservation/resource/exposure gate remain before scoped4commit/
+English/path/diff checks passed. At that precommit epoch, finalpairedsource/
+deliveryreview and fresh currentinput/preservation/resource/exposure gate
+remained before scoped4commit/
 normalpush/existingOPEN DRAFT275body. No ENDsend/shutdown/channel/CONTROL/P2.
 
 ## S6 separately bounded pure initial nonce extractor proposal
