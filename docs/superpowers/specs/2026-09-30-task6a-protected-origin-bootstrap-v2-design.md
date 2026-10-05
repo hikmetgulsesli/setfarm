@@ -19,6 +19,117 @@ assignment, provider/branch/access changes or automatically acting on proposals.
 Exact-head feedback and every suggested implementation/effect require their
 own evidence and scoped review. All positive/merge/runtime gates remain closed.
 
+## S5 separately bounded pure nonce producer proposal
+
+S4 ordinary status production/sensitivity and scoped draft delivery are complete
+at75c863a3; all positive native gates remain open. The next causal prerequisite
+is the independently supplied NONCE frame frozen in the existing byte ABI.
+Choose one pure nonce producer, separate from nonce consumption and shutdown-
+sensitive END semantics. Combining NONCE/END or executing a full channel would
+couple unrelated phase/effect gates; a roundtrip-only oracle could share defects.
+Initial paired source/design C0/I0/M0 and fresh source-onlye51079 audit admitted
+test authoring only. At that authoring epoch, test/helperd4ab3c45 existed while
+Caff still lacked the nonce function. Default8c8417 reported6SKIP/0PASS/0FAIL
+42.09675ms, syntax/diff0, no input/fixture/child acquisition. RED was separately gated;
+no compiler/link/driver or channel effect follows from S4's accepted samples.
+Separately reviewed originalRED775578 is now qualified by independentc820c0:
+two compile0/link1 sole missingnonceencoder/unchangedlink0assert/99checkedcloses,
+no image/inspection/driver. First four-artifact/source/test/tool/channels match
+independent six-held-input rereads/materialpath/checkedcloses; fixtureIVQAU3
+retained. Minimal nonce producer was appended only afterward. New baseline and
+reserved-control were separately gated. New baselineba57aa now passed its
+ordinary producer oracle and independent artifact audit7a7523. Separate control
+54de11 passed its specific reserved-byte oracle and independent artifact
+auditdabbb9. Scoped draft delivery still requires final review/current inventory.
+No native authority credit follows.
+
+Exact File Map remains existing frame C/test and this named plan/spec, aggregate
+eleven. Other seven code/test files and original31-line1509-byte frame C prefix
+remain unchanged, including both status functions and both accepted C drivers.
+Append only this new interface after a real missing-function link RED:
+
+```c
+unsigned sf_continuity_encode_nonce_v2(uint8_t *nonce_frame, size_t capacity,
+                                      const uint8_t nonce[16]);
+```
+
+Return0/refusal or1/encoded. Both pointers and exact capacity32 are checked
+before caller-memory access. Reject leaves all output unchanged/no nonce read.
+Valid output designates32 writable bytes and nonce16 readable bytes; extent and
+pointer validity are caller preconditions, not inferable from C pointers. All
+16 nonce bytes are copied into a local stack snapshot BEFORE any output write;
+valid overlap at output/output+8/output+16 preserves that pre-write value.
+Separate nonce storage remains unchanged. No pointer ordering/address casts.
+Successful output writes exactly32 bytes: SFNONC2!, BEversion2, four reserved
+zero bytes, then original input nonce16. Accept arbitrary byte values, including
+zero/allff, without claiming fresh randomness, secrecy or replay protection.
+No generation, I/O, allocation, Node callback, Mach, signals, cancellation,
+custody mutation, deadline renewal, pipe write or runtime integration. Producing
+bytes is never authorization to send NONCE or END, close/release an owner, or
+claim custody/continuity/CONTROL/P2. Stack memory is not infallible retention.
+
+Independent literal driver, not the production decoder/helper, fixes three full
+32-byte outputs: pattern nonce00/11/.../ff, allzero nonce, and allff nonce.
+For each, verify exact output/canaries/separate nonce and overlaps0/8/16. Refuse
+NULLoutput/NULLnonce, capacities0..31/33/SIZE_MAX with independent0 expectation,
+unchanged34-byte arena and16-byte nonce. Baseline has36 refusals+12 successes.
+Control changes ONLYunique nonce_frame[15]=0 to1 in an owned candidate copy;
+never mutate original C/test/status functions/drivers. Driver71 means return1,
+intact canaries/nonce and ALL31 other frame bytes correct before reservedbyte15
+is observed1 instead of0. Other mutations, returns, setup/compiler/link/signal/
+crash failures cannot qualify. Control stops after36 refusals and that specific
+first accepted-frame failure; it is not all12 accepted-case mutation coverage.
+
+New exact SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_TEST=1, absent or1 only; refuse
+two or more of S3/S4/S5 opt-ins. Default adds2SKIPs (total6/0PASS) and no input,
+fixture or child acquisition. Two new anchored cases only: 'continuity nonce
+encoder produces only literal input frames' and 'continuity nonce encoder
+oracle rejects reserved-byte mutation'. Closed internal nonce-baseline/
+nonce-reserved modes select a separate literal driver; no caller-selected magic,
+path, compiler flags or mutation. Historical S3/S4 drivers remain byte-identical;
+do not replay any accepted S4/S3/S2/S1/genuine sample or full native matrix.
+
+Reuse current reviewed fixed85-original-header/seven-absence/tool/strong-stack/
+two-compile/explicitSystem-link/inspection/original-FD/child-settlement recipe,
+without loosening checks. Missing-function RED has two compile0 results then
+link1 sole undefined sf_continuity_encode_nonce_v2 before image/inspection/driver.
+Preserve the four-file fixture and complete first compiler/link/input/tool/
+artifact commitments through original rereads/material checks/checked once
+closes BEFORE diagnostic and unchanged link0 assertion. Generic failure is not
+RED qualification. Minimal implementation follows only independently qualified
+actual RED. Baseline and reserved-control each need separate complete actual-
+source/effect review, fresh exact-input/preservation/resource gates and original
+five-artifact receipts with100 checked closes. Retain all fixtures visibly;
+post-audits establish current consistency, never retroactive immutable TCB.
+All live owner/channel/END/nonce-consumer/retention/control/host gates stay open.
+
+Paired baseline-only actual-source C0/I0/M0 and fresh4b051c full109-input/
+preservation/resource gate preceded ONEba57aa CLOSED0:1PASS/0FAIL/0SKIP
+1594.972625ms. Actualtwo compile0/link0/exacttwo guards/directSystem1356 before
+driver0/all48literal calls/emptychannels/naturalexit-close/signalNULL/bothEOF/
+100distinct100checkedcloses. First five-artifact/source/test/tool commitments
+emitted; fixtureXp2rXJ/dir216287700 retained. IndependentONLYnewbaseline7a7523
+heldseven distinct originalFDs/rereads twice/allfirstmaterial/path/hash
+commitments/checkedonce7closes/exactfiveinventory+directory matched.
+Historical accepted invocation, never replay it or older native cases.
+
+Paired separate CONTROL-only C0/I0/M0 and fresh e62381 full109-original-input/
+preservation/resource gate preceded ONE54de11 CLOSED0:1PASS/0FAIL/0SKIP
+1587.786084ms. Actualtwo compile0/link0/exacttwo guards/directSystem1356 before
+driver71/only-reserved-byte-mutated-to-one after36refusals+31other first-frame
+bytes; naturalexit-close/signalNULL/bothEOF/emptychannels/100distinct100checked
+closes. Complete first five-artifact/source/test/tool commitments; fixture
+dDMVjg/dir216287935 retained,13atimechanges separate/noninvariant. Original C/
+test unchanged; independentONLYnewcontrol dabbb9 heldseven originalFDs/rereads
+twice/allfirstmaterial/path/hash commitments/checkedonce7closes/exactfive
+inventory+directory matched; only unique reserved15 zero-to-one copy mutation.
+This control
+does not establish all12 accepted-case mutation coverage or native authority.
+Final9c81d5 syntax0/2427a1 default6SKIP0PASS0FAIL41.1185ms (no acquisition),
+a9458d version2.3.79/890edd English1936/45f871 paths971 all0. Final scoped
+review/currentinventory/draft-only delivery remain pending; no ready/merge/build/
+rollout/channel/CONTROL/P2 credit.
+
 ## S4 separately bounded pure status producer proposal
 
 S3's eleven-file draft checkpoint was delivered at acdf31d4. Its accepted
@@ -30,7 +141,10 @@ all compiler/link/driver invocations retain separate exact-source gates. Origina
 RED189506 is independently qualified; minimal encoder was appended only
 afterward. Separate baselinec80fb5 and version-controlc6a622 passed their strict
 ordinary producer oracles, with independent audits43236b/c7b567 matching original
-commitments. Scoped draft delivery remains separate from all positive native gates.
+commitments. Scoped draft delivery completed at75c863a3, with exact cloud head,
+OPEN/DRAFT11-file map6046+/7- and updated measured body verified417cd3. Guardian
+success is not review approval; reviews[] remain nonpositive. All native gates
+remain separate. Historical S4 delivery-pending wording describes its precommit epoch.
 
 Choose one encoder in the existing frame C file and its existing builtin test.
 Literal output checks exercise the real producer. Encoder/decoder round trips

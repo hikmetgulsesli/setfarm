@@ -29,3 +29,17 @@ unsigned sf_continuity_encode_status_v2(uint8_t *out, size_t capacity,
     for (size_t i = 0; i < 16; i++) out[16 + i] = snapshot[i];
     return 1;
 }
+
+/* Pure NONCE bytes; no randomness, channel or shutdown authority. */
+unsigned sf_continuity_encode_nonce_v2(uint8_t *nonce_frame, size_t capacity,
+                                      const uint8_t nonce[16]) {
+    static const uint8_t magic[8] = {'S','F','N','O','N','C','2','!'};
+    uint8_t snapshot[16];
+    if (nonce_frame == NULL || nonce == NULL || capacity != 32) return 0;
+    for (size_t i = 0; i < 16; i++) snapshot[i] = nonce[i];
+    for (size_t i = 0; i < 8; i++) nonce_frame[i] = magic[i];
+    nonce_frame[8] = 0; nonce_frame[9] = 0; nonce_frame[10] = 0; nonce_frame[11] = 2;
+    nonce_frame[12] = 0; nonce_frame[13] = 0; nonce_frame[14] = 0; nonce_frame[15] = 0;
+    for (size_t i = 0; i < 16; i++) nonce_frame[16 + i] = snapshot[i];
+    return 1;
+}

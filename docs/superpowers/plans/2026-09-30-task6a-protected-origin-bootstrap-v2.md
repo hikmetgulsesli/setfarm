@@ -1,5 +1,200 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S5 pure nonce producer implementation plan
+
+> **For agentic workers:** Root implements inline and remains sole writer;
+> independent agents perform read-only research/review, never delivery or effects.
+
+**Goal:** Produce the existing exact NONCE input frame without authority.
+**Architecture:** One appended pure C function plus a separate independent
+literal C driver in the existing builtin test. No nonce reader/END/channel hook.
+**Tech Stack:** Existing fixed CLT/Public SDK C11/builtin Node; no install/header.
+**Spec:** Named design, S5 separately bounded pure nonce producer proposal.
+**Status:** Paired source/design review admitted test authoring only. Actual
+nonce driver/helper was authored before qualified missing-function RED775578/
+c820c0. Minimal nonce encoder was appended only afterward; the original31-line/
+1509-byte S4 prefix stays unchanged. New baselineba57aa passed its ordinary
+producer oracle and independent artifact audit7a7523. Separate control54de11
+passed its specific reserved-byte oracle and independent artifact auditdabbb9.
+Scoped draft delivery remains gated on final review/current inventory.
+
+### Global constraints / File Map / interface
+
+- Modify only scripts/task6a-origin-native-continuity-frame-v2.c, its existing
+  scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js and named
+  plan/spec; aggregate eleven. Other seven code/test files and original31-line/
+  1509-byte C prefix stay unchanged. Preserve S3 DRIVERa4dc and S4 DRIVERa860fc.
+- Append unsigned sf_continuity_encode_nonce_v2(uint8_t *,size_t,const uint8_t[16]).
+  Return0/1, NULL/exact32 before any access, caller-valid32/16 storage, snapshot16
+  before every write for valid overlap. SFNONC2!/BE2/reserved0/nonce16 exactly.
+- No heap/I/O/nonce-generation/JS/Mach/signal/cancel/channel/owner/deadline effect
+  or authority; arbitrary nonce bytes accepted without entropy/replay claims.
+- Exact new SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_TEST=1; reject malformed and
+  multiple S3/S4/S5 opt-ins. Default6SKIP/0PASS, no acquisition. New anchored
+  cases only, serial fixed env-i Node; no accepted sample/full-matrix replay.
+- Same85 original headers/seven absences/fixedtools/compile/link/inspection/
+  originalFD/checked-once-close/child-settlement recipe; never auto-admit headers
+  or weaken stack protection. Retain original fixtures/roots/two files/journal.
+
+### Task S5a: literal oracle and missing-function RED
+
+- [x] Independently review complete spec/interface/pre-access/storage/overlap,
+  File Map/source-only boundaries before actual test authoring.
+- [x] Add NONCE_CASES and separate NONCE_DRIVER. Its full expected fixtures are:
+
+  ```c
+  static const uint8_t patterned[16]={
+    0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+    0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+  };
+  static const uint8_t zero[16]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+  static const uint8_t ff[16]={
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+  };
+  static const uint8_t pattern_frame[32]={
+    'S','F','N','O','N','C','2','!',0,0,0,2,0,0,0,0,
+    0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+    0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+  };
+  static const uint8_t zero_frame[32]={
+    'S','F','N','O','N','C','2','!',0,0,0,2,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  };
+  static const uint8_t ff_frame[32]={
+    'S','F','N','O','N','C','2','!',0,0,0,2,0,0,0,0,
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+  };
+  ```
+
+  Driver declares exact new API, includes onlystddef/stdint. Refusal probe owns
+  arena34 and nonce16 initialized from patterned; snapshots both independently,
+  calls actual API and requires return0/all34+16 unchanged. Exercise NULLout,
+  NULLnonce, every capacity0..31 then33/SIZE_MAX (36 refusals). Accepted probe
+  owns arena34/canaries0xa5, mutable separate input16 from selected independent
+  nonce, or embeds that nonce at output+0/+8/+16. It calls with capacity32, checks
+  canaries+separate input unchanged+return1, ALL31 bytes except15 against the
+  supplied full literal frame, then byte15:
+
+  ```c
+  if (arena[0] != 0xa5 || arena[33] != 0xa5) return 91;
+  for (size_t i=0; i<16; i++) if (input[i] != supplied[i]) return 90;
+  if (actual != 1) return 80;
+  for (size_t i=0; i<32; i++) if (i != 15 && out[i] != expected[i]) return 72;
+  if (out[15] != expected[15]) return out[15] == 1 ? 71 : 72;
+  ```
+
+  Baseline finishes12 accepted calls: pattern/zero/ff each with separate nonce
+  and three overlap offsets. Never derive expected frames via production code.
+  Add exact names 'continuity nonce encoder produces only literal input frames'
+  and 'continuity nonce encoder oracle rejects reserved-byte mutation'.
+  Extend helper's closed modes with nonce-baseline/nonce-reserved; select new
+  literal driver/cases, retain both historical drivers unchanged. Add new flag
+  and pairwise mutual exclusion. For nonce-reserved only replace the unique
+  anchor 'nonce_frame[15] = 0;' with 'nonce_frame[15] = 1;' in owned copy.
+  Failed-link branch must include this producer, preserve four originals/full
+  actual result through checks/closures and emit diagnostic before link0assert.
+  Paired C0/I0/M0 at pland37923ba/specd7048d49; independent source-onlye51079
+  current11/preservation/fullheld16/reread/materialpath/checked16closes preceded
+  authoring. Actualtestd4ab3c45 is674lines; Caff unchanged/no nonce function.
+  Rootab6ca9 syntax/diff0;8c8417 default6SKIP/0PASS/0FAIL42.09675ms, no input/
+  fixture/child acquisition. This is opt-out evidence, not nonce acceptance.
+- [x] Review COMPLETE actual test/helper/driver and still-missing nonce function;
+  refresh exact current11/85originalheaders/sevenabsences/tool/preservation/
+  resources, then run only the new RED baseline once:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity nonce encoder produces only literal input frames$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Require actual two compile0/link1 sole undefined new nonce encoder/no image/
+  inspection/driver, exact four-file retained inventory, complete original
+  channels/metadata/hashes/99distinct99checkedcloses. Unchanged link0assert
+  MUST fail. Independently audit ONLYnewRED original artifacts/source/test;
+  generic compiler/setup/refusal is not missing-feature evidence.
+  Historical completed RED command, never replay it. Paired actual-test
+  C0/I0/M0 at Caff/testd4ab/planfd4368/spec92bf and correctedfreshec7866
+  fullheld109/checked109closes/current11/85originalheaders/sevenabsences/tools/
+  preservation/graph60headers109edges/resources5233408KiB98%/memory65%/noheat
+  preceded ONE775578 CLOSED1:1FAIL/0PASS/0SKIP1024.334167ms/case982.587083.
+  Both compile0, link1 sole missingnonceencoder/no warnings/otherundefined;
+  no image/inspection/driver. Complete first four-artifact/source/test/tool/
+  channel commitments precede unchangedlink0assert/99distinct99checkedcloses.
+  Fixture IVQAU3/dir216287498/501:0m700 retained. Independentc820c0 ONLYnewRED
+  four artifacts+C/test/held6/rereads twice/allfirstmaterialhash/pathcommitments/
+  checked6closes/exactfourinventory match. This qualifies missingfeature only.
+  Audit91b99e failed on a copied65hex nomination; correcting only that copied
+  literal restored the original64hex test nomination, no source/guard/hash change.
+
+### Task S5b: minimal producer, independent baseline and reserved-control
+
+- [x] Only after qualified original RED append minimal new implementation:
+
+  ```c
+  unsigned sf_continuity_encode_nonce_v2(uint8_t *nonce_frame, size_t capacity,
+                                        const uint8_t nonce[16]) {
+      static const uint8_t magic[8] = {'S','F','N','O','N','C','2','!'};
+      uint8_t snapshot[16];
+      if (nonce_frame == NULL || nonce == NULL || capacity != 32) return 0;
+      for (size_t i = 0; i < 16; i++) snapshot[i] = nonce[i];
+      for (size_t i = 0; i < 8; i++) nonce_frame[i] = magic[i];
+      nonce_frame[8] = 0; nonce_frame[9] = 0; nonce_frame[10] = 0; nonce_frame[11] = 2;
+      nonce_frame[12] = 0; nonce_frame[13] = 0; nonce_frame[14] = 0; nonce_frame[15] = 0;
+      for (size_t i = 0; i < 16; i++) nonce_frame[16 + i] = snapshot[i];
+      return 1;
+  }
+  ```
+
+- [x] Separate complete actual-source/effect review and freshinputgate precede
+  ONEnewbaseline at this new implementation epoch (same anchored S5 command,
+  not replay of the missing-function epoch). Require driver0/all48calls, two
+  compile0/link0/strict2guardimports/directSystem before execution, emptychannels/
+  naturalexit-close/signalNULL/bothEOF/allfiveoriginalartifact commitments/
+  100distinct100checkedcloses. IndependentONLYnewbaseline audit before control.
+  Paired C0/I0/M0 at C6e3b10aa/testd4ab/plan a76df932/spec d97de6b2 and fresh
+  4b051c full109-original-input/reread/materialpath/checked109closes/85original
+  headers/sevenabsences/tools/preservation/resources5235104KiB98%/memory66%/
+  throttled0/noheat preceded ONEba57aa CLOSED0:1PASS/0FAIL/0SKIP1594.972625ms/
+  case1552.816875. Both compile0/link0/exacttwo guards/directSystem1356 before
+  actualdriver0/all48literal calls/emptychannels/naturalexit-close/signalNULL/
+  bothEOF/100distinct100checkedcloses. First five-artifact/source/test/tool/
+  channel commitments emitted; fixtureXp2rXJ/dir216287700/501:0m700 retained.
+  Readatime13changes separate/noninvariant; independentONLYnewbaseline7a7523
+  heldseven distinct original FDs/rereads twice/allfirstmaterial/path/hash
+  commitments/checkedonce7closes/exactfiveinventory+directory matched.
+  Accepted baseline must never be replayed; no native authority credit.
+- [x] Separate unique-reserved-byte control review/freshgate precede ONE:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity nonce encoder oracle rejects reserved-byte mutation$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Actualspecificdriver71 after36refusals and31otherframebytes, not generic
+  failure; same complete fixture/result/closure recipe. IndependentONLYcontrol
+  originalartifact audit. No accepted baseline/RED/S4/S3/S2/S1/genuine replay.
+  Historical completed command, never replay it. Paired CONTROL-only C0/I0/M0
+  at C6e3b10aa/testd4ab/plan c68cd9f8/spec2d07762b plus fresh e62381 held109/
+  checked109closes/current11/85originalheaders/sevenabsences/tools/preservation/
+  resources5230220KiB98%/memory66%/throttled0/noheat precede ONE54de11 CLOSED0:
+  1PASS/0FAIL/0SKIP1587.786084ms/case1547.440958. Actualtwo compile0/link0/
+  exacttwo guards/directSystem1356 before driver71/only-reserved-byte-mutated-
+  to-one; all36refusals and31other first-frame bytes precede diagnostic71.
+  Naturalexit-close/signalNULL/bothEOF/emptychannels/100distinct100checkedcloses;
+  complete first five-artifact/source/test/tool commitments,13atimechanges
+  separate. Fixture dDMVjg/dir216287935/501:0m700 retained, original C/test
+  unchanged. IndependentONLYnewcontrol dabbb9 heldseven originalFDs/rereads
+  twice/allfirstmaterial/path/hash commitments/checkedonce7closes/exactfive
+  inventory+directory matched; only unique reserved15 zero-to-one copy mutation.
+  This is not
+  all12 accepted-case control coverage, entropy/replay/channel/CONTROL/P2credit.
+- [x] Verify default6SKIP0PASS opt-out, syntax/version/English/path/diff, original
+  31lineCprefix and allothersevenpins/S3+S4drivers/elevenFileMap unchanged.
+  9c81d5 syntax0;2427a1 default6SKIP/0PASS/0FAIL41.1185ms, no inputs/fixtures/
+  children. a9458d version2.3.79/890edd English1936/45f871 paths971 all0.
+- [ ] Independent scoped review/currentinventory precede normal root commit/push/
+  existingDRAFT275 body update; no ready/merge/build/channel/host/CONTROL/P2credit.
+
 ## S4 pure status producer implementation plan
 
 > Root remains the sole source/Git/effect writer. Independent reviewers are
@@ -13,8 +208,11 @@ driver in its builtin test. Existing decoder and accepted S3 driver stay unchang
 **Status:** Original missing-encoder link RED189506 qualified; minimal encoder
 appended only afterward. Separate baselinec80fb5 and version-controlc6a622 passed
 their strict ordinary producer oracles; independent audits43236b/c7b567 match
-original commitments. Final scoped draft-only review/delivery gate remains;
-this is not native-channel, CONTROL, P2, clean-main or host qualification.
+original commitments. Scoped draft delivery completed75c863a3; exact cloud
+head/OPEN/DRAFT11map6046+/7- and measured body verified417cd3. Guardian security
+is not code approval; reviews[] remain nonpositive. Precommit delivery-pending
+wording below describes its historical epoch, not a replay instruction. This is
+not native-channel, CONTROL, P2, clean-main or host qualification.
 
 ### File Map / exact interface / constraints
 
