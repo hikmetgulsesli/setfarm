@@ -14,7 +14,11 @@ record callback execution; canonical JavaScript text alone is insufficient.
 **Tech Stack:** Public Node-API8 C headers, fixed Node26.4/libnode147, CLT clang/ld,
 MacOSX26.5 SDK, builtin node:test; no package installation or node-gyp.
 **Spec:** Existing named design, S1 separately bounded inert Node-API prerequisite.
-**Status:** Design-only until exact review. No S1 source/test or addon exists.
+**Status:** Missing-source RED recorded; minimal C/CJS and test now exist locally.
+First compilation/link stopped on a deprecated-option warning before inspection
+or addon load. After the reviewed correction, four separately anchored cases
+passed: actual baseline, omission, native-message and argv. This qualifies only
+the ordinary instrumented S1 sample, not transport/CONTROL/protected/P2 or T4.
 
 ### Global constraints / File Map / interfaces
 
@@ -22,8 +26,9 @@ MacOSX26.5 SDK, builtin node:test; no package installation or node-gyp.
 - Create `scripts/task6a-origin-native-cooperative-entry-v2.cjs`.
 - Create `scripts/__tests__/task6a-origin-native-cooperative-initializer-v2.test.js`.
 - Modify only this named plan and its named spec for the causal refinement.
-- Existing task-port C7deb/testb2fc/builtin entry stay unchanged. Aggregate future
-  branch map is7, current draft actual map remains4 until creation.
+- Existing task-port C7deb/testb2fc/builtin entry stay unchanged. The initial
+  published draft checkpoint is4; the current local aggregate is7, and the next
+  draft update will publish7.
 - Default opt-out has no native effects; opt-in exactly
   `SETFARM_TASK6A_NATIVE_INERT_INITIALIZER_TEST=1` in the test process only.
 - No Mach/ports/TFP/query/threads, target/path/provider selectors, policy/security/
@@ -32,19 +37,21 @@ MacOSX26.5 SDK, builtin node:test; no package installation or node-gyp.
 - Production consumes a napi_env and original napi_value exports at the standard
   NAPI_MODULE_INIT interface; produces only initialize(). It always throws the
   fixed native unavailable error, never transport/readiness or positive authority.
-- NAPI_VERSION8; production imports create_function/set_named_property/throw_error
-  plus libSystem `_Exit`. NAPI failure => owned child exit72, never acceptance.
+- NAPI_VERSION8; production source calls create_function/set_named_property/throw_error
+  plus libSystem `_Exit`. Compiler security/runtime imports are distinct and stay
+  enabled; unmodified binary closure is not inferred from the derivative.
+  NAPI failure => owned child exit72, never acceptance.
 - Entry prints actual native error.message, extra argv refuses BEFORE require.
 - Instrumentation delegates actual NAPI functions, records actual callback entry
   and return plus image identity, never a mock status or JS self-certification.
 
 ### Task S1a: exact design review, then real missing-behavior RED
 
-- [ ] Self-review this design for contradiction with the full-channel no-effect
+- [x] Self-review this design for contradiction with the full-channel no-effect
   gate; keep only the inert exception explicit. Independent read-only reviewers
   inspect all new file responsibilities, status checks, loader identity,
   resource custody and four behavioral oracles. Review is not an effect run.
-- [ ] Write the new test first. Its closed helper holds original sources first;
+- [x] Write the new test first. Its closed helper holds original sources first;
   missing source returns `{availability:'source-unavailable'}` before fixture,
   CLT, Node child or addon acquisition. Baseline assertion is:
 
@@ -62,7 +69,7 @@ MacOSX26.5 SDK, builtin node:test; no package installation or node-gyp.
   modes. Build test-copy prefix with actual typed delegates/trampoline, no source
   body callback marker substitute. Exact prefix/helper/command/environment and
   ownership recipe receive independent review before any invocation.
-- [ ] Run anchored RED only after test-source review:
+- [x] Run anchored RED only after test-source review:
 
   ```sh
   /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_INERT_INITIALIZER_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^inert native initializer delegates actual callback and refuses$' scripts/__tests__/task6a-origin-native-cooperative-initializer-v2.test.js
@@ -75,10 +82,13 @@ MacOSX26.5 SDK, builtin node:test; no package installation or node-gyp.
   Expected one assertion FAIL: actual source-unavailable vs inert-native-observed;
   no syntax error, compiler or loader effects. Preserve the original closed
   result. Do not fabricate GREEN, skip the missing behavior or weaken the oracle.
+  Original3f8262 CLOSED1: oneFAIL/zeroPASS/zeroSKIP,41.756834ms;
+  ERR_ASSERTION source-unavailable vs inert-native-observed at test17e1e4e7.
+  Both exact RED-only reviews C0/I0/M0; no compiler/link/addon effect.
 
 ### Task S1b: minimal inert native implementation / checked measured GREEN
 
-- [ ] Implement only the native registration/callback and fixed entry described
+- [x] Implement only the native registration/callback and fixed entry described
   in the spec after RED. Native control flow is exactly:
 
   ```c
@@ -97,41 +107,85 @@ MacOSX26.5 SDK, builtin node:test; no package installation or node-gyp.
   No extra native API, test knob or source-owned file write. JS guards argv and
   sole initialize export, require is outside callback catch, invokes once and
   prints actual native message. Unexpected load/setup exceptions cannot match.
-- [ ] Review exact complete source/test and effects before compiler/addon use.
+  Future-GREEN review corrections: positional original held-FD reads instead of
+  pathname reopen; guarded stream setup/data failures remain latched until
+  original child close; typed real export wrappers capture env/exports and
+  delegate the original macro bodies; delegate/export image checks occur at
+  their actual invocations, not atexit. Trace is explicit exclusive0600 checked
+  open/fdopen/write/fclose; failed fdopen close failure exits74, otherwise73.
+  All are test-copy-only custody/witness changes, not production authority.
+- [x] Review exact complete source/test and effects before compiler/addon use.
   Compile argv: `--no-default-config --target=arm64-apple-macos26.5
   -std=c11 -O0 -Wall -Wextra -Werror -fno-modules -fno-lto
   -fvisibility=hidden -nostdinc -isystem NODE_HEADERS -isystem RESOURCE/include
   -isystem SDK/usr/include -isysroot SDK -c OWNED_C -o OWNED_OBJECT`.
   Link through fixed clang with explicit fixed LD,
   `--no-default-config --target=arm64-apple-macos26.5 -bundle -fno-lto -nostdlib
-  -Wl,-Z -Wl,-undefined,error -Wl,-syslibroot,SDK OWNED_OBJECT CELLAR_LIBNODE
+  -Wl,-Z -Wl,-syslibroot,SDK OWNED_OBJECT CELLAR_LIBNODE
   SDK/usr/lib/libSystem.B.tbd -o OWNED_ADDON`.
   Constants are the already pinned CLT/SDK/resource paths and exact Cellar
   Node26.4/libnode147; no ambient search inputs. Separate derivative prefix
   imports from production. Inspect actual exports/imports/dependency load
   commands before load; errors/extra symbols refuse.
-- [ ] Fresh physical/resource/preservation gate, then run the SAME anchored
+  The pinned installed ld.1 specifies default undefined-error. First actual
+  baseline fdee93 CLOSED1 (0PASS/1FAIL) compiled/linked but stopped on exact
+  deprecated explicit-flag warning before inspection/Node load. Remove only
+  `-Wl,-undefined,error`, retain default error semantics and strict empty stderr;
+  no warning suppression/acceptance, `-U` or dynamic lookup. Preserve artifacts
+  and this failed receipt; review the changed recipe before a fresh invocation.
+  Read-only retained derivative inspection establishes the actual fdopen SDK
+  alias and memcpy/stack-protection imports. The test now requires that exact
+  derivative set, keeps protection enabled and does not credit an unmodified
+  production-binary import closure or native callback from this inspection.
+- [x] Fresh physical/resource/preservation gate, then run the SAME anchored
   baseline command. Require original compile/link0, Node2, stdout empty,
   actual canonical stderr, checked native order/count/status/image trace,
   both EOF/original close and all held reread/stat/path/checked closes.
   Retain all fixtures, sources/objects/addon/trace and original output. No force
   kill, deletion, uncertain disposal, original-receipt replay or host mutation.
+  Paired exact reviews C0/I0/M0 at Ccbafba3d/CJSbd83726b/test4cf92b3d/
+  spec547265cb/planb9ed3ff4. Fresh7/tool/preservation gate5b9171/4e900c/3a9174
+  CLOSED0; own helper rechecks recorded30files/38selectors before/after.
+  ONE corrected baseline1daa29/session52693 ->fd884c CLOSED0:
+  1PASS/0FAIL/0SKIP1233.145042ms, actual callback/refusal plus exact five
+  invocation-site image/count witnesses. No baseline replay after acceptance.
+  Independent1efa83/d8eb34/8c7479/2d11ce confirms bounded post-audit/current7/
+  preservation/tools/allclose. Original receipt did NOT emit object/addon/trace
+  hashes/inodes: independent artifact checks are current held consistency plus
+  literal trace expectations, NOT cross-epoch immutable comparison. Keep this
+  limitation; internal helper checks are not an unmodified/P2/continuous receipt.
 
 ### Task S1c: independent oracle sensitivity and scoped checkpoint
 
-- [ ] Write/run one closed omission control: actual module still loads and
+- [x] Write/run one closed omission control: actual module still loads and
   registers initialize, modified entry never invokes it yet prints canonical
   stderr/exit2. Parse its structurally valid create/set-only trace without
   helper faults; unchanged baseline oracle checks callbackEntries before full
   semantic order/count checks and must fail native-callback-entry only.
-- [ ] Write/run one closed C-message control: change native thrown literal,
+  Original8184c4 CLOSED0:1PASS/0FAIL/0SKIP1072.43525ms. Same canonical JS
+  stderr, valid create/set-only trace, precise callback-entry oracle rejection.
+- [x] Write/run one closed C-message control: change native thrown literal,
   original entry stays byte-identical. Real stderr changes; unchanged oracle
   must fail native-error-message, while callback/status/image facts remain real.
-- [ ] Write/run extra-argv refusal with no addon file: expected argv stderr,
+  Original710fec/session26538 ->c856cd CLOSED0:1PASS/0FAIL/0SKIP1172.114792ms.
+  Actual changed native stderr, original entry bytes, precise native-error-message
+  rejection, complete real callback/delegate/export witnesses unchanged.
+- [x] Write/run extra-argv refusal with no addon file: expected argv stderr,
   Node2/empty stdout/no native trace, independently verified before-load refusal.
-- [ ] Confirm default opt-out, syntax/diff/version/English/path contracts and
+  Originala958fd CLOSED0:1PASS/0FAIL/0SKIP607.814541ms; no compile/link/addon
+  in this case. All three were separately reviewed and serial, each after fresh
+  custody/resource checks. No four-case omnibus or other native matrix replay.
+- [x] Confirm default opt-out, syntax/diff/version/English/path contracts and
   independent source/test review on exact pins. Native outcomes are ordinary
   measured S1 only, not native transport/CONTROL/P2/full matrix approval.
+  Exact test4cf92b3d default4SKIP/0PASS/0FAIL41.854792ms, syntax/diff0;
+  ea461f version2.3.79/1577d2 English1934/2dcd1a paths969 CLOSED0.
+  Both exact source/effect reviews C0/I0/M0; final receipt/docs aggregate review
+  and public seven-file exposure check precede the scoped checkpoint below.
+  Independent35f5f4 checks ONLY the three original control fixtures:11files,
+  exact5+5+1 inventories, original/derived entry and compiled-source hashes,
+  literal traces/currentheldstat/path/allclose; no replay or immutable original
+  object/addon/trace commitment. Preserve the warning failure and original RED.
 - [ ] Scoped conventional checkpoint and normal draft-branch update after fresh
   held/preservation/exposure checks. Do not mark ready/merge/rebuild/rollout from
   S1 or replay the retained genuineFAIL5. Full-channel and T4 gates remain open.
@@ -145,7 +199,9 @@ permit ready-for-review promotion, merge, clean-main build, rollout or a new
 native experiment. Strict genuine acceptance remains unmet; green cloud checks,
 bot comments, accepted review requests or silence cannot reopen that gate.
 
-**File Map:** Same four files: task-port C/test and these named spec/plan.
+**File Map:** Initial published checkpoint has four files: task-port C/test and
+these named spec/plan. A separately reviewed S1 update extends the next draft to
+those four plus its three inert source/test files (seven total), still incomplete.
 No external operational log/journal, credentials, runtime artifacts or retained
 cluster data are staged/published. Normal push only; no force/history rewrite,
 main write, branch-protection/access/provider configuration or paid activation.

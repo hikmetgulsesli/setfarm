@@ -9,8 +9,11 @@ rollout or new native effect is admitted. Preserve actual genuineFAIL5 at
 test43ec, separate finite15 passes at C7deb/testb2fc and default16SKIP evidence;
 never replace these with an all-pass/positive statement. Bot request acceptance,
 silence, quota or green security checks do not certify acquisition/CONTROL/P2.
-Publish only the four mapped source/test/spec/plan files, not local operational
-logs/journals/credentials/artifacts/cluster data. Existing review integrations
+The initial published checkpoint contains four task-port source/test/spec/plan
+files. A separately reviewed S1 update extends the next draft map to those four
+plus the three inert source/test files below; this is still incomplete feedback,
+not T4 delivery. Publish no local operational logs/journals/credentials/
+artifacts/cluster data. Existing review integrations
 may be requested once as review-only, without new paid activation, coding-agent
 assignment, provider/branch/access changes or automatically acting on proposals.
 Exact-head feedback and every suggested implementation/effect require their
@@ -35,7 +38,7 @@ or first measure an inert native callback. Choose the last, using standing
 owner authority for a bounded reversible diagnostic with no host-policy change.
 No new package, node-gyp, npm install, target selector or service integration.
 
-Prospective S1 File Map, in addition to these existing named spec/plan:
+S1 File Map, in addition to these existing named spec/plan:
 
 - Create `scripts/task6a-origin-native-cooperative-initializer-v2.c`: one inert
   native callback and symbol-based Node-API registration, no transport.
@@ -44,9 +47,10 @@ Prospective S1 File Map, in addition to these existing named spec/plan:
 - Create `scripts/__tests__/task6a-origin-native-cooperative-initializer-v2.test.js`:
   closed opt-in real ABI tests, independent native witness and causal mutants.
 
-Until created, these are prospective paths, not actual PR files. The current
-draft's four-file map stays historical; after creation the aggregate map is
-seven. No operational journal, local manifest, binary or fixture is published.
+The three source/test files were created locally after the missing-source RED.
+The published draft's four-file map stays historical; the prospective next
+aggregate map is seven. No operational journal, local manifest, binary or
+fixture is published.
 
 Native interface: define `NAPI_VERSION 8`, use `NAPI_MODULE_INIT()` from the
 installed public headers, and expose only the two default-visible symbols
@@ -59,8 +63,10 @@ calls `napi_throw_error(env, "ORIGIN_COOPERATIVE_TRANSPORT_UNAVAILABLE",
 "cooperative transport unavailable")`, then returns NULL. Each of these three
 calls must return `napi_ok`; otherwise `_Exit(72)` terminates only the owned
 inert child. Exit72, missing trace or loader/setup failure cannot qualify S1.
-Production imports are exactly these three Node-API functions plus `_Exit`
+Production source calls only these three Node-API functions plus `_Exit`
 from libSystem; no Mach/TFP/registration/query/message/thread/cleanup-hook API.
+Compiler-generated security/runtime imports are separate from source calls;
+do not claim an unmodified binary's import closure from the derivative.
 Exit here settles no Mach obligation: this component creates none.
 
 Entry interface: extra argv refuses before loading, stderr
@@ -81,9 +87,19 @@ callback and supplies a trampoline to the real create function. The trampoline
 records entry, calls the captured callback unchanged, records its NULL result
 and returns it. Track env/exports/function/name/data correspondence and statuses;
 require exactly create0 -> set0 -> callback-entry -> throw0 -> callback-return,
-one of each, with no overflow/sticky fault. The test copy, not production, writes
-one bounded checked `wx` native trace on atexit, checking every write and fclose.
-Any trace failure is noncanonical stderr and test failure. `_Exit(72)` bypasses
+one of each, with no overflow/sticky fault. Test-only public typed export wrappers
+delegate the original installed macro's registration/getter bodies under private
+names, capture original env/exports and returned correspondence, and record
+image identity on the actual export calls. No body is synthesized in place of
+the real callback or real Node-API operation. Macro renaming and instrumentation
+are derivative-only and must be reviewed separately from unmodified source.
+The test copy, not production, writes one bounded exclusive0600 native trace
+on atexit using checked open(O_CREAT|O_EXCL|O_NOFOLLOW), fdopen, every write and
+fclose. A failed fdopen makes one checked close attempt: failed close exits74,
+otherwise exits73. Neither trace/error failure is accepted. Verify mode0600.
+Trace failure means a noncanonical exit, missing/malformed trace or
+instrumentation fault, never acceptance; canonical callback stderr can remain.
+`_Exit(72)` bypasses
 atexit and therefore cannot accidentally satisfy the complete trace oracle.
 Structural trace parsing must accept the omission control's valid create/set-only
 trace without inventing a fault. The unchanged Node oracle checks actual
@@ -102,12 +118,24 @@ Fixed compile recipe: CLT clang/ld, MacOSX26.5 SDK and clang21 resource tree
 already pinned by the task-port recipe; C11, O0, Wall/Wextra/Werror, no modules,
 no LTO, hidden visibility, nostdinc with only the exact Node public-header
 directory and SDK/resource include trees. Fixed explicit link: bundle,
-undefined-error, nostdlib, `-Z`, exact syslibroot, owned object, held Cellar
+undefined-error (the pinned installed ld's documented default), nostdlib, `-Z`,
+exact syslibroot, owned object, held Cellar
 libnode147 and SDK libSystem.B.tbd. No undefined-dynamic-lookup, `-L`/`-l`,
 added rpath, install-name rewrite, private dylib copy or signing/policy change.
 Both compiler and clang-driven linker use `--no-default-config` and explicit
 `--target=arm64-apple-macos26.5`; scrubbed env alone does not exclude clang's
 on-disk default configuration.
+The first inert attempt compiled/linked but stopped BEFORE inspection/Node load:
+ld emitted `warning: -undefined error is deprecated`. Do not ignore/suppress
+warnings or accept that failed attempt. The installed pinned ld.1 documents
+default error treatment; remove only the redundant deprecated spelling, not
+error semantics. Never select warning/suppress/dynamic_lookup or undefined `-U`.
+Read-only inspection of that retained first derivative also establishes the
+installed SDK's `fdopen$DARWIN_EXTSN` alias and compiler-generated memcpy plus
+stack_chk_guard/stack_chk_fail imports. Keep stack protection enabled and use
+the exact observed derivative import set, not a widened arbitrary allowlist or
+disabled protection. This is derivative-only evidence, not a production-binary
+import measurement. No callback/transport/P2 evidence follows from inspection.
 Inspect actual Mach-O exports/imports/dependencies before loading; reject extras.
 The libnode LC_ID uses `/opt/homebrew/opt/node/lib/libnode.147.dylib`: specifying
 its Cellar link input does NOT freeze runtime resolution. Pin the recorded
@@ -145,6 +173,18 @@ and rerun the same real oracle. Exact test source and each effect recipe need
 read-only review before invocation. Passing S1 leaves every channel/CONTROL/
 protected/P2/T4/ready/merge/clean-main/rollout gate open.
 
+Measured S1 checkpoint: intended missing-source RED first; one warning-refused
+compile/link attempt retained; after separately reviewed correction, four cases
+passed in separate serial runs (baseline/omission/native-message/argv). Baseline
+has real callback/delegate/export witnesses; omission preserves canonical JS
+stderr but fails the callback-entry oracle; native-message reaches the original
+entry's actual stderr and fails its message oracle; argv never compiles/loads.
+Independent bounded artifact audits match literal traces/source copies and
+current held-file consistency. Original receipts omit object/addon/trace hashes
+and inodes, so no cross-epoch immutable artifact commitment is asserted.
+This completes only the ordinary instrumented sample, not an unmodified binary,
+full dyld/compiler trust closure, transport or protected-origin admission.
+
 Primary Node26.4 sources explain why returning NULL at registration alone is
 not a load refusal (original exports may remain), and why a callback's pending
 native exception reaches its caller. Inspect actual installed ABI separately;
@@ -156,10 +196,12 @@ published sources are supporting contracts, not runtime evidence.
 Status: research contract only. The scoped acquisition checkpoint82272c9b is
 unmerged and its genuine task_for_pid gate remains FAIL5. This candidate does
 not retry/replace that experiment, admit new native code/effects or qualify
-CONTROL/protected/P2. Current refinement changes only this spec and its existing
-plan. An executable design needs a separately complete source/test/File Map,
+CONTROL/protected/P2. This channel research refinement is docs-only, distinct
+from the inert S1 prerequisite above. A channel executable design needs a
+separately complete source/test/File Map,
 ownership error table, exact compiler/loader recipe and independent review
-before any source implementation or effect. No addon or new executable exists.
+before any channel source implementation or effect. No channel addon/owner
+exists; retained inert S1 addons are not silently relabelled as channel actors.
 
 The causal question is whether a separately reviewed run-time initializer inside
 the already-execed fixed Node can transfer its CURRENT self right to its actual
