@@ -41,7 +41,7 @@ parseDashboardCutoverHistoryV2. Parser consumes two canonical Buffer arrays.
   proxy/accessor invocation, noncanonical bytes, sparse/oversized array.
 - [x] GREEN full finite matrix; old V1 pure grammar suite remains passing.
 - [x] Independent source/test review, both seats C0/I0/M0.
-- [ ] Scoped conventional commit (this is the pretransaction checkpoint).
+- [x] Scoped conventional commit7260883b; no private evidence staged.
 
 Task1 evidence: genuine missing-module RED12fail before source; review-discovered
 Buffer prototype-trap regression RED12pass/1fail before fix; final14V2+5V1 tests
@@ -62,14 +62,27 @@ Consumes Task1 canonical bytes; produces observeDashboardCutoverStoreV2,
 publishDashboardCutoverIntentV2, publishDashboardCutoverCompletionV2 with expected
 observation hash. Fixed namespace and publication rules are in spec.
 
-- [ ] RED real private filesystem tests for empty observation without creation,
+- [x] RED real private filesystem tests for empty observation without creation,
   all six published pairs, intent without completion refusing next ordinal,
   stale observation/crossed records, symlink/mode/root drift, partial writes,
   sync/link/close faults and intact old V1 namespace.
-- [ ] Implement using owned nofollow descriptors, immutable stages/links,
+- [x] Implement using owned nofollow descriptors, immutable stages/links,
   fsync and complete rechecks; preserve pending artifacts and checked-once closes.
-- [ ] GREEN tests assert actual file bytes/identities/history, not mock presence.
-- [ ] Independent retention review; no live authority-root writes; commit.
+- [x] GREEN tests assert actual file bytes/identities/history, not mock presence.
+- [x] Independent input and retention reviews C0/I0/M0; no live-root writes.
+- [ ] Scoped commit (this is the pretransaction checkpoint).
+
+Task2 evidence: genuine missing-store-module RED29fail before authoring; final
+31 real private-FS tests +14 V2 grammar +5 old V1 grammar pass50/0fail/0skip.
+Strict isolated noemit0. Fixed12 records retain12 exact same-inode aliases;
+tests independently verify hashes/bytes, recursively frozen observations and
+untouched V1 sentinel. Actual close-response loss attempts original close once.
+Two real contenders both observe absent root before a bounded IPC barrier,
+then publish using those original expected hashes; both settle naturally.
+Private fixtures remain retained; no live services or authority roots touched.
+Latest exact receipt: workspace logs/2026-10-07-dashboard-cutover-v2-store-barrier-
+green-original.json, SHA d85f6278cfdb4804b11abc75459dc3e14ae5fb99d8605b0c2fa292f5e969950f.
+Earlier RED/GREEN originals are preserved, not overwritten or replayed.
 
 ## Task3: live-capability controller and reconciliation
 
@@ -113,6 +126,18 @@ post-effect observations; enumerate its owned resources under a V2 phase profile
   bypass, blanket PID kill or generic finally restoring spawner.
 - [ ] GREEN owned fixtures and independent source/provider/crash review.
   Lack of adapter qualification keeps live command closed; commit.
+
+Provider mapping outcome (research only): normal epoch-one lease and cold-genesis
+wrapper cannot supply the pre-dashboard mutex. The raw V1 acquisition/release
+also repairs/unlinks setup failures and retries ambiguous closes; do not wrap it
+as checked-once V2. A separately owned distinct-schema V2 lock at the same fixed
+physical transition path could block future V1 direct/cold acquisitions, including
+after owner death, because V1 parsing rejects the unknown schema before reclaim.
+It still requires independently qualified already-entered/stale cleanup and
+queued-contender drain. Existing V1 final lstat then unlink has a TOCTOU window;
+an already-entered stale reclaimer could remove a newer V2 pathname. O_EXCL or a
+different schema alone is NOT the complete freeze proof. No provider source,
+production controller or live effect is admitted by this research observation.
 
 ## Task5: authenticated entry, delivery and qualified dashboard checkpoint
 
