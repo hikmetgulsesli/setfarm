@@ -29,18 +29,27 @@ the spec. Exports createDashboardCutoverIntentV2, encodeDashboardCutoverIntentV2
 createDashboardCutoverCompletionV2, encodeDashboardCutoverCompletionV2,
 parseDashboardCutoverHistoryV2. Parser consumes two canonical Buffer arrays.
 
-- [ ] Write RED asserting all six literal actions and complete/pending prefixes;
+- [x] Write RED asserting all six literal actions and complete/pending prefixes;
   independently hash manually written canonical bodies, not builder expectations.
   Example:
   `assert.equal(history.intents[3].action, "select-new-cli")`;
   `assert.equal(history.authority, "history-only")`.
-- [ ] Run focused test with existing absolute tsx loader; absence must be genuine
+- [x] Run focused test with existing absolute tsx loader; absence must be genuine
   missing production module/export. No OS effect or compiler fixture required.
-- [ ] Implement minimal strict grammar. Reject ordinal skips, mismatched previous
+- [x] Implement minimal strict grammar. Reject ordinal skips, mismatched previous
   completion, crossed cutover/owner/self hashes, illegal outcome, extra fields,
   proxy/accessor invocation, noncanonical bytes, sparse/oversized array.
-- [ ] GREEN full finite matrix; old V1 pure grammar suite remains passing.
-- [ ] Independent source/test review; scoped conventional commit.
+- [x] GREEN full finite matrix; old V1 pure grammar suite remains passing.
+- [x] Independent source/test review, both seats C0/I0/M0.
+- [ ] Scoped conventional commit (this is the pretransaction checkpoint).
+
+Task1 evidence: genuine missing-module RED12fail before source; review-discovered
+Buffer prototype-trap regression RED12pass/1fail before fix; final14V2+5V1 tests
+19pass/0fail/0skip. Strict isolated noemit for source/tests exits0; diff-check0.
+Review also added hostile late-edge relations through ordinal6 and bounded
+nonproxy ancestry128accept/129refuse. This is grammar qualification only, not
+service dispatch or live takeover. Original outputs retained in private workspace
+logs named2026-10-07-dashboard-cutover-v2-*, never committed as runtime artifacts.
 
 Owner tests distinguish legal later-intent/reconciliation-owner changes from a
 completion that changes its original dispatch owner. Exact wire literals/bounds/

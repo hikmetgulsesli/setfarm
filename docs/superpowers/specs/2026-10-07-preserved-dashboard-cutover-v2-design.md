@@ -83,6 +83,11 @@ Use the existing canonical-json primitive's UTF16 key order and scalar semantics
 Input arrays are dense ordinary arrays of canonical Buffer records, length0..6;
 copy Buffer bytes without invoking overridden methods. Reject proxies/accessors,
 symbol/extra/nonenumerable fields and sparse arrays before consuming their values.
+Those field rules apply to records and array containers. Byte containers must be
+genuine nonproxy bounded Buffers; extra Buffer properties are ignored, never read
+or invoked. Intrinsic TypedArray operations supply their length and owned copy.
+Buffer ancestry is checked without invoking proxy traps, with at most128
+nonproxy intermediate prototypes; unknown/proxy/unbounded ancestry refuses.
 Parser output has exactly schema,authority,historicalState,intents,completions.
 Schema: setfarm.internal-production-dashboard-cutover-history.v2.
 Authority: history-only. State: empty for0/0; unsettled for one unmatched final
@@ -96,6 +101,46 @@ Hold/recheck nofollow ancestors/files; owner/mode/device/count/size constraints,
 exclusive temporary publication, fsync file and containing directories, immutable
 committed links, checked-once closes. Preserve stages; unknown sync/close burns
 future access. V1 grammar/store and every historical receipt remain unchanged.
+
+### Exact Task2 storage nomination
+
+Export observeDashboardCutoverStoreV2(), publishDashboardCutoverIntentV2(record,
+expectedObservationHash), publishDashboardCutoverCompletionV2(record,
+expectedObservationHash). The expected hash is mandatory64 lowercase hex, never
+an authority grant. Namespace is deployment-dashboard-cutover-v2 under the fixed
+account-derived baseline root. Ordered names alternate intent-0001.json,
+completion-0001.json through intent-0006.json,completion-0006.json; no gaps.
+Committed bytes use Task1 encoders. Every committed inode retains exactly one
+same-inode UUIDv4 temporary alias and nlink2. Stages use
+.<fixed-name>.<lowercase-UUIDv4>.tmp; no stage unlink or replacement publication.
+Unknown names, more than32 names or more than8 inert stages refuse. An inert
+stage is observational needs-reconciliation and blocks every publication.
+
+Return exact frozen observation fields: schema,authority,storageState,
+rootIdentityHash,ancestorIdentityHash,pendingStageCount,files,history,
+storeObservationHash. Schema: setfarm.internal-production-dashboard-cutover-store.v2;
+authority history-only; storageState settled or needs-reconciliation. Missing
+root is observed without creation and has rootIdentityHash null. History is the
+Task1 frozen parser output. Sorted frozen file entries contain exactly name,
+identityHash,bytesHash,byteLength,kind. Kind: committed for fixed names;
+inert-stage for nlink1 temporaries; committed-alias for qualified nlink2 aliases.
+Identity projections match the existing V1 store: directory dev,ino,mode,uid,gid,
+birthtimeNs; file adds size,nlink,mtimeNs,ctimeNs. SHA256 bytesHash hashes raw bytes;
+other hashes use canonical-json bodies without self hash. Ancestor hash binds
+every held ancestor path/identity, including the baseline parent but not root.
+Unknown sync/close makes access sticky-invalid in that module instance. A fresh
+instance must reobserve exact physical evidence; no automatic physical-effect
+retry. Exact existing record publication may durably resync without changing its
+inode. Storage has no dispatch/exclusion/recovery-owner authority.
+Reuse the existing baseline-deployment-cutover-service-effect-store-v1.ts entire
+physical guard and bracket/recheck profile, except namespace, grammar, order and
+counts: at most128 lexical ancestor segments; existing workspace/data/baseline
+required, same owner UID/device and no group/other writable scope directories;
+root0700, regular files0600, nofollow, bounded0..65536 byte stages and1..65536
+canonical committed records; same original ancestor/file descriptors/identities
+through publication and checked-once closes. Missing baseline is invalid, not an
+instruction to create the workspace. A missing V2 root alone may be created only
+for first intent with the matching observed missing-root hash.
 
 Controller exports a run/reconcile operation consuming a LIVE opaque capability
 from the qualified adapter, not inspection JSON or permission booleans. It owns
