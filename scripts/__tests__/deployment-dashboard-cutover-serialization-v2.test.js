@@ -350,3 +350,99 @@ test("already-entered stale pathname unlink removes V2: assertion burns, not ful
   assert.equal(result.legacyUnlinked, true); assert.match(result.legacyClosed, /EBADF/);
   assert.match(result.assertion, refused); assert.match(result.release, refused); assert.match(result.reacquire, refused);
 }));
+
+test("authentic empty history returns void with no new component fs.openSync acquisition", () => fixture(({ home }) => {
+  const result = run(home, `
+    const handle=api.acquireDashboardCutoverSerializationV2(input);
+    const open=fs.openSync;let opens=0;
+    fs.openSync=(...args)=>{opens++;return open(...args);};syncBuiltinESMExports();
+    output.returnType=typeof api.assertDashboardCutoverEmptyRetirementHistoryV2(handle);
+    output.opens=opens;api.assertDashboardCutoverSerializationV2(handle);
+    api.releaseDashboardCutoverSerializationV2(handle);output.absent=!fs.existsSync(lock);
+  `);
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  assert.equal(result.returnType, "undefined"); assert.equal(result.opens, 0); assert.equal(result.absent, true);
+}));
+
+for (const name of ["baseline-helper-registry-v1", "cold-spawner-bootstrap-v1", "direct-spawner-rebind-v1",
+  ".pre-schema-helper-journal.json.owned.tmp", "unknown-artifact", "symlink-artifact"]) {
+  test(`empty history refuses and preserves ${name}, including unheaded physical artifacts`, () => fixture(({ home, root, lock }) => {
+    const result = run(home, `
+      const handle=api.acquireDashboardCutoverSerializationV2(input);
+      const target=root+"/"+${JSON.stringify(name)};
+      if(${JSON.stringify(name)}==="symlink-artifact")fs.symlinkSync(lock,target);
+      else fs.mkdirSync(target,{mode:0o700});
+      const before=fs.lstatSync(target,{bigint:true});const wire=fs.readFileSync(lock,"utf8");
+      output.assertion=attempt(()=>api.assertDashboardCutoverEmptyRetirementHistoryV2(handle));
+      output.release=attempt(()=>api.releaseDashboardCutoverSerializationV2(handle));
+      output.same=before.ino===fs.lstatSync(target,{bigint:true}).ino&&wire===fs.readFileSync(lock,"utf8");
+    `);
+    assert.equal(result.error, undefined, JSON.stringify(result));
+    assert.match(result.assertion, refused); assert.match(result.release, refused); assert.equal(result.same, true);
+    assert.ok(fs.lstatSync(path.join(root, name))); assert.ok(fs.lstatSync(lock));
+  }));
+}
+
+test("empty-history final owner bracket rejects transient membership change without repinning", () => fixture(({ home }) => {
+  const result = run(home, `
+    const handle=api.acquireDashboardCutoverSerializationV2(input);
+    const spawn=childProcess.spawnSync;let boot=0,fired=false;
+    childProcess.spawnSync=(file,args,options)=>{const value=spawn(file,args,options);
+      if(file==="/usr/sbin/sysctl"&&++boot===4){fired=true;fs.writeFileSync(root+"/transient","owned");fs.unlinkSync(root+"/transient");}
+      return value;};syncBuiltinESMExports();
+    output.assertion=attempt(()=>api.assertDashboardCutoverEmptyRetirementHistoryV2(handle));
+    output.release=attempt(()=>api.releaseDashboardCutoverSerializationV2(handle));
+    output.fired=fired;output.members=fs.readdirSync(root);
+  `);
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  assert.equal(result.fired, true); assert.match(result.assertion, refused); assert.match(result.release, refused);
+  assert.deepEqual(result.members, ["physical-service-restart-authority.transition.lock"]);
+}));
+
+test("swallowed empty-history enumeration reentry burns before later owner commands", () => fixture(({ home }) => {
+  const result = run(home, `
+    const handle=api.acquireDashboardCutoverSerializationV2(input);
+    const read=fs.readdirSync,spawn=childProcess.spawnSync;let nested=null,laterCommands=0;
+    fs.readdirSync=(...args)=>{const value=read(...args);nested=attempt(()=>api.assertDashboardCutoverSerializationV2(handle));return value;};
+    childProcess.spawnSync=(...args)=>{if(nested!==null)laterCommands++;return spawn(...args);};syncBuiltinESMExports();
+    output.assertion=attempt(()=>api.assertDashboardCutoverEmptyRetirementHistoryV2(handle));
+    output.release=attempt(()=>api.releaseDashboardCutoverSerializationV2(handle));
+    output.nested=nested;output.laterCommands=laterCommands;output.remains=fs.existsSync(lock);
+  `);
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  for (const error of [result.assertion, result.release, result.nested]) assert.match(error, refused);
+  assert.equal(result.laterCommands, 0); assert.equal(result.remains, true);
+}));
+
+for (const shape of ["proxy", "getter", "symbol", "subclass"]) {
+  test(`empty history rejects ${shape} enumeration without running traps`, () => fixture(({ home }) => {
+    const result = run(home, `
+      const handle=api.acquireDashboardCutoverSerializationV2(input);let traps=0;
+      const read=fs.readdirSync,trap=()=>{traps++;throw Error("ENUMERATION_TRAP");};
+      fs.readdirSync=(...args)=>{const value=read(...args);
+        if(${JSON.stringify(shape)}==="proxy")return new Proxy(value,{get:trap,ownKeys:trap,getPrototypeOf:trap});
+        if(${JSON.stringify(shape)}==="getter")Object.defineProperty(value,"0",{enumerable:true,get:trap});
+        if(${JSON.stringify(shape)}==="symbol")value[Symbol()]=true;
+        if(${JSON.stringify(shape)}==="subclass")Object.setPrototypeOf(value,Object.create(Array.prototype));
+        return value;};syncBuiltinESMExports();
+      output.assertion=attempt(()=>api.assertDashboardCutoverEmptyRetirementHistoryV2(handle));
+      output.release=attempt(()=>api.releaseDashboardCutoverSerializationV2(handle));output.traps=traps;
+    `);
+    assert.equal(result.error, undefined, JSON.stringify(result));
+    assert.match(result.assertion, refused); assert.match(result.release, refused); assert.equal(result.traps, 0);
+  }));
+}
+
+test("foreign empty-history handles do not burn the authentic original reservation", () => fixture(({ home }) => {
+  const result = run(home, `
+    const handle=api.acquireDashboardCutoverSerializationV2(input);let traps=0;
+    const trap=()=>{traps++;throw Error("FOREIGN_HANDLE_TRAP");};
+    output.failures=[null,Object.freeze(Object.create(null)),new Proxy(handle,{get:trap,ownKeys:trap,getPrototypeOf:trap})]
+      .map(value=>attempt(()=>api.assertDashboardCutoverEmptyRetirementHistoryV2(value)));
+    api.assertDashboardCutoverEmptyRetirementHistoryV2(handle);api.releaseDashboardCutoverSerializationV2(handle);
+    output.traps=traps;output.absent=!fs.existsSync(lock);
+  `);
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  for (const error of result.failures) assert.match(error, refused);
+  assert.equal(result.traps, 0); assert.equal(result.absent, true);
+}));

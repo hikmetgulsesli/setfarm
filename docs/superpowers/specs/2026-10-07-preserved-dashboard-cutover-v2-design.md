@@ -269,6 +269,48 @@ that interleaving as a negative admission case; O_EXCL/schema alone never proves
 the complete frozen-owner contract. Separately authenticated old-family drain is
 still a prerequisite for live adapter admission and release.
 
+### Task4a.1 held empty-retirement-history assertion
+
+The old absent-helper holder rejects the retirement root itself; it cannot
+coexist with our original reservation. For the initially empty-history route,
+add assertDashboardCutoverEmptyRetirementHistoryV2(handle) to the same V2 module.
+It consumes ONLY its authentic privately held serialization handle and returns
+void. No caller paths, labels, ports, snapshot object or separate authority token.
+It reuses original root/lock/ancestry custody; no additional component-owned
+returned FD is acquired. Read-only observer/readdir provider internals may own
+encapsulated resources; this leaf adds no fs.openSync acquisition or ledger slot.
+
+Operation sequence: authentic lookup/active entry; actual owner + physical;
+capture original-held and named root FULL metadata (CORE plus size,nlink,mtimeNs,
+ctimeNs); root readdir; exact single member physical-service-restart-authority.transition.lock;
+physical + actual owner; second exact readdir + physical; require original-held
+and named root FULL metadata still equal that same first witness. No repinning
+across the owner/metadata bracket. Existing directory CORE checks alone do not
+prove membership continuity. Enumeration must be an exact nonproxy dense plain
+array with only its one string element and length; no accessor/proxy traps.
+Each component port
+uses the same post-return burn check. Success leaves the original handle held;
+any unknown/malformed/drifting member result or observer/physical fault burns
+and once-drains only known original sealed descriptors, preserving path evidence.
+Reentry and foreign handles have the existing strict disposition.
+
+Any other retirement-root child, including symlinks, unheaded registry artifacts,
+partial stages, cold/direct history or epoch metadata, refuses without parsing,
+following, deleting or repairing it. This route does NOT accept settled history:
+a later retained settled-history graph requires its own nomination. The exact
+one-member graph proves only absent subordinate helper/retirement history at
+these live assertion boundaries, not process absence or freedom from a paused
+old unlinker. Already-entered stale helpers/no-FD queued callers, physical+DB
+owners, delivered source/phase graph and effect admission remain separate gates.
+Do not call the old census or introduce a wrapper around its absent-root guard.
+
+Owned real-FS tests must assert successful void/no-new-FD behavior and continued
+held reservation, refusal/preservation for unheaded registry/cold/direct/staging/
+unknown/symlink entries, actual owner-boundary member drift, swallowed readdir
+reentry, transient add/remove detected by FULL metadata, malformed enumeration,
+and foreign-handle no-burn. Genuine missing-export RED precedes source.
+This is a causal refinement of Task4a, not the complete Task4b contender holder.
+
 The bootstrap authenticates the complete delivered source/build/loader closure
 before constructing the adapter. Closed explicit modes; no ambient opt-in that
 grants authority. Existing inspection entry remains diagnostic. A new real

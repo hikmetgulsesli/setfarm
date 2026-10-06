@@ -180,6 +180,27 @@ This is reservation qualification only: full adapter drain/DB/source proof,
 controller, live command, clean-main deployment and dashboard checkpoint remain
 pending. It does not authenticate an old-family zero-owner state.
 
+### Task4a.1 causal held empty-history refinement
+
+File Map: same serialization-v2.mjs and matching builtin test. Existing helper
+holder requires retirement root absent; logical old helper census alone can
+miss unheaded registry artifacts. Add only the independently nominated authentic-
+handle empty-retirement-history assertion in the spec. Exact root membership
+admits our known original reservation, rejects every other child, holds original
+resources across two physical/actual-owner brackets with no new component-owned
+returned FD or fs.openSync acquisition; provider internals are not counted.
+No settled-history route, process quiescence or full capability is manufactured.
+
+- [x] Independent exact interface/graph nomination.
+- [x] Genuine missing-export RED27 priorPASS/14 newFAIL using actual owned V2
+  reservation and root, before adding the export.
+- [x] Minimal assertion plus real member/drift/reentry/foreign/resource tests.
+- [x] GREEN41/41; affected65 maintenance/reservation/history +50 store/grammars,
+ 0fail/0skip. Three independent reviews C0/I0/M0. A review narrowed no-new-FD
+ wording to returned component originals/fs.openSync; provider internals are not
+ counted. No membership-sensitive witness is refreshed into acceptance.
+- [ ] Scoped incremental delivery, confirmed afterward in private master.
+
 ## Task5: authenticated entry, delivery and qualified dashboard checkpoint
 
 Files: scripts/deployment-dashboard-cutover-v2.mjs and builtin entry test;

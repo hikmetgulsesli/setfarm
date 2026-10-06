@@ -184,6 +184,35 @@ export function assertDashboardCutoverSerializationV2(handle) {
   finally { vault.active = false; }
 }
 
+// Subordinate history absence only. This does not drain old processes or aliases.
+export function assertDashboardCutoverEmptyRetirementHistoryV2(handle) {
+  lookup(handle); enter("held");
+  try {
+    owner(); physical();
+    const original = port(() => fs.fstatSync(vault.parent.fd, { bigint: true }));
+    const rootStable = () => {
+      for (const stat of [port(() => fs.fstatSync(vault.parent.fd, { bigint: true })),
+        port(() => fs.lstatSync(vault.parent.target, { bigint: true }))]) {
+        if (!stat.isDirectory() || stat.isSymbolicLink() || !same(original, stat, FULL)) fail();
+      }
+    };
+    const emptyHistory = () => {
+      rootStable();
+      const members = port(() => fs.readdirSync(vault.parent.target));
+      if (!members || typeof members !== "object" || types.isProxy(members)
+        || !Array.isArray(members) || Object.getPrototypeOf(members) !== Array.prototype) fail();
+      const fields = Object.getOwnPropertyDescriptors(members), keys = Reflect.ownKeys(fields);
+      if (keys.length !== 2 || !keys.includes("0") || !keys.includes("length")
+        || !Object.hasOwn(fields["0"], "value") || !fields["0"].enumerable
+        || fields["0"].value !== "physical-service-restart-authority.transition.lock"
+        || !Object.hasOwn(fields.length, "value") || fields.length.value !== 1) fail();
+      rootStable();
+    };
+    rootStable(); emptyHistory(); physical(); owner(); emptyHistory(); physical(); rootStable();
+  } catch { burn(); fail(); }
+  finally { vault.active = false; }
+}
+
 export function releaseDashboardCutoverSerializationV2(handle) {
   lookup(handle); enter("releasing");
   try {
