@@ -23,8 +23,8 @@ existing isolated clone/branch, root only writer; no dependency installation.
 sf_remap_policy_run_v2 with the embedded object as sole mutable storage.
 **Produces:** sf_bootstrap_prefix_run_v2 private model outcomes, never authority.
 
-- [ ] Independent written nomination/input/preservation/reentry review.
-- [ ] Create exact declared header, independent C-driver/JS test; new C absent.
+- [x] Independent written nomination/input/preservation/reentry review.
+- [x] Create exact declared header, independent C-driver/JS test; new C absent.
   Driver manually initializes all fields and checks literal callback trace:
   genesis1..9, DISABLE,MASK,ENTRY, close3/4/5/6, dup7→3/bind7, dup8→4/bind8,
   close7/8,POST. Driver-only missing implementation definition:
@@ -35,9 +35,9 @@ sf_remap_policy_run_v2 with the embedded object as sole mutable storage.
       }
 
   Under absence mode return71; ordinary unwrapped exit0 oracle must FAIL.
-- [ ] ONE admitted missing-C RED; complete original compile/link/import/run
+- [x] ONE admitted missing-C RED; complete original compile/link/import/run
   returns and checked-once holder closes. Setup/import errors are not RED.
-- [ ] Minimal declared implementation after RED. Same embedded object; no
+- [x] Minimal declared implementation after RED. Same embedded object; no
   physical calls/second ledger. Required at enum-returning outer boundaries:
 
       if (p->burned || p->remap.burned) {
@@ -51,11 +51,11 @@ sf_remap_policy_run_v2 with the embedded object as sole mutable storage.
   burns; S10e then seals its sole action and known settlement/acquisition before
   stopping. Binding wrapper seals its own receipt, synchronizes BOTH burns and
   returns the ORIGINAL int. Never return SF_P_BURNED as an operation result.
-- [ ] ONE new GREEN full matrix; preserve compile/link/import/dependency/run,
+- [x] ONE new GREEN full matrix; preserve compile/link/import/dependency/run,
   EOFs and holders. Do not infer any physical guard/owner or full build.
-- [ ] Separately nominate one omitted-cross-burn private derivative, expect
+- [x] Separately nominate one omitted-cross-burn private derivative, expect
   ordinary oracle FAIL; preserve originals, no baseline/old recipe replay.
-- [ ] Independent read-only behavior/diff/evidence reviews. Recheck original
+- [x] Independent read-only behavior/diff/evidence reviews. Recheck original
   frozen pins, new source/driver pins, default SKIP and adjacent-flag refusal.
 - [ ] Root scoped conventional commit/push and draft PR275 body after gates,
   File Map19 and exact limitations; never main commit/merge/activation.
@@ -67,3 +67,12 @@ Ready/context are scheduling/confinement, not physical identity authority.
 Unknown/pending suffix remains owned in model; no restoration/exit token.
 Prefix excludes nonFD owners. Existing physical-source/effect gate and universal
 terminal contract stand. No placeholder physical adapter belongs to this plan.
+
+## Pre-delivery checkpoint, 2026-10-06 22:04:50 UTC
+
+The spec records the exact observed RED/GREEN/derivative. The seven completed
+checkboxes describe source/test verification, not whole-project completion.
+Delivery remains pending the final evidence-annotation review, preservation
+gate and ordinary root commit/push plus DRAFT PR275 body transaction. Record
+that transaction in the private completion master plan, not as native/runtime
+qualification. No accepted recipe needs replay to deliver these exact bytes.

@@ -157,3 +157,48 @@ Finite success qualifies shared FD-prefix policy ONLY. Physical inherited birth,
 nonFD/provider/Kc/Mach/VM capacity, guard/TCB/thread continuity, two real complete
 censuses, original-owner terminal, Node lifecycle, EVERY settlement/restoration,
 P2/CONTROL/P3/P4/P5/A-E/READY/merge/cutover remain closed.
+
+## Observed finite verification, 2026-10-06 UTC
+
+Nomination was independently reviewed before implementation. The first candidate
+driver compile at21:53 refused a misleading-indentation warning under unchanged
+-Werror: compiler/setup refusal, NOT RED. An explicit-brace-only driver correction
+was reviewed; the refused fixture remains untouched.
+
+Genuine missing-C RED21:56:05..08 naturally closed with six statuses
+0,0,0,0,0,71 and19 checked-once closes/errors[]. The driver-only UNAVAILABLE
+path checks full fieldwise NO_EFFECT and naturally exits71; the ordinary exit0
+assertion fails specifically MissingBootstrapPrefixPolicy. New C was authored
+only after preserving that complete original.
+
+Actual-C GREEN22:02:39..41 has seven natural zero statuses (three compiles,
+link, nm, otool, model), both EOFs and22 checked-once closes/errors[].
+Ordinary test result:1PASS/0FAIL/0SKIP. The independent finite driver covers
+both accepted synthetic saved guard values, failure at all23 callback positions,
+invalid guard outputs, both owner/direct-remap active reentry with successful
+and error results, missing ports/noncanonical storage and NO_EFFECT refusal.
+
+Separately reviewed copy-only omit-cross-burn22:04:48..50 replaces only the
+unique live check's inner-latch term. Its seven natural statuses are
+0,0,0,0,0,0,140;22 checked-once closes/errors[], both EOFs; ordinary FAIL.
+Direct-remap reentry at first genesis now allows later ports, violating the
+unchanged stopped-prefix oracle. This is specific behavioral sensitivity,
+not a compiler/setup failure, baseline replay or exhaustive mutation proof.
+
+All qualified invocations inspected exactly two stack imports and one direct
+System1356 dependency before model entry; compile/link/model channels are
+empty. Each effect recipe had fresh255-input preservation with unchanged
+materialManifest8932f44384c62eccfae77276eb84c6d5a8ec47a0252cec8c7f29c24e47289f21.
+Default invocation registers one SKIP without effects; syntax passes; adjacent
+native opt-in refuses before fixture acquisition. SKIP is not acceptance.
+
+Reviewed source pins: header ad64d936990c55d0600ca259f5a416e2dbc8cbaa378f7208c9a00f6b4252236f;
+C e6c6e9c40f3293298adb87a4f8b22f73e97d39da9690cbee15ece28ff372b1db;
+test7bc8edaa80779571daa1841c4012b240b307f6ac1e88edc0cdadf8a4b287d47a;
+driver baa0711f323f26567753faa866be37e5473344f34f30720c8cfbb034a66675ec.
+Owned derivative C958411160735671613b1481ae535e8d4df70955720bc8658363de25c49e45481.
+Originals/accepted fixtures remain unchanged; private complete raw receipts
+are not public delivery files. Source/test evidence was independently reviewed.
+Only this shared private C prefix is qualified. Physical/integrated, terminal,
+CONTROL, rollout and whole-project qualification remains unresolved;
+all associated execution/admission gates above remain closed.
