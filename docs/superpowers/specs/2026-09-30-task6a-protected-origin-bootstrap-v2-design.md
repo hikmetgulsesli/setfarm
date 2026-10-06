@@ -19,6 +19,530 @@ assignment, provider/branch/access changes or automatically acting on proposals.
 Exact-head feedback and every suggested implementation/effect require their
 own evidence and scoped review. All positive/merge/runtime gates remain closed.
 
+## S10 integrated ordinary continuity source-design nomination
+
+### Current checkpoint and selected unit
+
+S9 is delivered at aef571190d1f5cfa56f6fc02534127ed670506d1, tree
+ac319e668dfcb8f9821ff0a46848cdccee85c893, parent d511f06f. Fresh RESTc1a659
+verified existing OPEN/DRAFT275, exact head/body, eleven files, 8932 additions/
+seven deletions. Guardian7698ea succeeded on that head; reviews5bfd2b are empty.
+This overrides earlier S9 delivery-pending prose, which records its precommit
+epoch. It is not ready/merge, clean-main build, rollout, CONTROL or P2 delivery.
+
+The next selected unit is the integrated ordinary descriptor-free continuity
+runtime, with an acquisition-free native-interface RED before its owner setup.
+Do not deliver another standalone codec/sleep or a version-2 false-ready stub.
+A full task-self-right channel would additionally require unresolved movability/
+CONTROL; it is not a substitute for this ordinary continuity prerequisite.
+Root remains sole writer; independent agents only research/review. This is a
+SOURCE/DESIGN nomination, not an executable plan or test/source/effect admission.
+
+#### Initial prospective five-file map, superseded by embedding refinement below
+
+- `scripts/task6a-origin-native-cooperative-initializer-v2.c`: actual native
+  contract callback and complete original-thread child FSM, not inert metadata
+  falsely identifying an implemented channel.
+- `scripts/task6a-origin-native-cooperative-entry-v2.cjs`: explicit new entry
+  epoch. Its current sole-initialize export check and canonical-refusal catch
+  are not channel-compatible; do not silently reuse them.
+- `scripts/__tests__/task6a-origin-native-cooperative-initializer-v2.test.js`:
+  separately nominated native-interface consumer, real-call instrumentation,
+  literal fixture-owned C parent/receiver, independent full-channel oracle,
+  complete FIRST custody and separately gated omission derivative.
+- This named spec and its named implementation plan: exact role/phase/error,
+  input and effect nomination. A complete implementation plan follows only
+  after the source-design gaps below are resolved and independently reviewed.
+
+These are five files within the existing eleven, not five implicit operational
+roles. The literal parent is a test-owned implementation role, not an installed
+CLI, public launcher or protected/P2 publisher. Task-port C/test, ABI C/test and
+frame C/test/all six historical drivers remain frozen. Preserve all historical
+S1/S9 bodies and recipes; old opt-ins must refuse changed source/entry epochs
+before their limited tools/fixture/compile/load boundary. Never repin/replay
+accepted history. Original two, journal HASH ONLY, old CLI, retained roots,
+fixtures and clean-main builds remain untouched.
+
+#### Closed native interface, never positive authority
+
+Nominate exact JavaScript exports `continuityContract` and `initialize`, both
+actual public Node-API callbacks. Keep NAPI_VERSION8 distinct from protocol2.
+The contract callback returns exactly this independently consumed record:
+
+```js
+{ protocolVersion: 2, implementation: 'ordinary-continuity-v2' }
+```
+
+Exact own keys, types and values are required; no ready, PID, task, custody or
+cleanup field. The implementation string is permitted only when initialize
+actually routes into the complete reviewed integrated FSM. An inert initializer
+must identify inert-refusal or omit this interface; scalar2 alone is insufficient.
+Successful preflight proves interface compatibility only. It never certifies
+startup, primitive effects, NOSIGPIPE, retention, ownership or activation.
+The two Mach-O Node module exports and these two JS exports are distinct gates.
+
+First actual RED uses the existing S9 source and successfully loaded owned
+addon. The unchanged independent contract consumer must specifically reject
+the missing native contract export after real Node-API registration/image witnesses,
+BEFORE initialize, parent setup, pipe creation, parent Mach stash registration or channel-child
+birth. Generic compile/link/load/provider/trace faults cannot qualify. Addon
+loading and NAPI allocation are not claimed zero transitive heap/VM activity.
+The actual compiled/instrumented recipe and nominated inputs must be fully
+reviewed separately before this RED; this prose admits no invocation.
+
+Do not implement an ordinary-continuity advertisement on a refusal stub just
+to make that interface test green. The candidate source must compose the real
+FSM; integrated activation remains independently closed until its complete
+owner/error/settlement recipe is admitted. Useful future interface controls
+distinguish wrong version, version2 plus inert-refusal and omitted actual native
+invocation. They are queued design requirements, not admitted effects or an
+all-pass claim. No textual JS replacement can supply native-call witnesses.
+
+#### Obligation and retained-failure design requirements
+
+Use fixed native occurrence storage before any fallible owner setup. Register
+every original FD endpoint and duplicate, R/S/L, each lookup VM and each valid
+returned reference by occurrence, even when names coincide. Keep parent/child
+stash mutations and transient copied header D separate from user references.
+Receiver started/returned/joined and original child born/live/exited/EOF/reaped
+are distinct obligations. Seal observable acquisitions before validation;
+mark disposal attempts before their once-only calls. Unobservable effects
+remain explicitly unknown. A status frame never certifies these dispositions.
+
+Select direct same-original-thread public sigsuspend on the captured unchanged
+original mask over a private holder pipe: the latter adds FD/EOF/error rules
+and still requires a fallback. Cancellation must remain disabled through all
+original applicable obligations, not merely Mach/VM. Restore saved state only
+after EVERY such obligation is definitely settled, including pipes/receiver/
+child where applicable. S9's early restoration and finite Exit72 do not transfer.
+An unknown latch permanently burns acceptance. Known once-only dispositions may
+continue, but cannot clear it. Retained dispatch never returns/throws to JS,
+restores cancellation, exits, retries acquisition, renews the deadline, logs
+through newly acquired resources or guesses cleanup.
+
+With a valid immutable original mask and established disabled cancellation,
+each returned sigsuspend call remains nonpositive: capture its result/errno
+immediately; -1/EINTR repeats only that same wait, while any unexpected return
+latches one bounded cause and continues only the same unchanged-mask wait.
+No uncertain FD is reread. This is a source proposal, not hard CPU bounds,
+handler/backend closure, zero transitive Mach activity or survival proof.
+Existing handlers, signal storms, unreturned calls and external death remain
+explicit nonpositive limitations. No retained-owner/signal/cancel experiment.
+
+Crucial bootstrap gap: the actual channel child inherits stash and protocol
+FD obligations before entering the callback guard. If cancellation disable
+or original-mask capture fails, a valid sigsuspend setup is not established.
+No guessed mask, new blocked signals/handler/type, S9 abort/refusal, pause,
+new resource wait or busy-spin is admitted to fill that gap. Resolve this
+preexisting-obligation/fallback ordering in the written original-owner contract
+before any integrated source authoring or channel acquisition is admitted.
+A matching contract export does not solve it or permit owner death as cleanup.
+Audit pre-callback registration and entry failure exits too: current initializer
+registration can Exit72 before the guard, and the inert entry can refuse an
+export or throw a load error before callback entry. Those finite inert paths
+are not bootstrap-retention branches for an already registered child.
+
+Fresh public-source research also rejects pause as a hidden alternative:
+the fetched Apple Libc main snapshot queries the mask without checking that
+query's result, then supplies its local mask to sigsuspend. It does not furnish
+a checked fallback after mask-capture failure. This is a retrieved source
+observation, not pinned installed-Libc identity or a tested wait.
+[Published pause wrapper](https://github.com/apple-oss-distributions/Libc/blob/main/gen/FreeBSD/pause.c).
+
+#### Burned bootstrap-retention candidate, not recovery or effect admission
+
+Distinguish retention setup from prohibited transaction retries. After the
+first bootstrap failure, permanently burn acceptance before doing anything
+else. A source candidate may repeat only literal cancellation DISABLE and a
+read-only NULL-set mask query until their actual successful results establish
+the prerequisites for retained waiting. It may never resume initialization,
+lookup, registration, channel I/O, authentication, disposal or a positive path.
+This refines the unresolved fallback question; it does not resolve or admit it.
+
+Use `pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL)` in this permanently
+retained phase; there is no later restoration or usable saved-state output.
+Skip that operation once actual success has established DISABLE. Query into
+valid invocation-lifetime native mask storage, consume it only after success,
+and then freeze it. A later successful query captures the retention-entry
+current mask, not proof of the failed transaction's original mask. The normal
+transaction still requires its original guard and EVERY-obligation settlement
+before restoration; this candidate never borrows that restoration permission.
+
+Before actual disable success, asynchronous cancellation protection is absent.
+Neither attempted disable nor valid arguments prove that the thread survives
+this interval. Persistent setup errors, unreturned calls and external death
+remain nonpositive limitations, not permission for parent-only custody, owner
+replacement, cleanup guesses or a new attempt. Once setup succeeds, dispatch
+only the same immutable-mask `sigsuspend` wait described above.
+
+`sched_yield` is a separately nominated throttle candidate, not a sleep or
+low-CPU guarantee. The installed public pthread/sched.h declares it, and the
+SDK libsystem_pthread.tbd exports it. A pinned published libpthread snapshot
+routes it through Mach scheduling calls and returns zero; no explicit
+cancellation test or allocation appears in that wrapper. This is not installed
+backend identity, transitive allocation/cancellation closure, blocking proof or
+eventual progress. The cancellation manual permits implementation-added
+cancellation points; omission from its list is insufficient. Do not call private
+backend symbols, assume zero transitive Mach activity or substitute an unreviewed
+sleep/resource wait. A persistent failed-setup yield loop can consume CPU and
+must not be advertised as resource-safe containment. Its health contract and
+full input/provider nomination remain unresolved before implementation/effects.
+[Published yield wrapper](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/src/pthread.c#L2247),
+[Published guard wrappers](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/src/pthread_cancelable.c#L120).
+
+Public `mach_wait_until(uint64_t)` is a new source-review alternative to yield
+while retention setup lacks a usable mask. Installed mach/mach_time.h declares
+it and libsystem_kernel.tbd exports it. The published .121.6 public-symbol
+dispatch reaches a calling-thread wait; its backend uses the thread's existing
+wait timer, not an explicitly acquired user timer port. That does not establish
+installed-backend identity, cancellation closure, zero transitive allocation or
+a usable infinite-wait argument. Never invoke private trap/backend symbols.
+
+Independent source review rejects zero and UINT64_MAX as public infinite-wait
+arguments. Select only a checked finite backoff as the next written candidate:
+literal B=50,000,000 Mach absolute ticks, now<=UINT64_MAX-1-B, then freeze D=now+B.
+Ticks are not milliseconds. Capture every wait result and check the clock even
+after KERN_SUCCESS; while now<D, repeat only that same D. Once D is actually
+reached, retry only still-missing DISABLE/query prerequisites. Never silently
+expand this into a timebase conversion, acquisition or transaction retry.
+Overflow, exhausted/invalid clock room and repeated anomalous returns still
+lack an admitted terminal health branch; no wrapped, expired or maximum fallback.
+This remains a source candidate, not an executable recipe. Backoff must never
+renew the original acceptance deadline, unburn acceptance or restart any
+transaction. Do not use zero as an infinite-wait shortcut: zero suppresses timer
+arming in the retrieved internal wait-queue code, but that observation is not a
+separately established public infinite-wait contract. Returned/aborted waits,
+signal storms, anomalous argument/backend results, cancellation before actual
+DISABLE and external death remain nonpositive limitations. A new public wait
+requires its own complete input/provider/error/health nomination and review;
+source investigation admits no call, retained owner or replacement fallback.
+
+Make the finite throttle's source health assumption explicit: the original
+owner's live lifetime requires a monotonic nonwrapping Mach absolute clock and
+representable room for each new finite deadline. Check the stated room bound
+before inherited-owner birth and before every retention cycle. Failed pre-birth
+qualification forbids birth. Post-birth clock regression/exhaustion is an
+infrastructure/health failure, not settlement, custody transfer or healthy
+containment. A sample before birth cannot prove lifetime room. For an already
+valid D, latch one bounded anomalous-return cause and check time before repeating
+only that D. This gives no hard CPU bound under storms or a faulty provider.
+An exhaustive no-spin/no-return/no-exit/no-new-resource branch after lifetime
+clock-room loss is still missing; the conditional health assumption does not
+close that executable gate. Do not add select or another wait acquisition.
+[Published wait path](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/kern/clock.c#L1511),
+[Published wait queue](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/kern/waitq.c#L1319),
+[Published public-symbol dispatch](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/osfmk/mach/syscall_sw.h#L176).
+
+#### Selected native-embedding lifecycle refinement, not executable admission
+
+The candidate above starts only when native code already has control. It cannot
+catch `require` failing before the addon loads, and it does not convert current
+NAPI registration Exit72 branches into retention. An extra JS catch, a pre-exec
+wrapper or a parent keeping its own references is not proof that the child's
+original thread, inherited FDs and stash survive those paths.
+
+Public Node embedding is a concrete alternative for further source review:
+a native original-thread entry can establish its guard and inherited-obligation
+ledger before Node initialization and addon loading. Installed node.h exposes
+initialization early-return results, empty environment/load results and a
+process-exit handler. Those checked results can be routed to native retention
+instead of copying the documentation's sample return/exit paths. This does not
+prove containment of dyld failure, Node/V8 fatal termination, unreturned calls
+or internal cleanup. Existing stdio/signal/resource behaviour must be separately
+accounted for; no private API or runtime/security-guard bypass follows.
+
+Select native Node embedding for the next written lifecycle refinement after
+fresh independent source review. A pure-C child is smaller, but changes the
+selected Node lifecycle/interface rather than resolving its startup gap.
+Selection is not a complete design or executable admission. Supersede the
+earlier five-file prospective map with those same five plus these two roles:
+
+- `scripts/task6a-origin-native-cooperative-bootstrap-v2.h`: own typed C/C++
+  boundary for bootstrap, actual registration, native protocol-settlement check,
+  final restoration and nonreturning retained failure. No fabricated public API
+  declaration, cast-based bypass, external pointer authority or JS owner token.
+- `scripts/task6a-origin-native-cooperative-main-v2.cc`: guarded native child
+  entry using the matched public Node embedding surface. The existing initializer
+  test hosts a separately named embedding suite; no new test file is implied.
+
+This is seven prospective files, thirteen in the prospective aggregate map.
+The actual published PR still has eleven files; neither new file exists yet.
+Historical task-port/ABI/frame sources, tests and drivers remain frozen.
+The earlier two-export Mach-O gate applies to the owned addon preflight, not
+implicitly to the new child executable's export/import/loaded-image namespace.
+That namespace requires a new exact reviewed whitelist and complete FIRST.
+
+The first native-main action must enter the initializer C object's single
+process-resident ledger and original-thread guard, before C++/Node setup.
+Compile that C object once into the child executable. Registration and initialize
+use the same ledger: no second guard saving an already-disabled state as the
+original, second owner record, FD transfer to Node cleanup, or proxy custody.
+The ledger seals inherited Kc/protocol obligations before fallible setup.
+Pre-main dyld/static constructors and fatal termination remain nonpositive
+limitations; embedding is not immunity against them or an owner-death receipt.
+
+Use the public AddLinkedBinding overload taking actual napi_addon_register_func
+and literal API version8. Installed node.h documents its process._linkedBinding
+accessor; this is matched-header C++ embedding, not Node-API ABI stability or
+permission for unrelated internal require. The actual registration callback
+matches the public callback type without casts. It need not load a separate
+initializer.node. A returned void binding call is not registration evidence:
+require actual callback/function-address witnesses and the native ledger result.
+
+Explicitly nominate public kNoDefaultSignalHandling and kNoStdioInitialization
+to suppress Node's corresponding process-initialization mask/disposition and
+stdio mutations. These flags are not proof that every V8/libuv lifecycle stage
+preserves mask/FD state; those stages remain independently unqualified. Do not expose
+protocol endpoints as stdio, raw-FD tracking or Node cleanup-hook resources.
+Freeze inspector/debug, environment/argument and resource-limit behaviour too.
+These scoped embedder choices are not Setfarm runtime/security-guard bypasses.
+The fixed entry is synchronous, creates no Workers and does not reenter the
+binding. Compare actual thread identity with the immutable captured owner
+identity before any mutable ledger access or obligation operation; that check
+may read only the immutable identity field. Identity mismatch never grants a
+foreign thread authority to mutate, dispose or restore the original ledger.
+Avoid SpinEventLoop unless a separately nominated requirement needs its task
+draining and beforeExit/exit callbacks; a JS return/exitCode is not settlement.
+
+Route initialization early-return, missing platform/environment, empty load
+result, catchable C++ failure and explicit process.exit into original native
+retention before caller-owned objects unwind. Each catch must be inside the
+scope owning that stage's result/setup objects; an outer catch reached after
+their destructors have run cannot qualify preservation. Install the public process-exit
+handler before entry execution. Actual registration errors must retain, not
+Exit72. Internal setup failure can already destroy partial Node objects before
+returning; the private C ledger and its originals must never belong to those
+objects. Empty setup is not zero-resource evidence. On a known settled branch,
+require checked native protocol settlement before nominated Node teardown,
+remain disabled during teardown, then restore once only after EVERY scoped
+original is definitely settled. Never initiate caller-owned teardown/restoration
+on an unknown branch or infer it from JS output. This rule cannot prevent the
+separately described internal cleanup Node setup performs before a failed result.
+
+The installed v8config.h rejects C++17 or earlier; nominate C++20 for the new
+main while retaining C11 for the single initializer object. Rebind the complete
+installed C++/Node/V8/libuv/header/library/provider and
+artifact graph before implementation or effects. The own bridge and lifecycle
+nomination below refine this source selection, not executable admission.
+Every spawn alias, entry-byte acquisition, teardown witness and bootstrap
+overflow/error branch still requires complete qualification before authoring,
+child birth or execution.
+[Public embedding API](https://nodejs.org/api/embedding.html).
+[Version-matched binding implementation](https://github.com/nodejs/node/blob/v26.4.0/src/api/environment.cc#L1112),
+[Node-API callback dispatch](https://github.com/nodejs/node/blob/v26.4.0/src/node_api.cc#L695),
+[Process initialization](https://github.com/nodejs/node/blob/v26.4.0/src/node.cc),
+[Setup teardown](https://github.com/nodejs/node/blob/v26.4.0/src/api/embed_helpers.cc#L224).
+
+#### Own typed bridge and phase-local lifecycle nomination
+
+The prospective own header requires NAPI_VERSION8 before node_api.h and rejects
+any different value. Its C++ declarations use extern "C". Its nonreturning
+annotation is [[noreturn]] in C++20 and _Noreturn in C11, not a cast or a new
+declaration of any public Node function. Nominate only these own signatures:
+
+```c
+enum sf_origin_terminal_v2 {
+    SF_ORIGIN_UNSETTLED = 0,
+    SF_ORIGIN_CLOSED_AFTER_SEND = 1,
+    SF_ORIGIN_CLOSED_REFUSAL = 2
+};
+enum sf_origin_failure_v2 {
+    SF_ORIGIN_ARGUMENTS = 1,
+    SF_ORIGIN_NODE_INIT = 2,
+    SF_ORIGIN_NODE_SETUP = 3,
+    SF_ORIGIN_NODE_BINDING = 4,
+    SF_ORIGIN_NODE_ENTRY = 5,
+    SF_ORIGIN_NODE_EXIT = 6,
+    SF_ORIGIN_PROTOCOL_UNSETTLED = 7,
+    SF_ORIGIN_NODE_TEARDOWN = 8
+};
+void sf_origin_bootstrap_v2(void);
+napi_value NAPI_CDECL sf_origin_register_v2(napi_env, napi_value);
+enum sf_origin_terminal_v2 sf_origin_check_settled_v2(void);
+void sf_origin_finish_v2(void);
+SF_ORIGIN_NORETURN void sf_origin_retain_v2(enum sf_origin_failure_v2);
+```
+
+Bootstrap's return requires actual original-thread identity, sealed inherited
+Kc/FD obligations, successful save/DISABLE with legal saved state and successful
+immutable original-mask capture. Reentry cannot create another ledger or save
+DISABLE as the original. Its failures require the still-unqualified nonreturning
+fallback; declaring noreturn is not evidence of a correct implementation.
+Registration's ordinary NAPI_MODULE_INIT wrapper delegates to the same named
+C function used by the executable's AddLinkedBinding callback. Each process has
+one C ledger; the executable neither links another C copy nor loads a .node.
+
+The acquisition-free addon starts UNBOUND_IMAGE. Registration and contract
+inspection in that state do not bootstrap or create a channel; initialize must
+refuse before any channel operation. Advertising ordinary-continuity-v2 still
+requires a real complete implemented FSM in the candidate source, not a stub.
+The executable transitions its one ledger only through actual native bootstrap.
+No JS parameter, caller pointer, environment variable or exported owner token
+can authorize that transition.
+
+The check function verifies actual native callback completion, no unknown latch,
+every child stash/reference/VM occurrence disposition, END and required EOF,
+and checked closure of all child protocol originals. A closed enum is private
+native branch information, not a JS or parent cleanup certificate. Zero is
+nonpositive and cannot authorize teardown; unsafe/missing invocation enters
+retention. Finish repeats the full private ledger and restoration-once checks
+after the independently witnessed caller-owned teardown stages have returned.
+Only then may it make the one saved-state restoration attempt; failed or
+ambiguous restoration retains, never retries or guesses a second restore.
+
+| Child descriptor | Prospective sole role |
+| --- | --- |
+| 0, 1, 2 | Separately nominated ordinary stdio; never protocol endpoints. |
+| 3 | C-only reader: NONCE32, then END32, then required EOF. |
+| 4 | C-only STATUS32 writer; checked close after the complete frame. |
+
+After lookup/stash/send and known local Mach settlement, C writes the status
+and checks its FD4 close, stays live awaiting authentic END, checks END plus
+EOF and closes FD3 once. Only then can initialize return. LOCAL_CLOSED status
+does not mean that every child FD is already settled. Parent spawn actions must
+separately resolve source/target collisions, every unused inherited duplicate,
+stdio ownership and exact descriptor census; choosing 3/4 does not qualify them.
+
+Nominate the following lifecycle phases; their exact call/input/failure witnesses
+remain necessary before an executable plan:
+
+1. First native-main body statement is bootstrap. No argument vector, log,
+   uv_setup_args or Node call precedes it; pre-main effects stay nonpositive.
+2. Construct fixed arguments and invoke public InitializeOncePerProcess with
+   kNoDefaultSignalHandling, kNoStdioInitialization, kDisableNodeOptionsEnv,
+   kDisableCLIOptions, kNoParseGlobalDebugVariables, kNoAdjustResourceLimits,
+   kNoUseLargePages and kNoPrintHelpOrVersionOutput. Keep normal V8/default
+   platform initialization, not a separately constructed platform. Check
+   result, early_return and result->platform; keep previously owned holders
+   outside each phase-local try so its catch retains before their destruction.
+3. Use public CommonEnvironmentSetup::Create on that default platform. Nominate
+   kOwnsProcessState, kNoCreateInspector, kNoStartDebugSignalHandler and
+   kNoGlobalSearchPaths, excluding kTrackUnmanagedFds and implicit inspector
+   ownership. Check errors/setup/environment/isolate/context. C protocol
+   originals never belong to the environment or its internal failure cleanup.
+4. Install the public process-exit handler before binding/entry. Its callback
+   calls native retention, not exit or requested-code acceptance. Register
+   the actual sf_origin_register_v2 callback with literal8. Void return alone
+   supplies no registration receipt.
+5. Enter public V8 locker/isolate/handle/context scopes and execute only exact
+   nominated entry bytes through LoadEnvironment. Catch inside those scopes,
+   before caller-owned scope unwind. Empty load, missing native witnesses,
+   entry refusal or unsettled protocol retains. No SpinEventLoop, Workers,
+   interpreter-stdin reader, unrelated internal require or binding reentry.
+6. Only a checked closed native terminal may leave those scopes, explicitly
+   release setup, invoke TearDownOncePerProcess and release remaining holders.
+   Keep cancellation disabled throughout; failures retain without restoration.
+   The concrete phase graph must ensure every caller-owned holder is destroyed
+   before finish and no unknown path initiates that teardown. Parent acceptance
+   still requires natural original-child exit, required EOFs and exclusive reap.
+
+C exclusively owns protocol FDs, Kc bookkeeping, lookup occurrences, frame/
+deadline progress, burn latch and cancellation/mask state. Node owns its opaque
+environment/isolate/loop/allocator/platform resources, whose public lifecycle
+and provider contracts must be separately qualified; nothing here proves zero
+runtime allocations or exhaustive internal cleanup. Public void teardown is
+not automatically an independent EVERY-original closure receipt. The shared
+C ledger cannot infer Node settlement from JS return or copied enum/status bytes.
+
+#### Protocol writers: causally necessary no-SIGPIPE refinement
+
+Seal original pipe endpoints before configuration. Each actual parent NONCE/
+END writer and postexec child STATUS writer requires checked SET success and
+GET exactly1 before its first possible write; never infer the child's result
+from parent settings. Proposed public calls are:
+
+```c
+fcntl(original_writer, F_SETNOSIGPIPE, 1) == 0;
+fcntl(original_writer, F_GETNOSIGPIPE) == 1;
+```
+
+This configures the original open-file object, not global signal policy or
+descriptor-local privacy. Aliases must not clear it; no reset mutation is needed
+for an exclusively owned protocol object. Setter/query failure burns and
+forbids the write, but known FD ownership is not automatically unknown. Partial
+progress, EPIPE and failed/ambiguous close never certify a complete frame or
+closure; never retry a possibly closed/rebound FD. Child setup failure already
+has inherited stash/pipe obligations even before lookup. Only complete known
+settlement permits finite refusal; otherwise retain the original owner.
+
+Installed sys/fcntl.h already declares SET73/GET74 under the unchanged pin.
+Published .121.6 sets a shared fileglob flag; its write path tests that flag on
+EPIPE. These are source support, not running .121.10 or spawn/dup inheritance
+qualification. No broken-reader write, signal injection or handler change is
+admitted by this refinement.
+[Published flag handling](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/kern_descrip.c#L3054),
+[Published EPIPE path](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/sys_generic.c#L605).
+
+#### Inputs and activation gates still require exact nomination
+
+Use public child task.h/mach_port.h/mach_init.h/vm_map.h plus message.h, rather
+than private RPC/traps or cast-based declaration bypass. Parent libbsm.h itself
+includes mach/mach.h; the child narrowing does not remove parent breadth.
+Choose vm_deallocate only. Exact pointer-to-uintptr_t-to-vm_address_t roundtrip,
+count multiplication, vm_size_t representation and address-range checks prove
+arithmetic, not readable extent or ownership. Retain unexpected/unbounded slots
+without walking them, guessed page rounding or merged occurrence entries.
+
+Existing199/IMAGE30 remain frozen. New Mach/BSM/spawn/entropy/errno/poll/atomic
+inputs, conditional MIG presence, link stubs, native parent/frame artifacts and
+actual typed function-image witnesses require a separately complete graph and
+recipe. The present SDK mig_strncpy_zerofill_support.h must not be treated as
+absent. Canonical libbsm.0.tbd is separate from its libbsm.tbd selector; its
+arm64e target is not already a proved fixed-arm64 link. Never widen flags/imports
+after rejection or reinterpret stub exports as loaded/backend identity.
+
+Fresh source-only routing on 2026-10-06 used eleven candidate public roots:
+task.h, mach_port.h, mach_init.h, vm_map.h, message.h, libbsm.h, spawn.h,
+sys/wait.h, sys/random.h, poll.h and stdatomic.h. The first conservative literal
+include pass held/reread/checked-once closed287 headers, with127 new to199.
+Extending lexical routing to resource-to-SDK include_next and literal presence
+queries held/reread/checked-once closed302 headers, with131 new to199, 926
+literal edges, 32 checked ancestors and no errors or selector following. Its
+manifest is ba00d982db3360771dc0735a98e2cb4909ffbba1daf7db6dd6aaac22b5597066.
+This traverses inactive branches too; duplicate probes include comment text.
+It is not a preprocessor trace or complete input nomination. Nine unresolved
+conditional/next edges remain; candidate roots omit the Node front search path.
+SDK stdatomic.h is absent in that candidate search, while the MIG zerofill
+support file is present and held. Exact flags, macro/conditional choices,
+additional search-root presence/absence bindings and paired review are still
+required. No compiler, addon or channel was invoked by either source inventory.
+
+The separately held MachTime candidate epoch81451d at14:51:46.530-.607UTC adds
+only mach/mach_time.h:303 held/reread/checked-once closed,929 edges,132 newTo199,
+32 ancestors,errors[],manifestf28c10bdb75c8f067971b1aff25d185053ea323c6128616138d8a529598568ca.
+Its file is inode14866441/2590B/0:0/m444/SHA
+d690e304ea595ca216ed51e20aa9747e0b3bcb07446d996abe0080a231c7065f.
+Keep all three epochs separate. The combined union with frozen199 is330 for
+the302 candidate,331 after MachTime, not a replacement manifest or full FIRST
+count. Node front-root conditional absence observations and the nine written
+branch/search choices still need complete binding and per-role review. The new
+embedding C++ graph is an additional nomination, not covered by either union.
+
+The installed libbsm.0.tbd and previously used libSystem.B.tbd have the same
+top-level architecture target list, including arm64e-macos but not literal
+arm64-macos. Historical fixed-arm64 System linking prevents treating that list
+alone as proof of a universal subtype rejection. It does not qualify the new
+BSM link/import/provider recipe. Keep that new recipe unqualified without
+changing the fixed target or widening flags after an actual rejection.
+
+Before activation, freeze ledger capacities/bindings and every operation-specific
+known/unknown transition, original monotonic deadline, pipe/frame progress and
+all terminal branches. Require real receiver success and sole join BEFORE
+buffer inspection/status consumption, bounded transformed header/audit trailer,
+three public BSM accessors and freshly sampled live/unreaped original child
+BEFORE END. Then require natural settlement, both EOFs, exclusive reap and
+checked original stash/pipe/right/VM closure. No TERM/KILL cleanup transplant.
+The separately gated omitted-registration derivative must establish actual
+successful3NULL lookup/VM disposal, specific no-message timeout/actual join,
+known refusal rendezvous/END and complete natural settlement before the
+unchanged positive oracle specifically rejects the missing receipt. Unknown
+ownership can never become an expected-refusal PASS or enable another attempt.
+
+S10 source-design research continues; bootstrap fallback, complete literal
+ledger/entry/parent recipe and exact new inputs are unresolved gates, not
+promises hidden behind interface metadata. No source/test authoring, native
+effect, positive channel, retained-owner, CONTROL, P2 or cutover follows here.
+
 ## S9 separately bounded finite callback guard transaction
 
 S8 is delivered at d511f06f to the existing OPEN/DRAFT275, eleven-file map;

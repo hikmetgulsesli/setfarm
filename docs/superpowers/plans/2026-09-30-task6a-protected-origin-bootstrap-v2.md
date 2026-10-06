@@ -1,5 +1,136 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S10 source-design worklist - not an executable implementation plan
+
+> **For agentic workers:** Root writes inline, sole writer; independent agents
+> perform read-only source research/review. No delegated effects or delivery.
+
+**Goal:** Resolve the actual inherited-obligation bootstrap and terminal-owner
+contract for one integrated ordinary descriptor-free continuity runtime.
+**Architecture:** A closed actual native contract preflight precedes all channel
+owner setup; the full parent/callback FSM retains every unknown original and
+permits acceptance only after authentic join/live-child/checked settlement.
+**Tech Stack:** Fixed public Node-API8/CLT/SDK C11 and Node builtin tests;
+matched public Node C++20 embedding is selected (installed v8config.h requires
+C++20 or later), with its exact compiler recipe and input/provider graph still
+unqualified. No install, private API, signing,
+global signal-policy or service/DB change.
+**Spec:** Named design, S10 integrated ordinary continuity source nomination.
+**Current evidence:** S9 delivered aef57119/treeac319e66; RESTc1a659 exact
+OPEN/DRAFT275/head/body/eleven files/8932+/7-. Guardian7698ea success onexacthead;
+formalreviews5bfd2b empty. Earlier S9 pending text below is its precommit epoch.
+No positive channel, retained-owner, CONTROL, P2, ready/merge or rollout credit.
+
+### Global constraints / prospective File Map
+
+The initial prospective source unit explicitly names initializer C, existing
+initializer test, fixed CJS entry and named spec/plan: five within aggregate
+eleven. The selected native-embedding refinement below adds a typed own header
+and native main: seven prospective files within thirteen, not actual authored
+files or an enlarged published PR. The test's literal native parent is an
+explicitly new fixture-only role, not an
+operational parent delivery. No native file/test changes are admitted yet.
+Freeze task-port/ABI/frame C/tests/all six drivers, historical bodies/recipes,
+original two/journal HASH ONLY/CLI/builds/worktrees/fixtures. Root fresh60c051
+written-design gate at22:59:46.941-47.357UTC checked252 distinct originals/full
+hashes/rereads/materialpath/252oncecloses/123dirs/40aliases/8absences/errors[];
+material127dee51/preservationmatched. Native effects were false. Canonical SF
+dc26d8 and MC4be019 clean before this documentation-only nomination.
+
+- [x] Select integrated ordinary continuity over another codec/sleep, full
+  task-self transport or a standalone false-ready metadata stub. Independent
+  research identified exact child-bootstrap/entry/input limitations; no source
+  author/effect permission follows from research opinions.
+- [x] Nominate closed native exports continuityContract/initialize and exact
+  protocol2/ordinary-continuity-v2 record without ready/PID/custody authority.
+  Implementation identity requires a real integrated initialize FSM, not an
+  inert stub. First real missing-export RED stops before initialize or owner
+  setup; generic compiler/link/load/image/trace failures cannot qualify.
+- [x] Record causal writer SIGPIPE refinement in the spec/File Map: each actual
+  original writer must checked SET73/GET74==1 before any write; original endpoints
+  sealed first, no global handler/mask/type mutation or inferred child result.
+  Fcntl is already a public declared input, but running-kernel behaviour and
+  spawn/alias propagation are not dynamically qualified. No closed-reader test.
+- [x] Identify precise bootstrap gate: Kc and protocol FDs exist before callback
+  guard initialization. Disable/query failure and pre-callback registration/load/
+  export exits have no admitted terminal retention branch. No S9 Exit72, guessed
+  mask, pause, new wait resource or busy-spin fills this gap. Published pause
+  research uses an unchecked mask query and does not supply the missing fallback.
+- [ ] Resolve that gate through an explicit original-owner/phase/error contract
+  that preserves physical originals, same-owner containment and EVERY applicable
+  original-obligation restoration rule. A parent retaining only a journal after
+  discarding the actual child is not automatically containment. Review concrete
+  ownership-ordering alternatives; no native retained-owner experiment.
+- [x] Refine the setup-retry question into a permanently burned source candidate:
+  actual DISABLE with NULL oldstate, successful read-only current-mask capture,
+  then immutable-mask waiting; never positive recovery or transaction retry.
+  Pinned public libpthread yield/guard wrappers were read. Yield is not blocking
+  or low-CPU evidence, and its backend/cancellation/health graph is unqualified.
+- [x] Identify public mach_wait_until as a separate mask-free wait candidate;
+  inspect its published dispatch, calling-thread wait and existing timer path.
+  No argument recipe or call is admitted. Zero's internal no-timer sentinel is
+  not a public infinite-wait contract. The subsequent independent review below
+  selected checked finite retention-only deadlines and rejected maximum;
+  acceptance is never renewed and no timer port is added.
+- [x] Select checked finite50,000,000-Mach-tick backoff for further written
+  refinement after independent source review; reject zero/MAX infinite-wait
+  shortcuts. Check clock after every result and repeat the same finite deadline
+  until actually reached. Overflow/invalid clock room and anomalous return health
+  remain unresolved; no source/test/effect admission or millisecond guarantee.
+- [x] State the lifetime clock-room assumption and distinguish sampled pre-birth
+  refusal from post-birth infrastructure/health loss. The latter is not cleanup
+  or healthy containment; an exhaustive legal terminal remains an open gate.
+- [ ] Close pre-callback startup separately. Compare a guarded public native
+  Node-embedding entry with a pure-C channel child; the former requires a new
+  C++ entry/input/File Map nomination, while the latter does not qualify Node
+  startup. Embedding is now selected for further written refinement, not a
+  complete lifecycle or executable admission. Do not return,
+  exit or replace the original child merely because its addon failed to load.
+- [x] Select the independently reviewed native-embedding architecture and map
+  scripts/task6a-origin-native-cooperative-bootstrap-v2.h plus
+  scripts/task6a-origin-native-cooperative-main-v2.cc explicitly. One C object/
+  original-thread ledger/guard precedes Node setup; real linked binding uses
+  the actual public callback type and literal8. Preserve mask/stdio through
+  scoped public embedder flags, not runtime/security-guard bypass or a blanket
+  V8/libuv lifetime guarantee. Private C
+  protocol originals never belong to partial Node setup/destructors. Remaining
+  exact interfaces/FD layout/teardown/inputs and retention branches stay open.
+- [x] Nominate the typed own bootstrap/register/check/finish/retain bridge,
+  unbound acquisition-free addon state, child FD3 NONCE/END/EOF and FD4 STATUS,
+  fixed public process/environment flags and default-platform phase ordering.
+  Correct immutable identity read versus mutable access, phase-local catches
+  and caller-owned versus Node-internal teardown. Complete witnesses, spawn
+  collisions/aliases/stdio, entry-byte ownership and runtime settlement remain
+  unqualified; this source nomination admits no implementation or invocation.
+- [ ] Freeze finite ledger capacities/bindings/once-only dispositions and each
+  operation-specific unknown transition, complete native NONCE/STATUS/END flow,
+  original deadline, actual receiver join/authentication/live-child-beforeEND,
+  natural EOF/exclusive reap and final closure. Keep inherited-stash obligations
+  distinct from lookup VM/urefs and status bytes distinct from primitive receipts.
+- [ ] Nominate complete new public header/conditional graph, canonical link
+  stubs/aliases, exact imports/function-address witnesses, parent/frame source/
+  object/executable artifacts and complete FIRST counts. Existing199/IMAGE30
+  do not expand automatically. BSM arm64e-stub/fixed-arm64 compatibility remains
+  unqualified; source routing receipts b1e086/905fde are not compiler/runtime gates.
+- [x] Inventory the eleven public header roots read-only, then extend lexical
+  include-next/presence routing:302 held/reread/checked-once closed,131 new to199,
+  926 edges,32 ancestors,errors[]. Manifestba00d982; nine unresolved conditional/
+  next edges and the omitted Node front search path prevent complete nomination.
+  Compare matching BSM/System stub target lists without inferring a new BSM link.
+- [x] Attribute separate MachTime303 epoch81451d/f28c10bd; combined candidate/
+  frozen199 union331 is not a full FIRST count. Independent input review confirms
+  stored287/302 claims, fresh302 hashes and supplied MachTime material tuple,
+  not a complete future compiler/embedding graph or effect recipe.
+- [ ] Self-review the complete written design for scope, contradiction, exact
+  error dispositions and false authority. Obtain paired independent written
+  design review, then write the actual step-by-step implementation/test recipe.
+  No outline or interface constant is treated as a complete executable plan.
+
+This worklist authorizes only continued written source-design research/review.
+Source/test authoring, preflight compile/load, registered birth and channel
+effects remain separately closed. Safe design progress continues without
+loosening gates or claiming this unresolved stage is complete.
+
 ## S9 finite actual-callback guard implementation plan
 
 > **For agentic workers:** Root implements inline, sole writer; independent
