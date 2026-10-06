@@ -1,5 +1,518 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S10a isolated pre-channel native-contract RED implementation plan
+
+> **For agentic workers:** Root implements inline, sole writer. Independent
+> agents review actual written design/source/receipts read-only; no delegated
+> native effects, delivery or historical replay.
+
+**Goal:** Demonstrate the real owned addon lacks the required continuity contract
+before any initializer invocation or scoped channel-owner acquisition.
+**Architecture:** A NEW fixed consumer loads an actually compiled addon, inspects
+the closed native contract and never invokes initialize. Real Node-API delegates
+witness registration; checked input/artifact custody and natural child settlement
+must succeed before the narrowly identified missing-contract assertion fails.
+**Tech Stack:** Fixed installed Node26.4/Node-API8, CLT/SDK26.5 C11 and builtin
+Node tests; no provider/install, embedding, service/DB or security change.
+**Spec:** Named design, S10a independently bounded pre-channel RED subsection.
+
+**Observed checkpoint, 2026-10-06 16:27 UTC:** ONE actual new missing-contract
+RED c3618c/session17931 ->304bea CLOSED1 at source746f4451. Real compile/link,
+two exports/seventeen imports/two dependencies, six natural children0/0/0/0/0/2,
+fault0/create0,set0/four once images/callback0, full245 originals/245 checked-once
+closes/failures[] preceded MissingNativeContract. Overall1FAIL/7historicalSKIP/
+0PASS; not all-pass or Green. Immediate3aaf9f preservation252 closes/errors[].
+Three independent new-epoch audits C0/I0/M0 qualify ONLY this specific RED;
+private original SHA124dbde7e3e7f15a47a14fa46c34c27c00fb55248b30d4b4de57a92776043343.
+Independent read-only Mach-O parsing and245-original hash/material audit agree;
+closure evidence is source-backed receipt, not a kernel close-syscall trace.
+Keep the accepted fixture/recipe frozen; NEVER repoll17931 or rerun this epoch.
+The invocation below is now HISTORICAL evidence, not a fresh run instruction.
+DRAFT checkpoint delivery remains pending; every integrated S10 gate stays closed.
+
+### Scope, sequencing and exact nominations
+
+This is the explicit narrow sequencing exception to the integrated S10 worklist:
+a complete written/reviewed pre-channel recipe may precede resolution of channel
+bootstrap/retention/FD/provider gaps because it cannot enter those phases.
+Review of this actual written recipe admits test authoring ONLY. Actual authored
+source, complete nominations, a fresh preservation gate and paired source/effect
+review must precede ONE new invocation. Research opinions alone admit neither.
+
+File Map: modify ONLY the existing initializer test plus this named plan/spec
+(three existing files within the published eleven). Production initializer C626,
+production entry bd837, task-port/ABI/frame sources/tests and every historical
+driver/helper/body/PREFIX/SUFFIX remain byte-identical. No C++ main/own header,
+native parent, pipe, registered child, Mach stash/right, or retained-owner effect.
+"Pre-channel" is not zero heap/VM/Node/test-process/stdio/diagnostic resources.
+
+Inputs: frozen C6267af24fc2ced81af7a781352313d357b00ab25bb199513025e69126372da4d;
+production entry bd83726b1f9270eec4cb1eddb929e97ae767f525a1cdab0003257729dd552c94
+held but NEVER copied/launched; immutable frame inventory54575f8e; historical
+test f7a624958fb2d9fdd3fda214795ac11c9a3ec9b52adf6a20486e0ddd1b828a15.
+The exact code below consumes existing frozen hash/PREFIX/SUFFIX/parseTrace,
+guardHold/guardSpawn/assertGuardSettlement/directoryGuard helpers, IMAGE30,
+selectors38, literal85+114 public header rows and tools7. All these definitions
+remain unchanged; neither historical invoke helper is called.
+
+Prospective self-test SHA: 746f4451c8925246811649f42fe6f56263b870e099aedd5912c8d27b52c0656a
+Prospective self-test bytes: 87879
+Consumer SHA: 31d299b836e74feaf3db7989f37f40eaf2dcfa998ba4685e4be2e2cb5cec3081 (1076 bytes, final LF).
+PREFIX + LF + SUFFIX SHA: aebe55f767c97fe5865719731767ea9290945150408381fca4166ee829a312ca
+PREFIX + LF + unchanged C626 bytes + LF + SUFFIX SHA:
+d4dd3cfbfe3929f7afdc6ea608f69d97eec77ab2338f4b2a96950af166b639f0 (6622 bytes).
+These are deterministic prospective byte nominations, NOT observed compile/load
+or runtime success. The future actual source must match before effect review.
+
+FIRST prediction: source/unused-entry/self/frame4 + IMAGE30 + tools7 + headers199
+=240 originals before fixture creation. Five generated originals (consumer,
+compiled-C copy, object, addon, natural-exit native trace) produce245, not246.
+All originals stay held through process and trace checks; distinct descriptors,
+full positional hashing/rereads/material checks, original-input receipts and
+checked-once closure occur even on intended RED. Thirty-nine aliases, eight
+absence predicates and material ancestor/fixture checks are separate guards,
+not additional held-file originals. No guard-trace or guard preparation.
+The NEW C11-only routing inventory1e3082/independent input audit nominates N->R->S,
+quoted-relative-first and include_next only later roots: nine seeds, eleven actual
+compiled-source includes,190 reachable contexts inside the already held203 public
+headers,487 header edges,18 presence probes,367 negative paths and only the pthread
+alias. Thirteen held headers are preservation surplus, not compiler-used evidence.
+Per-edge regular targets must already be held; unknown selectors/targets or computed
+includes refuse BEFORE fixture/tools. All367 negative paths and their nearest
+existing ancestor FULL material tuples are rechecked before tools and in final
+custody checks; the eight legacy absence guards are an overlapping subset.
+Root edgeSHAa5568707/probesc9413238/absence8cdeba87 and exact six unresolved rows
+are nominated in code, not inferred from counts. Absent private Availability
+branches, MVS-only stdbool/stdarg next branches and sentinel-guarded arm/i386 limits
+next branches are inactive/negative under the fixed C11/arm64 source profile;
+root read their actual public conditionals. This lexical input binding is not an
+independent compiler/backend/predefined-macro or lifetime trust certificate.
+
+Fresh fixture only: /private/tmp/setfarm-native-contract-preflight. random0700,
+two exclusive0600 authored files, object0644/addon0755, trace0600. Keep fixtures
+and private original receipts; do not delete/reuse any accepted historical path.
+Six naturally settled children: compile, link, nm exports, nm imports, otool
+dependencies, fixed Node with exactly one consumer argv. Fixed child environment
+PATH=/usr/bin:/bin, LANG=C, LC_ALL=C, TMPDIR=fixture; stdio ignore/pipe/pipe,
+shell false, bounded1MiB output, checked matching exit/close, null signal and both
+EOFs. No timeout/kill/forced owner-death cleanup or green from default skips.
+
+Expected real trace: fault0; events exactly create:0,set:0; images exactly
+create,set,register,version once each, actual held libnode/addon attribution;
+callbackEntries0, no throw or callback-entry/return. Two Mach-O module exports,
+seventeen imports and two dependencies must match the code below. The pthread
+imports remain because the callback is compiled, not because it executes.
+Consumer natural exit2, empty stdout and exact S10A_NATIVE_CONTRACT_MISSING LF
+are necessary but insufficient without the preceding native/FIRST witnesses.
+Generic compiler/link/load/export/trace/provider/settlement failures do not
+qualify this RED and are retained/classified separately.
+
+### Task 1: Author the distinct test-only epoch
+
+**Files:** existing initializer test and named plan/spec only.
+**Interfaces:** consume the frozen helpers listed above; produce only
+invokeContractPreflight(), fixed literal CONTRACT_PREFLIGHT_CONSUMER and a
+MissingNativeContract RED. No production interface/owner/activation is produced.
+
+- [x] Step 1: Obtain paired actual written-plan/spec review and refresh original
+  two/journal HASH ONLY/CLI/build/frozen-file preservation. Do not execute tests
+  or author production changes during this gate.
+- [x] Step 2: Insert this exact block immediately AFTER the existing
+  const guardEnabled = guardFlag === '1'; line INCLUDING its original LF.
+  Preserve the inserted fenced block's leading and trailing LF exactly; do not
+  insert before that original LF. Leave the original line bytes unchanged.
+  Historical opt-ins refuse the new self-test epoch before tools/fixtures/load.
+  New opt-in is closed, mutually exclusive and requires externally nominated
+  actual self SHA; do not compute an effect admission from the source itself.
+
+```js
+
+// S10a is a NEW pre-channel source epoch. Historical recipes stay frozen/closed.
+const preflightFlag = process.env.SETFARM_TASK6A_NATIVE_CONTRACT_PREFLIGHT_RED;
+assert.ok(preflightFlag === undefined || preflightFlag === '1', 'closed contract preflight opt-in');
+const preflightEnabled = preflightFlag === '1';
+assert.ok(!(preflightEnabled && (enabled || guardEnabled)), 'native modes are exclusive');
+assert.equal(enabled || guardEnabled, false, 'historical native recipes are closed in the S10a epoch');
+const preflightSelfSha = process.env.SETFARM_TASK6A_NATIVE_CONTRACT_PREFLIGHT_SELF_SHA256;
+assert.ok(preflightEnabled ? /^[a-f0-9]{64}$/.test(preflightSelfSha || '') :
+  preflightSelfSha === undefined, 'externally nominated preflight self-test epoch');
+```
+
+- [x] Step 3: Append this exact code AFTER the existing final historical test.
+  No historical definition/body/literal is edited. Neither historical invocation
+  helper (invokeInertInitializer/invokeGuardInitializer) nor consumer is invoked.
+
+```js
+
+
+// S10a: separate consumer; never invoke old cases or initialize.
+const CONTRACT_PREFLIGHT_CONSUMER = String.raw`'use strict';
+const assert = require('node:assert/strict');
+try {
+  assert.equal(process.argv.length, 2, 'sole fixed consumer argument');
+  const native = require('./initializer.node');
+  assert.equal(Object.hasOwn(native, 'initialize'), true);
+  assert.equal(typeof native.initialize, 'function');
+  if (!Object.hasOwn(native, 'continuityContract')) {
+    assert.deepEqual(Reflect.ownKeys(native), ['initialize']);
+    process.stderr.write('S10A_NATIVE_CONTRACT_MISSING\n');
+    process.exitCode = 2;
+  } else {
+    assert.deepEqual(Reflect.ownKeys(native).sort(), ['continuityContract', 'initialize']);
+    assert.equal(typeof native.continuityContract, 'function');
+    const record = native.continuityContract();
+    assert.equal(Object.getPrototypeOf(record), Object.prototype);
+    assert.deepEqual(Reflect.ownKeys(record).sort(), ['implementation', 'protocolVersion']);
+    assert.deepEqual(record, {protocolVersion: 2, implementation: 'ordinary-continuity-v2'});
+  }
+} catch {
+  process.stderr.write('S10A_NATIVE_PREFLIGHT_OTHER_FAILURE\n');
+  process.exitCode = 3;
+}
+`;
+
+function bindPreflightHeaderSearch(held,checks,receipt,compiledSource) {
+  const roots=[['N',HEADERS],['R',RESOURCE+'/include'],['S',SDK+'/usr/include']];
+  const rank=p=>roots.findIndex(([,root])=>p===root||p.startsWith(root+'/'));
+  const label=p=>{const i=rank(p);assert.ok(i>=0);return roots[i][0]+'/'+p.slice(roots[i][1].length+1);};
+  const physical=(base,name)=>fileURLToPath(new URL(name,'file://'+base));
+  const queue=[],contexts=new Set(),edges=[],probes=[],unresolved=[],absences=new Map(),directories=new Map(),seeds=[];
+  const negative=(p,code)=>{
+    let nearest=p.slice(0,p.lastIndexOf('/'));
+    for(;;) {
+      try {
+        const stat=fs.lstatSync(nearest,{bigint:true});assert.ok(stat.isDirectory());
+        if(!directories.has(nearest)) {
+          directories.set(nearest,stat);
+          checks.push(()=>assert.ok(same(stat,fs.lstatSync(nearest,{bigint:true})),
+            'header-search absence ancestor unchanged'));
+        }
+        break;
+      } catch(error) {
+        if(error.code!=='ENOENT')throw error;
+        nearest=nearest.slice(0,nearest.lastIndexOf('/'));assert.ok(nearest.length>0);
+      }
+    }
+    if(!absences.has(p)) {
+      absences.set(p,[code,nearest]);
+      checks.push(()=>assert.throws(()=>fs.lstatSync(p),error=>error.code===code,
+        'per-edge header-search negative binding'));
+    }
+    return ['absent',p,code,nearest];
+  };
+  const candidate=p=>{
+    assert.ok(rank(p)>=0,'public search roots only');
+    let stat;
+    try{stat=fs.lstatSync(p,{bigint:true});}
+    catch(error){if(error.code==='ENOENT'||error.code==='ENOTDIR')
+      return {observation:negative(p,error.code)};throw error;}
+    let resolved=p,observation=['regular',p];
+    if(stat.isSymbolicLink()) {
+      assert.equal(p,SDK+'/usr/include/pthread.h','only nominated C11 header alias');
+      const target=fs.readlinkSync(p);assert.equal(target,'pthread/pthread.h');
+      resolved=physical(p,target);observation=['selector',p,target,resolved];
+    }else assert.ok(stat.isFile(),'regular header candidate');
+    const original=held.find(item=>item.path===resolved);
+    assert.ok(original,'every resolved header is already a nominated held original: '+resolved);
+    original.check();assert.ok(same(original.stat,fs.lstatSync(resolved,{bigint:true})));
+    return {p:resolved,observation};
+  };
+  const resolve=(name,origin,next,quoted)=>{
+    assert.ok(!name.includes('\0')&&!name.startsWith('/'),'relative include name');
+    const candidates=[];
+    if(next)for(let i=origin.rank+1;i<roots.length;i++)candidates.push([roots[i][1]+'/'+name,i]);
+    else {
+      if(quoted){const p=physical(origin.p,name),i=rank(p);if(i>=0)candidates.push([p,i]);}
+      for(let i=0;i<roots.length;i++)candidates.push([roots[i][1]+'/'+name,i]);
+    }
+    const seen=new Set(),bindings=[];
+    for(const [p,i]of candidates) {
+      if(seen.has(p))continue;seen.add(p);
+      const actual=candidate(p);bindings.push(actual.observation);
+      if(actual.p)return {p:actual.p,rank:i,bindings};
+    }
+    return {error:next?'not-present-in-later-roots':'not-present-in-ordered-roots',bindings};
+  };
+  const add=actual=>{
+    const key=actual.p+'\0'+actual.rank;
+    if(!contexts.has(key)){contexts.add(key);queue.push({p:actual.p,rank:actual.rank});}
+  };
+  const origin={p:HEADERS+'/candidate.cc',rank:0};
+  for(const name of ['node_api.h','pthread.h','signal.h','stdlib.h','dlfcn.h','fcntl.h','stdio.h','string.h','unistd.h']) {
+    const actual=resolve(name,origin,false,false);assert.equal(actual.error,undefined);
+    seeds.push([name,label(actual.p),actual.bindings]);add(actual);
+  }
+  assert.deepEqual(seeds.map(row=>row[1]),['N/node_api.h','S/pthread/pthread.h','S/signal.h',
+    'S/stdlib.h','S/dlfcn.h','S/fcntl.h','S/stdio.h','S/string.h','S/unistd.h']);
+  const sourceIncludes=[...compiledSource.matchAll(/^\s*#\s*include\s+<([^>]+)>/gm)].map(m=>m[1]);
+  assert.deepEqual(sourceIncludes,['node_api.h','dlfcn.h','fcntl.h','stdio.h','stdlib.h','string.h','unistd.h',
+    'node_api.h','pthread.h','signal.h','stdlib.h'],'all eleven actual compiled-source includes');
+  for(const name of sourceIncludes)assert.equal(resolve(name,origin,false,false).error,undefined);
+  for(let q=0;q<queue.length;q++) {
+    const from=queue[q],original=held.find(item=>item.path===from.p);assert.ok(original);
+    const text=original.read().toString();
+    for(const m of text.matchAll(/__has_include(_next)?\s*\(\s*([<"])([^>"]+)[>"]\s*\)/g)) {
+      const actual=resolve(m[3],from,!!m[1],m[2]==='"');
+      probes.push([label(from.p),from.rank,m[1]?'has_include_next':'has_include',m[3],
+        actual.p?label(actual.p):null,actual.bindings,actual.error||null]);
+      if(actual.p)add(actual);
+    }
+    const lines=text.split('\n');
+    for(let i=0;i<lines.length;i++) {
+      const m=/^\s*#\s*(include|include_next|import)\s+(.+)$/.exec(lines[i]);if(!m)continue;
+      const literal=/^[<"]([^>"]+)[>"]/.exec(m[2]);
+      assert.ok(literal,'no unbound computed include');
+      const actual=resolve(literal[1],from,m[1]==='include_next',m[2].startsWith('"'));
+      edges.push([label(from.p),from.rank,i+1,m[1],literal[1],actual.p?label(actual.p):null,actual.bindings]);
+      if(actual.error)unresolved.push([label(from.p),from.rank,i+1,m[1],literal[1],actual.error]);else add(actual);
+    }
+  }
+  assert.equal(contexts.size,190);assert.equal(edges.length,487);assert.equal(probes.length,18);
+  assert.equal(absences.size,367);
+  assert.equal(hash(JSON.stringify(edges)),'a55687071ca8562f37378a9eee4352fea3ecfdd406033d5f8368bbe9fd9af687');
+  assert.equal(hash(JSON.stringify(probes)),'c941323849240c731ac02508c1d412c0b99995940dc6ca999aa04616749f831a');
+  const absenceRows=[...absences].map(([p,row])=>[p,...row]).sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0);
+  assert.equal(hash(JSON.stringify(absenceRows)),'8cdeba87c5cc7bc51bd67e57a62f666817420194329b1a541743874220b8e833');
+  assert.deepEqual(unresolved,[
+    ['S/Availability.h',2,200,'include','AvailabilityInternalPrivate.h','not-present-in-ordered-roots'],
+    ['S/Availability.h',2,319,'include','AvailabilityProhibitedInternal.h','not-present-in-ordered-roots'],
+    ['R/stdbool.h',1,16,'include_next','stdbool.h','not-present-in-later-roots'],
+    ['R/stdarg.h',1,29,'include_next','stdarg.h','not-present-in-later-roots'],
+    ['S/i386/limits.h',2,62,'include_next','limits.h','not-present-in-later-roots'],
+    ['S/arm/limits.h',2,65,'include_next','limits.h','not-present-in-later-roots'],
+  ],'only nominated conditional absent edges, not missing active inputs');
+  receipt.headerSearch={roots,seeds,contexts:contexts.size,edges,probes,unresolved,
+    absences:absenceRows,
+    absenceAncestors:[...directories].map(([p,stat])=>({path:p,...guardMaterial(stat)})),
+    compiledSourceIncludes:sourceIncludes,compilerUsedClosure:false};
+}
+
+async function invokeContractPreflight() {
+  const held=[],checks=[],failures=[],processes=[],aliases=[],artifacts=[],ancestors=[];
+  let closed=0,result,dir=null,fixture=null;
+  const receipt={kind:'S10a-native-contract-preflight-FIRST',recipe:'missing-native-contract-v1',startedAt:new Date().toISOString(),
+    ownerAuthority:false,retentionQualified:false,channelAcquired:false,processes,aliases,artifacts,ancestors};
+  const acquire=(path,expected)=>{const item=guardHold(path,expected);held.push(item);return item;};
+  const produced=(path,expected)=>{
+    try{const item=acquire(path,expected);artifacts.push(item.first);return item;}
+    catch(error){if(error.code==='ENOENT'){artifacts.push({path,absentAt:new Date().toISOString()});return null;}throw error;}
+  };
+  const settle=async(command,args)=>{precheck();const actual=await guardSpawn(command,args,dir);processes.push(actual);return actual;};
+  const precheck=()=>{
+    assert.equal(new Set(held.map(item=>item.fd)).size,held.length,'distinct original descriptors');
+    for(const check of checks)check();for(const item of held)item.check();
+  };
+  const alias=(path,inode,target,uid,gid,size,mtimeNs,ctimeNs)=>{
+    const stat=fs.lstatSync(path,{bigint:true});assert.ok(stat.isSymbolicLink());
+    assert.equal(stat.ino,BigInt(inode));assert.equal(stat.uid,BigInt(uid));assert.equal(stat.gid,BigInt(gid));
+    assert.equal(stat.nlink,1n);assert.equal(fs.readlinkSync(path),target);
+    if(size!==undefined)assert.equal(stat.size,BigInt(size));
+    if(mtimeNs!==undefined)assert.equal(stat.mtimeNs,BigInt(mtimeNs));
+    if(ctimeNs!==undefined)assert.equal(stat.ctimeNs,BigInt(ctimeNs));
+    const resolved=fs.realpathSync(path);aliases.push({path,target,resolved,...guardMaterial(stat)});
+    checks.push(()=>{assert.ok(same(stat,fs.lstatSync(path,{bigint:true})));
+      assert.equal(fs.readlinkSync(path),target);assert.equal(fs.realpathSync(path),resolved);});
+  };
+  try {
+    assert.equal(process.platform,'darwin');assert.equal(process.getuid(),501);assert.equal(process.geteuid(),501);
+    assert.equal(fs.realpathSync(process.execPath),NODE,'fixed test runtime');
+    const source=acquire(sourcePath,{uid:501,inode:216276870,size:1373,
+      sha:'6267af24fc2ced81af7a781352313d357b00ab25bb199513025e69126372da4d'}),entry=acquire(entryPath,{uid:501,
+      inode:216276871,sha:'bd83726b1f9270eec4cb1eddb929e97ae767f525a1cdab0003257729dd552c94'});
+    const self=acquire(fileURLToPath(import.meta.url),{uid:501,sha:preflightSelfSha});
+    const inventory=acquire(fileURLToPath(new URL('./task6a-origin-native-continuity-frame-v2.test.js',import.meta.url)),
+      {uid:501,inode:216283209,size:60175,sha:'54575f8e27cfcd4ed33bca4a08206e191a09f89af66ffa0e44417482411548b7'});
+    assert.equal(IMAGE_PINS.length,30);assert.equal(SELECTORS.length,38);
+    for(const [relative,inode,sha]of IMAGE_PINS)acquire(CELLAR+relative,{uid:501,inode,sha,limit:100_000_000});
+    for(const [relative,inode,target]of SELECTORS)alias('/opt/homebrew/'+relative,inode,target,501,80);
+    alias(SDK+'/usr/include/pthread.h',14866985,'pthread/pthread.h',0,0,17,
+      '1782608311515232577','1782608364253587548');
+    const tools=[
+      [CLANG,14827087,290664032,'f30550eab15fdf5ab8c0dc54c52679711241e5d4b636b027e18c09fef531775d'],
+      [LD,14827148,4953232,'28d85b9af18c923db12e0b4ce70b80ee217f2b7cade0e872baa9e8ddc396c08d'],
+      [NM,14827169,33125008,'9097f9662024989b801a1448eea2a71a4e916537a595cbaf34d4d051480236f6'],
+      [OTOOL,14827173,138208,'61ff2c63cf68eeeadf9c4700dadb8271740ff4960f98500f30db82b31521c0de'],
+      [CLT+'/usr/share/man/man1/ld.1',14830332,62981,'8570994697756ef9bf0146983a6971892d99cb830a2b36f93fb0d049835e81d5'],
+      [SDK+'/SDKSettings.json',14830457,7774,'f8d005f09381389167f9e0aeaa169bc9e7dff162ef22ca2fd8e98df7ff1acafe'],
+      [SDK+'/usr/lib/libSystem.B.tbd',14867668,334178,'20cfce043f11a083e2eb6111efe3579919a8082fa4cc912a7bd839af2010ec57'],
+    ];
+    for(const [path,inode,size,sha]of tools)acquire(path,{uid:0,inode,size,sha,limit:size});
+    const matches=[...inventory.read().toString().matchAll(/^const HEADER_ROWS = `\n([^`$]*)\n`\.trim\(\);$/gm)];
+    assert.equal(matches.length,1,'one literal original header nomination');
+    const originalRows=matches[0][1];assert.equal(hash(originalRows+'\n'),
+      '55e1f4b0f341f5eef4d375bdf31ec29081fcc8771ef2cf51fe9bbe897e649c0f');
+    assert.equal(hash(GUARD_HEADER_ADDITIONS+'\n'),'cd580f87d21fc6695a955bf4ba7a93eaba40e7a8ebed476c6a8c2fd93897ae01');
+    assert.equal(originalRows.split('\n').length,85);assert.equal(GUARD_HEADER_ADDITIONS.split('\n').length,114);
+    assert.equal(GUARD_HEADER_644.size,22);
+    const roots={R:RESOURCE+'/include',S:SDK+'/usr/include'},labels=new Set();
+    for(const [body,original]of[[originalRows,true],[GUARD_HEADER_ADDITIONS,false]])for(const row of body.split('\n')) {
+      const match=(original?/^([RS]\/[A-Za-z0-9_/.]+)\|([0-9]+)\|([0-9]+)\|(444|644)\|([a-f0-9]{64})$/:
+        /^([RS]\/[A-Za-z0-9_/.]+)\|([0-9]+)\|([0-9]+)\|([a-f0-9]{64})$/).exec(row);
+      assert.ok(match,'strict literal header row');const [label,inode,size]=match.slice(1,4);
+      assert.equal(label.includes('..'),false);assert.equal(labels.has(label),false);labels.add(label);
+      const mode=original?parseInt(match[4],8):GUARD_HEADER_644.has(label)?0o644:0o444;
+      acquire(roots[label[0]]+label.slice(1),{uid:0,inode,size,mode,sha:match[original?5:4]});
+    }
+    assert.equal(labels.size,199);receipt.publicHeaderCount=199;
+    const absent=[roots.R+'/AvailabilityInternalPrivate.h',roots.S+'/AvailabilityInternalPrivate.h',
+      roots.R+'/AvailabilityProhibitedInternal.h',roots.S+'/AvailabilityProhibitedInternal.h',
+      roots.R+'/__xnu_libcxx_sentinel.h',roots.S+'/__xnu_libcxx_sentinel.h',roots.S+'/stdarg.h',roots.S+'/stdbool.h'];
+    for(const path of absent) {
+      const check=()=>assert.throws(()=>fs.lstatSync(path),error=>error.code==='ENOENT','nominated absent input');
+      check();checks.push(check);
+    }
+    receipt.absentInputs=absent;
+    const parents=new Set();for(const item of held){const parts=item.path.split('/').filter(Boolean);let p='';
+      for(const part of parts.slice(0,-1)){p+='/'+part;parents.add(p);}}
+    for(const path of parents){directoryGuard(path,checks);const stat=fs.lstatSync(path,{bigint:true});
+      ancestors.push({path,...guardMaterial(stat)});}
+    assert.equal(fs.lstatSync(SDK,{bigint:true}).ino,14162438n);
+    assert.equal(fs.lstatSync(RESOURCE,{bigint:true}).ino,6714331n);
+    assert.equal(held.length,240,'nominated original inputs before fixture creation');
+    const candidate=source.read().toString();
+    bindPreflightHeaderSearch(held,checks,receipt,PREFIX+'\n'+candidate+'\n'+SUFFIX);
+    precheck(); // Includes Node-first shadows and conditional presence bindings before fixture/tools.
+    dir=fs.mkdtempSync('/private/tmp/setfarm-native-contract-preflight.');fs.chmodSync(dir,0o700);
+    directoryGuard(dir,checks,true);fixture=guardMaterial(fs.lstatSync(dir,{bigint:true}));
+    receipt.dir=dir;receipt.fixture=fixture;receipt.sourceHash=source.sha;receipt.entryHash=entry.sha;
+    receipt.testHash=self.sha;receipt.inventoryHash=inventory.sha;
+    receipt.instrumentationHash=hash(PREFIX+'\n'+SUFFIX);
+    receipt.consumerHash=hash(CONTRACT_PREFLIGHT_CONSUMER);
+    const copy=dir+'/initializer.c',consumerFile=dir+'/contract-preflight.cjs';
+    const object=dir+'/initializer.o',addon=dir+'/initializer.node';
+    const compiled=Buffer.from(PREFIX+'\n'+candidate+'\n'+SUFFIX);
+    receipt.compiledSourceHash=hash(compiled);
+    for(const [path,body]of[[consumerFile,Buffer.from(CONTRACT_PREFLIGHT_CONSUMER)],[copy,compiled]]) {
+      fs.writeFileSync(path,body,{flag:'wx',mode:0o600});
+      assert.ok(produced(path,{uid:501,sha:hash(body),mode:0o600}),'authored original held before compiler');
+    }
+    const compile=await settle(CLANG,['--no-default-config','--target=arm64-apple-macos26.5',
+      '-resource-dir',RESOURCE,'-isysroot',SDK,'-integrated-as','-nostdinc','-isystem',HEADERS,
+      '-isystem',RESOURCE+'/include','-isystem',SDK+'/usr/include',
+      '-fno-modules','-fno-implicit-modules','-fno-implicit-module-maps','-fno-lto',
+      '-fstack-protector-strong','-fvisibility=hidden','-std=c11','-O0','-Wall','-Wextra','-Werror',
+      '-c',copy,'-o',object]);
+    const objectHeld=produced(object,{uid:501,mode:0o644});
+    assertGuardSettlement(compile);assert.equal(compile.code,0);assert.equal(compile.stdout,'');assert.equal(compile.stderr,'');
+    assert.ok(objectHeld,'actual compiled object');
+    const link=await settle(CLANG,['--no-default-config','--target=arm64-apple-macos26.5',
+      '-resource-dir',RESOURCE,'-isysroot',SDK,'--ld-path='+LD,'-bundle','-fno-lto','-nostdlib',
+      '-Wl,-Z','-Wl,-syslibroot,'+SDK,object,LIBNODE,SDK+'/usr/lib/libSystem.B.tbd','-o',addon]);
+    const addonHeld=produced(addon,{uid:501,mode:0o755});
+    assertGuardSettlement(link);assert.equal(link.code,0);assert.equal(link.stdout,'');assert.equal(link.stderr,'');
+    assert.ok(addonHeld,'actual linked addon');
+    const exports=await settle(NM,['-gjU',addon]);assertGuardSettlement(exports);assert.equal(exports.code,0);assert.equal(exports.stderr,'');
+    assert.deepEqual(exports.stdout.trim().split('\n').sort(),['_napi_register_module_v1','_node_api_module_get_api_version_v1']);
+    const imports=await settle(NM,['-uj',addon]);assertGuardSettlement(imports);assert.equal(imports.code,0);assert.equal(imports.stderr,'');
+    assert.deepEqual(imports.stdout.trim().split('\n').sort(),['_napi_create_function','_napi_set_named_property',
+      '_napi_throw_error','__Exit','_atexit','_dladdr','_open','_fdopen$DARWIN_EXTSN','_close','_fclose',
+      '_fprintf','_strcmp','_memcpy','___stack_chk_fail','___stack_chk_guard',
+      '_pthread_setcancelstate','_pthread_sigmask'].sort(),'exact preflight imports; not guard invocation witnesses');
+    const deps=await settle(OTOOL,['-L',addon]);assertGuardSettlement(deps);assert.equal(deps.code,0);assert.equal(deps.stderr,'');
+    assert.deepEqual(deps.stdout.trim().split('\n').slice(1).map(line=>line.trim().split(' (')[0]).sort(),
+      ['/opt/homebrew/opt/node/lib/libnode.147.dylib','/usr/lib/libSystem.B.dylib']);
+    const actual=await settle(NODE,[consumerFile]);
+    const trace=produced(dir+'/native-trace',{uid:501,mode:0o600,limit:8192});
+    assertGuardSettlement(actual);assert.ok(trace,'actual natural-exit native trace');
+    const nativeTrace=trace.read().toString(),parsed=parseTrace(nativeTrace);
+    assert.deepEqual(parsed.events,['create:0','set:0'],'actual registration, no initializer call');
+    assert.deepEqual(parsed.images.map(image=>[image.name,image.count]),
+      [['create',1],['set',1],['register',1],['version',1]]);
+    for(const image of parsed.images) {
+      const expected=['create','set'].includes(image.name)?LIBNODE:addon;
+      assert.equal(fs.realpathSync(image.path),expected,'actual owned NAPI/addon image');
+      const original=held.find(item=>item.path===expected);assert.ok(original);original.check();
+      assert.ok(same(original.stat,fs.statSync(image.path,{bigint:true})));
+    }
+    assert.equal(held.length,245,'240 inputs plus exactly five generated originals');
+    assert.equal(artifacts.length,5);assert.equal(processes.length,6);
+    receipt.callbackEntries=0;receipt.nativeWitness=parsed;
+    result={code:actual.code,stdout:actual.stdout,stderr:actual.stderr,nativeTrace,receipt};
+    receipt.loadedProviderScope='dladdr attribution only, not shared-cache bytes/backend/TCB';
+  }catch(error){failures.push(error);}
+  finally {
+    for(const check of checks)try{check();}catch(error){failures.push(error);}
+    for(const item of held)try{item.check();}catch(error){failures.push(error);}
+    receipt.originalInputs=held.map(item=>item.first);
+    receipt.distinctOriginalInputs=new Set(held.map(item=>item.fd)).size;
+    for(const item of [...held].reverse())try{item.close();closed++;}catch(error){failures.push(error);}
+    receipt.checkedOnceCloses=closed;receipt.completedAt=new Date().toISOString();
+    receipt.failures=failures.map(error=>({name:error.name,message:error.message}));
+    // Full original artifact/process receipt exists even when the real oracle fails.
+    process.stdout.write(JSON.stringify(receipt)+'\n');
+  }
+  if(failures.length)throw new AggregateError(failures,'preflight fixture failed; original artifacts retained, not the intended RED');
+  assert.equal(receipt.distinctOriginalInputs,held.length);assert.equal(closed,held.length);
+  return result;
+}
+
+class MissingNativeContract extends Error {
+  constructor() {
+    super('real owned addon is missing continuityContract before initialize');
+    this.name='MissingNativeContract';
+  }
+}
+test('ordinary continuity preflight requires a real native contract before initialize',
+  {skip:!preflightEnabled},async()=>{
+    const actual=await invokeContractPreflight();
+    assert.equal(actual.receipt.distinctOriginalInputs,245);
+    assert.equal(actual.receipt.checkedOnceCloses,245);
+    assert.deepEqual(actual.receipt.failures,[]);
+    assert.equal(actual.receipt.callbackEntries,0);
+    assert.equal(actual.stdout,'');
+    if(actual.code===2) {
+      assert.equal(actual.stderr,'S10A_NATIVE_CONTRACT_MISSING\n');
+      throw new MissingNativeContract(); // Genuine TDD RED, never assert.throws.
+    }
+    assert.equal(actual.code,0,'generic preflight faults cannot qualify missing-contract RED');
+    assert.equal(actual.stderr,'');
+  });
+```
+
+- [x] Step 4: Read-only syntax/diff/secret/English checks and source-preservation
+  reconstruction: removing EXACTLY the new insertion and append reproduces
+  historical test SHAf7a62495. Confirm future actual self/consumer/instrumented-C
+  hashes against the nominations above; do not repin mismatches. Default native
+  skips, if observed, give zero positive credit. Request paired actual source
+  AND ONE-new-effect recipe review, including245/17 predictions, before opt-in.
+
+### Task 2: One genuine missing-contract RED, no Green stub
+
+- [x] Step 1: After paired actual source/effect review and fresh root preservation
+  gate, execute this literal environment nomination with the fixed Node binary:
+
+```sh
+SETFARM_TASK6A_NATIVE_CONTRACT_PREFLIGHT_RED=1 \
+SETFARM_TASK6A_NATIVE_CONTRACT_PREFLIGHT_SELF_SHA256=746f4451c8925246811649f42fe6f56263b870e099aedd5912c8d27b52c0656a \
+/opt/homebrew/Cellar/node/26.4.0/bin/node --test \
+scripts/__tests__/task6a-origin-native-cooperative-initializer-v2.test.js
+```
+
+  Expect seven historical SKIPs and ONE real FAIL named MissingNativeContract,
+  only after real native trace/245 originals/245 closes/six children succeed.
+  Preserve full original process output, full FIRST receipt and fixture. Never
+  wrap the missing-contract oracle in assert.throws or label this an all-pass.
+- [x] Step 2: Independent read-only audit of ONLY the new receipt and actual
+  artifacts against reviewed byte/operation/input nominations. If evidence
+  differs, classify that failure and form a NEW reviewed recipe; do not replay
+  accepted cases or claim the intended RED from generic refusal.
+- [ ] Step 3: Record genuine RED and exact private-receipt identity in this
+  plan/spec, run proportional non-native source verification, and deliver only
+  a separately reviewed incomplete DRAFT checkpoint. Root alone stages scoped
+  files/commits/pushes. No ready, merge, clean-main rollout or project completion.
+
+There is intentionally NO minimal "Green" metadata patch in this bounded task.
+The next implementation unit requires the complete integrated initialize FSM,
+legal bootstrap/retention terminals, embedding/FD/input/provider nominations and
+separately reviewed source/effects. The same literal contract consumer is kept
+for that new producer epoch; this frozen-C RED opt-in must refuse changed C or
+self epochs rather than repin/replay history. No false implementation advertisement.
+
+Self-review: this plan covers ONLY the named isolated spec unit and gives all new
+test code/actual compiler argv/consumer bytes/closure dispositions. Integrated
+S10 gaps remain explicitly outside this unit, not silently omitted or relaxed.
+
+
 ## S10 source-design worklist - not an executable implementation plan
 
 > **For agentic workers:** Root writes inline, sole writer; independent agents

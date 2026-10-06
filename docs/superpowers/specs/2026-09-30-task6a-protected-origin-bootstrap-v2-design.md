@@ -1,5 +1,81 @@
 # Task6A protected private source-entry bootstrap v2
 
+## S10a independently bounded pre-channel missing-contract RED
+
+Observed ONE new RED c3618c/session17931 ->304bea CLOSED1 at source746f4451,
+2026-10-06 16:27 UTC. Actual compile/link/17imports/2exports/2dependencies,
+natural child codes0/0/0/0/0/2, fault0/create0,set0/four images once/callback0,
+245 originals/245 checked-once closes/failures[] preceded MissingNativeContract;
+overall1FAIL/7historicalSKIP/0PASS. Three independent new-epoch audits C0/I0/M0
+qualify only the specific pre-channel missing-contract RED. Private original
+SHA124dbde7e3e7f15a47a14fa46c34c27c00fb55248b30d4b4de57a92776043343;
+immediate3aaf9f preservation252 closes/errors[]. Current source stays frozen.
+Never repoll17931 or replay the now accepted fixture/recipe. The written execution
+recipe is historical, not permission for another run. Source-backed closure and
+image evidence are not independent kernel close/backend/lifetime certificates.
+DRAFT delivery remains pending; no Green/guard/continuity/CONTROL/P2/activation.
+
+This subsection is a narrow sequencing exception, NOT a channel-gate relaxation.
+A complete isolated written/reviewed preflight recipe may be authored and reviewed
+before the integrated S10 bootstrap/retention/embedding/FD/provider gaps close.
+It loads a new fixture-owned real addon and stops before initialize; it cannot
+enter any inherited channel-owner or retained-owner branch. Integrated source/
+Green/activation still require the complete ordinary-continuity FSM and every
+existing original-owner/guard/settlement gate. No metadata-only implementation
+advertisement, "ready", merge or rollout follows.
+
+Root sole writer. Three-file map: existing initializer test plus named plan/spec.
+Production C626, old entry bd837 (held but not copied/launched), task-port/ABI/frame
+and all accepted historical helpers/bodies/recipes/PREFIX/SUFFIX stay frozen.
+New closed opt-in, fixed literal consumer/helper, self-test/instrumentation/input
+epoch and receipt identity are required. Old S1/S9 flags reject the changed self
+epoch before tools/fixtures/compile/load, never repin/replay accepted history.
+Immutable real-delegate instrumentation components may be reused in the distinct
+new recipe; the historical executable consumers/recipes are not invoked.
+
+Actual compile/link/load must succeed. Consumer takes exactly one argv, requires
+the owned addon, verifies initialize exists but NEVER invokes it, then checks own
+continuityContract and exact protocol2/ordinary-continuity-v2 record. Missing own
+export has a unique natural exit2/diagnostic; malformed export, load fault or other
+exception has a different code3/diagnostic and cannot qualify. Future valid native
+contract may be invoked only as that contract callback; no initialize/channel is
+ever called by this consumer. Same literal consumer bytes are preserved for the
+future separately reviewed complete producer epoch, not a false-ready stub.
+
+Native witnesses precede the oracle: fault0, create:0/set:0; actual image create/
+set/register/version once each; zero initialize callback entries/returns, no
+throw event/image. Real delegates call public registration/API-version/NAPI
+create/set operations, never replace their effects with textual JS evidence.
+Held libnode/addon material and actual image attribution must match. Frozen C
+contains pthread imports but runtime guard execution is NOT qualified here.
+
+Nominate frozen C626 and actual new self SHA externally before effects; compiled C
+is exactly unchanged PREFIX + LF + frozen C bytes + LF + SUFFIX, no GUARD_PREFIX,
+GUARD_PREP or mutation. Modern fixed C11 recipe in named plan, two module exports,
+17 imports and two dependencies. Base240 held originals and generated consumer/C/
+object/addon/trace5 predict245. Thirty-nine aliases/eight absence predicates/
+ancestors/0700 fixture are separate guards. New C11 routing binds N->R->S,
+quoted-relative-first/include_next-later-only,190 reachable held headers/487 edges/
+18 probes/367 absence paths with full-material nearest-ancestor rechecks. Exact
+regular targets/alias/conditional absent rows and graph hashes are nominated; no
+extra acquisition or implicit expansion of199. Written authored-file acquisition
+must be non-null before compiler launch. Lexical binding is not independent
+compiler/backend/predefined-macro/lifetime trust. Six naturally settled children, both
+stdio EOFs, null signal, matching exit/close, bounded outputs and full FIRST/
+checked-once closure are required before recognizing the specific missing-contract
+RED. Diagnostic/Node/NAPI/process/file resources exist: "pre-channel" does not mean
+zero transitive acquisition or independent dyld/installed-backend trust.
+
+Paired actual written recipe review authorizes only test authoring. Actual new
+source hashes, complete input/byte/effect nomination and fresh preservation plus
+paired source/effect review precede ONE prospective invocation. The intended
+MissingNativeContract assertion genuinely fails after all witnesses settle;
+assert.throws or a generic fault is not RED. Preserve original receipt and fixture
+even on failure, audit only that new epoch, never rerun accepted historical cases.
+This unit ends at an independently audited RED/incomplete DRAFT checkpoint.
+Full FSM, CONTROL/P2, ready/merge/clean-main build/rollout remain separately closed.
+
+
 ## Feedback-only draft review boundary
 
 Standing owner authority and the independent aggregate source review permit
