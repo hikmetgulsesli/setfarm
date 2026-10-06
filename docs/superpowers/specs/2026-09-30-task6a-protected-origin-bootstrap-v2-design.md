@@ -1,5 +1,157 @@
 # Task6A protected private source-entry bootstrap v2
 
+## S10e private C remap-policy unit nomination
+
+This explicitly nominates an independently compositional C POLICY unit,
+not the resource-owning fixture deferred in S10d. Its actual C control flow
+can be behaviorally tested with an in-memory descriptor/OFD model. JavaScript
+counterpart tests and C syntax alone cannot qualify C behavior. Actual
+close/dup2, cancellation/mask, census, Mach, Node embedding, child inheritance
+and retained-owner qualification remain closed. No integrated S10 source gate
+is narrowed. Root alone implements; parallel agents independently review.
+
+### Scope decision and private contract
+
+Prefer actual-C/model-port tests over a JS-only model (which does not execute C)
+or a real guarded FD fixture (whose legal failure terminal is still unresolved).
+The unit makes no explicit remap/guard/OS API call or autonomous resource
+operation. Compiler ABI/stack-protection imports remain exact separately audited
+nominations, not a compiled-zero-import claim. It calls only
+the private original C caller's supplied operation ports, updates that caller's
+fixed occurrence/action subledger and returns control ONLY to that same owner.
+It never restores, exits, logs, retries, publishes a token or returns to JS.
+This is useful production policy, not another wire codec or contract
+advertisement on the frozen initializer. No current runtime links it.
+
+Physical guard/source genesis, private pointer/storage validity, exclusive
+table, callback confinement and provenance are CALLER preconditions. The
+ready field is a private scheduling input, not a certificate of those facts.
+Model fixtures use synthetic occurrences and synthetic returned results only;
+they neither own nor settle the physical FD numbers encoded in model memory.
+Baseline ordinary test-runtime/compiler resources are not channel-child
+originals, and no guard/restoration is created by this policy fixture.
+
+Exact private header:
+```c
+#ifndef SF_ORIGIN_REMAP_POLICY_V2_H
+#define SF_ORIGIN_REMAP_POLICY_V2_H
+/* Private policy only: no guard, syscall, owner terminal or public authority. */
+enum sf_remap_state_v2 { SF_R_EMPTY, SF_R_HELD, SF_R_CLOSING,
+                         SF_R_PENDING, SF_R_SETTLED, SF_R_UNKNOWN };
+enum sf_remap_result_v2 { SF_R_REFUSED, SF_R_BURNED, SF_R_COMPLETE,
+                          SF_R_UNAVAILABLE };
+struct sf_remap_call_v2 { int rc; int error; };
+struct sf_remap_occurrence_v2 {
+    unsigned id; int fd; enum sf_remap_state_v2 state;
+};
+struct sf_remap_action_v2 {
+    unsigned attempted, returned;
+    int rc, error;
+};
+struct sf_remap_policy_v2 {
+    unsigned ready, entered, burned;
+    struct sf_remap_occurrence_v2 occurrence[8];
+    struct sf_remap_action_v2 action[8];
+};
+struct sf_remap_ports_v2 {
+    void *context;
+    struct sf_remap_call_v2 (*close_one)(void *, int);
+    struct sf_remap_call_v2 (*duplicate)(void *, int, int);
+    int (*binding_valid)(void *, int, unsigned);
+};
+enum sf_remap_result_v2 sf_remap_policy_run_v2(
+    struct sf_remap_policy_v2 *, const struct sf_remap_ports_v2 *);
+#endif
+```
+
+The fixed input has six HELD occurrences: ids1..6 at3..8. Two EMPTY planned
+targets have ids7/8 at3/4, with no acquired-original claim until usable duplicate
+success. All eight action records start zero; ready=1,entered=0,burned=0.
+Null policy storage returns SF_R_REFUSED without memory access or callbacks.
+For caller-qualified writable policy storage, reject null ports, missing
+callbacks, noncanonical fields, duplicate/wrong identities, unexpected states
+or preattempted actions WITHOUT callbacks; latch burned without resetting
+historical records. Reentry after any attempted invocation,
+burn or completion invokes no operation and never resets historical state.
+
+The complete operation order is close3,close4,close5,close6,duplicate7->3,
+duplicate8->4,close7,close8. Before each call mark its action attempted and
+occurrence CLOSING or planned target PENDING. Seal returned flag, actual
+rc/error immediately after its callback returns. Only close rc0 settles that
+original. Any other close result records UNKNOWN, permanently burns and stops.
+Never retry, replace or classify EBADF as the original's settlement.
+
+Only duplicate rc==REQUESTED TARGET establishes that target's new HELD
+occurrence. Any failed/contradictory result leaves UNKNOWN/pending acquisition,
+does not create ownership at the returned number and stops before the next
+operation. Record the new HELD acquisition before binding_valid, which must
+return exactly1. Binding rejection burns but preserves that known acquisition;
+it does not authorize this unit to clean it up. A missing callback return
+provides no result receipt and no function-return promise.
+
+COMPLETE requires six SETTLED source occurrences, two distinct new HELD
+targets, exactly eight attempted/returned operation records and no burn.
+It means only policy progression, NOT global EVERY-original settlement,
+physical six-close receipts, restoration permission or a production capability.
+The broader caller ledger includes inherited stdio, Mach/VM, guard, receiver,
+provider and child originals separately; these eight slots are not full capacity.
+
+### Independent behavior tests and explicit effect boundary
+
+The new test embeds one fixed C driver implementing a descriptor/OFD memory
+model. Model sources3/7 share OFD11; source4 has OFD12; source5 has OFD21;
+sources6/8 share OFD22. Each close mutates the real model slot; duplication
+requires absent requested targets and preserves the source OFD. Assertions
+inspect model bindings AND actual policy state, not only callback counts.
+No OS close/dup/cancel/signal/census/Mach/provider operation is mocked as a
+physical success. Their synthetic model results are explicitly labeled.
+
+One literal finite suite covers: correct six-source/two-target transition;
+each of six close-failure positions; each duplication failure; contradictory
+duplication returns0/9; each binding rejection after acquisition; invalid
+layout/identity/target/action/ready input; null callbacks/storage; reentry after
+burn and completion; distinct old3/new3 and old4/new4. Each failure verifies
+sticky burn, preserved unknown/held obligations and no later forbidden action.
+The production breaks caught are missing disposal, unsafe duplication over an
+unsettled target, acceptance after uncertainty, unsealed acquisition, lost
+original identity and retry/reclose. Tests execute the ACTUAL C unit.
+
+RED: while candidate C implementation is absent, the embedded driver links a
+distinct typed UNAVAILABLE_NO_EFFECT stub. It invokes no operation and makes no
+completion claim. The SAME independent success oracle demands actual model
+transition and policy COMPLETE; driver returns the specifically bounded
+missing-implementation code71. Compiler/link/import/layout failures, crash,
+timeouts and generic driver failure are NOT that RED. The test assertion is
+unwrapped; it must actually fail. There are zero physical remap acquisitions.
+
+Only after the genuine RED and review implement minimal C policy. GREEN uses
+that actual C source, not a transformed JS counterpart. An independent
+omit-one-close source derivative must fail the same model oracle, not produce
+a passing expected-failure advertisement. Preserve all new raw artifacts.
+Never replay or repin any historical accepted native recipe.
+
+Authoring this bounded unit requires complete paired design review and fresh
+preservation first. Compilation/execution is a separate nominated effect
+recipe: held new header/test/source or explicit source absence, immutable
+copied C inputs, fixed original Node/clang/ld/nm/otool/SDK stub inputs and
+ancestor/alias checks, strict empty compiler channels, exact object/import/
+dependency checks, natural child exit plus both EOFs, checked-once parent input
+closures. Every recipe is tied to actual written bytes before invocation.
+The policy fixture is ordinary C computation, not retained-owner/channel
+execution. No source-only review admits an effect automatically.
+
+### File Map and unchanged gates
+
+New files: scripts/task6a-origin-native-remap-policy-v2.h (private types);
+scripts/task6a-origin-native-remap-policy-v2.c (policy; only after RED);
+scripts/__tests__/task6a-origin-native-remap-policy-v2.test.js (C memory-model
+driver, literal oracle and isolated recipe). Modify only this existing design
+and its paired plan. Public prospective File Map11->14; no existing native
+source/test/entry/driver changes. Original two, all retained trees, journal
+HASH ONLY, CLI/builds and accepted recipes remain frozen.
+Full bootstrap, anomalous-owner terminal, provider/input/FSM/census, CONTROL,
+P2, READY/merge and host rollout remain independently closed.
+
 ## S10d delayed-disposal source nomination
 
 This SOURCE-ONLY nomination addresses the structural six-close-receipt gap

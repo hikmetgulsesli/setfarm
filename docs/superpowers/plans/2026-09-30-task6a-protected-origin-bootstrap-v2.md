@@ -1,5 +1,96 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S10e C remap-policy implementation plan
+
+> **For agentic workers:** Root alone writes. Parallel agents perform read-only
+> independent review; no implementation or delivery delegation.
+
+**Goal:** Implement and test actual C remap sequencing against memory-only
+effect ports without qualifying physical native ownership.
+**Architecture:** Fixed eight-occurrence/eight-action private caller subledger;
+six once-only disposals, two new-target acquisitions, sticky uncertainty.
+**Tech Stack:** C11, the pinned local clang/ld/nm/otool, Node node:test and a
+finite C memory-model driver; zero remap syscalls/guard/Mach operations.
+**Spec:** Paired design, S10e private C remap-policy unit nomination.
+
+### Global constraints and File Map
+
+Add ONLY private C header/implementation and new JS test. Modify existing
+paired plan/spec. Prospective public File Map14. Freeze all original native
+sources/entries/tests/drivers/recipes and user originals. No real owner fixture,
+integrated linking, runtime flag, safety bypass, service/DB change or rollout.
+
+### Task S10e: private policy and actual-C behavioral coverage
+
+**Files:** Create scripts/task6a-origin-native-remap-policy-v2.h;
+create scripts/__tests__/task6a-origin-native-remap-policy-v2.test.js;
+after RED create scripts/task6a-origin-native-remap-policy-v2.c.
+**Consumes:** Exact header/interface and operation/result contract in paired spec.
+**Produces:** sf_remap_policy_run_v2 with private same-C-owner results;
+not a physical receipt, restoration permission or token.
+
+- [ ] Independently review ACTUAL paired source nomination and preservation.
+  Only then author the header and C-driver test; candidate C remains absent.
+- [ ] Write the test first. Header is the exact spec declaration. Driver builds
+  six synthetic source occurrences and model bindings with literal OFD values.
+  The absent-source branch defines only:
+  ```c
+  enum sf_remap_result_v2 sf_remap_policy_run_v2(
+      struct sf_remap_policy_v2 *p, const struct sf_remap_ports_v2 *ports) {
+      (void)p; (void)ports; return SF_R_UNAVAILABLE;
+  }
+  ```
+  Its independent success consumer requires COMPLETE, source states SETTLED,
+  targets HELD ids7/8, model3=11/model4=22 and model5..8 absent. Literal71 is
+  reserved ONLY for the UNAVAILABLE missing-implementation path.
+- [ ] Review the ACTUAL written header/test and exact new RED recipe before
+  compile/link/execution; default invocation remains off. No accepted replay.
+  Fixed opt-in: SETFARM_ALLOW_NATIVE_REMAP_POLICY_MODEL_V2=1; reject any other
+  defined value and every old native effect opt-in. One finite recipe only.
+- [ ] Run ONE exact reviewed RED invocation:
+  `/opt/homebrew/Cellar/node/26.4.0/bin/node --test scripts/__tests__/task6a-origin-native-remap-policy-v2.test.js`
+  with ONLY the named opt-in. Require natural compile/link/nm/otool success and
+  actual driver71, then the unwrapped independent test assertion must FAIL.
+  Record all original channels/artifacts; a setup failure is not RED.
+- [ ] Implement the smallest C policy ONLY after that real RED. Validate all
+  canonical inputs before effects; enter once; premark each call; seal actual
+  callback result; stop on UNKNOWN; register new targets before validation.
+  Literal operation schedule:
+  ```
+  close(3), close(4), close(5), close(6),
+  duplicate(7,3), duplicate(8,4), close(7), close(8)
+  ```
+  COMPLETE requires the exact resulting states and eight returned actions.
+- [ ] Review actual implementation plus new GREEN recipe/inputs. Run the same
+  literal success and finite error matrix against ACTUAL C only after that gate.
+  Model fixtures supply no physical OS error or original ownership evidence.
+- [ ] Create ONE separately reviewed omit-first-close derivative in a new fixture
+  and run the same unwrapped model oracle. Require specific behavioral failure;
+  compiler/driver crash cannot qualify sensitivity. No source history rewrite.
+- [ ] Root verifies exact File Map, English contract, new C compile smoke,
+  raw receipts, inverse historical docs, original/native pins and clean scope.
+  Three read-only actual-diff reviews precede normal scoped commit/push.
+  Keep DRAFT and all integrated/native-terminal/CONTROL/P2 gates closed.
+
+### Literal compiler recipe constraints before its later effect review
+
+Copies: task6a-origin-native-remap-policy-v2.h, driver.c, and policy.c only
+when source is present. Every quoted include uses that exact header basename;
+all copied bytes are immutable. Fixed
+compiler flags: --no-default-config --target=arm64-apple-macos26.5,
+-resource-dir /Library/Developer/CommandLineTools/usr/lib/clang/21,
+-isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk,
+-integrated-as -nostdinc -fno-modules -fno-implicit-modules
+-fno-implicit-module-maps -fno-lto -fno-builtin -fstack-protector-strong
+-std=c11 -O0 -Wall -Wextra -Werror -c. Own quoted header only; no SDK include.
+Link with fixed clang/ld, -nostdlib -Wl,-Z and exact SDK libSystem.B.tbd.
+No weakening compiler protections. Exact provider imports must be reviewed from
+actual objects before executable entry; no catch-all import widening.
+Driver includes only the copied task6a-origin-native-remap-policy-v2.h;
+it has no explicit I/O/allocation/syscall function;
+it returns a bounded integer code through ordinary main.
+Artifacts remain preserved; never automatic recursive deletion.
+
 ## S10d delayed-disposal source worklist
 
 > **For agentic workers:** Root alone writes and delivers. Parallel seats
