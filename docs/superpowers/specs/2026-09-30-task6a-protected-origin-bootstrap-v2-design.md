@@ -73,6 +73,11 @@ callbacks, noncanonical fields, duplicate/wrong identities, unexpected states
 or preattempted actions WITHOUT callbacks; latch burned without resetting
 historical records. Reentry after any attempted invocation,
 burn or completion invokes no operation and never resets historical state.
+Same-owner active reentry from an operation or binding port is not silently
+excluded by callback confinement. It refuses and burns; the outer invocation
+must seal the returned operation receipt and any known settlement/acquisition,
+then stop before any later port. Arbitrary direct ledger mutation by callbacks
+remains outside the caller-qualified confinement precondition.
 
 The complete operation order is close3,close4,close5,close6,duplicate7->3,
 duplicate8->4,close7,close8. Before each call mark its action attempted and
@@ -112,6 +117,13 @@ duplication returns0/9; each binding rejection after acquisition; invalid
 layout/identity/target/action/ready input; null callbacks/storage; reentry after
 burn and completion; distinct old3/new3 and old4/new4. Each failure verifies
 sticky burn, preserved unknown/held obligations and no later forbidden action.
+Fieldwise snapshots cover every policy and synthetic-model field; refusal and
+reentry may change only the burn latch, and UNAVAILABLE changes none. Every
+returned prefix receipt, untouched suffix and partial-effect model binding is
+checked independently. Close faults include both negative and positive nonzero
+results, with and without a synthetic effect, at all six disposal positions.
+Active reentry covers all eight operation callbacks and both binding callbacks;
+usable results remain recorded, including newly HELD targets, despite the burn.
 The production breaks caught are missing disposal, unsafe duplication over an
 unsettled target, acceptance after uncertainty, unsealed acquisition, lost
 original identity and retry/reclose. Tests execute the ACTUAL C unit.
@@ -134,11 +146,50 @@ Authoring this bounded unit requires complete paired design review and fresh
 preservation first. Compilation/execution is a separate nominated effect
 recipe: held new header/test/source or explicit source absence, immutable
 copied C inputs, fixed original Node/clang/ld/nm/otool/SDK stub inputs and
-ancestor/alias checks, strict empty compiler channels, exact object/import/
-dependency checks, natural child exit plus both EOFs, checked-once parent input
+ancestor/alias/resource-directory rechecks, strict empty compiler channels,
+object custody/hash checks and exact executable import/dependency checks,
+natural child exit plus both EOFs, checked-once parent input
 closures. Every recipe is tied to actual written bytes before invocation.
 The policy fixture is ordinary C computation, not retained-owner/channel
 execution. No source-only review admits an effect automatically.
+
+### Observed bounded policy evidence, 2026-10-06
+
+The new C/header/test are now authored and the finite ACTUAL-C policy matrix
+passed. This is not an integrated bootstrap or physical-owner qualification.
+An initial import refusal exposed compiler-generated memset from a driver
+aggregate initializer. It stopped before model entry and was NOT counted as
+RED. Scalar initialization removed that dependency without widening imports
+or weakening strong stack protection.
+
+The corrected missing-source run at20:02UTC produced five natural statuses
+0,0,0,0,71 and fourteen successful checked-once input closes; its unwrapped
+MissingRemapPolicy assertion failed. Only then was the initial C policy written.
+Independent review found active-reentry continuation after a nested burn.
+The expanded actual-C test reproduced it at20:08UTC with six natural statuses
+0,0,0,0,0,150 and seventeen closes; the assertion genuinely failed. Only after
+that behavioral RED were three stop-on-burn checks added, preserving sealed
+receipts and known acquisitions rather than erasing them.
+
+The corrected baseline at20:10UTC produced six natural zero statuses,
+seventeen successful checked-once closes, and one passing unwrapped test with
+zero skips. The same C driver covers successful sequencing, uncertainty,
+history preservation, invalid inputs and all ten active-reentry positions.
+A separately reviewed copy-only first-disposal omission at20:14UTC produced
+six natural statuses0,0,0,0,0,81 and seventeen closes; the same oracle failed
+unwrapped. The original C remained unchanged. Every qualified invocation had
+exactly the two stack-protection imports and one direct System dependency;
+compile/link/model channels were empty and all direct children naturally
+settled with both EOFs. Original artifacts and complete raw receipts remain
+private and preserved; none of these accepted recipes may be replayed.
+
+Policy source SHA4d57f44fdbafecf262139d6be08d9bebdbd788e32d5a12b4634ce60057a903c6;
+test SHA5a64be437f2a6822f7382da0b72b147cd0206154272d1ec0087c2665c538d079;
+omission-copy SHA84e571887898103f387ad8de8d0034d9052ca7f3c36f10bfed9f3a7abca5cef7.
+These certify only the bounded memory-policy evidence. All real remap, guard,
+census, receiver, retained-terminal and broader native capacity remain
+unqualified, and no current runtime links this policy. Effect admission stays
+closed for those unqualified stages.
 
 ### File Map and unchanged gates
 

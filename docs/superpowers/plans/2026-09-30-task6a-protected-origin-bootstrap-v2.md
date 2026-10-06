@@ -29,9 +29,9 @@ after RED create scripts/task6a-origin-native-remap-policy-v2.c.
 **Produces:** sf_remap_policy_run_v2 with private same-C-owner results;
 not a physical receipt, restoration permission or token.
 
-- [ ] Independently review ACTUAL paired source nomination and preservation.
+- [x] Independently review ACTUAL paired source nomination and preservation.
   Only then author the header and C-driver test; candidate C remains absent.
-- [ ] Write the test first. Header is the exact spec declaration. Driver builds
+- [x] Write the test first. Header is the exact spec declaration. Driver builds
   six synthetic source occurrences and model bindings with literal OFD values.
   The absent-source branch defines only:
   ```c
@@ -43,16 +43,16 @@ not a physical receipt, restoration permission or token.
   Its independent success consumer requires COMPLETE, source states SETTLED,
   targets HELD ids7/8, model3=11/model4=22 and model5..8 absent. Literal71 is
   reserved ONLY for the UNAVAILABLE missing-implementation path.
-- [ ] Review the ACTUAL written header/test and exact new RED recipe before
+- [x] Review the ACTUAL written header/test and exact new RED recipe before
   compile/link/execution; default invocation remains off. No accepted replay.
   Fixed opt-in: SETFARM_ALLOW_NATIVE_REMAP_POLICY_MODEL_V2=1; reject any other
   defined value and every old native effect opt-in. One finite recipe only.
-- [ ] Run ONE exact reviewed RED invocation:
+- [x] Run ONE exact reviewed RED invocation:
   `/opt/homebrew/Cellar/node/26.4.0/bin/node --test scripts/__tests__/task6a-origin-native-remap-policy-v2.test.js`
   with ONLY the named opt-in. Require natural compile/link/nm/otool success and
   actual driver71, then the unwrapped independent test assertion must FAIL.
   Record all original channels/artifacts; a setup failure is not RED.
-- [ ] Implement the smallest C policy ONLY after that real RED. Validate all
+- [x] Implement the smallest C policy ONLY after that real RED. Validate all
   canonical inputs before effects; enter once; premark each call; seal actual
   callback result; stop on UNKNOWN; register new targets before validation.
   Literal operation schedule:
@@ -61,10 +61,15 @@ not a physical receipt, restoration permission or token.
   duplicate(7,3), duplicate(8,4), close(7), close(8)
   ```
   COMPLETE requires the exact resulting states and eight returned actions.
-- [ ] Review actual implementation plus new GREEN recipe/inputs. Run the same
+- [x] Review actual implementation plus new GREEN recipe/inputs. Run the same
   literal success and finite error matrix against ACTUAL C only after that gate.
   Model fixtures supply no physical OS error or original ownership evidence.
-- [ ] Create ONE separately reviewed omit-first-close derivative in a new fixture
+  Active same-owner port reentry is causally necessary sticky-burn coverage:
+  reproduce the continuing-after-burn defect with an actual-C behavioral RED,
+  then seal the returned receipt/known acquisition and stop before later ports.
+  Cover all eight operation callbacks and both binding callbacks. Do not narrow
+  callback confinement silently to avoid this root-policy defect.
+- [x] Create ONE separately reviewed omit-first-close derivative in a new fixture
   and run the same unwrapped model oracle. Require specific behavioral failure;
   compiler/driver crash cannot qualify sensitivity. No source history rewrite.
 - [ ] Root verifies exact File Map, English contract, new C compile smoke,
@@ -84,12 +89,37 @@ compiler flags: --no-default-config --target=arm64-apple-macos26.5,
 -fno-implicit-module-maps -fno-lto -fno-builtin -fstack-protector-strong
 -std=c11 -O0 -Wall -Wextra -Werror -c. Own quoted header only; no SDK include.
 Link with fixed clang/ld, -nostdlib -Wl,-Z and exact SDK libSystem.B.tbd.
-No weakening compiler protections. Exact provider imports must be reviewed from
-actual objects before executable entry; no catch-all import widening.
+No weakening compiler protections. Objects receive custody/hash checks;
+the linked executable receives exact provider import/dependency checks before
+entry. This is not an independent per-object import qualification. No catch-all
+import widening. Resource-directory bindings are rechecked before each tool,
+before executable entry and during final closure.
 Driver includes only the copied task6a-origin-native-remap-policy-v2.h;
 it has no explicit I/O/allocation/syscall function;
 it returns a bounded integer code through ordinary main.
 Artifacts remain preserved; never automatic recursive deletion.
+
+### Actual policy outcomes and remaining delivery boundary
+
+Missing-source RED20:02UTC: five natural statuses0,0,0,0,71; fourteen checked
+input closes; unwrapped FAIL. First import-refused attempt before that is not
+RED and was preserved separately. Initial C then authored; review-discovered
+active-reentry defect reproduced by actual-C RED20:08UTC, six statuses
+0,0,0,0,0,150/seventeen closes, before its three local stop-on-burn corrections.
+Baseline GREEN20:10UTC: six zeros/seventeen closes/1PASS0FAIL0SKIP through
+the finite matrix. Copy-only omission20:14UTC: six statuses0,0,0,0,0,81/
+seventeen closes/unwrapped FAIL, original source unchanged. Exact executable
+imports remain only stack_chk_fail/stack_chk_guard; one direct System dependency.
+No implicit dependency acceptance, accepted-recipe replay or gate bypass.
+
+Private originals: logs/2026-10-06-task6a-s10e-native-policy-red-original.json,
+logs/2026-10-06-task6a-s10e-active-reentry-red-original.json,
+logs/2026-10-06-task6a-s10e-native-policy-green-original.json and
+logs/2026-10-06-task6a-s10e-omission-original.json. They are not public File Map
+entries and must not be staged. This unit's source and behavior verification
+are complete; final exact-diff review/scoped PR delivery follows the final gate
+above. Integrated physical bootstrap, original-owner terminal, both censuses,
+full native capacity, CONTROL and P2/P3/P4/P5/A-E remain unqualified.
 
 ## S10d delayed-disposal source worklist
 
