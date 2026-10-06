@@ -70,7 +70,8 @@ observation hash. Fixed namespace and publication rules are in spec.
   fsync and complete rechecks; preserve pending artifacts and checked-once closes.
 - [x] GREEN tests assert actual file bytes/identities/history, not mock presence.
 - [x] Independent input and retention reviews C0/I0/M0; no live-root writes.
-- [ ] Scoped commit (this is the pretransaction checkpoint).
+- [x] Scoped commit a893efc2, normally pushed in incremental DRAFT PR276;
+  full controller/adapter/live delivery remains pending under Task5.
 
 Task2 evidence: genuine missing-store-module RED29fail before authoring; final
 31 real private-FS tests +14 V2 grammar +5 old V1 grammar pass50/0fail/0skip.
@@ -138,6 +139,16 @@ queued-contender drain. Existing V1 final lstat then unlink has a TOCTOU window;
 an already-entered stale reclaimer could remove a newer V2 pathname. O_EXCL or a
 different schema alone is NOT the complete freeze proof. No provider source,
 production controller or live effect is admitted by this research observation.
+
+Task4a causal File Map refinement: add the separately nominated reservation-only
+scripts/deployment-dashboard-cutover-serialization-v2.mjs and matching builtin
+test before Task3. It must use the actual existing maintenance observer/normalizer
+closure, own the original same-path V2 lock and checked-once resource ledger, and
+refuse every EEXIST without V1 repair/reclaim. Exact proposed interface, wire,
+physical rules and release/admission distinction are in the spec. Preserve the
+stale-reclaimer interleaving as a negative complete-admission case, not a fixed
+race claim. Independent nomination and real owned-fixture RED precede production
+authoring. This component alone does NOT satisfy the Task3 provider dependency.
 
 ## Task5: authenticated entry, delivery and qualified dashboard checkpoint
 

@@ -166,6 +166,103 @@ exact dashboard targets; unrelated runtime owners stay zero. Authenticate
 delivered producer presence; do not turn old absence profiles or total-owner-zero
 claims into exceptions. A preflight snapshot is not the live exclusion capability.
 
+### Task4a prospective serialization primitive (not complete effect admission)
+
+Add scripts/deployment-dashboard-cutover-serialization-v2.mjs and matching
+scripts/__tests__/deployment-dashboard-cutover-serialization-v2.test.js.
+This primitive supplies only an authentic original-process-owned reservation
+against FUTURE cooperating direct/cold acquisitions, never owner-claim, DB,
+stale-contender quiescence, service-effect or READY authority. The complete adapter
+must separately authenticate the existing owner handle, physical+DB inventory,
+already-entered stale cleanup/helper/queued-contender drain and source/build.
+Do not begin Task3 authoring or any live call from this component alone.
+
+Proposed exports acquireDashboardCutoverSerializationV2(input),
+assertDashboardCutoverSerializationV2(handle), releaseDashboardCutoverSerializationV2(handle).
+Input exactly {cutoverIntentHash,ownerClaimHash}, both64 lowercase hex; those
+labels alone grant nothing. Input is copied from a nonproxy Object.prototype
+plain record with exactly those own enumerable data properties. Reject proxies,
+accessors, symbols, nonenumerable/extra fields and malformed hashes before any
+observer/FS work or acquisition-attempt consumption. Invalid idle input does not
+consume the attempt. An already-active operation always detects and burns reentry
+before further caller-input handling. Handle is a frozen empty null-prototype object in a
+private WeakMap. Copy/proxy/foreign/released handles refuse without caller code.
+At most one acquisition attempt per module instance; EEXIST always refuses,
+including dead/malformed locks. No V1 repair/reclaim/genesis/epoch APIs are used.
+
+Account-derived path is the existing data/internal-production-baseline/
+restart-authority-retirement-v1/physical-service-restart-authority.transition.lock.
+Existing workspace/data/baseline required; at most128 held nofollow ancestors,
+same owner UID/device for scope directories, no group/other writable scope.
+Retirement parent0700 may be exclusively created and parent-fsynced; existing
+parent must authenticate. Do not create an epoch, genesis, helper or service.
+Original lock is exclusively created nofollow0600/nlink1, held in an immediate
+resource ledger, written/readback/fsynced with original ancestry brackets and
+parent directory sync BEFORE minting a handle. Setup failure preserves the lock;
+there is no repair unlink. Retained original-resource state must remain reachable
+after unknown results; never retry uncertain close or begin another acquisition.
+
+Wire body exactly schema,purpose,cutoverIntentHash,ownerClaimHash,owner;
+schema setfarm.internal-production-dashboard-cutover-serialization-lock.v2;
+purpose preserved-dashboard-cutover. Owner is the existing authentic maintenance
+observer tuple uid,pid,processLstart,processGroupId,bootSessionHash,reservationNonce,
+observed for the actual current process, with code-minted UUIDv4 nonce. Append
+only lockHash = existing canonical-json-compatible SHA256 body without LF.
+Wire canonical UTF8 entire record plus one LF, bounded1..65536 bytes. Reuse actual
+build-generation-maintenance-owner-observer.mjs and its journal normalizer; both
+belong to the eventual authenticated entry closure. No injected observer ports.
+
+Assertion rechecks original owner live_match, same account, original ancestor
+descriptors/paths and complete original lock bytes/identity. Any failed held
+assertion permanently burns this handle/module. Release is a reservation-resource
+operation only: live original owner and exact original lock must still match;
+premark unlink, parent-sync and each close attempt, check original unlinked inode
+transition, and never retry an unknown result. It grants no effect settlement;
+the future complete adapter must not release it while any effect/owner remains
+unsettled or stale cleanup is unqualified. No generic finally release in controller.
+
+Operation FSM: idle -> acquiring -> held -> releasing -> released; any uncertain
+operation or held-assertion drift -> burned. active is set before all external
+observations/ports; nested acquire/assert/release burns the current operation,
+even when a test fault boundary swallows the nested exception. Every resumed
+operation checks the original FSM/active owner before its next port. Foreign
+idle handle lookup refuses without touching caller fields or burning an unrelated
+valid held handle. Burned/unsealed handles cannot enter normal release.
+
+Acquisition brackets actual owner observation with full physical rechecks once
+originals exist. Immediately before handle mint, repeat actual owner live_match
+and original physical checks; no pending sync/close may remain. Release similarly
+performs owner+physical+owner+physical checks before its FIRST unlink. After an
+owned unlink, only the retained original inode may explain nlink1 -> nlink0;
+never authenticate or remove a later pathname owner as cleanup.
+
+Resource slots are registered immediately upon each returned FD, BEFORE first
+fallible fstat. States unsealed -> sealed -> close-attempted -> close-settled;
+throwing close consumes its attempt and remains close-unknown. Store original
+identity, returned FD and close-state in a retained module-owned vault even when
+no handle was minted. Unsealed identity cannot authorize unlink or close. On
+setup failure preserve every created pathname and prohibit repair unlink; once-
+close only definitely owned sealed untouched FD slots, checking retained-original
+descriptor identity, not mutable pathname. Unknown/unsealed slots remain reachable.
+
+Release ordering: premark unlink -> unlink -> original inode transition check ->
+premark parent-sync -> fsync parent -> once-close lock then ancestors in reverse.
+An unlink/sync/close error marks its attempt unknown, stops later release ports,
+burns the module and never publishes released state. A separate bounded failure
+cleanup may once-close OTHER definitely-owned sealed untouched originals only;
+it never repeats an attempted/unknown slot, unlinks, syncs or reacquires. A failed
+cleanup identity check preserves that original without a close. Continue checking
+other distinct owned originals; never convert uncertainty into release authority.
+Normal successful release retires WeakMap custody only after ALL original slots
+are definitely settled. No unknown result reopens release/acquisition admission.
+
+The V2 schema blocks newly entered V1 reclaim before owner observation/unlink,
+including after V2 owner death/reboot. It cannot stop an already-entered V1
+reclaimer paused after final lstat and before unlink. Fixture tests must preserve
+that interleaving as a negative admission case; O_EXCL/schema alone never proves
+the complete frozen-owner contract. Separately authenticated old-family drain is
+still a prerequisite for live adapter admission and release.
+
 The bootstrap authenticates the complete delivered source/build/loader closure
 before constructing the adapter. Closed explicit modes; no ambient opt-in that
 grants authority. Existing inspection entry remains diagnostic. A new real
@@ -197,6 +294,9 @@ Create src/internal-production/baseline-dashboard-cutover-records-v2.ts and test
 Create baseline-dashboard-cutover-store-v2.ts and test in those same directories.
 Create baseline-dashboard-cutover-controller-v2.ts and test.
 Create scripts/deployment-dashboard-cutover-adapter-v2.mjs and builtin script test.
+Create scripts/deployment-dashboard-cutover-serialization-v2.mjs and builtin test
+as the separately reviewed Task4a reservation primitive; include both existing
+maintenance observer/normalizer scripts in the eventual authenticated closure.
 Create scripts/deployment-dashboard-cutover-v2.mjs and builtin entry test.
 Update applicable approved source inventories/manifest tests and affected package
 test commands only when adding the actual consuming production unit. Record those
