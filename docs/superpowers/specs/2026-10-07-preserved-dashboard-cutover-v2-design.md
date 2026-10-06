@@ -229,6 +229,12 @@ operation checks the original FSM/active owner before its next port. Foreign
 idle handle lookup refuses without touching caller fields or burning an unrelated
 valid held handle. Burned/unsealed handles cannot enter normal release.
 
+The existing synchronous maintenance-observer call is one read-only component
+port: its internal four OS queries finish as a bracket; this primitive checks
+burn on its return, not between those trusted helper queries. No later component
+port or mutation is allowed after a swallowed reentry. Per-query helper abort is
+not claimed by these tests or this reservation contract.
+
 Acquisition brackets actual owner observation with full physical rechecks once
 originals exist. Immediately before handle mint, repeat actual owner live_match
 and original physical checks; no pending sync/close may remain. Release similarly

@@ -150,6 +150,36 @@ stale-reclaimer interleaving as a negative complete-admission case, not a fixed
 race claim. Independent nomination and real owned-fixture RED precede production
 authoring. This component alone does NOT satisfy the Task3 provider dependency.
 
+### Task4a implemented reservation checkpoint
+
+- [x] Independent interface/resource nomination before authoring.
+- [x] Genuine missing-production-module RED27fail, with originals preserved
+  before implementation and after independent oracle corrections.
+- [x] Implement actual owner observation, strict input/opaque handles, held
+  nofollow originals, distinct-schema exclusive lock and sticky checked-once FSM.
+- [x] GREEN27 owned-process/filesystem tests; successful release proves every
+  returned component-original FD closes exactly once, in reverse order, and EBADF.
+- [x] Actual-owner/final-physical drift and swallowed reentry refuse. Setup
+  failures preserve lock evidence; an unsealed FD stays retained and unclosed.
+- [x] A genuine canonical lock from a naturally exited owner remains unchanged
+  on the next process's EEXIST refusal. Stale V1 pathname unlink stays NEGATIVE.
+- [x] Three independent final source/resource reviews C0/I0/M0.
+- [ ] Scoped incremental delivery; transaction confirmation belongs to the
+  private master checkpoint, not an assertion before this commit.
+
+Originals are private workspace logs named2026-10-07-dashboard-cutover-v2-
+serialization-*. First implementation exposed test-loader FD-number reuse before
+component admission; original failed outputs are retained. The corrected oracle
+arms the returned-original ledger after module import, counts closes only for
+those actual component originals and still checks ALL of them. No production
+resource leak was excused by that correction. Successful reverse close order and
+failure-tail unlink/sync tracing remain explicit. Affected ordinary tests:
+51 reservation/maintenance-owner/journal +50 V2 store/grammar and old V1 grammar,
+all pass,0fail/0skip. Syntax, version, English and path contracts exit0.
+This is reservation qualification only: full adapter drain/DB/source proof,
+controller, live command, clean-main deployment and dashboard checkpoint remain
+pending. It does not authenticate an old-family zero-owner state.
+
 ## Task5: authenticated entry, delivery and qualified dashboard checkpoint
 
 Files: scripts/deployment-dashboard-cutover-v2.mjs and builtin entry test;
