@@ -1,5 +1,67 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S10c bounded source-research worklist
+
+> **For agentic workers:** Root is the sole writer. Parallel agents research
+> and independently review read-only; no native effects or delivery authority.
+
+**Goal:** Separate a conditional exhaustive-census proof and actual guard-state
+provenance from unproved integrated producer requirements.
+**Architecture:** Preserve the selected eleven-action spawn candidate and every
+existing gate. Prove only the conditional number-set implication; classify
+terminal states from actual success/error provenance rather than one generic
+DISABLE assumption.
+**Tech Stack:** Existing source documents and public POSIX/Darwin contracts;
+no implementation, compile/preprocess, scanner, child birth or runtime change.
+**Spec:** Paired design, S10c conditional census lemma and guard-state audit.
+
+### Constraints and File Map
+
+Modify ONLY this existing plan and its paired existing design. No source/test
+file, fixture, accepted recipe, driver or published PR file-count expansion.
+Original two, journal HASH ONLY, CLI/builds and every retained tree remain
+preserved. Exact current-child census, individual source dispositions,
+EVERY-original settlement and original-guard restoration are unchanged.
+This research worklist is NOT the integrated executable implementation plan.
+
+- [x] Establish conditional induction: certified exec S0={0..4}, preserved
+  finite soft ceiling L>4, all new numbers below L, then complete immutable
+  F_GETFD classification of [0,L). Successful enumeration can still reveal
+  extras; acceptance requires exactly {0..4}, with no adoption/guessed close.
+- [x] Enumerate counterexamples: old100 after lowering to64; raise1024/acquire900/
+  lower64 despite equal endpoint samples; opening an already-scanned number.
+  These are written examples, not executed descriptor or limit mutations.
+- [x] Distinguish a future eligibility ceiling C from scan truncation:
+  reject L>C before birth without changing limits; never scan min(L,C).
+  No numeric C, timing guarantee or resource budget is selected.
+- [x] Separate stable soft ceiling from sampled effective minimum. Keep all
+  creation/import paths and pre-main/provider/handler exclusions explicit.
+- [x] Classify actual guard save/query/restore results, unusable failed outputs,
+  legal saved-state domain and target DISABLE versus ENABLE. Successful target
+  restoration does not certify earlier continuity; nonzero/unreturned restore
+  has no generic unchanged-DISABLE postcondition and is never retried.
+- [x] Record fork-before-Node as unselected: Darwin library-safety caveat,
+  held-lock rules, atfork/guard/Mach genesis and ambient-FD gaps prevent direct
+  embedding qualification. No fork or replacement architecture is invoked.
+- [ ] Qualify actual Darwin/provider numeric semantics and EVERY acquisition,
+  duplication/import/replacement path through the proposed census boundary.
+- [ ] Qualify complete exec provenance, ceiling history and mutation-free
+  full scan interval, including unresolved reservations/in-flight acquisitions.
+  Equal samples, current getdtablesize or arbitrary caps
+  are not substitutes. Specify sentinel/range/error/overflow handling and
+  finite deadline/resource budget before any scanner recipe. Require
+  4<L<=wider(INT_MAX)+1 before birth, wider iteration and checked d narrowing;
+  reject rather than truncate.
+- [ ] Resolve each still-open guard/retention row with actual provider
+  postconditions and legal same-original-owner terminals. No pause, guessed
+  mask, restoration retry, busy-spin, owner-death cleanup or new wait resource.
+- [ ] Complete integrated occurrence capacities, compiler/input/ABI/Node
+  profile, six individual source dispositions and complete FSM/error recipe.
+  Conditional census proof and public source snapshots do not discharge them.
+- [ ] Independently review the ACTUAL paired additions and verify unchanged
+  historical bytes/frozen originals before a documentation-only delivery.
+  No ready/merge/clean-main build/rollout or native correctness claim.
+
 ## S10b source-only inheritance and disposition refinement worklist
 
 Root sole writer. This is paired source-design work after S10a RED and DRAFT

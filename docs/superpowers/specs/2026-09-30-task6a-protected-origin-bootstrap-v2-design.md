@@ -1,5 +1,127 @@
 # Task6A protected private source-entry bootstrap v2
 
+## S10c conditional census lemma and guard-state audit
+
+This is SOURCE-ONLY research after S10b at d06064a0. It does not nominate a
+scanner invocation, change the selected spawn architecture, satisfy the native
+producer gate or qualify any retained owner. All existing exact-current-census,
+individual-disposition, EVERY-original and original-guard gates remain in force.
+No historical accepted test recipe is replayed or repinned.
+
+### Conditional constructive-bound lemma
+
+A current soft-limit sample is still insufficient. The following is a
+mathematical implication, not a claim that its installed/profile premises hold:
+
+1. One qualified exec launch establishes the COMPLETE inherited number set
+   S0={0,1,2,3,4}; a spawn return0 or observed PID is not that qualification.
+2. A separately qualified finite soft RLIMIT_NOFILE value L is greater than4
+   and remains a valid descriptor-number ceiling from that exec boundary
+   through completion of the census. Every postexec acquisition, duplication,
+   import and replacement, including pre-main/provider paths, assigns any new
+   number below L. Merely observing equal endpoint limits does not prove this.
+3. No FD-table mutation occurs throughout the COMPLETE census interval,
+   including mutations by signal handlers, provider threads or the observer.
+   Exclude unresolved/in-flight acquisitions and reserved unpublished slots;
+   EBADF alone cannot discharge hidden pending-acquisition obligations.
+4. Every integer d in [0,L) receives its actual definitive F_GETFD result:
+   success with valid returned flags, or failure with definite errno EBADF.
+   Every other result/error, missing probe or ambiguous output remains unknown.
+5. Sentinel rejection, representability, overflow-safe iteration and a finite
+   resource/deadline budget are independently qualified before an effect.
+
+Induction: initially every live number is below L. Closing removes a number;
+every acquisition or replacement adds only numbers below L. Thus the live set
+remains a subset of [0,L). A complete immutable-table classification of that
+interval is exhaustive. It may reveal additional descriptors; acceptance STILL
+requires exactly {0,1,2,3,4}. Never adopt, close or hide an unexpected descriptor.
+
+This uses a stable SOFT limit as a ceiling, not a sampled effective minimum
+returned by getdtablesize. A lower global cap may constrain allocation further;
+a changing global cap cannot invalidate an independently preserved soft ceiling,
+but a claim about a stable effective minimum needs its own provenance. No
+kernel-max constant or current soft sample supplies the omitted history.
+[POSIX resource-limit contract](https://pubs.opengroup.org/onlinepubs/9799919799/functions/getrlimit.html).
+
+Three counterexamples explain why every premise matters. An old descriptor100
+can survive lowering the current limit to64. A raise to1024, acquisition at900
+and later return to64 defeats equal endpoint samples. Opening an already-scanned
+number during enumeration defeats exhaustive membership observation. Certified
+exec filtering, continuous ceiling provenance and mutation exclusion separately
+exclude these cases; none may be inferred from successful probes alone.
+
+A future admission ceiling C may reject L>C BEFORE birth WITHOUT changing L.
+For admitted L, scan every number in [0,L), never [0,min(L,C)). C bounds probe
+count, not elapsed time, scheduling latency or resource safety. No numerical C
+has been selected. Reject RLIM_INFINITY and saved-limit sentinels before
+comparison/narrowing. Before birth require 4<L<=wider(INT_MAX)+1; form the upper
+bound in a wider type, iterate with a wider index and narrow d only after
+checking d<=INT_MAX. Reject an unrepresentable L rather than truncate. Do not
+lower any limit to manufacture eligibility.
+
+This lemma does NOT prove occurrence continuity, six individually observed
+source-close returns, dyld/Node acquisition closure, provider matching,
+guard restoration or legal retained terminals. The installed Darwin manual's
+open-count wording and POSIX's new-number wording still require an explicit
+platform/provider qualification. Source-path evidence is not installed identity.
+Complete compiler/input/ABI and all effect gates remain separately open.
+
+### Actual guard result is not one universal retained state
+
+The public successful cancellation-state operation sets its requested target
+and returns the previous state. Target-state establishment and evidence that
+the original guard remained continuous are different facts. Apply the following
+source classifications only with their actual results and qualified exclusions;
+this table supplies no new executable transition or permission to restore.
+[Public cancellation-state contract](https://pubs.opengroup.org/onlinepubs/9799919799/functions/pthread_setcancelstate.html).
+
+| Actual provenance | Usable facts | Still-open terminal requirement |
+| --- | --- | --- |
+| Save/DISABLE0, legal saved state, mask query0, no later mutation | Known DISABLE and valid immutable original mask. | Existing same-mask sigsuspend candidate still needs complete provider/handler/health qualification. |
+| DISABLE0 but saved state is outside its legal domain | Output contradicts the public success contract; no reliable original-state or state postcondition is established. | Burn acceptance; never guess a restoration target or relabel output as legal. |
+| DISABLE0, mask query nonzero | Mask output is unusable; DISABLE continuity needs its own exclusions. | No valid mask argument is established; pause is not a checked replacement. |
+| DISABLE nonzero or unreturned | No successful target-state witness; failed output is unusable. | No cancellation-protected wait is established. |
+| Sole restoration0 targeting DISABLE, expected previous DISABLE | Target DISABLE is established on actual return under the public success contract. | Require EVERY-original settlement and all remaining continuity/phase checks. |
+| Restoration0 targeting DISABLE, unexpected legal previous ENABLE | Target DISABLE and invalid guard-continuity evidence are distinct. | Burn acceptance; no automatic reuse of a retained branch or new restoration attempt. |
+| Restoration0 targeting ENABLE, legal previous state | On an actual successful return, target ENABLE is established, not DISABLE. | Do not enter a branch whose precondition is disabled cancellation; pending cancellation may prevent a return. |
+| Restoration0 with illegal previous-state output | Self-inconsistent provider/output witness, not a trusted target-state postcondition. | Burn acceptance; infer no terminal permission from the zero alone. |
+| Restoration nonzero, ambiguous or unreturned | No generic unchanged-state postcondition or usable previous-state output is established. | Never retry restoration or presume DISABLE; an admitted provider postcondition/terminal is still missing. |
+
+Restoration remains marked BEFORE its sole call and permitted only after EVERY
+applicable original is definitely settled. A zero result with unexpected
+previous state never clears a burn latch or proves historical continuity.
+An unreturned call supplies no return receipt. Async-signal-safe does not mean
+cancellation-safe, failure-free or allocation-free. Public source wrappers
+and the earlier finite S9 return samples do not close these lifetime branches.
+
+An independently proved continuously unchanged ORIGINAL mask blocking every
+blockable signal could exclude ordinary caught-signal wakeups for an already
+known DISABLE/mask pair. No mask/handler mutation is authorized to establish
+that premise. It does not repair a failed mask query, unknown DISABLE,
+restoration ambiguity, synchronous faults, backend errors or external death.
+Use the selected captured-mask candidate rather than pause's unchecked query;
+no wait, signal or cancellation experiment follows.
+[Public suspension contract](https://pubs.opengroup.org/onlinepubs/9799919799/functions/sigsuspend.html).
+
+### Fork-before-Node alternative is not selected
+
+A preguarded parent followed by fork does not presently supply a qualified
+direct child Node/V8 lifecycle. Darwin's public library/framework/global-data
+postfork safety caveat is not waived merely by a single-threaded parent or no
+explicit Node initialization. POSIX separately leaves operations on inherited,
+held non-process-shared locks undefined regardless of parent thread count.
+No selected public Node embedding contract establishes the missing safety.
+[Apple fork contract](https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/man/man2/fork.2),
+[POSIX fork contract](https://pubs.opengroup.org/onlinepubs/9799919799/functions/fork.html).
+
+A narrow independently qualified child remap would close the four pipe sources,
+dup A/B to3/4, then close A/B, not close all six before duplicating. That potential
+access to actual close results does not qualify fork hooks, child guard genesis,
+Mach inheritance, ambient descriptor census or Node setup. Fork alone does not
+apply the selected exec CLOEXEC inheritance filter. COW ledger bytes and copied
+guard flags are not independent child ownership evidence. Exec afterwards is a
+different unresolved bootstrap transition, not an automatic cure.
+
 ## S10b public inheritance candidate and original-descriptor ledger
 
 This is a SOURCE-ONLY refinement after the independently audited S10a RED and
