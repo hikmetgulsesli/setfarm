@@ -1,5 +1,217 @@
 # Task6A protected private source-entry bootstrap v2
 
+## S10b public inheritance candidate and original-descriptor ledger
+
+This is a SOURCE-ONLY refinement after the independently audited S10a RED and
+DRAFT delivery at 6b352f2c. It does not amend any accepted executable recipe,
+qualify Green, replace the exact current-child descriptor-census requirement,
+or admit source authoring, compilation, a new child or retained-owner effects.
+The S10a delivery-pending sentences below belong to its earlier receipt epoch;
+the accepted RED remains frozen and must never be replayed.
+
+### Decision and evidence boundary
+
+Compare three approaches. Private process-information enumeration is rejected:
+the installed libproc.h labels its interfaces private. Scanning to a current
+NOFILE limit is not an exact census: existing descriptors can exceed a lowered
+limit. Prefer the public ordered-spawn candidate for further source design:
+POSIX_SPAWN_CLOEXEC_DEFAULT plus explicit actions can define the exec-inherited
+set without either shortcut. This is not a substitution for a global census at
+the later C bootstrap, nor for individually checked close-call returns.
+
+The installed SDK26.5 headers and manuals declare/document the Darwin flag and
+addinherit_np. Current Apple public manual sources corroborate their semantics
+and insertion order. The older developer.apple.com archive pages omit these
+extensions and cannot prove them. Current source snapshots are not matched
+installed-kernel or lifetime-health certificates.
+[Apple flag contract](https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/man/man3/posix_spawnattr_setflags.3),
+[Apple action contract](https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/man/man3/posix_spawn_file_actions_addclose.3),
+[Apple ordering contract](https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/man/man3/posix_spawn_file_actions_init.3).
+
+### Collision-safe candidate, no allocation-number assumption
+
+Before acquiring protocol endpoints, require actual parent0 readable and1/2
+writable, immutable borrowed stdio observations, and actual F_GETFD failures
+with errno EBADF at3/4. Keep the relevant FD table free of unreviewed concurrent
+mutations through acquisition, spawn and the named original dispositions.
+Fresh private pipes must not be exposed, passed, duplicated outside the ledger
+or inherited by an unrelated birth. An unrelated preexisting FD cannot already
+alias a newly created pipe, but that fact does not prove later alias exclusion.
+
+Parent acquires nonce-pipe Nr/Nw and status-pipe Sr/Sw, sealing the returned
+original occurrences before validating them. Then acquire A from Nr and B from
+Sw using public F_DUPFD_CLOEXEC with minimum5; seal each result before checking
+its distinctness, role and range. All six originals remain live through spawn.
+Nr/Nw/Sr/Sw need NOT be at least5. With initially absent3/4 and exclusive nominated
+mutation, any new occupant of3/4 must be one of those four pipe originals; A/B
+are distinct staging originals at least5. Do not assume pipe() chooses3/4.
+
+The exact eleven insertion-order actions are:
+
+| Action index | Public action | Original-occurrence meaning |
+| --- | --- | --- |
+| 0 | addclose(Nr) | Dispose this inherited pipe-source occurrence. |
+| 1 | addclose(Nw) | Dispose this inherited pipe-source occurrence. |
+| 2 | addclose(Sr) | Dispose this inherited pipe-source occurrence. |
+| 3 | addclose(Sw) | Dispose this inherited pipe-source occurrence. |
+| 4 | adddup2(A,3) | Create the new child NONCE/END reader occurrence. |
+| 5 | adddup2(B,4) | Create the new child STATUS writer occurrence. |
+| 6 | addclose(A) | Dispose inherited staging A after its duplication. |
+| 7 | addclose(B) | Dispose inherited staging B after its duplication. |
+| 8 | addinherit_np(0) | Preserve the separately observed input occurrence. |
+| 9 | addinherit_np(1) | Preserve the separately observed output occurrence. |
+| 10 | addinherit_np(2) | Preserve the separately observed error occurrence. |
+
+Closing all four pipe sources BEFORE creating child3/4 empties those targets
+without closing the new occurrences. Only CLOEXEC_DEFAULT is nominated; no
+signal-mask/default, suspension, process-group, limit or access-control change.
+Actions mentioning A/B as sources do not preserve them after their explicit
+closes. Keep the initial stdio observations valid at the actual spawn boundary.
+
+### Record classes and composite witness
+
+Use six parent-owned FD occurrence records and eleven action/history records,
+not seventeen FD originals. Three borrowed parent stdio observations are a
+different record class. Each owned record carries immutable occurrence ID,
+role, acquisition ordinal, actual returned descriptor, original owner identity,
+configuration/disposal-attempt state and checked result. A matching number or
+fstat tuple is an observation, not original-occurrence continuity authority.
+A/B deliberately alias pipe open-file objects but are distinct FD occurrences.
+
+An action record carries its exact index, operation, referenced occurrence IDs,
+source/target values and actual builder result. Attribute init/set/get must
+establish exactly CLOEXEC_DEFAULT before the sole marked spawn attempt. Read
+and seal the returned PID only after actual zero spawn return; a nonzero return
+has no child under the installed public contract and leaves PID unspecified.
+Builder return0 records queued
+construction only. It is NOT an executed close result. Seal the actual spawn
+actions/attribute objects separately on successful initialization; checked
+once-only destruction is a separate parent obligation, not an action record.
+Failure cannot authorize destroying an uninitialized object or retrying a
+possibly disposed one. Unknown hidden initialization effects stay unqualified.
+
+A prospective composite launch witness must bind the complete source/argv/env,
+held executable/provider inputs, exact attribute/action provenance, actual
+spawn result and the actual guarded original-child bootstrap to one launch
+occurrence. Return0/PID alone does not prove bootstrap; generic POSIX permits
+late setup failure reported through exit127. The installed Darwin manual's
+nonzero-return/no-child statement is not a permission to interpret return0 as
+all child dispositions observed. Missing bootstrap, loader failure or death
+remain nonpositive; exit127 is neither a unique diagnosis nor cleanup credit.
+[Public spawn contract](https://pubs.opengroup.org/onlinepubs/9799919799/functions/posix_spawn.html).
+
+At successful exec inheritance, the public contract supports inherited
+{0,1,2,3,4}. It does NOT individually expose the six inherited source-close
+returns or establish the current global FD set after dyld, constructors or Node
+allocate descriptors. Do not demand EBADF at all old numeric descriptors:3/4
+are deliberately reused and later allocations can reuse higher numbers.
+If implicit ambient inherited-copy dispositions are applicable originals under
+the existing gate, they still need an admitted composite/provider provenance
+contract. No individual success receipt may be fabricated from a builder rc0.
+
+Relevant-owned alias closure could be a causally sufficient separate premise
+for protocol EOF, but is NOT the existing exact current-child census. No gate
+has been narrowed here. The complete written source design must resolve that
+difference and every applicable original before an executable plan or effect.
+
+### Parent and child original-FD dispositions
+
+| Parent owned original | Child-launch role | Parent once-only disposition |
+| --- | --- | --- |
+| PFD0 Nr | Closed source; A supplies new child3. | After checked Kp restore/verification. |
+| PFD1 Nw | Closed child copy. | Complete NONCE/END; close to supply required EOF. |
+| PFD2 Sr | Closed child copy. | Consume required STATUS/EOF; then close. |
+| PFD3 Sw | Closed source; B supplies new child4. | After checked Kp restore/verification. |
+| PFD4 A | Duplicate to3, then close source. | After checked Kp restore/verification. |
+| PFD5 B | Duplicate to4, then close source. | After checked Kp restore/verification. |
+
+Parent borrowed0/1/2 are never closed or rebound by this transaction. Child0/1/2
+are NEW inherited owned occurrences, not borrowed exemptions. Child3/4 are NEW
+postexec protocol occurrences, distinct from their staging sources. Seal all
+five at native bootstrap before fallible setup, with their genesis provenance;
+numeric checks alone do not establish that the original occurrences survived.
+
+Child4: checked NOSIGPIPE SET/GET before any write, complete STATUS only after
+known local Mach settlement, then mark and once-close. Child3: authenticate END,
+observe required EOF, then mark and once-close. UNKNOWN is sticky; an ambiguous
+close never permits reclose, teardown progression, restoration or acceptance.
+A failing role/configuration observation does not erase already acquired
+ownership. Known dispositions may continue only under the exact phase rules.
+
+Parent/child Kp/Kc stash transitions, R/S/L user-reference occurrences, each
+lookup VM, copied header D uncertainty, receiver create/return/sole join and
+original child born/live/natural exit/exclusive reap are separate record classes.
+This FD candidate neither merges them nor claims complete ledger capacity.
+Unexpected acquisitions and overflow cannot be hidden in a seventeen-row count.
+
+### Node teardown: protocol settlement is not every-original settlement
+
+The existing private check_settled enum may authorize caller-owned Node teardown
+ONLY after actual callback/protocol/Mach settlement and child3/4 disposition,
+no unknown latch, and proven child0/1/2 original continuity. Its CLOSED labels
+are not a certificate that all five FDs, Node holders or guards are settled.
+Keep cancellation disabled and the original guard/stdio ownership through that
+teardown. Finish must run only after every nominated caller-owned Node holder
+has been destroyed and its stage witness returned; then separately mark and
+once-close child0/1/2. Restore once only after EVERY applicable original is
+definitely settled. Any ambiguous FD close or restoration burns permanently.
+
+Published Node26.4 FreeEnvironment runs RunCleanup and AtExit. Cleanup closes
+HandleWrap objects and drains uv; unmanaged-FD cleanup calls uv_fs_close without
+exposing each result to this ledger. However, the bundled Unix stream close
+explicitly preserves io_watcher descriptors0..2. Therefore neither "HandleWrap
+cleanup always closes stdio" nor "Node never closes stdio" is justified.
+Accepted/queued stream FDs and other operation/type paths remain separate.
+[Node environment cleanup](https://github.com/nodejs/node/blob/v26.4.0/src/env.cc#L1253),
+[Environment teardown](https://github.com/nodejs/node/blob/v26.4.0/src/api/environment.cc#L516),
+[Bundled stream close](https://github.com/nodejs/node/blob/v26.4.0/deps/uv/src/unix/stream.c#L1515).
+
+Published PlatformInit gates its /dev/null repair and ResetStdio registration
+with NoStdio; ResetStdio also returns under that flag. This does not gate the
+later libuv TTY initialization path, which can reopen a TTY and dup2 over an
+original stdio occurrence. No lazy stdio getter activation is permitted by the
+candidate profile, including indirect warning/error/console paths. Embedding's
+UTF8 entry first invokes internal/main/embedding and pre-execution setup; it
+still examines NODE_CHANNEL_FD and NODE_UNIQUE_ID and can configure IPC/cluster.
+kDisableNodeOptionsEnv does not disable those distinct environment channels.
+Require a complete fixed clean environment/argv/default-snapshot/preload profile,
+not merely clean NODE_OPTIONS or a short user entry. ReallyExit runs AtExit
+before invoking the environment exit handler; that handler cannot undo prior
+hook effects. Complete hook exclusion/provenance remains a separate gate.
+[Initialization and ResetStdio](https://github.com/nodejs/node/blob/v26.4.0/src/node.cc),
+[Embedding pre-execution](https://github.com/nodejs/node/blob/v26.4.0/lib/internal/process/pre_execution.js#L631),
+[TTY replacement path](https://github.com/nodejs/node/blob/v26.4.0/deps/uv/src/unix/tty.c#L166),
+[ReallyExit ordering](https://github.com/nodejs/node/blob/v26.4.0/src/node_process_methods.cc#L501).
+
+The fixed synchronous linked-binding entry and public flags must exclude raw
+fs.close/fclose, unmanaged ownership, arbitrary cleanup/AtExit registration,
+FD passing/replacement, Workers and unrelated modules. The actual entry,
+Node initialization/bootstrap/internal hooks, type-specific operations and
+matched provider profile still need complete source qualification. NoStdio is
+not a general later-operation stdio-continuity guarantee. A fresh same-number post-teardown observation
+does not repair lost original continuity. Published bundled libuv is not
+automatically the installed separately mapped libuv1.52.1 provider.
+
+### Unchanged effect gate and next source work
+
+The own typed header and C++20 main remain prospective; neither is authored.
+Actual published File Map stays eleven. This checkpoint may modify only the
+named spec and paired plan; test/C/CJS and accepted recipes remain frozen.
+No private proc_pidinfo/F_MAXFD, soft-limit census, guessed child close,
+unconditional guard rc0, Green advertisement stub or S10a replay is admitted.
+
+Still resolve complete ledger capacity, original-thread guard/bootstrap failure,
+pre-main provider and stdio continuity, composite disposition vs exact census,
+Node teardown witnesses, complete role-specific input/search/import/provider
+recipe, and legal burned retention after lifetime-clock-room/provider loss.
+Classifying a path nonqualified grants NO return/exit/unchecked cleanup,
+busy-spin, new wait acquisition, guard restoration or owner-death credit.
+Finite50,000,000 Mach ticks remains conditional source research, not a complete
+terminal. This source refinement is progress on the same cutover prerequisite;
+CONTROL/P2, ready/merge/clean-main build/rollout and host activation remain closed.
+
+
+
 ## S10a independently bounded pre-channel missing-contract RED
 
 Observed ONE new RED c3618c/session17931 ->304bea CLOSED1 at source746f4451,

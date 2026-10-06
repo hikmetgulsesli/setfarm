@@ -1,5 +1,82 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S10b source-only inheritance and disposition refinement worklist
+
+Root sole writer. This is paired source-design work after S10a RED and DRAFT
+delivery at6b352f2c, not an executable implementation plan or effect admission.
+Existing S10a invocation is accepted historical evidence and MUST NOT replay.
+Only this named plan and paired spec may change at this checkpoint; all native
+source/CJS/tests/fixtures and original preservation targets remain frozen.
+
+**Goal:** Resolve the concrete public-spawn FD topology and separate its evidence
+classes before completing the integrated ordinary-continuity design.
+**Architecture:** Prefer the public eleven-action CLOEXEC_DEFAULT candidate for
+source research; preserve the exact current-child census/checked-original gates.
+Reject private libproc enumeration and soft-limit scans. Six parent originals,
+eleven queued-action records, three borrowed observations and five child
+originals are separate classes; no seventeen-original shortcut.
+**Spec:** Paired design, S10b public inheritance candidate subsection.
+
+### Source checkpoint requirements, not native run instructions
+
+- [x] Main read installed public spawn/flag/action declarations and manuals,
+  private-labelled libproc, and public current Apple action/flag/order documents.
+  The older Apple archive omits the selected Darwin extensions; do not use it
+  as evidence of CLOEXEC_DEFAULT/addinherit_np.
+- [x] Main read pinned published Node26.4 cleanup/FreeEnvironment and bundled Unix
+  stream close, plus public POSIX spawn inheritance/order/error contract.
+  Preserve retrieval originals/metadata privately; public source is not matched
+  installed backend or lifetime health.
+- [x] Correct source/target collision premise: actual0..2 valid, initially3/4
+  EBADF, exclusive nominated mutation, Nr/Nw/Sr/Sw may occupy3/4, distinct A/B
+  from F_DUPFD_CLOEXEC(minimum5), FOUR source closes before both destination
+  dup2 actions, then A/B closes, then three stdio inherit actions.
+- [ ] Independently review actual paired written refinement and root diff.
+  Reviews may qualify source consistency only, never child/effect admission.
+- [ ] Bind six acquisition/disposal records, eleven exact action/history records
+  and separately initialized/destroyed spawn objects in the complete literal
+  parent FSM. Bind child0..4 genesis/continuity/once dispositions in its one C
+  ledger, with Kp/Kc/VM/urefs/D/receiver/birth stored separately. Unknown hidden
+  effects or capacity overflow cannot be turned into absent obligations.
+- [ ] Resolve composite launch witness vs the unchanged exact current-child
+  census. Builder return0 means queued, spawn return0/PID is not bootstrap,
+  public exec-inherited{0..4} is not post-dyld current-global{0..4}, and six
+  child source-close returns are not individually observed. Explicit relevant
+  alias closure must not silently replace the stronger existing gate.
+- [ ] Bind literal synchronous entry, exact Node flags/bootstrap/hook/type profile
+  and matched provider provenance. No unmanaged0..4 ownership, raw close/fclose,
+  FD passing/rebinding, Workers or arbitrary cleanup/AtExit registration.
+  Bind clean env/argv/snapshot/preloads and exclude lazy stdio getter/TTY
+  replacement and indirect warning/console activation. NODE_CHANNEL_FD and
+  NODE_UNIQUE_ID are separate from NODE_OPTIONS; ReallyExit runs AtExit BEFORE
+  the environment exit handler. Public flags alone do not exclude those paths.
+  Private check_settled means protocol/Mach closed plus original stdio live;
+  its CLOSED enum is not every-original settlement. Caller-owned teardown
+  returns before finish marks/once-closes0..2 and restores EVERY original guard.
+- [ ] Complete minimal public role-specific C/C++ input/search/link/provider
+  nomination. errno.h/sys/errno.h are candidate additions; sys/stat.h is causal
+  only if fstat is selected. Preserve frozen331 vs303-union1649=1778 distinction;
+  the latter is NOT a superset of the former. No bootstrap service APIs for
+  mach_ports_register/lookup; no private Node declarations or cast bypass.
+- [ ] Resolve bootstrap/provider/lifetime-clock-room retained-failure terminal.
+  Nonqualified classification grants no return/exit, guessed cleanup, spin,
+  newly acquired wait, restoration or owner-death certificate.
+- [ ] Only after all source gates close and paired complete-design review passes,
+  write the actual separately reviewed executable plan and new producer/test
+  epoch. Existing S10a consumer bytes are preserved; changed source/self pins
+  must refuse historical opt-ins before effects. No stub solely to turn RED green.
+
+Prospective source File Map remains the existing initializer C/new entry/test,
+own typed bootstrap header/C++20 main and paired plan/spec (seven roles, thirteen
+prospective aggregate files). Only two documents change NOW; actual PR remains
+eleven files. No build/native test is needed for this documentation checkpoint.
+Syntax/English/diff/secret checks and fresh original-two/journal-HASH-ONLY/CLI/
+build/frozen-source preservation are required before any source-only delivery.
+Normal reviewed scoped commit/push may keep PR275 DRAFT; no ready, merge, clean
+main build, service/DB/security change, CONTROL/P2 or cutover follows.
+
+
+
 ## S10a isolated pre-channel native-contract RED implementation plan
 
 > **For agentic workers:** Root implements inline, sole writer. Independent
