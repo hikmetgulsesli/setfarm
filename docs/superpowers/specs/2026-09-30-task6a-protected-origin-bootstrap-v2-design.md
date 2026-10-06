@@ -1,5 +1,133 @@
 # Task6A protected private source-entry bootstrap v2
 
+## S10d delayed-disposal source nomination
+
+This SOURCE-ONLY nomination addresses the structural six-close-receipt gap
+identified after S10c. It replaces the eleven-action proposal ONLY as the
+candidate being developed; no launch, scanner, integrated source authoring or
+native effect is admitted. Historical S10b/S10c text retains its dated meaning.
+Root is the sole writer; reviewers and researchers remain read-only.
+
+### Alternatives and selected source architecture
+
+Select delayed CHILD disposal after exec and successful original guard setup.
+Do not infer six individually marked close returns from posix_spawn's aggregate
+result. Do not select fork-before-Node: its library/lock/guard/Node qualification
+gaps remain. Guard-first late acquisition also does not remove inherited stdio
+or birth obligations, and late Mach/fileport handoff adds transport obligations.
+The selected source candidate changes WHEN sources are closed, not the required
+individual-disposition evidence or the final exact five-descriptor boundary.
+
+Parent eligibility requires actual borrowed stdio observations0/1/2, actual
+F_GETFD EBADF for3..8 and no table mutation except the explicitly nominated
+acquisitions and dispositions. Acquire and seal
+usable successful pipe acquisitions before validating their expected layout.
+A zero pipe result with unusable or contradictory endpoint outputs does not
+establish known originals or cleanup permission; preserve its unknown acquisition
+obligation. Accept ONLY Nr=3,Nw=4,Sr=5,Sw=6. Then seal usable actual
+F_DUPFD_CLOEXEC acquisitions for Nr and Sw,
+with minimum7; accept ONLY A=7 and B=8. This does not assume lowest-number pipe
+allocation. Failed acquisitions have no usable output unless a separately
+qualified postcondition supplies it; unexpected or ambiguous layouts burn
+prebirth acceptance, with every actual original separately accounted for.
+Never seek another layout, guess cleanup, retry acquisition or replace a number.
+
+Keep all six parent-owned source occurrences live through spawn. Nominate
+CLOEXEC_DEFAULT plus exactly nine checked addinherit_np builders for0..8:
+ZERO application preexec close or dup2 actions. The selected installed inheritance
+contract and complete ambient filtering still require qualification. A zero
+spawn result/PID does not itself prove all child copies or provider effects.
+Inherited stdio are CHILD originals, not borrowed copies of parent ownership.
+[Public Darwin inheritance contract](https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/man/man3/posix_spawn_file_actions_addclose.3).
+
+Before its first fallible guard call, the child must have fixed memory-only
+pending/genesis occurrence records for all nine inherited originals and every
+other applicable birth/stash obligation. A qualified original DISABLE, legal
+saved state and unchanged valid original-mask observation must precede remap.
+This does NOT solve failures before those witnesses; no automatic exit is
+admitted for an already owned child.
+
+### Two-stage census and actual original remap
+
+The proposed ENTRY number-set boundary changes from {0..4} to {0..8}. The final
+POST-REMAP/PRE-NODE boundary remains exactly {0..4}. These are two distinct
+exact census requirements, not a logical strengthening of the previous entry
+predicate or a claim that that requirement is unchanged.
+Both COMPLETE immutable-table censuses need exec/ceiling/provider provenance,
+all reservation/in-flight exclusions, actual results and finite budgets.
+Require 8<L<=wider(INT_MAX)+1 before birth, reject sentinels before narrowing,
+scan ALL [0,L) with a wider index and check each conversion to int.
+Never lower a limit or truncate to an eligibility cap. No numerical cap or
+timing/resource budget is selected by this source nomination.
+
+On the SAME guarded original child thread, with exclusive FD-table ownership
+through the first census, remap and second census:
+
+1. Premark each original close of3,4,5,6, call it ONCE and immediately seal
+   its actual result/errno. An ambiguous or unsuccessful disposition prevents
+   progress to duplication and Node; no reread or retry certifies that original.
+2. After targets3/4 are definitely absent because THEIR ORIGINALS settled,
+   mark actual dup2(7,3), then dup2(8,4). Seal attempt/result first. Only a usable
+   success postcondition establishes the requested target3/4 as its new occurrence;
+   record that occurrence before later binding validation. An unexpected return
+   number is contradictory, not a newly acquired original at that returned number.
+   Failed or unqualified calls preserve pending/unknown target obligations; no
+   guessed cleanup or progress to the next duplication follows.
+3. Premark and observe the once-only close of original7, then original8.
+   Every original source therefore has its OWN guarded-thread call/return
+   witness, unlike the previous preexec aggregate inference.
+4. Perform the complete second census and require EXACT {0..4} BEFORE Node.
+   No extra descriptor is adopted, hidden or closed on a guessed identity.
+
+There are ELEVEN named CHILD FD occurrences across this lifetime: nine
+inherited originals plus two new target occurrences, not eleven simultaneous
+FDs. Original3 versus new reader3, and original4 versus new writer4, are distinct
+identities. The named FD graph also contains six parent-owned occurrences and
+three parent-borrowed stdio observations. This is NOT a complete native ledger
+capacity: builder state, Mach rights/VM, guard, receiver, child, unobservable
+acquisitions and provider obligations remain separately enumerated.
+Continuity, exact child identity and every actual result are still required.
+
+### Provider evidence and still-closed terminal branches
+
+Read-only inspection of installed libsystem_pthread arm64e UUID
+4F33683C-18C8-39A1-800B-2E3BD43BCC13 exposes a complete named
+pthread_setcancelstate instruction interval0x749c..0x754c. After successful
+signature validation, the normal returning path for legal targets0/1 calls the
+backend and atomically updates state; it writes the masked previous state only
+for non-NULL output storage, then returns zero. The invalid-target branch
+returns22 before that update.
+Signature validation also has trap/cold failure paths. This is a bounded
+function observation: the full disassembly tool output was truncated.
+No whole-image certificate or byte-equivalence to the public source follows.
+
+The reviewed public wrapper likewise calls __pthread_canceled(1/2) without
+checking its result; its backend is an independent proof obligation.
+[Public libpthread wrapper](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/src/pthread_cancelable.c#L120),
+[public XNU backend](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.121.6/bsd/kern/kern_sig.c#L971).
+A matched defined returning domain can narrow modeled errors; it cannot turn
+an ACTUAL unexpected nonzero for a legal literal into proof of unchanged
+DISABLE. That result contradicts its own qualification premises. It remains
+burned/unknown. Installed binding/stub/kernel/TSD/storage/provider health,
+unreturned calls and lifetime continuity remain unqualified.
+
+EVERY-original settlement before the premarked sole restoration is unchanged.
+No new retry, signal mask/type mutation, guessed sigsuspend input, pause,
+busy-spin, parent substitution, owner-death cleanup, public token, JS return or
+Exit72 fallback follows. A remap-only finite fixture would characterize that
+algorithm, not qualify inherited child genesis or its anomalous-owner terminal.
+It requires its own complete reviewed written contract, actual recipe and
+input/closure qualification before authoring or effects. Integrated S10 remains
+closed until the bootstrap/terminal and full FSM obligations are resolved.
+
+### Exact documentation scope
+
+Modify ONLY this existing design and its paired existing plan. The public File
+Map remains eleven; every native source, entry, test and driver stays frozen.
+No new native helper/test is nominated for authoring here. Preserve every prior
+byte below this insertion. A documentation-only review/commit/push may record
+this conditional solution; no READY/merge/build/rollout/CONTROL/P2 credit follows.
+
 ## S10c conditional census lemma and guard-state audit
 
 This is SOURCE-ONLY research after S10b at d06064a0. It does not nominate a

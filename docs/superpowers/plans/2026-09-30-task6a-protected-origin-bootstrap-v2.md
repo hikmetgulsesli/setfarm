@@ -1,5 +1,63 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S10d delayed-disposal source worklist
+
+> **For agentic workers:** Root alone writes and delivers. Parallel seats
+> perform read-only research/review. This is NOT an executable implementation plan.
+
+**Goal:** Remove the six unobservable preexec application-close actions from the
+source candidate without replacing individual witnesses with an aggregate.
+**Architecture:** Keep a checked fixed parent layout through exec, inherit all
+nine numbers, then observe six closes and two remaps on the original guarded
+child thread between two complete census boundaries.
+**Tech Stack:** Existing paired source documents and public Darwin/POSIX
+contracts; installed library inspection through the read-only dyld_info CLI.
+**Spec:** Paired design, S10d delayed-disposal source nomination.
+
+### Constraints and File Map
+
+ONLY this existing plan and its paired design change. Public File Map stays
+eleven; initializer, entry, tests, all drivers and accepted recipes are frozen.
+The original two, journal HASH ONLY, CLI/build artifacts and retained trees stay
+preserved. No child, native compile/load/probe, scanner, provider mutation,
+retained owner, service/DB/security change or rollout is admitted.
+
+- [x] Identify the structural incompatibility: public posix_spawn has one
+  aggregate result, not six observed original-thread close-return receipts.
+- [x] Select delayed-child disposal over fork-before-Node or late handoff.
+  This selection is SOURCE-ONLY and does not qualify a launch contract.
+- [x] Specify actual observed parent layout Nr3/Nw4/Sr5/Sw6/A7/B8, no guessed
+  pipe allocation, reseeking/retry or unsealed result. Nominate nine inherit
+  builders and zero application preexec close/dup actions.
+- [x] Specify child lifetime FD occurrences9+2=11, distinguish reused numbers,
+  and retain inherited child stdio as originals. Do not label this the full
+  Mach/VM/guard/receiver/provider ledger capacity.
+- [x] Specify complete entry{0..8}, guarded close3/4/5/6, dup7->3 and8->4,
+  close7/8, complete postremap{0..4} before Node. Every close is once-marked
+  and observed; any unknown prevents duplication/Node acceptance.
+- [x] State the changed census precondition8<L<=wider(INT_MAX)+1, sentinel
+  rejection, wide loop, checked conversion and ALL [0,L) classification.
+  No arbitrary scan cap, limit mutation or numeric runtime budget.
+- [x] Bound the installed arm64e function observation and public wrapper/backend
+  evidence. No whole-provider identity, unexpected-error unchanged-state
+  conclusion or lifetime-health certificate follows.
+- [ ] Qualify parent source origins, exact installed inheritance and ambient
+  dispositions, pre-main provider paths, both census histories/exclusion
+  intervals and finite time/resource budgets. Source numbers are not receipts.
+- [ ] Resolve preguard nine-original/stash child failures and every restore/
+  mask/backend/unreturned row using valid ORIGINAL-owner terminals. Keep
+  EVERY-original, sole-restore, no JS/exit/retry/owner-death-credit invariants.
+- [ ] Complete full occurrence capacities, Node/provider/compiler/input/ABI
+  closure and integrated FSM, THEN separately review a complete written
+  authoring nomination and actual new effect recipe. No ordinary-continuity
+  advertisement on a refusal stub, frozen recipe repinning or accepted replay.
+- [ ] A prospective remap primitive requires a separately complete contract
+  and finite real guarded fixture recipe; it supplies no whole-child retention
+  qualification. Do not author a helper/test from this research worklist.
+- [ ] Independently review the ACTUAL paired additions, verify inverse-byte
+  preservation plus native/original pins, and deliver only documentation.
+  No project completion or DRAFT promotion follows.
+
 ## S10c bounded source-research worklist
 
 > **For agentic workers:** Root is the sole writer. Parallel agents research
