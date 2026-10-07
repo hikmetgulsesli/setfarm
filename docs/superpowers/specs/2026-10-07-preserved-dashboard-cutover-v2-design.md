@@ -653,6 +653,69 @@ intent/provider ports, actual request/failure branding and no real database.
 No actual PG, facade-consuming HTTP, schema-writer exclusion, build or startup
 grant follows from this unit. Task5 and the existing startup refusal gates remain.
 
+### Task4f.2 truthful UI failure nomination
+
+File Map: server/index.html, tests/dashboard-http-availability-v2.test.ts and
+the normal pure-suite entry. Current actual UI ignores HTTP status; observations
+failure becomes [], failed import announces zero-count success and export downloads
+the error body. These are causal presentation bugs for the approved restricted
+reader, not permission to reopen any denied route. No daemon/CLI/DB guard changes.
+
+Choose a checked transport plus explicit per-section unavailable state. A
+transport-only throw leaves unhandled/swallowed failures and stale caches; replacing
+failed responses with [] hides failed projects. Keep previously displayed data,
+mark it unavailable/potentially stale using a textContent-only status element and
+role=status, and clear that mark only on a successful fresh load. Rule filtering
+must keep the unavailable marker when repainting cached rows. No server/private
+error body is presented or parsed as a non-2xx successful DTO. Network and invalid
+JSON failures use fixed messages. Successful empty data retains ordinary semantics.
+
+Check HTTP status before JSON/blob/download and before mutation-success paths.
+Catch workflow/runs/detail/stories/history/medic failures at their display owner;
+startup, poll and onclick calls cannot leave rejected load promises unhandled.
+Medic failure explicitly says unavailable, not unknown/not-installed. Preserve
+existing successful payload/rendering/filter/terminal semantics and request methods.
+Await save confirmation before closing its editor; rejected save/delete/import
+must not reload or announce success. Rejected export has zero blob/objectURL/click
+ports. Do not introduce retries or server queues. Explicit editor/download behavior
+belongs to this UI unit, not an external signing/distribution action.
+
+Events and observations are independent sources: denied events must not prevent
+the allowed observations read. If either fails, show which source is unavailable;
+do not silently promote legacy events to authoritative observations. Both failed
+keeps prior activity with an unavailable marker, not an empty success. Successful
+observation/event projection and superseded-observation semantics remain unchanged.
+Capture current workflow/selected run and subpanel ownership before asynchronous
+loads so an old response/error cannot repaint a newer selection. This narrow
+display freshness check supplies no backend continuity or runtime ownership.
+Keep per-section latest-issued token identity, not just selection equality:
+older success must not clear a newer failure, and older failure must not mark
+a newer successful snapshot unavailable. Capture workflow plus terminal-filter
+state. Retained successful snapshots keep their original visible workflow/run/
+filter label; if a different selection fails, the unavailable text names both
+the requested view and the last displayed view. Cached A data must not appear
+as B even with a generic stale warning. Tokens are presentation-only, no queue.
+Recheck auto-selection tokens before/after every awaited workflow run probe.
+New detail selection invalidates old stories/activity immediately, not only after
+replacement detail succeeds. Expected top-level array DTOs must reject null/object
+success-shaped JSON before empty/cache/paint. Rules rendering rejection restores
+the prior cache and its display; this is client display validation, not backend
+schema qualification. Qualify these exact reviewer-fault oracles before fixes.
+Give save/delete/import/export separate action-outcome status owners, independent
+of cached-rule GET tokens; a successful newer data refresh must not mask a denied
+pending action. Successful action clears only its own warning. Scraper HTTP200
+application failure uses a fixed message, not arbitrary result.error. Qualify
+pending action -> successful rule GET -> action503 and application-error canaries.
+
+Before production authoring, paired Node VM fixtures evaluate the actual entire
+inline script with inert DOM/fetch/timer/download ports. RED exercises HTTP503
+JSON/non-JSON without parsing, network/invalid JSON, each section's visible state,
+success-empty recovery, both mixed activity outcomes, stale rules filtering,
+mutation denial/editor preservation, zero failed-export download ports and delayed
+selection mismatch. No live browser, database, listener or startup grant. Existing
+reader and startup/source tests plus strict no-emit/contracts/material255 remain
+the proportional source-delivery verification; actual HTTP/browser/Task5 stay open.
+
 Actual listener startup does not initialize PG; DB HTTP paths use generic
 pgMigrate and therefore are not qualified pre32 read-only reads. Before live
 adapter admission, independently nominate a code-owned dashboard-only restrictive

@@ -492,7 +492,31 @@ actual entry/adapter still supplies independently qualified effect authority.
   Earlier v6 aggregate9f1c14e8 / PR280 exact-head GitGuardian succeeded at
   2026-10-07T03:36:17Z; earlier failed historical PR ranges/incidents remain intact.
   This facade source change still requires a new-head delivery check.
-- [ ] Truthful UI error/unavailability, never fake empty data or hidden failures.
+- [x] Task4f.2 source-only truthful UI error/unavailability, never fake empty data or hidden
+  failures. File Map: server/index.html + dashboard-http-availability-v2.test.ts
+  and normal pure-suite entry. Actual-inline-script VM RED before authoring:
+  non-2xx before json/blob, fixed network/parse failures, per-panel stale state,
+  mixed events/observations and both failed, rule-cache filtering, rejected
+  save/delete/import/editor preservation, export zero-download and old-selection
+  publication refusal. Implement checked transport/section-owned catches and
+  retained-data status, preserving successful UI semantics. Run focused VM tests
+  then existing affected sources/noemit/contracts/material255; independent exact
+  code/test review before normal commit/push. No HTTP/browser/startup authority.
+  Actual entire-inline-script VM31 cases:30 genuine RED plus one successful-empty
+  control before authoring. Auto-selection review fault32/31/1 RED and collection/
+  subpanel/cache review faults41/32/9 RED before corrective source. Distinct action
+  status/privacy nomination then46/27/19 RED before its correction. Final51 UI
+  cases include five ordinary populated/success controls (not retroactive RED);
+  together with prior383 affected source tests434/0. Final strict existing-toolchain
+  no-emit902/0; version2.3.79, English1959, paths978. Final exact-byte input,
+  retention and startup source reviews C0/I0/M0 at HTML6ca494b1/teste4d927f1.
+  Four independent rule-action status owners cannot be masked by newer data GETs;
+  malformed collections refuse before empty/cache, rejected rules restore prior
+  cache, auto probes and old subpanels cannot replace newer selections. Actual255
+  preservation errors[], original two dirty files unchanged. Private original
+  outputs/commands retained outside PR. No real browser/HTTP/build/listener or
+  authenticated entry; those remain required. Prior facade7be4b392 exact-head
+  GitGuardian SUCCESS2026-10-07T03:49:49Z, new UI delivery requires its own check.
 - [ ] Private actual-PG/HTTP qualification and independent source/resource review.
 
 Pure projection prerequisite delivery:27 genuine missing-module RED before
