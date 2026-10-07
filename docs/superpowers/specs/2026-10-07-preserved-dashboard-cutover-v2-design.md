@@ -20,6 +20,54 @@ path is a complete, durable, capability-bound controller through dashboard step5
 
 ## Scope / ordered operations
 
+### Capability-bound owner labels before the consuming adapter
+
+Add observeDashboardCutoverOwnerBindingsV2(capability) to the existing
+scripts/deployment-cutover-owner.mjs; extend its existing builtin owner test.
+It consumes ONLY the original private WeakMap owner handle and returns exactly
+frozen fields schema,authority,maintenanceIntentHash,ownerClaimHash,
+controllerSourceHash,cutoverPlanHash. Schema is
+setfarm.internal-production-dashboard-cutover-owner-bindings.v2; authority is
+binding-only. Four hashes are taken from ORIGINAL held maintenance/claim, never
+caller JSON, reloaded history or a new source observation. Hashes are labels,
+not ownership/effect/recovery authority; the adapter retains the original handle.
+
+Authenticate that same handle with existing assertDeploymentCutoverOwnerV1 both
+before projection and immediately before return. Foreign/proxy/serialized copies
+refuse without caller traps and without burning a valid idle handle. No new
+owner, history publication, service or SQL effect is introduced. No new acquisition
+code/resource class beyond the two existing bounded read-only assertions; their
+actual filesystem/process operations and sticky cleanup uncertainty remain.
+Keep existing owner acquisition/assertion behavior unchanged. New projection
+sets its active guard before the first trusted composite assertion; nested
+projection (even swallowed) burns the original owner/module before further
+projection ports. Check active/original/burn state after each composite returns;
+no per-query abort inside existing assertions is claimed. Failure is sticky;
+restoring source/history/process evidence never revives that owner.
+
+Tests pin exact returned labels to real on-disk fixture claim/maintenance, frozen
+copy/no capability serialization authority, hostile handles zero traps, source
+and history/process drift with sticky refusal, and swallowed projection reentry.
+Existing compiled private owner fixtures mock clean-main BUILD observation;
+they exercise actual FS/current-process owner binding only, NOT production build
+qualification, loaded code, complete freeze or service admission.
+
+### Pending causal dashboard-reader startup root fix
+
+Actual listener startup does not initialize PG; DB HTTP paths use generic
+pgMigrate and therefore are not qualified pre32 read-only reads. Before live
+adapter admission, independently nominate a code-owned dashboard-only restrictive
+pre32 reader: original reserved session, exact journal/cold catalog/required
+structure, permanent latch and closed source-qualified read statement inventory.
+No default-migration, role/credential changes, raw getSql/driver controls, SQL
+prefix permission filter or Task6A rehearsal helper may supply this route.
+Existing base verifier requires ownerReachable=false and full-head verifier is
+not pre32; neither predicate may silently be relaxed. Any separate structural
+reader profile must be explicitly source-qualified, never called owner proof.
+Daemon prepares before PID/listen; unknown/mutation/unqualified read effects
+refuse. Absent-intent ordinary behavior stays unchanged. Reader API/consumer
+inventory and actual-PG recipe are not yet nominated; no production authoring.
+
 ### Retained ordinary-dashboard pre32 bridge nomination
 
 Additional exports in baseline-legacy-database-census-v1.ts:

@@ -260,7 +260,8 @@ This corrects released-at-return snapshots across the physical second pass.
   revoke BEFORE callback leaves transaction. Never return SQL/URL.
 - [x] GREEN source fault matrix plus unchanged census snapshots. Real private PG
   qualification and phase-aware launcher composition remain separate gates.
-- [ ] Review scoped source/test diff and record exact evidence before delivery.
+- [x] Review scoped source/test diff and record exact evidence before delivery.
+  Delivereddda5fe70 in OPEN DRAFT PR276; actual PG/adapter admission stays closed.
 
 Task4c evidence:16 genuine missing-export REDs before source; first16 GREEN,
 review-expanded final20 source-fault cases PASS0fail0skip. Legacy7 PASS with an
@@ -271,6 +272,41 @@ Source1fcdc6a7/test28a16e2c have three independent C0/I0/M0 reviews. Final raw
 outputs/harnesses preserved privately.142 fresh cases for this slice; native9+4
 remain unchanged prior evidence,155 distinct across units, NOT155fresh. No actual
 PG backend/credential/phase/owner qualification or live admission by fixtures.
+
+### Task4d: genuine owner-handle bound labels for the future adapter
+
+Causal File Map: scripts/deployment-cutover-owner.mjs and its existing builtin
+scripts/__tests__/deployment-cutover-owner.test.js. Adapter must bind its actual
+owner handle to the same maintenance/claim hashes; returning labels from trusted
+private custody avoids substituting history JSON for that handle. Exact additive
+export/guard/binding-only semantics are nominated in spec. Original owner/build
+authenticator and native work remain unchanged; source fixture BUILD is mocked.
+
+- [x] Independently nominate strict opaque-handle projection/reentry contract.
+- [x] Add missing-export RED with exact on-disk fixture labels/hostile handles,
+  drift/sticky refusal and swallowed reentry; old owner tests unchanged.
+- [x] Minimal additive private-handle projection; no owner or effect grant.
+- [x] GREEN focused owner suite and source/resource review; scoped draft delivery.
+
+Task4d evidence: old24 PASS/new7 genuine missing-export FAIL before source;
+first31 GREEN. Review expanded both original/proxy reentry into the second
+assertion (actual observer call3); final33 PASS0fail0skip. Source d86ec813/test
+3cc3dadd; readonly existing-candidate resolver, no install/symlink. Fixture
+clean-main BUILD is mocked; actual private FS/history/process only, not actual
+production build, consuming adapter, complete freeze or live admission. Two
+trusted assertions retain their existing bounded FS/process resources; no
+per-internal-query abort claim. Original and final outputs preserved privately.
+Three final independent reviewers C0/I0/M0. Adjacent65 PASS freshly; Node syntax,
+version/English/path/diff checks pass. No TypeScript production changed in this
+slice; prior noemit evidence remains prior.98 fresh source-fixture cases here;
+188 distinct across the units includes historical native13, NOT188fresh. Final
+preservation255 originals/123ancestors40aliases8absences/255once-closes/errors[].
+
+Next causal File Map pending reader nomination: db-pg.ts, server/daemon.ts,
+server/dashboard.ts, closed reader/bootstrap modules and tests as required by
+actual GET statement inventory. Generic full-head migration cannot authenticate
+pre32 DB-backed dashboard reads. This is an in-goal startup root fix, NOT new
+features or Task6A/native prerequisite. No runtime/role/catalog guard bypass.
 
 ## Task5: authenticated entry, delivery and qualified dashboard checkpoint
 
