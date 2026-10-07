@@ -13,6 +13,13 @@ const source = new URL("../../src/internal-production/baseline-dashboard-cutover
 const observer = new URL("../../src/internal-production/baseline-deployment-cutover-v1.ts", import.meta.url).href;
 const records = new URL("../../src/internal-production/baseline-deployment-cutover-records-v1.ts", import.meta.url).href;
 const refusal = "DASHBOARD_CUTOVER_ORDINARY_CONFIGURATION_REFUSED";
+const json5 = createRequire(loader).resolve("json5");
+const fullConsumers = {
+  writer: [new URL("../../src/installer/openclaw-config.ts", import.meta.url).href, "writeOpenClawConfig"],
+  atomic: [new URL("../../src/installer/config-schema.ts", import.meta.url).href, "atomicWriteSync"],
+  install: [new URL("../../src/medic/medic-cron.ts", import.meta.url).href, "installMedicCron"],
+  uninstall: [new URL("../../src/medic/medic-cron.ts", import.meta.url).href, "uninstallMedicCron"],
+} as const;
 
 function body(relative: string, name: string): string {
   const file = new URL(relative, import.meta.url);
@@ -41,9 +48,10 @@ const home=${JSON.stringify(home)},account=os.userInfo();os.userInfo=()=>({...ac
 const workspace=path.join(home,'ai/setrox');fs.mkdirSync(workspace,{recursive:true,mode:0o700});
 const target=path.join(workspace,'data/internal-production-baseline/deployment-cutover-v1');
 const records=await import(${JSON.stringify(records)});
+const originalMkdir=fs.mkdirSync,originalWrite=fs.writeFileSync;
 const publish=()=>{const hash='a'.repeat(64),sha='b'.repeat(40),deployment={checkoutPath:'/fixture/source',checkoutDirectoryIdentityHash:hash,sourceSha:sha,sourceTreeHash:'c'.repeat(40),buildHash:hash};
 const wire=records.encodeDeploymentCutoverIntentV1(records.createDeploymentCutoverIntentV1({oldDeployment:deployment,newDeployment:{...deployment,checkoutPath:'/fixture/new-source'},cliLinkObservationHash:hash,spawnerLauncherConfigurationHash:hash,dashboardLauncherConfigurationHash:hash,maintenanceIntentHash:hash,dashboardPort:3333}));
-fs.mkdirSync(target,{recursive:true,mode:0o700});fs.writeFileSync(path.join(target,'intent.json'),wire,{mode:0o600,flag:'wx'});};
+originalMkdir(target,{recursive:true,mode:0o700});originalWrite(path.join(target,'intent.json'),wire,{mode:0o600,flag:'wx'});};
 if(${JSON.stringify(mode)}==='open')publish();if(${JSON.stringify(mode)}==='unknown'){fs.mkdirSync(target,{recursive:true,mode:0o700});fs.writeFileSync(path.join(target,'unexpected'),'private-unknown')}
 const out={effects:[],traps:0};const effect=name=>()=>{out.effects.push(name);throw Error('OWNED_EFFECT')};
 let ports=0;const lstat=fs.lstatSync;fs.lstatSync=(...args)=>{ports++;return lstat(...args)};syncBuiltinESMExports();
@@ -126,3 +134,53 @@ try{await bind(${JSON.stringify(factories[kind])},env)()}catch(e){out.refused=e.
     });
   }
 }
+
+function fullModuleEntry(kind: keyof typeof fullConsumers): string {
+  const [url, name] = fullConsumers[kind];
+  return `const{registerHooks}=await import('node:module');
+registerHooks({resolve(s,c,next){return s==='json5'?next(${JSON.stringify(json5)},c):next(s,c)}});
+const cp=(await import('node:child_process')).default;
+cp.execFile=effect('child-command');globalThis.fetch=effect('network');syncBuiltinESMExports();
+const consumer=await import(${JSON.stringify(url)}),fn=consumer[${JSON.stringify(name)}];
+const fsp=(await import('node:fs/promises')).default;
+const owned=path.join(home,'owned-config.json');let allowOwnedOutput=false;
+for(const name of ['writeFileSync','renameSync','appendFileSync','mkdirSync','unlinkSync','rmSync','rmdirSync','chmodSync','copyFileSync']){
+const original=fs[name];fs[name]=(...args)=>{out.effects.push('fs.'+name);
+if(allowOwnedOutput&&((name==='writeFileSync'&&typeof args[0]==='string'&&args[0].startsWith(path.join(home,'.tmp-owned-config.json-')))
+||(name==='renameSync'&&typeof args[0]==='string'&&args[0].startsWith(path.join(home,'.tmp-owned-config.json-'))&&args[1]===owned)))return original(...args);
+throw Error('OWNED_EFFECT')};}
+for(const name of ['writeFile','rename','appendFile','mkdir','unlink','rm','rmdir','chmod','copyFile'])fsp[name]=effect('fsp.'+name);
+const originalRead=fsp.readFile;fsp.readFile=(...args)=>{
+if(typeof args[0]!=='string'||args[0].startsWith(path.join(home,'.openclaw'))||args[0].startsWith(path.join(home,'.config')))return effect('config-cron-read')();
+return originalRead(...args)};syncBuiltinESMExports();
+const proxy=new Proxy({},{get(){out.traps++;throw Error('TRAP')}});`;
+}
+
+for (const kind of Object.keys(fullConsumers) as Array<keyof typeof fullConsumers>) {
+  for (const mode of ["open", "unknown"]) {
+    test(`full imported ${kind} refuses ${mode} before mutation or caller observation`, async () => {
+      const out = await fixture(mode, fullModuleEntry(kind) + `
+try{await fn(${kind === "writer" ? "owned,proxy" : kind === "atomic" ? "proxy,'owned-content'" : ""})}catch(e){out.refused=e.message}`);
+      assert.equal(out.error, undefined, JSON.stringify(out)); assert.equal(out.refused, refusal);
+      assert.deepEqual(out.effects, []); assert.equal(out.traps, 0);
+    });
+  }
+}
+
+for (const kind of ["writer", "atomic"] as const) {
+  test(`full imported ${kind} preserves ordinary absent write to a new private file`, async () => {
+    const out = await fixture("absent", fullModuleEntry(kind) + `allowOwnedOutput=true;
+await fn(owned,${kind === "writer" ? "{}" : "'owned-only\\n'"});out.bytes=fs.readFileSync(owned,'utf8');`);
+    assert.equal(out.error, undefined, JSON.stringify(out));
+    assert.equal(out.bytes, kind === "writer" ? "{}\n" : "owned-only\n");
+    assert.deepEqual(out.effects, ["fs.writeFileSync", "fs.renameSync"]); assert.equal(out.traps, 0);
+  });
+}
+
+test("full imported writer cannot atomically publish after serialization creates OPEN", async () => {
+  const out = await fixture("absent", fullModuleEntry("writer") + `
+const config={toJSON(){out.serialized=(out.serialized??0)+1;publish();return{agents:{list:[]}}}};
+try{await fn(owned,config)}catch(e){out.refused=e.message}out.outputExists=fs.existsSync(owned);`);
+  assert.equal(out.error, undefined, JSON.stringify(out)); assert.equal(out.refused, refusal);
+  assert.equal(out.serialized, 1); assert.equal(out.outputExists, false); assert.deepEqual(out.effects, []);
+});

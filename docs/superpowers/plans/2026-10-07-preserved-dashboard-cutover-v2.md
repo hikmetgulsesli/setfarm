@@ -901,7 +901,8 @@ paired design and plan. Interface/schema remain V1.
   C0/I0/M0; review M1 self-retention gap addressed with existing-behavior test,
   not new RED credit. Preservation255/errors[]07:32:32–33UTC, unchanged
   8932f443 manifest and original user-dirty files. MC/gateway200;3333 absent.
-- [ ] Normal scoped commit/push to existing DRAFT PR280 and exact-head scanner.
+- [x] Normal scoped commit/push08d42876 to existing DRAFT PR280; exact-head
+  GitGuardian SUCCESS completed07:37:37UTC. No startup admission.
 - [ ] Original legacy process settlement, loaded-source/argv authentication and
   continuous exclusion remain separate adapter obligations. No live startup.
 
@@ -917,3 +918,40 @@ fixtures; original source classifier and bracket are actual. Real private plutil
 conversions do not alter installed launchers. This does not qualify whole
 default bootstrap, live process death, actor drain, clean-main build or startup.
 Final source0ca4ed07/test20ba341c; strict927/0 after the final test delta.
+
+## Task4a.7.1: qualify actual configuration consumer imports
+
+File Map: existing baseline-dashboard-cutover-configuration-refusal-v2.test.ts;
+paired spec/plan. No production edit is nominated. Close the existing AST-body
+qualification limit with actual complete consumer imports, not a new behavior.
+
+- [x] Add8 denied full-module cases: writer/atomic/Medic install/uninstall under
+  real private OPEN and unknown. Only bare JSON5 resolves to existing installed
+  dependency bytes. Real guard/observer and consumer imports remain unchanged.
+  Mutation, cron reads, child commands and network traps must stay untouched;
+  writer/atomic caller proxies must remain unobserved.
+- [x] Add2 known-absent actual writer/atomic controls creating new owned private
+  files and asserting literal bytes. Add real-module serialization publishes
+  OPEN and reaches zero atomic mutation. Retain private files; no host paths.
+- [x] Focused33/0 and fresh proportional configuration/validation35/0/0SKIP;
+  strict927-file readonly noemit0 diagnostics; version2.3.79/English1971/path985.
+  Three independent exact-byte C0/I0/M0 reviews. Fresh preservation255/errors[]
+  07:47:02UTC, unchanged8932f443 material manifest and original dirty files.
+  Supplemental existing behavior, no missing-module/consumer RED credited again.
+- [ ] Scoped DRAFT test-only commit/push and exact-head scanner. No actual Medic
+  systemd/gateway, build, process control, PG or authenticated startup effects.
+
+Task4b.2 delivery receipt:08d42876 committed/pushed clean to DRAFT PR280;
+exact-head GitGuardian SUCCESS completed07:37:37UTC. Existing Task4b.2 delivery
+checkbox is satisfied by this subsequent receipt; history is not rewritten.
+
+Task4a.7.1 receipt: all11 added cases pass on first execution, as supplemental
+qualification of unchanged production behavior. Full consumer modules and their
+shared guard/observer/cache are real; only bare JSON5 resolves through the
+existing installed dependency. Child-command/network traps are installed before
+imports; filesystem mutation/private-cron traps before calls, not loader-cache
+exclusion. Positive actual writer/atomic files have literal bytes and remain
+private. Fresh35/0 includes2 existing validation controls; this test-only change
+does not repeat the prior615-case reader/HTTP campaign or accepted PG/native
+recipes. Initial33/0, final35/0 and strict927/0 original outputs retained in full.
+Testb1c669c0; no production pin changes or full CLI/source-build/startup grant.

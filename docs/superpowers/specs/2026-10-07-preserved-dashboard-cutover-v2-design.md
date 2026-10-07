@@ -1757,3 +1757,19 @@ labels before production changes. Preserve existing daemon/alias controls;
 test late ordinary contenders and identity drift cause whole-bracket refusal,
 with fixed errors and no raw argument disclosure. No live process signal,
 service, selector, launcher, database or ROOT mutation is part of this slice.
+
+### Task4a.7.1 real configuration consumer module imports
+
+Supplement the existing AST-selected consumer tests with full source-module
+imports of openclaw-config, config-schema and Medic exports in private owned
+children. Keep the actual assertion, authentic observer, private OPEN/unknown
+paths, static imports and module cache. Redirect only the bare JSON5 dependency
+to the existing installed package; never replace source or observer imports.
+Trap filesystem mutation/cron reads below the owned OpenClaw/unit paths, child
+command and network ports. Denied entry must touch none of those ports or caller
+proxy traps. Positive absent writer/atomic cases really create only new owned
+private files with hand-derived bytes and preserve the files. Real serialization
+publishing OPEN must reach no atomic write or rename. These are supplemental
+qualification of existing behavior, not new RED or full CLI/import-closure,
+source/build, actor exclusion, private PG, transport or startup authority.
+File Map: existing configuration-refusal-v2.test.ts and paired docs only.
