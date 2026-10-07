@@ -377,6 +377,64 @@ full existing legacy census and must not be mislabeled migration31 application.
 
 ### Pending causal dashboard-reader startup root fix
 
+#### Task4f.1b closed data operation on the caller's original transaction
+
+File Map: db/dashboard-core-response-v2.ts, its focused internal-production
+test and package.json's normal pure-suite entry. Internal readDashboardCoreResponseInTransactionV2(originalTransaction,
+request) never begins/ends a transaction, opens a client or executes qualification;
+the private lifecycle composer owns initial/final qualification, RR/locks and
+settlement. No raw SQL/query callback crosses the public db-pg reader facade.
+copyDashboardCoreRequestV2(request) copies one exact own-data record; permit
+Object.prototype/null prototype only, reject proxy/accessor/symbol/extra keys
+before any transaction property/port. Absent includeTerminal becomes false;
+present undefined controls refuse. Empty workflow is normalized by HTTP before
+this module, never by coercion. IDs/workflow use the nominated1024-byte bound.
+
+The seven fixed data statements are the current SELECTs with explicit public
+qualification: runs with workflow predicate; all runs; run by id; steps by run
+ordered step_index; stories by run ordered story_index; custom rules ordered
+sort_order/created_at; explicit20 observation columns by run ordered created_at
+DESC LIMIT250. No standalone steps operation or alternate SQL input. All included
+run/step statements use exactly the supplied original transaction. Validate
+source-manifest columns/nullability, primitive text/int4/bool and original builtin
+Date timestamps (intrinsic conversion to ISO, no caller hooks). Preserve raw TEXT
+value semantics, including status/protocol; projection's legacy TypeScript type
+is not an additional protocol-enum authority. Reject extra/missing/crossed rows,
+duplicate identities per relation, and requested ID/workflow mismatch.
+
+Keep expected parent IDs private before the data port; hand it only a fresh
+parameter array, never use its retained mutable array as result identity. Before
+await assimilation, reject synchronously returned object/function proxies without
+traps. Promise/provider settlement itself remains a trusted installed-driver
+boundary: provider-internal assimilation cannot be retroactively prevented by a
+consumer. Validate outer Result density/own-data indices/no symbols before a
+nonburning row-count capacity refusal; malformed outer batches remain sticky
+even over-cap. Oversized dense batches are refused before decoding row values;
+this is no claim that over-cap values are source-qualified. Nonenumerable driver
+metadata is ignored without access. Neither validation nor response caps bound
+driver allocation or provider-internal execution.
+
+Count fetched rows before subsequent data ports: runs≤256, steps≤1024/run,
+stories/rules≤4096, observations≤250, aggregate≤4096. Whole final projected inert
+JSON≤4MiB. Inert response root depth0; each own field/index traversal adds1;
+depth64 accepted,65 whole-response capacity refusal. This is a newly nominated
+reader publication restriction, not legacy projection equivalence or provider
+allocation bound. Preserve observation JSON fallbacks/scalars before deep inert
+copy; no subtree replacement, truncation, empty success or partial publication.
+
+Four fixed privately WeakMap-branded failure categories:
+DASHBOARD_CORE_REQUEST_REFUSED / DASHBOARD_CORE_RESPONSE_CAPACITY_REFUSED are
+operation refusals; DASHBOARD_CORE_ROWS_REFUSED / DASHBOARD_CORE_QUERY_REFUSED
+require caller sticky refusal. classifyDashboardCoreResponseFailureV2(error)
+inspects original identity without caller traps and returns an inert private
+category or null; error messages alone cannot classify provider failures.
+The lifecycle composer must convert only authentic source capacity failure into
+an internal no-data outcome, still perform final qualification, original callback/
+transaction/end settlement, and emit refusal afterward. Any qualification/provider/
+cleanup failure overrides capacity and burns; no replacement while original work
+is pending. Invalid request is rejected before acquisition. This helper/profile
+supplies no reader-ready, schema-writer exclusion, backend-death or startup grant.
+
 Actual listener startup does not initialize PG; DB HTTP paths use generic
 pgMigrate and therefore are not qualified pre32 read-only reads. Before live
 adapter admission, independently nominate a code-owned dashboard-only restrictive

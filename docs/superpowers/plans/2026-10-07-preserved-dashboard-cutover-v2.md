@@ -349,7 +349,8 @@ dispatch; server/index.html truthful unavailable/error handling; focused reader,
 startup/router/UI tests. These recover existing basic data under pre32 without
 generic migrations; no unrelated feature or new native barrier. The six named
 methods/seven fixed existing SELECT shapes and explicit excluded routes are
-recorded in design. Exact provider/result/structure/capacity nomination pending.
+recorded in design. Exact lifecycle/provider and actual-host recipe remain pending;
+structural and closed-data nominations below do not supply those grants.
 Select one fresh private READ ONLY REPEATABLE READ transaction per complete HTTP
 operation, including all run/step reads; no cross-request backend continuity or
 owner claim. Initially one active request with explicit busy refusal, no queue.
@@ -372,6 +373,21 @@ actual entry/adapter still supplies independently qualified effect authority.
   nested zero-trap refusal, four partial and three non-text index branches.
   An earlier1 source type-overload diagnostic remains uncredited. No actual PG,
   locks, RR/callback/end, schema-writer exclusion, data reader or startup proof.
+- [x] Closed original-transaction data operation: exact5 requests/7 SQL, all
+  run/step reads together, source row/inert DTO validation, truthful whole-result
+  caps and privately branded failure dispositions. RED before implementation;
+  original lifecycle/qualification/HTTP/startup remain separate pending work.
+  Actual44 missing-module RED; source-fault RED2 private-parent/proxy, RED3
+  malformed-overcap precedence, RED1 function-proxy before corrective source.
+  Final71 GREEN; seven literal SQL/parameters and third-port no-partial oracle.
+  Read-only omitted-WHERE sensitivity70/1 fails the intended exact-SQL assertion,
+  not compilation/setup. Three independent current-byte reviews C0/I0/M0.
+  Focused profile/projection/data/ordinary-refusal/startup231 GREEN, strict
+  existing-toolchain no-emit896/0; version2.3.79, English1953, paths976.
+  Earlier8 no-emit diagnostics and async-proxy test-driver assimilation negative
+  remain uncredited; corrected typed/request narrowing and synchronous port
+  oracle without weakening production checks. Actual255 material preservation,
+  original two user-dirty files unchanged. Not full suite/build/live qualification.
 - [ ] RED then minimal runtime implementation; preserve generic and Task6A guards.
 - [ ] RED exact-method/route denial and no PID/listen on preparation failure.
 - [ ] Truthful UI error/unavailability, never fake empty data or hidden failures.
