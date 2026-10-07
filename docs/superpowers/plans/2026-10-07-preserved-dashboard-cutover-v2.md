@@ -938,7 +938,8 @@ qualification limit with actual complete consumer imports, not a new behavior.
   Three independent exact-byte C0/I0/M0 reviews. Fresh preservation255/errors[]
   07:47:02UTC, unchanged8932f443 material manifest and original dirty files.
   Supplemental existing behavior, no missing-module/consumer RED credited again.
-- [ ] Scoped DRAFT test-only commit/push and exact-head scanner. No actual Medic
+- [x] Scoped DRAFT test-only commit/push770bb2bb and exact-head GitGuardian
+  SUCCESS completed07:50:49UTC. No actual Medic
   systemd/gateway, build, process control, PG or authenticated startup effects.
 
 Task4b.2 delivery receipt:08d42876 committed/pushed clean to DRAFT PR280;
@@ -955,3 +956,43 @@ private. Fresh35/0 includes2 existing validation controls; this test-only change
 does not repeat the prior615-case reader/HTTP campaign or accepted PG/native
 recipes. Initial33/0, final35/0 and strict927/0 original outputs retained in full.
 Testb1c669c0; no production pin changes or full CLI/source-build/startup grant.
+
+## Task4b.2.1: correct process-title bare alias false positives
+
+Causal prerequisite: fresh actual source diagnostic incorrectly retains a real
+PostgreSQL backend whose process-title metadata names the setfarm database.
+Read-only comm/cwd/text metadata identifies the backend; no PG query or signal.
+Choose a narrow generic title grammar, not a PID/PG blacklist or broad wrapper
+allowlist. Unknown non-title wrappers and every strong path remain contenders.
+This does not promote diagnostic absence into authenticated actor exclusion.
+
+File Map: existing process-observation-v1.ts and its test; paired design/plan.
+
+- [x] Add observed and generic title bare-alias negatives; actual exported
+  observer must retain no extra family or disclose private metadata. Preserve
+  bare direct/Node/options/env/shell/unknown-wrapper candidates and strong paths
+  under title/unknown prefixes. Title changing to a real CLI must refuse bracket.
+  Observe genuine RED before touching production.
+- [x] Suppress later bare aliases only under the finite first-token title label
+  grammar with no preceding nominated execution prefix. Use one cumulative
+  pass; keep original starter promotion, daemon checks, schema and hash formulas.
+- [x] Fresh affected process/launcher tests, strict existing-toolchain noemit,
+  contracts, preservation255 and three independent exact-byte read-only reviews.
+- [ ] Normal scoped commit/push to existing DRAFT PR280 and exact-head scanner;
+  real informational rescan only, never loaded-source/drain/startup authority.
+- [ ] Full authenticated transport/controller, original actor settlement,
+  reviewed integration, clean-main build and real-host3333 acceptance remain.
+
+Task4b.2.1 receipt: genuine110-case RED100PASS/10FAIL before production, each
+failure an invented fourth family from bare title metadata rather than setup.
+Full original40075-byte RED output retained; UI combined rendering truncation
+was reread from the original result without rerunning. Initial GREEN110/0.
+Reviewer bare unknown-wrapper gap closed with supplemental existing-behavior
+case, no new RED credit. Fresh final process111+launcher118=229PASS/0FAIL/0SKIP;
+strict927-file readonly noemit0 diagnostics. Version2.3.79/English1971/path985.
+Three independent exact source/test/spec reviews C0/I0/M0; receipt-only plan
+annotation follows. Source081c26ec/testa56e511b/spec ca3a8a34. Fresh original255
+preservation08:10:20–21UTC errors[], material8932f443 and both dirty files
+unchanged. Actual informational source rescan families[]/listener null, not
+authenticated actor absence. MC/gateway200;3333 absent. No signal, PG query,
+native replay, build, launcher/selector/ROOT effect or startup acceptance.

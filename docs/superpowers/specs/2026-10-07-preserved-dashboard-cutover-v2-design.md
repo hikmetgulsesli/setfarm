@@ -1743,7 +1743,8 @@ Choose compatible V1 hardening over a disconnected V2 diagnostic or a new
 authority catalog. File Map is the existing process-observation-v1.ts, its
 existing test and paired docs. Keep the public zero-input function, wire schema,
 daemon checks, two complete process/listener samples and sanitized output.
-Every recognized Setfarm CLI token stays visible. Only a unique CLI token at
+Every recognized Setfarm CLI entry stays visible (bare process-title metadata
+is refined by Task4b.2.1 below). Only a unique CLI token at
 the direct executable position or immediately after a Node executable, with
 the group immediately following it, may keep the existing starter label.
 Unsupported loader/options placement, no group, ordinary groups, duplicated
@@ -1773,3 +1774,32 @@ publishing OPEN must reach no atomic write or rename. These are supplemental
 qualification of existing behavior, not new RED or full CLI/import-closure,
 source/build, actor exclusion, private PG, transport or startup authority.
 File Map: existing configuration-refusal-v2.test.ts and paired docs only.
+
+### Task4b.2.1 distinguish bare aliases from process-title metadata
+
+Fresh read-only host evidence found a PostgreSQL backend title containing the
+database name setfarm. The V1 matcher mistakes this bare metadata word for a
+CLI entry. No process, database, user, PID or executable-specific exemption is
+permitted. This is a causal correction to Task4b.2, not a new owner contract.
+
+Keep slash-qualified aliases and dedicated src/dist CLI paths visible anywhere.
+Keep bare setfarm/js/mjs/cjs aliases at position0 and under every non-title
+prefix, including unknown wrappers. For later bare aliases only, a first token
+matching the finite title-label grammar /^[A-Za-z0-9_.+-]+:$/ is treated as title
+metadata by this diagnostic unless
+a preceding token has basename node, nodejs, env, sh, bash, zsh, dash, ksh or fish.
+Scan once with cumulative execution-prefix state; do not repeatedly slice argv.
+Title-prefixed strong paths and execution-prefixed bare aliases stay ambiguous.
+Existing unique/direct starter labels, daemon checks, bracket hashes, wire schema
+and public zero-input observer are unchanged. Do not broadly allowlist wrappers:
+unknown non-title wrappers must remain visible rather than silently disappear.
+
+A colon-ending token is not kernel-reserved syntax and can name an executable.
+This finite flattened-ps diagnostic does not authenticate argv, exclude actors,
+prove loaded-source settlement or grant startup, even if its result is empty.
+The existing continuous exclusion/authenticated transport obligations remain.
+File Map: existing process-observation-v1.ts, existing test and paired docs.
+RED literal observed/generic title mentions, preserve direct/Node/options/env/
+shell/unknown-wrapper candidates, strong paths and title-to-CLI bracket refusal.
+Only external ps/lsof fixture ports are inert; actual classifier/hash is tested.
+No live signal, PostgreSQL query, selector, launcher, ROOT or service mutation.

@@ -182,6 +182,67 @@ for (const group of ["spawner", "dashboard"]) {
   });
 }
 
+// A token-wide alias matcher invents CLI families from database/job metadata;
+// a broad wrapper allowlist silently loses uncertain real CLI invocations.
+for (const title of ["postgres: PRIVATE_ACCOUNT", "worker-1.2+queue_: PRIVATE_ACCOUNT"]) {
+  for (const alias of ["setfarm", "setfarm.js", "setfarm.mjs", "setfarm.cjs"]) {
+    test(`${title.split(" ")[0]} metadata ${alias} is not a CLI entry`, () => {
+      const result = observe(`const original=rows;rows=()=>original()+row(4105,${JSON.stringify(title + " " + alias + " ::1(60575) idle PRIVATE_METADATA")},4100,4100);`);
+      assert.equal(result.observation?.families.length, 3, JSON.stringify(result));
+      assert.equal(result.scans, 2); assert.equal(result.listens, 2);
+      assert.equal(JSON.stringify(result).includes("PRIVATE_"), false);
+    });
+  }
+}
+
+for (const command of ["worker: PRIVATE_ACCOUNT setfarm node PRIVATE_METADATA",
+  "worker: PRIVATE_ACCOUNT setfarm /usr/bin/env PRIVATE_METADATA"]) {
+  test("execution words after bare title metadata cannot invent a CLI entry", () => {
+    const result = observe(`const original=rows;rows=()=>original()+row(4105,${JSON.stringify(command)},4100,4100);`);
+    assert.equal(result.observation?.families.length, 3, JSON.stringify(result));
+    assert.equal(JSON.stringify(result).includes("PRIVATE_"), false);
+  });
+}
+
+for (const command of ["setfarm workflow run PRIVATE_TASK", "setfarm.js --help",
+  "setfarm.mjs step claim PRIVATE_TASK", "setfarm.cjs step fail PRIVATE_TASK",
+  "/unknown/wrapper setfarm workflow run PRIVATE_TASK",
+  "unknown-wrapper setfarm step peek PRIVATE_TASK",
+  "/usr/bin/node --inspect setfarm step peek PRIVATE_TASK",
+  "worker: PRIVATE_ACCOUNT /unknown/setfarm step complete PRIVATE_TASK",
+  "worker: PRIVATE_ACCOUNT ./setfarm.js uninstall PRIVATE_TASK",
+  "worker: PRIVATE_ACCOUNT dist/cli/cli.js workflow run PRIVATE_TASK",
+  "worker: PRIVATE_ACCOUNT ./src/cli/cli.ts medic run PRIVATE_TASK",
+  "worker: PRIVATE_ACCOUNT setfarm /unknown/setfarm step peek PRIVATE_TASK",
+  "worker: PRIVATE_ACCOUNT nodejs setfarm.js medic run PRIVATE_TASK"]) {
+  test(`uncertain alias entry ${command.split(" PRIVATE_")[0]} remains visible`, () => {
+    const result = observe(`const original=rows;rows=()=>original()+row(4105,${JSON.stringify(command)},4100,4100);`);
+    assert.equal(result.observation?.families.length, 4, JSON.stringify(result));
+    const contender = result.observation.families[3];
+    assert.equal(contender.classification, "ambiguous-contender");
+    assert.equal(contender.executable, null); assert.equal(contender.entrypoint, null); assert.equal(contender.checkoutPath, null);
+    assert.equal(JSON.stringify(result).includes("PRIVATE_"), false);
+  });
+}
+
+for (const prefix of ["node", "nodejs", "env", "sh", "bash", "zsh", "dash", "ksh", "fish"]) {
+  test(`title-prefixed ${prefix} execution retains a bare CLI alias`, () => {
+    const result = observe(`const original=rows;rows=()=>original()+row(4105,${JSON.stringify("worker: PRIVATE_ACCOUNT /usr/bin/" + prefix + " --option setfarm step peek PRIVATE_TASK")},4100,4100);`);
+    assert.equal(result.observation?.families.length, 4, JSON.stringify(result));
+    assert.equal(result.observation.families[3].classification, "ambiguous-contender");
+    assert.equal(result.observation.families[3].executable, null);
+    assert.equal(JSON.stringify(result).includes("PRIVATE_"), false);
+  });
+}
+
+for (const direction of ["arrives", "departs"]) {
+  test(`title-to-CLI contender ${direction} refuses the full bracket`, () => {
+    const result = observe(`const original=rows;rows=()=>original()+row(4105,${direction === "arrives" ? "scans>1" : "scans===1"}?"/unknown/wrapper setfarm step peek PRIVATE_TASK":"worker: PRIVATE_ACCOUNT setfarm idle",4100,4100);`);
+    assert.match(result.error, /DEPLOYMENT_CUTOVER_PROCESS_OBSERVATION_INVALID/);
+    assert.equal(result.error.includes("PRIVATE_"), false);
+  });
+}
+
 for (const change of ["late", "departed", "reused", "changed-task"]) {
   test(`ordinary CLI ${change} refuses the complete process bracket`, () => {
     const fault = `const original=rows;rows=()=>original()+${change === "late" ? "(scans>1?" : change === "departed" ? "(scans===1?" : ""}
