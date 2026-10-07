@@ -435,6 +435,45 @@ cleanup failure overrides capacity and burns; no replacement while original work
 is pending. Invalid request is rejected before acquisition. This helper/profile
 supplies no reader-ready, schema-writer exclusion, backend-death or startup grant.
 
+### Task4f.1c retained original-transaction qualification snapshot nomination
+
+File Map: db/dashboard-core-readonly-qualification-v2.ts and focused paired test;
+normal pure-suite entry after verification. Internal
+observeDashboardCoreReadonlyQualificationV2(originalTransaction, previous?)
+composes only retained source observers, never client/BEGIN/locks/end/listener.
+The lifecycle owner must already hold the nominated RR READ ONLY snapshot,
+utility settings, five ACCESS SHARE locks and cooperative schema-writer exclusion.
+This helper does not establish those conditions or authenticate an arbitrary
+transaction. No public query/callback/URL/options are introduced.
+
+Run exact3 metadata observations, source ordinal/name/checksum/state1..31
+verification1, exact26..31 APPLIED tail1, retained cold-catalog/aggregate/finding
+publication observation5, in that order:10 application statements, separate from
+driver startup/transaction/utility traffic. Earlier ordinal identities may be
+adopted; the six tail entries must be applied; later32 refuses. Reuse existing
+checks without changing their predicates or acquiring the Task4c36 SHARE backend.
+Before the old journal verifier receives its batch, require dense own-data
+indices and exact primitive row descriptors; never let Array.every skip holes.
+Tail rows are independently decoded similarly, never Array.some over sparse
+driver rows. Ignore nonenumerable Result metadata without executing it.
+
+The source-returned census has exact13 canonical normalized zero counts plus
+validated complete legacyFindingPublicationInventory. Preserve terminal finding
+memberships: normalized findingOwnerCount0 does not require raw finding emptiness.
+Hash only this closed normalized projection using existing canonical JSON;
+inventoryHash is independently verified. The inherited source observer/installed
+driver tuple decoding is trusted here, not a new universal hostile-provider
+certificate. Return frozen schema/profile/censusHash, privately branded originals
+only; copied/proxy/foreign previous snapshots refuse before any transaction port.
+Final recheck retains original OIDs/catalogHash and the closed censusHash without
+repinning. Cross-request comparison of inert hashes is not backend/capability
+transfer. Any malformed row, provider, census or continuity failure yields fixed
+DASHBOARD_CORE_READONLY_QUALIFICATION_REFUSED and requires lifecycle sticky refusal.
+No partial snapshot, automatic retry, row repair or source gate relaxation.
+Source fixtures must exercise sparse/malformed journals, early-adopted acceptance,
+tail-adopted/later32 refusal, nonzero counts, profile drift, retained publication
+membership and port failures. Actual provider/lifecycle/startup remain pending.
+
 Actual listener startup does not initialize PG; DB HTTP paths use generic
 pgMigrate and therefore are not qualified pre32 read-only reads. Before live
 adapter admission, independently nominate a code-owned dashboard-only restrictive
@@ -447,8 +486,10 @@ Existing base verifier requires ownerReachable=false and full-head verifier is
 not pre32; neither predicate may silently be relaxed. Any separate structural
 reader profile must be explicitly source-qualified, never called owner proof.
 Daemon prepares before PID/listen; unknown/mutation/unqualified read effects
-refuse. Absent-intent ordinary behavior stays unchanged. Reader API/consumer
-inventory and actual-PG recipe are not yet nominated; no production authoring.
+refuse. Absent-intent ordinary behavior stays unchanged. The complete lifecycle,
+actual-PG recipe and consuming-entry qualification remain pending. The explicitly
+nominated internal source components above may be authored and reviewed; none
+alone supplies reader-ready or startup authority.
 
 ### Retained ordinary-dashboard pre32 bridge nomination
 

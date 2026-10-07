@@ -389,6 +389,20 @@ actual entry/adapter still supplies independently qualified effect authority.
   oracle without weakening production checks. Actual255 material preservation,
   original two user-dirty files unchanged. Not full suite/build/live qualification.
 - [ ] RED then minimal runtime implementation; preserve generic and Task6A guards.
+- [x] Closed retained qualification snapshot: metadata3/source-journal1/exact
+  applied-tail1/cold-census5, private original continuity and fixed refusal;
+  dense journal decoding before inherited every/some predicates. Nomination and
+  genuine RED before source, no acquisition/lock/lifecycle/start grant.
+  Actual30 missing-module RED before authoring; final31 qualification cases plus
+  prior231 focused cases passed together262/0. Real retained source validators,
+  source checksum identities and a genuine terminal-open finding fixture used;
+  no connection-owning/migration helper or fake empty finding inventory. Exact
+  dense journal/tail copies reject holes before inherited every/some predicates.
+  Three independent final-byte source reviews C0/I0/M0; strict no-emit898/0,
+  version2.3.79/English1955/paths977. An earlier apply_patch context mismatch
+  changed no files and receives no verification credit. Material255 preserved.
+  Callback/queries/commit/end custody and readiness are still pending, not supplied
+  by these inert cross-request hash comparisons. No build/live reader/startup.
 - [ ] RED exact-method/route denial and no PID/listen on preparation failure.
 - [ ] Truthful UI error/unavailability, never fake empty data or hidden failures.
 - [ ] Private actual-PG/HTTP qualification and independent source/resource review.
