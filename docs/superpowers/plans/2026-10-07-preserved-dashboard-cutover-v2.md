@@ -199,7 +199,30 @@ No settled-history route, process quiescence or full capability is manufactured.
  0fail/0skip. Three independent reviews C0/I0/M0. A review narrowed no-new-FD
  wording to returned component originals/fs.openSync; provider internals are not
  counted. No membership-sensitive witness is refreshed into acceptance.
-- [ ] Scoped incremental delivery, confirmed afterward in private master.
+- [x] Scoped incremental delivery2c52ceaf, confirmed afterward in private master.
+
+### Task4b.0 causal direct root-FD provider slice
+
+File Map: new scripts/deployment-dashboard-cutover-root-fds-v2.py and matching
+builtin test. The narrowed source lemma concerns retained ROOT FDs through an
+already-entered last-unlink interval, not whole ordinary lease/helper lifetimes.
+Selected writers do not replace/remove the root; full loaded-source graph and
+root generation still need authentication. Apple wrapper source confirms its
+per-process errors are skipped; do NOT turn proc_listpidspath results into
+absence. The new direct requested-PID FD-only report propagates query errors and
+remains diagnostic-only, with exact interface/layout/fixture contract in spec.
+No parent live transport, global PID discovery, fileport coverage, stale drain,
+future-entry capability or live effects are supplied by this component alone.
+
+- [x] Independent exact interface/provider/resource nomination, three C0/I0/M0
+ reviews; diagnostic-only, not global absence. Actual recipe exactnom in spec.
+- [x] Genuine corrected missing-provider RED9/9, actual privately held root FDs;
+ first inherited-fixture readiness UNKNOWN retained separately, not credited.
+- [x] Minimal direct typed read-only provider; no silent per-process/FD omission.
+- [x] Actual owned Mac fixtures GREEN9/9,0fail/0skip; all natural EOF/custody
+ checks pass. Adjacent65+50 pass; total124 distinct focused tests. AST/syntax,
+ version/English/path/diff checks pass. Three source/resource reviews C0/I0/M0.
+- [ ] Scoped incremental DRAFT delivery; no full build/live-effect admission.
 
 ## Task5: authenticated entry, delivery and qualified dashboard checkpoint
 

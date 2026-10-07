@@ -311,6 +311,107 @@ reentry, transient add/remove detected by FULL metadata, malformed enumeration,
 and foreign-handle no-burn. Genuine missing-export RED precedes source.
 This is a causal refinement of Task4a, not the complete Task4b contender holder.
 
+### Task4b.0 direct per-process root-FD diagnostic provider
+
+Create scripts/deployment-dashboard-cutover-root-fds-v2.py and matching builtin
+script test. This is a bounded read-only provider, NOT the complete contender
+holder, process enumeration, quiescence, alias/fileport census or permission to
+operate services. Do not add a live entry or Task3 capability from this unit.
+
+The Apple published proc_listpidspath wrapper skips per-process errors as well
+as nonmatches; parent/self positive witnesses cannot cure that omission. Avoid
+that wrapper. Use direct typed libproc proc_pidinfo/PROC_PIDLISTFDS and
+proc_pidfdinfo/PROC_PIDFDVNODEINFO, propagating EVERY query error or short result.
+Reference: https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/libsyscall/wrappers/libproc/proc_listpidspath.c
+Published source is not a verified version match to this installed26.5.2 host.
+Installed SDK labels these private/version-sensitive APIs; fixture qualification
+does not confer account-wide completeness or atomicity.
+
+Fresh provider runs only via trusted /usr/bin/python3 -I -S -B, cwd/, sanitized
+environment, no compile/build/deployment or library substitution. Maximum wire
+size65536 bytes; read at most65537 bytes for overflow detection and require EOF
+before ANY native query. Require exact canonical JSON+LF; request exactly schema,rootDev,
+rootIno,pids. Schema setfarm.dashboard-cutover-root-fd-request.v2. Device/inode
+are canonical positive decimal strings fitting uint32/uint64. PIDs are a dense
+sorted unique list1..64 of positive int32 PIDs, including the ACTUAL parent PID.
+Account UID/GID, observer/parent PIDs are OS-derived, never requested labels.
+Root labels grant nothing; parent must itself supply at least one matching
+directory FD as an actual positive fixture/provider witness.
+
+Fixed-width SDK-derived ctypes structures: BSD136 (start offset120), FD8,
+fileinfo24, vinfo_stat136, vnode_info152, vnode_fdinfo176. Assert sizes/alignment/
+critical offsets before querying. Load ONLY /usr/lib/libSystem.B.dylib using
+ctypes.CDLL(use_errno=True). proc_pidinfo argtypes are c_int,c_int,c_uint64,
+c_void_p,c_int; proc_pidfdinfo argtypes c_int,c_int,c_int,c_void_p,c_int;
+both restype c_int. Flavors: BSD3, FD list1, vnode FD1. BSD UID/GID offsets20/24,
+PGID100/start120; FD type4; stat dev0/mode4/nlink6/ino8/uid16/gid20;
+vnode type136/fsid144; vnode_fdinfo pvi24. Alignment BSD/stat/vnode/fileinfo8,
+FD4. Clear/read errno at every typed call. Max4096
+FD slots per requested PID; reject zero/short/misaligned/saturated results,
+duplicate/negative FD numbers, unsupported descriptor types and ambiguous/dead/
+foreign-account process metadata. Accept only BSD status2/3/4 (runnable,
+sleeping/stopped), no INEXIT flag4, positive PID/PPID/PGID/startSeconds,
+startMicroseconds<1000000; effective/real/saved UID and GID must all equal actual
+observer UID/GID. BSD xstatus must be0. Descriptor types exactly vnode1 or
+known nonvnode {0,2,3,4,5,6,7,9,10,11}; unknown8/other refuse. Max16384 aggregate
+FD entries across requested PIDs, canonical output at most1048576 bytes, checked
+before stdout. Known nonvnode FD types are outside this
+explicit FD-only report; fileports/CWD/mappings/deleted-path coverage is NOT
+claimed. Vnode records must be exact-sized; used dev/ino must be positive,
+vnode types1..7 must agree with stat file-kind bits (regular,directory,block,
+character,symlink,socket,FIFO respectively). Unused reserved fields confer no
+proof. Never silently
+drop a revoked/vanished/inaccessible vnode or process.
+
+For each requested PID: actual BSD identity -> FD list -> every vnode detail ->
+repeat all matched-root vnode details -> second FD list -> second BSD identity.
+Repeated matches must retain exactly {fd,dev,ino,mode,uid,gid,nlink}; no union of
+historical matches. Require unchanged PID/account/parent/group/
+start tuple and unchanged FD-number/type vector. Root matches bind dev/inode and
+directory mode from those actual vnode records, including directory vnode type2
+and actual account UID. This supplies two bracketed samples, not mutation-free global
+continuity. No signal, close of another process's FD, repair, acquire or service
+call. The provider owns no extra returned root FD; requested processes keep their
+originals. Fresh child must exit naturally with exact stdout/stderr dispositions.
+
+Return exact canonical JSON+LF with schema,authority,coverage,uid,gid,observerPid,
+parentPid,rootDev,rootIno,processes. Schema setfarm.dashboard-cutover-root-fd-diagnostic.v2;
+authority diagnostic-only; coverage requested-process-vnode-fds. Process entries
+exactly pid,ppid,uid,gid,pgid,startSeconds,startMicroseconds,fds,rootFds. fds is the
+sorted list of {fd,type}; rootFds sorted {fd,dev,ino,mode,uid,gid,nlink}, dev/ino
+decimal strings. No zero-owner, complete, permission or authority-derived flag.
+On any input/query/validation uncertainty stdout empty/nonzero natural exit and
+fixed refusal stderr. Publication/transport failure may leave bytes but must
+refuse; a parent may accept ONLY full canonical bounded stdout, empty stderr,
+zero natural exit and both error-free EOFs. Never accept a partial usable report.
+Parent transport/future capability remains
+separately nominated and must deeply freeze/recheck this diagnostic.
+
+Real owned fixtures qualify actual parent/root FD, foreign child root FD,
+inherited/duplicated FD, neighbour inode, renamed-but-held original and natural
+holder exit. Include strict wire/field/count refusal and actual exited-PID query
+refusal. No backend/OS policy stubs or live authority roots. Missing-provider
+RED precedes production; native read-only recipe is new, not a replay of any S10
+sample. Unsupported platform/provider behavior refuses; platform skips outside
+Darwin are not host qualification. Keep all private fixtures/evidence retained.
+
+Exact new fixture recipe: env-i PATH=/usr/bin:/bin LANG=C LC_ALL=C fixed installed
+Node26.4.0 --test scripts/__tests__/deployment-dashboard-cutover-root-fds-v2.test.js.
+Nine sequential retained private mkdtemp roots, one parent original/root; six
+actual holders across cases (five Node, one isolated Python), at most one
+concurrently. One case inherits FD3 and uses actual os.dup(3) as a second
+descriptor; a failed /dev/fd/3 setup attempt is retained, not qualified as RED.
+Use bigint inode/device witnesses.
+Each Python query receives closed bounded stdin; capture at most1MiB total output
+and require natural process close, explicit stdout/stderr EOF and no stream
+errors within10s. No signal/retry on timeout; preserve unknown original custody.
+Each holder receives stdin EOF once, memoized natural close/EOF settlement;
+parent original closes checked-once only after all holder observations settle.
+Incremental holder output parsing is bounded before buffering complete lines.
+Register every returned original before first fallible fstat; failed sealing
+retains it. Root/fixture paths remain intact. RED has source absent, hence zero
+libproc calls; separately review exact source bytes before native-query GREEN.
+
 The bootstrap authenticates the complete delivered source/build/loader closure
 before constructing the adapter. Closed explicit modes; no ambient opt-in that
 grants authority. Existing inspection entry remains diagnostic. A new real
@@ -345,6 +446,8 @@ Create scripts/deployment-dashboard-cutover-adapter-v2.mjs and builtin script te
 Create scripts/deployment-dashboard-cutover-serialization-v2.mjs and builtin test
 as the separately reviewed Task4a reservation primitive; include both existing
 maintenance observer/normalizer scripts in the eventual authenticated closure.
+Create scripts/deployment-dashboard-cutover-root-fds-v2.py and matching builtin
+script test as a separately qualified diagnostic-only provider; not an entry gate.
 Create scripts/deployment-dashboard-cutover-v2.mjs and builtin entry test.
 Update applicable approved source inventories/manifest tests and affected package
 test commands only when adding the actual consuming production unit. Record those
