@@ -8,6 +8,8 @@ const DIRECTORY_KEYS = ["dev", "ino", "mode", "uid", "gid", "birthtimeNs"] as co
 const FILE_KEYS = [...DIRECTORY_KEYS, "size", "nlink", "mtimeNs", "ctimeNs"] as const;
 const same = (a: BigIntStats, b: BigIntStats, keys: readonly (keyof BigIntStats)[]): boolean => keys.every(key => a[key] === b[key]);
 let cleanupUncertain = false;
+let dashboardAdmissionRefusedV2 = false;
+let dashboardAdmissionObservationActiveV2 = false;
 function fail(): never { throw Error("DEPLOYMENT_CUTOVER_OBSERVATION_INVALID"); }
 function missing(error: unknown): boolean { return error instanceof Error && "code" in error && error.code === "ENOENT"; }
 
@@ -16,6 +18,25 @@ export function assertOrdinarySpawnerDeploymentCutoverAdmissionV1(): void {
   if (observeDeploymentCutoverIntentV1().state !== "absent") {
     throw Error("DEPLOYMENT_CUTOVER_ORDINARY_START_REFUSED");
   }
+}
+
+/** Refusal only. Reader preparation cannot authorize an OPEN-intent service. */
+export function assertOrdinaryDashboardDeploymentCutoverAdmissionV2(): void {
+  const refuse = (): never => { throw Error("DEPLOYMENT_CUTOVER_UNQUALIFIED_DASHBOARD_START_REFUSED"); };
+  if (dashboardAdmissionRefusedV2) refuse();
+  if (dashboardAdmissionObservationActiveV2) {
+    dashboardAdmissionRefusedV2 = true;
+    refuse();
+  }
+  dashboardAdmissionObservationActiveV2 = true;
+  try {
+    if (observeDeploymentCutoverIntentV1().state !== "absent") dashboardAdmissionRefusedV2 = true;
+  } catch {
+    dashboardAdmissionRefusedV2 = true;
+  } finally {
+    dashboardAdmissionObservationActiveV2 = false;
+  }
+  if (dashboardAdmissionRefusedV2) refuse();
 }
 
 // Read-only fixed-root observation. Open/partial records never authorize startup.
