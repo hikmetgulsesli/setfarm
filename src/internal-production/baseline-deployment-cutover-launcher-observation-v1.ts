@@ -3,6 +3,7 @@ import path from "node:path";
 import { userInfo } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { types } from "node:util";
 import { holdDeploymentCutoverNodePathV1 } from "./baseline-deployment-cutover-node-path-v1.js";
 import { observeDeploymentCutoverProcessFamiliesV1 } from "./baseline-deployment-cutover-process-observation-v1.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
@@ -18,6 +19,8 @@ const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex
 const exact = (value: unknown, keys: readonly string[]): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 const equal = (left: unknown, right: unknown) => hashCanonicalJson(left) === hashCanonicalJson(right);
+type LauncherPre32ContinuationV2<T> = (scope: object, census: Awaited<ReturnType<
+  typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusV1>>) => Promise<T>;
 function command(executable: string, args: string[], input?: Buffer): string {
   const result = spawnSync(executable, args, { input, encoding: "buffer", timeout: 5000, maxBuffer: MAX_BYTES,
     env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" } });
@@ -57,6 +60,9 @@ function holdLauncherConfigurationV1(defaultMode = false) {
     state: string; activeCount: 0; loadedStateHash: string }>;
   let output: Readonly<{ schema: string; launchers: readonly Entry[]; launcherObservationHash: string }> | undefined;
   let recheck: () => void = fail;
+  let recheckMaterial: () => void = fail;
+  let assertMaterialDatabase: () => void = fail;
+  let withPre32Database: <T>(continuation: LauncherPre32ContinuationV2<T>, check: () => void) => Promise<T> = async () => fail();
   let census: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusV1> = async () => fail();
   let censusAndActiveRows: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4> = async () => fail();
   let censusAndActiveRowsWithQuarantine: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndActiveRowsWithQuarantineV5> = async () => fail();
@@ -176,6 +182,14 @@ function holdLauncherConfigurationV1(defaultMode = false) {
     checkPins();
     const body = { schema: "setfarm.internal-production-deployment-cutover-launcher-observation.v1", launchers: Object.freeze(launchers) };
     output = Object.freeze({ ...body, launcherObservationHash: hashCanonicalJson(body) });
+    // V2's material lifetime is independent of deliberate loaded-job phases.
+    // V1 callers below keep their original loaded-state comparisons unchanged.
+    recheckMaterial = () => {
+      if (closed || cleanupUncertain) fail();
+      checkPins();
+      for (const item of held) if (!item.read().equals(item.bytes)) fail();
+      checkPins();
+    };
     recheck = () => {
       if (closed || cleanupUncertain) fail();
       checkPins();
@@ -206,8 +220,8 @@ function holdLauncherConfigurationV1(defaultMode = false) {
         return { state: current.state, activeCount: current.activeCount, pid: current.pid };
       },
     };
-    const agreedDatabaseUrl = () => {
-      recheck();
+    const agreedDatabaseUrl = (check: () => void = recheck) => {
+      check();
       const urls = held.map(item => (item.parsed.EnvironmentVariables as Record<string, string>).SETFARM_PG_URL);
       const raw = urls[0];
       if (!raw || urls[1] !== raw || Object.keys(process.env).some(key => key.startsWith("PG"))
@@ -219,15 +233,18 @@ function holdLauncherConfigurationV1(defaultMode = false) {
         || parsed.search !== "" || parsed.hash !== "") fail();
       return raw;
     };
+    assertMaterialDatabase = () => { agreedDatabaseUrl(recheckMaterial); };
     const observeDatabase = async <T>(observe: (module: typeof import("./baseline-legacy-database-census-v1.js"),
-      raw: string) => Promise<T>): Promise<T> => {
-      const raw = agreedDatabaseUrl();
+      raw: string) => Promise<T>, check: () => void = recheck): Promise<T> => {
+      const raw = agreedDatabaseUrl(check);
       const module = await import("./baseline-legacy-database-census-v1.js");
-      recheck();
+      check();
       const result = await observe(module, raw);
-      recheck();
+      check();
       return result;
     };
+    withPre32Database = (continuation, check) => observeDatabase(
+      (module, raw) => module.withHeldDashboardCutoverPre32DatabaseV2(raw, continuation), check);
     census = () => observeDatabase((module, raw) => module.observeLegacyDatabaseCensusV1(raw, true, "cutover-local"));
     censusAndActiveRows = () => observeDatabase((module, raw) =>
       module.observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4(raw));
@@ -247,8 +264,144 @@ function holdLauncherConfigurationV1(defaultMode = false) {
     };
   } catch { invalid = true; }
   if (invalid || !output) { close(); fail(); }
-  return { observation: output, recheck, census, censusAndActiveRows, censusAndActiveRowsWithQuarantine,
+  return { observation: output, recheck, recheckMaterial, assertMaterialDatabase, withPre32Database, census, censusAndActiveRows, censusAndActiveRowsWithQuarantine,
     censusAndBindingRows, censusAndBindingRowsV7, activeBindingSnapshot, close, defaultInputs };
+}
+
+type LauncherMaterialStateV2 = {
+  configuration?: ReturnType<typeof holdLauncherConfigurationV1>;
+  account?: ReturnType<typeof launcherMaterialAccountV2>;
+  valid: boolean;
+  closed: boolean;
+  outerSettled: boolean;
+  callbackSettled: boolean;
+  callback?: Promise<unknown>;
+};
+const launcherMaterialHandlesV2 = new WeakMap<object, LauncherMaterialStateV2>();
+let launcherMaterialOccupiedV2 = false, launcherMaterialBurnedV2 = false;
+let launcherMaterialBurnSequenceV2 = 0;
+let launcherMaterialActiveV2: LauncherMaterialStateV2 | null = null;
+// Retain the original state even on failed acquisition/cleanup; no replacement.
+let launcherMaterialOriginalV2: LauncherMaterialStateV2 | null = null;
+function launcherMaterialAccountV2() {
+  const account = userInfo();
+  return { uid: account.uid, gid: account.gid, homedir: account.homedir, username: account.username, shell: account.shell };
+}
+function burnLauncherMaterialV2(state: LauncherMaterialStateV2 | null): never {
+  if (state) state.valid = false;
+  launcherMaterialBurnedV2 = true;
+  launcherMaterialBurnSequenceV2 += 1;
+  fail();
+}
+function assertLauncherMaterialIdleV2() {
+  if (launcherMaterialActiveV2) burnLauncherMaterialV2(launcherMaterialActiveV2);
+}
+function launcherMaterialStateV2(handle: object, allowInvalid = false) {
+  const state = launcherMaterialHandlesV2.get(handle);
+  if (!state || (!allowInvalid && (!state.valid || state.closed || launcherMaterialBurnedV2 || cleanupUncertain))) fail();
+  return state;
+}
+function checkLauncherMaterialStateV2(state: LauncherMaterialStateV2) {
+  if (launcherMaterialActiveV2 !== state || state !== launcherMaterialOriginalV2
+    || !state.valid || state.closed || launcherMaterialBurnedV2 || cleanupUncertain) fail();
+}
+function checkLauncherMaterialV2(state: LauncherMaterialStateV2) {
+  const check = () => {
+    checkLauncherMaterialStateV2(state);
+    if (!state.account || !state.configuration) fail();
+    const current = launcherMaterialAccountV2();
+    if (!equal(current, state.account) || process.getuid?.() !== current.uid || process.geteuid?.() !== current.uid
+      || process.getgid?.() !== current.gid || process.getegid?.() !== current.gid) fail();
+    checkLauncherMaterialStateV2(state);
+  };
+  check(); state.configuration!.assertMaterialDatabase(); check();
+}
+function settleLauncherMaterialActivityV2(state: LauncherMaterialStateV2) {
+  if (state.outerSettled && state.callbackSettled && launcherMaterialActiveV2 === state) launcherMaterialActiveV2 = null;
+}
+
+/** Original plist material only. Never loaded-phase, Node-path or effect authority. */
+export function holdDashboardCutoverLauncherMaterialV2(): object {
+  assertLauncherMaterialIdleV2();
+  if (arguments.length !== 0) fail();
+  if (launcherMaterialOccupiedV2 || launcherMaterialBurnedV2 || cleanupUncertain) fail();
+  launcherMaterialOccupiedV2 = true;
+  const state: LauncherMaterialStateV2 = { valid: true, closed: false, outerSettled: false, callbackSettled: true };
+  launcherMaterialOriginalV2 = launcherMaterialActiveV2 = state;
+  try {
+    state.account = launcherMaterialAccountV2();
+    checkLauncherMaterialStateV2(state);
+    state.configuration = holdLauncherConfigurationV1(true);
+    checkLauncherMaterialV2(state);
+    const handle = Object.freeze(Object.create(null)) as object;
+    launcherMaterialHandlesV2.set(handle, state);
+    return handle;
+  } catch {
+    state.valid = false; launcherMaterialBurnedV2 = true; state.closed = true;
+    try { state.configuration?.close(); } catch { cleanupUncertain = true; }
+    fail();
+  } finally {
+    state.outerSettled = true; settleLauncherMaterialActivityV2(state);
+  }
+}
+
+export function assertHeldDashboardCutoverLauncherMaterialV2(handle: object): void {
+  assertLauncherMaterialIdleV2();
+  const state = launcherMaterialStateV2(handle);
+  launcherMaterialActiveV2 = state; state.outerSettled = false;
+  try { checkLauncherMaterialV2(state); }
+  catch { burnLauncherMaterialV2(state); }
+  finally { state.outerSettled = true; settleLauncherMaterialActivityV2(state); }
+}
+
+export async function withHeldDashboardCutoverLauncherPre32V2<T>(
+  handle: object, continuation: LauncherPre32ContinuationV2<T>,
+): Promise<T> {
+  assertLauncherMaterialIdleV2();
+  const state = launcherMaterialStateV2(handle);
+  if (typeof continuation !== "function" || types.isProxy(continuation)) fail();
+  launcherMaterialActiveV2 = state; state.outerSettled = false;
+  try {
+    checkLauncherMaterialV2(state);
+    const result = await state.configuration!.withPre32Database((scope, census) => {
+      // Track this ORIGINAL callback before invoking trusted caller work.
+      if (state.callback && !state.callbackSettled) burnLauncherMaterialV2(state);
+      state.callbackSettled = false;
+      const work = Promise.resolve().then(async () => {
+        checkLauncherMaterialV2(state);
+        const answer = await continuation(scope, census);
+        checkLauncherMaterialV2(state);
+        return answer;
+      });
+      state.callback = work;
+      void work.then(() => {
+        state.callbackSettled = true; settleLauncherMaterialActivityV2(state);
+      }, () => {
+        state.valid = false; launcherMaterialBurnedV2 = true;
+        state.callbackSettled = true; settleLauncherMaterialActivityV2(state);
+      });
+      return work;
+    }, () => checkLauncherMaterialV2(state));
+    checkLauncherMaterialV2(state);
+    return result;
+  } catch { burnLauncherMaterialV2(state); }
+  finally {
+    state.outerSettled = true;
+    // Outer driver failure is not settlement of the retained original callback.
+    settleLauncherMaterialActivityV2(state);
+  }
+}
+
+export function closeHeldDashboardCutoverLauncherMaterialV2(handle: object): void {
+  assertLauncherMaterialIdleV2();
+  const state = launcherMaterialStateV2(handle, true);
+  if (state.closed) return;
+  launcherMaterialActiveV2 = state; state.outerSettled = false;
+  state.closed = true; state.valid = false;
+  const before = launcherMaterialBurnSequenceV2;
+  try { state.configuration!.close(); if (launcherMaterialBurnSequenceV2 !== before || cleanupUncertain) fail(); }
+  catch { launcherMaterialBurnedV2 = true; fail(); }
+  finally { state.outerSettled = true; settleLauncherMaterialActivityV2(state); }
 }
 
 // Separate, zero-input default-mode holder. Secret-bearing configuration and
