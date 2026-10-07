@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import { getSql, pgQuery, pgGet, pgRun, now } from "../db-pg.js";
+import { assertOrdinaryDashboardDeploymentCutoverAdmissionV2 } from "../internal-production/baseline-deployment-cutover-v1.js";
 import { resolveBundledWorkflowsDir } from "../installer/paths.js";
 import YAML from "yaml";
 
@@ -28,7 +29,13 @@ import {
   resolveProductArtifactDir,
 } from "../runtime-config.js";
 import { readShadowParityReport } from "../execution/shadow-parity.js";
-import { isSetfarmOperationalActiveRunStatusV1 } from "../contracts/operational-active-run-status-v1.js";
+import {
+  projectDashboardRunForApi,
+  projectDashboardObservationForApiV2,
+  type DashboardRunInfo,
+} from "./dashboard-core-projection-v2.js";
+export { projectDashboardRunForApi } from "./dashboard-core-projection-v2.js";
+export type { DashboardRunInfo } from "./dashboard-core-projection-v2.js";
 import {
   createV3ProjectTransferAckRepository,
   V3ProjectTransferAckRepositoryError,
@@ -67,44 +74,6 @@ function loadWorkflows(): WorkflowDef[] {
   return results;
 }
 
-export type DashboardRunInfo = RunInfo & {
-  steps: StepInfo[];
-  operationalActive: boolean;
-  terminal: boolean;
-  derived_status: "active" | "terminal" | "completed" | "queued";
-};
-
-function dashboardDerivedStatus(
-  run: RunInfo,
-  operationalActive: boolean,
-): DashboardRunInfo["derived_status"] {
-  const status = String(run.status || "").trim().toLowerCase();
-  if (operationalActive) return "active";
-  if (status === "completed" || status === "done") return "completed";
-  if (
-    status === "failed"
-    || status === "cancelled"
-    || status === "canceled"
-    || status === "error"
-  ) return "terminal";
-  return "queued";
-}
-
-export function projectDashboardRunForApi(
-  run: RunInfo & { steps: StepInfo[] },
-  options: { includeTerminal?: boolean } = {},
-): DashboardRunInfo | null {
-  const operationalActive = isSetfarmOperationalActiveRunStatusV1(run.status);
-  if (!options.includeTerminal && !operationalActive) return null;
-  const derivedStatus = dashboardDerivedStatus(run, operationalActive);
-  return {
-    ...run,
-    operationalActive,
-    terminal: derivedStatus === "terminal",
-    derived_status: derivedStatus,
-  };
-}
-
 async function getRuns(workflowId?: string, options: { includeTerminal?: boolean } = {}): Promise<DashboardRunInfo[]> {
   const runs = workflowId
     ? await pgQuery<RunInfo>("SELECT * FROM runs WHERE workflow_id = $1 ORDER BY created_at DESC", [workflowId])
@@ -137,34 +106,7 @@ async function getRunObservations(runId: string): Promise<any[]> {
      LIMIT 250`,
     [runId],
   );
-  return rows.map((row) => ({
-    id: row.id,
-    runId: row.run_id,
-    stepId: row.step_id,
-    storyId: row.story_id,
-    agentId: row.agent_id,
-    phase: row.phase,
-    checkId: row.check_id,
-    label: row.label,
-    status: row.status,
-    summary: row.summary,
-    detail: row.detail,
-    eventType: row.event_type,
-    startedAt: row.started_at,
-    completedAt: row.completed_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    evidence: safeJson(row.evidence, {}),
-    filePaths: safeJson(row.file_paths, []),
-    github: safeJson(row.github, {}),
-    metadata: safeJson(row.metadata, {}),
-  }));
-}
-
-function safeJson(raw: unknown, fallback: unknown): unknown {
-  if (raw == null || raw === "") return fallback;
-  if (typeof raw !== "string") return raw;
-  try { return JSON.parse(raw); } catch { return fallback; }
+  return rows.map(projectDashboardObservationForApiV2);
 }
 
 function json(res: http.ServerResponse, data: unknown, status = 200) {
@@ -422,6 +364,7 @@ export function startDashboard(port = 3333, options: Readonly<{
     observe(receipt: V3DeployReceiptV1): Promise<V3DeploymentObservationV1>;
   }>;
 }> = {}): http.Server {
+  assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
   const server = http.createServer(async (req, res) => {
    try {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);

@@ -10,7 +10,7 @@ import { readRecentLogs } from "../lib/logger.js";
 import { emitEvent, getRecentEvents, getRunEvents, type SetfarmEvent } from "../installer/events.js";
 import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/daemonctl.js";
 import { startSpawner, stopSpawner, getSpawnerStatus, isSpawnerRunning } from "../server/spawnerctl.js";
-import { assertOrdinarySpawnerDeploymentCutoverAdmissionV1 } from "../internal-production/baseline-deployment-cutover-v1.js";
+import { assertOrdinarySpawnerDeploymentCutoverAdmissionV1, assertOrdinaryDashboardDeploymentCutoverAdmissionV2 } from "../internal-production/baseline-deployment-cutover-v1.js";
 import { assertTask6aPreSchemaOrdinaryStartupV2 } from "../internal-production/baseline-task6a-preschema-ordinary-refusal-v2.js";
 import {
   claimStep,
@@ -468,6 +468,7 @@ async function main() {
     console.log(`\nDone. Start a workflow with: setfarm workflow run <name> "your task"`);
 
     // Auto-start dashboard if not already running
+    assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
     if (!isRunning().running) {
       try {
         const result = await startDaemon(3333);
@@ -526,6 +527,7 @@ async function main() {
       if (!Number.isNaN(parsed)) port = parsed;
     }
 
+    assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
     if (isRunning().running) {
       const status = getDaemonStatus();
       console.log(`Dashboard already running (PID ${status?.pid})`);
