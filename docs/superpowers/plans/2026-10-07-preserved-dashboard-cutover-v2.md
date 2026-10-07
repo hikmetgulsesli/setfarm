@@ -772,3 +772,48 @@ shell invocation refused to parse before JS execution, corrected node heredoc
 succeeded. Version2.3.79/English1967/path983 pass. MC/gateway200,3333 absent.
 Full originals saved privately, not uploaded. This is not a full-suite/build,
 producer/OS-loader closure, complete controller or real-host startup acceptance.
+
+## Task4a.6: prevent future generic cleanup from erasing baseline authority
+
+Root cause and exact interface/limits are nominated in the paired Task4a.6 spec.
+File Map: new installer platform-cleanup-protection-v2.ts + top-level test;
+cleanAgentWorkspace and uninstall recursive-delete boundaries; CLI uninstall
+caller ordering in src/cli/cli.ts. This bounded
+systemic fix is necessary to close the cooperative cleanup part of the monotonic
+ROOT premise, but old loaded callbacks still require separate drain evidence.
+
+- [x] Write real owned-path tests before source: target ancestor/baseline/child,
+  symlink aliases, absent ROOT, broken-link/unknown ancestry, disjoint workspace,
+  invalid zero-port input and finite path bounds; observe genuine missing-module RED.
+- [x] Implement the fixed-account physical assertion without caller roots/flags.
+- [x] Add consumer refusal REDs before process/delete boundaries; integrate
+  preflight plus per-delete checks without running live cleaner/uninstaller.
+- [x] Execute the actual AST-selected CLI uninstall branch composed with the
+  actual uninstaller body and private physical guard: protected target must
+  refuse before daemon/PID inspection or stop. Observe RED against the existing
+  early isRunning/stopDaemon block; remove only that redundant caller block.
+  Keep ordinary admission, force and active-run checks unchanged; the callee
+  retains the one daemon stop after its complete preflight. Positive disjoint
+  fixture must reach that stop exactly once after config read, not refuse all.
+- [x] Fresh focused33/0 and affected123/0; strict910-file noemit0 diagnostics;
+  contracts and three independent exact-source C0/I0/M0 reviews. Save originals
+  privately and preserve existing dirty files.
+- [ ] Normal scoped DRAFT delivery and exact-head security check.
+- [ ] Adapter separately drains legacy pre-publication/post-terminal/uninstall
+  callbacks and retains current config closure; source guard is not their proof.
+
+Task4a.6 receipt: corrected missing-module12FAIL/0PASS before source; namespace/
+alias16-case13PASS/3FAIL; corrected consumer19-case16PASS/3FAIL; positive
+21-case19PASS/2FAIL exposed accidental arity-overrefusal; indirect-hop/preunlink
+27-case24PASS/3FAIL before their fixes. Initial malformed fixtures are retained
+but uncredited, as is the first19-GREEN uninstaller oracle. CLI corrected
+33-case31PASS/2FAIL exposed premature caller stop; minimal caller removal gives
+33PASS/0FAIL/0SKIP. Real actual CLI branch/callee composition is bounded fixture
+evidence, not complete import/runtime admission. Four final filesystem cases
+characterize existing behavior rather than authoring RED. Fresh affected123/0
+and strict910/0/noemit. Guard77168dfe/worktreef8a3cba5/uninstalld357f6b7/
+CLI91698dde/testd6eee67e have three read-only C0/I0/M0 reviews. Fresh physical
+preservation255/errors[] at06:59:10–11UTC, unchanged manifest8932f443. Version
+2.3.79/English1969/path984 pass; MC/gateway200,3333 absent (curl7, not success).
+Full originals saved privately, not uploaded. No live cleaner/uninstaller,
+canonical ROOT effect, full suite/build, merge, legacy drain or startup grant.

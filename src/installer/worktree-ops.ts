@@ -10,6 +10,7 @@ import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { assertCleanupTargetOutsideBaselineV2 } from "./platform-cleanup-protection-v2.js";
 import { pgGet } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
@@ -1969,11 +1970,12 @@ const WORKSPACE_PRESERVED = new Set([
 export function cleanAgentWorkspace(agentId: string): void {
   const ws = getAgentWorkspacePath(agentId);
   if (!ws || !fs.existsSync(ws)) return;
+  assertCleanupTargetOutsideBaselineV2(ws);
 
   // Also clean stale setfarm output files (prevents "Step not found" errors)
   for (const staleFile of ['.setfarm-step-output.txt', 'setfarm-output.txt']) {
     const stale = path.join(ws, staleFile);
-    try { if (fs.existsSync(stale)) { fs.unlinkSync(stale); logger.info(`[workspace-clean] Removed stale ${staleFile} from ${agentId}`, {}); } } catch {}
+    try { if (fs.existsSync(stale)) { assertCleanupTargetOutsideBaselineV2(stale); fs.unlinkSync(stale); logger.info(`[workspace-clean] Removed stale ${staleFile} from ${agentId}`, {}); } } catch {}
   }
 
   try {
@@ -1988,12 +1990,15 @@ export function cleanAgentWorkspace(agentId: string): void {
 
       const fullPath = path.join(ws, entry);
       try {
+        assertCleanupTargetOutsideBaselineV2(fullPath);
         const stat = fs.lstatSync(fullPath);
         if (stat.isDirectory()) {
           // Kill any orphaned processes in the directory first
           killWorktreeProcesses(fullPath);
+          assertCleanupTargetOutsideBaselineV2(fullPath);
           fs.rmSync(fullPath, { recursive: true, force: true });
         } else {
+          assertCleanupTargetOutsideBaselineV2(fullPath);
           fs.unlinkSync(fullPath);
         }
         removed++;

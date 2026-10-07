@@ -1626,3 +1626,70 @@ once-close; unknown stops, never repeats observation/close. ROOT and V2 lock sta
 durable after successful close, so this is intentionally one-generation only.
 Finite producer/root-history/cleanup proof, full adapter/entry and live admission
 remain separate. New qualification touches only owned retained private fixtures.
+
+### Task4a.6 future cleanup namespace protection
+
+Causal source gap: run.ts cleans agent workspaces before publishing its running
+row; step-advance.ts cleans after terminal transition; uninstall.ts captures
+configured paths before awaits. None acquires the retirement ROOT. Current ROOT
+absence or current configuration cannot prove those earlier callbacks settled.
+The consuming adapter must drain these finite cooperative legacy families before
+using current config disjointness; no universal UID roster or nativeS10 condition.
+
+File Map: src/installer/platform-cleanup-protection-v2.ts;
+tests/platform-cleanup-protection-v2.test.ts; worktree-ops.ts cleanAgentWorkspace;
+uninstall.ts recursive-delete sites; src/cli/cli.ts uninstall caller ordering.
+Add assertCleanupTargetOutsideBaselineV2(target:string):void. This is an ordinary
+filesystem safety assertion, NOT an owner/exclusion/retained-capability grant.
+Fixed protected namespace is actual account home/ai/setrox/data/
+internal-production-baseline, whether present or not. No caller protected roots,
+callbacks or disable flags. Require primitive absolute UTF8-roundtripping strings
+of1..16384 UTF8 bytes and at most128 components. Reject literal dot/dot-dot
+components before ports: lexical normalization of symlink/.. is NOT physical
+resolution of the consumer's original deletion path. Invalid/nonabsolute/NUL/
+oversized/proxy inputs refuse before account/FS ports.
+Error is SETFARM_PROTECTED_BASELINE_CLEANUP_REFUSED.
+
+Resolve existing target/protected ancestry physically with lstat/readlink; only
+definite ENOENT permits unresolved suffixes. Existing broken links, inaccessible
+or nondirectory ancestry refuse. Bound both walks to128 components. Reject target
+equal to, inside or an ancestor of the protected namespace, including symlink,
+existing inode aliases and Darwin ASCII case aliases of absent reserved names.
+Compare component-prefix overlap in BOTH directions at ANY shared directory
+dev/ino anchor, not merely equal deepest prefixes. Protect both reserved-name
+ancestry before a link and the resolved destination; retain/recheck each observed
+link occurrence and each first-missing component after the final account bracket.
+Resolve every indirect link hop explicitly, including relative link-target dots
+against the already resolved physical parent, never lexical symlink/.. collapse.
+At most128 resolution steps per path; link targets are bounded16384 UTF8 bytes.
+Protect removal of each protected-route link or its ancestor (one direction),
+without classifying every disjoint descendant of an account link as baseline.
+Allow disjoint file leaves, not nondirectory intermediate ancestors. Limit each
+path to16 observed link occurrences and total matching-anchor projection
+comparisons to65536; unknown/budget overflow refuses. Never treat a missing
+canonical ROOT as permission to erase its parent. Normal physically disjoint
+generated workspaces remain permitted.
+
+Call before stale-file removal, process-kill or recursive directory deletion in
+cleanAgentWorkspace; recheck each target immediately before its mutation boundary.
+Uninstaller materializes/freezes its at most128 deletion-target strings once:
+workflow/workspace roots, configured agent parent directories, fixed runtime
+children and runtime root, own dist and node_modules. Validate the entire set
+before config/DB/daemon
+effects, then rechecks at every recursive-delete dispatch, including after awaits.
+The CLI uninstall branch must not call isRunning or stopDaemon before this
+preflight: isRunning can unlink stale PID state and stopDaemon can signal a
+process. Remove the redundant caller pre-stop; retain ordinary admission,
+noninteractive force and active-run checks. The callee remains the sole stop
+site, after complete preflight. Tests execute the actual AST-selected CLI branch
+composed with the actual uninstaller body and real private-path guard. A rejected
+protected target reaches neither PID inspection nor stop; a disjoint preflight
+reaches exactly one callee stop after config read. This fixture does not qualify
+the full CLI import/runtime/source-build closure or permit ordinary admission.
+Unknown guard state aborts that deletion; no catch/fallback may retry it. Keep
+ordinary logging/error behavior without claiming the broader workflow succeeded.
+No actual uninstaller/cleaner is invoked against user paths during qualification.
+Private owned tests exercise real physical paths and consumer boundaries, with
+guard refusal preserving files and zero process/delete ports. Source is future
+hardening only: it does not retroactively protect old loaded cleanup code or
+establish continuous namespace/actor exclusion across an await.

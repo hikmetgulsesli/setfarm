@@ -18,6 +18,7 @@ import { deleteAgentCronJobs } from "./gateway-api.js";
 import { pgQuery, pgRun, pgGet } from "../db-pg.js";
 import { stopDaemon } from "../server/daemonctl.js";
 import type { WorkflowInstallResult } from "./types.js";
+import { assertCleanupTargetOutsideBaselineV2 } from "./platform-cleanup-protection-v2.js";
 
 
 function filterAgentList(
@@ -90,6 +91,12 @@ export async function uninstallWorkflow(params: {
   const list = Array.isArray(config.agents?.list) ? config.agents?.list : [];
   const nextList = filterAgentList(list, params.workflowId);
   const removedAgents = list.filter((entry) => !nextList.includes(entry));
+  const agentParentDirs = Object.freeze(removedAgents
+    .map(entry => typeof entry.agentDir === "string" ? entry.agentDir : "")
+    .filter(Boolean).map(agentDir => path.dirname(agentDir)));
+  const cleanupTargets = Object.freeze([workflowDir, workflowWorkspaceDir, ...agentParentDirs]);
+  if (cleanupTargets.length > 128) throw Error("SETFARM_PROTECTED_BASELINE_CLEANUP_REFUSED");
+  cleanupTargets.forEach(target => assertCleanupTargetOutsideBaselineV2(target));
   if (config.agents) {
     config.agents.list = nextList;
   }
@@ -106,23 +113,21 @@ export async function uninstallWorkflow(params: {
   }
 
   if (await pathExists(workflowDir)) {
+    assertCleanupTargetOutsideBaselineV2(workflowDir);
     await fs.rm(workflowDir, { recursive: true, force: true });
   }
 
   if (await pathExists(workflowWorkspaceDir)) {
+    assertCleanupTargetOutsideBaselineV2(workflowWorkspaceDir);
     await fs.rm(workflowWorkspaceDir, { recursive: true, force: true });
   }
 
   await removeRunRecords(params.workflowId);
   await removeAgentCrons(params.workflowId);
 
-  for (const entry of removedAgents) {
-    const agentDir = typeof entry.agentDir === "string" ? entry.agentDir : "";
-    if (!agentDir) {
-      continue;
-    }
-    const parentDir = path.dirname(agentDir);
+  for (const parentDir of agentParentDirs) {
     if (await pathExists(parentDir)) {
+      assertCleanupTargetOutsideBaselineV2(parentDir);
       await fs.rm(parentDir, { recursive: true, force: true });
     }
   }
@@ -131,8 +136,6 @@ export async function uninstallWorkflow(params: {
 }
 
 export async function uninstallAllWorkflows(): Promise<void> {
-  stopDaemon();
-
   const { path: configPath, config } = await readOpenClawConfig();
   const list = Array.isArray(config.agents?.list) ? config.agents?.list : [];
   const removedAgents = list.filter((entry) => {
@@ -140,6 +143,22 @@ export async function uninstallAllWorkflows(): Promise<void> {
     const agentDir = typeof entry.agentDir === "string" ? entry.agentDir : "";
     return id !== "main" && agentDir.includes("/.openclaw/agents/");
   });
+  const workflowRoot = resolveWorkflowRoot();
+  const workflowWorkspaceRoot = resolveWorkflowWorkspaceRoot();
+  const setfarmRoot = resolveSetfarmRoot();
+  const projectRoot = path.resolve(import.meta.dirname, "..", "..");
+  const distDir = path.join(projectRoot, "dist");
+  const nodeModulesDir = path.join(projectRoot, "node_modules");
+  const agentParentDirs = Object.freeze(removedAgents
+    .map(entry => typeof entry.agentDir === "string" ? entry.agentDir : "")
+    .filter(Boolean).map(agentDir => path.dirname(agentDir)));
+  const setfarmTargets = Object.freeze(["dashboard.pid", "dashboard.log", "events.jsonl", "logs"]
+    .map(name => path.join(setfarmRoot, name)));
+  const cleanupTargets = Object.freeze([workflowRoot, workflowWorkspaceRoot, ...agentParentDirs,
+    ...setfarmTargets, setfarmRoot, distDir, nodeModulesDir]);
+  if (cleanupTargets.length > 128) throw Error("SETFARM_PROTECTED_BASELINE_CLEANUP_REFUSED");
+  cleanupTargets.forEach(target => assertCleanupTargetOutsideBaselineV2(target));
+  stopDaemon();
   if (config.agents) {
     config.agents.list = list.filter((entry) => !removedAgents.includes(entry));
   }
@@ -178,37 +197,33 @@ export async function uninstallAllWorkflows(): Promise<void> {
 
   await deleteAgentCronJobs("setfarm/");
 
-  const workflowRoot = resolveWorkflowRoot();
   if (await pathExists(workflowRoot)) {
+    assertCleanupTargetOutsideBaselineV2(workflowRoot);
     await fs.rm(workflowRoot, { recursive: true, force: true });
   }
 
-  const workflowWorkspaceRoot = resolveWorkflowWorkspaceRoot();
   if (await pathExists(workflowWorkspaceRoot)) {
+    assertCleanupTargetOutsideBaselineV2(workflowWorkspaceRoot);
     await fs.rm(workflowWorkspaceRoot, { recursive: true, force: true });
   }
 
-  for (const entry of removedAgents) {
-    const agentDir = typeof entry.agentDir === "string" ? entry.agentDir : "";
-    if (!agentDir) {
-      continue;
-    }
-    const parentDir = path.dirname(agentDir);
+  for (const parentDir of agentParentDirs) {
     if (await pathExists(parentDir)) {
+      assertCleanupTargetOutsideBaselineV2(parentDir);
       await fs.rm(parentDir, { recursive: true, force: true });
     }
   }
 
-  const setfarmRoot = resolveSetfarmRoot();
   if (await pathExists(setfarmRoot)) {
-    for (const name of ["dashboard.pid", "dashboard.log", "events.jsonl", "logs"]) {
-      const p = path.join(setfarmRoot, name);
+    for (const p of setfarmTargets) {
       if (await pathExists(p)) {
+        assertCleanupTargetOutsideBaselineV2(p);
         await fs.rm(p, { recursive: true, force: true });
       }
     }
     const entries = await fs.readdir(setfarmRoot).catch(() => ["placeholder"] as string[]);
     if (entries.length === 0) {
+      assertCleanupTargetOutsideBaselineV2(setfarmRoot);
       await fs.rm(setfarmRoot, { recursive: true, force: true });
     }
   }
@@ -217,18 +232,17 @@ export async function uninstallAllWorkflows(): Promise<void> {
   removeCliSymlink();
 
   // Note: execSync used here for npm unlink — no user input, safe usage
-  const projectRoot = path.resolve(import.meta.dirname, "..", "..");
   try {
     execSync("npm unlink -g", { cwd: projectRoot, stdio: "ignore" });
   } catch {
     // link may not exist
   }
-  const distDir = path.join(projectRoot, "dist");
   if (await pathExists(distDir)) {
+    assertCleanupTargetOutsideBaselineV2(distDir);
     await fs.rm(distDir, { recursive: true, force: true });
   }
-  const nodeModulesDir = path.join(projectRoot, "node_modules");
   if (await pathExists(nodeModulesDir)) {
+    assertCleanupTargetOutsideBaselineV2(nodeModulesDir);
     await fs.rm(nodeModulesDir, { recursive: true, force: true });
   }
 }

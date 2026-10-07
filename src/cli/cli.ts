@@ -439,12 +439,7 @@ async function main() {
       process.exit(1);
     }
 
-    // Stop dashboard if running
-    if (isRunning().running) {
-      stopDaemon();
-      console.log("Dashboard stopped.");
-    }
-
+    // The uninstaller validates every cleanup target before stopping the daemon.
     await uninstallAllWorkflows();
     console.log("Setfarm fully uninstalled (workflows, agents, crons, database, skill).");
     return;
