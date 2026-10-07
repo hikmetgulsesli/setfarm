@@ -474,6 +474,107 @@ Source fixtures must exercise sparse/malformed journals, early-adopted acceptanc
 tail-adopted/later32 refusal, nonzero counts, profile drift, retained publication
 membership and port failures. Actual provider/lifecycle/startup remain pending.
 
+### Task4f.1d private reader lifecycle nomination
+
+File Map: db/dashboard-core-readonly-reader-v2.ts and paired source-fault test;
+package pure-suite entry after qualification. The internal source-only constructor
+createDashboardCoreReadonlyReaderV2(capturedPrivateUrl) returns frozen prepare/read/
+refuse functions, never a driver, SQL callback, transaction or startup grant. It
+may be created only once per process, consuming that selection before validation.
+The future db-pg public facade remains zero-argument preparation plus closed
+request reads; it owns cold-state/intent/config capture and its own reservation
+before imports/awaits. The internal URL argument is not a new public URL input.
+
+Require a primitive UTF8-roundtripping URL≤65536 bytes, no NUL/whitespace,
+exact lower-case postgres/postgresql syntax, nonempty user, only localhost or
+127.0.0.1, omitted/5432 port, exact /setfarm, no query/hash/multihost/socket.
+Privately decode credentials without hooks; decoded username is nonempty and both
+decoded credentials UTF8-roundtrip without NUL. Legitimate encoded password
+whitespace is preserved, not blanket-rejected. No URL/credential in errors/results.
+Reject uppercase PG* environment controls before each actual factory. Capture
+target bytes permanently. One trusted installed postgres client per complete
+operation, fixed max1/idle_timeout1/connect_timeout5/debugfalse/inert notice and
+source-owned close observer. Register original client custody immediately on
+return, before inspecting its actual options host/port/database/user/pass/path/
+ssl/socket agreement; mismatch consumes its original end once and burns.
+Provider startup/internal traffic remains separate from application statements.
+
+Private phases UNPREPARED/PREPARING/READY/REFUSED and one occupied operation,
+no queue/retry/replacement. Preparing duplication burns the original; READY
+duplication refuses only that preparation, even during an active read. READY
+busy/invalid request refuse only that operation before factory/target ports.
+Precedence is fixed: REFUSED first; PREPARING duplication burns before arguments;
+READY prepare is nonburning duplicate before arguments/active-read inspection;
+only fresh UNPREPARED preparation checks arity and burns on misuse. Thus READY
+prepare(extraArg) cannot cancel a valid response. Reads check refusal/readiness,
+then active-slot BUSY before arity/request inspection; only idle READY validates
+closed request controls and rejects invalid ones without burning.
+Constructor arity is exactly1; prepare/refuse exactly0. Bad preparation arity or
+unprepared reading is misuse, permanent refusal. Fixed errors are
+DASHBOARD_CUTOVER_CORE_READER_REFUSED,
+DASHBOARD_CUTOVER_CORE_READER_DUPLICATE_PREPARATION_REFUSED and
+DASHBOARD_CUTOVER_CORE_READER_BUSY; messages carry no provider details.
+read copy validation uses the actual closed-data helper before acquisition;
+extra read arguments are request refusal. refuse is source-owned synchronous
+burn; if an original client exists, initiate checked-once original cleanup
+without waiting first for stuck callback/query work. No reset/reopen via pgClose.
+
+Begin exactly isolation level repeatable read read only. Before first snapshot
+SELECT, run fixed SET LOCAL statement_timeout='5s', lock_timeout='1s',
+search_path=pg_catalog and one fixed five-relation LOCK TABLE ONLY public.runs,
+ONLY public.steps, ONLY public.stories, ONLY public.rules, ONLY
+public.run_observations IN ACCESS SHARE MODE. This does not implement the
+independent cooperative schema-writer/old-helper drain or Task5 startup grant.
+Reuse qualification10, optional closed data operation, final qualification10
+against the initial snapshot. Preparation has no data query; retain its inert
+baseline hashes, never repin them on later responses.
+Later-read first qualification explicitly receives the retained preparation
+baseline BEFORE any data port; final qualification receives that read's initial
+snapshot. Prior OID/catalog/census drift must refuse with zero data statements.
+No controller backend or36 SHARE lock transfer. No SQL-prefix authorization or
+provider option input.
+
+Register callback work before its first source port (defer body until its original
+promise is retained). Capture original query promises before attaching any lazy
+then/catch/finally observer. After retention, attach intrinsic Promise settlement
+observation without calling Query.then/handle (installed Query species is plain
+Promise); already-rejecting returned originals remain observed even if burnt.
+Retain then recheck burn after the source invocation
+and after original then lookup, before synchronously initiating the known
+original observer; do not queue unguarded Promise.resolve(Query) assimilation.
+Already initiated driver-internal dispatch remains original pending custody,
+not a cancellation/backend-death claim. Guarded source-owned callable/unsafe forwarding must
+keep the real original transaction receiver. Only original installed-driver
+Promises/Query promises, not arbitrary thenables, supply these ports. Every
+query rejection burns even if a nested consumer swallows it; after loss, prevent
+late new source ports/publication. Observe callback/query settlement separately
+from begin's outer connection-loss race. Successful begin must carry the exact
+original callback outcome after its settlement, not an early/copied success.
+Pin a fresh frozen private outcome envelope for every callback, including
+preparation, missing/null data and capacity. At begin fulfillment, the original
+callback must already have settled successfully and the returned envelope must
+be that exact identity; eventual equality after waiting cannot repair early loss.
+Keep original pending identities and occupied custody after loss; cleanup is not
+callback settlement or physical backend-death proof.
+
+Premark endStarted before any end-method lookup/invocation, retain its original
+promise and call once with timeout1. Expected onclose after cleanup initiation
+does not itself burn; unexpected close does. Publication/readiness requires
+callback, every tracked query, original begin/commit and original end to settle
+successfully, with no burn. Only an authentic source-branded capacity error is
+converted inside callback to private no-data outcome; still final qualify and
+commit/end, then emit capacity outside afterward without burning READY. Any
+provider/qualification/cleanup failure overrides capacity and permanently refuses.
+Recheck permanent refusal after execute fulfillment and immediately before
+public data/capacity publication, even if original successful custody was cleared.
+Busy refusal cannot clear or replace pending work. Fixed reader/duplicate/busy
+errors hide provider details; data request/capacity errors retain source branding.
+Source-fault tests must cover pre-port misuse, target/options/PG overrides,
+all utility/qualification/data failures, swallowed/detached query rejection,
+early outer loss with pending callback/query, commit/end faults, cleanup reentry,
+normal onclose, pending end publication barrier, capacity recovery only after
+settlement, and permanent no-reacquisition. Actual PG/facade/HTTP/entry remain open.
+
 Actual listener startup does not initialize PG; DB HTTP paths use generic
 pgMigrate and therefore are not qualified pre32 read-only reads. Before live
 adapter admission, independently nominate a code-owned dashboard-only restrictive

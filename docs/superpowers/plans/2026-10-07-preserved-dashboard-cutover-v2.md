@@ -389,6 +389,27 @@ actual entry/adapter still supplies independently qualified effect authority.
   oracle without weakening production checks. Actual255 material preservation,
   original two user-dirty files unchanged. Not full suite/build/live qualification.
 - [ ] RED then minimal runtime implementation; preserve generic and Task6A guards.
+- [x] Private lifecycle constructor/prepare/read/refuse: one selection/active
+  operation, privately captured target, original callback/query/begin/end custody,
+  exact RR/utility/locks/qualification/data flow and capacity settlement before
+  publication. Actual45 missing-module RED before authoring. Reviewer faults
+  produced57/55/2 RED for lazy initiation,61/57/4 RED for late publication and
+  unhandled native rejection,64/63/1 RED for pre-cap allocation before fixes.
+  Final68 lifecycle cases plus prior262 passed together330/0; strict existing
+  toolchain no-emit900/0. Three exact-byte independent reviews C0/I0/M0.
+  First43/45 passing attempt exposed two fixture future-read count errors and
+  four strict diagnostics; neither is credited as verification. A four-microtask
+  late-refusal fixture passed at an earlier boundary and was not credited as
+  the publication oracle; five-microtask schedule genuinely reproduced both
+  post-execute publication failures before the final pure refusal fence.
+  Intrinsic settlement observation uses installed Query's plain Promise species
+  without activating its overridden then/handle; query/lazy-getter reentry stays
+  zero-activation, rejected originals stay observed. Prepared baseline and final
+  initial identities, zero DATA on drift, tagged receiver, detached success and
+  rejection, pending query/callback/BEGIN/end, duplicate precedence and checked
+  once cleanup have focused fault oracles. Material255 preserved, original two
+  user-dirty files unchanged. No public facade, actual PG, schema-writer exclusion,
+  HTTP, build, listener/PID or consuming-entry grant. Those remain required.
 - [x] Closed retained qualification snapshot: metadata3/source-journal1/exact
   applied-tail1/cold-census5, private original continuity and fixed refusal;
   dense journal decoding before inherited every/some predicates. Nomination and
