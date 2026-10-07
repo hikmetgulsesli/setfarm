@@ -47,6 +47,24 @@ function fixture(action: string, setup = ""): any {
       return await work;
     }`);
     source = source.replace(marker, `await import(${JSON.stringify(pathToFileURL(port).href)})`);
+    // Exact private-reader boundary only. No installed PG or public facade.
+    const readerMarker = 'coreReaderOriginals.imported = import("../db/dashboard-core-readonly-reader-v2.js")';
+    assert.equal(source.split(readerMarker).length,
+      source.includes('export async function qualifyHeldDashboardCutoverCoreReaderV2') ? 2 : 1);
+    const readerPort = path.join(home, "reader-port.mjs");
+    fs.writeFileSync(readerPort, `globalThis.importEntered?.();await globalThis.importWait;
+    if(globalThis.importFailure)throw Error('PRIVATE_PG_SENTINEL_IMPORT');
+    export function createDashboardCoreReadonlyReaderV2(url){
+      globalThis.readerCalls++;if(url!=='postgresql://fixture_PG_SENTINEL@localhost/setfarm')throw Error('PRIVATE_READER_TARGET');
+      globalThis.onConstruct?.();if(globalThis.readerFailure==='constructor')throw Error('PRIVATE_PG_SENTINEL_CONSTRUCTOR');
+      return Object.freeze({async prepare(){globalThis.readerTrace.push('prepare');globalThis.onPrepare?.();
+        if(globalThis.readerFailure==='prepare')throw Error('PRIVATE_PG_SENTINEL_PREPARE');await globalThis.prepareWait},
+        async read(request){globalThis.readerTrace.push('read');if(JSON.stringify(request)!=='{"kind":"rules"}')throw Error('PRIVATE_REQUEST');
+          globalThis.onRead?.();if(globalThis.readerFailure==='read')throw Error('PRIVATE_PG_SENTINEL_READ');await globalThis.readWait;
+          return globalThis.readerResult??[{id:'public',title:'public',content:'public',enabled:true}]},
+        refuse(){globalThis.readerTrace.push('refuse');globalThis.onRefuse?.();if(globalThis.readerFailure==='refuse')throw Error('PRIVATE_PG_SENTINEL_REFUSE')}});
+    }`);
+    source = source.replace(readerMarker, `coreReaderOriginals.imported = import(${JSON.stringify(pathToFileURL(readerPort).href)})`);
     for (const name of ["baseline-deployment-cutover-node-path-v1", "baseline-deployment-cutover-process-observation-v1"])
       source = source.replace(JSON.stringify(`./${name}.js`), JSON.stringify(new URL(`../../src/internal-production/${name}.ts`, import.meta.url).href));
     source = source.replace('"../product-compiler/canonical-json.js"', JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href));
@@ -73,12 +91,14 @@ function fixture(action: string, setup = ""): any {
       for(const name of ${JSON.stringify(exportsV2)})if(typeof module[name]!=='function')throw Error('MISSING_LAUNCHER_MATERIAL_EXPORT');
       const rawHold=module.holdDashboardCutoverLauncherMaterialV2,check=module.assertHeldDashboardCutoverLauncherMaterialV2,
         bridge=module.withHeldDashboardCutoverLauncherPre32V2,close=module.closeHeldDashboardCutoverLauncherMaterialV2;
+      const qualify=module.qualifyHeldDashboardCutoverCoreReaderV2;
       const open=fs.openSync,shut=fs.closeSync,stat=fs.lstatSync;const originals=[],closed=[];let onStat=null,onClose=null,closeFault=false,tracking=false;
       const hold=(...args)=>{tracking=true;try{return rawHold(...args)}finally{tracking=false}};
       fs.openSync=(...args)=>{const fd=open(...args);if(tracking)originals.push(fd);return fd};
       fs.closeSync=fd=>{const original=originals.includes(fd);if(original){closed.push(fd);if(onClose){const callback=onClose;onClose=null;callback()}}const result=shut(fd);if(original&&closeFault){closeFault=false;throw Error('PRIVATE_CLOSE_RESPONSE_LOSS')}return result};
       fs.lstatSync=(...args)=>{if(onStat){const callback=onStat;onStat=null;callback()}return stat(...args)};
       syncBuiltinESMExports();globalThis.dbCalls=0;globalThis.urlMatched=false;
+      globalThis.readerCalls=0;globalThis.readerTrace=[];
       ${setup}
       ${action}
       process.stdout.write(JSON.stringify({ok:true,prints,opens:originals.length,closes:closed.length,dbCalls:globalThis.dbCalls}));
@@ -183,3 +203,82 @@ test("swallowed final account-composite reentry cannot return assertion success"
 test("acquisition account reentry burns before any configuration resource is acquired", () => fixture(`
   let fired=false;onAccount=()=>{if(!fired){fired=true;assert.throws(()=>hold())}};
   assert.throws(()=>hold());assert(fired);assert.equal(originals.length,0);assert.equal(prints,0);assert.equal(globalThis.dbCalls,0);`));
+
+function requireQualifier(): string {
+  return "assert.equal(typeof qualify,'function','MISSING_CLOSED_READER_QUALIFIER');";
+}
+test("held-launcher fixed private reader returns count-only diagnostic",()=>fixture(requireQualifier()+`
+  const cap=hold();forbidPrint=true;const result=await qualify(cap);
+  assert.deepEqual(result,{schema:'setfarm.dashboard-core-held-launcher-qualification.v2',authority:'diagnostic-only',
+    target:'held-launcher',plannedApplicationStatements:49,preparationTransactions:1,readTransactions:1,ruleCount:1});
+  assert(Object.isFrozen(result));assert.equal(globalThis.readerCalls,1);assert.equal(globalThis.dbCalls,0);
+  assert.deepEqual(globalThis.readerTrace,['prepare','read','refuse']);
+  await assert.rejects(qualify(cap));assert.equal(globalThis.readerCalls,1);
+  check(cap);close(cap);assert.deepEqual(closed,[...originals].reverse());
+`));
+test("private diagnostic hostile handles and extra arguments have zero reader ports",()=>fixture(requireQualifier()+`
+  const cap=hold();let traps=0;const other=new Proxy({}, {get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')}});
+  for(const handle of [undefined,null,{},other,0])await assert.rejects(qualify(handle));
+  await assert.rejects(qualify(cap,{}));assert.equal(traps,0);assert.equal(globalThis.readerCalls,0);
+  check(cap);await qualify(cap);close(cap);
+`));
+for(const failure of ['constructor','prepare','read','refuse'])test('private diagnostic '+failure+' failure retains uncertain custody',()=>fixture(requireQualifier()+`
+  const cap=hold();globalThis.readerFailure=${JSON.stringify(failure)};
+  await assert.rejects(qualify(cap),error=>{assert.doesNotMatch(String(error),/PG_SENTINEL/);return true});
+  assert.equal(globalThis.readerCalls,1);assert.throws(()=>check(cap));assert.throws(()=>close(cap));assert.equal(closed.length,0);
+  globalThis.readerFailure=null;await assert.rejects(qualify(cap));assert.equal(globalThis.readerCalls,1);
+  assert.equal(globalThis.readerTrace.filter(x=>x==='refuse').length,${failure==='constructor'?0:1});
+`));
+for(const phase of ['prepare','read'])test('private diagnostic pending '+phase+' retains originals on burned close',()=>fixture(requireQualifier()+`
+  const cap=hold();let release,entered;const started=new Promise(r=>entered=r);
+  globalThis[${JSON.stringify(phase+'Wait')}]=new Promise(r=>release=r);
+  globalThis[${JSON.stringify('on'+phase[0].toUpperCase()+phase.slice(1))}]=()=>entered();
+  const original=qualify(cap);await started;assert.throws(()=>close(cap));assert.equal(closed.length,0);
+  const rejection=assert.rejects(original);release();await rejection;
+  assert.throws(()=>close(cap));assert.equal(closed.length,0);assert.equal(globalThis.readerCalls,1);
+  assert.equal(globalThis.readerTrace.filter(x=>x==='refuse').length,1);
+`));
+for(const phase of ['Construct','Prepare','Read','Refuse'])test('private diagnostic swallowed '+phase+' reentry cannot publish',()=>fixture(requireQualifier()+`
+  const cap=hold();let fired=false;
+  globalThis[${JSON.stringify('on'+phase)}]=()=>{fired=true;assert.throws(()=>check(cap))};
+  await assert.rejects(qualify(cap));assert(fired);assert.throws(()=>close(cap));assert.equal(closed.length,0);
+  assert.equal(globalThis.readerCalls,1);assert.equal(globalThis.readerTrace.filter(x=>x==='refuse').length,1);
+`));
+for(const drift of ['bytes','account','PG'])test('private diagnostic '+drift+' drift refuses count publication',()=>fixture(requireQualifier()+`
+  const cap=hold();globalThis.onRead=()=>{
+    if(${JSON.stringify(drift)}==='bytes')fs.appendFileSync(home+'/Library/LaunchAgents/'+labels[0]+'.plist','\\n');
+    else if(${JSON.stringify(drift)}==='account')account={...account,username:'different'};
+    else process.env.PGHOST='elsewhere';
+  };
+  await assert.rejects(qualify(cap));assert.throws(()=>close(cap));assert.equal(closed.length,0);
+  assert.equal(globalThis.readerCalls,1);
+`));
+test("private diagnostic bounded malformed result never publishes counts",()=>fixture(requireQualifier()+`
+  const cap=hold();globalThis.readerResult={length:1};await assert.rejects(qualify(cap));
+  assert.throws(()=>close(cap));assert.equal(closed.length,0);assert.equal(globalThis.readerCalls,1);
+`));
+
+for(const size of [0,4096,4097])test('private diagnostic count boundary '+size,()=>fixture(requireQualifier()+`
+  const cap=hold();globalThis.readerResult=Array(${size}).fill(null);
+  if(${size}<=4096){const result=await qualify(cap);assert.equal(result.ruleCount,${size});close(cap);assert.deepEqual(closed,[...originals].reverse())}
+  else{await assert.rejects(qualify(cap));assert.throws(()=>close(cap));assert.equal(closed.length,0)}
+  assert.equal(globalThis.readerCalls,1);
+`));
+test("private diagnostic array proxy refuses before metadata traps",()=>fixture(requireQualifier()+`
+  const cap=hold();let traps=0;
+  globalThis.readerResult=new Proxy([], {get(target,key){if(key==='then')return undefined;traps++;throw Error('TRAP')},
+    getOwnPropertyDescriptor(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')}});
+  await assert.rejects(qualify(cap));assert.equal(traps,0);assert.throws(()=>close(cap));assert.equal(closed.length,0);
+`));
+for(const missing of [false,true])test('private diagnostic '+(missing?'missing':'rejected')+' import retains unknown custody',()=>fixture(requireQualifier()+`
+  const cap=hold();if(${missing})fs.unlinkSync(home+'/reader-port.mjs');else globalThis.importFailure=true;
+  await assert.rejects(qualify(cap),error=>{assert.doesNotMatch(String(error),/PG_SENTINEL/);return true});
+  assert.equal(globalThis.readerCalls,0);assert.deepEqual(globalThis.readerTrace,[]);assert.throws(()=>close(cap));assert.equal(closed.length,0);
+`));
+test("private diagnostic pending import cannot proceed after active burn",()=>fixture(requireQualifier()+`
+  const cap=hold();let entered,release;const started=new Promise(r=>entered=r);
+  globalThis.importEntered=entered;globalThis.importWait=new Promise(r=>release=r);
+  const original=qualify(cap);await started;assert.equal(globalThis.readerCalls,0);assert.throws(()=>close(cap));assert.equal(closed.length,0);
+  const rejection=assert.rejects(original);release();await rejection;
+  assert.equal(globalThis.readerCalls,0);assert.deepEqual(globalThis.readerTrace,[]);assert.throws(()=>close(cap));assert.equal(closed.length,0);
+`));

@@ -1384,6 +1384,100 @@ all scenarios assert none. End-rejection additionally requires26 statements,
 two qualification cycles and successful original callback/commit before its
 intentional end failure. Required fresh actual255 gate precedes first invocation.
 
+### Task4f.5 installed private reader / held-launcher diagnostic
+
+Causal prerequisite: the whole-reader owned HTTP fixture uses inert PostgreSQL;
+actual provider decoding/lazy Query/BEGIN/end compatibility is still unqualified.
+File Map: baseline-deployment-cutover-launcher-observation-v1.ts, existing
+baseline-dashboard-cutover-launcher-material-v2.test.ts and normal pure suite.
+Add one closed qualifyHeldDashboardCutoverCoreReaderV2(genuineMaterialHandle)
+operation. No caller URL/request/SQL/callback/provider/configuration/report.
+Private agreed URL from both original held plists goes directly to actual private
+reader constructor. This qualifies held-launcher target only, NOT runtimeConfig
+or public facade target equality. Do not import runtime-config/env-file loader.
+
+Acquire existing material under unchanged account/FD/loaded-idle predicates;
+never stop a launcher to obtain a diagnostic. Consume one lifetime attempt and
+reserve active material before import/await. Register original deferred work
+before invocation; retain actual import/reader/prepare/read originals privately.
+Existing reentry/close/other material operations burn the active original. Check
+account/material/PG overrides at each boundary. Actual private reader prepare,
+then fixed {kind:rules} only. Two sequential max1 clients, existing RR READ ONLY,
+ACCESS SHARE five tables and timeout/end semantics: planned24+25 application
+statements. Provider-internal traffic is not relabelled as counted. No outer
+36-SHARE nesting: queued ACCESS EXCLUSIVE writer can introduce a wait cycle.
+This diagnostic does not supply continuous schema-writer exclusion.
+
+Success requires both actual reader operations and final material checks, then
+once-only idle-reader refusal and a frozen count-only diagnostic: schema,
+authority diagnostic-only, target held-launcher, plannedApplicationStatements49,
+preparation/read transaction budget1 each and rules rowCount0..4096. No rows,
+URL, credentials, provider errors or parameters escape. Caller closes original
+material normally only after success. Any failure burns and conservatively keeps
+material occupied, even after the public prepare/read promise rejects: private
+callback/query settlement is unknown. No automatic close/replacement/retry.
+Retain owner and once-only refusal; natural child exit/OS descriptor cleanup is
+not a callback/backend-death certificate.
+
+Before actual PG invocation, missing-export/fault tests use owned private FS and
+inert OS/private-reader boundary only; do not invoke installed PG or live
+launchers from tests. Qualify success/zero ports/once consumption, private target,
+reentry, drift, import/preparation/read/refusal failure and pending-original
+retention. Fresh exact source/loader/provider pins, bounded child/output/time
+recipe and actual255 preservation plus independent reviews must precede the
+one actual installed-PG invocation. Failure is sanitized/unqualified, no timeout
+retry, PID/listener/start/migration/schema/role/credential or service mutation.
+Task5 adapter/controller/authenticated entry and later actual3333 remain open.
+
+Revised host recipe (actual qualification recorded below): private local child script
+2026-10-07-dashboard-cutover-v2-private-reader-host-qualification.mjs and
+parent collector2026-10-07-dashboard-cutover-v2-private-reader-host-parent.mjs,
+both outside Git/PR. Child sourcea51cdabd pins seven selected source and eleven
+installed provider/loader files, not a complete build/loader authenticity grant.
+Actual node26.4.0 --import existing tsx loader, fresh child cwd writer; preserve
+inherited environment except TSX_DISABLE_CACHE=1 (no cache artifact). Refuse
+PG*, TSX_*, ESBUILD_* and NODE_OPTIONS/NODE_PATH/NODE_V8_COVERAGE inputs before spawning.
+No runtime env loader, provider substitution or native/passive recipe.
+Native launchctl/plutil and FS are real; delegate-only observers count seven
+original account-home launcher/material FDs, require reverse close and EBADF,
+then retire observers before final source rereads can reuse numeric FDs.
+Publish diagnostic only after original material close and final pins. Thirty-
+second unref watchdog marks unqualified only, never signals/cancels/certifies
+closure. Existing statement/lock/connect/end bounds stay unchanged. Parent
+waits child close plus pipe EOF, retains at most4KiB stdout, hashes/discards raw
+stderr, validates a closed public JSON schema and emits only validated fields;
+any stderr/overflow/signal/nonzero/unknown shape is unqualified. One child, no
+retry/PID/listener/launcher mutation; natural child exit is not backend death.
+558 affected and strict908-file noemit0 precede fresh255 and exact recipe review.
+Normal loader ancillary scope is explicit: installed tsx may start its ESM
+worker and installed esbuild0.28.1 --service helper while compiling source.
+Do not assume a cache hit or call one Node child the whole process set. Disable
+tsx FileCache (in-memory Map) before --import so no cache rotation/removal;
+parent also pins listed loader/esbuild entries and native binary before spawn.
+No esbuild stop()/signal, package installation or download. Actual child close
+is not a complete loader-descendant/backend resource certificate. Receipt18
+selected file pins and seven material FDs are scoped evidence only; full
+authenticated source/build/producer/exclusion custody stays Task5.
+
+First child05:06:38UTC refused during initial pins, before source import or
+material/PG acquisition, opened0; natural exit1, stderr0, no startup. Read-only
+metadata audit: all17 hashes match; installed native esbuild has two links,
+not the assumed one. Both @esbuild/darwin-arm64/bin/esbuild and esbuild/bin/esbuild
+are actual dev16777231/ino201752772/nlink2/10573778B regular files with identical
+expected content. Preserve both; no relink/install/change to dependencies.
+Revised recipe positively requires EXACT two links on these two paths, matching
+dev/inode, original pre/post metadata/hash; all other file paths retain nlink1.
+One separately reviewed invocation after this causal pin repair is nominated,
+not blind same-recipe retry or actual-PG passing credit for the first refusal.
+
+Revised invocation actual05:09:42UTC: real installedpostgres3.4.8/private reader
+prepare+fixed rules read succeeds(ruleCount0), planned49 app statements/two
+sequentialRR clients; eighteen selected path pins/seventeen physical files,
+seven original material reverse closes+EBADF. Child41705 natural exit0, no signal,
+stderr0, closed public receipt valid, watchdog false. No listener/startup,
+backend/ancillary-death or whole facade/exclusion/Task5 claim. Preserve the failed
+first pin receipt and separately reviewed successful revision; do not replay.
+
 ## Verification / delivery / deployment
 
 TDD covers real record parsing, real private filesystem publication, actual

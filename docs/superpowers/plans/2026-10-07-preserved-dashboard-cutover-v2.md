@@ -598,6 +598,47 @@ Three independent final-byte reviews C0/I0/M0 at helper83487cc2/test847f06a6/
 packageb15f4c3d. Actual255 preservation04:49:53UTC errors[], original two dirty
 files unchanged; MC/gateway200,3333 refused. Full receipts remain private.
 
+### Task4f.5: installed private reader on genuine held-launcher target
+
+Spec: paired Task4f.5. Files: launcher-observation source and existing material
+V2 test; normal pure suite. One handle-only fixed diagnostic, no public facade or
+startup grant. Actual private URL stays inside original authenticated holder.
+
+- [x] Genuine missing-export RED and closed fault fixtures before source.
+- [x] Smallest private prepare/fixed-rules diagnostic, retained original custody,
+  one lifetime attempt and count-only output; no runtimeConfig/env-loader import.
+- [x] Focused affected/noemit/contracts, exact-byte independent review and fresh
+  actual255 gate. No accepted native or prior-PG recipe replay.
+- [x] Independently nominate exact single fresh installed-PG child recipe before
+  invocation: existing idle launcher material, installed real driver, two
+  sequential readonly transactions,49 planned app statements, bounded output.
+  No nested36SHARE, retries or service changes; failed custody stays unqualified.
+- [ ] Retain private originals and normal draft PR delivery/exact-head scanner.
+
+Qualification receipts: thirteen valid missing-export REDs; three syntax-invalid
+fixture failures receive no RED credit. Intermediate exact-import-boundary
+mapping authoring failures are unqualified, not production faults. Final new23
+plus original24 material cases47/0; affected558/0, strict readonly noemit908/0,
+version2.3.79/English1964/paths980. Three final source/test reviews C0/I0/M0 at
+source30db631e/testa6a46d99. The first host child05:06:38 refused initial file
+pins BEFORE source import/material/PG, opened0/no PG credit. Pure metadata found
+the installed native esbuild exact two known hardlinks; preserve both, positively
+pin exact2+sameinode, do not relax other inputs. Separate revised recipe reviewed
+C0/I0/M0, childa51cdabd/parent5ec29b6c. Fresh25505:09:41 errors[] then actual
+installedpostgres3.4.8 qualification05:09:42: private preparation+fixed rules
+read succeeded, ruleCount0 genuine,49 planned application statements/two original
+RR readonly clients,18 selected path pins,7 original material reverse closes+
+EBADF, child41705 natural exit0/stderr0, watchdog not expired. No replay.
+Natural child exit and reader promise success are not backend/descendant death.
+No runtimeConfig/public-facade target match, complete schema-writer exclusion,
+all-seven data-query installed qualification, full adapter/entry, browser/build
+or actual3333 startup grant. Public OPEN/spawner gates remain closed. Full
+original receipts stay private; all preserved worktrees/archives/user dirty files
+unchanged. This qualifies Task4f.5 diagnostic only, not whole cutover.
+
+Task4f.4 normal delivery9d4aa12dbe834643f93747ee8dcecf9a8b2eaaec;
+exact-head GitGuardian SUCCESS2026-10-07T04:50:46Z, PR280 OPEN DRAFT.
+
 Task5 complete adapter remains required: original genuine owner+reservation+
 retirement ROOT and source/build/selector handles, authenticated finite cooperative
 producer graph/ROOT-held last-unlink exclusion, retained launcher/private pre32

@@ -63,6 +63,12 @@ function holdLauncherConfigurationV1(defaultMode = false) {
   let recheckMaterial: () => void = fail;
   let assertMaterialDatabase: () => void = fail;
   let withPre32Database: <T>(continuation: LauncherPre32ContinuationV2<T>, check: () => void) => Promise<T> = async () => fail();
+  let qualifyCoreReader: (check: () => void) => Promise<HeldCoreReaderDiagnosticV2> = async () => fail();
+  const coreReaderOriginals: {
+    imported?: Promise<typeof import("../db/dashboard-core-readonly-reader-v2.js")>;
+    owner?: ReturnType<typeof import("../db/dashboard-core-readonly-reader-v2.js").createDashboardCoreReadonlyReaderV2>;
+    preparation?: Promise<void>; read?: Promise<unknown>; refusalConsumed: boolean;
+  } = { refusalConsumed: false };
   let census: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusV1> = async () => fail();
   let censusAndActiveRows: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndActiveRowsInOneReadOnlyTransactionV4> = async () => fail();
   let censusAndActiveRowsWithQuarantine: () => ReturnType<typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusAndActiveRowsWithQuarantineV5> = async () => fail();
@@ -234,6 +240,39 @@ function holdLauncherConfigurationV1(defaultMode = false) {
       return raw;
     };
     assertMaterialDatabase = () => { agreedDatabaseUrl(recheckMaterial); };
+    qualifyCoreReader = async check => {
+      const refuseOnce = () => {
+        if (coreReaderOriginals.owner && !coreReaderOriginals.refusalConsumed) {
+          coreReaderOriginals.refusalConsumed = true;
+          coreReaderOriginals.owner.refuse();
+        }
+      };
+      try {
+        const raw = agreedDatabaseUrl(check);
+        coreReaderOriginals.imported = import("../db/dashboard-core-readonly-reader-v2.js");
+        const module = await coreReaderOriginals.imported;
+        check();
+        coreReaderOriginals.owner = module.createDashboardCoreReadonlyReaderV2(raw);
+        check();
+        coreReaderOriginals.preparation = coreReaderOriginals.owner.prepare();
+        await coreReaderOriginals.preparation;
+        check();
+        coreReaderOriginals.read = coreReaderOriginals.owner.read({ kind: "rules" });
+        const rows = await coreReaderOriginals.read;
+        check();
+        if (types.isProxy(rows) || !Array.isArray(rows)) fail();
+        const count = Object.getOwnPropertyDescriptor(rows, "length")?.value;
+        if (!Number.isSafeInteger(count) || count < 0 || count > 4096) fail();
+        refuseOnce();
+        check();
+        return Object.freeze({ schema: "setfarm.dashboard-core-held-launcher-qualification.v2",
+          authority: "diagnostic-only", target: "held-launcher", plannedApplicationStatements: 49,
+          preparationTransactions: 1, readTransactions: 1, ruleCount: count });
+      } catch {
+        try { refuseOnce(); } catch { /* Unknown custody stays held by caller. */ }
+        fail();
+      }
+    };
     const observeDatabase = async <T>(observe: (module: typeof import("./baseline-legacy-database-census-v1.js"),
       raw: string) => Promise<T>, check: () => void = recheck): Promise<T> => {
       const raw = agreedDatabaseUrl(check);
@@ -264,7 +303,7 @@ function holdLauncherConfigurationV1(defaultMode = false) {
     };
   } catch { invalid = true; }
   if (invalid || !output) { close(); fail(); }
-  return { observation: output, recheck, recheckMaterial, assertMaterialDatabase, withPre32Database, census, censusAndActiveRows, censusAndActiveRowsWithQuarantine,
+  return { observation: output, recheck, recheckMaterial, assertMaterialDatabase, withPre32Database, qualifyCoreReader, census, censusAndActiveRows, censusAndActiveRowsWithQuarantine,
     censusAndBindingRows, censusAndBindingRowsV7, activeBindingSnapshot, close, defaultInputs };
 }
 
@@ -276,7 +315,14 @@ type LauncherMaterialStateV2 = {
   outerSettled: boolean;
   callbackSettled: boolean;
   callback?: Promise<unknown>;
+  coreReaderSelected: boolean;
+  coreReaderCustodyUnknown: boolean;
 };
+type HeldCoreReaderDiagnosticV2 = Readonly<{
+  schema: "setfarm.dashboard-core-held-launcher-qualification.v2";
+  authority: "diagnostic-only"; target: "held-launcher";
+  plannedApplicationStatements: 49; preparationTransactions: 1; readTransactions: 1; ruleCount: number;
+}>;
 const launcherMaterialHandlesV2 = new WeakMap<object, LauncherMaterialStateV2>();
 let launcherMaterialOccupiedV2 = false, launcherMaterialBurnedV2 = false;
 let launcherMaterialBurnSequenceV2 = 0;
@@ -317,7 +363,8 @@ function checkLauncherMaterialV2(state: LauncherMaterialStateV2) {
   check(); state.configuration!.assertMaterialDatabase(); check();
 }
 function settleLauncherMaterialActivityV2(state: LauncherMaterialStateV2) {
-  if (state.outerSettled && state.callbackSettled && launcherMaterialActiveV2 === state) launcherMaterialActiveV2 = null;
+  if (state.outerSettled && state.callbackSettled && !state.coreReaderCustodyUnknown
+    && launcherMaterialActiveV2 === state) launcherMaterialActiveV2 = null;
 }
 
 /** Original plist material only. Never loaded-phase, Node-path or effect authority. */
@@ -326,7 +373,8 @@ export function holdDashboardCutoverLauncherMaterialV2(): object {
   if (arguments.length !== 0) fail();
   if (launcherMaterialOccupiedV2 || launcherMaterialBurnedV2 || cleanupUncertain) fail();
   launcherMaterialOccupiedV2 = true;
-  const state: LauncherMaterialStateV2 = { valid: true, closed: false, outerSettled: false, callbackSettled: true };
+  const state: LauncherMaterialStateV2 = { valid: true, closed: false, outerSettled: false, callbackSettled: true,
+    coreReaderSelected: false, coreReaderCustodyUnknown: false };
   launcherMaterialOriginalV2 = launcherMaterialActiveV2 = state;
   try {
     state.account = launcherMaterialAccountV2();
@@ -390,6 +438,34 @@ export async function withHeldDashboardCutoverLauncherPre32V2<T>(
     // Outer driver failure is not settlement of the retained original callback.
     settleLauncherMaterialActivityV2(state);
   }
+}
+
+/** Fixed actual private-reader diagnostic, not a facade or startup capability. */
+export async function qualifyHeldDashboardCutoverCoreReaderV2(handle: object): Promise<HeldCoreReaderDiagnosticV2> {
+  assertLauncherMaterialIdleV2();
+  if (arguments.length !== 1) fail();
+  const state = launcherMaterialStateV2(handle);
+  if (state.coreReaderSelected) fail();
+  state.coreReaderSelected = true;
+  state.coreReaderCustodyUnknown = true; // A rejected API cannot certify private originals.
+  launcherMaterialActiveV2 = state; state.outerSettled = false; state.callbackSettled = false;
+  const work = Promise.resolve().then(async () => {
+    checkLauncherMaterialV2(state);
+    const answer = await state.configuration!.qualifyCoreReader(() => checkLauncherMaterialV2(state));
+    checkLauncherMaterialV2(state);
+    return answer;
+  });
+  state.callback = work; // Original registered before deferred imports/provider work.
+  void work.then(() => { state.callbackSettled = true; settleLauncherMaterialActivityV2(state); }, () => {
+    state.callbackSettled = true; settleLauncherMaterialActivityV2(state);
+  });
+  try {
+    const result = await work;
+    checkLauncherMaterialV2(state);
+    state.coreReaderCustodyUnknown = false; // Only real lifecycle success proves its originals.
+    return result;
+  } catch { burnLauncherMaterialV2(state); }
+  finally { state.outerSettled = true; settleLauncherMaterialActivityV2(state); }
 }
 
 export function closeHeldDashboardCutoverLauncherMaterialV2(handle: object): void {
