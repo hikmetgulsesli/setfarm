@@ -854,8 +854,8 @@ src/medic/medic-cron.ts installMedicCron/uninstallMedicCron; paired docs.
   version2.3.79/English1971/path985 pass; three read-only exact-byte C0/I0/M0
   reviews; fresh preservation255/errors[]07:10:40–41UTC, unchanged8932f443
   manifest and original dirty files. Full originals saved privately.
-- [ ] Normal scoped DRAFT commit/push and exact new-head scanner. No full
-  build/startup admission.
+- [x] Normal scoped DRAFT commit/push9f9542e1; exact new-head GitGuardian
+  SUCCESS completed07:13:32UTC. No full build/startup admission.
 - [ ] Consuming adapter separately authenticates OPEN-intent genesis, original
   legacy invocation settlement, config/producer closure and phase-aware grants.
 
@@ -874,3 +874,46 @@ independent reviews: assertion7f0913c1/writer70a2a57a/schema041897cd/
 Medic212a9023/test5efd5ad9. MC/gateway200,3333 absent (curl7, not success).
 No actual config/cron/unit mutation, full-suite/build, merge, actor exclusion,
 legacy drain or startup acceptance is inferred.
+
+## Task4b.2: retain ordinary CLI contenders in the existing diagnostic
+
+Causal prerequisite: the original V1 classifier omits recognizable ordinary
+CLI cleanup/config invocations and matches service group words anywhere in task
+arguments. Existing consumers refuse every nonempty family inventory; retain
+that behavior without new grants or consumer exemptions.
+
+File Map: src/internal-production/baseline-deployment-cutover-process-observation-v1.ts;
+tests/internal-production/baseline-deployment-cutover-process-observation-v1.test.ts;
+paired design and plan. Interface/schema remain V1.
+
+- [x] Add literal ordinary workflow/uninstall/step/Medic/unknown-route cases;
+  actual exported observer must retain them with ambiguous-contender and null
+  executable/entrypoint/checkoutPath. Add incidental task-word, options/wrapper,
+  duplicated-entry and late/reused contender cases. External ps/lsof only are
+  inert, source classifier/bracket/hash remain actual. Observe genuine RED.
+- [x] Change early omission to exclude only rows with no daemon OR CLI token.
+  Service CLI labels require one recognized entry at position0, or position1
+  immediately after Node, plus immediate group. All other CLI rows ambiguous.
+  Keep original daemon and listener authentication/refusal unchanged.
+- [x] Actual focused76/0; fresh affected process/default-launcher195/0 after
+  supplemental self-retention oracle; strict927-file readonly noemit0 diagnostics.
+  Version2.3.79/English1971/path985 pass. Three independent source/test reviews
+  C0/I0/M0; review M1 self-retention gap addressed with existing-behavior test,
+  not new RED credit. Preservation255/errors[]07:32:32–33UTC, unchanged
+  8932f443 manifest and original user-dirty files. MC/gateway200;3333 absent.
+- [ ] Normal scoped commit/push to existing DRAFT PR280 and exact-head scanner.
+- [ ] Original legacy process settlement, loaded-source/argv authentication and
+  continuous exclusion remain separate adapter obligations. No live startup.
+
+Task4b.2 receipt: original76 cases49PASS/27FAIL before the production change;
+15 dropped ordinary routes,8 misplaced/incidental service labels and4 missing
+ordinary bracket refusals. One both-service-word ambiguity control and2 direct
+starter controls already pass. Original RED tool output was truncated; preserve
+the exact as-returned fragment, but do not claim full-original RED custody.
+Initial GREEN76/0 and affected194/0 are full original outputs. Final195/0 adds
+the observer's own recognizable CLI invocation and preserves its visibility.
+External ps/lsof/native/DB observation ports remain inert in these owned source
+fixtures; original source classifier and bracket are actual. Real private plutil
+conversions do not alter installed launchers. This does not qualify whole
+default bootstrap, live process death, actor drain, clean-main build or startup.
+Final source0ca4ed07/test20ba341c; strict927/0 after the final test delta.

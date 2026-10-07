@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+
+const importIndex = process.execArgv.indexOf("--import");
+const loader = importIndex >= 0 ? process.execArgv[importIndex + 1]! : createRequire(import.meta.url).resolve("tsx");
 
 function observe(fault = ""): any {
   const url = new URL("../../src/internal-production/baseline-deployment-cutover-process-observation-v1.ts", import.meta.url).href;
-  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+  const child = spawnSync(process.execPath, ["--import", loader, "--input-type=module", "-e", `
     import cp from "node:child_process"; import fs from "node:fs";
     import {syncBuiltinESMExports} from "node:module"; import {inspect} from "node:util";
     const node = fs.realpathSync(process.execPath), uid = process.getuid();
@@ -28,7 +32,7 @@ function observe(fault = ""): any {
     };
     syncBuiltinESMExports();
     try { const module = await import(${JSON.stringify(url)}); const observation = module.observeDeploymentCutoverProcessFamiliesV1();
-      process.stdout.write(JSON.stringify({observation,frozen:Object.isFrozen(observation)&&Object.isFrozen(observation.families),scans,listens}));
+      process.stdout.write(JSON.stringify({observation,observerPid:process.pid,frozen:Object.isFrozen(observation)&&Object.isFrozen(observation.families),scans,listens}));
     } catch(error) {process.stdout.write(JSON.stringify({error:inspect(error,{depth:null}),scans,listens}));}
   `], { encoding: "utf8", env: {}, timeout: 10000 });
   assert.equal(child.status, 0, child.stderr); return JSON.parse(child.stdout);
@@ -117,5 +121,73 @@ for (const change of ["late-family", "reused", "missing-observer", "duplicate-pi
       : change === "foreign-listener" ? `listener=Buffer.from("p4104\\0cforeign\\0\\nf21\\0n127.0.0.1:3333\\0\\n");`
       : `listener=Buffer.from("p4103\\0cnode\\0\\nf21\\0n*:3333\\0\\n");`;
     assert.match(observe(fault).error, /DEPLOYMENT_CUTOVER_PROCESS_OBSERVATION_INVALID/);
+  });
+}
+
+// Removing ordinary CLI retention or searching later task words for a service
+// group must break these literal output oracles, not merely change source text.
+test("recognizable observer CLI cannot exempt itself from contender evidence", () => {
+  const result = observe(`const original=rows;rows=()=>original().replace(node+" /fixture/observer.mjs",node+" /fixture/new/dist/cli/cli.js step peek PRIVATE_TASK");`);
+  assert.equal(result.observation?.families.length, 4, JSON.stringify(result));
+  const self = result.observation.families.find((row: any) => row.pid === result.observerPid);
+  assert.equal(self?.classification, "ambiguous-contender");
+  assert.equal(self.executable, null); assert.equal(self.entrypoint, null); assert.equal(self.checkoutPath, null);
+  assert.equal(JSON.stringify(result).includes("PRIVATE_TASK"), false);
+});
+
+for (const route of ["workflow run app --task PRIVATE_TASK", "workflow uninstall app",
+  "uninstall --force", "step peek claim", "step claim claim", "step complete claim --output PRIVATE_OUTPUT",
+  "step fail claim --error PRIVATE_ERROR", "medic run", "medic install", "medic uninstall",
+  "workflow install app", "workflow update app", "future-command PRIVATE_ARGUMENT", "--help", ""]) {
+  test(`ordinary CLI ${route.split("PRIVATE_")[0]} remains an ambiguous contender`, () => {
+    const result = observe(`const original=rows;rows=()=>original()+row(4105,node+" /fixture/new/dist/cli/cli.js"+${JSON.stringify(route ? " " + route : "")},4100,4100);`);
+    assert.equal(result.observation?.families.length, 4, JSON.stringify(result));
+    const contender = result.observation.families[3];
+    assert.equal(contender.classification, "ambiguous-contender");
+    assert.equal(contender.pid, 4105);
+    assert.equal(contender.executable, null); assert.equal(contender.entrypoint, null); assert.equal(contender.checkoutPath, null);
+    assert.equal(JSON.stringify(result).includes("PRIVATE_"), false);
+  });
+}
+
+for (const tail of ["workflow run app --task spawner", "workflow run app --task dashboard",
+  "step complete claim --output spawner dashboard"]) {
+  test(`incidental service words in ${tail} do not label a CLI starter`, () => {
+    const result = observe(`const original=rows;rows=()=>original()+row(4105,node+" /fixture/new/dist/cli/cli.js "+${JSON.stringify(tail)},4100,4100);`);
+    assert.equal(result.observation?.families.length, 4, JSON.stringify(result));
+    assert.equal(result.observation.families[3].classification, "ambiguous-contender");
+  });
+}
+
+for (const command of [
+  `node+" --inspect /fixture/new/dist/cli/cli.js spawner start"`,
+  `"/usr/bin/env "+node+" /fixture/new/dist/cli/cli.js dashboard start"`,
+  `node+" --import tsx /fixture/new/src/cli/cli.ts spawner start"`,
+  `node+" /fixture/new/dist/cli/cli.js dashboard start /fixture/old/dist/cli/cli.js"`,
+  `node+" '/fixture/new/dist/cli/cli.js' spawner start"`,
+  `node+"  /fixture/new/dist/cli/cli.js dashboard start"`,
+]) {
+  test(`uncertain CLI placement ${command} stays visible without a starter label`, () => {
+    const result = observe(`const original=rows;rows=()=>original()+row(4105,${command},4100,4100);`);
+    assert.equal(result.observation?.families.length, 4, JSON.stringify(result));
+    assert.equal(result.observation.families[3].classification, "ambiguous-contender");
+  });
+}
+
+for (const group of ["spawner", "dashboard"]) {
+  test(`direct Setfarm ${group} executable preserves its positional diagnostic label`, () => {
+    const result = observe(`const original=rows;rows=()=>original()+row(4105,"/fixture/.local/bin/setfarm ${group} start",4100,4100);`);
+    assert.equal(result.observation?.families.length, 4, JSON.stringify(result));
+    assert.equal(result.observation.families[3].classification, `${group}-cli-starter`);
+  });
+}
+
+for (const change of ["late", "departed", "reused", "changed-task"]) {
+  test(`ordinary CLI ${change} refuses the complete process bracket`, () => {
+    const fault = `const original=rows;rows=()=>original()+${change === "late" ? "(scans>1?" : change === "departed" ? "(scans===1?" : ""}
+row(4105,node+" /fixture/new/dist/cli/cli.js workflow run PRIVATE_TASK"${change === "changed-task" ? '+(scans>1?"_CHANGED":"")' : ""},4100,4100${change === "reused" ? ',scans>1?"Wed Sep 16 01:02:04 2026":"Wed Sep 16 01:02:03 2026"' : ""})${change === "late" || change === "departed" ? ':"")' : ""};`;
+    const result = observe(fault);
+    assert.match(result.error, /DEPLOYMENT_CUTOVER_PROCESS_OBSERVATION_INVALID/);
+    assert.equal(result.error.includes("PRIVATE_"), false);
   });
 }

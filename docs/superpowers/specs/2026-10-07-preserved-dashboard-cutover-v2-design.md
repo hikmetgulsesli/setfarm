@@ -1729,3 +1729,31 @@ and late serialization OPEN. Preserve all fixture and user originals.
 This is future source hardening only. It does not authenticate historical
 loaded writers, continuous async path stability, ROOT/intent genesis, the full
 controller, native peer transport, clean-main build or real-host startup.
+
+### Task4b.2 retain ordinary CLI process contenders
+
+The legacy-invocation audit found that the V1 process observer drops workflow
+run/uninstall, top-level uninstall, step peek/claim/complete/fail and Medic run.
+Those invocations can reach cleanup or config effects even with no running DB
+row. A blank diagnostic inventory therefore cannot even establish sampled
+absence of these recognizable CLI processes. Existing token-wide group matching
+also calls incidental task/output words spawner or dashboard starters.
+
+Choose compatible V1 hardening over a disconnected V2 diagnostic or a new
+authority catalog. File Map is the existing process-observation-v1.ts, its
+existing test and paired docs. Keep the public zero-input function, wire schema,
+daemon checks, two complete process/listener samples and sanitized output.
+Every recognized Setfarm CLI token stays visible. Only a unique CLI token at
+the direct executable position or immediately after a Node executable, with
+the group immediately following it, may keep the existing starter label.
+Unsupported loader/options placement, no group, ordinary groups, duplicated
+entry tokens and incidental later group words remain ambiguous-contender.
+Never echo ordinary task/output arguments or claim authentic argv, loaded
+source, original generation death or continuous exclusion from flattened ps.
+
+Execute the real exported observer with only external ps/lsof commands supplied
+as finite inert fixtures. RED dropped ordinary CLI processes and wrong starter
+labels before production changes. Preserve existing daemon/alias controls;
+test late ordinary contenders and identity drift cause whole-bracket refusal,
+with fixed errors and no raw argument disclosure. No live process signal,
+service, selector, launcher, database or ROOT mutation is part of this slice.

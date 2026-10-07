@@ -33,9 +33,14 @@ function classify(row: Row, uid: number) {
   const tokens = row.command.split(/\s+/).map(token => token.replace(/^["']|["']$/g, ""));
   const spawner = tokens.some(token => /(?:^|\/)(?:dist\/spawner\.js|src\/spawner\.ts)$/.test(token));
   const dashboard = tokens.some(token => /(?:^|\/)(?:dist\/server\/daemon\.js|src\/server\/daemon\.ts)$/.test(token));
-  const cli = tokens.some(token => /(?:^|\/)(?:setfarm(?:\.(?:js|mjs|cjs))?|dist\/cli\/cli\.js|src\/cli\/cli\.ts)$/.test(token));
-  const spawnerCli = cli && tokens.includes("spawner"), dashboardCli = cli && tokens.includes("dashboard");
-  if (!spawner && !dashboard && !spawnerCli && !dashboardCli) return null;
+  const cliEntries = tokens.flatMap((token, index) => /(?:^|\/)(?:setfarm(?:\.(?:js|mjs|cjs))?|dist\/cli\/cli\.js|src\/cli\/cli\.ts)$/.test(token) ? [index] : []);
+  const cliIndex = cliEntries.length === 1 ? cliEntries[0]! : -1;
+  // Flattened ps text cannot authenticate argv. Only an unambiguous positional
+  // prefix earns a service label; every other recognizable CLI remains visible.
+  const directCli = cliIndex === 0 || (cliIndex === 1 && path.isAbsolute(tokens[0]!) && path.basename(tokens[0]!) === "node");
+  const cliGroup = directCli && tokens.join(" ") === row.command && !/["']/.test(row.command) ? tokens[cliIndex + 1] : undefined;
+  const spawnerCli = cliGroup === "spawner", dashboardCli = cliGroup === "dashboard";
+  if (!spawner && !dashboard && cliEntries.length === 0) return null;
   if (!/^[A-Za-z+<>]{1,16}$/.test(row.stat) || /[ZE]/.test(row.stat)) fail();
   let classification = "ambiguous-contender", entrypoint: string | null = null, checkoutPath: string | null = null, executable: string | null = null;
   if (Number(spawner) + Number(dashboard) + Number(spawnerCli) + Number(dashboardCli) === 1) {
