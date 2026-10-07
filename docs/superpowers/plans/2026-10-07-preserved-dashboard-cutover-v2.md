@@ -562,6 +562,50 @@ Private original output and commands remain outside PR. Source adapter delivery
 does not complete Task4f.1, Task5, reviewed integration or clean-main/live rollout.
 Prior UI615a9356 exact-head GitGuardian SUCCESS2026-10-07T04:06:49Z.
 
+### Task4f.4: whole-reader owned HTTP composition
+
+Spec: paired Task4f.4. Files: create
+tests/internal-production/dashboard-core-http-composition-v2.test.ts and
+tests/helpers/dashboard-core-http-fixture-v2.ts; register in package.json.
+Interface: test utility creates independent readonly metadata/source-journal/
+cold-census/historical-row fixtures and tracked inert postgres transport.
+Only exact runtime-config/intent observer/postgres substitutions. Actual handler,
+facade, lifecycle, qualification/profile/census/journal/response code stays real.
+
+- [x] Before fixture execution, independently review exact owned-child/server/
+  provider/original-promise resource recipe; no accepted native/runtime replay.
+- [x] Write actual composition assertions using independent literal DTO/port
+  expectations. Example: historical failed run appears only with include_terminal;
+  response before original end settles must have zero200 publication. Observe
+  failures before corrective production code, if any; do not fabricate RED for
+  an already-working composition.
+- [x] Run owned loopback ephemeral HTTP cases and retain complete original
+  output/closure ledger. Separate inert PG/source composition from actual PG.
+- [x] Run affected sources/noemit/contracts/preservation255, review actual bytes.
+- [ ] Normal draft delivery and exact new-head scanner. No full build, merge or
+  live startup by this fixture.
+
+Actual first invocation eight cases passed; no production change or fabricated
+RED. Final affected511/0, strict existing-toolchain noemit907/0, version2.3.79,
+English1964/paths980. Eight complete original diagnostic ledgers retain exact
+statement-role counts, callback/commit/end settlement and zero owned sockets;
+BUSY cases peak two client/server sockets. End-rejection occurs after successful
+original callback/commit; early-loss callback remains false until owned release
+and natural model settlement. All fixture invariantErrors empty. These are real
+owned loopback HTTP bytes through actual source modules with inert PostgreSQL,
+not installed-PG, launchd, browser, full adapter or startup qualification.
+Three independent final-byte reviews C0/I0/M0 at helper83487cc2/test847f06a6/
+packageb15f4c3d. Actual255 preservation04:49:53UTC errors[], original two dirty
+files unchanged; MC/gateway200,3333 refused. Full receipts remain private.
+
+Task5 complete adapter remains required: original genuine owner+reservation+
+retirement ROOT and source/build/selector handles, authenticated finite cooperative
+producer graph/ROOT-held last-unlink exclusion, retained launcher/private pre32
+36-lock scope, exact six changing-phase predicates and durable intent before
+once-only effects. Default-context snapshots that release at return or V1 idle/
+absence holders cannot supply this capability. No readerREADY/labels/sample
+metadata substituted for live startup/exclusion authority.
+
 - [ ] Private actual-PG/HTTP qualification and independent source/resource review.
 
 Pure projection prerequisite delivery:27 genuine missing-module RED before

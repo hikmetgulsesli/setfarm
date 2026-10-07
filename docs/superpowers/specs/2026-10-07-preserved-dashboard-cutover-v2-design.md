@@ -1312,6 +1312,78 @@ late read/client loss, framing and write failure. This is source-adapter evidenc
 not integrated facade/PG, actual socket/browser/startup or Task5 authority. Later
 qualified composition and authenticated entry remain mandatory.
 
+### Task4f.4 whole-reader owned HTTP qualification nomination
+
+This is the next bounded qualification, not another authority helper. File Map:
+tests/internal-production/dashboard-core-http-composition-v2.test.ts,
+tests/helpers/dashboard-core-http-fixture-v2.ts and package.json normal pure suite.
+No production change initially; failures require paired fault nomination before
+the smallest corrective source change. Current source delivery0404c766/PR280
+exact-head GitGuardianSUCCESS04:23:35UTC, OPEN DRAFT; no review approval inferred.
+
+Run actual handler/public facade/private reader/profile/qualification/response/
+projection, actual pre32 journal and census validators. Only fixed exact
+runtime-config, intent observer and postgres package are test-loader substitutions.
+Intent is explicitly inert OPEN, not a real account/root/exclusion qualification;
+configuration is an explicit public test identity, not installed launcher material.
+No other import replacement. Source-derived journal identities are actual source
+contract inputs; independent metadata fixture remains the prior hand-written
+104 columns/5 relations/5 builtin PK indexes, never production-derived catalog.
+
+Data must agree with zero active-owner census: populated historical failed/
+completed runs, parent-matched steps/stories/observations/custom rules only.
+Default active run list may be genuinely empty; include_terminal=1 reveals
+preserved failed cards. Never combine running rows with activeRunCount zero.
+Actual census thirteen normalized zeros and source journal1..31/applied26..31/
+cold32 checks remain real. Any unknown SQL/fresh port refuses the fixture.
+Trace literal statements/parameters, receiver and original transaction identities.
+Preparation24 statements; each read24 qualification/utility plus closed data
+budget; BEGIN/COMMIT/end counted separately. No migration/schema/runtime writer.
+
+One fresh child per sticky scenario. Fresh child owns at most one server on
+127.0.0.1 with OS-assigned ephemeral port; never3333/3080/18789 or startDashboard.
+Server is fixture transport only, no production startup proof. Own/register every
+accepted socket, handler promise and original inert provider promise before
+await. At most2 simultaneous clients for BUSY; otherwise one one-shot client.
+No retry/queue. Capture whole HTTP bytes with fixed4MiB-plus-error/header bound,
+complete client framing and closed status/content-length/DTO expectations.
+
+Qualify populated routes/rules/export and honest empty data; preparation and
+original read callback/qual/commit/end must settle before200. Separate original
+query/finalqualification/commit/end barriers; BUSY503 must add zero provider
+clients or statements and not burn original success. Client disconnect/error
+does not pgClose/cancel/reconstruct/release pending reader; settle actual modeled
+originals afterward, then later request succeeds only if lifecycle still valid.
+Provider failure/end rejection gives fixed503/sticky future refusal, no retry.
+Early outer BEGIN loss may complete HTTP503 while callback/query stays privately
+occupied; fixture retains and settles them before claiming its own closure.
+No HTTP-finish-as-provider/backend-death inference.
+
+Finally release only owned barriers, await every original callback/query/begin/
+end/handler, close original client/server sockets and await server close. A
+bounded watchdog may fail the fixture, not certify cancellation/settlement.
+Do not kill other processes, signal live services or delete preserved resources.
+Unexpected unresolved work is unqualified; output only public fixture traces.
+Real installed PostgreSQL, source/build/schema-writer exclusion, full adapter/
+controller/authenticated entry and live checkpoint remain independent required
+gates. Ordinary OPEN startup/spawner guards stay unchanged.
+
+Exact first invocation recipe: eight serialized fresh child scenarios success,
+query, final-qualification, commit, end, disconnect, end-rejection, early-loss.
+One new ephemeral loopback server per child; separate original client/server
+socket groups assert peaks<=2, each completed request waits its own socket close.
+HTTP capture4MiB+16384 bytes, child stdout/stderr1MiB;12s unref watchdog and20s
+spawn timeout are unqualified failure only. Real res.complete and Content-Length
+must match whole JSON. No accepted native recipe or host launcher invocation.
+Preparation/listen acquisition lives inside cleanup custody. Cleanup attempts
+independent stages despite earlier failure; original-provider ledger drains to
+stable settlement (100 rounds/10000 retained originals ceiling), waits original
+handlers/clients and rechecks provider ledger before claiming closure. Fixture
+guard errors remain separately sticky outside actual reader503 translation;
+all scenarios assert none. End-rejection additionally requires26 statements,
+two qualification cycles and successful original callback/commit before its
+intentional end failure. Required fresh actual255 gate precedes first invocation.
+
 ## Verification / delivery / deployment
 
 TDD covers real record parsing, real private filesystem publication, actual
