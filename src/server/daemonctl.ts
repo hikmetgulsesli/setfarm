@@ -4,6 +4,7 @@ import os from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import "../runtime-config.js";
+import { assertOrdinaryDashboardDeploymentCutoverAdmissionV2 } from "../internal-production/baseline-deployment-cutover-v1.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,6 +32,7 @@ export function isRunning(): { running: true; pid: number } | { running: false }
 }
 
 export async function startDaemon(port = 3333): Promise<{ pid: number; port: number }> {
+  assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
   const status = isRunning();
   if (status.running) {
     return { pid: status.pid, port };
