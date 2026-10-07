@@ -1856,3 +1856,82 @@ partial/collision/recycled-port custody and the actual provider/profile need
 independent qualification. Keep original dashboard/spawner plists unchanged.
 The existing V1 idle diagnostic is not the positive foreground listener profile.
 This is a transport data prerequisite, not a new universal native/S10 barrier.
+
+### Task4g.1a closed local Mach audit diagnostic
+
+File Map: scripts/dashboard-cutover-mach-audit-v2.c; matching builtin JS test;
+paired design/plan. This is a public C11 Node-API8 local mechanics diagnostic,
+not the endpoint/provider authenticator. No production loader, sidecar builder,
+package build change, bootstrap registration/lookup/check-in or CLI admission.
+The separately opt-in Darwin test compiles only a fresh private test artifact.
+Default portable script tests do not need CLT. Existing dist/archives stay intact.
+
+One export observeLocalMachAuditV2(bytes) accepts exactly one actual Uint8Array
+(including Buffer) backed by a nonshared, nondetached ArrayBuffer, intrinsic
+length1..1024. Copy before acquisition; never read caller properties, iterators
+or serializers. Invalid idle input does not consume the one module-wide attempt.
+The pre-claim copy is bounded per-invocation storage. Only the winning atomic
+owner may copy it into the shared retained vault; no pre-claim vault writes.
+Return exactly frozen inert {bytes,euid,pid,pidversion}, with newly copied Buffer
+bytes. No raw names, handles, callbacks, labels, modes or permission fields.
+Every failure exposes only DASHBOARD_CUTOVER_LOCAL_MACH_AUDIT_REFUSED.
+
+The module-retained bounded C vault precedes all acquisition. A C11 atomic FSM
+allows one acquisition owner across addon environments; another attempt burns
+the module without touching its vault or issuing native calls.
+Any call entering while ACTIVE burns before argument/typed-array inspection.
+The first owner checks the latch after every port and before publication. A
+fresh ACTIVE atomic load immediately before each premarked operation is its
+admission linearization. If another environment burns AFTER that admission,
+the already-admitted one call may finish and seal its result; no new operation
+may be admitted after a witnessed burn. This is not instantaneous OS revocation.
+Every returned name/buffer and status remains retained after uncertainty.
+Record each returned status/name and seal every proven acquisition/disposal
+effect BEFORE checking a concurrently burned latch. Successful allocate then
+burn retains held R, not only pending; successful close then burn stays settled.
+No finalizer, GC, process-exit cleanup or generic finally is settlement credit.
+
+Allocate one RECEIVE occurrence R, insert one MAKE_SEND reference S (same name,
+distinct obligations). Premark each acquisition/send/receive/disposal; success
+seals its occurrence, uncertain return remains unknown. Send a simple inline
+frame with COPY_SEND, null reply/voucher, fixed message ID, uint32 payload length
+and zero4-byte padding. No complex/OOL/descriptor producer exists. Receive once,
+request FORMAT_0 AUDIT, use finite timeout plus SEND/RCV_INTERRUPT (no automatic
+wrapper restart). Bound and validate header, size, padding and rounded trailer
+offset/type/exact audit size before public BSM pid/euid/pidversion accessors.
+Require current getpid/geteuid and positive pidversion for this local diagnostic.
+Payload/PID claims cannot replace the received kernel trailer.
+
+Unexpected headers/complex messages, receive errors or trailer faults burn and
+retain the original receive buffer and right obligations; no blind destroy,
+retry, reacquire or cleanup is attempted. Inline capacity is NOT an OOL-resource
+bound for a future public inbox. This inbox's name is never published/returned;
+the threat model is the closed cooperative source, not hostile task-space access.
+General remote/public-resource qualification remains a separate obligation.
+
+On the sole successful path, premark S disposal then mach_port_deallocate once;
+only settled S permits premarked mach_port_mod_refs(RECEIVE,-1) once. Any disposal
+failure stops later native calls and retains unknown custody. No mach_port_destroy.
+Build output objects only after both occurrences settle; object allocation/freeze
+failure burns but cannot erase the vault.
+Output construction ends with an ACTIVE-to-COMPLETED atomic compare/exchange;
+failure refuses publication. A contender after that linearization may burn future
+entry but cannot retroactively invalidate the already returned inert DATA.
+Success proves only local audit mechanics, not remote birth, rendezvous,
+replay/source/build binding, owner/phase or startup.
+
+Tests name payload boundary/copy faults, pre-acquisition validation, duplicate
+attempt, receive/header/trailer faults and unknown disposal/reentry. Test-owned
+instrumented copies wrap actual native calls first, then inject closed faults;
+production exports no probe or fixture flag. Compile/link use installed public
+Node headers and SDK, -lbsm and per-symbol NAPI dynamic imports, never blanket
+undefined dynamic_lookup or a replayed Task6A private compiler recipe. Retain
+fresh artifact/input hashes and originals; compiler/link/import/setup failures
+are unqualified, not authenticated transport RED.
+The fixture runner keeps original child/pipe custody until actual close, uses a
+mark-only20s watchdog and bounded capture/drain, and never signals/retries a
+timed-out fixture. Timeout/overflow/signal/natural death cannot count as Mach
+right settlement. Inspect exact libSystem/libbsm dependency paths before load.
+Postcompile dependency hashes are diagnostic records, not a pre-held complete
+compiler/provider certificate. Injected burns qualify the nominated operation
+boundary only; no general concurrent-domain/worker exclusion claim follows.

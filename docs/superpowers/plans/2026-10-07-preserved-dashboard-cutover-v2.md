@@ -1031,7 +1031,7 @@ Exact four-kind shapes and1..1024 byte/canonical rules are in Task4g.0 spec.
   Never export a permission/capability, caller serializer or generic dispatch.
 - [x] Fresh focused/affected record+store suites; strict readonly noemit, normal
   contracts, preservation255 and three independent current-byte reviews.
-- [ ] Normal scoped commit/push to existing DRAFT PR280; exact-head scanner.
+- [x] Normal scoped commit/push to existing DRAFT PR280; exact-head scanner.
 - [ ] Native endpoint/peer/replay/resource-custody profile and foreground
   positive observation remain separate actual provider obligations, not codec
   success. No launchctl, Mach registration, native compilation, PG, selector,
@@ -1066,3 +1066,66 @@ the actual Node --test runner and readonly existing loader/dependency resolution
 74PASS/0FAIL/0SKIP, original subprocess status0/signal null/error null. The full
 unqualified campaign remains unexecuted. This does not promote the pure codec
 into transport, endpoint, replay, peer-birth or startup authority.
+
+Task4g.0 delivery3015845d3bfd9d1587d1f07b4ecd86030389dee7 pushed; exact-head
+GitGuardian SUCCESS08:37:23UTC, writer clean, PR280 OPEN DRAFT. Fresh precommit
+preservation255/errors[]08:37:17UTC unchanged8932f443 and both dirty originals.
+Actual freshly fetched PR body appended (31311bytes), not overwritten. No goal
+currently stored (fresh get_goal null); no fake complete/blocked status.
+
+## Task4g.1a: actual closed local audit mechanics
+
+Spec: paired Task4g.1a. File Map: new scripts/dashboard-cutover-mach-audit-v2.c
+and scripts/__tests__/dashboard-cutover-mach-audit-v2.test.js; paired docs only.
+Consumes copied1..1024 Uint8Array bytes, installed public Node-API8/SDK/BSM;
+produces frozen DATA from observeLocalMachAuditV2(bytes), not a capability.
+No independent implementation writer; root implements, three agents RO review.
+
+- [x] Write actual native addon behavior tests first. Missing nominated source
+  must fail independently of CLT/setup; no fabricated peer/owner qualification.
+  Literal payloads1/2/3/4/1024 must return equal copied bytes and actual current
+  process.pid/euid plus positive pidversion. Invalid0/1025/nonbyte/shared/proxy
+  inputs must cause zero native acquisitions; valid input after invalid succeeds.
+- [x] Observe missing-source RED before production C authoring. Then implement
+  one closed local operation: input copy, atomic attempt, retained R/S occurrences,
+  one simple send, one audit receive, validate trailer, once-drop S then R, output.
+  Example invariant: close S unknown => no close R and no second allocation.
+- [x] Build fresh private test artifacts using fixed public compiler argv and
+  individually nominated -U NAPI imports; actual linked imports inspected.
+  Run SETFARM_DASHBOARD_MACH_AUDIT_TEST=1 node --test
+  scripts/__tests__/dashboard-cutover-mach-audit-v2.test.js. Normal script glob
+  only skips this separate native qualification; no default build changed.
+- [x] Test-owned actual-call wrappers inject malformed header/trailer, receive
+  result loss, S/R close uncertainty and swallowed concurrent burn; zero later
+  admissions after witnessed unknown/burn. An already-admitted call may finish
+  and seal; no instantaneous OS revocation or general worker proof. Retain
+  full outputs and new private artifacts. Mark-only watchdog, no runner kill.
+  Actual setter RED must independently observe trap count, not generic refusal.
+- [ ] Independent exact-byte code/provider/custody review; focused suites,
+  source contracts, preservation255, scoped commit/push/scanner and draft receipt.
+- [ ] Remote native endpoint/peer birth/source/build/replay/phase authentication,
+  real controller/foreground CLI and host3333 acceptance remain unqualified.
+  This local diagnostic does not grant live effects or change existing services.
+
+Task4g.1a actual receipt: missing-source12/0PASS before C authoring; first native
+attempts macro collision, symbol-parser digits and omitted SDK-fortified memcpy
+symbol are UNQUALIFIED setup failures, no native protocol RED. Correct only
+test-copy wrapper/parser and nominate the public libSystem fortified symbol from
+installed SDK secure/_string.h and libsystem_c.tbd. Keep those artifacts/originals.
+Fresh real native behavior15cases12PASS/3FAIL: two inherited-setter trap counts1
+versus0 (result after all6native events; export zeroMach); frame-burn extra send.
+Minimal own napi_define_properties and fresh ACTIVE operation admissions fix;
+fresh15/0 GREEN. Two supplemental uninstrumented-source and getter-offset controls
+add no new RED credit. Final fresh17PASS/0FAIL/0SKIP, including actual pristine
+production C bytes compiled/loaded;8instrumented+pristine owned fresh artifacts.
+Exact2NAPIexports,2libSystem/libbsm dependencies and finite public imports checked;
+264postcompile include records per artifact are diagnostic, NOT pre-held closure.
+Native C warning-as-error build is the proportional actual build/smoke here;
+no default npm build, optional production builder or selected CLI build credited.
+Fresh related record/store74PASS/0FAIL/0SKIP; normal native-disabled runner skips17
+with zeroCLT/native use (not a GREEN claim). Contracts2.3.79/English1973/path987.
+Three final exact-byte independent reviews C0/I0/M0 on C760f57c4/test66167c99/
+specbfa5956b/planf4840159 before this receipt-only annotation. Postnative fresh
+preservation255/errors[]09:14:06UTC unchanged8932f443, originaldirtyfiles and
+acceptedTask6A/PG evidence. No bootstrap/launchd/selector/ROOT/PID/listener/PG
+mutation; local diagnostic only. Full remote adapter/controller/startup pending.
