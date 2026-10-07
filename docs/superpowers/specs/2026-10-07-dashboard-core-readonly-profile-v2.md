@@ -6,6 +6,9 @@ inside the original private RR read-only transaction. Statement1 has no inputs;
 statements2/3 receive only the five relation OIDs captured and validated from1.
 No caller SQL, URL or metadata overrides. Repeat the complete qualification
 before publication on the same transaction, alongside source journal/cold census.
+Accepted inert metadata JSON is also bounded to4MiB; each index definition is a
+nonempty UTF8-roundtripping string≤65536 bytes. These do not bound driver/backend
+allocation. Overflow refuses the entire profile before data reads.
 
 Trust boundary: installed PostgreSQL and its builtin pg_catalog identities are
 trusted. This does not attest binaries or defeat privileged catalog tampering.
@@ -316,6 +319,16 @@ attestation): [LOCK](https://www.postgresql.org/docs/18/sql-lock.html),
 [utility command classification](https://raw.githubusercontent.com/postgres/postgres/REL_18_STABLE/src/backend/tcop/utility.c).
 
 ## Remaining proof gates
+
+Internal source API: observeDashboardCoreReadonlyProfileV2(originalTransaction,
+previousProfile?) executes only these three fixed metadata statements; the
+transaction/query interface never crosses the public db-pg reader facade.
+Returned frozen profile carries original five OIDs and a metadata hash, not a
+read/start capability. previousProfile must be the original module-issued object;
+foreign/proxy/copied inputs refuse before metadata ports. Rechecks retain the
+original relation OIDs and complete metadata hash. Caller owns RR/locks, query
+promise custody, cold/journal qualification and final settlement; this stateless
+structural helper cannot certify them. Fixed refusal code, no provider details.
 
 Check exact source/predicate tuples with source-fault RED before runtime source;
 then installed provider decoding and actual target compatibility. Source tuple

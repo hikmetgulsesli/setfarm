@@ -366,6 +366,12 @@ actual entry/adapter still supplies independently qualified effect authority.
 - [ ] Task4f.1 actual closed whole-response reader; exact profile/provider port
   nomination and RED before production. Five response kinds, seven private SELECT
   fragments, original RR transaction and whole-result refusal caps; no Task5 grant.
+- [x] Structural-only internal metadata profile:39 missing-module RED, reviewer
+  nested-array/parameter-alias7 RED before corrective source, final71 GREEN and
+  strict no-emit894/0. Exact3 SQL/104-column fixtures, original OID+metadata hash,
+  nested zero-trap refusal, four partial and three non-text index branches.
+  An earlier1 source type-overload diagnostic remains uncredited. No actual PG,
+  locks, RR/callback/end, schema-writer exclusion, data reader or startup proof.
 - [ ] RED then minimal runtime implementation; preserve generic and Task6A guards.
 - [ ] RED exact-method/route denial and no PID/listen on preparation failure.
 - [ ] Truthful UI error/unavailability, never fake empty data or hidden failures.
@@ -385,6 +391,20 @@ Exact structural3-statement nomination has scoped source review and explicitly
 trusted builtin/matched-locale/ACCESS SHARE plus separate schema-writer exclusion
 premises; actual provider/host and reader implementation remain open. A proposed
 SRE lock recipe was rejected because it conflicts with controller SHARE locks.
+
+Causal delivery refinement: PR276's historical scanner checks still flag a
+password-shaped fictitious test canary in an earlier commit, despite the corrected
+current source. Another head-only source edit cannot remove that historical scan.
+After scoped source verification/review, preserve PR276, its branch, failed gate
+and evidence read-only; create a separately named normal delivery branch from the
+actual main ancestor with the exact final reviewed tree as one new aggregate
+commit. No old ref/history rewrite, force push, incident ignore/resolution,
+scanner/access/credential change or branch/worktree deletion. ROOT remains the
+sole writer and switches only the active writing branch. Verify exact tree/delta
+equivalence and actual new-head scanner result; a new PR is transparent DRAFT,
+not a gate bypass, merge or promise that incident association will disappear.
+This preserves all development/deployment worktrees and the two original dirty
+files; no new build/archive/candidate resources are created by this delivery step.
 
 Task4f.0 source delivery: 35 genuine ordinary-DB refusal REDs +1 absent PASS;
 14 genuine startup REDs +1 absent PASS, then reviewer-found CLI running-status
