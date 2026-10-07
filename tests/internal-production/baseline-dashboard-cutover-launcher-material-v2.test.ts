@@ -18,7 +18,7 @@ function fixture(action: string, setup = ""): any {
   const texts = labels.map((label, index) => {
     const program = path.join(home, ".local", "bin", "setfarm");
     const args = index ? [program, "dashboard", "start", "--port", "3333"] : [program, "spawner", "start"];
-    const env: Record<string, string> = { PATH: "/usr/local/bin:/usr/bin:/bin", SETFARM_PG_URL: "postgresql://fixture:PG_SENTINEL@localhost/setfarm" };
+    const env: Record<string, string> = { PATH: "/usr/local/bin:/usr/bin:/bin", SETFARM_PG_URL: "postgresql://fixture_PG_SENTINEL@localhost/setfarm" };
     if (index) env.SETFARM_OPERATIONAL_WRITE_TOKEN = "TOKEN_SENTINEL";
     const log = path.join(home, ".openclaw", "logs", index ? "setfarm-dashboard.watch" : "setfarm-spawner.watch");
     const target = path.join(directory, `${label}.plist`);
@@ -39,7 +39,7 @@ function fixture(action: string, setup = ""): any {
     assert.equal(source.split(marker).length, 2);
     const port = path.join(home, "pre32-port.mjs");
     fs.writeFileSync(port, `export async function withHeldDashboardCutoverPre32DatabaseV2(url,callback){
-      globalThis.dbCalls++;globalThis.urlMatched=url==='postgresql://fixture:PG_SENTINEL@localhost/setfarm';
+      globalThis.dbCalls++;globalThis.urlMatched=url==='postgresql://fixture_PG_SENTINEL@localhost/setfarm';
       if(!globalThis.urlMatched)throw Error('PRIVATE_PG_SENTINEL_WRONG_URL');
       if(globalThis.dbFailure)throw Error('PRIVATE_PG_SENTINEL_FAILURE');
       const work=callback(Object.freeze(Object.create(null)),Object.freeze({activeRunCount:0}));

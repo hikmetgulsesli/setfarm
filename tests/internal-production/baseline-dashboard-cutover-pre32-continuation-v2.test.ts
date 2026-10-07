@@ -8,7 +8,7 @@ const loader = importIndex >= 0 ? process.execArgv[importIndex + 1]! : "tsx";
 const fixture = String.raw`
   export default function postgres(url,options){
     const p=globalThis.probe;
-    p.open++; p.credentialsPrivate=url==='postgresql://fixture:PRIVATE_CANARY@localhost/setfarm';
+    p.open++; p.credentialsPrivate=url==='postgresql://fixture_PRIVATE_CANARY@localhost/setfarm';
     const tx=async strings=>{
       p.events.push('query');
       if(p.failQuery)throw Error('PRIVATE_DRIVER_DETAIL');
@@ -29,7 +29,7 @@ const fixture = String.raw`
       }
       return [];
     };
-    return {options:{host:['localhost'],port:[5432],database:'setfarm',user:'fixture'},
+    return {options:{host:['localhost'],port:[5432],database:'setfarm',user:'fixture_PRIVATE_CANARY'},
       begin:async(mode,callback)=>{
         p.mode=mode;p.held=true;p.events.push('begin');
         try{const work=callback(tx);work.catch(()=>{});
@@ -65,13 +65,14 @@ function run(scenario: string) {
     assert.equal(typeof module.withHeldDashboardCutoverPre32DatabaseV2,'function','MISSING_PROVIDER_EXPORT');
     assert.equal(typeof module.assertHeldDashboardCutoverPre32DatabaseV2,'function','MISSING_ASSERT_EXPORT');
     const enter=module.withHeldDashboardCutoverPre32DatabaseV2,check=module.assertHeldDashboardCutoverPre32DatabaseV2;
-    const url='postgresql://fixture:PRIVATE_CANARY@localhost/setfarm';
+    // A nonsecret canary username keeps URL privacy assertions without a fake password.
+    const url='postgresql://fixture_PRIVATE_CANARY@localhost/setfarm';
     let leaked,returned,error,lateRefused=false,traps=0,nestedRefused=false;
     p.nested=async()=>{try{await enter(url,async()=>{})}catch{nestedRefused=true}};
     if(p.scenario==='invalid-input'){
       const proxy=new Proxy(()=>{}, {get(){traps++;throw Error('TRAP')},apply(){traps++;throw Error('TRAP')}});
       for(const callback of [null,{},proxy]){let refused=false;try{await enter(url,callback)}catch{refused=true}assert.ok(refused)}
-      for(const value of [undefined,'postgresql://fixture:PRIVATE_CANARY@remote.invalid/setfarm']){let refused=false;try{await enter(value,async()=>{})}catch{refused=true}assert.ok(refused)}
+      for(const value of [undefined,'postgresql://fixture_PRIVATE_CANARY@remote.invalid/setfarm']){let refused=false;try{await enter(value,async()=>{})}catch{refused=true}assert.ok(refused)}
     }else{
       try{returned=await enter(url,async(scope,census)=>{
         leaked=scope;p.events.push('consumer-enter');assert.equal(p.held,true);
@@ -202,8 +203,8 @@ test("a second entry during the first acquisition burns before any driver query"
     const module=await import(${JSON.stringify(production)});
     assert.equal(typeof module.withHeldDashboardCutoverPre32DatabaseV2,'function','MISSING_PROVIDER_EXPORT');
     const enter=module.withHeldDashboardCutoverPre32DatabaseV2;
-    const first=enter('postgresql://fixture:PRIVATE_CANARY@localhost/setfarm',async()=>{queries++});
-    const second=enter('postgresql://fixture:PRIVATE_CANARY@localhost/setfarm',async()=>{queries++});
+    const first=enter('postgresql://fixture_PRIVATE_CANARY@localhost/setfarm',async()=>{queries++});
+    const second=enter('postgresql://fixture_PRIVATE_CANARY@localhost/setfarm',async()=>{queries++});
     const results=await Promise.allSettled([first,second]);
     assert.ok(results.every(x=>x.status==='rejected'&&/dashboard retained pre32/.test(x.reason.message)));
     assert.equal(queries,0);assert.equal(globalThis.driverOpens,0);process.stdout.write('acquiring-reentry-refused');
