@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { types } from "node:util";
 import { runtimeConfig } from "./runtime-config.js";
 import { observeDeploymentCutoverIntentV1 } from "./internal-production/baseline-deployment-cutover-v1.js";
+import { copyDashboardCoreRequestV2, classifyDashboardCoreResponseFailureV2 } from "./db/dashboard-core-response-v2.js";
 import { observeLegacyFindingPublicationInventoryV1, requireFindingPublicationV1, type FindingPublicationParentRowV1, type FindingPublicationChildRowV1 } from "./findings/finding-publication-v1.js";
 import { LEGACY_FINDING_PUBLICATION_MAX_SETS_V1, LEGACY_FINDING_PUBLICATION_MAX_CHILDREN_V1 } from "./findings/legacy-finding-publication-inventory-v1.js";
 import {
@@ -155,6 +156,101 @@ let _isolatedTestPgUrl: string | null = null;
 let _dashboardCutoverRefusedV2 = false;
 let _dashboardCutoverObservationActiveV2 = false;
 let _dashboardCutoverOrdinaryUsedV2 = false;
+
+// This is cold process admission, not writer-drain or listener-start authority.
+// Original import/preparation work and an occupied read survive permanent refusal.
+type DashboardReaderModuleV2 = typeof import("./db/dashboard-core-readonly-reader-v2.js");
+const _dashboardReaderV2: {
+  phase: "UNPREPARED" | "PREPARING" | "READY" | "REFUSED";
+  capturedUrl: string | null;
+  importOriginal: Promise<DashboardReaderModuleV2> | null;
+  prepareOriginal: Promise<void> | null;
+  readOriginal: Promise<unknown> | null;
+  owner: ReturnType<DashboardReaderModuleV2["createDashboardCoreReadonlyReaderV2"]> | null;
+  refuseConsumed: boolean;
+  reading: boolean;
+} = { phase: "UNPREPARED", capturedUrl: null, importOriginal: null,
+  prepareOriginal: null, readOriginal: null, owner: null, refuseConsumed: false, reading: false };
+const DASHBOARD_READER_REFUSED_V2 = "DASHBOARD_CUTOVER_CORE_READER_REFUSED";
+const DASHBOARD_READER_DUPLICATE_V2 = "DASHBOARD_CUTOVER_CORE_READER_DUPLICATE_PREPARATION_REFUSED";
+
+function failDashboardReaderV2(code = DASHBOARD_READER_REFUSED_V2): never { throw new Error(code); }
+function revokeDashboardReaderV2(): void {
+  _dashboardReaderV2.phase = "REFUSED";
+  _dashboardCutoverRefusedV2 = true;
+  if (_dashboardReaderV2.owner && !_dashboardReaderV2.refuseConsumed) {
+    _dashboardReaderV2.refuseConsumed = true; // Before lookup/invocation and reentry.
+    try { _dashboardReaderV2.owner.refuse(); } catch { /* Refusal cannot restore authority. */ }
+  }
+}
+function requireDashboardReaderPhaseV2(phase: "PREPARING" | "READY"): void {
+  if (_dashboardReaderV2.phase !== phase) { revokeDashboardReaderV2(); failDashboardReaderV2(); }
+}
+
+export async function prepareDashboardCutoverCoreReaderV2(): Promise<void> {
+  if (_dashboardReaderV2.phase === "REFUSED") failDashboardReaderV2();
+  if (_dashboardReaderV2.phase === "PREPARING") {
+    revokeDashboardReaderV2(); failDashboardReaderV2(DASHBOARD_READER_DUPLICATE_V2);
+  }
+  if (_dashboardReaderV2.phase === "READY") failDashboardReaderV2(DASHBOARD_READER_DUPLICATE_V2);
+  const warm = _sql !== null || _schemaReady || _schemaReadyPromise !== null || _isMigrating
+    || _verificationOnlyMode || _isolatedTestPgUrl !== null || _task6aNoDefaultMigration
+    || _task6aRestrictedClosing || _task6aRestrictedConnectionEpoch !== 0
+    || _dashboardCutoverOrdinaryUsedV2 || _dashboardCutoverRefusedV2 || _dashboardCutoverObservationActiveV2;
+  _dashboardReaderV2.phase = "PREPARING";
+  _dashboardCutoverRefusedV2 = true; // Permanent ordinary fence before all ports.
+  try {
+    if (warm || arguments.length !== 0) failDashboardReaderV2();
+    if (observeDeploymentCutoverIntentV1().state !== "open") failDashboardReaderV2();
+    requireDashboardReaderPhaseV2("PREPARING");
+    if (types.isProxy(runtimeConfig)) failDashboardReaderV2();
+    const configured = Object.getOwnPropertyDescriptor(runtimeConfig, "setfarmPgUrl");
+    const raw = process.env.SETFARM_PG_URL;
+    if (!configured || !Object.hasOwn(configured, "value") || typeof configured.value !== "string"
+      || (raw !== undefined && (typeof raw !== "string" || !raw || raw !== configured.value))
+      || (raw === undefined && configured.value !== "postgresql://postgres@localhost:5432/setfarm")) failDashboardReaderV2();
+    _dashboardReaderV2.capturedUrl = configured.value;
+    requireDashboardReaderPhaseV2("PREPARING");
+    const originalImport = import("./db/dashboard-core-readonly-reader-v2.js");
+    _dashboardReaderV2.importOriginal = originalImport;
+    const module = await originalImport;
+    requireDashboardReaderPhaseV2("PREPARING");
+    // Register even a late returned owner before detecting constructor revocation.
+    _dashboardReaderV2.owner = module.createDashboardCoreReadonlyReaderV2(_dashboardReaderV2.capturedUrl!);
+    requireDashboardReaderPhaseV2("PREPARING");
+    const originalPreparation = _dashboardReaderV2.owner.prepare();
+    _dashboardReaderV2.prepareOriginal = originalPreparation;
+    if (!types.isPromise(originalPreparation) || types.isProxy(originalPreparation)) failDashboardReaderV2();
+    await originalPreparation;
+    requireDashboardReaderPhaseV2("PREPARING");
+    _dashboardReaderV2.phase = "READY";
+  } catch {
+    revokeDashboardReaderV2(); failDashboardReaderV2();
+  }
+}
+
+export async function readDashboardCoreResponseV2(request: unknown): Promise<unknown> {
+  requireDashboardReaderPhaseV2("READY");
+  if (_dashboardReaderV2.reading) failDashboardReaderV2("DASHBOARD_CUTOVER_CORE_READER_BUSY");
+  // Genuine source-branded request refusal occurs before any resource reservation.
+  const copied = copyDashboardCoreRequestV2(arguments.length === 1 ? request : undefined);
+  _dashboardReaderV2.reading = true;
+  try {
+    const originalRead = _dashboardReaderV2.owner!.read(copied);
+    _dashboardReaderV2.readOriginal = originalRead;
+    if (!types.isPromise(originalRead) || types.isProxy(originalRead)) failDashboardReaderV2();
+    const data = await originalRead;
+    requireDashboardReaderPhaseV2("READY");
+    return data;
+  } catch (error) {
+    requireDashboardReaderPhaseV2("READY");
+    if (classifyDashboardCoreResponseFailureV2(error)?.disposition === "operation-refusal") throw error;
+    revokeDashboardReaderV2(); failDashboardReaderV2();
+  } finally {
+    // A burned original remains occupied; cleanup completion is not certified here.
+    if (_dashboardReaderV2.phase === "READY") _dashboardReaderV2.reading = false;
+  }
+}
 
 function assertOrdinaryDashboardDatabaseAccessV2(): void {
   const refuse = (): never => { throw new Error("DASHBOARD_CUTOVER_ORDINARY_DATABASE_REFUSED"); };
@@ -6350,6 +6446,7 @@ export async function pgCheckpoint(): Promise<void> {
 }
 
 export async function pgClose(): Promise<void> {
+  if (_dashboardReaderV2.phase !== "UNPREPARED") revokeDashboardReaderV2();
   if (_task6aNoDefaultMigration) {
     if (_task6aRestrictedClosing) throw new Error("TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED");
     _task6aRestrictedClosing = true;

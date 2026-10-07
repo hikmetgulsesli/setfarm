@@ -463,6 +463,35 @@ actual entry/adapter still supplies independently qualified effect authority.
   Callback/queries/commit/end custody and readiness are still pending, not supplied
   by these inert cross-request hash comparisons. No build/live reader/startup.
 - [ ] RED exact-method/route denial and no PID/listen on preparation failure.
+- [x] Task4f.1e source-only cold public db-pg facade, using the existing private lifecycle:
+  source nomination, paired missing-export/fault RED before runtime authoring;
+  exact prior cold flags, OPEN intent, raw/config own-data capture, lazy import,
+  original work custody and pgClose revocation without resetting history.
+  File Map: db-pg.ts; dashboard-core-reader-facade-v2.test.ts; normal pure entry.
+  No startup/router/UI/actual-PG authority. Independently review exact source,
+  run affected source tests/strict no-emit and preserve actual255 before delivery.
+  Nomination reviews: input C0/I1/M1, retention C0/I0/M2, startup C0/I0/M1.
+  Amendments pin premature read as permanent refusal, premark refuse before its
+  port, and spell exact errors. Unexpected private BUSY is lifecycle failure;
+  only facade-owned busy precedence is nonburning. Cold-flag fault fixtures append
+  a lexical setter to the loaded module in memory only, never production hooks.
+  Paired RED run uses the existing retained dependency-resolution harness and
+  actual db-pg plus request/error authority, with inert external-effect ports.
+  Example oracle: close during pending import, then settle the original import;
+  original preparation must refuse and constructor count remain zero.
+  Actual51 missing-export RED before implementation, then51 GREEN; final52 facade
+  cases plus prior331 affected cases passed together383/0. The reviewer-added
+  unexpected-private-BUSY case covers existing behavior and is not credited with
+  retroactive RED. Final strict existing-toolchain no-emit901/0; version2.3.79,
+  English1958, paths978. Three final-byte independent reviews C0/I0/M0 at
+  db-pg3d015fad / testf2f1906c. Existing startup files/ordinary guard bodies remain
+  unchanged. Actual255 held resources preserved with errors[], including both
+  original user-dirty files. Original output/commands retained privately outside
+  the PR. First fixture syntax error was corrected before genuine RED and receives
+  no RED/verification credit. No actual PG/HTTP/build/listener or Task5 entry grant.
+  Earlier v6 aggregate9f1c14e8 / PR280 exact-head GitGuardian succeeded at
+  2026-10-07T03:36:17Z; earlier failed historical PR ranges/incidents remain intact.
+  This facade source change still requires a new-head delivery check.
 - [ ] Truthful UI error/unavailability, never fake empty data or hidden failures.
 - [ ] Private actual-PG/HTTP qualification and independent source/resource review.
 

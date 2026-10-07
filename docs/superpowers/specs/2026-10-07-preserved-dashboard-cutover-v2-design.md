@@ -575,6 +575,84 @@ early outer loss with pending callback/query, commit/end faults, cleanup reentry
 normal onclose, pending end publication barrier, capacity recovery only after
 settlement, and permanent no-reacquisition. Actual PG/facade/HTTP/entry remain open.
 
+### Task4f.1e cold public facade nomination
+
+File Map: db-pg.ts, tests/internal-production/dashboard-core-reader-facade-v2.test.ts
+and its normal package pure-suite entry. No startup/router/UI file changes in
+this unit. Reuse the already nominated zero-argument
+prepareDashboardCutoverCoreReaderV2():Promise<void> and
+readDashboardCoreResponseV2(request):Promise<unknown>; no new caller authority,
+URL, SQL, callback, grant or driver controls. Alternatives of ordinary getSql/
+pgMigrate reuse or calling the private constructor directly from routes are
+rejected: the former requires absent intent and warms/migrates, the latter loses
+db-pg cold history and captured configuration. Select one private facade control
+record in db-pg around the existing lifecycle, not a replacement resource ledger.
+
+Facade phases UNPREPARED/PREPARING/READY/REFUSED persist for this process. Apply
+REFUSED first, PREPARING duplicate burns, READY duplicate nonburning before arity
+or active-read inspection. Fresh selection snapshots prior ordinary refusal/use/
+active observation and all DB state, then reserves PREPARING and the permanent
+ordinary fence BEFORE arity, observer/configuration/import or await. Reject any
+prior _sql, schema ready/promise, migration/verification, isolated URL or Task6A
+latch/closing/nonzero epoch. Do not invoke ordinary assert or resolvePgUrl.
+Require the existing fixed-root intent observer's exact OPEN state; recheck facade
+revocation after this trusted composite. These labels do not prove writer drain
+or a startup authority. Existing ordinary and public OPEN startup guards stay
+byte-identical; readiness must never affect their decision.
+
+Before the first await capture primitive raw process.env.SETFARM_PG_URL and an
+own data runtimeConfig.setfarmPgUrl descriptor; reject proxy/accessor configuration
+without traps/getters. Present raw URL must equal configured bytes exactly;
+absent requires the literal existing source default
+postgresql://postgres@localhost:5432/setfarm. Empty or whitespace-normalized raw
+configuration does not qualify. Capture is permanent; future reads never revisit
+mutable runtime configuration. The private lifecycle still validates the complete
+target/PG environment and options; do not add another permissive URL parser.
+
+Only after capture may a lazy private lifecycle import occur. Retain original
+import/preparation promises, recheck revocation before constructor/preparation
+and after their settlement. Register the exact returned owner immediately after
+construction, BEFORE post-construction checks, so constructor reentry into close
+revokes that returned owner without a new acquisition. Its source-owned refuse
+port is premarked consumed BEFORE lookup/invocation, including throw/reentrant
+pgClose, and is consumed at most once; original lifecycle owns end-once.
+Unknown import/construction/preparation failure permanently refuses with fixed
+DASHBOARD_CUTOVER_CORE_READER_REFUSED and retains occupied history; never
+reacquire/reinitialize. Duplicate preparation uses the exact existing
+DASHBOARD_CUTOVER_CORE_READER_DUPLICATE_PREPARATION_REFUSED error.
+
+Public read in UNPREPARED selects permanent ordinary fence/refusal without caller
+inspection/import. A PREPARING read burns that original reservation, retains
+pending work and once-refuses any returned owner. REFUSED always uses the fixed
+zero-port refusal. READY then checks DASHBOARD_CUTOVER_CORE_READER_BUSY BEFORE
+caller controls.
+Use actual closed request copy before idle-read reservation and pass only that
+inert copy to the retained private owner. Extra public arguments are REQUEST
+operation refusal. Retain its original read promise and recheck facade revocation
+before any data/capacity escape. Only authentic source-branded REQUEST/CAPACITY
+operation refusal remains nonburning; no queue/replacement. Unknown/lifecycle
+failure (including any unexpected private BUSY) burns. Successful or nonburning
+operation settlement releases only facade activity, never preparation history.
+
+pgClose revokes a selected facade synchronously before existing ordinary/Task6A
+cleanup, including when import or preparation is pending. It must not reset
+selection, capture, pending originals or permanent fence. An untouched cold
+process's no-resource pgClose does not itself select/warm a reader. Prior ordinary
+attempt/configuration stays warm even after successful/failed close. The private
+refuse port is synchronous void; pgClose completion does NOT attest its original
+query/callback/BEGIN/end settlement or backend death. Existing original _sql.end
+and migration-abort cleanup retain their original semantics.
+
+RED before runtime authoring: absent/unknown/observer reentry; all independent
+cold flags/warm history, original configuration/default/raw disagreement and
+zero traps for accessor/proxy capture; no import/owner creation after refusal;
+close during import/constructor/preparation/read, permanent after ordinary close;
+duplicate/busy precedence, immutable captured bytes, original pending work and
+post-await publication refusal. Source fixtures use inert lifecycle/config/
+intent/provider ports, actual request/failure branding and no real database.
+No actual PG, facade-consuming HTTP, schema-writer exclusion, build or startup
+grant follows from this unit. Task5 and the existing startup refusal gates remain.
+
 Actual listener startup does not initialize PG; DB HTTP paths use generic
 pgMigrate and therefore are not qualified pre32 read-only reads. Before live
 adapter admission, independently nominate a code-owned dashboard-only restrictive
