@@ -109,12 +109,165 @@ Deferred callback plus early PG connection-loss recipe must prove close refusal
 with zero original closes, followed by genuine callback settlement and exactly
 one reverse cleanup. No settlement is inferred from timeout or process death.
 
+### Causal core-reader checkpoint decision and pending provider nomination
+
+Select a restricted, truthful core-reader dashboard checkpoint while the OPEN
+cutover intent continues to refuse the ordinary spawner. This is the smallest
+causal recovery of useful existing UI data under the retained pre32 transaction;
+it is NOT a whole dashboard/Task6A completion or permanent feature reduction.
+Implement six named data-only reads backed by seven source-owned literal SELECT
+shapes: listRuns(workflowId?), runById(id), stepsForRun(id), storiesForRun(id),
+customRules(), observationsForRun(id). No statement text, generic query callback,
+raw driver, query/result control object, connection options or transaction
+commands are accepted/exposed by this interface. The exact current SQL inventory
+is dashboard.ts110–138,389,747; operational model adds another observations
+projection and is NOT silently included. There is no actual settings route.
+
+Code-owned fixed-root OPEN-intent observation selects an irreversible restriction
+BEFORE the first await/acquisition; it grants NO startup/effect authority.
+Known absent preserves ordinary behavior. Unknown intent/freshness refuses.
+Generic getSql/pgQuery/pgGet/pgRun/pgExec/pgBegin, migration/admin/configuration
+entrypoints are fenced before ports when restricted; named reader functions do
+not run ensureSchemaReady/pgMigrate or fake their readiness variables. pgClose
+cannot reset restriction into ordinary mode. Existing Task6A/full-head/base-owner
+verifiers are unchanged. A new structural read profile must be separately
+nominated; ownerReachable=false cannot be falsified or weakened for reuse.
+
+Select a NEW private READ ONLY REPEATABLE READ transaction per COMPLETE HTTP
+data operation, not a persistent cross-request session. Task4c/4e scope does not
+transfer its ended backend. Runs list includes runs+ALL selected step reads in
+ONE transaction; run detail includes run+steps in ONE transaction. The seven SQL
+fragments are private building blocks, not independently exported transaction
+callbacks/methods. Exact journal1..31, cold catalog and required ordinary structure
+are checked before reads and finally on that SAME original transaction. Return
+copied inert rows only after its original callback/transaction/client settlement.
+Loss retains original pending custody; another request cannot replace it until
+genuine settlement. No application queue/retry; initially one active request,
+explicit busy refusal. Process restriction stays permanent between requests.
+Provider connection loss/reconnect/queue behavior still needs exact source-port
+qualification for EACH invocation; max1/session defaults/onclose alone do not
+prove successful snapshot settlement. NO continuous backend/owner claim between
+requests is needed or permitted for inert UI data. The controller independently
+retains its Task4c READ COMMITTED/36 SHARE locks; their semantics stay unchanged.
+Installed driver initial-close and queued-reconnect paths remain explicit review
+obligations. Keep provider startup/internal traffic separate from application
+port counts; never claim per-internal-query abort or natural backend death from
+end(timeout:1). Returned data are copied inert row snapshots, not a physical
+freeze, owner, phase or effect capability. A fully qualified live entry/adapter
+must independently grant the eventual daemon start; reader-ready is not that
+grant. Do not wire a public OPEN-intent daemon start on reader-ready alone.
+
+Before daemon PID publication/listen, the eventual authenticated startup must
+prepare the restricted profile. Direct unqualified start under OPEN refuses.
+Restricted HTTP dispatch is exact METHOD+PATH before body/token/legacy handlers:
+GET root/static assets/workflows and the exact existing data routes below only:
+GET /api/runs (runs+all selected steps in one transaction), GET /api/runs/:id
+(run+steps in one transaction), GET /api/runs/:id/stories,
+GET /api/runs/:id/observations, GET /api/rules and GET /api/rules/export.
+Select export as the same existing rules/filter closure, not a new SQL shape.
+No standalone steps endpoint is introduced. Mutations,
+SCRAPE, deployment-observation GET (external probes), raw-driver advanced reads,
+operational model/snapshot, artifact authority, transfer acknowledgements, shadow
+parity, supervisor/events/medic and all other unqualified routes return explicit
+unavailable status without downstream calls. Never let run-ID catch-all or HTML
+fallback convert an unknown API into200. Existing medic table helper is a NO-OP,
+not DDL; its actual hazards here are generic migration and unawaited/swallowed
+errors. Unavailable UI panels must display truthful status, not empty success:
+existing frontend fetchJSON ignores HTTP status, so this causal UI correction
+belongs in the same root fix. No failed projects are hidden or deleted.
+
+Current basic lists are unbounded except observations250. Any row/byte capacity
+or narrowed SELECT projection must be explicitly nominated with refusal (not
+silent truncation/absence), and return-data caps must not be mislabeled provider
+transport/backend memory bounds. No new cap or SQL implementation is approved
+by this decision paragraph. Exact whole-request provider API, structure validators,
+closed statement/parameter/result contract and private PG/HTTP recipe are the
+next nomination before production. No universal/native S10 prerequisite.
+
+### Task4f.0 ordinary database and unqualified dashboard refusal nomination
+
+Deliver the ordinary-path fence before the private reader provider. This fixes
+the demonstrated generic migration/admin route; it does not grant reader-ready
+or startup. Reuse the existing fixed-root intent observer, not caller mode/env.
+Reserve its own activity/burn state before the observer, then perform a pure
+post-observer burn check even when nested refusal was swallowed. Synchronous
+observation precedes caller options/URL/control inspection, ordinary state mutation,
+await and driver acquisition. OPEN or unknown permanently refuses the ordinary
+DB path, including after pgClose; a later absent observation cannot reopen it.
+Nested observation burns before lookup/ports, even if the nested error is
+swallowed. Known absent retains existing ordinary and Task6A behavior. Remember
+ordinary use without reset for the eventual fresh-only reader preparation.
+
+File Map: db-pg.ts ordinary getter/schema/config/Task6A/migration and all 22 exported
+borrowed-transaction entrypoints; baseline-deployment-cutover-v1.ts a distinct
+dashboard refusal assertion; daemonctl.ts startDaemon before isRunning (including
+its stale-PID unlink), log open and spawn; daemon.ts before mkdir/PID and dashboard.ts before
+server creation/listen; package.json normal pure-suite entries and paired
+source-fault tests. Migration32 abort and pgClose
+remain original-resource cleanup, not new acquisition or admission. Pure record
+validators/now remain unaffected. Earlier returned raw handles are NOT revoked
+by this latch; Task5 still must drain/authenticate existing processes.
+Migration32 stage and commit are new work and refuse before original-handle lookup;
+abort remains the original settlement path. This slice records the warm marker;
+functional fresh-reader admission tests belong to the following provider slice,
+not an invented proof from a private boolean.
+
+Review-found causal entry refinement: src/cli/cli.ts dashboard start currently
+calls isRunning before startDaemon; install's auto-dashboard path has the same
+status fast path after awaited installation. Add the distinct dashboard refusal
+before these two status calls (ordinary stop/status remain unchanged). Existing
+runtime-integrity and ordinary-spawner gates remain in place, not bypassed.
+Startup test additionally evaluates the actual AST-extracted/transpiled dashboard
+branch and auto-dashboard block with the real owned-intent assertion and inert
+status/start ports; validate the named import. This qualifies source-component
+ordering, not full CLI loader/build/runtime authentication. RED must reproduce
+the running/stale status fast path before this additional production edit.
+
+Fixed errors: DASHBOARD_CUTOVER_ORDINARY_DATABASE_REFUSED and
+DEPLOYMENT_CUTOVER_UNQUALIFIED_DASHBOARD_START_REFUSED. DB entry inventory:
+getSql, ensureSchemaReady, pgConfigureIsolatedTestDatabase, pgQuery/Get/Run/Exec/
+Begin, pgMigrate, prepareTask6aRestrictedSpawnerDatabaseV1; migration32 stage and
+commit. Borrowed-SQL exports (exact current source names):
+resolveCurrentInternalProductionOwnerProducerManifestSetActivationInTransactionV1;
+lockInternalProductionBaselineCompletionOwnerBootstrapTargetInTransactionV1;
+lockInternalProductionBaselineCompletionOwnerBootstrapReleaseInTransactionV1;
+beginOrAdoptInternalProductionOwnerReservationV1;
+bindInternalProductionOwnerReservationV1; closeInternalProductionOwnerReservationV1;
+lockInternalProductionRecoverySourceBootstrapRunInsertionFenceV1;
+bindInternalProductionRecoverySourceBootstrapRunInTransactionV1;
+classifyInternalProductionRecoverySourceBootstrapRunPersistenceInTransactionV1;
+assertInternalProductionRecoverySourceBootstrapRunDeliveryPendingInTransactionV1;
+resolveInternalProductionRecoverySourceBootstrapActualRunTerminalInTransactionV1;
+resolveInternalProductionWorkflowRunTerminalAuthorityPairInTransactionV1;
+resolveInternalProduction{Claim,ExecutionAttempt,RuntimeSession,CompletionOwner,
+MandatoryEffect,Termination,Finding,OperationalDelivery}TerminalAuthorityPairInTransactionV1;
+resolveInternalProductionOwnerReservationCloseInTransactionV1;
+lockInternalProductionWorkflowRunInsertionFenceV1.
+
+Ports: existing fixed-root observation is a trusted composite read-only port;
+failure details become fixed refusal codes. No per-inner-filesystem-call abort
+claim. No new resources beyond that observer; initially OPEN/unknown causes no
+driver/SQL, PID, listener or mutating filesystem port. Each admission boundary
+prevents subsequent ports only: if ordinary absent startup has already published
+PID state before another boundary sees OPEN, this slice does not claim continuous
+absence, revocation or undo of that earlier write. Retain that negative drift
+oracle separately; authenticated Task5 startup/settlement is still required.
+DB source fixtures mock the observer and driver. Startup fixtures use the real
+observer with fresh owned intent files and mock service/effect ports and unused
+advanced import providers. They are not canonical OPEN filesystem, complete
+loader/runtime closure or qualified live entry evidence. The late-OPEN negative
+oracle witnesses a prior mocked PID-write port, not an actual PID publication.
+RED: open/unknown/observation reentry, malformed/proxy controls with zero traps,
+generic/admin/borrowed SQL zero ports, sticky after close/absent, no PID/listen
+for unqualified OPEN startup; ordinary absent smoke and pure validators unchanged.
+
 ### Pending causal dashboard-reader startup root fix
 
 Actual listener startup does not initialize PG; DB HTTP paths use generic
 pgMigrate and therefore are not qualified pre32 read-only reads. Before live
 adapter admission, independently nominate a code-owned dashboard-only restrictive
-pre32 reader: original reserved session, exact journal/cold catalog/required
+pre32 reader: original per-complete-HTTP READ ONLY REPEATABLE READ transaction,
+exact journal/cold catalog/required
 structure, permanent latch and closed source-qualified read statement inventory.
 No default-migration, role/credential changes, raw getSql/driver controls, SQL
 prefix permission filter or Task6A rehearsal helper may supply this route.

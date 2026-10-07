@@ -342,6 +342,44 @@ adapter/controller/entry and restrictive-reader startup remain required.
 
 ## Task5: authenticated entry, delivery and qualified dashboard checkpoint
 
+Task4f causal refinement before Task5: restricted core-reader runtime/root fix.
+File Map: db-pg.ts; a dedicated private reader/session module and structural
+validator only as independently nominated; server/daemon.ts; dashboard.ts closed
+dispatch; server/index.html truthful unavailable/error handling; focused reader,
+startup/router/UI tests. These recover existing basic data under pre32 without
+generic migrations; no unrelated feature or new native barrier. The six named
+methods/seven fixed existing SELECT shapes and explicit excluded routes are
+recorded in design. Exact provider/result/structure/capacity nomination pending.
+Select one fresh private READ ONLY REPEATABLE READ transaction per complete HTTP
+operation, including all run/step reads; no cross-request backend continuity or
+owner claim. Initially one active request with explicit busy refusal, no queue.
+Provider must not transfer Task4c's ended backend or claim reserve/onclose alone
+is successful snapshot settlement. Reader preparation does not authorize a public OPEN daemon start;
+actual entry/adapter still supplies independently qualified effect authority.
+
+- [x] Task4f.0 RED then permanent ordinary DB/admin/borrowed-TX refusal and
+  unqualified dashboard entry refusal, with absent and cleanup compatibility.
+- [ ] Qualify exact reader/session genesis/loss/queue/result and structural API.
+- [ ] RED then minimal runtime implementation; preserve generic and Task6A guards.
+- [ ] RED exact-method/route denial and no PID/listen on preparation failure.
+- [ ] Truthful UI error/unavailability, never fake empty data or hidden failures.
+- [ ] Private actual-PG/HTTP qualification and independent source/resource review.
+
+Task4f.0 source delivery: 35 genuine ordinary-DB refusal REDs +1 absent PASS;
+14 genuine startup REDs +1 absent PASS, then reviewer-found CLI running-status
+fast-path4 REDs +15 component PASS before its separate fix. Final new38 DB +19
+startup/CLI component cases GREEN;41 affected observer/spawner-admission/base
+catalog/current-head compatibility PASS. Strict889-file noemit0 diagnostics;
+version/English/path contracts pass.98 fresh cases for this slice, not a full
+build/test or live checkpoint. Warm original close and rejected-end identity/
+no-reconstruction guards added after review; production cleanup unchanged.
+Initial fixture-record and dependency-resolution failures remain uncredited.
+Normal pure-suite includes the two new test files. Three independent read-only
+source/resource reviews; no writer delegation. CLI tests evaluate actual source
+components, not a full runtime-guard/loader qualification. Reader provider,
+restricted HTTP/UI and authenticated Task5 entry remain required; no source unit
+or OPEN-intent refusal grants their admission. Native/S10 diagnostics not replayed.
+
 Files: scripts/deployment-dashboard-cutover-v2.mjs and builtin entry test;
 exact consuming inventories/package entries recorded alongside their edits.
 

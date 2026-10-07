@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import { getSql, pgQuery, pgGet, pgRun, now } from "../db-pg.js";
+import { assertOrdinaryDashboardDeploymentCutoverAdmissionV2 } from "../internal-production/baseline-deployment-cutover-v1.js";
 import { resolveBundledWorkflowsDir } from "../installer/paths.js";
 import YAML from "yaml";
 
@@ -422,6 +423,7 @@ export function startDashboard(port = 3333, options: Readonly<{
     observe(receipt: V3DeployReceiptV1): Promise<V3DeploymentObservationV1>;
   }>;
 }> = {}): http.Server {
+  assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
   const server = http.createServer(async (req, res) => {
    try {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
