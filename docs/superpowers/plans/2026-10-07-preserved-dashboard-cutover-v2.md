@@ -241,7 +241,36 @@ bindings, not unused development/archive ownership or arbitrary UI code ability.
  Fresh adjacent65+50 pass, contracts/AST/syntax/noemit/diff0. Unchanged ROOT9
  remain prior qualified evidence, not rerun;128 distinct focused tests passed
  across the units. Three independent source/resource reviews C0/I0/M0.
-- [ ] Scoped incremental DRAFT delivery; no full adapter/Task3/Task5 admission.
+- [x] Scoped incremental DRAFT delivery76c0ef8c; no full adapter/Task3/Task5 admission.
+
+### Task4c: retained ordinary-dashboard pre32 transaction bridge
+
+Causal File Map: extend baseline-legacy-database-census-v1.ts with an additional
+V2 continuation export and opaque-scope recheck; add tests/internal-production/
+baseline-dashboard-cutover-pre32-continuation-v2.test.ts. Existing V1/V7 behavior stays
+unchanged. The next launcher/phase-V2 consuming provider is separately required;
+no caller URL, callback, census or opaque PG scope is service-effect authority.
+This corrects released-at-return snapshots across the physical second pass.
+
+- [x] Independently nominate exact scope/lifetime/recheck/failure contract.
+- [x] Genuine missing-export RED before implementation, using read-only driver
+  fault fixtures; no fixture result is production credential/freeze authority.
+- [x] Hold actual private transaction through callback; exact pre32 locks/journal,
+  opaque same-instance scope, bounded rechecks, sticky reentry/query failure,
+  revoke BEFORE callback leaves transaction. Never return SQL/URL.
+- [x] GREEN source fault matrix plus unchanged census snapshots. Real private PG
+  qualification and phase-aware launcher composition remain separate gates.
+- [ ] Review scoped source/test diff and record exact evidence before delivery.
+
+Task4c evidence:16 genuine missing-export REDs before source; first16 GREEN,
+review-expanded final20 source-fault cases PASS0fail0skip. Legacy7 PASS with an
+explicit read-only existing dependency-resolution harness; initial1PASS6missing-
+dependency FAIL attempt is not credited. No install/symlink or build bypass.
+Fresh adjacent65JS+50TS pass; strict noemit378files0diagnostics; contracts/diff0.
+Source1fcdc6a7/test28a16e2c have three independent C0/I0/M0 reviews. Final raw
+outputs/harnesses preserved privately.142 fresh cases for this slice; native9+4
+remain unchanged prior evidence,155 distinct across units, NOT155fresh. No actual
+PG backend/credential/phase/owner qualification or live admission by fixtures.
 
 ## Task5: authenticated entry, delivery and qualified dashboard checkpoint
 

@@ -20,6 +20,60 @@ path is a complete, durable, capability-bound controller through dashboard step5
 
 ## Scope / ordered operations
 
+### Retained ordinary-dashboard pre32 bridge nomination
+
+Additional exports in baseline-legacy-database-census-v1.ts:
+withHeldDashboardCutoverPre32DatabaseV2(databaseUrl, continuation) and
+assertHeldDashboardCutoverPre32DatabaseV2(scope). This is a narrow read-only
+transaction composition primitive, NOT adapter/owner/dispatch authority.
+databaseUrl is consumed only by the privately agreed launcher provider in the
+future authenticated bootstrap; no ambient URL, raw connection or caller SQL is
+exposed. Existing public snapshot methods and V1 behavior stay unchanged.
+
+Continuation is a trusted same-process nonproxy function, called once with an
+empty frozen null-prototype WeakMap scope and frozen initial zero-owner census.
+The original private READ COMMITTED READ ONLY transaction holds its fixed36
+SHARE locks and exact source journal1..31 through the awaited callback. The
+scope is valid only inside that callback. Assertion privately repeats exact
+source journal and cold pre32 zero-owner census on the ORIGINAL connection;
+at most32 explicit assertions. No later driver connection may replace it.
+Exact asynchronous signatures: withHeld...(string|undefined,
+(scope:object,census:LegacyDatabaseCensusV1)=>Promise<T>):Promise<T>;
+assertHeld...(scope:object):Promise<void>. Assertion count is reserved before
+await; assertion33 burns/refuses before query. Final internal recheck is separate.
+
+One occupied invocation per module: reserve BEFORE first import/await/driver
+acquisition, and retain through callback, transaction and client settlement.
+Starting another during acquisition/live/settlement burns the original before
+input handling. Reentrant assertions burn before any later query.
+Foreign/stale scope at idle refuses without touching caller properties; query,
+drift, callback failure or swallowed reentry makes the valid scope sticky-invalid.
+Every resumed trusted composite read checks burn before another component read.
+No claim of per-query abort inside unchanged legacy census/verifier helpers.
+Scope revokes before callback return/throw escapes the transaction; no leaked
+scope or returned census survives as live authority. The outer promise succeeds
+only after existing sql.begin and sql.end settle. Existing end({timeout:1}) may
+terminate local transport and is NOT backend-death or natural EOF certification;
+unknown/failure never grants service authority or allows a later dispatch.
+Track every admitted asynchronous assertion with a retained original promise.
+If callback returns/throws with one still pending, revoke first, burn/refuse and
+await that original work before callback may leave the transaction. Every resumed
+trusted composite boundary checks live AND unburned before a further read. Never
+retry a failed/pending query. On outer begin/transport rejection revoke before
+awaiting end, even while callback is suspended (driver races callback vs close).
+Retain unresolved callback/assertion custody in the burned module; no new entry.
+No callback-return value or timeout discharges that pending custody. Fixtures
+cover acquiring/settling nested entry, detached assertion return/throw/late
+rejection, outer connection loss with suspended callback and late resumed check.
+
+Source fault fixtures qualify callback-before-release, exact lock/journal order,
+revoked/foreign handles, zero-owner drift, swallowed reentry, callback failure,
+connection failure and transaction/end failure. They do not qualify an actual
+PG backend or launcher credential. Actual private-PG and phase-V2 qualification
+must precede consuming adapter admission. Original launcher idle predicates
+remain unchanged; successful dashboard restoration needs a separately nominated
+positive exact dashboard phase profile, not an idle exception or nativeS10.
+
 A new V2 history namespace records these exact operations in order:
 
 1. bootout-spawner
