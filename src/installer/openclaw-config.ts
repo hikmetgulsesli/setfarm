@@ -3,6 +3,7 @@ import JSON5 from "json5";
 import { resolveOpenClawConfigPath } from "./paths.js";
 import { validateConfig, logValidationErrors, atomicWriteSync } from "./config-schema.js";
 import { logger } from "../lib/logger.js";
+import { assertOrdinaryConfigurationDeploymentCutoverAdmissionV2 } from "../internal-production/baseline-dashboard-cutover-configuration-refusal-v2.js";
 
 export type OpenClawConfig = {
   cron?: {
@@ -57,6 +58,7 @@ export async function writeOpenClawConfig(
   filePath: string,
   config: OpenClawConfig,
 ): Promise<void> {
+  assertOrdinaryConfigurationDeploymentCutoverAdmissionV2();
   // Validate before writing to prevent persisting bad config
   const errors = validateConfig(config);
   if (errors.length > 0) {

@@ -798,7 +798,8 @@ ROOT premise, but old loaded callbacks still require separate drain evidence.
 - [x] Fresh focused33/0 and affected123/0; strict910-file noemit0 diagnostics;
   contracts and three independent exact-source C0/I0/M0 reviews. Save originals
   privately and preserve existing dirty files.
-- [ ] Normal scoped DRAFT delivery and exact-head security check.
+- [x] Normal scoped DRAFT delivery179607d17d0b2a6f948c675aeb7f7dc0ad36825a;
+  exact-head GitGuardian SUCCESS completed2026-10-07T07:00:36Z.
 - [ ] Adapter separately drains legacy pre-publication/post-terminal/uninstall
   callbacks and retains current config closure; source guard is not their proof.
 
@@ -817,3 +818,59 @@ preservation255/errors[] at06:59:10–11UTC, unchanged manifest8932f443. Version
 2.3.79/English1969/path984 pass; MC/gateway200,3333 absent (curl7, not success).
 Full originals saved privately, not uploaded. No live cleaner/uninstaller,
 canonical ROOT effect, full suite/build, merge, legacy drain or startup grant.
+
+## Task4a.7: central future configuration mutation refusal
+
+Causal source gap from the legacy-drain audit: configuration writers are not
+covered by CLI-only guards; Medic install/uninstall also reach cron/config/unit
+mutations without ordinary admission. Captured configs can reach the writer
+after an earlier async read. Source admission inspects the authentic deployment
+intent, not the first-generation retirement reservation. It cannot drain older
+loaded writers. Keep that distinction explicit.
+
+File Map: new src/internal-production/baseline-dashboard-cutover-configuration-refusal-v2.ts;
+new tests/internal-production/baseline-dashboard-cutover-configuration-refusal-v2.test.ts;
+src/installer/openclaw-config.ts writeOpenClawConfig;
+src/installer/config-schema.ts atomicWriteSync;
+src/medic/medic-cron.ts installMedicCron/uninstallMedicCron; paired docs.
+
+- [x] Missing-module RED22/0PASS for a zero-argument fixed-source ordinary assertion;
+  real private OPEN/unknown/absent paths, permanent refusal and swallowed
+  reentry. Invalid idle arguments touch no observation ports or caller traps.
+- [x] Implement void assertOrdinaryConfigurationDeploymentCutoverAdmissionV2()
+  using the existing authentic observer, sticky refusal, active-before-ports
+  burn and sanitized DASHBOARD_CUTOVER_ORDINARY_CONFIGURATION_REFUSED error.
+  It returns no ownership/exclusion/dispatch grant and exposes no reset.
+- [x] Before consumer changes, execute actual AST-extracted writer/atomic/Medic
+  bodies with real assertion and private paths. OPEN/unknown must reach zero
+  serialization/write/cron/unit ports. Known absent must reach each original
+  first port. JSON serialization publishing OPEN must be stopped by the atomic
+  writer's last check. Record actual consumer RED, not source-text assertions.
+- [x] Add assertion before central writer validation/serialization and before
+  atomic write's first filesystem mutation. Medic exports check before first
+  cron entry, after that await before config cleanup, and after that await before
+  timer entry. No guard bypass or full async helper-graph exclusion claim.
+- [x] Run focused22/0 and affected615/0, strict912-file noemit0 diagnostics;
+  version2.3.79/English1971/path985 pass; three read-only exact-byte C0/I0/M0
+  reviews; fresh preservation255/errors[]07:10:40–41UTC, unchanged8932f443
+  manifest and original dirty files. Full originals saved privately.
+- [ ] Normal scoped DRAFT commit/push and exact new-head scanner. No full
+  build/startup admission.
+- [ ] Consuming adapter separately authenticates OPEN-intent genesis, original
+  legacy invocation settlement, config/producer closure and phase-aware grants.
+
+Task4a.7 receipt: missing-module22FAIL/0PASS preceded assertion source; first
+consumer8PASS/14FAIL contains latent duplicate-declaration and duplicate-publish
+fixture errors, uncredited. Corrected consumer9PASS/13FAIL preceded integrations;
+five assertion cases and four positive absent first-port controls already pass.
+Final22/0 and fresh affected615PASS/0FAIL/0SKIP include33 cleanup plus existing
+558 reader/UI/HTTP/material/startup source cases and2 config validation controls.
+Installed PostgreSQL remains inert in this affected harness; actual owned Node
+HTTP uses ephemeral loopback ports, not3333. No earlier actual-PG/native recipe
+is replayed. Private original output was retained in full; large combined tool
+display truncated, so omitted middle was read from retained raw output without
+re-execution. Strict912/0/noemit; all source/test pins unchanged under three
+independent reviews: assertion7f0913c1/writer70a2a57a/schema041897cd/
+Medic212a9023/test5efd5ad9. MC/gateway200,3333 absent (curl7, not success).
+No actual config/cron/unit mutation, full-suite/build, merge, actor exclusion,
+legacy drain or startup acceptance is inferred.

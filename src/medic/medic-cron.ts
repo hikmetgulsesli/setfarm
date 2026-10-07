@@ -13,6 +13,7 @@ import { promisify } from "node:util";
 import { deleteCronJob } from "../installer/gateway-api.js";
 import { resolveSetfarmCli } from "../installer/paths.js";
 import { readOpenClawConfig, writeOpenClawConfig } from "../installer/openclaw-config.js";
+import { assertOrdinaryConfigurationDeploymentCutoverAdmissionV2 } from "../internal-production/baseline-dashboard-cutover-configuration-refusal-v2.js";
 
 const MEDIC_CRON_NAME = "setfarm/medic";
 const MEDIC_SERVICE_NAME = "setfarm-medic.service";
@@ -159,16 +160,22 @@ async function removeMedicAgent(): Promise<void> {
 }
 
 export async function installMedicCron(): Promise<{ ok: boolean; error?: string }> {
+  assertOrdinaryConfigurationDeploymentCutoverAdmissionV2();
   // Migrate away from the legacy OpenClaw agent cron if it exists.
   await removeLegacyMedicCronJob();
+  assertOrdinaryConfigurationDeploymentCutoverAdmissionV2();
   await removeMedicAgent();
 
+  assertOrdinaryConfigurationDeploymentCutoverAdmissionV2();
   return installSystemdMedicTimer();
 }
 
 export async function uninstallMedicCron(): Promise<{ ok: boolean; error?: string }> {
+  assertOrdinaryConfigurationDeploymentCutoverAdmissionV2();
   const legacyResult = await removeLegacyMedicCronJob();
+  assertOrdinaryConfigurationDeploymentCutoverAdmissionV2();
   await removeMedicAgent();
+  assertOrdinaryConfigurationDeploymentCutoverAdmissionV2();
   const timerResult = await uninstallSystemdMedicTimer();
   if (!legacyResult.ok) return legacyResult;
   return timerResult;

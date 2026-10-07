@@ -1693,3 +1693,39 @@ Private owned tests exercise real physical paths and consumer boundaries, with
 guard refusal preserving files and zero process/delete ports. Source is future
 hardening only: it does not retroactively protect old loaded cleanup code or
 establish continuous namespace/actor exclusion across an await.
+
+### Task4a.7 central future configuration mutation refusal
+
+Configuration publication is a separate causal prerequisite of the same
+first-generation cooperative namespace closure. CLI-only admission does not
+cover exported writeOpenClawConfig/atomicWriteSync or Medic install/uninstall;
+an async caller may carry a previously read config to a later publication.
+Use a central refusal-only zero-argument assertion over the existing authentic
+deployment-cutover intent observer. Refuse permanently on OPEN, unknown or
+swallowed reentry, with fixed DASHBOARD_CUTOVER_ORDINARY_CONFIGURATION_REFUSED.
+No caller observer/root/config/grant, no reset, no ownership token. Invalid
+idle arity refuses before ports; an active reentrant call burns before input.
+Known absent retains ordinary behavior, subject to a fresh check on every call.
+An absence observation is never retained exclusion or startup authority.
+
+File Map: new baseline-dashboard-cutover-configuration-refusal-v2.ts and matching
+internal-production test; openclaw-config.ts, config-schema.ts and medic-cron.ts.
+Call before central config validation/serialization and immediately before
+atomic write's first mutation. This catches a late OPEN published by serialization
+without relying on an earlier absent snapshot. Medic public install/uninstall
+check before legacy cron entry, before config cleanup after its original await,
+and before timer entry after config cleanup's original await. Keep original
+promise settlement and existing helper behavior; no retry/rollback or caller
+guard override. A refusal swallowed by best-effort config cleanup cannot permit
+the next timer entry. Internal already-entered helper effects remain part of
+the legacy invocation drain, not retroactively excluded by these checks.
+
+Private fixtures use real held-observation source and real owned paths, with
+only external write/cron/unit ports trapped. Execute actual AST-selected source
+bodies; no whole import/runtime-loader admission is inferred. Qualify genuine
+missing-module and consumer REDs, positive absent first-port controls, zero
+caller-proxy traps on denied writer entry, permanent refusal, swallowed reentry
+and late serialization OPEN. Preserve all fixture and user originals.
+This is future source hardening only. It does not authenticate historical
+loaded writers, continuous async path stability, ROOT/intent genesis, the full
+controller, native peer transport, clean-main build or real-host startup.
