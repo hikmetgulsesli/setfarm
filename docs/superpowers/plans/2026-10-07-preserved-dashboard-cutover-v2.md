@@ -360,10 +360,31 @@ actual entry/adapter still supplies independently qualified effect authority.
 - [x] Task4f.0 RED then permanent ordinary DB/admin/borrowed-TX refusal and
   unqualified dashboard entry refusal, with absent and cleanup compatibility.
 - [ ] Qualify exact reader/session genesis/loss/queue/result and structural API.
+- [x] RED then extract existing run/observation value projection into a pure
+  shared module, preserving public dashboard export and legacy semantics. This
+  independent prerequisite neither clears the catalog gate nor starts a reader.
+- [ ] Task4f.1 actual closed whole-response reader; exact profile/provider port
+  nomination and RED before production. Five response kinds, seven private SELECT
+  fragments, original RR transaction and whole-result refusal caps; no Task5 grant.
 - [ ] RED then minimal runtime implementation; preserve generic and Task6A guards.
 - [ ] RED exact-method/route denial and no PID/listen on preparation failure.
 - [ ] Truthful UI error/unavailability, never fake empty data or hidden failures.
 - [ ] Private actual-PG/HTTP qualification and independent source/resource review.
+
+Pure projection prerequisite delivery:27 genuine missing-module RED before
+runtime authoring, then29 new GREEN (two reviewer-found compatibility cases) +
+3 existing terminal-filter GREEN. Existing OPEN-refusal57 GREEN after extraction;
+89 fresh tests total, not a complete suite/build. Final strict existing-toolchain
+no-emit892 files/0 diagnostics; an earlier typed test fixture excess-property
+diagnostic was fixed without cast/type weakening and receives no passing credit.
+The shared projection retains existing spread/reference/JSON fallback behavior;
+hostile-row validation remains the future reader's responsibility. Actual original
+material gate255 resources/errors[]; MC/gateway HTTP200,3333 refused. No native,
+SQL mutation, migration, PID/listener, build/archive deletion or admission effects.
+Exact structural3-statement nomination has scoped source review and explicitly
+trusted builtin/matched-locale/ACCESS SHARE plus separate schema-writer exclusion
+premises; actual provider/host and reader implementation remain open. A proposed
+SRE lock recipe was rejected because it conflicts with controller SHARE locks.
 
 Task4f.0 source delivery: 35 genuine ordinary-DB refusal REDs +1 absent PASS;
 14 genuine startup REDs +1 absent PASS, then reviewer-found CLI running-status

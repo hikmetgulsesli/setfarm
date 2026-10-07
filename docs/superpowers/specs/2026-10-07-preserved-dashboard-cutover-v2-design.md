@@ -261,6 +261,120 @@ RED: open/unknown/observation reentry, malformed/proxy controls with zero traps,
 generic/admin/borrowed SQL zero ports, sticky after close/absent, no PID/listen
 for unqualified OPEN startup; ordinary absent smoke and pure validators unchanged.
 
+### Task4f.1 private whole-response reader nomination
+
+Implement the actual runtime data path next, not another admission label.
+Public db-pg exports: prepareDashboardCutoverCoreReaderV2():Promise<void> (zero
+arguments), readDashboardCoreResponseV2(request):Promise<closed response below>. Preparation
+is one-shot, cold-only and selects the permanent ordinary fence synchronously
+before import/await/driver ports. Refuse any prior ordinary attempt, configured
+URL, driver/schema/migration/verification/Task6A state or earlier restriction
+failure. No caller URL, SQL, transaction callback, options or startup grant.
+Use only the private runtime-config URL, matching the independently authenticated
+launcher target at Task5; reject PG* environment overrides and anything outside
+local localhost/127.0.0.1:5432/setfarm with exact driver-option target agreement.
+Reader-ready proves data preparation only; existing public OPEN startup guards
+stay closed until Task5 supplies its separately authenticated consuming entry.
+Preparation requires fixed-root intent OPEN; absent/unknown refuses permanently.
+Select the restriction and copy runtimeConfig.setfarmPgUrl synchronously before
+the first await. Capture the original raw SETFARM_PG_URL too: if present, require
+exact equality (no whitespace suffix/normalization); if absent require the exact
+source default. Later requests use only captured bytes, never mutable config.
+Duplicate preparation refuses without new ports; preparation reentry burns the
+original attempt. Readiness resolves only after a qualification-only original
+RR transaction, its callback and original client cleanup all succeed.
+
+Closed requests, copied from nonproxy exact plain own-data records without
+getters/extra/symbol keys: {kind:'runs',workflowId?:string,includeTerminal?:boolean},
+{kind:'run',id:string}, {kind:'stories',id:string},
+{kind:'observations',id:string}, {kind:'rules'}. Rules/export share the rules
+operation; no sixth SQL response shape or steps endpoint. IDs/workflow are
+nonempty primitive UTF8-roundtripping strings, no NUL, at most1024 UTF8 bytes.
+Absent workflow is normalized explicitly by the router, not through coercion.
+Keep the existing terminal filter/projection and observations250 semantics.
+includeTerminal defaults false. Exact results: runs is the existing projected
+array (selected steps included); run is the original column row plus steps or
+null, with no list terminal filter; stories is the original column array;
+observations is the existing camelCase/JSON-fallback projection; rules is custom
+rows only. HTTP retains system-rule merge/filter/export. Malformed requests and
+busy refuse only that request, zero driver ports, without burning readiness.
+Capacity overflow refuses that complete response after original settlement;
+unknown/malformed provider rows and qualification/provider failures burn readiness.
+Seven private SQL fragments use explicit public table qualification, with
+unchanged selected fields/order/filter. Runs plus every included step read and
+run detail plus steps stay on one original READ ONLY REPEATABLE READ transaction.
+No raw driver or subquery callback crosses the public interface.
+
+Select one active operation, no application queue/retry. Busy requests produce
+explicit unavailability and zero additional driver ports; ordinary simultaneous
+HTTP requests do not invalidate the original successful snapshot. Preparation
+reentry/unknown or original connection/transaction/callback/cleanup failure is
+sticky refusal. Track callback and query promises separately from begin's outer
+race; retain original occupied custody after early outer loss. Cleanup consumes
+the original client once, never opens a replacement; end(timeout:1) is provider
+settlement, not backend-death certification. Never return rows until original
+callback, transaction and end all successfully settle. Swallowed failures and
+pending original work cannot publish rows or restore ordinary mode. pgClose
+must not clear the reader slot, restriction or preparation history.
+
+Before and finally on the same transaction: exact source journal1..31, existing
+applied26..31 tail, cold catalog/complete legacy zero-owner census and separately
+nominated structural reader checks. Controller Task4c/4e READ COMMITTED/36 SHARE
+transaction remains independent, unchanged and not transferred. Installed
+provider reconnect/internal-startup traffic is not application retry or a new
+continuity proof; detect loss/rejection and never publish a failed snapshot.
+No per-inner-query abort claim for existing trusted census composite ports.
+
+Nominate publication caps: fetched runs256, steps1024 per included run,
+stories/rules4096, existing observations250, aggregate rows4096, inert PG response
+UTF8 JSON4MiB. Overflow refuses the WHOLE response, not truncation or empty
+success. Runs data SELECT budget257; detail2; others1. Qualification/transaction/
+driver startup traffic is separately counted, not hidden inside these data
+budgets. These limits bound publication/application calls, NOT transport/backend
+allocation. Later restricted HTTP adds the SAME4MiB complete-envelope budget
+after system-rule merge/filter/export; it cannot silently relax this limit.
+Copy/freeze exact source-column rows; built-in Date timestamps become ISO strings
+using intrinsic Date operations, preserving ordinary JSON output. Reject proxy,
+accessor, foreign type, duplicate/missing identity or malformed/crossed rows.
+
+Structural File Map: new db/dashboard-core-readonly-profile-v2.ts plus focused
+tests, private per-response reader module and tests, db-pg.ts facade/latch,
+shared pure dashboard run/observation projection only if needed to avoid source
+duplication; dashboard.ts retains its existing public projection export.
+Extract the existing value semantics into server/dashboard-core-projection-v2.ts
+with tests/dashboard-core-projection-v2.test.ts first. It has no DB/server/HTTP
+imports and does not claim hostile-row validation: legacy run spread/steps
+reference and safeJson object identity/fallback behavior remain unchanged. Reader
+validation/inert copying is separate. This pure extraction may proceed before
+the still-open structural/provider gate; it supplies no reader/startup authority.
+Five fixed public relations: runs20 columns (11 ordinary+5 protocol+4 pre32
+pointers), steps18, stories33 including quality_failure_fingerprint, rules13,
+run_observations20. Freeze complete names/types/nullability from ordinary DDL
+and migrations2/13/14/15/18, not base-only constants. SELECT* tables refuse extra
+columns; explicit observations projection does not export other fields.
+Require permanent plain heap, no view/foreign/partition/inheritance/RLS/rewrite,
+built-in column types/typmods/generated/identity state and SELECT privilege.
+Require valid unique id primary key and source-compatible builtin index/operator/
+collation paths, rejecting expression/custom-code substitutions. Exact catalog
+statements/result tuple contract must be independently reviewed before production.
+The concrete three statements and104-column/index tuple nomination are in
+2026-10-07-dashboard-core-readonly-profile-v2.md; its explicitly open predicate/
+dependency gates are not cleared by merely writing that document.
+Do NOT alter existing ownerReachable=false/base/full-head verifiers; read
+compatibility is not owner, admission, migration or physical freeze authority.
+
+Source-fault RED covers all closed requests, one whole-response transaction,
+no generic migration/driver escape, fresh/warm selection, zero-port hostile input,
+busy/loss/pending callback/query/end custody, final qualification failure, exact
+private SQL/parameters, overflow/no partial rows, inert copied output and no
+startup grant. Structural fake-row tests complement, not replace, source-port
+tests. Actual metadata/data characterization uses the agreed private host URL
+only through the qualified facade and emits counts/hashes, never URLs or row
+payloads. It remains read-only characterization, not live startup authority.
+Any private writable PG fixture/concurrent-writer test needs its own exact
+resource/target/cleanup nomination; a five-table-only fixture cannot satisfy the
+full existing legacy census and must not be mislabeled migration31 application.
+
 ### Pending causal dashboard-reader startup root fix
 
 Actual listener startup does not initialize PG; DB HTTP paths use generic
