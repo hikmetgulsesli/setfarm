@@ -222,7 +222,26 @@ future-entry capability or live effects are supplied by this component alone.
 - [x] Actual owned Mac fixtures GREEN9/9,0fail/0skip; all natural EOF/custody
  checks pass. Adjacent65+50 pass; total124 distinct focused tests. AST/syntax,
  version/English/path/diff checks pass. Three source/resource reviews C0/I0/M0.
-- [ ] Scoped incremental DRAFT delivery; no full build/live-effect admission.
+- [x] Scoped incremental DRAFT delivery805c0289; no full build/live-effect admission.
+
+### Task4b.1 causal sampled UID-cohort slice before complete adapter
+
+File Map: new scripts/deployment-dashboard-cutover-account-cohort-v2.py and
+matching builtin test; qualified root-fds-v2.py is an unchanged literal source
+dependency. Actual account ps sample432 rows precludes a64-PID truncation into
+absence. Direct1025-slot UID-discovery diagnostic with strict dual BSD samples
+is nominated exactly in spec; no live producer/exclusion certificate. Source
+research confines ROOT last-unlink lemma to actual cooperative platform target
+bindings, not unused development/archive ownership or arbitrary UI code ability.
+
+- [x] Independent exact input/ABI/source/resource/interface nomination.
+- [x] Genuine missing-provider RED4/4 before source; separately reviewed recipe.
+- [x] Minimal actual typed read-only sampled cohort provider; whole-report refusal.
+- [x] Actual fresh native GREEN4/4,0fail0skip; two naturally settled holders.
+ Fresh adjacent65+50 pass, contracts/AST/syntax/noemit/diff0. Unchanged ROOT9
+ remain prior qualified evidence, not rerun;128 distinct focused tests passed
+ across the units. Three independent source/resource reviews C0/I0/M0.
+- [ ] Scoped incremental DRAFT delivery; no full adapter/Task3/Task5 admission.
 
 ## Task5: authenticated entry, delivery and qualified dashboard checkpoint
 

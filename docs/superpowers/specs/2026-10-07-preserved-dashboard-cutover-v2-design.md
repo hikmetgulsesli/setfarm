@@ -417,6 +417,75 @@ before constructing the adapter. Closed explicit modes; no ambient opt-in that
 grants authority. Existing inspection entry remains diagnostic. A new real
 activation command requires all adapter and crash qualifications first.
 
+### Task4b.1 sampled account-cohort diagnostic nomination
+
+Create scripts/deployment-dashboard-cutover-account-cohort-v2.py and matching
+builtin test. Causally needed because actual read-only ps sampled432 own-account
+rows; the qualified64-request FD interface must never truncate a producer roster
+or be silently widened/batched into an absence certificate. This unit discovers
+sampled account metadata only, NOT complete producer membership, root-reference
+absence, ownership classification, death authority or live admission.
+
+Use the same literal Python isolation/environment/cwd and bounded stdin/EOF,
+canonical-output/natural-exit/full-EOF transport contract as Task4b.0. Request
+exactly {schema}, schema setfarm.dashboard-cutover-account-cohort-request.v2;
+no caller UID/PIDs/flavor/cap/path/policy. Import the adjacent literal
+deployment-dashboard-cutover-root-fds-v2.py via importlib.util only after strict
+request validation, reusing its immutable canonical codec, typed ABI/native
+provider and direct-query wrapper. This source dependency belongs to eventual
+authenticated loader closure; an ordinary diagnostic import grants no authority.
+Do not modify its qualified64-request source/test or any source inventory yet.
+
+OS-derived real/effective UID/GID must agree for the observer. Fixed libSystem
+proc_listpids argtypes c_uint32,c_uint32,c_void_p,c_int, restype c_int; flavor4
+PROC_UID_ONLY, actual UID, fixed1025-slot int32 buffer. Return is BYTES, not PID
+count. Clear/read errno, refuse zero/error/nonmultiple/overflow, accept1..1024
+positive unique int32 PIDs sorted. Require actual observer and parent present.
+No NULL-buffer count estimate, retry, dynamic growth, caller scope or truncation.
+Published Apple kernel source filters current effective UID, skips shadow/NOCRED
+rows, includes zombie list and can stop at internal capacity. This is NOT an
+installed-host equivalence proof or completeness guarantee. Report sampled only.
+Reference: https://raw.githubusercontent.com/apple-oss-distributions/xnu/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/proc_info.c
+
+Exact sequence: first UID PID list -> first BSD metadata for EVERY listed PID ->
+second UID PID list -> second BSD metadata for EVERY same PID. Sorted PID sets
+must equal; all direct BSD queries exact136 bytes/error-free. Require actual PID,
+effective UID equals observer account, positive startSeconds at most2^53-1 and
+startMicroseconds<1000000, known status2/3/4/5. Live-status2/3/4 requires positive
+PPID/PGID; status5 may have0. Every effective/real/saved UID/GID is reported from
+actual uint32 fields, not a label; do not silently discard foreign saved/real
+identities, zombie or exiting metadata as a nonmatch. Source predicates preserve
+uncertainty rather than turn those values into permissions. Pair identity tuple
+pid,ppid,uid,gid,ruid,rgid,savedUid,savedGid,pgid,startSeconds,startMicroseconds must
+equal. Status/inExit/exitStatus may change and both samples are reported, never
+converted into death/owner evidence. Any PID loss/reuse/account/birth change,
+unknown metadata or query uncertainty refuses WHOLE report before publication.
+Recheck observer UID/GID and parent after the final sample.
+
+Output exact schema,authority,coverage,uid,gid,observerPid,parentPid,processes.
+Schema setfarm.dashboard-cutover-account-cohort-diagnostic.v2; authority
+diagnostic-only; coverage sampled-effective-uid-process-metadata. Each sorted
+process entry exactly {first,last}; each metadata sample exactly the eleven
+identity fields above plus status,inExit,exitStatus. inExit is actual flags bit4
+as a boolean; all other fields integers. No complete/quiescent/alive/dead/owner/
+permission field. Max1024 process pairs/2050 native queries/1MiB output, checked
+before stdout. No FD/vnode query, returned original FD, signal, service, PG or
+filesystem mutation from this provider. Equal samples do not prove continuity;
+different-state samples remain diagnostic. Actual entry/exclusion composition
+with source/ROOT/FS+PG holders must be separately nominated and reviewed.
+
+New fixture recipe, separately actual-byte reviewed before execution: fixedNode
+env-i --test matching test file, fresh naturally settled Node holder(s) with
+closed bounded inputs. A successful actual UID-query report must include real
+observer/parent/owned-holder identities, exact canonical fields/counts and two
+account/birth samples. Invalid/oversized wire must refuse before native queries;
+natural holder exit may only be compared diagnostically, not certify death.
+Queries read the actual observer's UID cohort (potentially unrelated own-account
+process metadata), not only fixture PIDs; no target state is mutated. Churn,
+unavailable provider or setup/transport failure is unqualified, never an accepted
+substitute for expected success. No mocks of OS/backend policy and no accepted
+S10 recipe replay. Genuine missing-provider RED precedes this source.
+
 ## Verification / delivery / deployment
 
 TDD covers real record parsing, real private filesystem publication, actual
@@ -448,6 +517,8 @@ as the separately reviewed Task4a reservation primitive; include both existing
 maintenance observer/normalizer scripts in the eventual authenticated closure.
 Create scripts/deployment-dashboard-cutover-root-fds-v2.py and matching builtin
 script test as a separately qualified diagnostic-only provider; not an entry gate.
+Create scripts/deployment-dashboard-cutover-account-cohort-v2.py and matching
+builtin test as sampled UID metadata only; no full roster/exclusion authority.
 Create scripts/deployment-dashboard-cutover-v2.mjs and builtin entry test.
 Update applicable approved source inventories/manifest tests and affected package
 test commands only when adding the actual consuming production unit. Record those
