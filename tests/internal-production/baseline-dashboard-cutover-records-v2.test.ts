@@ -57,6 +57,141 @@ const load = () => import("../../src/internal-production/baseline-dashboard-cuto
 const firstInput = () => ({ cutoverIntentHash: hex("a"), ownerClaimHash: hex("b"), ordinal: 1,
   previousCompletionHash: null, beforeObservationHash: hex("d") });
 
+// Closed transport payloads are data, never a process/phase/startup capability.
+const loadControl = () => import("../../src/internal-production/baseline-dashboard-cutover-control-wire-v2.js");
+const controlInvalid = /DASHBOARD_CUTOVER_CONTROL_MESSAGE_INVALID/;
+const hello = () => ({ schema: "setfarm.internal-production-dashboard-cutover-control-message.v2",
+  kind: "HELLO", exchangeNonce: hex("a"), childSourceHash: hex("b"), childBuildHash: hex("c") });
+const challenged = (kind = "CHALLENGE") => ({ ...hello(), kind, challengeNonce: hex("d"),
+  phase6IntentHash: hex("e"), ownerClaimHash: hex("f") });
+
+for (const kind of ["HELLO", "CHALLENGE", "ACK", "GRANT"]) {
+  test(`control ${kind} matches independent canonical bytes and frozen data only`, async () => {
+    const codec = await loadControl(), expected = kind === "HELLO" ? hello() : challenged(kind);
+    const bytes = wire(expected), encoded = codec.encodeDashboardCutoverControlMessageV2(expected);
+    assert.deepEqual(encoded, bytes);
+    const decoded = codec.decodeDashboardCutoverControlMessageV2(bytes);
+    assert.deepEqual(decoded, expected); assert.ok(Object.isFrozen(decoded));
+    assert.notEqual(decoded, expected); assert.notEqual(encoded, bytes);
+    expected.childBuildHash = hex("0"); bytes.fill(0);
+    assert.equal(decoded.childBuildHash, hex("c"));
+    assert.deepEqual(Object.keys(decoded).sort(), kind === "HELLO"
+      ? ["childBuildHash", "childSourceHash", "exchangeNonce", "kind", "schema"]
+      : ["challengeNonce", "childBuildHash", "childSourceHash", "exchangeNonce", "kind", "ownerClaimHash", "phase6IntentHash", "schema"]);
+  });
+}
+
+for (const changes of [{ kind: "READY" }, { schema: "PRIVATE_SECRET" }, { exchangeNonce: hex("A") },
+  { childSourceHash: "b".repeat(63) }, { childBuildHash: 9 }, { exchangeNonce: null },
+  { pid: 4105 }, { permission: true }, { url: "PRIVATE_SECRET" }] as Record<string, Json>[]) {
+  test(`control payload rejects wrong ${Object.keys(changes)[0]} without disclosure`, async () => {
+    const codec = await loadControl(), message = { ...hello(), ...changes };
+    for (const invoke of [() => codec.encodeDashboardCutoverControlMessageV2(message),
+      () => codec.decodeDashboardCutoverControlMessageV2(wire(message))]) {
+      assert.throws(invoke, error => error instanceof Error && error.message === "DASHBOARD_CUTOVER_CONTROL_MESSAGE_INVALID");
+    }
+  });
+}
+
+test("control phase fields are absent on HELLO and all required on every challenged kind", async () => {
+  const codec = await loadControl();
+  const bad = (message: { [key: string]: Json }) => {
+    assert.throws(() => codec.encodeDashboardCutoverControlMessageV2(message), controlInvalid);
+    assert.throws(() => codec.decodeDashboardCutoverControlMessageV2(wire(message)), controlInvalid);
+  };
+  for (const key of ["challengeNonce", "phase6IntentHash", "ownerClaimHash"]) {
+    bad({ ...hello(), [key]: hex("d") });
+    for (const kind of ["CHALLENGE", "ACK", "GRANT"]) {
+      const missing: Record<string, string> = challenged(kind); delete missing[key]; bad(missing);
+      for (const value of ["", hex("A"), "f".repeat(65), null, {}, 8]) bad({ ...challenged(kind), [key]: value });
+    }
+  }
+  for (const key of Object.keys(hello())) {
+    const missing: Record<string, string> = hello(); delete missing[key]; bad(missing);
+  }
+});
+
+test("control descriptor validation invokes no caller traps, accessors or serializers", async () => {
+  const codec = await loadControl(); let traps = 0;
+  const trap = () => { traps++; throw Error("PRIVATE_SECRET"); };
+  const proxied = new Proxy(hello(), { get: trap, ownKeys: trap, getPrototypeOf: trap, getOwnPropertyDescriptor: trap });
+  const getter = hello(), hidden = hello();
+  Object.defineProperty(getter, "exchangeNonce", { enumerable: true, get: trap });
+  Object.defineProperty(hidden, "exchangeNonce", { enumerable: false, value: hex("a") });
+  for (const input of [proxied, getter, hidden, Object.assign(hello(), { toJSON: trap }),
+    Object.assign(hello(), { [Symbol()]: true }), Object.assign(Object.create(null), hello()),
+    { ...hello(), childSourceHash: proxied }, Object.create(hello()), [], null, "PRIVATE_SECRET", trap]) {
+    assert.throws(() => codec.encodeDashboardCutoverControlMessageV2(input), controlInvalid);
+  }
+  assert.equal(traps, 0);
+});
+
+for (const fault of ["missing-LF", "CRLF", "spaces", "key-order", "duplicate-key", "two-frames", "NUL", "invalid-UTF8", "oversized", "empty"]) {
+  test(`control ${fault} wire refuses the complete frame`, async () => {
+    const codec = await loadControl(), original = wire(hello());
+    const malformed = fault === "missing-LF" ? original.subarray(0, -1)
+      : fault === "CRLF" ? Buffer.from(original.toString().slice(0, -1) + "\r\n")
+      : fault === "spaces" ? Buffer.from(" " + original.toString())
+      : fault === "key-order" ? Buffer.from(JSON.stringify(hello()) + "\n")
+      : fault === "duplicate-key" ? Buffer.from(original.toString().replace('{', '{"kind":"HELLO",'))
+      : fault === "two-frames" ? Buffer.concat([original, original])
+      : fault === "NUL" ? Buffer.concat([original, Buffer.from([0])])
+      : fault === "invalid-UTF8" ? Buffer.from([255, 10])
+      : fault === "oversized" ? Buffer.alloc(1025, 32) : Buffer.alloc(0);
+    assert.throws(() => codec.decodeDashboardCutoverControlMessageV2(malformed), controlInvalid);
+  });
+}
+
+test("control byte ownership ignores caller Buffer properties and rejects proxy ancestry before traps", async () => {
+  const codec = await loadControl(); let traps = 0;
+  const trap = () => { traps++; throw Error("PRIVATE_SECRET"); };
+  const bytes = wire(hello());
+  for (const key of ["length", "toString", "equals", Symbol.iterator]) Object.defineProperty(bytes, key, { get: trap });
+  assert.deepEqual(codec.decodeDashboardCutoverControlMessageV2(bytes), hello());
+  const proxy = new Proxy(Buffer.from("PRIVATE_SECRET"), { get: trap, getPrototypeOf: trap });
+  const prototype = new Proxy(Buffer.prototype, { get: trap, getPrototypeOf: trap });
+  const foreign = wire(hello()); Object.setPrototypeOf(foreign, prototype);
+  for (const input of [proxy, foreign, new Uint8Array(wire(hello())), wire(hello()).toString(), null]) {
+    assert.throws(() => codec.decodeDashboardCutoverControlMessageV2(input), controlInvalid);
+  }
+  assert.equal(traps, 0);
+});
+
+test("control codec enforces exactly one argument before touching hostile inputs", async () => {
+  const codec = await loadControl(); let traps = 0;
+  const proxy = new Proxy({}, { get(){ traps++; throw Error("PRIVATE_SECRET"); }, getPrototypeOf(){ traps++; throw Error("PRIVATE_SECRET"); } });
+  for (const operation of [codec.encodeDashboardCutoverControlMessageV2, codec.decodeDashboardCutoverControlMessageV2]) {
+    const invoke = operation as (...args: unknown[]) => unknown;
+    assert.throws(() => invoke(), controlInvalid);
+    assert.throws(() => invoke(proxy, proxy), controlInvalid);
+  }
+  assert.equal(traps, 0);
+});
+
+test("control Buffer ancestry is bounded at128 intermediates and deeper proxies remain zero-trap", async () => {
+  const codec = await loadControl();
+  for (const depth of [128, 129]) {
+    const bytes = wire(hello()); let prototype: object = Buffer.prototype;
+    for (let index = 0; index < depth; index++) prototype = Object.create(prototype) as object;
+    Object.setPrototypeOf(bytes, prototype);
+    if (depth === 128) assert.deepEqual(codec.decodeDashboardCutoverControlMessageV2(bytes), hello());
+    else assert.throws(() => codec.decodeDashboardCutoverControlMessageV2(bytes), controlInvalid);
+  }
+  let traps = 0;
+  const trap = () => { traps++; throw Error("PRIVATE_SECRET"); };
+  const proxy = new Proxy(Buffer.prototype, { get: trap, getPrototypeOf: trap });
+  const bytes = wire(hello()); Object.setPrototypeOf(bytes, Object.create(Object.create(proxy)) as object);
+  assert.throws(() => codec.decodeDashboardCutoverControlMessageV2(bytes), controlInvalid);
+  assert.equal(traps, 0);
+});
+
+test("control detached original byte storage refuses with the fixed public error", async () => {
+  const codec = await loadControl(), storage = new ArrayBuffer(512), bytes = Buffer.from(storage);
+  structuredClone(storage, { transfer: [storage] });
+  assert.throws(() => codec.decodeDashboardCutoverControlMessageV2(bytes), error =>
+    error instanceof Error && error.message === "DASHBOARD_CUTOVER_CONTROL_MESSAGE_INVALID");
+});
+
 test("all six builders match independent literal canonical bodies, hashes and wire", async () => {
   const records = await load(), expected = fixture();
   for (let index = 0; index < 6; index++) {

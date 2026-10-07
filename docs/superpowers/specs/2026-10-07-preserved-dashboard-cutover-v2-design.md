@@ -1803,3 +1803,56 @@ RED literal observed/generic title mentions, preserve direct/Node/options/env/
 shell/unknown-wrapper candidates, strong paths and title-to-CLI bracket refusal.
 Only external ps/lsof fixture ports are inert; actual classifier/hash is tested.
 No live signal, PostgreSQL query, selector, launcher, ROOT or service mutation.
+
+### Task4g.0 closed control-message data grammar
+
+The pending authenticated foreground startup needs a finite payload grammar,
+independent of native peer identity and effect capability. Choose a closed pure
+codec over generic JSON dispatch or using a received GRANT as a permission flag.
+Create baseline-dashboard-cutover-control-wire-v2.ts; extend the existing
+baseline-dashboard-cutover-records-v2.test.ts; paired docs. Actual normal-command
+inspection found records/store tests absent from the explicit pure suite. Add
+these two existing files to package.json test:internal-production:pure, retaining
+all existing entries. This closes a causal qualification-enrollment gap; no
+native code, CLI/startup/controller wiring or build-profile change in this slice.
+
+Two exports take exactly one unknown argument:
+encodeDashboardCutoverControlMessageV2(message): Buffer and
+decodeDashboardCutoverControlMessageV2(bytes): DashboardCutoverControlMessageV2.
+Schema is setfarm.internal-production-dashboard-cutover-control-message.v2.
+Kinds are exactly HELLO, CHALLENGE, ACK, GRANT. Every kind has exactly schema,
+kind, exchangeNonce, childSourceHash, childBuildHash. HELLO has no further fields;
+the other three additionally require challengeNonce, phase6IntentHash,
+ownerClaimHash. Every nonce/hash is exactly64 lowercase hex characters.
+No PID, URL, path, SQL, mode, permission, result or callback field is accepted.
+
+Encode accepts only an actual nonproxy plain Object-prototype record, exact own
+enumerable data descriptors and primitive strings; no getters, symbols or caller
+serialization. Decode accepts actual nonproxy Buffer ancestry only, bounds its
+intrinsic byte length1..1024 before copying or parsing, permits at most128
+nonproxy intermediate prototypes before Buffer.prototype, uses original typed-array
+intrinsics rather than caller length/iterator/toString properties, and requires
+exact canonical UTF8 JSON plus one LF. Refuse duplicate keys, extra whitespace,
+CRLF, invalid UTF8, concatenated frames, unknown/missing fields and overcapacity.
+Return a freshly copied frozen inert record; encode returns new owned bytes.
+All refusal paths expose only DASHBOARD_CUTOVER_CONTROL_MESSAGE_INVALID.
+
+Codec success is DATA ONLY, including decoded GRANT. It cannot authenticate
+peers, compare exchange/phase/birth freshness, generate entropy, reserve rights,
+prove endpoint publication, authorize effects or mint a startup capability.
+The future actual transport must authenticate kernel audit trailers, bind both
+original births/source/builds, maintain once-only challenge/replay state and
+consume genuine owner/phase originals before a child-local nonforgeable grant.
+HELLO can arrive while phase5 restoration is pending and grants nothing. Parent
+must complete observed phase5 restoration and publish phase6 intent before its
+CHALLENGE/GRANT; phase6 completion requires the same authenticated CLI listener.
+
+Public rendezvous research found ambient bootstrap_register/create_service can
+reuse inactive same-job services; a private subset alone is not reachable by an
+independent unchanged launchd CLI. A separately owned controller MachServices job
+plus public bootstrap_check_in is a supported alternative, NOT nominated for
+live creation here. Job bootstrap success alone cannot certify service binding;
+partial/collision/recycled-port custody and the actual provider/profile need
+independent qualification. Keep original dashboard/spawner plists unchanged.
+The existing V1 idle diagnostic is not the positive foreground listener profile.
+This is a transport data prerequisite, not a new universal native/S10 barrier.

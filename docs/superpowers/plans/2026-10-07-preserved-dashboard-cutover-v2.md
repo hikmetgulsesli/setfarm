@@ -978,7 +978,8 @@ File Map: existing process-observation-v1.ts and its test; paired design/plan.
   pass; keep original starter promotion, daemon checks, schema and hash formulas.
 - [x] Fresh affected process/launcher tests, strict existing-toolchain noemit,
   contracts, preservation255 and three independent exact-byte read-only reviews.
-- [ ] Normal scoped commit/push to existing DRAFT PR280 and exact-head scanner;
+- [x] Normal scoped commit/push820776b4 to existing DRAFT PR280; exact-head
+  GitGuardian SUCCESS completed08:13:06UTC;
   real informational rescan only, never loaded-source/drain/startup authority.
 - [ ] Full authenticated transport/controller, original actor settlement,
   reviewed integration, clean-main build and real-host3333 acceptance remain.
@@ -996,3 +997,72 @@ preservation08:10:20–21UTC errors[], material8932f443 and both dirty files
 unchanged. Actual informational source rescan families[]/listener null, not
 authenticated actor absence. MC/gateway200;3333 absent. No signal, PG query,
 native replay, build, launcher/selector/ROOT effect or startup acceptance.
+
+Task4b.2.1 delivery receipt:820776b4 committed/pushed clean to DRAFT PR280;
+exact-head GitGuardian SUCCESS completed08:13:06UTC. PR receipt appended without
+overwriting preceding body. This subsequent receipt satisfies its delivery box;
+full adapter/controller/integration/startup obligations remain open.
+
+## Task4g.0: closed transport-message data grammar before authenticator
+
+File Map: create src/internal-production/baseline-dashboard-cutover-control-wire-v2.ts;
+extend tests/internal-production/baseline-dashboard-cutover-records-v2.test.ts
+(existing tests were NOT in the normal pure command); package.json explicit
+test:internal-production:pure enrollment of existing records/store tests;
+paired design/plan. Preserve all previous command entries and runtime guards.
+Consumers: future actual authenticated native control channel; no live consumer
+or fake authenticator is wired by this independently testable pure codec.
+Interfaces: encodeDashboardCutoverControlMessageV2(unknown): Buffer;
+decodeDashboardCutoverControlMessageV2(unknown): DashboardCutoverControlMessageV2.
+Exact four-kind shapes and1..1024 byte/canonical rules are in Task4g.0 spec.
+
+- [x] Write failing actual-code tests: each of four literal messages roundtrips
+  to independent hand-derived canonical bytes/frozen inert data. Reject malformed
+  kind/schema/scalars/field sets and caller record proxies/accessors. Ignore own
+  Buffer properties; reject proxied Buffer/ancestry; test128/129 ancestry bound,
+  deeper proxy chain and detached original bytes with fixed errors. Reject
+  duplicate/noncanonical/malformed/oversized wire with fixed secret-free errors.
+  Example oracle: decoded HELLO kind==='HELLO', exact5fields; no phase/owner grant.
+- [x] Run the existing records test through readonly installed tsx; observe the
+  new missing-module RED, not a fabricated native/provider qualification.
+- [x] Implement descriptor-first closed record validation and owned bounded
+  Buffer copy; canonical comparison on decode. Minimal encoder:
+  `Buffer.from(canonicalJsonStringify(validatedData)+'\n','utf8')`.
+  Never export a permission/capability, caller serializer or generic dispatch.
+- [x] Fresh focused/affected record+store suites; strict readonly noemit, normal
+  contracts, preservation255 and three independent current-byte reviews.
+- [ ] Normal scoped commit/push to existing DRAFT PR280; exact-head scanner.
+- [ ] Native endpoint/peer/replay/resource-custody profile and foreground
+  positive observation remain separate actual provider obligations, not codec
+  success. No launchctl, Mach registration, native compilation, PG, selector,
+  PID/listener or ROOT mutation; no clean-main build/startup admission.
+
+Task4g.0 receipt: actual missing-module RED41cases14PASS/27FAIL before source;
+all27 are the nominated missing control-wire module, not another dependency.
+Full51647-byte original retained privately. Initial GREEN41/0. Review requested
+explicit ancestry128 bound and new128/129/deeper-proxy/detached-storage controls;
+two supplemental existing-behavior cases add no new RED credit. Initial fresh
+affected74/0, strict931-file noemit3 typing diagnostics (uncredited). Correct
+only the explicit never function annotation and test JSON record types; no
+runtime validation or oracle changes. Fresh final affected74PASS/0FAIL/0SKIP,
+strict931/0, version2.3.79/English1972/path986. Three final exact-byte independent
+reviews C0/I0/M0, receipt-only annotation follows. Source9f7a40e9/testba3ee311/
+specdd8aac3f. Preservation255/errors[]08:28:27–28UTC, unchanged8932f443 material
+manifest and both original dirty files. Decoded GRANT remains inert DATA; no
+native protocol/endpoint, replay/freshness, phase, exclusion or startup credit.
+
+Causal enrollment correction: actual package inspection disproved the earlier
+already-enrolled assumption. Normal npm test delegates to internal-production,
+then to its explicit pure command, which omits BOTH existing records/store
+files. Append those two paths without altering earlier entries or launching the
+unqualified full campaign. Their real focused/affected74/0 is the proportional
+execution check; inspecting command enrollment is not an extra production RED.
+This root refinement is source/test delivery work in the same approved goal.
+
+Final enrollment receipt:package26c13305/spec45329049 reviewed independently by
+all three reviewers C0/I0/M0; source/test pins unchanged. Exact actual command
+prefix retained, only two paths appended. Run those package-selected paths with
+the actual Node --test runner and readonly existing loader/dependency resolution:
+74PASS/0FAIL/0SKIP, original subprocess status0/signal null/error null. The full
+unqualified campaign remains unexecuted. This does not promote the pure codec
+into transport, endpoint, replay, peer-birth or startup authority.
