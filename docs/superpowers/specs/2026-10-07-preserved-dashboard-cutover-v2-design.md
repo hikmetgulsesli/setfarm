@@ -52,6 +52,63 @@ Existing compiled private owner fixtures mock clean-main BUILD observation;
 they exercise actual FS/current-process owner binding only, NOT production build
 qualification, loaded code, complete freeze or service admission.
 
+### Retained launcher material / private pre32 bridge V2
+
+Add four exports to baseline-deployment-cutover-launcher-observation-v1.ts:
+holdDashboardCutoverLauncherMaterialV2() (zero arguments, one lifetime attempt),
+assertHeldDashboardCutoverLauncherMaterialV2(handle),
+withHeldDashboardCutoverLauncherPre32V2(handle, trustedContinuation), and
+closeHeldDashboardCutoverLauncherMaterialV2(handle). Dedicated source-fault test.
+Original V1 diagnostic/default idle/qualification guards stay unchanged.
+
+Acquisition privately reuses the existing strict default-mode configuration
+holder: both fixed plists and nofollow original ancestor/file descriptors, exact
+parsed contents and matching loaded-idle configuration before/after acquisition.
+It mints an empty frozen null-prototype WeakMap handle only after final material
+and actual account checks. No credentials, secret-derived configuration hashes,
+raw SQL, mutable resource or observation method is exposed by this handle.
+
+Material assertions recheck the ORIGINAL plist/ancestor identities and bytes,
+actual original account UID/GID/home/name/shell, and matching privately validated
+launcher DB URL. They do NOT call launchctl or require loaded/idle jobs after
+acquisition. Unloaded/loaded/running state does NOT become an authorization flag;
+separate future typed phase observations remain required before any effect.
+This slice holds plist material ONLY, not Node-path/passive-home resources,
+family/process drain, absence, loaded code or service authority.
+
+Private pre32 bridge accepts only a genuine handle and same-process nonproxy
+function. It consumes the unchanged, agreed local/setfarm URL privately through
+the already-qualified withHeldDashboardCutoverPre32DatabaseV2. Bracket dynamic
+import, callback entry, callback settlement and original bridge settlement with
+material/account checks; the caller receives only the existing opaque PG scope
+and immutable census, never the URL. Callback is trusted composition, not effect
+permission. Existing pre32 scope controls detached reads/driver-close lifetime.
+Launcher wrapper separately retains its OWN original trusted-callback promise.
+Outer PG/import/bridge rejection burns/revokes before escape but is NOT callback
+settlement. No activity release or plist FD cleanup while that original callback
+is unresolved; immediate close refuses without close ports. Retain custody and
+observe its eventual rejection without converting it into success/retry. Only
+when BOTH original callback and outer bridge genuinely settle may activity clear
+for a later idle checked-once close. If either remains unknown, retain resources.
+Use private material-only checks for the agreed URL; existing V1 URL getter's
+loaded recheck is not suitable and stays unchanged for its original callers.
+
+Reserve module activity before the first assertion/import; active reentry on any
+of the four exports burns original custody even if swallowed. Idle foreign/proxy
+handles refuse without caller traps or burning a valid owner. New assertion,
+admitted bridge or acquisition failure is permanent; restoring bytes never
+revives. Idle pre-admission invalid arity/foreign handle/proxy callback refuses
+without ports or valid-custody burn; active reentry still burns before lookup.
+Close reserves closed state BEFORE reverse once-only original-resource cleanup;
+idle duplicate close is inert. Failed close retains sticky unknown, never
+retries, unlinks or reacquires. Active close burns but does not close descriptors
+under an outstanding assertion/bridge; a later idle close may settle original
+resources once. Source fixture ports mock launchctl/PG only, real private plist
+FS; no actual launchd or PG qualification. Bounded recipe never mutates host jobs.
+Deferred callback plus early PG connection-loss recipe must prove close refusal
+with zero original closes, followed by genuine callback settlement and exactly
+one reverse cleanup. No settlement is inferred from timeout or process death.
+
 ### Pending causal dashboard-reader startup root fix
 
 Actual listener startup does not initialize PG; DB HTTP paths use generic

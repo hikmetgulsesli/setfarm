@@ -308,6 +308,38 @@ actual GET statement inventory. Generic full-head migration cannot authenticate
 pre32 DB-backed dashboard reads. This is an in-goal startup root fix, NOT new
 features or Task6A/native prerequisite. No runtime/role/catalog guard bypass.
 
+### Task4e: retained launcher material and private pre32 bridge
+
+Causal File Map: extend existing launcher-observation-v1.ts only with the
+separately nominated material path and four V2 exports; add dedicated
+tests/internal-production/baseline-dashboard-cutover-launcher-material-v2.test.ts.
+Plist material must outlive bootout/start phases; existing V1 idle assertions
+cannot span them. Retain original files without pretending material is loaded
+phase, Node-path/passive-home or effect authority. Private URL bridge consumes
+Task4c scope without exposing credentials or importing generic migrations.
+
+- [x] Independent nomination review before implementation.
+- [x] Genuine missing-export RED for strict handle/zero-input, material drift,
+  private bridge lifetime, reentry and checked-once reverse cleanup.
+- [x] Minimal additive implementation; existing V1 behavior unchanged.
+- [x] Focused GREEN plus V1 compatibility/noemit/contracts, independent review.
+- [ ] Scoped draft delivery, no host effect or whole-completion claim.
+
+Task4e evidence:12 genuine missing-export RED before source. First source attempt
+3PASS9FAIL (cleanup rejection plus original-FD fixture ledger mixing loader FDs)
+preserved/uncredited; corrected12 then review-expanded22 GREEN. Reviewer account
+reentry flaw reproduced22PASS2FAIL BEFORE pure-state fix; final24 PASS0fail0skip.
+Exact final source3f2535ea/test98aa4836. Final V1 compatibility118 PASS0fail0skip,
+strict noemit393files0diagnostics/no emission. Initial compatibility117PASS1parent
+loader-resolutionFAIL uncredited; corrected earlier118 kept separate from final
+revision run. All three source/resource reviewers C0/I0/M0; final raw receipts
+saved privately.142 fresh source-fixture cases here;330 distinct across units,
+not330fresh or whole npm test/build. Contracts/diff0; final01:15:08UTC gate255
+originals/123ancestors40aliases8absences/255once-closes/errors[]. Acquisition keeps
+strict loaded-idle config; later material checks do not query launchctl. This
+component holds NO Node/passive/typed-phase/actualPG/effect authority. Complete
+adapter/controller/entry and restrictive-reader startup remain required.
+
 ## Task5: authenticated entry, delivery and qualified dashboard checkpoint
 
 Files: scripts/deployment-dashboard-cutover-v2.mjs and builtin entry test;
