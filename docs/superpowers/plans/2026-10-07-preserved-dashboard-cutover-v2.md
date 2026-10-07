@@ -742,3 +742,33 @@ material gate05:49:42 errors[]/manifest8932f443 unchanged (first wrong-cwd
 252-resource diagnostic refused, then correct native-source cwd audit succeeded;
 no native/provider replay). Version2.3.79/English1965/path981 pass; unchanged
 MC3080/gateway18789 HTTP200,3333 absent. Scoped delivery does not satisfy Task3/4/5.
+
+## Task4a.5: retain the atomic publisher's consuming originals
+
+File Map: first-generation-v2.mjs + matching builtin test, exact nomination in
+Task4a.5 spec. Causal need: the filesystem leaf cannot retain a controller's
+original descriptors across its asynchronous child or supply a private handle.
+Keep old V2 API unchanged; no native/S10 prerequisite or actor census claim.
+
+- [x] Missing-production RED, independently handwritten V2 wire/hash oracle.
+- [x] Implement closed input/custody state and original child/FD retention.
+- [x] Real private-FS success/refusal, owned boundary faults/reentry, once-close
+  and permanent ROOT/lock preservation; independent review before delivery.
+- [ ] Consuming adapter authenticates full producer/cleanup/build/OS closure;
+  this reservation-only component does not qualify effect or startup admission.
+
+Task4a.5 receipt: genuine missing-module12FAIL/0PASS before source; late-lock
+metadata13-case12PASS/1FAIL before published-FULL close fix; short-interpreter
+14-case13PASS/1FAIL before exact original-size fix. Final20/0 plus103 affected
+existing gives123PASS/0FAIL/0SKIP. Five parent-capture error/overflow/malformed/
+missing-EOF cases are supplemental existing-behavior characterization: original
+fixed helper runs once and closes naturally before public refusal; all parent
+FDs stay live, retry touches zero ports, published paths persist. No capture
+fault causes a signal/timeout/cleanup/retry. Closed genuine handle is permanently
+spent. Expanded idle/foreign oracle counts account/FS/owner/Python boundaries.
+Source19d3035f/testb42e4223 have three read-only C0/I0/M0 reviews. Fresh actual
+255-original gate06:16:17UTC errors[]/manifest8932f443 unchanged; uncredited first
+shell invocation refused to parse before JS execution, corrected node heredoc
+succeeded. Version2.3.79/English1967/path983 pass. MC/gateway200,3333 absent.
+Full originals saved privately, not uploaded. This is not a full-suite/build,
+producer/OS-loader closure, complete controller or real-host startup acceptance.

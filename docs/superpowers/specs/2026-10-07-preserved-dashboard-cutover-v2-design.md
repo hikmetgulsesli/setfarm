@@ -1570,3 +1570,59 @@ Qualification is limited to newly owned retained private filesystem fixtures,
 including independent wire/hash expectations, existing-ROOT and source-alias
 refusal, both legacy-mkdir race orders, original FD survival and exact native
 error/failure custody. No canonical ROOT, listener, launchd or PostgreSQL effect.
+
+### Task4a.5 retained first-generation reservation custody
+
+File Map: scripts/deployment-dashboard-cutover-first-generation-v2.mjs and
+scripts/__tests__/deployment-dashboard-cutover-first-generation-v2.test.js.
+Keep old serialization exports unchanged. New exports:
+acquireFirstGenerationDashboardCutoverReservationV2(input):Promise<object>,
+assertFirstGenerationDashboardCutoverReservationV2(handle):void,
+closeFirstGenerationDashboardCutoverReservationV2(handle):void.
+Input is the existing strict plain-record two-hash snapshot. Invalid idle input
+consumes nothing; any active reentry burns before inspecting arguments.
+All three exports require exactly1 argument; fixed error
+DASHBOARD_FIRST_GENERATION_RESERVATION_REFUSED. Consume one valid acquisition
+before account/FS ports: idle→acquiring→held→closing→closed, selected failure→burned;
+never reset to idle. Closed/burned acquisition always refuses even if ROOT is
+externally removed. Foreign inactive handles refuse zero ports without burning
+the authentic held reservation.
+Returned empty frozen null-prototype WeakMap handle proves reservation custody only;
+labels never replace the consuming adapter's genuine owner/build authority.
+
+Account-derived ROOT and lock are fixed. Every existing canonical ROOT refuses
+before staging. Retain nofollow ancestors/baseline, exactly one stage-to-ROOT
+directory original, one lock original, and original fixed helper/interpreter file
+inputs. Canonical account path has9 filesystem originals plus2 provider inputs;
+bound the entire ledger to128. Interpreter is the fixed root-owned regular
+/usr/bin/python3 OS input, not nlink1 (installed hardlinks are not rewritten).
+Interpreter byte witness is capped16MiB, read in bounded1MiB chunks; total
+provider-input budget16MiB+65536. Reject overflow/short/changed originals.
+Helper is regular/nonblocking/nofollow/nlink1, bounded65536 bytes, and must match
+reviewed e65e3f49ac0ee41d52c82cfe9491ff631f3180c2311ef9424ce9849256436b38.
+Retained inputs are named/held/byte witnesses, not full Python/OS loader authority.
+Its consuming finalized source/build/OS profile must supply that closure.
+
+Create one exclusive UUID stage0700 and complete canonical lock0600, pin original
+FULL lock identity only after owned write, fsync file/directory, then reserve the
+sole Python attempt before spawning. Register returned child, original natural
+close settlement and both drain/EOF/error observers before the post-spawn burn
+check. Fixed isolated Python argv/env/cwd and FD3 baseline duplicate.
+Literal executable /usr/bin/python3, argv[-I,-S,-B,<fixed helper>,<stage leaf>],
+cwd/, env{PATH:/usr/bin:/bin:/usr/sbin:/sbin,LANG:C,LC_ALL:C,TZ:UTC}.
+Total output bounded16384 bytes with continued discard/drain, no signal/timeout/retry. Retain
+original settlement while failing; response/capture loss never drops child work.
+Drain remains allowed after burn; no later normal FS/process/effect port.
+
+Accept only exact fixed success wire, empty stderr, both EOF, natural status0/no
+signal. Recheck original stage inode under canonical ROOT, original lock FULL
+bytes, stage absence, held provider inputs, account and original owner; final
+publication-state fence precedes handle return. Never open/repin a replacement.
+Maintenance process observation remains its existing four-query composite with
+existing timeout semantics; the no-signal promise concerns the Python child.
+Failure retains ALL parent originals, no rollback/unlink/automatic close. Normal
+close consumes genuine held handle, checks/premarks identity and each reverse
+once-close; unknown stops, never repeats observation/close. ROOT and V2 lock stay
+durable after successful close, so this is intentionally one-generation only.
+Finite producer/root-history/cleanup proof, full adapter/entry and live admission
+remain separate. New qualification touches only owned retained private fixtures.
