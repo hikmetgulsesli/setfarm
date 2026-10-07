@@ -707,3 +707,38 @@ exact consuming inventories/package entries recorded alongside their edits.
   owner/fence/adapter condition is proven. Verify3333 and unchanged3080/18789.
 - [ ] Record dashboard checkpoint only; keep spawner refusal and whole-cutover/
   Task6A completion unresolved until their separate real acceptance campaigns.
+
+## Task4a.4: remove first-generation publication window
+
+Causal refinement: existing mkdir-then-lock publication permits a prepublication
+V1 entrant and therefore still needs a last-unlink drain. The current positively
+absent canonical ROOT permits the separately nominated absent-only atomic route.
+Use the exact Task4a.4 spec above, not sampled UID equality as completeness.
+File Map: atomic-root-v2.py + scripts/__tests__/deployment-dashboard-cutover-
+atomic-root-v2.test.js. Existing reservation and native/S10 artifacts unchanged.
+No production adapter/startup permission follows from this filesystem leaf.
+
+- [x] Genuine missing-production RED14/0PASS; no native call before input qualification.
+- [x] Implement bounded public Darwin syscall/checked-once child FD custody.
+- [x] Actual new private-FS GREEN38/0FAIL/0SKIP; affected103/0; three exact-source
+  reviews C0/I0/M0. Private originals preserved; no source/build/live admission.
+- [ ] Bind finite producer/root/cleanup closure in the consuming adapter; parent
+  originals and child settlement must be retained before any live publication.
+
+Task4a.4 receipt: sourcee65e3f49/test4c70e5de, freshFULL38c915aa; affected103
+includes38new+65existing, not the earlier558 full reader set. Review found
+pre-close observation retry and FIFO blocking: independent26-case23PASS/3FAIL
+RED8e4089 before source fixes. Nonblocking owned FIFO and one-shot unknown-state
+oracles now pass. Trap-counter/source-variant73 proves zero-port sensitivity.
+Every child close position and rejected/lost output retain path evidence, not
+rollback; exact native/sync/close counts prove nominated boundaries were reached.
+Order controls are deterministic, NOT concurrent-race acceptance. Async fixture
+capture drains both EOF without signals and retains all3parent originals after
+overflow/error. Early fixture cleanup/positional-offset/capture-wrapper bugs are
+preserved as uncredited originals, not production RED claims. Literal native
+flags0x34 are qualified only on these owned host fixtures. Existing canonical
+ROOT, lock, launchd/listener and PostgreSQL remain untouched. Actual255 original
+material gate05:49:42 errors[]/manifest8932f443 unchanged (first wrong-cwd
+252-resource diagnostic refused, then correct native-source cwd audit succeeded;
+no native/provider replay). Version2.3.79/English1965/path981 pass; unchanged
+MC3080/gateway18789 HTTP200,3333 absent. Scoped delivery does not satisfy Task3/4/5.

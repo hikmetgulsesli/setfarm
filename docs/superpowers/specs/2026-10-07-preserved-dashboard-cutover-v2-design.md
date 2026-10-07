@@ -1516,3 +1516,57 @@ Update applicable approved source inventories/manifest tests and affected packag
 test commands only when adding the actual consuming production unit. Record those
 exact updates before that task; do not weaken source authentication.
 No changes to PR275, native modules or existing accepted recipes.
+
+### Task4a.4 absent-only atomic ROOT publication
+
+The installed cooperative producer inventory supports a narrower alternative to
+sampled UID coverage: ROOT is monotonic within authenticated producer versions.
+Successful no-replace publication of a complete first-generation ROOT then
+excludes an older canonical-lock validator: its prior ROOT could not disappear.
+This is conditional namespace exclusion, not process quiescence. Unknown external
+namespace mutation remains outside contract. Bind every admitted producer to its
+actual module/root; configurable recursive cleanup roots must be positively
+disjoint or their entry routes excluded. Current absence alone does not certify
+this premise. Old repository-relative installs and private fixtures must never
+be projected onto the canonical ROOT by labels.
+
+File Map: add scripts/deployment-dashboard-cutover-atomic-root-v2.py and builtin
+script test. This is a filesystem publication leaf, NOT owner/startup authority.
+Invoke only /usr/bin/python3 -I -S -B with fixed sanitized environment and cwd/;
+FD3 is one inherited duplicate of the parent's held baseline-directory original,
+never the parent's original or an opaque ownership capability. Exactly one argv
+stage leaf: .dashboard-cutover-root.<lowercase UUIDv4>.stage. Fixed destination
+restart-authority-retirement-v1. No caller destination/path/provider/flags.
+
+Before native publication, derive the parent's bounded absolute named path only
+from public fcntl F_GETPATH(50) on FD3 (1024-byte buffer, terminated result), and
+recheck nofollow named/held parent identity. This is not an ancestor/source grant;
+the consuming parent supplies that retained closure. Authenticate staged
+directory0700, exactly one regular nofollow/nonblocking0600/nlink1 lock (FIFO
+cannot suspend type validation), canonical bounded
+V2 reservation wire/hash and same filesystem. Fsync file and staged directory.
+Use typed public libSystem renameatx_np with RENAME_EXCL|RENAME_NOFOLLOW_ANY|
+RENAME_RESOLVE_BENEATH (0x34), one attempt; unsupported flags/filesystems refuse
+without fallback. Every existing destination, including empty/symlink, refuses.
+After return, recheck original directory/lock against canonical named originals,
+stage absence and held baseline; fsync baseline. Directory immutable identity is
+dev/ino/type/mode/uid/gid/birthtime; own rename may change directory ctime and
+parent mtime/ctime. Lock FULL identity/bytes remain unchanged; never repin an
+arbitrary poststate. Register every returned child FD before its first fstat,
+including inherited FD3. Unsealed or unknown originals are not blindly closed.
+Premark each checked-once reverse close, stop at an uncertain/unsealed original;
+premark close-observation too: failed identity query/mismatch permanently latches
+unknown before failure disposal, with no second query or close attempt.
+fixed success wire requires all three originals known close-settled. Failure
+disposal closes only sealed originals under original immutable identity and
+never repeats an attempted close. Natural child exit does not certify uncertain
+cleanup. Failed/unknown publication never retries, repairs, removes or replaces any
+path. Parent retains its independent originals across child settlement and burns
+on any child/transport/post-observation uncertainty; no natural-exit rollback
+claim. Successful close preserves ROOT and V2 lock permanently. Reuse/release and
+live adapter admission require their own qualification; existing V2 API unchanged.
+
+Qualification is limited to newly owned retained private filesystem fixtures,
+including independent wire/hash expectations, existing-ROOT and source-alias
+refusal, both legacy-mkdir race orders, original FD survival and exact native
+error/failure custody. No canonical ROOT, listener, launchd or PostgreSQL effect.
