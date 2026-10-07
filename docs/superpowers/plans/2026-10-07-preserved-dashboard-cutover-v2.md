@@ -517,6 +517,51 @@ actual entry/adapter still supplies independently qualified effect authority.
   outputs/commands retained outside PR. No real browser/HTTP/build/listener or
   authenticated entry; those remain required. Prior facade7be4b392 exact-head
   GitGuardian SUCCESS2026-10-07T03:49:49Z, new UI delivery requires its own check.
+### Task4f.3: terminal restricted HTTP source adapter
+
+Spec: Task4f.3 in paired design. This causal root fix is required to consume the
+prepared reader without generic SQL/advanced-route fallback; startup stays closed.
+Files: create server/dashboard-core-readonly-http-v2.ts,
+server/dashboard-core-static-v2.ts and tests/dashboard-core-readonly-http-v2.test.ts;
+modify dashboard.ts for shared ordinary material/rules helpers only and package.json
+to register the new test in the normal pure suite.
+
+Interface: handleDashboardCoreReadonlyHttpV2(req:IncomingMessage,
+res:ServerResponse):Promise<void>; literal readDashboardCoreResponseV2 import,
+no preparation or injection. Shared ordinary/required loaders have distinct
+zero-argument exports, pure mergeDashboardRulesV2(system,custom,query).
+Static source identity is not startup admission.
+
+- [x] Write paired actual-handler route/complete-publication tests before source.
+  Example: GET /api/runs?workflow=&include_terminal=YES must invoke exactly
+  {kind:"runs",includeTerminal:true}, return complete JSON bytes with exact length;
+  POST /api/rules must503 with no reader/material/body ports.
+- [x] Run via existing candidate tsx loader and readonly package resolution;
+  verify genuine missing-handler RED, retaining full original output.
+- [x] Extract shared material/projection/filter helpers via apply_patch; preserve
+  ordinary catch behavior, add separate strict required exports. Implement fixed
+  handler route classification, awaited actual facade, staged complete4MiB payload.
+- [x] Run new tests + existing434 affected source cases, strict noemit and contracts.
+  Review exact code/test bytes independently for inputs, retention and startup.
+  Preserve actual255 resources. No dirty build bypass or service action.
+- [ ] Record original receipts privately, normal scoped commit/push PR280 and
+  exact-head scanner check. Real integrated facade/PG/socket/browser/Task5,
+  reviewed integration and NEW-revision clean-main rollout remain open.
+
+Source qualification:54 genuine missing-handler RED before source authoring,
+then54 GREEN. Review added corrupt required material/ordinary compatibility
+controls and four genuine empty-static/invalidHTMLUTF8 RED before correction;
+64 GREEN followed. Final69 adapter cases plus434 prior affected tests503/0;
+strict readonly noemit905/0, version2.3.79, English1962, paths980. Actual Node
+ServerResponse serialization into an owned memory Duplex is framing evidence
+only, no socket/parser/browser or integrated facade/PG proof. Three independent
+exact-byte reviews C0/I0/M0 at handlerc000291e/catalog51a771c0/test9ac318e1/
+dashboard5afe2651. Actual255 preservation04:19:53UTC errors[], both original
+dirty files unchanged. MC/gateway200,3333 refused; no host service change.
+Private original output and commands remain outside PR. Source adapter delivery
+does not complete Task4f.1, Task5, reviewed integration or clean-main/live rollout.
+Prior UI615a9356 exact-head GitGuardian SUCCESS2026-10-07T04:06:49Z.
+
 - [ ] Private actual-PG/HTTP qualification and independent source/resource review.
 
 Pure projection prerequisite delivery:27 genuine missing-module RED before

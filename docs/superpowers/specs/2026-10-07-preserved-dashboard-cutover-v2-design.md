@@ -1253,6 +1253,65 @@ unavailable provider or setup/transport failure is unqualified, never an accepte
 substitute for expected success. No mocks of OS/backend policy and no accepted
 S10 recipe replay. Genuine missing-provider RED precedes this source.
 
+### Task4f.3 terminal restricted HTTP dispatcher nomination
+
+File Map: new server/dashboard-core-readonly-http-v2.ts, shared
+server/dashboard-core-static-v2.ts, tests/dashboard-core-readonly-http-v2.test.ts,
+package.json normal pure-suite registration;
+dashboard.ts imports the shared ordinary loaders and pure rule merge/filter.
+No daemon, CLI, public startup guard, preparation, listener or SQL changes.
+
+Choose a terminal all-request handler with a literal actual facade import, not
+a legacy-handler mode or caller-supplied reader. Every request is handled without
+an unhandled/next/fallback return; end/destroy is attempted at most once each.
+Pending reads retain custody without a completion guarantee. End invocation is
+not transport finish or client receipt. Only GET:
+root, exact logo and GeistPixel font, workflows, runs, single literal-segment run,
+stories, observations, rules and rules/export. All other methods/paths are503
+with fixed unavailable JSON, zero body/token/legacy/reader/material ports.
+No absolute-form target, fragment, backslash, whitespace/control, malformed
+percent/UTF8 or dot-segment alias. Target limit16384 UTF8 bytes before parsing.
+Classify raw pathname without URL normalization; validate percent sequences but
+keep IDs percent-encoded, preserving ordinary literal lookup. Raw whitespace and
+backslash refuse; decoded query spaces remain legal (normal rule search).
+Decoded NUL/control/invalidUTF8 and encoded dot-segment aliases refuse. Query uses
+URLSearchParams first values; empty workflow is omitted; include_terminal accepts
+case-insensitive1/true/yes/on. IDs/workflow remain bounded by actual facade copy.
+
+Share existing category/scope/workflow projection and rule merge/filter, retaining
+ordinary best-effort loader semantics through separate ordinary exports.
+Restricted required loaders require source-owned membership: five workflow files
+bug-fix/daily-standup/feature-dev/security-audit/ui-refactor workflow.yml, and all
+current20 fragment plus12 reference markdown basenames listed literally in the
+shared module. Directories may include extra material but cannot omit that set;
+_fragments is not a workflow. Missing directory/file/required member or corruption
+refuses the whole response; no partial/empty substitution. Validate workflow id/name and
+step id/agent as strings. Required markdown reads are fixed bundled directories.
+Rules: system before custom, enabled boolean coercion, readonly false for custom,
+existing five filters. Export ignores query filters, wraps version1/exportedAt/
+rules with indent2 and existing attachment name. Missing run is404 fixed JSON.
+
+Serialize the complete final JSON once, enforce4MiB UTF8 after merge/filter/export
+and before headers; static bytes obey same cap and must be nonempty; HTML must
+UTF8-roundtrip without replacement. Binary asset authenticity remains Task5's
+source inventory obligation, not a MIME-signature inference. Publish exact staged bytes with
+Content-Length and fixed Content-Type/CORS, never raw error detail. Any source,
+facade, capacity or serialization failure is503 unavailable, no partial success.
+Install nonthrowing response error/close observers before first await; normal
+IncomingMessage close is not a client-loss signal. Async transport error/client
+loss retains original pending work. Transport already unusable gets no publication;
+post-header synchronous failure
+destroys original response, never second JSON. Original facade promise remains
+awaited after client loss; no cancel/close/replacement/retry or custody release.
+No atomic-network-delivery or client-receipt claim.
+
+First qualification executes actual handler/catalog with inert loader facade and
+filesystem/transport boundaries only: exact mapping, denied zero ports, populated
+and empty success, missing404, filters/export, required material fault, UTF8 caps,
+late read/client loss, framing and write failure. This is source-adapter evidence,
+not integrated facade/PG, actual socket/browser/startup or Task5 authority. Later
+qualified composition and authenticated entry remain mandatory.
+
 ## Verification / delivery / deployment
 
 TDD covers real record parsing, real private filesystem publication, actual
