@@ -2741,3 +2741,82 @@ Include natural no-work, known failure/logging and detached-parent controls.
 This supplies only current-instance registered JS queue termination. Legacy
 other-process cohorts, original gateway/Medic children, remote effects and the
 complete six-effect adapter remain separate required outcomes.
+
+## Task4i: approved dashboard-job endpoint revision
+
+The user's continuation on 2026-10-09 approves the previously asked narrow
+revision: add ONE fixed dashboard-owned MachServices entry. Original launcher
+files, deployments and worktrees remain held, immutable provenance. The new
+definition is a separately identified approved derivative, never described as
+byte-identical original restoration. Keep the original seven dashboard fields
+and all spawner material unchanged; add only
+`com.setrox.setfarm.dashboard-cutover.job.v4` with `ResetAtClose: true`.
+V1/V2 material validation and the qualified V3 transport remain unchanged.
+This supersedes only the earlier prohibition on this single addition.
+
+### Task4i.0: closed job-routed four-frame mechanics
+
+Create a distinct V4 C consumer. Fixed controller service is
+`com.setrox.setfarm.dashboard-cutover.control.v4`; the dashboard service is
+`com.setrox.setfarm.dashboard-cutover.job.v4`. No service-name argument,
+anonymous receive-port allocation, caller callback, retry, relookup or reset.
+The five frozen native methods are receiveControllerHelloV4(),
+challengeControllerAndReceiveAckV4(bytes), sendControllerGrantV4(bytes),
+helloClientAndReceiveChallengeV4(bytes), ackClientAndReceiveGrantV4(bytes).
+Input is intrinsic non-detached Uint8Array over ArrayBuffer, 1..1024 bytes,
+copied before any kernel port. The outputs remain frozen DATA-only byte and
+kernel audit-tuple records, or a frozen empty terminal record. Retain the V3
+atomic single-lifetime/environment and sticky uncertainty rules.
+
+Client checks in the fixed dashboard receive endpoint BEFORE looking up the
+controller. Controller checks in its own endpoint and receives HELLO. Only the
+second controller method looks up the fixed dashboard endpoint, exactly once.
+Use that original send occurrence for BOTH CHALLENGE and GRANT. Never deliver
+the challenge through a HELLO-supplied port. The four exact send profiles are:
+
+| Frame | Destination occurrence | Local disposition |
+| --- | --- | --- |
+| HELLO | original controller lookup, COPY_SEND | none |
+| CHALLENGE | original dashboard lookup, COPY_SEND | MAKE_SEND_ONCE from controller receive endpoint |
+| ACK | original CHALLENGE reply, MOVE_SEND_ONCE | none |
+| GRANT | original dashboard lookup, COPY_SEND | none |
+
+The client retains the incoming CHALLENGE reply occurrence before validation;
+only its successful ACK send settles it. All other received frames require no
+remote right. Validate exact header/dispositions, id, length, zero padding,
+voucher, audit trailer, and original HELLO/ACK or CHALLENGE/GRANT tuple equality.
+Each frame has distinct immutable storage. Unknown acquisition, send, receive,
+publication, disposal or reentry burns, retaining uncertain originals without
+blind destruction. Successful terminal mechanics dispose each owned receive
+and original lookup send occurrence once; this is not later listener liveness.
+
+The intended proof is fresh challenge access through the declared endpoint and
+original sender-birth continuity UNDER reviewed nonforwarding receiver code and
+retained declaring-job/source/build material. It is NOT universal receiver-birth
+attestation: receive rights are transferable and audit trailers identify the
+sender. The actual adapter must create and compare private unpredictable nonce
+and complete transcript, retain genuine owner/pre32/phase capabilities, observe
+phase5 restoration, publish phase6 intent before challenge/grant, and admit the
+same foreground CLI listener. Decoded bytes and successful transport never mint
+those capabilities. Existing safety guards and zero-owner conditions stay.
+
+Task4i.0 qualification compiles the actual C translation unit with doubled
+external Mach/BSM ports and calls its actual internal mechanics. These tests
+establish routing/disposition and post-burn port denial, NOT production step()
+failure-to-burn orchestration, kernel/job/domain/source AUTH or Node-API
+publication qualification. The harness sets private lifecycle for direct
+mechanics calls; that assignment earns no production burn credit.
+One separately enabled campaign retains
+all original compiler/consumer receipts, natural exit and both pipe EOF/close;
+no launchd jobs, provider, DB, ROOT, CLI or old native campaigns are exercised.
+
+Production composition additionally requires separate current-host negative
+check-in/collision/domain/reset qualification, held derivative material, exact
+sidecar build-input qualification and actual adapter/foreground consumer tests.
+Missing declarations must never be probed in ordinary production. Those remain
+required; no full cutover or completion follows from Task4i.0 alone.
+
+Primary interface evidence: [Apple bootstrap interface](https://raw.githubusercontent.com/apple-oss-distributions/launchd/main/liblaunch/bootstrap.h)
+documents receive-right check-in and send-right lookup; [Apple Mach overview](https://developer.apple.com/library/archive/documentation/Darwin/Conceptual/KernelProgramming/Mach/Mach.html)
+documents transferable rights. These are interface/trust-boundary evidence,
+not current-host qualification receipts.

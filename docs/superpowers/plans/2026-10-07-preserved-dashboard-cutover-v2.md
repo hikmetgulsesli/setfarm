@@ -1756,3 +1756,64 @@ Strictfcdd7f→25e5a4:1190files0diagnostics. Versionc834e0:2.3.79, Englishcb3a4a
 1985files, pathsbdb614:996files, diff77ad57 pass. No actual cleanup-ops PG import,
 timer/cron/gateway/native/ROOT/job/user-configuration effects; no dirty build.
 Local queue body termination only, not original children or remote effects.
+
+Task4h.2 delivery: final independent source/evidence C0/I0/M0, ae741547
+normal push, exact-head scanner SUCCESS and preserved DRAFT PR280 appendix;
+the historical unchecked delivery item above is superseded by this receipt.
+
+## Task4i.0: approved fixed dashboard-job transport mechanics
+
+Spec: paired Task4i. User approved the narrow launcher addition on 2026-10-09;
+no repeated permission question. Root remains sole writer; agents read-only.
+
+File Map: create scripts/dashboard-cutover-mach-job-peer-v4.c and
+scripts/__tests__/dashboard-cutover-mach-job-peer-v4.test.js. Update paired spec
+and this plan; private receipts/current handoff live outside tracked source.
+Do not modify V3 C/tests, V1/V2 material grammar or existing job definitions.
+
+Interfaces: five native methods named exactly in Task4i.0, frozen DATA-only
+results. Closed service names and four header profiles are spec constants.
+Internal acquire/send_frame/receive_frame/dispose mechanics have no permission
+arguments beyond their closed role/frame indices. No authority handle export.
+
+- [x] Write one opt-in compiled-C fixture campaign with an explicit pre-source
+  baseline mode selecting the unchanged V3 source ONLY for functional RED.
+  Call actual acquire/receive/send/dispose functions with inert external ports.
+  Client must check in job endpoint first; controller must independently look
+  up job endpoint and use that same send occurrence twice. Assert exact traces.
+- [x] Run baseline functional RED before new production source. The test must
+  fail on old anonymous-port/routing behavior, not missing compiler/import.
+  Retain originals and natural exit/EOF/close; do not replay baseline later.
+- [x] Implement distinct V4 C with these literal profile choices:
+  ```c
+  /* HELLO and GRANT: COPY_SEND, no local right. */
+  /* CHALLENGE: COPY_SEND, MAKE_SEND_ONCE from original controller receive. */
+  /* ACK: MOVE_SEND_ONCE of the retained CHALLENGE reply, no local right. */
+  ```
+  Keep every before/after admission, immutable frame, atomic state, intrinsic
+  input/publication rule. Replace anonymous allocation with job check-in.
+- [x] Qualify both success roles and uncertainty at check-in/lookup, four
+  send/receive boundaries, tuple mismatch, malformed header/right/padding,
+  and endpoint/send disposal. Require no later port dispatch after harness-set
+  burn; production step() failure-to-burn is separately reviewed, not credited
+  as dynamically qualified by these direct internal-helper calls.
+  Compile once per source campaign; fixed maximum 32 commands, zero jobs.
+  Fixed 20-second watchdog marks only, never kills or authorizes retry.
+- [ ] Strict compile and focused mechanics GREEN; syntax/contracts/diff plus
+  fresh independent exact-byte source and evidence review. No native kernel,
+  Node-API publication, job/source authentication or listener credit.
+- [ ] Scoped root commit/push/scanner and preserved DRAFT PR280 appendix after
+  reviews. Continue held derivative material, installed-host/job negatives,
+  sidecar/actual adapter/foreground and child/legacy closure obligations next;
+  clean-main build and live3333 are required before whole-goal completion.
+
+Task4i.0 original receipts: V3 baseline1bca4f 0PASS/1FAIL943.860083ms;
+two actual old-C route expectations fail, not compiler/import setup. V4
+95390a1PASS/0FAIL541.727167ms contains24cases/26commands/zerojobs, all natural
+status0/signalnull/bothEOF+close/no watchdog. Original directories53aakP/aCzsCG
+and private ledger logs/2026-10-09-dashboard-cutover-job-v4-mechanics-original.md
+retain exact command intents/results/builds. C64fc0322/test2640804d. Real-source
+strict -fsyntax-only e3b7380diagnostics; diff a89c5e passes. Port doubles establish
+mechanics/post-harness-burn denial only, not production step() burn/publication,
+native job/domain/source/build/phase/startup qualification. No live jobs or old
+campaign replay; all original material remains. Final review/delivery pending.
