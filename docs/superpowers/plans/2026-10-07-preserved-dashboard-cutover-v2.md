@@ -1200,7 +1200,7 @@ separately owned declared MachService, not ambient registration or socket metada
   Fix findings, then one separately reviewed opt-in invocation:
   `SETFARM_DASHBOARD_MACH_PEER_TEST=1 node --test scripts/__tests__/dashboard-cutover-mach-peer-v2.test.js`.
   At most3newjobs; no retry/kill/bootout. Retain partial/unknown job/artifacts.
-- [ ] Verify actual paired receipts/PIDs, native traces and exact imports/exports/
+- [x] Verify actual paired receipts/PIDs, native traces and exact imports/exports/
   deps. Run affected portable tests/contracts; independent final review and scoped
   PR delivery. Native echo GREEN is not source/build/owner/freeze/controller or
   real3333 acceptance. Sidecar builder/loader and full adapter remain next work.
@@ -1225,3 +1225,80 @@ was performed or provenance inferred. Do NOT credit the old255 gate as current.
 Both original dirty files' bytes/inodes and selected CLI link remain unchanged.
 This historical Task6A receipt gap is not a universal prerequisite or permission
 for the new independent closed echo recipe; full Task6A/live acceptance stays open.
+
+Task4g.1c delivery:c6e838ee committed/pushed, exact-head GitGuardian SUCCESS
+16:46:08UTC, fresh retained PR280 body append387069/36444bytes. Two final
+exact-byte C0/I0/M0 reviews independently inspected31 command results and actual
+paired receipts. Native-disabled21SKIP is not extra native GREEN. Whole PR is
+still OPEN DRAFT; no clean-main build or dashboard3333 acceptance.
+
+## Task4g.1d: retained direct native inputs
+
+Spec: paired Task4g.1d. File Map: new
+scripts/dashboard-cutover-native-inputs-v2.mjs, matching builtin test and
+scripts/__tests__/helpers/dashboard-cutover-finalized-fixture-v2.js; paired docs.
+Consumes genuine own finalized holder and fixed profile/direct files; produces
+zero-arg holdDashboardCutoverNativeInputsV2()->frozen{observation,recheck,close}.
+Observation authority is direct-inputs-only, never startup or full provider proof.
+Root implements; same-model agents independently investigate/review read-only.
+
+Ruling: separate direct-input custody from full builder/loader — actual clang
+exceeds existing reader cap and Node/ld have non-system dynamic dependencies;
+a whole-buffer shim or filename-only loader would misstate provider evidence.
+This slice genuinely holds/hash-checks original files, without compiler/jobs.
+Remaining include/dynamic provider/loader obligations stay explicit, not waived.
+
+- [x] Write missing-export/source RED actual consumer tests. Use genuine new
+  clean-main/finalized own fixtures, relocated fixed providers only in test copies.
+  Literal observation oracle: authority==='direct-inputs-only', ten direct files,
+  expected C/file SHA independently computed from original fixture bytes.
+- [x] Run `node --test scripts/__tests__/dashboard-cutover-native-inputs-v2.test.js`;
+  missing production module must fail before compiler/native effects.
+- [x] Implement activity/custody vault, fixed profile, real source/build holder,
+  physical original direct files/ancestors and bounded positional streaming.
+  Minimal streaming step:
+  `readSync(fd,block,0,Math.min(65536,size-position),position)`;
+  reject partial/zero/oversized reads, check metadata before/after and hash originals.
+- [x] GREEN actual retained fixture cases: invalid arity/profile zero ports;
+  cwd/env independence; dirty/nonmain/stale build refusal; symlink/hardlink/mode/
+  file-boundary rejection; streaming cap/short-read; file/ancestor ABA; activity
+  reentry/active close; sticky refusal and once-close/reusedFD unknown retention.
+- [x] Independent exact source/test/spec review before opt-in actual acquisition.
+  Run one `SETFARM_DASHBOARD_NATIVE_INPUTS_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test scripts/__tests__/dashboard-cutover-native-inputs-v2.test.js`.
+  Only NEW owned genuine fixture and real direct-file reads, no compiler, load,
+  native/Mach/launchd/PG, .setfarm creation or existing installation change.
+- [ ] Fresh affected suites/contracts/diff; final independent exact-byte review,
+  scoped commit/push/scanner and PR receipt. No normal build/main acceptance claim.
+- [ ] Full optional builder/include alias closure, dynamic provider nomination,
+  genuine private native loader, capability/freeze/controller/foreground CLI and
+  actual3333 acceptance remain separate incomplete obligations.
+
+Task4g.1d actual receipt2026-10-08: missing-source21FAIL before source/fixture
+effects. Initial pretty-BUILD_INFO/child syntax/transient-close oracle failures
+are UNQUALIFIED setup defects, not provider/native RED. Actual new close-reentry
+count6054c0 witnesses64vs1 before per-revocation correction; actual review29b351
+threeFAIL witnesses writable CLT intermediate acceptance and reused-FD64vs0.
+Root fixed common CLT anchors/upgrades and original-extra-FD preclose identity.
+Source/build composite semantics unchanged and explicitly scoped in spec.
+
+RO actualprofile caught /usr/bin/nm/otool nlink78 shim BEFORE actual acquisition;
+replace nomination with physical root0755,nlink1 CLTllvm-nm/llvm-otool, not guard
+relaxation. Fixture providers now new sibling outsideROOT; broad FS/Git zero-port
+spies and preimport cwd/env. Fixture Git environment/config/hooks/fsmonitor fixed.
+Three cap supplements earn no new behavior RED; fake512MiB FS size/read ports
+exercise real loop without GiB artifact; deep physical directories hit256 cap.
+First capsule off-by-one expected248vs249 corrected independently: five own
+parents+C+siblingroot=7,256-7=249. No production cap change or hidden failed test.
+
+Final portable444d07+723de2:28PASS/0FAIL/1SKIP15.6682s. Three exact code/recipe
+RO reviews before actual, final capsule gates C0/I0/M0. SINGLE nominated actual
+ca7efe+40d0c8:29PASS/0FAIL/0SKIP16.9273s. Genuine new fixture
+/private/tmp/setfarm-native-inputs-v2.o3EO3d retains real10 direct inputs,
+329,011,978 bytes, sourceC228be6c7 and own synchronized/finalized fixture build.
+Originals held through await/recheck then once-close;175 tracked opens/closes
+include genuine verifier transient reads, NOT175 extra native inputs.
+All new roots/provider siblings/previous-fixture-dist/result receipts retained.
+Root independent read ed7dc1 agrees10 inputs/source/profile/receipt/status0.
+No compiler/native load/Mach/jobs/PG/.setfarm creation, deployment/default build
+or current loaded image qualification. Node/@rpath/ld dynamic deps and full
+includes still unqualified; actual recipe does not run the oldnativecampaign.

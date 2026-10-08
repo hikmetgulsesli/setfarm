@@ -2053,3 +2053,92 @@ skip attachment despite job import success, and non-strict missing-name check-in
 can create a service. Do not treat this old source as current implementation or
 probe arbitrary undeclared names. Actual paired kernel receipts, not bootstrap
 status or launchctl print text, qualify this closed exchange.
+
+### Task4g.1d retained direct native inputs before sidecar compilation
+
+The optional sidecar needs original provider custody before it can compile or
+load. Current clang is290,664,032 bytes, larger than the existing33MiB reader;
+its resource directory21 is physical,21.0.0 is an alias. Select a bounded
+streaming direct-input holder rather than allocating a whole compiler buffer or
+claiming an unimplemented whole compiler/OS closure. This is a causal prerequisite
+of the already approved sidecar path, not a new universal admission gate.
+
+File Map: new scripts/dashboard-cutover-native-inputs-v2.mjs; its builtin test;
+new scripts/__tests__/helpers/dashboard-cutover-finalized-fixture-v2.js for real
+new owned Git/finalized output fixtures; paired design/plan. Default build,
+package commands, C source, dist and all existing installations stay unchanged.
+
+Export only holdDashboardCutoverNativeInputsV2(), exactly zero arguments,
+returning frozen{observation,recheck,close}. Derive checkout from import.meta.url;
+use the genuine holdCurrentFinalizedSetfarmSourceBuildV1() and keep that original
+context through explicit close. Profile before FS/Git ports: Darwin arm64,
+Node26.4.0 at /opt/homebrew/Cellar/node/26.4.0/bin/node, public Node-API>=8,
+nonroot actual UID. No cwd/environment/provider/options/root overrides. Invalid
+idle arity/profile refuses without ports; active reentry burns before inspection.
+
+Fixed direct files: own scripts/dashboard-cutover-mach-peer-v2.c; the Node binary;
+CLT usr/bin/clang and usr/bin/ld; physical CLT usr/bin/llvm-nm and llvm-otool;
+four public Node
+headers node_api.h,node_api_types.h,js_native_api.h,js_native_api_types.h under
+the fixed Node include/node directory. Physical anchors include those ancestors,
+CLT MacOSX26.5.sdk and physical usr/lib/clang/21. Own source files must belong to
+actual UID; provider files and ancestors AT/BELOW the fixed Node generation or
+CLT root must belong to root or that UID, non-group/other-writable, with physical
+nofollow identity. SDKs/usr/lib/clang intermediates are inside CLT protection;
+upgrade and revalidate an already-held directory if it later becomes protected.
+Ancestors above own checkout/Node generation/CLT root are identity-bound ambient
+anchors, NOT owner-private or mode-qualified (Homebrew Cellar is0775). Reject aliases/hardlinks,
+nonregular inputs, empty/oversized files and metadata/content drift including ABA.
+
+Hash via positional64KiB readSync blocks,512MiB/file,1GiB aggregate,256 extra
+descriptors. Hash originals again on recheck; check pathname and FD identities
+before/after each stream and all original ancestors. Files retain mode,size,
+links,dev/ino,birth,mtime,ctime,uid/gid; protected directories retain identity and
+timestamps, outer ambient ancestors identity only. This is not continuous outer
+directory exclusion or a whole descendant inventory.
+Preallocate each occurrence before open; seal returned FD before further checks.
+One lifetime acquisition and module activity/burn guard. Unknown acquisition or
+recheck retains original vault and refuses later acquisition; no auto-cleanup.
+The legacy source/build holder retains its unchanged internal failure semantics.
+
+Explicit idle close reserves closed state before ports, disposes extra original
+FDs in reverse order once, then invokes original source/build close once. Check
+each original FD dev/ino/birth/type immediately before close; identity mismatch
+or lookup uncertainty refuses without closing a reused number. Named-path or
+content drift does not forbid settling a still-proven original object. First
+unknown extra close stops all later close calls and retains remaining originals;
+never retry a consumed/reused descriptor. Active close burns without close ports;
+after actual synchronous activity unwinds, explicit close may settle originals.
+Count each new activity revocation separately: reentry while closing an already
+burned context must still stop later disposal. The original source/build close
+is a trusted unchanged composite, not a new per-internal-FS-call abort guarantee.
+Invalid method arity while idle refuses without burning healthy custody; active
+reentry burns even if swallowed. Failure messages are the fixed secret-free
+DASHBOARD_CUTOVER_NATIVE_INPUTS_REFUSED.
+
+Frozen observation is inert DATA: schema,authority='direct-inputs-only',profile,
+sourceBuild and files{role,locator,byteLength,sha256}. No FDs/raw handles, compiler
+execution, directory creation, native load, Mach service or startup authority.
+The Node executable hash does NOT prove current loaded executable identity or
+its @rpath libnode/Homebrew dependencies. SDK/resource directory pins do NOT pin
+all descendants; ld has non-system dependencies not pinned by this slice.
+Existing pristine dependency evidence has269 paths including one declared public
+SDK bootstrap.h alias; that include closure and alias custody must be separately
+nominated before actual production compilation, not silently realpathed here.
+Future builder also needs own ignored-parent bootstrap BEFORE retained root pin,
+exclusive generation, compiler/pipe custody, exact link inspection and manifest;
+future loader needs actual private load/cache contract and guarded native calls.
+
+Portable tests use the genuine source/build verifier and real private files;
+test-owned copies relocate only fixed provider literals to a NEW sibling provider
+root OUTSIDE own checkout, so ROOT protections do not mask provider ancestry.
+They nominate a closed
+process profile. This earns no actual Darwin/compiler qualification. Separately
+opt-in actual fixed-profile acquisition uses a NEW retained genuine own fixture,
+streams real tool bytes and rechecks/once-closes, without compiler/native/job
+invocation. Never edit/delete historical fixtures or infer process-exit cleanup.
+Fixed fixture Git calls suppress system/global config, hooks and fsmonitor;
+finalize's binary listing uses the same finite environment. /usr/bin/nm/otool
+were found to share a nlink78 Apple shim; do not weaken nlink1 or follow CLT
+symlinks. The nominated physical llvm tools are nlink1 root0755,33,125,008 and
+138,208 bytes respectively. All actual-direct tool/header inputs total about329MB.
