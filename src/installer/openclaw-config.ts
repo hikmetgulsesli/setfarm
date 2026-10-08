@@ -4,6 +4,7 @@ import { resolveOpenClawConfigPath } from "./paths.js";
 import { validateConfig, logValidationErrors, atomicWriteSync } from "./config-schema.js";
 import { logger } from "../lib/logger.js";
 import { assertOrdinaryConfigurationDeploymentCutoverAdmissionV2 } from "../internal-production/baseline-dashboard-cutover-configuration-refusal-v2.js";
+import { withDashboardCutoverLocalProducerAsyncV2 } from "../internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js";
 
 export type OpenClawConfig = {
   cron?: {
@@ -58,17 +59,19 @@ export async function writeOpenClawConfig(
   filePath: string,
   config: OpenClawConfig,
 ): Promise<void> {
-  assertOrdinaryConfigurationDeploymentCutoverAdmissionV2();
-  // Validate before writing to prevent persisting bad config
-  const errors = validateConfig(config);
-  if (errors.length > 0) {
-    const hasErrors = logValidationErrors(errors);
-    if (hasErrors) {
-      logger.warn(`[config] Writing config with ${errors.filter(e => e.severity === "error").length} validation error(s)`);
+  return withDashboardCutoverLocalProducerAsyncV2("configuration-write", async () => {
+    assertOrdinaryConfigurationDeploymentCutoverAdmissionV2();
+    // Validate before writing to prevent persisting bad config
+    const errors = validateConfig(config);
+    if (errors.length > 0) {
+      const hasErrors = logValidationErrors(errors);
+      if (hasErrors) {
+        logger.warn(`[config] Writing config with ${errors.filter(e => e.severity === "error").length} validation error(s)`);
+      }
     }
-  }
 
-  const content = `${JSON.stringify(config, null, 2)}\n`;
-  // Atomic write: temp file → rename (prevents corruption on crash)
-  atomicWriteSync(filePath, content);
+    const content = `${JSON.stringify(config, null, 2)}\n`;
+    // Atomic write: temp file → rename (prevents corruption on crash)
+    atomicWriteSync(filePath, content);
+  });
 }

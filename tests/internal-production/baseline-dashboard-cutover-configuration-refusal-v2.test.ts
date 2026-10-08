@@ -13,6 +13,7 @@ const source = new URL("../../src/internal-production/baseline-dashboard-cutover
 const observer = new URL("../../src/internal-production/baseline-deployment-cutover-v1.ts", import.meta.url).href;
 const records = new URL("../../src/internal-production/baseline-deployment-cutover-records-v1.ts", import.meta.url).href;
 const refusal = "DASHBOARD_CUTOVER_ORDINARY_CONFIGURATION_REFUSED";
+const drainSource = new URL("../../src/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.ts", import.meta.url).href;
 const json5 = createRequire(loader).resolve("json5");
 const fullConsumers = {
   writer: [new URL("../../src/installer/openclaw-config.ts", import.meta.url).href, "writeOpenClawConfig"],
@@ -30,6 +31,7 @@ function body(relative: string, name: string): string {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText;
   return `const {fs,path,validateConfig,logValidationErrors,logger,atomicWriteSync,
+withDashboardCutoverLocalProducerSyncV2,withDashboardCutoverLocalProducerAsyncV2,
 assertOrdinaryConfigurationDeploymentCutoverAdmissionV2,removeLegacyMedicCronJob,removeMedicAgent,
 installSystemdMedicTimer,uninstallSystemdMedicTimer}=env;const exports={};return(function(){${compiled};return exports[${JSON.stringify(name)}]})();`;
 }
@@ -56,7 +58,8 @@ if(${JSON.stringify(mode)}==='open')publish();if(${JSON.stringify(mode)}==='unkn
 const out={effects:[],traps:0};const effect=name=>()=>{out.effects.push(name);throw Error('OWNED_EFFECT')};
 let ports=0;const lstat=fs.lstatSync;fs.lstatSync=(...args)=>{ports++;return lstat(...args)};syncBuiltinESMExports();
 try{const m=await import(${JSON.stringify(source)});const guard=m.assertOrdinaryConfigurationDeploymentCutoverAdmissionV2;
-const bind=(factory,env)=>new Function('env',factory)({path,assertOrdinaryConfigurationDeploymentCutoverAdmissionV2:guard,...env});
+const drain=await import(${JSON.stringify(drainSource)});
+const bind=(factory,env)=>new Function('env',factory)({...drain,path,assertOrdinaryConfigurationDeploymentCutoverAdmissionV2:guard,...env});
 const base={fs:{writeFileSync:effect('write'),renameSync:effect('rename')},validateConfig:effect('validate'),logValidationErrors:effect('log-errors'),logger:{warn:effect('warn')},atomicWriteSync:effect('atomic'),
 removeLegacyMedicCronJob:effect('legacy-cron'),removeMedicAgent:effect('agent-config'),installSystemdMedicTimer:effect('install-timer'),uninstallSystemdMedicTimer:effect('uninstall-timer')};
 ${action}
@@ -157,6 +160,15 @@ const proxy=new Proxy({},{get(){out.traps++;throw Error('TRAP')}});`;
 }
 
 for (const kind of Object.keys(fullConsumers) as Array<keyof typeof fullConsumers>) {
+  test(`full imported ${kind} refuses held local gate before body or caller observation`, async () => {
+    const out = await fixture("absent", `drain.assertDashboardCutoverLocalProducerDrainV2(await drain.acquireDashboardCutoverLocalProducerDrainV2());`
+      + fullModuleEntry(kind) + `
+try{await fn(${kind === "writer" ? "owned,proxy" : kind === "atomic" ? "proxy,'owned-content'" : ""})}catch(e){out.refused=e.message}`);
+    assert.equal(out.error, undefined, JSON.stringify(out));
+    assert.equal(out.refused, "DASHBOARD_CUTOVER_LOCAL_PRODUCER_DRAIN_REFUSED");
+    assert.deepEqual(out.effects, []);
+    assert.equal(out.traps, 0);
+  });
   for (const mode of ["open", "unknown"]) {
     test(`full imported ${kind} refuses ${mode} before mutation or caller observation`, async () => {
       const out = await fixture(mode, fullModuleEntry(kind) + `

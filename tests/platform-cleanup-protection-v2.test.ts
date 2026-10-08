@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 const source = new URL("../src/installer/platform-cleanup-protection-v2.ts", import.meta.url).href;
+const drainSource = new URL("../src/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.ts", import.meta.url).href;
 const inheritedImport = process.execArgv[process.execArgv.indexOf("--import") + 1];
 const loader = inheritedImport && path.isAbsolute(inheritedImport)
   ? inheritedImport : createRequire(import.meta.url).resolve("tsx");
@@ -30,6 +31,7 @@ function consumer(relative: string, name: string): string {
     }] },
   }).outputText;
   return `const {fs,path,os,logger,getAgentWorkspacePath,killWorktreeProcesses,assertCleanupTargetOutsideBaselineV2,
+withDashboardCutoverLocalProducerSyncV2,withDashboardCutoverLocalProducerAsyncV2,
 readOpenClawConfig,writeOpenClawConfig,removeMainAgentGuidance,removeSubagentAllowlist,pgQuery,pgRun,pgGet,removeAgentCrons,
 resolveWorkflowDir,resolveWorkflowWorkspaceDir,resolveWorkflowRoot,resolveWorkflowWorkspaceRoot,resolveSetfarmRoot,
 stopDaemon,uninstallSetfarmSkill,deleteAgentCronJobs,execSync}=env;const importMeta={dirname:${JSON.stringify(path.dirname(fileURLToPath(filename)))}};
@@ -44,7 +46,7 @@ const home=${JSON.stringify(home)},baseline=${JSON.stringify(baseline)};const ac
 os.userInfo=()=>{ports++;return{...account,homedir:home}};
 ${setup}
 const out={};let api;const call=target=>{try{api.assertCleanupTargetOutsideBaselineV2(target);return null}catch(e){return e.message}};
-try{api=await import(${JSON.stringify(source)});${body}}catch(e){out.error=e.message}
+try{api=await import(${JSON.stringify(source)});const drain=await import(${JSON.stringify(drainSource)});${body}}catch(e){out.error=e.message}
 process.stdout.write(JSON.stringify(out));`;
   // The guard itself performs no deletion, signals or DB work. Keep all fixtures.
   const child = spawn(process.execPath, ["--import", loader, "--input-type=module", "-e", program],
@@ -95,7 +97,7 @@ for (const protectedTarget of [true, false]) {
     const out = await fixture(`const effects=[],events=[];const dirs=name=>path.join(home,'.openclaw',name);
 const record={id:'owned_workflow_agent',agentDir:${protectedTarget ? "baseline" : "dirs('agent-root')"}+'/.openclaw/agents/demo/agent'},config={agents:{list:[record]}};
 const effect=name=>()=>{effects.push(name);throw Error('OWNED_MUTATION')};
-const uninstaller=new Function('env',${JSON.stringify(factory)})({fs:{...fs.promises,rm:effect('rm')},path,os,
+const uninstaller=new Function('env',${JSON.stringify(factory)})({...drain,fs:{...fs.promises,rm:effect('rm')},path,os,
 readOpenClawConfig:async()=>{events.push('config-read');return{path:dirs('config.json'),config}},writeOpenClawConfig:effect('write-config'),
 removeMainAgentGuidance:effect('guidance'),removeSubagentAllowlist:effect('allowlist'),pgQuery:effect('database'),pgRun:effect('database'),
 resolveWorkflowRoot:()=>dirs('workflows'),resolveWorkflowWorkspaceRoot:()=>dirs('workspaces'),resolveSetfarmRoot:()=>dirs('setfarm'),
@@ -187,7 +189,7 @@ test("a formerly absent target redirected into baseline during the bracket refus
 test("agent workspace consumer refuses baseline ancestor before stale unlink, process-kill or recursive deletion", async () => {
   const factory = consumer("../src/installer/worktree-ops.ts", "cleanAgentWorkspace");
   const out = await fixture(`const effects=[];const io={...fs,rmSync(){effects.push('rm');throw Error('OWNED_MUTATION')},unlinkSync(){effects.push('unlink');throw Error('OWNED_MUTATION')}};
-const clean=new Function('env',${JSON.stringify(factory)})({fs:io,path,os,logger:{warn(){},info(){}},getAgentWorkspacePath:()=>path.dirname(baseline),
+const clean=new Function('env',${JSON.stringify(factory)})({...drain,fs:io,path,os,logger:{warn(){},info(){}},getAgentWorkspacePath:()=>path.dirname(baseline),
 killWorktreeProcesses(){effects.push('kill')},assertCleanupTargetOutsideBaselineV2:api.assertCleanupTargetOutsideBaselineV2});
 try{clean('owned-fixture')}catch(e){out.refused=e.message}out.effects=effects;`);
   assert.equal(out.error, undefined, JSON.stringify(out)); assert.equal(out.refused, refused); assert.deepEqual(out.effects, []);
@@ -197,7 +199,7 @@ for (const name of ["uninstallWorkflow", "uninstallAllWorkflows"]) {
     const factory = consumer("../src/installer/uninstall.ts", name);
     const out = await fixture(`const effects=[],record={id:'owned_workflow_agent',agentDir:baseline+'/.openclaw/agents/demo/agent'},config={agents:{list:[record]}};
 const effect=name=>()=>{effects.push(name);throw Error('OWNED_MUTATION')};const dirs=name=>path.join(home,'.openclaw',name);
-const fn=new Function('env',${JSON.stringify(factory)})({fs:{...fs.promises,rm:effect('rm')},path,os,
+const fn=new Function('env',${JSON.stringify(factory)})({...drain,fs:{...fs.promises,rm:effect('rm')},path,os,
 readOpenClawConfig:async()=>({path:dirs('config.json'),config}),writeOpenClawConfig:effect('write-config'),removeMainAgentGuidance:effect('guidance'),
 removeSubagentAllowlist:effect('allowlist'),pgQuery:effect('database'),pgRun:effect('database'),removeAgentCrons:effect('cron'),
 resolveWorkflowDir:()=>dirs('workflows/demo'),resolveWorkflowWorkspaceDir:()=>dirs('workspaces/demo'),resolveWorkflowRoot:()=>dirs('workflows'),
@@ -213,7 +215,7 @@ out.effects=effects;out.configSame=config.agents.list.length===1&&config.agents.
     const factory = consumer("../src/installer/uninstall.ts", name);
     const out = await fixture(`const effects=[],record={id:'owned_workflow_agent',agentDir:home+'/.openclaw/agents/demo/agent'},config={agents:{list:[record]}};
 const effect=name=>()=>{effects.push(name);throw Error('OWNED_FIRST_EFFECT')};const dirs=name=>path.join(home,'.openclaw',name);
-const fn=new Function('env',${JSON.stringify(factory)})({fs:{...fs.promises,rm:effect('rm')},path,os,
+const fn=new Function('env',${JSON.stringify(factory)})({...drain,fs:{...fs.promises,rm:effect('rm')},path,os,
 readOpenClawConfig:async()=>({path:dirs('config.json'),config}),writeOpenClawConfig:effect('write-config'),removeMainAgentGuidance:effect('guidance'),
 removeSubagentAllowlist:effect('allowlist'),pgQuery:effect('database'),pgRun:effect('database'),removeAgentCrons:effect('cron'),
 resolveWorkflowDir:()=>dirs('workflows/demo'),resolveWorkflowWorkspaceDir:()=>dirs('workspaces/demo'),resolveWorkflowRoot:()=>dirs('workflows'),
@@ -230,7 +232,7 @@ try{await fn({workflowId:'owned_workflow',removeGuidance:false})}catch(e){out.re
 const target=dirs('${name === "uninstallWorkflow" ? "workflows/demo" : "workflows"}');fs.mkdirSync(target,{recursive:true});let redirected=false;
 const io={...fs.promises,access:async name=>{if(name===target&&!redirected){fs.renameSync(target,target+'-original');fs.symlinkSync(baseline,target);redirected=true}return fs.promises.access(name)},
 rm:async name=>{deletions.push(name);throw Error('OWNED_DELETE_PORT')}};
-const noop=()=>{};const fn=new Function('env',${JSON.stringify(factory)})({fs:io,path,os,
+const noop=()=>{};const fn=new Function('env',${JSON.stringify(factory)})({...drain,fs:io,path,os,
 readOpenClawConfig:async()=>({path:dirs('config.json'),config}),writeOpenClawConfig:noop,removeMainAgentGuidance:noop,
 removeSubagentAllowlist:noop,pgQuery:async()=>[],pgRun:noop,removeAgentCrons:noop,
 resolveWorkflowDir:()=>dirs('workflows/demo'),resolveWorkflowWorkspaceDir:()=>dirs('workspaces/demo'),resolveWorkflowRoot:()=>dirs('workflows'),
@@ -245,7 +247,7 @@ test("workspace entry-level refusal cannot fall through into unlink or process-d
   const factory = consumer("../src/installer/worktree-ops.ts", "cleanAgentWorkspace");
   const out = await fixture(`const effects=[],workspace=path.join(home,'.openclaw','workspace'),alias=path.join(workspace,'alias');fs.mkdirSync(workspace,{recursive:true});fs.symlinkSync(baseline,alias);
 const io={...fs,rmSync(){effects.push('rm');throw Error('OWNED_MUTATION')},unlinkSync(){effects.push('unlink');throw Error('OWNED_MUTATION')}};
-const clean=new Function('env',${JSON.stringify(factory)})({fs:io,path,os,logger:{warn(){},info(){}},getAgentWorkspacePath:()=>workspace,
+const clean=new Function('env',${JSON.stringify(factory)})({...drain,fs:io,path,os,logger:{warn(){},info(){}},getAgentWorkspacePath:()=>workspace,
 killWorktreeProcesses(){effects.push('kill')},assertCleanupTargetOutsideBaselineV2:api.assertCleanupTargetOutsideBaselineV2});
 clean('owned-fixture');out.effects=effects;out.aliasRetained=fs.readlinkSync(alias)===baseline;`);
   assert.equal(out.error, undefined, JSON.stringify(out)); assert.deepEqual(out.effects, []); assert.equal(out.aliasRetained, true);
@@ -266,7 +268,7 @@ test("workspace rechecks a file-like alias between consumer lstat and unlink dis
 fs.mkdirSync(workspace,{recursive:true});fs.mkdirSync(destination);fs.symlinkSync(destination,alias);let retargeted=0;
 const io={...fs,lstatSync(name,...args){if(name===alias){fs.renameSync(alias,alias+'-original');fs.symlinkSync(baseline,alias);retargeted++}return fs.lstatSync(name,...args)},
 rmSync(){effects.push('rm');throw Error('OWNED_MUTATION')},unlinkSync(){effects.push('unlink');throw Error('OWNED_MUTATION')}};
-const clean=new Function('env',${JSON.stringify(factory)})({fs:io,path,os,logger:{warn(){},info(){}},getAgentWorkspacePath:()=>workspace,
+const clean=new Function('env',${JSON.stringify(factory)})({...drain,fs:io,path,os,logger:{warn(){},info(){}},getAgentWorkspacePath:()=>workspace,
 killWorktreeProcesses(){effects.push('kill')},assertCleanupTargetOutsideBaselineV2:api.assertCleanupTargetOutsideBaselineV2});
 clean('owned-fixture');out.effects=effects;out.retargeted=retargeted;out.originalRetained=fs.existsSync(alias+'-original');`);
   assert.equal(out.error, undefined, JSON.stringify(out)); assert.equal(out.retargeted, 1); assert.equal(out.originalRetained, true);

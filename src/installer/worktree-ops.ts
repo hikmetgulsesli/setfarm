@@ -11,6 +11,7 @@ import os from "node:os";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { assertCleanupTargetOutsideBaselineV2 } from "./platform-cleanup-protection-v2.js";
+import { withDashboardCutoverLocalProducerSyncV2 } from "../internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js";
 import { pgGet } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
@@ -1968,49 +1969,51 @@ const WORKSPACE_PRESERVED = new Set([
  * Call this before a new run claims a step for the agent.
  */
 export function cleanAgentWorkspace(agentId: string): void {
-  const ws = getAgentWorkspacePath(agentId);
-  if (!ws || !fs.existsSync(ws)) return;
-  assertCleanupTargetOutsideBaselineV2(ws);
+  return withDashboardCutoverLocalProducerSyncV2("workspace-cleanup", () => {
+    const ws = getAgentWorkspacePath(agentId);
+    if (!ws || !fs.existsSync(ws)) return;
+    assertCleanupTargetOutsideBaselineV2(ws);
 
-  // Also clean stale setfarm output files (prevents "Step not found" errors)
-  for (const staleFile of ['.setfarm-step-output.txt', 'setfarm-output.txt']) {
-    const stale = path.join(ws, staleFile);
-    try { if (fs.existsSync(stale)) { assertCleanupTargetOutsideBaselineV2(stale); fs.unlinkSync(stale); logger.info(`[workspace-clean] Removed stale ${staleFile} from ${agentId}`, {}); } } catch {}
-  }
+    // Also clean stale setfarm output files (prevents "Step not found" errors)
+    for (const staleFile of ['.setfarm-step-output.txt', 'setfarm-output.txt']) {
+      const stale = path.join(ws, staleFile);
+      try { if (fs.existsSync(stale)) { assertCleanupTargetOutsideBaselineV2(stale); fs.unlinkSync(stale); logger.info(`[workspace-clean] Removed stale ${staleFile} from ${agentId}`, {}); } } catch {}
+    }
 
-  try {
-    const entries = fs.readdirSync(ws);
-    let removed = 0;
+    try {
+      const entries = fs.readdirSync(ws);
+      let removed = 0;
 
-    for (const entry of entries) {
-      // Skip preserved system files
-      if (WORKSPACE_PRESERVED.has(entry)) continue;
-      // Skip hidden dirs other than .git (e.g. .openclaw)
-      if (entry.startsWith('.') && entry !== '.git') continue;
+      for (const entry of entries) {
+        // Skip preserved system files
+        if (WORKSPACE_PRESERVED.has(entry)) continue;
+        // Skip hidden dirs other than .git (e.g. .openclaw)
+        if (entry.startsWith('.') && entry !== '.git') continue;
 
-      const fullPath = path.join(ws, entry);
-      try {
-        assertCleanupTargetOutsideBaselineV2(fullPath);
-        const stat = fs.lstatSync(fullPath);
-        if (stat.isDirectory()) {
-          // Kill any orphaned processes in the directory first
-          killWorktreeProcesses(fullPath);
+        const fullPath = path.join(ws, entry);
+        try {
           assertCleanupTargetOutsideBaselineV2(fullPath);
-          fs.rmSync(fullPath, { recursive: true, force: true });
-        } else {
-          assertCleanupTargetOutsideBaselineV2(fullPath);
-          fs.unlinkSync(fullPath);
+          const stat = fs.lstatSync(fullPath);
+          if (stat.isDirectory()) {
+            // Kill any orphaned processes in the directory first
+            killWorktreeProcesses(fullPath);
+            assertCleanupTargetOutsideBaselineV2(fullPath);
+            fs.rmSync(fullPath, { recursive: true, force: true });
+          } else {
+            assertCleanupTargetOutsideBaselineV2(fullPath);
+            fs.unlinkSync(fullPath);
+          }
+          removed++;
+        } catch (e) {
+          logger.warn(`[workspace-clean] Failed to remove ${entry} in ${agentId} workspace: ${String(e)}`, {});
         }
-        removed++;
-      } catch (e) {
-        logger.warn(`[workspace-clean] Failed to remove ${entry} in ${agentId} workspace: ${String(e)}`, {});
       }
-    }
 
-    if (removed > 0) {
-      logger.info(`[workspace-clean] Cleaned ${removed} stale entries from ${agentId} workspace`, {});
+      if (removed > 0) {
+        logger.info(`[workspace-clean] Cleaned ${removed} stale entries from ${agentId} workspace`, {});
+      }
+    } catch (err) {
+      logger.warn(`[workspace-clean] Failed for ${agentId}: ${String(err)}`, {});
     }
-  } catch (err) {
-    logger.warn(`[workspace-clean] Failed for ${agentId}: ${String(err)}`, {});
-  }
+  });
 }

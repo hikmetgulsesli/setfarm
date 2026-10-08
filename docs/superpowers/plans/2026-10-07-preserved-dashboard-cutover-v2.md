@@ -1557,7 +1557,7 @@ All native refusal DASHBOARD_CUTOVER_MACH_CONTROL_REFUSED. No startup capability
   final independent reviews required before scoped delivery below.
   Keep actual loader/authentication/finite freeze/owner-phase/controller/CLI/
   clean-main/live3333 required outcomes open. Do not borrow old1f C qualification.
-- [ ] Complete final exact-byte independent reviews, root scoped commit/push,
+- [x] Complete final exact-byte independent reviews, root scoped commit/push,
   exact-head scanner and preserved DRAFT PR delivery receipt. This is not merge
   or whole-goal completion.
 
@@ -1575,4 +1575,102 @@ Parent16a038bc andinnerdbd82caforiginals preserved. Fixture source/tree/build
 notproductionmain. Focused direct/header8PASS4997.507ms; control-wire29PASS
 438.671ms using existing canonical tsx4.22.4 loader, initial absent-local-tsx
 setup not product failure. Syntax/version/English/path/diff pass. Finaldelivery
-pending, no loader/phase6/CLI/clean-main/live3333/full-project credit.
+proved in bcf1f84 with exact-head scanner SUCCESS and preserved PR280 body;
+no loader/phase6/CLI/clean-main/live3333/full-project credit.
+
+## Task4h.0: source-integrated local invocation admission and drain
+
+Spec: paired Task4h.0 below. Causal need: the existing ordinary OPEN and protected
+path assertions cannot retain already-entered new-version invocation originals.
+This slice supplies an actual monotonic local gate, not another observed count.
+It is independently useful source hardening; legacy, other-process, queued
+unregistered, child/backend/effect settlement and full adapter proof remain open.
+
+File Map: create src/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.ts
+and tests/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.test.ts;
+modify installer/openclaw-config.ts, config-schema.ts, uninstall.ts,
+worktree-ops.ts and medic/medic-cron.ts. Update existing configuration-refusal and
+platform-cleanup AST-selected consumer fixtures to bind the genuine new module,
+not identity wrappers. Preserve full imported consumers and all original guards.
+
+Interfaces: withDashboardCutoverLocalProducerSyncV2(kind,body):T and
+withDashboardCutoverLocalProducerAsyncV2(kind,body):Promise<T> are trusted internal
+source integration helpers; kind is the closed seven-entry vocabulary in spec.
+acquireDashboardCutoverLocalProducerDrainV2():Promise<object> takes no arguments;
+assertDashboardCutoverLocalProducerDrainV2(handle):void accepts only its actual
+private frozen empty handle. Neither takes caller observation, children, promise
+lists, completion flags or reset/release options.
+
+- [x] Add child-isolated builtin tests importing the actual module: pending
+  original promise with nested sync work; new-root denial; independently retained
+  detached registered invocation; ended ancestry; self-drain; rejected original;
+  wrong arity/foreign/proxy handles; reentrant acquisition burns. Literal ordering
+  assertions, e.g. `["entered","sealed","nested","returned","held"]`.
+- [x] Execute genuine missing-export/module RED before production source. Capture
+  natural child exit, both pipe EOF and close, no signal/watchdog/cleanup.
+- [x] Implement private AsyncLocalStorage records/Set, synchronous registration,
+  monotonic close-before-await, independent original-promise settlement and
+  WeakMap handle. No OS/DB/service/resource authority is minted.
+- [x] Wrap the seven actual public consumer bodies before any parameter read,
+  await or mutation; retain nested existing guards and original return/error
+  semantics. Entire sync cleanup wrapper stays outside its best-effort catches.
+- [x] Test actual AST-selected seven consumers composed with genuine registry;
+  held gate reaches zero body effects/getters. Pause admitted Medic before its
+  first await and returned timer promise; prove no intermediate handle, and
+  nested config/atomic remains possible subject to unchanged OPEN refusal.
+- [x] GREEN focused new + configuration refusal + cleanup consumer suites, strict
+  noemit using existing read-only toolchain, syntax/version/English/path/diff.
+- [ ] Fresh independent source and contract/evidence review; record exact local
+  claim only. Scoped commit/push/scanner/preserved DRAFT PR delivery, no merge or
+  live admission from this slice alone.
+
+Task4h.0 implementation receipt: amended missing-module19FAIL/0PASS
+0f3d51→010d75 capture1289.002ms (retained exact tool
+receipt in private logs); initial17FAIL1209.972ms had truncated outer reporting,
+not full-original credit. First implementation17PASS/2 latent AST fixture parse
+failures1272.017ms; corrected lexical factory scope/importMeta setup, no production
+guard weakening. First combined85PASS2337.467ms; supplemental held/wrong-instance
+and4full-imported closed-consumer controls91PASS2568.299ms.
+
+Fresh source review found native Promise await-adoption could release a pending
+original on constructor metadata error or spoofed own then. Three genuine
+functionalRED e4ed5b (0PASS/3FAIL402.609ms) demonstrate missing expected drain
+rejection, premature held state and wrong observer-error publication BEFORE the
+intrinsic settlement fix. Preserve originals, no reset/revert. Implementation
+observes actual native settlement via retained intrinsic then into its own
+terminal Promise; constructor/species observer uncertainty burns with original
+record retained and fixed refusal. The callback's own then never grants drain.
+
+```ts
+// Accounting follows intrinsic settlement, not `await original` metadata.
+observeOriginal(original,
+  value => { finish(record); fulfill(value); },
+  reason => { finish(record); reject(reason); });
+```
+
+Current sourceca2e9d2e/test1775a146:26new local cases plus37configuration and
+33cleanup =96PASS/0FAIL/0SKIP2602.332ms (6d3d39→205c76). Supplemental business
+throw/non-native tests are additional branch coverage, not new pre-source RED.
+Full strict noemit1189source/test/dependencyfiles0diagnostics actual045086; seven
+AST body-equivalence comparisons931b53 prove preserved original body statements
+including guards/order. Fresh version2.3.79/English1983/path996/diff-check pass.
+No full build on dirty source, native/provider/PG/services or user cleanup effects.
+Final exact-byte reviews/delivery pending; no child/effect/legacy/globalfreeze,
+controller, clean-main or live3333 qualification from this receipt.
+
+Final continuation: independent review found a known-burned pending acquisition
+could remain waiting on a deliberately retained unknown descendant record.
+FunctionalRED8ded74 (0PASS/1FAIL330.489ms) observes missing fixed refusal after
+the original outer body terminates. Added shared burn notification: wake only
+the acquisition so it rejects, without removing any unknown record, canceling
+operations or reopening. Temporal spec wording now distinguishes initial RED,
+causal later REDs and supplemental coverage correctly.
+
+Current frozen sourceebdd0de2/test17d69ac4:27local+37config+33cleanup97PASS/0FAIL/
+0SKIP2477.044ms actualc76c8b→d66994. Strict1189files0diagnostics16d3c3; all seven
+original AST bodies unchangedb8ac8b; version2.3.79/English1983/path996/diff3cfa5a.
+These fresh originals are included in the private evidence ledger, superseding
+the earlier reviewer-unavailable AST/contract originals. No native campaign,
+provider, PG, service, selector, ROOT or user cleanup mutation. Current HTTP:
+MC3080/api/projects200, gateway18789200, dashboard3333000/curl7. Final two-seat
+exact-byte review and scoped delivery remain pending.

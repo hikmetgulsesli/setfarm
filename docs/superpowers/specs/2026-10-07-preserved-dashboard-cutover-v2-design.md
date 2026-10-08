@@ -2595,3 +2595,91 @@ Syntax/version2.3.79/English1981/path995/diff pass. This qualifies mechanics and
 private compile/inspection DATA only; private actual load/authentication, finite
 drain, genuine owner/phase6, child startup grant, controller/foregroundCLI and
 clean-main/live3333 remain open. No default-build, live-service or full-goal claim.
+
+### Task4h.0 genuine source-integrated local invocation gate
+
+The retained original invocation problem is causal to the approved cutover, but
+a new registry cannot enroll historical loaded actors. Implement a narrowly
+qualified new-version local gate, not a global freeze certificate. Alternatives
+are a sampled empty count (insufficient) or full cross-process/child authentication
+in one unit (not yet nominated). Choose the real local gate with explicit limits.
+
+New internal module baseline-dashboard-cutover-local-producer-drain-v2.ts owns
+one ESM-instance lifetime. Trusted source helpers
+withDashboardCutoverLocalProducerSyncV2(kind,body) and
+withDashboardCutoverLocalProducerAsyncV2(kind,body) use exactly these primitive
+string kinds: `configuration-write`, `atomic-configuration-write`,
+`medic-install`, `medic-uninstall`, `workflow-uninstall`, `all-workflows-uninstall`,
+`workspace-cleanup`. They are internal source integrations, not user callback
+endpoints or controller/owner grants. No injected observation, original promise
+list, child, process identifier, root, settled flag, reset or release exists.
+
+Register the original invocation synchronously before calling its body. Retain
+its actual returned native Promise until fulfillment or rejection, and retain
+each independently registered nested invocation separately. AsyncLocalStorage
+provides private original ancestry, never a caller continuation token. Ordinary
+behavior before closure stays unchanged: a delayed ended ancestry may enter as
+a new root while admission is still open. After closure it cannot enter. An
+already registered, still-live descendant may complete and register its own
+nested local calls even if its parent body has ended. A sync body returning a
+Promise is protocol uncertainty and burns rather than falsely declaring drain.
+Retain that mistaken original and observe its eventual rejection when observation
+is known; burn is not permission to discard it. Use the retained intrinsic native
+then for settlement accounting, not await adoption or an own `then` method. If
+constructor/species metadata makes observer registration unknown, burn and retain
+the original with fixed refusal; do not claim its future rejection was observed.
+Never finish a record merely because adoption/observer setup threw.
+
+Zero-argument acquireDashboardCutoverLocalProducerDrainV2 permanently closes
+fresh roots synchronously, before its first await. It waits for all admitted
+original bodies/promises and registered descendants to terminate. No timeout,
+polling, signal, cancellation, cleanup or automatic reopening. Calling acquire
+inside a live local producer refuses before waiting on itself and does not
+consume the outside acquisition. Invalid idle arity refuses before caller code
+or closure. A second valid acquisition attempt burns the first/held generation;
+swallowing that refusal cannot produce a handle. Unknown accounting also burns.
+Burn notifies an already-pending acquisition to publish fixed refusal, while
+retaining every unknown record/original. Do not leave a known-burned acquisition
+waiting for a Set that deliberately cannot become empty; no operation is canceled.
+
+Mint only when closed admission and the actual live Set is empty, with no burn:
+an empty frozen null-prototype object held in a private WeakMap. The synchronous
+assertDashboardCutoverLocalProducerDrainV2 validates this original handle plus
+closed/empty/unburned state. Foreign, copied, proxied or wrong-instance handles
+refuse without caller traps; invalid assertion does not mint or replace anything.
+Fixed error: DASHBOARD_CUTOVER_LOCAL_PRODUCER_DRAIN_REFUSED.
+
+Wrap writeOpenClawConfig, atomicWriteSync, installMedicCron, uninstallMedicCron,
+uninstallWorkflow, uninstallAllWorkflows and cleanAgentWorkspace around their
+entire existing bodies. The wrapper precedes consumer parameter inspection and
+first await/port. Existing OPEN refusal, path protection, rechecks and caller
+return/error behavior remain. Admitted nesting stays possible during drain,
+but cannot bypass those existing guards. Return adoption must include Medic's
+original returned installSystemdMedicTimer Promise. The sync cleaner's wrapper
+is outside its best-effort catches, so fresh denial cannot be swallowed inside
+the body and followed by later deletion attempts.
+
+The capability proves ONLY this module instance's nominated registered
+JavaScript invocation termination and denial of fresh local entry. Rejection is
+observed body termination, NOT effect settlement. It proves neither original
+child/pipe exit, remote response/effect settlement, daemon death, old-module or
+other-process drain, all queues, Worker instances, direct guidance/gateway/Medic
+runtime entrypoints, transition-helper exclusion, ROOT preservation nor startup
+authority. An unregistered queued callback is denied at the wrapped boundary;
+its earlier unwrapped effects are not covered. The existing lost teardown chain,
+discarded timed execFile children and stale ROOT-unlink counterexample remain
+separate obligations. Full adapter composition must authenticate/settle those
+originals independently; a fresh empty registry is never legacy closure.
+
+Qualification uses genuine module handles and actual selected/imported consumer
+bodies with inert external ports. Natural test children retain exit/EOF/close;
+no provider, launchd, native campaign, PG, real cleanup or user configuration
+mutation. The amended nineteen missing-module cases precede the initial source;
+three native-metadata functional REDs precede the intrinsic-accounting fix and a
+pending-descendant-burn functional RED precedes waiter notification. Additional
+held/wrong-instance, business-error/non-native and full-imported consumer cases
+are supplemental coverage after implementation, not pre-source RED. The final
+matrix has nineteen lifecycle cases, seven AST-selected fresh-consumer denials
+and one Medic original-return control; four full-imported configuration/Medic
+closed-gate controls and prior guard suites also pass. No live effect follows
+from this local handle alone.
