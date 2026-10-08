@@ -1267,7 +1267,7 @@ Remaining include/dynamic provider/loader obligations stay explicit, not waived.
   Run one `SETFARM_DASHBOARD_NATIVE_INPUTS_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test scripts/__tests__/dashboard-cutover-native-inputs-v2.test.js`.
   Only NEW owned genuine fixture and real direct-file reads, no compiler, load,
   native/Mach/launchd/PG, .setfarm creation or existing installation change.
-- [ ] Fresh affected suites/contracts/diff; final independent exact-byte review,
+- [x] Fresh affected suites/contracts/diff; final independent exact-byte review,
   scoped commit/push/scanner and PR receipt. No normal build/main acceptance claim.
 - [ ] Full optional builder/include alias closure, dynamic provider nomination,
   genuine private native loader, capability/freeze/controller/foreground CLI and
@@ -1302,3 +1302,84 @@ Root independent read ed7dc1 agrees10 inputs/source/profile/receipt/status0.
 No compiler/native load/Mach/jobs/PG/.setfarm creation, deployment/default build
 or current loaded image qualification. Node/@rpath/ld dynamic deps and full
 includes still unqualified; actual recipe does not run the oldnativecampaign.
+
+Delivered Task4g.1d: root0a54a099 scoped commit/push, exact GitGuardian SUCCESS
+17:29:16UTC86574e; two final exact-byte C0/I0/M0 reviews; PR280 stays OPEN DRAFT.
+Append031356 preserved37995byte body, SHA3b8c8bf44e661683f2c8b4d314e0e58491d64e51c9af21111a501d9f35420c6a.
+
+## Task4g.1e: closed compiler discovery and retained headers
+
+Spec: paired Task4g.1e. File Map: new
+scripts/dashboard-cutover-native-build-inputs-v2.mjs and matching builtin test;
+paired docs only. Consumes genuine direct holder, fixed physical clang and own C;
+produces zero-arg async prepareDashboardCutoverNativeBuildInputsV2(), private
+frozen observation/recheck/close context. Compiler-dependencies-only DATA, not
+build/load/loaded-image/startup authority. Root sole writer, RO reviewers.
+
+- [x] Write actual consumer tests BEFORE production: missing module refuses
+  before fixture/compiler; genuine owned source/build, fixed relocated sibling
+  providers, original headers across await, declared alias identity; literal
+  recipe/source/env oracle; malformed/foreign/duplicate/escaped dependencies,
+  second-graph mismatch, writable/symlink/hardlink/short-read/ABA/reentry/unknown
+  child/FD close, size/count/output caps and sticky zero-later-spawn refusal.
+  Spawn-return reentry oracle: admit original child/pipes before post-spawn burn
+  checks, no source pipe write or second spawn after swallowed revocation.
+- [x] Run `node --test scripts/__tests__/dashboard-cutover-native-build-inputs-v2.test.js`
+  and retain complete missing-source RED output. Production not yet present.
+- [x] Implement one private module vault, genuine direct context, bounded own-C
+  copy, fixed recipe and once-admitted async child/pipe event ledger. Await
+  `discover('provisional')`, hold validated originals with separate512FD cap,
+  await `discover('held-validation')`, compare sorted lexicalsets, recheck.
+  Reject all unknowns; never kill/destroy/retry or expose raw originals.
+- [x] GREEN portable consumer cases; root self-review and independent exact
+  source/test/spec/actual recipe reviews before any new real compiler execution.
+- [x] Single opt-in actual command:
+  `SETFARM_DASHBOARD_BUILD_INPUTS_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test scripts/__tests__/dashboard-cutover-native-build-inputs-v2.test.js`.
+  New own fixture only; real fixed compiler two planned stdout discoveries, no
+  object/addon/native load/launchd/PG/.setfarm/default build/service mutations.
+- [ ] Fresh focused affected suites/contracts/diff, actual original receipt
+  inspection, final RO exact-byte review, scoped commit/push/scanner/PR receipt.
+  No normal build/main/3333 credit. All full capability/freeze/CLI obligations
+  remain required by the parent plan after this separately reviewable slice.
+
+Task4g.1e preactual receipt2026-10-08:07fc34 genuine missing-source26FAIL1SKIP
+before fixture/compiler effects. Firstportable9e483b+0f1b31+751d0d26PASS/0FAIL/
+1SKIP36.551s. Two RO reviews caught killing outer timeout/maxBuffer and absent
+raw compiler command/pipe results BEFORE any actual compiler invocation; root
+fixed test-only outer runner, no source guard change. New once-admitted actual
+intent/returned child/pipes/raw bytes/events are emitted in finally, sibling
+result persists before assertions. No-kill/cancellation credit from fixture exit.
+
+Supplemental caps/lifecycle cases were added after initial source and earn no
+new behavior RED. Two oracle-error rounds3e68d2+7867e6 and5fd612+f8518c retained
+all roots/results: mid-close FD selection allowed14 earlier proven closes;
+nochild-close had naturally closed pipes; creation/truncate opens contaminated
+acquisition counts; one-root depth remained below512; historical numeric FD
+closes included verifier transients. Root corrected independent oracles, active
+occurrence spies and384-multi-root graph, never altered source79071e6b/caps.
+Fresh fullportable1945c6+daca49:41PASS/0FAIL/1SKIP59.0091s. RO then strengthened
+385-path oracle with zero named-header lstat queries so nonexistent files cannot
+mask a removed count guard. Focus rerun required; actual invocation still gated.
+Version2.3.79/English1979/path993/syntax/diff97eaa7 pass. Original two file SHA
+unchanged; MC2d8d73=200/gatewayffdf08=200/333383665d=curl7/000.
+
+Task4g.1e SINGLE actuale194a7+e598ce+bec444 at18:02UTC:42PASS/0FAIL/0SKIP
+62.810183292s. Finalcountfocus1b7997=1PASS; valid stdout overflow and stderr
+prewatchdog/nochildclose fc91aa+c79444=2PASS/0FAIL2.040475s. Two final preactual
+RO gates C0/I0/M0 exact source79071e6b/test4c5a1550/spec10df994a/plan4b6d7cc7.
+No actual setup failure/unknown acquisition or compiler retry in this invocation.
+
+Actual new genuine fixture /private/tmp/setfarm-native-inputs-v2.SRoXqu and
+sibling.build-inputs-result.json retained (187983B,SHAe8f2a53410c2420fd0eed17ff5341797e3c5e0cda519129ea535db7bf2c74900).
+Fixed physical clang produced two24243B stdout originals with identical SHA
+11ceabfb32853ea5375de5bc804ce61a084f59f8ed0626076fb7d804d02d4fdc;
+zero stderr, actual stdin finish/close, both output end/close, child code0/no
+signal/error. Exact C228be6c7 copied to both original stdin occurrences.268
+distinct physical header originals2345321B, only declared bootstrap alias;
+817opens/817closes INCLUDE genuine verifier transients and direct custody,
+NOT817 include pins. Fullactualcase4.1494s; no .setfarm/object/native/Mach/jobs/PG.
+Root independent receipt d48900 compares original bytes/graph/events/hash and
+source/build tuple38e05378/c36a6088/601826b1; genuine FIXTURE main/origin proof,
+NOT production clean-main build. Source/test unchanged; no provider override
+in actualfixture. Related direct28/0/1SKIP15.7295s and original-source44/0/0SKIP
+18.0735s fresh e9a902+6d4610/d3958b+a3e6c4. WholePR remains draft, no3333 credit.

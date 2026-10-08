@@ -2142,3 +2142,91 @@ finalize's binary listing uses the same finite environment. /usr/bin/nm/otool
 were found to share a nlink78 Apple shim; do not weaken nlink1 or follow CLT
 symlinks. The nominated physical llvm tools are nlink1 root0755,33,125,008 and
 138,208 bytes respectively. All actual-direct tool/header inputs total about329MB.
+
+### Task4g.1e closed compiler dependency discovery and retained headers
+
+Choose a separately bounded clang-M data preparation rather than a whole
+compiler/linker/loaded-Node certificate or a filename-only build. The direct
+holder is already delivered; the remaining headers are causally required by the
+approved sidecar. clang's observed direct dylib dependencies are system-only;
+the already-running Node controller remains trusted, NOT certified loaded code.
+No compilation/link/load, native/Mach/launchd/PG, output directory, .setfarm or
+startup effect belongs to this slice. Preserve existing inputs and services.
+
+File Map: new scripts/dashboard-cutover-native-build-inputs-v2.mjs and its
+builtin test; paired design/plan. Existing direct holder and its256FD budget,
+genuine source holder, C, package/default build and dist remain unchanged.
+Export only zero-arg async prepareDashboardCutoverNativeBuildInputsV2(), returning
+frozen{observation,recheck,close}. No caller context, root, provider, environment
+or cwd selection. Privately retain genuine holdDashboardCutoverNativeInputsV2().
+Copy own C with64KiB cap from own import.meta checkout and bind its observed hash
+before effects. One lifetime preparation, active-reentry revocation, sticky burn,
+secret-free DASHBOARD_CUTOVER_NATIVE_BUILD_INPUTS_REFUSED. Invalid idle arity
+refuses without ports; active reentry burns, including method calls during await.
+
+Fixed physical clang uses --no-default-config, -nostdinc, -std=c11,
+-DNAPI_VERSION=8, -arch arm64, -mmacosx-version-min=14.0, explicit SDK26.5 and
+resource21, explicit Node/resource/include/SDK/usr/include search roots, explicit
+SDK System/Library/Frameworks search, -M -MT setfarm-cutover-inputs -x c -.
+Finite environment PATH=/usr/bin:/bin, LANG/LC_ALL=C, TMPDIR=/private/tmp;
+cwd=/private/tmp, no shell. Source goes to stdin; dependencies to stdout.
+LLVM command-line reference documents -M includes system headers, implies -E,
+defaults stdout; -MT fixes target; --no-default-config suppresses config files,
+-nostdinc suppresses implicit search. These upstream facts do not certify this
+Apple compiler's version; one reviewed actual fixture invocation is required.
+Primary source: https://clang.llvm.org/docs/ClangCommandLineReference.html .
+
+Exactly two PLANNED successful discovery phases: first provisional lexical
+graph, then the identical recipe while every discovered original is held.
+The second must return exactly the same sorted lexical set. Neither phase
+retries an unsuccessful or unknown child. At most2children,256KiB stdout,
+64KiB stderr,30s mark-only watchdog per phase. No kill/destroy/cancellation or
+later spawn after burn. Record original child and stdin/stdout/stderr occurrence
+before writing C; preallocate each child occurrence BEFORE spawn admission, seal
+the returned child and all three pipes BEFORE any post-spawn burn check. Keep
+buffers/events private. Require actual stdin finish and
+close, output end and close, zero stderr, child close status0/no signal and
+successful write callback. Error/overflow/timeout/unknown burns and retains
+original resources; later events only record state, never authorize recovery.
+No closure while an original child has not actually closed, even after promise
+rejection. Watchdog refusal is not evidence of child cancellation or settlement.
+
+Strict bounded Make depfile parsing accepts the fixed single target, line
+continuations and escaped printable path whitespace, no raw control/NUL,
+comments/variables/extra rules or malformed escapes. Ignore only one nominated
+stdin sentinel ('-' or '<stdin>'); require nonempty unique canonical absolute
+paths under the three fixed roots: Node include/node, resource21/include, SDK.
+At most384 headers,4MiB/header,32MiB aggregate,512 extra include FDs. Own separate
+header vault keeps direct cap unchanged. Hold nofollow original regular nlink1
+root/actualUID non-group/other-writable files and physical parent directories;
+protected timestamps at/below Node generation/CLT, outer ambient identity only.
+Premark pin before opening; seal returnedFD before burn check; hash in64KiB
+positional blocks; name+FD identities checked around reads and on every recheck.
+Only declared SDK usr/include/servers/bootstrap.h symlink with raw target
+../bootstrap.h is allowed. Retain its lstat/readlink identity and physical target
+usr/include/bootstrap.h plus parents; no generic realpath aliases. Reject other
+symlinks, hardlinks, repeated physical files, escapes, foreign roots and drift.
+Historical269-path diagnostic is not an acceptance count for stdin discovery.
+
+Recheck holds original direct context before/after include checks and across
+await. Explicit idle close first proves original child closure, premarks closed,
+then reversely validates dev/ino/birth/type and once-closes own include FDs,
+then trusted direct context once. Stop at first unknown/reentry; consumed FD
+numbers never retried. Named/content drift need not prevent disposal of a
+still-proven original FD. Existing source/direct composite semantics unchanged.
+Frozen observation reports authority='compiler-dependencies-only', direct DATA,
+header lexical/physical locators, byteLength/hash, optional declared raw alias
+and two completed discovery receipts; never handles, a grant or compile proof.
+
+Portable tests execute actual production code in new genuine owned fixtures;
+test copies only relocate fixed provider literals and nominate runtime profile.
+Double ONLY async external compiler spawn with original stream event mechanics,
+keeping genuine Git/verifier/files/FD/hash/parser/guards. Default runs make no
+actual compiler calls. Separately opt-in fresh actual fixed Node26.4 fixture,
+review recipe before invocation, retain whole outputs/roots/results. Any actual
+setup failure remains visible and earns no qualification/retry credit.
+The outer test-owned Node runner has no killing timeout or maxBuffer stop;
+trusted fixture printing is bounded by the production data/count/path limits.
+Actual child command intents, original source/stdout/stderr bytes and original
+pipe/child events are retained in the sibling result receipt, before assertions
+can misstate success. Natural fixture exit is not unknown-child settlement.
