@@ -1129,3 +1129,45 @@ specbfa5956b/planf4840159 before this receipt-only annotation. Postnative fresh
 preservation255/errors[]09:14:06UTC unchanged8932f443, originaldirtyfiles and
 acceptedTask6A/PG evidence. No bootstrap/launchd/selector/ROOT/PID/listener/PG
 mutation; local diagnostic only. Full remote adapter/controller/startup pending.
+
+## Task4g.1b: retain own-generation finalized source/build proof
+
+Spec: paired Task4g.1b. File Map: scripts/build-generation-retention.mjs;
+scripts/__tests__/build-generation-retention.test.js; paired design/plan.
+Consumes the private holdFinalizedSetfarmSourceBuildAtRootV1(root,true).
+Produces zero-argument holdCurrentFinalizedSetfarmSourceBuildV1() -> frozen
+{observation,recheck,close}, with the exact existing filesystem proof/semantics.
+It supplies the own-generation retained input needed before native sidecar work;
+it does not qualify sidecar, loaded runtime, ownership or live startup.
+
+- [x] Add export inventory and actual-fixture behavior tests before the export:
+  held originals through await, independent own root, zero ports for invalid
+  arguments, sticky source/output drift and once-close loss safety. Use existing
+  createFixture/writeFinalizedRuntimeDist and independently expected hashes.
+- [x] Run `node --test --test-name-pattern='current finalized|held current|imports the operator' scripts/__tests__/build-generation-retention.test.js`.
+  Missing export must cause assertion failures, not unrelated fixture errors.
+- [x] Implement only the zero-input bridge:
+
+  ```js
+  export function holdCurrentFinalizedSetfarmSourceBuildV1() {
+    if (arguments.length) fail("current finalized source/build holder takes no arguments");
+    return holdFinalizedSetfarmSourceBuildAtRootV1(repositoryRootV1(), true);
+  }
+  ```
+
+- [x] Run affected current/selected holder tests, syntax/version/English/path/
+  diff checks. No native tools, deployment build or historical recipe replay.
+- [ ] Independent read-only exact-source/test/docs review; resolve findings,
+  rerun affected checks, scoped commit/push and fresh exact-head PR scanner audit.
+  Record receipts without claiming whole PR, clean-main or dashboard acceptance.
+
+Task4g.1b actual2026-10-08 receipt: before export,21cases12PASS9FAIL
+(eight public missing-export consumer assertions plus exact export inventory).
+First21/0 GREEN. Independent review found a supplemental preimport cwd/env test
+gap; root moved those inputs before actual import without new RED credit.
+Fresh broader current/selected source/build44PASS0FAIL0SKIP18.1407s; syntax,
+version2.3.79/English1973/path987/diff checks pass. New own-holder private fixtures
+remain retained. Full tool originals saved outside Git in root logs; no raw PG
+or accepted native recipe read/replay. Normal build/package/default runtime and
+all existing deployments/services remain unchanged. Native builder/loader,
+remote transport, controller/freeze and real dashboard startup remain pending.

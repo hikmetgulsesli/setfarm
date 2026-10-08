@@ -1935,3 +1935,44 @@ right settlement. Inspect exact libSystem/libbsm dependency paths before load.
 Postcompile dependency hashes are diagnostic records, not a pre-held complete
 compiler/provider certificate. Injected burns qualify the nominated operation
 boundary only; no general concurrent-domain/worker exclusion claim follows.
+
+### Task4g.1b retain the executing generation's existing build proof
+
+The optional native sidecar cannot authenticate its generation by following the
+ambient selected CLI: that is intentionally an older preserved installation.
+A transient current-build observation releases originals before a later
+compile/load boundary. Reuse the existing finalized-build holder rather than
+duplicating its verifier or accepting BUILD_INFO alone. This is a causal
+prerequisite of the same native/startup channel, not a universal OS certificate.
+
+File Map: scripts/build-generation-retention.mjs; its existing builtin test;
+paired design/plan. Add holdCurrentFinalizedSetfarmSourceBuildV1(), exactly zero
+arguments, deriving the root exclusively from its own import.meta.url. Supplied
+arguments, including undefined/proxies, refuse before filesystem/Git ports and
+do not consume the existing uncertainty latch. No caller root/provider/options,
+environment, cwd or selected-CLI lookup may select the generation.
+
+Return the existing frozen {observation,recheck,close} context from the private
+holdFinalizedSetfarmSourceBuildAtRootV1(root,true), unchanged. Its existing source
+and full finalized-output hashes, synchronized clean main/origin, retained
+physical files/ancestry and4096 descriptor bound remain scoped filesystem proof.
+Observation is frozen {checkoutSource,buildSource}. Recheck across awaits detects
+source/output identity/metadata/hash drift; failed recheck burns existing module
+uncertainty while originals remain held until explicit close. Explicit close is
+once-only, duplicate close inert; close-result loss permanently refuses
+reacquisition and must not close a reused descriptor.
+
+Do not strengthen or misrepresent the legacy holder: acquisition failure drains
+its own originals once, explicit close consumes attempted descriptors even when
+results are unknown, and it has no new construction/recheck reentry fence.
+This context is trusted composition, not a nonforgeable owner/native/startup
+capability, loaded-code or whole compiler/OS-loader qualification. A future
+sidecar owner must supply its own activity/custody contract and pin providers.
+No production builder/loader, default build, CLI, service, selector, PostgreSQL,
+ROOT, accepted native artifact or deployment change is part of this slice.
+
+Tests use real new private Git/finalized-output fixtures and actual production
+verifier. Assert independently derived hashes, original held descriptors through
+an await, cwd/environment/selected-link independence, no writes/dist evaluation/
+non-Git processes, zero ports for invalid arity, sticky drift refusal, and
+close-loss/reused-descriptor safety. New fixtures are retained as evidence.
