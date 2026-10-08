@@ -2230,3 +2230,201 @@ trusted fixture printing is bounded by the production data/count/path limits.
 Actual child command intents, original source/stdout/stderr bytes and original
 pipe/child events are retained in the sibling result receipt, before assertions
 can misstate success. Natural fixture exit is not unknown-child settlement.
+
+### Task4g.1f optional closed native sidecar build, without loading
+
+Choose an optional code-owned compile/link/inspection preparation. The delivered
+direct/header holders are prerequisites; a default npm native build would change
+normal installation and a filename-only loader would overclaim identity. This
+new slice produces a terminal sidecar DATA context; loading and startup remain
+separately required. No existing deployment, dist, selector, native artifact,
+service, launchd job, runtime ROOT, PG record or archive is edited or discarded.
+
+File Map: new scripts/dashboard-cutover-native-sidecar-v2.mjs, matching builtin
+test, paired design/plan. Existing holders/C/default package/build unchanged.
+Only export zero-arg async prepareDashboardCutoverNativeSidecarV2() returning
+frozen{observation,recheck,close}. Import alone has no module-owned FS/child/effect
+ports; normal trusted interpreter reads of its four code modules are not input
+retention or build authority. No
+caller context/root/provider/flags/paths, env or cwd selection, no provider
+download/fallback. Actual Darwin arm64 fixed Node26.4.0/NAPI>=8/nonroot profile
+before ports. One lifetime preparation, activity/revocation burn and fixed
+DASHBOARD_CUTOVER_NATIVE_SIDECAR_REFUSED; invalid idle arity zero ports, active
+reentry burns. Root is import.meta-derived.
+
+Before retained ROOT acquisition, use genuine transient
+observeCurrentFinalizedSetfarmSourceBuildV1() and require fixed Git check-ignore
+for own .setfarm/dashboard-cutover-native-v2 path with no system/global config,
+hooks/fsmonitor/replacements. Validate/create ONLY physical actualUID0700 own
+.setfarm and dashboard-cutover-native-v2 directory, at most two mkdir occurrences.
+Never chmod/adopt a preexisting unsafe path. Premark intent before each mkdir,
+seal returned physical original before burn checks; failed/unknown effects stay
+visible, never removed or retried. This intentional ignored-parent bootstrap
+must precede genuine prepareDashboardCutoverNativeBuildInputsV2() because its
+ROOT mtime pin must stay unchanged. Fresh source SHA/tree/build must equal
+preflight tuple; dirty/nonmain/stale source fails before parent creation.
+After the asynchronous Git settles, repeat genuine transient preflight and
+compare the same tuple BEFORE bootstrap; source drift during that await refuses
+without mkdir. Retain safe/created bootstrap directory originals before header
+await, compare the same originals afterward; never adopt replacement parents.
+
+Git check-ignore is ONE separate own asynchronous preflight child, not one of
+the four compile/inspection children. Fixed /usr/bin/git argv: -c
+core.hooksPath=/dev/null -c core.fsmonitor=false check-ignore -q --
+.setfarm/dashboard-cutover-native-v2/; cwd own ROOT. Fixed env PATH=/usr/bin:/bin,
+LANG=C,LC_ALL=C,GIT_CONFIG_NOSYSTEM=1,GIT_CONFIG_GLOBAL=/dev/null,
+GIT_NO_REPLACE_OBJECTS=1,GIT_OPTIONAL_LOCKS=0,GIT_TERMINAL_PROMPT=0. Premark its
+original occurrence before spawn; seal returned child/three pipes before burn
+checks, retain original argv/env/pipe events and close0/null with empty outputs.
+No retry/kill/destroy; unknown prevents bootstrap. Existing genuine source/header
+Git composites retain their unchanged semantics; this adds no per-internal-call
+custody or Git-loaded-image certificate.
+
+Hold own additional physical link originals: CLT usr/lib/libtapi.dylib,
+libcodedirectory.dylib,libLTO.dylib,libswiftDemangle.dylib; SDK usr/lib/
+libSystem.B.tbd and libbsm.0.tbd. All observed regular nlink1 root-owned and
+non-group/other-writable; physical targets avoid unversioned .tbd aliases.
+Guard ownership is root OR actual UID, matching the delivered closed physical
+input policy; ROOT/output parents and files require actual UID. Observed installed
+six link files are root-owned, not a requirement that test-fixture files be root.
+These are direct link/provider inputs, not a complete loaded-image/OS certificate.
+Already-running Node and installed system runtimes remain the declared trusted
+cooperative provider. Original ancestors/files, identity/timestamps/hash checked
+across awaits;64KiB positional streaming,512MiB/file,1GiB additional aggregate,
+128 additional FDs. Existing direct256/include512 caps unchanged. Copy own
+9673B C with64KiB bound and compare genuine retained input hash, no cwd path.
+
+Exclusive mkdir0700 generation basename <sourceSha>.<buildHash> under the own
+ignored parent. Never adopt, overwrite, resume, remove or retry a colliding or
+partial generation. Parent/gen directory originals retained. Own planned-effect
+directory ledger checks identity/owner/mode before each nominated creation and
+records expected post-effect timestamps; immutable provider guards are never
+relaxed to accommodate output. Gen is initially empty; then create exclusive
+physical actualUID0700 provider-tmp inside it and set own TMPDIR there for all
+compile/inspection commands. After compile exactly provider-tmp, peer.node and
+inputs.d; after terminal manifest exactly those plus manifest.json. Successful
+provider-tmp must be the same physical original and empty; never delete/adopt
+unexpected contents. Directory inventory is checked at each terminal boundary.
+Directory timestamps may evolve only at explicitly nominated effects; unexpected
+entries or identity/metadata drift burn. This is a closed cooperative builder,
+not continuous hostile same-UID exclusion or a general syscall transaction.
+
+Use delivered explicit include/config/profile flags plus -Wall -Wextra -Werror
+-O2, -bundle, -nostdlib, --ld-path=<physical CLT usr/bin/ld>; per-symbol
+-Wl,-U,_napi_ for exactly create_buffer_copy,define_properties,create_object,
+create_uint32,get_cb_info,get_typedarray_info,is_typedarray,is_arraybuffer,
+is_detached_arraybuffer,object_freeze,throw_error,is_exception_pending,
+get_and_clear_last_exception. No blanket undefined dynamic_lookup. Instead of
+-M, use -MD -MF <generation>/inputs.d -MT setfarm-cutover-inputs; stdin via
+-x c -, then reset -x none BEFORE physical SDK libSystem.B.tbd/libbsm.0.tbd;
+fixed -o <generation>/peer.node. argv/env/cwd are fixed code-owned values,
+same finite environment as discovery except own generation/provider-tmp TMPDIR.
+LLVM primary reference documents the
+flags; prior pristine build is diagnostic only, NOT qualification of this new
+explicit-link recipe. Installed CLT token presence not parser qualification.
+
+Four own PLANNED successful children: compile, physical llvm-nm -u peer.node,
+llvm-nm -gU peer.node, llvm-otool -L peer.node.
+For fixed Mach-O -u inspection parse strict name-only lines, NOT an assumed
+address/type table; exports retain exact sixteen-hex-address/type/name lines.
+Previous shim-provider receipts are diagnostic evidence, not qualification of
+this new physical LLVM provider recipe. The actual reviewed invocation remains
+required and cannot silently switch tool/output format.
+Header preparation's two discovery children are separate qualified composition.
+Premark original child occurrence
+before spawn, seal returned child/three pipes before post-spawn checks; no shell.
+Copy C to compile stdin; inspection stdin empty. Retain actual stdin write
+callback/finish/close, both output end/close, original child close0/null, zero
+stderr.256KiB stdout/64KiB stderr/30s mark-only watchdog per child,4children
+maximum plus the separate Git preflight; composed NEW child occurrences are one
+Git, two header discovery, four builder/inspection (seven total). No signals/
+destroy/retry/cancellation. Unknown retains admitted originals, original children,
+pipes/buffers/generation and all still-present partial artifacts, prevents later
+commands and performs no cleanup. The compiler driver is an explicitly trusted
+cooperative composite: it may delegate frontend/linker children, create/remove
+temporary files, and remove failed results before builder admission. Driver close
+is not universal descendant settlement or custody of already-removed results.
+No per-delegated-child FD/syscall proof is claimed. LLVM DriverInternals documents
+these boundaries; current Apple recipe still requires actual qualification:
+https://clang.llvm.org/docs/DriverInternals.html. Existing source/
+header composites keep their unchanged internal failure semantics.
+
+After compile actual close, validate/hold output originals nofollow regular
+actualUID/nlink1/non-group-other-writable; bundle <=4MiB, depfile <=256KiB. Compare
+strict single-target canonical escaped depfile lexicalset exactly with retained
+header observation; ignore only nominated stdin sentinel. Independently check
+64-bit Mach-O little-endian magic0xfeedfacf,cputype0x0100000c,
+CPU_SUBTYPE_ARM64_ALL=0 (reject arm64e/subtype2/high bits), filetype8. Require
+ncmds1..128, sizeofcmds<=file bytes minus32, every aligned command size>=8 wholly
+inside the command region/file, and traversal ending exactly32+sizeofcmds before
+LLVM inspection. No native require/dlopen evaluation.
+nm export set exactly _napi_register_module_v1 and
+_node_api_module_get_api_version_v1. Undefined imports only the thirteen declared
+NAPI names and known libSystem/libbsm C ABI: audit_token_to_euid/pid/pidversion,
+bootstrap_check_in/look_up/port,mach_port_allocate/deallocate/mod_refs,mach_msg,
+mach_task_self_,getpid/geteuid,memcpy/memcmp/memset,bzero,__memcpy_chk,
+__stack_chk_fail/__stack_chk_guard (Mach-O underscore prefix), and exact raw
+dyld_stub_binder without that prefix. No arbitrary bare or _dyld_stub_binder alias.
+Require every declared NAPI import. Exact dylib set /usr/lib/libSystem.B.dylib
+and /usr/lib/libbsm.0.dylib. Reject extra symbols/deps, wrong architecture/type,
+malformed bounded output, mismatched dependency graph or source drift.
+
+Serialize and reject manifest bytes exceeding256KiB BEFORE exclusive open/write.
+Publish own manifest.json via exclusive nofollow original FD, bounded write/fsync,
+no rename-overwrite. Record source/tree/build, C/input/header hashes,
+profile/argv, original successful command receipts, observed imports/exports/
+deps and actual bundle/dependency bytes/hash; schema
+setfarm.internal-production-dashboard-native-sidecar-build.v2. Explicit terminal
+fchmod0444 output/depfile/manifest and fsync generation must be ledgered effects,
+then reseal and rehash those same originals and recheck genuine inputs. Fixed
+manifest/directory inventory and bytes remain original across later awaits.
+Every original file/directory fsync has a phase/FD intent recorded before the
+call and returned/unknown disposition before the post-call revocation check.
+This terminal DATA is not signed distribution, public release or startup grant.
+
+Observation authority='native-sidecar-build-only', manifest and own generation
+locator; no raw FDs/child/native handles. Recheck validates actual immutable
+terminal outputs/manifest plus original input context and physical link files.
+Explicit idle close allowed only after every admitted original child has closed;
+reverse own FD dev/ino/birth/type admission and once-close, stop on first unknown
+or revocation, never retry a consumed/reused number, then trusted header context
+once. Active close burns without disposal ports; duplicate completed close inert.
+Partial output absence never authorizes cleanup. Output file read-only flags
+are integrity hygiene, not hostile same-UID access-control exclusion.
+
+Portable consumer tests use NEW genuine own finalized fixtures, only relocated
+fixed provider literals in test copies; real FS/Git/FD/hash/ledger/parser/Mach-O
+validation, only external async children doubled. Test-created bundle bytes are
+diagnostic and never evaluated. Before production code, missing-source cases
+fail before fixture/effects. Cover bootstrap ordering/unsafe parent/collision,
+dirty/nonmain/stale zero-effect refusal, link alias/hardlink/mode/bounds/drift,
+input tuple/graph mismatch, output/header mutation, child unknown/stderr/output
+caps/watchdog/reentry, wrong Mach-O subtype/load commands, provider-temp inventory,
+preflight child custody, partial publication and once-close/reused FD. Assert
+manifest contents independently, not only a digest of whatever was published.
+Default
+tests never invoke real compiler/inspection/native. Separately reviewed SINGLE
+actual fixed-profile new-fixture preparation produces new private output only,
+retains all original command bytes/events, never loads it or creates a Mach job.
+No killing outer timeout/maxBuffer; preserve failure receipts before assertions.
+Inner finally writes one exclusive nofollow600/fsynced bounded5MiB original-command
+snapshot to a new sibling OUTSIDE pinned fixture, BEFORE relying on interpreter
+exit. Parent full result receipt remains separate. Unknown child can remain
+retained without suppressing this durable failure snapshot; no kill/drain/retry.
+
+Task4g.1f qualification: missing-source RED29fail before fixture/effects; genuine
+source drift across Git await and original parent replacement across header await
+RED preceded their source fixes. Narrow rawdyld and name-only Mach-O nm REDs
+preceded those parser fixes. Test-only setup/spy/oracle failures give no transport
+RED credit. Frozen portable64PASS/0FAIL/1SKIP299.072s and SINGLE fixed opt-in
+65PASS/0FAIL/0SKIP311.197s (actual15.537s); affected direct/header/build suites
+337PASS/0FAIL/2SKIP475.199s. Syntax/version/English/path/diff checks pass.
+Original actual7child/pipe dispositions are close0/null/zeroerrors/stderr,
+9673BC stdin matches source228be6c7; discovery and compiledgraph match268headers.
+Actual bundle35784B,depfile24243B,manifest91932B are original0444 hashes,
+exact generation inventory and original0700empty provider-tmp. Independently
+parsed actual receipts and all284manifest input rows;2454opens/closes include
+source verifier transients, not2454retained native inputs. The fixture's own
+source/tree/build identities are not production main. Provider recipe is now
+qualified for this fixed private fixture, not native evaluation, loaded-image,
+owner/phase capability, authenticated transport, freeze, CLI or live3333 startup.

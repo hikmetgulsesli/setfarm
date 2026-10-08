@@ -1383,3 +1383,74 @@ source/build tuple38e05378/c36a6088/601826b1; genuine FIXTURE main/origin proof,
 NOT production clean-main build. Source/test unchanged; no provider override
 in actualfixture. Related direct28/0/1SKIP15.7295s and original-source44/0/0SKIP
 18.0735s fresh e9a902+6d4610/d3958b+a3e6c4. WholePR remains draft, no3333 credit.
+
+Delivered4g.1e root358249e4f71a12df0939f3113f52811e861630ed/21cfea, normalpush
+015185+0c7dde; two final exact-byte C0/I0/M0 independently parse actualreceipt.
+PR425735 appended39947B/SHA8c21c2877deddbb57188042cf8d8d85c18d5afa3254dc9aec806d7fd7584422e,
+exact358 GitGuardian SUCCESS18:06:35UTC d2eb18, OPEN DRAFT/reviews[]. No fullbuild.
+
+## Task4g.1f: optional compile/link and inspected terminal sidecar
+
+Spec: paired Task4g.1f; causal continuation of delivered original compiler/header
+custody. File Map: new scripts/dashboard-cutover-native-sidecar-v2.mjs and
+matching builtin test; paired design/plan. Existing holders/C/helper/package/
+dist/CLI/services unchanged. Root sole writer; RO independent reviewers.
+Consumes genuine transient own build and genuine async header preparation;
+produces zero-arg async prepareDashboardCutoverNativeSidecarV2() frozen
+{observation,recheck,close}. DATA only, no loader/startup/wholeprovider certificate.
+
+- [x] Write consumer tests before source with literal recipe/original byte and
+  manifestation oracles. NEW genuine finalized own Git fixtures, fixed providers
+  relocated only in copied test modules. Missing production module asserts
+  before fixture or any build effects. Simulated external children create only
+  NEW fixture output; keep real original FS/Git/header guards and stream events.
+- [x] Run `node --test scripts/__tests__/dashboard-cutover-native-sidecar-v2.test.js`;
+  preserve complete missing-source RED. Do not label malformed fixture setup,
+  compiler/link failure or oracle defects authenticated transport RED.
+- [x] Implement original activity/effect vault and fixed profile. Sequence:
+  `preflight=observeCurrentFinalizedSetfarmSourceBuildV1()`;
+  one original async fixed Git check-ignore child (own argv/env, all pipe/child
+  events; empty outputs, close0/null); repeat/compare genuine transient preflight
+  after Git BEFORE first mkdir; then validate/bootstrap0700ignored parents and
+  retain actual bootstrap directory originals BEFORE header await;
+  `inputs=await prepareDashboardCutoverNativeBuildInputsV2()`; compare tuple;
+  hold six physical link inputs and bounded C; exclusive generation and own
+  exclusive0700provider-tmp, command TMPDIR there;
+  compile→hold/validate Mach-O and exactdepgraph→nm imports→nm exports→otool deps;
+  exclusive original manifest write/fsync→planned0444terminalization→rehash/recheck.
+  Record every fsync original FD/phase/intent and returned/unknown disposition.
+  Link files root-or-actualUID physical policy, own ROOT/output actualUID only;
+  exact bare dyld_stub_binder exception, never arbitrary bare symbol/alias.
+  Require provider-tmp original empty at success boundaries and exact generation
+  inventory. Validate literal ARM64_ALL subtype0 plus all aligned bounded Mach-O
+  load commands and exact traversal. Serialize manifest <=256KiB BEFORE open;
+  independent content-binding tests. No defaultbuild or load; four builder children
+  PLUS separate Git preflight, sticky unknowns retain admitted/still-present effects.
+  Trusted driver delegation/temp cleanup/failure-result removal is not universal
+  descendant settlement or custody of provider-removed results; builder never cleans.
+- [x] GREEN portable negative/positive consumer cases and independently reviewed
+  exact fixed actual recipe. Never soften direct256/include512/source/zero-owner
+  runtime gates; additional128FD/512MiB/1GiB link budget separately scoped.
+- [x] SINGLE opt-in actual new fixture:
+  `SETFARM_DASHBOARD_SIDECAR_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test scripts/__tests__/dashboard-cutover-native-sidecar-v2.test.js`.
+  One Git preflight plus two header discovery and four builder/inspection children;
+  seven composed NEW child occurrences, legacy composite semantics unchanged; installed
+  fixed compiler/tool providers only. New ignored private fixture generation,
+  no native evaluation/Mach/launchd/PG/service/defaultbuild/install mutations.
+  Record original intent/argv/bytes/stream+child results before assertions; raw
+  parent results retained outside pinned fixture, no cancellation/retry.
+- [ ] Fresh focused affected suites, source syntax/version/English/path/diff,
+  independent actual receipt/output/source/manifests review; scoped commit/push,
+  exact scanner and preserved PR receipt. Keep full loader/authenticated transport/
+  freeze/controller/CLI/clean-main/3333 obligations open after this bounded slice.
+
+Task4g.1f verification: missing-source29RED; reviewer-found source/Git-await and
+original-bootstrap/header-await REDs before their fixes; narrow ABI/name-only nm
+RED before parser fixes. No credit for malformed/oracle/setup failures. Frozen
+portable64P0F1skip299.072s; ONE actual65P0F0skip311.197s (actual15.537s), original
+7child/pipe close0/null/zeroerrors/stderr,9673BC228be6c7,268headers; terminal
+bundle35784B/depfile24243B/manifest91932B all original0444, exact inventory and
+original0700empty temp. Affected337P0F2skip475.199s; syntax/contracts/diff pass.
+Actual fixture own source/build is not current main or loaded-code authority.
+Original receipts and failed fixtures retained privately; delivery/scanner/PR
+receipt remains the last checkbox until actual results, not a completion claim.
