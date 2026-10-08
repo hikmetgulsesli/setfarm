@@ -1620,7 +1620,7 @@ lists, completion flags or reset/release options.
   nested config/atomic remains possible subject to unchanged OPEN refusal.
 - [x] GREEN focused new + configuration refusal + cleanup consumer suites, strict
   noemit using existing read-only toolchain, syntax/version/English/path/diff.
-- [ ] Fresh independent source and contract/evidence review; record exact local
+- [x] Fresh independent source and contract/evidence review; record exact local
   claim only. Scoped commit/push/scanner/preserved DRAFT PR delivery, no merge or
   live admission from this slice alone.
 
@@ -1674,3 +1674,46 @@ the earlier reviewer-unavailable AST/contract originals. No native campaign,
 provider, PG, service, selector, ROOT or user cleanup mutation. Current HTTP:
 MC3080/api/projects200, gateway18789200, dashboard3333000/curl7. Final two-seat
 exact-byte review and scoped delivery remain pending.
+
+Task4h.0 delivery supersedes the historical pending text above: final two-seat
+source/evidence review C0/I0/M0, commit038fec6, normal push and exact-head
+GitGuardian SUCCESS, preserved PR280 DRAFT appendix. See the private original
+ledger and current handoff for complete receipts. No merge or whole-goal credit.
+
+## Task4h.1: original gateway CLI failure settlement
+
+Causal relation: Medic removal and uninstall await gateway cron promises; the
+discarded async runCli executor can leave those registered originals pending.
+Paired spec chooses the smallest async-function/synchronous-executor correction.
+Root sole writer, research/review agents read-only.
+
+File Map: modify src/installer/gateway-api.ts and tests/gateway-api-model.test.ts;
+create tests/helpers/gateway-api-safe-consumer.ts and
+tests/gateway-api-cli-settlement-v2.test.ts; update this plan and paired spec.
+Public API unchanged. No new authority, native/PG/cron/launchd effects or timeout.
+
+- [x] Add inert full-import fixture and genuine public-call lookup-throw and
+  post-await invocation-throw regressions; run functional RED before production.
+- [x] Make runCli async and use synchronous execFile Promise executor. Preserve
+  all binary/argument/timeout/HTTP/disabled/error semantics.
+- [x] Add configured/PATH/npx, callback error, disabled zero CLI/binary-discovery-port and HTTP-success
+  controls; convert old model cases to full-import safe consumers, asserting
+  exact model forwarding and removing real-job creation/deletion possibility.
+- [x] Focused GREEN plus affected local/config/cleanup suites; strict noemit and
+  contracts. This is source verification, not clean-main build or host cutover.
+- [ ] Fresh independent source and evidence review; scoped commit/push/scanner
+  and preserved DRAFT PR delivery only after exact qualifications pass.
+
+Task4h.1 receipts: actual functional RED1b35c3 BEFORE production edit, 0PASS/2FAIL
+248.455625ms, both actual deleteCronJob calls still unsettled at checkpoints.
+No import/setup failure or watchdog; fixtures end naturally. Initial patch
+attempts rejected before any mutation are editing errors, not test REDs.
+Source08fbb20c + testb654182f/helper2ced19b1/modeltestfc251e0f: focused14PASS
+655.004584ms1cbc66. Initial affected command701c99 silently omitted a nonexistent
+cleanup test path (78PASS2551.599417ms), so NO cleanup coverage credit from it.
+Corrected actual command01b963 includes tests/platform-cleanup-protection-v2.test.ts:
+111PASS/0FAIL/0SKIP2566.933916ms, 14gateway+27local+37config+33cleanup.
+Strict noemit870915→73bf59:1189files0diagnostics. Version96d3b0:2.3.79,
+English5ff5a6:1985files, paths8d0c51:996files; diff7a14a2 clean.
+These are source/fixture receipts only, not clean-main build, original subprocess
+termination, remote effect settlement, controller completion or live3333.

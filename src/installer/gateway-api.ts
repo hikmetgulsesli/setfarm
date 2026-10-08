@@ -109,14 +109,13 @@ async function findOpenclawBinary(): Promise<string> {
 }
 
 /** Run an openclaw CLI command and return stdout. */
-function runCli(args: string[]): Promise<string> {
-  return new Promise(async (resolve, reject) => {
-    if (DISABLE_CLI_FALLBACK) {
-      reject(new Error("OpenClaw CLI fallback disabled for this process"));
-      return;
-    }
-    const bin = await findOpenclawBinary();
-    const finalArgs = bin === "npx" ? ["openclaw", ...args] : args;
+async function runCli(args: string[]): Promise<string> {
+  if (DISABLE_CLI_FALLBACK) {
+    throw new Error("OpenClaw CLI fallback disabled for this process");
+  }
+  const bin = await findOpenclawBinary();
+  const finalArgs = bin === "npx" ? ["openclaw", ...args] : args;
+  return new Promise((resolve, reject) => {
     execFile(bin, finalArgs, { timeout: 30_000 }, (err, stdout, stderr) => {
       if (err) reject(new Error(stderr || err.message));
       else resolve(stdout);

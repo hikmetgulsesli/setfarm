@@ -2683,3 +2683,30 @@ matrix has nineteen lifecycle cases, seven AST-selected fresh-consumer denials
 and one Medic original-return control; four full-imported configuration/Medic
 closed-gate controls and prior guard suites also pass. No live effect follows
 from this local handle alone.
+
+## Task4h.1: settle original gateway CLI caller failures
+
+Causal scope refinement: admitted Medic removal and workflow uninstall await
+gateway cron calls. The private runCli currently uses an async Promise executor;
+binary-lookup rejection or synchronous execFile throw rejects its discarded
+executor Promise, leaving the original public caller pending. A retained local
+invocation cannot terminate on that path. Correct this root bug without claiming
+child, pipe, remote-effect, legacy-cohort or global freeze settlement.
+
+Prefer async runCli with awaited binary lookup followed by a synchronous Promise
+executor around execFile. An explicit catch in the async executor could forward
+the two failures but retains the unnecessary discarded Promise; a new process
+manager would broaden scope. Preserve configured binary preference/cache, PATH
+then npx fallback, literal arguments, 30,000ms timeout, callback stderr precedence,
+HTTP-first behavior and disabled-fallback error. No credentials or guards change.
+
+Full-module public deleteCronJob regression consumers trap HTTP, filesystem
+config reads and subprocess ports before import. Lookup and invocation throws
+must yield the existing soft failure, no unhandled rejection, and actual caller
+settlement at bounded event-loop checkpoints. Unsettled RED promises are never
+awaited indefinitely, canceled or killed. Consumer children end naturally with
+both pipe EOF and close retained. Fresh module state isolates cached binary and
+disabled-fallback state. Add unchanged configured/PATH/npx forwarding, callback
+error, disabled zero binary-discovery/CLI-port and HTTP success controls. Replace the existing model
+test's real-CLI fallback/cleanup with the same inert fixture and exact --model
+argument assertions; no real cron or provider action is a test prerequisite.
