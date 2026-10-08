@@ -2820,3 +2820,31 @@ Primary interface evidence: [Apple bootstrap interface](https://raw.githubuserco
 documents receive-right check-in and send-right lookup; [Apple Mach overview](https://developer.apple.com/library/archive/documentation/Darwin/Conceptual/KernelProgramming/Mach/Mach.html)
 documents transferable rights. These are interface/trust-boundary evidence,
 not current-host qualification receipts.
+
+### Task4i.0b: actual five-method Node consumer qualification
+
+Compile the same V4 source as a real Node addon with doubled Mach/BSM ports.
+Use a distinct opt-in campaign, mutually exclusive with direct mechanics and
+baseline modes. Remove the fixture-only static module override/main; preserve
+real exports, step(), input intrinsics and Node-API publication. Each case is a
+fresh original Node process, never a reset of private state. Derive fixture role
+only from the first fixed check-in; fault selection is fixture-only getenv.
+Keep original immutable frame checks and pin the changed fixture separately.
+
+Require exact five frozen exports, input/proxy/detached/shared-buffer refusal
+before any doubled kernel port, actual copied output bytes, exact frozen record
+keys/tuples, original peer continuity and empty controller terminal record.
+Exercise both success paths, all sixteen nominated external-port failures, six
+malformed/tuple cases, plus client tuple/header/reply-disposition controls.
+After success or failure invoke every real method again: fixed refusal and no
+additional doubled kernel dispatch. This qualifies externally sticky refusal
+through actual step() and successful Node-API publication ONLY with doubled
+external ports. Exact private failure-to-BURNED transition remains a source
+review claim, not a black-box private-state oracle. It does
+not qualify injected Node-API failures/reentry, real kernel/job/domain identity,
+loaded sidecar inputs, owner/phase/nonces or startup/listener authority.
+
+Closed recipe: one compilation, nm undefined/export audit and otool dependency
+audit, twenty-eight fresh consumers; maximum32commands, zerojobs. Each original
+command retains natural exit, both EOF/close and fixed20s mark-only watchdog.
+No kill, cleanup, retry, prior campaign replay or live fixture adoption.

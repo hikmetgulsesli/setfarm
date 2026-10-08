@@ -263,4 +263,3 @@ NAPI_MODULE_INIT(){
     if(napi_define_properties(env,exports,5,methods)!=napi_ok || napi_object_freeze(env,exports)!=napi_ok)return refuse(env);
     return exports;
 }
-

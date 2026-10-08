@@ -1817,3 +1817,54 @@ strict -fsyntax-only e3b7380diagnostics; diff a89c5e passes. Port doubles establ
 mechanics/post-harness-burn denial only, not production step() burn/publication,
 native job/domain/source/build/phase/startup qualification. No live jobs or old
 campaign replay; all original material remains. Final review/delivery pending.
+
+## Task4i.0b: actual Node publication and failure-to-burn consumer
+
+File Map: extend scripts/__tests__/dashboard-cutover-mach-job-peer-v4.test.js
+with a distinct mutually exclusive actual-addon mode; paired docs. Remove the
+single trailing blank line from the new C only (64fc0322→875ab97c); no behavior
+change or V3 edit. Preserve original Task4i.0 receipts as original64fc bytes.
+
+Interfaces: use the exact five V4 exported methods from Task4i.0, not direct
+helpers. Actual real NAPI layer plus doubled Mach/BSM ports, DATA-only outputs.
+
+- [x] Add the independently pinned actual-addon fixture; remove ONLY the static
+  module-registration override, no direct-helper main. Role/fault initialization
+  lives only in fixture_check; inject invalid received disposition in fixture.
+  ```js
+  const first = controller ? a.receiveControllerHelloV4()
+    : a.helloClientAndReceiveChallengeV4(Buffer.from('hello'));
+  const second = controller
+    ? a.challengeControllerAndReceiveAckV4(Buffer.from('challenge'))
+    : a.ackClientAndReceiveGrantV4(Buffer.from('ack'));
+  if (controller) a.sendControllerGrantV4(Buffer.from('grant'));
+  // All five methods must subsequently refuse without further kernel traces.
+  ```
+- [x] One closed32-command campaign: strict fixture compile, exact13NAPI import
+  inventory, two module exports, libSystem/libbsm dependencies,28freshconsumers.
+  Literal traces and exact frozen DATA records; retain alloriginals/naturalclose.
+- [ ] Strict final realCsyntax, syntax/contracts/diff, fresh independent source
+  and original-evidence reviews. InjectedNAPIerror/reentry and realkernelAUTH stay
+  excluded. Black-box refusal does not uniquely identify private lifecycle;
+  exact failure-to-BURNED transition earns source-review credit only.
+  No production behavior change without a newly witnessed RED.
+- [ ] Forward reviewed commit/push/scanner/preservedPRdelivery, no amend/force.
+  Continue held derivative material/currenthost/sidecar/adapter/foreground and
+  child+legacyclosure; clean-main/live3333 remain required, not claimed here.
+
+Delivery sequencing correction: root's cached diff2d86ba found new C trailing
+blank line but root mistakenly proceeded to 5b514935 commit808b83 before reading
+that failure. No push occurred. This is an orchestration error, not test RED.
+Keep that commit and all original64fc evidence; fix only new EOF with apply_patch
+and qualify final875ab bytes here, then use normal forward commit. No rewrite.
+
+Task4i.0b original c84265→8220f0 GREEN1PASS/0FAIL/1SKIP1446.282375ms,
+28freshconsumers/32commands/zerojobs. The skip is direct-mechanics mode, NOT an
+unexecuted case in the28. NewfixtureeMblAz/source875ab97c/fixtureda695d7e/addonbd440ab2
+retain exact originals; readback4ff79f verifies32naturalstatus0/signalnull/bothEOF+
+close/no unknown/watchdog. Exact13NAPIimports,2exports and2dylibs inspected.
+StrictrealC14f7660diagnostics;testf50a8d/version83ef72/English246e37/path4ba288/
+diffccf98f all0. No oldcampaignreplay; original64fc receipts remain historical.
+ActualnormalNodepublication and persistentpublicrefusal only, not private-state
+oracle/injectedNAPIerror/reentry/kernel/job/source/phase/startup AUTH. Freshfinal
+source/evidence review and forwarddelivery remain pending.

@@ -5,8 +5,10 @@ import {spawn} from 'node:child_process';
 import test from 'node:test';
 
 const enabled=process.env.SETFARM_DASHBOARD_MACH_JOB_PORT_TEST==='1';
+const addonEnabled=process.env.SETFARM_DASHBOARD_MACH_JOB_NODE_TEST==='1';
 const baseline=process.env.SETFARM_DASHBOARD_MACH_JOB_RED_BASELINE==='1';
 assert.ok(!baseline||enabled,'baseline requires explicit campaign admission');
+assert.ok(!(enabled&&addonEnabled),'mixed native qualification campaigns');
 const source=new URL(baseline?'../dashboard-cutover-mach-peer-v2.c':'../dashboard-cutover-mach-job-peer-v4.c',import.meta.url);
 const clang='/Library/Developer/CommandLineTools/usr/bin/clang';
 const sdk='/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk';
@@ -193,4 +195,91 @@ test('actual C routes challenge and grant through one job lookup and retains unc
   fs.writeFileSync(directory+'/campaign.json',JSON.stringify({baseline,cases:cases.length,commands:ordinal,failures}),{flag:'wx',mode:0o600});
   assert.deepEqual(failures,[],'job-route behavior differs from nominated contract');
   assert.equal(ordinal,baseline?4:26);
+});
+
+test('actual five-method Node consumer publishes DATA and burns after external-port uncertainty',{
+  skip:!addonEnabled,concurrency:false,
+},async()=>{
+  assert.equal(process.platform,'darwin');assert.equal(process.arch,'arm64');
+  assert.ok(fs.existsSync(source),'missing nominated C source');
+  directory=fs.mkdtempSync('/private/tmp/setfarm-dashboard-mach-job-node-v4.');fs.chmodSync(directory,0o700);
+  console.log(JSON.stringify({directory,kind:'actual-node-double-ports'}));
+  const original=fs.readFileSync(source),override='#undef NAPI_MODULE_INIT\n#define NAPI_MODULE_INIT() static napi_value fixture_module(napi_env env,napi_value exports)\n';
+  assert.equal(prefix.split(override).length,2);
+  const double=prefix.replace(override,'').replace(
+    'int controller=!strcmp(s,"com.setrox.setfarm.dashboard-cutover.control.v4") ||',
+    'fault=getenv("SETFARM_MACH_JOB_FAULT");if(!fault)fault="";role=!strcmp(s,"com.setrox.setfarm.dashboard-cutover.control.v4");\n  int controller=!strcmp(s,"com.setrox.setfarm.dashboard-cutover.control.v4") ||'
+  ).replace('if(!strcmp(fault,"bad-header")&&count==2)m->msgh_id=0;',
+    'if(!strcmp(fault,"bad-header")&&count==2)m->msgh_id=0;\n    if(!strcmp(fault,"bad-disposition")&&index==1)m->msgh_bits=MACH_MSGH_BITS(MACH_MSG_TYPE_PORT_SEND,MACH_MSG_TYPE_PORT_SEND);');
+  const input=double+original.toString(),fixture=directory+'/addon.c',addon=directory+'/addon.node';
+  fs.writeFileSync(fixture,input,{flag:'wx',mode:0o600});
+  const napi=['create_buffer_copy','define_properties','create_object','create_uint32','get_cb_info',
+    'get_typedarray_info','is_typedarray','is_arraybuffer','is_detached_arraybuffer','object_freeze',
+    'throw_error','is_exception_pending','get_and_clear_last_exception'];
+  const args=['-std=c11','-Wall','-Wextra','-Werror','-Wno-unused-function','-O2','-DNAPI_VERSION=8',
+    '-arch','arm64','-mmacosx-version-min=14.0','-isysroot',sdk,'-I',headers,'-bundle',
+    ...napi.map(n=>'-Wl,-U,_napi_'+n),fixture,'-lbsm','-o',addon];
+  await run(clang,args);
+  const imports=(await run('/usr/bin/nm',['-u',addon])).stdout;
+  const symbols=imports.trim().split('\n').map(l=>l.trim().split(/\s+/).at(-1));
+  const system=['___stack_chk_fail','___stack_chk_guard','___stderrp','_bootstrap_port','_bzero',
+    '_fprintf','_fputs','_fwrite','_geteuid','_getpid','_getenv','_mach_task_self_','_memcmp','_memcpy',
+    '___memcpy_chk','_memset','_snprintf','_strcmp','_strlen','dyld_stub_binder'];
+  assert.deepEqual(symbols.filter(n=>n.startsWith('_napi_')).sort(),napi.map(n=>'_napi_'+n).sort());
+  assert.deepEqual(symbols.filter(n=>!system.includes(n)&&!napi.some(p=>n==='_napi_'+p)),[]);
+  const exports=(await run('/usr/bin/nm',['-gU',addon])).stdout.trim().split('\n')
+    .map(l=>l.trim().split(/\s+/).at(-1)).sort();
+  assert.deepEqual(exports,['_napi_register_module_v1','_node_api_module_get_api_version_v1']);
+  const deps=(await run('/usr/bin/otool',['-L',addon])).stdout.trim().split('\n').slice(1)
+    .map(l=>l.trim().split(/\s+/)[0]).sort();
+  assert.deepEqual(deps,['/usr/lib/libSystem.B.dylib','/usr/lib/libbsm.0.dylib']);
+  fs.writeFileSync(directory+'/build.json',JSON.stringify({sourceSha:sha(original),fixtureSha:sha(Buffer.from(input)),
+    addonSha:sha(fs.readFileSync(addon)),args,imports,exports,deps}),{flag:'wx',mode:0o600});
+  const controller=['check-controller','receive-0','lookup-job','send-1','receive-2','send-3','close-receive','close-send'];
+  const client=['check-job','lookup-controller','send-0','receive-1','send-2','receive-3','close-receive','close-send'];
+  const cases=[['controller','',controller],['client','',client]];
+  for(const [role,trace] of [['controller',controller],['client',client]])
+    for(const [index,fault] of trace.entries())cases.push([role,fault,trace.slice(0,index+1)]);
+  for(const fault of ['bad-header','peer-pid','peer-version'])cases.push(['controller',fault,controller.slice(0,5)]);
+  for(const fault of ['bad-reply','bad-padding','bad-trailer'])cases.push(['controller',fault,controller.slice(0,2)]);
+  for(const fault of ['bad-header','peer-pid','peer-version'])cases.push(['client',fault,client.slice(0,6)]);
+  cases.push(['client','bad-disposition',client.slice(0,4)]);
+  assert.equal(cases.length,28);
+  for(const [role,fault,trace] of cases){
+    const result=await run('/opt/homebrew/Cellar/node/26.4.0/bin/node',['--input-type=module','-e',`
+      import assert from 'node:assert/strict';import {createRequire} from 'node:module';
+      process.env.SETFARM_MACH_JOB_FAULT=${JSON.stringify(fault)};
+      const a=createRequire(import.meta.url)(${JSON.stringify(addon)}),controller=${role==='controller'};
+      const names=['ackClientAndReceiveGrantV4','challengeControllerAndReceiveAckV4',
+        'helloClientAndReceiveChallengeV4','receiveControllerHelloV4','sendControllerGrantV4'];
+      assert.deepEqual(Object.keys(a).sort(),names);assert.ok(Object.isFrozen(a));
+      const refused=f=>assert.throws(f,e=>e.message==='DASHBOARD_CUTOVER_MACH_JOB_CONTROL_REFUSED');
+      let traps=0;const proxy=new Proxy({},{get(){traps++;throw Error('caller trap')}});
+      const detached=new Uint8Array(1);structuredClone(detached.buffer,{transfer:[detached.buffer]});
+      for(const bad of [undefined,null,{},proxy,new Uint8Array(0),new Uint8Array(1025),new Int16Array(1),
+        new Uint8Array(new SharedArrayBuffer(1)),detached])refused(()=>a.helloClientAndReceiveChallengeV4(bad));
+      refused(()=>a.receiveControllerHelloV4(null));
+      refused(()=>a.helloClientAndReceiveChallengeV4(Buffer.from('hello'),1));assert.equal(traps,0);
+      const verify=(v,bytes)=>{assert.ok(Object.isFrozen(v));assert.deepEqual(Object.keys(v).sort(),['bytes','euid','pid','pidversion']);
+        assert.equal(v.bytes.toString(),bytes);assert.equal(v.euid,process.geteuid());assert.equal(v.pid,process.pid+1000);assert.equal(v.pidversion,42);};
+      let failed=false;
+      try{
+        const one=controller?a.receiveControllerHelloV4():a.helloClientAndReceiveChallengeV4(Buffer.from('hello'));
+        verify(one,controller?'hello':'challenge');
+        const two=controller?a.challengeControllerAndReceiveAckV4(Buffer.from('challenge')):a.ackClientAndReceiveGrantV4(Buffer.from('ack'));
+        verify(two,controller?'ack':'grant');verify(one,controller?'hello':'challenge');
+        assert.deepEqual([one.euid,one.pid,one.pidversion],[two.euid,two.pid,two.pidversion]);
+        if(controller){const end=a.sendControllerGrantV4(Buffer.from('grant'));assert.ok(Object.isFrozen(end));assert.deepEqual(Object.keys(end),[]);}
+      }catch(e){assert.equal(e.message,'DASHBOARD_CUTOVER_MACH_JOB_CONTROL_REFUSED');failed=true;}
+      assert.equal(failed,${Boolean(fault)});
+      for(const f of [()=>a.receiveControllerHelloV4(),()=>a.challengeControllerAndReceiveAckV4(Buffer.from('challenge')),
+        ()=>a.sendControllerGrantV4(Buffer.from('grant')),()=>a.helloClientAndReceiveChallengeV4(Buffer.from('hello')),
+        ()=>a.ackClientAndReceiveGrantV4(Buffer.from('ack'))])refused(f);
+      console.log(JSON.stringify({role:${JSON.stringify(role)},fault:${JSON.stringify(fault)},failed}));
+    `]);
+    assert.deepEqual(result.stderr.trim().split('\n'),trace,role+' '+fault);
+    assert.deepEqual(JSON.parse(result.stdout),{role,fault,failed:Boolean(fault)});
+  }
+  assert.equal(ordinal,32);
+  fs.writeFileSync(directory+'/campaign.json',JSON.stringify({cases:28,commands:ordinal,failures:[]}),{flag:'wx',mode:0o600});
 });
