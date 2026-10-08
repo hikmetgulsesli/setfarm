@@ -1157,7 +1157,7 @@ it does not qualify sidecar, loaded runtime, ownership or live startup.
 
 - [x] Run affected current/selected holder tests, syntax/version/English/path/
   diff checks. No native tools, deployment build or historical recipe replay.
-- [ ] Independent read-only exact-source/test/docs review; resolve findings,
+- [x] Independent read-only exact-source/test/docs review; resolve findings,
   rerun affected checks, scoped commit/push and fresh exact-head PR scanner audit.
   Record receipts without claiming whole PR, clean-main or dashboard acceptance.
 
@@ -1171,3 +1171,57 @@ remain retained. Full tool originals saved outside Git in root logs; no raw PG
 or accepted native recipe read/replay. Normal build/package/default runtime and
 all existing deployments/services remain unchanged. Native builder/loader,
 remote transport, controller/freeze and real dashboard startup remain pending.
+
+Task4g.1b delivered0ae28dcb6011046886e07f8fd717c2504f9999a3; final supplemental
+guarded-dist44/0 actual18.2191s and two final exact-byte C0/I0/M0 reviews.
+Exact-head GitGuardian SUCCESS16:24:02UTC; fresh PR280 body append6e2dca34654bytes,
+OPEN DRAFT. Own-generation source proof delivered, not clean-main/live acceptance.
+
+## Task4g.1c: actual closed two-birth Mach echo mechanics
+
+Spec: paired Task4g.1c, including3new-job maximum and retained diagnostic scope.
+File Map: scripts/dashboard-cutover-mach-peer-v2.c; its builtin JS test; paired
+docs. Input is copied intrinsic bytes1..1024 only. Two native exports
+observeControllerMachPeerV2(bytes), observeClientMachPeerV2(bytes) -> frozen
+DATA{bytes,euid,pid,pidversion}. No effect/startup grant. Actual provider is the
+separately owned declared MachService, not ambient registration or socket metadata.
+
+- [x] Add opt-in actual tests: pristine invalid-input zero-port control, crossed
+  original-PID positive pair/copy/once-only controls, server/client malformed-header
+  refusal and literal no-later-port traces. Compile new copies only; owned scripts
+  publish only fixed receipts. No historical native fixture or live job used.
+- [x] Run opt-in missing-source assertions before C authoring; missing C must
+  refuse before compiler/job effects. Setup/import errors do not earn behavior RED.
+- [x] Implement bounded C11 vault/FSM, fixed-service check-in/lookup, header reply
+  SEND_ONCE exchange, checked kernel audit and occurrence-specific disposal.
+  Use the existing local audit's actual intrinsic-validation/public ABI pattern,
+  but do not reuse its self-peer qualification as remote proof.
+- [x] Exact source/runner/recipe independent RO review BEFORE new actual jobs.
+  Fix findings, then one separately reviewed opt-in invocation:
+  `SETFARM_DASHBOARD_MACH_PEER_TEST=1 node --test scripts/__tests__/dashboard-cutover-mach-peer-v2.test.js`.
+  At most3newjobs; no retry/kill/bootout. Retain partial/unknown job/artifacts.
+- [ ] Verify actual paired receipts/PIDs, native traces and exact imports/exports/
+  deps. Run affected portable tests/contracts; independent final review and scoped
+  PR delivery. Native echo GREEN is not source/build/owner/freeze/controller or
+  real3333 acceptance. Sidecar builder/loader and full adapter remain next work.
+
+Task4g.1c actual first invocation2026-10-08T16:40UTC: missing-source assertions
+4FAIL0PASS before any compiler/job. Three initial RO reviews; one found command
+retention, timeout-satisfiable fault oracle and inherited job-environment gaps.
+All fixed BEFORE actual native/job invocation and exact updated recipe approved.
+Native4PASS0FAIL0SKIP3.9767s; no setup failures/retry. Pristine production C bytes
+compiled/loaded zero-service-input control. Actual pair67120<->67121/uid501,
+positive pidversions and1024 copied bytes, literal native traces. Each malformed
+header test has explicit post-SUCCESS injection witness and no later native call;
+client-fault server receipt succeeds and cross-binds client PID.
+Six fresh binaries/exact2NAPIexports+2libSystem/libbsm paths checked. All four
+private directories and three newly owned launchd job intents/receipts retained;
+no bootout/kill/restart/existing-job change. Native own occurrence settlement is
+scoped to successful DATA; no job/ad/exclusion/unknown-fault disposal certificate.
+
+Preservation audit separately found the historical private PG transcript.journal
+absent at its recorded path (its parent/data remains). No deletion/recovery/replay
+was performed or provenance inferred. Do NOT credit the old255 gate as current.
+Both original dirty files' bytes/inodes and selected CLI link remain unchanged.
+This historical Task6A receipt gap is not a universal prerequisite or permission
+for the new independent closed echo recipe; full Task6A/live acceptance stays open.

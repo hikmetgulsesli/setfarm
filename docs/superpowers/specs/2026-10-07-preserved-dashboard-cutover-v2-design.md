@@ -1976,3 +1976,80 @@ verifier. Assert independently derived hashes, original held descriptors through
 an await, cwd/environment/selected-link independence, no writes/dist evaluation/
 non-Git processes, zero ports for invalid arity, sticky drift refusal, and
 close-loss/reused-descriptor safety. New fixtures are retained as evidence.
+
+### Task4g.1c closed two-birth Mach mechanics
+
+Replace the self-only diagnostic gap with a separately opt-in, closed echo
+exchange between two new owned Node processes. This is remote audit/right
+mechanics DATA, not the full authenticated cutover transport or startup authority.
+File Map: scripts/dashboard-cutover-mach-peer-v2.c and matching builtin test;
+paired docs. Existing local diagnostic/default build/runtime remain unchanged.
+
+Export observeControllerMachPeerV2(bytes) and observeClientMachPeerV2(bytes),
+each exactly one intrinsic nonshared/nondetached Uint8Array1..1024, no caller
+properties/label/root/expectedPID/provider. One module-wide atomic attempt, active
+contender burns before input. Copied input and volatile occurrence/status vault
+precede native acquisition; admit each public operation once, seal returned
+effects before burn checks, never retry/auto-cleanup after uncertainty. Return
+frozen copied DATA{bytes,euid,pid,pidversion}, observed from the received AUDIT
+trailer, same euid, positive pid/version and different PID from this process.
+This filter is not original-source/build, peer-lifetime or ownership proof.
+
+Production C has one fixed service string. Controller checks in that declared
+service with public bootstrap_check_in(bootstrap_port,...); client looks up its
+private SEND occurrence S with public bootstrap_look_up. Controller owns checked-in
+RECEIVE R; client owns private reply RECEIVE Q. Request is SIMPLE COPY_SEND to S
+plus header MAKE_SEND_ONCE from Q; controller receives distinct reply SEND_ONCE T.
+Validate request header dispositions/names/ID, exact size/length/payload/padding,
+rounded FORMAT_0 AUDIT trailer before echo via MOVE_SEND_ONCE T. Known successful
+reply consumes T; unknown send retains it. Client validates reply/null remote and
+PORT_SEND_ONCE local, exact frame and kernel audit before disposing Q then S.
+Controller surrenders R only after settled T. R returns to launchd: this does
+NOT remove advertisement, dispose the job or prove endpoint-generation continuity.
+No generic port destroy, bootstrap register/subset/create-service, task-for-pid,
+native callbacks/threads or raw right names. Public bootstrap APIs are nominated
+provider composites, not a claim about every internal MIG/kernel attempt.
+
+The 1024-byte inline cap is not protection against arbitrary public OOL imports.
+Scope is exclusively these closed cooperative test producers; unexpected complex
+or malformed received state burns and retains original buffers/names, without
+blind disposal. Full provider resource/freeze/peer-source binding stays separate.
+
+Actual fixture profile: Darwin arm64, installed Node26.4.0/public Node-API8 and
+CLT/MacOSX26.5 SDK, warning-as-error C11/per-symbol NAPI imports, exact libSystem/
+libbsm dependencies. Normal script tests skip without compiling or job effects.
+Test-owned copies replace ONLY the fixed service literal with a bounded unique
+UUID service and optionally wrap genuine native calls before closed header faults.
+Pristine production C must also compile/load and reject invalid input zero ports;
+no fixed production-service lookup/check-in is invoked by qualification.
+
+At most three new individually named launchd fixture jobs per opt-in invocation,
+one successful pair plus server/client received-header faults. Job and service
+names derive root-owned UUIDs, <128 bytes, own actual uid GUI domain, plist700
+parent/600 file, fixed Node/script/cwd and sanitized compiler/child/job environment.
+Job ProgramArguments uses /usr/bin/env -i with literal PATH/LANG/LC_ALL and
+fixed Node/script, preserving the job's exec identity/bootstrap context while
+clearing inherited Node environment; plist EnvironmentVariables alone is only
+an overlay. Trust the nominated system launcher/env provider, not a universal
+hostile-loader environment claim. Retain every command intent/result before
+assertions and bootstrap outcome immediately; setup/capture/receipt failure burns
+the qualification invocation and forbids subsequent attempts/jobs. Bound to40
+commands. A malformed-header oracle must witness injection AFTER actual receive
+SUCCESS; timeout/refusal alone earns no fault credit.
+Set RunAtLoad=true, KeepAlive=false, LaunchOnlyOnce=true, ResetAtClose=true.
+No caller label, existing job replacement/unload/enable/disable/kickstart, signal,
+retry or bootout. All new job/plist/binary/receipt artifacts remain visible and
+retained; they are not a clean launchd resource-settlement certificate. Receive
+uses5000ms and SEND/RCV_INTERRUPT; mark-only watchdog/capture-loss is unqualified,
+natural process exit never proves unknown-right disposal. Pair acceptance requires
+both actual native result receipts, crossed original process PIDs/euid and copied
+bytes plus expected literal call trace. Fault acceptance requires fixed refusal
+and no later native call, not cleanup credit. MC3080/gateway18789 stay unchanged.
+
+Installed launch(3) documents receive-right return/recycling; launchd.plist(5)
+documents ResetAtClose/LaunchOnlyOnce. Published Apple launchd842.1.4 core.c
+(d448a1c8f70a61202f8705f94337f686b87c30c4) demonstrates service-name collision can
+skip attachment despite job import success, and non-strict missing-name check-in
+can create a service. Do not treat this old source as current implementation or
+probe arbitrary undeclared names. Actual paired kernel receipts, not bootstrap
+status or launchctl print text, qualify this closed exchange.
