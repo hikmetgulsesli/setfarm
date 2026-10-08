@@ -2428,3 +2428,170 @@ source verifier transients, not2454retained native inputs. The fixture's own
 source/tree/build identities are not production main. Provider recipe is now
 qualified for this fixed private fixture, not native evaluation, loaded-image,
 owner/phase capability, authenticated transport, freeze, CLI or live3333 startup.
+
+### Task4g.1g bounded four-frame native mechanics DATA
+
+Causal root gap: the delivered two-birth source accepts only equal echo bytes,
+disposes endpoints before return and cannot carry HELLO/CHALLENGE/ACK/GRANT.
+Choose evolution of its fixed C anchor rather than a caller-selectable parallel
+provider/source fork or another load-only DATA helper. Keep all historical
+artifacts/receipts unchanged, explicitly supersede the two-method echo API with
+V3 methods and service. This changes native diagnostic mechanics, not default
+installation/build, launcher, CLI, owner/phase authority or startup admission.
+File Map: scripts/dashboard-cutover-mach-peer-v2.c, matching builtin test, paired
+spec/plan. Existing direct/header/sidecar holders keep their closed C path and
+dynamic byte/hash binding; old qualification does not qualify the new bytes.
+
+Exact frozen native exports, no configuration/role/name/handle/callback inputs:
+receiveControllerHelloV3(); challengeControllerAndReceiveAckV3(bytes);
+sendControllerGrantV3(bytes); helloClientAndReceiveChallengeV3(bytes);
+ackClientAndReceiveGrantV3(bytes). Argument-taking methods accept exactly one
+actual Uint8Array/Buffer backed by nonshared/nondetached ArrayBuffer, intrinsic
+length1..1024; copy before acquisition. receiveControllerHelloV3 has zero args.
+Initial invalid arity/data and wrong initial continuation admit no kernel calls
+and preserve the initial attempt. ACTIVE reentry burns before inspecting args.
+After session reservation, wrong role/stage/environment burns before new ports;
+invalid idle payload/arity at the correct stage preserves original custody.
+One module-wide atomic session, original napi_env bound at first winning claim.
+All errors exactly DASHBOARD_CUTOVER_MACH_CONTROL_REFUSED.
+
+Fixed service com.setrox.setfarm.dashboard-cutover.control.v3 prevents reuse of
+historical v2 diagnostic service names. No production job created by this slice.
+Controller first checks in original RECEIVE R and receives HELLO, then returns
+copied frozen {bytes,euid,pid,pidversion} DATA while retaining R/T_HELLO. This
+intentional JS boundary allows observed phase5 restoration and phase6-intent
+work before CHALLENGE. challengeControllerAndReceiveAckV3 sends CHALLENGE via
+T_HELLO once, receives ACK on original R, and returns copied DATA retaining
+R/T_ACK. sendControllerGrantV3 sends GRANT via T_ACK once; only successful send
+permits original R surrender, then returns frozen empty terminal DATA.
+Client first looks up original SEND S, allocates original RECEIVE Q, sends HELLO
+and receives CHALLENGE, returning copied DATA while retaining S/Q. Its final
+method sends ACK and receives GRANT, then disposes Q followed by S once and
+returns copied frozen {bytes,euid,pid,pidversion} DATA. No reacquisition.
+
+HELLO and ACK each COPY_SEND S plus MAKE_SEND_ONCE Q. Controller receives distinct
+T_HELLO/T_ACK occurrences (numeric names may recycle after settled transfer);
+CHALLENGE and GRANT MOVE_SEND_ONCE the respective original, null local/voucher.
+Message IDs exactly0x53463331/32/33/34 in order. Controller received header bits
+PORT_SEND_ONCE/PORT_SEND, local original R; client received bits0/PORT_SEND_ONCE,
+remote null, local original Q. Four fixed immutable frame slots preserve each
+original send/receive buffer, length, status/header/trailer and right occurrence.
+Never overwrite earlier frame originals to prepare a later message. Premark all
+acquisition/send/receive/disposal intents and seal returned names/status/buffers
+BEFORE post-port burn checks. Every kernel/BSM port and normal post-reservation
+Node-API DATA-publication port checks ACTIVE immediately before admission;
+already admitted calls may seal after concurrent burn but no later normal port
+is admitted. Preclaim intrinsic Node-API argument checks are an explicit
+exception, guarded by initial-stage/original-environment eligibility and zero
+kernel calls. The bounded fixed refusal publisher may check/clear pending
+exceptions and throw the fixed error after BURNED; it authorizes no acquisition,
+protocol continuation, success publication or disposal. No kernel-name
+inequality as an occurrence identity shortcut.
+
+Validate received opaque length independently1..1024, exact bounded header/body
+size/zero padding/simple bits/messageID/voucher/names and rounded FORMAT_0 AUDIT
+trailer/type/exact size before public BSM accessors. No JSON or echo equality in
+C. First received euid equals current nonroot uid, pid is positive/nonself and
+pidversion positive; each role's second original kernel tuple must equal its
+first. That is peer continuity DATA, not source/build/owner authentication.
+Native publication checks ACTIVE after every Node-API port and atomically
+advances only after copied/frozen result construction. Unknown native/NAPI/
+header/tuple/disposal result burns and retains all originals; no destroy,
+retry, resend, close-after-unknown, finalizer or generic cleanup. Inline bounds
+are not a public hostile OOL-resource certificate; only closed cooperative
+admitted producers are nominated. No new NAPI imports beyond the existing13.
+
+Functional RED precedes C changes: ONE new private pristine compile/inspection
+and real Node consumer calls the absent V3 methods with invalid inputs, before
+any Mach/job effects. Missing method, not source-text matching, is the expected
+failure. Compiler/link/load/capture failures are unqualified. Existing fixed
+diagnostic compile recipe may be used with original receipts; no old artifact
+reuse or whole compiler/loaded-image authority. Default portable suite skips
+native diagnostics; no package/hardware enrollment change.
+
+Then test-owned C copies double only external Mach/BSM boundary ports, exercising
+the actual compiled C/Node-API state/header/parser/copy/publication logic. Literal
+different hello/challenge/ack/grant payloads, exact call traces, distinct buffer
+storage and original once-only right occurrences; malformed frames, second-peer
+tuple drift, wrong role/stage, active reentry and every unknown port stop later
+calls. Test-only doubles must be in the test prefix, never production knobs.
+Fresh real campaign separately reviewed: at most3new private owned jobs, success,
+controller ACK successful-receive header fault, client GRANT successful-receive
+header fault. All artifacts/jobs/original intent/results retained. No bootout,
+signals, killing timeout, retries or process-death settlement inference.
+New C/ABI/provider recipe must be requalified with ONE fresh genuine sidecar
+fixture; retain1f historical receipt but never borrow it for changed source.
+
+Native methods/decoded GRANT remain DATA ONLY. Genuine private loader with
+original cache/exports and guarded calls, executing-source/build authentication,
+finite already-entered producer drain, genuine owner+branded restored-phase6,
+child-local nonforgeable startup grant, actual foreground CLI and clean-main
+build/live3333 acceptance remain required. No universal native/S10 barrier.
+
+Campaign selection is test-owned and closed: initial/pristine API consumer only
+SETFARM_DASHBOARD_MACH_PEER_TEST=1 with its exact test-name pattern (5commands,
+0jobs); compiled kernel-double matrix only SETFARM_DASHBOARD_MACH_CONTROL_PORT_TEST=1
+(one4-command artifact and at most36fresh Node consumers,40commands,0jobs);
+real3-job campaign only SETFARM_DASHBOARD_MACH_CONTROL_REAL_TEST=1 (at most
+31commands including one5-command pristine consumer,3jobs). Reject mixed enabled
+selectors before effects. Preserve existing40command ceiling, per-child20s
+mark-only watchdog and2MiB capture; never combine all campaigns under one flag.
+Kernel/BSM doubles and one explicitly nominated post-success Node-API freeze
+burn cover those boundaries, not every possible Node-API failure. Production
+native send/receive uses fixed5s interrupted/non-retrying timeout; future phase5
+integration must fit its independently qualified finite budget or nominate a
+causal timeout change, never waive restoration or infer a grant on expiry.
+
+The test prefix retains four bounded independent original frame-memory copies
+and checks them before every later kernel port. BSM calls have separate literal
+traces, including early tuple-drift refusal. Test-only forwarding wrappers of
+existing get_cb_info/get_typedarray_info retain the current synchronous caller
+buffer only until result freeze/new callback entry; fake boundary calls overwrite
+that caller buffer, while real production copied wire bytes must remain correct.
+No production debug export/knob or extra Node-API imports. Successful-return burn
+cases now actually reenter the real controller entry with null callback info
+while ACTIVE, observe/clear its pending exception in the trusted prefix, then return
+the original successful provider result. That tests reentry before argument
+inspection, not merely assigning a private lifecycle value. The nominated
+post-success freeze wrapper similarly reenters after real successful freeze.
+Foreign napi_env actor and exhaustive Node-API error injection remain unqualified.
+One additional nominated intrinsic get_cb_info unknown-status witness is admitted
+only after successful controller HELLO publication, once in the existing36consumer
+matrix. Valid invalid-input checks are folded into positive consumers. Unknown
+Node-API status burns even in preclaim validation; only successfully observed
+invalid shape/arity preserves custody. The next same-stage valid continuation
+must refuse before any new kernel port, tested before any wrong-stage call can
+mask revival. The test wrapper forwards the real intrinsic call before returning
+its one-shot generic-failure status. No new actor/import or job/budget expansion.
+
+Task4g.1g qualification: pristine old-source functional RED1c6c23 and compiled
+matrix API RED e80b2a preceded C implementation. Test-prefix indentation failure
+d0de5f is setup only, no RED credit. Independent review found intrinsic-unknown
+held-stage revival; functionalREDd945f8 observed actual next send/receive after
+generic Node-API status before the causal ARG_PORT fix. All failed originals
+retained, never replayed. Final C2d5698bd13573B/teste1fbed5b freezes V3 mechanics.
+
+Compiled kernel-double matrix d7df7a→850307:36fresh consumers/40originalcommands,
+1PASS/0FAIL1758.308ms, no jobs. Separately nominated SINGLE real campaign
+a9dbfb→5075c1:4PASS/0FAIL/1SKIP3344.763ms,31originalcommands/3new private retained
+jobs. Actual positive33166↔33167/uid501/versions62811296,62811298 exchanges literal
+hello/challenge/ack/grant; complete native traces and own terminal disposal.
+Controller ACK and client GRANT header mutations occur only after successful
+second receives, with no later native ports on faulted roles. All original
+intents/results independently read: complete0/null/EOF/close, no capture unknown,
+overflow or watchdog. Natural process exit/job bootstrap is not resource closure.
+
+Changed C independently requalified ONE unchanged genuine sidecar recipe:
+1a9202→e8f1f4 ROOTZUoeY7,1PASS/0FAIL14979.014ms (actual14935.531). Seven original
+commands close0/null/fullpipeevents/error0/stderr0; three original13573B stdin
+copies bind C2d5698bd;268headers. Actual0444 bundle36008B/1a98fa8e,depfile24243B/
+11ceabfb, manifest91935B/b2d9f576, exact inventory and0700emptytemp. Parent receipt
+16a038bc/innerdbd82caf retained;2454opens/closes include verifier transients.
+Fixture source9a1bd8cf/tree307f9f0d/build57689289 is NOT production main identity.
+Direct/header focused8PASS/0FAIL4997.507ms; pure control-wire29PASS/0FAIL438.671ms
+uses existing canonical tsx4.22.4 loader explicitly, no install or repo mutation.
+Initial missing-local-tsx setup error is not a product regression or passing run.
+Syntax/version2.3.79/English1981/path995/diff pass. This qualifies mechanics and
+private compile/inspection DATA only; private actual load/authentication, finite
+drain, genuine owner/phase6, child startup grant, controller/foregroundCLI and
+clean-main/live3333 remain open. No default-build, live-service or full-goal claim.

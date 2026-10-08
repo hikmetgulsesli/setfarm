@@ -1,4 +1,4 @@
-/* Closed two-birth echo mechanics DATA only; no owner or startup authority. */
+/* Closed four-frame mechanics DATA only; no owner, phase or startup authority. */
 #include <node_api.h>
 #include <mach/mach.h>
 #include <servers/bootstrap.h>
@@ -8,161 +8,247 @@
 #include <string.h>
 #include <unistd.h>
 
-static const name_t service="com.setrox.setfarm.dashboard-cutover.peer.v2";
-enum { LIMIT=1024, REQUEST_ID=0x53463233, REPLY_ID=0x53463234,
-    PREFIX=sizeof(mach_msg_header_t)+sizeof(uint32_t) };
+static const name_t service="com.setrox.setfarm.dashboard-cutover.control.v3";
+enum { LIMIT=1024, PREFIX=sizeof(mach_msg_header_t)+sizeof(uint32_t) };
 enum { NONE,PENDING,HELD,DISPOSING,SETTLED,UNKNOWN };
-static _Atomic unsigned lifecycle=0; /* idle, active, completed, burned */
+enum { IDLE=0,ACTIVE=1,CONTROLLER_HELLO=2,BURNED=3,CONTROLLER_ACK=4,CLIENT_CHALLENGE=5,DONE=6 };
+enum { HELLO,CHALLENGE,ACK,GRANT };
+static _Atomic unsigned lifecycle=IDLE;
+static _Atomic uintptr_t original_environment;
+static _Atomic unsigned intrinsic_unknown_status;
+struct right {volatile mach_port_name_t name;volatile unsigned state;volatile kern_return_t status,close_status;};
+struct message {
+    union {mach_msg_header_t header;uint8_t raw[PREFIX+LIMIT+sizeof(mach_msg_audit_trailer_t)];} buffer;
+    volatile unsigned attempt,bsm_attempt[3];
+    volatile mach_msg_return_t status;
+    uint32_t length;
+    volatile uid_t euid;volatile pid_t pid;volatile int version;
+};
 static struct {
-    volatile mach_port_name_t receive_name,send_name,reply_name;
-    volatile unsigned receive_state,send_state,reply_state,send_attempt,receive_attempt;
-    volatile kern_return_t acquire_status,allocate_status,send_status,receive_status;
-    volatile kern_return_t receive_close_status,send_close_status;
-    uint8_t input[LIMIT];
-    union { mach_msg_header_t header;uint8_t raw[PREFIX+LIMIT+sizeof(mach_msg_audit_trailer_t)]; } sent,received;
+    struct right endpoint,send,hello_reply,ack_reply;
+    struct message frames[4];
+    uid_t peer_euid;pid_t peer_pid;int peer_version;
+    volatile unsigned publication_attempt[3][7];
+    volatile napi_status publication_status[3][7];
 } vault;
 
-static int active(void){return atomic_load(&lifecycle)==1u;}
+static int active(void){return atomic_load(&lifecycle)==ACTIVE;}
 static napi_value refuse(napi_env env){
+    /* The sole bounded after-burn publication exception; never a normal port. */
     bool pending=false;
     if(napi_is_exception_pending(env,&pending)==napi_ok && pending){
         napi_value ignored;(void)napi_get_and_clear_last_exception(env,&ignored);
     }
-    (void)napi_throw_error(env,NULL,"DASHBOARD_CUTOVER_MACH_PEER_REFUSED");return NULL;
+    (void)napi_throw_error(env,NULL,"DASHBOARD_CUTOVER_MACH_CONTROL_REFUSED");return NULL;
 }
-static napi_value burn(napi_env env){atomic_store(&lifecycle,3u);return refuse(env);}
+static napi_value burn(napi_env env){atomic_store(&lifecycle,BURNED);return refuse(env);}
 
-static void frame(int controller,size_t length){
-    memset(&vault.sent,0,sizeof vault.sent);
-    vault.sent.header.msgh_bits=controller?MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE,0)
-        :MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND,MACH_MSG_TYPE_MAKE_SEND_ONCE);
-    vault.sent.header.msgh_size=(mach_msg_size_t)(PREFIX+round_msg(length));
-    vault.sent.header.msgh_remote_port=controller?vault.reply_name:vault.send_name;
-    vault.sent.header.msgh_local_port=controller?MACH_PORT_NULL:vault.receive_name;
-    vault.sent.header.msgh_id=controller?REPLY_ID:REQUEST_ID;
-    uint32_t n=(uint32_t)length;
-    memcpy(vault.sent.raw+sizeof(mach_msg_header_t),&n,sizeof n);
-    memcpy(vault.sent.raw+PREFIX,vault.input,length);
-}
-
-static int send_frame(int controller){
+static int acquire(int controller){
+    struct right *right=controller?&vault.endpoint:&vault.send;
+    mach_port_t name=MACH_PORT_NULL;
     if(!active())return 0;
-    vault.send_attempt=PENDING;
-    if(controller)vault.reply_state=DISPOSING;
-    kern_return_t k=mach_msg(&vault.sent.header,MACH_SEND_MSG|MACH_SEND_TIMEOUT|MACH_SEND_INTERRUPT,
-        vault.sent.header.msgh_size,0,MACH_PORT_NULL,5000,MACH_PORT_NULL);
-    vault.send_status=k;vault.send_attempt=k==MACH_MSG_SUCCESS?SETTLED:UNKNOWN;
-    if(controller)vault.reply_state=k==MACH_MSG_SUCCESS?SETTLED:UNKNOWN;
-    return active() && vault.send_attempt==SETTLED;
-}
-
-static int receive_frame(int controller,size_t length,pid_t *pid,uid_t *euid,int *version){
-    memset(&vault.received,0,sizeof vault.received);
-    if(!active())return 0;
-    vault.receive_attempt=PENDING;
-    kern_return_t k=mach_msg(&vault.received.header,MACH_RCV_MSG|MACH_RCV_TIMEOUT|MACH_RCV_INTERRUPT|
-        MACH_RCV_TRAILER_TYPE(MACH_MSG_TRAILER_FORMAT_0)|MACH_RCV_TRAILER_ELEMENTS(MACH_RCV_TRAILER_AUDIT),
-        0,sizeof vault.received,vault.receive_name,5000,MACH_PORT_NULL);
-    vault.receive_status=k;vault.receive_attempt=k==MACH_MSG_SUCCESS?SETTLED:UNKNOWN;
-    if(k==MACH_MSG_SUCCESS && controller){
-        /* Register the returned occurrence/buffer before any publication/burn check. */
-        vault.reply_name=vault.received.header.msgh_remote_port;
-        vault.reply_state=MACH_PORT_VALID(vault.reply_name) &&
-            vault.received.header.msgh_bits==MACH_MSGH_BITS(MACH_MSG_TYPE_PORT_SEND_ONCE,MACH_MSG_TYPE_PORT_SEND)
-            ?HELD:UNKNOWN;
-    }
-    if(!active() || vault.receive_attempt!=SETTLED)return 0;
-    mach_msg_header_t h=vault.received.header;
-    unsigned bits=controller?MACH_MSGH_BITS(MACH_MSG_TYPE_PORT_SEND_ONCE,MACH_MSG_TYPE_PORT_SEND)
-        :MACH_MSGH_BITS(0,MACH_MSG_TYPE_PORT_SEND_ONCE);
-    size_t padded=round_msg(length),size=PREFIX+padded;
-    if(h.msgh_bits!=bits || h.msgh_local_port!=vault.receive_name || h.msgh_voucher_port!=MACH_PORT_NULL ||
-        h.msgh_id!=(controller?REQUEST_ID:REPLY_ID) || h.msgh_size!=size ||
-        (controller?vault.reply_state!=HELD:h.msgh_remote_port!=MACH_PORT_NULL))return 0;
-    uint32_t received_length=0;memcpy(&received_length,vault.received.raw+sizeof h,sizeof received_length);
-    if(received_length!=length || memcmp(vault.received.raw+PREFIX,vault.input,length))return 0;
-    for(size_t i=length;i<padded;i++)if(vault.received.raw[PREFIX+i]!=0)return 0;
-    size_t offset=round_msg(h.msgh_size);
-    if(offset>sizeof vault.received || sizeof(mach_msg_audit_trailer_t)>sizeof vault.received-offset)return 0;
-    mach_msg_audit_trailer_t trailer;memcpy(&trailer,vault.received.raw+offset,sizeof trailer);
-    if(trailer.msgh_trailer_type!=MACH_MSG_TRAILER_FORMAT_0 || trailer.msgh_trailer_size!=sizeof trailer)return 0;
-    *pid=audit_token_to_pid(trailer.msgh_audit);*euid=audit_token_to_euid(trailer.msgh_audit);
-    *version=audit_token_to_pidversion(trailer.msgh_audit);
-    return *pid>0 && *pid!=getpid() && *euid==geteuid() && *version>0 && active();
-}
-
-static napi_value observe(napi_env env,napi_callback_info info,int controller){
-    if(active())return burn(env);
-    size_t argc=2,length=0,offset=0;napi_value argv[2],backing;napi_typedarray_type type;
-    void *data=NULL;bool typed=false,arraybuffer=false,detached=true;uint8_t local[LIMIT];
-    if(napi_get_cb_info(env,info,&argc,argv,NULL,NULL)!=napi_ok || argc!=1 ||
-        napi_is_typedarray(env,argv[0],&typed)!=napi_ok || !typed ||
-        napi_get_typedarray_info(env,argv[0],&type,&length,&data,&backing,&offset)!=napi_ok ||
-        type!=napi_uint8_array || !data || length<1 || length>LIMIT ||
-        napi_is_arraybuffer(env,backing,&arraybuffer)!=napi_ok || !arraybuffer ||
-        napi_is_detached_arraybuffer(env,backing,&detached)!=napi_ok || detached)return refuse(env);
-    memcpy(local,data,length);
-    unsigned expected=0;if(!atomic_compare_exchange_strong(&lifecycle,&expected,1u))return burn(env);
-    memcpy(vault.input,local,length);
-
-    mach_port_t name=MACH_PORT_NULL;kern_return_t k;
-    if(!active())return burn(env);
-    if(controller){
-        vault.receive_state=PENDING;k=bootstrap_check_in(bootstrap_port,service,&name);
-        vault.receive_name=name;vault.acquire_status=k;
-        vault.receive_state=k==KERN_SUCCESS && MACH_PORT_VALID(name)?HELD:UNKNOWN;
-        if(!active() || vault.receive_state!=HELD)return burn(env);
-    }else{
-        vault.send_state=PENDING;k=bootstrap_look_up(bootstrap_port,service,&name);
-        vault.send_name=name;vault.acquire_status=k;
-        vault.send_state=k==KERN_SUCCESS && MACH_PORT_VALID(name)?HELD:UNKNOWN;
-        if(!active() || vault.send_state!=HELD)return burn(env);
-        name=MACH_PORT_NULL;vault.receive_state=PENDING;
-        k=mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&name);
-        vault.receive_name=name;vault.allocate_status=k;
-        vault.receive_state=k==KERN_SUCCESS && MACH_PORT_VALID(name)?HELD:UNKNOWN;
-        if(!active() || vault.receive_state!=HELD)return burn(env);
-        frame(0,length);if(!send_frame(0))return burn(env);
-    }
-
-    pid_t pid=0;uid_t euid=0;int version=0;
-    if(!receive_frame(controller,length,&pid,&euid,&version))return burn(env);
-    if(controller){frame(1,length);if(!send_frame(1))return burn(env);}
-
-    if(!active())return burn(env);
-    vault.receive_state=DISPOSING;k=mach_port_mod_refs(mach_task_self(),vault.receive_name,MACH_PORT_RIGHT_RECEIVE,-1);
-    vault.receive_close_status=k;vault.receive_state=k==KERN_SUCCESS?SETTLED:UNKNOWN;
-    if(!active() || vault.receive_state!=SETTLED)return burn(env);
+    right->state=PENDING;
+    kern_return_t k=controller?bootstrap_check_in(bootstrap_port,service,&name):bootstrap_look_up(bootstrap_port,service,&name);
+    right->name=name;right->status=k;
+    right->state=k==KERN_SUCCESS && MACH_PORT_VALID(name)?HELD:UNKNOWN;
+    if(!active() || right->state!=HELD)return 0;
     if(!controller){
-        vault.send_state=DISPOSING;k=mach_port_deallocate(mach_task_self(),vault.send_name);
-        vault.send_close_status=k;vault.send_state=k==KERN_SUCCESS?SETTLED:UNKNOWN;
-        if(!active() || vault.send_state!=SETTLED)return burn(env);
+        name=MACH_PORT_NULL;
+        if(!active())return 0;
+        vault.endpoint.state=PENDING;
+        k=mach_port_allocate(mach_task_self(),MACH_PORT_RIGHT_RECEIVE,&name);
+        vault.endpoint.name=name;vault.endpoint.status=k;
+        vault.endpoint.state=k==KERN_SUCCESS && MACH_PORT_VALID(name)?HELD:UNKNOWN;
+        if(!active() || vault.endpoint.state!=HELD)return 0;
     }
+    return 1;
+}
 
-    napi_value result,values[4];
-    if(napi_create_object(env,&result)!=napi_ok ||
-        napi_create_buffer_copy(env,length,vault.received.raw+PREFIX,NULL,&values[0])!=napi_ok ||
-        napi_create_uint32(env,(uint32_t)euid,&values[1])!=napi_ok ||
-        napi_create_uint32(env,(uint32_t)pid,&values[2])!=napi_ok ||
-        napi_create_uint32(env,(uint32_t)version,&values[3])!=napi_ok)return burn(env);
-    napi_property_descriptor fields[]={
-        {.utf8name="bytes",.value=values[0],.attributes=napi_enumerable},
-        {.utf8name="euid",.value=values[1],.attributes=napi_enumerable},
-        {.utf8name="pid",.value=values[2],.attributes=napi_enumerable},
-        {.utf8name="pidversion",.value=values[3],.attributes=napi_enumerable},
-    };
-    if(napi_define_properties(env,result,4,fields)!=napi_ok || napi_object_freeze(env,result)!=napi_ok)return burn(env);
-    expected=1u;if(!atomic_compare_exchange_strong(&lifecycle,&expected,2u))return burn(env);
+static int send_frame(unsigned index,const uint8_t *input,size_t length,int controller){
+    struct message *f=&vault.frames[index];
+    struct right *reply=index==CHALLENGE?&vault.hello_reply:&vault.ack_reply;
+    if(!active() || f->attempt!=NONE || vault.endpoint.state!=HELD ||
+        (controller?reply->state!=HELD:vault.send.state!=HELD))return 0;
+    memset(&f->buffer,0,sizeof f->buffer);f->length=(uint32_t)length;
+    f->buffer.header.msgh_bits=controller?MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND_ONCE,0):
+        MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND,MACH_MSG_TYPE_MAKE_SEND_ONCE);
+    f->buffer.header.msgh_size=(mach_msg_size_t)(PREFIX+round_msg(length));
+    f->buffer.header.msgh_remote_port=controller?reply->name:vault.send.name;
+    f->buffer.header.msgh_local_port=controller?MACH_PORT_NULL:vault.endpoint.name;
+    f->buffer.header.msgh_id=(mach_msg_id_t)(0x53463331+index);
+    memcpy(f->buffer.raw+sizeof(mach_msg_header_t),&f->length,sizeof f->length);
+    memcpy(f->buffer.raw+PREFIX,input,length);
+    if(!active())return 0;
+    f->attempt=PENDING;if(controller)reply->state=DISPOSING;
+    mach_msg_return_t k=mach_msg(&f->buffer.header,MACH_SEND_MSG|MACH_SEND_TIMEOUT|MACH_SEND_INTERRUPT,
+        f->buffer.header.msgh_size,0,MACH_PORT_NULL,5000,MACH_PORT_NULL);
+    f->status=k;f->attempt=k==MACH_MSG_SUCCESS?SETTLED:UNKNOWN;
+    if(controller){reply->status=k;reply->state=k==MACH_MSG_SUCCESS?SETTLED:UNKNOWN;}
+    return active() && f->attempt==SETTLED;
+}
+
+static int receive_frame(unsigned index,int controller){
+    struct message *f=&vault.frames[index];
+    struct right *reply=index==HELLO?&vault.hello_reply:&vault.ack_reply;
+    if(!active() || f->attempt!=NONE || vault.endpoint.state!=HELD)return 0;
+    memset(&f->buffer,0,sizeof f->buffer);
+    if(!active())return 0;
+    f->attempt=PENDING;
+    mach_msg_return_t k=mach_msg(&f->buffer.header,MACH_RCV_MSG|MACH_RCV_TIMEOUT|MACH_RCV_INTERRUPT|
+        MACH_RCV_TRAILER_TYPE(MACH_MSG_TRAILER_FORMAT_0)|MACH_RCV_TRAILER_ELEMENTS(MACH_RCV_TRAILER_AUDIT),
+        0,sizeof f->buffer,vault.endpoint.name,5000,MACH_PORT_NULL);
+    f->status=k;f->attempt=k==MACH_MSG_SUCCESS?SETTLED:UNKNOWN;
+    if(k==MACH_MSG_SUCCESS && controller){
+        reply->name=f->buffer.header.msgh_remote_port;reply->status=k;
+        reply->state=MACH_PORT_VALID(reply->name) &&
+            f->buffer.header.msgh_bits==MACH_MSGH_BITS(MACH_MSG_TYPE_PORT_SEND_ONCE,MACH_MSG_TYPE_PORT_SEND)?HELD:UNKNOWN;
+    }
+    if(!active() || f->attempt!=SETTLED)return 0;
+    mach_msg_header_t h=f->buffer.header;
+    if(h.msgh_size<PREFIX || h.msgh_size>PREFIX+LIMIT)return 0;
+    memcpy(&f->length,f->buffer.raw+sizeof h,sizeof f->length);
+    if(f->length<1 || f->length>LIMIT)return 0;
+    size_t padded=round_msg(f->length),size=PREFIX+padded;
+    unsigned bits=controller?MACH_MSGH_BITS(MACH_MSG_TYPE_PORT_SEND_ONCE,MACH_MSG_TYPE_PORT_SEND):
+        MACH_MSGH_BITS(0,MACH_MSG_TYPE_PORT_SEND_ONCE);
+    if(h.msgh_bits!=bits || h.msgh_size!=size || h.msgh_id!=(mach_msg_id_t)(0x53463331+index) ||
+        h.msgh_local_port!=vault.endpoint.name || h.msgh_voucher_port!=MACH_PORT_NULL ||
+        (controller?reply->state!=HELD:h.msgh_remote_port!=MACH_PORT_NULL))return 0;
+    for(size_t i=f->length;i<padded;i++)if(f->buffer.raw[PREFIX+i]!=0)return 0;
+    size_t offset=round_msg(h.msgh_size);
+    if(offset>sizeof f->buffer || sizeof(mach_msg_audit_trailer_t)>sizeof f->buffer-offset)return 0;
+    mach_msg_audit_trailer_t trailer;memcpy(&trailer,f->buffer.raw+offset,sizeof trailer);
+    if(trailer.msgh_trailer_type!=MACH_MSG_TRAILER_FORMAT_0 || trailer.msgh_trailer_size!=sizeof trailer)return 0;
+
+    if(!active())return 0;
+    f->bsm_attempt[0]=PENDING;f->euid=audit_token_to_euid(trailer.msgh_audit);f->bsm_attempt[0]=SETTLED;
+    if(!active() || f->euid==0 || f->euid!=geteuid() || (index>=ACK && f->euid!=vault.peer_euid))return 0;
+    if(!active())return 0;
+    f->bsm_attempt[1]=PENDING;f->pid=audit_token_to_pid(trailer.msgh_audit);f->bsm_attempt[1]=SETTLED;
+    if(!active() || f->pid<=0 || f->pid==getpid() || (index>=ACK && f->pid!=vault.peer_pid))return 0;
+    if(!active())return 0;
+    f->bsm_attempt[2]=PENDING;f->version=audit_token_to_pidversion(trailer.msgh_audit);f->bsm_attempt[2]=SETTLED;
+    if(!active() || f->version<=0 || (index>=ACK && f->version!=vault.peer_version))return 0;
+    if(index<ACK){vault.peer_euid=f->euid;vault.peer_pid=f->pid;vault.peer_version=f->version;}
+    return active();
+}
+
+static int dispose(int controller){
+    struct right *r=&vault.endpoint;
+    if(!active() || r->state!=HELD)return 0;
+    r->state=DISPOSING;
+    kern_return_t k=mach_port_mod_refs(mach_task_self(),r->name,MACH_PORT_RIGHT_RECEIVE,-1);
+    r->close_status=k;r->state=k==KERN_SUCCESS?SETTLED:UNKNOWN;
+    if(!active() || r->state!=SETTLED)return 0;
+    if(!controller){
+        r=&vault.send;
+        if(!active() || r->state!=HELD)return 0;
+        r->state=DISPOSING;k=mach_port_deallocate(mach_task_self(),r->name);
+        r->close_status=k;r->state=k==KERN_SUCCESS?SETTLED:UNKNOWN;
+        if(!active() || r->state!=SETTLED)return 0;
+    }
+    return 1;
+}
+
+/* Every success publication has separate before/after admission and disposition. */
+#define DATA_PORT(call) do { \
+    if(!active() || port>=7)return burn(env); \
+    vault.publication_attempt[publication][port]=PENDING; \
+    napi_status returned=(call); \
+    vault.publication_status[publication][port]=returned; \
+    vault.publication_attempt[publication][port]=returned==napi_ok?SETTLED:UNKNOWN; \
+    port++;if(!active() || returned!=napi_ok)return burn(env); \
+} while(0)
+
+static napi_value publish(napi_env env,unsigned index,unsigned publication,unsigned next,int terminal_empty){
+    napi_value result,values[4];unsigned port=0;
+    DATA_PORT(napi_create_object(env,&result));
+    if(!terminal_empty){
+        struct message *f=&vault.frames[index];
+        DATA_PORT(napi_create_buffer_copy(env,f->length,f->buffer.raw+PREFIX,NULL,&values[0]));
+        DATA_PORT(napi_create_uint32(env,(uint32_t)f->euid,&values[1]));
+        DATA_PORT(napi_create_uint32(env,(uint32_t)f->pid,&values[2]));
+        DATA_PORT(napi_create_uint32(env,(uint32_t)f->version,&values[3]));
+        napi_property_descriptor fields[]={
+            {.utf8name="bytes",.value=values[0],.attributes=napi_enumerable},
+            {.utf8name="euid",.value=values[1],.attributes=napi_enumerable},
+            {.utf8name="pid",.value=values[2],.attributes=napi_enumerable},
+            {.utf8name="pidversion",.value=values[3],.attributes=napi_enumerable},
+        };
+        DATA_PORT(napi_define_properties(env,result,4,fields));
+    }
+    DATA_PORT(napi_object_freeze(env,result));
+    unsigned expected=ACTIVE;
+    if(!atomic_compare_exchange_strong(&lifecycle,&expected,next))return burn(env);
     return result;
 }
 
-static napi_value controller(napi_env env,napi_callback_info info){return observe(env,info,1);}
-static napi_value client(napi_env env,napi_callback_info info){return observe(env,info,0);}
+static napi_value step(napi_env env,napi_callback_info info,unsigned method){
+    unsigned state=atomic_load(&lifecycle);
+    if(state==ACTIVE)return burn(env);
+    unsigned desired=method==0 || method==3?IDLE:method==1?CONTROLLER_HELLO:method==2?CONTROLLER_ACK:CLIENT_CHALLENGE;
+    if(state==IDLE && desired!=IDLE)return refuse(env);
+    if(state!=desired || (state!=IDLE && atomic_load(&original_environment)!=(uintptr_t)env))return burn(env);
+
+    /* Intrinsic preclaim checks: no kernel ports, no caller getters/callbacks. */
+    size_t argc=2,length=0,offset=0;napi_value argv[2],backing;napi_typedarray_type type;
+    void *data=NULL;bool typed=false,arraybuffer=false,detached=true;uint8_t local[LIMIT];
+    #define ARG_PORT(call) do { \
+        napi_status returned=(call); \
+        if(returned!=napi_ok){atomic_store(&intrinsic_unknown_status,(unsigned)returned);return burn(env);} \
+    } while(0)
+    ARG_PORT(napi_get_cb_info(env,info,&argc,argv,NULL,NULL));
+    if(argc!=(method==0?0u:1u))return refuse(env);
+    if(method!=0){
+        ARG_PORT(napi_is_typedarray(env,argv[0],&typed));
+        if(!typed)return refuse(env);
+        ARG_PORT(napi_get_typedarray_info(env,argv[0],&type,&length,&data,&backing,&offset));
+        if(type!=napi_uint8_array || !data || length<1 || length>LIMIT)return refuse(env);
+        ARG_PORT(napi_is_arraybuffer(env,backing,&arraybuffer));
+        if(!arraybuffer)return refuse(env);
+        ARG_PORT(napi_is_detached_arraybuffer(env,backing,&detached));
+        if(detached)return refuse(env);
+        memcpy(local,data,length);
+    }
+    #undef ARG_PORT
+    unsigned expected=state;
+    if(!atomic_compare_exchange_strong(&lifecycle,&expected,ACTIVE))return burn(env);
+    if(state==IDLE)atomic_store(&original_environment,(uintptr_t)env);
+    if(!active() || geteuid()==0)return burn(env);
+
+    if(method==0){
+        if(!acquire(1) || !receive_frame(HELLO,1))return burn(env);
+        return publish(env,HELLO,0,CONTROLLER_HELLO,0);
+    }
+    if(method==1){
+        if(!send_frame(CHALLENGE,local,length,1) || !receive_frame(ACK,1))return burn(env);
+        return publish(env,ACK,1,CONTROLLER_ACK,0);
+    }
+    if(method==2){
+        if(!send_frame(GRANT,local,length,1) || !dispose(1))return burn(env);
+        return publish(env,GRANT,2,DONE,1);
+    }
+    if(method==3){
+        if(!acquire(0) || !send_frame(HELLO,local,length,0) || !receive_frame(CHALLENGE,0))return burn(env);
+        return publish(env,CHALLENGE,0,CLIENT_CHALLENGE,0);
+    }
+    if(!send_frame(ACK,local,length,0) || !receive_frame(GRANT,0) || !dispose(0))return burn(env);
+    return publish(env,GRANT,1,DONE,0);
+}
+
+static napi_value controller_hello(napi_env env,napi_callback_info info){return step(env,info,0);}
+static napi_value controller_challenge(napi_env env,napi_callback_info info){return step(env,info,1);}
+static napi_value controller_grant(napi_env env,napi_callback_info info){return step(env,info,2);}
+static napi_value client_hello(napi_env env,napi_callback_info info){return step(env,info,3);}
+static napi_value client_ack(napi_env env,napi_callback_info info){return step(env,info,4);}
 NAPI_MODULE_INIT(){
     napi_property_descriptor methods[]={
-        {.utf8name="observeControllerMachPeerV2",.method=controller,.attributes=napi_enumerable},
-        {.utf8name="observeClientMachPeerV2",.method=client,.attributes=napi_enumerable},
+        {.utf8name="receiveControllerHelloV3",.method=controller_hello,.attributes=napi_enumerable},
+        {.utf8name="challengeControllerAndReceiveAckV3",.method=controller_challenge,.attributes=napi_enumerable},
+        {.utf8name="sendControllerGrantV3",.method=controller_grant,.attributes=napi_enumerable},
+        {.utf8name="helloClientAndReceiveChallengeV3",.method=client_hello,.attributes=napi_enumerable},
+        {.utf8name="ackClientAndReceiveGrantV3",.method=client_ack,.attributes=napi_enumerable},
     };
-    if(napi_define_properties(env,exports,2,methods)!=napi_ok || napi_object_freeze(env,exports)!=napi_ok)return refuse(env);
+    if(napi_define_properties(env,exports,5,methods)!=napi_ok || napi_object_freeze(env,exports)!=napi_ok)return refuse(env);
     return exports;
 }

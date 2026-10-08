@@ -1439,7 +1439,7 @@ produces zero-arg async prepareDashboardCutoverNativeSidecarV2() frozen
   no native evaluation/Mach/launchd/PG/service/defaultbuild/install mutations.
   Record original intent/argv/bytes/stream+child results before assertions; raw
   parent results retained outside pinned fixture, no cancellation/retry.
-- [ ] Fresh focused affected suites, source syntax/version/English/path/diff,
+- [x] Fresh focused affected suites, source syntax/version/English/path/diff,
   independent actual receipt/output/source/manifests review; scoped commit/push,
   exact scanner and preserved PR receipt. Keep full loader/authenticated transport/
   freeze/controller/CLI/clean-main/3333 obligations open after this bounded slice.
@@ -1454,3 +1454,125 @@ original0700empty temp. Affected337P0F2skip475.199s; syntax/contracts/diff pass.
 Actual fixture own source/build is not current main or loaded-code authority.
 Original receipts and failed fixtures retained privately; delivery/scanner/PR
 receipt remains the last checkbox until actual results, not a completion claim.
+
+Delivered4g.1f8cdf0c8da36fadc6a057a26353e77e96dc2bc268, root2a4736 normalpush
+6bcf0f→88d6d9; finaltwo exact4fileC0/I0/M0 plus three independent actual reviews.
+Preserved PRbody39947→41921B SHA53ced10329cac49dbce61b8e2fe27893334123112dce2d791e059722a434aa0b,
+2387c6; exact8cdf GitGuardianSUCCESS19:15:54UTC, OPEN DRAFT/reviews[]. No main/
+loader/startup credit. Last checkbox now proven, prior pending text historical.
+
+## Task4g.1g: bounded four-frame native mechanics DATA
+
+Spec: paired Task4g.1g; causal missing distinct-message/live-session root gap.
+File Map: modify scripts/dashboard-cutover-mach-peer-v2.c and matching builtin
+test; paired docs. Root sole writer; parallel workers RO reviews only. Fixed C
+path keeps existing holders' dynamic source hash binding; no selectable fork.
+V3-only native API/service explicitly supersedes old echo, old artifacts retained.
+No default package/build/CLI/PG/launchd/service/deployment mutation.
+
+Consumes fixed public Node-API8/CLT/SDK, genuine kernel Mach/BSM ports. Produces
+receiveControllerHelloV3() -> frozen{bytes,euid,pid,pidversion};
+challengeControllerAndReceiveAckV3(bytes) -> same copied DATA;
+sendControllerGrantV3(bytes) -> frozen{} terminal DATA;
+helloClientAndReceiveChallengeV3(bytes) -> copied peer DATA;
+ackClientAndReceiveGrantV3(bytes) -> copied peer DATA, terminal.
+All native refusal DASHBOARD_CUTOVER_MACH_CONTROL_REFUSED. No startup capability.
+
+- [x] Add actual compiled pristine consumer before C changes:
+  ```js
+  for (const [name,args] of [
+    ['receiveControllerHelloV3',[null]],
+    ['challengeControllerAndReceiveAckV3',[new Uint8Array(0)]],
+    ['sendControllerGrantV3',[]],
+    ['helloClientAndReceiveChallengeV3',[new Uint8Array(0)]],
+    ['ackClientAndReceiveGrantV3',[new Uint8Array(0)]],
+  ]) {
+    assert.equal(typeof addon[name],'function','missing four-frame native method '+name);
+    assert.throws(()=>addon[name](...args),e=>e.message==='DASHBOARD_CUTOVER_MACH_CONTROL_REFUSED');
+  }
+  ```
+  Run ONE nominated initial RED only:
+  `SETFARM_DASHBOARD_MACH_PEER_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-name-pattern='four-frame native consumer' scripts/__tests__/dashboard-cutover-mach-peer-v2.test.js`.
+  New pristine fixture only; compile/inspect original source then real Node,
+  absent method before any native acquisitions/jobs. Preserve raw originals;
+  classify setup/compiler/load/capture failure unqualified, never transport RED.
+  Actual1c6c23 initial API RED retained ROOTuxvW35; five original commands,
+  missing receiveControllerHelloV3 before invocation. Compiled matrix amended
+  old-source REDe80b2a ROOT5Dvz13: five commands, actual two old exports vs five
+  required V3 exports before native calls. Prior matrixd0de5f ROOTUbpglz one
+  compiler command was test-only indentation setup failure, not RED. All retained.
+- [x] Add test-owned Mach/BSM doubles prefix, literal different4payloads,
+  exact native boundary traces and separate original buffer addresses. Default
+  tests opt-in SKIP, no source-text-only tests or production fixture switches.
+  Run compiled actualC/Node-API under doubled kernel ports; require controller
+  receive→challenge/send+ack/receive→grant/send+Rclose and client lookup+Qallocate
+  →hello/send+challenge/receive→ack/send+grant/receive+Qclose+Sclose. Check first
+  copied result unchanged after second exchange, no caller buffer alias, methods
+  immutable, wrong-stage/role/reentry/terminal calls zero later kernel ports.
+  Malformed second frames and changed pidversion must refuse before final sends.
+  Separate SETFARM_DASHBOARD_MACH_CONTROL_PORT_TEST=1 only, one4-command artifact
+  plus<=36fresh Node consumers,<=40commands/0jobs. Reject mixed campaign flags
+  before effects. Kernel/BSM and one post-success freeze-burn boundary only,
+  never claim exhaustive Node-API-failure injection.
+  Independent four bounded frame-memory snapshots checked before later kernel
+  ports; BSM accessor traces verify admission order. Existing intrinsic NAPI
+  forwarding wrappers capture only current synchronous caller input, reset at
+  next entry/result freeze, and fake ports mutate it to exercise real preclaim
+  copy isolation. Five kernel success-return and one real-success-freeze cases
+  call actual ACTIVE controller entry before null-info inspection, clear only
+  the test-observed fixed refusal, then return original provider result. No new
+  production imports/exports/fixture knobs. Foreign env remains unqualified.
+  Reviewer-found intrinsic-unknown root path: nominate one forwarded real
+  get_cb_info one-shot generic failure after HELLO within existing36consumers;
+  fold invalid-input oracle into positives. Run functional RED before fix;
+  same valid continuation must refuse first, not be masked by a wrong-stage
+  retry. Split non-napi_ok -> burn from successful invalid shape/arity -> refusal.
+- [x] Implement bounded atomic role/stage/original-env vault, four immutable
+  frame slots plus original R/Q/S/T_HELLO/T_ACK occurrence states. Typed input
+  copy before first CAS; returned effect seal before burn. HELLO/ACK COPY_SEND S
+  + MAKE_SEND_ONCE Q; CHALLENGE/GRANT MOVE_SEND_ONCE respective returned T. Keep
+  original endpoint custody across JS boundaries, opaque independent length and
+  exact header/trailer validation, same original peer tuple twice, terminal
+  disposal ordering. Preserve13NAPI imports and two Mach-O registration exports.
+  Normal kernel/BSM/post-reservation success-publication ports require ACTIVE;
+  preclaim intrinsic input checks and bounded fixed refusal publisher are the
+  only explicit exceptions. Refusal exception admits no further kernel work.
+- [x] Run focused compiled fake-port GREEN and negative matrices covering each
+  acquire/send/receive/close uncertainty and successful-return burn, input shape,
+  copied bytes, source-owned stage/publication. No automatic cleanup or retries.
+- [x] Review SINGLE new real campaign before invocation: up to3NEW retained
+  private jobs (success/controllerACKfault/clientGRANTfault), finite capture/
+  mark-only watchdog, each original compiler/Node/launchctl receipt before
+  assertions, no cancellation/bootout/reuse. Independent kernel births and
+  all4distinct payloads/trace/right states must agree; job bootstrap alone and
+  natural child death are not resource/public-service settlement certificates.
+  Separate SETFARM_DASHBOARD_MACH_CONTROL_REAL_TEST=1 only,<=31commands including
+  the5-command pristine consumer,<=3jobs, unchanged40command ceiling/20s mark-only
+  watchdog/2MiBcapture. Never run under initial RED or fake-port flag. Fixed5s
+  native timeout remains fail-closed; later phase5 integration must qualify its
+  finite timing budget, not skip phase5 after timeout.
+- [x] Requalify changed C via ONE fresh genuine closed sidecar fixture with
+  unchanged literal providers/guards and alloriginal recipes/bytes/events.
+  Focus direct/header/source and purewire regressions; syntax/contracts/diff;
+  final independent reviews required before scoped delivery below.
+  Keep actual loader/authentication/finite freeze/owner-phase/controller/CLI/
+  clean-main/live3333 required outcomes open. Do not borrow old1f C qualification.
+- [ ] Complete final exact-byte independent reviews, root scoped commit/push,
+  exact-head scanner and preserved DRAFT PR delivery receipt. This is not merge
+  or whole-goal completion.
+
+Task4g.1g actual qualification: C2d5698bd/teste1fbed5b; APIabsent RED1c6c23/e80b2a
+before implementation; setupd0de5f notRED. Held intrinsic unknown revival RED
+d945f8 before ARG_PORT fix, failed originals retained. FakeGREENd7df7a→850307
+36consumers40commands/0jobs1758.308ms; reala9dbfb→5075c1 4PASS/0FAIL/1SKIP
+3344.763ms31commands3new retained jobs, positive33166↔33167/uid501/positive
+versions and four different frames; successful-second-receive ACK/GRANT header
+faults admit no later native ports. All40/31originalresults independently read
+0/null/completecapture/nounknown/watchdog. New-Csidecar1a9202→e8f1f4 ROOTZUoeY7
+1PASS14979.014ms,7qualifiedcommands/three13573B2dstdin/268headers, original0444
+bundle36008B1a98fa8e/dep24243B11ceabfb/manifest91935Bb2d9f576/exactinventory.
+Parent16a038bc andinnerdbd82caforiginals preserved. Fixture source/tree/build
+notproductionmain. Focused direct/header8PASS4997.507ms; control-wire29PASS
+438.671ms using existing canonical tsx4.22.4 loader, initial absent-local-tsx
+setup not product failure. Syntax/version/English/path/diff pass. Finaldelivery
+pending, no loader/phase6/CLI/clean-main/live3333/full-project credit.
