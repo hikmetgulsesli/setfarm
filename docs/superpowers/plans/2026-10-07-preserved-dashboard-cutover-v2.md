@@ -1701,7 +1701,7 @@ Public API unchanged. No new authority, native/PG/cron/launchd effects or timeou
   exact model forwarding and removing real-job creation/deletion possibility.
 - [x] Focused GREEN plus affected local/config/cleanup suites; strict noemit and
   contracts. This is source verification, not clean-main build or host cutover.
-- [ ] Fresh independent source and evidence review; scoped commit/push/scanner
+- [x] Fresh independent source and evidence review; scoped commit/push/scanner
   and preserved DRAFT PR delivery only after exact qualifications pass.
 
 Task4h.1 receipts: actual functional RED1b35c3 BEFORE production edit, 0PASS/2FAIL
@@ -1717,3 +1717,42 @@ Strict noemit870915→73bf59:1189files0diagnostics. Version96d3b0:2.3.79,
 English5ff5a6:1985files, paths8d0c51:996files; diff7a14a2 clean.
 These are source/fixture receipts only, not clean-main build, original subprocess
 termination, remote effect settlement, controller completion or live3333.
+
+Task4h.1 delivered in b59d4b06: final independent source/evidence C0/I0/M0,
+normal push, exact-head GitGuardian SUCCESS21:38:06UTC and preserved PR280 DRAFT
+appendix. Previous47596B body remains an exact prefix;49185B new body matches
+reviewed private file. No whole-project/merge/clean-main/live3333 credit.
+
+## Task4h.2: retain deferred run-cron teardown originals
+
+Causal relation: scheduleRunCronTeardown is entered after terminal transitions
+but drops its nested five-minute grace/deletion Promise. The local drain must
+retain the actual registered original queue, not infer completion from DB state.
+
+File Map: src/installer/cleanup-ops.ts (schedule only),
+src/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.ts
+(one closed kind), its existing test file (AST factory bindings plus regression
+matrix), paired spec and this plan. No actual agent-cron grace/policy edits.
+Root sole writer, read-only agents independently nominate/review.
+
+- [x] Actual AST-selected function + genuine registry: pending lookup and pending
+  nested teardown functional RED before production changes, natural child exit.
+- [x] Register before lookup, adopt entire teardown, preserve public void and
+  logging/error distinctions, observe wrapper rejection after closed denial.
+- [x] Cover no-work, lookup/teardown rejection, already-held and closing zero-work
+  denial, and detached parent retention; every synthetic gate ends naturally.
+- [x] Focused GREEN + gateway/config/cleanup affected matrix, strict noemit,
+  contracts and diff. No real PG, cron, gateway, grace timer or native campaign.
+- [ ] Fresh independent source/evidence reviews, scoped root commit/push/scanner
+  and preserved DRAFT PR appendix. No global/legacy/child/effect/startup grant.
+
+Task4h.2 actual receipts: two genuine full-function AST functionalRED BEFORE
+production, bccf81:0PASS/2FAIL441.286125ms, held=true while lookup/nested teardown
+remain pending; originals retained and synthetic gates settled in finally.
+InitialGREENae28a0:2PASS392.525833ms. Six supplementary controls added afterward,
+not claimed as pre-source RED. Current cleanup44129934/local7890a3a7/test06791fcc:
+e0bb7a119PASS/0FAIL/0SKIP2733.342375ms =35local+14gateway+37config+33cleanup.
+Strictfcdd7f→25e5a4:1190files0diagnostics. Versionc834e0:2.3.79, Englishcb3a4a:
+1985files, pathsbdb614:996files, diff77ad57 pass. No actual cleanup-ops PG import,
+timer/cron/gateway/native/ROOT/job/user-configuration effects; no dirty build.
+Local queue body termination only, not original children or remote effects.

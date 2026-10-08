@@ -2710,3 +2710,34 @@ disabled-fallback state. Add unchanged configured/PATH/npx forwarding, callback
 error, disabled zero binary-discovery/CLI-port and HTTP success controls. Replace the existing model
 test's real-CLI fallback/cleanup with the same inert fixture and exact --model
 argument assertions; no real cron or provider action is a test prerequisite.
+
+## Task4h.2: retain the actual deferred run-cron teardown queue
+
+Causal scope refinement: terminal step transitions call scheduleRunCronTeardown.
+Its outer lookup chain currently loses the nested teardown Promise; teardown
+can wait five minutes and then dispatch gateway deletion after terminal DB state.
+Neither the terminal row nor public void return proves this queue has ended.
+
+Extend the closed local kind vocabulary by `run-cron-teardown`. Register the
+actual schedule body before getWorkflowId, adopt lookup plus the entire nested
+teardown Promise into that independently retained record, and preserve public
+void/fire-and-forget return. Keep separate teardown-error and scheduling-error
+logging; observe wrapper rejection outside the body so closed admission cannot
+produce an unhandled rejection. Denied scheduling reaches zero lookup, grace,
+teardown or gateway work ports; refusal logging is permitted. Existing grace
+duration, active-run checks, gateway policy and deletion behavior are unchanged.
+
+Preferred implementation is the existing trusted async wrapper with awaited
+lookup and teardown. Merely returning the inner Promise repairs one lost chain
+but supplies no admission/drain retention; changing public return to Promise
+would unnecessarily change callers. No cancellation, polling, shortened grace,
+terminal-row inference or remote-effect settlement claim is introduced.
+
+Regressions select the exact full schedule function AST and bind the genuine
+local registry plus inert lookup/teardown/logger ports. Do not import the real
+PG-bearing cleanup module. A pending lookup and independently pending teardown
+must each prevent a local handle; closure denies new scheduling before lookup.
+Include natural no-work, known failure/logging and detached-parent controls.
+This supplies only current-instance registered JS queue termination. Legacy
+other-process cohorts, original gateway/Medic children, remote effects and the
+complete six-effect adapter remain separate required outcomes.

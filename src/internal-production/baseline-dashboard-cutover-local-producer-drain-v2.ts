@@ -5,9 +5,9 @@ import { types } from "node:util";
 // termination, NOT children, effects, historical actors or cross-process freeze.
 type ProducerKind = "configuration-write" | "atomic-configuration-write"
   | "medic-install" | "medic-uninstall" | "workflow-uninstall"
-  | "all-workflows-uninstall" | "workspace-cleanup";
+  | "all-workflows-uninstall" | "workspace-cleanup" | "run-cron-teardown";
 const kinds = new Set<string>(["configuration-write", "atomic-configuration-write",
-  "medic-install", "medic-uninstall", "workflow-uninstall", "all-workflows-uninstall", "workspace-cleanup"]);
+  "medic-install", "medic-uninstall", "workflow-uninstall", "all-workflows-uninstall", "workspace-cleanup", "run-cron-teardown"]);
 type Invocation = { live: boolean; original?: Promise<unknown> };
 const ancestry = new AsyncLocalStorage<Invocation>();
 const live = new Set<Invocation>();

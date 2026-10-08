@@ -205,7 +205,8 @@ function factory(relative: string, name: string): string {
   return `const{withDashboardCutoverLocalProducerSyncV2,withDashboardCutoverLocalProducerAsyncV2,
 assertOrdinaryConfigurationDeploymentCutoverAdmissionV2,validateConfig,atomicWriteSync,fs,path,logger,
 removeLegacyMedicCronJob,removeMedicAgent,installSystemdMedicTimer,uninstallSystemdMedicTimer,
-resolveWorkflowDir,resolveWorkflowWorkspaceDir,readOpenClawConfig,getAgentWorkspacePath}=env;
+resolveWorkflowDir,resolveWorkflowWorkspaceDir,readOpenClawConfig,getAgentWorkspacePath,
+getWorkflowId,teardownWorkflowCronsIfIdle}=env;
 const importMeta={dirname:'/unused-qualified-entry'};const exports={};
 return(function(){${compiled};return exports[${JSON.stringify(name)}]})();`;
 }
@@ -239,4 +240,122 @@ const original=writer(),pending=acquire().then(h=>{held=true;events.push('held')
 await tick();assert.equal(held,false);first.resolve();await tick();assert.equal(held,false);
 assert.deepEqual(events,['legacy','config','timer']);timer.resolve({ok:true});assert.deepEqual(await original,{ok:true});
 check(await pending);assert.deepEqual(events,['legacy','config','timer','held']);`);
+});
+
+// Genuine queue accounting: losing the registration or nested await makes these
+// actual-source consumers grant a handle while their original remains pending.
+function scheduledTeardownFactory(): string {
+  return factory("../../src/installer/cleanup-ops.ts", "scheduleRunCronTeardown");
+}
+
+test("actual scheduled teardown retains original workflow lookup before local handle", async () => {
+  const body = scheduledTeardownFactory();
+  await exercise(`const lookup=deferred(),events=[],unhandled=[];let held=false;
+process.on('unhandledRejection',e=>unhandled.push(e));
+const schedule=new Function('env',${JSON.stringify(body)})({withDashboardCutoverLocalProducerAsyncV2:async,
+getWorkflowId:id=>{events.push(['lookup',id]);return lookup.promise},
+teardownWorkflowCronsIfIdle:()=>{throw Error('UNEXPECTED_TEARDOWN')},logger:{debug:()=>{},error:()=>{}}});
+try{assert.equal(schedule('owned-run'),undefined);
+const pending=acquire().then(h=>{held=true;return h});await tick();assert.equal(held,false);
+assert.deepEqual(events,[['lookup','owned-run']]);lookup.resolve(undefined);await tick();
+assert.equal(held,true);check(await pending);assert.deepEqual(unhandled,[]);
+}finally{lookup.resolve(undefined);await tick();}`);
+});
+
+test("actual scheduled teardown retains nested grace/deletion original after lookup", async () => {
+  const body = scheduledTeardownFactory();
+  await exercise(`const lookup=deferred(),teardown=deferred(),events=[],unhandled=[];let held=false;
+process.on('unhandledRejection',e=>unhandled.push(e));
+const schedule=new Function('env',${JSON.stringify(body)})({withDashboardCutoverLocalProducerAsyncV2:async,
+getWorkflowId:id=>{events.push(['lookup',id]);return lookup.promise},
+teardownWorkflowCronsIfIdle:id=>{events.push(['teardown',id]);return teardown.promise},logger:{debug:()=>{},error:()=>{}}});
+try{assert.equal(schedule('owned-run'),undefined);lookup.resolve('owned-workflow');await tick();
+const pending=acquire().then(h=>{held=true;return h});await tick();assert.equal(held,false);
+assert.deepEqual(events,[['lookup','owned-run'],['teardown','owned-workflow']]);
+teardown.resolve();await tick();assert.equal(held,true);check(await pending);assert.deepEqual(unhandled,[]);
+}finally{lookup.resolve('owned-workflow');teardown.resolve();await tick();}`);
+});
+
+test("actual scheduled teardown lookup rejection preserves only scheduling log", async () => {
+  const body = scheduledTeardownFactory();
+  await exercise(`const lookup=deferred(),debug=[],errors=[],unhandled=[];let held=false,teardowns=0;
+process.on('unhandledRejection',e=>unhandled.push(e));
+const schedule=new Function('env',${JSON.stringify(body)})({withDashboardCutoverLocalProducerAsyncV2:async,
+getWorkflowId:()=>lookup.promise,teardownWorkflowCronsIfIdle:()=>{teardowns++;throw Error('UNEXPECTED_TEARDOWN')},
+logger:{debug:(...args)=>debug.push(args),error:(...args)=>errors.push(args)}});
+try{assert.equal(schedule('owned-run'),undefined);const pending=acquire().then(h=>{held=true;return h});
+await tick();assert.equal(held,false);lookup.reject(Error('LOOKUP_FAILED'));await tick();assert.equal(held,true);
+check(await pending);assert.equal(teardowns,0);assert.deepEqual(errors,[]);
+assert.deepEqual(debug,[['[cleanup] Cron teardown scheduling failed: Error: LOOKUP_FAILED',{runId:'owned-run'}]]);
+assert.deepEqual(unhandled,[]);}finally{lookup.resolve(undefined);await tick();}`);
+});
+
+test("actual scheduled teardown rejection preserves only workflow error log", async () => {
+  const body = scheduledTeardownFactory();
+  await exercise(`const teardown=deferred(),debug=[],errors=[],unhandled=[];let held=false;
+process.on('unhandledRejection',e=>unhandled.push(e));
+const schedule=new Function('env',${JSON.stringify(body)})({withDashboardCutoverLocalProducerAsyncV2:async,
+getWorkflowId:async()=> 'owned-workflow',teardownWorkflowCronsIfIdle:()=>teardown.promise,
+logger:{debug:(...args)=>debug.push(args),error:(...args)=>errors.push(args)}});
+try{assert.equal(schedule('owned-run'),undefined);const pending=acquire().then(h=>{held=true;return h});
+await tick();assert.equal(held,false);teardown.reject(Error('TEARDOWN_FAILED'));await tick();assert.equal(held,true);
+check(await pending);assert.deepEqual(debug,[]);
+assert.deepEqual(errors,[['Cron teardown failed for workflow owned-workflow: Error: TEARDOWN_FAILED',{runId:'owned-run'}]]);
+assert.deepEqual(unhandled,[]);}finally{teardown.resolve();await tick();}`);
+});
+
+test("actual scheduled teardown falsy workflow lookup dispatches no teardown", async () => {
+  const body = scheduledTeardownFactory();
+  await exercise(`const calls=[],unhandled=[];let teardowns=0,held=false;
+process.on('unhandledRejection',e=>unhandled.push(e));
+const schedule=new Function('env',${JSON.stringify(body)})({withDashboardCutoverLocalProducerAsyncV2:async,
+getWorkflowId:async id=>{calls.push(id);return id==='empty'?'':undefined},
+teardownWorkflowCronsIfIdle:()=>{teardowns++;throw Error('UNEXPECTED_TEARDOWN')},
+logger:{debug:()=>assert.fail('UNEXPECTED_LOG'),error:()=>assert.fail('UNEXPECTED_LOG')}});
+assert.equal(schedule('empty'),undefined);assert.equal(schedule('missing'),undefined);
+const pending=acquire().then(h=>{held=true;return h});await tick();assert.equal(held,true);check(await pending);
+assert.deepEqual(calls,['empty','missing']);assert.equal(teardowns,0);assert.deepEqual(unhandled,[]);`);
+});
+
+test("actual scheduled teardown held denial observes refusal before lookup work", async () => {
+  const body = scheduledTeardownFactory();
+  await exercise(`const handle=await acquire(),debug=[],unhandled=[];let work=0;
+process.on('unhandledRejection',e=>unhandled.push(e));
+const denied=()=>{work++;throw Error('BODY_WORK')};
+const schedule=new Function('env',${JSON.stringify(body)})({withDashboardCutoverLocalProducerAsyncV2:async,
+getWorkflowId:denied,teardownWorkflowCronsIfIdle:denied,
+logger:{debug:(...args)=>debug.push(args),error:denied}});
+assert.equal(schedule('owned-run'),undefined);await tick();assert.equal(work,0);check(handle);
+assert.deepEqual(debug,[['[cleanup] Cron teardown scheduling failed: Error: '+refused,{runId:'owned-run'}]]);
+assert.deepEqual(unhandled,[]);`);
+});
+
+test("actual scheduled teardown closing denial retains first original and denies new queue", async () => {
+  const body = scheduledTeardownFactory();
+  await exercise(`const lookup=deferred(),calls=[],debug=[],unhandled=[];let held=false,teardowns=0;
+process.on('unhandledRejection',e=>unhandled.push(e));
+const schedule=new Function('env',${JSON.stringify(body)})({withDashboardCutoverLocalProducerAsyncV2:async,
+getWorkflowId:id=>{calls.push(id);return lookup.promise},
+teardownWorkflowCronsIfIdle:async id=>{assert.equal(id,'owned-workflow');teardowns++},
+logger:{debug:(...args)=>debug.push(args),error:()=>assert.fail('UNEXPECTED_ERROR_LOG')}});
+try{assert.equal(schedule('first'),undefined);const pending=acquire().then(h=>{held=true;return h});
+assert.equal(schedule('denied'),undefined);await tick();assert.equal(held,false);assert.deepEqual(calls,['first']);
+assert.equal(teardowns,0);assert.deepEqual(debug,[['[cleanup] Cron teardown scheduling failed: Error: '+refused,{runId:'denied'}]]);
+lookup.resolve('owned-workflow');await tick();assert.equal(held,true);check(await pending);
+assert.equal(teardowns,1);assert.deepEqual(unhandled,[]);
+}finally{lookup.resolve('owned-workflow');await tick();}`);
+});
+
+test("actual scheduled teardown remains registered after detached parent return", async () => {
+  const body = scheduledTeardownFactory();
+  await exercise(`const lookup=deferred(),teardown=deferred(),unhandled=[];let held=false;
+process.on('unhandledRejection',e=>unhandled.push(e));
+const schedule=new Function('env',${JSON.stringify(body)})({withDashboardCutoverLocalProducerAsyncV2:async,
+getWorkflowId:()=>lookup.promise,teardownWorkflowCronsIfIdle:()=>teardown.promise,
+logger:{debug:()=>assert.fail('UNEXPECTED_LOG'),error:()=>assert.fail('UNEXPECTED_LOG')}});
+try{assert.equal(await async('medic-install',async()=>{assert.equal(schedule('owned-run'),undefined);return 21}),21);
+const pending=acquire().then(h=>{held=true;return h});await tick();assert.equal(held,false);
+lookup.resolve('owned-workflow');await tick();assert.equal(held,false);teardown.resolve();await tick();
+assert.equal(held,true);check(await pending);assert.deepEqual(unhandled,[]);
+}finally{lookup.resolve('owned-workflow');teardown.resolve();await tick();}`);
 });
