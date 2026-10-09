@@ -3806,3 +3806,17 @@ This canonical registry covers only nominated current-process source consumers.
 It is not finite old-loaded-process exclusion, queued legacy contender freeze,
 positive execution-owner PG+physical binding, final-lstat-to-unlink monotonicity,
 six-effect/controller/foreground/native build or live port3333 qualification.
+
+Task4i.8 bounded qualification refinement after independent source review:
+capture SAME genuine published bilateral scopes diagnostically, attempt actual
+provider assertions during pending JS drainage, and compare all direct counters
+before/after and after SAME original settles. Separately inject response loss
+only AFTER actual Reflect.apply installs the original intrinsic native-promise
+observer; no legacy/reentry call supplies the burn. Verify later genuine native
+promise fulfillment and SAME canonical authenticated JS handle remain privately
+retained; child intent false, ready false, unknown true and PG/ROOT0. No caller
+authority or production inspection API is added. Supplementary oracle REDs use
+two explicitly labeled finalized fixture source faults: one literal working-stage
+substitution and one literal dropped fulfilled-value/returned assignment. Root
+production bytes stay unchanged; these graphs never earn healthy qualification.
+Only current graph with source fault disabled counts as the two additional GREENs.

@@ -30,14 +30,15 @@ const translations=[
 
 // LOCAL finite source-only bridge. This does NOT run the production compiler or
 // confer clean-main/native/executing-image authority. Shared fixture unchanged.
-function jointFixture(resources=false,pre32=false,bounded=false,owner=false,ownerInputCopy=false){
+function jointFixture(resources=false,pre32=false,bounded=false,owner=false,ownerInputCopy=false,localDrainFault=false){
   const bridgeList=pre32?[...translations,
     ['src/internal-production/baseline-legacy-database-census-v1.ts',
       'dist/internal-production/baseline-legacy-database-census-v1.js']]:[...translations];
   if(owner){
     assert.equal(resources,true);assert.equal(pre32,true);
     for(const name of ['baseline-deployment-cutover-records-v1','baseline-deployment-cutover-owner-store-v1',
-      'baseline-deployment-cutover-publication-v1','baseline-deployment-cutover-v1','baseline-workspace-authority-path-v1'])
+      'baseline-deployment-cutover-publication-v1','baseline-deployment-cutover-v1','baseline-workspace-authority-path-v1',
+      'baseline-dashboard-cutover-local-producer-drain-v2'])
       bridgeList.push(['src/internal-production/'+name+'.ts','dist/internal-production/'+name+'.js']);
   }
   const files=Object.fromEntries(scripts.map(n=>['scripts/'+n,fs.readFileSync(sourceRoot+'/scripts/'+n)]));
@@ -59,6 +60,18 @@ function jointFixture(resources=false,pre32=false,bounded=false,owner=false,owne
   for(const [source] of bridgeList)files[source]=fs.readFileSync(sourceRoot+'/'+source);
   for(const n of ['deployment-dashboard-cutover-adapter-v2.mjs','deployment-dashboard-cutover-adapter-v2.d.mts']){
     const p=sourceRoot+'/scripts/'+n;if(fs.existsSync(p))files['scripts/'+n]=fs.readFileSync(p);
+  }
+  if(localDrainFault){
+    assert.equal(owner,true);assert.equal(sourceFault,null);
+    const locator='scripts/deployment-dashboard-cutover-adapter-v2.mjs',original=files[locator].toString();
+    const [needle,replacement]=localDrainFault==='pending-stage-working'
+      ?["record.stage='draining';checkOperation(record);","record.stage='working';checkOperation(record);"]
+      :localDrainFault==='drop-fulfilled-custody'
+        ?['occurrence.value=value;occurrence.returned=true;occurrence.settled=true;','occurrence.settled=true;']:[];
+    assert.equal(typeof needle,'string');assert.equal(original.split(needle).length,2);
+    const changed=original.replace(needle,replacement);files[locator]=Buffer.from(changed);
+    sourceFault={authority:'explicit-counterfactual-source-graph-not-healthy-production-qualification',
+      locator,originalHash:hash(original),changedHash:hash(changed),needle,replacement,localDrainFault};
   }
   let providers=null,home=null;
   if(resources){
@@ -234,12 +247,13 @@ function resourceProgram(fixture){return `
   syncBuiltinESMExports();
 `;}
 
-async function exercise(body,{resources=false,pre32=false,bounded=pre32,owner=false,ownerInputCopy=false}={}){
-  const fixture=jointFixture(resources,pre32,bounded,owner,ownerInputCopy),{root}=fixture;
+async function exercise(body,{resources=false,pre32=false,bounded=pre32,owner=false,ownerInputCopy=false,localDrainFault=false}={}){
+  const fixture=jointFixture(resources,pre32,bounded,owner,ownerInputCopy,localDrainFault),{root}=fixture;
   const program=`import assert from 'node:assert/strict';import fs from 'node:fs';
     import path from 'node:path';
     import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
     const root=${JSON.stringify(root)},out={actual:false,ports:[],commands:[],nativeCalls:0};
+    const originalExecFile=cp.execFile;
     ${resources?resourceProgram(fixture):''}
     for(const name of ${resources?"['exec','execSync','execFile','execFileSync','fork']":"['spawn','spawnSync','exec','execSync','execFile','execFileSync','fork']"})cp[name]=(...args)=>{
       out.commands.push({name,args});throw Error('FORBIDDEN_EXTERNAL_EFFECT')};
@@ -671,7 +685,7 @@ test('fixed pre32 original-operation interfaces exist before participant or data
 // are explicit inert driver/journal/finding mechanics, never a fabricated scope.
 const pre32Driver=String.raw`
 export default function postgres(url,options){
-  const p=globalThis.pre32Probe;assertTarget();p.open++;
+  const p=globalThis.pre32Probe;assertTarget();p.open++;p.openObserved?.();
   function assertTarget(){if(url!=='postgresql://FIXTURE_ONLY@localhost/setfarm')throw Error('UNEXPECTED_FIXTURE_TARGET')}
   const tx=async strings=>{
     const q=strings.join('');p.queries++;
@@ -772,6 +786,222 @@ test('actual owner OPEN fixture retains independent original bytes before any jo
   assert.equal(fs.existsSync(baseline+'/restart-authority-retirement-v1'),false);
   assert.equal(out.commands.length,0);assert.ok(out.ownerProcessObservations>0);
 `,{resources:true,pre32:true,owner:true}));
+
+// These exercise actual canonical registry state, not synthetic drain handles.
+// Removing the coordinator's acquisition permits PG/ROOT while the original
+// producer/child is live; removing ready-handle rechecks admits later ports.
+const localDrainSetup=`
+  const local=await import('./dist/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js');
+  const tick=()=>new Promise(resolve=>setImmediate(resolve));
+  const localSnapshot=()=>({open:p.open,queries:p.queries,
+    reservationSpawns:out.portCounts?.['reservation:spawn']??0,
+    reservationOpens:out.portCounts?.['reservation:openSync']??0,
+    reservationPorts:Object.fromEntries(Object.entries(out.portCounts??{}).filter(([key])=>key.startsWith('reservation:')))});
+  const waitLocalBoundary=async()=>{
+    for(let probe=0;probe<4096;probe++){
+      if(p.open!==0)return {kind:'PG-open',freshEntryRefused:false};
+      try{local.withDashboardCutoverLocalProducerSyncV2('workspace-cleanup',()=>{})}
+      catch(error){assert.equal(error.message,'DASHBOARD_CUTOVER_LOCAL_PRODUCER_DRAIN_REFUSED');
+        return {kind:'fresh-producer-refused',freshEntryRefused:true}}
+      await tick();
+    }
+    throw Error('LOCAL_DRAIN_BOUNDARY_SETUP_EXHAUSTED');
+  };
+`;
+
+test('local drain waits SAME registered body before first PG or ROOT port',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+participants+localDrainSetup+`
+  let finish,settled=false;const original=new Promise(resolve=>{finish=resolve});
+  const producer=local.withDashboardCutoverLocalProducerAsyncV2('workflow-uninstall',()=>original);
+  void producer.then(()=>{settled=true});
+  const reservation=adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner);
+  const outcome=reservation.then(()=>({success:true}),error=>({error:error.message}));
+  let boundary,before;
+  try{boundary=await waitLocalBoundary();before={...localSnapshot(),...boundary,bodySettled:settled}}
+  finally{finish();await producer}
+  const result=await outcome;out.localDrain={authority:'actual-canonical-registry-body-with-explicit-PG-Python-native-doubles',before,result};
+  assert.equal(before.bodySettled,false);
+  assert.equal(before.open,0,'LOCAL_DRAIN_PG_OPEN_BEFORE_ORIGINAL_BODY_SETTLEMENT');
+  assert.equal(before.reservationSpawns,0);assert.equal(before.reservationOpens,0);
+  assert.equal(before.queries,0);assert.deepEqual(before.reservationPorts,{});
+  assert.equal(before.freshEntryRefused,true);assert.deepEqual(result,{success:true});
+  assert.equal(p.open,1);assert.equal(out.reservationChild.closed,true);
+`,{resources:true,pre32:true,owner:true}));
+
+test('local drain unknown original child refuses PG and ROOT after registered JS settles',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+participants+`
+  let dispatches=0,callback;
+  cp.execFile=(command,args,done)=>{
+    assert.equal(command,'/fixture-owned-inert-child');assert.deepEqual(args,['unknown-custody']);
+    dispatches++;done(null,'BUSINESS_OUT','BUSINESS_ERR');return undefined;
+  };syncBuiltinESMExports();
+`+localDrainSetup+`
+  await local.withDashboardCutoverLocalProducerAsyncV2('medic-install',async()=>{
+    local.execFileDashboardCutoverLocalChildV3('/fixture-owned-inert-child',['unknown-custody'],
+      (error,stdout,stderr)=>{callback={error,stdout,stderr}});
+  });
+  assert.deepEqual(callback,{error:null,stdout:'BUSINESS_OUT',stderr:'BUSINESS_ERR'});
+  const result=await adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner)
+    .then(()=>({success:true}),error=>({error:error.message}));
+  out.localDrain={authority:'explicit-undefined-child-return-double-not-child-execution',dispatches,result,...localSnapshot()};
+  assert.deepEqual(result,{error:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'},'LOCAL_DRAIN_UNKNOWN_CHILD_ACCEPTED');
+  assert.equal(p.open,0);assert.equal(out.portCounts?.['reservation:spawn']??0,0);
+  assert.equal(out.portCounts?.['reservation:openSync']??0,0);assert.equal(dispatches,1);
+  assert.equal(p.queries,0);assert.deepEqual(localSnapshot().reservationPorts,{});
+`,{resources:true,pre32:true,owner:true}));
+
+test('local drain waits original real Node child and streams before PG',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+participants+`
+  let originalChild,childClosed,callbackResult;const events=[];const OriginalPromise=Promise;
+  const node=${JSON.stringify(fixedNode)},childProgram='process.stdin.resume();process.stdin.on("end",()=>{process.stdout.write("OUT");process.stderr.write("ERR")})';
+  cp.execFile=(command,args,done)=>{
+    assert.equal(command,node);assert.deepEqual(args,['-e',childProgram]);
+    originalChild=originalExecFile(command,args,{cwd:root,env:{},encoding:'utf8'},done);
+    childClosed=new OriginalPromise(resolve=>originalChild.once('close',resolve));
+    out.localOriginalChild={pid:originalChild.pid,command,args,options:{cwd:root,env:{},encoding:'utf8'}};
+    for(const event of ['exit','close'])originalChild.on(event,(code,signal)=>events.push({event,code,signal}));
+    for(const [name,stream] of [['stdout',originalChild.stdout],['stderr',originalChild.stderr],['stdin',originalChild.stdin]])
+      for(const event of name==='stdin'?['close']:['end','close'])stream.on(event,()=>events.push({event:name+':'+event}));
+    return originalChild;
+  };syncBuiltinESMExports();
+`+localDrainSetup+`
+  let boundary,before,result;
+  try{
+  await local.withDashboardCutoverLocalProducerAsyncV2('medic-install',async()=>{
+    local.execFileDashboardCutoverLocalChildV3(node,['-e',childProgram],
+      (error,stdout,stderr)=>{callbackResult={error:error?.message??null,stdout,stderr}});
+  });
+  // Observe the actual wait-promise constructor at the canonical child-drain
+  // boundary. Return SAME native Promise; never mint a fake drain handle.
+  let childWaitResolve,pgResolve;
+  const childWait=new OriginalPromise(resolve=>{childWaitResolve=resolve});
+  const pgOpened=new OriginalPromise(resolve=>{pgResolve=resolve});p.openObserved=pgResolve;
+  globalThis.Promise=new Proxy(OriginalPromise,{construct(target,args,newTarget){
+    const value=Reflect.construct(target,args,target);
+    if(Error().stack.includes('acquireDashboardCutoverLocalChildDrainV3'))childWaitResolve('actual-child-wait');
+    return value;
+  }});
+  const reservation=adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner);
+  const outcome=reservation.then(()=>({success:true}),error=>({error:error.message}));
+  try{boundary=await OriginalPromise.race([childWait,pgOpened.then(()=>'PG-open'),outcome.then(()=> 'operation-returned')]);
+    before={...localSnapshot(),boundary,events:[...events],callbackReturned:callbackResult!==undefined}}
+  finally{globalThis.Promise=OriginalPromise;originalChild.stdin.end()}
+  result=await outcome;
+  }finally{
+    globalThis.Promise=OriginalPromise;
+    if(originalChild){if(!originalChild.stdin.writableEnded)originalChild.stdin.end();await childClosed}
+  }
+  out.localDrain={authority:'one-actual-owned-Node-child-leaf-explicit-PG-Python-native-doubles',before,result,events,callbackResult};
+  assert.equal(before.boundary,'actual-child-wait','LOCAL_DRAIN_PG_OPEN_BEFORE_REAL_CHILD_SETTLEMENT');
+  assert.equal(before.open,0);assert.equal(before.callbackReturned,false);assert.deepEqual(before.events,[]);
+  assert.equal(before.queries,0);assert.deepEqual(before.reservationPorts,{});
+  assert.deepEqual(result,{success:true});assert.deepEqual(callbackResult,{error:null,stdout:'OUT',stderr:'ERR'});
+  for(const event of ['stdout:end','stdout:close','stderr:end','stderr:close','stdin:close'])
+    assert.equal(events.filter(row=>row.event===event).length,1);
+  for(const event of ['exit','close'])assert.deepEqual(events.find(row=>row.event===event),{event,code:0,signal:null});
+`,{resources:true,pre32:true,owner:true}));
+
+test('local drain genuine ready-generation burn inhibits later ports after SAME PG query settles',()=>exercise(
+  pre32Setup('callback-loss')+ownerSetup+participants+localDrainSetup+`
+  const reservation=adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner);
+  const outcome=reservation.then(()=>({success:true}),error=>({error:error.message}));
+  await p.suspended;
+  const burn=await local.acquireDashboardCutoverLocalProducerDrainV2()
+    .then(()=>({success:true}),error=>({error:error.message}));
+  const direct=()=>Object.fromEntries(Object.entries(out.portCounts??{}).filter(([key])=>
+    key.startsWith('native:')||key.startsWith('definition:')||key.startsWith('reservation:')));
+  const before=direct();p.resumeOriginalQuery();const result=await outcome;
+  const after=direct();out.localDrain={authority:'actual-canonical-ready-generation-burn-driver-double',burn,before,after,result,querySettled:p.querySettled};
+  assert.deepEqual(burn,{error:'DASHBOARD_CUTOVER_LOCAL_PRODUCER_DRAIN_REFUSED'},'LOCAL_DRAIN_READY_GENERATION_NOT_ACQUIRED');
+  assert.deepEqual(result,{error:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'});
+  assert.equal(p.querySettled,true);assert.deepEqual(after,before);
+  assert.equal(out.portCounts?.['reservation:spawn']??0,0);
+`,{resources:true,pre32:true,owner:true}));
+
+test('local drain pending reentry burns before proxy traps PG ROOT and original settlement',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+participants+localDrainSetup+`
+  let finish;const original=new Promise(resolve=>{finish=resolve});
+  const producer=local.withDashboardCutoverLocalProducerAsyncV2('workflow-uninstall',()=>original);
+  const reservation=adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner);
+  const outcome=reservation.then(()=>({success:true}),error=>({error:error.message}));
+  let boundary,traps=0,reentry;
+  const proxy=new Proxy({},{get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')}});
+  try{boundary=await waitLocalBoundary();
+    reentry=await adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(proxy,proxy,proxy,{})
+      .then(()=>({success:true}),error=>({error:error.message}))}
+  finally{finish();await producer}
+  const result=await outcome;out.localDrain={authority:'actual-canonical-pending-drain-reentry',boundary,reentry,result,traps,...localSnapshot()};
+  assert.equal(boundary.freshEntryRefused,true);
+  assert.deepEqual(reentry,{error:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'});
+  assert.deepEqual(result,{error:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'});
+  assert.equal(traps,0);assert.equal(p.open,0);assert.equal(out.portCounts?.['reservation:spawn']??0,0);
+  assert.equal(p.queries,0);assert.deepEqual(localSnapshot().reservationPorts,{});
+`,{resources:true,pre32:true,owner:true}));
+
+test('local drain captured genuine scopes deny all direct ports while JS original remains pending',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+participants+localDrainSetup+`
+  const get=WeakMap.prototype.get;let nativeScope,definitionScope;
+  WeakMap.prototype.get=function(key){const value=get.call(this,key);
+    if(value?.original===loaded&&value.published)nativeScope=key;
+    if(value?.original===approved&&value.published)definitionScope=key;
+    return value;
+  };
+  let finish;const original=new Promise(resolve=>{finish=resolve});
+  const producer=local.withDashboardCutoverLocalProducerAsyncV2('workflow-uninstall',()=>original);
+  const reservation=adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner);
+  const outcome=reservation.then(()=>({success:true}),error=>({error:error.message}));
+  const direct=()=>Object.fromEntries(Object.entries(out.portCounts??{}).filter(([key])=>!key.startsWith('composite:')));
+  let boundary,before,after,nativeRefused=false,definitionRefused=false;
+  try{boundary=await waitLocalBoundary();before=direct();
+    try{native.assertHeldDashboardCutoverLoadedJobOperationV4(nativeScope)}catch{nativeRefused=true}
+    try{definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4(definitionScope)}catch{definitionRefused=true}
+    after=direct();
+  }finally{WeakMap.prototype.get=get;finish();await producer}
+  const result=await outcome;
+  out.localDrain={authority:'actual-captured-bilateral-scopes-pending-canonical-JS-drain',
+    boundary,capturedNative:!!nativeScope,capturedDefinition:!!definitionScope,
+    nativeRefused,definitionRefused,before,after,afterSettlement:direct(),result,...localSnapshot()};
+  assert.equal(boundary.freshEntryRefused,true);assert.ok(nativeScope);assert.ok(definitionScope);
+  assert.equal(nativeRefused,true,'LOCAL_DRAIN_STAGE_ADMITTED_NATIVE_SCOPE');assert.equal(definitionRefused,true);
+  assert.deepEqual(after,before);assert.deepEqual(direct(),before);
+  assert.deepEqual(result,{error:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'});
+  assert.equal(p.open,0);assert.equal(p.queries,0);assert.deepEqual(localSnapshot().reservationPorts,{});
+`,{resources:true,pre32:true,owner:true,
+  localDrainFault:process.env.SETFARM_LOCAL_DRAIN_COUNTERFACTUAL_RED==='1'?'pending-stage-working':false}));
+
+test('local drain lost original observer response retains SAME later fulfilled JS handle',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+participants+localDrainSetup+`
+  const set=WeakMap.prototype.set,apply=Reflect.apply;let coordinator,triggered=0;
+  WeakMap.prototype.set=function(key,value){const result=set.call(this,key,value);
+    if(value?.originalLoaded===loaded&&value.originalDefinition===approved&&value.route==='reservation')coordinator=value;
+    return result;
+  };
+  Reflect.apply=function(target,thisArg,args){const result=apply(target,thisArg,args);
+    if(!triggered&&target===Promise.prototype.then&&thisArg===coordinator?.localDrain.js.promise
+      &&Error().stack.includes('acquireLocalDrainOriginal')){
+      triggered++;throw Error('ACTUAL_INTRINSIC_OBSERVER_RESPONSE_LOST');
+    }return result;
+  };
+  let result,fulfilled;
+  try{
+    result=await adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner)
+      .then(()=>({success:true}),error=>({error:error.message}));
+    assert.ok(coordinator);fulfilled=await coordinator.localDrain.js.promise;await tick();
+  }finally{WeakMap.prototype.set=set;Reflect.apply=apply}
+  // No legacy/reentry burn before observing original fulfillment and retention.
+  local.assertDashboardCutoverLocalProducerDrainV2(fulfilled);
+  const js=coordinator.localDrain.js,child=coordinator.localDrain.child;
+  out.localDrain={authority:'actual-original-intrinsic-observer-installed-then-response-loss',
+    triggered,result,retainedSameValue:js.value===fulfilled,returned:js.returned,settled:js.settled,
+    authenticOriginal:true,promiseNative:(await import('node:util')).types.isPromise(js.promise),
+    ready:coordinator.localDrain.ready,unknown:coordinator.unknown,childIntent:child.intent,...localSnapshot()};
+  assert.equal(triggered,1);assert.equal(js.value,fulfilled,'LOCAL_DRAIN_FULFILLED_HANDLE_DISCARDED');
+  assert.equal(js.returned,true);assert.equal(js.settled,true);assert.equal(child.intent,false);
+  assert.equal(coordinator.localDrain.ready,false);assert.equal(coordinator.unknown,true);
+  assert.deepEqual(result,{error:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'});
+  assert.equal(p.open,0);assert.equal(p.queries,0);assert.deepEqual(localSnapshot().reservationPorts,{});
+`,{resources:true,pre32:true,owner:true,
+  localDrainFault:process.env.SETFARM_LOCAL_DRAIN_COUNTERFACTUAL_RED==='1'?'drop-fulfilled-custody':false}));
 
 test('owner-bound reservation uses actual OPEN and claim while genuine pre32 scope remains held',()=>exercise(
   pre32Setup('healthy')+ownerSetup+participants+`

@@ -2760,12 +2760,12 @@ acquireDashboardCutoverLocalChildDrainV3(jsHandle:object):Promise<object>;
 assertDashboardCutoverLocalChildDrainV3(handle:object):void.
 No new public interfaces or caller-supplied module/promise/handle/ports.
 
-- [ ] Step1: root inline spec/plan self-review and independent nomination gates.
+- [x] Step1: root inline spec/plan self-review and independent nomination gates.
   Exact fixed URL ROOT+'/dist/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js';
   authenticate bilateral scopes, then enter private draining stage before JS
   acquisition. Genuine participant live-token ports reject this stage. Retain
   original native promises and fulfilled handles BEFORE fallible post-checks.
-- [ ] Step2: actual ordering RED before production edits. Register an async
+- [x] Step2: actual ordering RED before production edits. Register an async
   producer with a held original native promise in SAME canonical module:
   let finish;const original=new Promise(resolve=>{finish=resolve});
   const producer=local.withDashboardCutoverLocalProducerAsyncV2('workflow-uninstall',()=>original);
@@ -2779,7 +2779,7 @@ No new public interfaces or caller-supplied module/promise/handle/ports.
   program/intent/result/pins/EOF-close records; setup failures are separate.
   Run fixed Node26 builtin test with shared NODE_PATH and literal esbuild loader:
   node --test --test-name-pattern='local drain' scripts/__tests__/deployment-dashboard-cutover-adapter-v2.test.js
-- [ ] Step3: minimal source after genuine RED. Prepare canonical registry only
+- [x] Step3: minimal source after genuine RED. Prepare canonical registry only
   for reservation; after enrollment set stage='draining'. For each fixed JS then
   child occurrence retain intent, same native promise and actual fulfillment
   value before validation; child consumes SAME authentic JS handle. Authenticate
@@ -2798,3 +2798,26 @@ No new public interfaces or caller-supplied module/promise/handle/ports.
   update private handoff. Continue remaining positive execution-owner coupling,
   finite cooperative old-process/root exclusion, phase/effects/controller/entry
   and reviewed clean-main+native/current-host proof, not Task6A.
+
+Task4i.8 evidence before final delivery: baseline source5005b836 five genuine
+ordering/unknown-child/ready-generation controls0P5F189136.438459ms, root-read
+originals KqmplK/RAVJAr/y1h5vA/8WJoDE/p7gkZm. Corrected actual-child original
+gcHRSg0P1F38953.840292ms includes natural exit/close/stdin/stdout/stderr closure;
+earlier y1h5vA snapshot was partial, not equivalent leaf qualification.
+Current adapter91747147 fiveGREEN5P0F161481.350333ms plus two supplementary
+GREEN2P0F55195.146292ms: genuine captured pending scopes (zero direct-port
+deltas) and actual intrinsic observer installed then response loss (SAME native
+promise later fulfills, authentic original handle retained, unknown sticky,
+child intent false, PG/ROOT0). Two literal source-fault test graphs first prove
+the supplementary oracles: working-before-drain and dropping fulfillment fields,
+0P2F71029.859917ms; no production reset/revert or healthy graph credit for them.
+Exactly7current retained originals independently read:182copied source pins/
+77literal TS bridges/105manualoutput entries, one actual owned Node child leaf;
+PG/Python/native doubles remain explicit. Private local-drain-final-index.json.
+Old-route/currentpre32/owner13P0F340319.549208ms original readback;
+existing localJS/child/Medic/gateway59P0F2223.755875ms aggregate with retained
+original children only where actual harness wrote them. Strict1194/0noEmit and
+contracts2.3.79/English1992/paths999 pass, not actual build. Final exact-four-file
+independent review/fresh gates/normal delivery still pending; no whole Task4,
+positive execution-owner coupling, finite legacy freeze, six-effect/entry/host
+or3333 authority. Same four-file map; no new public production API.

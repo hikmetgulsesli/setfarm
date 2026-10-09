@@ -6,13 +6,23 @@ import {holdCurrentFinalizedSetfarmSourceBuildV1} from './build-generation-reten
 
 const ROOT=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const tokens=new WeakMap();
+const originalThen=Promise.prototype.then;
 const preparation={attempted:false,ready:false,revoked:false,source:null,imports:[],native:null,definition:null,census:null,censusAttempted:false,
-  owner:null,reservation:null,ownerAttempted:false};
+  owner:null,reservation:null,ownerAttempted:false,localDrain:null};
 let active=null,operation=null,attempted=false;
 function refuse(){throw Error('DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED')}
 function revokeActive(){if(active===preparation)preparation.revoked=true;else if(active)active.revoked=true}
 function checkPreparation(){if(active!==preparation||preparation.revoked)refuse()}
-function checkOperation(record){if(active!==record||record!==operation||record.revoked)refuse()}
+function checkOperation(record){
+  if(active!==record||record!==operation||record.revoked)refuse();
+  if(record.localDrain?.ready){
+    try{
+      preparation.localDrain.assertDashboardCutoverLocalProducerDrainV2(record.localDrain.js.value);
+      preparation.localDrain.assertDashboardCutoverLocalChildDrainV3(record.localDrain.child.value);
+    }catch{record.revoked=true;record.unknown=true;refuse()}
+  }
+  if(active!==record||record!==operation||record.revoked)refuse();
+}
 function sourceCheck(check){check();preparation.source.recheck();check()}
 async function importOriginal(locator){
   const occurrence={locator,intent:true,promise:null,settled:false,value:null};
@@ -43,6 +53,8 @@ async function prepare(pre32,ownerReservation){
     preparation.owner=await importOriginal(ROOT+'/scripts/deployment-cutover-owner.mjs');
     sourceCheck(checkPreparation);
     preparation.reservation=await importOriginal(ROOT+'/scripts/deployment-dashboard-cutover-first-generation-v2.mjs');
+    sourceCheck(checkPreparation);
+    preparation.localDrain=await importOriginal(ROOT+'/dist/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js');
     sourceCheck(checkPreparation);
   }
 }
@@ -117,6 +129,30 @@ async function originalOccurrence(record,invoke){
   }catch{record.revoked=true;record.unknown=true;refuse()}
 }
 
+async function acquireLocalDrainOriginal(record,kind){
+  const occurrence=record.localDrain[kind];occurrence.intent=true;checkOperation(record);
+  try{
+    record.pending.add(occurrence);checkOperation(record);
+    occurrence.promise=kind==='js'
+      ?preparation.localDrain.acquireDashboardCutoverLocalProducerDrainV2()
+      :preparation.localDrain.acquireDashboardCutoverLocalChildDrainV3(record.localDrain.js.value);
+    if(!types.isPromise(occurrence.promise))refuse();
+    Reflect.apply(originalThen,occurrence.promise,[value=>{
+      // Preserve actual fulfilled custody BEFORE any pending-set/liveness cut.
+      occurrence.value=value;occurrence.returned=true;occurrence.settled=true;
+      record.pending.delete(occurrence);
+    },()=>{
+      occurrence.settled=true;record.pending.delete(occurrence);
+      record.revoked=true;record.unknown=true;
+    }]);
+    await occurrence.promise;checkOperation(record);
+    if(!occurrence.returned)refuse();
+    if(kind==='js')preparation.localDrain.assertDashboardCutoverLocalProducerDrainV2(occurrence.value);
+    else preparation.localDrain.assertDashboardCutoverLocalChildDrainV3(occurrence.value);
+    occurrence.authenticated=true;checkOperation(record);
+  }catch{record.revoked=true;record.unknown=true;refuse()}
+}
+
 export async function executeDashboardCutoverJointPre32AssertionsV4(token,originalDefinition,scope){
   if(operation?.pre32?.checking){operation.revoked=true;refuse()}
   if(arguments.length!==3||scope===null||typeof scope!=='object'||types.isProxy(scope))refuse();
@@ -170,7 +206,10 @@ async function qualifyOriginals(originalLoaded,originalDefinition,arity,route,or
       {intent:false,returned:false,authenticated:false,scope:null}],
     settlements:[{intent:false,returned:false},{intent:false,returned:false}],
     pre32:{invocationIntent:false,helperAttempted:false,helperSettled:false,checking:false,scope:null,authenticated:false},
-    reservation:{invocationIntent:false,returned:false}};
+    reservation:{invocationIntent:false,returned:false},
+    localDrain:{ready:false,
+      js:{intent:false,promise:null,returned:false,settled:false,value:null,authenticated:false},
+      child:{intent:false,promise:null,returned:false,settled:false,value:null,authenticated:false}}};
   // Construction may have swallowed active-first reentry. Never discard that burn.
   checkPreparation();operation=active=record;
   let failed=false;
@@ -181,6 +220,13 @@ async function qualifyOriginals(originalLoaded,originalDefinition,arity,route,or
       preparation.native.assertHeldDashboardCutoverLoadedJobOperationV4,originalLoaded);
     enroll(record,1,preparation.definition.beginHeldDashboardCutoverApprovedDefinitionOperationV4,
       preparation.definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4,originalDefinition);
+    if(route==='reservation'){
+      record.stage='draining';checkOperation(record);
+      await acquireLocalDrainOriginal(record,'js');
+      await acquireLocalDrainOriginal(record,'child');
+      if(!record.localDrain.js.authenticated||!record.localDrain.child.authenticated)refuse();
+      record.localDrain.ready=true;checkOperation(record);
+    }
     record.stage='working';
     if(route!=='original'){
       record.pre32.invocationIntent=true;
