@@ -3584,3 +3584,164 @@ No new Task4 capability is created here. Full current-owner/reservation, finite
 legacy exclusion, changing phase/durable intents, six effects, controller,
 authenticated foreground grant/birth/job/control/listener and final genuine
 clean-main/live3333 verification remain mandatory.
+
+## Task4i.7 nomination: owner-bound original ROOT reservation
+
+Task4i.6 delivered826ff24e after two exact-six-file C0/I0/M0 reviews and
+7+6+52 focused passing cases. Next functional step is the existing absent-only
+atomic first-generation ROOT publication under original pre32 custody. This
+is reservation custody, not any of the six service/native effects or full freeze.
+Root alone writes; readers review nomination and retained originals. No live
+entry/CLI wiring or host ROOT mutation is authorized by this partial producer.
+
+Alternatives: merely conjoining owner/lock DATA leaves the publisher ungated;
+wrapping acquire before/after leaves subsequent parent ports admitted after
+shared revocation. Selected design extends the actual parent's per-port check
+with a fixed, resource-free, owner-bound coordinator fence. No generic callback
+or caller permission injection. Preserve all old V1/V2 semantics when no joint
+operation exists, including census-free old routes and strict EEXIST/no reclaim.
+
+Fixed interfaces, exact arity:
+reserveHeldDashboardCutoverJointFirstGenerationV4(loaded:object,definition:object,owner:object):Promise<void>;
+assertDashboardCutoverJointOwnerTokenV4(token:object,owner:object):void;
+reserveDeploymentCutoverFirstGenerationWithOwnerV4(owner:object,token:object):Promise<void>;
+assertDeploymentCutoverJointReservationMetadataV4(token:object,input:object):void;
+acquireFirstGenerationDashboardCutoverJointReservationV4(input:object,token:object):Promise<object>;
+assertFirstGenerationDashboardCutoverJointReservationV4(token:object):void.
+The first two are adapter exports; next two owner exports; last two atomic
+reservation provider exports. Only its existing private original opaque handle
+is returned internally. No public reservation getter, callback/path/URL/SQL/
+optional mode, token mint, returned controller capability or release port.
+
+The new fixed adapter entry adds a literal reservation route to its existing
+shared once-only preparation/enrollment/attempt. Retain canonical owner and
+first-generation imports before await; no query namespace or fallback. Validate
+the actual owner through the same canonical module/WeakMap, not binding DATA.
+The fixed pre32 helper authenticates the same actual census scope as before;
+between its two explicit scope assertions it invokes the owner-owned fixed
+operation, retaining that native original promise before await. Existing launcher
+continuation and private URL remain unchanged. The coordinator record retains
+originalOwner and reservation invocation intent. Its new token assertion checks
+same token/owner/fixed route/live working stage and prior actual pre32 scope
+authentication, with no resources or recursive owner/PG reads.
+
+The owner operation retains a provisional private token/owner/held record BEFORE
+its first original import or trusted owner/source/OPEN composite. Public legacy
+reentry can therefore burn even during preflight. Attach immutable hash input
+only after the actual relation validates; an unpublished/lost record or import
+response stays unknown and cannot be replaced. The operation authenticates its
+original handle, reads its held
+modules.observation actual OPEN intent, canonicalizes it with existing records,
+and applies assertDeploymentCutoverMaintenanceRelationV1 against SAME held
+maintenance and current sourceAuthority. It must not publish/overwrite OPEN.
+Only then derive actual observed.intent.cutoverIntentHash and held.claim.
+ownerClaimHash. Never substitute maintenanceIntentHash, cutoverPlanHash, caller
+labels or a fabricated observer. Preserve a copy of the actual canonical intent
+bytes and recheck them plus owner before/after reservation acquisition. The
+claim's process birth and the provider's fresh reservation nonce remain distinct
+occurrences; don't claim identical nonce records. Existing source/build/process/
+history/OPEN observers are trusted composites, not universal interior guards.
+They still require genuine clean-main BUILD outside source fixtures.
+
+Before first acquisition, retain an owner-private original operation record with
+token/original owner, immutable two-hash input and native import/acquisition
+promises. Metadata assertion authenticates SAME private input object identity
+and token/owner operation, plus held validity/uncertainty and shared token fence;
+it is resource-free. It cannot accept a copied DATA object even with same hashes.
+Authenticate that ORIGINAL input separately from the atomic provider's existing
+snapshot() value copy; using the copy as identity would reject healthy work.
+Metadata may call adapter token assertion, never a recursive reverse call.
+Actual reservation WeakMap handle, promise, and result remain private and
+retained after settlement. No response/promise/constructor/publication exception
+may discard a returned original or refresh unknown custody into acceptance.
+
+Owner public legacy entry points must guard the retained joint lifetime BEFORE
+input parsing/imports/normal resource ports. During genuine joint work reentry
+burns/refuses and notifies the shared token. Split its trusted internal owner
+checker from public wrappers so source-owned checks don't self-burn. New fixed
+metadata checks need a separate short synchronous checking guard, not a flag
+held across awaits. Original legacy routes must not resolve new adapter/provider
+imports or acquire joint resources. Fixed canonical imports in the new route
+are original preparation work, not falsely counted as zero loader activity.
+
+Actual first-generation publisher parent uses its original check/port/open/
+child machinery. New fixed joint entry binds the actual private metadata and
+token BEFORE first parent resource port. Every nominated parent check consults
+both resource-free canonical guards. Its private joint lifetime survives v.active
+finally, acquired-handle return, outer PG loss and actual child settlement.
+Public V2 acquire/assert/close during this lifetime burn/refuse before parsing,
+proxy traps or parent FS/process ports; existing no-joint behavior stays unchanged.
+No new FD close, pathname unlink, rollback/reclaim or retry is permitted by this
+slice. Existing atomic V2 close continues to leave ROOT+lock unchanged.
+
+Add exact one-member ROOT validation to actual physical() using two bracketed
+readdir observations, original root descriptor/path identities, lock byte and
+physical checks. Extra sibling artifacts cause sticky refusal; a source file's
+absence or sampled empty history is not a producer freeze. Preserve root original
+identity through its one admitted stage-to-canonical rename; no arbitrary root
+or lock replacement/mtime adoption. This integrity check is not namespace-wide
+monotonicity or protection against already-entered stale unlink.
+
+The fixed Python atomic publisher is ONE admitted original child composite;
+parent guards cannot inhibit its already-running syscalls. Register original
+child and settlement before fallible observation, retain/drain it after burn;
+never cancel/signal/replace/retry it or call completion a backend-death proof.
+Publication may complete after joint failure: preserve ROOT/lock/FD originals
+as evidence and permanently refuse subsequent parent ports and cleanup. Any
+invoked bridge/acquisition rejection, lost response or unobserved original stays
+UNKNOWN. Eventual child/query settlement does not release the joint lifetime.
+Healthy source-owned checks may finish original native/definition bookkeeping,
+but reservation originals remain privately held; the root is never erased.
+No half-complete live rollout is wired: final controller will incorporate this
+same fixed operation and its retained record in the complete qualified route.
+
+Exact File Map: adapter.mjs/.d.mts and builtin test; owner.mjs and owner test;
+first-generation.mjs and first-generation test; this paired spec and plan. Nine
+files only; no launcher/PG/Python/native/CLI/service/package/Task6A change. Existing
+owner fixture cleanup cannot destroy new RED/qualification receipts: new cases
+must use owned retained fixtures with original program/intent/result/EOF+close.
+Local finite bridges add EXACT five pairs to the existing five pre32 pairs:
+src/internal-production/baseline-deployment-cutover-records-v1.ts -> dist/internal-production/baseline-deployment-cutover-records-v1.js;
+src/internal-production/baseline-deployment-cutover-owner-store-v1.ts -> dist/internal-production/baseline-deployment-cutover-owner-store-v1.js;
+src/internal-production/baseline-deployment-cutover-publication-v1.ts -> dist/internal-production/baseline-deployment-cutover-publication-v1.js;
+src/internal-production/baseline-deployment-cutover-v1.ts -> dist/internal-production/baseline-deployment-cutover-v1.js;
+src/internal-production/baseline-workspace-authority-path-v1.ts -> dist/internal-production/baseline-workspace-authority-path-v1.js.
+Canonical-json is already in the old four-pair bridge. Owner's original six
+source files must exist unchanged in fixture: build-generation-maintenance-
+journal.mjs, build-generation-maintenance-owner-observer.mjs, build-generation-
+retention.mjs, deployment-cutover-owner.mjs, deployment-cutover.mjs,
+deployment-cutover-dependencies.mjs. Copy actual first-generation.mjs and pinned
+atomic-root-v2.py (helper SHAe65e3f49), retaining original hashes. No glob or
+invented build graph. Build/process/driver
+double boundaries are labeled. Actual Python in an owned fixture earns only
+that original leaf receipt; a doubled Python earns parent custody only, never
+fresh native atomic proof. Use bounded counters/events, no huge duplicate traces.
+
+Qualification: missing fixed interfaces before owner/PG/ROOT ports; genuine old
+atomic-provider sibling acceptance RED; healthy actual owner/OPEN/claim and
+reservation WeakMaps with exact wire hashes under live canonical pre32 scope;
+suspended SAME original child followed by PG loss or shared owner burn, no next
+parent ports/FD disposal/proxy traps/retry and preserved late publication; wrong
+owner namespace/copy/proxy or mismatched actual OPEN maintenance before dispatch.
+At an actual owner OPEN/source preflight boundary, swallow a legacy wrong-arity/
+proxy call; prove it burns before traps and no reservation dispatch follows the
+trusted composite's return. Do not claim inhibition of its internal source reads.
+Missing-interface evidence excludes existing owner module initialization/source
+reads from owner acquisition/PG/ROOT attempts; no universal import-time FS0 claim.
+Healthy wire expectations come from independently retained actual OPEN bytes and
+durable claim, not input/projection. Fixture cutover/maintenance/plan hashes must
+be distinct. Add a narrowly recorded source-fault substituting a spread copy at
+the actual owner-to-provider call, with SAME original owner/token/private input;
+refuse before first reservation parent resource port, without inspection exports.
+This counterfactual source graph is explicit, not healthy production-graph credit.
+Hold SAME child BEFORE publication, lose PG response or burn shared owner, then
+let it publish: suspending only exit after an earlier rename is insufficient.
+Externally read late fixture ROOT evidence outside parent counters. A process
+double explicitly models publication and natural stream events, labeled parent-
+source-only rather than OS atomic/child-execution qualification. Also exercise
+the complementary order: child acquisition succeeds, actual provider FINAL PG
+query suspends and loses response; even after SAME final query settles, retained
+reservation/legacy close/retry stay quarantined, with no traps/ports/disposal.
+Full positive execution-worktree DB+FS owner coupling, finite legacy exclusion,
+selected source/selector, changing phase/durable intents, six effects/controller/
+authenticated foreground/current host and genuine clean-main build remain open.

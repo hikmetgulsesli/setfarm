@@ -2565,7 +2565,7 @@ authentication is the canonical compiled census module's existing assertion.
   removal. Genuine REDs OpRfMf/lMYBFm/81xjdp; unarmed11JaIf is setup failure.
   Final source adaptere0685287/launcher32384f38/d.mts950de098/testdea600da;
   earlier4P0F at e7afe4c1/e42dbec9 is historical, not final-graph credit.
-- [ ] Step5: affected no-PG joint API/healthy custody controls, approved/pre32
+- [x] Step5: affected no-PG joint API/healthy custody controls, approved/pre32
   controls, strict noEmit/shared tools, syntax/contracts/diff and two independent
   exact-file/original-evidence gates. Only proportional focused cases; disk7.1GiB.
   Shared fixed-route factoring may relocate record allocation: rebase existing
@@ -2590,7 +2590,10 @@ authentication is the canonical compiled census module's existing assertion.
   2026-10-09-dashboard-cutover-joint-pre32-final-index.json and
   2026-10-09-dashboard-cutover-joint-pre32-controls-index.json. Two correction
   source gates and focused evidence gate C0/I0/M0; final exact-six-file delivery
-  gates and scoped commit/push pending. No whole Task4/host/build qualification.
+  gates and scoped commit/push were pending at this checkpoint. Both final gates
+  C0/I0/M0 followed; normal6-file delivery826ff24e and exact-head PR280 security
+  SUCCESS04:50:10Z. Commit/body/evidence comment6074500557 confirmed afterward
+  in private ledger. No whole Task4/host/build qualification.
 
 Remaining route after this resource bridge: true reservation/current owner and
 finite cooperative legacy/queued/stale-unlink exclusion, selected-build/selector
@@ -2602,3 +2605,103 @@ absence predicates or invent a global-hostile-runtime prerequisite.
 - [ ] Step6: qualify complete Task4 actual capability separately before Task3:
   no owner/legacy/pre32/phase/intents/selector/restoration/control/foreground
   predicates may be replaced by this operation token or a fixture boolean.
+
+## Task4i.7: retain owner-bound actual ROOT reservation under pre32
+
+Goal: perform existing absent-only first-generation ROOT publication inside
+genuine bilateral pre32 work, bound to actual owner/OPEN intent; retain originals,
+not return a DATA conjunction or grant six-effect authority. Architecture: one
+fixed new adapter route, owner-private authentic metadata/occurrence record and
+same actual first-generation parent check/child machinery. Spec: paired Task4i.7.
+Tech: existing Node26 ESM, shared readonly TS fixture translation, existing atomic
+Python leaf. Root only writer/delivery; readers nominate and independently review.
+Standing delegated design choice applies; no user reconfirmation or live entry.
+
+File Map exactly nine:
+- scripts/deployment-dashboard-cutover-adapter-v2.mjs: fixed3-input route,
+  canonical owner/provider imports, originalOwner/token assertion, invocation
+  between two actual PG assertions and retained original promise.
+- scripts/deployment-dashboard-cutover-adapter-v2.d.mts: adapter exact signatures.
+- scripts/__tests__/deployment-dashboard-cutover-adapter-v2.test.js: retained
+  original fixture coupling, finite extra owner translation closure, bounded
+  actual wire/child/fence counters and precise doubled boundaries.
+- scripts/deployment-cutover-owner.mjs: fixed owner-owned operation deriving
+  actual OPEN cutover hash, resource-free immutable-input identity assertion,
+  original import/acquisition/returned handle retention and active-first legacy
+  wrappers; no canonical published history or existing source guard bypass.
+- scripts/__tests__/deployment-cutover-owner.test.js: new retained original
+  missing-interface/foreign/mismatched-OPEN cases; no lost RED via old cleanup.
+- scripts/deployment-dashboard-cutover-first-generation-v2.mjs: same atomic
+  parent with private joint fence/lifetime, original public legacy guards,
+  exact bracketed one-lock-member physical integrity; no Python mutation.
+- scripts/__tests__/deployment-dashboard-cutover-first-generation-v2.test.js:
+  genuine sibling acceptance RED and new fixed-interface/retained-child controls.
+- This paired plan/spec. No launcher/PG/Python/C/CLI/service/package edits.
+
+Interfaces: fixed3-input reserveHeldDashboardCutoverJointFirstGenerationV4;
+adapter assertDashboardCutoverJointOwnerTokenV4(token,owner); owner fixed2-input
+reserveDeploymentCutoverFirstGenerationWithOwnerV4(owner,token) returning void
+and assertDeploymentCutoverJointReservationMetadataV4(token,input); provider
+fixed2-input acquireFirstGenerationDashboardCutoverJointReservationV4(input,token)
+returns its actual private opaque handle internally, and fixed1-input
+assertFirstGenerationDashboardCutoverJointReservationV4(token). Exact types and
+lifetimes in spec. No caller callback/mode/hashes/URL/path or returned capability.
+
+- [ ] Step1: root self-review and two independent exact nomination gates before
+  implementation. Canonical source/private WeakMaps, old route lazy-import
+  compatibility, true cutover-vs-maintenance hash, child composite and unknown
+  retention must be explicit. Preserve approved bounded scope and no live entry.
+- [ ] Step2: missing fixed interfaces RED before resources; retained original:
+  assert.equal(typeof adapter.reserveHeldDashboardCutoverJointFirstGenerationV4,
+    'function','MISSING_OWNER_BOUND_ROOT_RESERVATION');
+  Also original old provider sibling fault (not missing API):
+  const h=await provider.acquireFirstGenerationDashboardCutoverReservationV2(input);
+  fs.writeFileSync(root+'/unexpected-sibling','evidence',{flag:'wx',mode:0o600});
+  assert.throws(()=>provider.assertFirstGenerationDashboardCutoverReservationV2(h),
+    /DASHBOARD_FIRST_GENERATION_RESERVATION_REFUSED/);
+  Run each new focused pattern with fixedNode26/sharedNODE_PATH; keep original
+  program/intent/result/source pins and naturalEOFclose before source edits.
+- [ ] Step3: implement smallest fixed original producer after RED. Retain actual
+  provisional owner operation BEFORE first import or owner/source/OPEN composite,
+  then immutable input BEFORE acquisition; owner checks actual
+  OPEN relation rather than two hash labels. Private input identity authenticates:
+  if(record.input!==input||record.token!==token||!record.held.valid)refuse();
+  Record actual returned reservation handle before assertion/fallible observation:
+  record.promise=provider.acquireFirstGenerationDashboardCutoverJointReservationV4(input,token);
+  record.reservation=await record.promise;record.returned=true;
+  // A lost return is UNKNOWN; never guessed settled or closed.
+  Every parent check consults resource-free original owner/token guards; public
+  legacy reentry burns before parsing, while internal fixed checks remain usable.
+  No arbitrary callback/per-port recursive source/PG read or source guard bypass.
+- [ ] Step4: healthy actual owner/OPEN/claim/provider/scope fixture wire proves
+  actual cutoverIntentHash (not maintenanceIntentHash), publication while PGheld,
+  exact one-member ROOT and same original reservation; zero six-effect calls.
+  Suspend SAME original child, lose original PG driver or burn owner, snapshot
+  all nominated parent counters/disposals, then release child and prove late
+  original settlement/publication cannot retry/release/close. Wrong actual owner
+  namespace and mismatched OPEN maintenance must precede reservation dispatch.
+  Swallowed wrong-arity/proxy legacy reentry during actual OPEN/source preflight
+  must burn without traps and prevent subsequent reservation dispatch; trusted
+  observer interiors are not falsely claimed as joint-inhibited.
+  Compare wire to independent actual OPEN bytes/durable claim, and prove actual
+  cutover/maintenance/plan hashes distinct. Source-fault spread-copy at genuine
+  owner-to-provider call must fail with SAME token/owner before first parentport;
+  authenticate original identity separately from provider snapshot value copy.
+  Suspend child BEFORE publication (not merely exit); model later publication
+  explicitly if doubled, with external oracle reads excluded from parent counters.
+  Add complementary child-success→actual hidden-final-PG-query loss case, then
+  release SAME query and show legacy invalid/proxy calls remain refused with no
+  parent ports/traps/disposals. Existing owner import initialization reads are
+  distinct from owner acquisition/PG/ROOT; never claim all loader FS0.
+  Retain all original receipts; real vs doubled Python authority kept separate.
+- [ ] Step5: affected old-route custody, current52 approved/pre32 controls,
+  owner/first-generation proportional controls and strict noEmit/syntax/contracts/
+  diff. Bound resource snapshots; do not replay large old native campaigns.
+  Two independent exact-nine-file/all-original gates; normal scoped delivery
+  and append-only PR evidence. Genuine fullbuild only after whole reviewed main.
+
+After this slice: positive execution-owner PG+physical coupling and finite
+cooperative legacy/root-monotonicity, selected-build+selector, changing V2 phase
+and actual durable intents, complete six-effect adapter, controller/reconciliation,
+authenticated foreground, reviewed integration/clean-main build/current3333 proof.
+No source-only reservation test can replace those outcomes.
