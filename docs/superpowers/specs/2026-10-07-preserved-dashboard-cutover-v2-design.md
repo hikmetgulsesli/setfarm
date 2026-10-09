@@ -4415,3 +4415,74 @@ weakening. Actual BSD pbi_flags are PROC_FLAG_TRACED2/INEXIT4, not sys/proc.h
 P_TRACED/P_WEXIT mask values. New fault controls cover consumed close failure,
 lost close response, returned EINTR and zero repeat calls. Eight-path map,
 DATA-only scope and all other conditions remain unchanged.
+
+Task4l original-DATA source refinement (2026-10-09, same exact-eight map):
+READY has ordered exact registrations {intentHex,returned,result,errno,receiptHex},
+actual original32byte kevent input/output and true/1/0. EXITED event records have
+rawHex from the actual retained event buffer. Decode/cross-check the nominated
+packed layout against SAME PID/privateordinal/constants; no synthesized expected
+receipt, arbitrary backend proof adoption, FD/pointer or larger output caps.
+The backend intake uses readiness/read under SAME30s deadline, including missing
+stdin EOF; no queue wrapper or signal is introduced. Raw publication requires
+exact returned byte count and actual flush return, one attempt/no repair.
+Bare provisional activity precedes allocations/descriptor checks; each returned
+native Promise is installed in its slot before observing rejection. Preparation
+reentry remains quarantined after finally, never a new attempt. Natural original
+settlement follows same full matching exit/close, input ACK/finish/close and both
+output EOF/close receipts. Lossless generation labels require actual string type.
+One test bridge exposing a private occurrence is explicitly not byte-exact;
+all other source copies preserve actual bytes. No native/host/delivery completion
+is claimed by source-only mocks or this checkpoint.
+
+Task4l path API contract correction (2026-10-09, same exact-eight map):
+An actual owned-native original refused before READY. A separate disclosed
+actual-source passive occurrence-exposure diagnostic showed exact proc_pidpath
+return135/errno0/firstNUL135 but duplicate workspace suffix bytes in4096capacity;
+known original queueclose0 followed, no registration attempt. Apple upstream
+proc_pidpathinfo copies full buffersize; path reconstruction memmoves the path
+prefix without clearing its old suffix. The strict subject path is ONLY the
+exact returned NUL-terminated/nonempty/absolute/UTF8 prefix, compared before/
+after enrollment. Unused capacity is not path/environment/authority DATA.
+Do not require or consume its contents. Keep return length/NUL bounds and all
+other profile/identity/receipt/event/close conditions unchanged.
+[proc_info](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/proc_info.c),
+[vfs_cache](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/vfs/vfs_cache.c).
+Genuine path-tail-workspace RED45oVSx preceded minimal prefix-only correction;
+fresh GREENuY9fvY. This is a causal API parsing fix, not installed-kernel/family
+qualification or permission to reuse the failed prior original.
+
+Task4l fresh original qualified locally (2026-10-09):
+After both fresh source gates, NEW FJFOXk original actual fixedPython backend
+and ownedtarget42337 produced1672B canonical READYseq0/EXITEDseq1 with actual
+raw32 registrationintent/receipt/event, exact nominated flags/interest/private
+ordinal and known close0/errno0. Same target/helper actual0/nullsignal/matching
+exit+close, inputfinish/close and both outputEOF/close all observed. Target0
+requires actual READY→ownedstdinEOF branch, not its deadline (exit2).
+This is local conditional event mechanics ONLY; no immutable kernel theorem,
+family/death/queued/future-entry/owner/admission/startup permission.
+Ordinary48PASS/native1SKIP plus standalone native1PASS, oldPY5/newbootstrap8,
+strict1195/0/noEmit. Root48actual-original reads bind current source/test bytes;
+Node executable substitutions and Python libc doubles remain expressly distinct
+from actual native qualification. Burn-before-input mock retains unresolved
+input custody instead of inventing settlement. Multi/overflow/lifetime
+complements, independent fulloriginal review and finalsource delivery remain.
+
+Task4l current-test qualification boundary (2026-10-09):
+Current test8dc8eb6a:70PASS/0FAIL/native1SKIP,39Node+30Python-double+interface.
+Six same-nine-callback permutations test named orderings, not every possible
+schedule; pending EOF/close/inputfinish never becomes natural settlement.
+Multi-candidate reverse EXIT succeeds; missing and within-capacity duplicate
+EXIT refuse. Single-candidate duplicate-event is explicitly count overflow.
+Owned-native readiness is inside failure retention after independent M1 review;
+only positively retained owned-target stdin may receive natural EOF on failure.
+Both fresh exact source gates C0/I0/M0 preceded NEW Xp9nhm actual fixedPython
+native PASS1/0 at unchanged MJS6400be6c/PY20eee88c. Target/helper/outer original
+lifetimes separately retain matching actual exit+close and all pipe events;
+raw32 intent/receipt/event and known queue-close independently decode. Earlier
+FJFOXk remains historical309c proof, not current8dc8 test qualification.
+Root read70current full originals40Node(includingnative)/30Python-double;
+four mock private occurrence bridges are disclosed, not byte-exact authority.
+Bootstrap8+oldPythonDATA3 PASS11/0; strict1195/0/noEmit and source contracts
+pass. Final exact-eight/all-original independent review/delivery remains pending.
+No family/ingress/owner/PG/ROOT/controller/startup or actual clean-main build
+credit follows from these local DATA mechanics. Existing conjunction unchanged.

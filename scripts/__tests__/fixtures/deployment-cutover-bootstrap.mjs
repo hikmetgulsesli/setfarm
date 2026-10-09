@@ -20,14 +20,15 @@ export function write(root, locator, bytes, mode = 0o644) {
   fs.writeFileSync(target, bytes, { mode }); fs.chmodSync(target, mode);
 }
 export function fixture(body, instrument = source => source, { genuine = false, census = false, envAbsence = false, helpers = false, phaseClosure = false, prepare = () => {}, sourceInstrument = (_locator, source) => source,
-  extraSources = {}, temporaryParent = os.tmpdir() } = {}) {
+  extraSources = {}, temporaryParent = os.tmpdir(), retain = false } = {}) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(temporaryParent, "cutover-bootstrap-")));
   const root = path.join(home, "ai/setrox/controller");
   try {
     for (const name of ["deployment-cutover.mjs", "deployment-cutover-owner.mjs", "build-generation-retention.mjs", "build-generation-maintenance-owner-observer.mjs", "build-generation-maintenance-journal.mjs",
       "deployment-cutover-retained-profile.mjs", "deployment-cutover-retained-profile.v1.json",
       "deployment-cutover-default-context.mjs",
-      "deployment-cutover-passive-home.mjs", "deployment-cutover-passive-home.py"]) {
+      "deployment-cutover-passive-home.mjs", "deployment-cutover-passive-home.py",
+      "dashboard-cutover-process-events-v4.mjs", "dashboard-cutover-process-events-v4.py"]) {
       let source = fs.readFileSync(new URL(`scripts/${name}`, repo), "utf8");
       if (name === "deployment-cutover.mjs") {
         // Keep even an accidental runtime-store call inside this owned fixture.
@@ -94,7 +95,7 @@ export function fixture(body, instrument = source => source, { genuine = false, 
     const { builtAt: ignored, ...stable } = info;
     const buildHash = commitHash({ schema: "setfarm.internal-production-controller-build.v1", stableBuildInfo: { schema: "setfarm.internal-production-stable-setfarm-build-info.v1", ...stable }, buildInputSetHash, outputTreeHash: output.outputTreeHash, releaseManifestHash: commitHash(manifest) });
     body(root, { branch: "main", clean: true, sha, treeHash, buildHash, originMainSha: sha }, home);
-  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  } finally { if (!retain) fs.rmSync(home, { recursive: true, force: true }); }
 }
 export function run(root, args = ["inspect", "--json"], extraEnv = {}) {
   return spawnSync(process.execPath, [path.join(root, "scripts/deployment-cutover.mjs"), ...args], {

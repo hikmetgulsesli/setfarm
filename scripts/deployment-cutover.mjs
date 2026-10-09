@@ -16,8 +16,10 @@ const closure = ["scripts/build-generation-maintenance-journal.mjs", "scripts/bu
   "scripts/build-generation-retention.mjs", "scripts/deployment-cutover-owner.mjs", "scripts/deployment-cutover.mjs", "scripts/deployment-cutover-dependencies.mjs",
   "scripts/deployment-cutover-retained-profile.mjs", "scripts/deployment-cutover-retained-profile.v1.json",
   "scripts/deployment-cutover-default-context.mjs",
-  "scripts/deployment-cutover-passive-home.mjs", "scripts/deployment-cutover-passive-home.py"];
+  "scripts/deployment-cutover-passive-home.mjs", "scripts/deployment-cutover-passive-home.py",
+  "scripts/dashboard-cutover-process-events-v4.mjs", "scripts/dashboard-cutover-process-events-v4.py"];
 const passiveSourceUrl = pathToFileURL(path.join(root, "scripts/deployment-cutover-passive-home.py")).href;
+const processEventsSourceUrl = pathToFileURL(path.join(root, "scripts/dashboard-cutover-process-events-v4.py")).href;
 const directoryKeys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"];
 const fileKeys = [...directoryKeys, "nlink", "size", "mtimeNs", "ctimeNs"];
 const fail = () => { throw Error("DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED"); };
@@ -225,13 +227,13 @@ async function inspect() {
         if (dependencyEntries.has(specifier)) return { url: dependencyEntries.get(specifier), shortCircuit: true };
         if (!specifier.startsWith("./") && !specifier.startsWith("../") && !specifier.startsWith("file:")) fail();
         const resolved = new URL(specifier, context.parentURL);
-        if (resolved.search || resolved.hash || (!executableFiles.has(resolved.href) && resolved.href !== passiveSourceUrl)) fail();
+        if (resolved.search || resolved.hash || (!executableFiles.has(resolved.href) && resolved.href !== passiveSourceUrl && resolved.href !== processEventsSourceUrl)) fail();
         return { url: resolved.href, shortCircuit: true };
       },
       load(url, context, nextLoad) {
         if (isBuiltin(url)) return nextLoad(url, context);
         const entry = files.get(url); if (!entry) fail();
-        if (url === passiveSourceUrl) {
+        if (url === passiveSourceUrl || url === processEventsSourceUrl) {
           check();
           const source = entry.bytes.toString("utf8");
           if (entry.bytes.length > 131072 || !Buffer.from(source).equals(entry.bytes)) fail();

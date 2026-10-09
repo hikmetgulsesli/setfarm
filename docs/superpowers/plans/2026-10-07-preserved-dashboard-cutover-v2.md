@@ -3479,14 +3479,14 @@ Cached observe is resource-free metadata only, NOT a synchronous kernel recheck.
 During pending acquisition/wait ordinary public entries are embargoed.
 
 Implementation steps:
-- [ ] Step1: root paired-doc self-review; two independent exact-eight nomination
+- [x] Step1: root paired-doc self-review; two independent exact-eight nomination
   gates; normal two-doc design commit BEFORE new tests/source.
-- [ ] Step2: actual bootstrap consumer RED for absent fixed authenticated DATA
+- [x] Step2: actual bootstrap consumer RED for absent fixed authenticated DATA
   enrollment plus exact missing transport interface; distinguish SETUP/import
   fixture mistakes. Preserve originals; no production source edit first.
-- [ ] Step3: minimum new backend/transport and exact bootstrap/fixture input
+- [x] Step3: minimum new backend/transport and exact bootstrap/fixture input
   enrollment. Existing effects/routes/providers untouched.
-- [ ] Step4: typed/proxy/reentry before ports; receipt vs observed-event flags;
+- [x] Step4: typed/proxy/reentry before ports; receipt vs observed-event flags;
   short ABI/ESRCH/uid/path/generation/exec/fork/mixed/overflow/deadline/close loss;
   READY-before-terminal; original response loss and driver-only rejection with
   STILL pending actual child; all exit/stream permutations and no late repair.
@@ -3538,3 +3538,99 @@ weakening. Actual BSD pbi_flags are PROC_FLAG_TRACED2/INEXIT4, not sys/proc.h
 P_TRACED/P_WEXIT mask values. New fault controls cover consumed close failure,
 lost close response, returned EINTR and zero repeat calls. Eight-path map,
 DATA-only scope and all other conditions remain unchanged.
+
+Task4l source-only implementation checkpoint (2026-10-09):
+Normal paired design269d2f2a preceded test-only RED. Actual old bootstrap control
+PASS and enrollment RED duKKjA/OcJPQj; interface/backend missing assertions RED.
+Root added the six nominated source/test paths only; source delivery still pending.
+Three read-only reviewers found causal preparation/input/publication defects;
+root retained REDs and fixed them without retries, signals or authority grants.
+Additional single exact private occurrence-exposure test bridge is disclosed,
+not byte-exact source qualification. Normal other copied sources stay byte-exact.
+Native Promise slots are retained before allocation observers; active-first
+quarantine also persists preparation reentry. Invalid non-reentrant requests
+never dispatch a port. Natural settlement waits same complete pipe/exit receipts.
+Fixed backend intake shares SAME30s deadline with enrollment/event waits;
+select.select is input readiness only, NOT kqueue wrapper/status evidence.
+Short raw publication or uncertain flush refuses without another write/dispatch.
+
+For nominated original native receipts, READY adds exact ordered registrations:
+{intentHex,returned,result,errno,receiptHex}. Each hex is the actual retained
+32byte original kevent input/output, success true/1/0. Terminal events add
+rawHex from the actual original event buffer. Parent decodes nominated packed
+layout and cross-checks same PID/privateordinal/constants, not synthesized labels.
+Both caps unchanged; oversized evidence fails closed. No FD/pointer/adoption
+API or full path/environment buffers. Candidate generation labels remain strings.
+This is bounded conditional DATA, not family/ingress/owner/cutover proof.
+Final complements/exact-original reader/source gates/owned-native opt-in/fresh
+verification/two final exact-eight reviews and delivery are still pending.
+
+Task4l owned-native first probe and causal path correction (2026-10-09):
+Both pre-owned-native source gates cleared current6400be/372a90/8cce013e;
+actual fixed-helper probe zmqPBv refused before READY, not native qualification.
+A SEPARATE fresh owned-target diagnostic Jbn0q6 used unchanged full Python
+definitions with one passive Original.__init__ exposure/private main invocation;
+no library/profile mocks. This bridge is NOT the public transport qualification.
+Actual original calls: kqueue4/errno0; unique56/0; BSD136/0; path135/0;
+known close0/0, target naturally exited0 via owned EOF; no registration attempt.
+Path return135 exactly matched firstNUL135, but unused4096capacity had duplicate
+135nonzero workspace bytes. Current producer's extra all-tail-zero assumption
+was causally wrong. Public path prefix remains exact/nonempty/absolute/UTF8 and
+before-after identical. Do not treat unusedcapacity as path/environment DATA.
+[Apple proc_pidpath full-buffer copyout](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/proc_info.c)
+and [path memmove without suffix clearing](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/vfs/vfs_cache.c).
+Actual-source libc-double path-tail-workspace45oVSx RED1vs0 before one-line
+prefix-only correction; freshuY9fvY GREEN plus wronguid/shortidentity/pathchange
+refusals unchanged. Same exact-eight map; no flags/profile/identity/family gate
+relaxation. Fresh source gates precede another owned-native probe.
+
+Task4l fresh owned-native checkpoint (2026-10-09):
+Both fresh source gates C0/I0/M0 cleared6400be/20eee88c/test309c3189 and
+pairedba47/3316. NEW original FJFOXk actual fixedPython probe PASS1/0:
+owned fresh target42337 waited READY then exactstdinEOF, target/helper both
+actualstatus0/nullsignal/matchingexit+close and all inputfinish+close/output
+EOF+close. Actual1672B canonical rawstdout retained READYseq0/EXITEDseq1;
+original registration intent65/interest3758096384, recoveredreceipt16449/1/0,
+later empty-changelist event32881/NOTE_EXIT2147483648/data0, samepid/private
+ordinal1, actual raw32bytes and known close0/errno0. This qualifies local
+conditional owned-target mechanics ONLY, never family/ingress/cutover/host.
+Fresh ordinary48PASS/native1SKIP, oldPYcontrols5PASS/newbootstrap8PASS,
+strict1195/0/noEmit. Root read all48current originals20Node(including1native)/
+28actualPython+libc doubles with exactfulltest/source/program snapshots.
+Source-only mock originals and spawnSync envelopes carry no kernel or full
+pipe-custody credit. Spawn-reentry mock's inputfinish/close remain false;
+preserved UNKNOWN is not guessed natural-original settlement.
+Private rootreader a9afd907/index4116a21f remain outside deliveredsource;
+two independent original reads now pending. Step4 remaining multi-candidate/
+overflow/full lifetime complements and Step5 finalverification/eightreviews/
+normaldelivery still required. No partial merge, sourcebuild or host3333 claim.
+
+Task4l final verification nomination (2026-10-09):
+Current test8dc8eb6a retains actual70PASS/0FAIL/native1SKIP: one interface,
+39Node controls and30actual Python source/libc-double controls. Six named
+same-callback delivery permutations preserve all nine original invocations and
+arguments; this is not exhaustive scheduling enumeration. Multi-candidate
+reverse EXIT order, missing/duplicate EXIT, malformed/capped/canonical input,
+pending missing EOF/close/stdinfinish and helper nonzero controls pass. A
+single-candidate duplicate-event control rejects result-count overflow; only
+multi-duplicate-event models a duplicate within the selected capacity.
+Both source reviewers found one test-only M1: owned-target readiness preceded
+failure retention. Root moved the existing try before setup; no production
+change. Both exact8dc8/MJS6400/PY20eee re-gates cleared C0/I0/M0 before NEW
+owned-native Xp9nhm PASS1/0. Same actual fixed Python, positively owned fresh
+target, READY-before-ownedEOF, actual raw registration/event/queue-close and
+complete target/helper/outer child pipe/exit custody. No substituted executable
+or private exposure bridge in this native original. Earlier FJFOXk is retained
+as historical test309c proof, not current8dc8 qualification.
+Root read ALL70current originals:40Node including fresh native,30Python-double;
+full source/test/program snapshots, bridge identity, raw32 tuples and distinct
+driver/backend/target lifetimes. Private readera43076e9 and index482ab681 remain
+outside source delivery; prior309c index is retained separately. Fixed private
+occurrence exposure in four mock controls is disclosed, never byte-exact credit.
+Fresh bootstrap8+oldPythonDATA3 PASS11/0; all eight new retained originals
+available. Fresh strict1195/0/noEmit, MJS/test syntax, PythonAST-only,
+version2.3.79, English1996/paths1002 and diff pass, not actual source build.
+Step4 complete for this local DATA slice. Step5 still needs final exact-eight/
+all-original independent gates and normal scoped delivery/readback. Full
+cutover conjunction, finite historical ingress/descendant closure and clean-main
+build/host proof remain required; no partial merge or running3333 claim.
