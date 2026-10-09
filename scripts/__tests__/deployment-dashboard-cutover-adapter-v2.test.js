@@ -30,9 +30,12 @@ const translations=[
 
 // LOCAL finite source-only bridge. This does NOT run the production compiler or
 // confer clean-main/native/executing-image authority. Shared fixture unchanged.
-function jointFixture(resources=false){
+function jointFixture(resources=false,pre32=false,bounded=false){
+  const bridgeList=pre32?[...translations,
+    ['src/internal-production/baseline-legacy-database-census-v1.ts',
+      'dist/internal-production/baseline-legacy-database-census-v1.js']]:translations;
   const files=Object.fromEntries(scripts.map(n=>['scripts/'+n,fs.readFileSync(sourceRoot+'/scripts/'+n)]));
-  for(const [source] of translations)files[source]=fs.readFileSync(sourceRoot+'/'+source);
+  for(const [source] of bridgeList)files[source]=fs.readFileSync(sourceRoot+'/'+source);
   for(const n of ['deployment-dashboard-cutover-adapter-v2.mjs','deployment-dashboard-cutover-adapter-v2.d.mts']){
     const p=sourceRoot+'/scripts/'+n;if(fs.existsSync(p))files['scripts/'+n]=fs.readFileSync(p);
   }
@@ -68,7 +71,7 @@ function jointFixture(resources=false){
   const initial=Object.fromEntries(initialOutputs.map(p=>[p,{bytes:fs.readFileSync(root+'/'+p),mode:fs.statSync(root+'/'+p).mode&0o777}]));
   fs.renameSync(root+'/dist',root+'.initial-finalized-dist');
   for(const [p,r] of Object.entries(initial))if(p!=='dist/PLATFORM_BUILD_OUTPUT_TREE.json')file(root,p,r.bytes,r.mode);
-  for(const [source,output] of translations){
+  for(const [source,output] of bridgeList){
     const original=files[source],translated=ts.transpileModule(original.toString(),{
       fileName:source,reportDiagnostics:true,compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext},
     });
@@ -85,7 +88,7 @@ function jointFixture(resources=false){
   file(root,'dist/PLATFORM_BUILD_OUTPUT_TREE.json',JSON.stringify({...projection,outputTreeHash})+'\n',0o444);
   for(const p of ['dist','dist/cli','dist/server','dist/internal-production','dist/product-compiler'])fs.chmodSync(root+'/'+p,0o755);
   const pins=Object.fromEntries(Object.entries(files).map(([p,b])=>[p,hash(b)]));
-  return {root,bridges,pins,providers,home,sourceSha:git(root,['rev-parse','HEAD']),outputTreeHash};
+  return {root,bridges,pins,providers,home,pre32,bounded,sourceSha:git(root,['rev-parse','HEAD']),outputTreeHash};
 }
 
 function resourceProgram(fixture){return `
@@ -158,14 +161,19 @@ function resourceProgram(fixture){return `
       direct&&(frames[2]??'').includes('baseline-deployment-cutover-launcher-observation-v1.js')?'definition':'composite';
     const row={name,owner,scopeEnrollment:stack.includes('at enroll '),
       scopePass:!stack.includes('at enroll ')&&(stack.includes('assertHeldDashboardCutoverLoadedJobOperationV4')||
-      stack.includes('assertHeldDashboardCutoverApprovedDefinitionOperationV4')),path:typeof args[0]==='number'?fdPaths.get(args[0]):String(args[0])};out.ports.push(row);
-    const result=original(...args);if(name==='readSync')row.result=result;onPort(row);return result;
+      stack.includes('assertHeldDashboardCutoverApprovedDefinitionOperationV4')),path:typeof args[0]==='number'?fdPaths.get(args[0]):String(args[0])};
+    ${fixture.bounded?`row.fd=typeof args[0]==='number'?args[0]:null;
+    out.portCounts??={};const key=owner+':'+name;out.portCounts[key]=(out.portCounts[key]??0)+1;
+    if(owner!=='composite'&&out.ports.length<32)out.ports.push(row);`:'out.ports.push(row);'}
+    const result=original(...args);if(name==='readSync')row.result=result;
+    ${fixture.bounded?"if(name==='closeSync')fdPaths.delete(args[0]);":''}
+    onPort(row);return result;
   }}
   syncBuiltinESMExports();
 `;}
 
-async function exercise(body,{resources=false}={}){
-  const fixture=jointFixture(resources),{root}=fixture;
+async function exercise(body,{resources=false,pre32=false,bounded=pre32}={}){
+  const fixture=jointFixture(resources,pre32,bounded),{root}=fixture;
   const program=`import assert from 'node:assert/strict';import fs from 'node:fs';
     import path from 'node:path';
     import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
@@ -253,7 +261,7 @@ test('joint operation record construction cannot discard a swallowed preparation
   const OriginalSet=globalThis.Set,originalCreate=Object.create;let nested,triggered=0,mints=0;
   globalThis.Set=function(...args){
     const caller=Error().stack.split('\\n')[2]??'';
-    if(!triggered&&caller.includes('qualifyHeldDashboardCutoverJointOriginalOperationV4')&&caller.includes('deployment-dashboard-cutover-adapter-v2.mjs')){
+    if(!triggered&&caller.includes('qualifyOriginals')&&caller.includes('deployment-dashboard-cutover-adapter-v2.mjs')){
       triggered++;nested=assert.rejects(()=>adapter.qualifyHeldDashboardCutoverJointOriginalOperationV4(),{message:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'});
     }
     return new OriginalSet(...args);
@@ -525,7 +533,7 @@ test('genuine query-instance definition and captured-token copies cannot substit
     {message:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'});
   const freeze=Object.freeze;let originalToken;
   Object.freeze=function(value){
-    if((Error().stack.split('\\n')[2]??'').includes('qualifyHeldDashboardCutoverJointOriginalOperationV4'))originalToken=value;
+    if((Error().stack.split('\\n')[2]??'').includes('qualifyOriginals'))originalToken=value;
     return freeze(value);
   };
   assert.equal(await adapter.qualifyHeldDashboardCutoverJointOriginalOperationV4(loaded,approved),undefined);
@@ -575,6 +583,189 @@ for(const lost of ['native','definition']){
   `,{resources:true}));
 }
 
+test('fixed pre32 original-operation interfaces exist before participant or database acquisition',()=>exercise(`
+  const adapter=await import('./scripts/deployment-dashboard-cutover-adapter-v2.mjs');
+  const definition=await import('./dist/internal-production/baseline-deployment-cutover-launcher-observation-v1.js');
+  const census=await import('./dist/internal-production/baseline-legacy-database-census-v1.js');
+  assert.equal(typeof census.assertHeldDashboardCutoverPre32DatabaseV2,'function');
+  assert.deepEqual({
+    qualifier:typeof adapter.qualifyHeldDashboardCutoverJointPre32OperationV4,
+    fixedAssertions:typeof adapter.executeDashboardCutoverJointPre32AssertionsV4,
+    definitionOperation:typeof definition.runHeldDashboardCutoverApprovedDefinitionOperationPre32V4,
+  },{qualifier:'function',fixedAssertions:'function',definitionOperation:'function'},
+  'MISSING_FIXED_JOINT_PRE32_OPERATION_INTERFACES');
+`,{pre32:true}));
+
+// New pre32 cases retain bounded counters/events, not huge duplicate FS traces.
+// Scope owner is the actual fifth compiled bridge. These three imported boundaries
+// are explicit inert driver/journal/finding mechanics, never a fabricated scope.
+const pre32Driver=String.raw`
+export default function postgres(url,options){
+  const p=globalThis.pre32Probe;assertTarget();p.open++;
+  function assertTarget(){if(url!=='postgresql://FIXTURE_ONLY@localhost/setfarm')throw Error('UNEXPECTED_FIXTURE_TARGET')}
+  const tx=async strings=>{
+    const q=strings.join('');p.queries++;
+    if(q.startsWith('SET LOCAL'))return [];
+    if(q.includes('FROM public.setfarm_schema_migrations')&&q.includes('ORDER BY version'))
+      return [26,27,28,29,30,31].map(version=>({version,state:'applied'}));
+    if(q.includes('WITH expected_tables(name)'))return [{laterJournalCount:'0',relationCount:'0',functionCount:'0',typeCount:'0',triggerCount:'0'}];
+    if(q.includes('WITH required_columns('))return [{catalogViolationCount:'0',aprbChildViolationCount:'0',ordinaryBatchViolationCount:'0',activeHeaderViolationCount:'0',
+      ownerReservationsRelation:null,ownerAdmissionHeadRelation:null,producerSourceRelation:null,producerActivationRelation:null,producerActivationHeadRelation:null,producerCurrentRelation:null,
+      activeRunCount:'0',openClaimCount:'0',executionAttemptCount:'0',activeRuntimeSessionCount:'0',activeCompletionOwnerCount:'0',unsettledMandatoryEffectCount:'0',
+      artifactReservationCount:'0',publicationBatchCount:'0',artifactPublicationCount:'0',terminationOwnerCount:'0',findingOwnerCount:'0',recoveryOwnerCount:'0',operationalDeliveryCount:'0'}];
+    if(q.includes('FROM public.finding_sets ORDER BY')||q.includes('FROM public.findings ORDER BY')||q.includes('finding_sets'))return [];
+    throw Error('UNEXPECTED_QUERY');
+  };
+  tx.unsafe=async(q,parameters)=>{
+    p.queries++;p.events.push(q);
+    if(q==='FIXTURE_EXACT_JOURNAL'){
+      p.exactJournal++;
+      const stop=p.scenario==='callback-loss'?2:p.scenario==='final-loss'?4:0;
+      if(p.exactJournal===stop){
+        p.suspendedAt=p.exactJournal;p.suspendObserved();
+        await new Promise(resolve=>{p.resumeOriginalQuery=resolve});
+        p.querySettled=true;p.events.push('original-suspended-query-settled');
+      }
+    }
+    return [];
+  };
+  return {options:{host:['localhost'],port:[5432],database:'setfarm',user:'FIXTURE_ONLY'},
+    begin:async(mode,callback)=>{
+      p.mode=mode;p.held=true;p.events.push('begin');
+      const driver=new Promise((resolve,reject)=>{p.rejectDriver=reject;
+        const original=callback(tx);p.actualCallback=original;
+        original.then(value=>{p.callbackSettled=true;p.events.push('actual-transaction-callback-settled');resolve(value)},
+          error=>{p.callbackSettled=true;p.events.push('actual-transaction-callback-rejected');reject(error)});
+      });p.actualDriver=driver;
+      try{return await driver}finally{p.held=false;p.events.push('driver-return-or-reject')}
+    },
+    end:async()=>{p.end++;p.events.push('end');p.endObserved()},
+  };
+}
+`;
+
+function pre32Setup(scenario){return `
+  assert.equal(typeof (await import('./scripts/deployment-dashboard-cutover-adapter-v2.mjs'))
+    .qualifyHeldDashboardCutoverJointPre32OperationV4,'function','MISSING_FIXED_JOINT_PRE32_OPERATION');
+  const p=globalThis.pre32Probe={scenario:${JSON.stringify(scenario)},events:[],queries:0,exactJournal:0,open:0,end:0,held:false,callbackSettled:false};
+  p.suspended=new Promise(resolve=>{p.suspendObserved=resolve});
+  p.ended=new Promise(resolve=>{p.endObserved=resolve});
+  const sources={postgres:${JSON.stringify(pre32Driver)},
+    '../findings/finding-publication-v1.js':'export const observeLegacyFindingPublicationInventoryV1=()=>Object.freeze({authority:"diagnostic-only"});',
+    '../db/contract-spine-migrations.js':'export async function verifyHeldPre32ContractSpineJournalIdentityV1(query){await query("FIXTURE_EXACT_JOURNAL",[31])}',
+  };
+  moduleBuiltin.registerHooks({resolve(specifier,context,next){
+    if(Object.hasOwn(sources,specifier))return {url:'data:text/javascript,'+encodeURIComponent(sources[specifier]),shortCircuit:true};
+    return next(specifier,context);
+  }});
+`;}
+
+const expectedPre32Locks=[
+  'artifact_capacity','artifact_publication_batch_items','artifact_publication_batch_plan_items',
+  'artifact_publication_batch_plans','artifact_publication_batches','artifact_publication_reservations','artifact_store_authorities',
+  'claim_log','execution_attempts','finding_sets','findings','operational_event_deliveries','operational_outbox',
+  'platform_release_store_records_v3','product_compilation_attempts','product_packets','recovery_cases','recovery_dispatch_deliveries',
+  'recovery_revision_dispatches','run_termination_requests','runs','runtime_completion_effects','runtime_completion_requests','runtime_sessions',
+  'semantic_artifacts','setfarm_schema_migrations','steps','stories','v3_canary_admission_claims','v3_preparation_authorities_v2',
+  'v3_preparation_authority_attempts_v2','v3_preparation_authority_claims_v2','v3_preparation_blocks','v3_preparation_story_state',
+  'v3_story_claim_runtime_binding_cutovers_v1','v3_story_claim_runtime_bindings_v1',
+].map(n=>'LOCK TABLE public.'+n+' IN SHARE MODE');
+
+test('fixed pre32 operation holds genuine transaction across both original participants before successful release',()=>exercise(
+  pre32Setup('healthy')+participants+`
+  const heldFds=new Set(fdPaths.keys());let disposals=0;const heldChecks={native:0,definition:0};
+  onPort=row=>{if(row.name==='closeSync'&&heldFds.has(row.fd))disposals++;
+    if(p.held&&row.scopePass&&Object.hasOwn(heldChecks,row.owner))heldChecks[row.owner]++};
+  const result=await adapter.qualifyHeldDashboardCutoverJointPre32OperationV4(loaded,approved);
+  assert.equal(result,undefined);assert.equal(disposals,0);assert.ok(heldChecks.native>0);assert.ok(heldChecks.definition>0);
+  assert.equal(p.open,1);assert.equal(p.end,1);assert.equal(p.held,false);assert.equal(p.callbackSettled,true);
+  assert.equal(p.mode,'isolation level read committed read only');assert.equal(p.exactJournal,4);
+  assert.deepEqual(p.events.filter(e=>e.startsWith('LOCK TABLE ')),${JSON.stringify(expectedPre32Locks)});
+  native.assertHeldDashboardCutoverLoadedJobPeerV4(loaded);definition.assertHeldDashboardCutoverApprovedDefinitionV4(approved);
+  definition.closeHeldDashboardCutoverApprovedDefinitionV4(approved);native.closeHeldDashboardCutoverLoadedJobPeerV4(loaded);
+  definition.closeHeldDashboardCutoverLauncherMaterialV2(material);assert.ok(disposals>0);
+  out.pre32={mode:p.mode,events:p.events,queries:p.queries,exactJournal:p.exactJournal,heldChecks,open:p.open,end:p.end,callbackSettled:p.callbackSettled};
+`,{resources:true,pre32:true}));
+
+for(const scenario of ['callback-loss','final-loss']){
+  test('fixed pre32 '+scenario+' retains both fences after original driver loss and same query settlement',()=>exercise(
+    pre32Setup(scenario)+participants+`
+    const heldFds=new Set(fdPaths.keys());let disposals=0;
+    onPort=row=>{if(row.name==='closeSync'&&heldFds.has(row.fd))disposals++};
+    const operation=adapter.qualifyHeldDashboardCutoverJointPre32OperationV4(loaded,approved);operation.catch(()=>{});
+    await p.suspended;assert.equal(p.held,true);assert.equal(p.callbackSettled,false);
+    assert.equal(p.suspendedAt,p.scenario==='callback-loss'?2:4);
+    const queries=p.queries;p.rejectDriver(Error('INERT_DRIVER_LOSS'));await p.ended;
+    await new Promise(resolve=>setImmediate(resolve));
+    const direct=()=>Object.fromEntries(['native','definition'].flatMap(owner=>['fstatSync','lstatSync','readSync']
+      .map(name=>[owner+':'+name,out.portCounts?.[owner+':'+name]??0])));
+    const directAt=direct();
+    assert.equal(disposals,0);assert.equal(p.queries,queries);
+    assert.throws(()=>native.closeHeldDashboardCutoverLoadedJobPeerV4(loaded));
+    assert.throws(()=>definition.closeHeldDashboardCutoverApprovedDefinitionV4(approved));assert.equal(disposals,0);
+    let traps=0;const proxy=new Proxy({}, {get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')}});
+    await assert.rejects(()=>adapter.qualifyHeldDashboardCutoverJointPre32OperationV4(proxy));assert.equal(traps,0);
+    assert.equal(disposals,0);assert.equal(p.queries,queries);assert.deepEqual(direct(),directAt);
+    p.resumeOriginalQuery();await p.actualCallback.catch(()=>{});
+    await assert.rejects(()=>operation,{message:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'});
+    assert.equal(p.querySettled,true);assert.equal(p.callbackSettled,true);assert.equal(p.queries,queries);assert.equal(disposals,0);
+    assert.throws(()=>native.closeHeldDashboardCutoverLoadedJobPeerV4(loaded));
+    assert.throws(()=>definition.closeHeldDashboardCutoverApprovedDefinitionV4(approved));assert.equal(disposals,0);
+    await assert.rejects(()=>adapter.qualifyHeldDashboardCutoverJointPre32OperationV4(loaded,approved));assert.equal(p.open,1);
+    assert.deepEqual(direct(),directAt);
+    out.pre32={scenario:p.scenario,events:p.events,queries:p.queries,exactJournal:p.exactJournal,suspendedAt:p.suspendedAt,
+      disposals,querySettled:p.querySettled,callbackSettled:p.callbackSettled,open:p.open,end:p.end,traps,directAt,directAfter:direct()};
+  `,{resources:true,pre32:true}));
+}
+
+test('fixed pre32 keeps original invocation and query promises after genuine settlement',()=>exercise(
+  pre32Setup('healthy')+participants+`
+  const set=WeakMap.prototype.set;let coordinatorOriginal;
+  WeakMap.prototype.set=function(key,value){
+    if(value&&value.originalLoaded===loaded&&value.originalDefinition===approved)coordinatorOriginal=value;
+    return set.call(this,key,value);
+  };
+  await adapter.qualifyHeldDashboardCutoverJointPre32OperationV4(loaded,approved);
+  assert.ok(coordinatorOriginal);assert.equal(coordinatorOriginal.pending.size,0);
+  out.retention={captured:true,pending:coordinatorOriginal.pending.size,count:coordinatorOriginal.originals?.length??null};
+  assert.ok(Array.isArray(coordinatorOriginal.originals),'MISSING_RETAINED_ORIGINAL_OCCURRENCE_HISTORY');
+  assert.equal(coordinatorOriginal.originals.length,3);
+  const {types}=await import('node:util');
+  for(const occurrence of coordinatorOriginal.originals){
+    assert.equal(occurrence.intent,true);assert.equal(occurrence.returned,true);assert.equal(occurrence.settled,true);
+    assert.ok(types.isPromise(occurrence.promise));
+  }
+  definition.closeHeldDashboardCutoverApprovedDefinitionV4(approved);native.closeHeldDashboardCutoverLoadedJobPeerV4(loaded);
+  definition.closeHeldDashboardCutoverLauncherMaterialV2(material);
+`,{resources:true,pre32:true}));
+
+for(const window of ['configuration','final']){
+  test('fixed pre32 short checking fence refuses genuine scope reentry at '+window+' post-driver validation',()=>exercise(
+    pre32Setup('healthy')+participants+`
+    const get=WeakMap.prototype.get;let originalScope,originalRecord,triggered=0,nestedRefused=false;
+    WeakMap.prototype.get=function(key){const value=get.call(this,key);
+      if(value&&value.original===approved&&Object.hasOwn(value,'definition')&&value.published){originalScope=key;originalRecord=value}
+      return value;
+    };
+    const window=${JSON.stringify(window)};
+    onPort=row=>{
+      const target=window==='final'?row.owner==='definition':
+        row.owner==='composite'&&row.path===home+'/Library/LaunchAgents/com.setrox.setfarm-dashboard.plist';
+      if(!triggered&&p.end===1&&target&&row.name==='fstatSync'&&originalScope&&
+        originalRecord.pre32.outerSettled===(window==='final')){
+        triggered++;out.shortFence={window,triggered,outerSettled:originalRecord.pre32.outerSettled,nestedRefused:false};
+        // Do not throw a test assertion from this port: an admitted nested assert
+        // must let the actual outer operation succeed and expose a genuine RED.
+        try{definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4(originalScope)}catch{nestedRefused=true}
+        out.shortFence.nestedRefused=nestedRefused;
+      }
+    };
+    await assert.rejects(()=>adapter.qualifyHeldDashboardCutoverJointPre32OperationV4(loaded,approved),
+      {message:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'});
+    assert.equal(triggered,1);assert.equal(nestedRefused,true);assert.equal(out.nativeCalls,0);
+  `,{resources:true,pre32:true}));
+}
+
 test('unpublished coordinator token sealing loss admits no participant and never authenticates a captured mint',()=>exercise(participants+`
   const freeze=Object.freeze,create=Object.create;let token,mints=0;
   Object.create=function(...args){
@@ -583,7 +774,7 @@ test('unpublished coordinator token sealing loss admits no participant and never
     return create.apply(this,args);
   };
   Object.freeze=function(value){
-    if((Error().stack.split('\\n')[2]??'').includes('qualifyHeldDashboardCutoverJointOriginalOperationV4')){
+    if((Error().stack.split('\\n')[2]??'').includes('qualifyOriginals')){
       token=value;freeze(value);throw Error('ORIGINAL_TOKEN_SEAL_RESPONSE_LOSS');
     }
     return freeze(value);

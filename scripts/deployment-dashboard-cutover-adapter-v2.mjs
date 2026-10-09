@@ -6,7 +6,7 @@ import {holdCurrentFinalizedSetfarmSourceBuildV1} from './build-generation-reten
 
 const ROOT=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const tokens=new WeakMap();
-const preparation={attempted:false,ready:false,revoked:false,source:null,imports:[],native:null,definition:null};
+const preparation={attempted:false,ready:false,revoked:false,source:null,imports:[],native:null,definition:null,census:null,censusAttempted:false};
 let active=null,operation=null,attempted=false;
 function refuse(){throw Error('DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED')}
 function revokeActive(){if(active===preparation)preparation.revoked=true;else if(active)active.revoked=true}
@@ -21,15 +21,22 @@ async function importOriginal(locator){
   catch{occurrence.settled=true;preparation.revoked=true;refuse()}
   checkPreparation();sourceCheck(checkPreparation);return occurrence.value;
 }
-async function prepare(){
-  if(preparation.ready){sourceCheck(checkPreparation);return}
-  if(preparation.attempted||preparation.revoked)refuse();preparation.attempted=true;
-  checkPreparation();preparation.source=holdCurrentFinalizedSetfarmSourceBuildV1();checkPreparation();
-  sourceCheck(checkPreparation);
-  preparation.native=await importOriginal(ROOT+'/scripts/dashboard-cutover-native-sidecar-v2.mjs');
-  sourceCheck(checkPreparation);
-  preparation.definition=await importOriginal(ROOT+'/dist/internal-production/baseline-deployment-cutover-launcher-observation-v1.js');
-  sourceCheck(checkPreparation);preparation.ready=true;
+async function prepare(pre32){
+  if(preparation.ready)sourceCheck(checkPreparation);
+  else{
+    if(preparation.attempted||preparation.revoked)refuse();preparation.attempted=true;
+    checkPreparation();preparation.source=holdCurrentFinalizedSetfarmSourceBuildV1();checkPreparation();
+    sourceCheck(checkPreparation);
+    preparation.native=await importOriginal(ROOT+'/scripts/dashboard-cutover-native-sidecar-v2.mjs');
+    sourceCheck(checkPreparation);
+    preparation.definition=await importOriginal(ROOT+'/dist/internal-production/baseline-deployment-cutover-launcher-observation-v1.js');
+    sourceCheck(checkPreparation);preparation.ready=true;
+  }
+  if(pre32&&!preparation.census){
+    if(preparation.censusAttempted)refuse();preparation.censusAttempted=true;
+    preparation.census=await importOriginal(ROOT+'/dist/internal-production/baseline-legacy-database-census-v1.js');
+    sourceCheck(checkPreparation);
+  }
 }
 function bound(token,participant,kind,arity){
   if(arity!==2)refuse();const record=tokens.get(token);
@@ -79,16 +86,49 @@ function settle(record,index,finish){
   catch{record.unknown=true;record.revoked=true;refuse()}
 }
 
-export async function qualifyHeldDashboardCutoverJointOriginalOperationV4(originalLoaded,originalDefinition){
+async function originalOccurrence(record,invoke){
+  const occurrence={intent:true,returned:false,promise:null,settled:false};
+  try{
+    record.originals.push(occurrence);checkOperation(record);
+    record.pending.add(occurrence);checkOperation(record);
+    occurrence.promise=invoke();occurrence.returned=true;
+    if(!types.isPromise(occurrence.promise))refuse();
+    // Observe the SAME native promise; a lost response never invents settlement.
+    void occurrence.promise.then(()=>{occurrence.settled=true;record.pending.delete(occurrence)},
+      ()=>{occurrence.settled=true;record.pending.delete(occurrence);record.revoked=true;record.unknown=true});
+    checkOperation(record);await occurrence.promise;checkOperation(record);
+  }catch{record.revoked=true;record.unknown=true;refuse()}
+}
+
+export async function executeDashboardCutoverJointPre32AssertionsV4(token,originalDefinition,scope){
+  if(operation?.pre32?.checking){operation.revoked=true;refuse()}
+  if(arguments.length!==3||scope===null||typeof scope!=='object'||types.isProxy(scope))refuse();
+  const record=bound(token,originalDefinition,'originalDefinition',2);checkOperation(record);
+  if(record.route!=='pre32'||record.stage!=='working'||!record.pre32.invocationIntent||record.pre32.helperAttempted)refuse();
+  const state=record.pre32;state.helperAttempted=true;state.checking=true;state.scope=scope;
+  try{
+    await originalOccurrence(record,()=>preparation.census.assertHeldDashboardCutoverPre32DatabaseV2(scope));
+    state.authenticated=true;sourceCheck(()=>checkOperation(record));
+    preparation.native.assertHeldDashboardCutoverLoadedJobOperationV4(record.enrollments[0].scope);checkOperation(record);
+    preparation.definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4(record.enrollments[1].scope);checkOperation(record);
+    sourceCheck(()=>checkOperation(record));
+    preparation.native.assertHeldDashboardCutoverLoadedJobOperationV4(record.enrollments[0].scope);checkOperation(record);
+    preparation.definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4(record.enrollments[1].scope);checkOperation(record);
+    await originalOccurrence(record,()=>preparation.census.assertHeldDashboardCutoverPre32DatabaseV2(scope));
+  }catch{record.revoked=true;record.unknown=true;refuse()}
+  finally{state.checking=false;state.helperSettled=true}
+}
+
+async function qualifyOriginals(originalLoaded,originalDefinition,arity,route){
   // Pending preparation and original work are fenced BEFORE all input parsing.
   if(active){revokeActive();refuse()}
-  if(arguments.length!==2||originalLoaded===null||typeof originalLoaded!=='object'
+  if(arity!==2||originalLoaded===null||typeof originalLoaded!=='object'
     ||originalDefinition===null||typeof originalDefinition!=='object'
     ||types.isProxy(originalLoaded)||types.isProxy(originalDefinition))refuse();
   if(attempted||preparation.revoked)refuse();
   active=preparation;
   try{
-    await prepare();checkPreparation();
+    await prepare(route==='pre32');checkPreparation();
     // Fixed provider assertions own their WeakMaps; no caller-supplied ports.
     preparation.native.assertHeldDashboardCutoverLoadedJobPeerV4(originalLoaded);checkPreparation();
     preparation.definition.assertHeldDashboardCutoverApprovedDefinitionV4(originalDefinition);checkPreparation();
@@ -99,11 +139,12 @@ export async function qualifyHeldDashboardCutoverJointOriginalOperationV4(origin
     refuse();
   }
   attempted=true;
-  const record={originalLoaded,originalDefinition,stage:'enrolling',revoked:false,published:false,
-    token:null,pending:new Set(),unknown:false,
+  const record={originalLoaded,originalDefinition,route,stage:'enrolling',revoked:false,published:false,
+    token:null,pending:new Set(),originals:[],unknown:false,
     enrollments:[{intent:false,returned:false,authenticated:false,scope:null},
       {intent:false,returned:false,authenticated:false,scope:null}],
-    settlements:[{intent:false,returned:false},{intent:false,returned:false}]};
+    settlements:[{intent:false,returned:false},{intent:false,returned:false}],
+    pre32:{invocationIntent:false,helperAttempted:false,helperSettled:false,checking:false,scope:null,authenticated:false}};
   // Construction may have swallowed active-first reentry. Never discard that burn.
   checkPreparation();operation=active=record;
   let failed=false;
@@ -115,6 +156,11 @@ export async function qualifyHeldDashboardCutoverJointOriginalOperationV4(origin
     enroll(record,1,preparation.definition.beginHeldDashboardCutoverApprovedDefinitionOperationV4,
       preparation.definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4,originalDefinition);
     record.stage='working';
+    if(route==='pre32'){
+      record.pre32.invocationIntent=true;
+      await originalOccurrence(record,()=>preparation.definition.runHeldDashboardCutoverApprovedDefinitionOperationPre32V4(record.enrollments[1].scope));
+      if(!record.pre32.authenticated||!record.pre32.helperSettled)refuse();
+    }
     const check=()=>checkOperation(record);
     sourceCheck(check);
     preparation.native.assertHeldDashboardCutoverLoadedJobOperationV4(record.enrollments[0].scope);check();
@@ -132,4 +178,11 @@ export async function qualifyHeldDashboardCutoverJointOriginalOperationV4(origin
   settle(record,1,preparation.definition.settleHeldDashboardCutoverApprovedDefinitionOperationV4);
   record.stage='terminal';active=null;
   if(failed||record.revoked)refuse();
+}
+
+export async function qualifyHeldDashboardCutoverJointOriginalOperationV4(originalLoaded,originalDefinition){
+  return qualifyOriginals(originalLoaded,originalDefinition,arguments.length,'original');
+}
+export async function qualifyHeldDashboardCutoverJointPre32OperationV4(originalLoaded,originalDefinition){
+  return qualifyOriginals(originalLoaded,originalDefinition,arguments.length,'pre32');
 }

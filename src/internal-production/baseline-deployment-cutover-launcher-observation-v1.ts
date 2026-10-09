@@ -8,7 +8,8 @@ import { holdDeploymentCutoverNodePathV1 } from "./baseline-deployment-cutover-n
 import { observeDeploymentCutoverProcessFamiliesV1 } from "./baseline-deployment-cutover-process-observation-v1.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { assertDashboardCutoverJointDefinitionTokenV4, assertDashboardCutoverJointDefinitionSettlementTokenV4,
-  assertDashboardCutoverJointDefinitionReleaseTokenV4, revokeDashboardCutoverJointTokenV4 } from "../../scripts/deployment-dashboard-cutover-adapter-v2.mjs";
+  assertDashboardCutoverJointDefinitionReleaseTokenV4, revokeDashboardCutoverJointTokenV4,
+  executeDashboardCutoverJointPre32AssertionsV4 } from "../../scripts/deployment-dashboard-cutover-adapter-v2.mjs";
 
 const LABELS = ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard"] as const;
 const DIRECTORY_KEYS = ["dev", "ino", "mode", "uid", "gid", "birthtimeNs"] as const;
@@ -500,8 +501,12 @@ let launcherMaterialBurnSequenceV2 = 0;
 let launcherMaterialActiveV2: LauncherMaterialStateV2 | null = null;
 // Retain the original state even on failed acquisition/cleanup; no replacement.
 let launcherMaterialOriginalV2: LauncherMaterialStateV2 | null = null;
+type DefinitionPre32OccurrenceV4 = { intent: boolean; unknown: boolean;
+  outer: Promise<void> | null; outerSettled: boolean;
+  callback: Promise<void> | null; callbackIntent: boolean; callbackSettled: boolean };
 type ApprovedDefinitionOperationV4 = { original: object; token: object; definition: ApprovedDefinitionStateV4;
-  handle: object | null; published: boolean; checking: boolean; settled: boolean; released: boolean; settlementIntent: boolean };
+  handle: object | null; published: boolean; checking: boolean; settled: boolean; released: boolean; settlementIntent: boolean;
+  pre32: DefinitionPre32OccurrenceV4 | null };
 const approvedDefinitionOperationScopesV4 = new WeakMap<object, ApprovedDefinitionOperationV4>();
 let jointDefinitionOperationV4: ApprovedDefinitionOperationV4 | null = null;
 function launcherMaterialAccountV2() {
@@ -737,7 +742,7 @@ export function beginHeldDashboardCutoverApprovedDefinitionOperationV4(original:
     approvedDefinitionFailureV4();
   assertDashboardCutoverJointDefinitionTokenV4(token, original);
   const record: ApprovedDefinitionOperationV4 = { original, token, definition, handle: null,
-    published: false, checking: true, settled: false, released: false, settlementIntent: false };
+    published: false, checking: true, settled: false, released: false, settlementIntent: false, pre32: null };
   jointDefinitionOperationV4 = record;
   launcherMaterialActiveV2 = definition.material; definition.material.outerSettled = false;
   try {
@@ -771,10 +776,57 @@ export function settleHeldDashboardCutoverApprovedDefinitionOperationV4(handle: 
   const record = originalApprovedDefinitionOperationV4(handle, arguments.length);
   if (record.settled) approvedDefinitionFailureV4(); record.checking = true;
   try {
+    if (record.pre32 && (record.pre32.unknown || !record.pre32.outerSettled
+      || !record.pre32.callbackIntent || !record.pre32.callbackSettled)) approvedDefinitionFailureV4();
     assertDashboardCutoverJointDefinitionSettlementTokenV4(record.token, record.original);
     record.settlementIntent = true; record.settled = true;
   } catch { burnApprovedDefinitionV4(record.definition); }
   finally { record.checking = false; }
+}
+
+/** Fixed original transaction work only; no caller continuation or database URL. */
+export async function runHeldDashboardCutoverApprovedDefinitionOperationPre32V4(handle: object): Promise<void> {
+  const active = jointDefinitionOperationV4;
+  if (active?.pre32 && (active.pre32.unknown || !active.pre32.outerSettled || !active.pre32.callbackSettled)) {
+    burnApprovedDefinitionV4(active.definition);
+  }
+  const record = originalApprovedDefinitionOperationV4(handle, arguments.length);
+  if (record.settled || record.pre32) approvedDefinitionFailureV4();
+  const occurrence: DefinitionPre32OccurrenceV4 = { intent: true, unknown: true,
+    outer: null, outerSettled: false, callback: null, callbackIntent: false, callbackSettled: true };
+  record.pre32 = occurrence; // Retain long lifetime separately from synchronous checking.
+  const notifyFailure = () => {
+    occurrence.unknown = true;
+    try { burnApprovedDefinitionV4(record.definition); } catch { /* Notification is resource-free; preserve original work. */ }
+  };
+  const shortCheck = (check: () => void) => {
+    if (record.checking) { notifyFailure(); approvedDefinitionFailureV4(); }
+    record.checking = true;
+    try { check(); } finally { record.checking = false; }
+  };
+  try {
+    shortCheck(() => checkApprovedDefinitionOperationV4(record));
+    occurrence.outer = record.definition.material.configuration!.withPre32Database((scope) => {
+      if (occurrence.callbackIntent) { notifyFailure(); approvedDefinitionFailureV4(); }
+      occurrence.callbackIntent = true; occurrence.callbackSettled = false;
+      // Native original retained before its asynchronous body runs.
+      const work = Promise.resolve().then(() => executeDashboardCutoverJointPre32AssertionsV4(record.token, record.original, scope));
+      occurrence.callback = work;
+      if (!types.isPromise(work)) { notifyFailure(); approvedDefinitionFailureV4(); }
+      void work.then(() => { occurrence.callbackSettled = true; }, () => {
+        occurrence.callbackSettled = true; notifyFailure();
+      });
+      return work;
+    }, () => shortCheck(() => checkLauncherMaterialV2(record.definition.material)));
+    if (!types.isPromise(occurrence.outer)) { notifyFailure(); approvedDefinitionFailureV4(); }
+    void occurrence.outer.then(() => { occurrence.outerSettled = true; }, () => {
+      occurrence.outerSettled = true; notifyFailure();
+    });
+    await occurrence.outer;
+    if (!occurrence.outerSettled || !occurrence.callbackIntent || !occurrence.callbackSettled) approvedDefinitionFailureV4();
+    // Only recovered SUCCESS proves the trusted provider's hidden final query settled.
+    shortCheck(() => checkApprovedDefinitionOperationV4(record)); occurrence.unknown = false;
+  } catch { notifyFailure(); approvedDefinitionFailureV4(); }
 }
 
 // Separate, zero-input default-mode holder. Secret-bearing configuration and

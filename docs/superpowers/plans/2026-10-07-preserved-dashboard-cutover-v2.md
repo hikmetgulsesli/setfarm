@@ -2430,7 +2430,7 @@ separate from later bilateral checks; no fake scope holder or new public API.
   an internal port after opposite burn earns no universal inhibition claim.
 - [x] Step5a: affected native/definition/material controls, strict1193+new files
   noEmit with shared deps, syntax/contracts/diff. Full build remains clean-main only.
-- [ ] Step5b: final reviewed delivery, not whole-branch completion:
+- [x] Step5b: final reviewed delivery, not whole-branch completion:
   Two final exact-byte source/evidence reviews. Root stages only File Map, normal
   scoped commit/push and append-only PR delivery (body capacity currently2048B;
   use a normal evidence comment if necessary, never truncate prior evidence).
@@ -2475,6 +2475,130 @@ workspace. No entire npm suite, genuine compiler/native image, full build,
 main synchronization, merge or live3333 credit. Step6 is still the complete
 Task4 six-effect adapter/controller/legacy-owner-pre32-phase-intent/foreground
 closure followed by reviewed integration, genuine clean-main build and host proof.
+
+Task4i.5 delivery verified: root ordinary ten-file commit8f816103/forwardpush;
+two final C0/I0/M0 independent all25joint/13native/32approved original gates.
+PR280 remains OPEN DRAFT exacthead, scannerSUCCESS04:04:20UTC. Append-only
+comment6074026030 exact2762B/02d32fbf; previous63488B/a94ff9b9 body intact.
+No main synchronization or whole-branch completion clearance.
+
+## Task4i.6: hold real pre32 transaction inside bilateral original work
+
+Goal: qualify original database custody that every later effect requires, not
+return another DATA conjunction or grant a service/native capability.
+Architecture: fixed second coordinator route reuses original preparation/token/
+enrollment machinery; operation-scoped launcher privately enters the existing
+real pre32 provider. Its continuation is fixed source code, not caller work.
+Spec: paired Task4i.6 section. Tech: existing Node26 ESM/TS and readonly PG provider.
+Root only writer/delivery; independent readers perform design/evidence review.
+Standing authority covers this causal in-goal resource composition. Preserve all
+previous source-only limits, original worktrees/files and same service ports.
+
+File Map, exactly six paths:
+- scripts/deployment-dashboard-cutover-adapter-v2.mjs: fixed pre32 route and
+  original scope/query/operation occurrence custody; no caller mode/callback.
+- scripts/deployment-dashboard-cutover-adapter-v2.d.mts: exact three signatures.
+- scripts/__tests__/deployment-dashboard-cutover-adapter-v2.test.js: local finite
+  fifth TS→JS census bridge; bounded event/counter receipts for the new cases,
+  actual compiled census module with private WeakMaps, driver/journal/finding
+  boundaries explicitly doubled. Preserve all historical receipts and old helpers.
+- src/internal-production/baseline-deployment-cutover-launcher-observation-v1.ts:
+  fixed operation-scoped pre32 continuation, callback/outer original custody and
+  settlement refusal on unresolved/unknown original work.
+- This plan and paired spec. No PG-provider/C/native/CLI/service/package changes.
+
+Interfaces (all fixed arity):
+qualifyHeldDashboardCutoverJointPre32OperationV4(loaded:object,definition:object):Promise<void>;
+runHeldDashboardCutoverApprovedDefinitionOperationPre32V4(scope:object):Promise<void>;
+executeDashboardCutoverJointPre32AssertionsV4(token:object,definition:object,scope:object):Promise<void>.
+Keep existing no-PG qualifier behavior and same shared once-only attempt; route
+is a source literal chosen by fixed exports, never a caller flag. Actual scope
+authentication is the canonical compiled census module's existing assertion.
+
+- [x] Step1: independent exact interface/lifetime nomination before code. Resolve
+  pending original import/callback/query/outer response, scope authentication,
+  active-first reentry and revoked-but-known cleanup. No presumed driver death.
+  Two independent C0/I0/M0 at spec19a82e6d/plan9d9255a3; explicit hidden-final-
+  query rejection staysUNKNOWN and fourth causal timing case required.
+- [x] Step2: one genuine missing-interface RED before production, resources0:
+  assert.equal(typeof adapter.qualifyHeldDashboardCutoverJointPre32OperationV4,
+    'function','MISSING_FIXED_JOINT_PRE32_OPERATION');
+  assert.equal(typeof adapter.executeDashboardCutoverJointPre32AssertionsV4,
+    'function','MISSING_FIXED_JOINT_PRE32_ASSERTIONS');
+  assert.equal(typeof definition.runHeldDashboardCutoverApprovedDefinitionOperationPre32V4,
+    'function','MISSING_FIXED_DEFINITION_PRE32_OPERATION');
+  Retain actual program/intent/result, natural0-or1/signal/EOF/close and exactpins.
+  Actual4265950P1F380.735958ms/a16tTQ; all3undefined in one deep literal assertion.
+  Rootc7977f verifies1/null/errornull/EOFclose and0commands/ports/native,5bridges/
+  9manualoutputs. Source96a3/a1f3 unchanged; test5a9ae9b0. API-only RED, notPG.
+- [x] Step3: minimal fixed resource implementation after RED. Register original
+  occurrences before invocation and retain returned native promises before await:
+  occurrence.intent=true; pending.add(occurrence);
+  occurrence.promise=fixedSourceOwnedOperation();
+  // Unrecovered original/response is unknown, never synthesized settled.
+  await occurrence.promise;
+  // Only actual settlement observer removes the original pending occurrence.
+  Private launcher callback retains its ORIGINAL work before body observation;
+  driver rejection burns first, notifies shared token and does NOT settle callback.
+  Final source/definition/native-cache cutpoint follows actual settled originals.
+  Definition settlement additionally refuses unresolved/unknown pre32 custody.
+  ANY invoked pre32 bridge rejection/lost response is sticky UNKNOWN at local
+  definition AND coordinator: the provider's final post-continuation query is
+  hidden custody without a public completion witness. No SETTLING on failure,
+  even after visible callback/query settles; no retry/guessed resource release.
+- [x] Step4: three actual-resource GREEN/fault cases with independently literal
+  expectations, not fake PG scope. Healthy: original READ COMMITTED READ ONLY,
+  exact36 SHARE statements, original scope authentication, bilateral assertions
+  while transaction held, actual callback+outer settlement before scope release.
+  Fault: suspend one genuine assertion query, lose outer driver response, prove
+  both activities retained/FDdisposal0/normal subsequent directports0; release
+  that SAME original query and observe actual rejection/settlement, permanent
+  refusal/no retry. Add only causal negatives found by independent review.
+  Second causal timing window: our helper/callback has returned, suspend the
+  actual census provider's final query and lose outer driver response. Prove
+  both participant fences/FDdisposal0 even though our callback is already settled;
+  release SAME original final query, retain unknown composite/no retry forever.
+  Bounded selected events/counters/hashes, not millions of duplicated FS rows.
+  Final7P0F145120.07425ms includes API, three resource cases and three causal
+  review corrections. Short synchronous checks cover initial/configuration/
+  final; original promises remain in append-only private history after pending
+  removal. Genuine REDs OpRfMf/lMYBFm/81xjdp; unarmed11JaIf is setup failure.
+  Final source adaptere0685287/launcher32384f38/d.mts950de098/testdea600da;
+  earlier4P0F at e7afe4c1/e42dbec9 is historical, not final-graph credit.
+- [ ] Step5: affected no-PG joint API/healthy custody controls, approved/pre32
+  controls, strict noEmit/shared tools, syntax/contracts/diff and two independent
+  exact-file/original-evidence gates. Only proportional focused cases; disk7.1GiB.
+  Shared fixed-route factoring may relocate record allocation: rebase existing
+  Set-construction fault oracle to actual source-owned frame and rerun it. Preserve
+  no-PG behavior, no census import/PGopening on old fixed route; no caller mode.
+  Ordinary scoped commit/push and append-only PR evidence. Full build still only
+  genuine clean main; no source fixture is a native/backend/host proof.
+  Verification checkpoint: no-PG6P0F63387.798584ms, approved32 plus pre32
+  harness20=52P0F9034.30075ms, strict1194/0/noEmit; syntax/version2.3.79/
+  English1992/path999/migration/diff. Explicit readonly shared dependencies,
+  not writer dependency closure. Root reread all final7+old-route6 originals
+  (program/intent/result/snapshot) and32 approved child receipts. Final7 have
+  42 inert child commands/18 exact V4 C inputs and five literal translations/
+  nine manual outputs. Old-route6 have four translations/eight manual outputs,
+  absent census bridge,21 inert commands/nine exact C inputs. EOF/close natural,
+  actual:false/native0. Final6 bounded snapshots differ from printed stdout only
+  by one diagnostic trusted-composite close counter; old3 resource snapshots
+  similarly have one diagnostic close row. All nominated six direct counters
+  unchanged in both loss windows; not universal composite inhibition. Final
+  provider query timing is source-derived, not private-settlement telemetry.
+  Durable private indices in canonical logs:
+  2026-10-09-dashboard-cutover-joint-pre32-final-index.json and
+  2026-10-09-dashboard-cutover-joint-pre32-controls-index.json. Two correction
+  source gates and focused evidence gate C0/I0/M0; final exact-six-file delivery
+  gates and scoped commit/push pending. No whole Task4/host/build qualification.
+
+Remaining route after this resource bridge: true reservation/current owner and
+finite cooperative legacy/queued/stale-unlink exclusion, selected-build/selector
+originals, changing V2 phase and durable ordinal intents, all six fixed effect
+dispatches, Task3 controller/reconciliation and Task5 authenticated foreground
+entry. Then reviewed whole delivery, genuine clean-main build, current declaring
+job/native/control/birth and3333 listener/HTTP acceptance. Do not relax V1 idle/
+absence predicates or invent a global-hostile-runtime prerequisite.
 - [ ] Step6: qualify complete Task4 actual capability separately before Task3:
   no owner/legacy/pre32/phase/intents/selector/restoration/control/foreground
   predicates may be replaced by this operation token or a fixture boolean.

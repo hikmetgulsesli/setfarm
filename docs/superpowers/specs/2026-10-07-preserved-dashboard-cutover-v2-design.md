@@ -3446,3 +3446,141 @@ uses explicit shared tools, NOT writer dependency or production build authority.
 Final reviewed delivery is a separate plan gate. Six-effect adapter/controller,
 complete trusted-composite freeze, executing-entry/image, owner/legacy/pre32/
 phase/ordinal, foreground/clean-main/live3333 obligations remain unqualified.
+
+## Task4i.6 nomination: fixed original pre32 transaction composition
+
+Causal prerequisite of the approved Task4 adapter: original locked database
+custody must remain live during jointly held original checks. Existing public
+withHeldDashboardCutoverLauncherPre32V2 is idle-only and therefore burns/refuses
+under the Task4i.5 definition scope. Do NOT relax that guard or substitute a
+snapshot/census DATA object. Selected approach extends SAME coordinator and
+launcher provider with a literal source-owned pre32 route. Existing no-PG route
+stays unchanged; both share once-only preparation and joint attempt.
+
+Exact fixed interfaces, no optional arguments:
+qualifyHeldDashboardCutoverJointPre32OperationV4(originalLoaded:object,originalDefinition:object):Promise<void>;
+runHeldDashboardCutoverApprovedDefinitionOperationPre32V4(originalDefinitionScope:object):Promise<void>;
+executeDashboardCutoverJointPre32AssertionsV4(originalToken:object,originalDefinition:object,originalPre32Scope:object):Promise<void>.
+First/third are coordinator exports; second is launcher provider export. None
+returns a token/path/query/callback/permission/capability. No caller continuation,
+URL, SQL, connection, census, selected mode or provider is accepted. The existing
+private configuration's agreedDatabaseUrl(check) and withPre32Database consume
+the SAME material originals; they are never exposed by the scope function.
+
+Coordinator preparation for this fixed route lazily imports SAME ROOT/dist/
+internal-production/baseline-legacy-database-census-v1.js with retained original
+import custody and source checks. No src/query namespace/fallback/loader input.
+Existing configuration imports that SAME canonical module. Its existing
+assertHeldDashboardCutoverPre32DatabaseV2 authenticates genuine scope through
+its OWN WeakMap before queries; empty/frozen DATA copies, query-instance scopes,
+unknown scopes and proxies cannot manufacture that authentication.
+
+The actual trusted provider uses READ COMMITTED READ ONLY with36 SHARE table
+locks, exact migration26..31 journal and cold zero-owner census. This excludes
+its nominated write surface only, NOT all producers/processes/physical owners
+or backend-death/global freeze. Explicit rechecks retain the existing32 budget;
+this slice cannot increase it. Existing driver/journal/census helpers are declared
+trusted composites, not retroactive joint-token inhibition of their internal ports.
+
+Active-first guard precedes arity/type/proxy parsing on the coordinator fixed
+route, including pending imports/PG work. The fixed assertion helper has a private
+checking-first guard before input parsing; nested helper calls burn shared
+original custody and refuse with zero new query/FS ports and traps. Authenticate
+SAME token/operation/definition/fixed route/stage, then retain the original callback
+scope response before fallible checks. Only the actual canonical pre32 assertion
+can authenticate it. Original query promises are registered/retained before await
+and are never replaced by a fulfilled boolean, timeout or consumer promise.
+
+The definition scope's callback is literal source-owned code invoking the fixed
+coordinator helper. Privately retain original callback and outer bridge promises
+SEPARATELY, with intent/returned/actual-settled/unknown records before observation.
+Native promises are required; no caller thenable or generic continuation. Retain
+callback work before invoking its asynchronous body. The coordinator separately
+retains its original provider invocation and explicit scope-query occurrences.
+Response loss or an unrecovered original is irrevocable unknown custody.
+
+The new definition pre32 entry also guards its retained original occurrence
+BEFORE parsing arity/scope during pending work. This lifetime fence is distinct
+from short synchronous scope checking: fixed coordinator-owned bilateral checks
+must still run within its source-owned callback. Never add a caller bypass flag
+or temporarily release material/native activity to make that possible.
+
+Outer driver rejection or sql.end({timeout:1}) is NOT callback/query settlement
+and NOT backend-death proof. Burn/notify shared token before any further normal
+ports. While an original callback/query remains pending or unknown, keep BOTH
+participant activities held; no scope release/participant FD disposal/retry or
+replacement. The source-owned postlude may await actual retained callbacks,
+never synthesize completion. Definition settlement additionally refuses any
+unsettled/unknown pre32 local occurrence, even if its outer function's returned
+promise has already rejected. This makes the terminal coordinator release gate
+fail closed rather than inferring resource death from an exception.
+
+Important existing composite boundary: the actual census provider performs an
+internal final read AFTER our source-owned continuation has returned. Its driver
+begin/end may reject while that private final query/transaction callback remains
+pending. Our callback + explicit query + outer promise settlement cannot prove
+that hidden original settled. No public genuine provider-internal witness exists
+within this File Map. Therefore ANY rejection/lost response of the invoked pre32
+bridge is sticky UNKNOWN at both local definition occurrence and coordinator;
+do NOT enter SETTLING or release either scope, even after visible callbacks or
+test-controlled queries eventually settle. The original attempt is not retried.
+Only successful returned outer bridge with trusted provider completion may prove
+this composite settled. Known-revoked cleanup applies only when that successful
+completion was actually recovered, never to an outer driver rejection.
+
+Healthy fixed work: authenticate actual pre32 scope, perform literal bilateral
+source/native/definition checks while that ORIGINAL transaction continuation is
+live, recheck original pre32 scope before callback return. Register and await every
+original query. After actual callback and outer bridge settlement, run existing
+final source/definition/resource-free native cache cutpoint. Only then can the
+existing known-scope settlement/terminal-release bookkeeping run. Known revoked
+settled custody with recovered successful composite completion may use existing
+cleanup; validity/effect authority never returns.
+
+File Map: existing adapter.mjs/.d.mts/builtin test, launcher-observation TS, paired
+spec/plan only. No native C/provider, PG provider, package, controller or service
+change. The local test adds precisely one literal mapping:
+src/internal-production/baseline-legacy-database-census-v1.ts -> dist/internal-production/baseline-legacy-database-census-v1.js.
+Record original TS/translated JS hash/canonical URL and complete finalized manual
+inventory. Actual compiled census scope owner is NOT doubled; only explicit
+driver/journal/finding boundaries are inert. Existing shared finalized helper
+and historical receipts stay untouched. New cases use bounded selected event/
+counter/hash receipts instead of repeated huge FS traces. This remains source-only
+fixture translation, not genuine compiler/backend/native/clean-main execution.
+
+Fault qualification must distinguish two timing windows: pending explicit query
+inside our callback, and pending actual provider FINAL read after our callback
+has returned. In each, lose original outer driver response and prove both fences/
+no participant disposal/no retry. Release that SAME test query and observe its
+actual settlement, but never promote the failed composite to known custody.
+If shared route factoring relocates allocation to a private fixed routine, update
+the existing Set-construction causal oracle to the actual source-owned frame and
+rerun it; behavior preservation is required, not fictional byte preservation.
+No-PG route must not import census/openPG even after ordinary-foreign preparation.
+
+2026-10-09 source-only qualification checkpoint: seven final cases7P0F at
+adaptere0685287/launcher32384f38/declaration950de098/testdea600da. Actual
+canonical census module owns its genuine scope; explicit driver/journal/finding
+boundaries are doubled. Healthy36 SHARE locks/four journal reads; loss windows
+retain both participants after same original queries settle, with FDdisposals0,
+proxytraps0 and all six nominated direct counters unchanged. Final provider-query
+window follows exact source ordering, not a fabricated private helper witness.
+Synchronous checking covers initial/configuration-callback/final validation
+without spanning awaits. Append-only private history retains three original
+native promises after pending removal. Genuine causal REDs OpRfMf/lMYBFm/
+81xjdp preceded correction;11JaIf never armed and has NO causal credit.
+Root rereads final7 and old-route6 original program/intent/result/snapshots,
+byte-exact provider relocation, translated bridges and complete manual outputs,
+plus32 approved child receipts. Old-route fixtures have no census bridge;
+six old-route tests and20 pre32 harness controls pass. The latter have normal
+harness output, not invented retained child receipts. Strict1194/0/noEmit and
+syntax/contracts pass through explicit readonly shared tools, not actual build.
+Bounded final resource snapshots and stdout differ only by one diagnostic
+trusted-composite close count. Counters qualify the nominated direct windows,
+not every interior composite port. Final evidence and controls indices are in
+canonical logs; final exact-six-file delivery reviews still pending.
+
+No new Task4 capability is created here. Full current-owner/reservation, finite
+legacy exclusion, changing phase/durable intents, six effects, controller,
+authenticated foreground grant/birth/job/control/listener and final genuine
+clean-main/live3333 verification remain mandatory.
