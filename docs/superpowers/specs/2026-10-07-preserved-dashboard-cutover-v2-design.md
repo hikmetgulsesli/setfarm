@@ -4129,3 +4129,37 @@ material recheck (including after await), and provisional quiet body-work
 occurrence registered before scheduling its actual Promise. Preserve original
 Promise after driver failure/late settlement; don't manufacture custody from a
 later reconstructed callback. Final ten-file review is required.
+### Task4j implemented causal boundaries and qualification limit
+
+2026-10-09. Refined ten-file producer preserves both short checking-first burn
+and long quiet embargo in full/cache native assertions, not the separate
+settlement-token path. Actual causal suWgS2 direct-bound1/traps0 RED precedes
+checking-first fix; corrected source requires direct-bound0. Resource-free SAME
+original admission brackets private phase material reads after every await.
+Provisional body occurrence is retained before Promise scheduling. Driver loss
+never settles the original wait; complete natural child/stream events alone do,
+and late completion after UNKNOWN cannot repair owner/coordinator or mint rows.
+Owner short store composites burn nested genuine/wrongarity calls before ports.
+
+22current new and6existing joint consumers plus35owner/198calibrated launcher/
+3sidecar controls pass. Root read31actual retained originals, not264 fictional
+receipts:793pins/387literalTSbridges/218inert-or-explicit-doublecommands/93exactC,
+89quietchilddoubles/14bootoutdoubles/21canonicaljournalfiles/native0. Actual
+private owner/OPEN journal FS and unchanged source binding are qualified ONLY
+inside source/manual-output fixtures. Aggregate198 uses explicit sharedtsx,
+relative adapter relocation and one preexisting account fault calibrated AFTER
+import; no production admission or test guard bypass. Bare broad-suite/build
+success is not claimed. Exact final peer evidence gates/delivery still pending.
+
+Do not release/reopen terminal quiet scopes or adopt prefix history. A future
+combined route must enroll actual process lifetime BEFORE quiet dispatch under
+SAME original coordinator, retain it through quieting, then wait before PG.
+No present provider proves finite legacy death/descendants/future cooperative
+entry closure. Sampled passive APIs and conditional selected guard mismatch
+remain diagnostic, and quiet success does not convert them to capabilities.
+No partial merge, host mutation, actual build/native/realPG or full cutover
+completion follows these source controls.
+The three sidecar outer spawnSync diagnostic envelopes have no explicit EOF/
+pipe-close slots; their recorded status/signal/error/output and per-command
+natural lifecycle are separate evidence. The28joint outer consumers do retain
+both EOF/close. No blanket all31 outer-lifecycle or host capability claim.

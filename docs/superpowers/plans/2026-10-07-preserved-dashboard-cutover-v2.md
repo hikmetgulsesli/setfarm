@@ -3039,10 +3039,10 @@ records/store and launcher only. Adapter's quiet route prepares no census,
 physical/ROOT/local-drain modules and never enters pre32. Existing routes keep
 their original preparation/behavior. No general action dispatcher or callback.
 
-- [ ] Step1: root spec/plan self-review, two independent exact paired nomination
+- [x] Step1: root spec/plan self-review, two independent exact paired nomination
   gates, then ordinary two-doc design commit BEFORE tests or source. No routine
   permission question under standing authorization. No live job command here.
-- [ ] Step2: write actual consumer RED against missing quiet producer. Reuse
+- [x] Step2: write actual consumer RED against missing quiet producer. Reuse
   finite jointFixture with a quiet-only preparation option and two added Task2
   TS bridges. Genuine owner/OPEN must use actual fixture launcher configuration
   hashes. Existing diagnostic observation supplies DATA only. Child double is
@@ -3064,7 +3064,7 @@ their original preparation/behavior. No general action dispatcher or callback.
   Expected RED: missing quiet entry assertion, not loader/setup/syntax failure.
   Keep actual program, complete source pins, TS translations/manual outputs,
   stdout/stderr, natural exit and EOF+close. Do not replay Task4i.9 campaigns.
-- [ ] Step3: minimal producer. Extend preparation with a quiet-only owner import
+- [x] Step3: minimal producer. Extend preparation with a quiet-only owner import
   branch; register route/intents before calls. Owner retains actual OPEN bytes
   and claim, then fixed V2 imports. Require initial empty settled store; prepare
   records with actual private OPEN/claim/hash values:
@@ -3089,7 +3089,7 @@ their original preparation/behavior. No general action dispatcher or callback.
   including derivative lease's captured checkOriginal; no caller guard selector.
   Quiet releaseToken always refuses, including healthy terminal bookkeeping.
   Never pass caller hashes or labels.
-- [ ] Step4: complementary causal controls, each owns retained originals:
+- [x] Step4: complementary causal controls, each owns retained originals:
   intent1 publication/readback loss => bootouts0; first child pending/lost/error/
   timeout => completion1 absent and ordinal2 absent; late original settlement
   cannot repair; exact wrong absent status/stderr/label => refusal, not completion;
@@ -3122,7 +3122,7 @@ their original preparation/behavior. No general action dispatcher or callback.
 
 - [ ] Step5: focused new/owner/material/adapter regressions, strict noEmit,
   syntax/contracts/diff; root reads every actual retained quiet original and two
-  exact-nine-file independent final reviews. Normal source commit/forward push,
+  exact-ten-file independent final reviews. Normal source commit/forward push,
   append-only PR280 evidence and exact-head readback. No full-build/real launchd/
   PG/native/legacy death or host clearance claims from fixtures. Update handoff.
 
@@ -3157,3 +3157,53 @@ clear this ten-file refinement or final delivery.
   require two independent reviews, focused regression/strict/syntax/contracts,
   normal scoped commit/forward push and append-only PR readback. No live effect,
   real PG, actual build, legacy death or host-completion claims from fixtures.
+### Task4j current-source qualification, before final delivery
+
+2026-10-09. Final producer adapter64ad70b3/owner7afe1895/nativeabe39395/
+launcherefef054a, declaration0e02d881, testsfa56106f/42c6160b/new71244ed0.
+Root implemented only nominated ten paths, no runtime artifact/credential edit.
+Normal design commits76b35217 anddbe19b56 preceded initial producer and causal
+native map refinement respectively, each after two exact paired gates.
+
+Every review root fix followed causal assertion RED: timeout cTdEl9;
+publication reentry cUgy8q/OAcWiN; phase-await BtnRTl; original scheduled-work
+registration I63Fsf; long pending native wrongarity nnx4X5; short checking
+precedence suWgS2. Wrong API-name and loader failures are setup, not producer
+RED. Older o1kL1d has orphan unhandled stderr; clean I63Fsf is custody gate.
+No duplicate metadata API was needed: nominated signature already existed.
+
+264 focused controls PASS on current sources:22new (21quiet+1native shortcheck),
+6existing joint/pre32/owner/localdrain,35owner,198launcher/material/approved/
+foreign-interface,3native-sidecar consumers. Aggregate suites are not invented
+264 original consumer receipts. Broad raw197/198 exposed a preexisting test
+injection error: static retention import consumed its first userInfo result.
+Calibrated test-only literal loader arms that ONE fault after active=true/import;
+all198 pass. Exact sharedtsx and relative canonical adapter relocation, no
+dependency install/link or production/test-source rewrite. Readback-loss control
+required stack64 to expose fixed quietHistory callsite; earlier unarmed control
+does not earn a causal producer RED. No assertion or runtime guard weakened.
+
+Root independently read all28 current joint/quiet actual originals:772pins,
+387literalTSbridges,197inert/explicit-double commands,84exactC stdin payloads,
+89quiet child doubles,14doubled bootouts and21canonical journal files. Copied
+provider relocation reverses byte-for-byte toCURRENT source; each TS translation
+reproduced exactly, actual private owner/OPEN unchanged, forbidden imports[],
+quiet ROOTabsent/native0. Snapshot vs stdout diagnostics differ by own write/
+close only; authority fields compared exactly, not fictitious whole-envelope
+equality. The ONE existing Python ROOT control is narrower parent/publication
+double: only its recorded status/null and outputEOF/close, no invented stdin or
+natural exit evidence. Separately3actual sidecar originals add21pins/21commands/
+9exactC, native0: total31originals793pins387bridges218commands93exactC.
+
+Private final joint index8d43f37d and sidecar index in workspace logs; actual
+sibling originals retained. NoEmit1195/0 diagnostics, syntax/version2.3.79/
+English1993/paths999/diff pass, NOTactualbuild/nativeimage/realPG/legacydeath.
+Two final exact-ten/all31original review gates and normal source delivery remain
+pending. PR280 observed OPEN DRAFT/head58cbb227/reviews[]; no partial merge.
+HTTP3080/18789=200,3333absent; protected two file hashes unchanged; no host
+effects, install, reset/revert, deletion, secret/access-control or paid action.
+Evidence precision for the three sidecar consumers: outer spawnSync envelopes
+retain status/signal/error/stdout/stderr, NOT explicit EOF/pipe-close fields.
+Only their per-command retained lifecycle has those recorded flags. The28joint
+outer envelopes independently retain both EOF and close; never credit fictional
+outer lifecycle slots to all31 or treat synchronous-return DATA as a capability.

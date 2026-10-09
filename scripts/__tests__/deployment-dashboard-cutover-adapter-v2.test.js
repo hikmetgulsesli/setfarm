@@ -30,15 +30,17 @@ const translations=[
 
 // LOCAL finite source-only bridge. This does NOT run the production compiler or
 // confer clean-main/native/executing-image authority. Shared fixture unchanged.
-function jointFixture(resources=false,pre32=false,bounded=false,owner=false,ownerInputCopy=false,localDrainFault=false){
+function jointFixture(resources=false,pre32=false,bounded=false,owner=false,ownerInputCopy=false,localDrainFault=false,quiet=false){
   const bridgeList=pre32?[...translations,
     ['src/internal-production/baseline-legacy-database-census-v1.ts',
       'dist/internal-production/baseline-legacy-database-census-v1.js']]:[...translations];
   if(owner){
-    assert.equal(resources,true);assert.equal(pre32,true);
+    assert.equal(resources,true);assert.ok(pre32||quiet);
     for(const name of ['baseline-deployment-cutover-records-v1','baseline-deployment-cutover-owner-store-v1',
       'baseline-deployment-cutover-publication-v1','baseline-deployment-cutover-v1','baseline-workspace-authority-path-v1',
       'baseline-dashboard-cutover-local-producer-drain-v2'])
+      bridgeList.push(['src/internal-production/'+name+'.ts','dist/internal-production/'+name+'.js']);
+    if(quiet)for(const name of ['baseline-dashboard-cutover-records-v2','baseline-dashboard-cutover-store-v2'])
       bridgeList.push(['src/internal-production/'+name+'.ts','dist/internal-production/'+name+'.js']);
     for(const name of ['baseline-positive-worktree-physical-catalog-v2',
       'baseline-positive-worktree-active-binding-snapshot-v1',
@@ -129,7 +131,7 @@ function jointFixture(resources=false,pre32=false,bounded=false,owner=false,owne
   file(root,'dist/PLATFORM_BUILD_OUTPUT_TREE.json',JSON.stringify({...projection,outputTreeHash})+'\n',0o444);
   for(const p of ['dist','dist/cli','dist/server','dist/internal-production','dist/product-compiler'])fs.chmodSync(root+'/'+p,0o755);
   const pins=Object.fromEntries(Object.entries(files).map(([p,b])=>[p,hash(b)]));
-  return {root,bridges,pins,providers,home,pre32,bounded,owner,sourceFault,sourceSha:git(root,['rev-parse','HEAD']),outputTreeHash};
+  return {root,bridges,pins,providers,home,pre32,bounded,owner,quiet,sourceFault,sourceSha:git(root,['rev-parse','HEAD']),outputTreeHash};
 }
 
 function resourceProgram(fixture){return `
@@ -281,8 +283,8 @@ function resourceProgram(fixture){return `
   syncBuiltinESMExports();
 `;}
 
-async function exercise(body,{resources=false,pre32=false,bounded=pre32,owner=false,ownerInputCopy=false,localDrainFault=false}={}){
-  const fixture=jointFixture(resources,pre32,bounded,owner,ownerInputCopy,localDrainFault),{root}=fixture;
+async function exercise(body,{resources=false,pre32=false,bounded=pre32,owner=false,ownerInputCopy=false,localDrainFault=false,quiet=false}={}){
+  const fixture=jointFixture(resources,pre32,bounded,owner,ownerInputCopy,localDrainFault,quiet),{root}=fixture;
   const program=`import assert from 'node:assert/strict';import fs from 'node:fs';
     import path from 'node:path';
     import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
@@ -842,6 +844,313 @@ const ownerSetup=`
     cutoverIntentHash:actualOpen.cutoverIntentHash,maintenanceIntentHash:maintenance.maintenanceIntentHash,
     cutoverPlanHash:maintenance.cutoverPlanHash,ownerClaimHash:actualClaim.ownerClaimHash};
 `;
+
+// Independent literal fixture hashes are DATA; production must compare its
+// retained actual plist hashes to the genuine OPEN before dispatching anything.
+const quietConfigurationSetup=String.raw`
+  const {createHash}=await import('node:crypto');
+  const quietCanonical=value=>value===null||typeof value!=='object'?JSON.stringify(value):
+    Array.isArray(value)?'['+value.map(quietCanonical).join(',')+']':'{'+Object.keys(value).sort()
+      .map(key=>JSON.stringify(key)+':'+quietCanonical(value[key])).join(',')+'}';
+  const fixtureConfigurationHash=index=>createHash('sha256').update(quietCanonical({
+    schema:'setfarm.internal-production-deployment-cutover-launcher-configuration.v1',
+    plistPath:home+'/Library/LaunchAgents/'+labels[index]+'.plist',plist:definitions[index]})).digest('hex');
+`;
+const quietOwnerSetup=ownerSetup.replace(
+  "spawnerLauncherConfigurationHash:'4'.repeat(64),dashboardLauncherConfigurationHash:'5'.repeat(64)",
+  'spawnerLauncherConfigurationHash:fixtureConfigurationHash(0),dashboardLauncherConfigurationHash:fixtureConfigurationHash(1)');
+
+// Complete launchctl child double: actual owner/OPEN/store/material remain real
+// private FS. This is NOT launchd/native/source-build or legacy-exit evidence.
+const quietCommandSetup=String.raw`
+  const previousQuietSpawn=cp.spawn,quietLoaded=[true,true];
+  out.quietChildren=[];out.bootoutArguments=[];out.forbiddenQuietImports=[];
+  const forbiddenQuietUrls=new Set([
+    root+'/dist/internal-production/baseline-legacy-database-census-v1.js',
+    root+'/dist/internal-production/baseline-positive-worktree-physical-catalog-v2.js',
+    root+'/dist/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js',
+    root+'/scripts/deployment-dashboard-cutover-first-generation-v2.mjs',
+  ].map(locator=>'file://'+locator));
+  moduleBuiltin.registerHooks({resolve(specifier,context,next){
+    const resolved=next(specifier,context);
+    if(forbiddenQuietUrls.has(resolved.url)){
+      out.forbiddenQuietImports.push({specifier,url:resolved.url});throw Error('QUIET_IMPORTED_FORBIDDEN_PROVIDER');
+    }return resolved;
+  },load(url,context,next){
+    if(forbiddenQuietUrls.has(url)){out.forbiddenQuietImports.push({url});throw Error('QUIET_EVALUATED_FORBIDDEN_PROVIDER')}
+    return next(url,context);
+  }});
+  cp.spawn=(command,args,options)=>{
+    if(command!=='/bin/launchctl')return previousQuietSpawn(command,args,options);
+    assert.equal(args.length,2);assert.ok(['print','bootout'].includes(args[0]));
+    const index=labels.findIndex(label=>args[1]==='gui/'+process.getuid()+'/'+label);assert.ok(index>=0);
+    assert.equal(options.cwd,home);assert.deepEqual(options.stdio,['pipe','pipe','pipe']);
+    assert.deepEqual(options.env,{PATH:'/usr/bin:/bin:/usr/sbin:/sbin',LANG:'C',LC_ALL:'C'});
+    const journal=baseline+'/deployment-dashboard-cutover-v2';
+    if(args[0]==='bootout'){
+      const n=index+1,intent=JSON.parse(fs.readFileSync(journal+'/intent-000'+n+'.json'));
+      assert.equal(intent.ordinal,n);assert.equal(intent.action,index?'bootout-dashboard':'bootout-spawner');
+      assert.equal(intent.cutoverIntentHash,actualOpen.cutoverIntentHash);assert.equal(intent.ownerClaimHash,actualClaim.ownerClaimHash);
+      assert.equal(fs.existsSync(journal+'/completion-000'+n+'.json'),false);
+      if(index)assert.equal(fs.existsSync(journal+'/completion-0001.json'),true);
+      out.bootoutArguments.push([...args]);
+    }
+    const row={authority:'explicit-launchctl-child-double-not-host-effect',args:[...args],events:[],closed:false};
+    out.quietChildren.push(row);
+    const child=new EventEmitter();child.stdin=new PassThrough();child.stdout=new PassThrough();child.stderr=new PassThrough();
+    child.kill=()=>{throw Error('QUIET_FORBIDDEN_SIGNAL')};
+    for(const [name,stream] of [['stdin',child.stdin],['stdout',child.stdout],['stderr',child.stderr]])
+      for(const event of ['finish','end','close'])stream.on(event,()=>row.events.push(name+':'+event));
+    child.stdin.resume();child.stdin.on('finish',()=>setImmediate(()=>{
+      let status=0,stdout='',stderr='';
+      if(args[0]==='bootout'){assert.equal(quietLoaded[index],true);quietLoaded[index]=false}
+      else if(quietLoaded[index])stdout=launcherText(index);
+      else{status=113;stderr='Bad request.\nCould not find service "'+labels[index]+'" in domain for user gui: '+process.getuid()+'\n'}
+      if(args[0]==='print'&&index===0&&!quietLoaded[0]&&globalThis.quietFault==='absent-status')status=3;
+      if(args[0]==='print'&&index===0&&!quietLoaded[0]&&globalThis.quietFault==='absent-label')stderr=stderr.replace(labels[0],labels[1]);
+      if(args[0]==='bootout'&&index===0&&globalThis.quietFault==='abnormal')status=5;
+      if(args[0]==='bootout'&&index===0&&globalThis.quietFault==='dashboard-drift')
+        fs.appendFileSync(home+'/Library/LaunchAgents/'+labels[1]+'.plist','\n');
+      const finish=()=>{
+      child.stdout.end(stdout);child.stderr.end(stderr);
+      row.status=status;row.signal=null;child.emit('exit',status,null);row.events.push('child:exit');
+      setImmediate(()=>{row.closed=true;row.events.push('child:close');child.emit('close',status,null)});
+      };
+      if(args[0]==='bootout'&&index===0&&globalThis.quietFault==='missing-eof'){
+        globalThis.releaseQuietChild=()=>child.stdout.end(stdout);
+        child.stderr.end(stderr);row.status=status;row.signal=null;child.emit('exit',status,null);row.events.push('child:exit');
+        setImmediate(()=>{row.closed=true;row.events.push('child:close');child.emit('close',status,null)});
+        globalThis.quietChildObserved();
+      }else if((args[0]==='bootout'&&index===0&&['response-loss','timeout','stream-error','oversize','native-reentry','native-cache-reentry','definition-reentry'].includes(globalThis.quietFault))
+        ||(args[0]==='print'&&index===0&&globalThis.quietFault==='phase-microtask'&&!globalThis.releaseQuietChild)){
+        globalThis.releaseQuietChild=finish;globalThis.quietChildObserved();
+        if(globalThis.quietFault==='response-loss')child.emit('error',Error('INERT_BOOTOUT_RESPONSE_LOSS'));
+        if(globalThis.quietFault==='stream-error')child.stdout.emit('error',Error('INERT_STREAM_ERROR'));
+        if(globalThis.quietFault==='oversize')child.stdout.write(Buffer.alloc(1024*1024+1));
+      }else finish();
+    }));return child;
+  };syncBuiltinESMExports();
+`;
+
+// Missing producer, wrong order, skipped readback or accidental full preparation
+// must fail this REAL journal consumer; a command double alone cannot pass it.
+test('native short checking guard burns before nested token metadata authentication',()=>exercise(participants+String.raw`
+  const get=WeakMap.prototype.get;let nativeRecord,triggered=0,nested=false,nestedAuth=0,traps=0;
+  const proxy=new Proxy({}, {get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')}});
+  WeakMap.prototype.get=function(key){const answer=get.call(this,key);
+    if(answer?.original===loaded&&answer?.published)nativeRecord=answer;
+    if(answer?.enrollments&&answer?.route==='original'&&/at bound \(/.test(Error().stack.split('\n')[2]??'')){
+      if(nested)nestedAuth++;
+      else if(!triggered&&nativeRecord?.checking&&answer.stage==='working'){
+        triggered++;nested=true;try{assert.throws(()=>native.assertHeldDashboardCutoverLoadedJobOperationV4(proxy,proxy))}
+        finally{nested=false}
+      }
+    }return answer};
+  await assert.rejects(()=>adapter.qualifyHeldDashboardCutoverJointOriginalOperationV4(loaded,approved));
+  out.nativeShortGuard={triggered,nestedAuth,traps};
+  assert.equal(triggered,1);assert.equal(traps,0);assert.equal(nestedAuth,0,'NATIVE_SHORT_CHECK_REENTRY_AUTHENTICATED_TOKEN');
+`,{resources:true,bounded:true}));
+
+test('launcher quiet original owner records ONLY two once-only journaled bootouts without PG or ROOT',()=>exercise(
+  quietConfigurationSetup+quietOwnerSetup+participants+quietCommandSetup+String.raw`
+  assert.equal(typeof adapter.quietHeldDashboardCutoverJointLaunchersV4,'function','MISSING_OWNER_BOUND_LAUNCHER_QUIET');
+  assert.equal(await adapter.quietHeldDashboardCutoverJointLaunchersV4(loaded,approved,actualOwner),undefined);
+  const journal=baseline+'/deployment-dashboard-cutover-v2';
+  const intents=[1,2].map(n=>JSON.parse(fs.readFileSync(journal+'/intent-000'+n+'.json')));
+  const completions=[1,2].map(n=>JSON.parse(fs.readFileSync(journal+'/completion-000'+n+'.json')));
+  assert.deepEqual(intents.map(row=>row.action),['bootout-spawner','bootout-dashboard']);
+  assert.deepEqual(completions.map(row=>row.outcome),['launcher-unloaded','launcher-unloaded']);
+  assert.equal(intents[0].previousCompletionHash,null);
+  assert.equal(intents[1].previousCompletionHash,completions[0].effectCompletionHash);
+  for(const [index,row] of completions.entries())assert.equal(row.effectIntentHash,intents[index].effectIntentHash);
+  assert.deepEqual(out.bootoutArguments,[['bootout','gui/'+process.getuid()+'/'+labels[0]],['bootout','gui/'+process.getuid()+'/'+labels[1]]]);
+  assert.deepEqual(quietLoaded,[false,false]);assert.deepEqual(out.forbiddenQuietImports,[]);
+  assert.equal(fs.existsSync(baseline+'/restart-authority-retirement-v1'),false);
+  assert.equal(out.reservationChild,undefined);assert.equal(out.nativeCalls,0);
+  for(const row of out.quietChildren){assert.equal(row.closed,true);
+    for(const event of ['stdin:finish','stdin:close','stdout:end','stdout:close','stderr:end','stderr:close','child:exit','child:close'])
+      assert.equal(row.events.includes(event),true,event);
+  }
+  const before=out.portCounts?.['composite:closeSync']??0;
+  assert.throws(()=>native.closeHeldDashboardCutoverLoadedJobPeerV4(loaded));
+  assert.throws(()=>definition.closeHeldDashboardCutoverApprovedDefinitionV4(approved));
+  assert.equal(out.portCounts?.['composite:closeSync']??0,before);
+  await assert.rejects(()=>adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner));
+  out.quietJournal={intents,completions};
+`,{resources:true,owner:true,quiet:true,bounded:true}));
+
+for(const fault of ['absent-status','absent-label','abnormal','dashboard-drift','response-loss','timeout','missing-eof','stream-error','oversize','native-reentry','native-cache-reentry','definition-reentry'])
+test('launcher quiet '+fault+' preserves unknown originals and never dispatches ordinal2',()=>exercise(
+  quietConfigurationSetup+quietOwnerSetup+participants+quietCommandSetup+String.raw`
+  globalThis.quietFault=${JSON.stringify(fault)};
+  let capturedCoordinator,nativeScope,definitionScope,definitionRecord,traps=0,settlements=0,originalChild,originalSettled=false;
+  const weakSet=WeakMap.prototype.set,weakGet=WeakMap.prototype.get;
+  WeakMap.prototype.set=function(key,value){const answer=weakSet.call(this,key,value);
+    if(value?.route==='quiet'&&value?.enrollments)capturedCoordinator=value;return answer};
+  WeakMap.prototype.get=function(key){const answer=weakGet.call(this,key);
+    if(answer?.original===loaded&&answer?.published)nativeScope=key;
+    if(answer?.original===approved&&answer?.published){definitionScope=key;definitionRecord=answer}
+    if(Error().stack.includes('settlementToken'))settlements++;return answer};
+  const fault=globalThis.quietFault;
+  const pending=['response-loss','timeout','missing-eof','stream-error','oversize','native-reentry','native-cache-reentry','definition-reentry'].includes(fault);
+  const observed=new Promise(resolve=>{globalThis.quietChildObserved=resolve});
+  const work=adapter.quietHeldDashboardCutoverJointLaunchersV4(loaded,approved,actualOwner);work.catch(()=>{});
+  if(pending){
+    await observed;
+    originalChild=definitionRecord.quiet.children.at(-1);
+    assert.equal((await import('node:util')).types.isPromise(originalChild.promise),true);
+    originalChild.promise.then(()=>{originalSettled=true},()=>{originalSettled=true});
+    if(fault.endsWith('reentry')){
+      const proxy=new Proxy({}, {get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')}});
+      const at=JSON.stringify(out.portCounts);
+      assert.throws(()=>fault==='native-reentry'?native.assertHeldDashboardCutoverLoadedJobOperationV4(nativeScope,proxy)
+        :fault==='native-cache-reentry'?native.assertHeldDashboardCutoverLoadedJobOperationCacheV4(nativeScope,proxy)
+          :definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4(proxy,definitionScope));
+      assert.equal(JSON.stringify(out.portCounts),at);assert.equal(traps,0);
+      globalThis.releaseQuietChild();
+    }
+  }
+  await assert.rejects(work);
+  const journal=baseline+'/deployment-dashboard-cutover-v2';
+  assert.equal(fs.existsSync(journal+'/completion-0001.json'),false);
+  assert.equal(fs.existsSync(journal+'/intent-0002.json'),false);
+  assert.deepEqual(out.bootoutArguments,[['bootout','gui/'+process.getuid()+'/'+labels[0]]]);
+  assert.equal(capturedCoordinator.unknown,true);assert.equal(capturedCoordinator.quiet.returned,false);
+  assert.equal(settlements,0);
+  if(pending&&!fault.endsWith('reentry')){
+    const child=out.quietChildren.find(row=>row.args[0]==='bootout');assert.equal(child.closed,fault==='missing-eof');
+    assert.equal(originalSettled,false,'QUIET_DRIVER_LOSS_SETTLED_ORIGINAL_CHILD_PROMISE');
+    globalThis.releaseQuietChild();await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(child.closed,true);assert.equal(capturedCoordinator.unknown,true);assert.equal(settlements,0);
+    assert.equal(originalSettled,true);assert.equal(originalChild.naturalSettled,true);
+  }
+  const at=JSON.stringify(out.portCounts);
+  assert.throws(()=>native.closeHeldDashboardCutoverLoadedJobPeerV4(loaded));
+  assert.throws(()=>definition.closeHeldDashboardCutoverApprovedDefinitionV4(approved));
+  assert.equal(JSON.stringify(out.portCounts),at);
+  assert.equal(fs.existsSync(baseline+'/restart-authority-retirement-v1'),false);
+  assert.deepEqual(out.forbiddenQuietImports,[]);assert.equal(out.nativeCalls,0);
+  out.quietFault={fault,traps,settlements,unknown:capturedCoordinator.unknown,secondDispatches:0};
+`,{resources:true,owner:true,quiet:true,bounded:true}));
+
+test('launcher quiet lost work registration cannot orphan an already scheduled original Promise',()=>exercise(
+  quietConfigurationSetup+quietOwnerSetup+participants+quietCommandSetup+String.raw`
+  const get=WeakMap.prototype.get,then=Promise.prototype.then,push=Array.prototype.push;
+  let definitionRecord,actualWork=null,losses=0;
+  WeakMap.prototype.get=function(key){const answer=get.call(this,key);
+    if(answer?.original===approved&&answer?.published)definitionRecord=answer;return answer};
+  Promise.prototype.then=function(...args){const answer=then.apply(this,args);
+    if(Error().stack.includes('at withQuietDefinitionV4')){actualWork=answer;then.call(answer,undefined,()=>{})}return answer};
+  Array.prototype.push=function(...args){
+    if(!losses&&definitionRecord?.quiet?.work===this&&Error().stack.includes('at withQuietDefinitionV4')){
+      losses++;throw Error('INERT_WORK_REGISTRATION_LOSS')}
+    return push.apply(this,args)};
+  await assert.rejects(()=>adapter.quietHeldDashboardCutoverJointLaunchersV4(loaded,approved,actualOwner));
+  Promise.prototype.then=then;Array.prototype.push=push;WeakMap.prototype.get=get;
+  assert.equal(losses,1);
+  const retained=actualWork===null||definitionRecord.quiet.work.some(row=>row===actualWork||row.promise===actualWork);
+  out.quietWorkRegistration={losses,actualScheduled:actualWork!==null,retained,unknown:definitionRecord.quiet.unknown};
+  assert.equal(retained,true,'QUIET_SCHEDULED_ORIGINAL_LOST_BEFORE_REGISTRATION');
+  assert.equal(definitionRecord.quiet.unknown,true);assert.deepEqual(out.bootoutArguments,[]);assert.equal(out.quietChildren.length,0);
+`,{resources:true,owner:true,quiet:true,bounded:true}));
+
+test('launcher quiet phase original-promise microtask revocation admits no post-await material port',()=>exercise(
+  quietConfigurationSetup+quietOwnerSetup+participants+quietCommandSetup+String.raw`
+  globalThis.quietFault='phase-microtask';
+  let coordinator,nativeScope,definitionRecord,afterBurn,burns=0;
+  const set=WeakMap.prototype.set,get=WeakMap.prototype.get;
+  WeakMap.prototype.set=function(key,value){const answer=set.call(this,key,value);
+    if(value?.route==='quiet'&&value?.enrollments)coordinator=value;return answer};
+  WeakMap.prototype.get=function(key){const answer=get.call(this,key);
+    if(answer?.original===loaded&&answer?.published)nativeScope=key;
+    if(answer?.original===approved&&answer?.published)definitionRecord=answer;return answer};
+  const observed=new Promise(resolve=>{globalThis.quietChildObserved=resolve});
+  const work=adapter.quietHeldDashboardCutoverJointLaunchersV4(loaded,approved,actualOwner);work.catch(()=>{});
+  await observed;
+  const original=definitionRecord.quiet.children.at(-1);
+  original.promise.then(()=>queueMicrotask(()=>{
+    assert.throws(()=>native.assertHeldDashboardCutoverLoadedJobOperationV4(nativeScope));
+    burns++;afterBurn=JSON.stringify(out.portCounts);
+  }));
+  globalThis.releaseQuietChild();await assert.rejects(work);
+  out.quietPhaseSeam={burns,afterBurn,afterOuter:JSON.stringify(out.portCounts),children:out.quietChildren.length};
+  assert.equal(burns,1);assert.equal(JSON.stringify(out.portCounts),afterBurn,'QUIET_PHASE_POST_AWAIT_MATERIAL_PORT_AFTER_BURN');
+  assert.equal(out.quietChildren.length,1);assert.deepEqual(out.bootoutArguments,[]);assert.equal(coordinator.unknown,true);
+  assert.equal(fs.existsSync(baseline+'/deployment-dashboard-cutover-v2/intent-0001.json'),false);
+`,{resources:true,owner:true,quiet:true,bounded:true}));
+
+for(const kind of ['publication-loss','readback-loss'])
+test('launcher quiet intent1 '+kind+' refuses before any bootout',()=>exercise(
+  quietConfigurationSetup+quietOwnerSetup+participants+quietCommandSetup+String.raw`
+  const kind=${JSON.stringify(kind)},link=fs.linkSync,read=fs.readSync;
+  Error.stackTraceLimit=64; // Fixed store composite is deeper than default10 frames.
+  let committed=false,losses=0;
+  const target=baseline+'/deployment-dashboard-cutover-v2/intent-0001.json';
+  fs.linkSync=(from,to)=>{const result=link(from,to);if(to===target){committed=true;
+    if(kind==='publication-loss'){losses++;throw Error('INERT_PUBLISH_RESPONSE_LOSS')}}return result};
+  fs.readSync=(...args)=>{const result=read(...args);
+    if(kind==='readback-loss'&&committed&&fdPaths.get(args[0])===target&&Error().stack.includes('quietHistory')){
+      losses++;throw Error('INERT_INDEPENDENT_READBACK_LOSS')}
+    return result};syncBuiltinESMExports();
+  const result=await adapter.quietHeldDashboardCutoverJointLaunchersV4(loaded,approved,actualOwner)
+    .then(()=>({success:true}),error=>({success:false,error:error.message}));
+  out.quietIntentLoss={kind,committed,losses,result};
+  assert.equal(result.success,false);assert.equal(losses,1,'QUIET_LOSS_CONTROL_NOT_ARMED');
+  assert.equal(committed,true);assert.equal(losses,1);assert.deepEqual(out.bootoutArguments,[]);
+  assert.equal(fs.existsSync(target),true);assert.equal(fs.existsSync(baseline+'/deployment-dashboard-cutover-v2/completion-0001.json'),false);
+  assert.equal(fs.existsSync(baseline+'/deployment-dashboard-cutover-v2/intent-0002.json'),false);
+`,{resources:true,owner:true,quiet:true,bounded:true}));
+
+test('launcher quiet owner copy refuses without journal or bootout',()=>exercise(
+  quietConfigurationSetup+quietOwnerSetup+participants+quietCommandSetup+String.raw`
+  const before=JSON.stringify(out.portCounts);
+  await assert.rejects(()=>adapter.quietHeldDashboardCutoverJointLaunchersV4(loaded,approved,{...actualOwner}));
+  assert.deepEqual(out.bootoutArguments,[]);
+  assert.equal(fs.existsSync(baseline+'/deployment-dashboard-cutover-v2'),false);
+  out.quietOwnerCopy={before,after:JSON.stringify(out.portCounts),bootouts:0};
+`,{resources:true,owner:true,quiet:true,bounded:true}));
+
+test('launcher quiet cannot adopt an already published matching history prefix',()=>exercise(
+  quietConfigurationSetup+quietOwnerSetup+participants+quietCommandSetup+String.raw`
+  const store=await import('./dist/internal-production/baseline-dashboard-cutover-store-v2.js');
+  const journalRecords=await import('./dist/internal-production/baseline-dashboard-cutover-records-v2.js');
+  const empty=store.observeDashboardCutoverStoreV2();
+  const row=journalRecords.createDashboardCutoverIntentV2({cutoverIntentHash:actualOpen.cutoverIntentHash,
+    ownerClaimHash:actualClaim.ownerClaimHash,ordinal:1,previousCompletionHash:null,beforeObservationHash:'6'.repeat(64)});
+  store.publishDashboardCutoverIntentV2(row,empty.storeObservationHash);
+  const target=baseline+'/deployment-dashboard-cutover-v2/intent-0001.json',bytes=fs.readFileSync(target);
+  await assert.rejects(()=>adapter.quietHeldDashboardCutoverJointLaunchersV4(loaded,approved,actualOwner));
+  assert.deepEqual(out.bootoutArguments,[]);assert.equal(out.quietChildren.length,0);assert.ok(fs.readFileSync(target).equals(bytes));
+  assert.equal(fs.existsSync(baseline+'/deployment-dashboard-cutover-v2/completion-0001.json'),false);
+  out.quietHistoryCopy={unchanged:fs.readFileSync(target).equals(bytes),bootouts:0};
+`,{resources:true,owner:true,quiet:true,bounded:true}));
+
+for(const kind of ['genuine-metadata','wrong-arity-proxy'])
+test('launcher quiet journal publication '+kind+' reentry burns before bootout',()=>exercise(
+  quietConfigurationSetup+quietOwnerSetup+participants+quietCommandSetup+String.raw`
+  const kind=${JSON.stringify(kind)},set=WeakMap.prototype.set,link=fs.linkSync;
+  let coordinator,triggered=0,nestedRefused=false,traps=0;
+  WeakMap.prototype.set=function(key,value){const answer=set.call(this,key,value);
+    if(value?.route==='quiet'&&value?.enrollments)coordinator=value;return answer};
+  fs.linkSync=(from,to)=>{
+    const result=link(from,to);
+    if(!triggered&&to===baseline+'/deployment-dashboard-cutover-v2/intent-0001.json'){
+      triggered++;const at=JSON.stringify(out.portCounts);
+      const proxy=new Proxy({}, {get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')}});
+      try{if(kind==='genuine-metadata')ownerApi.assertDeploymentCutoverQuietMetadataV4(coordinator.token,coordinator.enrollments[1].scope);
+        else ownerApi.assertDeploymentCutoverQuietMetadataV4(proxy,proxy,undefined)}catch{nestedRefused=true}
+      assert.equal(JSON.stringify(out.portCounts),at);
+    }return result;
+  };syncBuiltinESMExports();
+  const result=await adapter.quietHeldDashboardCutoverJointLaunchersV4(loaded,approved,actualOwner)
+    .then(()=>({success:true}),error=>({success:false,error:error.message}));
+  out.quietStoreReentry={kind,triggered,nestedRefused,traps,result};
+  assert.equal(triggered,1);assert.equal(traps,0);assert.equal(nestedRefused,true);
+  assert.equal(result.success,false,'QUIET_STORE_COMPOSITE_REENTRY_DID_NOT_BURN');
+  assert.deepEqual(out.bootoutArguments,[]);assert.equal(coordinator.unknown,true);
+  assert.equal(fs.existsSync(baseline+'/deployment-dashboard-cutover-v2/completion-0001.json'),false);
+  assert.equal(fs.existsSync(baseline+'/deployment-dashboard-cutover-v2/intent-0002.json'),false);
+`,{resources:true,owner:true,quiet:true,bounded:true}));
 
 test('actual owner OPEN fixture retains independent original bytes before any joint reservation',()=>exercise(ownerSetup+`
   ownerApi.assertDeploymentCutoverOwnerV1(actualOwner);

@@ -1,7 +1,7 @@
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import { userInfo } from "node:os";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { types } from "node:util";
 import { holdDeploymentCutoverNodePathV1 } from "./baseline-deployment-cutover-node-path-v1.js";
@@ -225,6 +225,8 @@ function holdLauncherConfigurationV1(defaultMode = false) {
   let output: Readonly<{ schema: string; launchers: readonly Entry[]; launcherObservationHash: string }> | undefined;
   let recheck: () => void = fail;
   let recheckMaterial: () => void = fail;
+  let observeQuietPhase: (phase: 0 | 1 | 2, execute: (index: 0 | 1) => Promise<QuietCommandResultV4>,
+    checkOriginal: () => void) => Promise<QuietPhaseDataV4> = async () => fail();
   let assertMaterialDatabase: () => void = fail;
   let withPre32Database: <T>(continuation: LauncherPre32ContinuationV2<T>, check: () => void) => Promise<T> = async () => fail();
   let qualifyCoreReader: (check: () => void) => Promise<HeldCoreReaderDiagnosticV2> = async () => fail();
@@ -309,8 +311,7 @@ function holdLauncherConfigurationV1(defaultMode = false) {
       if (!exact(env, keys) || keys.some(key => typeof env[key] !== "string" || !(env[key] as string).length)) fail();
       const log = path.join(home, ".openclaw", "logs", index ? "setfarm-dashboard.watch" : "setfarm-spawner.watch");
       if (parsed.StandardOutPath !== `${log}.log` || parsed.StandardErrorPath !== `${log}.err.log`) fail();
-      const project = () => {
-        const text = command("/bin/launchctl", ["print", `gui/${uid}/${label}`]);
+      const projectText = (text: string) => {
         if (!text.startsWith(`gui/${uid}/${label} = {\n`) || !text.endsWith("}\n")) fail();
         const state = scalar(text, "state");
         // xpcproxy is occupied startup, not idle and never a Node sample target.
@@ -335,7 +336,8 @@ function holdLauncherConfigurationV1(defaultMode = false) {
           || !exact(defaults, ["PATH"]) || defaults.PATH !== "/usr/bin:/bin:/usr/sbin:/sbin") fail();
         return { state, activeCount: occupied ? 1 : 0, ...(pid === undefined ? {} : { pid }), loaded, inherited, defaults };
       };
-      return { label, plistPath, stat, args, parsed, bytes, read, project };
+      const project = () => projectText(command("/bin/launchctl", ["print", `gui/${uid}/${label}`]));
+      return { label, plistPath, stat, args, parsed, bytes, read, project, projectText };
     });
     const before = held.map(item => item.project());
     if (defaultMode && before.some(item => item.activeCount !== 0 || item.pid !== undefined)) fail();
@@ -361,6 +363,38 @@ function holdLauncherConfigurationV1(defaultMode = false) {
       checkPins();
       for (const item of held) if (!item.read().equals(item.bytes)) fail();
       checkPins();
+    };
+    observeQuietPhase = async (phase, execute, checkOriginal) => {
+      const checkMaterial = () => { checkOriginal(); recheckMaterial(); checkOriginal(); };
+      checkMaterial();
+      const states: string[] = [];
+      for (const index of [0, 1] as const) {
+        checkMaterial();
+        const observed = await execute(index);
+        // The fixed command's return check precedes another microtask seam.
+        // Reauthenticate the SAME original before admitting any material FS.
+        checkMaterial();
+        if (index < phase) {
+          const absent = Buffer.from(`Bad request.\nCould not find service "${LABELS[index]}" in domain for user gui: ${uid}\n`);
+          if (observed.status !== 113 || observed.signal !== null || observed.stdout.length !== 0
+            || !observed.stderr.equals(absent)) fail();
+          states.push("unloaded");
+        } else {
+          if (observed.status !== 0 || observed.signal !== null || observed.stderr.length !== 0
+            || !Buffer.from(observed.stdout.toString("utf8")).equals(observed.stdout)) fail();
+          const projection = held[index]!.projectText(observed.stdout.toString("utf8"));
+          if (projection.activeCount !== 0 || projection.pid !== undefined || !stable(projection, before[index]!)) fail();
+          states.push(projection.state);
+        }
+      }
+      checkMaterial();
+      const spawnerLauncherConfigurationHash = output!.launchers[0]!.configurationHash;
+      const dashboardLauncherConfigurationHash = output!.launchers[1]!.configurationHash;
+      return Object.freeze({ observationHash: hashCanonicalJson({
+        schema: "setfarm.internal-production-dashboard-cutover-launcher-quiet-phase.v4", phase,
+        states, materialObservationHash: output!.launcherObservationHash,
+        spawnerLauncherConfigurationHash, dashboardLauncherConfigurationHash,
+      }), spawnerLauncherConfigurationHash, dashboardLauncherConfigurationHash });
     };
     createApprovedDefinitionV4 = check => {
       if (approvedAttemptV4) approvedDefinitionFailureV4();
@@ -474,7 +508,7 @@ function holdLauncherConfigurationV1(defaultMode = false) {
     };
   } catch { invalid = true; }
   if (invalid || !output) { close(); fail(); }
-  return { observation: output, recheck, recheckMaterial, assertMaterialDatabase, withPre32Database, qualifyCoreReader, createApprovedDefinitionV4, census, censusAndActiveRows, censusAndActiveRowsWithQuarantine,
+  return { observation: output, recheck, recheckMaterial, observeQuietPhase, assertMaterialDatabase, withPre32Database, qualifyCoreReader, createApprovedDefinitionV4, census, censusAndActiveRows, censusAndActiveRowsWithQuarantine,
     censusAndBindingRows, censusAndBindingRowsV7, activeBindingSnapshot, close, defaultInputs };
 }
 
@@ -506,7 +540,7 @@ type DefinitionPre32OccurrenceV4 = { intent: boolean; unknown: boolean;
   callback: Promise<void> | null; callbackIntent: boolean; callbackSettled: boolean };
 type ApprovedDefinitionOperationV4 = { original: object; token: object; definition: ApprovedDefinitionStateV4;
   handle: object | null; published: boolean; checking: boolean; settled: boolean; released: boolean; settlementIntent: boolean;
-  pre32: DefinitionPre32OccurrenceV4 | null };
+  pre32: DefinitionPre32OccurrenceV4 | null; quiet?: DefinitionQuietOccurrenceV4 };
 const approvedDefinitionOperationScopesV4 = new WeakMap<object, ApprovedDefinitionOperationV4>();
 let jointDefinitionOperationV4: ApprovedDefinitionOperationV4 | null = null;
 function launcherMaterialAccountV2() {
@@ -540,8 +574,13 @@ function launcherMaterialStateV2(handle: object, allowInvalid = false) {
 function checkLauncherMaterialStateV2(state: LauncherMaterialStateV2) {
   if (launcherMaterialActiveV2 !== state || state !== launcherMaterialOriginalV2
     || !state.valid || state.closed || launcherMaterialBurnedV2 || cleanupUncertain) fail();
-  if (jointDefinitionOperationV4)
-    assertDashboardCutoverJointDefinitionTokenV4(jointDefinitionOperationV4.token, jointDefinitionOperationV4.original);
+  if (jointDefinitionOperationV4) {
+    const quiet = jointDefinitionOperationV4.quiet;
+    if (quiet) {
+      if (!quiet.owner || quiet.unknown) fail();
+      quiet.owner.assertDeploymentCutoverQuietMetadataV4(jointDefinitionOperationV4.token, jointDefinitionOperationV4.handle!);
+    } else assertDashboardCutoverJointDefinitionTokenV4(jointDefinitionOperationV4.token, jointDefinitionOperationV4.original);
+  }
 }
 function checkLauncherMaterialV2(state: LauncherMaterialStateV2) {
   const check = () => {
@@ -756,7 +795,8 @@ export function beginHeldDashboardCutoverApprovedDefinitionOperationV4(original:
   } catch { record.checking = false; burnApprovedDefinitionV4(definition); }
 }
 function originalApprovedDefinitionOperationV4(handle: object, arity: number): ApprovedDefinitionOperationV4 {
-  if (jointDefinitionOperationV4?.checking || (launcherMaterialActiveV2 && !jointDefinitionOperationV4)) {
+  if (jointDefinitionOperationV4?.checking || jointDefinitionOperationV4?.quiet?.active
+    || jointDefinitionOperationV4?.quiet?.unknown || (launcherMaterialActiveV2 && !jointDefinitionOperationV4)) {
     try { burnLauncherMaterialV2(launcherMaterialActiveV2); } catch { approvedDefinitionFailureV4(); }
   }
   if (arity !== 1) approvedDefinitionFailureV4();
@@ -778,6 +818,8 @@ export function settleHeldDashboardCutoverApprovedDefinitionOperationV4(handle: 
   try {
     if (record.pre32 && (record.pre32.unknown || !record.pre32.outerSettled
       || !record.pre32.callbackIntent || !record.pre32.callbackSettled)) approvedDefinitionFailureV4();
+    if (record.quiet && (record.quiet.unknown || record.quiet.active || record.quiet.phase !== 2
+      || record.quiet.children.some(child => !child.naturalSettled || child.error))) approvedDefinitionFailureV4();
     assertDashboardCutoverJointDefinitionSettlementTokenV4(record.token, record.original);
     record.settlementIntent = true; record.settled = true;
   } catch { burnApprovedDefinitionV4(record.definition); }
@@ -827,6 +869,173 @@ export async function runHeldDashboardCutoverApprovedDefinitionOperationPre32V4(
     // Only recovered SUCCESS proves the trusted provider's hidden final query settled.
     shortCheck(() => checkApprovedDefinitionOperationV4(record)); occurrence.unknown = false;
   } catch { notifyFailure(); approvedDefinitionFailureV4(); }
+}
+
+type QuietCommandResultV4 = { status: number | null; signal: NodeJS.Signals | null; stdout: Buffer; stderr: Buffer };
+type QuietPhaseDataV4 = Readonly<{ observationHash: string; spawnerLauncherConfigurationHash: string;
+  dashboardLauncherConfigurationHash: string }>;
+type QuietOwnerMetadataV4 = { assertDeploymentCutoverQuietMetadataV4(token: object, scope: object): void;
+  assertDeploymentCutoverSpawnerQuietIntentV4(token: object, scope: object): void;
+  assertDeploymentCutoverDashboardQuietIntentV4(token: object, scope: object): void };
+type QuietChildV4 = { intent: boolean; child: ChildProcessWithoutNullStreams | null; promise: Promise<QuietCommandResultV4> | null;
+  driver: Promise<QuietCommandResultV4> | null; timer: ReturnType<typeof setTimeout> | null; naturalSettled: boolean; error: boolean;
+  stdinFinished: boolean; stdinClosed: boolean; stdoutEnded: boolean; stdoutClosed: boolean; stderrEnded: boolean; stderrClosed: boolean;
+  exitSeen: boolean; closeSeen: boolean; status: number | null; signal: NodeJS.Signals | null;
+  stdout: Buffer[]; stderr: Buffer[]; stdoutLength: number; stderrLength: number };
+type DefinitionQuietOccurrenceV4 = { active: boolean; unknown: boolean; phase: 0 | 1 | 2;
+  ownerImport: Promise<QuietOwnerMetadataV4> | null; owner: QuietOwnerMetadataV4 | null;
+  children: QuietChildV4[]; work: { intent: boolean; promise: Promise<unknown> | null; settled: boolean }[];
+  spawnerAttempted: boolean; dashboardAttempted: boolean };
+function quietDefinitionBurnV4(record: ApprovedDefinitionOperationV4): never {
+  if (record.quiet) record.quiet.unknown = true;
+  return burnApprovedDefinitionV4(record.definition);
+}
+function quietDefinitionAdmissionV4(record: ApprovedDefinitionOperationV4): void {
+  const quiet = record.quiet;
+  if (!quiet || quiet.unknown || !quiet.active || record !== jointDefinitionOperationV4
+    || !record.published || record.settled || record.released || !quiet.owner) approvedDefinitionFailureV4();
+  quiet.owner.assertDeploymentCutoverQuietMetadataV4(record.token, record.handle!);
+}
+function quietDefinitionCheckV4(record: ApprovedDefinitionOperationV4): void {
+  quietDefinitionAdmissionV4(record);
+  checkApprovedDefinitionOperationV4(record);
+  quietDefinitionAdmissionV4(record);
+}
+async function withQuietDefinitionV4<T>(scope: object, arity: number,
+  body: (record: ApprovedDefinitionOperationV4) => Promise<T>): Promise<T> {
+  const record = originalApprovedDefinitionOperationV4(scope, arity);
+  if (record.settled || record.pre32) approvedDefinitionFailureV4();
+  const quiet = record.quiet ??= { active: false, unknown: false, phase: 0, ownerImport: null, owner: null,
+    children: [], work: [], spawnerAttempted: false, dashboardAttempted: false };
+  quiet.active = true; record.checking = true;
+  try {
+    if (!quiet.ownerImport) {
+      // Retain the original fixed import before await. No caller module/port.
+      quiet.ownerImport = import(new URL("../../scripts/deployment-cutover-owner.mjs", import.meta.url).href);
+      quiet.owner = await quiet.ownerImport;
+    }
+    quietDefinitionCheckV4(record);
+    const occurrence = { intent: true, promise: null as Promise<unknown> | null, settled: false };
+    quiet.work.push(occurrence); quietDefinitionAdmissionV4(record);
+    const work = Promise.resolve().then(() => body(record)); occurrence.promise = work;
+    void work.then(() => { occurrence.settled = true; }, () => { occurrence.settled = true; });
+    quietDefinitionAdmissionV4(record);
+    const answer = await work; quietDefinitionCheckV4(record); return answer;
+  } catch { quietDefinitionBurnV4(record); }
+  finally { quiet.active = false; record.checking = false; }
+}
+
+async function quietCommandV4(record: ApprovedDefinitionOperationV4, index: 0 | 1,
+  action: "print" | "bootout"): Promise<QuietCommandResultV4> {
+  const quiet = record.quiet!;
+  const occurrence: QuietChildV4 = { intent: true, child: null, promise: null, driver: null, timer: null,
+    naturalSettled: false, error: false, stdinFinished: false, stdinClosed: false, stdoutEnded: false, stdoutClosed: false,
+    stderrEnded: false, stderrClosed: false, exitSeen: false, closeSeen: false, status: null, signal: null,
+    stdout: [], stderr: [], stdoutLength: 0, stderrLength: 0 };
+  quiet.children.push(occurrence); quietDefinitionCheckV4(record);
+  let resolveOriginal!: (value: QuietCommandResultV4) => void, rejectOriginal!: (error: Error) => void;
+  occurrence.promise = new Promise((resolve, reject) => { resolveOriginal = resolve; rejectOriginal = reject; });
+  let rejectDriver: ((error: Error) => void) | null = null;
+  const lose = () => {
+    occurrence.error = true; quiet.unknown = true;
+    try { quietDefinitionBurnV4(record); } catch { /* Retain passive original event observation. */ }
+    // Driver loss never invents natural settlement of the original child.
+    rejectDriver?.(Error("DASHBOARD_CUTOVER_LAUNCHER_QUIET_REFUSED"));
+  };
+  const completed = () => {
+    if (!occurrence.exitSeen || !occurrence.closeSeen || !occurrence.stdinFinished || !occurrence.stdinClosed
+      || !occurrence.stdoutEnded || !occurrence.stdoutClosed || !occurrence.stderrEnded || !occurrence.stderrClosed) return;
+    occurrence.naturalSettled = true;
+    if (occurrence.timer) { clearTimeout(occurrence.timer); occurrence.timer = null; }
+    if (occurrence.error) { rejectOriginal(Error("DASHBOARD_CUTOVER_LAUNCHER_QUIET_REFUSED")); return; }
+    resolveOriginal({ status: occurrence.status, signal: occurrence.signal,
+      stdout: Buffer.concat(occurrence.stdout), stderr: Buffer.concat(occurrence.stderr) });
+  };
+  // Observe rejection even if a spawn/listener/stdin response is lost first.
+  void occurrence.promise.catch(() => {});
+  try {
+    const account = record.definition.material.account!;
+    quietDefinitionCheckV4(record);
+    occurrence.child = spawn("/bin/launchctl", [action, `gui/${account.uid}/${LABELS[index]}`], {
+      cwd: account.homedir, env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const child = occurrence.child;
+    // Retain and attach passive observations to the original returned resources
+    // before post-return liveness checks; they never dispatch a second effect.
+    child.on("error", lose);
+    child.on("exit", (status, signal) => {
+      if (occurrence.exitSeen) { lose(); return; }
+      occurrence.exitSeen = true; occurrence.status = status; occurrence.signal = signal; completed();
+    });
+    child.on("close", (status, signal) => {
+      if (occurrence.closeSeen || !occurrence.exitSeen || status !== occurrence.status || signal !== occurrence.signal) { lose(); return; }
+      occurrence.closeSeen = true; completed();
+    });
+    child.stdin.on("error", lose);
+    child.stdin.on("finish", () => { occurrence.stdinFinished = true; completed(); });
+    child.stdin.on("close", () => { occurrence.stdinClosed = true; completed(); });
+    for (const [name, stream] of [["stdout", child.stdout], ["stderr", child.stderr]] as const) {
+      stream.on("error", lose);
+      stream.on("data", (bytes: Buffer) => {
+        if (!Buffer.isBuffer(bytes)) { lose(); return; }
+        if (name === "stdout") {
+          occurrence.stdoutLength += bytes.length;
+          if (occurrence.stdoutLength > MAX_BYTES) { lose(); return; }
+          occurrence.stdout.push(Buffer.from(bytes));
+        } else {
+          occurrence.stderrLength += bytes.length;
+          if (occurrence.stderrLength > MAX_BYTES) { lose(); return; }
+          occurrence.stderr.push(Buffer.from(bytes));
+        }
+      });
+      stream.on("end", () => { if (name === "stdout") occurrence.stdoutEnded = true; else occurrence.stderrEnded = true; completed(); });
+      stream.on("close", () => { if (name === "stdout") occurrence.stdoutClosed = true; else occurrence.stderrClosed = true; completed(); });
+    }
+    quietDefinitionCheckV4(record);
+    const deadline = new Promise<QuietCommandResultV4>((_, reject) => {
+      rejectDriver = reject;
+      occurrence.timer = setTimeout(lose, 5000);
+    });
+    occurrence.driver = Promise.race([occurrence.promise, deadline]);
+    quietDefinitionCheckV4(record); child.stdin.end(); quietDefinitionCheckV4(record);
+    const answer = await occurrence.driver;
+    quietDefinitionCheckV4(record);
+    if (!occurrence.naturalSettled || occurrence.error) approvedDefinitionFailureV4();
+    return answer;
+  } catch { lose(); quietDefinitionBurnV4(record); }
+}
+
+function observeQuietOriginalV4(record: ApprovedDefinitionOperationV4): Promise<QuietPhaseDataV4> {
+  quietDefinitionCheckV4(record);
+  return record.definition.material.configuration!.observeQuietPhase(record.quiet!.phase,
+    index => quietCommandV4(record, index, "print"), () => quietDefinitionAdmissionV4(record));
+}
+export async function observeHeldDashboardCutoverApprovedDefinitionQuietV4(scope: object): Promise<QuietPhaseDataV4> {
+  return withQuietDefinitionV4(scope, arguments.length, observeQuietOriginalV4);
+}
+async function bootoutQuietOriginalV4(record: ApprovedDefinitionOperationV4, index: 0 | 1): Promise<void> {
+  const quiet = record.quiet!;
+  if (quiet.phase !== index || (index === 0 ? quiet.spawnerAttempted : quiet.dashboardAttempted)) approvedDefinitionFailureV4();
+  quietDefinitionCheckV4(record);
+  if (index === 0) quiet.owner!.assertDeploymentCutoverSpawnerQuietIntentV4(record.token, record.handle!);
+  else quiet.owner!.assertDeploymentCutoverDashboardQuietIntentV4(record.token, record.handle!);
+  quietDefinitionCheckV4(record);
+  // Fresh SAME original phase before the once-only command, not old hash DATA.
+  await observeQuietOriginalV4(record); quietDefinitionCheckV4(record);
+  if (index === 0) quiet.spawnerAttempted = true; else quiet.dashboardAttempted = true;
+  const result = await quietCommandV4(record, index, "bootout");
+  quietDefinitionCheckV4(record);
+  if (result.status !== 0 || result.signal !== null || result.stdout.length !== 0 || result.stderr.length !== 0)
+    approvedDefinitionFailureV4();
+  quiet.phase = index === 0 ? 1 : 2;
+  await observeQuietOriginalV4(record); quietDefinitionCheckV4(record);
+}
+export async function bootoutHeldDashboardCutoverApprovedDefinitionSpawnerV4(scope: object): Promise<void> {
+  return withQuietDefinitionV4(scope, arguments.length, record => bootoutQuietOriginalV4(record, 0));
+}
+export async function bootoutHeldDashboardCutoverApprovedDefinitionDashboardV4(scope: object): Promise<void> {
+  return withQuietDefinitionV4(scope, arguments.length, record => bootoutQuietOriginalV4(record, 1));
 }
 
 // Separate, zero-input default-mode holder. Secret-bearing configuration and

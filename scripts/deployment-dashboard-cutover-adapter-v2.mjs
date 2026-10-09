@@ -36,7 +36,7 @@ async function importOriginal(locator){
   catch{occurrence.settled=true;preparation.revoked=true;refuse()}
   checkPreparation();sourceCheck(checkPreparation);return occurrence.value;
 }
-async function prepare(pre32,ownerReservation){
+async function prepare(pre32,ownerReservation,quiet=false){
   if(preparation.ready)sourceCheck(checkPreparation);
   else{
     if(preparation.attempted||preparation.revoked)refuse();preparation.attempted=true;
@@ -52,10 +52,12 @@ async function prepare(pre32,ownerReservation){
     preparation.census=await importOriginal(ROOT+'/dist/internal-production/baseline-legacy-database-census-v1.js');
     sourceCheck(checkPreparation);
   }
-  if(ownerReservation&&!preparation.owner){
+  if((ownerReservation||quiet)&&!preparation.owner){
     if(preparation.ownerAttempted)refuse();preparation.ownerAttempted=true;
     preparation.owner=await importOriginal(ROOT+'/scripts/deployment-cutover-owner.mjs');
     sourceCheck(checkPreparation);
+  }
+  if(ownerReservation&&!preparation.reservation){
     preparation.reservation=await importOriginal(ROOT+'/scripts/deployment-dashboard-cutover-first-generation-v2.mjs');
     sourceCheck(checkPreparation);
     preparation.localDrain=await importOriginal(ROOT+'/dist/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js');
@@ -78,9 +80,11 @@ function liveToken(token,participant,kind,arity){
   // No participant port may race that provisional lifetime or import response.
   if(record.route==='reservation'&&record.reservation.invocationIntent&&!record.reservation.returned)refuse();
   if(record.route==='reservation'&&record.physical.intent&&!record.physical.returned)refuse();
+  if(record.quiet?.invocationIntent&&!record.quiet.returned){record.revoked=true;record.unknown=true;refuse()}
   checkOperation(record);
 }
-function settlementsKnown(record){return record.enrollments.every(r=>r.returned&&r.authenticated&&r.scope!==null)
+function settlementsKnown(record){return (!record.quiet||(record.quiet.returned&&!record.quiet.unknown))
+  &&record.enrollments.every(r=>r.returned&&r.authenticated&&r.scope!==null)
   &&!record.unknown&&record.pending.size===0}
 function settlementToken(token,participant,kind,arity){
   const record=bound(token,participant,kind,arity);
@@ -88,6 +92,7 @@ function settlementToken(token,participant,kind,arity){
 }
 function releaseToken(token,participant,kind,arity){
   const record=bound(token,participant,kind,arity);
+  if(record.route==='quiet')refuse();
   if(record.stage!=='terminal'||!settlementsKnown(record)
     ||!record.settlements.every(r=>r.returned))refuse();
 }
@@ -98,6 +103,16 @@ export function assertDashboardCutoverJointOwnerTokenV4(token,originalOwner){
   if(record.route!=='reservation'||record.stage!=='working'||!record.pre32.authenticated
     ||!record.reservation.invocationIntent)refuse();
   checkOperation(record);
+}
+export function assertDashboardCutoverJointQuietTokenV4(token,originalOwner,definitionScope){
+  if(operation?.quiet?.checking){operation.revoked=true;operation.unknown=true;refuse()}
+  if(arguments.length!==3)refuse();
+  const record=bound(token,originalOwner,'originalOwner',2);
+  if(record.route!=='quiet'||record.stage!=='working'||!record.quiet.invocationIntent
+    ||record.enrollments[1].scope!==definitionScope)refuse();
+  record.quiet.checking=true;
+  try{checkOperation(record)}catch{record.revoked=true;record.unknown=true;refuse()}
+  finally{record.quiet.checking=false}
 }
 export function assertDashboardCutoverJointPhysicalTokenV4(token,originalOwner,scope){
   if(arguments.length!==3)refuse();
@@ -218,18 +233,19 @@ export async function executeDashboardCutoverJointPre32AssertionsV4(token,origin
 async function qualifyOriginals(originalLoaded,originalDefinition,arity,route,originalOwner){
   // Pending preparation and original work are fenced BEFORE all input parsing.
   if(active){revokeActive();refuse()}
-  if(arity!==(route==='reservation'?3:2)||originalLoaded===null||typeof originalLoaded!=='object'
+  const ownerRoute=route==='reservation'||route==='quiet';
+  if(arity!==(ownerRoute?3:2)||originalLoaded===null||typeof originalLoaded!=='object'
     ||originalDefinition===null||typeof originalDefinition!=='object'
     ||types.isProxy(originalLoaded)||types.isProxy(originalDefinition)
-    ||(route==='reservation'&&(originalOwner===null||typeof originalOwner!=='object'||types.isProxy(originalOwner))))refuse();
+    ||(ownerRoute&&(originalOwner===null||typeof originalOwner!=='object'||types.isProxy(originalOwner))))refuse();
   if(attempted||preparation.revoked)refuse();
   active=preparation;
   try{
-    await prepare(route!=='original',route==='reservation');checkPreparation();
+    await prepare(route==='pre32'||route==='reservation',route==='reservation',route==='quiet');checkPreparation();
     // Fixed provider assertions own their WeakMaps; no caller-supplied ports.
     preparation.native.assertHeldDashboardCutoverLoadedJobPeerV4(originalLoaded);checkPreparation();
     preparation.definition.assertHeldDashboardCutoverApprovedDefinitionV4(originalDefinition);checkPreparation();
-    if(route==='reservation'){preparation.owner.assertDeploymentCutoverOwnerV1(originalOwner);checkPreparation()}
+    if(ownerRoute){preparation.owner.assertDeploymentCutoverOwnerV1(originalOwner);checkPreparation()}
     sourceCheck(checkPreparation);
   }catch{
     if(!preparation.ready)preparation.revoked=true;
@@ -245,6 +261,7 @@ async function qualifyOriginals(originalLoaded,originalDefinition,arity,route,or
     pre32:{invocationIntent:false,helperAttempted:false,helperSettled:false,checking:false,scope:null,authenticated:false},
     reservation:{invocationIntent:false,returned:false},
     physical:{intent:false,registered:false,returned:false,ownerAttempted:false,ownerChecking:false},
+    quiet:route==='quiet'?{invocationIntent:false,returned:false,unknown:true,checking:false}:null,
     localDrain:{ready:false,
       js:{intent:false,promise:null,returned:false,settled:false,value:null,authenticated:false},
       child:{intent:false,promise:null,returned:false,settled:false,value:null,authenticated:false}}};
@@ -266,18 +283,24 @@ async function qualifyOriginals(originalLoaded,originalDefinition,arity,route,or
       record.localDrain.ready=true;checkOperation(record);
     }
     record.stage='working';
-    if(route!=='original'){
+    if(route==='pre32'||route==='reservation'){
       record.pre32.invocationIntent=true;
       await originalOccurrence(record,()=>preparation.definition.runHeldDashboardCutoverApprovedDefinitionOperationPre32V4(record.enrollments[1].scope));
       if(!record.pre32.authenticated||!record.pre32.helperSettled)refuse();
     }
+    if(route==='quiet'){
+      record.quiet.invocationIntent=true;checkOperation(record);
+      await originalOccurrence(record,()=>preparation.owner.quietDeploymentCutoverLaunchersWithOwnerV4(
+        originalOwner,token,record.enrollments[1].scope));
+      record.quiet.returned=true;record.quiet.unknown=false;checkOperation(record);
+    }
     const check=()=>checkOperation(record);
     sourceCheck(check);
     preparation.native.assertHeldDashboardCutoverLoadedJobOperationV4(record.enrollments[0].scope);check();
-    preparation.definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4(record.enrollments[1].scope);check();
+    if(route!=='quiet')preparation.definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4(record.enrollments[1].scope);check();
     sourceCheck(check);
     preparation.native.assertHeldDashboardCutoverLoadedJobOperationV4(record.enrollments[0].scope);check();
-    preparation.definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4(record.enrollments[1].scope);check();
+    if(route!=='quiet')preparation.definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4(record.enrollments[1].scope);check();
     check();
     preparation.native.assertHeldDashboardCutoverLoadedJobOperationCacheV4(record.enrollments[0].scope);check();
   }catch{record.revoked=true;failed=true}
@@ -298,4 +321,7 @@ export async function qualifyHeldDashboardCutoverJointPre32OperationV4(originalL
 }
 export async function reserveHeldDashboardCutoverJointFirstGenerationV4(originalLoaded,originalDefinition,originalOwner){
   return qualifyOriginals(originalLoaded,originalDefinition,arguments.length,'reservation',originalOwner);
+}
+export async function quietHeldDashboardCutoverJointLaunchersV4(originalLoaded,originalDefinition,originalOwner){
+  return qualifyOriginals(originalLoaded,originalDefinition,arguments.length,'quiet',originalOwner);
 }

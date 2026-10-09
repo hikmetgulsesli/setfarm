@@ -100,6 +100,21 @@ authority:'explicit-mocked-build-source-only'}));`);
   const out = JSON.parse(stdout);assert.equal(out.ownerCreated, false);assert.equal(out.openCreated, false);
   assert.deepEqual(out.interfaceKinds, ["function", "function"], "MISSING_FIXED_OWNER_ROOT_OPERATION");
 }, { retain: true }));
+test("launcher quiet foreign owner interfaces refuse without creating history", () => fixture((home, checkout) => {
+  const result=run(home,checkout,`let traps=0;const proxy=new Proxy({}, {get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')}});
+    const names=['quietDeploymentCutoverLaunchersWithOwnerV4','assertDeploymentCutoverQuietMetadataV4',
+      'assertDeploymentCutoverSpawnerQuietIntentV4','assertDeploymentCutoverDashboardQuietIntentV4'];
+    const kinds=names.map(name=>typeof module[name]);let refused=0;
+    if(kinds.every(kind=>kind==='function')){
+      try{await module[names[0]](proxy,proxy,proxy)}catch{refused++}
+      for(const name of names.slice(1)){try{module[name](proxy,proxy)}catch{refused++}}
+    }
+    process.stdout.write(JSON.stringify({kinds,traps,refused,ownerCreated:fs.existsSync(root),
+      journalCreated:fs.existsSync(${JSON.stringify(path.join(home,"ai/setrox/data/internal-production-baseline/deployment-dashboard-cutover-v2"))})}));`);
+  assert.deepEqual(result.kinds,['function','function','function','function'],'MISSING_OWNER_QUIET_INTERFACES');
+  assert.equal(result.traps,0);assert.equal(result.refused,4);assert.equal(result.ownerCreated,false);assert.equal(result.journalCreated,false);
+}, {retain:true}));
+
 test("owner controller source accepts legitimate partial source reads", () => fixture((home, checkout) => {
   const body = program(home, checkout, 'process.stdout.write(JSON.stringify({hash:source.controllerSourceHash}));')
     .replace('const module=await import', 'const read=fs.readSync;fs.readSync=(fd,buffer,offset,length,position)=>read(fd,buffer,offset,Math.min(length,127),position);const module=await import');

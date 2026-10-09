@@ -20,6 +20,14 @@ let uncertain = false, occupied = false, modulesPromise, originalBuild;
 const handles = new WeakMap();
 let bindingProjectionActive = false, bindingProjectionOwner = null;
 let jointReservation = null;
+let quietOriginal = null;
+function burnQuietOriginal() {
+  const record = quietOriginal;
+  if (!record) return;
+  record.unknown = true; record.held.valid = false; uncertain = true;
+  const adapter = record.adapter ?? record.imports.find(row => row.locator === "./deployment-dashboard-cutover-adapter-v2.mjs")?.value;
+  if (adapter) adapter.revokeDashboardCutoverJointTokenV4(record.token);
+}
 function burnJointReservation() {
   const record = jointReservation;
   if (!record) return;
@@ -27,6 +35,7 @@ function burnJointReservation() {
   if (record.adapter) record.adapter.revokeDashboardCutoverJointTokenV4(record.token);
 }
 function legacyOwnerEntry() {
+  if (quietOriginal) { burnQuietOriginal(); fail(); }
   if (jointReservation) { burnJointReservation(); fail(); }
 }
 function checkJointReservation(record) {
@@ -305,4 +314,163 @@ export async function reserveDeploymentCutoverFirstGenerationWithOwnerV4(owner, 
     checkJointReservation(record); jointOpenOriginal(record); checkJointReservation(record);
   } catch { burnJointReservation(); fail(); }
   // No release/reset: originals survive healthy bookkeeping and all unknowns.
+}
+
+// TWO journaled launcher effects only. No PG/ROOT/selector/legacy-death grant.
+function quietBasics(record) {
+  if (quietOriginal !== record || record.unknown || uncertain || !record.held.valid
+    || record.claim !== record.held.claim || jointReservation) fail();
+  if (record.adapter) record.adapter.assertDashboardCutoverJointQuietTokenV4(record.token, record.owner, record.scope);
+}
+function quietOwnerCheck(record) {
+  if (record.checking) { burnQuietOriginal(); fail(); }
+  record.checking = true;
+  try {
+    quietBasics(record); assertOwnerOriginal(record.owner); quietBasics(record);
+    const { records, observation } = record.held.modules;
+    const observed = observation.observeDeploymentCutoverIntentV1(); quietBasics(record);
+    if (observed.state !== "open") fail();
+    records.assertDeploymentCutoverMaintenanceRelationV1({ cutover: observed.intent, maintenance: record.held.maintenance,
+      controllerSourceHash: sourceAuthority(record.held.modules).controllerSourceHash });
+    quietBasics(record);
+    const bytes = records.encodeDeploymentCutoverIntentV1(observed.intent);
+    if (record.openBytes && !record.openBytes.equals(bytes)) fail();
+    record.openBytes ??= Buffer.from(bytes); record.open ??= observed.intent;
+    assertOwnerOriginal(record.owner); quietBasics(record);
+  } catch { burnQuietOriginal(); fail(); }
+  finally { record.checking = false; }
+}
+export function assertDeploymentCutoverQuietMetadataV4(token, scope) {
+  const record = quietOriginal;
+  if (record?.checking || record?.metadataChecking) { burnQuietOriginal(); fail(); }
+  if (arguments.length !== 2 || !record || record.token !== token || record.scope !== scope || !record.adapter) fail();
+  record.metadataChecking = true;
+  try { quietBasics(record); }
+  catch { burnQuietOriginal(); fail(); }
+  finally { record.metadataChecking = false; }
+}
+function quietIntentOriginal(token, scope, arity, ordinal) {
+  const record = quietOriginal;
+  if (record?.checking || record?.metadataChecking) { burnQuietOriginal(); fail(); }
+  if (arity !== 2 || !record || record.token !== token || record.scope !== scope) fail();
+  assertDeploymentCutoverQuietMetadataV4(token, scope);
+  const step = record.steps[ordinal - 1];
+  if (!step || !step.confirmed || !step.dispatchIntent || step.returned || record.ordinal !== ordinal) fail();
+  quietBasics(record);
+}
+export function assertDeploymentCutoverSpawnerQuietIntentV4(token, scope) {
+  quietIntentOriginal(token, scope, arguments.length, 1);
+}
+export function assertDeploymentCutoverDashboardQuietIntentV4(token, scope) {
+  quietIntentOriginal(token, scope, arguments.length, 2);
+}
+async function quietImport(record, locator) {
+  const occurrence = { locator, intent: true, promise: null, value: null, settled: false };
+  record.imports.push(occurrence); quietBasics(record);
+  occurrence.promise = import(locator);
+  try { occurrence.value = await occurrence.promise; occurrence.settled = true; }
+  catch { occurrence.settled = true; burnQuietOriginal(); fail(); }
+  quietBasics(record); return occurrence.value;
+}
+async function quietWork(record, kind, invoke) {
+  const occurrence = { kind, intent: true, promise: null, value: null, returned: false, settled: false, unknown: true };
+  record.work.push(occurrence); quietBasics(record);
+  try {
+    occurrence.promise = invoke();
+    if (!types.isPromise(occurrence.promise)) fail();
+    void occurrence.promise.then(value => {
+      occurrence.value = value; occurrence.returned = true; occurrence.settled = true;
+    }, () => { occurrence.settled = true; burnQuietOriginal(); });
+    const value = await occurrence.promise;
+    occurrence.value = value; occurrence.returned = true; occurrence.settled = true;
+    quietBasics(record); quietOwnerCheck(record); occurrence.unknown = false; return value;
+  } catch { burnQuietOriginal(); fail(); }
+}
+function quietStorePort(record, body) {
+  if (record.checking || record.metadataChecking) { burnQuietOriginal(); fail(); }
+  quietBasics(record); record.checking = true;
+  try { const value = body(); quietBasics(record); return value; }
+  catch { burnQuietOriginal(); fail(); }
+  finally { record.checking = false; }
+}
+function quietHistory(record) {
+  quietOwnerCheck(record);
+  const observed = quietStorePort(record, () => {
+    const value = record.store.observeDashboardCutoverStoreV2(); quietBasics(record);
+    if (value.storageState !== "settled" || (record.historyHash && value.storeObservationHash !== record.historyHash)
+      || value.history.intents.length !== record.intents.length || value.history.completions.length !== record.completions.length) fail();
+    for (const [index, bytes] of record.intents.entries())
+      if (!record.records.encodeDashboardCutoverIntentV2(value.history.intents[index]).equals(bytes)) fail();
+    for (const [index, bytes] of record.completions.entries())
+      if (!record.records.encodeDashboardCutoverCompletionV2(value.history.completions[index]).equals(bytes)) fail();
+    return value;
+  });
+  quietOwnerCheck(record); record.historyHash ??= observed.storeObservationHash; return observed;
+}
+function quietPhase(record, value) {
+  if (!value || types.isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype) fail();
+  const keys = ["observationHash", "spawnerLauncherConfigurationHash", "dashboardLauncherConfigurationHash"];
+  const fields = Object.getOwnPropertyDescriptors(value), actual = Reflect.ownKeys(fields);
+  if (actual.length !== keys.length || actual.some(key => !keys.includes(key) || !fields[key].enumerable
+    || !("value" in fields[key]) || !/^[a-f0-9]{64}$/.test(fields[key].value))) fail();
+  if (fields.spawnerLauncherConfigurationHash.value !== record.open.spawnerLauncherConfigurationHash
+    || fields.dashboardLauncherConfigurationHash.value !== record.open.dashboardLauncherConfigurationHash) fail();
+  return fields.observationHash.value;
+}
+function quietPublication(record, step, kind, row) {
+  quietHistory(record);
+  const isIntent = kind === "intent";
+  const bytes = isIntent ? record.records.encodeDashboardCutoverIntentV2(row) : record.records.encodeDashboardCutoverCompletionV2(row);
+  const occurrence = { ordinal: step.ordinal, kind, intent: true, returned: false, confirmed: false, bytes, result: null };
+  record.publications.push(occurrence); quietBasics(record);
+  const published = quietStorePort(record, () => isIntent ? record.store.publishDashboardCutoverIntentV2(row, record.historyHash)
+    : record.store.publishDashboardCutoverCompletionV2(row, record.historyHash));
+  occurrence.result = published; occurrence.returned = true; quietBasics(record);
+  (isIntent ? record.intents : record.completions).push(Buffer.from(bytes));
+  record.historyHash = published.storeObservationHash;
+  quietHistory(record); occurrence.confirmed = true;
+}
+export async function quietDeploymentCutoverLaunchersWithOwnerV4(owner, token, scope) {
+  legacyOwnerEntry();
+  if (arguments.length !== 3 || owner === null || typeof owner !== "object" || types.isProxy(owner)
+    || token === null || typeof token !== "object" || types.isProxy(token)
+    || scope === null || typeof scope !== "object" || types.isProxy(scope)) fail();
+  const held = handles.get(owner); if (!held || !held.valid || uncertain) fail();
+  const record = { owner, token, scope, held, claim: held.claim, adapter: null, launcher: null, records: null, store: null,
+    checking: false, metadataChecking: false, unknown: false, complete: false, openBytes: null, open: null,
+    imports: [], work: [], publications: [], intents: [], completions: [], historyHash: null, steps: [], ordinal: 0 };
+  quietOriginal = record;
+  try {
+    record.adapter = await quietImport(record, "./deployment-dashboard-cutover-adapter-v2.mjs");
+    quietOwnerCheck(record);
+    record.records = await quietImport(record, new URL("../dist/internal-production/baseline-dashboard-cutover-records-v2.js", import.meta.url).href);
+    quietOwnerCheck(record);
+    record.store = await quietImport(record, new URL("../dist/internal-production/baseline-dashboard-cutover-store-v2.js", import.meta.url).href);
+    quietOwnerCheck(record);
+    record.launcher = await quietImport(record, new URL("../dist/internal-production/baseline-deployment-cutover-launcher-observation-v1.js", import.meta.url).href);
+    quietHistory(record);
+    for (const ordinal of [1, 2]) {
+      record.ordinal = ordinal;
+      const step = { ordinal, confirmed: false, dispatchIntent: false, returned: false };
+      record.steps.push(step); quietOwnerCheck(record);
+      const before = quietPhase(record, await quietWork(record, "before-phase", () =>
+        record.launcher.observeHeldDashboardCutoverApprovedDefinitionQuietV4(scope)));
+      const intent = record.records.createDashboardCutoverIntentV2({ cutoverIntentHash: record.open.cutoverIntentHash,
+        ownerClaimHash: record.claim.ownerClaimHash, ordinal, previousCompletionHash: ordinal === 1 ? null
+          : JSON.parse(record.completions[0].toString("utf8")).effectCompletionHash, beforeObservationHash: before });
+      quietPublication(record, step, "intent", intent); step.confirmed = true;
+      quietOwnerCheck(record); step.dispatchIntent = true;
+      await quietWork(record, "bootout", () => ordinal === 1
+        ? record.launcher.bootoutHeldDashboardCutoverApprovedDefinitionSpawnerV4(scope)
+        : record.launcher.bootoutHeldDashboardCutoverApprovedDefinitionDashboardV4(scope));
+      step.returned = true;
+      const after = quietPhase(record, await quietWork(record, "after-phase", () =>
+        record.launcher.observeHeldDashboardCutoverApprovedDefinitionQuietV4(scope)));
+      const completion = record.records.createDashboardCutoverCompletionV2({ intent,
+        completionOwnerClaimHash: record.claim.ownerClaimHash, afterObservationHash: after, outcome: "launcher-unloaded" });
+      quietPublication(record, step, "completion", completion);
+    }
+    quietHistory(record); quietOwnerCheck(record); record.complete = true;
+  } catch { burnQuietOriginal(); fail(); }
+  // Never release originals or turn the settled journal prefix into authority.
 }

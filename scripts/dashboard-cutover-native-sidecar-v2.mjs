@@ -465,12 +465,20 @@ function originalOperationScope(handle,arity){
   if(arity!==1)refuse();const record=operationScopes.get(handle);
   if(!record||record!==joint||record.handle!==handle||!record.published||record.released)refuse();return record;
 }
+function assertOriginalOperationEntry(){
+  if(joint?.checking||(vault.active&&!joint)){burn();refuse()}
+  // Long quiet work is not the short synchronous checking lifetime. Enforce
+  // its existing SAME-token embargo before any caller arity/identity parsing.
+  if(joint&&!joint.settled){try{alive()}catch{burn();refuse()}}
+}
 export function assertHeldDashboardCutoverLoadedJobOperationV4(handle){
+  assertOriginalOperationEntry();
   const record=originalOperationScope(handle,arguments.length);if(record.settled)refuse();record.checking=true;
   try{alive();recheckTerminal();checkLoaded(record.loaded);recheckTerminal();checkLoaded(record.loaded);alive()}
   catch{burn();refuse()}finally{record.checking=false}
 }
 export function assertHeldDashboardCutoverLoadedJobOperationCacheV4(handle){
+  assertOriginalOperationEntry();
   const record=originalOperationScope(handle,arguments.length);if(record.settled)refuse();record.checking=true;
   // Final cache cutpoint only: no filesystem/upstream/native-method invocation.
   try{alive();checkLoaded(record.loaded);alive()}
