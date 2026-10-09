@@ -3130,3 +3130,30 @@ Remaining after Task4j is explicit: finite historical original exits/descendants
 and future cooperative entry closure, actual positive execution coupling,
 phase/selector transitions, remaining four effects, controller/authenticated
 entry, whole reviewed integration, clean-main actual build and current host3333.
+## Task4j causal refinement plan — ten-file native assertion embargo
+
+2026-10-09. Before native source edits, nominate one necessary File Map addition:
+`scripts/dashboard-cutover-native-sidecar-v2.mjs`. Exact map is the original
+Task4j nine plus this one; no new exported interface or caller-supplied port.
+Actual `nnx4X5` native-reentry consumer RED (missing expected outer rejection)
+retains SAME first bootout child and wrong-arity proxy refusal/traps0/zero nested
+FS. Root must independently read its full originals and obtain two paired-doc
+nomination gates before the native edit. Historical nine-file gates do not
+clear this ten-file refinement or final delivery.
+
+- Add private assertion-entry helper using existing `alive()` if original joint
+  exists and is not settled. Catch failure, burn, refuse; call helper BEFORE
+  originalOperationScope from BOTH full/cache native assertions, so pending
+  quiet embargo precedes arity/identity parsing. No guard bypass or token copies.
+- Leave the distinct settlement-token path unchanged: healthy stage settling
+  must not call a live-stage assertion. Regression controls cover that boundary.
+- Re-run native-reentry unchanged on refined producer; then causal quiet loss,
+  late settlement, proxy, phase, journal and healthy controls on final source.
+- Same-map fixes: phase microtask RED BtnRTl => private resource-free original
+  admission bracketing material; scheduled-original registration RED => append
+  provisional intent/Promise-null work occurrence before body scheduling, then
+  retain actual returned Promise and natural settlement status.
+- Final ten exact source/test/doc files and every retained current original
+  require two independent reviews, focused regression/strict/syntax/contracts,
+  normal scoped commit/forward push and append-only PR readback. No live effect,
+  real PG, actual build, legacy death or host-completion claims from fixtures.

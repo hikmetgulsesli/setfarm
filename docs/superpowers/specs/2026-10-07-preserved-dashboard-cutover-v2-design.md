@@ -4095,3 +4095,37 @@ This proves only scoped journaled job quieting. Bootout does not prove detached
 daemon death, descendant closure, reboot persistence or future selected-CLI
 entry exclusion. Real host effects require the reviewed complete authenticated
 entry, source/build and phase qualification; fixture GREEN never grants them.
+## Task4j causal implementation refinement — native assertion entry
+
+2026-10-09. This supersedes ONLY the nine-file exclusion of native-sidecar
+source in Task4j's original File Map: the refined map is ten, adding
+`scripts/dashboard-cutover-native-sidecar-v2.mjs`. No new public signature,
+native transport implementation, selected runtime material, credentials or
+host command. The relation is causal and necessary to the same quiet objective.
+
+Actual native-reentry original `nnx4X5` proves the current two-argument public
+native assertion rejects wrong arity without shared burn while quiet is pending;
+release of the SAME first bootout child then allows outer success. This violates
+the already nominated pending-entry embargo, not a newly expanded requirement.
+Definition's corresponding entry already burns before input parsing.
+
+Choose private assertion-entry admission for BOTH full and cache native public
+assertions: if an original unsettled joint record exists, invoke existing
+resource-free `alive()`/SAME token fence under burn-on-failure BEFORE any caller
+arity, handle, WeakMap lookup or proxy inspection. Do not add this ordinary
+live-stage fence to `settleHeldDashboardCutoverLoadedJobOperationV4`: its separate
+settlement token must still permit the healthy settling stage. Idle foreign
+inputs and existing ordinary/reservation routes preserve their contracts.
+No callback or returned proof is public; no additional port or new permission.
+
+Complementary control retains original pending child, wrong-arity proxy traps0
+and nested FS delta0, outer rejection, absent completion1/intent2, bilateral
+settlement0, late passive lifecycle never repairing UNKNOWN. Run current-source
+ordinary/pre32/owner/native consumer regressions before delivery.
+
+Two other same-map source refinements follow actual causal REDs, not scope
+expansion: resource-free SAME original admission around every quiet phase
+material recheck (including after await), and provisional quiet body-work
+occurrence registered before scheduling its actual Promise. Preserve original
+Promise after driver failure/late settlement; don't manufacture custody from a
+later reconstructed callback. Final ten-file review is required.
