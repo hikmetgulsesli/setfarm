@@ -5,6 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
+
+const loaderIndex = process.execArgv.indexOf("--import");
+const loader = loaderIndex >= 0 ? process.execArgv[loaderIndex + 1]! : createRequire(import.meta.url).resolve("tsx");
+let receiptSequence = 0;
 
 const secrets = ["postgresql://fixture:PG_SENTINEL@localhost/fixture", "TOKEN_SENTINEL", "/var/run/com.apple.launchd.SocketSentinel/Listeners"];
 const labels = ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard"];
@@ -29,7 +34,7 @@ function fixture(body: (home: string, texts: string[]) => void): void {
       + block("inherited environment", [`SETFARM_ENV_DIR => ${home}/ai/setrox/setfarm/scripts`, `SSH_AUTH_SOCK => ${secrets[2]}`])
       + block("default environment", ["PATH => /usr/bin:/bin:/usr/sbin:/sbin"]) + "}\n";
   });
-  try { body(home, texts); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  try { body(home, texts); } finally { console.log(JSON.stringify({ retainedLauncherFixture: home })); }
 }
 function observe(home: string, texts: string[], fault = "", census?: string, defaultAction?: string): any {
   const originalUrl = new URL("../../src/internal-production/baseline-deployment-cutover-launcher-observation-v1.ts", import.meta.url);
@@ -148,7 +153,7 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
     fs.writeFileSync(file, source);
     url = pathToFileURL(file).href;
   }
-  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+  const invocation = ["--import", loader, "--input-type=module", "-e", `
     import os from "node:os"; import fs from "node:fs"; import cp from "node:child_process";
     import {inspect as render} from "node:util"; import {syncBuiltinESMExports} from "node:module";
     const identity = os.userInfo(); os.userInfo = () => ({...identity,homedir:${JSON.stringify(home)}});
@@ -196,7 +201,11 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
       if (run && ${defaultAction === undefined}) { try { await run(); } catch (retry) { retryError = render(retry,{depth:null}); } }
       process.stdout.write(JSON.stringify({error:render(error,{depth:null}),launcherStage:error.cutoverLauncherStage,cleanupFailed:error.cutoverCleanupFailed,retryError,prints,conversions,evidence:evidence()}));
     }
-  `], { encoding: "utf8", env: {}, timeout: 15000 });
+  `];
+  const receipt = ++receiptSequence;
+  fs.writeFileSync(path.join(home, `intent-${receipt}.json`), JSON.stringify(invocation), { flag: "wx", mode: 0o600 });
+  const child = spawnSync(process.execPath, invocation, { encoding: "utf8", env: {}, timeout: 15000 });
+  fs.writeFileSync(path.join(home, `result-${receipt}.json`), JSON.stringify(child), { flag: "wx", mode: 0o600 });
   assert.equal(child.status, 0, child.stderr); return JSON.parse(child.stdout);
 }
 

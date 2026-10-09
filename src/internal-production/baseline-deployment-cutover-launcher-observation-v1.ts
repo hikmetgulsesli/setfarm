@@ -2,7 +2,7 @@ import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
 import { userInfo } from "node:os";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { types } from "node:util";
 import { holdDeploymentCutoverNodePathV1 } from "./baseline-deployment-cutover-node-path-v1.js";
 import { observeDeploymentCutoverProcessFamiliesV1 } from "./baseline-deployment-cutover-process-observation-v1.js";
@@ -19,6 +19,167 @@ const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex
 const exact = (value: unknown, keys: readonly string[]): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 const equal = (left: unknown, right: unknown) => hashCanonicalJson(left) === hashCanonicalJson(right);
+type ApprovedDefinitionAttemptV4 = { descriptors: number[]; closed: boolean };
+type ApprovedDefinitionLeaseV4 = { check(): void; close(): void };
+function approvedDefinitionFailureV4(): never { throw Error("DASHBOARD_CUTOVER_APPROVED_DEFINITION_REFUSED"); }
+function approvedDefinitionXmlV4(value: unknown): Buffer {
+  const escape = (input: string): string => {
+    for (const character of input) {
+      const code = character.codePointAt(0)!;
+      if (!(code === 9 || code === 10 || code === 13 || (code >= 32 && code <= 0xd7ff)
+        || (code >= 0xe000 && code <= 0xfffd) || (code >= 0x10000 && code <= 0x10ffff))) approvedDefinitionFailureV4();
+    }
+    return input.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&apos;").replace(/\r/g, "&#13;");
+  };
+  const encode = (item: unknown): string => {
+    if (typeof item === "string") return `<string>${escape(item)}</string>`;
+    if (item === true) return "<true/>";
+    if (item === 60) return "<integer>60</integer>";
+    if (Array.isArray(item)) return `<array>${item.map(encode).join("")}</array>`;
+    if (item && typeof item === "object") return `<dict>${Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+      .map(([key, entry]) => `<key>${escape(key)}</key>${encode(entry)}`).join("")}</dict>`;
+    return approvedDefinitionFailureV4();
+  };
+  const bytes = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?><plist version="1.0">${encode(value)}</plist>\n`);
+  if (bytes.length === 0 || bytes.length > MAX_BYTES) approvedDefinitionFailureV4();
+  return bytes;
+}
+function prepareApprovedDefinitionV4(attempt: ApprovedDefinitionAttemptV4, parsed: unknown,
+  home: string, uid: number, checkOriginal: () => void): ApprovedDefinitionLeaseV4 {
+  const refuse = approvedDefinitionFailureV4;
+  const pins: Array<{ target: string; fd: number; stat: BigIntStats }> = [];
+  let file: { target: string; fd: number; stat: BigIntStats; bytes: Buffer } | undefined;
+  const port = <T>(body: () => T): T => {
+    checkOriginal();
+    const result = body(); // FD-returning bodies register custody before return.
+    checkOriginal();
+    return result;
+  };
+  const check = () => {
+    if (attempt.closed) refuse();
+    checkOriginal();
+    for (const pin of pins) {
+      if (!same(pin.stat, port(() => fs.fstatSync(pin.fd, { bigint: true })), DIRECTORY_KEYS)
+        || !same(pin.stat, port(() => fs.lstatSync(pin.target, { bigint: true })), DIRECTORY_KEYS)) refuse();
+    }
+    checkOriginal();
+    if (file) {
+      const original = file;
+      if (!same(original.stat, port(() => fs.fstatSync(original.fd, { bigint: true })), FILE_KEYS)
+        || !same(original.stat, port(() => fs.lstatSync(original.target, { bigint: true })), FILE_KEYS)) refuse();
+      const bytes = Buffer.alloc(file.bytes.length + 1);
+      let count = 0;
+      while (count < bytes.length) {
+        const read = port(() => fs.readSync(original.fd, bytes, count, bytes.length - count, count));
+        if (!Number.isInteger(read) || read < 0 || read > bytes.length - count) refuse();
+        if (read === 0) break;
+        count += read;
+      }
+      if (count !== file.bytes.length || !bytes.subarray(0, count).equals(file.bytes)
+        || !same(original.stat, port(() => fs.fstatSync(original.fd, { bigint: true })), FILE_KEYS)
+        || !same(original.stat, port(() => fs.lstatSync(original.target, { bigint: true })), FILE_KEYS)) refuse();
+    }
+    checkOriginal();
+  };
+  checkOriginal();
+  if (!exact(parsed, ["EnvironmentVariables", "Label", "ProgramArguments", "RunAtLoad", "StandardErrorPath", "StandardOutPath", "StartInterval"])) return refuse();
+  const bytes = approvedDefinitionXmlV4({ ...parsed,
+    MachServices: { "com.setrox.setfarm.dashboard-cutover.job.v4": { ResetAtClose: true } } });
+  checkOriginal();
+  const baseline = path.join(home, "ai", "setrox", "data", "internal-production-baseline");
+  const segments = path.relative(path.parse(baseline).root, baseline).split(path.sep);
+  if (segments.length > 128) refuse();
+  let device: bigint | undefined;
+  const pinDirectory = (target: string, privateMode = false) => {
+    check();
+    const stat = port(() => fs.lstatSync(target, { bigint: true }));
+    if (!stat.isDirectory() || stat.isSymbolicLink() || ((target === home || target.startsWith(home + path.sep))
+      && (stat.uid !== BigInt(uid) || (stat.mode & 0o022n) !== 0n || (device !== undefined && stat.dev !== device)))
+      || (privateMode && (stat.mode & 0o7777n) !== 0o700n)) refuse();
+    if (target === home) device = stat.dev;
+    check();
+    const fd = port(() => {
+      const returned = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+      attempt.descriptors.push(returned); return returned;
+    });
+    pins.push({ target, fd, stat });
+    check();
+  };
+  for (const target of [path.parse(baseline).root, ...segments.map((_, i) => path.join(path.parse(baseline).root, ...segments.slice(0, i + 1)))]) pinDirectory(target);
+  const baselineFd = pins.at(-1)!.fd;
+  const collection = path.join(baseline, "dashboard-cutover-approved-definitions-v4");
+  check();
+  let missing = false;
+  try { port(() => fs.lstatSync(collection, { bigint: true })); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") refuse(); missing = true; }
+  check();
+  if (missing) { port(() => fs.mkdirSync(collection, { mode: 0o700 })); check(); }
+  pinDirectory(collection, true);
+  const collectionFd = pins.at(-1)!.fd;
+  check();
+  const nonce = port(() => randomUUID());
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(nonce)) refuse();
+  const directory = path.join(collection, nonce);
+  check(); port(() => fs.mkdirSync(directory, { mode: 0o700 })); check(); pinDirectory(directory, true);
+  const directoryFd = pins.at(-1)!.fd, target = path.join(directory, "com.setrox.setfarm-dashboard.plist");
+  check();
+  const fd = port(() => {
+    const returned = fs.openSync(target, fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    attempt.descriptors.push(returned); return returned;
+  });
+  check();
+  const initial = port(() => fs.fstatSync(fd, { bigint: true }));
+  let staged = initial;
+  const checkWriting = (size: number) => {
+    check();
+    const current = port(() => fs.fstatSync(fd, { bigint: true }));
+    if (!same(staged, current, FILE_KEYS)) refuse();
+    const lexical = port(() => fs.lstatSync(target, { bigint: true }));
+    if (!initial.isFile() || initial.uid !== BigInt(uid) || initial.dev !== device || initial.nlink !== 1n
+      || (initial.mode & 0o7777n) !== 0o600n || !same(initial, current, DIRECTORY_KEYS)
+      || !same(staged, lexical, FILE_KEYS) || current.nlink !== 1n || lexical.nlink !== 1n
+      || current.size !== BigInt(size) || lexical.size !== BigInt(size)) refuse();
+    const prefix = Buffer.alloc(size + 1);
+    let read = 0;
+    while (read < prefix.length) {
+      const count = port(() => fs.readSync(fd, prefix, read, prefix.length - read, read));
+      if (!Number.isInteger(count) || count < 0 || count > prefix.length - read) refuse();
+      if (count === 0) break;
+      read += count;
+    }
+    if (read !== size || !prefix.subarray(0, read).equals(bytes.subarray(0, size))
+      || !same(staged, port(() => fs.fstatSync(fd, { bigint: true })), FILE_KEYS)
+      || !same(staged, port(() => fs.lstatSync(target, { bigint: true })), FILE_KEYS)) refuse();
+    check();
+  };
+  let written = 0;
+  checkWriting(written);
+  while (written < bytes.length) {
+    const count = port(() => fs.writeSync(fd, bytes, written, bytes.length - written, written));
+    if (!Number.isInteger(count) || count <= 0 || count > bytes.length - written) refuse();
+    written += count;
+    // Only the admitted own write may advance staged size/timestamps. Preserve
+    // this original post-write observation through all later read/sync ports.
+    staged = port(() => fs.fstatSync(fd, { bigint: true }));
+    checkWriting(written);
+  }
+  checkWriting(written); port(() => fs.fsyncSync(fd)); checkWriting(written);
+  const sealed = staged; checkWriting(written);
+  file = { target, fd, stat: sealed, bytes };
+  check();
+  for (const parent of [directoryFd, collectionFd, baselineFd]) { check(); port(() => fs.fsyncSync(parent)); check(); }
+  return { check, close() {
+    if (attempt.closed) return;
+    attempt.closed = true;
+    let uncertain = false;
+    while (attempt.descriptors.length) {
+      const original = attempt.descriptors.pop()!;
+      try { fs.closeSync(original); } catch { uncertain = true; cleanupUncertain = true; }
+    }
+    if (uncertain) refuse();
+  } };
+}
 type LauncherPre32ContinuationV2<T> = (scope: object, census: Awaited<ReturnType<
   typeof import("./baseline-legacy-database-census-v1.js").observeLegacyDatabaseCensusV1>>) => Promise<T>;
 function command(executable: string, args: string[], input?: Buffer): string {
@@ -64,6 +225,8 @@ function holdLauncherConfigurationV1(defaultMode = false) {
   let assertMaterialDatabase: () => void = fail;
   let withPre32Database: <T>(continuation: LauncherPre32ContinuationV2<T>, check: () => void) => Promise<T> = async () => fail();
   let qualifyCoreReader: (check: () => void) => Promise<HeldCoreReaderDiagnosticV2> = async () => fail();
+  let approvedAttemptV4: ApprovedDefinitionAttemptV4 | undefined;
+  let createApprovedDefinitionV4: (check: () => void) => ApprovedDefinitionLeaseV4 = () => approvedDefinitionFailureV4();
   const coreReaderOriginals: {
     imported?: Promise<typeof import("../db/dashboard-core-readonly-reader-v2.js")>;
     owner?: ReturnType<typeof import("../db/dashboard-core-readonly-reader-v2.js").createDashboardCoreReadonlyReaderV2>;
@@ -196,6 +359,11 @@ function holdLauncherConfigurationV1(defaultMode = false) {
       for (const item of held) if (!item.read().equals(item.bytes)) fail();
       checkPins();
     };
+    createApprovedDefinitionV4 = check => {
+      if (approvedAttemptV4) approvedDefinitionFailureV4();
+      approvedAttemptV4 = { descriptors: [], closed: false };
+      return prepareApprovedDefinitionV4(approvedAttemptV4, held[1]!.parsed, home, uid, check);
+    };
     recheck = () => {
       if (closed || cleanupUncertain) fail();
       checkPins();
@@ -303,7 +471,7 @@ function holdLauncherConfigurationV1(defaultMode = false) {
     };
   } catch { invalid = true; }
   if (invalid || !output) { close(); fail(); }
-  return { observation: output, recheck, recheckMaterial, assertMaterialDatabase, withPre32Database, qualifyCoreReader, census, censusAndActiveRows, censusAndActiveRowsWithQuarantine,
+  return { observation: output, recheck, recheckMaterial, assertMaterialDatabase, withPre32Database, qualifyCoreReader, createApprovedDefinitionV4, census, censusAndActiveRows, censusAndActiveRowsWithQuarantine,
     censusAndBindingRows, censusAndBindingRowsV7, activeBindingSnapshot, close, defaultInputs };
 }
 
@@ -317,6 +485,7 @@ type LauncherMaterialStateV2 = {
   callback?: Promise<unknown>;
   coreReaderSelected: boolean;
   coreReaderCustodyUnknown: boolean;
+  approvedDefinitionSelectedV4: boolean;
 };
 type HeldCoreReaderDiagnosticV2 = Readonly<{
   schema: "setfarm.dashboard-core-held-launcher-qualification.v2";
@@ -374,7 +543,7 @@ export function holdDashboardCutoverLauncherMaterialV2(): object {
   if (launcherMaterialOccupiedV2 || launcherMaterialBurnedV2 || cleanupUncertain) fail();
   launcherMaterialOccupiedV2 = true;
   const state: LauncherMaterialStateV2 = { valid: true, closed: false, outerSettled: false, callbackSettled: true,
-    coreReaderSelected: false, coreReaderCustodyUnknown: false };
+    coreReaderSelected: false, coreReaderCustodyUnknown: false, approvedDefinitionSelectedV4: false };
   launcherMaterialOriginalV2 = launcherMaterialActiveV2 = state;
   try {
     state.account = launcherMaterialAccountV2();
@@ -478,6 +647,62 @@ export function closeHeldDashboardCutoverLauncherMaterialV2(handle: object): voi
   try { state.configuration!.close(); if (launcherMaterialBurnSequenceV2 !== before || cleanupUncertain) fail(); }
   catch { launcherMaterialBurnedV2 = true; fail(); }
   finally { state.outerSettled = true; settleLauncherMaterialActivityV2(state); }
+}
+
+declare const approvedDefinitionBrandV4: unique symbol;
+export type HeldDashboardCutoverApprovedDefinitionV4 = object & { readonly [approvedDefinitionBrandV4]: never };
+type ApprovedDefinitionStateV4 = { material: LauncherMaterialStateV2; lease?: ApprovedDefinitionLeaseV4; valid: boolean; closed: boolean };
+const approvedDefinitionHandlesV4 = new WeakMap<object, ApprovedDefinitionStateV4>();
+let approvedDefinitionOriginalV4: ApprovedDefinitionStateV4 | undefined;
+function approvedDefinitionIdleV4(): void {
+  try { assertLauncherMaterialIdleV2(); } catch { approvedDefinitionFailureV4(); }
+}
+function burnApprovedDefinitionV4(state: ApprovedDefinitionStateV4): never {
+  state.valid = false;
+  try { burnLauncherMaterialV2(state.material); } catch { approvedDefinitionFailureV4(); }
+}
+export function holdDashboardCutoverApprovedDefinitionV4(originalMaterial: object): HeldDashboardCutoverApprovedDefinitionV4 {
+  approvedDefinitionIdleV4();
+  if (arguments.length !== 1) approvedDefinitionFailureV4();
+  let material: LauncherMaterialStateV2;
+  try { material = launcherMaterialStateV2(originalMaterial); } catch { approvedDefinitionFailureV4(); }
+  if (material.approvedDefinitionSelectedV4) approvedDefinitionFailureV4();
+  material.approvedDefinitionSelectedV4 = true;
+  const state: ApprovedDefinitionStateV4 = { material, valid: true, closed: false };
+  approvedDefinitionOriginalV4 = state;
+  launcherMaterialActiveV2 = material; material.outerSettled = false;
+  try {
+    const check = () => { if (!state.valid || state.closed || approvedDefinitionOriginalV4 !== state) approvedDefinitionFailureV4(); checkLauncherMaterialV2(material); };
+    check(); state.lease = material.configuration!.createApprovedDefinitionV4(check); check(); state.lease.check(); check();
+    const handle = Object.freeze(Object.create(null)) as HeldDashboardCutoverApprovedDefinitionV4;
+    approvedDefinitionHandlesV4.set(handle, state);
+    return handle;
+  } catch { burnApprovedDefinitionV4(state); }
+  finally { material.outerSettled = true; settleLauncherMaterialActivityV2(material); }
+}
+export function assertHeldDashboardCutoverApprovedDefinitionV4(handle: HeldDashboardCutoverApprovedDefinitionV4): void {
+  approvedDefinitionIdleV4();
+  if (arguments.length !== 1) approvedDefinitionFailureV4();
+  const state = approvedDefinitionHandlesV4.get(handle);
+  if (!state || state !== approvedDefinitionOriginalV4 || !state.valid || state.closed) approvedDefinitionFailureV4();
+  const material = state.material;
+  launcherMaterialActiveV2 = material; material.outerSettled = false;
+  try { checkLauncherMaterialV2(material); state.lease!.check(); checkLauncherMaterialV2(material); }
+  catch { burnApprovedDefinitionV4(state); }
+  finally { material.outerSettled = true; settleLauncherMaterialActivityV2(material); }
+}
+export function closeHeldDashboardCutoverApprovedDefinitionV4(handle: HeldDashboardCutoverApprovedDefinitionV4): void {
+  approvedDefinitionIdleV4();
+  if (arguments.length !== 1) approvedDefinitionFailureV4();
+  const state = approvedDefinitionHandlesV4.get(handle);
+  if (!state || state !== approvedDefinitionOriginalV4) approvedDefinitionFailureV4();
+  if (state.closed) return;
+  state.closed = true; state.valid = false;
+  const material = state.material, sequence = launcherMaterialBurnSequenceV2;
+  launcherMaterialActiveV2 = material; material.outerSettled = false;
+  try { state.lease!.close(); if (sequence !== launcherMaterialBurnSequenceV2 || cleanupUncertain) approvedDefinitionFailureV4(); }
+  catch { burnApprovedDefinitionV4(state); }
+  finally { material.outerSettled = true; settleLauncherMaterialActivityV2(material); }
 }
 
 // Separate, zero-input default-mode holder. Secret-bearing configuration and

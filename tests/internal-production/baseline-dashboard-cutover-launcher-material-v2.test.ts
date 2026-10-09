@@ -5,6 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
+
+const loaderIndex = process.execArgv.indexOf("--import");
+const loader = loaderIndex >= 0 ? process.execArgv[loaderIndex + 1]! : createRequire(import.meta.url).resolve("tsx");
 
 const labels = ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard"];
 const exportsV2 = ["holdDashboardCutoverLauncherMaterialV2", "assertHeldDashboardCutoverLauncherMaterialV2",
@@ -71,7 +75,7 @@ function fixture(action: string, setup = ""): any {
     const fixturePath = path.join(home, "material-fixture.ts");
     fs.writeFileSync(path.join(home, "package.json"), '{"type":"module"}');
     fs.writeFileSync(fixturePath, source);
-    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+    const invocation = ["--import", loader, "--input-type=module", "-e", `
       import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import cp from 'node:child_process';
       import {syncBuiltinESMExports} from 'node:module';
       const home=${JSON.stringify(home)},texts=${JSON.stringify(texts)},labels=${JSON.stringify(labels)};
@@ -102,12 +106,15 @@ function fixture(action: string, setup = ""): any {
       ${setup}
       ${action}
       process.stdout.write(JSON.stringify({ok:true,prints,opens:originals.length,closes:closed.length,dbCalls:globalThis.dbCalls}));
-    `], { encoding: "utf8", env: {}, timeout: 15000 });
+    `];
+    fs.writeFileSync(path.join(home, "intent.json"), JSON.stringify(invocation), { flag: "wx", mode: 0o600 });
+    const child = spawnSync(process.execPath, invocation, { encoding: "utf8", env: {}, timeout: 15000 });
+    fs.writeFileSync(path.join(home, "result.json"), JSON.stringify(child), { flag: "wx", mode: 0o600 });
     assert.equal(child.status, 0, child.stderr);
     const result = JSON.parse(child.stdout);
     assert.doesNotMatch(child.stdout, /PG_SENTINEL|TOKEN_SENTINEL|Fixture\/Listeners/);
     return result;
-  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  } finally { console.log(JSON.stringify({ retainedMaterialFixture: home })); }
 }
 
 test("retained material survives loaded-job changes without launchctl or credential exposure", () => {

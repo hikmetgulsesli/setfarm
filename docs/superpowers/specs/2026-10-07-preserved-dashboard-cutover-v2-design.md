@@ -2945,3 +2945,112 @@ Node children with natural close/EOF. No real cron, systemctl, gateway, PG,
 provider, signal-driven timeout campaign, live job or old fixture replay.
 Synthetic missing/error/timeout samples earn refusal credit only. The capability
 is NOT global/legacy/remote/descendant/source/owner/phase/startup authority.
+
+## Task4i.1: opaque held approved dashboard definition V4
+
+Causal need: the approved job-owned V4 endpoint requires a declaring dashboard
+definition. Keep original home plists, worktrees, deployments and seven values.
+Alternatives: controller rendering exports secret-bearing originals/accepts
+caller material; editing the home plist violates preservation. Select a separate
+opaque derivative inside the EXISTING launcher material provider, borrowing
+genuine same-instance V2 material. No public renderer/bytes/hash/path getter,
+caller path/account/options, callback, effect permit or bootstrap API.
+
+```ts
+declare const approvedDefinitionBrandV4: unique symbol;
+export type HeldDashboardCutoverApprovedDefinitionV4 = object & {
+  readonly [approvedDefinitionBrandV4]: never;
+};
+export function holdDashboardCutoverApprovedDefinitionV4(originalMaterial: object):
+  HeldDashboardCutoverApprovedDefinitionV4;
+export function assertHeldDashboardCutoverApprovedDefinitionV4(
+  definition: HeldDashboardCutoverApprovedDefinitionV4): void;
+export function closeHeldDashboardCutoverApprovedDefinitionV4(
+  definition: HeldDashboardCutoverApprovedDefinitionV4): void;
+```
+
+Runtime handles are empty frozen null-prototype WeakMap objects, not compile-
+time brand authority. Exact one argument. Idle foreign/proxy/copied/wrong-instance
+or extra arguments refuse before caller traps/artifact ports without burning a
+valid idle original. Fixed secret-free error:
+DASHBOARD_CUTOVER_APPROVED_DEFINITION_REFUSED. Active nested V2/V4 operations
+burn the ORIGINAL active material before further ports/publication, even if
+swallowed. Never bypass assertLauncherMaterialIdleV2 during pre32.
+
+Privately render only the validated dashboard tree: exact original seven values
+plus MachServices:{"com.setrox.setfarm.dashboard-cutover.job.v4":{ResetAtClose:true}}.
+V1/V2 seven-key input validation remains unchanged, rejecting MachServices and
+Sockets. Deterministic UTF8 XML escapes string/key characters; malformed
+surrogates/XML1.0 unsupported controls refuse BEFORE artifact publication.
+CR uses numeric &#13; so XML newline normalization cannot change the original
+value. Supplemental private-renderer mechanics may cover CR/LF/TAB/entities and
+supplementary Unicode separately; values rejected by unchanged original loaded
+material parsing cannot become a genuine V2 input through test instrumentation.
+Rendered bytes are bounded by existing1MiB launcher limit. Final read-back must
+equal private rendered bytes/identity; independent plutil parse in tests checks
+the semantic oracle. No secret-derived public hashes/values/errors or new
+launchctl call after original acquisition; no PG/provider/DB operation.
+
+Fixed account-home sibling namespace (NEVER inside exact cutover history ROOT):
+home/ai/setrox/data/internal-production-baseline/dashboard-cutover-approved-definitions-v4.
+Workspace/data/baseline MUST exist. Pin every original physical nofollow ancestor,
+actual owner UID/device and no group/other-writable account-owned scope. Existing
+collection is0700; missing collection alone may be created once0700 after genuine
+baseline pins. One fresh private lowercaseUUIDv4 attempt directory0700, fixed
+com.setrox.setfarm-dashboard.plist basename0600. No caller names, collision retry,
+overwrite/link/chmod of old parents/unlink/delete/historical adoption/history
+mutation. All artifacts remain visible. This is preflight material preparation,
+NOT any of the six service/selector dispatches or owner authority.
+
+Reserve the one derivation attempt on ORIGINAL V2 state before render/FS ports.
+The configuration closure retains its derivative attempt object BEFORE factory
+render/FS work, including when the factory throws before returning a lease.
+Register every returned original FD before fallible sealing; retain original
+attempt/resources on uncertainty. Bracket every non-cleanup admitted port with original
+material/account and ancestor/file checks; swallowed reentry/drift stops the
+NEXT port and publication. Full bounded write, file fsync and attempt/collection/
+baseline directory fsync precede handle publication. Final nlink1/mode0600/owner/
+device/file/byte identity is pinned. Derived descriptors remain separate from
+borrowed material. Acquisition has explicit precreation, partial-write and final
+sealed checks: its own permitted writes change size/timestamps, but never refresh
+immutable identity after unexpected drift. Once sealed, full final identity and
+bytes remain original and unchanged. Derived descriptors remain separate from
+borrowed V2 descriptors. Partial write/sync/sealing/unknown close cannot mint
+or reacquire; failed acquisition retains its privately registered originals and
+created artifacts. No cleanup retry of possibly consumed descriptors.
+
+Assertions revalidate SAME original V2 state and derivative pins/bytes without
+loaded-job sampling. Original V2 close/invalidation invalidates derivative.
+Public V4 calls during outstanding original pre32 callback/driver refuse with
+zero FD closes, keeping original callback custody. Future source-owned executor
+checks must compose privately with that SAME active original; not supplied here.
+
+Checked-once derivative close reserves closed state before reverse consumption
+of only its own original FDs; no borrowed V2 close or artifact deletion. Genuine
+idle derivative may close its known originals once even after borrowed material
+invalidates, never restoring authority. Duplicate idle close has zero ports;
+This cleanup-only exception authenticates original derivative identity, idle
+activity and once-only disposition, not validity of the already-burned borrower.
+consume before each close, response loss burns and cannot retry reused FDs.
+Active reentry cannot close another operation's resources.
+
+Qualification: actual source, retained real private FS, inert exact launchctl-
+print/pre32 ports. Independent parsed XML/unchanged original bytes/inodes/spawner,
+opaque secret-free interfaces, XML escaping, sticky original/ancestor/derivative
+drift, foreign/once-only handles, partial write/sync/close loss, swallowed active
+and pending-pre32 reentry. No host job/bootstrap/systemctl/PG/provider/native
+campaign/selected deployment mutation. Material/FD success is NOT job/source/
+build/owner/phase/control/startup/foreground authority. Current-host negatives,
+sidecar build inputs, six-effect adapter and legacy closure remain required.
+
+Task4i.1 source qualification receipt: initial missing-export0P3Fdfce18 before
+production. Four causal source-port/stage/mode negatives3cb989 actually RED,
+then7GREEN258e94/37295e after smallest guarded corrections. Final197P0F0SKIP
+d61142/1fa9c8,29249.032125ms (32V4/47materialV2/118launcherV1), original private
+FS/plutil + inert job/pre32 ports only. Copied private-renderer mechanics for
+malformed surrogates and CR do NOT assert those are genuine V2 loaded inputs.
+Strictf7b28a/35ab8d1193files0diagnostics after explicit refusal-branch return;
+old V1/V2 test changes loader/owned fixture retention only. Earlier failed
+fixture expansions are recorded separately, not claimed as production REDs.
+Opaque data/FD behavior credit ONLY; no full build, current-host endpoint/source,
+owner/phase/control/adapter/foreground/clean-main/live3333 authority follows.

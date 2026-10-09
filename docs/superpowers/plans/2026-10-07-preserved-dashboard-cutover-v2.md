@@ -1985,3 +1985,120 @@ matrix retains its original snapshot, no relabelling. Refreshed strict also
 includes this imported helper. Ten-file scoped delivery nomination; no production
 change after143 matrix. Final reviewers independently read all retained14child,
 8Medic and refreshed16gateway programs/results, not merely aggregate prose.
+
+### Task4h.3 delivered, 2026-10-09/00:14UTC
+
+Two ten-file exact source/evidence RO reviews C0/I0/M0; root commit6cf45c56,
+normalpushfdfbccfc→6cf45c56; CLEAN. PR280 exact6cf OPEN DRAFT, scannerSUCCESS
+00:12:37UTC. Priorbody exactprefix preserved and body exactprivatefile55956B,
+SHA9473d66e1f5b532a9c4294be2317df6e972b38696568c2bb1e316529bb201e28.
+Fresh GitHub reviews[]/inlinecomments[]; no invented external reviews/merge.
+Ledger logs/2026-10-09-dashboard-cutover-local-child-original.md includes all
+original delivery receipts. Full clean-main/build/live3333 goal remains open.
+
+## Task4i.1: held approved definition V4 (nomination)
+
+Spec: paired Task4i.1. Root writer only; read-only design/source/evidence reviews.
+Existing material provider owns private parsed values; no new raw-material
+accessor or launchctl/PG/startup effect. Approved ONE fixed job.v4 entry only.
+
+File Map: modify src/internal-production/baseline-deployment-cutover-launcher-observation-v1.ts;
+create tests/internal-production/baseline-dashboard-cutover-approved-definition-v4.test.ts;
+modify package.json explicit pure enrollment and paired docs. Existing V1/V2
+material tests may change only test loader/retention where required, not guards.
+No controller/executor/launchctl command or existing launcher file changes.
+
+Interfaces: exact branded opaque hold/assert/close signatures in spec. Internally
+configuration closure renders only its private original dashboard tree and owns
+lease path/bytes/FDs. Public V4 WeakMap borrows genuine original V2 state; same
+activity/reentry guard. One derivation attempt, no replacement or retry.
+Private factory signature within that closure:
+createApprovedDefinitionV4(checkOriginal:()=>void):{check():void;close():void}.
+Its path/bytes remain closure-private, not properties of that returned lease.
+Later executor composition must remain inside this provider, never adding an
+arbitrary-path/raw-material getter to satisfy a consumer.
+Factory registers its private attempt inside retained configuration before any
+render/FS work; a returned lease variable alone cannot retain partial acquisition.
+XMLCR uses &#13; to preserve values through independent parsing. Private renderer
+mechanics are distinct from genuine material-holder tests for values the old
+loaded parser cannot accept. Cleanup-after-invalid-borrow exception checks genuine
+derivative/idle/once-only FD custody, not restored material validity.
+
+- [x] Independently review paired typed contracts, fixed sibling namespace,
+  original resource lifetime, idle-versus-pre32 guard and close-loss behavior.
+- [x] Author fresh actual-source private FS fixture and missing-export RED:
+  ```ts
+  const original = module.holdDashboardCutoverLauncherMaterialV2();
+  const definition = module.holdDashboardCutoverApprovedDefinitionV4(original);
+  assert.equal(Object.getPrototypeOf(definition), null);
+  assert.deepEqual(Reflect.ownKeys(definition), []);
+  // Inspect ONLY test-owned FS write/read-back instrumentation, not a public getter.
+  assert.deepEqual(parsedDerivative, {
+    Label: 'com.setrox.setfarm-dashboard',
+    ProgramArguments: [home+'/.local/bin/setfarm','dashboard','start','--port','3333'],
+    EnvironmentVariables: {PATH:'/usr/local/bin:/usr/bin:/bin',
+      SETFARM_PG_URL:'postgresql://fixture_PG_SENTINEL@localhost/setfarm',
+      SETFARM_OPERATIONAL_WRITE_TOKEN:'TOKEN_SENTINEL'},
+    RunAtLoad:true, StartInterval:60,
+    StandardOutPath:home+'/.openclaw/logs/setfarm-dashboard.watch.log',
+    StandardErrorPath:home+'/.openclaw/logs/setfarm-dashboard.watch.err.log',
+    MachServices:{'com.setrox.setfarm.dashboard-cutover.job.v4':{ResetAtClose:true}}
+  });
+  ```
+  Fresh actual outer Node source import; inert exact launchctl-print responses;
+  allow genuine finite plutil on private fixture input only. Deny every bootstrap/
+  job/PG/provider/systemctl/native/CLI port. Retain programs/result directories
+  and original natural outer exit/null signal/both output EOF/close.
+- [x] Run nominated RED before production:
+  node --import tsx --test --test-concurrency=1
+  tests/internal-production/baseline-dashboard-cutover-approved-definition-v4.test.ts.
+  Expected missing source-owned V4 export, not setup/import/compiler failure.
+- [x] Add minimal private configuration derivative factory + V4 state/WeakMap:
+  ```ts
+  // Registered original attempt BEFORE any fallible renderer/FS port.
+  originalState.approvedDefinitionSelectedV4 = true;
+  const lease = originalState.configuration.createApprovedDefinitionV4(checkOriginal);
+  checkOriginal(); lease.check(); checkOriginal();
+  // Empty handle publishes only after full durable write/private read-back.
+  ```
+  No public factory/getter/path parameter. Required workspace/data/baseline;
+  fresh0700 collection/UUID directory and0600 exclusive file. Original returned
+  descriptors registered before fstat. Fixed private XML escape/boundary validation,
+  complete write and file/directory fsync, no old parent modification or deletion.
+- [x] Expand actual behavior controls: copied/proxy/wrong-instance/arity zero
+  caller traps/ports; V1/V2 continue rejecting MachServices/Sockets; XML escaping/
+  Unicode/control refusal; unchanged original bytes/inodes/spawner; no launchctl
+  after acquire; original/account/ancestor/derivative inode/byte drift sticky;
+  second derive; swallowed hold/assert/close reentry; partial-write/sync refusal;
+  derivative close checked-once reverse FDs and original still usable; original
+  close invalidates derivative; close response loss no retry; active pending
+  pre32 refuses V4 calls with zero closes, retaining original callback.
+- [x] Focused V4 + material/V1 tests and strict noemit/contracts. Source-fault
+  fixtures get FS/material behavior credit ONLY, not current-host job/source/
+  control/adapter qualification. No dirty build or old native campaign replay.
+- [ ] Fresh two-seat exact source/evidence review; root normal commit/push and
+  preserved DRAFT PR append/scanner. Proceed to host endpoint/source qualification
+  and genuine adapter; derivative hold alone cannot dispatch/bootstrap or complete
+  ordinal5. Full owner/phase/legacy/foreground/clean-main/live3333 requirements stay.
+
+Task4i.1 actual qualification: initial missing-export REDdfce18 0P3F before
+production; first3P107b79. Independent I2/M1 and I1/M1 findings reproduced
+4RED3cb989 then7GREEN258e94/37295e: each new noncleanup port brackets original
+activity, partial writes validate original staged full metadata/bytes before
+later ports, fsync cannot adopt drifted timestamps, exact private modes07777.
+Two revised source RO reviews C0/I0/M0 atddf8955b (not final delivery reviews).
+Strict065b71/9763da caught one TS narrowing error plus two incorrectly named
+test roots; root explicit return in refusal branch changed no runtime gate.
+Corrected noemitf7b28a/35ab8d1193files/0diagnostics strict=true/noEmit=true.
+Actual final matrixd61142/1fa9c8:197P0F0SKIP29249.032125ms,32V4 +47materialV2
++118launcherV1. Exact old-test changes are loader selection and newly owned
+fixture intent/result retention only; no guard changes, no old native replay.
+Pure entry explicitly nominates new V4 file; no PG/provider/service effects.
+Private renderer copied-source mechanics cover malformed surrogates/CR separately
+from genuine unchanged V2 loaded-material inputs. Actual failed32 expansion
+804700/464621 was fixture duplicate identifier setup error31P1F, never source
+RED; corrected fixture name before final197. Earlier14/20 failed expansions
+were test-only FD tracking/builtin export synchronization, recorded unchanged.
+Original receipt ledger logs/2026-10-09-dashboard-cutover-approved-definition-original.md;
+all private owned originals retained. No full build/clean-main/source-host/job/
+owner/control/phase/adapter/foreground/live3333 qualification is claimed.
