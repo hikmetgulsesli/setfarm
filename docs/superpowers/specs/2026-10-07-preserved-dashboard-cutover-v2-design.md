@@ -4234,3 +4234,47 @@ The existing static observer closure calls userInfo during account-path module
 initialization. That trusted preparation precedes the assertion catch; arbitrary
 static loading/account-init errors are NOT promised generic normalization.
 Generic CLI_ENTRY_REFUSED covers the called observer/OPEN/refusal path only.
+
+Task4k source checkpoint 2026-10-09 (delivery pending):
+- Design preceded tests/source: normal two-doc c7045b81 after two independent
+  corrected paired-doc C0/I0/M0 gates. Initial escaped-newline doc issue was
+  corrected before nomination. Root stayed sole writer.
+- Genuine original-source RED retained zYG3Dc OPEN resolve1/eval0 and IcVgXK
+  OPEN resolve28/eval1; absent RCKsp7 reached dependency resolve1. All had actual
+  natural status1/signalnull/exit-close/outputEOF+close and exact five bridges.
+  An earlier entry-URL whitelist miss and later overbroad close-loss injection
+  hitting ESM-loader closes (lbFvy8) were SETUP failures, never producer RED.
+- Minimum source is only cli.ts import prefix. Existing body from
+  `const __filename =` through EOF is byte-identical to0561dc99,
+  SHA98f19fb0b0141eb4fb238ce9a59b78dc32acbedb5f1363b8bb65053459cfaf61.
+  Current cli SHA07d38f9129b73370519bfb9275916a43cdc26637c2e6f89ccc038ccb7448c442;
+  newtest SHA549da6ea9dae3b3834095ec381a1e4a25ce8eae5f86b901efd498555b0cd366b.
+- Fresh20/0 new controls: one static/type-erasure/body oracle and19 actual
+  absolute compiled child originals. Includes exact diagnostic/near misses,
+  runtime-guard argv and environment bypass, malformed/partial/unsafe records,
+  genuine absent, both resolution/evaluation and deliberately admitted late OPEN.
+  Scoped close-loss consumed only actual observer descriptors (five losses),
+  never loader preparation. Its armed counter is asserted.
+- Root independently read all19 originals,95 canonical source pins,95 literal
+  TS translations and95 exact0600 manual outputs; all original inputs/programs,
+  actual private records and child exit/EOF/close were verified. SOURCE ONLY:
+  no actual build, native process watcher, Postgres or host authority.
+  Private index logs/2026-10-09-task4k-cli-entry-final-original-index.json SHA
+  bde651e2d30aefb7d25bbd0bf147f7f783d5ce7fa424cca9b12253a2f321c0e0;
+  reader SHA9e6a425672832425136d72fbf7e40659fd8b3b45d5088ccb80a0ff0b1f751d90.
+  Full roots under /private/var/folders/x4/qxlz7krd09ndcx8mgn_zg7km0000gn/T/
+  setfarm-cli-entry-v4-* are indexed, not under /private/tmp.
+- Unchanged adjacent suite selections: launcher2, dashboard CLI4, cleanup CLI2,
+  claim-log resume1 PASS. Additionally root and independent reader each executed
+  six identical AST-selected callbacks: four spawner CLI source assertions and
+  Task6A claim/peek; original suite imports were NOT evaluated, and no full-suite
+  credit follows. Compact six-control index SHA
+  a9b12b609adb39740aaf4bb6241f38d050b7d9f3d9d819df136bfd2b048d0f2e.
+- Fresh strict noEmit1195files/0diagnostics; JS syntax, version2.3.79,
+  English1994files, paths1000files and diff check PASS.
+  Two final exact-four/all19 source+original reviews and normal source delivery
+  remain pending at this checkpoint. PR280 stays DRAFT; no partial merge.
+- Exact diagnostic control is stopped at the normal dependency boundary;
+  status2 readiness receipt is NOT claimed tested by these child fixtures.
+  Late OPEN actually reaches one business evaluation, so initial-only admission
+  is explicitly NOT lifetime exclusion. Existing callee/DB/service gates remain.
