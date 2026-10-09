@@ -2702,7 +2702,7 @@ lifetimes in spec. No caller callback/mode/hashes/URL/path or returned capabilit
   parent ports/traps/disposals. Existing owner import initialization reads are
   distinct from owner acquisition/PG/ROOT; never claim all loader FS0.
   Retain all original receipts; real vs doubled Python authority kept separate.
-- [ ] Step5: affected old-route custody, current52 approved/pre32 controls,
+- [x] Step5: affected old-route custody, current52 approved/pre32 controls,
   owner/first-generation proportional controls and strict noEmit/syntax/contracts/
   diff. Bound resource snapshots; do not replay large old native campaigns.
   Two independent exact-nine-file/all-original gates; normal scoped delivery
@@ -2723,10 +2723,78 @@ owner34P0F4186.178334ms; approved+pre32 harness52P0F8323.222959ms. Seventy-nine
 current retained original receipts independently read; legacy owner/harness
 aggregate controls do not invent child receipts. strict1194/0noEmit and contracts
 pass; no real build/native image/real PostgreSQL/backend death/host clearance.
-Step5 remains pending exact-nine-file final reviews, fresh gates and delivery.
+Step5 delivered c6e93fb19b2733b0c679883b72fd1f0c9143fcc8 after two independent
+exact-nine-file/all79-original C0/I0/M0 gates and fresh strict/syntax/contracts.
+PR280 exact-head security SUCCESS; comment6075321816 exact readback3558UTF8B
+SHA c006b116c58d0f2dea8bfb59fa8f93bfb7f927383ae5efbd8e0bb0b95ada4150.
+OPEN DRAFT/reviews empty, not whole-branch merge or live/build clearance.
 
 After this slice: positive execution-owner PG+physical coupling and finite
 cooperative legacy/root-monotonicity, selected-build+selector, changing V2 phase
 and actual durable intents, complete six-effect adapter, controller/reconciliation,
 authenticated foreground, reviewed integration/clean-main build/current3333 proof.
 No source-only reservation test can replace those outcomes.
+
+### Task4i.8: actual canonical local JS and child drain before pre32
+
+Goal: prevent the owner-bound reservation route entering PG/ROOT while this
+canonical registry still owns a producer or nominated execFile child. In-goal
+causal requirement: uninstall/teardown writers may need PG writes, so acquiring
+pre32 SHARE locks before draining their originals can deadlock the cutover.
+Other original/pre32 routes stay unchanged; no full legacy freeze authority.
+
+File Map (exact four files):
+- Modify scripts/deployment-dashboard-cutover-adapter-v2.mjs: reservation-only
+  canonical lazy import; private draining stage and original JS/child custody;
+  resource-free genuine-handle checks before subsequent nominated cuts.
+- Test scripts/__tests__/deployment-dashboard-cutover-adapter-v2.test.js: one
+  finite registry TS bridge in owner fixtures; actual held-producer ordering,
+  unknown-child refusal, finite owned real-child control and pending reentry.
+- This paired plan and docs/superpowers/specs/2026-10-07-preserved-dashboard-cutover-v2-design.md.
+No registry/owner/provider/launcher/PG/native/Python/CLI/package/service edits.
+
+Interfaces consumed (canonical existing compiled module only):
+acquireDashboardCutoverLocalProducerDrainV2():Promise<object>;
+assertDashboardCutoverLocalProducerDrainV2(handle:object):void;
+acquireDashboardCutoverLocalChildDrainV3(jsHandle:object):Promise<object>;
+assertDashboardCutoverLocalChildDrainV3(handle:object):void.
+No new public interfaces or caller-supplied module/promise/handle/ports.
+
+- [ ] Step1: root inline spec/plan self-review and independent nomination gates.
+  Exact fixed URL ROOT+'/dist/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js';
+  authenticate bilateral scopes, then enter private draining stage before JS
+  acquisition. Genuine participant live-token ports reject this stage. Retain
+  original native promises and fulfilled handles BEFORE fallible post-checks.
+- [ ] Step2: actual ordering RED before production edits. Register an async
+  producer with a held original native promise in SAME canonical module:
+  let finish;const original=new Promise(resolve=>{finish=resolve});
+  const producer=local.withDashboardCutoverLocalProducerAsyncV2('workflow-uninstall',()=>original);
+  const reservation=adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner);
+  // Observe actual fresh-entry refusal OR actual first PG open, not timer success.
+  // Snapshot BEFORE releasing same original; always settle it before assertions.
+  assert.equal(before.open,0);assert.equal(before.reservationSpawns,0);
+  assert.equal(before.freshEntryRefused,true);
+  Explicit unknown execFile return must refuse before PG/ROOT after JS settles;
+  do not claim a process double as executed-child authority. Retain all original
+  program/intent/result/pins/EOF-close records; setup failures are separate.
+  Run fixed Node26 builtin test with shared NODE_PATH and literal esbuild loader:
+  node --test --test-name-pattern='local drain' scripts/__tests__/deployment-dashboard-cutover-adapter-v2.test.js
+- [ ] Step3: minimal source after genuine RED. Prepare canonical registry only
+  for reservation; after enrollment set stage='draining'. For each fixed JS then
+  child occurrence retain intent, same native promise and actual fulfillment
+  value before validation; child consumes SAME authentic JS handle. Authenticate
+  both with canonical assertions before marking ready/working or invoking pre32.
+  checkOperation resource-free checks ready handles; failures burn and retain
+  unknown originals, no cleanup/refresh/retry. No asynchronous checking flag or
+  new generic callback exported to production callers.
+- [ ] Step4: fresh focused GREEN plus old original/pre32/reservation controls,
+  existing local drain consumer regressions, strict noEmit/syntax/contracts/diff.
+  Real owned Node child must naturally complete original exit+close and both
+  streams; no signal/cancel or unobserved timeout counted as drained. Pending
+  drain reentry must deny before proxy traps/PG/ROOT and keep sticky lifetime.
+  Root and two independent reviewers read exact changed bytes and retained
+  original evidence. Actual build is still not replaced by manual TS/noEmit.
+- [ ] Step5: normal scoped commit/push and append-only PR exact-head evidence;
+  update private handoff. Continue remaining positive execution-owner coupling,
+  finite cooperative old-process/root exclusion, phase/effects/controller/entry
+  and reviewed clean-main+native/current-host proof, not Task6A.

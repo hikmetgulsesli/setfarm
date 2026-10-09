@@ -3754,3 +3754,55 @@ reservation/legacy close/retry stay quarantined, with no traps/ports/disposal.
 Full positive execution-worktree DB+FS owner coupling, finite legacy exclusion,
 selected source/selector, changing phase/durable intents, six effects/controller/
 authenticated foreground/current host and genuine clean-main build remain open.
+
+## Task4i.8 nomination: canonical local JS/child drain before PG locks
+
+The next bounded gate belongs to the same owner-bound reservation route. It
+must stop admitting this canonical application's registered producers and await
+their actual original native promises, then separately await nominated execFile
+children's original exit/close and streams BEFORE entering pre32 PG locks.
+Uninstall/teardown originals may require PG writes: waiting under the SHARE
+locks can deadlock. A diagnostic/DATA conjunction lacks actual producer freeze;
+draining inside the held transaction has the wrong ordering. Select the existing
+canonical source-owned registry before the transaction, without registry edits.
+
+Only reservation preparation lazily imports the fixed compiled module
+ROOT+'/dist/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js'.
+Retain that original import exactly like existing canonical imports. Old original
+and pre32 routes must not import or acquire it. After authentic bilateral scope
+enrollment set private stage='draining'; genuine participant live-token ports
+deny that stage. Acquire fixed zero-arg acquireDashboardCutoverLocalProducerDrainV2,
+then acquireDashboardCutoverLocalChildDrainV3 using SAME returned JS handle.
+Private occurrence records retain intent, original native promises and actual
+fulfilled handles BEFORE fallible post-await checks. Losing a response never
+permits replacing handles, retrying acquisition or treating eventual settlement
+as a fresh authority. Keep originals in unknown custody even on refusal.
+
+Canonical assertDashboardCutoverLocalProducerDrainV2 and
+assertDashboardCutoverLocalChildDrainV3 authenticate both WeakMap handles before
+marking ready/working and invoking definition pre32. Subsequent checkOperation
+cuts assert retained ready handles resource-free; no reverse PG/owner/FS reads,
+caller callbacks or caller handles. Pending drain reentry burns shared lifetime
+before parsing and cannot dispatch PG/ROOT or dispose bilateral originals.
+The existing owner-invocation embargo remains distinct and unchanged.
+
+Exact four-file map: adapter.mjs, adapter builtin test, paired plan/spec. Owner
+fixture adds exactly one finite TS bridge from actual registry .ts to canonical
+dist/internal-production .js before fixture source finalization. Manual outputs
+and PG/native/Python doubles remain explicit. No new exported production API,
+declaration/registry/owner/provider/native/Python/launcher/CLI/live wiring edit.
+
+Qualification must reproduce actual missing ordering, not an API-existence RED:
+hold SAME registered producer native promise; observe actual first PG open or
+monotonic fresh-producer refusal; snapshot PG/ROOT BEFORE releasing original;
+then naturally settle original and evaluate literal zero-before expectations.
+Unknown original child return must block before PG/ROOT even with settled JS.
+Complementary owned real Node child earns only that child leaf's natural
+exit/close/stream receipt, not whole native or host qualification. A timeout is
+test failure/unknown, never accepted drainage. Preserve all original programs,
+envelopes, pins and source-only/double boundaries. No reset/revert of user bytes.
+
+This canonical registry covers only nominated current-process source consumers.
+It is not finite old-loaded-process exclusion, queued legacy contender freeze,
+positive execution-owner PG+physical binding, final-lstat-to-unlink monotonicity,
+six-effect/controller/foreground/native build or live port3333 qualification.
