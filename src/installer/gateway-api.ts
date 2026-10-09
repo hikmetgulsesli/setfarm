@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { execFile } from "node:child_process";
+import { execFileDashboardCutoverLocalChildV3 as execFile } from "../internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js";
 import { logger } from "../lib/logger.js";
 
 // Fetch with AbortController timeout — prevents medic/cron from hanging forever

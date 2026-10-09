@@ -2848,3 +2848,100 @@ Closed recipe: one compilation, nm undefined/export audit and otool dependency
 audit, twenty-eight fresh consumers; maximum32commands, zerojobs. Each original
 command retains natural exit, both EOF/close and fixed20s mark-only watchdog.
 No kill, cleanup, retry, prior campaign replay or live fixture adoption.
+
+## Task4h.3: source-owned nominated child custody
+
+Causal need: gateway and Medic can settle their ordinary callback/promise while
+the originally dispatched child or output pipes remain unresolved. The current
+V2 JS handle must remain JS-only. Add a distinct V3 child-custody handle in the
+SAME private ALS registry, integrating the two gateway callback launch ports
+and two Medic promisified helpers. No public attach(child), caller-provided
+child/PID/birth, provider injection, permit, settlement boolean or reset.
+
+Trusted callback integration has exactly these typed overloads:
+
+```ts
+type LocalChildCallbackV3 = (error: ExecFileException | null,
+  stdout: string, stderr: string) => void;
+function execFileDashboardCutoverLocalChildV3(file: string,
+  args: readonly string[], callback: LocalChildCallbackV3): void;
+function execFileDashboardCutoverLocalChildV3(file: string,
+  args: readonly string[], options: ExecFileOptionsWithStringEncoding,
+  callback: LocalChildCallbackV3): void;
+function execFileDashboardCutoverLocalChildAsyncV3(file: string,
+  args: readonly string[], options: ExecFileOptionsWithStringEncoding):
+  Promise<{ stdout: string; stderr: string }>;
+```
+
+Preserve actual UTF-8/default encoding options; consumers ignore the original
+ChildProcess return. Async uses the captured builtin promisified result/rejection
+and options but never exposes its private original promise.child. Acquisition is
+acquireDashboardCutoverLocalChildDrainV3(jsDrainHandle):Promise<object>;
+assertDashboardCutoverLocalChildDrainV3(childDrainHandle):void. Only the genuine
+same-instance V2 JS handle is accepted, not a caller closure/count or brand.
+
+Reserve a child occurrence for EVERY dispatch through these four source ports,
+including ordinary roots while admission is open, BEFORE dispatch. Invoke the
+actual captured Node execFile primitive,
+or its builtin promisified implementation, and seal the original returned
+ChildProcess and original stdout/stderr synchronously before yielding. Retain
+owned stdin if supplied by the builtin and require its original close, but no
+input EOF for this writable stream. Original promises, children, streams,
+dispatch attempts and observer outcomes remain private. No child is returned
+to callers. Duplicate/missing/fake originals or observer/dispatch uncertainty
+burn ONLY child authority and retain the attempted/returned originals.
+
+Settlement requires the same original child's natural exit and close with
+integer exit status/null signal, both original output end AND close events,
+consistent observations and no child/stream errors. Nonzero natural exit may
+settle custody while ordinary business rejection remains. Callback/promise
+completion, killed flags, timeout, exit alone, destroyed pipes or close without
+EOF never settle custody. Use captured intrinsic prependOnceListener before
+existing business/error listeners; a throwing callback must not prevent prior
+custody observation. Observers burn without throwing into ordinary dispatch.
+No added kill, cancellation, timeout, retry or cleanup.
+Review assumes pinned closed Node/loaded consumer code; public EventEmitter
+observations do not establish universal resistance to hostile same-process
+prototype/event synthesis. No grandchildren/remote-effect closure is claimed.
+
+Preserve ordinary callback arguments/errors and promisified result/rejection
+without waiting for custody or replacing failures with a drain error. Child
+burn must not prevent ordinary pre-closure fallback (e.g. failed which→npx).
+Continue recording still-permitted admitted dispatches even after child burn.
+Keep uncertainty per occurrence: independently known later originals may leave
+custody after complete natural settlement even though authority stays permanently
+burned. Retain genuinely uncertain records; no global-burn memory leak of every
+future ordinary child/result. A never-spawned constructed ChildProcess is refused;
+positive original PID is sanity data only, not birth/owner authority.
+Existing timeouts/maxBuffer/arguments/environment/cached binary remain unchanged.
+An inert execFile double returning undefined or a fake child preserves ordinary
+business results but can never mint child authority. JS authority is unchanged.
+
+Coverage is all original children dispatched through the four source ports in
+this authenticated module instance, NOT every gateway JS/HTTP root. Before local
+closure, ordinary and ended-ancestry roots preserve business behavior and record
+their child attempts. Once JS admission closes, only genuine still-live
+registered ALS ancestry may finish/nest; fresh roots, outside-ancestry Medic
+status and ended queued ancestry refuse BEFORE execFile. This four-port launch
+fence is causally necessary: ignoring fresh status/gateway launches leaves child
+closure unstable. No new JS kind or whole JS/HTTP lifetime claim. Independent
+HTTP roots, legacy actors, remote effects, descendants and other module/process
+instances still require separately qualified profiles.
+
+V3 acquisition is once-only, rejects self-acquisition, requires the actual V2
+handle and waits for its private admitted-child occurrences to settle. A known
+burn wakes a pending acquire with a fixed secret-free refusal, retaining unknown
+originals. Retain the SAME original V2 handle privately; validate it at entry,
+after every wait, immediately before V3 mint and on every V3 assertion. Existing
+JS burn must also notify a pending child wait so it promptly refuses, without
+releasing child/JS originals. A previously minted child handle fails when that
+prerequisite burns. Child burn does not conversely invalidate the JS handle.
+Successful publication is an empty frozen null-prototype WeakMap
+handle. Wrong arity/foreign/proxy/wrong-instance/V2-as-V3 handles refuse; repeated
+acquisition burns child authority without affecting existing JS authority.
+
+Qualification is actual source consumer behavior and fresh bounded one-shot
+Node children with natural close/EOF. No real cron, systemctl, gateway, PG,
+provider, signal-driven timeout campaign, live job or old fixture replay.
+Synthetic missing/error/timeout samples earn refusal credit only. The capability
+is NOT global/legacy/remote/descendant/source/owner/phase/startup authority.

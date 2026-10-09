@@ -43,16 +43,19 @@ const api=await import(${JSON.stringify(gateway)}),local=await import(${JSON.str
 ${body}
 assert.deepEqual(unhandled,[]);out.passed=true;
 }catch(e){out.error=e.message??String(e)}process.stdout.write(JSON.stringify(out));`;
+  fs.writeFileSync(path.join(fixture, "intent.json"), JSON.stringify({ program, loader }), { flag: "wx", mode: 0o600 });
   const child = spawn(process.execPath, ["--import", loader, "--input-type=module", "-e", program], {
     cwd: fixture, env: disabled ? { SETFARM_DISABLE_OPENCLAW_CLI_FALLBACK: "1" } : {},
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "", stderr = "", bytes = 0, unknown: Error | undefined;
   const eof = { stdout: false, stderr: false };
+  const closes = { stdout: false, stderr: false };
   child.on("error", error => { unknown ??= error; });
   for (const [stream, name] of [[child.stdout, "stdout"], [child.stderr, "stderr"]] as const) {
     stream.on("error", error => { unknown ??= error; });
     stream.on("end", () => { eof[name] = true; });
+    stream.on("close", () => { closes[name] = true; });
     stream.on("data", (chunk: Buffer) => {
       bytes += chunk.length;
       if (bytes > 1048576) { unknown ??= Error("CAPTURE_UNKNOWN"); return; }
@@ -61,10 +64,14 @@ assert.deepEqual(unhandled,[]);out.passed=true;
   }
   const [status, signal] = await new Promise<[number | null, NodeJS.Signals | null]>(resolve =>
     child.on("close", (code, sig) => resolve([code, sig])));
+  fs.writeFileSync(path.join(fixture, "result.json"), JSON.stringify({ stdout, stderr, status, signal, eof, closes,
+    unknown: unknown?.message }), { flag: "wx", mode: 0o600 });
+  console.log(JSON.stringify({ fixture, status, signal, eof, closes }));
   assert.equal(unknown, undefined);
   assert.equal(signal, null);
   assert.equal(status, 0, stderr);
   assert.deepEqual(eof, { stdout: true, stderr: true });
+  assert.deepEqual(closes, { stdout: true, stderr: true });
   assert.equal(stderr, "");
   const result = JSON.parse(stdout);
   assert.equal(result.error, undefined, result.error);

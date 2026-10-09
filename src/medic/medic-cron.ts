@@ -8,19 +8,16 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { deleteCronJob } from "../installer/gateway-api.js";
 import { resolveSetfarmCli } from "../installer/paths.js";
 import { readOpenClawConfig, writeOpenClawConfig } from "../installer/openclaw-config.js";
 import { assertOrdinaryConfigurationDeploymentCutoverAdmissionV2 } from "../internal-production/baseline-dashboard-cutover-configuration-refusal-v2.js";
-import { withDashboardCutoverLocalProducerAsyncV2 } from "../internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js";
+import { withDashboardCutoverLocalProducerAsyncV2, execFileDashboardCutoverLocalChildAsyncV3 as execFileAsync } from "../internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js";
 
 const MEDIC_CRON_NAME = "setfarm/medic";
 const MEDIC_SERVICE_NAME = "setfarm-medic.service";
 const MEDIC_TIMER_NAME = "setfarm-medic.timer";
 const MEDIC_ENV_NAME = "setfarm-medic.env";
-const execFileAsync = promisify(execFile);
 
 function systemdEnv(): NodeJS.ProcessEnv {
   const uid = os.userInfo().uid;

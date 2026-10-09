@@ -1868,3 +1868,120 @@ diffccf98f all0. No oldcampaignreplay; original64fc receipts remain historical.
 ActualnormalNodepublication and persistentpublicrefusal only, not private-state
 oracle/injectedNAPIerror/reentry/kernel/job/source/phase/startup AUTH. Freshfinal
 source/evidence review and forwarddelivery remain pending.
+
+Task4i.0/0b delivery supersedes pending text above: independent final exact-byte
+source/evidence C0/I0/M0, normal forward fdfbccfc after preserved5b514935,
+48fdec→519812 push ae→fdf, PR280 OPEN DRAFT exactfdf with originalbody prefix
+preserved and serverbodyexactprivate53579B SHA172822370488cf330701e39259e2a66ac338946ff6255a183187fbd0fa8337ac.
+ExactheadGitGuardianSUCCESS2026-10-08T23:42:11Z; reviews[]/inlinecomments[].
+No merge, clean-mainbuild, installedjobAUTH or live3333 credit. Original two
+dirty files remain exacta1fff41c/4cd12cde; all qualified fixtures retained.
+
+## Task4h.3: original nominated child/pipes custody (implementation pending)
+
+Spec: paired Task4h.3. Scope refinement is causally necessary for actual
+producer termination before full adapter composition, not unrelated process
+management. Existing JS-only capability meaning and business paths stay.
+
+File Map: modify src/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.ts,
+src/installer/gateway-api.ts and src/medic/medic-cron.ts; create
+tests/internal-production/baseline-dashboard-cutover-local-child-drain-v3.test.ts
+and tests/medic-owned-child-consumer-v3.test.ts plus
+tests/gateway-api-child-custody-v3.test.ts. Update existing gateway helper/
+CLI-settlement/model tests and existing local-producer test only as needed to
+bind genuine registry; enroll the new pure test in package.json. Paired docs.
+Root sole writer, implementation inline; read-only nomination/final reviews.
+
+Interfaces: callback void execFileDashboardCutoverLocalChildV3 with original
+callback argument shapes; async execFileDashboardCutoverLocalChildAsyncV3 returns
+the builtin stdout/stderr result without exposing the original child;
+acquireDashboardCutoverLocalChildDrainV3(jsDrainHandle):Promise<object> and
+assertDashboardCutoverLocalChildDrainV3(childDrainHandle):void. Literal same-
+instance V2 handle, private child Set and source-owned dispatch only.
+
+- [ ] Independently review exact paired typed overloads, original Node
+  execFile/promisify ports and prepend-before-business observers before source
+  changes. Four-port child fence does not cover whole JS/HTTP/legacy lifetime.
+- [ ] Add actual-module missing-export RED and actual consumer regressions:
+  ```ts
+  // Inside a registered producer, dispatch a finite original child then return.
+  const js = await acquireDashboardCutoverLocalProducerDrainV2();
+  const childHeld = acquireDashboardCutoverLocalChildDrainV3(js);
+  // The original child's exit AND output EOF/close, not the JS return, settle it.
+  ```
+  Include callback and builtin-promisified paths, nonzero natural exit, live
+  nesting during closure, ended/fresh/status denial, outside-ancestry OPEN
+  business compatibility with actual child retention,
+  foreign/duplicate/self handles, fake-return business compatibility and burn
+  notification. V2 burn while V3 pending promptly refuses, retains original
+  custody, and V2 burn after V3 mint invalidates V3; child-only burn leaves V2
+  valid. Literal output/order assertions; no public child-attach oracle.
+- [ ] Run actual functional/missing-export RED before implementation, capture
+  natural test process/child exit/EOF/close; no timeout-kill fixture or old replay.
+- [ ] Implement private reserve-before-dispatch, genuine original return/pipes,
+  separate childburn/wake/WeakMap and once-only acquisition.
+  Retain/revalidate the genuine original V2 handle before/after wait/pre-mint/on
+  assertion; JS burn notifies child wait, without reciprocal JS invalidation.
+  Preserve ordinary callback/promise results without custody waiting or new
+  cancellation. Closed
+  admission alone denies fresh launch, not a pre-closure child-authority burn.
+- [ ] Replace exactly gateway which/CLI and Medic two systemctl helpers; remove
+  only obsolete direct import/promisifier. Preserve four literal arguments,
+  timeout30000, error precedence, PATH/npx/cache and complete systemd environment.
+  Test actual selected/full-imported consumers with inert external ports.
+- [ ] Focused child/source/JS/config/cleanup matrix and strict noemit/contracts;
+  classify synthetic refusal separately from real natural child qualification.
+  No full build on dirty worktree or provider/PG/cron/systemctl effects.
+- [ ] Fresh independent exact-byte source/evidence reviews; scoped root normal
+  commit/push/scanner and preserved DRAFT PR append. Child cap remains nominated
+  originals only; full adapter/legacy/remote/held derivative/currenthost/sidecar/
+  foreground and clean-main/live3333 obligations remain required.
+
+Task4h.3 design chooses all-four-port child launch fencing at actual JS closure
+over the earlier untracked outside-ancestry proposal. This is necessary for
+stable child-only termination, not a new JS kind or whole HTTP/legacy/global
+freeze claim. Actual Node source confirms callback errors may precede close and
+native spawn precedes fallible pipe setup. Diagnostics-channel/prototype/manual
+event mutation is outside the trusted closed-loaded-code profile, not an ignored
+universal threat. Implementation/evidence receipts are recorded below.
+
+### Task4h.3 implementation qualification, 2026-10-09/00:07UTC
+
+Actual missing-export RED fb7359:0P6F442.301083ms before source; original
+retained six intent/results. Actual full-module gateway RED1312a0:0P2F and
+Medic REDe92140:0P2F before respective source ports changed. Initial source
+six GREENc9730f; synthetic never-spawned ChildProcess RED324f58 then positive
+original PID sanity guard. PID is not source/owner/birth AUTH.
+
+Independent review found I1 ordinary memory retention after one global child
+burn. Actual finite child WeakRef/GC RED228c0f fails known-original collectibility;
+retain its complete original fixture W2WKs9 (tool text was truncated). Minimal
+per-occurrence uncertainty fix + WeakMap original identity preserves permanent
+authority burn while releasing independently known natural completed originals.
+GREENde4c03. Unknown original occurrences stay retained, ordinary OPEN dispatch
+and fallback unchanged. This is causally necessary ordinary resource safety,
+not a relaxation of the drain gate.
+
+Final matrix146b49→85f8db:143PASS/0FAIL/0SKIP10689.779375ms:35localJS,
+14existinggateway,2newgateway,14child,8Medic,37configuration,33cleanup.
+Actual finite child positives earn natural original closure credit; constructed
+object/output-destroy negatives earn refusal only. Medic systemctl/FS and gateway
+CLI/HTTP are inert external doubles exercising actual full imported consumers;
+not host effects or their child qualification. Strict81c4df→72d064:1190files,
+0diagnostics including new test files; versionccdf0a/English248dc0/pathe104d1/
+diff60f24e all0. No dirty build/guard bypass or old native campaign replay.
+
+Source35cc9436, gateway81959cb7, Medicbb91eb6c; new child84718104,
+gatewaycff7a823, Medica093b9ec, package730a45bf. Explicit pure enrollment uses
+test:dashboard-local-custody; no automated real systemctl/provider/PG/cron.
+Private complete original ledger:logs/2026-10-09-dashboard-cutover-local-child-original.md.
+Final two-seat reviewed delivery pending; full six-effect adapter/legacy/current
+job qualification/held derivative/sidecar/foreground/clean-main/live3333 remain.
+
+Gateway receipt-only helper refinement d93e700c persists actual intent/result
+and explicitly observes both pipe close. Separate16post-refinement actual
+gateway consumers5fbff6→d06063:16PASS/0FAIL/0SKIP1191.949666ms; earlier143
+matrix retains its original snapshot, no relabelling. Refreshed strict also
+includes this imported helper. Ten-file scoped delivery nomination; no production
+change after143 matrix. Final reviewers independently read all retained14child,
+8Medic and refreshed16gateway programs/results, not merely aggregate prose.
