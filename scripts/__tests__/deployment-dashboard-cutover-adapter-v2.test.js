@@ -40,6 +40,10 @@ function jointFixture(resources=false,pre32=false,bounded=false,owner=false,owne
       'baseline-deployment-cutover-publication-v1','baseline-deployment-cutover-v1','baseline-workspace-authority-path-v1',
       'baseline-dashboard-cutover-local-producer-drain-v2'])
       bridgeList.push(['src/internal-production/'+name+'.ts','dist/internal-production/'+name+'.js']);
+    for(const name of ['baseline-positive-worktree-physical-catalog-v2',
+      'baseline-positive-worktree-active-binding-snapshot-v1',
+      'baseline-positive-worktree-active-row-snapshot-v2','baseline-positive-worktree-binding-rows-v1'])
+      bridgeList.push(['src/internal-production/'+name+'.ts','dist/internal-production/'+name+'.js']);
   }
   const files=Object.fromEntries(scripts.map(n=>['scripts/'+n,fs.readFileSync(sourceRoot+'/scripts/'+n)]));
   if(owner)for(const name of ['build-generation-maintenance-journal.mjs','build-generation-maintenance-owner-observer.mjs',
@@ -98,6 +102,9 @@ function jointFixture(resources=false,pre32=false,bounded=false,owner=false,owne
     home=fs.realpathSync(fs.mkdtempSync('/private/tmp/setfarm-joint-launcher-v4.'));fs.chmodSync(home,0o700);
     fs.mkdirSync(home+'/Library/LaunchAgents',{recursive:true,mode:0o700});
     fs.mkdirSync(home+'/ai/setrox/data/internal-production-baseline',{recursive:true,mode:0o700});
+    if(owner)for(const suffix of ['ai/setrox/setfarm','ai/setrox/mission-control','projects',
+      '.openclaw/workspace/agent-scratch','.openclaw/workspaces/workflows'])
+      fs.mkdirSync(home+'/'+suffix,{recursive:true,mode:0o700});
   }
   const {root}=createFinalizedFixture(files),bridges=[];
   const initialOutputs=['dist/cli/cli.js','dist/server/daemon.js','dist/service.js','dist/spawner.js',
@@ -146,6 +153,16 @@ function resourceProgram(fixture){return `
   const nativeSpawnSync=cp.spawnSync;
   cp.spawnSync=(command,args,options)=>{
     if(command==='/usr/bin/git')return nativeSpawnSync(command,args,options);
+    ${fixture.owner?`if(command==='/usr/sbin/lsof'){
+      assert.ok([4,6].includes(args.length));
+      const excluded=args.length===6;
+      assert.deepEqual(args.slice(0,2),['-nP','-F0']);
+      if(excluded)assert.deepEqual(args.slice(2,4),['-p','^'+process.pid]);
+      assert.equal(args[excluded?4:2],'+D');assert.ok(args.at(-1).startsWith(home+'/'));
+      out.lsofObservations??=[];out.lsofObservations.push({authority:'explicit-inert-lsof-not-host-census',args:[...args]});
+      const pid=globalThis.physicalProbe?.pid;
+      return {status:pid?0:1,signal:null,stdout:pid?Buffer.from('p'+pid+'\\0n'+args.at(-1)+'\\0\\n'):Buffer.alloc(0),stderr:Buffer.alloc(0)};
+    }`:''}
     ${fixture.owner?`if(command==='/usr/sbin/sysctl'||command==='/bin/ps'){
       assert.deepEqual(args,command==='/usr/sbin/sysctl'?['-n','kern.boottime']:
         ['-p',String(process.pid),'-o','uid=','-o','lstart=','-o','pgid=','-o','stat=']);
@@ -219,7 +236,14 @@ function resourceProgram(fixture){return `
     loadCalls++;loaderCache[p]={id:p,filename:p,loaded:true,exports:loadedExports};return loadedExports};loader.cache=loaderCache;
   moduleBuiltin.createRequire=url=>{assert.equal(url,'file://'+root+'/scripts/dashboard-cutover-native-sidecar-v2.mjs');return loader};
   const originalOpen=fs.openSync,originalClose=fs.closeSync,originalStat=fs.fstatSync,fdPaths=new Map();let onPort=()=>{};
-  fs.openSync=(p,...args)=>{const fd=originalOpen(p,...args);fdPaths.set(fd,String(p));
+  fs.openSync=(p,...args)=>{
+    const physical=globalThis.physicalProbe?.capture&&(Error().stack.split('\\n')[2]??'').includes('baseline-positive-worktree-physical-catalog-v2.js');
+    let occurrence;
+    if(physical){out.physicalFds??=[];occurrence={generation:out.physicalFds.length+1,path:String(p),intent:true,returned:false,fd:null,closeIntents:0};out.physicalFds.push(occurrence)}
+    const fd=originalOpen(p,...args);fdPaths.set(fd,String(p));
+    if(occurrence){occurrence.fd=fd;occurrence.returned=true;const s=originalStat(fd,{bigint:true});
+      occurrence.identity={dev:String(s.dev),ino:String(s.ino),birthtimeNs:String(s.birthtimeNs),mode:String(s.mode),uid:String(s.uid)}}
+    if(occurrence){out.portCounts??={};out.portCounts['physical:openSync']=(out.portCounts['physical:openSync']??0)+1}
     ${fixture.owner?`if((Error().stack.split('\\n')[2]??'').includes('deployment-dashboard-cutover-first-generation-v2.mjs')){
       out.reservationFds??=[];out.reservationFds.push({fd,path:String(p)});
       out.portCounts??={};out.portCounts['reservation:openSync']=(out.portCounts['reservation:openSync']??0)+1;
@@ -229,14 +253,24 @@ function resourceProgram(fixture){return `
     const stack=Error().stack,frames=stack.split('\\n'),direct=(frames[3]??'').includes('at port ');
     const owner=direct&&(frames[2]??'').includes('dashboard-cutover-native-sidecar-v2.mjs')?'native':
       direct&&(frames[2]??'').includes('baseline-deployment-cutover-launcher-observation-v1.js')?'definition':
+      (frames[2]??'').includes('baseline-positive-worktree-physical-catalog-v2.js')?'physical':
       ${fixture.owner?"(frames[2]??'').includes('deployment-dashboard-cutover-first-generation-v2.mjs')?'reservation':":''}'composite';
-    const row={name,owner,scopeEnrollment:stack.includes('at enroll '),
+    const row={name,owner,physicalOwnerEntry:stack.includes('assertHeldDashboardCutoverJointPhysicalOwnerEntryV4'),
+      physicalFullAssertion:stack.includes('assertHeldDashboardCutoverJointPhysicalReservationV4'),scopeEnrollment:stack.includes('at enroll '),
+      physicalStack:owner==='physical'?frames.filter(frame=>frame.includes('baseline-positive-worktree-physical-catalog-v2.js')):null,
       scopePass:!stack.includes('at enroll ')&&(stack.includes('assertHeldDashboardCutoverLoadedJobOperationV4')||
       stack.includes('assertHeldDashboardCutoverApprovedDefinitionOperationV4')),path:typeof args[0]==='number'?fdPaths.get(args[0]):String(args[0])};
     ${fixture.bounded?`row.fd=typeof args[0]==='number'?args[0]:null;
     out.portCounts??={};const key=owner+':'+name;out.portCounts[key]=(out.portCounts[key]??0)+1;
     if(owner!=='composite'&&out.ports.length<32)out.ports.push(row);`:'out.ports.push(row);'}
+    if(name==='closeSync')for(const occurrence of out.physicalFds??[])
+      if(occurrence.fd===args[0]&&occurrence.returned&&!occurrence.closeReturned)occurrence.closeIntents++;
     const result=original(...args);if(name==='readSync')row.result=result;
+    if(name==='readSync'&&owner==='physical'){
+      out.physicalReads??=[];out.physicalReads.push({fd:args[0],path:fdPaths.get(args[0]),position:args[4],length:args[3],result});
+    }
+    if(name==='closeSync')for(const occurrence of out.physicalFds??[])
+      if(occurrence.fd===args[0]&&occurrence.returned&&!occurrence.closeReturned)occurrence.closeReturned=true;
     ${fixture.bounded?"if(name==='closeSync')fdPaths.delete(args[0]);":''}
     onPort(row);return result;
   }}
@@ -686,6 +720,7 @@ test('fixed pre32 original-operation interfaces exist before participant or data
 const pre32Driver=String.raw`
 export default function postgres(url,options){
   const p=globalThis.pre32Probe;assertTarget();p.open++;p.openObserved?.();
+  const transaction='modeled-original-tx-'+p.open;
   function assertTarget(){if(url!=='postgresql://FIXTURE_ONLY@localhost/setfarm')throw Error('UNEXPECTED_FIXTURE_TARGET')}
   const tx=async strings=>{
     const q=strings.join('');p.queries++;
@@ -693,17 +728,40 @@ export default function postgres(url,options){
     if(q.includes('FROM public.setfarm_schema_migrations')&&q.includes('ORDER BY version'))
       return [26,27,28,29,30,31].map(version=>({version,state:'applied'}));
     if(q.includes('WITH expected_tables(name)'))return [{laterJournalCount:'0',relationCount:'0',functionCount:'0',typeCount:'0',triggerCount:'0'}];
-    if(q.includes('WITH required_columns('))return [{catalogViolationCount:'0',aprbChildViolationCount:'0',ordinaryBatchViolationCount:'0',activeHeaderViolationCount:'0',
+    if(q.includes('WITH required_columns(')){p.censusTransaction=transaction;return [{catalogViolationCount:'0',aprbChildViolationCount:'0',ordinaryBatchViolationCount:'0',activeHeaderViolationCount:'0',
       ownerReservationsRelation:null,ownerAdmissionHeadRelation:null,producerSourceRelation:null,producerActivationRelation:null,producerActivationHeadRelation:null,producerCurrentRelation:null,
       activeRunCount:'0',openClaimCount:'0',executionAttemptCount:'0',activeRuntimeSessionCount:'0',activeCompletionOwnerCount:'0',unsettledMandatoryEffectCount:'0',
-      artifactReservationCount:'0',publicationBatchCount:'0',artifactPublicationCount:'0',terminationOwnerCount:'0',findingOwnerCount:'0',recoveryOwnerCount:'0',operationalDeliveryCount:'0'}];
+      artifactReservationCount:'0',publicationBatchCount:'0',artifactPublicationCount:'0',terminationOwnerCount:'0',findingOwnerCount:'0',recoveryOwnerCount:'0',operationalDeliveryCount:'0'}]}
     if(q.includes('FROM public.finding_sets ORDER BY')||q.includes('FROM public.findings ORDER BY')||q.includes('finding_sets'))return [];
     throw Error('UNEXPECTED_QUERY');
   };
   tx.unsafe=async(q,parameters)=>{
     p.queries++;p.events.push(q);
+    if(q.includes('oversizedRunCount')||q.includes('oversizedAttemptCount')||
+      q.startsWith('SELECT id AS "runId"')||q.startsWith('SELECT id::text AS "claimId"')||
+      q.startsWith('SELECT attempt_id AS "attemptId"')||q.startsWith('SELECT session_id AS "sessionId"')){
+      const binding=q.includes('fence_token AS "fenceToken"')||
+        (q.includes('oversizedAttemptCount')&&!q.includes('oversizedRunCount'));
+      let rows=[];
+      if(q.includes('oversizedRunCount'))rows=[{runCount:'0',claimCount:'0',attemptCount:'0',sessionCount:'0',
+        oversizedRunCount:'0',oversizedClaimCount:'0',oversizedAttemptCount:'0',oversizedSessionCount:'0'}];
+      else if(q.includes('oversizedAttemptCount'))rows=[{attemptCount:p.scenario==='binding-crossed'?'1':'0',
+        sessionCount:'0',oversizedAttemptCount:'0',oversizedSessionCount:'0'}];
+      else if(q.includes('fence_token AS "fenceToken"')&&p.scenario==='binding-crossed')
+        rows=[{attemptId:'attempt-1',runId:'run-1',claimId:null,generation:1,fenceToken:'a'.repeat(64),
+          sourceSha:'b'.repeat(40),sourceTreeHash:'c'.repeat(40),worktreeRoot:null,disposition:'running'}];
+      p.bindingQueries??=[];p.bindingQueries.push({statement:q,transaction,binding,beginOccurrence:p.begins});
+      if(q.includes('oversizedAttemptCount')&&!q.includes('oversizedRunCount')&&p.scenario==='binding-drift'){
+        p.bindingObserved();await new Promise(resolve=>{p.resumeBinding=resolve});p.bindingSettled=true;
+      }
+      class Result extends Array {}
+      const result=new Result(...rows);
+      for(const key of ['count','state','command','columns','statement'])Object.defineProperty(result,key,{value:null,enumerable:false});
+      return result;
+    }
     if(q==='FIXTURE_EXACT_JOURNAL'){
       p.exactJournal++;
+      p.journalTransactions??=[];p.journalTransactions.push({transaction,beginOccurrence:p.begins});
       const stop=p.scenario==='callback-loss'?2:p.scenario==='final-loss'?4:0;
       if(p.exactJournal===stop){
         p.suspendedAt=p.exactJournal;p.suspendObserved();
@@ -715,6 +773,7 @@ export default function postgres(url,options){
   };
   return {options:{host:['localhost'],port:[5432],database:'setfarm',user:'FIXTURE_ONLY'},
     begin:async(mode,callback)=>{
+      p.begins=(p.begins??0)+1;
       p.mode=mode;p.held=true;p.events.push('begin');
       const driver=new Promise((resolve,reject)=>{p.rejectDriver=reject;
         const original=callback(tx);p.actualCallback=original;
@@ -723,7 +782,9 @@ export default function postgres(url,options){
       });p.actualDriver=driver;
       try{return await driver}finally{p.held=false;p.events.push('driver-return-or-reject')}
     },
-    end:async()=>{p.end++;p.events.push('end');p.endObserved()},
+    end:async()=>{p.end++;p.events.push('end');p.endObserved();
+      if(p.holdEnd){p.originalEndWait=new Promise(resolve=>{p.resumeEnd=resolve});await p.originalEndWait}
+      p.endReturned=true;p.events.push('end-returned')},
   };
 }
 `;
@@ -734,6 +795,7 @@ function pre32Setup(scenario){return `
   const p=globalThis.pre32Probe={scenario:${JSON.stringify(scenario)},events:[],queries:0,exactJournal:0,open:0,end:0,held:false,callbackSettled:false};
   p.suspended=new Promise(resolve=>{p.suspendObserved=resolve});
   p.ended=new Promise(resolve=>{p.endObserved=resolve});
+  p.bindingSuspended=new Promise(resolve=>{p.bindingObserved=resolve});
   const sources={postgres:${JSON.stringify(pre32Driver)},
     '../findings/finding-publication-v1.js':'export const observeLegacyFindingPublicationInventoryV1=()=>Object.freeze({authority:"diagnostic-only"});',
     '../db/contract-spine-migrations.js':'export async function verifyHeldPre32ContractSpineJournalIdentityV1(query){await query("FIXTURE_EXACT_JOURNAL",[31])}',
@@ -1002,6 +1064,258 @@ test('local drain lost original observer response retains SAME later fulfilled J
   assert.equal(p.open,0);assert.equal(p.queries,0);assert.deepEqual(localSnapshot().reservationPorts,{});
 `,{resources:true,pre32:true,owner:true,
   localDrainFault:process.env.SETFARM_LOCAL_DRAIN_COUNTERFACTUAL_RED==='1'?'drop-fulfilled-custody':false}));
+
+const physicalSnapshot=String.raw`
+  const physicalSnapshot=()=>({
+    descriptors:(out.physicalFds??[]).map(row=>{let state,identity;
+      try{const s=originalStat(row.fd,{bigint:true});state='live';identity={dev:String(s.dev),ino:String(s.ino),
+        birthtimeNs:String(s.birthtimeNs),mode:String(s.mode),uid:String(s.uid)}}catch(error){state=error.code}
+      return {...row,state,currentIdentity:identity??null}}),
+    reservationPorts:Object.fromEntries(Object.entries(out.portCounts??{}).filter(([key])=>key.startsWith('reservation:'))),
+    bindingQueries:p.bindingQueries??[],exactJournal:p.exactJournal,open:p.open,end:p.end,held:p.held,
+  });
+`;
+
+const capturePhysicalCoordinator=String.raw`
+  let actualCoordinator;
+  const originalWeakSet=WeakMap.prototype.set;
+  WeakMap.prototype.set=function(key,value){const returned=Reflect.apply(originalWeakSet,this,[key,value]);
+    if(value?.route==='reservation'&&value?.pre32&&value?.enrollments)actualCoordinator=value;
+    return returned};
+  const directPhysicalCounters=()=>Object.fromEntries(Object.entries(out.portCounts??{}).filter(([key])=>!key.startsWith('composite:')));
+`;
+
+const privatePhysicalGit=String.raw`
+  const privateGit=args=>{const result=cp.spawnSync('/usr/bin/git',args,{encoding:'utf8',env:{
+    PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_OPTIONAL_LOCKS:'0'}});
+    assert.equal(result.status,0,result.stderr);return result.stdout.trim()};
+  const privateRepo=(directory,origin)=>{
+    privateGit(['init','-q',directory]);privateGit(['-C',directory,'config','user.name','Fixture']);
+    privateGit(['-C',directory,'config','user.email','fixture@example.invalid']);
+    privateGit(['-C',directory,'commit','-q','--allow-empty','-m','initial']);
+    if(origin)privateGit(['-C',directory,'remote','add','origin',origin]);
+  };
+`;
+
+test('physical binding healthy retained linked marker and directories survive actual outer success',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+privatePhysicalGit+`
+  const primary=home+'/ai/setrox/setfarm',linked=home+'/ai/setrox/.worktrees/linked';
+  privateRepo(primary,'https://github.com/hikmetgulsesli/setfarm.git');
+  fs.mkdirSync(path.dirname(linked),{recursive:true,mode:0o700});
+  privateGit(['-C',primary,'worktree','add','-q','-b','retained-fixture',linked]);
+  `+participants+physicalSnapshot+`
+  globalThis.physicalProbe={capture:true};
+  const result=await adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner)
+    .then(()=>({success:true}),error=>({success:false,error:error.message}));
+  const snapshot=physicalSnapshot();
+  const markerReads=(out.physicalReads??[]).filter(row=>row.path===linked+'/.git');
+  out.physicalBinding={authority:'actual-private-Git-FS-originals-explicit-PG-lsof-Python-native-doubles',result,snapshot,markerReads};
+  assert.equal(result.success,true);
+  assert.ok(snapshot.descriptors.length>14);assert.ok(snapshot.descriptors.some(row=>row.path===linked+'/.git'));
+  assert.ok(markerReads.filter(row=>row.position===0&&row.result>0).length>=2);
+  assert.equal(new Set(markerReads.map(row=>row.fd)).size,1);
+  const markerOpens=snapshot.descriptors.filter(row=>row.path===linked+'/.git');
+  assert.equal(markerOpens.length,1);
+  assert.ok(markerReads.every(row=>row.fd===markerOpens[0].fd));
+  assert.ok(snapshot.descriptors.every(row=>row.state==='live'&&row.returned&&row.closeIntents===0&&
+    JSON.stringify(row.identity)===JSON.stringify(row.currentIdentity)));
+  assert.equal(p.open,1);assert.equal(p.begins,1);assert.equal(p.end,1);assert.equal(p.endReturned,true);
+  assert.equal(p.bindingQueries.length,8);assert.ok(p.bindingQueries.every(row=>row.transaction===p.censusTransaction&&row.beginOccurrence===1));
+  assert.equal(out.reservationChild.publishedWhilePgHeld,true);
+  assert.deepEqual(fs.readFileSync(baseline+'/deployment-cutover-v1/intent.json'),actualOpenBytes);
+  assert.deepEqual(fs.readFileSync(baseline+'/deployment-cutover-owner-v1/owner-0001.json'),actualClaimBytes);
+`,{resources:true,pre32:true,owner:true}));
+
+for(const kind of ['runtime','referenced-retained'])test('physical binding complete '+kind+' candidate still refuses cold-zero ROOT',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+privatePhysicalGit+`
+  const kind=${JSON.stringify(kind)};
+  const primary=kind==='runtime'?home+'/projects/project':home+'/ai/setrox/setfarm';
+  const linked=kind==='runtime'?primary+'/.worktrees/runtime':home+'/ai/setrox/.worktrees/retained';
+  privateRepo(primary,kind==='runtime'?null:'https://github.com/hikmetgulsesli/setfarm.git');
+  fs.mkdirSync(path.dirname(linked),{recursive:true,mode:0o700});
+  privateGit(['-C',primary,'worktree','add','-q','-b','candidate-fixture',linked]);
+  globalThis.physicalProbe={capture:false,pid:kind==='referenced-retained'?424242:null};
+  const physical=await import('./dist/internal-production/baseline-positive-worktree-physical-catalog-v2.js');
+  const diagnostic=await physical.observeCodeOwnedPositiveWorktreePhysicalCatalogV2();
+  assert.equal(diagnostic.status,'complete');assert.equal(diagnostic.entries.length,1);
+  assert.equal(diagnostic.entries[0].zone,kind==='runtime'?'runtime-zone':'retained-zone');
+  assert.deepEqual(diagnostic.entries[0].referencingPids,kind==='runtime'?[]:[424242]);
+  out.completeCandidate={authority:'actual-private-Git-FS-with-explicit-lsof-reference-double',kind,diagnostic};
+  `+participants+physicalSnapshot+`
+  globalThis.physicalProbe.capture=true;
+  const result=await adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner)
+    .then(()=>({success:true}),error=>({success:false,error:error.message}));
+  out.physicalBinding={authority:'actual-source-cold-zero-policy-with-explicit-PG-lsof-Python-native-doubles',result,snapshot:physicalSnapshot()};
+  assert.deepEqual(out.physicalBinding.snapshot.reservationPorts,{});assert.equal(result.success,false);
+  assert.equal(fs.existsSync(baseline+'/restart-authority-retirement-v1'),false);
+`,{resources:true,pre32:true,owner:true}));
+
+test('physical binding post-binding actual directory drift refuses owner and ROOT',()=>exercise(
+  pre32Setup('binding-drift')+ownerSetup+participants+physicalSnapshot+capturePhysicalCoordinator+`
+  globalThis.physicalProbe={capture:true};
+  const operation=adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner)
+    .then(()=>({success:true}),error=>({success:false,error:error.message}));
+  const boundary=await Promise.race([p.bindingSuspended.then(()=>({kind:'binding'})),operation.then(result=>({kind:'operation',result}))]);
+  if(boundary.kind!=='binding'){out.physicalBinding={boundary,snapshot:physicalSnapshot()};assert.equal(boundary.kind,'binding')}
+  const before=physicalSnapshot();fs.mkdirSync(home+'/projects/appeared-during-binding',{mode:0o700});
+  p.resumeBinding();const result=await operation;
+  out.physicalBinding={authority:'actual-private-held-directory-drift-during-SAME-modeled-query',before,result,snapshot:physicalSnapshot()};
+  assert.equal(p.bindingSettled,true);assert.equal(result.success,false);
+  assert.equal(actualCoordinator.reservation.invocationIntent,false);
+  assert.deepEqual(out.physicalBinding.snapshot.reservationPorts,{});
+  assert.equal(fs.existsSync(baseline+'/restart-authority-retirement-v1'),false);
+`,{resources:true,pre32:true,owner:true}));
+
+test('physical binding original final query loss revokes BEFORE suspended end and retains SAME FDs',()=>exercise(
+  pre32Setup('final-loss')+ownerSetup+participants+physicalSnapshot+capturePhysicalCoordinator+`
+  const physical=await import('./dist/internal-production/baseline-positive-worktree-physical-catalog-v2.js');
+  globalThis.physicalProbe={capture:true};p.holdEnd=true;
+  const operation=adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner);operation.catch(()=>{});
+  await p.suspended;assert.equal(p.suspendedAt,4);assert.equal(out.reservationChild.published,true);
+  p.rejectDriver(Error('ACTUAL_MODELED_BEGIN_RESPONSE_LOSS'));await p.ended;
+  const before=physicalSnapshot(),revokedBeforeEnd=actualCoordinator.revoked;
+  const ports=directPhysicalCounters();
+  assert.throws(()=>native.assertHeldDashboardCutoverLoadedJobOperationV4(actualCoordinator.enrollments[0].scope));
+  assert.throws(()=>definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4(actualCoordinator.enrollments[1].scope));
+  assert.throws(()=>physical.assertHeldDashboardCutoverJointPhysicalReservationV4(actualCoordinator.pre32.scope,actualOwner,actualCoordinator.token));
+  const afterRefusal=directPhysicalCounters();
+  p.resumeOriginalQuery();await assert.rejects(()=>p.actualCallback);
+  const afterQuery=physicalSnapshot();p.resumeEnd();await assert.rejects(()=>operation);
+  const after=physicalSnapshot();
+  out.physicalBinding={authority:'SAME-source-PG-composite-response-loss-explicit-driver-lsof-Python-native-doubles',
+    revokedBeforeEnd,before,ports,afterRefusal,afterQuery,after};
+  assert.equal(revokedBeforeEnd,true);assert.deepEqual(afterRefusal,ports);
+  assert.ok(before.descriptors.length>0);assert.deepEqual(afterQuery.descriptors,before.descriptors);
+  assert.deepEqual(after.descriptors,before.descriptors);
+  assert.ok(after.descriptors.every(row=>row.state==='live'&&row.closeIntents===0));
+  assert.deepEqual(directPhysicalCounters(),ports);assert.equal(p.querySettled,true);assert.equal(p.endReturned,true);
+`,{resources:true,pre32:true,owner:true}));
+
+test('physical binding successful begin with suspended end denies physical ports before outer success',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+participants+physicalSnapshot+capturePhysicalCoordinator+`
+  const physical=await import('./dist/internal-production/baseline-positive-worktree-physical-catalog-v2.js');
+  globalThis.physicalProbe={capture:true};p.holdEnd=true;
+  const operation=adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner);operation.catch(()=>{});
+  await p.ended;
+  const before=physicalSnapshot(),ports=directPhysicalCounters(),revokedBefore=actualCoordinator.revoked;
+  let refused=false;
+  try{physical.assertHeldDashboardCutoverJointPhysicalReservationV4(actualCoordinator.pre32.scope,actualOwner,actualCoordinator.token)}catch{refused=true}
+  const afterRefusal=directPhysicalCounters();p.resumeEnd();
+  const result=await operation.then(()=>({success:true}),error=>({success:false,error:error.message}));
+  out.physicalBinding={authority:'actual-source-successful-begin-pending-end-phase-with-explicit-provider-doubles',
+    before,ports,revokedBefore,refused,afterRefusal,result,after:physicalSnapshot()};
+  assert.equal(revokedBefore,false);assert.equal(refused,true);assert.deepEqual(afterRefusal,ports);
+  assert.equal(result.success,false);assert.deepEqual(out.physicalBinding.after.descriptors,before.descriptors);
+`,{resources:true,pre32:true,owner:true}));
+
+test('physical binding owner-entry reentry burns before any nested direct port or owner intent',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+participants+physicalSnapshot+capturePhysicalCoordinator+`
+  globalThis.physicalProbe={capture:true};let nested,triggered=0,nestedResult;
+  onPort=row=>{if(row.owner==='physical'&&row.physicalOwnerEntry&&triggered++===0){
+    const before=directPhysicalCounters();
+    nested=adapter.executeDashboardCutoverJointPhysicalOwnerReservationV4(actualCoordinator.token,actualOwner,actualCoordinator.pre32.scope);
+    nestedResult=nested.then(()=>({success:true}),error=>({success:false,error:error.message}));
+    out.physicalReentry={before,after:directPhysicalCounters(),ownerIntent:actualCoordinator.reservation.invocationIntent};
+  }};
+  const result=await adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner)
+    .then(()=>({success:true}),error=>({success:false,error:error.message}));
+  onPort=()=>{};const nestedOutcome=await nestedResult;
+  out.physicalBinding={authority:'actual-source-original-tuple-reentry-explicit-PG-lsof-Python-native-doubles',result,
+    snapshot:physicalSnapshot(),reentry:out.physicalReentry,nestedOutcome,triggered};
+  assert.ok(out.physicalReentry);assert.equal(result.success,false);assert.equal(nestedOutcome.success,false);
+  assert.deepEqual(out.physicalReentry.after,out.physicalReentry.before);
+  assert.equal(out.physicalReentry.ownerIntent,false);assert.equal(actualCoordinator.reservation.invocationIntent,false);
+  assert.deepEqual(out.physicalBinding.snapshot.reservationPorts,{});
+`,{resources:true,pre32:true,owner:true}));
+
+test('physical binding full assertion reentry burns before any nested direct port',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+participants+physicalSnapshot+capturePhysicalCoordinator+`
+  const physical=await import('./dist/internal-production/baseline-positive-worktree-physical-catalog-v2.js');
+  globalThis.physicalProbe={capture:true};let triggered=0;
+  onPort=row=>{if(row.owner==='physical'&&row.physicalFullAssertion&&triggered++===0){
+    const before=directPhysicalCounters();let refused=false;
+    try{physical.assertHeldDashboardCutoverJointPhysicalReservationV4(actualCoordinator.pre32.scope,actualOwner,actualCoordinator.token)}catch{refused=true}
+    out.physicalReentry={before,after:directPhysicalCounters(),refused};
+  }};
+  const result=await adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner)
+    .then(()=>({success:true}),error=>({success:false,error:error.message}));
+  onPort=()=>{};
+  out.physicalBinding={authority:'actual-source-full-assertion-tuple-reentry-explicit-PG-lsof-Python-native-doubles',
+    result,snapshot:physicalSnapshot(),reentry:out.physicalReentry,triggered};
+  assert.ok(out.physicalReentry);assert.equal(out.physicalReentry.refused,true);
+  assert.deepEqual(out.physicalReentry.after,out.physicalReentry.before);assert.equal(result.success,false);
+`,{resources:true,pre32:true,owner:true}));
+
+test('physical binding private terminal recheck refuses public reentry before extra direct ports',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+participants+physicalSnapshot+capturePhysicalCoordinator+`
+  const physical=await import('./dist/internal-production/baseline-positive-worktree-physical-catalog-v2.js');
+  const lines=fs.readFileSync(root+'/dist/internal-production/baseline-positive-worktree-physical-catalog-v2.js','utf8').split('\\n');
+  const terminalLine=lines.findLastIndex(line=>line.trim()==='record.recheck();')+1;assert.ok(terminalLine>0);
+  globalThis.physicalProbe={capture:true};let triggered=0;
+  onPort=row=>{if(row.owner==='physical'&&row.physicalStack.some(frame=>frame.includes('runHeldDashboardCutoverJointPhysicalReservationV4')&&frame.includes(':'+terminalLine+':'))&&triggered++===0){
+    const before=directPhysicalCounters();let refused=false;
+    try{physical.assertHeldDashboardCutoverJointPhysicalReservationV4(actualCoordinator.pre32.scope,actualOwner,actualCoordinator.token)}catch{refused=true}
+    out.physicalReentry={before,after:directPhysicalCounters(),refused,terminalLine,frames:row.physicalStack};
+  }};
+  const result=await adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner)
+    .then(()=>({success:true}),error=>({success:false,error:error.message}));
+  onPort=()=>{};
+  out.physicalBinding={authority:'actual-source-private-terminal-check-public-reentry-explicit-provider-doubles',result,
+    snapshot:physicalSnapshot(),reentry:out.physicalReentry,triggered};
+  assert.ok(out.physicalReentry);assert.equal(out.physicalReentry.refused,true);
+  assert.deepEqual(out.physicalReentry.after,out.physicalReentry.before);assert.equal(result.success,false);
+`,{resources:true,pre32:true,owner:true}));
+
+test('physical binding post-owner private recheck burns wrong-arity proxy reentry before extra direct ports',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+participants+physicalSnapshot+capturePhysicalCoordinator+`
+  const physical=await import('./dist/internal-production/baseline-positive-worktree-physical-catalog-v2.js');
+  const lines=fs.readFileSync(root+'/dist/internal-production/baseline-positive-worktree-physical-catalog-v2.js','utf8').split('\\n');
+  const postOwnerBranch=lines.findLastIndex((line,index)=>line.trim()==='if (retained)'&&lines[index+1]?.trim()==='retained.recheck();');
+  const postOwnerLine=postOwnerBranch+2;assert.ok(postOwnerBranch>=0);
+  let traps=0;const proxy=new Proxy({}, {get(){traps++;throw Error('UNREACHABLE_PROXY')},ownKeys(){traps++;throw Error('UNREACHABLE_PROXY')}});
+  globalThis.physicalProbe={capture:true};let triggered=0;
+  onPort=row=>{if(row.owner==='physical'&&row.physicalStack.some(frame=>frame.includes('observePhysicalCatalogV2')&&frame.includes(':'+postOwnerLine+':'))&&triggered++===0){
+    const before=directPhysicalCounters();let refused=false;
+    try{physical.assertHeldDashboardCutoverJointPhysicalReservationV4(proxy)}catch{refused=true}
+    out.physicalReentry={before,after:directPhysicalCounters(),refused,postOwnerLine,traps,frames:row.physicalStack};
+  }};
+  const result=await adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner)
+    .then(()=>({success:true}),error=>({success:false,error:error.message}));
+  onPort=()=>{};
+  out.physicalBinding={authority:'actual-source-post-owner-private-check-wrong-arity-proxy-reentry-explicit-provider-doubles',result,
+    snapshot:physicalSnapshot(),reentry:out.physicalReentry,triggered,traps};
+  assert.ok(out.physicalReentry);assert.equal(out.physicalReentry.refused,true);assert.equal(traps,0);
+  assert.deepEqual(out.physicalReentry.after,out.physicalReentry.before);assert.equal(result.success,false);
+`,{resources:true,pre32:true,owner:true}));
+
+test('physical binding first-pass non-Git blocker prevents actual ROOT reservation',()=>exercise(
+  pre32Setup('healthy')+`
+  const unknown=home+'/ai/setrox/.worktrees/unknown';fs.mkdirSync(unknown,{recursive:true,mode:0o700});
+  const physical=await import('./dist/internal-production/baseline-positive-worktree-physical-catalog-v2.js');
+  const diagnostic=await physical.observeCodeOwnedPositiveWorktreePhysicalCatalogV2();
+  assert.equal(diagnostic.status,'unresolved');assert.deepEqual(diagnostic.blockers,[{root:unknown,reason:'non-git-child'}]);
+  out.actualBlocker={status:diagnostic.status,blockers:diagnostic.blockers};
+  `+ownerSetup+participants+physicalSnapshot+`
+  globalThis.physicalProbe={capture:true};
+  const result=await adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner)
+    .then(()=>({success:true}),error=>({success:false,error:error.message}));
+  out.physicalBinding={authority:'actual-private-FS-with-explicit-PG-lsof-Python-native-doubles',result,snapshot:physicalSnapshot()};
+  assert.deepEqual(out.physicalBinding.snapshot.reservationPorts,{});
+  assert.equal(result.success,false);assert.equal(fs.existsSync(baseline+'/restart-authority-retirement-v1'),false);
+`,{resources:true,pre32:true,owner:true}));
+
+test('physical binding SAME transaction crossed rows prevent actual ROOT reservation',()=>exercise(
+  pre32Setup('binding-crossed')+ownerSetup+participants+physicalSnapshot+`
+  globalThis.physicalProbe={capture:true};
+  const result=await adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner)
+    .then(()=>({success:true}),error=>({success:false,error:error.message}));
+  out.physicalBinding={authority:'deliberately-crossed-modeled-PG-evidence-not-real-PG-consistency',result,snapshot:physicalSnapshot()};
+  assert.deepEqual(out.physicalBinding.snapshot.reservationPorts,{});
+  assert.equal(result.success,false);assert.equal(fs.existsSync(baseline+'/restart-authority-retirement-v1'),false);
+  assert.equal(p.bindingQueries.length,8);assert.equal(p.open,1);assert.equal(p.begins,1);
+  assert.ok(p.bindingQueries.every(row=>row.transaction===p.censusTransaction&&row.beginOccurrence===1));
+  assert.ok(p.journalTransactions.every(row=>row.transaction===p.censusTransaction&&row.beginOccurrence===1));
+`,{resources:true,pre32:true,owner:true}));
 
 test('owner-bound reservation uses actual OPEN and claim while genuine pre32 scope remains held',()=>exercise(
   pre32Setup('healthy')+ownerSetup+participants+`

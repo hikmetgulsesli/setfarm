@@ -8,7 +8,7 @@ const ROOT=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const tokens=new WeakMap();
 const originalThen=Promise.prototype.then;
 const preparation={attempted:false,ready:false,revoked:false,source:null,imports:[],native:null,definition:null,census:null,censusAttempted:false,
-  owner:null,reservation:null,ownerAttempted:false,localDrain:null};
+  owner:null,reservation:null,ownerAttempted:false,localDrain:null,physical:null,activeBinding:null};
 let active=null,operation=null,attempted=false;
 function refuse(){throw Error('DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED')}
 function revokeActive(){if(active===preparation)preparation.revoked=true;else if(active)active.revoked=true}
@@ -20,6 +20,10 @@ function checkOperation(record){
       preparation.localDrain.assertDashboardCutoverLocalProducerDrainV2(record.localDrain.js.value);
       preparation.localDrain.assertDashboardCutoverLocalChildDrainV3(record.localDrain.child.value);
     }catch{record.revoked=true;record.unknown=true;refuse()}
+  }
+  if(record.physical?.registered){
+    try{preparation.census.assertHeldDashboardCutoverPre32PhysicalMetadataV4(record.pre32.scope,record.originalOwner,record.token)}
+    catch{record.revoked=true;record.unknown=true;refuse()}
   }
   if(active!==record||record!==operation||record.revoked)refuse();
 }
@@ -56,6 +60,10 @@ async function prepare(pre32,ownerReservation){
     sourceCheck(checkPreparation);
     preparation.localDrain=await importOriginal(ROOT+'/dist/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js');
     sourceCheck(checkPreparation);
+    preparation.physical=await importOriginal(ROOT+'/dist/internal-production/baseline-positive-worktree-physical-catalog-v2.js');
+    sourceCheck(checkPreparation);
+    preparation.activeBinding=await importOriginal(ROOT+'/dist/internal-production/baseline-positive-worktree-active-binding-snapshot-v1.js');
+    sourceCheck(checkPreparation);
   }
 }
 function bound(token,participant,kind,arity){
@@ -69,6 +77,7 @@ function liveToken(token,participant,kind,arity){
   // The original owner composite may still be resolving its canonical adapter.
   // No participant port may race that provisional lifetime or import response.
   if(record.route==='reservation'&&record.reservation.invocationIntent&&!record.reservation.returned)refuse();
+  if(record.route==='reservation'&&record.physical.intent&&!record.physical.returned)refuse();
   checkOperation(record);
 }
 function settlementsKnown(record){return record.enrollments.every(r=>r.returned&&r.authenticated&&r.scope!==null)
@@ -89,6 +98,34 @@ export function assertDashboardCutoverJointOwnerTokenV4(token,originalOwner){
   if(record.route!=='reservation'||record.stage!=='working'||!record.pre32.authenticated
     ||!record.reservation.invocationIntent)refuse();
   checkOperation(record);
+}
+export function assertDashboardCutoverJointPhysicalTokenV4(token,originalOwner,scope){
+  if(arguments.length!==3)refuse();
+  const record=bound(token,originalOwner,'originalOwner',2);checkOperation(record);
+  if(record.route!=='reservation'||record.stage!=='working'||!record.pre32.authenticated
+    ||record.pre32.scope!==scope||!record.physical.intent)refuse();
+  preparation.census.assertHeldDashboardCutoverPre32PhysicalMetadataV4(scope,originalOwner,token);
+  record.physical.registered=true;checkOperation(record);
+}
+export async function executeDashboardCutoverJointPhysicalOwnerReservationV4(token,originalOwner,scope){
+  if(operation?.physical?.ownerChecking||operation?.physical?.ownerAttempted){
+    operation.revoked=true;operation.unknown=true;refuse();
+  }
+  if(arguments.length!==3)refuse();
+  const record=bound(token,originalOwner,'originalOwner',2);
+  record.physical.ownerChecking=true;
+  try{
+    assertDashboardCutoverJointPhysicalTokenV4(token,originalOwner,scope);
+    if(record.physical.ownerAttempted||record.reservation.invocationIntent)refuse();
+    preparation.physical.assertHeldDashboardCutoverJointPhysicalOwnerEntryV4(scope,originalOwner,token);
+    checkOperation(record);record.physical.ownerAttempted=true;
+    record.physical.ownerChecking=false;
+    record.reservation.invocationIntent=true;checkOperation(record);
+    await originalOccurrence(record,()=>preparation.owner.reserveDeploymentCutoverFirstGenerationWithOwnerV4(originalOwner,token));
+    record.reservation.returned=true;checkOperation(record);
+    preparation.reservation.assertFirstGenerationDashboardCutoverJointReservationV4(token);checkOperation(record);
+  }catch{record.revoked=true;record.unknown=true;refuse()}
+  finally{record.physical.ownerChecking=false}
 }
 export function assertDashboardCutoverJointNativeSettlementTokenV4(token,originalLoaded){settlementToken(token,originalLoaded,'originalLoaded',arguments.length)}
 export function assertDashboardCutoverJointDefinitionSettlementTokenV4(token,originalDefinition){settlementToken(token,originalDefinition,'originalDefinition',arguments.length)}
@@ -168,10 +205,10 @@ export async function executeDashboardCutoverJointPre32AssertionsV4(token,origin
     preparation.native.assertHeldDashboardCutoverLoadedJobOperationV4(record.enrollments[0].scope);checkOperation(record);
     preparation.definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4(record.enrollments[1].scope);checkOperation(record);
     if(record.route==='reservation'){
-      record.reservation.invocationIntent=true;checkOperation(record);
-      await originalOccurrence(record,()=>preparation.owner.reserveDeploymentCutoverFirstGenerationWithOwnerV4(record.originalOwner,record.token));
-      record.reservation.returned=true;checkOperation(record);
-      preparation.reservation.assertFirstGenerationDashboardCutoverJointReservationV4(record.token);checkOperation(record);
+      record.physical.intent=true;checkOperation(record);
+      await originalOccurrence(record,()=>preparation.census.runHeldDashboardCutoverPre32PhysicalReservationV4(scope,record.originalOwner,record.token));
+      record.physical.returned=true;checkOperation(record);
+      if(!record.reservation.returned)refuse();
     }
     await originalOccurrence(record,()=>preparation.census.assertHeldDashboardCutoverPre32DatabaseV2(scope));
   }catch{record.revoked=true;record.unknown=true;refuse()}
@@ -207,6 +244,7 @@ async function qualifyOriginals(originalLoaded,originalDefinition,arity,route,or
     settlements:[{intent:false,returned:false},{intent:false,returned:false}],
     pre32:{invocationIntent:false,helperAttempted:false,helperSettled:false,checking:false,scope:null,authenticated:false},
     reservation:{invocationIntent:false,returned:false},
+    physical:{intent:false,registered:false,returned:false,ownerAttempted:false,ownerChecking:false},
     localDrain:{ready:false,
       js:{intent:false,promise:null,returned:false,settled:false,value:null,authenticated:false},
       child:{intent:false,promise:null,returned:false,settled:false,value:null,authenticated:false}}};

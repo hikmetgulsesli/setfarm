@@ -3930,3 +3930,26 @@ Do not inherit V2's before-callback/after-whole-callback-only placement. A real
 private directory change during a suspended binding query must refuse ROOT even
 if the earlier first pass and DB row snapshots were complete. This source-owned
 fresh check is still a trusted observer composite, not universal syscall fencing.
+
+Task4i.9 implementation refinements: adapter ownerChecking begins before the
+private physical owner-entry composite and before actual owner intent. Private
+physical checking encloses ALL full retained passes, including the post-owner
+and terminal rechecks; diagnostics retain their direct existing post-pass path.
+Separate public entryChecking authenticates a public assertion once while the
+owned private checking remains usable. Nested entry burns before arity/proxy
+inspection; no caller tuple can admit a second composite or owner invocation.
+Retained linked .git marker reads are bounded positional reads from offset zero
+on the SAME original descriptor, followed by exact EOF and identity checks;
+never reopen/seek/adopt a replacement. Healthy evidence must prove one marker
+OPEN occurrence and every read belonging to it, not read-FD uniqueness alone.
+
+ONE already-admitted finite read-only observer/assertion remains a trusted
+composite. Zero-delta claims are exclusively about the nested refused call,
+not every subsequent interior syscall of the already-running composite. After
+burn its return must refuse and no new public composite or owner dispatch may
+start. Pre-owner refusals prove owner-intent and ROOT ports zero separately.
+No per-syscall freeze, hostile-UID exclusion or positive-owner exception is added.
+Source-specific final campaigns/reviews remain necessary: earlier11 GREENs bind
+physical080cb8b3, not corrected53918a47. The Error-proxy marker diagnostic is
+failure-point evidence only, not retained-FD custody. No fixture/API/syntax/noEmit
+or literal dependency-loader result implies real PG/native/build/live3333 proof.

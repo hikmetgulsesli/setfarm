@@ -2,6 +2,8 @@ export function qualifyHeldDashboardCutoverJointOriginalOperationV4(originalLoad
 export function qualifyHeldDashboardCutoverJointPre32OperationV4(originalLoaded: object, originalDefinition: object): Promise<void>;
 export function reserveHeldDashboardCutoverJointFirstGenerationV4(originalLoaded: object, originalDefinition: object, originalOwner: object): Promise<void>;
 export function assertDashboardCutoverJointOwnerTokenV4(token: object, originalOwner: object): void;
+export function assertDashboardCutoverJointPhysicalTokenV4(token: object, originalOwner: object, scope: object): void;
+export function executeDashboardCutoverJointPhysicalOwnerReservationV4(token: object, originalOwner: object, scope: object): Promise<void>;
 export function executeDashboardCutoverJointPre32AssertionsV4(token: object, originalDefinition: object, scope: object): Promise<void>;
 export function assertDashboardCutoverJointNativeTokenV4(token: object, originalLoaded: object): void;
 export function assertDashboardCutoverJointDefinitionTokenV4(token: object, originalDefinition: object): void;

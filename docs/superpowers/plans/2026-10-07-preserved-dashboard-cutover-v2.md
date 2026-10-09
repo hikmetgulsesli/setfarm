@@ -2879,10 +2879,10 @@ Metadata has no FS/SQL/reverse adapter assertion; explicit physical assertion ha
 FS but no SQL and uses the resource-free fence. No raw query, URL, path, callback,
 module, hash, DATA grant or exported inspection/cleanup operation.
 
-- [ ] Step1: root self-review and two exact independent nomination gates; normal
+- [x] Step1: root self-review and two exact independent nomination gates; normal
   paired design commit before tests/source. Phase/recursion/unknown distinctions
   must be explicit. Keep existing scopes and original/pre32 routes unchanged.
-- [ ] Step2: causal baseline RED before production edits. Fixture mandatory dirs
+- [x] Step2: causal baseline RED before production edits. Fixture mandatory dirs
   exist before physical acquisition, including baseline ROOT parent before hold.
   Create actual .worktrees/unknown and verify original diagnostic non-git-child;
   then call existing real owner-bound route and assert all reservation parent
@@ -2891,7 +2891,7 @@ module, hash, DATA grant or exported inspection/cleanup operation.
   No missing API/setup error substituted for functional RED. Retain literal
   programs/envelopes/pins/original stdout/EOF+close; fixed Node26/shared compiler.
   Command: node --test --test-name-pattern='physical binding' scripts/__tests__/deployment-dashboard-cutover-adapter-v2.test.js.
-- [ ] Step3: minimal producer after original RED. Set physical intent before
+- [x] Step3: minimal producer after original RED. Set physical intent before
   dispatch; deny both genuine participant live-token ports while physical is
   pending. Census authenticates SAME WeakMap scope/token/owner and records intent
   before imports. Store actual provider Promise before observation/await; store
@@ -2901,7 +2901,7 @@ module, hash, DATA grant or exported inspection/cleanup operation.
   No active owner exception: active counts/rows must be zero and aligned. Actual
   physical assertions surround each census state.read, including hidden final
   read; no PG assertion recursively used by physical port guards.
-- [ ] Step4: source-current GREEN and complementary healthy/final-loss controls.
+- [x] Step4: source-current GREEN and complementary healthy/final-loss controls.
   Attribute original physical FDs by occurrence/path and show all remain live
   through hidden final query and outer driver/end; owner ROOT handles remain
   separate. Genuine captured participant assertions while physical pending have
@@ -2941,3 +2941,54 @@ the original (rename/add evidence only); naturally resume SAME query; assert
 owner intent/ROOT parent ports zero. Production must reassert full physical
 FD/path/absence/churn, parent/candidate Git/lsof and cold-zero policy AFTER
 binding settles, BEFORE owner-ready/dispatch. No extra File Map/API needed.
+
+Implementation refinements from causal tests and independent review (same map):
+adapter ownerChecking fences authenticated owner-entry checks BEFORE owner intent;
+physical private checking fences EVERY full retained recheck, including post-owner
+and terminal passes. Separate public entryChecking prevents nested assertion entry
+before arity/proxy inspection without recursively denying the owned private check.
+The diagnostic post-owner path remains separate. Retained linked-marker reads use
+bounded positional reads from zero on the SAME original FD, exact EOF and identity
+checks; no reopen/seek/replacement. Healthy control asserts one OPEN occurrence,
+not merely one FD appearing in read receipts.
+
+Each already-admitted finite read-only physical observer/assertion is one trusted
+composite. Reentry controls prove zero additional NESTED-call ports and eventual
+outer refusal; pre-owner cases additionally prove owner intent/ROOT ports zero.
+They do not claim that the already-admitted interior fstat/Git/lsof loop stops at
+every syscall after burn. Burn forbids a new public composite or owner dispatch;
+there is no per-syscall/global-hostile-process guarantee or weakened source guard.
+
+Evidence checkpoint before final gates: design commit03a2a7ef preceded all tests
+and source edits. Baseline functional RED gnoKfI/uJT8HT (0pass/2fail) reproduces
+ignored non-Git blocker and ignored crossed modeled binding rows with actual ROOT
+publication. Original API RED is separate, not functional authority. Public
+reentry RED ynSHEd/RWZjVw, terminal RED vgBIaI and post-owner wrong-arity proxy RED
+tmpaD1 reproduce missing fences; tmpaD1 nested refusal/traps0/zero nested delta
+still allowed outer success. QyQnaO is marker failure-point diagnosis only: its
+Error proxy changes FD attribution, so it earns no FD-custody qualification.
+Syntax-only eZEmRN earns no causal credit. Earlier source080cb8b3 campaign11pass
+qualifies that historical graph only. Corrected source53918a47 healthy DcMZXj and
+post-owner x2wxDe pass; remaining frozen controls/regressions/reviews/delivery
+are pending. Strict1194/0noEmit is not a build. Census regression8pass uses a
+literal test-only shared tsx/postgres/zod resolver without dependency installation
+or repository mutation; failed initial missing-zod setup is not a producer RED.
+
+Frozen53918a47 qualification: 12new controls (healthy/post-owner2, policy/drift/
+final-query/end-phase5, original owner/full/terminal reentry/non-Git/crossed5)
+and12 old original/pre32/owner/local-drain controls pass. Old child-driver-loss
+proves naturally late suspended child publication after PG rejection without
+getting its burn from test legacy calls. Root read all24 actual retained consumer
+originals:616pins/298literalTSbridges/394manualoutputs/176inert-or-explicit-double
+commands/72exactC payloads/nativeCalls0. Final and old-route indices SHA
+1a02fb6d665c3c8266f77135cb2c4bb820ec6dbbc434691b3ec9be1bbac10472 and
+82386ff0a88311583d3bce378e92784b7063521f440e77a6fe0294f577271886.
+59current physical diagnostic controls (including actual finite external-holder
+controls),24active/binding controls and8census controls pass:115focused total,
+no fictional retained consumer receipts for those aggregate suites. Current
+strict1194/0noEmit, syntax, version2.3.79/English1992/paths999 and diff pass.
+The two test-command path/setup failures are retained separately, not production
+failures/REDs. Final exact-nine-file/all24-original reviews and normal scoped
+delivery remain pending. Protected passive-home bytes unchanged; actual3080/
+18789HTTP200,3333absent. No actual build, native effect, real PG/backend death,
+positive-owner admission or whole cutover clearance.
