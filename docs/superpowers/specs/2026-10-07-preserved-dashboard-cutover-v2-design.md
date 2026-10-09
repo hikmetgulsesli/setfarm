@@ -3820,3 +3820,113 @@ two explicitly labeled finalized fixture source faults: one literal working-stag
 substitution and one literal dropped fulfilled-value/returned assignment. Root
 production bytes stay unchanged; these graphs never earn healthy qualification.
 Only current graph with source fault disabled counts as the two additional GREENs.
+
+## Task4i.9 nomination: census-owned retained physical/binding bracket
+
+The existing physical V2 observer is diagnostic: first-pass callback runs with
+blockers, later Git-admin churn is appended, marker FDs close internally, and
+outer finally closes directories/files. Released V7 and separate snapshot PG
+transactions cannot furnish SAME pre32 custody. Select an additive literal
+retained profile owned by the genuine census scope. Never infer this capability
+from status/hash/partition DATA, sampled process absence or old receipt objects.
+
+Bounded cold-zero contract: keep pre32 aggregate nonzero-owner rejection intact;
+query canonical active/binding rows through the SAME privately held connection,
+normalize actual postgres Result containers, reconcile counts/identity, require
+all active rows zero. Physical retained/development/deployment Git candidates
+stay visible and are not owners merely because present. Positive runtime owner
+admission and complete DB/FS identity proof remain subsequent work; no Task6A.
+
+Adapter sets private physical invocation intent before one fixed census call:
+runHeldDashboardCutoverPre32PhysicalReservationV4(scope,originalOwner,token).
+Separate physical-pending participant embargo covers imports, FS discovery and
+binding queries; the existing owner invocation embargo stays intact. Fixed
+assertDashboardCutoverJointPhysicalTokenV4(token,owner,scope) authenticates SAME
+coordinator WeakMap record/route/working phase/local drain/pre32 scope/owner and
+physical intent; it performs only resource-free checks. It accepts no caller
+ports or flags. Recovery of the actual complete physical operation alone ends
+the physical-pending embargo; rejection/response loss stays UNKNOWN.
+
+Census owns physical occurrence intent, SAME scope/owner/token, original import,
+canonical module, original native invocation Promise and recovered return. The
+physical module has its own private single occurrence and retained holder; no
+holder is returned publicly. Its fixed run(scope,owner,token) derives canonical
+home/workspace internally, invokes a private version of existing physical
+discovery, and refuses the full first-pass blocker set INCLUDING Git-admin churn
+BEFORE fixed census binding read and canonical owner reservation dispatch. After
+owner return, unchanged second-pass Git/lsof/identity comparisons must complete.
+No mode, callback, path, query, URL, module locator, DATA snapshot or hash is an
+input to either fixed public operation. Existing diagnostic callback and cleanup
+semantics stay unchanged; the retained profile is private and additive.
+
+All nominated retained open occurrences register path/kind/intent BEFORE open;
+retain returned descriptor before subsequent fstat/reads/fallible checks. Keep
+directories, incidental files AND linked .git marker originals in private
+records. No finally cleanup, pop/discard, retry, reopening or replacing an
+original after uncertainty. Healthy return also retains originals in this slice:
+bounded single-attempt custody avoids inventing an unqualified close protocol.
+Existing diagnostic cleanup remains separate. No broad timestamp adoption,
+compareMutation disabling or generic ignored paths. ROOT publication changes its
+already-existing baseline parent, not held workspace/home ancestors; fixtures
+must create all layout and durable OPEN/claim before first hold. A newly pinned
+baseline-parent transition would need separate exact source-owned proof.
+
+Resource-free census assertHeldDashboardCutoverPre32PhysicalMetadataV4 authenticates
+SAME census WeakMap record/scope/owner/token and burn without FS/SQL or reverse
+adapter calls. Physical ports use this plus fixed adapter fence; they do NOT call
+the PG-reading assertHeldDashboardCutoverPre32DatabaseV2. Explicit physical
+assertHeldDashboardCutoverJointPhysicalReservationV4 checks actual original FDs,
+paths and absence/churn without SQL. Census state.read brackets journal/census
+queries with that physical assertion, including the hidden final read after
+callback return. Thus burn in a driver/query invalidates physical ports without
+an FS→PG→FS assertion recursion.
+
+Track actual successful begin RETURN before finally revoke/end. On begin rejection
+mark census burned and synchronously notify the canonical shared token BEFORE
+the potentially suspended end await. Retain actual callback/query/physical
+promises; late settlement never converts rejection into recovered begin success.
+Ordinary PG scope assertions still require current+live and remain unchanged.
+After callback finally sets live=false, the only physical-check phase is genuine
+begin-success, end-success, callback settled, pending-null, not-burned outer
+success, checked BEFORE current is cleared. It permits physical reassertion,
+never a DB read or reuse of the closed transaction. Retained physical metadata
+may remain authentic after healthy outer completion; burned state cannot.
+Outer final failure/source/local-registry burn keeps originals and shared UNKNOWN.
+
+Exact nine-file map: adapter.mjs/.d.mts/builtin test; census.ts/census test;
+physical catalog.ts/physical test; paired plan/spec. Four additional finite TS
+bridges in owner fixtures: physical catalog, active-binding snapshot, active-row
+snapshot and binding rows. Manual outputs are not a production build. Explicit
+inert lsof command receipts cannot establish host process absence. Real private
+Git/FS controls do not establish real PostgreSQL, backend-death, native effect,
+full legacy/root monotonicity, six-effect/entry or live3333 clearance.
+
+Task4i.9 independent nomination refinements: import canonical physical and
+active/binding modules during reservation-only prepare under original source
+retention BEFORE locks; fixed census resolves those SAME URLs. Public PG-reading
+scope assertions refuse active-FIRST while the physical original is pending;
+internal metadata and single fixed binding operation do not use that assertion.
+`complete` catalog is not physical zero-owner proof: runtime-zone candidates
+and referenced retained-zone candidates refuse in this no-positive-exception
+profile, even absent ordinary blockers. Do not silently turn existing dirty
+retained development trees into owners or remove them. The existing finite
+legacy exclusion/source/selector policies remain distinct live prerequisites.
+
+Owner dispatch remains coordinated by fixed adapter
+executeDashboardCutoverJointPhysicalOwnerReservationV4(token,owner,scope), not
+an injected callback. It authenticates the SAME tuple and canonical private
+physical owner-ready state through assertHeldDashboardCutoverJointPhysicalOwnerEntryV4
+before setting reservation.invocationIntent. Physical ready is set only after
+fresh complete first-pass policy and SAME connection binding validation; early
+calls cannot set owner intent. Dispatcher retains actual owner Promise and sets
+returned only after recovered return and canonical reservation assertion.
+Participant embargo spans physical and owner occurrences independently. Neither
+marker closure nor late DB/child/driver settlement releases any original.
+
+The first-pass gate is reasserted AFTER the awaited SAME binding read and BEFORE
+setting owner-ready or entering the dispatcher: original FD/path/absence/churn,
+parent/candidate Git lists/identity and lsof references, plus cold-zero policy.
+Do not inherit V2's before-callback/after-whole-callback-only placement. A real
+private directory change during a suspended binding query must refuse ROOT even
+if the earlier first pass and DB row snapshots were complete. This source-owned
+fresh check is still a trusted observer composite, not universal syscall fencing.

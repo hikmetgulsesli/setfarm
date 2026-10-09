@@ -2787,14 +2787,14 @@ No new public interfaces or caller-supplied module/promise/handle/ports.
   checkOperation resource-free checks ready handles; failures burn and retain
   unknown originals, no cleanup/refresh/retry. No asynchronous checking flag or
   new generic callback exported to production callers.
-- [ ] Step4: fresh focused GREEN plus old original/pre32/reservation controls,
+- [x] Step4: fresh focused GREEN plus old original/pre32/reservation controls,
   existing local drain consumer regressions, strict noEmit/syntax/contracts/diff.
   Real owned Node child must naturally complete original exit+close and both
   streams; no signal/cancel or unobserved timeout counted as drained. Pending
   drain reentry must deny before proxy traps/PG/ROOT and keep sticky lifetime.
   Root and two independent reviewers read exact changed bytes and retained
   original evidence. Actual build is still not replaced by manual TS/noEmit.
-- [ ] Step5: normal scoped commit/push and append-only PR exact-head evidence;
+- [x] Step5: normal scoped commit/push and append-only PR exact-head evidence;
   update private handoff. Continue remaining positive execution-owner coupling,
   finite cooperative old-process/root exclusion, phase/effects/controller/entry
   and reviewed clean-main+native/current-host proof, not Task6A.
@@ -2821,3 +2821,123 @@ contracts2.3.79/English1992/paths999 pass, not actual build. Final exact-four-fi
 independent review/fresh gates/normal delivery still pending; no whole Task4,
 positive execution-owner coupling, finite legacy freeze, six-effect/entry/host
 or3333 authority. Same four-file map; no new public production API.
+
+Task4i.8 delivered 29407e7e618f3657b3c324e674b936785f4f0e4a after two
+independent exact-four-file/all20-current-original C0/I0/M0 gates. Fresh strict
+1194/0, syntax/contracts/diff; normal forward push, writer clean. PR280 OPEN DRAFT,
+exact-head GitGuardian SUCCESS, actual GitHub reviews empty. Append-only comment
+6075822178 exact readback3568UTF8B SHA
+9dd7b02303daed053aa9c9f7f5a06b1d2dae0dcdd1eab7f4a0620f985befef0b.
+No actual build/native/realPG/live entry clearance follows from focused fixtures.
+
+### Task4i.9: retained physical bracket and SAME pre32 binding reads
+
+Goal: refuse actual first-pass physical blockers and crossed active/binding rows
+BEFORE ROOT on the owner-bound route, retaining physical originals across SAME
+PG final query, actual begin return and end. Existing released diagnostics do
+not establish this custody. This is a causally necessary cold-zero prerequisite
+for approved steps1–5, not positive-owner admission or Task6A. Paired spec defines
+the fixed producer. Root sole writer; three read-only nomination/review roles.
+
+Alternatives: wrapping the released V7/physical observer is rejected (finally
+closes FDs and callback precedes complete blocker rejection). Adapter-managed
+early disposal adds an unnecessary new loss protocol. Select census-owned
+private lifetime and permanent original retention even after healthy completion;
+no new close/release/retry or caller-facing holder. A later explicitly qualified
+controller lifecycle may nominate healthy disposal, never this slice.
+
+File Map exactly nine:
+- scripts/deployment-dashboard-cutover-adapter-v2.mjs: fixed physical intent,
+  participant embargo, SAME scope/owner/token metadata fence and census dispatch.
+- scripts/deployment-dashboard-cutover-adapter-v2.d.mts: exact new fence signature.
+- scripts/__tests__/deployment-dashboard-cutover-adapter-v2.test.js: four finite
+  extra TS bridges, private mandatory physical layout, proper modeled PG Result,
+  original first-pass/binding/hidden-final-loss controls and retained FD evidence.
+- src/internal-production/baseline-legacy-database-census-v1.ts: private physical
+  occurrence, SAME connection bounded binding read, begin-loss token notification,
+  hidden-query brackets and successful outer physical-held phase.
+- tests/internal-production/baseline-legacy-database-census-v1.test.ts: foreign
+  fixed-interface refusal and unchanged no-physical/legacy census regressions.
+- src/internal-production/baseline-positive-worktree-physical-catalog-v2.ts:
+  private retained profile sharing existing discovery/identity checks; first-pass
+  blockers including Git-admin churn refuse before owner; retain marker originals.
+- tests/internal-production/baseline-positive-worktree-physical-catalog-v2.test.ts:
+  foreign fixed-interface refusal; preserve actual existing diagnostic behavior.
+- This paired plan and spec. No owner/provider/registry/launcher/native/Python/
+  CLI/service/package/schema/credential changes; no destructive fixture cleanup.
+
+Exact interfaces (void or Promise<void>; three opaque originals only):
+adapter assertDashboardCutoverJointPhysicalTokenV4(token,owner,scope);
+adapter executeDashboardCutoverJointPhysicalOwnerReservationV4(token,owner,scope);
+census runHeldDashboardCutoverPre32PhysicalReservationV4(scope,owner,token),
+assertHeldDashboardCutoverPre32PhysicalMetadataV4(scope,owner,token), and
+assertHeldDashboardCutoverPre32ActiveBindingV4(scope,owner,token);
+physical runHeldDashboardCutoverJointPhysicalReservationV4(scope,owner,token),
+assertHeldDashboardCutoverJointPhysicalReservationV4(scope,owner,token), and
+assertHeldDashboardCutoverJointPhysicalOwnerEntryV4(scope,owner,token).
+Metadata has no FS/SQL/reverse adapter assertion; explicit physical assertion has
+FS but no SQL and uses the resource-free fence. No raw query, URL, path, callback,
+module, hash, DATA grant or exported inspection/cleanup operation.
+
+- [ ] Step1: root self-review and two exact independent nomination gates; normal
+  paired design commit before tests/source. Phase/recursion/unknown distinctions
+  must be explicit. Keep existing scopes and original/pre32 routes unchanged.
+- [ ] Step2: causal baseline RED before production edits. Fixture mandatory dirs
+  exist before physical acquisition, including baseline ROOT parent before hold.
+  Create actual .worktrees/unknown and verify original diagnostic non-git-child;
+  then call existing real owner-bound route and assert all reservation parent
+  counters zero. Also provide valid PostgreSQL Result-shaped SAME-tx active/binding
+  rows crossing the unchanged aggregate-zero fixture; before ROOT must refuse.
+  No missing API/setup error substituted for functional RED. Retain literal
+  programs/envelopes/pins/original stdout/EOF+close; fixed Node26/shared compiler.
+  Command: node --test --test-name-pattern='physical binding' scripts/__tests__/deployment-dashboard-cutover-adapter-v2.test.js.
+- [ ] Step3: minimal producer after original RED. Set physical intent before
+  dispatch; deny both genuine participant live-token ports while physical is
+  pending. Census authenticates SAME WeakMap scope/token/owner and records intent
+  before imports. Store actual provider Promise before observation/await; store
+  recovered return before post-check. Private profile registers FD intent before
+  open, retains actual returned directories/files/markers and complete blockers.
+  First pass calls SAME private tx binding closure then fixed canonical owner.
+  No active owner exception: active counts/rows must be zero and aligned. Actual
+  physical assertions surround each census state.read, including hidden final
+  read; no PG assertion recursively used by physical port guards.
+- [ ] Step4: source-current GREEN and complementary healthy/final-loss controls.
+  Attribute original physical FDs by occurrence/path and show all remain live
+  through hidden final query and outer driver/end; owner ROOT handles remain
+  separate. Genuine captured participant assertions while physical pending have
+  identical direct counters. Lose actual begin response with SAME query pending
+  and end suspended: shared token revokes BEFORE end await. Naturally settle SAME
+  originals; no later ports/cleanup/retry/refresh and no disposal by finally.
+  Retained linked-marker FD control covers marker custody, not just directories.
+  Keep real Git/FS distinct from lsof/PG/Python/native doubles and full host proof.
+- [ ] Step5: proportional old original/pre32/owner, actual physical/census/binding
+  regressions, strict noEmit/syntax/contracts/diff and two exact-nine-file reviews
+  reading every retained original. Normal scoped commit/push + exact-head PR
+  append-only readback; no full-build/native/PG/bot-approval claim. Continue actual
+  positive execution coupling, finite cooperative legacy/root monotonicity,
+  selector/phase/effects/controller/authenticated entry and clean-main/3333 proof.
+
+Task4i.9 nomination refinements from three read-only reviews: canonical physical
+and active/binding initialization occurs during reservation-only preparation,
+BEFORE SHARE locks, using fixed original imports under source retention; old
+routes remain lazy. Physical complete alone is insufficient: this cold-zero
+profile refuses every runtime-zone candidate and every referenced retained-zone
+candidate, besides original blockers/churn. Dirty retained development checkouts
+remain visible under existing source/selector policy, not automatically owners.
+Owner invocation intent is NOT marked before physical gates. After fresh first
+pass and SAME binding validation, physical private ready state authorizes the
+fixed adapter owner dispatcher via assertHeldDashboardCutoverJointPhysicalOwnerEntryV4.
+Only that dispatcher sets actual owner intent, retains SAME owner Promise and
+returned flag; arbitrary early captured tuple calls burn/refuse before owner.
+Public census assertions active-FIRST refuse during the original physical
+occurrence; fixed internal metadata/binding guards remain usable, without granting
+another PG read. Add actual complete runtime/ref-PID fixture controls separately
+from non-git blocker and crossed DB rows. Keep lost-end response UNKNOWN and
+retain healthy originals; source profile grants no physical release authority.
+
+Post-binding ordering control: suspend SAME fixed binding query after actual
+first pass; alter an actual private held discovery directory without deleting
+the original (rename/add evidence only); naturally resume SAME query; assert
+owner intent/ROOT parent ports zero. Production must reassert full physical
+FD/path/absence/churn, parent/candidate Git/lsof and cold-zero policy AFTER
+binding settles, BEFORE owner-ready/dispatch. No extra File Map/API needed.
