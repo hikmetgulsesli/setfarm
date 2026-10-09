@@ -4278,3 +4278,140 @@ Task4k source checkpoint 2026-10-09 (delivery pending):
   status2 readiness receipt is NOT claimed tested by these child fixtures.
   Late OPEN actually reaches one business evaluation, so initial-only admission
   is explicitly NOT lifetime exclusion. Existing callee/DB/service gates remain.
+
+## Task4l design — original conditional process-candidate event DATA
+
+2026-10-09. Causal reusable dependency before any fresh combined cutover route:
+an actual retained process-event backend. One-shot passive measurements and
+current process roster cannot provide original registrations; current MachV4
+five-method lease must NOT be relabeled. Transport-first avoids creating another
+terminal quiet attempt which cannot later continue or adopt its own prefix.
+
+Exact EIGHT-path map: NEW scripts/dashboard-cutover-process-events-v4.mjs,
+NEW scripts/dashboard-cutover-process-events-v4.py,
+NEW scripts/__tests__/dashboard-cutover-process-events-v4.test.js;
+existing scripts/deployment-cutover.mjs,
+scripts/__tests__/deployment-cutover.test.js,
+scripts/__tests__/fixtures/deployment-cutover-bootstrap.mjs; paired plan/spec.
+Shared fixture copier is causally necessary for retained/default-context callers.
+Its optional retain mode preserves NEW qualification originals; default behavior
+and existing source controls stay unchanged. Source inventories already hash
+canonical Git-tracked new files. No external package or dist/native profile.
+No adapter/owner/launcher/passive-home/five-NAPI/C/DB/service/selector changes.
+
+DATA interfaces exactarity1:
+holdDashboardCutoverProcessCandidateEventsV4(request):Promise<object>;
+observeHeldDashboardCutoverProcessCandidateEventsV4(original):object;
+waitHeldDashboardCutoverProcessCandidateEventsV4(original):Promise<object>.
+Request exactplain descriptor record schema='setfarm.dashboard-cutover-process-candidates-request.v4',
+candidates dense sortedunique1..32 exactplain {pid}, int2..INT_MAX. Inputs are
+comparison selectors, NOT owner/project/family/complete catalog evidence.
+Reject proxies/accessors/extra keys before traps/ports. Caller cannot supply
+source/interpreter/backend/profile/executable/identity token/callback/signal/SQL.
+A frozen zero-key original authenticates only this provider's WeakMap occurrence.
+Single-use, no release/reset/close/retry/adoption interface. Active-first reentry
+burns including malformed public entry while acquisition/wait is pending;
+cached observe is resource-free metadata, NOT a live kernel assertion.
+
+Bootstrap authenticates two additional LITERAL Git inputs and permits a SECOND
+exact Python DATA URL. Existing owned-byte snapshot/UTF8/131072B and query/hash/
+foreign-path restrictions remain. No generic .py loader or pathname re-read.
+The fixed Python3.9.6 backend executes imported bytes with -I -S -B -u -c,
+cwd'/' and sanitized PATH/LANG/LC_ALL; one canonical<=4096B private stdin then
+EOF. It retains SAME original queue through READYseq0 and terminalseq1,
+<=16384B/frame, <=32768B total, no stderr. Every observation explicitly denies
+family closure/future entry/cutover authority; no mutable argv/environment echo.
+
+Nominate actual inventory literals, not guessed ABI: Darwin25.5.0/arm64,
+EXACT kernel 'Darwin Kernel Version 25.5.0: Tue Jun  9 22:26:22 PDT 2026; root:xnu-12377.121.10~1/RELEASE_ARM64_T8132',
+Python3.9.6. API/OS inventory was not kernel registration/private-ABI proof.
+Validate public BSD136/alignment8/offsets and private PROC_PIDUNIQIDENTIFIERINFO17,
+record56/alignment8 offsets0/16/24/32/36/40/48 and pointer/size_t8. Exact56
+return only; no fallback to timestamp/ESRCH or composite18 credentials theorem.
+Actual U0→BSDaccount/path→original EV_ADD|EV_RECEIPT→BSDaccount/path→U1 bracket,
+same nonzero lossless64bit unique ID, exact raw32 version bits/executable UUID/
+path; all effective/real/saved account IDs match, live/nontraced/non-exiting.
+No positivity assumption for signed version export; encode raw bits losslessly.
+
+Conditional binding assumptions are explicit: same original backend boot/lifetime,
+no unique-id reuse/64bit allocation wrap, no idversion32 wrap and reviewed exec
+semantics. Published XNUf621 is NOT installed-kernel qualification. Its data
+defines logical generation, not immutable proc-structure address. See
+[private layout](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/sys/proc_info_private.h#L45),
+[allocation](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_fork.c#L952),
+[exec version](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_exec.c#L7096)
+and [registration/event handling](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_event.c#L1099).
+
+Receipt and event channels are separate. Successful enrollment receipt is same
+pid/filter/privateordinal/interest/count with requested flags+EV_ERROR/data0;
+requested FORK/EXEC bits are NOT observed events. Later empty-changelist read
+alone can yield a clean original NOTE_EXIT; reviewed auto-CLEAR and EXIT
+EOF/ONESHOT flags are exactprofile obligations, not generic accepted bits.
+Unexpectedflags, FORK/EXEC/mixedEXIT, overflow/error/identity change, ESRCH or
+fixed30s monotonic backenddeadline remain UNKNOWN. No TRACK/CHILD/EXITSTATUS,
+re-add/re-enroll/delete/adopt. Fork before attach and preexisting descendants
+remain invisible; tracing can delay EXIT; sampled credentials are not frozen.
+
+Child/original custody: provisional occurrence/native Promise before spawn;
+actual child and all three streams/listeners before post-return validation.
+READY and natural backend-lifetime promises remain distinct. Fixed5s READY/
+35s lifetime driver deadlines start at spawn, not per retry. Driver rejection
+never substitutes for original settlement; preserve passive finite drain after
+burn/loss. No signal/destroy/unref/kill/finally guessed disposal. Actual matching
+exit+childclose, stdinfinish+close, both outputEOF+close, canonical sequence and
+known queue-close response are required for terminal success DATA. Queue close
+is one original disposition; lost ACK remains UNKNOWN, never numericFD retry.
+Helper termination/EOF/queueclose is NOT a target event. Late original success
+cannot repair UNKNOWN or mint a retry. Cached observe never grants kernel liveness.
+
+Tests first: causal existing-bootstrap DATA enrollment RED and absent transport
+interface; separate SETUP. Full actual-source transport/backend bridges and
+bounded actual Node child lifecycle controls disclose executable substitution,
+never Python/kernel credit. Typed/trap-free ports, reentry, suspended original,
+READY response loss, timer driver-only rejection, stream/exit/close permutations,
+ABI/receipt/event/identity/deadline/disposition failures and old bootstrap
+compatibility required. Native owned-target qualification is a SEPARATE opt-in
+after source gate: targets wait for ACK then naturally exit, never real service
+PIDs/signals. Retain raw original registration/events/close/helper lifecycle.
+It qualifies local conditional mechanics only, not complete platform families.
+
+Task4k now delivered688d5c19, both final exact-four/all19 C0/I0/M0, fresh20new/
+9adjacent/6identical extracted PASS and strict1195/0; PR280 staysDRAFT. This
+slice grants NO pre32/PG/ROOT/positiveownership/phase/selector/controller/entry/
+startup permission. Future ONEcombined route must enroll real originals before
+fresh quiet and additionally close finite historical descendants/queued ingress
+in SAME record/prefix. No current service invocation, terminalquiet adoption or
+partialmerge. Complete integration/actualcleanmainbuild/currenthost3333 remains.
+
+Task4l pre-implementation syscall refinement (2026-10-09):
+Root read the upstream CPython3.9.6 selectmodule implementation. Its queue close
+helper returns saved positive errno, while public close tests errno<0; that
+published wrapper's normal None response does not certify successful underlying
+close. Its control wrapper also retries interrupted kevent with the original
+change list. Do NOT infer the installed Apple extension is byte-identical or
+claim a live fault; neither wrapper is an accepted original-status source here.
+[CPython close/control](https://github.com/python/cpython/blob/v3.9.6/Modules/selectmodule.c#L1953).
+
+Choose fixed ctypes calls to the existing system kqueue, kevent and close
+symbols, each with explicit arg/restypes and retained intent/returned/result/
+errno records. No select.kqueue object, Python destructor or wrapper retry.
+One private original queue descriptor is retained BEFORE any registration call;
+one explicit close attempt records actual zero return, never guessed success.
+Any -1/EINTR/raised/lost response poisons UNKNOWN; NEVER retry an original
+registration/change list, numeric descriptor or close. No replacement queue.
+Separate per-call returned custody from caller-observed frame delivery.
+
+Add explicit PUBLIC ABI validation to the same new Python source:
+struct kevent is packed4, size32/alignment4, ident0/filter8/flags10/fflags12/
+data16/udata24 (installed SDK pragma pack(4)); timespec size16/alignment8,
+seconds0/nanoseconds8. Fixed EVFILT_PROC=-5, EV_ADD=1, EV_RECEIPT=64,
+EV_ERROR=16384, autoEV_CLEAR=32, EXIT EOF32768/ONESHOT16;
+NOTE_EXIT2147483648/FORK1073741824/EXEC536870912.
+Enrollment success model flags16449 (ADD|RECEIPT|ERROR), interest3758096384,
+data0. Later pure EXIT model flags32881 (ADD|RECEIPT|CLEAR|EOF|ONESHOT),
+fflags2147483648/data0; same original pid/filter/privateordinal. Any model
+mismatch refuses pending actual-owned qualification, not a generic bitmask
+weakening. Actual BSD pbi_flags are PROC_FLAG_TRACED2/INEXIT4, not sys/proc.h
+P_TRACED/P_WEXIT mask values. New fault controls cover consumed close failure,
+lost close response, returned EINTR and zero repeat calls. Eight-path map,
+DATA-only scope and all other conditions remain unchanged.
