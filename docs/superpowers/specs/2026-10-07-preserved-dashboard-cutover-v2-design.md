@@ -4163,3 +4163,74 @@ The three sidecar outer spawnSync diagnostic envelopes have no explicit EOF/
 pipe-close slots; their recorded status/signal/error/output and per-command
 natural lifecycle are separate evidence. The28joint outer consumers do retain
 both EOF/close. No blanket all31 outer-lifecycle or host capability claim.
+
+## Task4k design — fixed-path pre-import ordinary CLI refusal
+
+2026-10-09. Causal necessity: current cli.ts statically evaluates installer,
+runtime-config, DB and service dependencies BEFORE main's runtime/per-branch
+admission checks. Durable old prompts can name absolute compiled CLI paths,
+so a PATH/symlink wrapper is not the eventual selected-entry boundary. This
+slice supplies the future CLI's missing initial OPEN fence, not old-image or
+queued/daemon/descendant closure. Root is sole writer; no selected bytes move.
+
+Choose the existing cli.ts path with literal top-level awaited imports after
+fixed ordinary refusal. A thin renamed body expands seven unrelated AST source
+consumers; avoid that expansion. A native watcher remains a separate prerequisite
+and cannot substitute for ingress. Its public timestamp-only enrollment is not
+unconditional generation binding; private unique-ID SPI and explicit sameboot/
+no-counter-wrap/exec conditions require a separate nomination and host boundary.
+Primary published kernel evidence is XNUf6217f891ac0bb64f3d375211650a4c1ff8ca1ea,
+not installed Darwin25.5/xnu12377.121.10 qualification. See
+[process attach](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_event.c#L1099),
+[allocation identity](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_fork.c#L952)
+and [private SPI](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/sys/proc_info_private.h#L45).
+No kernel/process producer or SPI added by Task4k.
+
+Exact map: cli.ts; new scripts/__tests__/deployment-cutover-cli-entry-v4.test.js;
+paired existing plan/spec. No new production locator/export/dependency/provider,
+source/build inventory edit or selected-worktree mutation. Current build topology
+still derives cli/cli.js and its existing permissions. No wholesale refactor.
+
+Runtime static nonbuiltin closure is ONLY existing baseline-deployment-cutover-
+v1.js, baseline-workspace-authority-path-v1.js, baseline-deployment-cutover-records-
+v1.js and canonical-json.js. Their dependencies are builtins/type-erased imports.
+The event type import is erased; it must not evaluate events. All business and
+runtime-guard imports become fixed literal awaited imports with identical
+bindings. main, command branch checks, runtime integrity and existing diagnostic
+behavior remain intact. No caller-built path/module/callback/port.
+
+Before any business import, derive exact argv privately. Only the pre-existing
+EXACT three arguments platform-release/preflight/--json retain their existing
+diagnostic exception; they do not gain ordinary admission or production
+authority. All other argv call existing zero-input ordinary cutover assertion.
+OPEN, partial/malformed records, unsafe ancestry or observer cleanup uncertainty
+stop with status1, stdoutempty and EXACT generic
+DEPLOYMENT_CUTOVER_CLI_ENTRY_REFUSED newline; no observer/private path/error echo.
+Existing runtime guard flags/env may retain their own old behavior after initial
+admission but cannot bypass this new fence. No rollback/retry/permission mint.
+
+Use complete literal actual-source TS bridges and real owned private canonical
+OPEN fixture; business resolve AND evaluation sentinel cannot be consulted for
+initial OPEN. Genuine absence reaches the normal dependency boundary. Preserve
+complete original child status/signal/exit/close/outputEOF+close and exact source
+pins/program/manual output bytes; these are SOURCE controls, not actualbuild.
+The specific behavior change causing RED is a forbidden dependency evaluation
+before the new fence; fixture source resolution/setup failure earns no RED.
+
+This is intentionally an INITIAL pre-import fence, not held monotonic absence:
+an OPEN published AFTER its initial check may race an admitted import. Keep
+all existing callee/ordinary DB/service guards unchanged and disclose that
+boundary. No full lifetime, old absolute image, finite queued instructions,
+native event, PG/ROOT, selector or startup admission follows from a GREEN.
+
+Task4j current delivery is0561dc99, source-only exact-ten/all31 C0/I0/M0 twice,
+264focused and1195strict noEmit; PR280 still DRAFT. Terminal quiet scope remains
+consumed/release-denied; no reopen/adoption. Full cutover still needs SAME original
+combined enrollment/quiet/prefix custody and independently closed historical
+ingress plus the remaining original physical/DB/phase/effects/controller/build/
+host conjunction. This refinement hardens one genuine source entry and never
+changes that conjunction or grants live effects.
+The existing static observer closure calls userInfo during account-path module
+initialization. That trusted preparation precedes the assertion catch; arbitrary
+static loading/account-init errors are NOT promised generic normalization.
+Generic CLI_ENTRY_REFUSED covers the called observer/OPEN/refusal path only.

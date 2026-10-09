@@ -3120,7 +3120,7 @@ their original preparation/behavior. No general action dispatcher or callback.
   assert.deepEqual(out.bootoutArguments,[['bootout','gui/'+process.getuid()+'/com.setrox.setfarm-spawner']]);
   ```
 
-- [ ] Step5: focused new/owner/material/adapter regressions, strict noEmit,
+- [x] Step5: focused new/owner/material/adapter regressions, strict noEmit,
   syntax/contracts/diff; root reads every actual retained quiet original and two
   exact-ten-file independent final reviews. Normal source commit/forward push,
   append-only PR280 evidence and exact-head readback. No full-build/real launchd/
@@ -3207,3 +3207,111 @@ retain status/signal/error/stdout/stderr, NOT explicit EOF/pipe-close fields.
 Only their per-command retained lifecycle has those recorded flags. The28joint
 outer envelopes independently retain both EOF and close; never credit fictional
 outer lifecycle slots to all31 or treat synchronous-return DATA as a capability.
+
+### Task4k: pre-import ordinary CLI refusal, future selected source only
+
+Goal: close the actual current CLI import-before-OPEN-check gap needed by the
+eventual authenticated selected entry. This is NOT complete historical ingress
+closure. Task4j is delivered0561dc99, both exact-ten/all31 gates C0/I0/M0,
+264focused/strict1195/0; PR280 OPEN DRAFT exacthead/securitySUCCESS and comment
+6078872044 exact3442B SHA6ad145bc0b0927ea95bc9ae20d6de211311571341f6b9940c5800e3d8f0857d1.
+Its Step5 is now complete; pending checkpoint prose above remains historical.
+
+Decision under standing owner authorization: preserve cli.ts pathname and its
+existing top-level main/branches instead of moving the1238-line implementation
+and rewriting unrelated AST consumers. Convert its fixed nonbuiltin runtime
+imports to top-level awaited literal imports AFTER the fixed ordinary fence.
+Type-only imports remain erased. Builtins and the existing pure fixed-root OPEN
+observation dependency closure are the only runtime static imports. Existing
+exact platform-release/preflight/--json remains the sole pre-existing diagnostic
+exception, with the same main/readiness behavior. No new caller flag/environment,
+callback, startup permit or owner API. Every other argv, including malformed
+near-misses and absolute compiled invocations, goes through the fence.
+
+File Map EXACT four paths:
+- src/cli/cli.ts: existing fixed ordinary assertion before any business/runtime
+  guard/config/DB import; finite generic entry refusal then process.exit(1);
+  fixed awaited imports keep existing names/type shape/main/source branches.
+- NEW scripts/__tests__/deployment-cutover-cli-entry-v4.test.js: literal full CLI
+  TS-to-JS bridge and actual fixed observation closure, genuine private OPEN FS,
+  intercepted business resolve/evaluation sentinel, no host/system effects;
+  retained full source/outputs/program/result lifecycle; complementary controls.
+- This plan and paired preserved-dashboard-cutover-v2-design.md only.
+No preserved deployment, symlink, source inventories, build contracts, native
+provider, process watcher, service, database or runtime config changes. Existing
+TS output topology derives the same cli/cli.js; no new runtime source locator.
+All adjacent main/branch AST consumers remain unchanged and must pass.
+
+Alternatives considered: old selector-only wrapper misses already materialized
+absolute CLI targets; a kernel event watcher supplies a different prerequisite
+but cannot close ingress (private SPI and sameboot/no-wrap/exec semantics must
+be explicitly nominated later); moving main into a new body unnecessarily
+expands current source-consuming tests. Choose the fixed-path pre-import fence.
+
+Interfaces unchanged. Fixed existing assertion:
+`assertOrdinarySpawnerDeploymentCutoverAdmissionV1(): void`.
+No new production exports. CLI refusal exactly
+`DEPLOYMENT_CUTOVER_CLI_ENTRY_REFUSED\n`, status1/stdoutempty, never private
+observer paths/errors. Runtime-guard bypass flags do not bypass this fence.
+Existing exact diagnostic retains status2 on its successful blocked receipt;
+the current main-level runtime guard and all branch-level guards stay intact.
+
+- [ ] Step1: root self-review paired four-file nomination; two independent
+  exact paired-doc gates; normal two-doc design commit BEFORE test/source edits.
+- [ ] Step2: source consumer RED against actual original CLI, not a missing
+  library/module. Generate one exact transpile per CLI/observation/workspace/
+  records/canonical source. Execute the full compiled CLI from an owned fixture
+  absolute path. Publish actual canonical OPEN under an owned account home;
+  fixed business resolve/evaluation hook increments a forbidden counter and
+  rejects. Control assertion:
+  ```js
+  const row=await runCli({mode:'open',argv:['step','claim','fixture-agent']});
+  assert.equal(row.status,1);
+  assert.equal(row.stdout,'');
+  assert.equal(row.stderr,'DEPLOYMENT_CUTOVER_CLI_ENTRY_REFUSED\n');
+  assert.equal(row.businessResolves,0);
+  assert.equal(row.businessEvaluations,0);
+  ```
+  Run fixed Node26 plus the existing read-only bare-typescript shared resolver:
+  `node --test scripts/__tests__/deployment-cutover-cli-entry-v4.test.js`.
+  Expected initial RED: business sentinel reached / missing finite refusal,
+  with valid private OPEN and complete natural child lifecycle, not SETUP.
+- [ ] Step3: minimum source producer: static existing fixed admission import
+  and erased event type plus builtins; before dynamic imports:
+  ```ts
+  const entryArgs=process.argv.slice(2);
+  const exactDiagnostic=entryArgs.length===3&&entryArgs[0]==='platform-release'
+    &&entryArgs[1]==='preflight'&&entryArgs[2]==='--json';
+  if(!exactDiagnostic){
+    try{assertOrdinarySpawnerDeploymentCutoverAdmissionV1()}
+    catch{process.stderr.write('DEPLOYMENT_CUTOVER_CLI_ENTRY_REFUSED\n');process.exit(1)}
+  }
+  const {assertRuntimeIntegrityOrExit}=await import('./runtime-guard.js');
+  ```
+  Convert every other fixed nonbuiltin runtime import without changing its
+  imported names or function bodies. Preserve type-only SetfarmEvent separately.
+  No import constructed from caller argv/environment. Keep existing main catch.
+- [ ] Step4: current-source complements: OPEN for each ordinary group and
+  absolute compiled command; malformed/partial/unsafe OPEN; observer cleanup
+  loss/private-message refusal; argv/guard-bypass near misses cannot bypass;
+  valid absent private workspace reaches the original fixed dependency boundary;
+  exact diagnostic remains deliberately non-authoritative; type-erased/static
+  runtime closure whitelist and byte-exact unchanged main-body controls.
+  This fence is an INITIAL admission check, NOT a held absence epoch. Explicit
+  late OPEN after admission can reach import evaluation; existing callee guards
+  remain required. Never claim this control closes that lifetime or old images.
+- [ ] Step5: root read each retained actual original and translations; focused
+  new controls plus unchanged startup/cleanup/Task6A-main/CLI source consumers;
+  strict/syntax/contracts/diff, two final four-path source/evidence reviews,
+  normal scoped delivery and append-only exact-head PR280 readback. No actual
+  host/general kernel/PG/build credit; do not merge partial branch.
+
+Remaining conjunction: actual historical original/descendant event custody
+enrolled BEFORE fresh combined quietdispatch; finite old absolute/queued/gateway
+ingress closure; SAME original settled prefix continuing atordinal3; positive
+execution DB+FS; selector/phase and remaining effects; authenticated controller/
+entry; whole reviewed integration/actual clean-main build/current host evidence.
+The new initial CLI fence changes NONE of these separate admission obligations.
+Static observer-loader/account initialization is trusted preparation outside
+the assertion catch. Its errors are not normalized by this slice; distinguish
+that existing preparation boundary from actual called-observer refusal controls.
