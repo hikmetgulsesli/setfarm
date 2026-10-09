@@ -9,6 +9,8 @@ import {createRequire} from 'node:module';
 import {types} from 'node:util';
 import {observeCurrentFinalizedSetfarmSourceBuildV1} from './build-generation-retention.mjs';
 import * as buildInputs from './dashboard-cutover-native-build-inputs-v2.mjs';
+import {assertDashboardCutoverJointNativeTokenV4,assertDashboardCutoverJointNativeSettlementTokenV4,
+  assertDashboardCutoverJointNativeReleaseTokenV4,revokeDashboardCutoverJointTokenV4} from './deployment-dashboard-cutover-adapter-v2.mjs';
 
 const NODE='/opt/homebrew/Cellar/node/26.4.0/bin/node';
 const CLANG='/Library/Developer/CommandLineTools/usr/bin/clang';
@@ -46,6 +48,8 @@ const vault={attempted:false,active:false,burned:false,closed:false,revocations:
   loadedAttempted:false,loaded:null};
 const leases=new WeakMap();
 const loadedHandles=new WeakMap();
+const operationScopes=new WeakMap();
+let joint=null;
 const JOB_METHODS=['receiveControllerHelloV4','challengeControllerAndReceiveAckV4','sendControllerGrantV4',
   'helloClientAndReceiveChallengeV4','ackClientAndReceiveGrantV4'].sort();
 const hash=b=>createHash('sha256').update(b).digest('hex');
@@ -54,10 +58,18 @@ const within=(r,p)=>p===r||p.startsWith(r+path.sep);
 const sorted=a=>a.slice().sort();
 const exact=(a,b)=>a.length===b.length&&a.every((x,i)=>x===b[i]);
 function refuse(){throw Error('DASHBOARD_CUTOVER_NATIVE_SIDECAR_REFUSED')}
-function burn(){vault.burned=true;vault.revocations++}
-function alive(){if(!vault.active||vault.burned||vault.closed)refuse()}
+function burn(){if(joint)revokeDashboardCutoverJointTokenV4(joint.token);vault.burned=true;vault.revocations++}
+function alive(){if(!vault.active||vault.burned||vault.closed)refuse();
+  if(joint)assertDashboardCutoverJointNativeTokenV4(joint.token,joint.original)}
 function port(fn){alive();const result=fn();alive();return result}
-function enter(){if(vault.active){burn();refuse()}vault.active=true}
+function idle(){
+  if(joint?.settled){
+    try{assertDashboardCutoverJointNativeReleaseTokenV4(joint.token,joint.original)}catch{burn();refuse()}
+    joint.released=true;joint=null;vault.active=false;
+  }
+  if(vault.active){burn();refuse()}
+}
+function enter(){idle();vault.active=true}
 function profile(){return process.platform==='darwin'&&process.arch==='arm64'&&process.version==='v26.4.0'
   &&process.execPath===NODE&&Number(process.versions.napi)>=8&&Number.isSafeInteger(process.getuid())&&process.getuid()>0}
 function checkProfile(){if(!profile()||BigInt(process.getuid())!==vault.uid)refuse()}
@@ -265,7 +277,7 @@ function close(){
   }catch{burn();refuse()}finally{vault.active=false}
 }
 async function prepareFixed(binding,arity,opaque=false){
-  if(vault.active){burn();refuse()}if(arity||!profile())refuse();
+  idle();if(arity||!profile())refuse();
   if(vault.attempted||vault.burned||vault.closed)refuse();enter();vault.attempted=true;vault.uid=BigInt(process.getuid());
   vault.binding=binding;
   try{
@@ -347,7 +359,7 @@ export async function prepareDashboardCutoverNativeSidecarV2(){return prepareFix
 export async function prepareDashboardCutoverNativeSidecarV4(){return prepareFixed(V4,arguments.length)}
 export function holdDashboardCutoverNativeSidecarLeaseV4(){return prepareFixed(V4,arguments.length,true)}
 function authenticateLease(original,arity){
-  if(vault.active){burn();refuse()}if(arity!==1)refuse();
+  idle();if(arity!==1)refuse();
   const record=leases.get(original);
   if(!record||record.vault!==vault||!record.published||vault.binding!==V4
     ||vault.lease?.original!==original||vault.lease.record!==record)refuse();
@@ -424,7 +436,7 @@ async function loadFixed(original,arity){
 }
 export function holdDashboardCutoverLoadedJobPeerV4(original){return loadFixed(original,arguments.length)}
 function authenticateLoaded(original,arity){
-  if(vault.active){burn();refuse()}if(arity!==1)refuse();const record=loadedHandles.get(original);
+  idle();if(arity!==1)refuse();const record=loadedHandles.get(original);
   if(!record||record.vault!==vault||record!==vault.loaded||!record.published||record.handle!==original)refuse();return record;
 }
 export function assertHeldDashboardCutoverLoadedJobPeerV4(original){
@@ -433,4 +445,40 @@ export function assertHeldDashboardCutoverLoadedJobPeerV4(original){
 }
 export function closeHeldDashboardCutoverLoadedJobPeerV4(original){
   authenticateLoaded(original,arguments.length);close();
+}
+
+export function beginHeldDashboardCutoverLoadedJobOperationV4(original,token){
+  idle();if(arguments.length!==2)refuse();const loaded=authenticateLoaded(original,1);
+  assertDashboardCutoverJointNativeTokenV4(token,original);
+  if(vault.burned||vault.closed||joint)refuse();enter();
+  const record={original,token,loaded,handle:null,published:false,checking:true,settled:false,released:false};
+  joint=record; // Retain activity and enrollment before all fallible work.
+  try{
+    recheckTerminal();checkLoaded(loaded);alive();
+    const handle=Object.create(null);record.handle=handle;operationScopes.set(handle,record);alive();
+    Object.freeze(handle);alive();recheckTerminal();checkLoaded(loaded);
+    record.published=true;record.checking=false;return handle;
+  }catch{record.checking=false;burn();refuse()}
+}
+function originalOperationScope(handle,arity){
+  if(joint?.checking||(vault.active&&!joint)){burn();refuse()}
+  if(arity!==1)refuse();const record=operationScopes.get(handle);
+  if(!record||record!==joint||record.handle!==handle||!record.published||record.released)refuse();return record;
+}
+export function assertHeldDashboardCutoverLoadedJobOperationV4(handle){
+  const record=originalOperationScope(handle,arguments.length);if(record.settled)refuse();record.checking=true;
+  try{alive();recheckTerminal();checkLoaded(record.loaded);recheckTerminal();checkLoaded(record.loaded);alive()}
+  catch{burn();refuse()}finally{record.checking=false}
+}
+export function assertHeldDashboardCutoverLoadedJobOperationCacheV4(handle){
+  const record=originalOperationScope(handle,arguments.length);if(record.settled)refuse();record.checking=true;
+  // Final cache cutpoint only: no filesystem/upstream/native-method invocation.
+  try{alive();checkLoaded(record.loaded);alive()}
+  catch{burn();refuse()}finally{record.checking=false}
+}
+export function settleHeldDashboardCutoverLoadedJobOperationV4(handle){
+  const record=originalOperationScope(handle,arguments.length);if(record.settled)refuse();record.checking=true;
+  try{assertDashboardCutoverJointNativeSettlementTokenV4(record.token,record.original);
+    record.settlementIntent=true;record.settled=true;
+  }catch{burn();refuse()}finally{record.checking=false}
 }

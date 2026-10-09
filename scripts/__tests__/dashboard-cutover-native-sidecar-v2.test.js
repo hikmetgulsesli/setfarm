@@ -20,7 +20,8 @@ const env={PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'};
 function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,actual=false,protocol=2,crossedSource=false,alternateSource=false,loader=false}={}){
   assert.ok(fs.existsSync(target),'missing nominated native sidecar builder');
   const names=['dashboard-cutover-native-sidecar-v2.mjs','dashboard-cutover-native-build-inputs-v2.mjs',
-    'dashboard-cutover-native-inputs-v2.mjs','build-generation-retention.mjs','dashboard-cutover-mach-peer-v2.c','dashboard-cutover-mach-job-peer-v4.c'];
+    'dashboard-cutover-native-inputs-v2.mjs','build-generation-retention.mjs','deployment-dashboard-cutover-adapter-v2.mjs',
+    'dashboard-cutover-mach-peer-v2.c','dashboard-cutover-mach-job-peer-v4.c'];
   const files=Object.fromEntries(names.map(n=>['scripts/'+n,fs.readFileSync(sourceRoot+'/scripts/'+n)]));
   if(alternateSource)files['scripts/dashboard-cutover-mach-job-peer-v4-alternate.c']=files['scripts/dashboard-cutover-mach-job-peer-v4.c'];
   const created=createFinalizedFixture(files),{root}=created,providerRoot=root+'.sidecar-providers';
@@ -152,17 +153,18 @@ function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,a
     mod=await import('./scripts/dashboard-cutover-native-sidecar-v2.mjs');
     prepare=mod[${JSON.stringify('prepareDashboardCutoverNativeSidecarV'+protocol)}];
     assert.equal(typeof prepare,'function','MISSING_FIXED_V4_NATIVE_SIDECAR');
-    // The trusted ESM interpreter reads these four code modules. That is not
+    // The trusted ESM interpreter reads these five code modules. That is not
     // module-owned retention/preparation; any other original/effect is forbidden.
     const codeNames=new Set(['dashboard-cutover-native-sidecar-v2.mjs','dashboard-cutover-native-build-inputs-v2.mjs',
-      'dashboard-cutover-native-inputs-v2.mjs','build-generation-retention.mjs']);
+      'dashboard-cutover-native-inputs-v2.mjs','build-generation-retention.mjs','deployment-dashboard-cutover-adapter-v2.mjs']);
     for(const r of opens.slice(importedOpenAt)){const p=r.p.startsWith('file:')?fileURLToPath(r.p):r.p;
       assert.ok(p.startsWith(root+'/scripts/')&&codeNames.has(p.slice((root+'/scripts/').length)),r.p);}
     assert.equal(commands.length,0);assert.equal(effects.length,importedEffectsAt);
-    assert.deepEqual(Object.keys(mod),['assertHeldDashboardCutoverLoadedJobPeerV4','assertHeldDashboardCutoverNativeSidecarLeaseV4',
+    assert.deepEqual(Object.keys(mod),['assertHeldDashboardCutoverLoadedJobOperationCacheV4','assertHeldDashboardCutoverLoadedJobOperationV4','assertHeldDashboardCutoverLoadedJobPeerV4','assertHeldDashboardCutoverNativeSidecarLeaseV4',
+      'beginHeldDashboardCutoverLoadedJobOperationV4',
       'closeHeldDashboardCutoverLoadedJobPeerV4','closeHeldDashboardCutoverNativeSidecarLeaseV4',
       'holdDashboardCutoverLoadedJobPeerV4','holdDashboardCutoverNativeSidecarLeaseV4',
-      'prepareDashboardCutoverNativeSidecarV2','prepareDashboardCutoverNativeSidecarV4']);
+      'prepareDashboardCutoverNativeSidecarV2','prepareDashboardCutoverNativeSidecarV4','settleHeldDashboardCutoverLoadedJobOperationV4']);
     ${before}
     ${body}}finally{const snapshot=JSON.stringify({root,generation,commandCount:commands.length,opens:opens.length,closes:closes.length,
       ${loader?'loader:{createRequireCalls,loadCalls,nativeCalls},':''}

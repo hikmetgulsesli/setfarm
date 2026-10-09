@@ -197,7 +197,8 @@ test("private XML renderer mechanics reject malformed surrogates and preserve CR
 for(const [specifier,file] of [
 ['./baseline-deployment-cutover-node-path-v1.js','../../src/internal-production/baseline-deployment-cutover-node-path-v1.ts'],
 ['./baseline-deployment-cutover-process-observation-v1.js','../../src/internal-production/baseline-deployment-cutover-process-observation-v1.ts'],
-['../product-compiler/canonical-json.js','../../src/product-compiler/canonical-json.ts']]){
+['../product-compiler/canonical-json.js','../../src/product-compiler/canonical-json.ts'],
+['../../scripts/deployment-dashboard-cutover-adapter-v2.mjs','../../scripts/deployment-dashboard-cutover-adapter-v2.mjs']]){
 const target=new URL(file,${JSON.stringify(new URL("./", import.meta.url).href)}).href;
 assert.ok(rendererSource.includes(JSON.stringify(specifier)));rendererSource=rendererSource.replace(JSON.stringify(specifier),JSON.stringify(target))}
 fs.writeFileSync(home+'/package.json','{"type":"module"}',{flag:'wx',mode:0o600});

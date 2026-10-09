@@ -1,0 +1,8 @@
+export function qualifyHeldDashboardCutoverJointOriginalOperationV4(originalLoaded: object, originalDefinition: object): Promise<void>;
+export function assertDashboardCutoverJointNativeTokenV4(token: object, originalLoaded: object): void;
+export function assertDashboardCutoverJointDefinitionTokenV4(token: object, originalDefinition: object): void;
+export function assertDashboardCutoverJointNativeSettlementTokenV4(token: object, originalLoaded: object): void;
+export function assertDashboardCutoverJointDefinitionSettlementTokenV4(token: object, originalDefinition: object): void;
+export function assertDashboardCutoverJointNativeReleaseTokenV4(token: object, originalLoaded: object): void;
+export function assertDashboardCutoverJointDefinitionReleaseTokenV4(token: object, originalDefinition: object): void;
+export function revokeDashboardCutoverJointTokenV4(token: object): void;

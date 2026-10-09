@@ -2248,7 +2248,7 @@ PR280OPEN DRAFT exacthead61533Bbody prior59728Bprefix intact. Writer clean,
 original2dirty unchanged. Historical pending lines above superseded; no genuine
 compiler/loading/mainbuild/job/foreground/wholegoal credit.
 
-## Task4i.4: functional private held-bundle loading (implementation under review)
+## Task4i.4: functional private held-bundle loading (delivered a1ae81a2)
 
 Spec: paired Task4i.4. Causal path to actual six-effect adapter: retain genuine
 native provider privately, rather than publishing another DATA-only conjunction.
@@ -2306,11 +2306,175 @@ fallible loader work, pending mint before sealing, genuine idle once-close.
   resolver verifies12artifacts, NOT writer dependency closure or full build.
   Private frozen/result indices ece7031e/364807d1; original two passive-home
   file bytes preserved, current stopped-retention worktree clean, no root reset.
-- [ ] Focused source-fault RED/GREEN + proportional old DATA/opaque controls,
+- [x] Focused source-fault RED/GREEN + proportional old DATA/opaque controls,
   strict/contracts/diff; two final exact-byte source/evidence/doc reviews and
   normal scoped delivery. Do not describe overlapping test selection as unique.
+  Final two independent original-evidence reviews C0/I0/M0. Rootstage725811,
+  normal commita129d7 a1ae81a26e0c0765dd7bf4b8f35123a47a976b83, pusha2087d;
+  writer clean72caf4. PR280 OPEN DRAFT exactnewhead27f1be and GitGuardianSUCCESS
+  02:30:56Z; appendonly63488B prior61533prefixpreserved, SHAa94ff9b9. No merge,
+  actual native loading, full build or live3333 claim.
 - [ ] Separately nominate joint original-operation fence/actual adapter use and
   genuine finalized compiler/loading qualification. No actual:true synthesis,
   native campaign replay, cache deletion/unload, owner/phase/startup substitution
   or clean-main guard bypass in this slice. All six effects/controller/entry,
   legacy cohort/foreground/clean-main/live3333 obligations remain.
+
+## Task4i.5: fixed bilateral original-operation qualifier (source qualified)
+
+Goal: execute genuine loaded/definition original checks under jointly held
+participant activity, without exposing provider methods or granting effects.
+Architecture: adapter owns private token, preparation/import occurrences
+and serial enrollment/check/settlement stages. Existing providers consult the same
+trap-free revocation identity around their admitted outer ports; existing nested
+source/configuration calls remain explicitly trusted composites.
+Tech: fixed Node26 ESM/builtins, existing TS launcher, adjacent .d.mts declaration.
+Spec: paired Task4i.5; existing Task4 effect contract and Task3 dependency unchanged.
+Root only writer/delivery. RO agents research/design/source/evidence review only.
+
+File Map (one bounded testable feature):
+- Create scripts/deployment-dashboard-cutover-adapter-v2.mjs: fixed qualifier,
+  private source/import/token/operation custody and fixed liveness/revoke helpers.
+- Create scripts/deployment-dashboard-cutover-adapter-v2.d.mts: exact object/void/
+  Promise<void> signatures; no any, callback or generic permission types.
+- Create scripts/__tests__/deployment-dashboard-cutover-adapter-v2.test.js:
+  actual copied provider qualification, inert loader/native commands only.
+- Modify scripts/dashboard-cutover-native-sidecar-v2.mjs and existing test:
+  original loaded operation scopes, shared token liveness and nonthrowing burn notice.
+- Modify src/internal-production/baseline-deployment-cutover-launcher-observation-v1.ts
+  and tests/internal-production/baseline-dashboard-cutover-approved-definition-v4.test.ts:
+  private definition operation scope while retaining material original activity.
+- Modify package.json: explicit builtin/pure test enrollment; no dependency install.
+- Modify this plan and paired spec. Existing source/build closure differences must
+  be named and independently reviewed before adding another production dependency.
+
+Interfaces: copy exact two-input qualifier, seven adapter token helpers and seven
+provider scope functions from paired spec. All fixed arity. Token mint private;
+source/compiled provider import literals fixed to same ROOT. Foreign ordinary
+objects may trigger readonly preparation/import proof BEFORE compiled WeakMap
+authentication, but never participant scopes/effects; do not promise zero FS there.
+Preparation custody and joint-operation attempt are distinct. Existing healthy
+participant handles survive invalid identity qualification.
+Coordinator active-first precedes ALL input parsing, including while imports are
+pending: bad-arity/proxy reentry burns original preparation/token, new ports0,
+traps0, no settlement/disposal. Only idle input validation follows the stated order.
+Authenticate through existing fixed idle assertions (loaded then definition) after
+fixed imports, never direct WeakMap access. Before mint/enrollment both assertions
+and source proof pass. Settlement needs pending0 AND every separately registered
+enrollment response recovered/published AND no unknown enrollment/settlement;
+a synchronous response-loss must not enter SETTLING via finally.
+RO source investigation found a serial settlement gap: keep each settled local
+activity fenced until both settlement responses are recovered at the coordinator's
+terminal stage. Two fixed release-token assertions authenticate that metadata
+only; next public idle entry clears activity without FD/resource ports. No extra
+production file or effect scope, but this causal lifecycle refinement must be
+reviewed before implementation.
+Second causal refinement: raw module/cache mutation in the last definition FS
+pass does not notify a provider burn. Nominate exact-one native cache-only scope
+assertion after ALL source/definition/FS passes and before settlement. Reuses
+private cache identity checks, no FS/upstream/native methods; explicit trusted
+intrinsic cutpoint, not simultaneous atomic disk/cache authority. Same File Map.
+Original scope responses require immediate fixed-provider authentication before
+the next enrollment, not merely non-null return. RO proposal became causal RED
+cb0c9f/6c9db0: dropped original scope WeakMap registration admitted a second mint.
+Retain returned response first; failed fixed scope assertion quarantines unknown
+custody and prevents the second begin. Enrollment authentication is explicitly
+separate from later bilateral checks; no fake scope holder or new public API.
+
+- [x] Step1: RO nomination review resolves exact import identity, source-closure
+  enrollment, preparation versus operation attempt, pending work/settlement and
+  trusted-composite port accounting before production. Self-review all interfaces
+  against paired spec; do not treat this qualifier as full adapter capability.
+  Three refreshed independent RO seats C0/I0/M0 on spec e9b4358e and plan
+  88c4c7c2, source HEAD a1ae81a2 unchanged. Design gate only, not source,
+  evidence, cached executing image or complete Task4 qualification.
+- [x] Step2: author source-only actual-provider fixtures and missing-export RED
+  before code. Retain each generated program, natural exit/signal/EOF and originals.
+  Example missing-module assertion:
+  assert.equal(typeof adapter.qualifyHeldDashboardCutoverJointOriginalOperationV4,
+    'function','MISSING_FIXED_JOINT_ORIGINAL_OPERATION');
+  Genuine participant fixture must obtain definition from the FIXED compiled
+  provider instance and loaded original from the actual copied sidecar, not mocks
+  returning fabricated handles. A declared exact source-loader/transpile bridge
+  may supply compiled-path test code, but never genuine clean-main/build credit.
+  Use a LOCAL finite finalized-output builder in this test, leaving the shared
+  four-output helper unchanged. Literal TS→JS map is launcher-observation,
+  node-path, process-observation under internal-production and product-compiler/
+  canonical-json; preserve relative .js/fixed adapter imports, record original/
+  translated hashes and canonical URLs, and declare manual fixture-only metadata.
+- [x] Step3: implement minimal coordinator and scope paths after RED:
+  const tokenRecord = { originalLoaded, originalDefinition, stage:'enrolling',
+    revoked:false, pending:new Set(), nativeScope:null, definitionScope:null };
+  // Register private original before sealing; no token factory/public output.
+  // Retain each returned scope BEFORE fallible post-entry checks.
+  // For every direct admitted participant port:
+  assertBoundJointToken(); const originalResult = ownedPort(); assertBoundJointToken();
+  // burn marks token revoked normally, then existing local refusal/settlement.
+  // Scope settlement is permitted ONLY at genuine settled/settling stage.
+  // Distinct settlement helpers allow genuine pending0 revoked scope release,
+  // never restored validity, effect permission or FD disposal.
+  Fixed operation performs both original full checks with both activities held;
+  it returns void only after actual original work settlement. No native method call.
+- [x] Step4: qualify concrete faults with actual provider originals:
+  burn native during a direct definition FD read -> next direct definition port0;
+  burn definition during a direct native bundle read -> next direct native port0;
+  public acquire/assert/close reentry wrong-arity/foreign/proxy -> traps0/disposals0;
+  foreign/copied/query-instance token or scope -> traps0/outer resource ports0;
+  failed second enrollment retains first scope and refuses premature settlement;
+  pending import original/consumer response loss -> no participant settlement;
+  cache/module/definition bytes/material/source drift -> sticky revocation/no retry;
+  captured unpublished mint/seal loss -> no authenticated scope;
+  reverse once-close/response loss/reused descriptor -> no duplicate disposal;
+  successful fixed qualifier returns undefined, exports no token/path/method/callback.
+  Explicitly distinguish trusted nested composite work from direct port counters;
+  an internal port after opposite burn earns no universal inhibition claim.
+- [x] Step5a: affected native/definition/material controls, strict1193+new files
+  noEmit with shared deps, syntax/contracts/diff. Full build remains clean-main only.
+- [ ] Step5b: final reviewed delivery, not whole-branch completion:
+  Two final exact-byte source/evidence reviews. Root stages only File Map, normal
+  scoped commit/push and append-only PR delivery (body capacity currently2048B;
+  use a normal evidence comment if necessary, never truncate prior evidence).
+
+Qualification checkpoint (2026-10-09, before delivery): final adapter96a3d441,
+nativee50a2a26, launchera1f3bb0c and declarationfe02b166. Four causal REDs
+preceded fixes: Set construction swallowed preparation burn (54f39a/AelZlF),
+last definition FD pass changed cache (5b5dc7/54OFmA), liveToken stage includes
+swallowed revocation admitted one direct port (99fbf4/A0yhGL), and unrecovered
+scope identity admitted the second begin (cb0c9f/uAoiyo). Fixes respectively
+recheck preparation after allocation, validate cache after all resource work,
+recheck sticky liveness after includes, and authenticate retained scope response
+before next enrollment. Missing cache-only interface also RED f42a32/uoZBRx.
+
+Final four disjoint campaigns:6+5+10+3 =24 distinct cases,0F; one API-only repeat
+after normalizing the test's TypeScript package lookup is NOT a25th case.
+Historical test pins d45bae7b/9f83671d/410bdd38/e7bc04c7 reconstruct exactly from
+final cbc48ee5; shared helpers and earlier bodies unchanged except explicit
+absolute-to-normal dependency lookup correction. Finite compiled-path fixture
+uses shared TypeScript5.9.3/transpileModule, not a production build. Root readback
+fedbbb verifies25 original intent/result/snapshot receipts,147 inert commands,
+63 exact C stdin blocks/native methods0. Direct88,935 versus trusted composite
+6,136,365 recorded FS rows are classification, NOT complete Task4 per-port proof.
+Resource-case stdout has one additional diagnostic-file composite close after
+the original snapshot; both hashes/delta are retained, not silently conflated.
+Thirteen affected native controls pass (4337e0/4b432f).
+First5 native controls used earlier adapter046aaa80, next8 final96a3d441;
+nativee50 unchanged, exact delta touches only joint enrollment paths absent from
+those5 original programs. Per-case copied adapter pins are in controls index;
+do not claim all13 used the final complete graph.
+Approved-definition full32 pass (1e2110). Earlier approved test31P1F was a missing private renderer import
+rebase, not production RED; first path-contract refusal was a testhost absolute
+TypeScript require, corrected to ordinary package resolution. Explicit readonly
+NODE_PATH/sharedtsx qualification does NOT establish writer dependency closure.
+Strict1194/0 noEmit342c4e, version/English33bd24 and path999/migration7da4d4 pass.
+
+Original evidence and limits:
+logs/2026-10-09-dashboard-cutover-joint-original-operation.md,
+logs/2026-10-09-dashboard-cutover-joint-original-final-index.json and
+logs/2026-10-09-dashboard-cutover-joint-original-controls-index.json in canonical
+workspace. No entire npm suite, genuine compiler/native image, full build,
+main synchronization, merge or live3333 credit. Step6 is still the complete
+Task4 six-effect adapter/controller/legacy-owner-pre32-phase-intent/foreground
+closure followed by reviewed integration, genuine clean-main build and host proof.
+- [ ] Step6: qualify complete Task4 actual capability separately before Task3:
+  no owner/legacy/pre32/phase/intents/selector/restoration/control/foreground
+  predicates may be replaced by this operation token or a fixture boolean.

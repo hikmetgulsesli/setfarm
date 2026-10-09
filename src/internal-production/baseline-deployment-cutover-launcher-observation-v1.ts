@@ -7,6 +7,8 @@ import { types } from "node:util";
 import { holdDeploymentCutoverNodePathV1 } from "./baseline-deployment-cutover-node-path-v1.js";
 import { observeDeploymentCutoverProcessFamiliesV1 } from "./baseline-deployment-cutover-process-observation-v1.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { assertDashboardCutoverJointDefinitionTokenV4, assertDashboardCutoverJointDefinitionSettlementTokenV4,
+  assertDashboardCutoverJointDefinitionReleaseTokenV4, revokeDashboardCutoverJointTokenV4 } from "../../scripts/deployment-dashboard-cutover-adapter-v2.mjs";
 
 const LABELS = ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard"] as const;
 const DIRECTORY_KEYS = ["dev", "ino", "mode", "uid", "gid", "birthtimeNs"] as const;
@@ -498,17 +500,31 @@ let launcherMaterialBurnSequenceV2 = 0;
 let launcherMaterialActiveV2: LauncherMaterialStateV2 | null = null;
 // Retain the original state even on failed acquisition/cleanup; no replacement.
 let launcherMaterialOriginalV2: LauncherMaterialStateV2 | null = null;
+type ApprovedDefinitionOperationV4 = { original: object; token: object; definition: ApprovedDefinitionStateV4;
+  handle: object | null; published: boolean; checking: boolean; settled: boolean; released: boolean; settlementIntent: boolean };
+const approvedDefinitionOperationScopesV4 = new WeakMap<object, ApprovedDefinitionOperationV4>();
+let jointDefinitionOperationV4: ApprovedDefinitionOperationV4 | null = null;
 function launcherMaterialAccountV2() {
   const account = userInfo();
   return { uid: account.uid, gid: account.gid, homedir: account.homedir, username: account.username, shell: account.shell };
 }
 function burnLauncherMaterialV2(state: LauncherMaterialStateV2 | null): never {
+  if (jointDefinitionOperationV4 && state === jointDefinitionOperationV4.definition.material)
+    revokeDashboardCutoverJointTokenV4(jointDefinitionOperationV4.token);
   if (state) state.valid = false;
   launcherMaterialBurnedV2 = true;
   launcherMaterialBurnSequenceV2 += 1;
   fail();
 }
 function assertLauncherMaterialIdleV2() {
+  const joint = jointDefinitionOperationV4;
+  if (joint?.settled) {
+    try { assertDashboardCutoverJointDefinitionReleaseTokenV4(joint.token, joint.original); }
+    catch { burnLauncherMaterialV2(joint.definition.material); }
+    joint.released = true; jointDefinitionOperationV4 = null;
+    joint.definition.material.outerSettled = true;
+    settleLauncherMaterialActivityV2(joint.definition.material);
+  }
   if (launcherMaterialActiveV2) burnLauncherMaterialV2(launcherMaterialActiveV2);
 }
 function launcherMaterialStateV2(handle: object, allowInvalid = false) {
@@ -519,6 +535,8 @@ function launcherMaterialStateV2(handle: object, allowInvalid = false) {
 function checkLauncherMaterialStateV2(state: LauncherMaterialStateV2) {
   if (launcherMaterialActiveV2 !== state || state !== launcherMaterialOriginalV2
     || !state.valid || state.closed || launcherMaterialBurnedV2 || cleanupUncertain) fail();
+  if (jointDefinitionOperationV4)
+    assertDashboardCutoverJointDefinitionTokenV4(jointDefinitionOperationV4.token, jointDefinitionOperationV4.original);
 }
 function checkLauncherMaterialV2(state: LauncherMaterialStateV2) {
   const check = () => {
@@ -703,6 +721,60 @@ export function closeHeldDashboardCutoverApprovedDefinitionV4(handle: HeldDashbo
   try { state.lease!.close(); if (sequence !== launcherMaterialBurnSequenceV2 || cleanupUncertain) approvedDefinitionFailureV4(); }
   catch { burnApprovedDefinitionV4(state); }
   finally { material.outerSettled = true; settleLauncherMaterialActivityV2(material); }
+}
+
+function checkApprovedDefinitionOperationV4(record: ApprovedDefinitionOperationV4): void {
+  const state = record.definition;
+  if (record !== jointDefinitionOperationV4 || !state.valid || state.closed || state !== approvedDefinitionOriginalV4)
+    approvedDefinitionFailureV4();
+  checkLauncherMaterialV2(state.material); state.lease!.check(); checkLauncherMaterialV2(state.material);
+}
+export function beginHeldDashboardCutoverApprovedDefinitionOperationV4(original: object, token: object): object {
+  approvedDefinitionIdleV4();
+  if (arguments.length !== 2) approvedDefinitionFailureV4();
+  const definition = approvedDefinitionHandlesV4.get(original);
+  if (!definition || definition !== approvedDefinitionOriginalV4 || !definition.valid || definition.closed)
+    approvedDefinitionFailureV4();
+  assertDashboardCutoverJointDefinitionTokenV4(token, original);
+  const record: ApprovedDefinitionOperationV4 = { original, token, definition, handle: null,
+    published: false, checking: true, settled: false, released: false, settlementIntent: false };
+  jointDefinitionOperationV4 = record;
+  launcherMaterialActiveV2 = definition.material; definition.material.outerSettled = false;
+  try {
+    checkApprovedDefinitionOperationV4(record);
+    const handle = Object.create(null) as object;
+    record.handle = handle; approvedDefinitionOperationScopesV4.set(handle, record);
+    checkLauncherMaterialStateV2(definition.material);
+    Object.freeze(handle); checkLauncherMaterialStateV2(definition.material);
+    checkApprovedDefinitionOperationV4(record);
+    record.published = true; record.checking = false; return handle;
+  } catch { record.checking = false; burnApprovedDefinitionV4(definition); }
+}
+function originalApprovedDefinitionOperationV4(handle: object, arity: number): ApprovedDefinitionOperationV4 {
+  if (jointDefinitionOperationV4?.checking || (launcherMaterialActiveV2 && !jointDefinitionOperationV4)) {
+    try { burnLauncherMaterialV2(launcherMaterialActiveV2); } catch { approvedDefinitionFailureV4(); }
+  }
+  if (arity !== 1) approvedDefinitionFailureV4();
+  const record = approvedDefinitionOperationScopesV4.get(handle);
+  if (!record || record !== jointDefinitionOperationV4 || record.handle !== handle || !record.published || record.released)
+    approvedDefinitionFailureV4();
+  return record;
+}
+export function assertHeldDashboardCutoverApprovedDefinitionOperationV4(handle: object): void {
+  const record = originalApprovedDefinitionOperationV4(handle, arguments.length);
+  if (record.settled) approvedDefinitionFailureV4(); record.checking = true;
+  try { checkApprovedDefinitionOperationV4(record); }
+  catch { burnApprovedDefinitionV4(record.definition); }
+  finally { record.checking = false; }
+}
+export function settleHeldDashboardCutoverApprovedDefinitionOperationV4(handle: object): void {
+  const record = originalApprovedDefinitionOperationV4(handle, arguments.length);
+  if (record.settled) approvedDefinitionFailureV4(); record.checking = true;
+  try {
+    assertDashboardCutoverJointDefinitionSettlementTokenV4(record.token, record.original);
+    record.settlementIntent = true; record.settled = true;
+  } catch { burnApprovedDefinitionV4(record.definition); }
+  finally { record.checking = false; }
 }
 
 // Separate, zero-input default-mode holder. Secret-bearing configuration and

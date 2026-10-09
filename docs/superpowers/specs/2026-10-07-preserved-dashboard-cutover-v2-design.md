@@ -3254,3 +3254,195 @@ compiler/loading qualification is separately nominated after reviewed delivery
 and genuine synchronized clean-main finalization, not actual:true synth builds.
 This is functional loading custody only, NOT joint approved-definition fence,
 executing-job/controller/owner/phase/ordinal/grant/startup or live3333 authority.
+
+## Task4i.5: fixed functional bilateral original-operation custody
+
+Existing Task4 causal refinement, NOT Task3/controller or six-effect capability.
+Task4i.4 is delivered a1ae81a2. Its private provider remains inaccessible to a
+caller. This source-qualified increment executes a fixed original-resource qualification while
+BOTH existing provider activities are held, rather than returning another DATA
+conjunction. No native method, launchctl/PG/selector/service effect is admitted.
+
+Selected coordinator is the already planned
+scripts/deployment-dashboard-cutover-adapter-v2.mjs. Its top-level imports are
+builtins and existing build-generation-retention only; no top-level provider
+import or source preparation. Fixed imports inside preparation are the SAME ROOT
+sidecar and ROOT/dist/internal-production/baseline-deployment-cutover-launcher-observation-v1.js.
+No src/query/root/env/loader fallback. TS provider imports only fixed coordinator
+token helpers via the adjacent declaration file. Lazy provider imports avoid
+evaluation cycles and cannot substitute another instance's WeakMaps.
+
+Qualification interface:
+qualifyHeldDashboardCutoverJointOriginalOperationV4(originalLoaded: object,
+originalDefinition: object): Promise<void>, exactly two inputs. No DATA/capability
+result, caller continuation, path, getter, loader or public token factory.
+
+Coordinator activity guard is FIRST, before arity/type/proxy parsing. During
+pending preparation/import or joint work, any nested qualifier call burns the
+current original preparation/token and refuses with zero caller traps/new ports;
+it never settles pending imports or disposes participant FDs. Only while idle,
+private preparation first validates arity and non-proxy object inputs
+without caller traps. Ordinary foreign object identity cannot be authenticated
+before the fixed compiled provider is loaded: explicitly allow bounded owned
+readonly source/build preparation and fixed trusted module-import occurrences
+at that stage, NOT any participant scope, native method or effect dispatch.
+Do NOT claim all foreign inputs have zero filesystem ports. Invalid identities
+must preserve both existing healthy participant originals and cannot consume the
+joint operation attempt. Preparation is separate, retained once-only source
+custody and fixed imports, with no retry after uncertainty. Native/source
+preflight and post-import checks bracket each trusted import; pending original
+Promise must be registered before observation and retained until actual settlement.
+The existing source holder pins the whole synchronized checkout and finalized
+dist inventory. This is source-fault qualification until genuine clean-main
+compilation/loading; fixtures cannot turn it into real runtime authority.
+
+Authenticate both original participant identities through their fixed private
+WeakMaps before minting/enrollment, specifically by calling the fixed module exports
+assertHeldDashboardCutoverLoadedJobPeerV4(originalLoaded), followed by
+assertHeldDashboardCutoverApprovedDefinitionV4(originalDefinition), while both
+participant activities are idle. Those exports perform their own WeakMap checks
+before original-resource ports; the coordinator never inspects another module's
+private WeakMap. Failed idle identity authentication mints/enrolls no token/scope.
+Both complete original assertions and source proof must pass before enrollment.
+A private token record binds SAME two originals, original operation, stage,
+sticky revocation, pending imports and scopes. Empty
+frozen null-prototype token, never public output. Retain mint/registration before
+sealing and check liveness before/after fallible creation/sealing. Scope identities
+are also opaque originals, never returned by the qualification to the caller.
+
+Exact fixed helper/provider interfaces, no optional inputs:
+assertDashboardCutoverJointNativeTokenV4(token: object, originalLoaded: object): void;
+assertDashboardCutoverJointDefinitionTokenV4(token: object, originalDefinition: object): void;
+assertDashboardCutoverJointNativeSettlementTokenV4(token: object, originalLoaded: object): void;
+assertDashboardCutoverJointDefinitionSettlementTokenV4(token: object, originalDefinition: object): void;
+assertDashboardCutoverJointNativeReleaseTokenV4(token: object, originalLoaded: object): void;
+assertDashboardCutoverJointDefinitionReleaseTokenV4(token: object, originalDefinition: object): void;
+revokeDashboardCutoverJointTokenV4(token: object): void;
+beginHeldDashboardCutoverLoadedJobOperationV4(originalLoaded: object, token: object): object;
+assertHeldDashboardCutoverLoadedJobOperationV4(scope: object): void;
+assertHeldDashboardCutoverLoadedJobOperationCacheV4(scope: object): void;
+settleHeldDashboardCutoverLoadedJobOperationV4(scope: object): void;
+beginHeldDashboardCutoverApprovedDefinitionOperationV4(originalDefinition: object, token: object): object;
+assertHeldDashboardCutoverApprovedDefinitionOperationV4(scope: object): void;
+settleHeldDashboardCutoverApprovedDefinitionOperationV4(scope: object): void.
+
+Token helpers authenticate WeakMap-original identity, exact bound participant and
+coordinator stage. They inspect only private state: no callbacks, resource reads,
+full recursive assertion, caller properties or future effect permission.
+Genuine revocation is sticky and RETURNS VOID, even after already revoked;
+foreign/wrong-arity helper calls refuse without traps. Never throw notification
+inside sidecar burn(): existing child-error/Promise settlement must still complete.
+Each local burn first notifies the shared token, then follows its existing refusal.
+Returned scope must be retained before post-entry checks; partial enrollment stays
+retained/quarantined on uncertainty, not disposed via generic finally.
+Immediately authenticate/check each returned scope through its fixed provider's
+existing scope assertion BEFORE admitting the next enrollment. Record successful
+original authentication separately from a returned non-null value. A response
+whose original published identity cannot be recovered remains unknown and cannot
+admit another participant or qualify settlement. Authentication checks during
+enrollment are distinct from the later checks while BOTH scopes are held.
+
+Both scopes hold their original activities across the fixed operation. Public
+idle assert/close/acquire while enrolled burns/refuses before arity/identity and
+cannot dispose participant FDs. Scope asserts use private checkOriginal paths,
+NOT the idle-only public assertions. A separate internal checking flag prevents
+nested scope assertion/settlement. Lightweight shared liveness around admitted
+provider ports prevents an opposite participant burn from authorizing a later
+outer port. Changing original cache/definition/material/source/terminal state
+burns the token and operation. Final validation precedes successful scope
+settlement and return. Caller Promise loss does not settle original work.
+Settlement is only accepted in the coordinator's genuine settling stage after
+all original pending work is actually settled; no replacement/retry after burn.
+Separate settlement-token helpers authenticate SAME token/participant and genuine
+settling stage with pending0, permitting checked-once scope release after revocation
+without restoring validity or granting a port/effect. Normal liveness helpers
+still reject revoked tokens. Successful local settlement only marks the scope
+settled; terminal release clears activity, never participant FDs. Later genuine
+idle close retains its existing once-only rules.
+Lost enrollment response with an unrecovered scope remains quarantined, not
+silently settled with a guessed token or missing handle.
+Eligibility also requires separately retained enrollment intent/return/publication
+records: every admitted scope response is recovered as the genuine published
+original, and no unknown enrollment or settlement occurrence exists. Synchronous
+call settlement does not prove its returned scope was recovered. A failed second
+begin that might have activated an unreturned scope cannot reach SETTLING through
+finally. If a settlement loses its response, later settlement attempts stop.
+Serial settlement does not release a participant's public-idle fence immediately.
+Retain its local settled scope and original activity until a release-token helper
+authenticates the SAME terminal coordinator record: both genuine scope settlement
+responses are recovered, pending0, no unknown occurrence. The next public idle
+entry may then clear its local activity without resource ports. During the gap,
+including a lost second settlement response, idle entry burns/refuses and cannot
+dispose the already locally settled participant. Separate exact-two-input release
+helpers return void; no caller stage, boolean getter or effect permission. They
+allow genuine revoked terminal custody solely for later existing idle cleanup.
+RO source review found raw module/cache drift in the last definition FD pass does
+not itself notify the shared token. After the final definition/source/FS composite,
+the fixed cache-only native scope assertion rechecks SAME retained require/cache/
+module/exports/method identities with existing checking-first scope custody and
+sticky burn, then settlement follows. This assertion invokes NO FS/upstream or
+native method. It establishes a final cache validation cutpoint under trusted
+intrinsics; sequential full checks are NOT a simultaneous atomic filesystem/cache
+snapshot against arbitrary replacement of the interpreter's global intrinsics.
+Token helpers remain resource-free. No further resource operation follows the
+cache cutpoint before the purely private settlement/release bookkeeping.
+
+Explicit trusted composite boundary: existing retained-source/build, native
+upstream and launcher configuration checks remain their reviewed composite calls
+unless their internal guards are explicitly enrolled in an additional File Map.
+Bracketing such a call is NOT inhibition of its internal ports. Cross-direction
+tests must distinguish direct participant ports from those trusted composites;
+there is no claim of complete per-port Task4 freeze or six-effect authority.
+Any need to inhibit their internal ports must be separately mapped and tested
+before effect admission, never hidden by aggregate counters or a passing wrapper.
+
+Finite legacy/queued/stale ROOT-unlink exclusion, current owner/reservation/history,
+genuine pre32 and changing-phase predicates, durable ordinal intent, qualified
+selector/restoration/new birth/control declaring-job/foreground CLI/listener,
+genuine clean-main build and live3333 remain existing whole-cutover obligations.
+This qualifier cannot authenticate or dispatch any of those effects.
+
+File Map: new adapter-v2.mjs + adapter-v2.d.mts + builtin adapter test; existing
+sidecar source/test; existing launcher-observation TS and approved-definition V4
+test; package.json enrollment; paired spec/plan. No controller/C/service/config
+changes. Any source-closure/native-input enrollment dependency must be recorded
+before production edits rather than widening imports silently.
+
+Concrete source enrollment: retention pins all Git inputs and complete dist
+inventory; adapter .mjs/.d.mts join existing input hashing automatically. No
+tsconfig/asset-copy/header-provider change is required. Do not import adapter
+back into retention: its own executing-source closure forbids dynamic imports.
+This disk inventory is NOT authentication of previously cached ESM code; genuine
+executing-entry/image qualification remains a complete Task4 prerequisite.
+
+Source-only fixture bridge is LOCAL to the new adapter builtin test. The shared
+finalized helper's four forbidden-evaluation outputs stay unchanged. A local finite
+manifest builder records complete output inventory/hashes for those outputs plus
+literal source-to-compiled mappings:
+src/internal-production/baseline-deployment-cutover-launcher-observation-v1.ts -> dist/internal-production/baseline-deployment-cutover-launcher-observation-v1.js;
+src/internal-production/baseline-deployment-cutover-node-path-v1.ts -> dist/internal-production/baseline-deployment-cutover-node-path-v1.js;
+src/internal-production/baseline-deployment-cutover-process-observation-v1.ts -> dist/internal-production/baseline-deployment-cutover-process-observation-v1.js;
+src/product-compiler/canonical-json.ts -> dist/product-compiler/canonical-json.js.
+Preserve .js relative imports and fixed ../../scripts/adapter import; caller and
+coordinator must mint/use the same canonical compiled-path namespace. Record each
+original TS/translated JS hash and actual import URL. Exact finite translation and
+manual finalized fixture metadata earn source mechanics only, never actual build,
+compiler/runtime authentication or clean-main credit. No static third-party/PG
+dependency is needed in this graph; lazy PG operations stay forbidden.
+
+2026-10-09 source-only qualification checkpoint:24 distinct actual-provider
+fixture cases passed at adapter96a3d441/nativee50a2a26/launchera1f3bb0c, plus one
+API dependency-resolution repeat,13 native controls and32 approved-definition
+controls. Final tests distinguish enrollment authentication from both-held work,
+direct owned ports from trusted composites, pre-local settlement loss from actual
+post-local checking-release response loss, and unpublished scope/token identities
+from fabricated handles. Preparation rechecks after record allocation and scope
+liveness rechecks after stage includes prevent swallowed nested revocation from
+admitting the next direct port. Scope responses authenticate before the next begin.
+Root original receipts, exact source/translation/provider hashes and four earlier
+append-only test-pin reconstructions are retained in canonical logs' joint-original
+final/controls indices and joint-original-operation ledger. Strict1194/0 noEmit
+uses explicit shared tools, NOT writer dependency or production build authority.
+Final reviewed delivery is a separate plan gate. Six-effect adapter/controller,
+complete trusted-composite freeze, executing-entry/image, owner/legacy/pre32/
+phase/ordinal, foreground/clean-main/live3333 obligations remain unqualified.
