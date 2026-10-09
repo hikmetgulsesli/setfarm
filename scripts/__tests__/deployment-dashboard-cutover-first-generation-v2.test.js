@@ -22,7 +22,7 @@ const account=os.userInfo();os.userInfo=()=>({...account,homedir:${JSON.stringif
 const root=${JSON.stringify(root)},lock=root+'/physical-service-restart-authority.transition.lock',input=${JSON.stringify(input)};
 const originalOpen=fs.openSync,originalStat=fs.fstatSync,originalClose=fs.closeSync,originalSpawn=cp.spawn;
 let armed=false,api,ports=0,children=0,childClosed=0;const originals=[],closes=[];
-for(const name of ['lstatSync','fstatSync','readSync','writeFileSync','fsyncSync','mkdirSync']){const original=fs[name];fs[name]=(...args)=>{ports++;return original(...args)}}
+for(const name of ['lstatSync','fstatSync','readSync','writeFileSync','fsyncSync','mkdirSync','readdirSync']){const original=fs[name];fs[name]=(...args)=>{ports++;return original(...args)}}
 const originalAccount=os.userInfo;os.userInfo=(...args)=>{ports++;return originalAccount(...args)};
 const originalOwnerPort=cp.spawnSync;cp.spawnSync=(...args)=>{ports++;return originalOwnerPort(...args)};
 fs.openSync=(...args)=>{ports++;const fd=originalOpen(...args);if(armed)originals.push({fd,target:String(args[0])});return fd};
@@ -36,26 +36,64 @@ try{api=await import(${JSON.stringify(moduleUrl)});armed=true;${body}}
 catch(error){output.error=error.message}
 output.children=children;output.childClosed=childClosed;output.closes=closes;output.originals=originals.map(s=>{let state;try{originalStat(s.fd);state='live'}catch(e){state=e.code}return{...s,state}});
 process.stdout.write(JSON.stringify(output));`;
+  // Retain actual test intent/result; do not infer child receipts from prose.
+  const sourceHash = createHash("sha256").update(fs.readFileSync(new URL(moduleUrl))).digest("hex");
+  fs.writeFileSync(home + "/intent.json", JSON.stringify({ program, node: process.execPath,
+    moduleUrl, sourceHash, root }), { flag: "wx", mode: 0o600 });
   const child = spawn(process.execPath, ["--input-type=module", "-e", program], {
     cwd: "/", env: {}, stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "", stderr = "", error, bytes = 0;
   const eof = { stdout: false, stderr: false };
+  const closed = { stdout: false, stderr: false };
   child.on("error", e => { error ??= e; });
   for (const [stream, name] of [[child.stdout, "stdout"], [child.stderr, "stderr"]]) {
     stream.setEncoding("utf8"); stream.on("error", e => { error ??= e; });
     stream.on("end", () => { eof[name] = true; });
+    stream.on("close", () => { closed[name] = true; });
     stream.on("data", data => {
       bytes += Buffer.byteLength(data); if (bytes > 1048576) { error ??= Error("CAPTURE_UNKNOWN"); return; }
       if (name === "stdout") stdout += data; else stderr += data;
     });
   }
   const [status, signal] = await new Promise(resolve => child.on("close", (...args) => resolve(args)));
+  fs.writeFileSync(home + "/result.json", JSON.stringify({ stdout, stderr, status,
+    signal, error: error?.message ?? null, eof, closed, program, sourceHash }), { flag: "wx", mode: 0o600 });
+  console.log(JSON.stringify({ kind: "retained-first-generation-case", home, status, signal, eof, closed }));
   assert.equal(error, undefined); assert.equal(signal, null); assert.equal(status, 0, stderr);
   assert.deepEqual(eof, { stdout: true, stderr: true }); assert.equal(stderr, "");
+  assert.deepEqual(closed, { stdout: true, stderr: true });
   // All fixture directories/publications retained; no cleanup or process signal.
   return { ...JSON.parse(stdout), root };
 }
+
+// Missing fixed parent interface is an API RED; source initialization is not
+// claimed to be an owner/PG/ROOT acquisition or universal loader-FS absence.
+test("fixed joint ROOT provider interfaces exist before reservation acquisition", async () => {
+  const out = await fixture(`output.interfaceKinds=[
+typeof api.acquireFirstGenerationDashboardCutoverJointReservationV4,
+typeof api.assertFirstGenerationDashboardCutoverJointReservationV4];`);
+  assert.equal(out.error, undefined);
+  assert.equal(out.children, 0); assert.deepEqual(out.originals, []);
+  assert.deepEqual(out.interfaceKinds, ["function", "function"], "MISSING_FIXED_JOINT_ROOT_PROVIDER");
+});
+
+// Break caught: original physical() accepts a sibling beside its own lock.
+// Uses the actual old provider and actual Python leaf, no fabricated holder.
+test("actual ROOT sibling insertion refuses original held reservation assertion", async () => {
+  const out = await fixture(`const h=await api.acquireFirstGenerationDashboardCutoverReservationV2(input);
+armed=false; // Oracle-created sibling is not a component-owned FD occurrence.
+fs.writeFileSync(root+'/unexpected-sibling','preserved fault evidence',{flag:'wx',mode:0o600});
+armed=true;
+output.refused=await attempt(()=>api.assertFirstGenerationDashboardCutoverReservationV2(h));
+armed=false; // External evidence reads are not parent-port disposal.
+output.members=fs.readdirSync(root).sort();output.wire=fs.readFileSync(lock,'utf8');`);
+  assert.equal(out.error, undefined, JSON.stringify(out));
+  assert.equal(out.children, 1); assert.equal(out.childClosed, 1);
+  assert.deepEqual(out.members, ["physical-service-restart-authority.transition.lock", "unexpected-sibling"]);
+  assert.deepEqual(out.closes, []);
+  assert.equal(out.refused, "DASHBOARD_FIRST_GENERATION_RESERVATION_REFUSED", "EXTRA_ROOT_MEMBER_WAS_ACCEPTED");
+});
 
 test("actual retained reservation publishes one complete ROOT and closes every original once without unlink", async () => {
   const out = await fixture(`const h=await api.acquireFirstGenerationDashboardCutoverReservationV2(input);

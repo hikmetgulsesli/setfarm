@@ -30,11 +30,32 @@ const translations=[
 
 // LOCAL finite source-only bridge. This does NOT run the production compiler or
 // confer clean-main/native/executing-image authority. Shared fixture unchanged.
-function jointFixture(resources=false,pre32=false,bounded=false){
+function jointFixture(resources=false,pre32=false,bounded=false,owner=false,ownerInputCopy=false){
   const bridgeList=pre32?[...translations,
     ['src/internal-production/baseline-legacy-database-census-v1.ts',
-      'dist/internal-production/baseline-legacy-database-census-v1.js']]:translations;
+      'dist/internal-production/baseline-legacy-database-census-v1.js']]:[...translations];
+  if(owner){
+    assert.equal(resources,true);assert.equal(pre32,true);
+    for(const name of ['baseline-deployment-cutover-records-v1','baseline-deployment-cutover-owner-store-v1',
+      'baseline-deployment-cutover-publication-v1','baseline-deployment-cutover-v1','baseline-workspace-authority-path-v1'])
+      bridgeList.push(['src/internal-production/'+name+'.ts','dist/internal-production/'+name+'.js']);
+  }
   const files=Object.fromEntries(scripts.map(n=>['scripts/'+n,fs.readFileSync(sourceRoot+'/scripts/'+n)]));
+  if(owner)for(const name of ['build-generation-maintenance-journal.mjs','build-generation-maintenance-owner-observer.mjs',
+    'deployment-cutover-owner.mjs','deployment-cutover.mjs','deployment-cutover-dependencies.mjs',
+    'deployment-dashboard-cutover-first-generation-v2.mjs','deployment-dashboard-cutover-atomic-root-v2.py'])
+    files['scripts/'+name]=fs.readFileSync(sourceRoot+'/scripts/'+name);
+  let sourceFault=null;
+  if(ownerInputCopy){
+    assert.equal(owner,true);
+    const locator='scripts/deployment-cutover-owner.mjs',original=files[locator].toString();
+    const needle='acquireFirstGenerationDashboardCutoverJointReservationV4(record.input, record.token)';
+    assert.equal(original.split(needle).length,2,'one literal original owner-to-provider call');
+    const changed=original.replace(needle,'acquireFirstGenerationDashboardCutoverJointReservationV4({...record.input}, record.token)');
+    files[locator]=Buffer.from(changed);
+    sourceFault={authority:'explicit-counterfactual-source-graph-not-healthy-production-qualification',
+      locator,originalHash:hash(original),changedHash:hash(changed),needle};
+  }
   for(const [source] of bridgeList)files[source]=fs.readFileSync(sourceRoot+'/'+source);
   for(const n of ['deployment-dashboard-cutover-adapter-v2.mjs','deployment-dashboard-cutover-adapter-v2.d.mts']){
     const p=sourceRoot+'/scripts/'+n;if(fs.existsSync(p))files['scripts/'+n]=fs.readFileSync(p);
@@ -88,7 +109,7 @@ function jointFixture(resources=false,pre32=false,bounded=false){
   file(root,'dist/PLATFORM_BUILD_OUTPUT_TREE.json',JSON.stringify({...projection,outputTreeHash})+'\n',0o444);
   for(const p of ['dist','dist/cli','dist/server','dist/internal-production','dist/product-compiler'])fs.chmodSync(root+'/'+p,0o755);
   const pins=Object.fromEntries(Object.entries(files).map(([p,b])=>[p,hash(b)]));
-  return {root,bridges,pins,providers,home,pre32,bounded,sourceSha:git(root,['rev-parse','HEAD']),outputTreeHash};
+  return {root,bridges,pins,providers,home,pre32,bounded,owner,sourceFault,sourceSha:git(root,['rev-parse','HEAD']),outputTreeHash};
 }
 
 function resourceProgram(fixture){return `
@@ -112,6 +133,12 @@ function resourceProgram(fixture){return `
   const nativeSpawnSync=cp.spawnSync;
   cp.spawnSync=(command,args,options)=>{
     if(command==='/usr/bin/git')return nativeSpawnSync(command,args,options);
+    ${fixture.owner?`if(command==='/usr/sbin/sysctl'||command==='/bin/ps'){
+      assert.deepEqual(args,command==='/usr/sbin/sysctl'?['-n','kern.boottime']:
+        ['-p',String(process.pid),'-o','uid=','-o','lstart=','-o','pgid=','-o','stat=']);
+      out.ownerProcessObservations=(out.ownerProcessObservations??0)+1;
+      return nativeSpawnSync(command,args,options);
+    }`:''}
     if(command==='/bin/launchctl'){
       assert.equal(args[0],'print');const i=labels.findIndex(l=>args[1]==='gui/'+process.getuid()+'/'+l);assert.ok(i>=0);
       out.launcherPrints=(out.launcherPrints??0)+1;return {status:0,signal:null,stdout:Buffer.from(launcherText(i)),stderr:Buffer.alloc(0)};
@@ -128,6 +155,31 @@ function resourceProgram(fixture){return `
   function mach(){const b=Buffer.alloc(40);b.writeUInt32LE(0xfeedfacf,0);b.writeUInt32LE(0x0100000c,4);b.writeUInt32LE(8,12);
     b.writeUInt32LE(1,16);b.writeUInt32LE(8,20);b.writeUInt32LE(0x1b,32);b.writeUInt32LE(8,36);return b}
   cp.spawn=(command,args,options)=>{
+    ${fixture.owner?`if(command==='/usr/bin/python3'){
+      out.portCounts??={};out.portCounts['reservation:spawn']=(out.portCounts['reservation:spawn']??0)+1;
+      assert.equal(args.length,5);assert.deepEqual(args.slice(0,4),['-I','-S','-B',root+'/scripts/deployment-dashboard-cutover-atomic-root-v2.py']);
+      assert.match(args[4],/^\\.dashboard-cutover-root\\.[a-f0-9-]{36}\\.stage$/);
+      assert.equal(options.cwd,'/');assert.equal(options.stdio.length,4);
+      assert.deepEqual(options.stdio.slice(0,3),['ignore','pipe','pipe']);
+      const parent=home+'/ai/setrox/data/internal-production-baseline',stage=parent+'/'+args[4],destination=parent+'/restart-authority-retirement-v1';
+      assert.equal(fdPaths.get(options.stdio[3]),parent);assert.equal(fs.fstatSync(options.stdio[3]).isDirectory(),true);
+      const row={command,args,authority:'explicit-Python-process-and-publication-double-parent-custody-only',
+        dispatchedWhilePgHeld:globalThis.pre32Probe.held,published:false,closed:false,events:[]};out.commands.push(row);
+      const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();
+      child.kill=()=>{throw Error('FORBIDDEN_KILL')};
+      for(const [name,stream] of [['stdout',child.stdout],['stderr',child.stderr]])
+        for(const event of ['end','close'])stream.on(event,()=>row.events.push(name+':'+event));
+      const release=()=>{
+        assert.equal(row.published,false);assert.equal(fs.existsSync(destination),false);
+        fs.renameSync(stage,destination);row.published=true;row.publishedWhilePgHeld=globalThis.pre32Probe.held;
+        child.stdout.end('DASHBOARD_ATOMIC_ROOT_PUBLISHED\\n');child.stderr.end('');
+        setImmediate(()=>{row.closed=true;row.status=0;row.signal=null;child.emit('close',0,null)});
+      };
+      out.reservationChild=row;
+      if(globalThis.holdReservationChild){globalThis.releaseReservationChild=release;globalThis.reservationChildObserved()}
+      else setImmediate(release);
+      return child;
+    }`:''}
     assert.ok(['/usr/bin/git',providers.clang,providers.nm,providers.otool].includes(command));
     const row={command,args,options,source:[],stdout:[],stderr:[],events:[],closed:false};out.commands.push(row);
     const child=new EventEmitter();child.stdin=new PassThrough();child.stdout=new PassThrough();child.stderr=new PassThrough();
@@ -153,12 +205,18 @@ function resourceProgram(fixture){return `
   const loader=p=>{assert.ok(p.startsWith(root+'/.setfarm/dashboard-cutover-native-v4/')&&p.endsWith('/peer.node'));
     loadCalls++;loaderCache[p]={id:p,filename:p,loaded:true,exports:loadedExports};return loadedExports};loader.cache=loaderCache;
   moduleBuiltin.createRequire=url=>{assert.equal(url,'file://'+root+'/scripts/dashboard-cutover-native-sidecar-v2.mjs');return loader};
-  const originalOpen=fs.openSync,originalClose=fs.closeSync,fdPaths=new Map();let onPort=()=>{};
-  fs.openSync=(p,...args)=>{const fd=originalOpen(p,...args);fdPaths.set(fd,String(p));return fd};
-  for(const name of ['fstatSync','lstatSync','readSync','closeSync']){const original=fs[name];fs[name]=(...args)=>{
+  const originalOpen=fs.openSync,originalClose=fs.closeSync,originalStat=fs.fstatSync,fdPaths=new Map();let onPort=()=>{};
+  fs.openSync=(p,...args)=>{const fd=originalOpen(p,...args);fdPaths.set(fd,String(p));
+    ${fixture.owner?`if((Error().stack.split('\\n')[2]??'').includes('deployment-dashboard-cutover-first-generation-v2.mjs')){
+      out.reservationFds??=[];out.reservationFds.push({fd,path:String(p)});
+      out.portCounts??={};out.portCounts['reservation:openSync']=(out.portCounts['reservation:openSync']??0)+1;
+    }`:''}
+    return fd};
+  for(const name of ${fixture.owner?"['fstatSync','lstatSync','readSync','closeSync','readdirSync','writeFileSync','fsyncSync','mkdirSync']":"['fstatSync','lstatSync','readSync','closeSync']"}){const original=fs[name];fs[name]=(...args)=>{
     const stack=Error().stack,frames=stack.split('\\n'),direct=(frames[3]??'').includes('at port ');
     const owner=direct&&(frames[2]??'').includes('dashboard-cutover-native-sidecar-v2.mjs')?'native':
-      direct&&(frames[2]??'').includes('baseline-deployment-cutover-launcher-observation-v1.js')?'definition':'composite';
+      direct&&(frames[2]??'').includes('baseline-deployment-cutover-launcher-observation-v1.js')?'definition':
+      ${fixture.owner?"(frames[2]??'').includes('deployment-dashboard-cutover-first-generation-v2.mjs')?'reservation':":''}'composite';
     const row={name,owner,scopeEnrollment:stack.includes('at enroll '),
       scopePass:!stack.includes('at enroll ')&&(stack.includes('assertHeldDashboardCutoverLoadedJobOperationV4')||
       stack.includes('assertHeldDashboardCutoverApprovedDefinitionOperationV4')),path:typeof args[0]==='number'?fdPaths.get(args[0]):String(args[0])};
@@ -169,11 +227,15 @@ function resourceProgram(fixture){return `
     ${fixture.bounded?"if(name==='closeSync')fdPaths.delete(args[0]);":''}
     onPort(row);return result;
   }}
+  ${fixture.owner?`const originalAccount=os.userInfo;
+  os.userInfo=(...args)=>{if((Error().stack.split('\\n')[2]??'').includes('deployment-dashboard-cutover-first-generation-v2.mjs')){
+    out.portCounts??={};out.portCounts['reservation:userInfo']=(out.portCounts['reservation:userInfo']??0)+1;
+  }return originalAccount(...args)};`:''}
   syncBuiltinESMExports();
 `;}
 
-async function exercise(body,{resources=false,pre32=false,bounded=pre32}={}){
-  const fixture=jointFixture(resources,pre32,bounded),{root}=fixture;
+async function exercise(body,{resources=false,pre32=false,bounded=pre32,owner=false,ownerInputCopy=false}={}){
+  const fixture=jointFixture(resources,pre32,bounded,owner,ownerInputCopy),{root}=fixture;
   const program=`import assert from 'node:assert/strict';import fs from 'node:fs';
     import path from 'node:path';
     import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
@@ -183,6 +245,7 @@ async function exercise(body,{resources=false,pre32=false,bounded=pre32}={}){
       out.commands.push({name,args});throw Error('FORBIDDEN_EXTERNAL_EFFECT')};
     syncBuiltinESMExports();
     try{${body};out.passed=true}catch(error){out.error=error.message;out.stack=error.stack;process.exitCode=1}
+    ${owner?"out.reservationFds=(out.reservationFds??[]).map(row=>{let state;try{originalStat(row.fd);state='live'}catch(error){state=error.code}return{...row,state}});":''}
     fs.writeFileSync(root+'.joint-originals.json',JSON.stringify(out),{flag:'wx',mode:0o600});
     process.stdout.write(JSON.stringify(out));`;
   file(path.dirname(root),path.basename(root)+'.joint-intent.json',JSON.stringify({fixture,program,node:fixedNode}));
@@ -583,6 +646,13 @@ for(const lost of ['native','definition']){
   `,{resources:true}));
 }
 
+test('fixed owner-bound ROOT reservation entry exists before participant or database acquisition',()=>exercise(`
+  const adapter=await import('./scripts/deployment-dashboard-cutover-adapter-v2.mjs');
+  assert.deepEqual([typeof adapter.reserveHeldDashboardCutoverJointFirstGenerationV4,
+    typeof adapter.assertDashboardCutoverJointOwnerTokenV4],['function','function'],
+    'MISSING_OWNER_BOUND_ROOT_RESERVATION');
+`));
+
 test('fixed pre32 original-operation interfaces exist before participant or database acquisition',()=>exercise(`
   const adapter=await import('./scripts/deployment-dashboard-cutover-adapter-v2.mjs');
   const definition=await import('./dist/internal-production/baseline-deployment-cutover-launcher-observation-v1.js');
@@ -670,6 +740,182 @@ const expectedPre32Locks=[
   'v3_preparation_authority_attempts_v2','v3_preparation_authority_claims_v2','v3_preparation_blocks','v3_preparation_story_state',
   'v3_story_claim_runtime_binding_cutovers_v1','v3_story_claim_runtime_bindings_v1',
 ].map(n=>'LOCK TABLE public.'+n+' IN SHARE MODE');
+
+// Actual copied owner, history, maintenance/OPEN codecs and filesystem publisher.
+// Finalized outputs remain manual fixture metadata, not a real clean-main build.
+const ownerSetup=`
+  const ownerApi=await import('./scripts/deployment-cutover-owner.mjs');
+  const records=await import('./dist/internal-production/baseline-deployment-cutover-records-v1.js');
+  const controllerSource=await ownerApi.observeDeploymentCutoverOwnerControllerSourceV1();
+  const plan={
+    oldDeployment:{checkoutPath:'/old',checkoutDirectoryIdentityHash:'a'.repeat(64),sourceSha:'b'.repeat(40),sourceTreeHash:'c'.repeat(40),buildHash:'d'.repeat(64)},
+    newDeployment:{checkoutPath:'/new',checkoutDirectoryIdentityHash:'e'.repeat(64),sourceSha:'f'.repeat(40),sourceTreeHash:'1'.repeat(40),buildHash:'2'.repeat(64)},
+    cliLinkObservationHash:'3'.repeat(64),spawnerLauncherConfigurationHash:'4'.repeat(64),dashboardLauncherConfigurationHash:'5'.repeat(64),dashboardPort:3333};
+  const maintenance=records.createDeploymentCutoverMaintenanceIntentV1({controllerSourceHash:controllerSource.controllerSourceHash,plan});
+  const actualOwner=await ownerApi.acquireDeploymentCutoverOwnerV1(maintenance);
+  const intended=records.createDeploymentCutoverIntentV1({...plan,maintenanceIntentHash:maintenance.maintenanceIntentHash});
+  ownerApi.publishDeploymentCutoverIntentWithOwnerV1(actualOwner,intended);
+  const baseline=home+'/ai/setrox/data/internal-production-baseline';
+  const actualOpenBytes=fs.readFileSync(baseline+'/deployment-cutover-v1/intent.json');
+  const actualClaimBytes=fs.readFileSync(baseline+'/deployment-cutover-owner-v1/owner-0001.json');
+  const actualOpen=records.parseDeploymentCutoverIntentV1(actualOpenBytes),actualClaim=JSON.parse(actualClaimBytes);
+  assert.equal(actualOpen.cutoverIntentHash,intended.cutoverIntentHash);
+  assert.equal(new Set([actualOpen.cutoverIntentHash,maintenance.maintenanceIntentHash,maintenance.cutoverPlanHash]).size,3);
+  out.ownerOriginals={authority:'actual-source-owner-and-OPEN-manual-build-fixture-only',
+    openBytes:actualOpenBytes.toString('base64'),claimBytes:actualClaimBytes.toString('base64'),
+    cutoverIntentHash:actualOpen.cutoverIntentHash,maintenanceIntentHash:maintenance.maintenanceIntentHash,
+    cutoverPlanHash:maintenance.cutoverPlanHash,ownerClaimHash:actualClaim.ownerClaimHash};
+`;
+
+test('actual owner OPEN fixture retains independent original bytes before any joint reservation',()=>exercise(ownerSetup+`
+  ownerApi.assertDeploymentCutoverOwnerV1(actualOwner);
+  assert.equal(fs.existsSync(baseline+'/restart-authority-retirement-v1'),false);
+  assert.equal(out.commands.length,0);assert.ok(out.ownerProcessObservations>0);
+`,{resources:true,pre32:true,owner:true}));
+
+test('owner-bound reservation uses actual OPEN and claim while genuine pre32 scope remains held',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+participants+`
+  assert.equal(typeof adapter.reserveHeldDashboardCutoverJointFirstGenerationV4,'function','MISSING_OWNER_BOUND_ROOT_RESERVATION');
+  const result=await adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner);
+  assert.equal(result,undefined);
+  assert.equal(out.reservationChild.dispatchedWhilePgHeld,true);assert.equal(out.reservationChild.publishedWhilePgHeld,true);
+  assert.equal(out.reservationChild.closed,true);assert.equal(out.reservationChild.status,0);
+  const reservationRoot=baseline+'/restart-authority-retirement-v1';
+  assert.deepEqual(fs.readdirSync(reservationRoot),['physical-service-restart-authority.transition.lock']);
+  const wire=JSON.parse(fs.readFileSync(reservationRoot+'/physical-service-restart-authority.transition.lock'));
+  assert.equal(wire.cutoverIntentHash,actualOpen.cutoverIntentHash);assert.equal(wire.ownerClaimHash,actualClaim.ownerClaimHash);
+  assert.notEqual(wire.owner.reservationNonce,actualClaim.owner.reservationNonce);
+  for(const field of ['pid','uid','processLstart','processGroupId','bootSessionHash'])assert.equal(wire.owner[field],actualClaim.owner[field]);
+  assert.equal(p.open,1);assert.equal(p.end,1);assert.equal(p.exactJournal,4);assert.equal(p.callbackSettled,true);
+  assert.deepEqual(p.events.filter(e=>e.startsWith('LOCK TABLE ')),${JSON.stringify(expectedPre32Locks)});
+  assert.equal(fs.readFileSync(baseline+'/deployment-cutover-v1/intent.json').equals(actualOpenBytes),true);
+  assert.equal(fs.readFileSync(baseline+'/deployment-cutover-owner-v1/owner-0001.json').equals(actualClaimBytes),true);
+  out.reservationWire=wire;out.pre32={mode:p.mode,events:p.events,open:p.open,end:p.end,exactJournal:p.exactJournal};
+`,{resources:true,pre32:true,owner:true}));
+
+for(const fault of ['owner-namespace','OPEN-maintenance','swallowed-owner-reentry']){
+  test('owner-bound reservation refuses '+fault+' before ROOT dispatch',()=>exercise(
+    pre32Setup('healthy')+ownerSetup+participants+`
+    assert.equal(typeof adapter.reserveHeldDashboardCutoverJointFirstGenerationV4,'function','MISSING_OWNER_BOUND_ROOT_RESERVATION');
+    const fault=${JSON.stringify(fault)};let triggered=0,traps=0,nestedRefused=false;
+    if(fault==='owner-namespace'){
+      fs.renameSync(baseline+'/deployment-cutover-owner-v1',baseline+'/deployment-cutover-owner-v1.retained');
+      fs.mkdirSync(baseline+'/deployment-cutover-owner-v1',{mode:0o700});triggered++;
+    }else if(fault==='OPEN-maintenance'){
+      fs.renameSync(baseline+'/deployment-cutover-v1',baseline+'/deployment-cutover-v1.retained');
+      fs.mkdirSync(baseline+'/deployment-cutover-v1',{mode:0o700});
+      const crossed=records.createDeploymentCutoverIntentV1({...plan,cliLinkObservationHash:'9'.repeat(64),maintenanceIntentHash:maintenance.maintenanceIntentHash});
+      fs.writeFileSync(baseline+'/deployment-cutover-v1/intent.json',records.encodeDeploymentCutoverIntentV1(crossed),{flag:'wx',mode:0o600});triggered++;
+    }else{
+      const proxy=new Proxy({}, {get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')},ownKeys(){traps++;throw Error('TRAP')}});
+      onPort=row=>{if(!triggered&&row.name==='fstatSync'&&row.path===baseline+'/deployment-cutover-v1/intent.json'){
+        triggered++;try{ownerApi.observeDashboardCutoverOwnerBindingsV2(proxy,undefined)}catch{nestedRefused=true}
+      }};
+    }
+    await assert.rejects(()=>adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner));
+    assert.equal(triggered,1);assert.equal(traps,0);
+    if(fault==='swallowed-owner-reentry')assert.equal(nestedRefused,true);
+    assert.equal(out.reservationChild,undefined);assert.equal(fs.existsSync(baseline+'/restart-authority-retirement-v1'),false);
+    out.ownerFault={fault,triggered,traps,nestedRefused};
+  `,{resources:true,pre32:true,owner:true}));
+}
+
+test('owner-bound original token and owner reject source-call input COPY before first parent port',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+participants+`
+  await assert.rejects(()=>adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner));
+  assert.equal(p.open,1);assert.equal(p.end,1);assert.equal(p.callbackSettled,true);
+  assert.equal(out.reservationChild,undefined);assert.equal((out.reservationFds??[]).length,0);
+  assert.equal(Object.keys(out.portCounts??{}).some(key=>key.startsWith('reservation:')),false);
+  assert.equal(fs.existsSync(baseline+'/restart-authority-retirement-v1'),false);
+  out.copiedInputRefused={sameOriginalOwnerAndTokenSourceCall:true,parentPorts:0,callbackSettled:p.callbackSettled};
+`,{resources:true,pre32:true,owner:true,ownerInputCopy:true}));
+
+test('owner-bound first canonical import reentry inhibits both participant ports before promise rejection',()=>exercise(
+  pre32Setup('healthy')+ownerSetup+participants+`
+  const get=WeakMap.prototype.get,push=Array.prototype.push;let nativeScope,definitionScope,triggered=0,traps=0;
+  WeakMap.prototype.get=function(key){const value=get.call(this,key);
+    if(value&&value.original===loaded&&value.published)nativeScope=key;
+    if(value&&value.original===approved&&value.published)definitionScope=key;
+    return value;
+  };
+  Array.prototype.push=function(...items){
+    const result=push.apply(this,items);
+    if(!triggered&&items[0]?.locator==='./deployment-dashboard-cutover-adapter-v2.mjs'){
+      triggered++;
+      const proxy=new Proxy({}, {get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')},ownKeys(){traps++;throw Error('TRAP')}});
+      let ownerRefused=false,nativeRefused=false,definitionRefused=false;
+      try{ownerApi.observeDashboardCutoverOwnerBindingsV2(proxy,undefined)}catch{ownerRefused=true}
+      const direct=()=>Object.fromEntries(Object.entries(out.portCounts??{}).filter(([key])=>!key.startsWith('composite:')));
+      const before=direct();
+      try{native.assertHeldDashboardCutoverLoadedJobOperationV4(nativeScope)}catch{nativeRefused=true}
+      try{definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4(definitionScope)}catch{definitionRefused=true}
+      out.firstImportReentry={triggered,traps,ownerRefused,nativeRefused,definitionRefused,
+        capturedNative:!!nativeScope,capturedDefinition:!!definitionScope,before,after:direct()};
+    }
+    return result;
+  };
+  await assert.rejects(()=>adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner));
+  assert.equal(triggered,1);assert.equal(traps,0);
+  assert.equal(out.firstImportReentry.capturedNative,true);assert.equal(out.firstImportReentry.capturedDefinition,true);
+  assert.equal(out.firstImportReentry.ownerRefused,true);
+  assert.equal(out.firstImportReentry.nativeRefused,true,'OWNER_IMPORT_BURN_ADMITTED_NATIVE_SCOPE');
+  assert.equal(out.firstImportReentry.definitionRefused,true);
+  assert.deepEqual(out.firstImportReentry.after,out.firstImportReentry.before,'OWNER_IMPORT_BURN_DISPATCHED_PARTICIPANT_PORT');
+  assert.equal(out.reservationChild,undefined);
+`,{resources:true,pre32:true,owner:true}));
+
+for(const scenario of ['child-driver-loss','child-reentry','final-loss']){
+  test('owner-bound reservation '+scenario+' quarantines SAME originals after later settlement',()=>exercise(
+    pre32Setup(scenario==='final-loss'?'final-loss':'healthy')+ownerSetup+participants+`
+    assert.equal(typeof adapter.reserveHeldDashboardCutoverJointFirstGenerationV4,'function','MISSING_OWNER_BOUND_ROOT_RESERVATION');
+    const provider=await import('./scripts/deployment-dashboard-cutover-first-generation-v2.mjs');
+    const scenario=${JSON.stringify(scenario)};
+    if(scenario!=='final-loss'){
+      globalThis.holdReservationChild=true;
+      globalThis.reservationChildSuspended=new Promise(resolve=>{globalThis.reservationChildObserved=resolve});
+    }
+    const operation=adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(loaded,approved,actualOwner);operation.catch(()=>{});
+    if(scenario!=='final-loss'){
+      await globalThis.reservationChildSuspended;assert.equal(out.reservationChild.published,false);assert.equal(p.held,true);
+    }else{await p.suspended;assert.equal(out.reservationChild.published,true);assert.equal(p.suspendedAt,4)}
+    p.rejectDriver(Error('INERT_DRIVER_LOSS'));await p.ended;await new Promise(resolve=>setImmediate(resolve));
+    const counters=()=>Object.fromEntries(Object.entries(out.portCounts??{}).filter(([key])=>!key.startsWith('composite:')));
+    let traps=0;const proxy=new Proxy({}, {get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')},ownKeys(){traps++;throw Error('TRAP')}});
+    const refusedLegacy=async()=>{
+      const at=counters();
+      assert.throws(()=>ownerApi.assertDeploymentCutoverOwnerV1(proxy,undefined));
+      assert.throws(()=>ownerApi.observeDashboardCutoverOwnerBindingsV2(proxy,undefined));
+      await assert.rejects(()=>ownerApi.acquireDeploymentCutoverOwnerV1(proxy,undefined));
+      assert.throws(()=>provider.assertFirstGenerationDashboardCutoverReservationV2(proxy,undefined));
+      assert.throws(()=>provider.closeFirstGenerationDashboardCutoverReservationV2(proxy,undefined));
+      await assert.rejects(()=>provider.acquireFirstGenerationDashboardCutoverReservationV2(proxy,undefined));
+      await assert.rejects(()=>adapter.reserveHeldDashboardCutoverJointFirstGenerationV4(proxy));
+      assert.throws(()=>native.closeHeldDashboardCutoverLoadedJobPeerV4(loaded));
+      assert.throws(()=>definition.closeHeldDashboardCutoverApprovedDefinitionV4(approved));
+      assert.deepEqual(counters(),at);assert.equal(traps,0);
+    };
+    const afterDriverLoss=counters();
+    // Natural-loss cases must not get their burn from this test's legacy calls.
+    // Pending reentry is independently exercised in its own separate case.
+    if(scenario==='child-reentry')await refusedLegacy();
+    if(scenario!=='final-loss'){
+      globalThis.releaseReservationChild();
+      await assert.rejects(()=>p.actualCallback);
+      assert.equal(out.reservationChild.published,true);assert.equal(out.reservationChild.publishedWhilePgHeld,false);
+      assert.equal(out.reservationChild.closed,true);
+    }else{
+      p.resumeOriginalQuery();await assert.rejects(()=>p.actualCallback);assert.equal(p.querySettled,true);
+    }
+    await assert.rejects(()=>operation);
+    const afterOriginalSettlement=counters();assert.deepEqual(afterOriginalSettlement,afterDriverLoss);
+    await refusedLegacy();
+    assert.equal(out.portCounts?.['reservation:closeSync']??0,0);
+    const reservationRoot=baseline+'/restart-authority-retirement-v1';
+    assert.deepEqual(fs.readdirSync(reservationRoot),['physical-service-restart-authority.transition.lock']);
+    out.quarantine={scenario,traps,callbackSettled:p.callbackSettled,child:out.reservationChild,
+      afterDriverLoss,afterOriginalSettlement,parentCounters:counters(),end:p.end,rootPreserved:fs.existsSync(reservationRoot)};
+  `,{resources:true,pre32:true,owner:true}));
+}
 
 test('fixed pre32 operation holds genuine transaction across both original participants before successful release',()=>exercise(
   pre32Setup('healthy')+participants+`

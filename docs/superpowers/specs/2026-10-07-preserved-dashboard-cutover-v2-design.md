@@ -3657,7 +3657,14 @@ may discard a returned original or refresh unknown custody into acceptance.
 
 Owner public legacy entry points must guard the retained joint lifetime BEFORE
 input parsing/imports/normal resource ports. During genuine joint work reentry
-burns/refuses and notifies the shared token. Split its trusted internal owner
+burns/refuses immediately and notifies the shared token synchronously when the
+canonical adapter import has returned. Before that original response, the
+coordinator denies BOTH participant live-token ports throughout the admitted
+owner composite; only its original successful promise return removes that
+embargo. Rejection or an unknown response never does. The owner-specific token
+guard remains usable for source-owned owner/reservation checks, not participant
+ports. This closes the provisional import window without an extra callback,
+static legacy import or invented synchronous-import notification. Split its trusted internal owner
 checker from public wrappers so source-owned checks don't self-burn. New fixed
 metadata checks need a separate short synchronous checking guard, not a flag
 held across awaits. Original legacy routes must not resolve new adapter/provider
@@ -3667,7 +3674,9 @@ are original preparation work, not falsely counted as zero loader activity.
 Actual first-generation publisher parent uses its original check/port/open/
 child machinery. New fixed joint entry binds the actual private metadata and
 token BEFORE first parent resource port. Every nominated parent check consults
-both resource-free canonical guards. Its private joint lifetime survives v.active
+the canonical owner metadata assertion, which authenticates original input
+identity and invokes the canonical adapter owner-token assertion: both guards
+are resource-free, with no reverse metadata recursion. Its private joint lifetime survives v.active
 finally, acquired-handle return, outer PG loss and actual child settlement.
 Public V2 acquire/assert/close during this lifetime burn/refuse before parsing,
 proxy traps or parent FS/process ports; existing no-joint behavior stays unchanged.

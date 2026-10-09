@@ -3,13 +3,14 @@ import { test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { transformSync } from "esbuild";
 
 // Private compiled fixtures exercise ownership, not clean-main build qualification.
 // The real source/build observer remains an external integration requirement.
 const repo = new URL("../../", import.meta.url);
-function fixture(body) {
+function fixture(body, { retain = false } = {}) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cutover-capability-")));
   const checkout = path.join(home, "checkout");
   fs.mkdirSync(path.join(checkout, "scripts"), { recursive: true, mode: 0o700 });
@@ -24,8 +25,8 @@ function fixture(body) {
     fs.writeFileSync(path.join(checkout, "package.json"), '{"type":"module"}', { mode: 0o600 });
     fs.writeFileSync(path.join(checkout, "scripts/build-generation-retention.mjs"), `
       export function observeCurrentFinalizedSetfarmSourceBuildV1(){return {branch:'main',clean:true,sha:'a'.repeat(40),treeHash:'b'.repeat(40),buildHash:'c'.repeat(64),originMainSha:'a'.repeat(40)}}`, { mode: 0o600 });
-    body(home, checkout);
-  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+    return body(home, checkout);
+  } finally { if (!retain) fs.rmSync(home, { recursive: true, force: true }); }
 }
 function program(home, checkout, action) {
   return `
@@ -59,6 +60,46 @@ function freshOrdinaryStartResult(home, checkout) {
   assert.equal(child.status, 0, child.stderr);
   return child.stdout;
 }
+
+// New retained API receipt uses the existing real owner module/FS initialization,
+// explicit mocked-build boundary, and no acquisition, OPEN publication or PG.
+test("fixed owner ROOT operation interfaces exist before owner acquisition", async () => fixture(async (home, checkout) => {
+  const script = program(home, checkout, `process.stdout.write(JSON.stringify({
+interfaceKinds:[typeof module.reserveDeploymentCutoverFirstGenerationWithOwnerV4,
+typeof module.assertDeploymentCutoverJointReservationMetadataV4],
+ownerCreated:fs.existsSync(root),openCreated:fs.existsSync(${JSON.stringify(path.join(home, "ai/setrox/data/internal-production-baseline/deployment-cutover-v1"))}),
+authority:'explicit-mocked-build-source-only'}));`);
+  const locators = ["package.json", ...["deployment-cutover-owner.mjs", "deployment-cutover.mjs",
+    "deployment-cutover-dependencies.mjs", "build-generation-maintenance-owner-observer.mjs",
+    "build-generation-maintenance-journal.mjs", "build-generation-retention.mjs"].map(n => "scripts/" + n),
+    ...["internal-production/baseline-deployment-cutover-owner-store-v1",
+      "internal-production/baseline-deployment-cutover-records-v1",
+      "internal-production/baseline-deployment-cutover-publication-v1",
+      "internal-production/baseline-deployment-cutover-v1", "internal-production/baseline-workspace-authority-path-v1",
+      "product-compiler/canonical-json"].map(n => "dist/" + n + ".js")];
+  const fixturePins = Object.fromEntries(locators.map(p => [p,
+    createHash("sha256").update(fs.readFileSync(checkout + "/" + p)).digest("hex")]));
+  fs.writeFileSync(home + "/intent.json", JSON.stringify({ program: script, node: process.execPath,
+    authority: "explicit-mocked-build-source-only", home, checkout, fixturePins }), { flag: "wx", mode: 0o600 });
+  const child = spawn(process.execPath, ["--input-type=module", "-e", script],
+    { cwd: home, env: {}, stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "", stderr = "", unknown = null;
+  const eof = { stdout: false, stderr: false }, closed = { stdout: false, stderr: false };
+  child.on("error", e => { unknown ??= e.message; });
+  for (const [stream, name] of [[child.stdout, "stdout"], [child.stderr, "stderr"]]) {
+    stream.on("error", e => { unknown ??= e.message; });
+    stream.on("end", () => { eof[name] = true; });stream.on("close", () => { closed[name] = true; });
+    stream.on("data", b => { if (name === "stdout") stdout += b; else stderr += b; });
+  }
+  const [status, signal] = await new Promise(resolve => child.on("close", (...args) => resolve(args)));
+  fs.writeFileSync(home + "/result.json", JSON.stringify({ stdout, stderr, status, signal,
+    error: unknown, eof, closed, program: script }), { flag: "wx", mode: 0o600 });
+  console.log(JSON.stringify({ kind: "retained-owner-root-case", home, status, signal, eof, closed }));
+  assert.equal(unknown, null);assert.equal(status, 0, stderr);assert.equal(signal, null);assert.equal(stderr, "");
+  assert.deepEqual(eof, { stdout: true, stderr: true });assert.deepEqual(closed, eof);
+  const out = JSON.parse(stdout);assert.equal(out.ownerCreated, false);assert.equal(out.openCreated, false);
+  assert.deepEqual(out.interfaceKinds, ["function", "function"], "MISSING_FIXED_OWNER_ROOT_OPERATION");
+}, { retain: true }));
 test("owner controller source accepts legitimate partial source reads", () => fixture((home, checkout) => {
   const body = program(home, checkout, 'process.stdout.write(JSON.stringify({hash:source.controllerSourceHash}));')
     .replace('const module=await import', 'const read=fs.readSync;fs.readSync=(fd,buffer,offset,length,position)=>read(fd,buffer,offset,Math.min(length,127),position);const module=await import');

@@ -11,7 +11,7 @@ import { observeCurrentMaintenanceOwnerV1, observeMaintenanceOwnerProcessV1 }
 // Custody only. The consuming adapter supplies genuine owner/build/namespace
 // authority; neither two hash labels nor this private handle supply that proof.
 const handles = new WeakMap();
-const v = { state: "idle", active: false, slots: [], child: null, settlement: null, publicationAttempted: false };
+const v = { state: "idle", active: false, slots: [], child: null, settlement: null, publicationAttempted: false, joint: null };
 const CORE = ["dev", "ino", "mode", "uid", "gid", "birthtimeNs"];
 const FULL = [...CORE, "nlink", "size", "mtimeNs", "ctimeNs"];
 const ROOT = "restart-authority-retirement-v1", LOCK = "physical-service-restart-authority.transition.lock";
@@ -24,8 +24,28 @@ const canonical = value => value === null || typeof value !== "object" ? JSON.st
   : Array.isArray(value) ? `[${value.map(canonical).join(",")}]`
     : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
 const fail = () => { throw Error("DASHBOARD_FIRST_GENERATION_RESERVATION_REFUSED"); };
-function burn() { v.state = "burned"; }
-function check() { if (!v.active || v.state === "burned") fail(); }
+function burn() {
+  v.state = "burned";
+  if (v.joint) {
+    v.joint.unknown = true;
+    if (v.joint.adapter) v.joint.adapter.revokeDashboardCutoverJointTokenV4(v.joint.token);
+  }
+}
+function legacyReservationEntry() { if (v.joint) { burn(); fail(); } }
+function check() {
+  if (!v.active || v.state === "burned") fail();
+  if (v.joint) {
+    const joint = v.joint;
+    if (!joint.ready || joint.unknown || joint.checking) { burn(); fail(); }
+    joint.checking = true;
+    try {
+      // Canonical owner metadata checks private input identity AND the same
+      // resource-free adapter owner-token guard. No recursive owner/PG ports.
+      joint.owner.assertDeploymentCutoverJointReservationMetadataV4(joint.token, joint.input);
+    } catch { burn(); fail(); }
+    finally { joint.checking = false; }
+  }
+}
 function port(callback) { check(); const value = callback(); check(); return value; }
 function start(state) { if (v.active) { burn(); fail(); } v.active = true; v.state = state; }
 function snapshot(input) {
@@ -93,10 +113,31 @@ function owner() {
 function physical() {
   directories(); inputs();
   if (!v.lock || v.lock.state !== "sealed" || !v.publishedLock || !v.wire) fail();
+  const rootOriginal = port(() => fs.fstatSync(v.root.fd, { bigint: true }));
+  if (!rootOriginal.isDirectory() || !same(v.root.identity, rootOriginal)) fail();
+  const rootStable = () => {
+    for (const current of [port(() => fs.fstatSync(v.root.fd, { bigint: true })),
+      port(() => fs.lstatSync(v.root.target, { bigint: true }))]) {
+      if (!current.isDirectory() || current.isSymbolicLink() || !same(rootOriginal, current, FULL)) fail();
+    }
+  };
+  const members = () => {
+    rootStable();
+    const names = port(() => fs.readdirSync(v.root.target));
+    if (!names || typeof names !== "object" || types.isProxy(names)
+      || !Array.isArray(names) || Object.getPrototypeOf(names) !== Array.prototype) fail();
+    const fields = Object.getOwnPropertyDescriptors(names), keys = Reflect.ownKeys(fields);
+    if (keys.length !== 2 || !keys.includes("0") || !keys.includes("length")
+      || !Object.hasOwn(fields["0"], "value") || !fields["0"].enumerable
+      || fields["0"].value !== LOCK || !Object.hasOwn(fields.length, "value")
+      || fields.length.value !== 1) fail();
+    rootStable();
+  };
+  members();
   for (const stat of [port(() => fs.fstatSync(v.lock.fd, { bigint: true })),
     port(() => fs.lstatSync(v.lock.target, { bigint: true }))]) if (!stat.isFile() || !same(v.publishedLock, stat, FULL)) fail();
   if (!bytes(v.lock, 65536).equals(v.wire)) fail();
-  directories();
+  members(); directories();
 }
 function lookup(handle, arity) {
   if (v.active) { burn(); fail(); }
@@ -129,9 +170,14 @@ function registerChild(child) {
 }
 
 export async function acquireFirstGenerationDashboardCutoverReservationV2(input) {
+  legacyReservationEntry();
   if (v.active) { burn(); fail(); }
   if (arguments.length !== 1 || v.state !== "idle") fail();
-  const captured = snapshot(input); start("acquiring");
+  const captured = snapshot(input);
+  return acquireOriginal(captured);
+}
+async function acquireOriginal(captured) {
+  start("acquiring");
   try {
     v.account = port(() => os.userInfo());
     if (v.account.uid !== process.getuid() || v.account.gid !== process.getgid() || !path.isAbsolute(v.account.homedir)) fail();
@@ -197,6 +243,7 @@ export async function acquireFirstGenerationDashboardCutoverReservationV2(input)
 }
 
 export function assertFirstGenerationDashboardCutoverReservationV2(handle) {
+  legacyReservationEntry();
   lookup(handle, arguments.length); start("held");
   try { physical(); owner(); physical(); }
   catch { burn(); fail(); }
@@ -204,6 +251,7 @@ export function assertFirstGenerationDashboardCutoverReservationV2(handle) {
 }
 
 export function closeFirstGenerationDashboardCutoverReservationV2(handle) {
+  legacyReservationEntry();
   lookup(handle, arguments.length); start("closing");
   try {
     physical(); owner(); physical();
@@ -217,5 +265,50 @@ export function closeFirstGenerationDashboardCutoverReservationV2(handle) {
     }
     check(); handles.delete(handle); v.state = "closed";
   } catch { burn(); fail(); }
+  finally { v.active = false; }
+}
+
+async function jointImport(joint, locator) {
+  const occurrence = { locator, intent: true, promise: null, settled: false, value: null };
+  joint.imports.push(occurrence);
+  if (v.joint !== joint || joint.unknown || v.state === "burned") fail();
+  occurrence.promise = import(locator);
+  try { occurrence.value = await occurrence.promise; occurrence.settled = true; }
+  catch { occurrence.settled = true; burn(); fail(); }
+  if (v.joint !== joint || joint.unknown || v.state === "burned") fail();
+  return occurrence.value;
+}
+
+export async function acquireFirstGenerationDashboardCutoverJointReservationV4(input, token) {
+  if (v.joint || v.active) { burn(); fail(); }
+  if (arguments.length !== 2 || v.state !== "idle" || token === null || typeof token !== "object" || types.isProxy(token)) fail();
+  const joint = { input, token, ready: false, unknown: false, checking: false, adapter: null, owner: null,
+    imports: [], promise: null, returned: false, settled: false, reservation: null };
+  v.joint = joint; v.active = true; v.state = "joint-preparing";
+  try {
+    joint.adapter = await jointImport(joint, "./deployment-dashboard-cutover-adapter-v2.mjs");
+    joint.owner = await jointImport(joint, "./deployment-cutover-owner.mjs");
+    joint.ready = true; check();
+    const captured = snapshot(input); check();
+    v.active = false;
+    joint.promise = acquireOriginal(captured);
+    if (!types.isPromise(joint.promise)) fail();
+    void joint.promise.then(reservation => { joint.reservation = reservation; joint.returned = true; joint.settled = true; },
+      () => { joint.settled = true; burn(); });
+    joint.reservation = await joint.promise; joint.returned = true; joint.settled = true;
+    if (joint.unknown || v.state !== "held") fail();
+    return joint.reservation;
+  } catch { burn(); fail(); }
+  finally { v.active = false; }
+}
+
+export function assertFirstGenerationDashboardCutoverJointReservationV4(token) {
+  if (v.active) { burn(); fail(); }
+  const joint = v.joint;
+  if (arguments.length !== 1 || !joint || joint.token !== token || joint.unknown
+    || !joint.returned || handles.get(joint.reservation) !== v || v.state !== "held") fail();
+  start("held");
+  try { check(); physical(); owner(); physical(); check(); }
+  catch { burn(); fail(); }
   finally { v.active = false; }
 }

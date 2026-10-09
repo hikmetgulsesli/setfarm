@@ -19,6 +19,20 @@ const same = (a, b, keys) => keys.every(key => a[key] === b[key]);
 let uncertain = false, occupied = false, modulesPromise, originalBuild;
 const handles = new WeakMap();
 let bindingProjectionActive = false, bindingProjectionOwner = null;
+let jointReservation = null;
+function burnJointReservation() {
+  const record = jointReservation;
+  if (!record) return;
+  record.unknown = true; record.held.valid = false; uncertain = true;
+  if (record.adapter) record.adapter.revokeDashboardCutoverJointTokenV4(record.token);
+}
+function legacyOwnerEntry() {
+  if (jointReservation) { burnJointReservation(); fail(); }
+}
+function checkJointReservation(record) {
+  if (jointReservation !== record || record.unknown || !record.held.valid || uncertain || !record.adapter) fail();
+  record.adapter.assertDashboardCutoverJointOwnerTokenV4(record.token, record.owner);
+}
 
 function sourceSnapshot() {
   if (uncertain) fail();
@@ -101,6 +115,7 @@ async function load() {
   return modulesPromise;
 }
 export async function observeDeploymentCutoverOwnerControllerSourceV1() {
+  legacyOwnerEntry();
   return sourceAuthority(await load());
 }
 const committed = value => canonical({ root: value.rootIdentityHash, ancestors: value.ancestorIdentityHash, maintenance: value.maintenance, claims: value.claims,
@@ -114,6 +129,7 @@ function captureMaintenance(input) {
   return Object.freeze(Object.fromEntries(expected.map(key => [key, fields[key].value])));
 }
 export async function acquireDeploymentCutoverOwnerV1(maintenance) {
+  legacyOwnerEntry();
   if (occupied || uncertain) fail(); occupied = true;
   try {
     const captured = captureMaintenance(maintenance);
@@ -136,10 +152,10 @@ export async function acquireDeploymentCutoverOwnerV1(maintenance) {
     if (published.claims.at(-1)?.ownerClaimHash !== claim.ownerClaimHash) fail();
     const capability = Object.freeze(Object.create(null));
     handles.set(capability, { modules, claim, maintenance: intent, projection: committed(published), valid: true });
-    assertDeploymentCutoverOwnerV1(capability); return capability;
+    assertOwnerOriginal(capability); return capability;
   } catch { uncertain = true; fail(); }
 }
-export function assertDeploymentCutoverOwnerV1(capability) {
+function assertOwnerOriginal(capability) {
   const held = handles.get(capability);
   if (!held || !held.valid || uncertain) fail();
   try {
@@ -150,10 +166,14 @@ export function assertDeploymentCutoverOwnerV1(capability) {
     sourceAuthority(held.modules);
   } catch { held.valid = false; uncertain = true; fail(); }
 }
+export function assertDeploymentCutoverOwnerV1(capability) {
+  legacyOwnerEntry(); assertOwnerOriginal(capability);
+}
 
 // Labels only: the original opaque capability remains the owner authority.
 // Each assertion is a trusted composite with its existing FS/process resources.
 export function observeDashboardCutoverOwnerBindingsV2(capability) {
+  legacyOwnerEntry();
   if (bindingProjectionActive) {
     bindingProjectionOwner.valid = false;
     uncertain = true;
@@ -167,7 +187,7 @@ export function observeDashboardCutoverOwnerBindingsV2(capability) {
     if (!bindingProjectionActive || bindingProjectionOwner !== held || !held.valid || uncertain) fail();
   };
   try {
-    assertDeploymentCutoverOwnerV1(capability);
+    assertOwnerOriginal(capability);
     check();
     const bindings = Object.freeze({
       schema: "setfarm.internal-production-dashboard-cutover-owner-bindings.v2",
@@ -177,7 +197,7 @@ export function observeDashboardCutoverOwnerBindingsV2(capability) {
       controllerSourceHash: held.maintenance.controllerSourceHash,
       cutoverPlanHash: held.maintenance.cutoverPlanHash,
     });
-    assertDeploymentCutoverOwnerV1(capability);
+    assertOwnerOriginal(capability);
     check();
     return bindings;
   } catch {
@@ -193,23 +213,96 @@ export function observeDashboardCutoverOwnerBindingsV2(capability) {
 // A durable refusal can be published only by this process's current owner.
 // This is not a DB admission fence, service-effect permission or zero-owner proof.
 export function publishDeploymentCutoverIntentWithOwnerV1(capability, cutoverIntent) {
-  assertDeploymentCutoverOwnerV1(capability);
+  legacyOwnerEntry(); assertOwnerOriginal(capability);
   const held = handles.get(capability);
   const { records, publication, observation } = held.modules;
   const intent = records.parseDeploymentCutoverIntentV1(records.encodeDeploymentCutoverIntentV1(cutoverIntent));
   records.assertDeploymentCutoverMaintenanceRelationV1({ cutover: intent, maintenance: held.maintenance,
     controllerSourceHash: sourceAuthority(held.modules).controllerSourceHash });
-  assertDeploymentCutoverOwnerV1(capability);
+  assertOwnerOriginal(capability);
   try {
     publication.publishDeploymentCutoverIntentV1(intent);
-    assertDeploymentCutoverOwnerV1(capability);
+    assertOwnerOriginal(capability);
     const observed = observation.observeDeploymentCutoverIntentV1();
     if (observed.state !== "open" || !records.encodeDeploymentCutoverIntentV1(observed.intent).equals(records.encodeDeploymentCutoverIntentV1(intent))) fail();
-    assertDeploymentCutoverOwnerV1(capability);
+    assertOwnerOriginal(capability);
     return observed.intent;
   } catch {
     held.valid = false;
     uncertain = true;
     fail();
   }
+}
+
+// Resource-free identity authentication, not a source/owner/OPEN composite.
+// The provider authenticates this ORIGINAL input before taking its value copy.
+export function assertDeploymentCutoverJointReservationMetadataV4(token, input) {
+  const record = jointReservation;
+  if (record?.checking) { burnJointReservation(); fail(); }
+  if (arguments.length !== 2 || !record || record.token !== token || record.input !== input || !record.invocationIntent) fail();
+  record.checking = true;
+  try { checkJointReservation(record); }
+  catch { burnJointReservation(); fail(); }
+  finally { record.checking = false; }
+}
+
+async function jointImport(record, locator) {
+  const occurrence = { locator, intent: true, promise: null, settled: false, value: null };
+  record.imports.push(occurrence);
+  if (record.unknown || !record.held.valid || uncertain) fail();
+  occurrence.promise = import(locator);
+  try { occurrence.value = await occurrence.promise; occurrence.settled = true; }
+  catch { occurrence.settled = true; burnJointReservation(); fail(); }
+  if (record.unknown || !record.held.valid || uncertain) fail();
+  return occurrence.value;
+}
+
+function jointOpenOriginal(record) {
+  checkJointReservation(record);
+  assertOwnerOriginal(record.owner); checkJointReservation(record);
+  const { records, observation } = record.held.modules;
+  const observed = observation.observeDeploymentCutoverIntentV1(); checkJointReservation(record);
+  if (observed.state !== "open") fail();
+  const bytes = records.encodeDeploymentCutoverIntentV1(observed.intent);
+  records.assertDeploymentCutoverMaintenanceRelationV1({ cutover: observed.intent, maintenance: record.held.maintenance,
+    controllerSourceHash: sourceAuthority(record.held.modules).controllerSourceHash });
+  checkJointReservation(record);
+  if (record.openBytes && !record.openBytes.equals(bytes)) fail();
+  if (record.claim !== record.held.claim || !record.held.valid) fail();
+  assertOwnerOriginal(record.owner); checkJointReservation(record);
+  return { bytes, intent: observed.intent };
+}
+
+export async function reserveDeploymentCutoverFirstGenerationWithOwnerV4(owner, token) {
+  legacyOwnerEntry();
+  if (arguments.length !== 2 || owner === null || typeof owner !== "object" || types.isProxy(owner)
+    || token === null || typeof token !== "object" || types.isProxy(token)) fail();
+  const held = handles.get(owner);
+  if (!held || !held.valid || uncertain) fail();
+  // Provisional lifetime precedes imports and all admitted owner/source/OPEN work.
+  const record = { owner, token, held, claim: held.claim, input: null, openBytes: null, adapter: null,
+    provider: null, imports: [], promise: null, invocationIntent: false, returned: false,
+    settled: false, reservation: null, checking: false, unknown: false };
+  jointReservation = record;
+  try {
+    record.adapter = await jointImport(record, "./deployment-dashboard-cutover-adapter-v2.mjs");
+    checkJointReservation(record);
+    const original = jointOpenOriginal(record);
+    record.openBytes = Buffer.from(original.bytes);
+    record.input = Object.freeze({ cutoverIntentHash: original.intent.cutoverIntentHash, ownerClaimHash: held.claim.ownerClaimHash });
+    checkJointReservation(record);
+    record.provider = await jointImport(record, "./deployment-dashboard-cutover-first-generation-v2.mjs");
+    checkJointReservation(record); jointOpenOriginal(record); checkJointReservation(record);
+    record.invocationIntent = true;
+    record.promise = record.provider.acquireFirstGenerationDashboardCutoverJointReservationV4(record.input, record.token);
+    if (!types.isPromise(record.promise)) fail();
+    // Retain the actual returned original before any fallible observation.
+    void record.promise.then(reservation => { record.reservation = reservation; record.returned = true; record.settled = true; },
+      () => { record.settled = true; burnJointReservation(); });
+    record.reservation = await record.promise; record.returned = true; record.settled = true;
+    checkJointReservation(record);
+    record.provider.assertFirstGenerationDashboardCutoverJointReservationV4(record.token);
+    checkJointReservation(record); jointOpenOriginal(record); checkJointReservation(record);
+  } catch { burnJointReservation(); fail(); }
+  // No release/reset: originals survive healthy bookkeeping and all unknowns.
 }

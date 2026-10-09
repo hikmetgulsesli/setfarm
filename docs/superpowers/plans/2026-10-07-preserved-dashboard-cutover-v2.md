@@ -2647,11 +2647,11 @@ returns its actual private opaque handle internally, and fixed1-input
 assertFirstGenerationDashboardCutoverJointReservationV4(token). Exact types and
 lifetimes in spec. No caller callback/mode/hashes/URL/path or returned capability.
 
-- [ ] Step1: root self-review and two independent exact nomination gates before
+- [x] Step1: root self-review and two independent exact nomination gates before
   implementation. Canonical source/private WeakMaps, old route lazy-import
   compatibility, true cutover-vs-maintenance hash, child composite and unknown
   retention must be explicit. Preserve approved bounded scope and no live entry.
-- [ ] Step2: missing fixed interfaces RED before resources; retained original:
+- [x] Step2: missing fixed interfaces RED before resources; retained original:
   assert.equal(typeof adapter.reserveHeldDashboardCutoverJointFirstGenerationV4,
     'function','MISSING_OWNER_BOUND_ROOT_RESERVATION');
   Also original old provider sibling fault (not missing API):
@@ -2661,7 +2661,7 @@ lifetimes in spec. No caller callback/mode/hashes/URL/path or returned capabilit
     /DASHBOARD_FIRST_GENERATION_RESERVATION_REFUSED/);
   Run each new focused pattern with fixedNode26/sharedNODE_PATH; keep original
   program/intent/result/source pins and naturalEOFclose before source edits.
-- [ ] Step3: implement smallest fixed original producer after RED. Retain actual
+- [x] Step3: implement smallest fixed original producer after RED. Retain actual
   provisional owner operation BEFORE first import or owner/source/OPEN composite,
   then immutable input BEFORE acquisition; owner checks actual
   OPEN relation rather than two hash labels. Private input identity authenticates:
@@ -2673,7 +2673,15 @@ lifetimes in spec. No caller callback/mode/hashes/URL/path or returned capabilit
   Every parent check consults resource-free original owner/token guards; public
   legacy reentry burns before parsing, while internal fixed checks remain usable.
   No arbitrary callback/per-port recursive source/PG read or source guard bypass.
-- [ ] Step4: healthy actual owner/OPEN/claim/provider/scope fixture wire proves
+  Causally required refinement after original import-window RED CLaQL0: the
+  coordinator embargoes both participant live-token ports while the original
+  owner operation is pending, including before its canonical adapter response.
+  Owner/provider guards stay resource-free and usable. Only successful original
+  owner return lifts this embargo; rejection/unknown cannot. Same nine-file map;
+  no static legacy import, new callback/export or weakened guard. Actual copied
+  scope assertions dispatched FS in the RED despite local owner burn; preserve
+  that receipt separately from API-only missing-interface failures.
+- [x] Step4: healthy actual owner/OPEN/claim/provider/scope fixture wire proves
   actual cutoverIntentHash (not maintenanceIntentHash), publication while PGheld,
   exact one-member ROOT and same original reservation; zero six-effect calls.
   Suspend SAME original child, lose original PG driver or burn owner, snapshot
@@ -2699,6 +2707,23 @@ lifetimes in spec. No caller callback/mode/hashes/URL/path or returned capabilit
   diff. Bound resource snapshots; do not replay large old native campaigns.
   Two independent exact-nine-file/all-original gates; normal scoped delivery
   and append-only PR evidence. Genuine fullbuild only after whole reviewed main.
+
+Task4i.7 pre-delivery evidence: final11P0F300376.200916ms (API, actual owner/
+OPEN control, healthy reservation, wrong namespace/crossed OPEN/swallowed owner
+preflight, original-input COPY, first import embargo, untouched child/final loss
+and separate pending reentry). Canonical private owner-root-final-index.json;
+262 copied pins/104 literal TS bridges/148 manual outputs/67 inert or explicitly
+doubled commands/27 exact decoded C inputs/nativeCalls0. Root independently
+read all originals, actual canonical OPEN/claim/ROOT bytes and12 retained live
+parent FDs. One COPY counterfactual source graph is not healthy production
+qualification. Owner-source first import causal RED CLaQL0 preceded embargo
+fix; current GREEN denies both captured genuine scopes with identical counters.
+Old joint/pre3213P0F221545.019ms; actual no-joint Python controls22P0F2022.273167ms;
+owner34P0F4186.178334ms; approved+pre32 harness52P0F8323.222959ms. Seventy-nine
+current retained original receipts independently read; legacy owner/harness
+aggregate controls do not invent child receipts. strict1194/0noEmit and contracts
+pass; no real build/native image/real PostgreSQL/backend death/host clearance.
+Step5 remains pending exact-nine-file final reviews, fresh gates and delivery.
 
 After this slice: positive execution-owner PG+physical coupling and finite
 cooperative legacy/root-monotonicity, selected-build+selector, changing V2 phase
