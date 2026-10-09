@@ -1,10 +1,12 @@
-// Optional closed build DATA only. Never evaluate an addon or grant startup.
+// Optional retained build/loading custody only. Never grant startup.
 import {createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {constants,openSync,closeSync,lstatSync,fstatSync,readSync,readdirSync,
   mkdirSync,writeSync,fchmodSync,fsyncSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {createRequire} from 'node:module';
+import {types} from 'node:util';
 import {observeCurrentFinalizedSetfarmSourceBuildV1} from './build-generation-retention.mjs';
 import * as buildInputs from './dashboard-cutover-native-build-inputs-v2.mjs';
 
@@ -40,8 +42,12 @@ const treeKeys=[...identity,'mtimeNs','ctimeNs'];
 const fileKeys=[...treeKeys,'size','nlink'];
 const vault={attempted:false,active:false,burned:false,closed:false,revocations:0,uid:null,
   inputs:null,pins:[],directories:new Map(),files:[],effects:[],children:[],total:0,
-  generation:null,temp:null,outputs:[],source:null,manifest:null,inputsCloseAttempted:false,binding:null,lease:null};
+  generation:null,temp:null,outputs:[],source:null,manifest:null,inputsCloseAttempted:false,binding:null,lease:null,
+  loadedAttempted:false,loaded:null};
 const leases=new WeakMap();
+const loadedHandles=new WeakMap();
+const JOB_METHODS=['receiveControllerHelloV4','challengeControllerAndReceiveAckV4','sendControllerGrantV4',
+  'helloClientAndReceiveChallengeV4','ackClientAndReceiveGrantV4'].sort();
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const same=(a,b,keys)=>keys.every(k=>a[k]===b[k]);
 const within=(r,p)=>p===r||p.startsWith(r+path.sep);
@@ -351,4 +357,80 @@ export function assertHeldDashboardCutoverNativeSidecarLeaseV4(original){
 }
 export function closeHeldDashboardCutoverNativeSidecarLeaseV4(original){
   authenticateLease(original,arguments.length);close();
+}
+function candidate(value,kind='object'){
+  if(value===null||typeof value!==kind||port(()=>types.isProxy(value)))refuse();
+}
+function descriptor(value,key,record,slot){
+  // Retain returned descriptor evidence before checking a swallowed reentry.
+  port(()=>{record[slot]=Object.getOwnPropertyDescriptor(value,key)});
+  const d=record[slot];if(!d||!Object.hasOwn(d,'value'))refuse();return d;
+}
+function sameDescriptor(a,b){return a.value===b.value&&a.writable===b.writable
+  &&a.enumerable===b.enumerable&&a.configurable===b.configurable}
+function checkLoaded(record,initial=false){
+  alive();candidate(record.require,'function');const seen={};record.inspection=seen;
+  const cache=descriptor(record.require,'cache',seen,'cache');
+  candidate(cache.value);if(cache.value!==record.cache||!sameDescriptor(cache,record.cacheDescriptor)
+    ||port(()=>Object.getPrototypeOf(cache.value))!==null)refuse();
+  const entry=descriptor(record.cache,record.locator,seen,'entry');candidate(entry.value);
+  if(initial){record.entryDescriptor=entry;record.module=entry.value}
+  else if(entry.value!==record.module||!sameDescriptor(entry,record.entryDescriptor))refuse();
+  for(const [name,value] of [['id',record.locator],['filename',record.locator],['loaded',true],['exports',record.exports]]){
+    const d=descriptor(record.module,name,seen,name);if(d.value!==value)refuse();
+    if(initial)record.moduleDescriptors[name]=d;
+    else if(!sameDescriptor(d,record.moduleDescriptors[name]))refuse();
+  }
+  candidate(record.exports);if(port(()=>Object.getPrototypeOf(record.exports))!==Object.prototype
+    ||!port(()=>Object.isFrozen(record.exports)))refuse();
+  const keys=port(()=>Reflect.ownKeys(record.exports));
+  if(keys.some(k=>typeof k!=='string')||!exact(sorted(keys),JOB_METHODS))refuse();
+  for(const name of JOB_METHODS){const d=descriptor(record.exports,name,seen,name);
+    if(d.enumerable!==true||d.writable!==false||d.configurable!==false)refuse();candidate(d.value,'function');
+    if(initial)record.methods[name]=d;
+    else if(!sameDescriptor(d,record.methods[name]))refuse();
+  }
+  alive();
+}
+async function loadFixed(original,arity){
+  authenticateLease(original,arity);if(vault.burned||vault.closed||vault.loadedAttempted)refuse();
+  enter();vault.loadedAttempted=true;
+  const record={vault,original,published:false,require:null,cache:null,module:null,exports:null,
+    moduleDescriptors:null,methods:null,locator:null};
+  vault.loaded=record;
+  try{
+    alive();record.moduleDescriptors=Object.create(null);alive();record.methods=Object.create(null);alive();
+    record.locator=vault.generation.locator+'/peer.node';
+    recheckTerminal();alive();record.require=createRequire(import.meta.url);alive();candidate(record.require,'function');
+    record.cacheDescriptor=descriptor(record.require,'cache',record,'returnedCacheDescriptor');
+    record.cache=record.cacheDescriptor.value;candidate(record.cache);
+    if(port(()=>Object.getPrototypeOf(record.cache))!==null)refuse();
+    port(()=>{record.preexisting=Object.getOwnPropertyDescriptor(record.cache,record.locator)});
+    if(record.preexisting)refuse();recheckTerminal();
+    const admitted=descriptor(record.require,'cache',record,'admissionCacheDescriptor');
+    candidate(admitted.value);
+    if(admitted.value!==record.cache||!sameDescriptor(admitted,record.cacheDescriptor)
+      ||port(()=>Object.getPrototypeOf(admitted.value))!==null)refuse();
+    port(()=>{record.preexisting=Object.getOwnPropertyDescriptor(record.cache,record.locator)});
+    if(record.preexisting)refuse();
+    const effect={kind:'native-module-load',locator:record.locator,state:'intent'};vault.effects.push(effect);alive();
+    // One trusted builtin occurrence, not a fence around Node-internal ports.
+    record.exports=record.require(record.locator);effect.state='returned';alive();
+    checkLoaded(record,true);recheckTerminal();checkLoaded(record);
+    const handle=Object.create(null);record.handle=handle;loadedHandles.set(handle,record);alive();
+    Object.freeze(handle);alive();recheckTerminal();checkLoaded(record);
+    record.published=true;return handle;
+  }catch{burn();refuse()}finally{vault.active=false}
+}
+export function holdDashboardCutoverLoadedJobPeerV4(original){return loadFixed(original,arguments.length)}
+function authenticateLoaded(original,arity){
+  if(vault.active){burn();refuse()}if(arity!==1)refuse();const record=loadedHandles.get(original);
+  if(!record||record.vault!==vault||record!==vault.loaded||!record.published||record.handle!==original)refuse();return record;
+}
+export function assertHeldDashboardCutoverLoadedJobPeerV4(original){
+  const record=authenticateLoaded(original,arguments.length);if(vault.burned||vault.closed)refuse();enter();
+  try{recheckTerminal();checkLoaded(record);recheckTerminal();checkLoaded(record)}catch{burn();refuse()}finally{vault.active=false}
+}
+export function closeHeldDashboardCutoverLoadedJobPeerV4(original){
+  authenticateLoaded(original,arguments.length);close();
 }

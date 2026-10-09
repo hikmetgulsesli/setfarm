@@ -3171,3 +3171,86 @@ is test-oracle attribution failure, not production RED; preserved originals and
 truncated tool-display limit are recorded. Private pending identity is retained
 before freeze and authenticates only after publication, which follows alive.
 No genuine compiler/build/native loading/transport/job/startup authority follows.
+
+## Task4i.4: private functional loading of the SAME held V4 bundle
+
+Causal necessity: the six-effect adapter eventually needs the genuine native
+five-method provider, not another DATA-only conjunction. Task4i.3 preserves its
+original generation lifetime but deliberately exposes no executable or locator.
+Nominate private loading INSIDE the existing sidecar vault first. This is only
+the sidecar's own fence: separately retained approved-definition/owner/phase/
+ordinal/controller authority and genuine clean-main loading remain required.
+A before/after conjunction is NOT a joint operation fence; do not add one here.
+
+Interfaces in existing scripts/dashboard-cutover-native-sidecar-v2.mjs:
+holdDashboardCutoverLoadedJobPeerV4(originalSidecarLease: object): Promise<object>;
+assertHeldDashboardCutoverLoadedJobPeerV4(originalLoaded: object): void;
+closeHeldDashboardCutoverLoadedJobPeerV4(originalLoaded: object): void.
+All exactly one input. Only original opaque sidecar lease can select its SAME
+private V4 terminal bundle; no DATA/path/manifest/profile/source/callback input.
+Output empty frozen null-prototype, WeakMap-original identity only. No methods,
+exports, module/cache, locator, bytes, getter or load callback leaves the vault.
+Existing five DATA/lease APIs retain their behavior and shared original state.
+
+Activity guard precedes arity/identity for all three new APIs. Authenticate
+original lease, then full original finalized source/build/profile/dependency/
+FD/terminal checks before loading. Idle invalid arity/foreign/proxy/copy inputs
+have zero caller traps/load/FS ports and preserve healthy original custody.
+Retain one private load attempt BEFORE fallible createRequire/cache/require work;
+failure/response loss may never retry, adopt an existing cache entry, or replace
+the original. Private fixed createRequire(import.meta.url) selects ONLY the
+held generation's peer.node. Reject any preexisting own cache occurrence, even
+correctly shaped frozen exports. No environmental or caller loader selection.
+After the final pre-load terminal filesystem pass, revalidate the retained
+require/cache descriptor and SAME cache binding and repeat own-entry absence
+immediately before the trusted require occurrence. Cache arrival or binding
+drift during that pass refuses before loading, never adopts a shaped entry.
+
+Retain exact require function/cache object, original cache-entry/module, exports
+and all five method occurrences. Inspect own DATA descriptors; reject proxies,
+accessors, missing/extra methods or malformed module evidence without getters.
+Module evidence: own DATA id and filename equal the held bundle locator, loaded
+strictly true, exports identical to the synchronous require return. These fields
+are consistency only, not provenance authority. Cache entry is own DATA binding
+that locator to SAME module. Require's own DATA cache is SAME retained non-proxy
+null-prototype cache. Exports is frozen ordinary Object-prototype object with
+exactly five own string keys/no symbols, enumerable true/writable false/
+configurable false DATA function fields; each function is non-proxy. Subsequent
+assertion compares original references and original descriptor flags, not shape
+alone; trap-free proxy detection precedes all candidate property inspection.
+Names/lengths/native-code strings are not authority. Native exports are frozen
+ordinary module exports, NOT null-prototype public handles. Exact methods:
+receiveControllerHelloV4, challengeControllerAndReceiveAckV4,
+sendControllerGrantV4, helloClientAndReceiveChallengeV4,
+ackClientAndReceiveGrantV4. Loading invokes NONE of these methods. The reviewed
+C initializer only defines/freezes methods; transport occurs inside invocation.
+
+Register each owned load/inspection occurrence before admission and recheck
+original liveness afterward. Treat require as ONE trusted builtin operation;
+before/after checks do NOT prove inhibition of Node-internal ports or undo
+native image execution after a refused response. No speculative unload/cache
+deletion/export restoration. Retain uncertain effects/module/cache evidence.
+Publish loaded original only after full source/build/terminal and exact cache/
+module/exports/method checks, pending identity registered before handle sealing,
+then final liveness. Captured unpublished keys never authenticate.
+Retain minted handle identity before checking creation liveness, and check
+liveness BEFORE sealing. After sealing, full terminal and loaded-identity checks
+gate publication. Assertion's final terminal filesystem pass is followed by
+loaded-identity validation so cache drift there cannot escape a successful return.
+
+Assertion rechecks SAME originals and exact cache/module/exports/functions; drift
+burns permanently. Loaded close and original sidecar-lease close share SAME
+checked-once reverse FD cleanup, including genuine idle cleanup after burn.
+Duplicate/cross-API close zero ports; response loss/reused numbers stop later
+disposals. Native image/cache stays retained; closed loaded handle confers no
+future use. Active reentry burns before next provider-owned port, cannot dispose
+active originals or mint replacement handles.
+
+Scope: existing provider/test + paired spec/plan only; no C, package, launcher,
+PG, CLI, native transport, service effects or controller changes. Qualification
+uses retained private real FS/source with inert require/cache/export doubles;
+no native image is evaluated in those source-fault fixtures. Actual native
+compiler/loading qualification is separately nominated after reviewed delivery
+and genuine synchronized clean-main finalization, not actual:true synth builds.
+This is functional loading custody only, NOT joint approved-definition fence,
+executing-job/controller/owner/phase/ordinal/grant/startup or live3333 authority.

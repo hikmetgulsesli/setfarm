@@ -2241,3 +2241,76 @@ command byte counters are not native capture authority. Strict1193files0diag,
 syntax/contracts/diff0. Two source/new40-case RO seats C0/I0/M0; final full-run
 evidence/docs clearance pending. No native compiler/production build/evaluation/
 job/foreground/clean-main/live3333 credit; no Task4i.3 delivery yet.
+
+Task4i.3 delivered212001d444435531b38e1d5b398349781a38113c; two final source/
+all161-original evidence/doc seats C0/I0/M0. Normalpush/scannerSUCCESS01:52:24Z,
+PR280OPEN DRAFT exacthead61533Bbody prior59728Bprefix intact. Writer clean,
+original2dirty unchanged. Historical pending lines above superseded; no genuine
+compiler/loading/mainbuild/job/foreground/wholegoal credit.
+
+## Task4i.4: functional private held-bundle loading (implementation under review)
+
+Spec: paired Task4i.4. Causal path to actual six-effect adapter: retain genuine
+native provider privately, rather than publishing another DATA-only conjunction.
+Selected smaller functional sidecar-only fence; alternative joint definition
+composition needs a separately nominated cross-module original-operation fence,
+not public idle assertion while launcher active or before/after-await snapshots.
+
+File Map: existing scripts/dashboard-cutover-native-sidecar-v2.mjs and
+scripts/__tests__/dashboard-cutover-native-sidecar-v2.test.js; this plan/paired
+spec. No new module/enrollment/package, C, launcher, PG, CLI or service changes.
+Root only writer/delivery; parallel agents RO design/source/evidence reviewers.
+
+Interfaces: holdDashboardCutoverLoadedJobPeerV4(originalSidecarLease):Promise<object>;
+assertHeldDashboardCutoverLoadedJobPeerV4(originalLoaded):void;
+closeHeldDashboardCutoverLoadedJobPeerV4(originalLoaded):void. Each exactly1.
+Empty frozen null-prototype original handle; private fixed require of same held
+bundle, exact require/cache/module/exports/five-method occurrences retained.
+No public methods/paths/bytes/getters/callbacks or supplied loader. Existing five
+exports remain; shared vault active guard first, one retained load attempt before
+fallible loader work, pending mint before sealing, genuine idle once-close.
+
+- [x] Independently review fixed APIs, loaded lifetime/cache ownership, original
+  shared activity, one trusted require boundary and no joint/startup authority.
+- [x] Actual missing-loader-export RED BEFORE production through existing
+  retained source fixture; no native image/compiler/Mach method evaluated.
+- [x] Implement minimal private same-vault load/WeakMap path using fixed
+  createRequire; retain originals before uncertainty, never cache adoption/retry.
+  Independent RO review produced causal REDs for post-terminal assertion cache
+  drift and post-seal publication drift (47d8ff), pre-load cache arrival (fff5a0),
+  pre-load cache binding drift and creation reentry before seal (d7376e). Root
+  sibling-original readbacks precede each smallest source correction. Focused
+  GREEN2 fb5016 and GREEN3 93a868 are not the final frozen matrix. Final admission
+  repeats SAME require/cache binding and own-entry absence after terminal FS;
+  retained mint gets alive before sealing; post-seal and final assert cache checks.
+- [x] Qualify zero-load/zero-trap foreign/proxy/arity/DATA/path refusal, genuine
+  private load with zero method calls, exact cache/module/exports/descriptor
+  custody, preexisting cache rejection, load response loss/malformed exports,
+  shared active reentry, source/build/terminal/cache drift, unpublished seal loss,
+  original/loaded cross-close, response loss and reused FD. All evidence retained.
+  Fixed26 final disjoint source-fault campaigns: malformed20P0F358265
+  189702.939209ms; corrected lifecycle23P0Ffecbd4 227502.352292ms; old
+  DATA/opaque/shared controls15P0F9eb033 94973.069792ms. Total58 distinct passed
+  case programs, no native image or method evaluation. Earlier lifecycle20P1F
+  30f724 retained: EACCES writing sealed readonly bundle was test SETUP, not
+  production RED; corrected to recoverable rename/return ABA with source unchanged.
+  Malformed20/control15 generated at teste4f5d712; lifecycle23 at testd5600b82.
+  Root9b9020 reconstructed exact earlier e4 bytes from revised d560: only one
+  setup/name correction and two added tests; all prior helpers/35 bodies unchanged.
+  Rootf98305 independently read58 original result/program/command records:
+  377 inert commands,173 exact provider relocations+one declared crossed V2,
+  four intentionally unsettled original command snapshots in old reentry
+  negatives remain unknown, NOT child-close/compiler qualification. No other
+  index faults. Strict1193/0/noEmit, syntax/version/English/paths/migration0.
+  Normal artifact check lacked writer zod; readonly explicit shared dependency
+  resolver verifies12artifacts, NOT writer dependency closure or full build.
+  Private frozen/result indices ece7031e/364807d1; original two passive-home
+  file bytes preserved, current stopped-retention worktree clean, no root reset.
+- [ ] Focused source-fault RED/GREEN + proportional old DATA/opaque controls,
+  strict/contracts/diff; two final exact-byte source/evidence/doc reviews and
+  normal scoped delivery. Do not describe overlapping test selection as unique.
+- [ ] Separately nominate joint original-operation fence/actual adapter use and
+  genuine finalized compiler/loading qualification. No actual:true synthesis,
+  native campaign replay, cache deletion/unload, owner/phase/startup substitution
+  or clean-main guard bypass in this slice. All six effects/controller/entry,
+  legacy cohort/foreground/clean-main/live3333 obligations remain.

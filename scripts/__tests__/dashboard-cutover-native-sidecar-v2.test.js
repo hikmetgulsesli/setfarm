@@ -15,9 +15,9 @@ const fixed={node:'/opt/homebrew/Cellar/node/26.4.0/bin/node',
   resource:'/Library/Developer/CommandLineTools/usr/lib/clang/21',clt:'/Library/Developer/CommandLineTools'};
 const env={PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'};
 
-// Each case exercises real source/Git/header custody; only external async
-// commands are simulated. Roots and original failure receipts are never removed.
-function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,actual=false,protocol=2,crossedSource=false,alternateSource=false}={}){
+// Each case exercises real source/Git/header custody; external async commands
+// and optional native loader/cache/exports are inert doubles. Never remove roots.
+function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,actual=false,protocol=2,crossedSource=false,alternateSource=false,loader=false}={}){
   assert.ok(fs.existsSync(target),'missing nominated native sidecar builder');
   const names=['dashboard-cutover-native-sidecar-v2.mjs','dashboard-cutover-native-build-inputs-v2.mjs',
     'dashboard-cutover-native-inputs-v2.mjs','build-generation-retention.mjs','dashboard-cutover-mach-peer-v2.c','dashboard-cutover-mach-job-peer-v4.c'];
@@ -132,6 +132,20 @@ function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,a
       }));return child;
     };
     let prepare,mod;
+    ${loader?`import moduleBuiltin from 'node:module';
+    const loadedMethodNames=['receiveControllerHelloV4','challengeControllerAndReceiveAckV4','sendControllerGrantV4',
+      'helloClientAndReceiveChallengeV4','ackClientAndReceiveGrantV4'];
+    let createRequireCalls=0,loadCalls=0,nativeCalls=0,loaderModule;
+    let onCreate=()=>{},onLoad=()=>{},afterLoad=()=>{};
+    let loadedExports=Object.freeze(Object.fromEntries(loadedMethodNames.map(n=>[n,()=>{nativeCalls++;throw Error('FORBIDDEN_NATIVE_METHOD')}])));
+    const loaderCache=Object.create(null);let loadReturn=()=>loadedExports;
+    const requireFixture=p=>{assert.equal(p,generation+'/peer.node');loadCalls++;onLoad();
+      loaderModule={id:p,filename:p,loaded:true,exports:loadedExports};loaderCache[p]=loaderModule;
+      afterLoad();return loadReturn()};requireFixture.cache=loaderCache;
+    // TEST ONLY: no native image is evaluated. Keep the fixed source/provider
+    // custody real; replace only the trusted builtin loader occurrence.
+    moduleBuiltin.createRequire=url=>{assert.equal(url,'file://'+root+'/scripts/dashboard-cutover-native-sidecar-v2.mjs');
+      createRequireCalls++;onCreate();return requireFixture};`:''}
     ${setup}
     ${preimport}
     try{syncBuiltinESMExports();const importedOpenAt=opens.length,importedEffectsAt=effects.length;
@@ -145,11 +159,13 @@ function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,a
     for(const r of opens.slice(importedOpenAt)){const p=r.p.startsWith('file:')?fileURLToPath(r.p):r.p;
       assert.ok(p.startsWith(root+'/scripts/')&&codeNames.has(p.slice((root+'/scripts/').length)),r.p);}
     assert.equal(commands.length,0);assert.equal(effects.length,importedEffectsAt);
-    assert.deepEqual(Object.keys(mod),['assertHeldDashboardCutoverNativeSidecarLeaseV4',
-      'closeHeldDashboardCutoverNativeSidecarLeaseV4','holdDashboardCutoverNativeSidecarLeaseV4',
+    assert.deepEqual(Object.keys(mod),['assertHeldDashboardCutoverLoadedJobPeerV4','assertHeldDashboardCutoverNativeSidecarLeaseV4',
+      'closeHeldDashboardCutoverLoadedJobPeerV4','closeHeldDashboardCutoverNativeSidecarLeaseV4',
+      'holdDashboardCutoverLoadedJobPeerV4','holdDashboardCutoverNativeSidecarLeaseV4',
       'prepareDashboardCutoverNativeSidecarV2','prepareDashboardCutoverNativeSidecarV4']);
     ${before}
     ${body}}finally{const snapshot=JSON.stringify({root,generation,commandCount:commands.length,opens:opens.length,closes:closes.length,
+      ${loader?'loader:{createRequireCalls,loadCalls,nativeCalls},':''}
       commands:commands.map(r=>({command:r.command,args:r.args,options:r.options,closed:r.closed,code:r.code,signal:r.signal,events:r.events,
         intentRecorded:r.intentRecorded,error:r.error,truncated:r.truncated,stdoutLength:r.stdoutLength,stderrLength:r.stderrLength,
         source:Buffer.concat(r.source).toString('base64'),stdout:Buffer.concat(r.stdout).toString('base64'),stderr:Buffer.concat(r.stderr).toString('base64')}))});
@@ -190,6 +206,214 @@ for(const protocol of [2,4]){
       const n=ports.length;ctx.close();await rejected(()=>mod.prepareDashboardCutoverNativeSidecarV${other}());assert.equal(ports.length,n);`,{protocol});
   });
 }
+
+test('V4 private loaded job peer exports exist before any acquisition or loader port',()=>fixture(`
+  assert.equal(typeof mod.holdDashboardCutoverLoadedJobPeerV4,'function','MISSING_V4_PRIVATE_LOADED_JOB_PEER');
+  assert.equal(typeof mod.assertHeldDashboardCutoverLoadedJobPeerV4,'function','MISSING_V4_PRIVATE_LOADED_ASSERT');
+  assert.equal(typeof mod.closeHeldDashboardCutoverLoadedJobPeerV4,'function','MISSING_V4_PRIVATE_LOADED_CLOSE');
+  assert.equal(commands.length,0);assert.equal(createRequireCalls,0);assert.equal(loadCalls,0);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded job peer holds the same original without exposing or calling native methods',()=>fixture(`
+  assert.equal(typeof mod.holdDashboardCutoverLoadedJobPeerV4,'function','MISSING_V4_PRIVATE_LOADED_JOB_PEER');
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4(),loaded=await mod.holdDashboardCutoverLoadedJobPeerV4(lease);
+  assert.equal(createRequireCalls,1);assert.equal(loadCalls,1);assert.equal(nativeCalls,0);
+  assert.equal(Object.getPrototypeOf(loaded),null);assert.equal(Object.isFrozen(loaded),true);
+  assert.deepEqual(Reflect.ownKeys(loaded),[]);assert.equal(JSON.stringify(loaded),'{}');
+  assert.equal(loaderCache[generation+'/peer.node'],loaderModule);
+  const beforeInvalid=ports.length;
+  await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));
+  refused(()=>mod.assertHeldDashboardCutoverLoadedJobPeerV4());
+  refused(()=>mod.closeHeldDashboardCutoverLoadedJobPeerV4());
+  refused(()=>mod.assertHeldDashboardCutoverLoadedJobPeerV4(loaded,undefined));
+  refused(()=>mod.closeHeldDashboardCutoverLoadedJobPeerV4(loaded,undefined));
+  assert.equal(ports.length,beforeInvalid);
+  mod.assertHeldDashboardCutoverLoadedJobPeerV4(loaded);assert.equal(nativeCalls,0);
+  mod.closeHeldDashboardCutoverLoadedJobPeerV4(loaded);assert.equal(closes.length,opens.length);
+  const at=ports.length;mod.closeHeldDashboardCutoverLoadedJobPeerV4(loaded);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(ports.length,at);
+  assert.equal(loaderCache[generation+'/peer.node'],loaderModule);assert.equal(loadCalls,1);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded job peer idle foreign proxy arity refuses zero loader ports and preserves healthy lease',()=>fixture(`
+  assert.equal(typeof mod.holdDashboardCutoverLoadedJobPeerV4,'function','MISSING_V4_PRIVATE_LOADED_JOB_PEER');
+  let traps=0;const proxy=new Proxy({},{get(){traps++;throw Error('secret')},getPrototypeOf(){traps++;throw Error('secret')}}),at=ports.length;
+  for(const value of [proxy,{},Object.freeze(Object.create(null)),undefined,null,generation]){
+    await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(value));
+    refused(()=>mod.assertHeldDashboardCutoverLoadedJobPeerV4(value));refused(()=>mod.closeHeldDashboardCutoverLoadedJobPeerV4(value));}
+  await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4());assert.equal(ports.length,at);
+  assert.equal(traps,0);assert.equal(loadCalls,0);assert.equal(createRequireCalls,0);
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4(),n=ports.length;
+  await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease,undefined));assert.equal(ports.length,n);
+  mod.assertHeldDashboardCutoverNativeSidecarLeaseV4(lease);
+  const loaded=await mod.holdDashboardCutoverLoadedJobPeerV4(lease);mod.assertHeldDashboardCutoverLoadedJobPeerV4(loaded);
+  mod.closeHeldDashboardCutoverLoadedJobPeerV4(loaded);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded final terminal-pass cache drift cannot escape assertion',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4(),loaded=await mod.holdDashboardCutoverLoadedJobPeerV4(lease);
+  let bundleReads=0,replaced=false;const reading=fs.readSync;
+  fs.readSync=(fd,...a)=>{const r=reading(fd,...a);if(fdPaths.get(fd)===generation+'/peer.node'&&++bundleReads===2){
+    loaderCache[generation+'/peer.node']={...loaderModule};replaced=true;}return r};syncBuiltinESMExports();
+  refused(()=>mod.assertHeldDashboardCutoverLoadedJobPeerV4(loaded));assert.equal(replaced,true);
+  const at=ports.length;refused(()=>mod.assertHeldDashboardCutoverLoadedJobPeerV4(loaded));assert.equal(ports.length,at);
+  mod.closeHeldDashboardCutoverLoadedJobPeerV4(loaded);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded mint-time cache drift cannot publish a valid loaded handle',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4();let changed=false;
+  const freezing=Object.freeze;Object.freeze=o=>{const r=freezing(o);
+    if(o&&Object.getPrototypeOf(o)===null&&Reflect.ownKeys(o).length===0){loaderCache[generation+'/peer.node']={...loaderModule};changed=true;}return r};
+  await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(changed,true);
+  const at=ports.length;await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(ports.length,at);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded cache arrival during pre-load terminal pass refuses before require',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4();let inserted=false;
+  onCreate=()=>{const reading=fs.readSync;fs.readSync=(fd,...a)=>{const r=reading(fd,...a);
+    if(!inserted&&fdPaths.get(fd)===generation+'/peer.node'){
+      loaderCache[generation+'/peer.node']={id:generation+'/peer.node',filename:generation+'/peer.node',loaded:true,exports:loadedExports};
+      inserted=true;}return r};syncBuiltinESMExports()};
+  await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(inserted,true);assert.equal(loadCalls,0);
+  const at=ports.length;await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(ports.length,at);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded cache binding drift before require refuses with zero load',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4();let changed=false;
+  onCreate=()=>{const reading=fs.readSync;fs.readSync=(fd,...a)=>{const r=reading(fd,...a);
+    if(!changed&&fdPaths.get(fd)===generation+'/peer.node'){requireFixture.cache=Object.create(null);changed=true;}
+    return r};syncBuiltinESMExports()};
+  await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(changed,true);assert.equal(loadCalls,0);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded mint creation active reentry prevents sealing',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4();let count=0,minted,seals=0;
+  const creating=Object.create,freezing=Object.freeze;
+  Object.create=(...a)=>{const r=creating(...a);if(a[0]===null&&Error().stack.includes('at loadFixed ')&&++count===3){
+    minted=r;refused(()=>mod.assertHeldDashboardCutoverLoadedJobPeerV4());}return r};
+  Object.freeze=o=>{if(o===minted)seals++;return freezing(o)};
+  await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.ok(minted);assert.equal(seals,0);
+  refused(()=>mod.assertHeldDashboardCutoverLoadedJobPeerV4(minted));
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+for(const [name,mutation,beforeLoad] of [
+  ['cache proxy',`onCreate=()=>{requireFixture.cache=new Proxy(loaderCache,{get(){traps++;throw Error('secret')},getPrototypeOf(){traps++;throw Error('secret')}})}`,true],
+  ['cache accessor',`onCreate=()=>Object.defineProperty(requireFixture,'cache',{get(){traps++;throw Error('secret')}})`,true],
+  ['module proxy',`afterLoad=()=>{loaderCache[generation+'/peer.node']=new Proxy(loaderModule,{get(){traps++;throw Error('secret')},getOwnPropertyDescriptor(){traps++;throw Error('secret')}})}`,false],
+  ['module accessor',`afterLoad=()=>Object.defineProperty(loaderModule,'filename',{get(){traps++;throw Error('secret')}})`,false],
+  ['module unloaded',`afterLoad=()=>{loaderModule.loaded=false}`,false],
+  ['module id',`afterLoad=()=>{loaderModule.id+='-foreign'}`,false],
+  ['module filename',`afterLoad=()=>{loaderModule.filename+='-foreign'}`,false],
+  ['module exports mismatch',`afterLoad=()=>{loaderModule.exports={...loadedExports}}`,false],
+  ['exports proxy',`loadedExports=new Proxy(loadedExports,{get(){traps++;throw Error('secret')},ownKeys(){traps++;throw Error('secret')},getPrototypeOf(){traps++;throw Error('secret')}})`,false],
+  ['exports mutable',`loadedExports={...loadedExports}`,false],
+  ['exports missing',`loadedExports=Object.freeze(Object.fromEntries(Object.entries(loadedExports).slice(1)))`,false],
+  ['exports extra',`loadedExports=Object.freeze({...loadedExports,extra(){}})`,false],
+  ['exports symbol',`loadedExports=Object.freeze({...loadedExports,[Symbol('extra')]:()=>{}})`,false],
+  ['method accessor',`const malformed={...loadedExports};Object.defineProperty(malformed,loadedMethodNames[0],{get(){traps++;throw Error('secret')},enumerable:true});loadedExports=Object.freeze(malformed)`,false],
+  ['method proxy',`loadedExports=Object.freeze({...loadedExports,[loadedMethodNames[0]]:new Proxy(loadedExports[loadedMethodNames[0]],{apply(){traps++;throw Error('secret')},get(){traps++;throw Error('secret')}})})`,false],
+])test('V4 private loaded malformed '+name+' rejects without caller traps',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4();await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));
+  assert.equal(traps,0);assert.equal(createRequireCalls,1);assert.equal(loadCalls,${beforeLoad?0:1});
+  const at=ports.length;await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(ports.length,at);
+  const entry=loaderCache[generation+'/peer.node'];mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);
+  assert.equal(loaderCache[generation+'/peer.node'],entry);assert.equal(nativeCalls,0);`,
+  {protocol:4,loader:true,setup:`let traps=0;${mutation};`}));
+
+for(const absentValue of [false,true])test('V4 private loaded preexisting '+(absentValue?'undefined':'shaped')+' own cache is never adopted',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4(),entry=${absentValue?'undefined':"{id:generation+'/peer.node',filename:generation+'/peer.node',loaded:true,exports:loadedExports}"};
+  loaderCache[generation+'/peer.node']=entry;await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));
+  assert.equal(loadCalls,0);assert.equal(loaderCache[generation+'/peer.node'],entry);
+  const at=ports.length;await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(ports.length,at);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(Object.hasOwn(loaderCache,generation+'/peer.node'),true);
+  assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded load response loss retains cache without retry or method invocation',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4();afterLoad=()=>{throw Error('private-response-loss')};
+  await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(loadCalls,1);
+  assert.equal(loaderCache[generation+'/peer.node'],loaderModule);
+  const at=ports.length;await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(ports.length,at);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(loaderCache[generation+'/peer.node'],loaderModule);
+  assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded thenable return is never awaited or inspected through then getter',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4();let thenReads=0;
+  loadReturn=()=>Object.defineProperty({},'then',{get(){thenReads++;throw Error('secret')}});
+  await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(thenReads,0);assert.equal(loadCalls,1);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded pending seal response loss never authenticates captured key',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4();let captured;
+  const freezing=Object.freeze;Object.freeze=o=>{const r=freezing(o);
+    if(o&&Object.getPrototypeOf(o)===null&&Reflect.ownKeys(o).length===0){captured=o;throw Error('seal-response-loss')}return r};
+  await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.ok(captured);
+  const at=ports.length;refused(()=>mod.assertHeldDashboardCutoverLoadedJobPeerV4(captured));
+  refused(()=>mod.closeHeldDashboardCutoverLoadedJobPeerV4(captured));
+  await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(ports.length,at);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+for(const [stage,api,args] of [
+  ['createRequire','assertHeldDashboardCutoverLoadedJobPeerV4',''],
+  ['createRequire','closeHeldDashboardCutoverNativeSidecarLeaseV4','foreign'],
+  ['require','assertHeldDashboardCutoverNativeSidecarLeaseV4','lease,undefined'],
+  ['require','closeHeldDashboardCutoverLoadedJobPeerV4','foreign'],
+  ['inspection','assertHeldDashboardCutoverLoadedJobPeerV4',''],
+  ['seal','closeHeldDashboardCutoverLoadedJobPeerV4','foreign,undefined'],
+])test('V4 private loaded active-first '+stage+' '+api+' rejects before identity or arity',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4();let traps=0,hit=false,at;
+  const foreign=new Proxy({},{get(){traps++;throw Error('secret')},getPrototypeOf(){traps++;throw Error('secret')}});
+  const reentry=()=>{if(hit)return;hit=true;refused(()=>mod.${api}(${args}));at=ports.length};
+  ${stage==='createRequire'?'onCreate=reentry':stage==='require'?'onLoad=reentry':stage==='inspection'?`const inspecting=Object.getOwnPropertyDescriptor;Object.getOwnPropertyDescriptor=(o,k)=>{const r=inspecting(o,k);if(o===loaderModule)reentry();return r}`:`const freezing=Object.freeze;Object.freeze=o=>{const r=freezing(o);if(o&&Object.getPrototypeOf(o)===null&&Reflect.ownKeys(o).length===0)reentry();return r}`};
+  await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(hit,true);
+  assert.equal(ports.length,at);assert.equal(traps,0);assert.equal(loadCalls,${stage==='createRequire'?0:1});
+  const entry=loaderCache[generation+'/peer.node'];mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);
+  assert.equal(loaderCache[generation+'/peer.node'],entry);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+for(const [name,mutation] of [
+  ['cache clone',`loaderCache[generation+'/peer.node']={...loaderModule}`],
+  ['module field',`loaderModule.loaded=false`],
+  ['exports replacement',`loaderModule.exports=Object.freeze({...loadedExports})`],
+  ['descriptor flags',`Object.defineProperty(loaderModule,'filename',{enumerable:false})`],
+])test('V4 private loaded post-load '+name+' drift burns with no replacement',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4(),loaded=await mod.holdDashboardCutoverLoadedJobPeerV4(lease);
+  ${mutation};refused(()=>mod.assertHeldDashboardCutoverLoadedJobPeerV4(loaded));
+  const at=ports.length;refused(()=>mod.assertHeldDashboardCutoverLoadedJobPeerV4(loaded));assert.equal(ports.length,at);
+  const entry=loaderCache[generation+'/peer.node'];mod.closeHeldDashboardCutoverLoadedJobPeerV4(loaded);
+  assert.equal(loaderCache[generation+'/peer.node'],entry);assert.equal(loadCalls,1);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded original-first cross-close never recloses reused descriptors',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4(),loaded=await mod.holdDashboardCutoverLoadedJobPeerV4(lease);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);const disposed=closes.length,fd=open('/dev/null','r');
+  const at=ports.length;mod.closeHeldDashboardCutoverLoadedJobPeerV4(loaded);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(ports.length,at);assert.equal(closes.length,disposed);
+  assert.ok(fs.fstatSync(fd));close(fd);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded source drift before loader refuses with zero loader occurrences',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4();
+  fs.writeFileSync(selectedSource,Buffer.concat([fs.readFileSync(selectedSource),Buffer.from('\\n')]));
+  await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(createRequireCalls,0);assert.equal(loadCalls,0);
+  const at=ports.length;await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(ports.length,at);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded terminal bundle ABA after loading burns without replay',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4(),loaded=await mod.holdDashboardCutoverLoadedJobPeerV4(lease);
+  const p=generation+'/peer.node';fs.renameSync(p,p+'.preserved');fs.renameSync(p+'.preserved',p);
+  refused(()=>mod.assertHeldDashboardCutoverLoadedJobPeerV4(loaded));
+  const at=ports.length;refused(()=>mod.assertHeldDashboardCutoverLoadedJobPeerV4(loaded));assert.equal(ports.length,at);
+  mod.closeHeldDashboardCutoverLoadedJobPeerV4(loaded);assert.equal(loadCalls,1);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded acquisition active reentry burns before require',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4();let nested;
+  onCreate=()=>{nested=rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4())};
+  await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));await nested;assert.equal(loadCalls,0);
+  const at=ports.length;await rejected(()=>mod.holdDashboardCutoverLoadedJobPeerV4(lease));assert.equal(ports.length,at);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
+
+test('V4 private loaded wrapper close response loss never retries reused number or later originals',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4(),loaded=await mod.holdDashboardCutoverLoadedJobPeerV4(lease);
+  let replacement;closes.length=0;fs.closeSync=fd=>{closes.push(fd);close(fd);replacement=open(providers.node,'r');
+    assert.equal(replacement,fd);throw Error('unknown close')};syncBuiltinESMExports();
+  refused(()=>mod.closeHeldDashboardCutoverLoadedJobPeerV4(loaded));assert.equal(closes.length,1);
+  const at=ports.length;mod.closeHeldDashboardCutoverLoadedJobPeerV4(loaded);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);refused(()=>mod.assertHeldDashboardCutoverLoadedJobPeerV4(loaded));
+  assert.equal(ports.length,at);assert.equal(closes.length,1);fs.fstatSync(replacement);close(replacement);
+  assert.equal(nativeCalls,0);`,{protocol:4,loader:true}));
 
 test('V4 opaque original sidecar lease exports exist before any acquisition port',()=>fixture(`
   assert.equal(typeof mod.holdDashboardCutoverNativeSidecarLeaseV4,'function','MISSING_V4_ORIGINAL_SIDECAR_LEASE');
