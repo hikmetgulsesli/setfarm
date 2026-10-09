@@ -2181,3 +2181,63 @@ Direct/build/sidecar counts full40/57/81 and fixed26focused12/16/17. Strictfd12e
 1193files0diagnostics; syntaxb6232e0, migrationdcab940, version/English/path0.
 Both independent source seats C0/I0/M0; final complete-original evidence review
 still pending. No staged/commit/push/clean-main/fullbuild/host/foreground credit.
+
+Task4i.2 delivered5b377ee582df7e2a1307ded878c6030a18e50595. Both independent
+eight-byte-pin source/evidence/doc seats C0/I0/M0, all223 originals/492 provider
+copies/223jobCcopies/98sidecar snapshots checked. Normalpush/PR280OPEN DRAFT
+exactheadGitGuardianSUCCESS01:22:18UTC; exact59728Bbody prior58007Bprefix intact.
+Original2dirty unchanged. No real compiler/mainbuild/job/foreground/cutover credit.
+
+## Task4i.3: opaque SAME original V4 sidecar lifetime
+
+Paired spec Task4i.3. Before spending a genuine finalized compiler generation,
+retain the same private original context behind an opaque lease; DATA path/
+manifest adoption cannot repair one-attempt custody after closure. Do not run
+actual:true synthetic-build fixtures as production-build qualification.
+
+File Map: scripts/dashboard-cutover-native-sidecar-v2.mjs and its existing
+scripts/__tests__/dashboard-cutover-native-sidecar-v2.test.js; paired spec/plan.
+Pure-script enrollment already present. Only root writes/delivers; independent
+RO design/source/evidence review. No loader/controller/CLI/launchd/PG change.
+
+Interfaces: zero-input async holdDashboardCutoverNativeSidecarLeaseV4;
+exact-one-input assertHeldDashboardCutoverNativeSidecarLeaseV4 and close counterpart.
+Empty frozen null-prototype WeakMap-original handles; mint INSIDE original
+terminal publication, not around a supplied public DATA holder. Same original
+activity/one-attempt/burn/closed state and checked-once cleanup, no new source
+selector/getter/callback/evaluation. Existing V2/V4 DATA behavior preserved.
+
+- [x] Independently review exact interfaces, original lifetime, shared activity,
+  unknown child/pipe custody and source-only/no-evaluation qualification.
+- [x] Actual missing opaque-export RED BEFORE production edits through existing
+  retained sidecar fixture; zero commands/effects before missing API assertion.
+- [x] Implement smallest private original WeakMap + fixed opaque return branch
+  in existing provider, not public generic mode or path/observation adoption.
+- [x] Prove opacity/original identity, wrong arity/proxy/foreign/copy/instance,
+  public DATA/path/manifest rejection, healthy assert/once-close, shared V2/V4
+  attempted/active/pending cleanup refusal, original/source/ancestor/output drift,
+  partial acquisition/unknown children/close response loss and reused FD.
+- [ ] Focused fixed26 source-fault tests + proportional old DATA controls,
+  strict/contracts/diff; two final exact-byte independent reviews, normal scoped
+  delivery. Genuine production-build/compiler/loader/native/job/foreground and
+  all six effects/owner/phase/legacy/live3333 remain excluded here.
+
+Task4i.3 actual receipts: fixed26 initial missing-export RED0P1F258.606ms,
+expanded0P3F688.234ms BEFORE production. Initial3GREEN17349.115ms.
+First expanded test66e3bff0 yielded18P22F246594.997ms from TEST-ONLY aggregate
+temporary-reader close counts and transient preflight opening attribution;
+production never changed for those failures. Corrected retained-sidecar original
+tracking/opening3GREEN2088.096ms; final test8039c763/sourcef81deacf.
+Focused active24P0F134312.181ms and passive16P0F118898.154ms. The third group's
+negative CLI filter actually included all cases: full122tests121P0F1SKIP,
+628261.345ms (d64802), including repeated40 opaque cases. Do NOT sum as unique
+tests or claim disjoint groups. All three actual-native flags removed.
+Root independently read all161 retained result/program/command originals with
+zero faults; full raw receipt/root and result SHA indices in logs:
+2026-10-09-dashboard-cutover-native-v4-opaque-frozen-index.json and
+2026-10-09-dashboard-cutover-native-v4-opaque-result-index.json. Old diagnostic
+failure tool output is truncated; intact private originals retained. Synthetic
+command byte counters are not native capture authority. Strict1193files0diag,
+syntax/contracts/diff0. Two source/new40-case RO seats C0/I0/M0; final full-run
+evidence/docs clearance pending. No native compiler/production build/evaluation/
+job/foreground/clean-main/live3333 credit; no Task4i.3 delivery yet.

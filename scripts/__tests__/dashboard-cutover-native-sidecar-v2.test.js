@@ -67,9 +67,15 @@ function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,a
     const rejected=fn=>assert.rejects(fn,e=>e.message==='DASHBOARD_CUTOVER_NATIVE_SIDECAR_REFUSED');
     ${profile&&!actual?`Object.defineProperties(process,{platform:{value:'darwin'},arch:{value:'arm64'},version:{value:'v26.4.0'},execPath:{value:providers.node}});`:''}
     const open=fs.openSync,close=fs.closeSync,write=fs.writeSync,read=fs.readSync,nativeReceiptFsync=fs.fsyncSync;
-    const ports=[],effects=[],opens=[],closes=[],fdPaths=new Map(),commands=[],children=[];
-    fs.openSync=(p,...a)=>{ports.push('open');const fd=open(p,...a);opens.push({p:String(p),fd,flags:a[0]});fdPaths.set(fd,String(p));return fd};
-    fs.closeSync=fd=>{ports.push('close');closes.push(fd);return close(fd)};
+    const ports=[],effects=[],opens=[],closes=[],fdPaths=new Map(),commands=[],children=[],
+      sidecarOriginalFds=new Set(),sidecarOriginalDisposals=[];
+    const isSidecarOriginal=()=>Error().stack.split('\\n').some(line=>
+      /at (openOriginal|publishManifest) /.test(line)&&line.includes('dashboard-cutover-native-sidecar-v2.mjs'));
+    fs.openSync=(p,...a)=>{ports.push('open');const owned=isSidecarOriginal(),fd=open(p,...a);
+      opens.push({p:String(p),fd,flags:a[0],sidecarOriginal:owned});fdPaths.set(fd,String(p));
+      if(owned)sidecarOriginalFds.add(fd);return fd};
+    fs.closeSync=fd=>{ports.push('close');closes.push(fd);
+      if(sidecarOriginalFds.has(fd))sidecarOriginalDisposals.push(fd);return close(fd)};
     for(const n of ['lstatSync','fstatSync','readSync','readFileSync','readlinkSync','readdirSync','realpathSync']){
       const f=fs[n];fs[n]=(...a)=>{ports.push(n);return f(...a)};}
     for(const n of ['mkdirSync','writeSync','writeFileSync','fchmodSync','fsyncSync','renameSync','chmodSync','rmSync','unlinkSync','rmdirSync']){
@@ -139,7 +145,9 @@ function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,a
     for(const r of opens.slice(importedOpenAt)){const p=r.p.startsWith('file:')?fileURLToPath(r.p):r.p;
       assert.ok(p.startsWith(root+'/scripts/')&&codeNames.has(p.slice((root+'/scripts/').length)),r.p);}
     assert.equal(commands.length,0);assert.equal(effects.length,importedEffectsAt);
-    assert.deepEqual(Object.keys(mod),['prepareDashboardCutoverNativeSidecarV2','prepareDashboardCutoverNativeSidecarV4']);
+    assert.deepEqual(Object.keys(mod),['assertHeldDashboardCutoverNativeSidecarLeaseV4',
+      'closeHeldDashboardCutoverNativeSidecarLeaseV4','holdDashboardCutoverNativeSidecarLeaseV4',
+      'prepareDashboardCutoverNativeSidecarV2','prepareDashboardCutoverNativeSidecarV4']);
     ${before}
     ${body}}finally{const snapshot=JSON.stringify({root,generation,commandCount:commands.length,opens:opens.length,closes:closes.length,
       commands:commands.map(r=>({command:r.command,args:r.args,options:r.options,closed:r.closed,code:r.code,signal:r.signal,events:r.events,
@@ -182,6 +190,144 @@ for(const protocol of [2,4]){
       const n=ports.length;ctx.close();await rejected(()=>mod.prepareDashboardCutoverNativeSidecarV${other}());assert.equal(ports.length,n);`,{protocol});
   });
 }
+
+test('V4 opaque original sidecar lease exports exist before any acquisition port',()=>fixture(`
+  assert.equal(typeof mod.holdDashboardCutoverNativeSidecarLeaseV4,'function','MISSING_V4_ORIGINAL_SIDECAR_LEASE');
+  assert.equal(typeof mod.assertHeldDashboardCutoverNativeSidecarLeaseV4,'function','MISSING_V4_ORIGINAL_SIDECAR_ASSERT');
+  assert.equal(typeof mod.closeHeldDashboardCutoverNativeSidecarLeaseV4,'function','MISSING_V4_ORIGINAL_SIDECAR_CLOSE');
+  assert.equal(commands.length,0);assert.equal(effects.length,0);`,{protocol:4}));
+
+test('V4 opaque original lease is empty and frozen while its same original can assert and close once',()=>fixture(`
+  const hold=mod.holdDashboardCutoverNativeSidecarLeaseV4;
+  assert.equal(typeof hold,'function','MISSING_V4_ORIGINAL_SIDECAR_LEASE');
+  const lease=await hold();assert.equal(commands.length,7);assert.equal(Object.getPrototypeOf(lease),null);
+  assert.equal(Object.isFrozen(lease),true);assert.deepEqual(Reflect.ownKeys(lease),[]);
+  assert.equal(JSON.stringify(lease),'{}');assert.equal(mod.assertHeldDashboardCutoverNativeSidecarLeaseV4(lease),undefined);
+  const m=JSON.parse(fs.readFileSync(generation+'/manifest.json'));assert.equal(m.source.sha256,sourceHash);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(closes.length,opens.length);
+  const n=ports.length;mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);
+  refused(()=>mod.assertHeldDashboardCutoverNativeSidecarLeaseV4(lease));assert.equal(ports.length,n);`,{protocol:4}));
+
+test('V4 opaque original lease refuses foreign proxy arity without consuming a healthy first attempt',()=>fixture(`
+  const hold=mod.holdDashboardCutoverNativeSidecarLeaseV4,check=mod.assertHeldDashboardCutoverNativeSidecarLeaseV4,
+    shut=mod.closeHeldDashboardCutoverNativeSidecarLeaseV4;
+  assert.equal(typeof hold,'function','MISSING_V4_ORIGINAL_SIDECAR_LEASE');
+  let traps=0;const proxy=new Proxy({},{get(){traps++;throw Error('secret')},getPrototypeOf(){traps++;throw Error('secret')}}),n=ports.length;
+  await rejected(()=>hold(proxy));await rejected(()=>hold(undefined));
+  for(const value of [proxy,{},Object.freeze(Object.create(null)),undefined,null,generation]){
+    refused(()=>check(value));refused(()=>shut(value));}
+  refused(()=>check());refused(()=>shut());assert.equal(traps,0);assert.equal(ports.length,n);
+  const lease=await hold(),at=ports.length;refused(()=>check(lease,undefined));refused(()=>shut(lease,undefined));
+  assert.equal(ports.length,at);check(lease);shut(lease);`,{protocol:4}));
+
+test('V4 opaque original lease refuses clones prototypes paths manifests and another module instance without traps',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4(),check=mod.assertHeldDashboardCutoverNativeSidecarLeaseV4,
+    shut=mod.closeHeldDashboardCutoverNativeSidecarLeaseV4;
+  const other=await import('./scripts/dashboard-cutover-native-sidecar-v2.mjs?independent-lease-instance');
+  const manifest=JSON.parse(fs.readFileSync(generation+'/manifest.json'));let traps=0;
+  const proxy=new Proxy(lease,{get(){traps++;throw Error('secret')},getPrototypeOf(){traps++;throw Error('secret')}});
+  const revoked=Proxy.revocable(lease,{});revoked.revoke();const at=ports.length;
+  for(const fake of [{...lease},Object.create(lease),proxy,revoked.proxy,generation,manifest,generation+'/peer.node']){
+    refused(()=>check(fake));refused(()=>shut(fake));}
+  refused(()=>other.assertHeldDashboardCutoverNativeSidecarLeaseV4(lease));
+  refused(()=>other.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease));
+  assert.equal(traps,0);assert.equal(ports.length,at);check(lease);shut(lease);`,{protocol:4}));
+
+for(const protocol of [2,4])test('V4 opaque original DATA '+protocol+' cannot be adopted and remains healthy after lease refusal',()=>fixture(`
+  const ctx=await prepare(),at=ports.length;await rejected(()=>mod.holdDashboardCutoverNativeSidecarLeaseV4());
+  for(const fake of [ctx,ctx.observation,ctx.observation.manifest]){
+    refused(()=>mod.assertHeldDashboardCutoverNativeSidecarLeaseV4(fake));
+    refused(()=>mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(fake));}
+  assert.equal(ports.length,at);ctx.recheck();ctx.close();const closed=ports.length;
+  await rejected(()=>mod.holdDashboardCutoverNativeSidecarLeaseV4());assert.equal(ports.length,closed);`,{protocol}));
+
+test('V4 opaque original lease blocks both DATA profiles and replacement without revoking original',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4(),at=ports.length;
+  for(const f of [mod.prepareDashboardCutoverNativeSidecarV2,mod.prepareDashboardCutoverNativeSidecarV4,
+    mod.holdDashboardCutoverNativeSidecarLeaseV4])await rejected(()=>f());
+  assert.equal(ports.length,at);mod.assertHeldDashboardCutoverNativeSidecarLeaseV4(lease);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);const closed=ports.length;
+  for(const f of [mod.prepareDashboardCutoverNativeSidecarV2,mod.prepareDashboardCutoverNativeSidecarV4,
+    mod.holdDashboardCutoverNativeSidecarLeaseV4])await rejected(()=>f());assert.equal(ports.length,closed);`,{protocol:4}));
+
+for(const action of ['hold','assert','close'])for(const boundary of ['opening','spawn','pending','terminal-sync','terminal-read','mint'])
+  test('V4 opaque original active '+action+' at '+boundary+' burns before later ports or publication',()=>fixture(`
+    await rejected(()=>mod.holdDashboardCutoverNativeSidecarLeaseV4());await nested;assert.equal(fired,1);
+    assert.equal(later,0);assert.equal(sidecarOriginalDisposals.length,0);const at=ports.length;
+    if(captured){refused(()=>mod.assertHeldDashboardCutoverNativeSidecarLeaseV4(captured));
+      refused(()=>mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(captured));}
+    await rejected(()=>mod.holdDashboardCutoverNativeSidecarLeaseV4());assert.equal(ports.length,at);
+    assert.equal(effects.some(e=>['unlinkSync','rmSync','rmdirSync'].includes(e.n)),false);
+    ${boundary==='spawn'?"assert.equal(commands.length,1);assert.equal(commands[0].source.length,0);":''}
+    ${boundary==='pending'?"assert.equal(commands.length,4);assert.equal(fs.existsSync(generation+'/manifest.json'),false);":''}`,{
+    protocol:4,setup:`let fired=0,nested,later=0,captured,terminal=false;
+      const fire=()=>{fired++;${action==='hold'?`nested=rejected(()=>mod.holdDashboardCutoverNativeSidecarLeaseV4(undefined));`:
+        `refused(()=>mod.${action==='assert'?'assertHeld':'closeHeld'}DashboardCutoverNativeSidecarLeaseV4(${['opening','terminal-sync'].includes(boundary)?'':
+          ['spawn','pending'].includes(boundary)?'{}':'{},undefined'}));`}};
+      ${boundary==='opening'?`const opening=fs.openSync;fs.openSync=(p,...a)=>{
+        const owned=isSidecarOriginal();if(fired&&owned)later++;const fd=opening(p,...a);
+        if(!fired&&owned&&String(p)===root)fire();return fd};`:
+        boundary==='spawn'?`onSpawn=()=>{if(!fired)fire();else later++};`:
+        boundary==='pending'?`onFinish=n=>{if(n===4)fire();else if(fired)later++};`:
+        boundary==='mint'?`const freezing=Object.freeze;Object.freeze=o=>{
+          if(o&&Object.getPrototypeOf(o)===null&&Reflect.ownKeys(o).length===0){captured=o;const r=freezing(o);fire();return r}
+          if(fired)later++;return freezing(o)};`:
+        `const syncing=fs.fsyncSync;fs.fsyncSync=fd=>{if(fired)later++;const r=syncing(fd);
+          if(fdPaths.get(fd)===generation){terminal=true;${boundary==='terminal-sync'?'fire();':''}}return r};
+        const reading=fs.readSync;fs.readSync=(fd,...a)=>{if(fired)later++;const r=reading(fd,...a);
+          ${boundary==='terminal-read'?"if(terminal&&!fired&&fdPaths.get(fd)===generation+'/peer.node')fire();":''}return r};`}`
+  }));
+
+for(const kind of ['seal-loss','last-fsync-loss','unknown-child','missing-output-eof'])
+  test('V4 opaque original '+kind+' retains unpublished originals without replacement',()=>fixture(`
+    await rejected(()=>mod.holdDashboardCutoverNativeSidecarLeaseV4());assert.equal(fired,1);
+    assert.equal(sidecarOriginalDisposals.length,0);const at=ports.length;
+    if(captured){assert.equal(Object.isFrozen(captured),true);
+      refused(()=>mod.assertHeldDashboardCutoverNativeSidecarLeaseV4(captured));
+      refused(()=>mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(captured));}
+    await rejected(()=>mod.holdDashboardCutoverNativeSidecarLeaseV4());assert.equal(ports.length,at);
+    assert.equal(effects.some(e=>['unlinkSync','rmSync','rmdirSync'].includes(e.n)),false);`,{
+    protocol:4,setup:`let fired=0,captured;
+      ${kind==='seal-loss'?`const freezing=Object.freeze;Object.freeze=o=>{
+        const r=freezing(o);if(o&&Object.getPrototypeOf(o)===null&&Reflect.ownKeys(o).length===0){
+          captured=o;fired++;throw Error('unknown sealing response')}return r};`:
+        kind==='last-fsync-loss'?`const syncing=fs.fsyncSync;fs.fsyncSync=fd=>{const r=syncing(fd);
+          if(fdPaths.get(fd)===generation){fired++;throw Error('unknown terminal sync response')}return r};`:
+        kind==='unknown-child'?`outcome=n=>{if(n===4){fired++;return {error:true}}return {code:0,signal:null,stderr:''}};`:
+        `const timeout=globalThis.setTimeout;globalThis.setTimeout=(f,ms,...a)=>timeout(f,ms===30000?50:ms,...a);
+        const spawning=cp.spawn;cp.spawn=(...a)=>{const c=spawning(...a);if(commands.length===4){fired++;c.stdout.end=()=>c.stdout}return c};`}`
+  }));
+
+for(const kind of ['source','ancestor','bundle','manifest'])test('V4 opaque original '+kind+' drift burns validity but genuine idle cleanup survives',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4(),p=${({source:'selectedSource',ancestor:"root+'/scripts'",
+    bundle:"generation+'/peer.node'",manifest:"generation+'/manifest.json'"})[kind]};
+  fs.renameSync(p,p+'.preserved');fs.renameSync(p+'.preserved',p);
+  refused(()=>mod.assertHeldDashboardCutoverNativeSidecarLeaseV4(lease));const at=ports.length;
+  refused(()=>mod.assertHeldDashboardCutoverNativeSidecarLeaseV4(lease));assert.equal(ports.length,at);
+  mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(closes.length,opens.length);
+  const closed=ports.length;mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(ports.length,closed);`,{protocol:4}));
+
+for(const phase of ['recheck','cleanup'])for(const action of ['hold','assert','close'])
+  test('V4 opaque original '+action+' during '+phase+' stops later original ports',()=>fixture(`
+    const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4();let fired=0,later=0,nested;
+    const fire=()=>{fired++;${action==='hold'?`nested=rejected(()=>mod.holdDashboardCutoverNativeSidecarLeaseV4(undefined));`:
+      `refused(()=>mod.${action==='assert'?'assertHeld':'closeHeld'}DashboardCutoverNativeSidecarLeaseV4({},undefined));`}};
+    ${phase==='recheck'?`fs.readSync=(fd,...a)=>{if(fired)later++;const r=read(fd,...a);
+      if(!fired&&fdPaths.get(fd)===generation+'/peer.node')fire();return r};`:
+      `closes.length=0;fs.closeSync=fd=>{if(fired)later++;closes.push(fd);close(fd);if(!fired)fire()};`}
+    syncBuiltinESMExports();refused(()=>mod.${phase==='recheck'?'assertHeld':'closeHeld'}DashboardCutoverNativeSidecarLeaseV4(lease));
+    await nested;assert.equal(fired,1);assert.equal(later,0);
+    ${phase==='recheck'?`mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(closes.length,opens.length);`:
+      `assert.equal(closes.length,1);mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);assert.equal(closes.length,1);`}`,{protocol:4}));
+
+test('V4 opaque original close response loss never retries the reused number or later originals',()=>fixture(`
+  const lease=await mod.holdDashboardCutoverNativeSidecarLeaseV4();let replacement;closes.length=0;
+  fs.closeSync=fd=>{closes.push(fd);close(fd);replacement=open(providers.node,'r');
+    assert.equal(replacement,fd);throw Error('unknown close')};syncBuiltinESMExports();
+  refused(()=>mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease));assert.equal(closes.length,1);
+  const at=ports.length;mod.closeHeldDashboardCutoverNativeSidecarLeaseV4(lease);
+  refused(()=>mod.assertHeldDashboardCutoverNativeSidecarLeaseV4(lease));assert.equal(ports.length,at);
+  fs.fstatSync(replacement);close(replacement);`,{protocol:4}));
 
 test('V4 terminal sidecar independently binds the job source and separate generation namespace',()=>fixture(`
   const old=fs.readFileSync(root+'/scripts/dashboard-cutover-mach-peer-v2.c'),ctx=await prepare(),o=ctx.observation;

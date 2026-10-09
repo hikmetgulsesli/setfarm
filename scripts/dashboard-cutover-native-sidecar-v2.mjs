@@ -40,7 +40,8 @@ const treeKeys=[...identity,'mtimeNs','ctimeNs'];
 const fileKeys=[...treeKeys,'size','nlink'];
 const vault={attempted:false,active:false,burned:false,closed:false,revocations:0,uid:null,
   inputs:null,pins:[],directories:new Map(),files:[],effects:[],children:[],total:0,
-  generation:null,temp:null,outputs:[],source:null,manifest:null,inputsCloseAttempted:false,binding:null};
+  generation:null,temp:null,outputs:[],source:null,manifest:null,inputsCloseAttempted:false,binding:null,lease:null};
+const leases=new WeakMap();
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const same=(a,b,keys)=>keys.every(k=>a[k]===b[k]);
 const within=(r,p)=>p===r||p.startsWith(r+path.sep);
@@ -257,7 +258,7 @@ function close(){
     vault.inputsCloseAttempted=true;vault.inputs.close();if(vault.revocations!==revocations)refuse();
   }catch{burn();refuse()}finally{vault.active=false}
 }
-async function prepareFixed(binding,arity){
+async function prepareFixed(binding,arity,opaque=false){
   if(vault.active){burn();refuse()}if(arity||!profile())refuse();
   if(vault.attempted||vault.burned||vault.closed)refuse();enter();vault.attempted=true;vault.uid=BigInt(process.getuid());
   vault.binding=binding;
@@ -325,6 +326,12 @@ async function prepareFixed(binding,arity){
       commands:vault.children.filter(c=>c.phase!=='ignored-parent').map(receipt),preflight:receipt(vault.children[0]),
       imports,exports,dependencies,outputs:{bundle:bundle.observation,depfile:depfile.observation}};
     publishManifest(manifest);for(const p of vault.outputs)terminalize(p);syncOccurrence(vault.generation,'terminal-generation');recheckTerminal();
+    if(opaque){
+      const original=Object.create(null),record={vault,published:false};
+      // Retain the original mint attempt even if sealing loses its response.
+      vault.lease={original,record};leases.set(original,record);
+      Object.freeze(original);alive();record.published=true;return original;
+    }
     const observation=Object.freeze({schema:manifest.schema,authority:'native-sidecar-build-only',generation:gen,
       manifest:Object.freeze({locator:vault.manifest.locator,byteLength:Number(vault.manifest.stats.size),sha256:vault.manifest.sha256})});
     alive();return Object.freeze({observation,recheck,close});
@@ -332,3 +339,16 @@ async function prepareFixed(binding,arity){
 }
 export async function prepareDashboardCutoverNativeSidecarV2(){return prepareFixed(V2,arguments.length)}
 export async function prepareDashboardCutoverNativeSidecarV4(){return prepareFixed(V4,arguments.length)}
+export function holdDashboardCutoverNativeSidecarLeaseV4(){return prepareFixed(V4,arguments.length,true)}
+function authenticateLease(original,arity){
+  if(vault.active){burn();refuse()}if(arity!==1)refuse();
+  const record=leases.get(original);
+  if(!record||record.vault!==vault||!record.published||vault.binding!==V4
+    ||vault.lease?.original!==original||vault.lease.record!==record)refuse();
+}
+export function assertHeldDashboardCutoverNativeSidecarLeaseV4(original){
+  authenticateLease(original,arguments.length);recheck();
+}
+export function closeHeldDashboardCutoverNativeSidecarLeaseV4(original){
+  authenticateLease(original,arguments.length);close();
+}

@@ -3117,3 +3117,57 @@ Root independently read all223 retained result originals with0faults. Actual
 source-fault C input/FS/graph/manifest/custody behavior only; process/provider
 relocation and simulated commands remain disclosed. No genuine fixed-native
 campaign or production-build/job/endpoint/startup authority is inferred.
+
+## Task4i.3: opaque original V4 sidecar lifetime
+
+Causal necessity: Task4i.2 publishes DATA-only generation/manifest observations.
+One attempt and fixed generation collision prohibit later adopting a path or
+receipt after closing its original holder. Preserve original lifetime BEFORE
+spending any genuine clean-main compiler qualification. This slice does not
+spend that campaign or implement loader/job/controller/startup authority.
+
+Exactly three new public entries in the existing sidecar provider:
+holdDashboardCutoverNativeSidecarLeaseV4(): Promise<object>,
+assertHeldDashboardCutoverNativeSidecarLeaseV4(original: object): void,
+closeHeldDashboardCutoverNativeSidecarLeaseV4(original: object): void.
+Acquisition zero arity; assert/close exactly one. A minted object is empty,
+frozen, null-prototype and genuine only by private WeakMap identity referring
+to the SAME original V4 sidecar vault and retained upstream chain. It is not a
+wrapper around caller DATA, a transcript, another instance or a reopened path.
+Mint privately at the original terminal publication boundary before returning;
+never take an externally supplied holder or release a successful private DATA
+holder to the caller as part of lease creation. V2/V4 DATA interfaces unchanged.
+
+All three APIs share existing original activity/one-attempt/burn/closed state.
+Activity guard BEFORE arity/handle checks: acquisition/assert/close reentry
+burns that original before its next admitted port. Wrong arity/foreign/copied/
+proxy/prototype/observation/path handles have zero traps/ports and preserve an
+otherwise idle healthy original. Assert performs the existing full original
+source/build/profile/FD/file/dependency/terminal checks; public DATA does not
+select originals or grant authority. No observation, locator, bytes, addon,
+callback or executable getter is exported from the opaque lease.
+
+Close authenticates SAME lease and invokes existing checked-once original
+reverse cleanup. Idle genuine cleanup remains allowed after validity burns;
+duplicate close has zero ports, response loss stops later disposals and never
+retries a reused number. Pending acquisition/unknown child/pipe cannot mint;
+active reentry cannot dispose its originals. Partial/uncertain creation keeps
+originals and visible artifacts, with no replacement/adoption/delete/cancel.
+
+Private fixed return-mode mechanics are allowed, not a public caller-selected
+mode/source/profile factory. Lease authenticity means original retained build
+DATA only, NOT compiler permission, addon evaluation, Mach job/peer/endpoint,
+owner/phase/control/startup grant, any service effect or completed foreground.
+Approved-definition private composition is a later separately nominated slice.
+Qualify through actual source in retained real private FS and inert command
+ports; no actual:true fixture/campaign, synth-build-to-production authority,
+old native replay or clean-main guard bypass. Existing generations stay visible.
+
+Task4i.3 frozen source-fault qualification: focused24+16 new opaque cases GREEN;
+full122tests121P0F1SKIP includes repeated new40, not three disjoint selections.
+Fixed Node26.4.0, all native opt-in flags removed; root read all161 retained
+program/result/command originals with zero faults. Earlier18P22F expanded run
+is test-oracle attribution failure, not production RED; preserved originals and
+truncated tool-display limit are recorded. Private pending identity is retained
+before freeze and authenticates only after publication, which follows alive.
+No genuine compiler/build/native loading/transport/job/startup authority follows.
