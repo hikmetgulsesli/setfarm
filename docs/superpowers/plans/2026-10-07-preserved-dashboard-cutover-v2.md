@@ -2910,7 +2910,7 @@ module, hash, DATA grant or exported inspection/cleanup operation.
   originals; no later ports/cleanup/retry/refresh and no disposal by finally.
   Retained linked-marker FD control covers marker custody, not just directories.
   Keep real Git/FS distinct from lsof/PG/Python/native doubles and full host proof.
-- [ ] Step5: proportional old original/pre32/owner, actual physical/census/binding
+- [x] Step5: proportional old original/pre32/owner, actual physical/census/binding
   regressions, strict noEmit/syntax/contracts/diff and two exact-nine-file reviews
   reading every retained original. Normal scoped commit/push + exact-head PR
   append-only readback; no full-build/native/PG/bot-approval claim. Continue actual
@@ -2992,3 +2992,141 @@ failures/REDs. Final exact-nine-file/all24-original reviews and normal scoped
 delivery remain pending. Protected passive-home bytes unchanged; actual3080/
 18789HTTP200,3333absent. No actual build, native effect, real PG/backend death,
 positive-owner admission or whole cutover clearance.
+
+Task4i.9 delivery: two exact-nine/all24-original final reviews C0/I0/M0;
+normal commit58cbb22729e305677fde9e5c377b999866741289 and forward push.
+PR280 OPEN DRAFT exact same head; security SUCCESS, actual reviews empty.
+Append-only comment6077119245 read back exact3578UTF8 bytes, SHA
+6b55e5e321eb39b2404c3b59273b259f91953b28c1a54e0dd4b32044b027b8c2.
+Existing PR body unchanged63488bytes/SHAa94ff9b9534f07801a1581b1c1249ef3470fe67e4a6d4ad48fe5179690d41210.
+Earlier pending prose above is historical checkpoint, not current delivery state.
+
+### Task4j: original-owner first-two journaled launcher quieting
+
+Goal: implement the paired spec's isolated TWO existing effects before ROOT,
+without claiming selected-CLI closure, legacy death or full admission. This
+causally necessary refinement breaks the service-quieting dependency cycle;
+it does not weaken physical/DB/source/phase guards. Root remains sole writer.
+
+Alternatives: sampled absence/conditional selected runtime-guard mismatch cannot
+grant exclusion; moving selector/rebuilding preserved material first lacks a
+qualified phase/effect producer and alters preserved installation. Choose the
+isolated owner-bound existing journal prefix; no unlinked new history or replay.
+
+File Map exactly nine, before implementation:
+- scripts/deployment-dashboard-cutover-adapter-v2.mjs: isolated quiet route,
+  common original enrollment, owner-only preparation, resource-free tuple fence
+  and BOTH participant embargo during the quiet occurrence.
+- scripts/deployment-dashboard-cutover-adapter-v2.d.mts: two exact new exports.
+- scripts/__tests__/deployment-dashboard-cutover-adapter-v2.test.js: original
+  finite quiet consumer with real owner/OPEN/V2 store/private plist FS, explicit
+  command doubles and independently inspected journal/order/unknown controls.
+- scripts/deployment-cutover-owner.mjs: actual OPEN-bound quiet record, retained
+  imports, first-two durable records/readbacks, resource-free metadata/intent
+  assertions and shared burn.
+- scripts/__tests__/deployment-cutover-owner.test.js: foreign/API and unchanged
+  owner/OPEN behavior; retained new fixtures, no destructive cleanup additions.
+- src/internal-production/baseline-deployment-cutover-launcher-observation-v1.ts:
+  separate original phase profile, fixed effects and retained child lifecycles.
+- tests/internal-production/baseline-dashboard-cutover-launcher-quiet-v4.test.ts:
+  independent foreign interfaces and command lifecycle boundaries; no host calls.
+- This plan and paired spec. Existing grammar/store/native transport, credentials,
+  selected CLI, plists, preserved worktrees and package/dependencies unchanged.
+
+Interfaces: exact signatures in paired Task4j spec; observe returns Promise of
+three inert original observation/configuration hashes. Owner imports fixed V2
+records/store and launcher only. Adapter's quiet route prepares no census,
+physical/ROOT/local-drain modules and never enters pre32. Existing routes keep
+their original preparation/behavior. No general action dispatcher or callback.
+
+- [ ] Step1: root spec/plan self-review, two independent exact paired nomination
+  gates, then ordinary two-doc design commit BEFORE tests or source. No routine
+  permission question under standing authorization. No live job command here.
+- [ ] Step2: write actual consumer RED against missing quiet producer. Reuse
+  finite jointFixture with a quiet-only preparation option and two added Task2
+  TS bridges. Genuine owner/OPEN must use actual fixture launcher configuration
+  hashes. Existing diagnostic observation supplies DATA only. Child double is
+  explicit EventEmitter/PassThrough complete lifecycle, not native qualification.
+  Assert independently read real intent/completion files:
+
+  ```js
+  await adapter.quietHeldDashboardCutoverJointLaunchersV4(loaded,definition,owner);
+  const rows=[1,2].map(n=>JSON.parse(fs.readFileSync(journal+'/intent-000'+n+'.json')));
+  assert.deepEqual(rows.map(r=>r.action),['bootout-spawner','bootout-dashboard']);
+  assert.equal(rows[1].previousCompletionHash,completion1.effectCompletionHash);
+  assert.deepEqual(out.bootoutArguments,[['bootout','gui/'+process.getuid()+'/com.setrox.setfarm-spawner'],
+    ['bootout','gui/'+process.getuid()+'/com.setrox.setfarm-dashboard']]);
+  assert.equal(out.pgQueries,0);assert.equal(out.rootDispatches,0);
+  ```
+
+  Run fixed Node26 with the existing literal test-only shared TypeScript resolver:
+  `node --test --test-name-pattern='launcher quiet' scripts/__tests__/deployment-dashboard-cutover-adapter-v2.test.js`.
+  Expected RED: missing quiet entry assertion, not loader/setup/syntax failure.
+  Keep actual program, complete source pins, TS translations/manual outputs,
+  stdout/stderr, natural exit and EOF+close. Do not replay Task4i.9 campaigns.
+- [ ] Step3: minimal producer. Extend preparation with a quiet-only owner import
+  branch; register route/intents before calls. Owner retains actual OPEN bytes
+  and claim, then fixed V2 imports. Require initial empty settled store; prepare
+  records with actual private OPEN/claim/hash values:
+
+  ```js
+  const intent=records.createDashboardCutoverIntentV2({cutoverIntentHash:open.cutoverIntentHash,
+    ownerClaimHash:claim.ownerClaimHash,ordinal:1,previousCompletionHash:null,
+    beforeObservationHash:phase.observationHash});
+  const published=store.publishDashboardCutoverIntentV2(intent,history.storeObservationHash);
+  const reread=store.observeDashboardCutoverStoreV2();
+  if(reread.storeObservationHash!==published.storeObservationHash
+    ||!records.encodeDashboardCutoverIntentV2(reread.history.intents[0]).equals(
+      records.encodeDashboardCutoverIntentV2(intent))) throw Error('DEPLOYMENT_CUTOVER_OWNER_REFUSED');
+  ```
+
+  Set private intent-confirmed only AFTER that reread and owner/source/OPEN
+  checks. Fixed launcher intent assertions authenticate SAME token/scope and
+  current once-only phase. Register spawn before invocation, preserve original
+  child/streams/Promise, require exact natural lifecycle and phase before fixed
+  completion creation/publication/readback. At private material-state shared-token
+  check, genuine quiet occurrence selects cached-owner resource-free metadata,
+  including derivative lease's captured checkOriginal; no caller guard selector.
+  Quiet releaseToken always refuses, including healthy terminal bookkeeping.
+  Never pass caller hashes or labels.
+- [ ] Step4: complementary causal controls, each owns retained originals:
+  intent1 publication/readback loss => bootouts0; first child pending/lost/error/
+  timeout => completion1 absent and ordinal2 absent; late original settlement
+  cannot repair; exact wrong absent status/stderr/label => refusal, not completion;
+  original dashboard drift after first effect => second dispatch0; wrong owner/
+  scope/history copy => zero effect; swallowed wrong-arity proxy reentry during
+  child work => traps0/zero subsequent direct ports. Captured ordinary native AND
+  definition live-token assertions while quiet pending burn without admitting
+  their composites; private quiet metadata never recursively calls them. A
+  timeout-rejected owner Promise empties neither original-child custody nor the
+  coordinator UNKNOWN: explicitly test zero bilateral settlement/release after
+  outer rejection while the same child remains pending and after its late exit.
+  Healthy
+  checks PG/ROOT/native
+  methods/selector/restoration/signals0, preserved material FDs live, attempt
+  consumed, and no implicit old reservation reuse. After healthy return both
+  participant close calls must refuse with zero original-FD closes; known
+  bilateral bookkeeping is not release permission. PG/ROOT counters alone do not
+  prove absent imports: register literal loader sentinels for canonical census,
+  physical, first-generation ROOT and local-drain module URLs before entering
+  quiet; every resolve/evaluation attempt must fail the healthy consumer. Keep
+  ordinary/reservation lazy-import compatibility controls separate. Example loss
+  assertion:
+
+  ```js
+  await assert.rejects(work);
+  assert.equal(fs.existsSync(journal+'/completion-0001.json'),false);
+  assert.equal(fs.existsSync(journal+'/intent-0002.json'),false);
+  assert.deepEqual(out.bootoutArguments,[['bootout','gui/'+process.getuid()+'/com.setrox.setfarm-spawner']]);
+  ```
+
+- [ ] Step5: focused new/owner/material/adapter regressions, strict noEmit,
+  syntax/contracts/diff; root reads every actual retained quiet original and two
+  exact-nine-file independent final reviews. Normal source commit/forward push,
+  append-only PR280 evidence and exact-head readback. No full-build/real launchd/
+  PG/native/legacy death or host clearance claims from fixtures. Update handoff.
+
+Remaining after Task4j is explicit: finite historical original exits/descendants
+and future cooperative entry closure, actual positive execution coupling,
+phase/selector transitions, remaining four effects, controller/authenticated
+entry, whole reviewed integration, clean-main actual build and current host3333.

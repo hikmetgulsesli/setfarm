@@ -3953,3 +3953,145 @@ Source-specific final campaigns/reviews remain necessary: earlier11 GREENs bind
 physical080cb8b3, not corrected53918a47. The Error-proxy marker diagnostic is
 failure-point evidence only, not retained-FD custody. No fixture/API/syntax/noEmit
 or literal dependency-loader result implies real PG/native/build/live3333 proof.
+
+### Task4j: isolated original-owner journaled launcher quieting
+
+This is a bounded ordering correction, not complete cutover admission. The
+first TWO existing V2 effects may run before retirement ROOT, using a distinct
+quiet-only route authenticated by the original maintenance owner, actual OPEN,
+and original held launcher definition/material. Fulfillment is void and grants
+no exclusion, process death, PostgreSQL/ROOT, selector, restoration or READY
+authority. No reservation continuation follows this route. Existing original,
+pre32 and reservation routes remain unchanged, and cannot reuse its consumed
+adapter attempt. The future complete controller must consume this original
+settled prefix and continue at ordinal3; journal copies alone cannot do so.
+
+Why this refinement is necessary: the selected compiled CLI lacks current OPEN
+admission. Its conditional runtime-guard mismatch is not whole-entry exclusion:
+static dependencies initialize first, configuration can affect the skip key,
+and the guard has explicit bypass/packaged-install branches. Interval wrappers
+also run Git status before refusing, potentially changing Git administration.
+Job quieting is therefore a separate prerequisite, not a sampled process proof.
+Do not rebuild, replace, delete or relink preserved selected material to obtain
+this slice. Historical process/descendant exit custody and future cooperative
+entry closure remain separate, required prerequisites before full admission.
+
+Exact fixed interfaces (objects are ORIGINAL opaque handles, never inspection
+records, callbacks, modules, supplied hashes, PIDs, paths or action selectors):
+
+```ts
+// adapter, one isolated public entry; resource-free canonical tuple/stage fence
+quietHeldDashboardCutoverJointLaunchersV4(loaded: object, definition: object,
+  owner: object): Promise<void>;
+assertDashboardCutoverJointQuietTokenV4(token: object, owner: object,
+  definitionScope: object): void;
+// owner, journal orchestration and privately confirmed intent authentication
+quietDeploymentCutoverLaunchersWithOwnerV4(owner: object, token: object,
+  definitionScope: object): Promise<void>;
+assertDeploymentCutoverQuietMetadataV4(token: object,
+  definitionScope: object): void;
+assertDeploymentCutoverSpawnerQuietIntentV4(token: object,
+  definitionScope: object): void;
+assertDeploymentCutoverDashboardQuietIntentV4(token: object,
+  definitionScope: object): void;
+// launcher, fixed original phase observations and two fixed effects
+observeHeldDashboardCutoverApprovedDefinitionQuietV4(scope: object): Promise<
+  Readonly<{ observationHash: string; spawnerLauncherConfigurationHash: string;
+    dashboardLauncherConfigurationHash: string }>>;
+bootoutHeldDashboardCutoverApprovedDefinitionSpawnerV4(scope: object): Promise<void>;
+bootoutHeldDashboardCutoverApprovedDefinitionDashboardV4(scope: object): Promise<void>;
+```
+
+The three observation fields are inert DATA derived from retained originals.
+Owner privately compares both configuration hashes to the authenticated OPEN
+before any intent. They are not caller-supplied permission or a new capability.
+Observe is asynchronous because its launchctl children require original custody.
+
+Adapter prepares owner/launcher/native transport only: NO census, physical,
+ROOT, local-drain, selector or service-start module imports on quiet route.
+Enroll existing bilateral original scopes; register quiet invocation intent and
+original owner Promise before any await. A distinct private route/stage fence
+authenticates the original owner and enrolled definition scope. The owner also
+provides the fixed resource-free SAME token/scope metadata assertion above, so
+private launcher checks need neither an exposed owner nor FS/process recursion.
+Launcher retains its fixed cached owner-module import Promise before yielding;
+only successful original import and metadata authentication admit phase work.
+At most one
+adapter attempt. Active-first reentry burns before arity, proxy or descriptor
+inspection. Retain enrollment/import/child/promise originals after failure and
+success. Native five-method transport stays unchanged and is not invoked.
+While quiet invocation is pending, BOTH ordinary native/definition live-token
+ports are embargoed. Fixed quiet metadata remains available to the owned
+private composite; it grants no additional public assertion/close/settlement.
+After quiet returns, do not substitute an ordinary definition/material composite
+for the new loaded/unloaded phase oracle (V1 loaded comparisons reside in the
+private configuration recheck, not the ordinary operation assertion). Require
+the quiet producer's recovered phase checks and
+unchanged material, then settle only known original bilateral enrollment scopes.
+Any quiet UNKNOWN blocks settlement and release even after late child exit.
+Specifically, coordinator quiet.unknown starts true and clears only on recovered
+successful owner completion. ANY rejection/response loss sets record.unknown
+and quiet.unknown, not only revoked. settlementsKnown must additionally require
+quiet returned/known; empty generic pending after a rejected outer Promise is
+not child settlement. Definition settlement independently requires its quiet
+occurrence known, no pending original print/bootout child, and complete natural
+child/stream lifecycle. A timed-out outer driver never clears this condition.
+At the existing private checkLauncherMaterialStateV2 shared-token site, a
+privately registered quiet occurrence selects the fixed cached-owner metadata
+guard instead of ordinary definition live-token; no caller flag selects it.
+This also protects the derivative lease's captured checkOriginal callback from
+self-refusal under embargo. Healthy bilateral bookkeeping settlement does NOT
+grant release: releaseToken must refuse the quiet route even in terminal known
+state, preserving native/material/definition originals. A future complete
+controller lifecycle needs separately nominated consumption/disposal authority.
+
+Owner registers a provisional quiet record before imports/composites, with SAME
+original owner claim, token, definition scope, actual OPEN bytes and all import/
+publication/work occurrences. Authenticate current source/build and exact
+OPEN/maintenance/controller relation, not a maintenance hash copied from DATA.
+Use existing V2 grammar/store unchanged. Require empty settled original history;
+an existing prefix is NOT authority to adopt or replay an effect. For ordinal1:
+observe strict initial phase, compare OPEN hashes, create/publish intent1 using
+current store hash, independently read back exact canonical committed intent,
+and only then mark private dispatch permission. Invoke fixed spawner bootout
+once, recover its original lifecycle and strict postphase, publish/read back
+completion1. Repeat for ordinal2 only after SAME original completion1. All
+publications use the SAME privately tracked store hash and exact record bytes.
+An unknown publication/readback/effect/observation/completion burns the shared
+token BEFORE any later await or effect; no completion or ordinal2 after loss.
+Original owner APIs must reject overlapping public entry during this lifetime;
+resource-free fixed intent assertions do not recurse through FS/process checks.
+
+Launcher preserves V1 acquisition/recheck semantics. Its new private phase
+profile accepts exactly both original jobs loaded-idle, then spawner unloaded /
+original dashboard loaded-idle, then both unloaded. Reuse original held plist
+FDs and private parsed configuration; never expose environment/credential
+values. Factor the existing loaded parser to consume trusted retained command
+bytes while keeping V1's fixed command behavior unchanged. Each new phase
+observation retains the actual fixed print child before result observation.
+Authenticate the same account and original material around every owned port.
+Bootout uses ONLY /bin/launchctl with arguments bootout,gui/UID/FIXED_LABEL;
+env exactly PATH=/usr/bin:/bin:/usr/sbin:/sbin,LANG=C,LC_ALL=C; cwd account home;
+stdio pipe/pipe/pipe. No signal, daemon stop helper, selector or plist mutation.
+
+Each child occurrence is registered BEFORE spawn; retain returned child, stdin,
+stdout/stderr, original wait Promise, exit status/signal and stream occurrences
+before inspecting results. Require stdin finish+close, both output EOF+close,
+natural exit+child close, status0/signalnull and empty stdout/stderr for bootout.
+For print of an unloaded service accept ONLY status113/signalnull, empty stdout,
+and exact UTF8 stderr `Bad request.\nCould not find service "FIXED_LABEL" in domain
+for user gui: UID\n`, bound to the actual fixed UID/label. This literal was
+observed read-only on this host for a nonexistent Setfarm diagnostic label;
+it is NOT proof either real service was unloaded. All other print failures,
+errors, partial/oversized output, malformed bytes or abnormal lifecycle refuse.
+Bound each stream to1MiB. A five-second deadline may revoke/reject the outer
+driver only: retain original child/streams/Promise and do not kill, destroy,
+retry, release or reinterpret timeout as absence. Natural late settlement does
+not repair UNKNOWN. Public assertion/close/reentry while child work is pending
+burns before parsing; trusted private port checks remain nonrecursive. Retain
+healthy material and phase originals too; no finally closes/releases this slice.
+
+This proves only scoped journaled job quieting. Bootout does not prove detached
+daemon death, descendant closure, reboot persistence or future selected-CLI
+entry exclusion. Real host effects require the reviewed complete authenticated
+entry, source/build and phase qualification; fixture GREEN never grants them.
