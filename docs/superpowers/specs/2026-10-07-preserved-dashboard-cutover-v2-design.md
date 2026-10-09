@@ -3054,3 +3054,66 @@ old V1/V2 test changes loader/owned fixture retention only. Earlier failed
 fixture expansions are recorded separately, not claimed as production REDs.
 Opaque data/FD behavior credit ONLY; no full build, current-host endpoint/source,
 owner/phase/control/adapter/foreground/clean-main/live3333 authority follows.
+
+## Task4i.2: retained fixed V4 native build binding
+
+Extend the existing direct-input, dependency and sidecar providers with exactly
+three zero-input V4 entries, not caller-selected inputs or raw addon access:
+holdDashboardCutoverNativeInputsV4(), prepareDashboardCutoverNativeBuildInputsV4(),
+prepareDashboardCutoverNativeSidecarV4(). They return the same frozen DATA-only
+holder shape with recheck()/close(). Existing V2 functions remain fixed to V3
+scripts/dashboard-cutover-mach-peer-v2.c with unchanged V2 schema and namespace.
+V4 functions fix scripts/dashboard-cutover-mach-job-peer-v4.c in their private
+original chain. One shared attempt/activity/uncertainty vault within each existing
+provider prevents simultaneous or replacement V2/V4 acquisition; profile choice
+is made internally once before admitted provider work, never switched thereafter.
+Wrong arity/proxy arguments have zero ports and do not consume an idle original;
+active cross-profile reentry burns that same original before the next port.
+Fixed secret-free existing refusal literals and once-only cleanup remain.
+
+Exact V4 schemas:
+setfarm.internal-production-dashboard-native-direct-inputs.v4 (direct-inputs-only),
+setfarm.internal-production-dashboard-native-build-inputs.v4 (compiler-dependencies-only),
+setfarm.internal-production-dashboard-native-sidecar-build.v4 (native-sidecar-build-only).
+Exact namespace ROOT/.setfarm/dashboard-cutover-native-v4/<sourceSha>.<buildHash>,
+same fixed four-entry terminal layout/modes/count/collision rules as V2. Prior
+V2/V4 generations stay visible; no overwrite/retry/adoption/cleanup/deletion.
+
+V4 direct source is the retained reviewed source byte occurrence. V4 dependency
+provider selects its genuine fixed V4 direct provider; exact direct schema,
+authority and source locator/hash/length agree before compiler discovery. Its
+provisional and held-validation graphs still match exactly; aliases, SDK/tool/
+headers/runtime/source-build pins and original children/pipes remain held.
+V4 sidecar selects genuine fixed V4 build-input provider and verifies expected
+schemas/authority, fixed source identity, graph and source-build crossbinding
+before the compile/publication ports. Its immutable manifest uses the V4 schema
+and records the actual same retained V4 input, terminal outputs, native imports/
+exports/dylibs and original child/pipe dispositions. Do not use data parsed from
+another holder or public transcript as compile/load/endpoint/startup permission.
+
+Private literal V2/V4 bindings may share checked mechanics; no public factory,
+source argument, profile selector, addon path/bytes getter, evaluation function
+or callback. Preserve all current clean-main/source-build guards; feature-source
+fixtures earn source-fault/private-FS credit only. Separate fresh genuine V4
+compiler qualification is later nominated; no old native campaign replay here.
+Nothing in this slice evaluates .node, calls bootstrap/Mach methods, dispatches
+service/selector effects, authenticates job/birth/foreground or completes cutover.
+
+Qualification refinement: TEST-ONLY source-fault copies may replace the single
+private V4 downstream call with the genuine fixed V2 provider before the final
+private source commit/finalization. Assert exact replacement occurrence; no fake
+holder, public source/profile option or production guard change. These two
+negatives prove crossed schema rejection before downstream discovery/compile.
+The genuine dependency provider binds canonical parsed graph equality, not raw
+discovery ordering/formatting. Test reversed equivalent output remains accepted.
+Two further TEST-ONLY consumer-binding literal faults select a distinct retained
+private fixture file containing identical V4 bytes. The genuine upstream remains
+V4; hashes/lengths match, only the independently nominated locator differs.
+Finalize that modified private source normally; no public selector or fake holder.
+
+Frozen Task4i.2 qualification: Node22 mechanical178P0F3SKIP and explicit fixed
+Node26.4.0 focused45P0F0SKIP, same six frozen source/test byte occurrences.
+Root independently read all223 retained result originals with0faults. Actual
+source-fault C input/FS/graph/manifest/custody behavior only; process/provider
+relocation and simulated commands remain disclosed. No genuine fixed-native
+campaign or production-build/job/endpoint/startup authority is inferred.

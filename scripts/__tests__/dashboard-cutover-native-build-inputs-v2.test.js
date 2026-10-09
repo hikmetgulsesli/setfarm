@@ -15,12 +15,13 @@ const fixed={node:'/opt/homebrew/Cellar/node/26.4.0/bin/node',
   resource:'/Library/Developer/CommandLineTools/usr/lib/clang/21',clt:'/Library/Developer/CommandLineTools'};
 const env={PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'};
 
-function fixture(body,{setup='',before='',preimport='',actual=false,profile=true}={}){
+function fixture(body,{setup='',before='',preimport='',actual=false,profile=true,protocol=2,crossedSource=false,alternateSource=false}={}){
   assert.ok(fs.existsSync(target),'missing nominated compiler dependency holder');
   const files={};
   for(const name of ['dashboard-cutover-native-build-inputs-v2.mjs','dashboard-cutover-native-inputs-v2.mjs',
-    'build-generation-retention.mjs','dashboard-cutover-mach-peer-v2.c'])
+    'build-generation-retention.mjs','dashboard-cutover-mach-peer-v2.c','dashboard-cutover-mach-job-peer-v4.c'])
     files['scripts/'+name]=fs.readFileSync(path.join(rootSource,'scripts',name));
+  if(alternateSource)files['scripts/dashboard-cutover-mach-job-peer-v4-alternate.c']=files['scripts/dashboard-cutover-mach-job-peer-v4.c'];
   const {root}=createFinalizedFixture(files),providerRoot=root+'.providers';
   const providers=Object.fromEntries(Object.entries(fixed).map(([k,p])=>[k,actual?p:providerRoot+p]));
   if(!actual){
@@ -36,6 +37,14 @@ function fixture(body,{setup='',before='',preimport='',actual=false,profile=true
     for(const name of ['dashboard-cutover-native-build-inputs-v2.mjs','dashboard-cutover-native-inputs-v2.mjs']){
       let text=files['scripts/'+name].toString();
       for(const [k,p] of Object.entries(fixed))text=text.replaceAll("'"+p+"'","'"+providers[k]+"'");
+      if(crossedSource&&name==='dashboard-cutover-native-build-inputs-v2.mjs'){
+        const from='hold:()=>directInputs.holdDashboardCutoverNativeInputsV4()';
+        assert.equal(text.split(from).length,2);text=text.replace(from,'hold:()=>directInputs.holdDashboardCutoverNativeInputsV2()');
+      }
+      if(alternateSource&&name==='dashboard-cutover-native-build-inputs-v2.mjs'){
+        const from="'scripts/dashboard-cutover-mach-job-peer-v4.c'";
+        assert.equal(text.split(from).length,2);text=text.replace(from,"'scripts/dashboard-cutover-mach-job-peer-v4-alternate.c'");
+      }
       fs.writeFileSync(root+'/scripts/'+name,text);
     }
     git(root,['add','scripts']);git(root,['commit','-qm','relocate closed dependency providers']);
@@ -43,11 +52,12 @@ function fixture(body,{setup='',before='',preimport='',actual=false,profile=true
     fs.renameSync(root+'/dist',root+'.previous-dist');
   }
   const expected=actual?{sourceSha:git(root,['rev-parse','HEAD'])}:finalize(root);
-  const source=fs.readFileSync(root+'/scripts/dashboard-cutover-mach-peer-v2.c');
+  const selectedSource=root+'/scripts/'+(protocol===4?'dashboard-cutover-mach-job-peer-v4.c':'dashboard-cutover-mach-peer-v2.c');
+  const source=fs.readFileSync(selectedSource);
   const script=`import assert from 'node:assert/strict';import fs from 'node:fs';import cp from 'node:child_process';
     import {syncBuiltinESMExports} from 'node:module';import {EventEmitter} from 'node:events';import {PassThrough} from 'node:stream';
     const root=${JSON.stringify(root)},providers=${JSON.stringify(providers)},expected=${JSON.stringify(expected)},
-      sourceHash=${JSON.stringify(hash(source))},sourceLength=${source.length};
+      sourceHash=${JSON.stringify(hash(source))},sourceLength=${source.length},selectedSource=${JSON.stringify(selectedSource)};
     const refused=fn=>assert.throws(fn,e=>e.message==='DASHBOARD_CUTOVER_NATIVE_BUILD_INPUTS_REFUSED');
     const rejected=fn=>assert.rejects(fn,e=>e.message==='DASHBOARD_CUTOVER_NATIVE_BUILD_INPUTS_REFUSED');
     ${!actual&&profile?`Object.defineProperties(process,{platform:{value:'darwin'},arch:{value:'arm64'},
@@ -98,7 +108,9 @@ function fixture(body,{setup='',before='',preimport='',actual=false,profile=true
     ${setup}
     ${preimport}
     syncBuiltinESMExports();const mod=await import('./scripts/dashboard-cutover-native-build-inputs-v2.mjs');
-    assert.deepEqual(Object.keys(mod),['prepareDashboardCutoverNativeBuildInputsV2']);const prepare=mod.prepareDashboardCutoverNativeBuildInputsV2;
+    const prepare=mod[${JSON.stringify('prepareDashboardCutoverNativeBuildInputsV'+protocol)}];
+    assert.equal(typeof prepare,'function','MISSING_FIXED_V4_NATIVE_BUILD_INPUTS');
+    assert.deepEqual(Object.keys(mod),['prepareDashboardCutoverNativeBuildInputsV2','prepareDashboardCutoverNativeBuildInputsV4']);
     ${before}
     try{${body}}finally{
     console.log(JSON.stringify({kind:'compiler-inputs-case',root,commandCount:commands.length,openCount:opens.length,closeCount:closes.length}));
@@ -118,7 +130,69 @@ function fixture(body,{setup='',before='',preimport='',actual=false,profile=true
   console.log(r.stdout.trim());return {root,result:r};
 }
 
-test('two planned discoveries bind original source, fixed recipe and retained declared include closure',()=>{
+test('V4 dependency discovery retains the exact V4 source and two identical owned graphs',async()=>{
+  fixture(`const ctx=await prepare();assert.equal(commands.length,2);
+    assert.equal(ctx.observation.schema,'setfarm.internal-production-dashboard-native-build-inputs.v4');
+    assert.equal(ctx.observation.direct.schema,'setfarm.internal-production-dashboard-native-direct-inputs.v4');
+    const source=ctx.observation.direct.files.find(f=>f.role==='source');assert.equal(source.locator,selectedSource);
+    assert.equal(source.sha256,sourceHash);assert.equal(source.byteLength,sourceLength);
+    for(const child of children){assert.equal(child.source.length,sourceLength);assert.equal(hashBytes(child.source),sourceHash)}
+    assert.equal(writes.length,0);ctx.recheck();ctx.close();`,{
+      protocol:4,setup:`const {createHash}=await import('node:crypto');const hashBytes=b=>createHash('sha256').update(b).digest('hex');`});
+});
+
+for(const protocol of [2,4]){
+  const other=protocol===2?4:2;
+  test('V4 shared dependency vault '+protocol+' idle proxy preserves selection and closed retry has zero ports',()=>{
+    fixture(`const alternate=mod.prepareDashboardCutoverNativeBuildInputsV${other};let traps=0;
+      const proxy=new Proxy({},{get(){traps++;throw Error('secret')}}),n=ports.length;
+      await rejected(()=>alternate(proxy));assert.equal(traps,0);assert.equal(ports.length,n);
+      const ctx=await prepare(),at=ports.length;await rejected(()=>alternate());assert.equal(ports.length,at);
+      ctx.recheck();ctx.close();const closed=ports.length;await rejected(()=>alternate());assert.equal(ports.length,closed);`,{protocol});
+  });
+  test('V4 shared dependency vault '+protocol+' alternate wrong arity during spawn prevents pipe write',()=>{
+    fixture(`await rejected(()=>prepare());await nested;assert.equal(commands.length,1);
+      assert.equal(children[0].source,undefined);
+      const n=ports.length;await rejected(()=>mod.prepareDashboardCutoverNativeBuildInputsV${other}());assert.equal(ports.length,n);`,{
+      protocol,setup:`let nested;onSpawn=()=>{nested=rejected(()=>mod.prepareDashboardCutoverNativeBuildInputsV${other}(undefined))};`});
+  });
+  test('V4 shared dependency vault '+protocol+' alternate reentry stops once-only cleanup',()=>{
+    fixture(`const ctx=await prepare();let nested;closes.length=0;fs.closeSync=fd=>{closes.push(fd);close(fd);
+      if(!nested)nested=rejected(()=>mod.prepareDashboardCutoverNativeBuildInputsV${other}(undefined))};
+      syncBuiltinESMExports();refused(()=>ctx.close());await nested;assert.equal(closes.length,1);
+      const n=ports.length;ctx.close();await rejected(()=>mod.prepareDashboardCutoverNativeBuildInputsV${other}());assert.equal(ports.length,n);`,{protocol});
+  });
+}
+
+test('V4 dependency rejects genuine crossed V2 upstream before discovery',()=>{
+  fixture(`await rejected(()=>prepare());assert.equal(commands.length,0);
+    const n=ports.length;await rejected(()=>prepare());assert.equal(ports.length,n);`,{protocol:4,crossedSource:true});
+});
+test('V4 dependency refuses locator-only mismatch despite identical bytes and genuine V4 upstream',()=>{
+  fixture(`assert.ok(fs.readFileSync(selectedSource).equals(fs.readFileSync(root+'/scripts/dashboard-cutover-mach-job-peer-v4-alternate.c')));
+    await rejected(()=>prepare());assert.equal(commands.length,0);const n=ports.length;
+    await rejected(()=>prepare());assert.equal(ports.length,n);`,{protocol:4,alternateSource:true});
+});
+test('V4 dependency second canonical graph mismatch retains both originals without third child',()=>{
+  fixture(`await rejected(()=>prepare());assert.equal(commands.length,2);const n=ports.length;
+    await rejected(()=>prepare());assert.equal(ports.length,n);`,{protocol:4,
+    setup:`const output=dependencyOutput;dependencyOutput=n=>n===2?'setfarm-cutover-inputs: '+headerPaths[0]+'\\n':output();`});
+});
+
+for(const protocol of [2,4])test('V4 shared dependency vault '+protocol+' alternate reentry while original discovery is pending burns',()=>{
+  const other=protocol===2?4:2;
+  fixture(`await rejected(()=>prepare());await nested;assert.equal(commands.length,1);
+    const n=ports.length;await rejected(()=>mod.prepareDashboardCutoverNativeBuildInputsV${other}());assert.equal(ports.length,n);`,{
+    protocol,setup:`let nested;onFinish=n=>{if(n===1)nested=rejected(()=>mod.prepareDashboardCutoverNativeBuildInputsV${other}(undefined))};`});
+});
+
+test('V4 dependency original child error retains unknown disposition without retry',()=>{
+  fixture(`await rejected(()=>prepare());assert.equal(commands.length,1);assert.equal(children[0].actualClosed,undefined);
+    const n=ports.length;await rejected(()=>mod.prepareDashboardCutoverNativeBuildInputsV2());assert.equal(ports.length,n);`,{
+    protocol:4,setup:`outcome=()=>({error:true});`});
+});
+
+for(const protocol of [2,4])test((protocol===4?'V4 full oracle: ':'')+'two planned discoveries bind original source, fixed recipe and retained declared include closure',()=>{
   fixture(`const ctx=await prepare();assert.ok(Object.isFrozen(ctx));assert.ok(Object.isFrozen(ctx.observation));
     const o=ctx.observation;assert.equal(o.authority,'compiler-dependencies-only');assert.equal(o.headers.length,4);
     assert.equal(o.direct.sourceBuild.checkoutSource.sha,expected.sourceSha);assert.equal(o.discoveries.length,2);
@@ -136,7 +210,7 @@ test('two planned discoveries bind original source, fixed recipe and retained de
     const alias=o.headers.find(x=>x.locator.endsWith('/servers/bootstrap.h'));
     assert.equal(alias.physicalLocator,providers.sdk+'/usr/include/bootstrap.h');assert.equal(alias.aliasTarget,'../bootstrap.h');
     await Promise.resolve();ctx.recheck();assert.equal(writes.length,0);ctx.close();assert.equal(closes.length,opens.length);
-    const n=closes.length;ctx.close();assert.equal(closes.length,n);await rejected(()=>prepare());`);
+    const n=closes.length;ctx.close();assert.equal(closes.length,n);await rejected(()=>prepare());`,{protocol});
 });
 
 test('idle invalid arguments inspect no proxy and touch no files or compiler',()=>{
@@ -202,22 +276,22 @@ test('partial original header read burns and retains originals without second sp
     assert.equal(closes.includes(opens.findLast(x=>x.p===providers.resource+'/include/stdint.h').fd),false);`,{
     setup:`fs.readSync=(fd,b,o,l,p)=>fdPaths.get(fd)===providers.resource+'/include/stdint.h'?0:read(fd,b,o,l,p);`});
 });
-test('unknown once-close never disposes a reused include descriptor or later originals',()=>{
+for(const protocol of [2,4])test((protocol===4?'V4 close loss: ':'')+'unknown once-close never disposes a reused include descriptor or later originals',()=>{
   fixture(`const ctx=await prepare();const row=opens.findLast(x=>x.p===providers.sdk+'/usr/include/bootstrap.h');
     let replacement;closes.length=0;fs.closeSync=fd=>{closes.push(fd);close(fd);replacement=open(providers.node,'r');
       assert.equal(replacement,fd);throw Error('unknown original close')};syncBuiltinESMExports();
     refused(()=>ctx.close());assert.equal(closes.length,1);ctx.close();assert.equal(closes.length,1);
-    fs.fstatSync(replacement);close(replacement);`);
+    fs.fstatSync(replacement);close(replacement);`,{protocol});
 });
 test('idle method arity performs zero ports without burning healthy original custody',()=>{
   fixture(`const ctx=await prepare(),n=ports.length;refused(()=>ctx.recheck(undefined));refused(()=>ctx.close(undefined));
     assert.equal(ports.length,n);ctx.recheck();ctx.close();`);
 });
-test('header recheck reentry burns before another original read and allows only later idle disposal',()=>{
+for(const protocol of [2,4])test((protocol===4?'V4 recheck: ':'')+'header recheck reentry burns before another original read and allows only later idle disposal',()=>{
   fixture(`const ctx=await prepare();let armed=true,nested=0,reads=0;fs.readSync=(fd,b,o,l,p)=>{
     const n=read(fd,b,o,l,p);if(armed&&fdPaths.get(fd)===providers.resource+'/include/stdint.h'){
       armed=false;nested++;refused(()=>ctx.close())}else if(!armed)reads++;return n};syncBuiltinESMExports();
-    refused(()=>ctx.recheck());assert.equal(nested,1);assert.equal(reads,0);ctx.close();`);
+    refused(()=>ctx.recheck());assert.equal(nested,1);assert.equal(reads,0);ctx.close();`,{protocol});
 });
 test('external consumed original header number is never closed again after reuse',()=>{
   fixture(`const ctx=await prepare(),row=opens.findLast(x=>x.p===providers.headers+'/node_api.h');

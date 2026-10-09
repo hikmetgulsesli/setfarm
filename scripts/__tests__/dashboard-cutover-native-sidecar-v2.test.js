@@ -17,11 +17,12 @@ const env={PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'};
 
 // Each case exercises real source/Git/header custody; only external async
 // commands are simulated. Roots and original failure receipts are never removed.
-function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,actual=false}={}){
+function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,actual=false,protocol=2,crossedSource=false,alternateSource=false}={}){
   assert.ok(fs.existsSync(target),'missing nominated native sidecar builder');
   const names=['dashboard-cutover-native-sidecar-v2.mjs','dashboard-cutover-native-build-inputs-v2.mjs',
-    'dashboard-cutover-native-inputs-v2.mjs','build-generation-retention.mjs','dashboard-cutover-mach-peer-v2.c'];
+    'dashboard-cutover-native-inputs-v2.mjs','build-generation-retention.mjs','dashboard-cutover-mach-peer-v2.c','dashboard-cutover-mach-job-peer-v4.c'];
   const files=Object.fromEntries(names.map(n=>['scripts/'+n,fs.readFileSync(sourceRoot+'/scripts/'+n)]));
+  if(alternateSource)files['scripts/dashboard-cutover-mach-job-peer-v4-alternate.c']=files['scripts/dashboard-cutover-mach-job-peer-v4.c'];
   const created=createFinalizedFixture(files),{root}=created,providerRoot=root+'.sidecar-providers';
   const providers=Object.fromEntries(Object.entries(fixed).map(([k,p])=>[k,actual?p:providerRoot+p]));
   if(!actual){
@@ -41,17 +42,26 @@ function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,a
   for(const n of names.filter(n=>n.startsWith('dashboard-cutover-native-'))){
     let text=files['scripts/'+n].toString();
     for(const [k,p] of Object.entries(fixed))text=text.replaceAll("'"+p+"'","'"+providers[k]+"'");
+    if(crossedSource&&n==='dashboard-cutover-native-sidecar-v2.mjs'){
+      const from='prepare:()=>buildInputs.prepareDashboardCutoverNativeBuildInputsV4()';
+      assert.equal(text.split(from).length,2);text=text.replace(from,'prepare:()=>buildInputs.prepareDashboardCutoverNativeBuildInputsV2()');
+    }
+    if(alternateSource&&n==='dashboard-cutover-native-sidecar-v2.mjs'){
+      const from="'/scripts/dashboard-cutover-mach-job-peer-v4.c'";
+      assert.equal(text.split(from).length,2);text=text.replace(from,"'/scripts/dashboard-cutover-mach-job-peer-v4-alternate.c'");
+    }
     fs.writeFileSync(root+'/scripts/'+n,text);
   }
   git(root,['add','scripts']);git(root,['commit','-qm','relocate closed sidecar providers']);
   git(root,['update-ref','refs/remotes/origin/main','HEAD']);fs.renameSync(root+'/dist',root+'.previous-dist');
   }
-  const expected=actual?created.expected:finalize(root),source=fs.readFileSync(root+'/scripts/dashboard-cutover-mach-peer-v2.c');
+  const selectedSource=root+'/scripts/'+(protocol===4?'dashboard-cutover-mach-job-peer-v4.c':'dashboard-cutover-mach-peer-v2.c');
+  const expected=actual?created.expected:finalize(root),source=fs.readFileSync(selectedSource);
   const script=`import assert from 'node:assert/strict';import fs from 'node:fs';import cp from 'node:child_process';
     import {syncBuiltinESMExports} from 'node:module';import {EventEmitter} from 'node:events';
     import {PassThrough} from 'node:stream';import {createHash} from 'node:crypto';import {fileURLToPath} from 'node:url';
     const root=${JSON.stringify(root)},providers=${JSON.stringify(providers)},expected=${JSON.stringify(expected)},
-      sourceHash=${JSON.stringify(hash(source))},sourceLength=${source.length};
+      sourceHash=${JSON.stringify(hash(source))},sourceLength=${source.length},selectedSource=${JSON.stringify(selectedSource)};
     const digest=b=>createHash('sha256').update(b).digest('hex');
     const refused=fn=>assert.throws(fn,e=>e.message==='DASHBOARD_CUTOVER_NATIVE_SIDECAR_REFUSED');
     const rejected=fn=>assert.rejects(fn,e=>e.message==='DASHBOARD_CUTOVER_NATIVE_SIDECAR_REFUSED');
@@ -64,7 +74,7 @@ function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,a
       const f=fs[n];fs[n]=(...a)=>{ports.push(n);return f(...a)};}
     for(const n of ['mkdirSync','writeSync','writeFileSync','fchmodSync','fsyncSync','renameSync','chmodSync','rmSync','unlinkSync','rmdirSync']){
       const f=fs[n];fs[n]=(...a)=>{ports.push(n);effects.push({n,args:a});return f(...a)};}
-    const generation=root+'/.setfarm/dashboard-cutover-native-v2/'+expected.sourceSha+'.'+expected.buildHash;
+    const generation=root+'/.setfarm/dashboard-cutover-native-v${protocol}/'+expected.sourceSha+'.'+expected.buildHash;
     const headerPaths=[providers.headers+'/node_api.h',providers.resource+'/include/stdint.h',
       providers.sdk+'/usr/include/servers/bootstrap.h'];
     const deps=()=> 'setfarm-cutover-inputs: - '+headerPaths.join(' ')+'\\n';
@@ -115,11 +125,13 @@ function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,a
         setImmediate(()=>{if(!o.noClose){row.closed=true;row.code=o.code;row.signal=o.signal;child.emit('close',o.code,o.signal)}});
       }));return child;
     };
-    let prepare;
+    let prepare,mod;
     ${setup}
     ${preimport}
-    try{syncBuiltinESMExports();const importedOpenAt=opens.length,importedEffectsAt=effects.length,
-      mod=await import('./scripts/dashboard-cutover-native-sidecar-v2.mjs');
+    try{syncBuiltinESMExports();const importedOpenAt=opens.length,importedEffectsAt=effects.length;
+    mod=await import('./scripts/dashboard-cutover-native-sidecar-v2.mjs');
+    prepare=mod[${JSON.stringify('prepareDashboardCutoverNativeSidecarV'+protocol)}];
+    assert.equal(typeof prepare,'function','MISSING_FIXED_V4_NATIVE_SIDECAR');
     // The trusted ESM interpreter reads these four code modules. That is not
     // module-owned retention/preparation; any other original/effect is forbidden.
     const codeNames=new Set(['dashboard-cutover-native-sidecar-v2.mjs','dashboard-cutover-native-build-inputs-v2.mjs',
@@ -127,7 +139,7 @@ function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,a
     for(const r of opens.slice(importedOpenAt)){const p=r.p.startsWith('file:')?fileURLToPath(r.p):r.p;
       assert.ok(p.startsWith(root+'/scripts/')&&codeNames.has(p.slice((root+'/scripts/').length)),r.p);}
     assert.equal(commands.length,0);assert.equal(effects.length,importedEffectsAt);
-    assert.deepEqual(Object.keys(mod),['prepareDashboardCutoverNativeSidecarV2']);prepare=mod.prepareDashboardCutoverNativeSidecarV2;
+    assert.deepEqual(Object.keys(mod),['prepareDashboardCutoverNativeSidecarV2','prepareDashboardCutoverNativeSidecarV4']);
     ${before}
     ${body}}finally{const snapshot=JSON.stringify({root,generation,commandCount:commands.length,opens:opens.length,closes:closes.length,
       commands:commands.map(r=>({command:r.command,args:r.args,options:r.options,closed:r.closed,code:r.code,signal:r.signal,events:r.events,
@@ -148,11 +160,89 @@ function fixture(body,{setup='',before='',preimport='',profile=true,sdkDepth=0,a
   console.log(JSON.stringify({kind:'sidecar-consumer-case',root,status:r.status}));return {root,result:r};
 }
 
-test('terminal sidecar binds source, exact recipe, original commands and independent manifest contents',()=>fixture(`
+for(const protocol of [2,4]){
+  const other=protocol===2?4:2;
+  test('V4 shared sidecar vault '+protocol+' idle proxy preserves selection and closed retry has zero ports',()=>{
+    fixture(`const alternate=mod.prepareDashboardCutoverNativeSidecarV${other};let traps=0;
+      const proxy=new Proxy({},{get(){traps++;throw Error('secret')}}),n=ports.length;
+      await rejected(()=>alternate(proxy));assert.equal(traps,0);assert.equal(ports.length,n);
+      const ctx=await prepare(),at=ports.length;await rejected(()=>alternate());assert.equal(ports.length,at);
+      ctx.recheck();ctx.close();const closed=ports.length;await rejected(()=>alternate());assert.equal(ports.length,closed);`,{protocol});
+  });
+  test('V4 shared sidecar vault '+protocol+' alternate wrong arity during spawn prevents pipe write',()=>{
+    fixture(`await rejected(()=>prepare());await nested;assert.equal(commands.length,1);
+      assert.equal(commands[0].source.length,0);assert.equal(effects.length,0);
+      const n=ports.length;await rejected(()=>mod.prepareDashboardCutoverNativeSidecarV${other}());assert.equal(ports.length,n);`,{
+      protocol,setup:`let nested;onSpawn=()=>{nested=rejected(()=>mod.prepareDashboardCutoverNativeSidecarV${other}(undefined))};`});
+  });
+  test('V4 shared sidecar vault '+protocol+' alternate reentry stops once-only cleanup',()=>{
+    fixture(`const ctx=await prepare();let nested;closes.length=0;fs.closeSync=fd=>{closes.push(fd);close(fd);
+      if(!nested)nested=rejected(()=>mod.prepareDashboardCutoverNativeSidecarV${other}(undefined))};
+      syncBuiltinESMExports();refused(()=>ctx.close());await nested;assert.equal(closes.length,1);
+      const n=ports.length;ctx.close();await rejected(()=>mod.prepareDashboardCutoverNativeSidecarV${other}());assert.equal(ports.length,n);`,{protocol});
+  });
+}
+
+test('V4 terminal sidecar independently binds the job source and separate generation namespace',()=>fixture(`
+  const old=fs.readFileSync(root+'/scripts/dashboard-cutover-mach-peer-v2.c'),ctx=await prepare(),o=ctx.observation;
+  assert.equal(o.schema,'setfarm.internal-production-dashboard-native-sidecar-build.v4');
+  assert.equal(o.authority,'native-sidecar-build-only');assert.equal(o.generation,generation);assert.equal(commands.length,7);
+  assert.equal(commands[0].args.at(-1),'.setfarm/dashboard-cutover-native-v4/');
+  assert.equal(digest(Buffer.concat(commands[3].source)),sourceHash);assert.equal(Buffer.concat(commands[3].source).length,sourceLength);
+  const manifest=JSON.parse(fs.readFileSync(generation+'/manifest.json'));
+  assert.equal(manifest.schema,'setfarm.internal-production-dashboard-native-sidecar-build.v4');
+  assert.equal(manifest.source.locator,selectedSource);assert.equal(manifest.source.sha256,sourceHash);assert.equal(manifest.source.byteLength,sourceLength);
+  const direct=manifest.directInputs.find(f=>f.role==='source');assert.equal(direct.locator,selectedSource);assert.equal(direct.sha256,sourceHash);
+  assert.deepEqual(fs.readdirSync(generation).sort(),['inputs.d','manifest.json','peer.node','provider-tmp']);
+  assert.equal(fs.existsSync(root+'/.setfarm/dashboard-cutover-native-v2'),false);
+  for(const name of ['peer.node','inputs.d','manifest.json'])assert.equal(fs.statSync(generation+'/'+name).mode&0o777,0o444);
+  ctx.recheck();ctx.close();assert.ok(fs.readFileSync(root+'/scripts/dashboard-cutover-mach-peer-v2.c').equals(old));`,{protocol:4}));
+
+test('V4 sidecar accepts the same canonical graph with different dependency ordering',()=>fixture(`
+  const ctx=await prepare();assert.equal(commands.length,7);
+  const manifest=JSON.parse(fs.readFileSync(generation+'/manifest.json'));
+  assert.notEqual(manifest.discoveries[0].sha256,manifest.discoveries[1].sha256);
+  assert.deepEqual(manifest.headers.map(h=>h.locator).sort(),headerPaths.slice().sort());
+  ctx.recheck();ctx.close();`,{protocol:4,setup:`onFinish=n=>{if(n===3)headerPaths.reverse()};`}));
+
+test('V4 sidecar refuses genuine crossed V2 upstream before generation or compile',()=>fixture(`
+  await rejected(()=>prepare());assert.equal(commands.length,3);
+  assert.equal(commands.some(r=>r.args.includes('-bundle')),false);assert.equal(fs.existsSync(generation),false);
+  const n=ports.length;await rejected(()=>prepare());assert.equal(ports.length,n);`,{protocol:4,crossedSource:true}));
+
+test('V4 sidecar refuses locator-only mismatch with identical bytes and genuine V4 build inputs',()=>fixture(`
+  assert.ok(fs.readFileSync(selectedSource).equals(fs.readFileSync(root+'/scripts/dashboard-cutover-mach-job-peer-v4-alternate.c')));
+  await rejected(()=>prepare());assert.equal(commands.length,3);assert.equal(fs.existsSync(generation),false);
+  const n=ports.length;await rejected(()=>prepare());assert.equal(ports.length,n);`,{protocol:4,alternateSource:true}));
+
+test('V4 namespace collision preserves both historical namespaces without adoption',()=>fixture(`
+  const old=fs.readFileSync(generation+'/preserved'),v2=root+'/.setfarm/dashboard-cutover-native-v2/preserved';
+  await rejected(()=>prepare());assert.equal(commands.length,3);assert.ok(fs.readFileSync(generation+'/preserved').equals(old));
+  assert.equal(fs.readFileSync(v2,'utf8'),'V2 history');assert.equal(effects.some(e=>['unlinkSync','rmSync','rmdirSync'].includes(e.n)),false);
+  const n=ports.length;await rejected(()=>prepare());assert.equal(ports.length,n);`,{protocol:4,before:`
+    fs.mkdirSync(generation,{recursive:true,mode:0o700});fs.writeFileSync(generation+'/preserved','V4 history',{mode:0o600});
+    fs.mkdirSync(root+'/.setfarm/dashboard-cutover-native-v2',{mode:0o700});
+    fs.writeFileSync(root+'/.setfarm/dashboard-cutover-native-v2/preserved','V2 history',{mode:0o600});effects.length=0;`}));
+
+for(const protocol of [2,4])test('V4 shared sidecar vault '+protocol+' alternate reentry during pending compile prevents inspection',()=>{
+  const other=protocol===2?4:2;
+  fixture(`await rejected(()=>prepare());await nested;assert.equal(commands.length,4);
+    assert.equal(fs.existsSync(generation+'/manifest.json'),false);const n=ports.length;
+    await rejected(()=>mod.prepareDashboardCutoverNativeSidecarV${other}());assert.equal(ports.length,n);`,{
+    protocol,setup:`let nested;onFinish=n=>{if(n===4)nested=rejected(()=>mod.prepareDashboardCutoverNativeSidecarV${other}(undefined))};`});
+});
+
+test('V4 sidecar original compile error retains unknown child and generation without retry',()=>fixture(`
+  await rejected(()=>prepare());assert.equal(commands.length,4);assert.equal(commands[3].closed,false);
+  assert.equal(fs.existsSync(generation+'/manifest.json'),false);const n=ports.length;
+  await rejected(()=>mod.prepareDashboardCutoverNativeSidecarV2());assert.equal(ports.length,n);`,{
+  protocol:4,setup:`outcome=n=>n===4?{error:true}:{code:0,signal:null,stderr:''};`}));
+
+for(const protocol of [2,4])test((protocol===4?'V4 full oracle: ':'')+'terminal sidecar binds source, exact recipe, original commands and independent manifest contents',()=>fixture(`
   const ctx=await prepare(),o=ctx.observation;assert.ok(Object.isFrozen(ctx));assert.ok(Object.isFrozen(o));
   assert.equal(o.authority,'native-sidecar-build-only');assert.equal(o.generation,generation);assert.equal(commands.length,7);
   const g=commands[0];assert.equal(g.command,'/usr/bin/git');assert.deepEqual(g.args,
-    ['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','check-ignore','-q','--','.setfarm/dashboard-cutover-native-v2/']);
+    ['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','check-ignore','-q','--','.setfarm/dashboard-cutover-native-v${protocol}/']);
   assert.equal(g.options.cwd,root);assert.deepEqual(g.options.env,{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',GIT_CONFIG_NOSYSTEM:'1',
     GIT_CONFIG_GLOBAL:'/dev/null',GIT_NO_REPLACE_OBJECTS:'1',GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0'});
   const c=commands[3];assert.equal(c.command,providers.clang);assert.deepEqual(c.args,
@@ -169,7 +259,7 @@ test('terminal sidecar binds source, exact recipe, original commands and indepen
     [providers.nm,['-gU',generation+'/peer.node']],[providers.otool,['-L',generation+'/peer.node']]]);
   assert.deepEqual(fs.readdirSync(generation).sort(),['inputs.d','manifest.json','peer.node','provider-tmp']);
   assert.deepEqual(fs.readdirSync(generation+'/provider-tmp'),[]);
-  const m=JSON.parse(fs.readFileSync(generation+'/manifest.json'));assert.equal(m.schema,'setfarm.internal-production-dashboard-native-sidecar-build.v2');
+  const m=JSON.parse(fs.readFileSync(generation+'/manifest.json'));assert.equal(m.schema,'setfarm.internal-production-dashboard-native-sidecar-build.v${protocol}');
   assert.deepEqual(m.sourceBuild,{sha:expected.sourceSha,treeHash:expected.sourceTreeHash,buildHash:expected.buildHash});
   assert.equal(m.source.sha256,sourceHash);assert.equal(m.source.byteLength,sourceLength);assert.equal(m.linkInputs.length,6);
   for(const p of [...m.linkInputs,...m.headers,...m.directInputs]){const original=fs.readFileSync(p.physicalLocator??p.locator);
@@ -187,7 +277,7 @@ test('terminal sidecar binds source, exact recipe, original commands and indepen
     assert.equal(c.stdoutHash,digest(Buffer.concat(r.stdout)));assert.equal(c.stderrLength,0);}
   for(const n of ['peer.node','inputs.d','manifest.json'])assert.equal(fs.statSync(generation+'/'+n).mode&0o777,0o444);
   await Promise.resolve();ctx.recheck();ctx.close();assert.equal(closes.length,opens.length);
-  const n=ports.length;ctx.close();assert.equal(ports.length,n);await rejected(()=>prepare());`));
+  const n=ports.length;ctx.close();assert.equal(ports.length,n);await rejected(()=>prepare());`,{protocol}));
 
 test('invalid idle arguments do not inspect proxy or admit effect ports',()=>fixture(`const n=ports.length;
   let traps=0;const p=new Proxy({},{get(){traps++;throw Error('secret')}});await rejected(()=>prepare(p));await rejected(()=>prepare(undefined));
@@ -234,10 +324,10 @@ for(const kind of ['bundle','manifest','link','header'])test('terminal '+kind+' 
     link:"providers.clt+'/usr/lib/libtapi.dylib'",header:"providers.resource+'/include/stdint.h'"})[kind]};
   fs.renameSync(p,p+'.original');fs.renameSync(p+'.original',p);refused(()=>ctx.recheck());const n=commands.length;
   refused(()=>ctx.recheck());assert.equal(commands.length,n);ctx.close();`));
-test('once-close unknown does not close reused number or later originals',()=>fixture(`const ctx=await prepare();
+for(const protocol of [2,4])test((protocol===4?'V4 close loss: ':'')+'once-close unknown does not close reused number or later originals',()=>fixture(`const ctx=await prepare();
   let replacement;closes.length=0;fs.closeSync=fd=>{closes.push(fd);close(fd);replacement=open(providers.node,'r');
     assert.equal(replacement,fd);throw Error('unknown close')};syncBuiltinESMExports();refused(()=>ctx.close());
-  assert.equal(closes.length,1);ctx.close();assert.equal(closes.length,1);fs.fstatSync(replacement);close(replacement);`));
+  assert.equal(closes.length,1);ctx.close();assert.equal(closes.length,1);fs.fstatSync(replacement);close(replacement);`,{protocol}));
 
 test('source drift during Git settlement refuses before bootstrap',()=>fixture(`await rejected(()=>prepare());
   assert.equal(commands.length,1);assert.equal(fs.existsSync(root+'/.setfarm'),false);`,{
@@ -310,10 +400,10 @@ test('already-burned close reentry consumes only its first original descriptor',
   fs.renameSync(generation+'/peer.node',generation+'/peer.node.saved');refused(()=>ctx.recheck());let nested=0;closes.length=0;
   fs.closeSync=fd=>{closes.push(fd);close(fd);if(!nested){nested++;refused(()=>ctx.close())}};syncBuiltinESMExports();
   refused(()=>ctx.close());assert.equal(closes.length,1);ctx.close();assert.equal(closes.length,1);`));
-test('externally consumed terminal descriptor is never closed after number reuse',()=>fixture(`const ctx=await prepare();
+for(const protocol of [2,4])test((protocol===4?'V4 close loss: ':'')+'externally consumed terminal descriptor is never closed after number reuse',()=>fixture(`const ctx=await prepare();
   const row=opens.findLast(x=>x.p===generation+'/manifest.json');close(row.fd);const replacement=open(providers.node,'r');
   assert.equal(replacement,row.fd);refused(()=>ctx.recheck());closes.length=0;refused(()=>ctx.close());assert.equal(closes.length,0);
-  fs.fstatSync(replacement);ctx.close();assert.equal(closes.length,0);close(replacement);`));
+  fs.fstatSync(replacement);ctx.close();assert.equal(closes.length,0);close(replacement);`,{protocol}));
 test('idle terminal method arity admits zero ports without revoking custody',()=>fixture(`const ctx=await prepare(),n=ports.length;
   refused(()=>ctx.recheck(undefined));refused(()=>ctx.close(undefined));assert.equal(ports.length,n);ctx.recheck();ctx.close();`));
 test('bounded manifest refuses before opening its output occurrence',()=>fixture(`await rejected(()=>prepare());

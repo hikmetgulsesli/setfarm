@@ -2102,3 +2102,82 @@ were test-only FD tracking/builtin export synchronization, recorded unchanged.
 Original receipt ledger logs/2026-10-09-dashboard-cutover-approved-definition-original.md;
 all private owned originals retained. No full build/clean-main/source-host/job/
 owner/control/phase/adapter/foreground/live3333 qualification is claimed.
+
+Task4i.1 delivered dcec316d4dddf901aaae7c50e4165474ef6cb526 with two independent
+seven-exact-file source/evidence C0/I0/M0 reviews. Normal forward push/PR280
+OPEN DRAFT, exactheadGitGuardianSUCCESS2026-10-09T00:46:34Z; original55956B
+PRbodyprefix preserved, new58007B privatebody exactserver. Reviews[] andinline
+comments[] are not Copilot/Gemini completion. Final strict1193/0 and direct
+migration/shared-dependency MC12 check passed; ordinarynpmchecks missing local
+dependencies and no fullbuild/main/cutover credit remain explicit.
+
+## Task4i.2: fixed retained V4 native source/dependency/sidecar binding
+
+Causal prerequisite: existing direct inputs153, build inputs16 and sidecar21
+still nominate scripts/dashboard-cutover-mach-peer-v2.c (V3). Reviewed job V4 C
+cannot be used by the eventual source-owned foreground/control consumer until
+that SAME actual V4 byte occurrence/dependency graph/terminal output is retained.
+Task4i.1 material succeeds without proving any addon or endpoint.
+
+File Map: existing scripts/dashboard-cutover-native-inputs-v2.mjs,
+dashboard-cutover-native-build-inputs-v2.mjs, dashboard-cutover-native-sidecar-v2.mjs;
+their three existing scripts/__tests__ files; paired design/plan. Pure-script
+enrollment already includes those files, no new runtime entry or public CLI.
+Keep root single writer, agents independent RO design/source/evidence only.
+
+Select private literal V2/V4 bindings inside the same existing providers, sharing
+one original attempt/activity/uncertainty vault per provider. Alternative three
+duplicated V4 modules would duplicate delicate FD/child/cleanup rules and force
+new source inventories; caller-selected generic profiles would expose unsafe
+selection. Fixed zero-argument exported V4 entry points add no caller factory.
+Preserve original V2 literal paths/schemas/namespace/custody and behavior.
+
+Exact interfaces: holdDashboardCutoverNativeInputsV4(),
+prepareDashboardCutoverNativeBuildInputsV4(), prepareDashboardCutoverNativeSidecarV4().
+All return existing frozen DATA-only observation/recheck/close holder shape.
+No source/profile/path/bytes/permission/addon-load callback argument or getter.
+Distinct V4 schemas and fixed .setfarm/dashboard-cutover-native-v4 namespace
+are in paired spec. Internal V4 downstream composition rejects a V2 schema,
+source locator/hash/length mismatch, crossed profile and dependency graph before
+later compiler/publication ports. Existing V2 checks remain at least as strict.
+
+- [x] Independently review fixed bindings, shared original activity/one attempt,
+  V2 compatibility, source-build constraints and no-evaluation boundary.
+- [x] Author actual missing-V4-export RED through each existing source fixture
+  BEFORE production. Fresh private finalized-source/Git/FS fixtures retained;
+  only relocated fixed provider literals and inert external command ports.
+  Missing API must fail before V4 FS/compiler dispatch, not old-export-list/setup.
+- [x] Add minimal private literal selection + three fixed zero-input V4 exports;
+  same retained original resource/once-only cleanup rules, no new generic API.
+- [x] Qualify actual V4 source/hash/byte occurrence, double dependency discovery,
+  terminal V4 manifest/outputs; V3 retained unchanged. Negatives: crossed V2/V4
+  schema/source, source/ancestor/dependency drift, V4 namespace collision,
+  shared cross-profile swallowed reentry, partial acquisition and close loss.
+- [ ] Run focused source-fault matrix + old V2 controls excluding previously
+  retained actual-native campaigns. Strict/contracts/diff checks; two final RO
+  reviews; root scoped normal commit/push/preserved DRAFT append/scanner.
+- [ ] Nominate fresh actual V4 compiler qualification separately only after
+  finalized source/build constraints are proven. No addon evaluation/bootstrap/
+  job mutation or old campaign replay in this source-only slice. All host birth,
+  foreground, six effects/controller, owner/phase/legacy and clean-main/live3333
+  requirements remain; observations cannot substitute for genuine capabilities.
+
+Task4i.2 test-only refinement: two exact source-fault fixture copies replace
+the private V4 downstream call with genuine V2 before the final private source commit/finalization;
+no fabricated authoritative holder or production selector. Actual initial
+3P GREEN; shared-vault expansion16P2F was fixture lexical mod scope only, fixed
+without production change. Equivalent graph-order test actually RED c64ff8,
+then minimal removal of unnecessary raw output equality GREEN925c93. Canonical
+graphs remain compared twice by genuine build provider and against compile
+depfile; no graph/security guard was relaxed.
+
+Task4i.2 frozen final verification: generic Node22 mechanical181tests178P0F3SKIP,
+383222.1685ms; explicit fixed Node26.4.0 focused45P0F0SKIP94681.370125ms.
+Three actual-native campaign flags explicitly removed in the full matrix;
+neither matrix executes real compiler/Mach or authenticates production build.
+Root independent9c3cb8 readback all223 retained fixture results,0faults; full
+root/result/tool-output index logs/2026-10-09-dashboard-cutover-native-v4-frozen-matrix-index.json.
+Direct/build/sidecar counts full40/57/81 and fixed26focused12/16/17. Strictfd12e9
+1193files0diagnostics; syntaxb6232e0, migrationdcab940, version/English/path0.
+Both independent source seats C0/I0/M0; final complete-original evidence review
+still pending. No staged/commit/push/clean-main/fullbuild/host/foreground credit.

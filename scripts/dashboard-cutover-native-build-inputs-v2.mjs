@@ -4,7 +4,7 @@ import {spawn} from 'node:child_process';
 import {constants,openSync,closeSync,lstatSync,fstatSync,readSync,readlinkSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {holdDashboardCutoverNativeInputsV2} from './dashboard-cutover-native-inputs-v2.mjs';
+import * as directInputs from './dashboard-cutover-native-inputs-v2.mjs';
 
 const NODE='/opt/homebrew/Cellar/node/26.4.0/bin/node';
 const CLANG='/Library/Developer/CommandLineTools/usr/bin/clang';
@@ -13,7 +13,14 @@ const HEADERS='/opt/homebrew/Cellar/node/26.4.0/include/node';
 const SDK='/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk';
 const RESOURCE='/Library/Developer/CommandLineTools/usr/lib/clang/21';
 const ROOT=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const SOURCE=path.join(ROOT,'scripts/dashboard-cutover-mach-peer-v2.c');
+const V2=Object.freeze({source:path.join(ROOT,'scripts/dashboard-cutover-mach-peer-v2.c'),
+  schema:'setfarm.internal-production-dashboard-native-build-inputs.v2',
+  directSchema:'setfarm.internal-production-dashboard-native-direct-inputs.v2',
+  hold:()=>directInputs.holdDashboardCutoverNativeInputsV2()});
+const V4=Object.freeze({source:path.join(ROOT,'scripts/dashboard-cutover-mach-job-peer-v4.c'),
+  schema:'setfarm.internal-production-dashboard-native-build-inputs.v4',
+  directSchema:'setfarm.internal-production-dashboard-native-direct-inputs.v4',
+  hold:()=>directInputs.holdDashboardCutoverNativeInputsV4()});
 const ALIAS=SDK+'/usr/include/servers/bootstrap.h',ALIAS_TARGET='../bootstrap.h';
 const PHYSICAL_ALIAS=SDK+'/usr/include/bootstrap.h';
 const identity=['dev','ino','uid','gid','mode','birthtimeNs'];
@@ -181,22 +188,31 @@ function close(){
     vault.directCloseAttempted=true;vault.direct.close();if(vault.revocations!==revocations)refuse();
   }catch{burn();refuse()}finally{vault.active=false}
 }
-export async function prepareDashboardCutoverNativeBuildInputsV2(){
-  if(vault.active){burn();refuse()}if(arguments.length||!profile())refuse();
+async function prepareFixed(binding,arity){
+  if(vault.active){burn();refuse()}if(arity||!profile())refuse();
   if(vault.attempted||vault.burned||vault.closed)refuse();enter();vault.attempted=true;vault.uid=BigInt(process.getuid());
   try{
-    alive();vault.direct=holdDashboardCutoverNativeInputsV2();alive();
-    const source=holdFile(SOURCE,true);vault.source=source.bytes;
+    alive();vault.direct=binding.hold();alive();
+    if(binding===V4){
+      const o=vault.direct.observation,p=o.profile;
+      if(o.schema!==binding.directSchema||o.authority!=='direct-inputs-only'
+        ||p.platform!=='darwin'||p.arch!=='arm64'||p.nodeVersion!=='26.4.0'||p.napiVersion!==8
+        ||p.sdk!==SDK||p.resource!==RESOURCE||o.files.filter(f=>f.role==='source').length!==1)refuse();
+    }
+    const source=holdFile(binding.source,true);vault.source=source.bytes;
     const nominated=vault.direct.observation.files.find(f=>f.role==='source');
+    if(binding===V4&&nominated.locator!==binding.source)refuse();
     if(source.pin.sha256!==nominated.sha256||source.bytes.length!==nominated.byteLength)refuse();
     recheckOriginals();const first=parseDependencies(await discover('provisional'));alive();recheckOriginals();
     const headers=first.map(p=>holdFile(p).observation);recheckOriginals();
     const second=parseDependencies(await discover('held-validation'));alive();recheckOriginals();
     if(first.length!==second.length||first.some((p,i)=>p!==second[i]))refuse();
-    const observation=Object.freeze({schema:'setfarm.internal-production-dashboard-native-build-inputs.v2',
+    const observation=Object.freeze({schema:binding.schema,
       authority:'compiler-dependencies-only',direct:vault.direct.observation,headers:Object.freeze(headers),
       discoveries:Object.freeze(vault.children.map(c=>Object.freeze({phase:c.phase,code:c.code,signal:c.signal,
         byteLength:c.outputLength,sha256:hash(Buffer.concat(c.output,c.outputLength))})))});
     alive();return Object.freeze({observation,recheck,close});
   }catch{burn();refuse()}finally{vault.active=false}
 }
+export async function prepareDashboardCutoverNativeBuildInputsV2(){return prepareFixed(V2,arguments.length)}
+export async function prepareDashboardCutoverNativeBuildInputsV4(){return prepareFixed(V4,arguments.length)}

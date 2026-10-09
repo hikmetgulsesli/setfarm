@@ -15,6 +15,10 @@ const HEADERS='/opt/homebrew/Cellar/node/26.4.0/include/node';
 const SDK='/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk';
 const RESOURCE='/Library/Developer/CommandLineTools/usr/lib/clang/21';
 const ROOT=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const V2=Object.freeze({source:path.join(ROOT,'scripts/dashboard-cutover-mach-peer-v2.c'),
+  schema:'setfarm.internal-production-dashboard-native-direct-inputs.v2'});
+const V4=Object.freeze({source:path.join(ROOT,'scripts/dashboard-cutover-mach-job-peer-v4.c'),
+  schema:'setfarm.internal-production-dashboard-native-direct-inputs.v4'});
 const FILE_LIMIT=512*1024*1024,TOTAL_LIMIT=1024*1024*1024,FD_LIMIT=256,BLOCK=65536;
 const identity=['dev','ino','uid','gid','mode','birthtimeNs'];
 const treeKeys=[...identity,'mtimeNs','ctimeNs'];
@@ -142,25 +146,27 @@ function close(){
     if(vault.revocations!==originalRevocations)refuse();
   }catch{vault.burned=true;refuse()}finally{vault.active=false}
 }
-export function holdDashboardCutoverNativeInputsV2(){
+function holdFixed(binding,arity){
   if(vault.active){burn();refuse()}
-  if(arguments.length||!profile())refuse();
+  if(arity||!profile())refuse();
   if(vault.attempted||vault.burned||vault.closed)refuse();
   enter();vault.attempted=true;vault.uid=BigInt(process.getuid());
   try{
     alive();vault.source=holdCurrentFinalizedSetfarmSourceBuildV1();alive();
     const files=[];
-    files.push(holdFile('source',path.join(ROOT,'scripts/dashboard-cutover-mach-peer-v2.c'),ROOT));
+    files.push(holdFile('source',binding.source,ROOT));
     for(const [role,locator,anchor] of [['node',NODE,path.dirname(path.dirname(NODE))],
       ['clang',CLANG,CLT],['ld',LD,CLT],['nm',NM,CLT],['otool',OTOOL,CLT]])files.push(holdFile(role,locator,anchor));
     holdAncestors(SDK,CLT);holdAncestors(RESOURCE,CLT);
     for(const name of ['node_api.h','node_api_types.h','js_native_api.h','js_native_api_types.h'])
       files.push(holdFile(name,path.join(HEADERS,name),path.dirname(path.dirname(NODE))));
     recheckOriginals();
-    const observation=Object.freeze({schema:'setfarm.internal-production-dashboard-native-direct-inputs.v2',
+    const observation=Object.freeze({schema:binding.schema,
       authority:'direct-inputs-only',profile:Object.freeze({platform:'darwin',arch:'arm64',nodeVersion:'26.4.0',
         napiVersion:8,sdk:SDK,resource:RESOURCE}),sourceBuild:vault.source.observation,files:Object.freeze(files)});
     alive();
     return Object.freeze({observation,recheck,close});
   }catch{vault.burned=true;refuse()}finally{vault.active=false}
 }
+export function holdDashboardCutoverNativeInputsV2(){return holdFixed(V2,arguments.length)}
+export function holdDashboardCutoverNativeInputsV4(){return holdFixed(V4,arguments.length)}

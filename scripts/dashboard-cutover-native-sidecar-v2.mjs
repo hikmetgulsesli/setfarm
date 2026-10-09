@@ -6,7 +6,7 @@ import {constants,openSync,closeSync,lstatSync,fstatSync,readSync,readdirSync,
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {observeCurrentFinalizedSetfarmSourceBuildV1} from './build-generation-retention.mjs';
-import {prepareDashboardCutoverNativeBuildInputsV2} from './dashboard-cutover-native-build-inputs-v2.mjs';
+import * as buildInputs from './dashboard-cutover-native-build-inputs-v2.mjs';
 
 const NODE='/opt/homebrew/Cellar/node/26.4.0/bin/node';
 const CLANG='/Library/Developer/CommandLineTools/usr/bin/clang';
@@ -18,8 +18,14 @@ const HEADERS='/opt/homebrew/Cellar/node/26.4.0/include/node';
 const SDK='/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk';
 const RESOURCE='/Library/Developer/CommandLineTools/usr/lib/clang/21';
 const ROOT=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const SOURCE=ROOT+'/scripts/dashboard-cutover-mach-peer-v2.c';
-const PARENT=ROOT+'/.setfarm/dashboard-cutover-native-v2';
+const V2=Object.freeze({source:ROOT+'/scripts/dashboard-cutover-mach-peer-v2.c',
+  parent:ROOT+'/.setfarm/dashboard-cutover-native-v2',ignored:'.setfarm/dashboard-cutover-native-v2/',
+  schema:'setfarm.internal-production-dashboard-native-sidecar-build.v2',
+  prepare:()=>buildInputs.prepareDashboardCutoverNativeBuildInputsV2()});
+const V4=Object.freeze({source:ROOT+'/scripts/dashboard-cutover-mach-job-peer-v4.c',
+  parent:ROOT+'/.setfarm/dashboard-cutover-native-v4',ignored:'.setfarm/dashboard-cutover-native-v4/',
+  schema:'setfarm.internal-production-dashboard-native-sidecar-build.v4',
+  prepare:()=>buildInputs.prepareDashboardCutoverNativeBuildInputsV4()});
 const NAPI=['create_buffer_copy','define_properties','create_object','create_uint32','get_cb_info',
   'get_typedarray_info','is_typedarray','is_arraybuffer','is_detached_arraybuffer','object_freeze',
   'throw_error','is_exception_pending','get_and_clear_last_exception'];
@@ -34,7 +40,7 @@ const treeKeys=[...identity,'mtimeNs','ctimeNs'];
 const fileKeys=[...treeKeys,'size','nlink'];
 const vault={attempted:false,active:false,burned:false,closed:false,revocations:0,uid:null,
   inputs:null,pins:[],directories:new Map(),files:[],effects:[],children:[],total:0,
-  generation:null,temp:null,outputs:[],source:null,manifest:null,inputsCloseAttempted:false};
+  generation:null,temp:null,outputs:[],source:null,manifest:null,inputsCloseAttempted:false,binding:null};
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const same=(a,b,keys)=>keys.every(k=>a[k]===b[k]);
 const within=(r,p)=>p===r||p.startsWith(r+path.sep);
@@ -102,11 +108,11 @@ function optionalStat(locator){
 }
 function bootstrap(){
   const root=port(()=>lstatSync(ROOT,{bigint:true}));if(!root.isDirectory()||root.isSymbolicLink()||!safe(root,true))refuse();
-  for(const locator of [ROOT+'/.setfarm',PARENT]){
+  for(const locator of [ROOT+'/.setfarm',vault.binding.parent]){
     const s=optionalStat(locator)??mkdirOccurrence(locator);
     if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==vault.uid||(s.mode&0o777n)!==0o700n)refuse();
   }
-  ancestors(PARENT);checkDirectories();
+  ancestors(vault.binding.parent);checkDirectories();
 }
 function inventory(p,names){
   checkPin(p);const found=port(()=>readdirSync(p.locator));
@@ -251,18 +257,33 @@ function close(){
     vault.inputsCloseAttempted=true;vault.inputs.close();if(vault.revocations!==revocations)refuse();
   }catch{burn();refuse()}finally{vault.active=false}
 }
-export async function prepareDashboardCutoverNativeSidecarV2(){
-  if(vault.active){burn();refuse()}if(arguments.length||!profile())refuse();
+async function prepareFixed(binding,arity){
+  if(vault.active){burn();refuse()}if(arity||!profile())refuse();
   if(vault.attempted||vault.burned||vault.closed)refuse();enter();vault.attempted=true;vault.uid=BigInt(process.getuid());
+  vault.binding=binding;
   try{
     const preflight=port(()=>observeCurrentFinalizedSetfarmSourceBuildV1());
     const gitOutput=await command('ignored-parent','/usr/bin/git',['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false',
-      'check-ignore','-q','--','.setfarm/dashboard-cutover-native-v2/'],{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',
+      'check-ignore','-q','--',binding.ignored],{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',
       GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_NO_REPLACE_OBJECTS:'1',GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0'},ROOT);
     alive();if(gitOutput.length)refuse();
     const refreshed=port(()=>observeCurrentFinalizedSetfarmSourceBuildV1());
     if(!['sha','treeHash','buildHash'].every(k=>refreshed[k]===preflight[k]))refuse();bootstrap();alive();
-    vault.inputs=await prepareDashboardCutoverNativeBuildInputsV2();alive();
+    vault.inputs=await binding.prepare();alive();
+    if(binding===V4){
+      const o=vault.inputs.observation,d=o.direct,p=d.profile;
+      if(o.schema!=='setfarm.internal-production-dashboard-native-build-inputs.v4'
+        ||o.authority!=='compiler-dependencies-only'
+        ||d.schema!=='setfarm.internal-production-dashboard-native-direct-inputs.v4'
+        ||d.authority!=='direct-inputs-only'||p.platform!=='darwin'||p.arch!=='arm64'
+        ||p.nodeVersion!=='26.4.0'||p.napiVersion!==8||p.sdk!==SDK||p.resource!==RESOURCE
+        ||d.files.filter(f=>f.role==='source').length!==1
+        ||o.discoveries.length!==2||o.discoveries[0].phase!=='provisional'
+        ||o.discoveries[1].phase!=='held-validation'
+        ||o.discoveries.some(c=>c.code!==0||c.signal!==null))refuse();
+      // The genuine build-input provider compares parsed canonical graphs.
+      // Different discovery formatting/order is not a different dependency set.
+    }
     checkDirectories();
     const sourceBuild=vault.inputs.observation.direct.sourceBuild;
     if(!['sha','treeHash','buildHash'].every(k=>preflight[k]===sourceBuild.buildSource[k])
@@ -270,16 +291,18 @@ export async function prepareDashboardCutoverNativeSidecarV2(){
     const linkInputs=[];for(const locator of [CLT+'/usr/lib/libtapi.dylib',CLT+'/usr/lib/libcodedirectory.dylib',
       CLT+'/usr/lib/libLTO.dylib',CLT+'/usr/lib/libswiftDemangle.dylib',SDK+'/usr/lib/libSystem.B.tbd',SDK+'/usr/lib/libbsm.0.tbd'])
       linkInputs.push(holdFile(locator,'link-input',512*1024*1024).observation);
-    const source=holdFile(SOURCE,'source',65536,true);vault.source=source.bytes;
+    const source=holdFile(binding.source,'source',65536,true);vault.source=source.bytes;
     const directSource=vault.inputs.observation.direct.files.find(f=>f.role==='source');
+    if(binding===V4&&directSource.locator!==binding.source)refuse();
     if(source.pin.sha256!==directSource.sha256||source.bytes.length!==directSource.byteLength)refuse();
-    ancestors(PARENT);const parent=vault.directories.get(PARENT);checkDirectories();
-    const gen=PARENT+'/'+preflight.sha+'.'+preflight.buildHash;
+    const parentLocator=binding.parent;
+    ancestors(parentLocator);const parent=vault.directories.get(parentLocator);checkDirectories();
+    const gen=parentLocator+'/'+preflight.sha+'.'+preflight.buildHash;
     // Parent may contain preserved prior generations; only its metadata changes.
-    const parentNames=port(()=>readdirSync(PARENT));if(parentNames.length>128||parentNames.includes(path.basename(gen)))refuse();
+    const parentNames=port(()=>readdirSync(parentLocator));if(parentNames.length>128||parentNames.includes(path.basename(gen)))refuse();
     mkdirOccurrence(gen);
     const named=port(()=>fstatSync(parent.fd,{bigint:true}));if(!same(parent.stats,named,identity))refuse();
-    const entries=port(()=>readdirSync(PARENT));if(!exact(sorted(entries),sorted([...parentNames,path.basename(gen)])))refuse();
+    const entries=port(()=>readdirSync(parentLocator));if(!exact(sorted(entries),sorted([...parentNames,path.basename(gen)])))refuse();
     parent.stats=named;checkPin(parent);vault.generation=holdDirectory(gen);inventory(vault.generation,[]);
     vault.temp=createChildDirectory(vault.generation,gen+'/provider-tmp',['provider-tmp']);inventory(vault.temp,[]);
     recheckInputs();const commandEnv={PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C',TMPDIR:gen+'/provider-tmp'};
@@ -295,7 +318,7 @@ export async function prepareDashboardCutoverNativeSidecarV2(){
     const exports=symbols(await command('exports',NM,['-gU',gen+'/peer.node'],commandEnv,'/private/tmp'),false);alive();recheckInputs();
     if(!exact(exports,EXPORTS))refuse();
     const dependencies=dylibs(await command('dependencies',OTOOL,['-L',gen+'/peer.node'],commandEnv,'/private/tmp'),gen);alive();recheckInputs();
-    const manifest={schema:'setfarm.internal-production-dashboard-native-sidecar-build.v2',
+    const manifest={schema:binding.schema,
       sourceBuild:{sha:preflight.sha,treeHash:preflight.treeHash,buildHash:preflight.buildHash},source:source.observation,
       profile:vault.inputs.observation.direct.profile,directInputs:vault.inputs.observation.direct.files,linkInputs,
       headers:vault.inputs.observation.headers,discoveries:vault.inputs.observation.discoveries,
@@ -307,3 +330,5 @@ export async function prepareDashboardCutoverNativeSidecarV2(){
     alive();return Object.freeze({observation,recheck,close});
   }catch{burn();refuse()}finally{vault.active=false}
 }
+export async function prepareDashboardCutoverNativeSidecarV2(){return prepareFixed(V2,arguments.length)}
+export async function prepareDashboardCutoverNativeSidecarV4(){return prepareFixed(V4,arguments.length)}
