@@ -131,3 +131,41 @@ package authority or signing. The other13 failures belong to private HOME
 preparation: a new diagnostic generation must contain empty Library/LaunchAgents
 before its initial pins, preserving the old supplier and unchanged isolation
 guard. A fresh complete unchanged chain remains necessary before delivery.
+
+### Causally necessary unsafe helper-history fixture
+
+The unchanged biFtU4 stock private-all chain naturally closed1/null with89
+groups8477tests/8377PASS/1FAIL/99SKIP. The sole failure is the unsafe-mode
+helper-history test: mkdir0755 inherits077 and creates0700, so the unchanged
+observer correctly accepts private absent history. Root and independent full
+receipt/journal/physical-custody audits agree; the failed owner stays retained.
+The later isolated and manifest groups did not execute and receive no credit.
+
+File Map adds only `tests/internal-production/baseline-deployment-cutover-helper-observation-v1.test.ts`
+and this paired plan/spec. First assert the literal native0755 precondition and
+witness077 RED. Then explicitly chmod only that newly authored fixture root;
+retain exact refusal, check unchanged inode/mode and zero writes/connections/
+effects. The symlink control remains real. Production ancestry policy, global
+umask, SQL/transport, source owner and previous evidence remain unchanged.
+Focused077/022 and full cutover checks precede an unchanged fresh full chain;
+this fixture correction alone does not authorize merge/build/live admission.
+
+### Remaining isolated-lane fixture preparation
+
+Read-only inspection found the cold-output healthy test creates0755/0644/0444
+objects without finalizing modes, while the real launch-output verifier requires
+those exact modes. It also recreates a declared0644 dependency. The private-chain
+acquisition test creates its unsafe0755 directory with mkdir alone, losing the
+intended validation failure under077. Both are verification-preparation defects
+causally necessary for this same delivery, not production behavior changes.
+File Map adds only `tests/internal-production/owner-admission-v1.test.ts` and
+`tests/internal-production/baseline-restart-authority-retirement-v1.test.ts` plus
+this paired plan/spec. Require actual native preconditions and077 RED before
+finalizing only fresh owned fixtures; preserve bytes/identity, literal original
+assertions/causes, consumed-FD custody and all production ancestry/output policy.
+The tail preflight and new unchanged full chain remain required separately.
+The same retirement fixture has two compiled-output builders which normalize
+ordinary outputs but create each metadata trio afterward as0444 without chmod.
+Require actual0444/nlink1/bytes before handoff and witness077 RED for both
+builders; explicitly finalize only their six freshly authored metadata objects.
+This remains within the same two-file fixture map and leaves guards unchanged.

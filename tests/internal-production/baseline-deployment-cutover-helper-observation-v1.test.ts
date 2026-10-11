@@ -153,10 +153,23 @@ for (const name of ["pre-schema-helper-journal.json", ".pre-schema-helper-journa
 
 for (const fault of ["unsafe-mode", "symlink"]) {
   test(`${fault} helper ancestry refuses without repair`, () => fixture((home, root) => {
-    if (fault === "unsafe-mode") fs.mkdirSync(root, { mode: 0o755 });
+    if (fault === "unsafe-mode") {
+      fs.mkdirSync(root, { mode: 0o755 });
+      fs.chmodSync(root, 0o755);
+    }
     else fs.symlinkSync("missing-retirement-root", root);
+    const before = fs.lstatSync(root, { bigint: true });
+    if (fault === "unsafe-mode") {
+      assert.equal(before.isDirectory(), true);
+      assert.equal(before.isSymbolicLink(), false);
+      assert.equal(before.mode & 0o7777n, 0o755n);
+    } else assert.equal(before.isSymbolicLink(), true);
     const result = observe(home);
     assert.equal(result.error, "DEPLOYMENT_CUTOVER_HELPER_OBSERVATION_INVALID"); assert.equal(result.writes, 0);
+    assert.equal(result.connections, 0); assert.equal(result.effects, 0);
+    const after = fs.lstatSync(root, { bigint: true });
+    assert.equal(after.dev, before.dev); assert.equal(after.ino, before.ino);
+    assert.equal(after.mode, before.mode);
   }));
 }
 

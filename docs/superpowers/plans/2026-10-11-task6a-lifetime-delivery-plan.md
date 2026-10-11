@@ -212,6 +212,68 @@ Exact four-path cb10-relative review C0/I0; no complete chain, build, signing,
 privileged package admission or live rollout credit follows. New browser HOME
 provisioning v5 first-use C0/I0/M0 remains gated on this clean local checkpoint.
 
+## Task8: Actual unsafe helper-history ancestry perturbation
+
+Files: the existing helper-observation test and this paired plan/spec; production
+observer/census and interfaces remain unchanged. This repairs the demonstrated
+premerge verification fixture defect, not a newly discovered transport failure.
+
+- [x] Original biFtU4 naturally1/null; root and independent complete custody audit
+  agree:89groups8377PASS/1FAIL/99SKIP, no reserve/capture fault. Preserve owner.
+- [x] Require native literal0755 before unsafe observation; witness077 RED
+  against mkdir-only fixture. Catch removal of the actual ancestry mode guard,
+  unexpected repair/effects, or accidentally safe negative input.
+- [x] Chmod only fresh fixture root0755; preserve native dev/ino/mode after
+  refusal and zero writes/connections/effects for both real ancestry controls.
+- [ ] Full affected file077/022, stock full cutover group and genuine remaining
+  isolated/manifest gates; strict types/contracts and exact independent review.
+- [ ] Commit/push a scoped checkpoint, exact-head review/security, new unchanged
+  stock private-all with root and independent terminal audit; only then reviewed
+  merge and actual clean-main standby build. No old failed capture retro-PASS.
+
+Task8 actual checkpoint: stronger077 RED2tests1PASS/1FAIL448nversus493n before
+observation. Minimal fresh-root chmod yields full affected file23PASS under077
+and022, no skips; ordinary stock cutover441PASS/0FAIL/0SKIP. TS5.9.3 actual
+source plus affected test833roots1181files0diagnostics/noEmit; version2.3.79,
+English1936/path968/migration digests/12MC contracts and diff check pass.
+Independent exact three-path review C0/I0; empty duplicate heading corrected.
+These checks are not the unchanged full-chain or clean-main build gate.
+
+## Task9: Remaining isolated-lane fixture preparation
+
+Read-only inspection of the eight previously unexecuted isolated test files
+identified two further mask-dependent preparations. File Map adds only
+`tests/internal-production/owner-admission-v1.test.ts` and
+`tests/internal-production/baseline-restart-authority-retirement-v1.test.ts`
+plus this paired plan/spec. Preserve all current tests/guards and literal errors.
+
+- [x] Cold output fixture: require actual owned0755 directories,0644 outputs and
+ 0444 metadata before real verifier. Witness077 RED; then finalize only these
+ freshly authored outputs, preserving identity/bytes. Finalize the explicitly
+ recreated dependency too; keep every original drift/topology assertion.
+- [x] Private-chain acquisition perturbation: require actual0755/0700 before
+ real guard; witness077 RED; then chmod only the newly authored unsafe fixture
+ directory. Preserve original validation/cleanup causes and consumed-FD tests.
+- [ ] Focused077/022, exact diff/strict/source checks, and genuinely owned private
+ cluster running ordinary remaining isolated/manifest commands. Full unchanged
+ chain remains mandatory; do not start the long retry before this tail preflight.
+- [x] Two retirement compiled-output metadata trios: native0444/nlink1/body
+ preconditions, real077 RED for both builders, fresh-file chmod0444 and byte/
+ identity preservation. Keep all direct/cold protocol perturbations unchanged.
+
+Task9 actual checkpoint: paired cold-output/private-chain077 RED2FAIL at native
+0700versus0755; focused077/022 GREEN2PASS each. Two metadata builders each
+independently077 RED0400versus0444; correctly named paired direct/cold controls
+GREEN2PASS under077 and022. The first metadata command named a nonexistent
+direct test and actually ran only the cold control; the subsequent exact-name
+direct RED supplies its missing evidence, not an inferred two-test result.
+Stock manifest18PASS. Ordinary source/affected-helper strict check remains zero;
+expanding strict roots to the two large historical fixtures exposes257 existing
+diagnostics. Exact in-memory8c preimages have the same257 diagnostic multiset;
+no new diagnostics, not a passing all-fixture strict check. No production source,
+global mask, guard, golden, source compiler policy or historical error is changed.
+Remaining private tail, full unchanged chain and clean-main build are pending.
+
 ## Earlier bounded verification checkpoint
 
 At4c61a68d, capsule `logs/setfarm-lifetime-source-capsule-Ydy8fh` captured18
