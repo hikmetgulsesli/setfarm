@@ -167,6 +167,53 @@ not47 separate browser lifecycles; no descendant-closure/full-chain credit.
 
 ## Fresh bounded verification checkpoint
 
+## Task7: Native aggregate and unsigned trust fixture finalization
+
+Files/interfaces: paired design's two changed fixture/test-support files and
+unchanged trust-audit test consumer; existing handles, C protocol and trust schema
+remain unchanged.
+
+- [x] Add real regular/nonlink/mode/dev/uid/gid/nlink/byte preconditions before
+  returning newly authored aggregate fixtures; actual077 RED must name the
+  permission precondition before protocol dispatch.
+- [x] Finalize only fresh wx-authored aggregate files to their declared0444/0555;
+  retain original bytes and native object identity. Focused077/022 GREEN must
+  reach every original protocol perturbation and assertion.
+- [x] Add trust marker pre-handoff native/byte verification; actual077 refusal,
+  then exclusive new marker creation and chmod0444, existing guard unchanged.
+  Focused077/022 trust controls, exact diff review and source strict checks.
+- [ ] Prepare a new private browser HOME with empty0700 LaunchAgents before
+  baseline capture, independently review immutable tools, repeat unchanged
+  private-all; old supplier/evidence stay visible and unchanged.
+- [ ] Fresh exact-head review/security, reviewed PR integration and genuinely
+  clean-main stock build remain required; no focused-test rollout inference.
+
+djSoak terminal:6745/6677PASS28FAIL0CANCEL40SKIP, compiler1405PASS. Complete
+strict2668-frame journal/current1741 pins/browser691 and byte-exact mirrored
+streams verified by root and independent reviewer; source freeze released.
+Three preparation families account for13+2+13 failures; no gate weakening.
+
+Task7 finite checkpoint: first stronger077 control6QwkFo50tests1PASS49FAIL
+hit an invalid process-GID oracle (20 versus actual parent0), so it earns no
+permission-causal RED credit. Correcting only that oracle to native parent GID
+produced rO9Fzd50tests1PASS49FAIL: all46 aggregate cases fail0400versus0444
+before protocol dispatch; three trust cases reject the builder before handle
+publication. The builder cleaned its marker, so that combined trust refusal is
+not an independently retained marker-mode measurement. Both failed owners remain.
+
+Nine fresh wx-authored aggregate chmod operations and one exclusive wx-authored
+trust marker chmod leave native policy, bytes and historical assertions unchanged.
+GREEN077 F3Rmnz and GREEN022 4wBulh each50PASS0FAIL0SKIP, natural0/null,
+capturefaults[]/reservefalse. All1566 before/after/current input pins plus artifacts,
+exact source inventory/HEAD/status and full original outputs agree under root and
+independent audit. The50 include all original protocol perturbations, one hostile
+input boundary and three trust-audit cases, not50 host admission lifecycles.
+Exact four-path cb10-relative review C0/I0; no complete chain, build, signing,
+privileged package admission or live rollout credit follows. New browser HOME
+provisioning v5 first-use C0/I0/M0 remains gated on this clean local checkpoint.
+
+## Earlier bounded verification checkpoint
+
 At4c61a68d, capsule `logs/setfarm-lifetime-source-capsule-Ydy8fh` captured18
 members135888B. Valid preflight05zOUN:23PASS/1explicitprivilegedSKIP, natural0/null.
 Earlier9E8xGh refused the diagnostic long TMPDIR (>103-byte socket bound); retained

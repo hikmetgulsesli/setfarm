@@ -112,3 +112,22 @@ HEAD==origin/main, ordinary lockfile provisioning/build and final stock manifest
 Keep standby unselected. No fake main/origin, dirty/runtime guard bypass, full
 application-suite inference, fixed descriptor authentication, native backend
 extinction, controller admission or live3333 claim follows the narrow tests.
+
+### Causally necessary native fixture file modes
+
+Fresh unchanged djSoak chain reached21 groups6745tests/6677PASS/28FAIL/40SKIP,
+including all1405 product-compiler tests passing. Thirteen aggregate-native
+failures arise before their intended protocol arms: wx-created0555/0444 files
+inherit private077 as0500/0400. Two trust-audit failures similarly reject the
+new marker0400 against the unchanged0444 guard. Finalize only freshly authored
+fixture objects; never relax C/kernel or trust validation, change global umask,
+refresh goldens, or adopt existing paths. Strengthen real lstat and byte checks
+before handoff, witness077 RED, then minimal owned chmod and077/022 GREEN.
+File Map changes only the aggregate-native fixture test and trust-audit-test-support
+builder, plus this paired plan/spec; the existing trust-audit test remains an
+unchanged covered consumer. This is required
+premerge source-suite preparation for the lifetime delivery, not production
+package authority or signing. The other13 failures belong to private HOME
+preparation: a new diagnostic generation must contain empty Library/LaunchAgents
+before its initial pins, preserving the old supplier and unchanged isolation
+guard. A fresh complete unchanged chain remains necessary before delivery.
