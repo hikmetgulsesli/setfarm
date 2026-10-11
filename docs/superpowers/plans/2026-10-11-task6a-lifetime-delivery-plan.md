@@ -61,6 +61,36 @@ four original paired documents; all signatures remain unchanged.
 - [ ] Record evidence, retain standby, and return the sole writer to queued
   aggregate cold-pre32 work. Live cutover/OpenClaw rollback remain separate gates.
 
+## Task3: Genuine finalized fixture permissions
+
+Files: `scripts/__tests__/fixtures/deployment-cutover-bootstrap.mjs` and new
+`scripts/__tests__/deployment-cutover-fixture-permissions.test.js`.
+Interface: existing fixture callback and retained observer stay unchanged.
+
+- [ ] New actual retained-fixture positive regression under inherited077 and022;
+  assert observer scope and all finalized output directories0755, home0700.
+  Run RED against current helper; an early generic refusal is the expected defect.
+- [ ] Finalize only fresh authored `root/dist` directory topology to0755 after
+  outputs/authority are written, before callback. Require real directories/no
+  symlinks. Keep production owner and file/dependency/private-home policy intact.
+- [ ] GREEN new regression and full retained/default/bootstrap/genuine adjacent
+  script groups under077; review exact correction before committing.
+
+## Task4: Standalone version-test source immutability
+
+File: `scripts/__tests__/inject-version.test.js`; actual production script unchanged.
+Interface: existing four release/URL/idempotency assertions stay unchanged.
+
+- [ ] Capture five original script/package/release-input byte and physical pins
+  before each actual test; require identical pins afterward. Witness RED from
+  original source-writing tests; do not restore timestamps to mask it.
+- [ ] Per-test owned temporary ESM root copies those real inputs/script bytes.
+  Invoke process.execPath on copied script; clean only the exact created fixture.
+  No source .bak overwrite or source write, fake release version or runtime bypass.
+- [ ] GREEN all four cases plus physical invariance, independent exact diff review;
+  repeat source contracts/strict checks, commit/push one scoped correction, fresh
+  exact-head cloud review and unchanged stock private-all chain. Preserve9RKd5L.
+
 Self-review: spec scopes causality/integration and all affected owners; steps keep
 code/integration/build distinct. No duplicate implementation, placeholder or live
 admission is invented. The approved original TDD plans/RED evidence travel intact.

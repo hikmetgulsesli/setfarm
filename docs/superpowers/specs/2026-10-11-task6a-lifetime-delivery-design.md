@@ -62,6 +62,34 @@ full verification until after merge would not satisfy the premerge test gate.
 File Map adds ONLY `tests/ant.test.ts` plus this paired plan/spec. Production CLI,
 runtime guard, build ownership and package dependencies remain unchanged.
 
+### Causally necessary fixture finalization and source isolation
+
+The unchanged private-all retry9RKd5L naturally closed1/null after its script
+group2738tests/2605PASS/110FAIL/23SKIP. Root reproduced the shared preparation
+defect with the real retained fixture: inherited private umask077 produces
+dist/cli/internal-production/product-compiler directories0700, and the unchanged
+selected-build owner correctly refuses. Finalizing only the two owned fixture
+output directory trees to0755 yields actual positive0/null with private home0700.
+This is diagnostic-fixture preparation, not a transport or production-guard fix.
+
+Choose explicit fixture-owned output finalization, matching the ordinary stock
+writer, rather than changing the capture owner's private umask or weakening the
+production0755 guard. File Map adds `scripts/__tests__/fixtures/deployment-cutover-bootstrap.mjs`
+and `scripts/__tests__/deployment-cutover-fixture-permissions.test.js`. The real
+retained observer must succeed under077 and022; private fixture homes stay0700.
+Normalize only fresh authored dist directories before exposing the fixture body;
+do not change source, dependency, preserved generation or host permissions.
+
+The same run found unchanged-byte scripts/install.sh mtime/ctime drift. Its
+existing `scripts/__tests__/inject-version.test.js` runs the real script against
+the source checkout and restores bytes, not physical timestamps. Add an actual
+source-physical-immutability regression, witness its failure with the original
+tests, then run those same script bytes and release inputs only in a newly owned
+temporary ESM fixture. Keep all existing version/URL/idempotency assertions.
+File Map adds only that test; production inject-version.js stays unchanged.
+Retain the original failed capture rather than admitting its source-pin fault.
+No full-suite or merge credit is available until a fresh unchanged chain passes.
+
 Fresh focused/adjacent and actual opted-in private descriptor tests, strict source
 and actual-test types, source contracts, exact diff review and exact-head cloud
 review/security checks precede reviewed merge. Source verification may use a fresh
