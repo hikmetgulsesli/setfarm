@@ -90,6 +90,17 @@ File Map adds only that test; production inject-version.js stays unchanged.
 Retain the original failed capture rather than admitting its source-pin fault.
 No full-suite or merge credit is available until a fresh unchanged chain passes.
 
+The corrected captured adjacent run otsUqX reached338 tests/337PASS/1FAIL. Its
+only failure is another permission-preparation defect: the unsafe-history case
+in `scripts/__tests__/deployment-cutover.test.js` requests mkdir0755, but077
+produces0700. The unchanged observer correctly accepts that safe empty history.
+File Map adds only this existing test: require the intended actual0755 mode
+before dispatch, witness RED, then explicitly chmod only that owned perturbation
+directory. Keep refusal/output/no-repair assertions and production0700 policy.
+Three exact missing genuine archives were separately provisioned through ordinary
+offline npm from retained lock/SRI-authenticated archives; no source dependency
+or guard change and no synthesized/skipped/downloaded test archive is permitted.
+
 Fresh focused/adjacent and actual opted-in private descriptor tests, strict source
 and actual-test types, source contracts, exact diff review and exact-head cloud
 review/security checks precede reviewed merge. Source verification may use a fresh

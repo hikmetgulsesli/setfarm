@@ -91,6 +91,19 @@ Interface: existing four release/URL/idempotency assertions stay unchanged.
   repeat source contracts/strict checks, commit/push one scoped correction, fresh
   exact-head cloud review and unchanged stock private-all chain. Preserve9RKd5L.
 
+## Task5: Actual unsafe-history perturbation
+
+File: `scripts/__tests__/deployment-cutover.test.js`; observer policy unchanged.
+The adjacent otsUqX capture is337PASS/1FAIL, not a passing broad suite.
+
+- [ ] Add a pre-dispatch actual0755 assertion to unsafe-history; witness RED
+  under077 against its old mkdir-only preparation. Retain original refusal and
+  post-dispatch mode/no-repair assertions.
+- [ ] Explicitly chmod only the fresh owned unsafe-history directory0755; GREEN
+  targeted case under077 and022, genuine owner still must refuse without writes.
+- [ ] Fresh exact-diff review, source contracts/strict and full unchanged private
+  chain before merge. Keep failed otsUqX and earlier captures visible.
+
 Self-review: spec scopes causality/integration and all affected owners; steps keep
 code/integration/build distinct. No duplicate implementation, placeholder or live
 admission is invented. The approved original TDD plans/RED evidence travel intact.
