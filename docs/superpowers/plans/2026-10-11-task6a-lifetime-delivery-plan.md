@@ -23,18 +23,26 @@ four original paired documents; all signatures remain unchanged.
 
 - [x] Verify real GitHub main and six matching preimages; create isolated branch
   without fetching/moving the preserved live checkout or canonical shared refs.
-- [ ] Commit this paired boundary design/plan; reapply the two original corrections
+- [x] Commit this paired boundary design/plan; reapply the two original corrections
   with normal `git cherry-pick c3d76237 00ab67e4`, inspecting every resulting path.
   No new behavior or weakening of original RED/GREEN requirements is authorized.
-- [ ] Fresh exact-source focused suite: actual socket test, transport, descriptor,
+- [x] Fresh exact-source focused suite: actual socket test, transport, descriptor,
   physical evidence and default private fixture skip. Actual native-close delay
   must remain pending; error ending must join native close before rejection.
-- [ ] Actual existing opted-in private descriptor fixture: read/recheck refusal
+- [x] Actual existing opted-in private descriptor fixture: read/recheck refusal
   retains each genuine FD; explicit close calls each original once and EBADF.
   Require natural child code0/signalnull, exact fixture removal and source pins.
-- [ ] Strict noEmit including actual affected tests; version/English/path,
+- [x] Strict noEmit including actual affected tests; version/English/path,
   migration digests/12MC artifacts/diff checks. Record exact counts, not full-suite
   or stock build claims. Root reviews raw original-close/resource evidence.
+- [x] Repair source-suite CLI preparation in `tests/ant.test.ts` after actual
+  private-all905/894PASS/2FAIL/9SKIP missing-dist result. First strengthen usage
+  assertion so missing CLI cannot satisfy help; observe RED with old runner.
+  Then invoke `process.execPath,['--import','tsx',srcCli,command]` with the same
+  isolated test environment. Add actual temporary feature-Git refusal assertion
+  requiring status2/RUNTIME_GUARD_FAIL/no ant output; do not touch the guard.
+  Focused GREEN and source-suite import policy, strict types and independent
+  exact-diff review precede a fresh unchanged stock private-all command.
 - [ ] Independent exact diff review (Critical0/Important0), fix/reverify findings;
   commit exact evidence checkpoint, push scoped branch, create one reviewed PR.
 - [ ] Exact-head cloud review/security and no-open-thread gates; SHA-bound merge,
@@ -56,3 +64,33 @@ four original paired documents; all signatures remain unchanged.
 Self-review: spec scopes causality/integration and all affected owners; steps keep
 code/integration/build distinct. No duplicate implementation, placeholder or live
 admission is invented. The approved original TDD plans/RED evidence travel intact.
+
+## Fresh bounded verification checkpoint
+
+At4c61a68d, capsule `logs/setfarm-lifetime-source-capsule-Ydy8fh` captured18
+members135888B. Valid preflight05zOUN:23PASS/1explicitprivilegedSKIP, natural0/null.
+Earlier9E8xGh refused the diagnostic long TMPDIR (>103-byte socket bound); retained
+without positive or correction-RED credit. Successorv2 uses fresh owned0700 short
+temp root, not a production endpoint override. ProtectedWDukzs:6PASS/0SKIP,
+natural0/null, raw1133B SHA2d1d0a1dc63ccec502f931f9b117366044ec59287dd6dc8916e1714a438792e7;
+receipt02d78b5f277c20724090e5708f721e40fe58ee227060832f9f3eb02965711e02.
+All36 source/copy and4 fixed pins unchanged, no capture faults, minimum sampled
+free17,233,240,064B. Exact protected okUIfnYf fixture independently absent; its
+five genuine FDs retained after refusal and explicitly closed once/EBADF.
+
+Ordinary new-writer npmci ownerzH0RsR completed0/null,1553 input pins unchanged,
+no existing dependency mutation. First private-all ownerEr3snc naturally1/null:
+905tests/894PASS/2FAIL/9SKIP, both missing dist CLI; not a full-suite pass. Actual
+private server32890 definitely closed0/null after quiescence and admin close;
+exact `/tmp/setfarm-task6a-pg.ETt4VG` retained by its existing owner policy.
+
+Stronger actual help RED rejects old missing CLI (3FAIL/0PASS, including usage
+assertion) in the root tool transcript. Test-only source-CLI repair GREEN:
+ant4/source-import-policy1,5PASS/0SKIP; genuine feature Git fixture still refuses
+with status2/null before art. Final help assertion requires literal1/null, not
+merely nonempty usage. No production CLI/runtime guard/build manifest changed.
+Fresh strictTS5.9.3 including actual ant test:832roots1180files0diagnostics/noEmit;
+version2.3.79/English1934/path967/migration digests/all12MC checks pass. Source
+correction review C0/I0/M0; ant-review minor exit assertion corrected/reverified.
+Full unchanged private-all retry, exact-head cloud/security, reviewed merge and
+ordinary clean-main standby build remain pending; no release authority inferred.
