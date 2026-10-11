@@ -1003,7 +1003,11 @@ for (const fault of ["partial-history", "unsafe-history", "tampered-observer", "
       fs.mkdirSync(history, { mode: 0o700 });
       write(history, "pre-schema-helper-journal.json", "PRIVATE_HISTORY_CANARY\n", 0o600);
     }
-    if (fault === "unsafe-history") fs.mkdirSync(history, { mode: 0o755 });
+    if (fault === "unsafe-history") {
+      fs.mkdirSync(history, { mode: 0o755 });
+      fs.chmodSync(history, 0o755);
+      assert.equal(fs.statSync(history).mode & 0o777, 0o755, "unsafe-history perturbation must be genuinely unsafe before observation");
+    }
     if (fault.startsWith("tampered-")) {
       const name = fault === "tampered-observer" ? "baseline-deployment-cutover-helper-observation-v1" : "baseline-restart-authority-retirement-v1";
       fs.appendFileSync(path.join(root, `dist/internal-production/${name}.js`), '\nprocess.stdout.write("UNVERIFIED_HISTORY_EXECUTED");\n');

@@ -19,6 +19,18 @@ export function write(root, locator, bytes, mode = 0o644) {
   const target = path.join(root, locator); fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
   fs.writeFileSync(target, bytes, { mode }); fs.chmodSync(target, mode);
 }
+// Match the stock output writer, not the caller's private capture umask. Only
+// this fixture's newly authored output directories are finalized; home stays private.
+function finalizeOutputDirectories(directory) {
+  const stat = fs.lstatSync(directory);
+  assert.ok(stat.isDirectory() && !stat.isSymbolicLink(), "fixture output directory must be real");
+  for (const name of fs.readdirSync(directory)) {
+    const child = path.join(directory, name), entry = fs.lstatSync(child);
+    assert.ok(!entry.isSymbolicLink(), "fixture output must not contain symlinks");
+    if (entry.isDirectory()) finalizeOutputDirectories(child);
+  }
+  fs.chmodSync(directory, 0o755);
+}
 export function fixture(body, instrument = source => source, { genuine = false, census = false, envAbsence = false, helpers = false, phaseClosure = false, prepare = () => {}, sourceInstrument = (_locator, source) => source,
   extraSources = {}, temporaryParent = os.tmpdir() } = {}) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(temporaryParent, "cutover-bootstrap-")));
@@ -93,6 +105,7 @@ export function fixture(body, instrument = source => source, { genuine = false, 
     write(root, "dist/PLATFORM_RELEASE_MANIFEST.json", `${JSON.stringify(manifest)}\n`, 0o444);
     const { builtAt: ignored, ...stable } = info;
     const buildHash = commitHash({ schema: "setfarm.internal-production-controller-build.v1", stableBuildInfo: { schema: "setfarm.internal-production-stable-setfarm-build-info.v1", ...stable }, buildInputSetHash, outputTreeHash: output.outputTreeHash, releaseManifestHash: commitHash(manifest) });
+    finalizeOutputDirectories(path.join(root, "dist"));
     body(root, { branch: "main", clean: true, sha, treeHash, buildHash, originMainSha: sha }, home);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 }
