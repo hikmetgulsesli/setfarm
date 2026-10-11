@@ -108,6 +108,48 @@ Self-review: spec scopes causality/integration and all affected owners; steps ke
 code/integration/build distinct. No duplicate implementation, placeholder or live
 admission is invented. The approved original TDD plans/RED evidence travel intact.
 
+## Task6: Native owned scaffold fixture link mode
+
+**Goal:** Remove demonstrated fixture-mask dependence without changing real
+dependency identity or any expected topology/story/transition golden.
+**Spec:** `../specs/2026-10-11-scaffold-fixture-link-mode-design.md`.
+**Files:** the paired spec, this plan, and only
+`tests/product-compiler/node-scaffold-private-materializer-v2.test.ts`.
+**Interface:** fakeNpmCiV2's existing installed npm-bin link; same real materializer,
+topology builders, original assertions and private PostgreSQL lifecycle.
+**Constraints:** root-only implementation; read-only independent review; actual
+macOS Node22 fixture, no-follow native link change, no global umask adjustment,
+target byte/physical preservation,8GiB floor, no production source changes.
+
+- [x] Actual paired focused originals:022 GEKzl3 passes allthree literal profile
+  goldens;077 UqXqpv reproduces identical90e559f9/72d6c191 refusal. All1557 source/
+  tool pins including Node22/libnode match; complete strict private journals,
+  native init/PG0/null and test0/1/null after real quiescence/admin close.
+- [x] Separate actual native dNlInb control:022 link0755,077 link0700; lchmod0755
+  retains actual link inode, leaves target full physical/SHA pins unchanged.
+- [ ] Add lstat import and actual link0755 assertion immediately after genuine
+  symlink creation. Keep golden assertions unchanged. Commit an explicit test
+  RED checkpoint because the private runner requires a clean worktree; this is
+  not a passing-test checkpoint. Expected077 RED448 versus493 at fixture link.
+
+  ```ts
+  const fixtureLink = await lstat(linkPath);
+  assert.equal(fixtureLink.isSymbolicLink(), true);
+  assert.equal(fixtureLink.mode & 0o777, 0o755);
+  ```
+
+- [ ] Observe actual077 stronger RED with the reviewed external focused original
+  and complete journal/input/host pins; preserve the failed owner.
+- [ ] Import lchmod and insert only `await lchmod(linkPath, 0o755)` before that
+  lstat assertion. Native API follows no target. Existing fixture cleanup stays
+  unchanged. Perform noEmit/diff checks and record a local verification checkpoint
+  so the genuine clean-source private runner can execute; no delivery claim yet.
+- [ ] Fresh focused077/022 GREEN, real all-four affected assertions and complete
+  product-compiler group with genuine prepared browser HOME. Independent review
+  of the added test owner and the whole main-relative scope; preserve failures.
+- [ ] Fresh unchanged private-all chain; exact-head cloud/security; SHA-bound
+  reviewed merge; actual clean-main stock build, then queued cold-pre32 handoff.
+
 ## Fresh bounded verification checkpoint
 
 At4c61a68d, capsule `logs/setfarm-lifetime-source-capsule-Ydy8fh` captured18
