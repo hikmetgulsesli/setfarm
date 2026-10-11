@@ -14,6 +14,7 @@ import {
   chmod,
   chown,
   copyFile,
+  lchmod,
   link,
   lstat,
   mkdir,
@@ -749,6 +750,7 @@ async function fakeNpmCiV2(
       const targetBytesBefore = await readFile(targetPath);
       assert.equal(targetBefore.isFile(), true);
       await symlink(path.posix.relative(path.posix.dirname(linkLocator), targetLocator), linkPath);
+      await lchmod(linkPath, 0o755);
       const fixtureLink = await lstat(linkPath);
       assert.equal(fixtureLink.isSymbolicLink(), true);
       assert.equal(fixtureLink.mode & 0o777, 0o755);
