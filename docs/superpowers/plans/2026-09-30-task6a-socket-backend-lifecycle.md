@@ -100,3 +100,81 @@ exit0, BUILD_INFO fullf149/main/dirtyfalse. Selected deployment untouched.
   GREEN7/7 with the native Darwin temp directory and again with TMPDIR=/tmp;
   source and actual-test strict TS plus all five source contracts passed.
   This is path portability coverage, not an actual Linux-host execution claim.
+
+## Native-close conjunction correction (2026-10-11)
+
+Causal scope: the planned dashboard native ingress needs this existing owner to
+retain real native close as well as driver end. Installed Postgres.js end() races
+terminate(), whose reserved ended callback need not await socket.close. This
+implements the existing spec's "Never trust async end() alone", not startup
+admission or an unrelated feature. End-only is unsound; destroyed-state polling
+does not prove native close. Chosen design joins both originals in this owner.
+
+File Map: modify existing source and actual unit test above, plus this existing
+plan and paired spec. No new public hook/provider, dependency, runtime artifact,
+daemon/listener/bootstrap, live DB or account mutation. Root sole writer; agents
+read/review only. Spec self-review: fixed responsibility, exact join and failure
+ordering, no placeholders or conflicting admission claim.
+
+- [x] Add a real native Unix-socket test that delays its actual destroy callback,
+  calls the unchanged client.close(), observes it remains pending across native
+  event-loop turns, then releases the original destroy and joins actual close.
+  Assert same close promise, sticky refusal and exactly one native allocation.
+- [x] Run actual test source against original owner; expected RED is early close
+  fulfillment while native close is still pending, not a fixture/import error.
+- [x] Enroll native close before revocation/driver listeners. Join it with the
+  retained original driver end using allSettled, then propagate ending failure.
+  Native-absent close remains valid only after the one-attempt fence is revoked.
+- [x] Focused GREEN, relevant transport/default tests and strict source/test
+  types; independent review. Existing real-PG fixture remains separate evidence;
+  this unit fixture does not establish reserved backend death or global zero-owner.
+- [ ] Record exact results, source/contracts/diff gates and qualified delivery
+  on the same sole PR branch; no direct-main/dirty-build or live-start shortcut.
+
+Correction evidence (2026-10-11): fresh retained actual receipts in
+`logs/setfarm-native-close-verification-jI0KMd` outside the worktree. Bundled
+unchanged-source focused/default discovery joined 0/null: native client9,
+transport4 and descriptor5 passed; protected descriptor1 explicitly skipped.
+This is not stock npm/full-suite or protected-PG execution credit. Actual original
+owner RED joined1/null,7pass/1fail: native close remained pending but owner close
+fulfilled. End-only mutant joined1/null,7pass/2fail; valid early-reject Promise.all
+mutant joined1/null,8pass/1fail. Both fail the native-pending assertion.
+
+The initial early-reject mutant retained the allSettled result decoder and caused
+unrelated TypeErrors and a stuck test child. No causal mutation credit: root
+identified and stopped only that exact task child; its parent joined1/null and
+the failed evidence remains visible. The valid replacement changes the complete
+conjunction expression and closes naturally. Cleanup now retains the actual
+driver ending and destroys peers/closes the server even after assertions fail.
+
+TypeScript5.9.3 strict noEmit:843 actual roots (all source plus four actual tests),
+1192 transitive files,0 diagnostics. Read-only canonical dependency resolution;
+not a stock build or provisioned candidate dependency image. An initial harness
+attempt omitted the exact node_modules directory mapping and kept rootDir=src;
+its failed raw is retained, not a source regression or successful verification.
+Version2.3.79/English1996/path1002, migration digests, all12 Mission Control
+contract artifacts and diff check passed. The latter two ordinary source scripts
+ran in --check mode with a process-local declared-dependency resolve fallback;
+no load/source rewriting, worktree symlink or dependency installation. Node's
+documented registerHooks resolve chain is used only by this verification process.
+Independent
+four-path source review found C0/I0/M0; native/driver originals, sticky one-attempt
+fence and failure ordering retained. Exact raw audit, remaining source contracts,
+fresh protected backend integration and qualified PR delivery remain distinct
+gates; no backend extinction, positive startup authority or live cutover claim.
+Fresh final receipts also retain launcher code/signal, source/bundle/Node/harness
+hashes and strict result in `logs/setfarm-native-close-verification-jUNJ6s/receipt.json`
+(SHA8764600650b544becb0f21f4748efd2f7b9e01f13ec56522639bc1284bdfca2d).
+Independent raw review confirms all expected counts and causal pending-close
+failures; OS joins are recorded by the actual root launcher, not inferred from TAP.
+
+Fresh protected-PG setup remains pending: absolute tsx+NODE_PATH alone cannot
+resolve the eagerly imported TypeScript package. A process-local read-only
+dependency resolver enabled default2policy/1explicit private skip, but the
+fixture's nested unchanged esbuild API still cannot find postgres via NODE_PATH.
+That read-only pre-effect bundle diagnostic failed, not the backend fixture;
+no opted-in fixture/root ownership/server birth occurred. Do not patch/wrap
+esbuild, widen permissions or count default skip as actual-PG proof. A fresh
+owned exact-byte source verification capsule with ordinary local dependency
+resolution may resolve this setup without mutating candidate/live dependencies;
+nominate/review that finite capture before privileged fixture execution.
