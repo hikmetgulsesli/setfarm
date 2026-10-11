@@ -22,29 +22,40 @@ function checked(executable: string, args: string[]): string {
   return result.stdout.trim();
 }
 const CHILD = `import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {createInterface} from 'node:readline';
 const {holdTask6aRootOwnedJsonFileV1}=await import(process.argv[1]);
 const file=process.argv[2], kind=process.argv[3];
 assert.equal(process.getuid(),Number(process.argv[4]));assert.equal(process.geteuid(),Number(process.argv[4]));
 assert.equal(process.getgid(),Number(process.argv[5]));assert.equal(process.getegid(),Number(process.argv[5]));
-if(kind==='deny') {assert.throws(()=>holdTask6aRootOwnedJsonFileV1(file),/TASK6A_ROOT_JSON_FILE_REFUSED/);console.log('denied');}
+// Observe actual originals; no fake open results, metadata or production hook.
+const actualOpen=fs.openSync,actualClose=fs.closeSync,pins=[],closeAttempts=new Map();
+fs.openSync=function(...args){const fd=Reflect.apply(actualOpen,this,args);pins.push(fd);return fd;};
+fs.closeSync=function(fd){if(pins.includes(fd))closeAttempts.set(fd,(closeAttempts.get(fd)??0)+1);return Reflect.apply(actualClose,this,[fd]);};
+function closedOriginals(){for(const fd of pins){assert.equal(closeAttempts.get(fd),1);assert.throws(()=>fs.fstatSync(fd),e=>e.code==='EBADF');}}
+try {
+if(kind==='deny') {assert.throws(()=>holdTask6aRootOwnedJsonFileV1(file),/TASK6A_ROOT_JSON_FILE_REFUSED/);closedOriginals();console.log('denied');}
 else {
  const holder=holdTask6aRootOwnedJsonFileV1(file);
- holder.read().fill(0); // A returned buffer must not mutate the held original.
- assert.equal(holder.read().toString(),'fixture-v1\\n');holder.recheck();console.log('held');
  let revoked=false;
  try {
+ assert.equal(pins.length,5);for(const fd of pins)assert.doesNotThrow(()=>fs.fstatSync(fd));
+ holder.read().fill(0); // A returned buffer must not mutate the held original.
+ assert.equal(holder.read().toString(),'fixture-v1\\n');holder.recheck();console.log('held');
   for await(const line of createInterface({input:process.stdin})) {
    if(line==='close') break;
    assert.equal(line,'check');
    assert.throws(()=>holder.read(),/TASK6A_ROOT_JSON_FILE_REFUSED/);
    assert.throws(()=>holder.recheck(),/TASK6A_ROOT_JSON_FILE_REFUSED/);
+   for(const fd of pins){assert.equal(closeAttempts.get(fd),undefined);assert.doesNotThrow(()=>fs.fstatSync(fd),'revocation must retain actual FD until explicit close');}
    revoked=true;console.log('revoked');
   }
  } finally {holder.close();holder.close();}
+ closedOriginals();
  assert.throws(()=>holder.read(),/TASK6A_ROOT_JSON_FILE_REFUSED/);
  console.log(revoked?'closed-revoked':'closed');
-}`;
+}
+} finally {fs.openSync=actualOpen;fs.closeSync=actualClose;}`;
 
 test("private root-owned file source and sticky recheck deny excluded identities and ACL drift", {
   skip: enabled ? false : "requires explicit isolated root-owned descriptor fixture opt-in",
@@ -52,6 +63,13 @@ test("private root-owned file source and sticky recheck deny excluded identities
 }, async (t) => {
   assert.equal(process.platform, "darwin");
   assert.ok(process.getuid!() > 0);
+  // Resolve and build before any privileged fixture effect. An unavailable
+  // toolchain must fail here, not leave a root-owned preparation behind.
+  const { buildSync } = createRequire(import.meta.url)("esbuild") as typeof import("esbuild");
+  const bundle = buildSync({ entryPoints: [fileURLToPath(new URL(
+    "../../src/internal-production/task6a-root-owned-json-file-v1.ts", import.meta.url))],
+    bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent" });
+  assert.equal(bundle.outputFiles.length, 1);
   const parents: { target: string; fd: number; stat: fs.BigIntStats }[] = [];
   const keys = ["dev", "ino", "uid", "gid", "mode", "birthtimeNs"] as const;
   t.after(() => {
@@ -86,16 +104,20 @@ test("private root-owned file source and sticky recheck deny excluded identities
     assert.match(checked("/usr/bin/sudo", ["-n", "/usr/bin/sudo", "-l", "-U", user]),
       new RegExp(`^User ${user} is not allowed to run sudo on [^\\n]+\\.$`));
   }
+  const scratch = fs.mkdtempSync("/private/tmp/setfarm-task6a-descriptor-source.");
+  const dataSource = path.join(scratch, "data"), moduleSource = path.join(scratch, "module");
+  fs.writeFileSync(dataSource, "fixture-v1\n", { mode: 0o600 });
+  fs.writeFileSync(moduleSource, bundle.outputFiles[0].contents, { mode: 0o600 });
   // Approved Task6A protected-host rehearsal, NOT the production Setfarm path.
   exactParents();
   const home = checked("/usr/bin/sudo", ["-n", "/usr/bin/mktemp", "-d",
     `${parent}/setfarm-task6a-descriptor.XXXXXXXX`]);
+  t.diagnostic(`private protected descriptor allocation returned ${home}`);
   const anchor = fs.lstatSync(home, { bigint: true });
+  t.diagnostic(`private protected descriptor allocated ${home}; ${anchor.dev}/${anchor.ino}`);
   let mode = 0o700, childRunning = false, cleanupReady = false;
   const file = path.join(home, "descriptor.json"), module = path.join(home, "reader.mjs");
   const extra = path.join(home, "extra.json");
-  const scratch = fs.mkdtempSync("/private/tmp/setfarm-task6a-descriptor-source.");
-  const dataSource = path.join(scratch, "data"), moduleSource = path.join(scratch, "module");
   function exactHome(): void {
     exactParents();
     assert.equal(path.dirname(home), parent);
@@ -168,15 +190,11 @@ test("private root-owned file source and sticky recheck deny excluded identities
       } finally { clearTimeout(timer); }
     }
   }
+  let primaryFailure: unknown;
+  let cleanupFailure: unknown;
+  let primaryFailed = false, cleanupFailed = false;
   try {
     exactHome();
-    fs.writeFileSync(dataSource, "fixture-v1\n", { mode: 0o600 });
-    const { buildSync } = createRequire(import.meta.url)("esbuild") as typeof import("esbuild");
-    const bundle = buildSync({ entryPoints: [fileURLToPath(new URL(
-      "../../src/internal-production/task6a-root-owned-json-file-v1.ts", import.meta.url))],
-      bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent" });
-    assert.equal(bundle.outputFiles.length, 1);
-    fs.writeFileSync(moduleSource, bundle.outputFiles[0].contents, { mode: 0o600 });
     install(dataSource, file); install(moduleSource, module);
     root("/bin/chmod", ["0755", home]); mode = 0o755; exactHome(); cleanupReady = true;
     t.diagnostic(`private protected descriptor ${home}; ${anchor.dev}/${anchor.ino}`);
@@ -222,7 +240,10 @@ test("private root-owned file source and sticky recheck deny excluded identities
     root("/bin/rm", [file]); root("/bin/ln", ["-s", module, file]); denied();
     root("/bin/rm", [file]); fs.writeFileSync(dataSource, "fixture-v1\n"); install(dataSource, file);
     await held();
+  } catch (error) {
+    primaryFailed = true; primaryFailure = error;
   } finally {
+    try {
     assert.equal(childRunning, false, `retain ${home}: reader lifecycle uncertain`);
     assert.equal(cleanupReady, true, `retain ${home}: preparation uncertain`);
     exactHome(); assert.deepEqual(fs.readdirSync(home).sort(), ["descriptor.json", "reader.mjs"]);
@@ -236,5 +257,10 @@ test("private root-owned file source and sticky recheck deny excluded identities
     assert.equal(fs.existsSync(home), false);
     fs.rmSync(scratch, { recursive: true, force: true });
     t.diagnostic("verified exact private fixture removed; production namespace untouched");
+    } catch (error) { cleanupFailed = true; cleanupFailure = error; }
   }
+  if (primaryFailed && cleanupFailed)
+    throw new AggregateError([primaryFailure, cleanupFailure], "private descriptor execution and cleanup failed");
+  if (cleanupFailed) throw cleanupFailure;
+  if (primaryFailed) throw primaryFailure;
 });

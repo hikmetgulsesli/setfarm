@@ -81,6 +81,36 @@ production `Setfarm` namespace. Default tests skip before any root/filesystem
 preparation. macOS system executable/runtime trust remains a prerequisite;
 checking `/bin/ls` UID/mode is not a full executable/native-library attestation.
 
+## Explicit release after revocation correction (2026-10-11)
+
+The later protected backend owner must retain physical custody until its actual
+reserve/query originals and native socket/driver ending close have joined. Today
+the generic file, protected descriptor and protected socket holders release FDs
+inside a failed returned read/recheck; an outer finally cannot reverse this.
+Refine all three existing holders without changing their interfaces or guards:
+post-handoff failure permanently invalidates and refuses, but preserves held FDs
+until explicit idempotent close. Acquisition failures still close every partial
+allocation because no holder or backend has been handed off. No refused read,
+restored path or retained FD can revive authentication. Explicit close still
+attempts all resources and preserves process-wide cleanup-uncertainty fences.
+
+Chosen approach is an existing-contract cleanup-timing refinement. An additive
+deferred-release API would duplicate three nested paths; changing only the outer
+holder would leave nested early release. Actual current source consumers are
+these nested constructors and fixtures; acquisition catch/finally paths explicitly
+close. There is no production backend consumer yet. This correction creates no
+initializer, pool, SQL callback/transport hook or runtime admission.
+
+Extend the existing actual private file fixture to observe real openSync results
+and delegate original closeSync calls, never synthesize metadata/FDs or override
+source policy. After genuine mode/byte/path/ACL drift, read/recheck must refuse
+while each actual acquired FD still responds to fstat; explicit close must close
+each once and fstat then return EBADF. Repeated reads/rechecks/close must remain
+sticky/idempotent. Failed acquisition must leave no recorded FD open. Initial
+old-owner RED is genuine premature physical release, not fixture/setup failure.
+Generic root-file proof does not positively authenticate either fixed production
+loader or demonstrate its joint PostgreSQL shutdown. Those remain separate gates.
+
 ## Acceptance
 
 Intended RED and GREEN for strict bytes and generic filesystem refusal;
