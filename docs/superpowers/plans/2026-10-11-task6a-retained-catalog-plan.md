@@ -1,5 +1,15 @@
 # Retained Task6a catalog implementation plan
 
+> Agentic execution: this tightly coupled slice uses root-only manual execution,
+> TDD and independent read-only review; standing single-writer policy forbids
+> delegated implementation. Existing isolated worktree is retained.
+
+**Goal:** Verify restricted catalog/access/ownership on the genuine held backend.
+**Architecture:** Shared query-only bodies inside a literal read-only transaction;
+ordinary pool wrappers unchanged; independent original rollback/native-close joins.
+**Tech Stack:** TypeScript5.9.3, postgres3.4.8, real private PostgreSQL17.
+**Spec:** `../specs/2026-10-11-task6a-retained-catalog-design.md`.
+
 Design: `../specs/2026-10-11-task6a-retained-catalog-design.md`.
 Root is sole writer; independent agents are read-only reviewers. Preserve all
 existing development/deployment worktrees, original protected pair and services.
@@ -14,7 +24,7 @@ existing development/deployment worktrees, original protected pair and services.
 - [x] Verify real protocol witnesses and negative privileges/schema/owner controls.
 - [x] Capture exact-source native evidence plus strict/adjacent regressions.
 - [x] Independent diff/design review; fix findings; reverify exact final bytes.
-- [ ] Commit/push scoped branch, reconcile PR280 evidence and remaining gates.
+- [x] Commit/push scoped branch, reconcile PR280 evidence and remaining gates.
 
 Do not claim stock build, full33, readiness, fixed authentication or live cutover
 from these narrower checks. Disk floor8GiB; no broad installs, native-image copies,
@@ -43,3 +53,7 @@ not as a valid producer refusal. Its stopped private fixture was retained after
 empty-descriptor cleanup refused. Both causes were fixed in the fixture owner;
 the later qualified runs removed only their own exact temporary fixtures.
 No fixed-anchor, full33, runtime readiness, stock build or live rollout credit.
+
+Delivered commit `1f219560c0f45fc28e60e3ecac0b576382e58a1f`, actual push complete;
+PR280 checkpoint https://github.com/hikmetgulsesli/setfarm/pull/280#issuecomment-6108731693.
+Fresh PR head matches; OPEN/DRAFT, GitGuardian SUCCESS, formal reviews/requests empty.
