@@ -127,7 +127,7 @@ target byte/physical preservation,8GiB floor, no production source changes.
   native init/PG0/null and test0/1/null after real quiescence/admin close.
 - [x] Separate actual native dNlInb control:022 link0755,077 link0700; lchmod0755
   retains actual link inode, leaves target full physical/SHA pins unchanged.
-- [ ] Add lstat import and actual link0755 assertion immediately after genuine
+- [x] Add lstat import and actual link0755 assertion immediately after genuine
   symlink creation. Keep golden assertions unchanged. Commit an explicit test
   RED checkpoint because the private runner requires a clean worktree; this is
   not a passing-test checkpoint. Expected077 RED448 versus493 at fixture link.
@@ -138,9 +138,9 @@ target byte/physical preservation,8GiB floor, no production source changes.
   assert.equal(fixtureLink.mode & 0o777, 0o755);
   ```
 
-- [ ] Observe actual077 stronger RED with the reviewed external focused original
+- [x] Observe actual077 stronger RED with the reviewed external focused original
   and complete journal/input/host pins; preserve the failed owner.
-- [ ] Import lchmod and insert only `await lchmod(linkPath, 0o755)` before that
+- [x] Import lchmod and insert only `await lchmod(linkPath, 0o755)` before that
   lstat assertion. Native API follows no target. Existing fixture cleanup stays
   unchanged. Perform noEmit/diff checks and record a local verification checkpoint
   so the genuine clean-source private runner can execute; no delivery claim yet.
@@ -149,6 +149,21 @@ target byte/physical preservation,8GiB floor, no production source changes.
   of the added test owner and the whole main-relative scope; preserve failures.
 - [ ] Fresh unchanged private-all chain; exact-head cloud/security; SHA-bound
   reviewed merge; actual clean-main stock build, then queued cold-pre32 handoff.
+
+Actual native checkpoint3915df47: stronger077 RED WDe6gy fails exactly448vs493
+at the authored symlink; all1557 pins and strict66-frame journal agree. The
+two-line no-follow correction is independently C0/I0/M0. Fresh sequential077
+E2MfgZ and022 Y9bZMd each1PASS0FAIL0SKIP, three historical profilegoldens and
+target byte/physical assertions complete. All1557 before/after/current pins
+match; strict64-frame private journals prove init/test/server exit+close0/null,
+two EOF each, twoquiescence, admin-ended then serverclosure. No global mask,
+production hash, expected golden or target change. Other scaffold families
+await the full product-compiler group in the unchanged private-all chain.
+
+Genuine prepared browser focus YNq1dU: existing renderer v1/v2/v3 files47PASS,
+0FAIL/SKIP, natural0/null;1729 input pins and full691-member browser payload
+unchanged, independent terminal C0/I0/M0. These include static/retry controls,
+not47 separate browser lifecycles; no descendant-closure/full-chain credit.
 
 ## Fresh bounded verification checkpoint
 
