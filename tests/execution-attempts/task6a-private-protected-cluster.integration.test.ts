@@ -144,10 +144,20 @@ const single=createTask6aSingleBackendSocketClientV1(candidate,(channel,payload)
 let reserved;
 try {
   reserved=await single.sql.reserve();
-  const before=(await reserved.unsafe('SELECT pg_backend_pid() AS pid, session_user AS session, current_user AS role, current_database() AS database, inet_client_addr() IS NULL AS socket'))[0];
-  assert.equal(before.session,'task6a_runtime');assert.equal(before.role,'task6a_runtime');
-  assert.equal(before.database,'postgres');assert.equal(before.socket,true);
-  assert.ok(Number.isSafeInteger(before.pid)&&before.pid>1);
+  const lifetimeQuery='SELECT self.pid AS pid, self.backend_start::text AS "backendStart", session_user AS session, current_user AS role, current_database() AS database, inet_client_addr() IS NULL AS socket FROM pg_catalog.pg_stat_activity self WHERE self.pid = pg_catalog.pg_backend_pid()';
+  function checkedLifetime(rows) {
+    assert.equal(rows.length,1);const facts=rows[0];
+    assert.deepEqual(Object.keys(facts).sort(),['backendStart','database','pid','role','session','socket']);
+    assert.equal(facts.session,'task6a_runtime');assert.equal(facts.role,'task6a_runtime');
+    assert.equal(facts.database,'postgres');assert.equal(facts.socket,true);
+    assert.ok(Number.isSafeInteger(facts.pid)&&facts.pid>1);
+    assert.equal(typeof facts.backendStart,'string');
+    assert.match(facts.backendStart,/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{1,6})?[+-][0-9]{2}(?::[0-9]{2})?$/);
+    return facts;
+  }
+  // Preserve microsecond text and all role/database/transport facts, not PID alone.
+  function sameLifetime(before,after) {assert.deepEqual(after,before);}
+  const before=checkedLifetime(await reserved.unsafe(lifetimeQuery));
   await reserved.unsafe('LISTEN task6a_single_backend_fixture');
   await reserved.unsafe("SELECT pg_notify('task6a_single_backend_fixture','same-backend-notification')");
   let timer;
@@ -155,10 +165,17 @@ try {
     const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('single backend notification timeout')),3000);});
     assert.equal(await Promise.race([singleNotification,timeout]),'same-backend-notification');
   } finally {clearTimeout(timer);}
-  const after=(await reserved.unsafe('SELECT pg_backend_pid() AS pid'))[0];
-  assert.equal(after.pid,before.pid);
+  const after=checkedLifetime(await reserved.unsafe(lifetimeQuery));
+  sameLifetime(before,after);
+  // Genuine SQL projection perturbation, not a forged driver row or actual drift.
+  const perturbed=checkedLifetime(await reserved.unsafe(lifetimeQuery.replace('self.backend_start::text',"(self.backend_start + interval '1 microsecond')::text")));
+  assert.equal(perturbed.pid,before.pid);assert.notEqual(perturbed.backendStart,before.backendStart);
+  assert.deepEqual({...perturbed,backendStart:before.backendStart},before);
+  try {assert.throws(()=>sameLifetime(before,perturbed),assert.AssertionError);}
+  catch(error) {console.error(JSON.stringify({event:'projection-canary-rejection-failed',before,after,perturbed}));throw error;}
   assert.deepEqual(single.observe(),{nativeSocketCreations:1,revoked:false});
   physical.recheck();
+  console.log(JSON.stringify({event:'reserved-backend-lifetime',before,after,projectionCanaryRejected:true,nativeSocketCreations:1}));
 } finally {single.revoke();reserved?.release();await single.close();}
 await assert.rejects(single.sql.unsafe('SELECT 1'));
 assert.deepEqual(single.observe(),{nativeSocketCreations:1,revoked:true});
@@ -448,7 +465,7 @@ test("private protected PG denies old identity and scoped admin impersonation ac
       }
     }
   }
-  function boundary(): void {
+  function boundary(phase: "before-restart" | "after-restart"): void {
     exactServer();
     const dataStat = fs.lstatSync(data, { bigint: true });
     assert.ok(dataAnchor && dataStat.isDirectory() && !dataStat.isSymbolicLink());
@@ -517,7 +534,18 @@ test("private protected PG denies old identity and scoped admin impersonation ac
         port, database: "postgres", user: "task6a_runtime", osUid: clientUid }),
       JSON.stringify({ serverUid, clientGid, otherUid: oldUid, ...physicalSnapshots })], 30_000);
     assert.equal(client.status, 0, `actual source connector failed: ${client.stderr}`);
-    assert.equal(client.stdout.trim(), "peer transport and single backend lifecycle verified");
+    const output=client.stdout.trim().split("\n");assert.equal(output.length,2);
+    assert.equal(output[1], "peer transport and single backend lifecycle verified");
+    const witness=JSON.parse(output[0]);
+    assert.deepEqual(Object.keys(witness).sort(),["after","before","event","nativeSocketCreations","projectionCanaryRejected"]);
+    assert.equal(witness.event,"reserved-backend-lifetime");assert.equal(witness.projectionCanaryRejected,true);
+    assert.equal(witness.nativeSocketCreations,1);assert.deepEqual(witness.after,witness.before);
+    assert.deepEqual(Object.keys(witness.before).sort(),["backendStart","database","pid","role","session","socket"]);
+    assert.ok(Number.isSafeInteger(witness.before.pid)&&witness.before.pid>1);
+    assert.equal(typeof witness.before.backendStart,"string");assert.ok(witness.before.backendStart.length>0);
+    assert.equal(witness.before.session,"task6a_runtime");assert.equal(witness.before.role,"task6a_runtime");
+    assert.equal(witness.before.database,"postgres");assert.equal(witness.before.socket,true);
+    t.diagnostic(JSON.stringify({phase,...witness}));
     assert.equal(admin("SELECT count(*) FROM task6a_probe.effects WHERE note='gated-queued-after-loss'"), "0",
       "queued effects must not execute on a replacement backend");
     fileDenials();
@@ -760,7 +788,7 @@ GRANT USAGE ON SCHEMA task6a_probe TO task6a_runtime;
 GRANT SELECT,INSERT ON task6a_probe.effects TO task6a_runtime;
 GRANT USAGE ON SEQUENCE task6a_probe.effects_id_seq TO task6a_runtime;`);
     if(native)admin("CREATE FUNCTION task6a_probe.native_add(a int,b int) RETURNS int LANGUAGE plpgsql AS 'BEGIN RETURN a+b; END'; GRANT EXECUTE ON FUNCTION task6a_probe.native_add(int,int) TO task6a_runtime;");
-    boundary();await nativeEvidence(); await physicalRevocation(); stop(); start(); boundary();await nativeEvidence(); await physicalRevocation();
+    boundary("before-restart");await nativeEvidence(); await physicalRevocation(); stop(); start(); boundary("after-restart");await nativeEvidence(); await physicalRevocation();
     await heldPg31Evidence(); stop();
   } catch (error) {
     failure = error; throw error;

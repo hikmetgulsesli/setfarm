@@ -212,3 +212,80 @@ must join complete writes/durability without retroactively changing its pin.
 Source correction c3d762379dcd093bf8600d46f15d3012423c9f22 pushed to the existing
 sole PR280 branch; current GitGuardian succeeded. PR remains draft with no
 qualified exact-head cloud review or live cutover/clean-main delivery claim.
+
+## Reserved lifetime witness correction (2026-10-11)
+
+Causal scope: subsequent protected bootstrap requires actual backend lifetime,
+not PID-only equality. Current fixture asserts but does not retain its reserved
+PID and omits backend_start. Strengthen this prerequisite without implementing
+or admitting a protected initializer. File Map: existing private protected
+cluster integration test, this plan and paired spec ONLY. No source factory,
+bundle entry, dependencies, package registration, runtime or cleanup changes.
+
+- [x] Add exact six-field own-backend query before/after actual reserved fixed
+  LISTEN/notification, retained child JSON and labeled parent diagnostics.
+- [x] Use genuine same-backend SQL with backend_start projection+1microsecond
+  as a canary. Keep current PID-only oracle initially; actual private execution
+  must naturally fail canary rejection, not fixture setup/import/cleanup.
+- [x] Replace ONLY oracle comparison with full-tuple equality; rerun default
+  discovery and genuine protected base fixture across restart. Preserve raw RED
+  and both actual tuples; no Date normalization or PID-reuse manufacture.
+- [ ] Independent exact-diff/raw/cleanup audit, strict types and proportional
+  source contracts; qualified same-branch delivery. No main merge/live start.
+
+Fresh tiny exact-byte source capsules may reuse existing canonical dependencies
+inside each new diagnostic capsule only; all earlier capsules remain immutable.
+New capture owner must use reviewed complete-write/fsync/original-close helper,
+sticky final observations and sampled8GiB floor. No full dependency freeze,
+protected native image or production fixed-descriptor provenance is claimed.
+
+Actual RED: exact14-member150492B capsule `A7JySm`, fixtureSHA
+43fd8d632bfb915721a08310e2ac4955d2826cb3515909c1d6aa94f44c06dcf7.
+Owner `protected-Vdr268` joined1/null,2policyPASS/1fixtureFAIL/0SKIP; raw2675B
+SHAf52b7c560ceb2a3d748c55f1a0b03c112aaabb7522e4e6ee1dac815e7f25493a,
+receiptfd9fd190428f493e1098c8413a71e10eb5aa587b4d5808b83b8e5bdf797c5164.
+Retained genuine PID39738 had before/after backendStart
+2026-10-11 02:36:08.941915+00; SQL projectioncanary .941916+00, all other
+fields unchanged. Failure is precisely Missing expected exception from the
+old PID-only comparator, not actual backend drift/setup failure. RED stops
+before restart/later loss assertions. ExactEX5sKo/postmaster39594 stopped and
+removed; root targeted path/ps checks corroborate absence, not global extinction.
+
+GREEN changes only that oracle+comment to deepEqual. Exact14-member150495B
+capsule `uWwEQ5`, fixtureSHA
+ef7f0fcf163899aea9570259da4390f3fed781a0c85fd632a0b5d2e9c373a066;
+nominationa3a7586492aefe938e06298525e83d301a7e0538f9ca7a2aa18dca6b57050d47.
+Defaultpreflight `wZCJ5M` joined0/null,2policyPASS/1explicitprivateskip.
+Actual `protected-ucV7tA` joined0/null,3PASS/0FAIL/0SKIP; raw1548B
+SHAdcef8ac409f0f3ba418d364a3fde399a83818ec7a47a5d14cd2beb43b799921e,
+receipt618a7f0d63c5753383b6e03320fb812ba7f0bb6d6cbeb959c57403c9d48a9b5b.
+Before restart reserved PID40201/start2026-10-11 02:37:23.107598+00;
+after restart PID40419/start2026-10-11 02:37:24.70554+00. Each lifetime retained
+both equal six-field tuples, one native allocation and rejected +1microsecond
+projection. Actual own-backend loss/queued-write refusal/zero forbidden rows
+passed in both phases. ExactZYaE0u/postmasters40056/40278 stopped/removed;
+root path/targeted ps also show no rows for those and scoped reserved PIDs.
+
+New outside capture FileMap `logs/setfarm-protected-pg-capsule-run-v2.mjs`
+SHAadb924f15dfb826f0711a5ce97c2fc9098cecfdd82b61541ca4cef8eb1cd61b6.
+Complete-write loop, independent artifact fsync/close, sticky final observations,
+actual original close and recorded28source/copy pre/post physical/byte snapshots.
+Predispatch review fixed separate parsed-nomination read by binding those actual
+bytes to checked pinned SHA before spawn. Helper reused at its immutable oldSHA;
+oldv1/raw/capsules retained. GREEN minimum9258987520B/final9300328448B, no sampled
+8GiB floor breach or capture/finalization fault. No complete dependency freeze,
+protected native image, production descriptor, historical owner or startup credit.
+
+StrictTS5.9.3 source+actualfixture/policy:841roots/1194files/0diagnostics/noEmit;
+read-only canonical dependency fallback, not a stock build. Version2.3.79,
+English1996/path1002, semantic migration digests/all12MCartifacts and diff check
+passed. Initial contract commands used the workspace CWD (version/Englishmissing,
+path0files) and two guessed nonexistent script names; these are launcher setup
+mistakes, retained in the tool transcript and not credited. Actual package-script
+paths and candidate CWD were then checked with no guard/source/dependency edits.
+Whole PR remains draft; exact-head review, full delivery and genuine clean-main
+build/host admission remain pending. Do not rename this branch or spoof origin/main
+to bypass the source-owned stock prebuild main/clean custody requirement.
+Independent full GREEN/RED raw, pins,28snapshot, stream and exact cleanup audit
+confirms C0/I0/M0 for this finite fixture scope. Original close is not universal
+descendant extinction; actual clean-main/integration authority is not inferred.
