@@ -4486,3 +4486,42 @@ Bootstrap8+oldPythonDATA3 PASS11/0; strict1195/0/noEmit and source contracts
 pass. Final exact-eight/all-original independent review/delivery remains pending.
 No family/ingress/owner/PG/ROOT/controller/startup or actual clean-main build
 credit follows from these local DATA mechanics. Existing conjunction unchanged.
+
+## Task4m: new pre-intent local conjunction, historical UNKNOWN retained
+
+2026-10-11. Standing in-goal design authority selects a bounded prerequisite,
+not a complete historical ingress provider. Existing terminal Task4j quiet stays
+unchanged and nonadoptable. The process-candidate transport remains DATA-only.
+Neither a fresh empty local registry nor a PID list proves historical closure.
+
+Add prepareHeldDashboardCutoverJointIngressV5(loaded,definition,owner):Promise<void>
+to the existing fixed adapter/declaration. It never fulfills successfully. In a
+fresh single-use operation, authenticate the genuine loaded peer, approved
+definition and maintenance owner, enroll the same original participant scopes,
+then acquire/recheck the existing SAME local JS and child drain originals. Keep
+the participant embargo in the draining stage. Retain original Promise slots and
+fulfilled handles exactly as the existing reservation machinery does.
+
+After both local originals actually settle, while still draining, mark the operation UNKNOWN/revoked
+and reject with the existing joint refusal. No historical capability, receipt,
+caller cohort, event enrollment, journal row, PG, physical reservation, ROOT or
+bootout is produced. Unknown refuses before all those ports. This is a deliberate
+non-admitting source contract, not a successful combined-cutover implementation.
+No return flag or empty registry can override it; no reset/retry/adoption.
+
+Alternatives rejected: inserting event enrollment into terminal quiet violates
+its accepted lifetime; granting from local drains or sampled PID DATA invents
+historical authority. This slice makes the original local conjunction observable
+and retains the missing historical boundary without weakening existing routes.
+
+Exact five-file map: adapter .mjs, its existing .d.mts and .test.js, this spec and
+paired plan. Fixture may add an ingress-only bridge selector; its manual output
+translation and native loader doubles remain source-only. An actual owned Node
+execFile child is separately real; it does not qualify historical descendants.
+Tests must catch an immediately-refusing stub: fresh JS admission closes while
+its SAME body remains pending; actual child stays pending until natural EOF,
+exit and close; final rejection retains original local handles and ZERO forbidden
+effects. Idle foreign handles earn zero scope/drain/effect admissions, with
+trusted source/authentication reads disclosed; proxy/wrong-arity inputs earn
+zero traps and early ports. Existing quiet and
+reservation routes remain unchanged. No live services, Doctor or DB mutation.

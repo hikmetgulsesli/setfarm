@@ -30,12 +30,12 @@ const translations=[
 
 // LOCAL finite source-only bridge. This does NOT run the production compiler or
 // confer clean-main/native/executing-image authority. Shared fixture unchanged.
-function jointFixture(resources=false,pre32=false,bounded=false,owner=false,ownerInputCopy=false,localDrainFault=false,quiet=false){
+function jointFixture(resources=false,pre32=false,bounded=false,owner=false,ownerInputCopy=false,localDrainFault=false,quiet=false,ingress=false){
   const bridgeList=pre32?[...translations,
     ['src/internal-production/baseline-legacy-database-census-v1.ts',
       'dist/internal-production/baseline-legacy-database-census-v1.js']]:[...translations];
   if(owner){
-    assert.equal(resources,true);assert.ok(pre32||quiet);
+    assert.equal(resources,true);assert.ok(pre32||quiet||ingress);
     for(const name of ['baseline-deployment-cutover-records-v1','baseline-deployment-cutover-owner-store-v1',
       'baseline-deployment-cutover-publication-v1','baseline-deployment-cutover-v1','baseline-workspace-authority-path-v1',
       'baseline-dashboard-cutover-local-producer-drain-v2'])
@@ -73,7 +73,10 @@ function jointFixture(resources=false,pre32=false,bounded=false,owner=false,owne
     const [needle,replacement]=localDrainFault==='pending-stage-working'
       ?["record.stage='draining';checkOperation(record);","record.stage='working';checkOperation(record);"]
       :localDrainFault==='drop-fulfilled-custody'
-        ?['occurrence.value=value;occurrence.returned=true;occurrence.settled=true;','occurrence.settled=true;']:[];
+        ?['occurrence.value=value;occurrence.returned=true;occurrence.settled=true;','occurrence.settled=true;']
+        :localDrainFault==='ingress-immediate-refusal'
+          ?["return qualifyOriginals(originalLoaded,originalDefinition,arguments.length,'ingress',originalOwner);",
+            "throw Error('DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED');"]:[];
     assert.equal(typeof needle,'string');assert.equal(original.split(needle).length,2);
     const changed=original.replace(needle,replacement);files[locator]=Buffer.from(changed);
     sourceFault={authority:'explicit-counterfactual-source-graph-not-healthy-production-qualification',
@@ -131,7 +134,7 @@ function jointFixture(resources=false,pre32=false,bounded=false,owner=false,owne
   file(root,'dist/PLATFORM_BUILD_OUTPUT_TREE.json',JSON.stringify({...projection,outputTreeHash})+'\n',0o444);
   for(const p of ['dist','dist/cli','dist/server','dist/internal-production','dist/product-compiler'])fs.chmodSync(root+'/'+p,0o755);
   const pins=Object.fromEntries(Object.entries(files).map(([p,b])=>[p,hash(b)]));
-  return {root,bridges,pins,providers,home,pre32,bounded,owner,quiet,sourceFault,sourceSha:git(root,['rev-parse','HEAD']),outputTreeHash};
+  return {root,bridges,pins,providers,home,pre32,bounded,owner,quiet,ingress,sourceFault,sourceSha:git(root,['rev-parse','HEAD']),outputTreeHash};
 }
 
 function resourceProgram(fixture){return `
@@ -283,8 +286,8 @@ function resourceProgram(fixture){return `
   syncBuiltinESMExports();
 `;}
 
-async function exercise(body,{resources=false,pre32=false,bounded=pre32,owner=false,ownerInputCopy=false,localDrainFault=false,quiet=false}={}){
-  const fixture=jointFixture(resources,pre32,bounded,owner,ownerInputCopy,localDrainFault,quiet),{root}=fixture;
+async function exercise(body,{resources=false,pre32=false,bounded=pre32,owner=false,ownerInputCopy=false,localDrainFault=false,quiet=false,ingress=false}={}){
+  const fixture=jointFixture(resources,pre32,bounded,owner,ownerInputCopy,localDrainFault,quiet,ingress),{root}=fixture;
   const program=`import assert from 'node:assert/strict';import fs from 'node:fs';
     import path from 'node:path';
     import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
@@ -1179,6 +1182,159 @@ const localDrainSetup=`
     throw Error('LOCAL_DRAIN_BOUNDARY_SETUP_EXHAUSTED');
   };
 `;
+
+// SAME local originals only. Native loader/compiled output remain manual fixture
+// bridges; the owned execFile child below is real, not historical-family proof.
+const ingressPreparationSetup=String.raw`
+  assert.equal(typeof adapter.prepareHeldDashboardCutoverJointIngressV5,'function','MISSING_PRE_INTENT_INGRESS_PREPARATION');
+  const local=await import('./dist/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js');
+  const OriginalPromise=Promise,weakSet=WeakMap.prototype.set;let coordinator;
+  WeakMap.prototype.set=function(key,value){const answer=weakSet.call(this,key,value);
+    if(value?.route==='ingress'&&value?.enrollments)coordinator=value;return answer};
+  out.ingressForbiddenImports=[];
+  const forbiddenIngressUrls=new Set([
+    root+'/dist/internal-production/baseline-legacy-database-census-v1.js',
+    root+'/dist/internal-production/baseline-positive-worktree-physical-catalog-v2.js',
+    root+'/dist/internal-production/baseline-positive-worktree-active-binding-snapshot-v1.js',
+    root+'/scripts/deployment-dashboard-cutover-first-generation-v2.mjs',
+  ].map(locator=>'file://'+locator));
+  moduleBuiltin.registerHooks({resolve(specifier,context,next){
+    if(forbiddenIngressUrls.has(specifier)||forbiddenIngressUrls.has('file://'+specifier)){
+      out.ingressForbiddenImports.push(specifier);throw Error('INGRESS_FORBIDDEN_IMPORT')}
+    return next(specifier,context);
+  },load(url,context,next){if(forbiddenIngressUrls.has(url)){
+    out.ingressForbiddenImports.push(url);throw Error('INGRESS_FORBIDDEN_EVALUATION')}
+    return next(url,context)}});
+  const observeIngressWait=kind=>{
+    let entered;const waiting=new OriginalPromise(resolve=>{entered=resolve});
+    globalThis.Promise=new Proxy(OriginalPromise,{construct(target,args){
+      const original=Reflect.construct(target,args,target);
+      if(Error().stack.includes(kind))entered();return original;
+    }});return waiting;
+  };
+  const assertIngressPending=()=>{
+    assert.equal(coordinator.stage,'draining');
+    const before=JSON.stringify(out.portCounts);
+    assert.throws(()=>adapter.assertDashboardCutoverJointNativeTokenV4(coordinator.token,loaded),
+      {message:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'});
+    assert.throws(()=>adapter.assertDashboardCutoverJointDefinitionTokenV4(coordinator.token,approved),
+      {message:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'});
+    assert.equal(JSON.stringify(out.portCounts),before);
+  };
+  const assertIngressUnknown=async()=>{
+    assert.ok(coordinator);assert.equal(coordinator.stage,'draining');
+    assert.equal(coordinator.unknown,true);assert.equal(coordinator.revoked,true);
+    assert.equal(coordinator.localDrain.ready,true);
+    for(const kind of ['js','child']){
+      const original=coordinator.localDrain[kind];
+      assert.equal(original.intent,true);assert.equal(original.returned,true);
+      assert.equal(original.settled,true);assert.equal(original.authenticated,true);
+      assert.equal((awaitedTypes).isPromise(original.promise),true);assert.ok(original.value);
+      assert.equal(await original.promise,original.value);
+    }
+    local.assertDashboardCutoverLocalProducerDrainV2(coordinator.localDrain.js.value);
+    local.assertDashboardCutoverLocalChildDrainV3(coordinator.localDrain.child.value);
+    assert.equal(fs.existsSync(baseline+'/deployment-dashboard-cutover-v2'),false);
+    assert.equal(fs.existsSync(baseline+'/restart-authority-retirement-v1'),false);
+    assert.equal(out.reservationChild,undefined);assert.deepEqual(out.ingressForbiddenImports,[]);
+    assert.equal(coordinator.quiet,null);assert.equal(coordinator.pre32.invocationIntent,false);
+    assert.equal(coordinator.reservation.invocationIntent,false);assert.equal(out.nativeCalls,0);
+  };
+  const awaitedTypes=(await import('node:util')).types;
+`;
+
+test('ingress preparation waits SAME JS original and closes queued fresh admission before historical refusal',()=>exercise(
+  ownerSetup+participants+ingressPreparationSetup+String.raw`
+  let finish,bodySettled=false,queued,releaseQueued;
+  const original=new OriginalPromise(resolve=>{finish=resolve});
+  const producer=local.withDashboardCutoverLocalProducerAsyncV2('workflow-uninstall',()=>{
+    const queuedGate=new OriginalPromise(resolve=>{releaseQueued=resolve});
+    queued=queuedGate.then(()=>{try{
+      local.withDashboardCutoverLocalProducerSyncV2('workspace-cleanup',()=>{throw Error('QUEUED_BODY_DISPATCHED')});
+      return 'accepted';
+    }catch(error){return error.message}});
+    return original;
+  });producer.then(()=>{bodySettled=true});
+  const waiting=observeIngressWait('acquireDashboardCutoverLocalProducerDrainV2');
+  const work=adapter.prepareHeldDashboardCutoverJointIngressV5(loaded,approved,actualOwner);
+  const outcome=work.then(()=>({success:true}),error=>({error:error.message}));
+  let boundary,before,queuedResult;
+  try{
+    boundary=await OriginalPromise.race([waiting.then(()=>'original-wait'),outcome.then(()=>'returned')]);
+    before={boundary,bodySettled,childIntent:coordinator?.localDrain.child.intent};
+    if(boundary==='original-wait'){
+      assertIngressPending();
+      assert.throws(()=>local.withDashboardCutoverLocalProducerSyncV2('workspace-cleanup',()=>{}));
+    }
+  }finally{globalThis.Promise=OriginalPromise;finish();await producer;
+    releaseQueued();queuedResult=await queued;WeakMap.prototype.set=weakSet}
+  const result=await outcome;
+  out.ingressPreparation={authority:'actual-local-JS-registry-with-manual-source-build-native-fixture',before,result};
+  assert.deepEqual(before,{boundary:'original-wait',bodySettled:false,childIntent:false});
+  assert.deepEqual(result,{error:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'});
+  assert.equal(queuedResult,'DASHBOARD_CUTOVER_LOCAL_PRODUCER_DRAIN_REFUSED');
+  await assertIngressUnknown();
+`,{resources:true,owner:true,ingress:true,bounded:true,
+  localDrainFault:process.env.SETFARM_INGRESS_COUNTERFACTUAL_RED==='1'?'ingress-immediate-refusal':false}));
+
+test('ingress preparation joins SAME real owned child before historical refusal without effects',()=>exercise(
+  ownerSetup+participants+String.raw`
+  let child,closed,callback;const events=[];
+  const node=${JSON.stringify(fixedNode)},program='process.stdin.resume();process.stdin.on("end",()=>{process.stdout.write("OUT");process.stderr.write("ERR")})';
+  cp.execFile=(command,args,done)=>{
+    assert.equal(command,node);assert.deepEqual(args,['-e',program]);
+    child=originalExecFile(command,args,{cwd:root,env:{},encoding:'utf8'},done);
+    closed=new OriginalPromise(resolve=>child.once('close',resolve));
+    for(const event of ['exit','close'])child.on(event,(code,signal)=>events.push({event,code,signal}));
+    for(const [name,stream] of [['stdin',child.stdin],['stdout',child.stdout],['stderr',child.stderr]])
+      for(const event of name==='stdin'?['close']:['end','close'])stream.on(event,()=>events.push({event:name+':'+event}));
+    return child;
+  };syncBuiltinESMExports();
+`+ingressPreparationSetup+String.raw`
+  let before,result;
+  try{
+    await local.withDashboardCutoverLocalProducerAsyncV2('medic-install',async()=>{
+      local.execFileDashboardCutoverLocalChildV3(node,['-e',program],(error,stdout,stderr)=>{callback={error:error?.message??null,stdout,stderr}});
+    });
+    const waiting=observeIngressWait('acquireDashboardCutoverLocalChildDrainV3');
+    const work=adapter.prepareHeldDashboardCutoverJointIngressV5(loaded,approved,actualOwner);
+    const outcome=work.then(()=>({success:true}),error=>({error:error.message}));
+    const boundary=await OriginalPromise.race([waiting.then(()=>'original-child-wait'),outcome.then(()=>'returned')]);
+    before={boundary,events:[...events],callbackReturned:callback!==undefined,jsAuthenticated:coordinator?.localDrain.js.authenticated};
+    if(boundary==='original-child-wait')assertIngressPending();
+    globalThis.Promise=OriginalPromise;child.stdin.end();result=await outcome;
+  }finally{globalThis.Promise=OriginalPromise;WeakMap.prototype.set=weakSet;
+    if(child){if(!child.stdin.writableEnded)child.stdin.end();await closed}}
+  out.ingressPreparation={authority:'one-real-owned-Node-child-not-historical-family',before,result,events,callback,pid:child.pid};
+  assert.deepEqual(before,{boundary:'original-child-wait',events:[],callbackReturned:false,jsAuthenticated:true});
+  assert.deepEqual(result,{error:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'});
+  assert.deepEqual(callback,{error:null,stdout:'OUT',stderr:'ERR'});
+  for(const event of ['stdin:close','stdout:end','stdout:close','stderr:end','stderr:close'])assert.equal(events.filter(row=>row.event===event).length,1);
+  for(const event of ['exit','close'])assert.deepEqual(events.find(row=>row.event===event),{event,code:0,signal:null});
+  await assertIngressUnknown();
+`,{resources:true,owner:true,ingress:true,bounded:true}));
+
+test('ingress preparation rejects idle foreign admission and proxy arity before authentic local conjunction',()=>exercise(
+  ownerSetup+participants+ingressPreparationSetup+String.raw`
+  const refusal={message:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'};
+  let traps=0;const proxy=new Proxy({}, {get(){traps++;throw Error('TRAP')},ownKeys(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')}});
+  const before=JSON.stringify(out.portCounts);
+  for(const args of [[],[proxy,approved,actualOwner],[loaded,proxy,actualOwner],[loaded,approved,proxy],
+    [loaded,approved,actualOwner,undefined]])
+    await assert.rejects(()=>adapter.prepareHeldDashboardCutoverJointIngressV5(...args),refusal);
+  assert.equal(traps,0);assert.equal(JSON.stringify(out.portCounts),before);assert.equal(coordinator,undefined);
+  for(const args of [[{},approved,actualOwner],[loaded,{},actualOwner],[loaded,approved,{}]]){
+    await assert.rejects(()=>adapter.prepareHeldDashboardCutoverJointIngressV5(...args),refusal);
+    assert.equal(coordinator,undefined,'FOREIGN_INPUT_ADMITTED_OPERATION');
+  }
+  const authenticationReads=JSON.parse(JSON.stringify(out.portCounts));
+  await assert.rejects(()=>adapter.prepareHeldDashboardCutoverJointIngressV5(loaded,approved,actualOwner),refusal);
+  await assertIngressUnknown();
+  const after=JSON.stringify(out.portCounts);
+  await assert.rejects(()=>adapter.prepareHeldDashboardCutoverJointIngressV5(proxy,proxy,proxy,undefined),refusal);
+  assert.equal(traps,0);assert.equal(JSON.stringify(out.portCounts),after);
+  out.ingressPreparation={authority:'local-empty-registry-still-historical-UNKNOWN-with-trusted-authentication-reads',traps,authenticationReads};
+`,{resources:true,owner:true,ingress:true,bounded:true}));
 
 test('local drain waits SAME registered body before first PG or ROOT port',()=>exercise(
   pre32Setup('healthy')+ownerSetup+participants+localDrainSetup+`

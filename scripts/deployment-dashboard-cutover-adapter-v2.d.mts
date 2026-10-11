@@ -14,3 +14,5 @@ export function assertDashboardCutoverJointDefinitionReleaseTokenV4(token: objec
 export function revokeDashboardCutoverJointTokenV4(token: object): void;
 export function quietHeldDashboardCutoverJointLaunchersV4(originalLoaded: object, originalDefinition: object, originalOwner: object): Promise<void>;
 export function assertDashboardCutoverJointQuietTokenV4(token: object, originalOwner: object, definitionScope: object): void;
+// Non-admitting local conjunction: historical UNKNOWN always rejects.
+export function prepareHeldDashboardCutoverJointIngressV5(originalLoaded: object, originalDefinition: object, originalOwner: object): Promise<void>;

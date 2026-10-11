@@ -3634,3 +3634,118 @@ Step4 complete for this local DATA slice. Step5 still needs final exact-eight/
 all-original independent gates and normal scoped delivery/readback. Full
 cutover conjunction, finite historical ingress/descendant closure and clean-main
 build/host proof remain required; no partial merge or running3333 claim.
+
+### Task4m: fresh non-admitting pre-intent local conjunction
+
+Scope and exact five-file map are the paired Task4m spec above. Root sole writer;
+all existing worktrees/proofs/two dirty files preserved. Ordinary standing
+authority covers this causal prerequisite, not historical authority or rollout.
+
+Consumes genuine loaded/definition/maintenance owner handles and the existing
+local drain owner. Produces prepareHeldDashboardCutoverJointIngressV5(a,b,c),
+Promise<void>, always rejection after actual local custody or earlier refusal.
+No new owner/provider module, callback, PID selector, receipt or grant.
+
+- [x] Read-only paired nomination gate before source edits.
+- [x] RED: extend existing joint fixture with ingress-only owner bridges; invoke
+  actual new adapter entry using ownerSetup+participants. A pending registered
+  body must close fresh admission while PG/journal/bootout remain untouched.
+  Existing source has no entry: explicit missing-entry assertion is the first
+  RED, not an import/setup crash. Final controls cannot pass an immediate stub.
+- [x] Minimal adapter: prepare owner+local drain only, new route authenticates
+  owner, enrolls same participant scopes, stage draining, retains both actual
+  original drains, then sets unknown/revoked and refuses before any effect.
+  Old original/pre32/reservation/terminalquiet behavior remains unchanged.
+- [x] GREEN/complements: pending JS body, actual owned execFile child and all
+  output/exit/close originals, closed queued admission, idle foreign zero scope/
+  drain/effect admissions with trusted reads disclosed; proxy/wrong-arity zero
+  early ports/traps, deliberate immediate-stub counterfactual failing behavior. Exact
+  same local fulfilled handles stay retained even after terminal UNKNOWN.
+- [x] Run selected ingress controls via node --test --test-name-pattern='ingress
+  preparation' scripts/__tests__/deployment-dashboard-cutover-adapter-v2.test.js;
+  unchanged quiet/local-drain consumers, strict noEmit/syntax/contracts/diff;
+  root original material read and independent final review. Source-only bridge
+  is not clean-main build/native family/PG/ROOT/startup proof. No partial merge.
+
+#### Task4m current finite verification, 2026-10-11
+
+Source adapter SHA256 a01012f7bccbae2d42cbed7bd2e5e855e2e1a1110e9040eead1efd8f58755f81;
+declaration 2f161bcbb3a9f5bc46a10bf2cf99b8fe7b8dd27bb140e6dab729e53c66de38ab;
+test d87e6082caf9937b033506f1dd83361e2f3f8119ba0dcd474e4afcecddf9a5ea.
+Current qualifying producers joined naturally before subsequent source edits. One older RED
+job had loaded an earlier test snapshot while a test-only refinement was made;
+that older snapshot is retained but not credited as current qualification.
+Fresh frozen RED followed before production implementation. A missing TypeScript
+dependency attempt was SETUP, not behavioral RED. Fresh BKYZLY pending-JS RED
+natural1/null, 20375.5255ms, explicitly MISSING_PRE_INTENT_INGRESS_PREPARATION.
+Previous fresh pair76o52P/3ZDLTh both reported that same absent entry. Missing-entry
+RED cannot qualify the bodies that were still unarmed.
+
+First GREEN child attempt nijSc2 failed SETUP because the local owner captured
+the execFile refusal wrapper before test interception. Root joined it, then
+corrected only test setup ordering. No qualification from that failed child.
+
+Frozen current ingress campaign natural0, PASS3/FAIL0/SKIP0, 87235.88925ms.
+Each inner original natural0/null/errornull; stdout/stderr EOF+close, empty
+stderr, exact29 pins/14 manual bridges. Receipt paths below use prefix
+/private/tmp/setfarm-native-inputs-v2. and suffix .joint-{intent,result,originals}.json.
+Hashes in each row are intent/result/originals, respectively:
+
+- 1p3bB4, genuine pending registered JS and inherited queued admission:
+  ec60f853b2857955c4906316553c7785fe5bc43085b205e4a2352461802c4146 /
+  d1d70edc5a8b26e7726d157772cd2dc411fa0b161b6bcccfae1c122cc174f560 /
+  b4649501e8b8aa6d7f2d77415d8ec37727fbb7fa0344d1236eee792b4b4d9759.
+- GomV47, SAME real Node execFile child PID94812, natural exit0/null,
+  seven exit/close/stream events and callback OUT/ERR:
+  35ae4c983dd48e700e1342e1b0bd0ee63e4b9e524c96acb9e13b1b99a26330b6 /
+  aba82f9b8f7c20bf594b660afa6248d574b81eda21fdd9e288ea535e6545ed2d /
+  1dcf4d3a41ca4ccd20693e1676f80db73e73cd4cfc6fd88de3b3e6029f8a0efa.
+- Uh5avi, idle foreign authentication reads, proxy/arity zero early ports,
+  genuine empty local registries still historical UNKNOWN:
+  96ff7a4cffdc1ff855ab17bd7fad5e9f965fa99aa52202fb27401be911d5e429 /
+  119f02fa5f47d84dd14751517bb5cccbd20e382e997a62fba855b16d154a9dea /
+  9064a04e6fc0f008c550efaebe40d19a329af72cc16b0822a839baa8a8f62964.
+
+Immediate-refusal counterfactual Ju6t4n natural1/null/errornull with all EOF+close,
+PASS0/FAIL1, 20612.932833ms. Exact copied-adapter single replacement reproduces
+changed SHA256 dcea61c67748ed21bc84f958966e0679b41e4d3d718fac3f8e0ebbc0f43dbafa.
+The actual failure is boundary returned instead of original-wait, body still
+pending; not import/setup. finally joins producer and queued original. Receipts:
+e82f6473edc159d61f46ecf2fd52819fab2a59f51a1e30f7b23b473759fe47f2 /
+c29bbcad33bb0940dd01aade046644848f8a8abc333f684b17259a570af73a96 /
+0fe0ceea283f8a861bbf4300b29e802c98c05a5f7e9d57dc6f455d85ed0b53ad.
+This catches a stub; it is not healthy production qualification.
+
+Root and independent seat fully read/audited each finite retained cohort:
+three GREEN total480 regularfiles/4884973B; counterfactual160/1629652B.
+SDK fixture links recorded separately and not followed. Source/bridge/receipt
+pins match. Final stdout is NOT byte-identical to originals: exactly +1 composite
+writeFileSync/+1 closeSync for publication of its own originals file; every other
+counter and remaining field matches. No native peer/PG/ROOT/journal publication
+or historical authority in the ingress cases.
+
+Fresh unchanged adjacent controls natural0, PASS2/FAIL0/SKIP0, 131580.469875ms:
+terminal quiet tv68Hc (90731.898375ms), existing actual-local-child reservation
+4kviVP (40705.3865ms). Root post-close audits0; independent full material C0/I0/M0.
+Both remain finite fixtures with native/PG/Python doubles; real local child is
+separate from historical family proof. Original older routes are not adopted.
+
+Fresh strict read-only TypeScript5.9.3 API check: parsed stock config, only noEmit
+added, virtual worktree node_modules paths resolve to canonical dependencies;
+839 source roots/1187 transitive files, diagnostics0, no emission/install/symlink.
+This is NOT historical1195 coverage or clean build; stock skipLibCheck stays true
+and JS/MJS are separately syntax-checked. Independent exact recipe C0/I0/M0.
+The earlier CLI baseUrl/typeRoots nomination failed unresolved dependency SETUP,
+not source RED. MJS/test syntax0; version2.3.79, English1996, paths1002, diff0.
+
+Actual build remains deferred: stock writer requires clean branch MAIN and
+HEAD==origin/main before writing authority. A clean private PR checkpoint does
+not satisfy that contract. No dirty-build/runtime bypass, local MAIN commit,
+selector change, historical grant, partial merge or live3333 claim.
+
+Task4m finite prerequisite is verified, not the whole Task4 or integration phase.
+Next historical contract must derive a complete owner-held cohort and close
+queued remote ingress; idle launchers, local ESM registries and supplied Task4l
+candidate PIDs cannot provide it. A parent that exits while its child survives,
+plus an already queued entry, is the required first behavioral counterexample.
+Do not manufacture a missing-event-call RED: current UNKNOWN correctly refuses.

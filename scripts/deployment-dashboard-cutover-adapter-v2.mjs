@@ -36,7 +36,7 @@ async function importOriginal(locator){
   catch{occurrence.settled=true;preparation.revoked=true;refuse()}
   checkPreparation();sourceCheck(checkPreparation);return occurrence.value;
 }
-async function prepare(pre32,ownerReservation,quiet=false){
+async function prepare(pre32,ownerReservation,quiet=false,ingress=false){
   if(preparation.ready)sourceCheck(checkPreparation);
   else{
     if(preparation.attempted||preparation.revoked)refuse();preparation.attempted=true;
@@ -52,7 +52,7 @@ async function prepare(pre32,ownerReservation,quiet=false){
     preparation.census=await importOriginal(ROOT+'/dist/internal-production/baseline-legacy-database-census-v1.js');
     sourceCheck(checkPreparation);
   }
-  if((ownerReservation||quiet)&&!preparation.owner){
+  if((ownerReservation||quiet||ingress)&&!preparation.owner){
     if(preparation.ownerAttempted)refuse();preparation.ownerAttempted=true;
     preparation.owner=await importOriginal(ROOT+'/scripts/deployment-cutover-owner.mjs');
     sourceCheck(checkPreparation);
@@ -65,6 +65,10 @@ async function prepare(pre32,ownerReservation,quiet=false){
     preparation.physical=await importOriginal(ROOT+'/dist/internal-production/baseline-positive-worktree-physical-catalog-v2.js');
     sourceCheck(checkPreparation);
     preparation.activeBinding=await importOriginal(ROOT+'/dist/internal-production/baseline-positive-worktree-active-binding-snapshot-v1.js');
+    sourceCheck(checkPreparation);
+  }
+  if(ingress&&!preparation.localDrain){
+    preparation.localDrain=await importOriginal(ROOT+'/dist/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js');
     sourceCheck(checkPreparation);
   }
 }
@@ -233,7 +237,7 @@ export async function executeDashboardCutoverJointPre32AssertionsV4(token,origin
 async function qualifyOriginals(originalLoaded,originalDefinition,arity,route,originalOwner){
   // Pending preparation and original work are fenced BEFORE all input parsing.
   if(active){revokeActive();refuse()}
-  const ownerRoute=route==='reservation'||route==='quiet';
+  const ownerRoute=route==='reservation'||route==='quiet'||route==='ingress';
   if(arity!==(ownerRoute?3:2)||originalLoaded===null||typeof originalLoaded!=='object'
     ||originalDefinition===null||typeof originalDefinition!=='object'
     ||types.isProxy(originalLoaded)||types.isProxy(originalDefinition)
@@ -241,7 +245,7 @@ async function qualifyOriginals(originalLoaded,originalDefinition,arity,route,or
   if(attempted||preparation.revoked)refuse();
   active=preparation;
   try{
-    await prepare(route==='pre32'||route==='reservation',route==='reservation',route==='quiet');checkPreparation();
+    await prepare(route==='pre32'||route==='reservation',route==='reservation',route==='quiet',route==='ingress');checkPreparation();
     // Fixed provider assertions own their WeakMaps; no caller-supplied ports.
     preparation.native.assertHeldDashboardCutoverLoadedJobPeerV4(originalLoaded);checkPreparation();
     preparation.definition.assertHeldDashboardCutoverApprovedDefinitionV4(originalDefinition);checkPreparation();
@@ -275,12 +279,17 @@ async function qualifyOriginals(originalLoaded,originalDefinition,arity,route,or
       preparation.native.assertHeldDashboardCutoverLoadedJobOperationV4,originalLoaded);
     enroll(record,1,preparation.definition.beginHeldDashboardCutoverApprovedDefinitionOperationV4,
       preparation.definition.assertHeldDashboardCutoverApprovedDefinitionOperationV4,originalDefinition);
-    if(route==='reservation'){
+    if(route==='reservation'||route==='ingress'){
       record.stage='draining';checkOperation(record);
       await acquireLocalDrainOriginal(record,'js');
       await acquireLocalDrainOriginal(record,'child');
       if(!record.localDrain.js.authenticated||!record.localDrain.child.authenticated)refuse();
       record.localDrain.ready=true;checkOperation(record);
+    }
+    if(route==='ingress'){
+      // Local originals do not own historical families or queued remote entry.
+      // Keep the SAME draining occurrence; never mint historical admission.
+      record.unknown=true;record.revoked=true;refuse();
     }
     record.stage='working';
     if(route==='pre32'||route==='reservation'){
@@ -324,4 +333,7 @@ export async function reserveHeldDashboardCutoverJointFirstGenerationV4(original
 }
 export async function quietHeldDashboardCutoverJointLaunchersV4(originalLoaded,originalDefinition,originalOwner){
   return qualifyOriginals(originalLoaded,originalDefinition,arguments.length,'quiet',originalOwner);
+}
+export async function prepareHeldDashboardCutoverJointIngressV5(originalLoaded,originalDefinition,originalOwner){
+  return qualifyOriginals(originalLoaded,originalDefinition,arguments.length,'ingress',originalOwner);
 }
