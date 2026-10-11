@@ -96,3 +96,91 @@ the owner checkpoint. No whole-app suite or production-cutover success claim.
   migration digests and12MC artifacts passed. Fixed missing production-path
   loader refused without creating anything. HTTP remains200/000/200. No complete
   application suite, live socket/grant verification or cutover is claimed.
+
+## Explicit release after revocation correction (2026-10-11)
+
+Causal scope: actual native client close now joins its originals, but composing
+the fixed protected socket holder would release descriptor/ancestry FDs earlier
+on recheck failure. Separate sticky refusal from release in the existing nested
+holders before adding any backend initializer. Root sole writer; existing linked
+worktree and draft PR280 stay, no integration/rollout or guard bypass.
+
+File Map: modify existing generic file holder, protected descriptor holder,
+`src/internal-production/task6a-socket-physical-evidence-v1.ts`, actual private
+descriptor integration fixture, this plan and paired spec ONLY. Outside diagnostic
+capture may reuse pinned existing read-only declared-dependency resolver/tsx and
+complete-write/original-close capture helper; no candidate dependency mutation.
+Actual outside owner is `logs/setfarm-protected-descriptor-run-v1.mjs`, with
+fixed argv/env/base-only descriptor opt-in and thirteen pre/post physical/byte
+pins. Original actual child close, complete writes, independent fsync/close and
+sticky final/capture failures; sampled8GiB reserve/64MiB admission margin. No
+native-graph/full-dependency or universal descendant-extinction claim follows.
+
+**Interfaces unchanged:** generic hold(path), zero-input protected descriptor and
+socket holds; returned read/recheck/close. Returned failure invalidates forever;
+constructor failures close partial resources; explicit close releases every FD.
+
+- [x] Extend existing private fixture CHILD with an observational wrapper around
+  actual fs.openSync/closeSync. Delegate each original unchanged, record actual
+  acquired FDs and exact close attempts. Healthy returned holder records5 FDs.
+  After drift and refused reads/rechecks, run `fs.fstatSync(fd)` on each; they
+  must remain open. After explicit close twice, each original was closed once
+  and `assert.throws(()=>fs.fstatSync(fd),e=>e.code==='EBADF')` must pass.
+- [x] Default tests remain unprivileged. Review exact test/capture before the
+  existing approved temporary root-file fixture opt-in. Old source must produce
+  intended RED when its failed recheck already closed a held original.
+- [x] Change only returned-callback catches from `invalid=true;close();refuse()`
+  to `invalid=true;refuse()` in all three nested FD holders (including protected
+  socket read). Keep acquisition catch/explicit close/physical-only data holder
+  policy intact. No authentication, ACL/path, identity or uncertainty relaxation.
+- [x] Fresh actual protected-file GREEN and default descriptor/physical/socket
+  tests, exact cleanup corroboration, strict source/actual-test types/contracts.
+  Root self-review verifies every acquired FD has constructor-failure or explicit
+  release ownership; independent source/raw review before scoped delivery.
+
+This fixture observes genuine FD ownership only; not a synthetic file-system
+acceptance stub. It does not prove a fixed production descriptor was deployed,
+joint backend cleanup, zero historical owners or dashboard startup. No live
+Setfarm path/DB, accounts, services or deployment selector are modified.
+
+Preparation refinement: an early candidate-worktree attempt failed before the
+FD oracle, while the old finally masked its initial error. It earns no RED.
+An independent pre-effect dependency probe reproduced MODULE_NOT_FOUND for
+declared esbuild in that worktree. Use a fresh10-member exact-source capsule
+with an ordinary symlink to existing canonical dependencies, never mutate the
+candidate dependency binding or expand the resolution hook. The fixture now
+completes actual write:false bundling and local bytes before root allocation,
+logs the allocated path before anchor lstat, and retains tagged initial/cleanup
+failures with ordered AggregateError after finally. Existing cleanup guards
+remain unchanged; the uncertain earlier root0700 fixture stays visible, not
+deleted. This infrastructure repair is necessary to earn the same FD evidence.
+Outside successor `logs/setfarm-protected-descriptor-capsule-run-v2.mjs`
+pins the used nomination bytes, all20 source/copy observations, actual node and
+capture helper, with the same sticky original-close/full-write/final-failure
+and sampled8GiB custody. Capsule builder is the distinct
+`logs/setfarm-protected-descriptor-source-capsule-v1.mjs`. Used older tools and
+captures remain unchanged. This is source verification, not dependency freeze.
+
+Actual intended RED: five pure passes, one native failure, zero skips, natural
+1/null. The healthy holder ran first; mode drift then caused the delegated
+original close count to be1 rather than absent before explicit close. Exact
+private fixture cleanup and independent absence were verified. Actual first
+GREEN:6/6,0 skips, natural0/null, all perturbations and genuine fstat/EBADF
+oracles passed, exact fixture cleanup/absence corroborated. No capture faults
+or8GiB reserve breach. Read-only source and RED reviews cleared the bounded
+four-catch correction. Final failure-presence hardening was freshly reverified:
+6/6 actual private tests,0 skips, natural0/null, raw SHA256
+`b5747ed5491a77ec1fa3cb908d359e11067a248fe8ae271ecc157cf833011b0e`,
+receipt SHA256
+`41fcd5f2d32b4738edcda58a2c687cd79ba244412637d29ee34ca589bafd9dfe`.
+Root rehashed all20 source/copy snapshots,4 fixed pins and3 stream artifacts;
+independent material review corroborates exact fixture absence and bounded
+capture. Final owner free9,297,797,120B, no capture faults or sampled8GiB breach.
+Actual candidate focused transport/descriptor/native-close/physical tests:
+23 passes,1 explicit privileged skip,0 failures. Strict TS5.9.3 actual source
+and four test roots:843 roots/1192 files,0 diagnostics/noEmit. Version2.3.79,
+English1996/path1002, semantic migration digests and12MC artifacts passed.
+Independent source/test/type-helper review closed all findings. This remains
+a partial draft-PR checkpoint, not branch integration or whole-app completion.
+Ordinary stock build still requires the eventual reviewed clean main custody;
+no fake main, origin rewrite, dirty-build flag or guard skip is used here.
