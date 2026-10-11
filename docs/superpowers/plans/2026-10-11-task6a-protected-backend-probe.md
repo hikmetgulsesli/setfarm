@@ -46,7 +46,7 @@ existing zero-input socket holder and one-attempt client; returns no data/author
   with independently attempted cleanup and explicit failure-presence flags. Keep
   held resources if client construction throws or close fails before returning
   its original; refuse future entry. Revoke/release throws cannot skip close.
-- [ ] Run focused GREEN and adjacent descriptor/transport/socket controls. Strict
+- [x] Run focused GREEN and adjacent descriptor/transport/socket controls. Strict
   source/actual-test types, version/English/path/migration/MC/diff checks; stock
   dirty build is forbidden. Independent source and complete raw review precede
   ordinary same-branch commit/push; PR remains draft until full integration gates.

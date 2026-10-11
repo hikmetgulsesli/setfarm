@@ -4,11 +4,13 @@ export type ProtectedClusterPolicyV1 = Readonly<{
   config: string;
   hba: string;
   ident: string;
+  closedProbe?: true;
 }>;
 
 // Test-only policy; the real fixture calls it before ownership/server effects.
 export function assertProtectedClusterPolicyV1(policy: ProtectedClusterPolicyV1): void {
   const refuse = (): never => { throw new Error("TASK6A_PROTECTED_CLUSTER_POLICY_REFUSAL"); };
+  if (policy.closedProbe !== undefined && policy.closedProbe !== true) refuse();
   if (!/^\/private\/tmp\/setfarm-task6a-protected-pg\.[A-Za-z0-9]+$/.test(policy.home)
     || !Number.isSafeInteger(policy.port) || policy.port < 55_000 || policy.port >= 59_000) refuse();
   const lines = (text: string): string[] => text.trim().split("\n")
@@ -20,12 +22,14 @@ export function assertProtectedClusterPolicyV1(policy: ProtectedClusterPolicyV1)
   exactLines(policy.hba, [
     "local all task6a_admin peer map=task6a_fixture",
     "local all task6a_runtime peer map=task6a_fixture",
+    ...(policy.closedProbe ? ["local setfarm setfarm_runtime peer map=task6a_fixture"] : []),
     "local all all reject", "local replication all reject",
     "host all all 0.0.0.0/0 reject", "host all all ::0/0 reject",
     "host replication all 0.0.0.0/0 reject", "host replication all ::0/0 reject",
   ]);
   exactLines(policy.ident, [
     "task6a_fixture _postgres task6a_admin", "task6a_fixture _www task6a_runtime",
+    ...(policy.closedProbe ? ["task6a_fixture _www setfarm_runtime"] : []),
   ]);
   const expected = new Map([
     ["data_directory", `'${policy.home}/data'`],

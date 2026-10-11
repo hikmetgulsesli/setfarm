@@ -17,6 +17,11 @@ import { extractTask6aOrdinaryBaseStatementsV2 } from "./task6a-held-pg31-base-d
 const enabled = process.env.SETFARM_TASK6A_TEST_PROTECTED_PG_FIXTURE === "1";
 const nativeEnabled = process.env.SETFARM_TASK6A_TEST_PROTECTED_NATIVE_FIXTURE === "1";
 const heldPg31Enabled = process.env.SETFARM_TASK6A_TEST_HELD_PG31_FIXTURE === "1";
+const closedProbeEnabled = process.env.SETFARM_TASK6A_TEST_CLOSED_PROBE_FIXTURE === "1";
+if (process.env.SETFARM_TASK6A_TEST_CLOSED_PROBE_FIXTURE !== undefined) {
+  assert.equal(closedProbeEnabled && enabled && !heldPg31Enabled && !nativeEnabled, true,
+    "closed probe fixture requires base opt-in, without held PG31/native image copy");
+}
 if (process.env.SETFARM_TASK6A_TEST_HELD_PG31_FIXTURE !== undefined) {
   assert.equal(heldPg31Enabled && nativeEnabled && enabled, true,
     "held PG31 fixture requires all three explicit opt-ins");
@@ -318,6 +323,51 @@ test("private protected PG denies old identity and scoped admin impersonation ac
   let server: Readonly<{ pid: number; identity: string; pidFile: string }> | undefined;
   let dataAnchor: fs.BigIntStats | undefined;
   let failure: unknown;
+  let descriptorHome: string | undefined, descriptorAnchor: fs.BigIntStats | undefined;
+  let descriptorReady = false;
+  const diagnosticSource = path.join(home, "closed-probe-transport.json");
+  const closedModule = path.join(home, "closed-probe.mjs");
+  let diagnosticAnchor: fs.BigIntStats | undefined;
+
+  function exactDescriptor(): void {
+    assert.ok(descriptorHome && descriptorAnchor && descriptorReady);
+    assert.equal(path.dirname(descriptorHome), "/Library/Application Support");
+    assert.match(path.basename(descriptorHome), /^setfarm-task6a-descriptor\.[A-Za-z0-9]{8}$/);
+    const stat = fs.lstatSync(descriptorHome, { bigint: true });
+    assert.ok(stat.isDirectory() && !stat.isSymbolicLink()); assert.equal(fs.realpathSync(descriptorHome), descriptorHome);
+    assert.equal(stat.dev, descriptorAnchor.dev); assert.equal(stat.ino, descriptorAnchor.ino);
+    assert.equal(stat.uid, 0n); assert.equal(stat.mode & 0o7777n, 0o755n);
+  }
+  function closedProbeEvidence(phase: string): void {
+    if (!closedProbeEnabled) return;
+    exactServer(); exactDescriptor();
+    const target = path.join(descriptorHome!, "transport.json");
+    for (const mode of ["healthy", "wrong-tuple", "delayed-close"] as const) {
+      const transport = { schema: "setfarm.postgres-socket-transport.v1", socketDirectory: socket,
+        port, database: mode === "wrong-tuple" ? "postgres" : "setfarm",
+        user: mode === "wrong-tuple" ? "task6a_runtime" : "setfarm_runtime", osUid: clientUid };
+      const staging = fs.lstatSync(diagnosticSource, { bigint: true }); assert.ok(diagnosticAnchor);
+      assert.ok(staging.isFile() && !staging.isSymbolicLink()); assert.equal(staging.nlink, 1n);
+      assert.equal(staging.dev, diagnosticAnchor.dev); assert.equal(staging.ino, diagnosticAnchor.ino);
+      assert.equal(staging.uid, BigInt(runnerUid)); assert.equal(staging.mode & 0o7777n, 0o600n);
+      // Prepared before sealing; the root0711 parent is never widened.
+      fs.writeFileSync(diagnosticSource, JSON.stringify(transport) + "\n", { flag: "w" });
+      assert.equal(fs.lstatSync(diagnosticSource, { bigint: true }).ino, diagnosticAnchor.ino);
+      exactDescriptor();
+      checked("/usr/bin/sudo", ["-n", "/usr/bin/install", "-m", "0444", "-o", "root", "-g", "wheel", diagnosticSource, target]);
+      exactDescriptor();
+      const result = asUser("_www", fixtureNode, ["--input-type=module", "-e",
+        `const {runTask6aNativeClosedProbeV1}=await import(process.argv[1]);
+         await runTask6aNativeClosedProbeV1(process.argv[2],JSON.parse(process.argv[3]),process.argv[4]);`,
+        new URL(`file://${closedModule}`).href, target, JSON.stringify({ serverUid, clientGid, socketPath: socketFile }), mode], 30_000);
+      assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+      const lines = result.stdout.trim().split("\n"); assert.equal(lines.length, 1);
+      const witness = JSON.parse(lines[0]!);
+      assert.equal(witness.event, "native-closed-probe"); assert.equal(witness.authority, "diagnostic-only");
+      assert.equal(witness.mode, mode); assert.equal(witness.fdCount, 5); assert.equal(witness.nativeSockets, 1);
+      t.diagnostic(JSON.stringify({ phase, ...witness })); exactServer(); exactDescriptor();
+    }
+  }
 
   function exactHome(): void {
     const stat = fs.lstatSync(home, { bigint: true });
@@ -721,6 +771,20 @@ test("private protected PG denies old identity and scoped admin impersonation ac
       bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent" });
     assert.equal(bundle.outputFiles.length, 1);
     fs.writeFileSync(clientModule, bundle.outputFiles[0].contents, { mode: 0o444 });
+    if (closedProbeEnabled) {
+      const probePath = fileURLToPath(new URL("../../src/internal-production/task6a-protected-postgres-backend-probe-v1.ts", import.meta.url));
+      const entryPath = fileURLToPath(new URL("./task6a-native-closed-probe-entry.ts", import.meta.url));
+      const closedBundle = await esbuild.build({ entryPoints: [entryPath], bundle: true,
+        platform: "node", format: "esm", write: false, logLevel: "silent",
+        plugins: [{ name: "private-diagnostic-holder-only", setup(build) {
+          build.onResolve({ filter: /^\.\/task6a-socket-physical-evidence-v1\.js$/ }, args =>
+            args.importer === probePath ? { path: entryPath } : undefined);
+        } }] });
+      assert.equal(closedBundle.outputFiles.length, 1);
+      fs.writeFileSync(closedModule, closedBundle.outputFiles[0].contents, { mode: 0o444 });
+      fs.writeFileSync(diagnosticSource, "{}\n", { mode: 0o600, flag: "wx" });
+      diagnosticAnchor = fs.lstatSync(diagnosticSource, { bigint: true });
+    }
     if (heldPg31Enabled) {
       const heldBundle = esbuild.buildSync({ entryPoints: [fileURLToPath(new URL(
         "./task6a-held-pg31-fixture-entry-v2.ts", import.meta.url))],
@@ -728,16 +792,39 @@ test("private protected PG denies old identity and scoped admin impersonation ac
       assert.equal(heldBundle.outputFiles.length, 1);
       fs.writeFileSync(heldModule, heldBundle.outputFiles[0].contents, { mode: 0o444 });
     }
-    fs.writeFileSync(hba, "local all task6a_admin peer map=task6a_fixture\nlocal all task6a_runtime peer map=task6a_fixture\nlocal all all reject\nlocal replication all reject\nhost all all 0.0.0.0/0 reject\nhost all all ::0/0 reject\nhost replication all 0.0.0.0/0 reject\nhost replication all ::0/0 reject\n", { mode: 0o444 });
-    fs.writeFileSync(ident, "task6a_fixture _postgres task6a_admin\ntask6a_fixture _www task6a_runtime\n", { mode: 0o444 });
+    fs.writeFileSync(hba, "local all task6a_admin peer map=task6a_fixture\nlocal all task6a_runtime peer map=task6a_fixture\n" +
+      (closedProbeEnabled ? "local setfarm setfarm_runtime peer map=task6a_fixture\n" : "") +
+      "local all all reject\nlocal replication all reject\nhost all all 0.0.0.0/0 reject\nhost all all ::0/0 reject\nhost replication all 0.0.0.0/0 reject\nhost replication all ::0/0 reject\n", { mode: 0o444 });
+    fs.writeFileSync(ident, "task6a_fixture _postgres task6a_admin\ntask6a_fixture _www task6a_runtime\n" +
+      (closedProbeEnabled ? "task6a_fixture _www setfarm_runtime\n" : ""), { mode: 0o444 });
     fs.writeFileSync(config, `data_directory='${data}'\nhba_file='${hba}'\nident_file='${ident}'\nlisten_addresses=''\nport=${port}\nunix_socket_directories='${socket}'\nunix_socket_permissions=0777\nunix_socket_group=''\nshared_buffers='16MB'\nmax_connections=10\n`, { mode: 0o444 });
     assertProtectedClusterPolicyV1({ home, port, config: fs.readFileSync(config, "utf8"),
-      hba: fs.readFileSync(hba, "utf8"), ident: fs.readFileSync(ident, "utf8") });
+      hba: fs.readFileSync(hba, "utf8"), ident: fs.readFileSync(ident, "utf8"),
+      ...(closedProbeEnabled ? { closedProbe: true as const } : {}) });
     rootCommand("/usr/sbin/chown", ["_postgres:_postgres", data]);
     rootCommand("/usr/sbin/chown", ["_postgres:_www", socket]);
     rootCommand("/bin/chmod", ["0710", socket]);
     rootCommand("/usr/sbin/chown", ["root:wheel", config, hba, ident, clientModule]);
     rootCommand("/bin/chmod", ["0444", config, hba, ident, clientModule]);
+    if (closedProbeEnabled) {
+      rootCommand("/usr/sbin/chown", ["root:wheel", closedModule]);
+      rootCommand("/bin/chmod", ["0444", closedModule]);
+      for (const target of ["/", "/Library", "/Library/Application Support"]) {
+        const stat = fs.lstatSync(target, { bigint: true });
+        assert.ok(stat.isDirectory() && !stat.isSymbolicLink());
+        assert.equal(stat.uid, 0n); assert.equal(stat.mode & 0o7777n, 0o755n);
+      }
+      descriptorHome = checked("/usr/bin/sudo", ["-n", "/usr/bin/mktemp", "-d",
+        "/Library/Application Support/setfarm-task6a-descriptor.XXXXXXXX"]);
+      descriptorAnchor = fs.lstatSync(descriptorHome, { bigint: true });
+      assert.equal(path.dirname(descriptorHome), "/Library/Application Support");
+      assert.match(path.basename(descriptorHome), /^setfarm-task6a-descriptor\.[A-Za-z0-9]{8}$/);
+      assert.ok(descriptorAnchor.isDirectory() && !descriptorAnchor.isSymbolicLink());
+      assert.equal(descriptorAnchor.uid, 0n); assert.equal(descriptorAnchor.mode & 0o7777n, 0o700n);
+      checked("/usr/bin/sudo", ["-n", "/bin/chmod", "0755", descriptorHome]);
+      descriptorReady = true; exactDescriptor();
+      t.diagnostic(`private diagnostic descriptor ${descriptorHome}; ${descriptorAnchor.dev}/${descriptorAnchor.ino}`);
+    }
     if (heldPg31Enabled) {
       rootCommand("/usr/sbin/chown", ["root:wheel", heldModule]);
       rootCommand("/bin/chmod", ["0444", heldModule]);
@@ -788,7 +875,12 @@ GRANT USAGE ON SCHEMA task6a_probe TO task6a_runtime;
 GRANT SELECT,INSERT ON task6a_probe.effects TO task6a_runtime;
 GRANT USAGE ON SEQUENCE task6a_probe.effects_id_seq TO task6a_runtime;`);
     if(native)admin("CREATE FUNCTION task6a_probe.native_add(a int,b int) RETURNS int LANGUAGE plpgsql AS 'BEGIN RETURN a+b; END'; GRANT EXECUTE ON FUNCTION task6a_probe.native_add(int,int) TO task6a_runtime;");
-    boundary("before-restart");await nativeEvidence(); await physicalRevocation(); stop(); start(); boundary("after-restart");await nativeEvidence(); await physicalRevocation();
+    if (closedProbeEnabled) {
+      admin("CREATE ROLE setfarm_runtime LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS");
+      admin("CREATE DATABASE setfarm OWNER task6a_owner");
+      admin("REVOKE ALL ON DATABASE setfarm FROM PUBLIC; GRANT CONNECT ON DATABASE setfarm TO setfarm_runtime");
+    }
+    boundary("before-restart"); closedProbeEvidence("before-restart"); await nativeEvidence(); await physicalRevocation(); stop(); start(); boundary("after-restart"); closedProbeEvidence("after-restart"); await nativeEvidence(); await physicalRevocation();
     await heldPg31Evidence(); stop();
   } catch (error) {
     failure = error; throw error;
@@ -802,6 +894,17 @@ GRANT USAGE ON SEQUENCE task6a_probe.effects_id_seq TO task6a_runtime;`);
       assert.equal(nativeChildUncertain,false,`native child completion uncertain; retain ${home}`);
       assert.equal(heldChildrenPossiblyRunning, 0, `held PG31 child completion uncertain; retain ${home}`);
       if (server) stop();
+      if (descriptorHome) {
+        exactDescriptor(); assert.deepEqual(fs.readdirSync(descriptorHome), ["transport.json"]);
+        const target = path.join(descriptorHome, "transport.json"), stat = fs.lstatSync(target, { bigint: true });
+        assert.ok(stat.isFile() && !stat.isSymbolicLink()); assert.equal(stat.uid, 0n);
+        assert.equal(stat.dev, descriptorAnchor!.dev); assert.equal(stat.nlink, 1n); assert.equal(stat.mode & 0o7777n, 0o444n);
+        exactDescriptor(); checked("/usr/bin/sudo", ["-n", "/bin/rm", target]);
+        exactDescriptor(); assert.deepEqual(fs.readdirSync(descriptorHome), []);
+        checked("/usr/bin/sudo", ["-n", "/bin/rmdir", descriptorHome]);
+        assert.equal(fs.existsSync(descriptorHome), false);
+        t.diagnostic("verified exact private diagnostic descriptor removed; fixed Setfarm namespace untouched");
+      }
       exactHome();
       if (protectedRoot) {
         assert.equal(asUser("_postgres", "/bin/test", ["-e", pidFile]).status, 1);
