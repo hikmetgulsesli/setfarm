@@ -178,3 +178,37 @@ esbuild, widen permissions or count default skip as actual-PG proof. A fresh
 owned exact-byte source verification capsule with ordinary local dependency
 resolution may resolve this setup without mutating candidate/live dependencies;
 nominate/review that finite capture before privileged fixture execution.
+
+Protected backend follow-through: fresh owned verification capsule
+`logs/setfarm-protected-pg-source-capsule-OlZyXC` retains14 exact-byte source/test/
+package members147911B, independently matched to clean c3d76237. Its only
+dependency symlink is inside that NEW capsule to the unchanged existing canonical
+node_modules; candidate/live dependencies are untouched. This is a copied-source
+verification image, NOT a commit archive, full dependency freeze or candidate build.
+Normal tsx source discovery passed2policy/1explicit skip; unchanged nested esbuild
+preflight compiled1 actual83954B client bundle, no source aliases/API wrapping.
+
+Reviewed base-only opt-in then joined0/null5845ms,3PASS/0FAIL/0SKIP; native and
+held-PG31 opt-ins absent. Owner `protected-dDj39T` retains actual launcher receipt,
+raw676B SHAfc7b7c722eb1b4e5f23820dc587fbdaf228ab0af649888fce2f177014d34ec5a.
+Private `/private/tmp/setfarm-task6a-protected-pg.WSGHck`, postmasters36021/36241,
+reported stopped/removed. Genuine same reserved PID/session/role/database/null
+address plus literal LISTEN/notification, own-backend loss/four queued effects
+refused and admin zero forbidden rows passed before/after restart. Native creation
+stayed1. All14 source/copy hashes rechecked; sampled free minimum9262968832B,
+final9304199168B, no8GiB-floor breach. No backend_start, protected native image,
+historical family, controller admission, full suite/build or live activation credit.
+Exact cleanup absence/receipt audit and remaining qualified delivery gates stay
+separate from the successful finite backend test.
+
+Independent post-close audit confirms the entire raw/receipt and all14 members;
+exact WSGHck path is absent and ps36021/36241 returns no rows. Reserved backend
+PID equality was asserted in the genuine child but its numerical value was not
+emitted/retained; raw retains only the postmaster IDs. Never promote this to a
+retained backend-start identity witness. Capture hardening advisory: launcher
+writeSync return/fsync are not checked; actual received676B equals complete raw676B,
+so no observed loss in this receipt. Retain v1 unchanged; future capture owners
+must join complete writes/durability without retroactively changing its pin.
+Source correction c3d762379dcd093bf8600d46f15d3012423c9f22 pushed to the existing
+sole PR280 branch; current GitGuardian succeeded. PR remains draft with no
+qualified exact-head cloud review or live cutover/clean-main delivery claim.
