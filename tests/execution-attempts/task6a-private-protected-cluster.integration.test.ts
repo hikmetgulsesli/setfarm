@@ -327,6 +327,7 @@ test("private protected PG denies old identity and scoped admin impersonation ac
   let descriptorReady = false;
   const diagnosticSource = path.join(home, "closed-probe-transport.json");
   const closedModule = path.join(home, "closed-probe.mjs");
+  const baselineModule = path.join(home, "restricted-baseline-setup.mjs");
   let diagnosticAnchor: fs.BigIntStats | undefined;
 
   function exactDescriptor(): void {
@@ -342,7 +343,15 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     if (!closedProbeEnabled) return;
     exactServer(); exactDescriptor();
     const target = path.join(descriptorHome!, "transport.json");
-    for (const mode of ["healthy", "wrong-tuple", "delayed-close"] as const) {
+    for (const mode of ["healthy", "wrong-tuple", "delayed-close", "denied-access", "denied-column", "denied-membership", "denied-owner", "denied-base"] as const) {
+      const baseline = baselineSnapshot();
+      if (mode === "denied-access") baselineAdmin("GRANT UPDATE ON public.setfarm_schema_migrations TO setfarm_runtime");
+      if (mode === "denied-column") baselineAdmin("GRANT UPDATE(state) ON public.setfarm_schema_migrations TO setfarm_runtime");
+      if (mode === "denied-membership") admin("GRANT setfarm_owner TO setfarm_runtime");
+      if (mode === "denied-owner") baselineAdmin("CREATE TABLE public.task6a_wrong_owner(id integer)");
+      if (mode === "denied-base") baselineAdmin("ALTER TABLE public.runs ALTER COLUMN status SET DEFAULT 'corrupt'");
+      const perturbed = baselineSnapshot();
+      try {
       const transport = { schema: "setfarm.postgres-socket-transport.v1", socketDirectory: socket,
         port, database: mode === "wrong-tuple" ? "postgres" : "setfarm",
         user: mode === "wrong-tuple" ? "task6a_runtime" : "setfarm_runtime", osUid: clientUid };
@@ -366,6 +375,18 @@ test("private protected PG denies old identity and scoped admin impersonation ac
       assert.equal(witness.event, "native-closed-probe"); assert.equal(witness.authority, "diagnostic-only");
       assert.equal(witness.mode, mode); assert.equal(witness.fdCount, 5); assert.equal(witness.nativeSockets, 1);
       t.diagnostic(JSON.stringify({ phase, ...witness })); exactServer(); exactDescriptor();
+      assert.equal(baselineSnapshot(), perturbed,
+        "probe must preserve sampled journal/ownership/ACL/default/effective-membership state");
+      } finally {
+        assert.equal(synchronousChildUncertain, false,
+          "retain perturbed fixture without further SQL when child completion is uncertain");
+        if (mode === "denied-access") baselineAdmin("REVOKE UPDATE ON public.setfarm_schema_migrations FROM setfarm_runtime");
+        if (mode === "denied-column") baselineAdmin("REVOKE UPDATE(state) ON public.setfarm_schema_migrations FROM setfarm_runtime");
+        if (mode === "denied-membership") admin("REVOKE setfarm_owner FROM setfarm_runtime");
+        if (mode === "denied-owner") baselineAdmin("DROP TABLE public.task6a_wrong_owner");
+        if (mode === "denied-base") baselineAdmin("ALTER TABLE public.runs ALTER COLUMN status SET DEFAULT 'running'::text");
+      }
+      assert.equal(baselineSnapshot(), baseline, "fixture negative control must restore exact observed baseline");
     }
   }
 
@@ -398,6 +419,28 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     const result = sqlAs("_postgres", "task6a_admin", sql);
     assert.equal(result.status, 0, result.stderr);
     return result.stdout.trim();
+  }
+  function baselineAdmin(sql: string): string {
+    exactServer();
+    const result = asUser("_postgres", path.join(pgBin, "psql"), ["-X", "-w", "-A", "-t",
+      "-v", "ON_ERROR_STOP=1", "-h", socket, "-p", String(port),
+      "-U", "task6a_admin", "-d", "setfarm", "-c", sql]);
+    assert.equal(result.status, 0, result.stderr); return result.stdout.trim();
+  }
+  function baselineSnapshot(): string {
+    return baselineAdmin(`SELECT jsonb_build_object(
+      'journal',(SELECT jsonb_agg(to_jsonb(j) ORDER BY version) FROM public.setfarm_schema_migrations j),
+      'relations',(SELECT jsonb_agg(jsonb_build_array(c.relname,pg_catalog.pg_get_userbyid(c.relowner),c.relacl::text)
+        ORDER BY c.relname) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'),
+      'columnACL',(SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,a.attacl::text)
+        ORDER BY c.relname,a.attname) FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND a.attnum>0 AND NOT a.attisdropped),
+      'defaults',(SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,pg_catalog.pg_get_expr(d.adbin,d.adrelid))
+        ORDER BY c.relname,a.attname) FROM pg_catalog.pg_attrdef d JOIN pg_catalog.pg_class c ON c.oid=d.adrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_attribute a
+        ON a.attrelid=d.adrelid AND a.attnum=d.adnum WHERE n.nspname='public'),
+      'membership',(SELECT jsonb_agg(jsonb_build_array(r.rolname,pg_catalog.pg_has_role('setfarm_runtime',r.oid,'MEMBER'))
+        ORDER BY r.rolname) FROM pg_catalog.pg_roles r))::text`);
   }
   function processIdentity(pid: number): string {
     return checked("/bin/ps", ["-p", String(pid), "-o", "uid=", "-o", "lstart=", "-o", "command="]);
@@ -782,6 +825,11 @@ test("private protected PG denies old identity and scoped admin impersonation ac
         } }] });
       assert.equal(closedBundle.outputFiles.length, 1);
       fs.writeFileSync(closedModule, closedBundle.outputFiles[0].contents, { mode: 0o444 });
+      const setupBundle = esbuild.buildSync({ entryPoints: [fileURLToPath(new URL(
+        "./task6a-restricted-baseline-fixture-entry-v1.ts", import.meta.url))],
+        bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent" });
+      assert.equal(setupBundle.outputFiles.length, 1);
+      fs.writeFileSync(baselineModule, setupBundle.outputFiles[0].contents, { mode: 0o444 });
       fs.writeFileSync(diagnosticSource, "{}\n", { mode: 0o600, flag: "wx" });
       diagnosticAnchor = fs.lstatSync(diagnosticSource, { bigint: true });
     }
@@ -807,8 +855,8 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     rootCommand("/usr/sbin/chown", ["root:wheel", config, hba, ident, clientModule]);
     rootCommand("/bin/chmod", ["0444", config, hba, ident, clientModule]);
     if (closedProbeEnabled) {
-      rootCommand("/usr/sbin/chown", ["root:wheel", closedModule]);
-      rootCommand("/bin/chmod", ["0444", closedModule]);
+      rootCommand("/usr/sbin/chown", ["root:wheel", closedModule, baselineModule]);
+      rootCommand("/bin/chmod", ["0444", closedModule, baselineModule]);
       for (const target of ["/", "/Library", "/Library/Application Support"]) {
         const stat = fs.lstatSync(target, { bigint: true });
         assert.ok(stat.isDirectory() && !stat.isSymbolicLink());
@@ -877,8 +925,18 @@ GRANT USAGE ON SEQUENCE task6a_probe.effects_id_seq TO task6a_runtime;`);
     if(native)admin("CREATE FUNCTION task6a_probe.native_add(a int,b int) RETURNS int LANGUAGE plpgsql AS 'BEGIN RETURN a+b; END'; GRANT EXECUTE ON FUNCTION task6a_probe.native_add(int,int) TO task6a_runtime;");
     if (closedProbeEnabled) {
       admin("CREATE ROLE setfarm_runtime LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS");
-      admin("CREATE DATABASE setfarm OWNER task6a_owner");
-      admin("REVOKE ALL ON DATABASE setfarm FROM PUBLIC; GRANT CONNECT ON DATABASE setfarm TO setfarm_runtime");
+      admin("CREATE ROLE setfarm_owner NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS NOREPLICATION");
+      admin("CREATE DATABASE setfarm OWNER setfarm_owner");
+      const statements = extractTask6aOrdinaryBaseStatementsV2(fs.readFileSync(new URL("../../src/db-pg.ts", import.meta.url), "utf8"));
+      const setup = asUser("_postgres", fixtureNode, ["--input-type=module", "-e",
+        `const {prepareTask6aPrivateRestrictedBaselineFixtureV1}=await import(process.argv[1]);
+         await prepareTask6aPrivateRestrictedBaselineFixtureV1(JSON.parse(process.argv[2]),JSON.parse(process.argv[3]));
+         console.log('restricted baseline31/base52 prepared; guarded32 pending');`,
+        new URL(`file://${baselineModule}`).href, JSON.stringify({ schema: "setfarm.postgres-socket-transport.v1",
+          socketDirectory: socket, port, database: "setfarm", user: "task6a_admin", osUid: serverUid }), JSON.stringify(statements)], 120000);
+      assert.equal(setup.status, 0, setup.stderr); assert.equal(setup.stderr, "");
+      assert.equal(setup.stdout.trim(), "restricted baseline31/base52 prepared; guarded32 pending");
+      t.diagnostic(setup.stdout.trim());
     }
     boundary("before-restart"); closedProbeEvidence("before-restart"); await nativeEvidence(); await physicalRevocation(); stop(); start(); boundary("after-restart"); closedProbeEvidence("after-restart"); await nativeEvidence(); await physicalRevocation();
     await heldPg31Evidence(); stop();
@@ -895,11 +953,16 @@ GRANT USAGE ON SEQUENCE task6a_probe.effects_id_seq TO task6a_runtime;`);
       assert.equal(heldChildrenPossiblyRunning, 0, `held PG31 child completion uncertain; retain ${home}`);
       if (server) stop();
       if (descriptorHome) {
-        exactDescriptor(); assert.deepEqual(fs.readdirSync(descriptorHome), ["transport.json"]);
-        const target = path.join(descriptorHome, "transport.json"), stat = fs.lstatSync(target, { bigint: true });
-        assert.ok(stat.isFile() && !stat.isSymbolicLink()); assert.equal(stat.uid, 0n);
-        assert.equal(stat.dev, descriptorAnchor!.dev); assert.equal(stat.nlink, 1n); assert.equal(stat.mode & 0o7777n, 0o444n);
-        exactDescriptor(); checked("/usr/bin/sudo", ["-n", "/bin/rm", target]);
+        exactDescriptor(); const members = fs.readdirSync(descriptorHome);
+        // Setup may fail before first install. Only this exact newly allocated
+        // empty directory or its one qualified member is owned cleanup.
+        assert.ok(members.length === 0 || members.length === 1 && members[0] === "transport.json");
+        if (members.length) {
+          const target = path.join(descriptorHome, "transport.json"), stat = fs.lstatSync(target, { bigint: true });
+          assert.ok(stat.isFile() && !stat.isSymbolicLink()); assert.equal(stat.uid, 0n);
+          assert.equal(stat.dev, descriptorAnchor!.dev); assert.equal(stat.nlink, 1n); assert.equal(stat.mode & 0o7777n, 0o444n);
+          exactDescriptor(); checked("/usr/bin/sudo", ["-n", "/bin/rm", target]);
+        }
         exactDescriptor(); assert.deepEqual(fs.readdirSync(descriptorHome), []);
         checked("/usr/bin/sudo", ["-n", "/bin/rmdir", descriptorHome]);
         assert.equal(fs.existsSync(descriptorHome), false);

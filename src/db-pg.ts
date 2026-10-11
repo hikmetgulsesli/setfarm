@@ -36,6 +36,7 @@ import {
 } from "./db/bootstrap-main-claim-handoff-v1-migration.js";
 import { computeContractSpineMigrationChecksumV1 } from "./db/contract-spine-migration-checksum.js";
 import { verifyOrdinaryBaseSchemaCatalogReadOnlyV1 } from "./db/base-schema-readonly-verifier-v1.js";
+import { verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1 } from "./db/public-object-owner-readonly-verifier-v1.js";
 import { verifyContractSpineCurrentHeadJournalReadOnlyV1 } from "./db/contract-spine-readonly-verifier-v1.js";
 import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "./db/contract-spine-migration-digests.generated.js";
 import { OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_STATEMENTS } from "./db/operational-failure-cause-authority-v3-migration.js";
@@ -6101,31 +6102,7 @@ async function verifyExpectedPublicObjectOwnerReadOnlyV1(
   sql: ReturnType<typeof postgres>, expectedOwner: string,
 ): Promise<void> {
   await sql.begin("isolation level repeatable read read only", async (transaction) => {
-    await transaction.unsafe("SELECT pg_catalog.set_config('lock_timeout', '1000ms', true)");
-    await transaction.unsafe("SELECT pg_catalog.set_config('statement_timeout', '5000ms', true)");
-    const rows = await transaction.unsafe<Array<{
-      roleExists: boolean;
-      ownerReachable: boolean | null;
-      objectCount: number;
-      ownerMatches: boolean;
-    }>>(`
-      WITH expected AS (
-        SELECT oid FROM pg_catalog.pg_roles WHERE rolname = $1
-      ), objects AS (
-        SELECT c.relowner FROM pg_catalog.pg_class c
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'public'
-      )
-      SELECT EXISTS(SELECT 1 FROM expected) AS "roleExists",
-        pg_catalog.pg_has_role(session_user, (SELECT oid FROM expected), 'MEMBER') AS "ownerReachable",
-        (SELECT count(*)::integer FROM objects) AS "objectCount",
-        NOT EXISTS(SELECT 1 FROM objects
-          WHERE relowner IS DISTINCT FROM (SELECT oid FROM expected)) AS "ownerMatches"
-    `, [expectedOwner]);
-    if (rows.length !== 1 || !rows[0]?.roleExists || rows[0].ownerReachable !== false
-      || rows[0].objectCount === 0 || !rows[0].ownerMatches) {
-      throw new Error("SETFARM_BASE_SCHEMA_OWNER_MISMATCH");
-    }
+    await verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1(transaction, expectedOwner);
   });
 }
 

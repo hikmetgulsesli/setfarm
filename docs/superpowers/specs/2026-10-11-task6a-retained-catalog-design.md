@@ -23,6 +23,10 @@ positive evidence. The ordinary no-opt-in fixture stays unchanged.
   ordinary begin wrapper, bounds and fixed mismatch error remain.
 - `src/db/contract-spine-readonly-verifier-v1.ts`: extract ONLY role/access block;
   unchanged full33 wrapper calls it in its original position.
+- `src/db/contract-spine-runtime-access-readonly-verifier-v1.ts`: own that exact
+  access body in an import-inert leaf. Independent review found that importing
+  the full journal module would also execute source-integrity filesystem scans
+  and shared error-factory registration; the protected baseline must not do so.
 - `src/db/public-object-owner-readonly-verifier-v1.ts`, `src/db-pg.ts`: inert shared
   owner body, original wrapper retains ordinary begin semantics and owner input.
 - `src/internal-production/task6a-protected-postgres-backend-probe-v1.ts`: own
@@ -30,6 +34,8 @@ positive evidence. The ordinary no-opt-in fixture stays unchanged.
   fixed descriptor owner, no new public input/output/callback/readiness grant.
 - Focused verifier/probe tests: leaf failures, unchanged wrappers, finite pending
   BEGIN/catalog/ROLLBACK controls, thrown-undefined failures and cleanup ordering.
+- `package.json`: include the actual shared producer tests in the normal protected
+  backend probe test command, so this coverage is not external-runner-only.
 - New private fixed-owner source31 setup sibling; existing52-source DDL extractor.
   Actual migrations then base DDL under isolated NOLOGIN `setfarm_owner`; runtime
   gets CONNECT/public USAGE/journal SELECT only. Preserve old owner-class fixture.

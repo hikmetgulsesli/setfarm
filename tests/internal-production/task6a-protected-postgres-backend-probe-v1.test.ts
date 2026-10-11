@@ -4,8 +4,9 @@ import vm from "node:vm";
 import ts from "typescript";
 import { test } from "node:test";
 
-// Complete real consumer module; ONLY its two imported owner boundaries are
-// modeled. These controls do not authenticate a fixed descriptor or native PG.
+// Complete real consumer module. Acquisition/client and three producer ports
+// are modeled explicitly; these controls prove original lifetime/wiring only.
+// Actual producer bodies and native canonical PG are verified separately.
 const sourceUrl = new URL("../../src/internal-production/task6a-protected-postgres-backend-probe-v1.ts", import.meta.url);
 const source = fs.existsSync(sourceUrl) ? fs.readFileSync(sourceUrl, "utf8") : "";
 const literalQuery = 'SELECT self.pid AS pid, self.backend_start::text AS "backendStart", session_user AS session, current_user AS role, current_database() AS database, inet_client_addr() IS NULL AS socket FROM pg_catalog.pg_stat_activity self WHERE self.pid = pg_catalog.pg_backend_pid()';
@@ -18,7 +19,7 @@ function deferred<T>() {
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
-async function turns() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
+async function turns() { for (let i = 0; i < 48; i++) await Promise.resolve(); }
 function observed<T>(original: Promise<T>): Promise<T> { void original.catch(() => {}); return original; }
 
 function fixture() {
@@ -26,26 +27,39 @@ function fixture() {
   const state = { sourceRefuses: false, pendingReserve: false, pendingQuery: false,
     pendingClose: false, endingRejects: false, closeThrows: false, heldCloseThrows: false,
     afterQueryRefuses: false, factoryThrows: false, revokeThrows: false, releaseThrows: false,
-    queryCount: 0, queriesSettled: 0, revoked: false };
+    queryCount: 0, queriesSettled: 0, revoked: false, pendingStatement: "",
+    rejectingStatement: "", producerRefuses: "", rollbackSettled: false,
+    driftAfterStatement: "", lastSettledStatement: "" };
   const reserve = deferred<any>(), query = deferred<any>(), close = deferred<void>();
+  const statement = deferred<any>();
   const rows: any[] = [[{ ...facts }], [{ ...facts }]];
   const transport = Object.freeze({ schema: "setfarm.postgres-socket-transport.v1",
     socketDirectory: "/Library/Application Support/Setfarm/PostgreSQL/run", port: 55439,
     database: "setfarm", user: "setfarm_runtime", osUid: 216 });
   const held = {
-    read() { events.push("read"); return { descriptor: { transport } }; },
+    read() { events.push("read"); return { descriptor: { transport, schemaOwner: "setfarm_owner" } }; },
     recheck() {
       events.push("recheck");
       if (state.afterQueryRefuses && state.queriesSettled) throw Error("TEST_ONLY_AUTHORITY_DRIFT");
+      if (state.driftAfterStatement && state.driftAfterStatement === state.lastSettledStatement)
+        throw Error("TEST_ONLY_AUTHORITY_DRIFT");
     },
     close() { events.push("held-close"); if (state.heldCloseThrows) throw undefined; },
   };
   const reserved = {
     unsafe(sql: string) {
       events.push("query"); queries.push(sql);
-      const ordinal = state.queryCount++;
-      return (state.pendingQuery && ordinal === 0 ? query.promise : Promise.resolve(rows[ordinal]))
-        .then(value => { state.queriesSettled++; events.push("query-settled"); return value; });
+      const ordinal = sql === literalQuery ? state.queryCount++ : -1;
+      const original = state.pendingStatement === sql ? statement.promise
+        : state.rejectingStatement === sql ? Promise.reject(undefined)
+        : state.pendingQuery && ordinal === 0 ? query.promise
+        : Promise.resolve(ordinal < 0 ? [] : rows[ordinal]);
+      return original.then(value => {
+        state.queriesSettled++; events.push("query-settled");
+        state.lastSettledStatement = sql;
+        if (sql === "ROLLBACK") state.rollbackSettled = true;
+        return value;
+      });
     },
     release() { assert.equal(state.revoked, true); events.push("release"); if (state.releaseThrows) throw undefined; },
   };
@@ -78,6 +92,17 @@ function fixture() {
           return client;
         },
       };
+      const producers: Record<string, readonly [string, string]> = {
+        "../db/contract-spine-runtime-access-readonly-verifier-v1.js": ["verifyContractSpineRuntimeAccessInTransactionReadOnlyV1", "ACCESS"],
+        "../db/base-schema-readonly-verifier-v1.js": ["verifyOrdinaryBaseSchemaCatalogInTransactionReadOnlyV1", "BASE"],
+        "../db/public-object-owner-readonly-verifier-v1.js": ["verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1", "OWNER"],
+      };
+      const producer = producers[name];
+      if (producer) return { [producer[0]]: async (transaction: any, owner?: string) => {
+        if (producer[1] === "OWNER") assert.equal(owner, "setfarm_owner");
+        await transaction.unsafe(`TEST_ONLY_${producer[1]}_BODY`);
+        if (state.producerRefuses === producer[1]) throw undefined;
+      } };
       throw Error(`UNQUALIFIED_TEST_IMPORT:${name}`);
     },
   });
@@ -90,17 +115,70 @@ function fixture() {
   assert.equal(typeof probe, "function", "missing closed backend consumer");
   assert.deepEqual(Object.keys(module.exports), ["probeTask6aProtectedPostgresBackendV1"]);
   return { probe: probe as (...args: unknown[]) => Promise<void>, state, events, queries, rows,
-    reserve, query, close, reserved };
+    reserve, query, close, statement, reserved };
 }
 
 test("closed probe performs two own-backend reads then releases only after client close", async () => {
   const f = fixture();
   assert.equal(await f.probe(), undefined);
-  assert.deepEqual(f.queries, [literalQuery, literalQuery]);
+  assert.deepEqual(f.queries.filter(sql => sql === literalQuery), [literalQuery, literalQuery]);
   assert.equal(f.events.filter(event => event === "client").length, 1);
   assert.equal(f.events.filter(event => event === "reserve").length, 1);
   assert.ok(f.events.indexOf("hold") < f.events.indexOf("client"));
   assert.ok(f.events.indexOf("client-closed") < f.events.indexOf("held-close"));
+});
+for (const sql of ["BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY", "TEST_ONLY_ACCESS_BODY",
+  "TEST_ONLY_BASE_BODY", "TEST_ONLY_OWNER_BODY", "ROLLBACK"]) {
+  test(`pending original ${sql} keeps reservation and FD custody`, async () => {
+    const f = fixture(); f.state.pendingStatement = sql;
+    let completed = false;
+    const original = observed(f.probe().finally(() => { completed = true; }));
+    try {
+      for (let i = 0; i < 8; i++) await turns();
+      assert.ok(f.queries.includes(sql)); assert.equal(completed, false);
+      assert.equal(f.events.includes("release"), false); assert.equal(f.events.includes("held-close"), false);
+      const before = [...f.events]; await assert.rejects(f.probe(), refused); assert.deepEqual(f.events, before);
+    } finally { f.statement.resolve([]); await original; }
+    assert.equal(f.state.rollbackSettled, true);
+    assert.ok(f.events.indexOf("client-closed") < f.events.indexOf("held-close"));
+  });
+  test(`undefined original ${sql} rejection fails and joins rollback/close`, async () => {
+    const f = fixture(); f.state.rejectingStatement = sql;
+    await assert.rejects(f.probe(), refused);
+    assert.equal(f.queries.filter(query => query === "ROLLBACK").length, 1);
+    assert.equal(f.queries.filter(query => query === literalQuery).length, 1);
+    assert.ok(f.events.indexOf("client-closed") < f.events.indexOf("held-close"));
+  });
+}
+for (const producer of ["ACCESS", "BASE", "OWNER"]) {
+  test(`producer ${producer} refusal cannot become successful probe`, async () => {
+    const f = fixture(); f.state.producerRefuses = producer;
+    await assert.rejects(f.probe(), refused);
+    assert.equal(f.state.rollbackSettled, true);
+    assert.equal(f.queries.filter(query => query === literalQuery).length, 1);
+  });
+}
+test("post-BEGIN custody drift still joins original pending rollback before release", async () => {
+  const f = fixture(); f.state.driftAfterStatement = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY";
+  f.state.pendingStatement = "ROLLBACK";
+  const original = observed(assert.rejects(f.probe(), refused));
+  try {
+    await turns(); assert.ok(f.queries.includes("ROLLBACK"));
+    assert.equal(f.events.includes("release"), false); assert.equal(f.events.includes("held-close"), false);
+  } finally { f.statement.resolve([]); await original; }
+  assert.equal(f.state.rollbackSettled, true);
+  assert.ok(f.events.indexOf("client-closed") < f.events.indexOf("held-close"));
+});
+test("restricted composition owns literal read-only transaction and rollback before second lifetime", async () => {
+  const f = fixture();
+  await f.probe();
+  assert.equal(f.queries[0], literalQuery);
+  assert.equal(f.queries[1], "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+  assert.equal(f.queries.at(-2), "ROLLBACK");
+  assert.equal(f.queries.at(-1), literalQuery);
+  assert.ok(f.queries.includes("TEST_ONLY_ACCESS_BODY"));
+  assert.ok(f.queries.includes("TEST_ONLY_BASE_BODY"));
+  assert.ok(f.queries.includes("TEST_ONLY_OWNER_BODY"));
 });
 test("closed probe rejects foreign proxy arguments without inspecting them or acquiring", async () => {
   const f = fixture(); let traps = 0;

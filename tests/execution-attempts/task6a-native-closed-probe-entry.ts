@@ -26,7 +26,7 @@ export function holdTask6aProtectedPostgresSocketV1() {
     assert.ok(physical);
     const fixedFile = file, fixedPhysical = physical;
     const recheck = () => { fixedFile.recheck(); fixedPhysical.recheck(); fixedFile.recheck(); };
-    return Object.freeze({ read: () => { recheck(); return { descriptor: { transport } }; },
+    return Object.freeze({ read: () => { recheck(); return { descriptor: { transport, schemaOwner: "setfarm_owner" } }; },
       recheck, close: () => {
         try { fixedPhysical.close(); } finally { fixedFile.close(); }
         ctx.events.push("holder-close");
@@ -36,8 +36,10 @@ export function holdTask6aProtectedPostgresSocketV1() {
 }
 
 export async function runTask6aNativeClosedProbeV1(file: string,
-  identities: Readonly<{ serverUid: number; clientGid: number; socketPath: string }>, mode: "healthy" | "wrong-tuple" | "delayed-close") {
-  assert.equal(context, undefined); assert.ok(["healthy", "wrong-tuple", "delayed-close"].includes(mode));
+  identities: Readonly<{ serverUid: number; clientGid: number; socketPath: string }>,
+  mode: "healthy" | "wrong-tuple" | "delayed-close" | "denied-access" | "denied-column" | "denied-membership" | "denied-owner" | "denied-base") {
+  assert.equal(context, undefined);
+  assert.ok(["healthy", "wrong-tuple", "delayed-close", "denied-access", "denied-column", "denied-membership", "denied-owner", "denied-base"].includes(mode));
   const ctx: Context = { file, ...identities, pins: [], acquiring: false, nativeCloses: 0, events: [] };
   context = ctx;
   const actualOpen = fs.openSync, actualClose = fs.closeSync, actualConnect = Socket.prototype.connect;
@@ -48,6 +50,11 @@ export async function runTask6aNativeClosedProbeV1(file: string,
   const destructionRequested = new Promise<void>(resolve => { resolveDestruction = resolve; });
   let observerFailure: unknown, observerFailed = false, settled = false;
   const rows: string[][] = [];
+  const commands: string[] = [], transactionStates: string[] = [];
+  const catalogRows: { names: string[]; values: (string | null)[] }[] = [];
+  const lifetimeNames = ["pid", "backendStart", "session", "role", "database", "socket"];
+  let names: string[] = [];
+  let refusedBaseDefault: string | null = null;
   let wire = Buffer.alloc(0);
   function releaseDestruction() {
     const original = releaseDestroy; releaseDestroy = undefined;
@@ -91,13 +98,34 @@ export async function runTask6aNativeClosedProbeV1(file: string,
             const size = wire.readInt32BE(1); assert.ok(size >= 4 && size < 65536);
             if (wire.length < size + 1) break;
             const frame = wire.subarray(5, size + 1);
-            if (wire[0] === 68 && frame.readUInt16BE(0) === 6) {
-              let offset = 2; const values: string[] = [];
-              for (let i = 0; i < 6; i++) {
-                const length = frame.readInt32BE(offset); offset += 4; assert.ok(length >= 0);
-                assert.ok(offset + length <= frame.length); values.push(frame.subarray(offset, offset + length).toString()); offset += length;
+            if (wire[0] === 84) { // Genuine RowDescription, not column-count guessing.
+              const count = frame.readUInt16BE(0); let offset = 2; names = [];
+              assert.ok(count < 64);
+              for (let i = 0; i < count; i++) {
+                const end = frame.indexOf(0, offset); assert.ok(end >= offset);
+                names.push(frame.subarray(offset, end).toString()); offset = end + 19;
+                assert.ok(offset <= frame.length);
               }
-              assert.equal(offset, frame.length); rows.push(values);
+              assert.equal(offset, frame.length);
+            } else if (wire[0] === 68) {
+              const count = frame.readUInt16BE(0); assert.equal(count, names.length);
+              let offset = 2; const values: (string | null)[] = [];
+              for (let i = 0; i < count; i++) {
+                const length = frame.readInt32BE(offset); offset += 4; assert.ok(length >= -1);
+                if (length === -1) values.push(null);
+                else { assert.ok(offset + length <= frame.length);
+                  values.push(frame.subarray(offset, offset + length).toString()); offset += length; }
+              }
+              assert.equal(offset, frame.length);
+              if (names.length === 6 && names.every((name, index) => name === lifetimeNames[index])) {
+                assert.ok(values.every(value => value !== null)); rows.push(values as string[]);
+              } else {
+                assert.ok(catalogRows.length < 1024); catalogRows.push({ names: [...names], values });
+              }
+            } else if (wire[0] === 67) {
+              assert.equal(frame.at(-1), 0); commands.push(frame.subarray(0, -1).toString());
+            } else if (wire[0] === 90) {
+              assert.equal(frame.length, 1); transactionStates.push(frame.toString()); names = [];
             }
             wire = wire.subarray(size + 1);
           }
@@ -126,21 +154,47 @@ export async function runTask6aNativeClosedProbeV1(file: string,
       assert.equal(settled, false); assert.equal(ctx.nativeCloses, 0); livePins();
       ctx.events.push("pending-native-close"); assert.ok(releaseDestroy); releaseDestruction();
     }
-    if (mode === "wrong-tuple") await assert.rejects(result, /TASK6A_PROTECTED_POSTGRES_BACKEND_PROBE_REFUSED/);
+    const denied = mode === "wrong-tuple" || mode.startsWith("denied-");
+    if (denied) await assert.rejects(result, /TASK6A_PROTECTED_POSTGRES_BACKEND_PROBE_REFUSED/);
     else assert.equal(await result, undefined);
     ctx.events.push("probe-settled");
     if (observerFailed) throw observerFailure;
     assert.equal(wire.length, 0, "complete native PG message framing required");
     assert.equal(connected, 1); assert.equal(ctx.nativeCloses, 1); assert.ok(socket?.destroyed);
-    assert.equal(rows.length, mode === "wrong-tuple" ? 1 : 2, "real own-backend DataRows required; setup failure cannot pass");
+    assert.equal(rows.length, denied ? 1 : 2, "real own-backend DataRows required; setup failure cannot pass");
     const [pid, backendStart, session, role, database, local] = rows[0]!;
     assert.ok(Number.isSafeInteger(Number(pid)) && Number(pid) > 1); assert.ok(backendStart!.length > 0);
     assert.equal(session, mode === "wrong-tuple" ? "task6a_runtime" : "setfarm_runtime");
     assert.equal(role, session); assert.equal(database, mode === "wrong-tuple" ? "postgres" : "setfarm"); assert.equal(local, "t");
-    if (mode !== "wrong-tuple") assert.deepEqual(rows[1], rows[0]);
+    if (!denied) assert.deepEqual(rows[1], rows[0]);
+    if (mode === "wrong-tuple") {
+      assert.ok(!commands.includes("BEGIN")); assert.ok(!commands.includes("ROLLBACK"));
+    } else {
+      assert.equal(commands.filter(tag => tag === "BEGIN").length, 1);
+      assert.equal(commands.filter(tag => tag === "ROLLBACK").length, 1);
+      assert.ok(transactionStates.includes("T")); assert.equal(transactionStates.at(-1), "I");
+      const access = catalogRows.find(row => row.names.includes("journalColumnWrite")); assert.ok(access);
+      const field = (name: string) => access.values[access.names.indexOf(name)];
+      assert.equal(field("journalWrite"), mode === "denied-access" || mode === "denied-membership" ? "t" : "f");
+      assert.equal(field("journalColumnWrite"), ["denied-access", "denied-column", "denied-membership"].includes(mode) ? "t" : "f");
+      assert.equal(field("otherRoleMembership"), mode === "denied-membership" ? "t" : "f");
+      if (!denied || mode === "denied-owner") {
+        const owner = catalogRows.find(row => row.names.includes("ownerMatches")); assert.ok(owner);
+        assert.equal(owner.values[owner.names.indexOf("ownerMatches")], mode === "denied-owner" ? "f" : "t");
+      }
+      if (mode === "denied-base") {
+        const drift = catalogRows.find(row => row.names.includes("column")
+          && row.values[row.names.indexOf("table")] === "runs"
+          && row.values[row.names.indexOf("column")] === "status");
+        assert.ok(drift); refusedBaseDefault = drift.values[drift.names.indexOf("default")]!;
+        assert.equal(refusedBaseDefault, "'corrupt'::text");
+      }
+    }
     for (const pin of ctx.pins) { assert.equal(pin.closes, 1); assert.throws(() => fs.fstatSync(pin.fd), (e: NodeJS.ErrnoException) => e.code === "EBADF"); }
     console.log(JSON.stringify({ event: "native-closed-probe", authority: "diagnostic-only", mode,
-      before: rows[0], after: rows.at(-1), events: ctx.events, fdCount: ctx.pins.length, nativeSockets: connected }));
+      before: rows[0], after: denied ? null : rows.at(-1), events: ctx.events,
+      commands, transactionStates, refusedBaseDefault, catalogRows: catalogRows.length,
+      fdCount: ctx.pins.length, nativeSockets: connected }));
   } finally {
     // Release the same genuine destruction original on any assertion failure.
     let cleanupFailed = false, cleanupError: unknown;

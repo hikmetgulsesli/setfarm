@@ -1,5 +1,10 @@
 import { holdTask6aProtectedPostgresSocketV1 } from "./task6a-socket-physical-evidence-v1.js";
 import { createTask6aSingleBackendSocketClientV1 } from "./task6a-single-backend-socket-client-v1.js";
+import type postgres from "postgres";
+import type { ReadOnlyCatalogTransactionV1 } from "../db/read-only-catalog-transaction-v1.js";
+import { verifyContractSpineRuntimeAccessInTransactionReadOnlyV1 } from "../db/contract-spine-runtime-access-readonly-verifier-v1.js";
+import { verifyOrdinaryBaseSchemaCatalogInTransactionReadOnlyV1 } from "../db/base-schema-readonly-verifier-v1.js";
+import { verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1 } from "../db/public-object-owner-readonly-verifier-v1.js";
 
 type Held = NonNullable<ReturnType<typeof holdTask6aProtectedPostgresSocketV1>>;
 type Client = ReturnType<typeof createTask6aSingleBackendSocketClientV1>;
@@ -47,15 +52,41 @@ export async function probeTask6aProtectedPostgresBackendV1(): Promise<void> {
     const reservation = client.sql.reserve(); originals.push(reservation);
     reserved = await reservation;
     held.recheck();
-    const lifetimes: Lifetime[] = [];
-    for (let ordinal = 0; ordinal < 2; ordinal++) {
+    // This query-only bracket retains the genuine PendingQuery, not a forged
+    // transaction/PendingQuery facade. No caller can supply statements or ports.
+    const transaction: ReadOnlyCatalogTransactionV1 = {
+      async unsafe<T extends object[] = postgres.Row[]>(statement: string,
+        parameters?: Parameters<postgres.TransactionSql["unsafe"]>[1]) {
+        held!.recheck();
+        const query = reserved!.unsafe<T>(statement, parameters); originals.push(query);
+        const rows = await query;
+        held!.recheck();
+        return rows;
+      },
+    };
+    const before = checkedLifetime(await transaction.unsafe(lifetimeQuery));
+    let transactionAttempted = false;
+    try {
       held.recheck();
-      const query = reserved.unsafe(lifetimeQuery); originals.push(query);
-      const rows = await query;
+      transactionAttempted = true; // Before dispatch, even a rejected BEGIN needs cleanup.
+      const beginning = reserved.unsafe("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"); originals.push(beginning);
+      await beginning;
       held.recheck();
-      lifetimes.push(checkedLifetime(rows));
+      await verifyContractSpineRuntimeAccessInTransactionReadOnlyV1(transaction);
+      await verifyOrdinaryBaseSchemaCatalogInTransactionReadOnlyV1(transaction);
+      await verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1(transaction, fixed.descriptor.schemaOwner);
+    } finally {
+      if (transactionAttempted) {
+        // Cleanup must not be gated by a now-refused holder. Same reservation,
+        // one original, no retry; pending rollback cannot surrender custody.
+        const rollback = reserved.unsafe("ROLLBACK"); originals.push(rollback);
+        await rollback;
+        held.recheck();
+      }
     }
-    if (fields.some(key => lifetimes[0]![key] !== lifetimes[1]![key])) throw refused();
+    // Outside repeatable-read activity snapshot, after the genuine rollback.
+    const after = checkedLifetime(await transaction.unsafe(lifetimeQuery));
+    if (fields.some(key => before[key] !== after[key])) throw refused();
     held.recheck();
   } catch { failed = true; }
   finally {

@@ -1,4 +1,5 @@
 import type postgres from "postgres";
+import type { ReadOnlyCatalogTransactionV1 } from "./read-only-catalog-transaction-v1.js";
 
 const REQUIRED_BASE_TABLES_V1 = Object.freeze([
   "claim_log",
@@ -322,205 +323,216 @@ export async function verifyOrdinaryBaseSchemaCatalogReadOnlyV1(
 ): Promise<void> {
   try {
     await sql.begin("isolation level repeatable read read only", async (transaction) => {
-      await transaction.unsafe("SELECT pg_catalog.set_config('search_path', 'pg_catalog, public, pg_temp', true)");
-      await transaction.unsafe("SELECT pg_catalog.set_config('lock_timeout', '1000ms', true)");
-      await transaction.unsafe("SELECT pg_catalog.set_config('statement_timeout', '5000ms', true)");
-      await transaction.unsafe("SELECT pg_catalog.set_config('idle_in_transaction_session_timeout', '5000ms', true)");
-      const access = await transaction.unsafe<Array<{ database: boolean; schema: boolean }>>(
-        "SELECT has_database_privilege(current_user, current_database(), 'CONNECT') AS database, has_schema_privilege(current_user, 'public', 'USAGE') AS schema",
-      );
-      if (access.length !== 1 || !access[0]?.database || !access[0]?.schema) mismatch();
-      const tables = await transaction.unsafe<Array<{
-        name: string;
-        kind: string;
-        persistence: string;
-        partitioned: boolean;
-        accessMethod: string | null;
-        tableOptions: string[] | null;
-        toastOptions: string[] | null;
-        replicaIdentity: string;
-        ordinaryUntyped: boolean;
-        defaultTablespace: boolean;
-        defaultToastTablespace: boolean;
-        rowSecurity: boolean;
-        forceRowSecurity: boolean;
-        hasInheritance: boolean;
-        hasRewriteRules: boolean;
-        ownerReachable: boolean;
-      }>>(TABLE_SQL_V1);
-      if (
-        tables.length !== REQUIRED_BASE_TABLES_V1.length
-        || tables.some((table, index) =>
-          table.name !== REQUIRED_BASE_TABLES_V1[index]
-          || table.kind !== "r"
-          || table.persistence !== "p"
-          || table.partitioned !== false
-          || table.accessMethod !== "heap"
-          || table.tableOptions !== null || table.toastOptions !== null
-          || table.replicaIdentity !== "d"
-          || !table.ordinaryUntyped
-          || !table.defaultTablespace || !table.defaultToastTablespace
-          || table.rowSecurity !== false
-          || table.forceRowSecurity !== false
-          || table.hasInheritance !== false
-          || table.hasRewriteRules !== false
-          || table.ownerReachable !== false)
-      ) mismatch();
-      const columns = await transaction.unsafe<Array<{
-        table: string;
-        column: string;
-        ordinal: number;
-        type: string;
-        typmod: number;
-        notNull: boolean;
-        default: string | null;
-        dropped: boolean;
-        identity: string;
-        generated: string;
-        hasMissing: boolean;
-        missingPresent: boolean;
-        storage: string;
-        defaultCompression: boolean;
-        collation: string;
-      }>>(COLUMN_SQL_V1);
-      if (columns.length > 1024) mismatch();
-      const byName = new Map<string, typeof columns[number]>();
-      for (const column of columns) {
-        if (column.dropped || column.identity !== "" || column.generated !== "") mismatch();
-        const key = `${column.table}.${column.column}`;
-        if (byName.has(key)) mismatch();
-        byName.set(key, column);
-      }
-      for (const expected of EXPECTED_BASE_COLUMNS_V1) {
-        const actual = byName.get(`${expected[0]}.${expected[1]}`);
-        if (!actual || actual.type !== expected[2]
-          || actual.typmod !== expected[3]
-          || actual.notNull !== expected[4]
-          || actual.default !== expected[5]
-          || actual.hasMissing || actual.missingPresent
-          || actual.storage !== (expected[2] === "text" ? "x" : "p")
-          || !actual.defaultCompression
-          || actual.collation !== (expected[2] === "text" ? "default" : "none")) mismatch();
-      }
-      for (const table of REQUIRED_BASE_TABLES_V1) {
-        const expectedOrder = EXPECTED_BASE_COLUMN_ORDER_V1[table].split(" ");
-        const stableNames = new Set(expectedOrder);
-        const actualOrder = columns.filter((column) => column.table === table
-          && stableNames.has(column.column))
-          .sort((left, right) => left.ordinal - right.ordinal)
-          .map((column) => column.column);
-        if (actualOrder.length !== expectedOrder.length
-          || actualOrder.some((name, index) => name !== expectedOrder[index])) mismatch();
-      }
-      const indexes = await transaction.unsafe<Array<{
-        table: string;
-        name: string;
-        definition: string;
-        valid: boolean;
-        ready: boolean;
-        live: boolean;
-        unique: boolean;
-        primary: boolean;
-        immediate: boolean;
-        constraintOwned: boolean;
-        keyCount: number;
-        totalCount: number;
-        hasExpression: boolean;
-        method: string;
-        kind: string;
-        persistence: string;
-        defaultTablespace: boolean;
-        ownerReachable: boolean;
-      }>>(INDEX_SQL_V1);
-      if (indexes.length !== EXPECTED_BASE_INDEXES_V1.length
-        || indexes.some((actual, index) => {
-          const expected = EXPECTED_BASE_INDEXES_V1[index]!;
-          return actual.name !== expected[0]
-            || actual.table !== expected[1]
-            || actual.definition !== expected[2]
-            || actual.unique !== expected[2].startsWith("CREATE UNIQUE INDEX")
-            || !actual.valid || !actual.ready || !actual.live || actual.primary
-            || !actual.immediate || actual.constraintOwned
-            || actual.keyCount !== actual.totalCount || actual.hasExpression
-            || actual.method !== "btree" || actual.kind !== "i"
-            || actual.persistence !== "p" || !actual.defaultTablespace
-            || actual.ownerReachable;
-        })) mismatch();
-      const constraints = await transaction.unsafe<Array<{
-        table: string;
-        name: string;
-        kind: string;
-        definition: string;
-        validated: boolean;
-        deferrable: boolean;
-        deferred: boolean;
-        local: boolean;
-        inheritCount: number;
-        noInherit: boolean;
-        defaultIndexTablespace: boolean;
-        defaultIndexOptions: boolean;
-        parentOid: string;
-      }>>(CONSTRAINT_SQL_V1);
-      if (constraints.length !== EXPECTED_BASE_CONSTRAINTS_V1.length
-        || constraints.some((actual, index) => {
-          const expected = EXPECTED_BASE_CONSTRAINTS_V1[index]!;
-          return actual.name !== expected[0]
-            || actual.table !== expected[1]
-            || actual.kind !== expected[2]
-            || actual.definition !== expected[3]
-            || !actual.validated || actual.deferrable || actual.deferred
-            || !actual.local || actual.inheritCount !== 0
-            || !actual.noInherit || actual.parentOid !== "0"
-            || !actual.defaultIndexTablespace || !actual.defaultIndexOptions;
-        })) mismatch();
-      const fkTriggers = await transaction.unsafe<Array<{
-        name: string;
-        triggerSchema: string;
-        triggerTable: string;
-        triggerCount: number;
-        enabled: boolean;
-      }>>(FK_TRIGGER_SQL_V1);
-      if (fkTriggers.length !== EXPECTED_BASE_FK_TRIGGER_GROUPS_V1.length
-        || fkTriggers.some((actual, index) => {
-          const expected = EXPECTED_BASE_FK_TRIGGER_GROUPS_V1[index]!;
-          return actual.name !== expected[0]
-            || actual.triggerSchema !== "public"
-            || actual.triggerTable !== expected[1]
-            || actual.triggerCount !== 2 || !actual.enabled;
-        })) mismatch();
-      const sequences = await transaction.unsafe<Array<{
-        name: string;
-        kind: string;
-        persistence: string;
-        type: string;
-        start: string;
-        increment: string;
-        min: string;
-        max: string;
-        cache: string;
-        cycle: boolean;
-        ownerTable: string | null;
-        ownerColumn: string | null;
-        dependencyType: string | null;
-        ownerSchema: string | null;
-        ownerReachable: boolean;
-      }>>(SEQUENCE_SQL_V1);
-      if (sequences.length !== EXPECTED_BASE_SEQUENCES_V1.length
-        || sequences.some((actual, index) => {
-          const expected = EXPECTED_BASE_SEQUENCES_V1[index]!;
-          return actual.name !== expected[0]
-            || actual.ownerTable !== expected[1]
-            || actual.ownerColumn !== expected[2]
-            || actual.dependencyType !== expected[3]
-            || actual.ownerSchema !== (expected[1] === null ? null : "public")
-            || actual.ownerReachable
-            || actual.kind !== "S" || actual.persistence !== "p"
-            || actual.type !== "bigint" || actual.start !== "1"
-            || actual.increment !== "1" || actual.min !== "1"
-            || actual.max !== "9223372036854775807"
-            || actual.cache !== "1" || actual.cycle;
-        })) mismatch();
+      await verifyOrdinaryBaseSchemaCatalogInTransactionReadOnlyV1(transaction);
     });
+  } catch {
+    mismatch();
+  }
+}
+
+/** Caller owns the read-only transaction; this port grants no authority. */
+export async function verifyOrdinaryBaseSchemaCatalogInTransactionReadOnlyV1(
+  transaction: ReadOnlyCatalogTransactionV1,
+): Promise<void> {
+  try {
+    await transaction.unsafe("SELECT pg_catalog.set_config('search_path', 'pg_catalog, public, pg_temp', true)");
+    await transaction.unsafe("SELECT pg_catalog.set_config('lock_timeout', '1000ms', true)");
+    await transaction.unsafe("SELECT pg_catalog.set_config('statement_timeout', '5000ms', true)");
+    await transaction.unsafe("SELECT pg_catalog.set_config('idle_in_transaction_session_timeout', '5000ms', true)");
+    const access = await transaction.unsafe<Array<{ database: boolean; schema: boolean }>>(
+      "SELECT has_database_privilege(current_user, current_database(), 'CONNECT') AS database, has_schema_privilege(current_user, 'public', 'USAGE') AS schema",
+    );
+    if (access.length !== 1 || !access[0]?.database || !access[0]?.schema) mismatch();
+    const tables = await transaction.unsafe<Array<{
+      name: string;
+      kind: string;
+      persistence: string;
+      partitioned: boolean;
+      accessMethod: string | null;
+      tableOptions: string[] | null;
+      toastOptions: string[] | null;
+      replicaIdentity: string;
+      ordinaryUntyped: boolean;
+      defaultTablespace: boolean;
+      defaultToastTablespace: boolean;
+      rowSecurity: boolean;
+      forceRowSecurity: boolean;
+      hasInheritance: boolean;
+      hasRewriteRules: boolean;
+      ownerReachable: boolean;
+    }>>(TABLE_SQL_V1);
+    if (
+      tables.length !== REQUIRED_BASE_TABLES_V1.length
+      || tables.some((table, index) =>
+        table.name !== REQUIRED_BASE_TABLES_V1[index]
+        || table.kind !== "r"
+        || table.persistence !== "p"
+        || table.partitioned !== false
+        || table.accessMethod !== "heap"
+        || table.tableOptions !== null || table.toastOptions !== null
+        || table.replicaIdentity !== "d"
+        || !table.ordinaryUntyped
+        || !table.defaultTablespace || !table.defaultToastTablespace
+        || table.rowSecurity !== false
+        || table.forceRowSecurity !== false
+        || table.hasInheritance !== false
+        || table.hasRewriteRules !== false
+        || table.ownerReachable !== false)
+    ) mismatch();
+    const columns = await transaction.unsafe<Array<{
+      table: string;
+      column: string;
+      ordinal: number;
+      type: string;
+      typmod: number;
+      notNull: boolean;
+      default: string | null;
+      dropped: boolean;
+      identity: string;
+      generated: string;
+      hasMissing: boolean;
+      missingPresent: boolean;
+      storage: string;
+      defaultCompression: boolean;
+      collation: string;
+    }>>(COLUMN_SQL_V1);
+    if (columns.length > 1024) mismatch();
+    const byName = new Map<string, typeof columns[number]>();
+    for (const column of columns) {
+      if (column.dropped || column.identity !== "" || column.generated !== "") mismatch();
+      const key = `${column.table}.${column.column}`;
+      if (byName.has(key)) mismatch();
+      byName.set(key, column);
+    }
+    for (const expected of EXPECTED_BASE_COLUMNS_V1) {
+      const actual = byName.get(`${expected[0]}.${expected[1]}`);
+      if (!actual || actual.type !== expected[2]
+        || actual.typmod !== expected[3]
+        || actual.notNull !== expected[4]
+        || actual.default !== expected[5]
+        || actual.hasMissing || actual.missingPresent
+        || actual.storage !== (expected[2] === "text" ? "x" : "p")
+        || !actual.defaultCompression
+        || actual.collation !== (expected[2] === "text" ? "default" : "none")) mismatch();
+    }
+    for (const table of REQUIRED_BASE_TABLES_V1) {
+      const expectedOrder = EXPECTED_BASE_COLUMN_ORDER_V1[table].split(" ");
+      const stableNames = new Set(expectedOrder);
+      const actualOrder = columns.filter((column) => column.table === table
+        && stableNames.has(column.column))
+        .sort((left, right) => left.ordinal - right.ordinal)
+        .map((column) => column.column);
+      if (actualOrder.length !== expectedOrder.length
+        || actualOrder.some((name, index) => name !== expectedOrder[index])) mismatch();
+    }
+    const indexes = await transaction.unsafe<Array<{
+      table: string;
+      name: string;
+      definition: string;
+      valid: boolean;
+      ready: boolean;
+      live: boolean;
+      unique: boolean;
+      primary: boolean;
+      immediate: boolean;
+      constraintOwned: boolean;
+      keyCount: number;
+      totalCount: number;
+      hasExpression: boolean;
+      method: string;
+      kind: string;
+      persistence: string;
+      defaultTablespace: boolean;
+      ownerReachable: boolean;
+    }>>(INDEX_SQL_V1);
+    if (indexes.length !== EXPECTED_BASE_INDEXES_V1.length
+      || indexes.some((actual, index) => {
+        const expected = EXPECTED_BASE_INDEXES_V1[index]!;
+        return actual.name !== expected[0]
+          || actual.table !== expected[1]
+          || actual.definition !== expected[2]
+          || actual.unique !== expected[2].startsWith("CREATE UNIQUE INDEX")
+          || !actual.valid || !actual.ready || !actual.live || actual.primary
+          || !actual.immediate || actual.constraintOwned
+          || actual.keyCount !== actual.totalCount || actual.hasExpression
+          || actual.method !== "btree" || actual.kind !== "i"
+          || actual.persistence !== "p" || !actual.defaultTablespace
+          || actual.ownerReachable;
+      })) mismatch();
+    const constraints = await transaction.unsafe<Array<{
+      table: string;
+      name: string;
+      kind: string;
+      definition: string;
+      validated: boolean;
+      deferrable: boolean;
+      deferred: boolean;
+      local: boolean;
+      inheritCount: number;
+      noInherit: boolean;
+      defaultIndexTablespace: boolean;
+      defaultIndexOptions: boolean;
+      parentOid: string;
+    }>>(CONSTRAINT_SQL_V1);
+    if (constraints.length !== EXPECTED_BASE_CONSTRAINTS_V1.length
+      || constraints.some((actual, index) => {
+        const expected = EXPECTED_BASE_CONSTRAINTS_V1[index]!;
+        return actual.name !== expected[0]
+          || actual.table !== expected[1]
+          || actual.kind !== expected[2]
+          || actual.definition !== expected[3]
+          || !actual.validated || actual.deferrable || actual.deferred
+          || !actual.local || actual.inheritCount !== 0
+          || !actual.noInherit || actual.parentOid !== "0"
+          || !actual.defaultIndexTablespace || !actual.defaultIndexOptions;
+      })) mismatch();
+    const fkTriggers = await transaction.unsafe<Array<{
+      name: string;
+      triggerSchema: string;
+      triggerTable: string;
+      triggerCount: number;
+      enabled: boolean;
+    }>>(FK_TRIGGER_SQL_V1);
+    if (fkTriggers.length !== EXPECTED_BASE_FK_TRIGGER_GROUPS_V1.length
+      || fkTriggers.some((actual, index) => {
+        const expected = EXPECTED_BASE_FK_TRIGGER_GROUPS_V1[index]!;
+        return actual.name !== expected[0]
+          || actual.triggerSchema !== "public"
+          || actual.triggerTable !== expected[1]
+          || actual.triggerCount !== 2 || !actual.enabled;
+      })) mismatch();
+    const sequences = await transaction.unsafe<Array<{
+      name: string;
+      kind: string;
+      persistence: string;
+      type: string;
+      start: string;
+      increment: string;
+      min: string;
+      max: string;
+      cache: string;
+      cycle: boolean;
+      ownerTable: string | null;
+      ownerColumn: string | null;
+      dependencyType: string | null;
+      ownerSchema: string | null;
+      ownerReachable: boolean;
+    }>>(SEQUENCE_SQL_V1);
+    if (sequences.length !== EXPECTED_BASE_SEQUENCES_V1.length
+      || sequences.some((actual, index) => {
+        const expected = EXPECTED_BASE_SEQUENCES_V1[index]!;
+        return actual.name !== expected[0]
+          || actual.ownerTable !== expected[1]
+          || actual.ownerColumn !== expected[2]
+          || actual.dependencyType !== expected[3]
+          || actual.ownerSchema !== (expected[1] === null ? null : "public")
+          || actual.ownerReachable
+          || actual.kind !== "S" || actual.persistence !== "p"
+          || actual.type !== "bigint" || actual.start !== "1"
+          || actual.increment !== "1" || actual.min !== "1"
+          || actual.max !== "9223372036854775807"
+          || actual.cache !== "1" || actual.cycle;
+      })) mismatch();
   } catch {
     mismatch();
   }
