@@ -24,12 +24,19 @@ export function createTask6aSingleBackendSocketClientV1(value: unknown,
   const socketPath = base.path!;
   let revoked = false, attempted = false, nativeSocketCreations = 0;
   let native: Socket | undefined, resolvedOptions: unknown;
+  let nativeClosed: Promise<void> | undefined;
   let closing: Promise<void> | undefined;
   let driver: ReturnType<typeof postgres> | undefined;
   const revoke = () => {
     revoked = true; native?.destroy(); // Fence before the driver's asynchronous drain.
     if (driver && !closing) {
-      closing = driver.end({ timeout: 0 });
+      const ending = driver.end({ timeout: 0 });
+      // Reserved driver termination can settle before the real socket closes.
+      // A failed driver ending must also retain that native close original.
+      closing = Promise.allSettled([ending, ...(nativeClosed ? [nativeClosed] : [])]).then(results => {
+        const failure = results.find(result => result.status === "rejected");
+        if (failure?.status === "rejected") throw failure.reason;
+      });
       void closing.catch(() => {}); // Caller close() still receives the failure.
     }
   };
@@ -42,6 +49,8 @@ export function createTask6aSingleBackendSocketClientV1(value: unknown,
     let opened: Socket;
     try { opened = new Socket(); } catch { revoke(); throw refused(); }
     native = opened; nativeSocketCreations += 1;
+    // Enroll before revocation/driver handlers can consume or close the socket.
+    nativeClosed = new Promise<void>(resolve => opened.once("close", () => resolve()));
     opened.on("error", revoke); // Permanent: driver query rejection alone does not revoke.
     opened.on("close", revoke);
     return new Promise<Socket>((resolve, reject) => {

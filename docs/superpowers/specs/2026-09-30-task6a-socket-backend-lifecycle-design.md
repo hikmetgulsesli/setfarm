@@ -42,6 +42,25 @@ a second native socket after loss/revocation. Pending work is not assumed rolled
 back merely because a socket is closed; callers must preserve effect uncertainty.
 No inference of continuous writer exclusion against the trusted root driver.
 
+### Native-close conjunction correction (2026-10-11)
+
+The installed driver's reserved-connection terminate path can fulfill end()
+without awaiting the native socket close event. Keeping end() alone or reading
+socket.destroyed is therefore insufficient for this owner's close contract.
+Enroll one native-close promise immediately after allocation, before any error,
+revocation or driver listener can consume that socket. The same idempotent close
+promise must join BOTH that native event and the original driver end(), including
+when driver end rejects; report its failure only after the socket also closes.
+If no socket was allocated, synchronous revocation prevents later allocation
+and only the genuine driver ending original needs joining. No new timer, retry,
+callback, transport hook, backend replacement or readiness authority is added.
+
+A unit fixture delays the actual allocated Socket destroy completion, then
+releases its original implementation. It must prove close stays pending until
+the genuine native close event while preserving sticky refusal and same close
+promise identity. This is finite native transport proof, not backend death,
+real reserved-PG lifetime, controller admission or dashboard startup proof.
+
 LISTEN must use the actual reserved connection via fixed channel SQL and the
 internal onnotify callback; do not use driver listen()/subscribe() hidden pools.
 Notifications after revoke or identity/environment drift must not dispatch.
