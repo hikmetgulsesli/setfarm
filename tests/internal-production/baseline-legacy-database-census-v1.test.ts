@@ -7,6 +7,22 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 
+test("fixed retained physical census interfaces refuse foreign originals before connection", async () => {
+  const api = await import("../../src/internal-production/baseline-legacy-database-census-v1.js");
+  const functions = api as unknown as Record<string, (...args: object[]) => unknown>;
+  let traps = 0;
+  const foreign = new Proxy({}, { get() { traps += 1; throw Error("TRAP"); },
+    getPrototypeOf() { traps += 1; throw Error("TRAP"); }, ownKeys() { traps += 1; throw Error("TRAP"); } });
+  for (const name of ["runHeldDashboardCutoverPre32PhysicalReservationV4",
+    "assertHeldDashboardCutoverPre32PhysicalMetadataV4", "assertHeldDashboardCutoverPre32ActiveBindingV4"]) {
+    assert.equal(typeof functions[name], "function", `MISSING_FIXED_PHYSICAL_CENSUS_INTERFACE:${name}`);
+    if (name.startsWith("run") || name.endsWith("ActiveBindingV4"))
+      await assert.rejects(async () => functions[name]!(foreign, foreign, foreign));
+    else assert.throws(() => functions[name]!(foreign, foreign, foreign));
+  }
+  assert.equal(traps, 0);
+});
+
 test("pre32 fixed-table lock entry refuses an absent private database URL before connection", () => {
   const url = new URL("../../src/internal-production/baseline-legacy-database-census-v1.ts", import.meta.url).href;
   const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `

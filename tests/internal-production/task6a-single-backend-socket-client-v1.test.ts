@@ -98,3 +98,58 @@ test("notification callback throws and async returns both revoke without unhandl
     } finally { await client.close(); }
   }
 });
+
+for (const endingFails of [false, true]) {
+test(`close retains real native close when driver ending ${endingFails ? "rejects" : "fulfills"}`, { timeout: 5000 }, async () => {
+  const peers = new Set<net.Socket>();
+  const server = net.createServer(peer => { peers.add(peer); peer.on("error", () => {}); });
+  server.listen(`${home}/.s.PGSQL.55439`); await once(server, "listening");
+  const client = createTask6aSingleBackendSocketClientV1(candidate), captured = client.sql;
+  const originalEnd = client.sql.end;
+  const endingFailure = endingFails ? Error("unit-driver-ending-failure") : undefined;
+  let releaseDestroy: (() => void) | undefined;
+  try {
+    // This finite native factory fixture does not emulate PG or prove backend death.
+    const factory = Reflect.get(client.sql.options, "socket") as (options: unknown) => Promise<net.Socket>;
+    const opened = await factory(client.sql.options), originalDestroy = opened._destroy;
+    const nativeClose = once(opened, "close");
+    opened._destroy = (error, callback) => {
+      // Delay the actual destroy completion, then invoke the same original below.
+      releaseDestroy = () => { releaseDestroy = undefined; originalDestroy.call(opened, error, callback); };
+    };
+    // Only the dependency's failure is injected; allocation/close stay genuinely native.
+    if (endingFailure) client.sql.end = () => Promise.reject(endingFailure);
+    const closing = client.close();
+    let settled = false;
+    void closing.then(() => { settled = true; }, () => { settled = true; });
+    assert.equal(client.close(), closing);
+    assert.equal(opened.destroyed, true); // A destruction request is not a close receipt.
+    assert.equal(client.observe().revoked, true);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(settled, false, "driver end must not release a pending native close");
+    assert.equal(opened.closed, false);
+    if (!endingFailure) await assert.rejects(captured.unsafe("SELECT 1"));
+    assert.equal(client.observe().nativeSocketCreations, 1);
+    assert.ok(releaseDestroy);
+    releaseDestroy();
+    await nativeClose;
+    if (endingFailure) await assert.rejects(closing, error => error === endingFailure);
+    else await closing;
+    assert.equal(settled, true);
+    assert.equal(client.close(), closing);
+    assert.throws(() => factory(client.sql.options), /TASK6A_SINGLE_BACKEND_SOCKET_REFUSED/);
+    assert.equal(client.observe().nativeSocketCreations, 1);
+  } finally {
+    releaseDestroy?.();
+    try {
+      if (endingFailure) await assert.rejects(client.close(), error => error === endingFailure);
+      else await client.close();
+    } finally {
+      client.sql.end = originalEnd; await originalEnd({ timeout: 0 });
+      for (const peer of peers) peer.destroy();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  }
+});
+}

@@ -133,14 +133,14 @@ export function holdTask6aProtectedPostgresSocketV1() {
       try {
         checkParents(); descriptor!.recheck(); physical!.recheck();
         checkParents(); descriptor!.recheck();
-      } catch { invalid = true; close(); protectedRefused(); }
+      } catch { invalid = true; protectedRefused(); }
     };
     recheck();
     return Object.freeze({ read: () => {
       try {
         recheck(); const observation = physical!.observe(); recheck();
         return Object.freeze({ descriptor: fixed, physical: observation });
-      } catch { invalid = true; close(); protectedRefused(); }
+      } catch { invalid = true; protectedRefused(); }
     }, recheck, close });
   } catch { invalid = true; close(); protectedRefused(); }
 }

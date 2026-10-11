@@ -414,6 +414,10 @@ select:focus{outline:none;border-color:#8ECFC0}
         <button onclick="exportRules()">Download</button>
       </div>
     </div>
+    <div id="rules-save-status"></div>
+    <div id="rules-delete-status"></div>
+    <div id="rules-import-status"></div>
+    <div id="rules-export-status"></div>
     <div class="rules-stats" id="rules-stats"></div>
     <div class="rules-list" id="rules-list"></div>
   </div>
@@ -449,13 +453,69 @@ function switchTab(name) {
   if (name === 'rules') loadRulesData();
 }
 
-async function fetchJSON(url) {
-  const r = await fetch(API + url);
-  return r.json();
+async function fetchDashboardResponse(url, options) {
+  let response;
+  try { response = await fetch(API + url, options); }
+  catch { throw new Error('Network request failed'); }
+  if (!response.ok) throw new Error('Dashboard request unavailable');
+  return response;
+}
+
+async function fetchJSON(url, options) {
+  const response = await fetchDashboardResponse(url, options);
+  try { return await response.json(); }
+  catch { throw new Error('Invalid dashboard response'); }
+}
+async function fetchJSONArray(url) {
+  const data = await fetchJSON(url);
+  if (!Array.isArray(data)) throw new Error('Invalid dashboard collection');
+  return data;
+}
+
+// Display-only tokens: never backend ownership, permission, a queue or a retry.
+const dashboardLoads = new WeakMap();
+function beginDashboardLoad(container, label) {
+  const load = { container, label };
+  dashboardLoads.set(container, load);
+  return load;
+}
+function currentDashboardLoad(load) {
+  return dashboardLoads.get(load.container) === load && document.getElementById(load.container.id) === load.container;
+}
+function invalidateDashboardLoad(container) { dashboardLoads.delete(container); }
+function renderDashboardAvailability(container) {
+  let status = Array.from(container.children).find(child => child.dataset.dashboardAvailability);
+  if (container.dataset.dashboardLoadState !== 'unavailable') { if (status) status.remove(); return; }
+  if (!status) {
+    status = document.createElement('div');
+    status.dataset.dashboardAvailability = 'true';
+    status.className = 'scrape-error';
+    status.setAttribute('role', 'status');
+    container.prepend(status);
+  }
+  status.textContent = container.dataset.dashboardErrorLabel + ' unavailable. Last displayed: ' +
+    (container.dataset.dashboardSnapshot || 'no successful snapshot') + '. Previously displayed data may be stale or incomplete.';
+}
+function dashboardAvailable(load) {
+  if (!currentDashboardLoad(load)) return;
+  load.container.dataset.dashboardLoadState = 'ready';
+  load.container.dataset.dashboardSnapshot = load.label;
+  delete load.container.dataset.dashboardErrorLabel;
+  renderDashboardAvailability(load.container);
+}
+function dashboardUnavailable(load, label = load.label) {
+  if (!currentDashboardLoad(load)) return;
+  load.container.dataset.dashboardLoadState = 'unavailable';
+  load.container.dataset.dashboardErrorLabel = label;
+  renderDashboardAvailability(load.container);
 }
 
 async function loadWorkflows() {
-  workflows = await fetchJSON('/api/workflows');
+  const load = beginDashboardLoad(document.getElementById('board'), 'Workflows');
+  try {
+  const fetched = await fetchJSONArray('/api/workflows');
+  if (!currentDashboardLoad(load)) return;
+  workflows = fetched;
   const sel = document.getElementById('wf-select');
   sel.textContent = '';
   const defaultOpt = document.createElement('option');
@@ -468,21 +528,26 @@ async function loadWorkflows() {
     opt.textContent = w.name;
     sel.appendChild(opt);
   });
+  dashboardAvailable(load);
   if (workflows.length === 1) {
     sel.value = workflows[0].id;
     selectWorkflow(workflows[0].id);
   } else if (workflows.length > 1) {
     try {
       for (const w of workflows) {
-        const runs = await fetchJSON('/api/runs?workflow=' + w.id);
+        if (!currentDashboardLoad(load)) return;
+        const runs = await fetchJSONArray('/api/runs?workflow=' + w.id);
+        if (!currentDashboardLoad(load)) return;
         const active = runs.find(r => r.operationalActive === true);
         if (active) { sel.value = w.id; selectWorkflow(w.id); break; }
       }
-    } catch {}
+    } catch { dashboardUnavailable(load, 'Run selection'); }
   }
+  } catch { dashboardUnavailable(load); }
 }
 
 function selectWorkflow(id) {
+  invalidateDashboardLoad(document.getElementById('board'));
   currentWf = workflows.find(w => w.id === id) || null;
   if (currentWf) loadRuns();
   else {
@@ -498,9 +563,15 @@ function selectWorkflow(id) {
 
 async function loadRuns() {
   if (!currentWf) return;
-  const terminalParam = showTerminalRuns ? '&include_terminal=1' : '';
-  const runs = await fetchJSON('/api/runs?workflow=' + currentWf.id + terminalParam);
-  renderBoard(currentWf, runs);
+  const workflow = currentWf, terminal = showTerminalRuns;
+  const load = beginDashboardLoad(document.getElementById('board'), 'Workflow ' + workflow.id + (terminal ? ' (terminal history)' : ' (active runs)'));
+  const selected = () => currentDashboardLoad(load) && currentWf === workflow && showTerminalRuns === terminal;
+  try {
+    const runs = await fetchJSONArray('/api/runs?workflow=' + workflow.id + (terminal ? '&include_terminal=1' : ''));
+    if (!selected()) return;
+    renderBoard(workflow, runs);
+    dashboardAvailable(load);
+  } catch { if (selected()) dashboardUnavailable(load); }
 }
 
 function toggleTerminalRuns(checked) {
@@ -589,8 +660,12 @@ function renderBoard(wf, runs) {
 }
 
 async function openRun(id) {
-  const run = await fetchJSON('/api/runs/' + id);
   const panel = document.getElementById('panel');
+  invalidateDashboardRunSubpanels();
+  const load = beginDashboardLoad(panel, 'Run ' + id);
+  try {
+  const run = await fetchJSON('/api/runs/' + id);
+  if (!currentDashboardLoad(load)) return;
   const created = run.created_at ? parseTS(run.created_at)?.toLocaleString() || "" : '';
   const updated = run.updated_at ? parseTS(run.updated_at)?.toLocaleString() || "" : '';
 
@@ -719,8 +794,14 @@ async function openRun(id) {
   panel.appendChild(activityPanel);
 
   document.getElementById('overlay').classList.add('open');
+  dashboardAvailable(load);
   loadStories(id);
   loadActivity(id);
+  } catch {
+    if (!currentDashboardLoad(load)) return;
+    dashboardUnavailable(load);
+    document.getElementById('overlay').classList.add('open');
+  }
 }
 
 function formatEventDesc(evt) {
@@ -898,14 +979,18 @@ function renderEvidenceFilmstrip(observations) {
 }
 
 async function loadActivity(runId) {
-  const events = await fetchJSON('/api/runs/' + runId + '/events');
-  let observations = [];
-  try {
-    observations = await fetchJSON('/api/runs/' + runId + '/observations');
-  } catch (e) {
-    observations = [];
-  }
   const container = document.getElementById('activity-panel');
+  const load = beginDashboardLoad(container, 'Activity for run ' + runId);
+  let events = [], observations = [], failed = [];
+  try {
+  try { events = await fetchJSONArray('/api/runs/' + runId + '/events'); }
+  catch { failed.push('legacy events'); }
+  if (!currentDashboardLoad(load)) return;
+  try {
+    observations = await fetchJSONArray('/api/runs/' + runId + '/observations');
+  } catch { failed.push('observations'); }
+  if (!currentDashboardLoad(load)) return;
+  if (failed.length === 2) { dashboardUnavailable(load); return; }
   const visibleObservations = filterSupersededObservations(observations || []);
   const observationActivity = visibleObservations.map(function(obs) {
       return Object.assign({ kind: 'observation', ts: obs.createdAt || obs.updatedAt || obs.completedAt || obs.startedAt }, obs);
@@ -919,7 +1004,12 @@ async function loadActivity(runId) {
       return new Date(b.ts || b.createdAt || 0).getTime() - new Date(a.ts || a.createdAt || 0).getTime();
     })
     .slice(0, 120);
-  if (activity.length === 0) { container.textContent = ''; return; }
+  if (activity.length === 0) {
+    container.textContent = '';
+    dashboardAvailable(load);
+    if (failed.length) dashboardUnavailable(load, 'Activity source: ' + failed.join(', '));
+    return;
+  }
 
   container.textContent = '';
   var evidenceFilmstrip = renderEvidenceFilmstrip(visibleObservations);
@@ -960,17 +1050,31 @@ async function loadActivity(runId) {
   });
   wrapper.appendChild(scrollDiv);
   container.appendChild(wrapper);
+  dashboardAvailable(load);
+  if (failed.length) dashboardUnavailable(load, 'Activity source: ' + failed.join(', '));
+  } catch { dashboardUnavailable(load); }
 }
 
+function invalidateDashboardRunSubpanels() {
+  for (const id of ['stories-panel', 'activity-panel']) {
+    const container = document.getElementById(id);
+    if (container) invalidateDashboardLoad(container);
+  }
+}
 function closePanel() {
+  invalidateDashboardLoad(document.getElementById('panel'));
+  invalidateDashboardRunSubpanels();
   document.getElementById('overlay').classList.remove('open');
 }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closePanel(); });
 
 async function loadStories(runId) {
-  const stories = await fetchJSON('/api/runs/' + runId + '/stories');
   const container = document.getElementById('stories-panel');
-  if (!stories || stories.length === 0) { container.textContent = ''; return; }
+  const load = beginDashboardLoad(container, 'Stories for run ' + runId);
+  try {
+  const stories = await fetchJSONArray('/api/runs/' + runId + '/stories');
+  if (!currentDashboardLoad(load)) return;
+  if (!stories || stories.length === 0) { container.textContent = ''; dashboardAvailable(load); return; }
   var done = stories.filter(s => ['done', 'verified'].includes(s.status)).length;
   var pct = Math.round((done / stories.length) * 100);
 
@@ -1109,6 +1213,8 @@ async function loadStories(runId) {
 
   wrapper.appendChild(listDiv);
   container.appendChild(wrapper);
+  dashboardAvailable(load);
+  } catch { dashboardUnavailable(load); }
 }
 
 document.getElementById('wf-select').addEventListener('change', e => selectWorkflow(e.target.value));
@@ -1135,10 +1241,12 @@ document.addEventListener('click', e => {
 });
 
 async function loadMedicStatus() {
+  const label = document.getElementById('medic-label');
+  const load = beginDashboardLoad(label, 'Medic status');
   try {
     const status = await fetchJSON('/api/medic/status');
+    if (!currentDashboardLoad(load)) return;
     const dot = document.getElementById('medic-dot');
-    const label = document.getElementById('medic-label');
 
     if (!status.installed || !status.lastCheck) {
       dot.className = 'medic-dot unknown';
@@ -1164,18 +1272,21 @@ async function loadMedicStatus() {
       label.textContent = ageMin + 'm ago';
     }
   } catch {
+    if (!currentDashboardLoad(load)) return;
     document.getElementById('medic-dot').className = 'medic-dot unknown';
-    document.getElementById('medic-label').textContent = 'Medic';
+    label.textContent = 'Medic unavailable';
   }
 }
 
 async function loadMedicData() {
   const body = document.getElementById('medic-panel-body');
+  const load = beginDashboardLoad(body, 'Medic data');
   try {
     const [status, checks] = await Promise.all([
       fetchJSON('/api/medic/status'),
-      fetchJSON('/api/medic/checks?limit=10'),
+      fetchJSONArray('/api/medic/checks?limit=10'),
     ]);
+    if (!currentDashboardLoad(load)) return;
 
     body.textContent = '';
     var statsDiv = document.createElement('div');
@@ -1236,13 +1347,8 @@ async function loadMedicData() {
       noData.textContent = 'No medic data yet. Run setfarm medic install to enable.';
       body.appendChild(noData);
     }
-  } catch {
-    body.textContent = '';
-    var errDiv = document.createElement('div');
-    errDiv.style.cssText = 'color:var(--text-secondary);font-size:12px;padding:8px 0';
-    errDiv.textContent = 'Could not load medic data.';
-    body.appendChild(errDiv);
-  }
+    dashboardAvailable(load);
+  } catch { dashboardUnavailable(load); }
 }
 
 loadMedicStatus();
@@ -1310,12 +1416,11 @@ async function doScrape() {
   output.appendChild(loadingDiv);
 
   try {
-    var resp = await fetch(API + '/api/scrape', {
+    var result = await fetchJSON('/api/scrape', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: url, adaptor: adaptor, format: format, selector: selector }),
     });
-    var result = await resp.json();
 
     output.textContent = '';
     if (result.success) {
@@ -1355,7 +1460,7 @@ async function doScrape() {
     } else {
       var errorDiv = document.createElement('div');
       errorDiv.className = 'scrape-error';
-      errorDiv.textContent = 'Error: ' + (result.error || 'Unknown error');
+      errorDiv.textContent = 'Scrape failed. Data unavailable.';
       output.appendChild(errorDiv);
     }
   } catch (e) {
@@ -1378,15 +1483,18 @@ document.getElementById('scrape-url').addEventListener('keydown', function(e) {
 });
 
 async function loadScrapeHistory() {
+  const body = document.getElementById('scrape-history-body');
+  const load = beginDashboardLoad(body, 'Scrape history');
   try {
-    var history = await fetchJSON('/api/scrape/history');
-    var body = document.getElementById('scrape-history-body');
+    var history = await fetchJSONArray('/api/scrape/history');
+    if (!currentDashboardLoad(load)) return;
     body.textContent = '';
     if (!history || history.length === 0) {
       var empty = document.createElement('div');
       empty.className = 'empty';
       empty.textContent = 'No scrapes yet';
       body.appendChild(empty);
+      dashboardAvailable(load);
       return;
     }
     history.forEach(function(h) {
@@ -1422,19 +1530,24 @@ async function loadScrapeHistory() {
 
       body.appendChild(item);
     });
-  } catch {}
+    dashboardAvailable(load);
+  } catch { dashboardUnavailable(load); }
 }
 
 // ── Rules ──────────────────────────────────────────────────────
 var allRules = [];
 
 async function loadRulesData() {
+  const load = beginDashboardLoad(document.getElementById('rules-list'), 'Rules');
   try {
-    allRules = await fetchJSON('/api/rules');
-    filterRules();
-  } catch (e) {
-    document.getElementById('rules-list').textContent = 'Failed to load rules';
-  }
+    const fetched = await fetchJSONArray('/api/rules');
+    if (!currentDashboardLoad(load)) return;
+    const previous = allRules;
+    allRules = fetched;
+    try { filterRules(); }
+    catch { allRules = previous; filterRules(); throw new Error('Invalid dashboard rules'); }
+    dashboardAvailable(load);
+  } catch { dashboardUnavailable(load); }
 }
 
 function filterRules() {
@@ -1453,6 +1566,7 @@ function filterRules() {
   });
 
   renderRulesList(filtered);
+  renderDashboardAvailability(document.getElementById('rules-list'));
 }
 
 function renderRulesList(rules) {
@@ -1592,7 +1706,7 @@ function openRuleModal(ruleId) {
   var saveBtn = document.createElement('button');
   saveBtn.className = 'btn-save';
   saveBtn.textContent = 'Save';
-  saveBtn.onclick = function() {
+  saveBtn.onclick = async function() {
     var data = {
       title: document.getElementById('rule-title').value,
       content: document.getElementById('rule-content').value,
@@ -1603,8 +1717,7 @@ function openRuleModal(ruleId) {
       enabled: true
     };
     if (!data.title || !data.content) { return; }
-    saveRule(rule ? rule.id : null, data);
-    overlay.remove();
+    if (await saveRule(rule ? rule.id : null, data)) overlay.remove();
   };
   actions.appendChild(saveBtn);
   modal.appendChild(actions);
@@ -1614,25 +1727,38 @@ function openRuleModal(ruleId) {
 }
 
 async function saveRule(id, data) {
+  const load = beginDashboardLoad(document.getElementById('rules-save-status'), 'Rule save');
+  try {
   var method = id ? 'PUT' : 'POST';
-  var url = id ? API + '/api/rules/' + id : API + '/api/rules';
-  await fetch(url, { method: method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+  var url = id ? '/api/rules/' + id : '/api/rules';
+  await fetchDashboardResponse(url, { method: method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+  dashboardAvailable(load);
   loadRulesData();
+  return true;
+  } catch { dashboardUnavailable(load); return false; }
 }
 
 async function deleteRule(id) {
   if (!confirm('Are you sure you want to delete this rule?')) return;
-  await fetch(API + '/api/rules/' + id, { method: 'DELETE' });
+  const load = beginDashboardLoad(document.getElementById('rules-delete-status'), 'Rule deletion');
+  try {
+  await fetchDashboardResponse('/api/rules/' + id, { method: 'DELETE' });
+  dashboardAvailable(load);
   loadRulesData();
+  } catch { dashboardUnavailable(load); }
 }
 
 async function exportRules() {
-  var resp = await fetch(API + '/api/rules/export');
+  const load = beginDashboardLoad(document.getElementById('rules-export-status'), 'Rule export');
+  try {
+  var resp = await fetchDashboardResponse('/api/rules/export');
   var blob = await resp.blob();
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
   a.href = url; a.download = 'setfarm-rules.json'; a.click();
   URL.revokeObjectURL(url);
+  dashboardAvailable(load);
+  } catch { dashboardUnavailable(load); }
 }
 
 function importRules() {
@@ -1642,14 +1768,17 @@ function importRules() {
 async function handleRulesImport(event) {
   var file = event.target.files[0];
   if (!file) return;
+  const load = beginDashboardLoad(document.getElementById('rules-import-status'), 'Rule import');
+  try {
   var text = await file.text();
-  var resp = await fetch(API + '/api/rules/import', {
+  var result = await fetchJSON('/api/rules/import', {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: text
   });
-  var result = await resp.json();
   alert('Import: ' + (result.imported || 0) + ' added, ' + (result.updated || 0) + ' updated, ' + (result.skipped || 0) + ' ignored');
+  dashboardAvailable(load);
   loadRulesData();
   event.target.value = '';
+  } catch { dashboardUnavailable(load); }
 }
 </script>
 </body>

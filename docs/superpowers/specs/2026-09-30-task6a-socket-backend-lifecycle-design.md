@@ -42,6 +42,25 @@ a second native socket after loss/revocation. Pending work is not assumed rolled
 back merely because a socket is closed; callers must preserve effect uncertainty.
 No inference of continuous writer exclusion against the trusted root driver.
 
+### Native-close conjunction correction (2026-10-11)
+
+The installed driver's reserved-connection terminate path can fulfill end()
+without awaiting the native socket close event. Keeping end() alone or reading
+socket.destroyed is therefore insufficient for this owner's close contract.
+Enroll one native-close promise immediately after allocation, before any error,
+revocation or driver listener can consume that socket. The same idempotent close
+promise must join BOTH that native event and the original driver end(), including
+when driver end rejects; report its failure only after the socket also closes.
+If no socket was allocated, synchronous revocation prevents later allocation
+and only the genuine driver ending original needs joining. No new timer, retry,
+callback, transport hook, backend replacement or readiness authority is added.
+
+A unit fixture delays the actual allocated Socket destroy completion, then
+releases its original implementation. It must prove close stays pending until
+the genuine native close event while preserving sticky refusal and same close
+promise identity. This is finite native transport proof, not backend death,
+real reserved-PG lifetime, controller admission or dashboard startup proof.
+
 LISTEN must use the actual reserved connection via fixed channel SQL and the
 internal onnotify callback; do not use driver listen()/subscribe() hidden pools.
 Notifications after revoke or identity/environment drift must not dispatch.
@@ -63,6 +82,26 @@ Native creation stays one; old handles cannot reconnect; forbidden queued
 effects remain absent in actual private PG rows. Repeat across fixture restart.
 No production Setfarm directory/path override, root Node, new host account,
 live DB/schema/service/selector/archive or dependency change.
+
+### Reserved lifetime witness correction (2026-10-11)
+
+The private fixture must compare the entire actual reserved tuple before and
+after fixed LISTEN/notification: PID, backend_start textual value, session role,
+current role, database and null client address. Query only its own pg_stat_activity
+row; require exactly one row and those exact fields. Timestamp ::text preserves
+PostgreSQL microseconds; no Date conversion, rounding or PID-only comparison.
+Retain both actual tuples in a bounded child JSON witness and parent diagnostic
+explicitly labeled before/after private restart. Compare within each reserved
+lifetime, never require equal identities across restart.
+
+An actual read-only SQL canary adds one microsecond ONLY to the after-query's
+backend_start projection. PID and other fields remain genuine/unchanged; the
+same full-tuple oracle must reject it. This is intentional query perturbation,
+not actual backend drift or authentication evidence. A PID-only oracle must
+fail this canary's rejection assertion. Existing source client, fixture ownership,
+loss/queued-write tests, native image opt-ins and cleanup are unchanged. These
+witnesses do not supply production ancestry, zero historical owners, initializer
+readiness or dashboard admission.
 
 ## Follow-on gate
 

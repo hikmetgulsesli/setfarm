@@ -9,6 +9,8 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { logger } from "../lib/logger.js";
+import { assertOrdinaryConfigurationDeploymentCutoverAdmissionV2 } from "../internal-production/baseline-dashboard-cutover-configuration-refusal-v2.js";
+import { withDashboardCutoverLocalProducerSyncV2 } from "../internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -171,8 +173,11 @@ export function logValidationErrors(errors: ConfigValidationError[]): boolean {
  * Prevents partial writes on crash/power loss from corrupting config.
  */
 export function atomicWriteSync(filePath: string, content: string): void {
-  const dir = path.dirname(filePath);
-  const tmpPath = path.join(dir, `.tmp-${path.basename(filePath)}-${Date.now()}`);
-  fs.writeFileSync(tmpPath, content, "utf-8");
-  fs.renameSync(tmpPath, filePath);
+  return withDashboardCutoverLocalProducerSyncV2("atomic-configuration-write", () => {
+    assertOrdinaryConfigurationDeploymentCutoverAdmissionV2();
+    const dir = path.dirname(filePath);
+    const tmpPath = path.join(dir, `.tmp-${path.basename(filePath)}-${Date.now()}`);
+    fs.writeFileSync(tmpPath, content, "utf-8");
+    fs.renameSync(tmpPath, filePath);
+  });
 }

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync, readdirSync } from "node:fs";
+import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync } from "node:fs";
 import type { BigIntStats } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
@@ -31,6 +31,30 @@ type PhysicalFailureOperation = "scope-hold" | "base-discovery" | "parent-git" |
 type Held = { root: string; descriptor: number; first: BigIntStats; compareMutation: boolean;
   gitAdminCandidateRoot: string | null };
 type HeldFile = { root: string; descriptor: number; first: BigIntStats };
+type PhysicalOriginalV4 = { root: string; kind: "directory" | "file" | "marker";
+  intent: true; returned: boolean; descriptor: number | null };
+type RetainedPhysicalV4 = {
+  scope: object; owner: object; token: object; burned: boolean; returned: boolean;
+  ownerReady: boolean; ownerEntered: boolean; checking: boolean; entryChecking: boolean; originals: PhysicalOriginalV4[];
+  held: HeldDirectories | null; recheck: (() => void) | null; promise: Promise<unknown> | null;
+  imports: Array<{ intent: true; promise: Promise<unknown> | null; value: unknown; returned: boolean }>;
+  census: typeof import("./baseline-legacy-database-census-v1.js") | null;
+  adapter: typeof import("../../scripts/deployment-dashboard-cutover-adapter-v2.mjs") | null;
+};
+let retainedPhysicalV4: RetainedPhysicalV4 | null = null;
+
+function burnRetainedPhysicalV4(record: RetainedPhysicalV4): void {
+  record.burned = true;
+  record.adapter?.revokeDashboardCutoverJointTokenV4(record.token);
+}
+
+function checkRetainedPhysicalV4(record: RetainedPhysicalV4): void {
+  if (retainedPhysicalV4 !== record || record.burned || !record.census || !record.adapter) fail();
+  try {
+    record.census.assertHeldDashboardCutoverPre32PhysicalMetadataV4(record.scope, record.owner, record.token);
+    record.adapter.assertDashboardCutoverJointPhysicalTokenV4(record.token, record.owner, record.scope);
+  } catch { burnRetainedPhysicalV4(record); fail(); }
+}
 
 function fail(): never { throw Error("INTERNAL_PRODUCTION_POSITIVE_WORKTREE_PHYSICAL_CATALOG_INVALID"); }
 
@@ -85,7 +109,30 @@ class HeldDirectories {
   private readonly churnedGitAdminCandidates = new Set<string>();
   private closed = false;
 
-  constructor(private readonly ownerHomeRoot: string, private readonly workspaceRoot: string) {}
+  constructor(private readonly ownerHomeRoot: string, private readonly workspaceRoot: string,
+    private readonly retained: RetainedPhysicalV4 | null = null) {}
+
+  private openOriginal(root: string, flags: number, kind: PhysicalOriginalV4["kind"]): number {
+    if (!this.retained) return openSync(root, flags);
+    checkRetainedPhysicalV4(this.retained);
+    const original: PhysicalOriginalV4 = { root, kind, intent: true, returned: false, descriptor: null };
+    this.retained.originals.push(original);
+    original.descriptor = openSync(root, flags); original.returned = true;
+    checkRetainedPhysicalV4(this.retained);
+    return original.descriptor;
+  }
+
+  retainMarker(root: string, first: BigIntStats): number {
+    if (!this.retained || this.closed || this.files.length >= MAX_INCIDENTAL_FILES) fail();
+    const existing = this.files.find(entry => entry.root === root);
+    if (existing) { if (!sameFile(existing.first, first)) fail(); this.assertStable(); return existing.descriptor; }
+    const descriptor = this.openOriginal(root, constants.O_RDONLY | constants.O_NOFOLLOW, "marker");
+    this.files.push({ root, descriptor, first });
+    this.assertStable();
+    return descriptor;
+  }
+
+  hasRetainedProfile(): boolean { return this.retained !== null; }
 
   observerCommandCwd(): string {
     if (!this.byRoot.has(this.workspaceRoot)) fail();
@@ -105,7 +152,7 @@ class HeldDirectories {
       if (this.byRoot.has(root)) continue;
       const first = lstatSync(root, { bigint: true });
       if (!first.isDirectory() || first.isSymbolicLink()) fail();
-      const descriptor = openSync(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      const descriptor = this.openOriginal(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW, "directory");
       const entry = { root, descriptor, first,
         compareMutation: root === this.ownerHomeRoot || root.startsWith(`${this.ownerHomeRoot}/`),
         gitAdminCandidateRoot: root === target ? gitAdminCandidateRoot : null };
@@ -127,7 +174,7 @@ class HeldDirectories {
     this.hold(path.dirname(target));
     const first = lstatSync(target, { bigint: true });
     if (!first.isFile() || first.isSymbolicLink()) fail();
-    const descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const descriptor = this.openOriginal(target, constants.O_RDONLY | constants.O_NOFOLLOW, "file");
     this.files.push({ root: target, descriptor, first });
     this.assertStable();
   }
@@ -150,6 +197,7 @@ class HeldDirectories {
   }
 
   assertStable(): void {
+    if (this.retained) checkRetainedPhysicalV4(this.retained);
     if (this.closed || cleanupUncertain) fail();
     for (const entry of this.entries) {
       const descriptor = fstatSync(entry.descriptor, { bigint: true });
@@ -170,6 +218,7 @@ class HeldDirectories {
     }
     for (const directory of this.absentDirectories) if (!isMissing(directory)) fail();
     for (const file of this.absentFiles) if (!isMissing(file)) fail();
+    if (this.retained) checkRetainedPhysicalV4(this.retained);
   }
 
   gitAdminChurnCandidateRoots(): readonly string[] {
@@ -178,6 +227,7 @@ class HeldDirectories {
   }
 
   close(): void {
+    if (this.retained) { burnRetainedPhysicalV4(this.retained); fail(); }
     if (this.closed) return;
     this.closed = true;
     const errors: unknown[] = [];
@@ -401,9 +451,21 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
   if (markerStat.isDirectory()) held.hold(marker);
   else {
     if (markerStat.size < 1n || markerStat.size > 4096n) fail();
-    markerDescriptor = openSync(marker, constants.O_RDONLY | constants.O_NOFOLLOW);
+    markerDescriptor = held.hasRetainedProfile() ? held.retainMarker(marker, markerStat)
+      : openSync(marker, constants.O_RDONLY | constants.O_NOFOLLOW);
     if (!sameFile(markerStat, fstatSync(markerDescriptor, { bigint: true }))) fail();
-    const markerBytes = readFileSync(markerDescriptor);
+    let markerBytes: Buffer;
+    if (held.hasRetainedProfile()) {
+      markerBytes = Buffer.alloc(Number(markerStat.size));
+      let offset = 0;
+      while (offset < markerBytes.length) {
+        const count = readSync(markerDescriptor, markerBytes, offset, markerBytes.length - offset, offset);
+        if (!Number.isSafeInteger(count) || count <= 0 || count > markerBytes.length - offset) fail();
+        offset += count;
+      }
+      if (readSync(markerDescriptor, Buffer.alloc(1), 0, 1, markerBytes.length) !== 0
+        || !sameFile(markerStat, fstatSync(markerDescriptor, { bigint: true }))) fail();
+    } else markerBytes = readFileSync(markerDescriptor);
     const match = /^gitdir: ([^\r\n]+)\n$/.exec(new TextDecoder("utf-8", { fatal: true }).decode(markerBytes));
     if (!match) fail();
     gitdirFromMarker = normalizedGitPath(match[1]!, root);
@@ -481,21 +543,23 @@ function observeGitCandidate(held: HeldDirectories, root: string, base: string, 
       dirty, listedRoots, prunableRoots: [], locked: listing.locked, barePrimaryRoot: null,
       reason: null, headOid };
   } finally {
-    if (markerDescriptor !== null) {
+    if (markerDescriptor !== null && !held.hasRetainedProfile()) {
       try { closeSync(markerDescriptor); }
       catch { cleanupUncertain = true; fail(); }
     }
   }
 }
 
-export async function observeHeldPositiveWorktreePhysicalCatalogV2(
+async function observePhysicalCatalogV2(
   rawScope: unknown,
   betweenPasses: (firstPass: readonly Candidate[],
-    withHeldRuntimeCandidate: WithHeldRuntimeCandidate) => Promise<void> = async () => undefined,
+    withHeldRuntimeCandidate: WithHeldRuntimeCandidate) => Promise<void>,
+  retained: RetainedPhysicalV4 | null = null,
 ) {
   const scope = captureScope(rawScope);
   if (cleanupUncertain || typeof betweenPasses !== "function") fail();
-  const held = new HeldDirectories(scope.ownerHomeRoot, scope.workspaceRoot);
+  const held = new HeldDirectories(scope.ownerHomeRoot, scope.workspaceRoot, retained);
+  if (retained) retained.held = held;
   let operation: PhysicalFailureOperation = "scope-hold";
   let candidateOrdinal: number | null = null;
   try {
@@ -598,6 +662,49 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     }
     held.assertStable();
     operation = "between-passes";
+    const recheckEntries = (): void => {
+      operation = "post-database-stability";
+      held.assertStable();
+      for (const root of absentBases) if (!isMissing(root)) fail();
+      for (const root of absentAgentsParents) if (!isMissing(root)) fail();
+      for (const root of absentLockedRoots) if (!isMissing(root)) fail();
+      operation = "parent-recheck";
+      for (const [parent, firstHash] of parentGitLists) {
+        const fresh = primaryWorktreeRoots(held, parent);
+        if (fresh === null || hashCanonicalJson(fresh) !== firstHash) fail();
+      }
+      for (const parent of nonGitParents) if (!isMissing(path.join(parent, ".git"))) fail();
+      for (const [index, entry] of entries.entries()) {
+        candidateOrdinal = index;
+        operation = "candidate-recheck-git";
+        const first = firstByRoot.get(entry.root)!;
+        const fresh = observeGitCandidate(held, entry.root, first.base, first.zone, scope);
+        operation = "candidate-recheck-lsof";
+        const freshPids = referencePids(held, entry.root);
+        operation = "candidate-recheck-compare";
+        if (fresh.kind !== entry.kind || fresh.gitPrimaryRoot !== entry.gitPrimaryRoot
+          || fresh.dirty !== entry.dirty || fresh.reason !== first.reason
+          || (fresh.headOid ?? null) !== first.headOid
+          || hashCanonicalJson({ roots: fresh.listedRoots, prunableRoots: fresh.prunableRoots,
+            locked: fresh.locked, barePrimaryRoot: fresh.barePrimaryRoot }) !== first.listedHash
+          || hashCanonicalJson(freshPids) !== hashCanonicalJson(entry.referencingPids)) fail();
+      }
+      candidateOrdinal = null;
+    };
+    if (retained) {
+      retained.recheck = () => {
+        if (retained.checking) { burnRetainedPhysicalV4(retained); fail(); }
+        retained.checking = true;
+        try {
+          checkRetainedPhysicalV4(retained); recheckEntries();
+          if (blockers.length !== 0 || held.gitAdminChurnCandidateRoots().length !== 0
+            || entries.some(entry => entry.zone === "runtime-zone" || entry.referencingPids.length !== 0)) fail();
+          held.assertStable(); checkRetainedPhysicalV4(retained);
+        } catch { burnRetainedPhysicalV4(retained); fail(); }
+        finally { retained.checking = false; }
+      };
+      retained.recheck(); // Complete first-pass/cold-zero gate BEFORE callback.
+    }
     let betweenPassesOpen = true;
     let holdCalls = 0;
     let holdInFlight = false;
@@ -686,33 +793,8 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
       betweenPassesOpen = false;
       if (holdSettled !== null) await holdSettled;
     }
-    operation = "post-database-stability";
-    held.assertStable();
-    for (const root of absentBases) if (!isMissing(root)) fail();
-    for (const root of absentAgentsParents) if (!isMissing(root)) fail();
-    for (const root of absentLockedRoots) if (!isMissing(root)) fail();
-    operation = "parent-recheck";
-    for (const [parent, firstHash] of parentGitLists) {
-      const fresh = primaryWorktreeRoots(held, parent);
-      if (fresh === null || hashCanonicalJson(fresh) !== firstHash) fail();
-    }
-    for (const parent of nonGitParents) if (!isMissing(path.join(parent, ".git"))) fail();
-    for (const [index, entry] of entries.entries()) {
-      candidateOrdinal = index;
-      operation = "candidate-recheck-git";
-      const first = firstByRoot.get(entry.root)!;
-      const fresh = observeGitCandidate(held, entry.root, first.base, first.zone, scope);
-      operation = "candidate-recheck-lsof";
-      const freshPids = referencePids(held, entry.root);
-      operation = "candidate-recheck-compare";
-      if (fresh.kind !== entry.kind || fresh.gitPrimaryRoot !== entry.gitPrimaryRoot
-        || fresh.dirty !== entry.dirty || fresh.reason !== first.reason
-        || (fresh.headOid ?? null) !== first.headOid
-        || hashCanonicalJson({ roots: fresh.listedRoots, prunableRoots: fresh.prunableRoots,
-          locked: fresh.locked, barePrimaryRoot: fresh.barePrimaryRoot }) !== first.listedHash
-        || hashCanonicalJson(freshPids) !== hashCanonicalJson(entry.referencingPids)) fail();
-    }
-    candidateOrdinal = null;
+    if (retained) retained.recheck!();
+    else recheckEntries();
     operation = "result";
     for (const root of held.gitAdminChurnCandidateRoots()) blockers.push(Object.freeze({ root, reason: "git-admin-entry-churn" }));
     const ordered = Object.freeze(entries.sort((left, right) => compareRoot(left.root, right.root)));
@@ -730,8 +812,89 @@ export async function observeHeldPositiveWorktreePhysicalCatalogV2(
     Object.defineProperty(failure, "physicalFailurePoint", { value: point });
     throw Object.freeze(failure);
   } finally {
-    held.close();
+    if (!retained) held.close();
   }
+}
+
+export async function observeHeldPositiveWorktreePhysicalCatalogV2(rawScope: unknown,
+  betweenPasses: (firstPass: readonly Candidate[], withHeldRuntimeCandidate: WithHeldRuntimeCandidate) => Promise<void>
+    = async () => undefined) {
+  return observePhysicalCatalogV2(rawScope, betweenPasses);
+}
+
+async function retainPhysicalImportV4<T>(record: RetainedPhysicalV4, invoke: () => Promise<T>): Promise<T> {
+  const occurrence = { intent: true as const, promise: null as Promise<T> | null, value: undefined as unknown, returned: false };
+  record.imports.push(occurrence);
+  if (retainedPhysicalV4 !== record || record.burned) fail();
+  occurrence.promise = invoke();
+  if (!types.isPromise(occurrence.promise)) fail();
+  occurrence.value = await occurrence.promise; occurrence.returned = true;
+  if (retainedPhysicalV4 !== record || record.burned) fail();
+  return occurrence.value as T;
+}
+
+function physicalOriginalV4(scope: object, owner: object, token: object): RetainedPhysicalV4 {
+  const record = retainedPhysicalV4;
+  if (!record || record.scope !== scope || record.owner !== owner || record.token !== token) fail();
+  checkRetainedPhysicalV4(record);
+  return record;
+}
+
+/** Full original physical assertion, no PG query or caller-produced holder. */
+export function assertHeldDashboardCutoverJointPhysicalReservationV4(scope: object, owner: object, token: object): void {
+  if (retainedPhysicalV4?.checking || retainedPhysicalV4?.entryChecking) { burnRetainedPhysicalV4(retainedPhysicalV4); fail(); }
+  if (arguments.length !== 3) fail();
+  const record = physicalOriginalV4(scope, owner, token);
+  record.entryChecking = true;
+  try {
+    if (!record.returned || !record.held || !record.recheck) fail();
+    record.recheck(); checkRetainedPhysicalV4(record);
+  } catch { burnRetainedPhysicalV4(record); fail(); }
+  finally { record.entryChecking = false; }
+}
+
+/** One authenticated entry after fresh physical and SAME binding checks. */
+export function assertHeldDashboardCutoverJointPhysicalOwnerEntryV4(scope: object, owner: object, token: object): void {
+  if (retainedPhysicalV4?.checking || retainedPhysicalV4?.entryChecking) { burnRetainedPhysicalV4(retainedPhysicalV4); fail(); }
+  if (arguments.length !== 3) fail();
+  const record = physicalOriginalV4(scope, owner, token);
+  record.entryChecking = true;
+  try {
+    if (!record.ownerReady || record.ownerEntered || !record.recheck) fail();
+    record.recheck(); checkRetainedPhysicalV4(record); record.ownerEntered = true;
+  } catch { burnRetainedPhysicalV4(record); fail(); }
+  finally { record.entryChecking = false; }
+}
+
+/** Fixed retained profile. Success retains originals; UNKNOWN never disposes. */
+export async function runHeldDashboardCutoverJointPhysicalReservationV4(scope: object, owner: object, token: object): Promise<void> {
+  if (retainedPhysicalV4) { burnRetainedPhysicalV4(retainedPhysicalV4); fail(); }
+  if (arguments.length !== 3 || [scope, owner, token].some(value => value === null
+    || typeof value !== "object" || types.isProxy(value))) fail();
+  const record: RetainedPhysicalV4 = { scope, owner, token, burned: false, returned: false,
+    ownerReady: false, ownerEntered: false, checking: false, entryChecking: false, originals: [], held: null, recheck: null,
+    promise: null, imports: [], census: null, adapter: null };
+  retainedPhysicalV4 = record; // BEFORE the first import or resource occurrence.
+  try {
+    record.census = await retainPhysicalImportV4(record, () => import("./baseline-legacy-database-census-v1.js"));
+    record.census.assertHeldDashboardCutoverPre32PhysicalMetadataV4(scope, owner, token);
+    record.adapter = await retainPhysicalImportV4(record, () => import("../../scripts/deployment-dashboard-cutover-adapter-v2.mjs"));
+    checkRetainedPhysicalV4(record);
+    record.promise = observePhysicalCatalogV2({ ownerHomeRoot: userInfo().homedir,
+      workspaceRoot: resolveInternalProductionBaselineWorkspaceRootV1() }, async () => {
+      checkRetainedPhysicalV4(record);
+      await record.census!.assertHeldDashboardCutoverPre32ActiveBindingV4(scope, owner, token);
+      checkRetainedPhysicalV4(record); record.recheck!();
+      record.ownerReady = true; checkRetainedPhysicalV4(record);
+      await record.adapter!.executeDashboardCutoverJointPhysicalOwnerReservationV4(token, owner, scope);
+      checkRetainedPhysicalV4(record);
+    }, record);
+    if (!types.isPromise(record.promise)) fail();
+    const result = await record.promise;
+    record.returned = true;
+    if ((result as { status: string }).status !== "complete") fail();
+    checkRetainedPhysicalV4(record); record.recheck!();
+  } catch { burnRetainedPhysicalV4(record); fail(); }
 }
 
 export async function observeCodeOwnedPositiveWorktreePhysicalCatalogV2() {

@@ -925,6 +925,78 @@ test("bootstrap preserves owner stage when its own cleanup also fails", () => fi
   },
 }));
 
+for (const route of ["transport", "python-data"]) {
+  test(`bootstrap enrolls fixed process-event ${route} DATA without execution`, () => {
+    const sentinel = 'raise Exception("PROCESS_EVENTS_PYTHON_MUST_NOT_EVALUATE")\n';
+    const importSource = route === "transport"
+      ? "const transport=await import('../../scripts/dashboard-cutover-process-events-v4.mjs');const data=transport.fixtureOwnedPythonBytesV4;"
+      : "const transport=await import('../../scripts/dashboard-cutover-process-events-v4.py');const data=transport.default;";
+    const originalSource = pre32Source("valid");
+    const entry = "export async function observeCodeOwnedPositiveWorktreePre32HostPairV4(){";
+    assert.equal(originalSource.split(entry).length - 1, 1, "ARMED_FIXED_ENDPOINT");
+    const extraSource = originalSource.replace(entry,
+      `${entry}${importSource}if(data!==${JSON.stringify(sentinel)})throw Error('OWNED_PROCESS_EVENT_DATA_MISMATCH');`);
+    fixture((root, expected, home) => {
+      write(home, "bootstrap-test-source.js", fs.readFileSync(new URL(import.meta.url)), 0o600);
+      for (const name of ["dashboard-cutover-process-events-v4.mjs", "dashboard-cutover-process-events-v4.py"]) {
+        assert.equal(git(root, "show", `HEAD:scripts/${name}`), fs.readFileSync(path.join(root, "scripts", name), "utf8").trimEnd());
+      }
+      const control = run(root);
+      const result = run(root, ["inspect-pre32-host-pair", "--json"]);
+      write(home, "process-events-bootstrap-original.json", JSON.stringify({
+        schema: "setfarm.process-events-bootstrap-test-original.v4", route, root, expected,
+        envelope: "spawnSync-status-signal-output-only-not-stream-custody",
+        control: { status: control.status, signal: control.signal, error: control.error?.code ?? null, stdout: control.stdout, stderr: control.stderr },
+        result: { status: result.status, signal: result.signal, error: result.error?.code ?? null, stdout: result.stdout, stderr: result.stderr },
+      }, null, 2) + "\n", 0o600);
+      console.log(`PROCESS_EVENTS_BOOTSTRAP_ORIGINAL ${home}`);
+      assert.equal(control.status, 0, control.stderr);
+      assert.deepEqual(JSON.parse(control.stdout).sourceBuild, expected);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).pre32HostPair.authority, "diagnostic-only");
+      assert.equal(fs.readFileSync(path.join(root, ".setfarm/pre32-called"), "utf8"), "x");
+    }, source => source, {
+      retain: true,
+      extraSources: { "internal-production/baseline-positive-worktree-host-pair-v2": extraSource },
+      prepare(root) {
+        write(root, "scripts/dashboard-cutover-process-events-v4.mjs", 'import source from "./dashboard-cutover-process-events-v4.py";\nexport const fixtureOwnedPythonBytesV4=source;\n');
+        write(root, "scripts/dashboard-cutover-process-events-v4.py", sentinel);
+      },
+    });
+  });
+}
+
+for (const fault of ["modified", "missing", "query", "fragment", "foreign-url", "load-time-replacement"]) {
+  test(`bootstrap refuses process-event Python DATA ${fault}`, () => {
+    const sentinel = 'raise Exception("PROCESS_EVENTS_PYTHON_MUST_NOT_EVALUATE")\n';
+    const entry = "export async function observeCodeOwnedPositiveWorktreePre32HostPairV4(){";
+    const originalSource = pre32Source("valid"); assert.equal(originalSource.split(entry).length - 1, 1);
+    const specifier = fault === "foreign-url" ? "../../scripts/foreign-process-events.py"
+      : "../../scripts/dashboard-cutover-process-events-v4.py" + (fault === "query" ? "?owned=1" : fault === "fragment" ? "#owned" : "");
+    const extraSource = originalSource.replace(entry, `${entry}const data=await import(${JSON.stringify(specifier)});if(data.default!==${JSON.stringify(sentinel)})throw Error('SWAPPED_PROCESS_DATA_ACCEPTED');`);
+    fixture((root, expected, home) => {
+      write(home, "bootstrap-test-source.js", fs.readFileSync(new URL(import.meta.url)), 0o600);
+      const control = run(root); assert.equal(control.status, 0, control.stderr);
+      if (fault === "modified") fs.appendFileSync(path.join(root, "scripts/dashboard-cutover-process-events-v4.py"), "PRIVATE_SENTINEL\n");
+      if (fault === "missing") fs.unlinkSync(path.join(root, "scripts/dashboard-cutover-process-events-v4.py"));
+      const result = run(root, ["inspect-pre32-host-pair", "--json"]);
+      write(home, "process-events-bootstrap-original.json", JSON.stringify({ fault, root, expected, control: { status: control.status, signal: control.signal, stdout: control.stdout, stderr: control.stderr }, result: { status: result.status, signal: result.signal, error: result.error?.code ?? null, stdout: result.stdout, stderr: result.stderr }, envelope: "spawnSync-not-stream-custody" }, null, 2) + "\n", 0o600);
+      console.log(`PROCESS_EVENTS_BOOTSTRAP_ORIGINAL ${home}`);
+      assert.equal(result.status, 1); assert.equal(result.signal, null); assert.equal(result.error, undefined); assert.equal(result.stdout, "");
+      assert.match(result.stderr, /^DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n/);
+      assert.doesNotMatch(result.stderr, /PRIVATE_SENTINEL|SWAPPED_PROCESS_DATA_ACCEPTED/);
+      const marker = path.join(root, ".setfarm/pre32-called");
+      if (fault !== "load-time-replacement") assert.equal(fs.existsSync(marker), false);
+      else { assert.equal(fs.readFileSync(marker, "utf8"), "x"); assert.equal(fs.readFileSync(path.join(root, "scripts/dashboard-cutover-process-events-v4.py"), "utf8"), "SWAPPED_PROCESS_DATA"); }
+    }, source => fault === "load-time-replacement" ? source.replace('const source = entry.bytes.toString("utf8");',
+      'if(entry.locator==="scripts/dashboard-cutover-process-events-v4.py")fs.writeFileSync(entry.target,"SWAPPED_PROCESS_DATA");const source = entry.bytes.toString("utf8");') : source,
+    { retain: true, extraSources: { "internal-production/baseline-positive-worktree-host-pair-v2": extraSource }, prepare(root) {
+      write(root, "scripts/dashboard-cutover-process-events-v4.py", sentinel);
+      write(root, "scripts/foreign-process-events.py", sentinel);
+    } });
+  });
+}
+
 test("bootstrap supplies authenticated Python bytes as data without evaluating them", () => fixture((root, expected) => {
   const result = run(root);
   assert.equal(result.status, 0, result.stderr);

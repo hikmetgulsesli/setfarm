@@ -29,6 +29,7 @@ import {
 import { autoSaveWorktree } from "./worktree-ops.js";
 import { failRun, getWorkflowId, getRunContext, recordStepTransition } from "./repo.js";
 import { getAgentWorkspacePath } from "./worktree-ops.js";
+import { withDashboardCutoverLocalProducerAsyncV2 } from "../internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js";
 
 // ── Helper ──────────────────────────────────────────────────────────
 
@@ -558,9 +559,10 @@ export async function cleanupProjectEphemera(
  * Looks up the workflow_id for the run and tears down crons if no other active runs.
  */
 export function scheduleRunCronTeardown(runId: string): void {
-  getWorkflowId(runId).then((wfId) => {
+  void withDashboardCutoverLocalProducerAsyncV2("run-cron-teardown", async () => {
+    const wfId = await getWorkflowId(runId);
     if (wfId) {
-      teardownWorkflowCronsIfIdle(wfId).catch((err) => {
+      await teardownWorkflowCronsIfIdle(wfId).catch((err) => {
         logger.error(`Cron teardown failed for workflow ${wfId}: ${String(err)}`, { runId });
       });
     }

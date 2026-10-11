@@ -33,9 +33,21 @@ function classify(row: Row, uid: number) {
   const tokens = row.command.split(/\s+/).map(token => token.replace(/^["']|["']$/g, ""));
   const spawner = tokens.some(token => /(?:^|\/)(?:dist\/spawner\.js|src\/spawner\.ts)$/.test(token));
   const dashboard = tokens.some(token => /(?:^|\/)(?:dist\/server\/daemon\.js|src\/server\/daemon\.ts)$/.test(token));
-  const cli = tokens.some(token => /(?:^|\/)(?:setfarm(?:\.(?:js|mjs|cjs))?|dist\/cli\/cli\.js|src\/cli\/cli\.ts)$/.test(token));
-  const spawnerCli = cli && tokens.includes("spawner"), dashboardCli = cli && tokens.includes("dashboard");
-  if (!spawner && !dashboard && !spawnerCli && !dashboardCli) return null;
+  const titleLabel = /^[A-Za-z0-9_.+-]+:$/.test(tokens[0]!);
+  let executionPrefixSeen = false;
+  const cliEntries = tokens.flatMap((token, index) => {
+    const recognized = /(?:^|\/)(?:setfarm(?:\.(?:js|mjs|cjs))?|dist\/cli\/cli\.js|src\/cli\/cli\.ts)$/.test(token);
+    const retained = recognized && (token.includes("/") || index === 0 || !titleLabel || executionPrefixSeen);
+    if (/^(?:node|nodejs|env|sh|bash|zsh|dash|ksh|fish)$/.test(path.basename(token))) executionPrefixSeen = true;
+    return retained ? [index] : [];
+  });
+  const cliIndex = cliEntries.length === 1 ? cliEntries[0]! : -1;
+  // Flattened ps text cannot authenticate argv. Only an unambiguous positional
+  // prefix earns a service label; every other recognized entry remains visible.
+  const directCli = cliIndex === 0 || (cliIndex === 1 && path.isAbsolute(tokens[0]!) && path.basename(tokens[0]!) === "node");
+  const cliGroup = directCli && tokens.join(" ") === row.command && !/["']/.test(row.command) ? tokens[cliIndex + 1] : undefined;
+  const spawnerCli = cliGroup === "spawner", dashboardCli = cliGroup === "dashboard";
+  if (!spawner && !dashboard && cliEntries.length === 0) return null;
   if (!/^[A-Za-z+<>]{1,16}$/.test(row.stat) || /[ZE]/.test(row.stat)) fail();
   let classification = "ambiguous-contender", entrypoint: string | null = null, checkoutPath: string | null = null, executable: string | null = null;
   if (Number(spawner) + Number(dashboard) + Number(spawnerCli) + Number(dashboardCli) === 1) {
@@ -64,7 +76,9 @@ function listener() {
 }
 
 // Read-only diagnostic, never a signal capability, source/build authentication
-// or sufficient zero-owner proof. Unknown contenders cannot be silently omitted.
+// or sufficient zero-owner proof. Strong paths and unknown non-title wrappers
+// stay visible. Bare aliases in generic title metadata are not authenticated argv;
+// the title-label grammar is diagnostic only, never actor exclusion authority.
 export function observeDeploymentCutoverProcessFamiliesV1() {
   try {
     const uid = process.getuid?.();

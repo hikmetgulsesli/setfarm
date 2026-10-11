@@ -3,13 +3,14 @@ import { test } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { transformSync } from "esbuild";
 
 // Private compiled fixtures exercise ownership, not clean-main build qualification.
 // The real source/build observer remains an external integration requirement.
 const repo = new URL("../../", import.meta.url);
-function fixture(body) {
+function fixture(body, { retain = false } = {}) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cutover-capability-")));
   const checkout = path.join(home, "checkout");
   fs.mkdirSync(path.join(checkout, "scripts"), { recursive: true, mode: 0o700 });
@@ -24,8 +25,8 @@ function fixture(body) {
     fs.writeFileSync(path.join(checkout, "package.json"), '{"type":"module"}', { mode: 0o600 });
     fs.writeFileSync(path.join(checkout, "scripts/build-generation-retention.mjs"), `
       export function observeCurrentFinalizedSetfarmSourceBuildV1(){return {branch:'main',clean:true,sha:'a'.repeat(40),treeHash:'b'.repeat(40),buildHash:'c'.repeat(64),originMainSha:'a'.repeat(40)}}`, { mode: 0o600 });
-    body(home, checkout);
-  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+    return body(home, checkout);
+  } finally { if (!retain) fs.rmSync(home, { recursive: true, force: true }); }
 }
 function program(home, checkout, action) {
   return `
@@ -59,6 +60,61 @@ function freshOrdinaryStartResult(home, checkout) {
   assert.equal(child.status, 0, child.stderr);
   return child.stdout;
 }
+
+// New retained API receipt uses the existing real owner module/FS initialization,
+// explicit mocked-build boundary, and no acquisition, OPEN publication or PG.
+test("fixed owner ROOT operation interfaces exist before owner acquisition", async () => fixture(async (home, checkout) => {
+  const script = program(home, checkout, `process.stdout.write(JSON.stringify({
+interfaceKinds:[typeof module.reserveDeploymentCutoverFirstGenerationWithOwnerV4,
+typeof module.assertDeploymentCutoverJointReservationMetadataV4],
+ownerCreated:fs.existsSync(root),openCreated:fs.existsSync(${JSON.stringify(path.join(home, "ai/setrox/data/internal-production-baseline/deployment-cutover-v1"))}),
+authority:'explicit-mocked-build-source-only'}));`);
+  const locators = ["package.json", ...["deployment-cutover-owner.mjs", "deployment-cutover.mjs",
+    "deployment-cutover-dependencies.mjs", "build-generation-maintenance-owner-observer.mjs",
+    "build-generation-maintenance-journal.mjs", "build-generation-retention.mjs"].map(n => "scripts/" + n),
+    ...["internal-production/baseline-deployment-cutover-owner-store-v1",
+      "internal-production/baseline-deployment-cutover-records-v1",
+      "internal-production/baseline-deployment-cutover-publication-v1",
+      "internal-production/baseline-deployment-cutover-v1", "internal-production/baseline-workspace-authority-path-v1",
+      "product-compiler/canonical-json"].map(n => "dist/" + n + ".js")];
+  const fixturePins = Object.fromEntries(locators.map(p => [p,
+    createHash("sha256").update(fs.readFileSync(checkout + "/" + p)).digest("hex")]));
+  fs.writeFileSync(home + "/intent.json", JSON.stringify({ program: script, node: process.execPath,
+    authority: "explicit-mocked-build-source-only", home, checkout, fixturePins }), { flag: "wx", mode: 0o600 });
+  const child = spawn(process.execPath, ["--input-type=module", "-e", script],
+    { cwd: home, env: {}, stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "", stderr = "", unknown = null;
+  const eof = { stdout: false, stderr: false }, closed = { stdout: false, stderr: false };
+  child.on("error", e => { unknown ??= e.message; });
+  for (const [stream, name] of [[child.stdout, "stdout"], [child.stderr, "stderr"]]) {
+    stream.on("error", e => { unknown ??= e.message; });
+    stream.on("end", () => { eof[name] = true; });stream.on("close", () => { closed[name] = true; });
+    stream.on("data", b => { if (name === "stdout") stdout += b; else stderr += b; });
+  }
+  const [status, signal] = await new Promise(resolve => child.on("close", (...args) => resolve(args)));
+  fs.writeFileSync(home + "/result.json", JSON.stringify({ stdout, stderr, status, signal,
+    error: unknown, eof, closed, program: script }), { flag: "wx", mode: 0o600 });
+  console.log(JSON.stringify({ kind: "retained-owner-root-case", home, status, signal, eof, closed }));
+  assert.equal(unknown, null);assert.equal(status, 0, stderr);assert.equal(signal, null);assert.equal(stderr, "");
+  assert.deepEqual(eof, { stdout: true, stderr: true });assert.deepEqual(closed, eof);
+  const out = JSON.parse(stdout);assert.equal(out.ownerCreated, false);assert.equal(out.openCreated, false);
+  assert.deepEqual(out.interfaceKinds, ["function", "function"], "MISSING_FIXED_OWNER_ROOT_OPERATION");
+}, { retain: true }));
+test("launcher quiet foreign owner interfaces refuse without creating history", () => fixture((home, checkout) => {
+  const result=run(home,checkout,`let traps=0;const proxy=new Proxy({}, {get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')}});
+    const names=['quietDeploymentCutoverLaunchersWithOwnerV4','assertDeploymentCutoverQuietMetadataV4',
+      'assertDeploymentCutoverSpawnerQuietIntentV4','assertDeploymentCutoverDashboardQuietIntentV4'];
+    const kinds=names.map(name=>typeof module[name]);let refused=0;
+    if(kinds.every(kind=>kind==='function')){
+      try{await module[names[0]](proxy,proxy,proxy)}catch{refused++}
+      for(const name of names.slice(1)){try{module[name](proxy,proxy)}catch{refused++}}
+    }
+    process.stdout.write(JSON.stringify({kinds,traps,refused,ownerCreated:fs.existsSync(root),
+      journalCreated:fs.existsSync(${JSON.stringify(path.join(home,"ai/setrox/data/internal-production-baseline/deployment-dashboard-cutover-v2"))})}));`);
+  assert.deepEqual(result.kinds,['function','function','function','function'],'MISSING_OWNER_QUIET_INTERFACES');
+  assert.equal(result.traps,0);assert.equal(result.refused,4);assert.equal(result.ownerCreated,false);assert.equal(result.journalCreated,false);
+}, {retain:true}));
+
 test("owner controller source accepts legitimate partial source reads", () => fixture((home, checkout) => {
   const body = program(home, checkout, 'process.stdout.write(JSON.stringify({hash:source.controllerSourceHash}));')
     .replace('const module=await import', 'const read=fs.readSync;fs.readSync=(fd,buffer,offset,length,position)=>read(fd,buffer,offset,Math.min(length,127),position);const module=await import');
@@ -288,4 +344,69 @@ test("first publication refuses changed absent-store ancestry before creating a 
     let refused=false;try{await module.acquireDeploymentCutoverOwnerV1(maintenance)}catch{refused=true}
     process.stdout.write(JSON.stringify({refused,replaced,exists:fs.existsSync(root)}));`);
   assert.deepEqual(result, { refused: true, replaced: true, exists: false });
+}));
+
+test("dashboard bindings project only the original held claim and maintenance labels", () => fixture((home, checkout) => {
+  const result = run(home, checkout, `assertExport();
+    const cap=await module.acquireDeploymentCutoverOwnerV1(maintenance);
+    const before=fs.readdirSync(root).sort();
+    const labels=module.observeDashboardCutoverOwnerBindingsV2(cap);
+    const claim=JSON.parse(fs.readFileSync(root+'/owner-0001.json'));
+    const intent=JSON.parse(fs.readFileSync(root+'/intent.json'));
+    let forged=false;try{module.assertDeploymentCutoverOwnerV1(JSON.parse(JSON.stringify(labels)))}catch{forged=true}
+    process.stdout.write(JSON.stringify({labels,claim,intent,frozen:Object.isFrozen(labels),forged,
+      sameInventory:JSON.stringify(before)===JSON.stringify(fs.readdirSync(root).sort())}));
+    function assertExport(){if(typeof module.observeDashboardCutoverOwnerBindingsV2!=='function')throw Error('MISSING_OWNER_BINDINGS_EXPORT')}`);
+  assert.deepEqual(result.labels, {
+    schema: "setfarm.internal-production-dashboard-cutover-owner-bindings.v2", authority: "binding-only",
+    maintenanceIntentHash: result.intent.maintenanceIntentHash, ownerClaimHash: result.claim.ownerClaimHash,
+    controllerSourceHash: result.intent.controllerSourceHash, cutoverPlanHash: result.intent.cutoverPlanHash,
+  });
+  assert.equal(result.claim.maintenanceIntentHash, result.labels.maintenanceIntentHash);
+  assert.equal(result.frozen, true); assert.equal(result.forged, true); assert.equal(result.sameInventory, true);
+}));
+
+test("foreign dashboard-binding handles refuse without caller traps or idle owner burn", () => fixture((home, checkout) => {
+  const result = run(home, checkout, `if(typeof module.observeDashboardCutoverOwnerBindingsV2!=='function')throw Error('MISSING_OWNER_BINDINGS_EXPORT');
+    const cap=await module.acquireDeploymentCutoverOwnerV1(maintenance);let traps=0,refused=0;
+    const proxy=new Proxy(cap,{get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')},ownKeys(){traps++;throw Error('TRAP')}});
+    for(const foreign of [null,undefined,0,{...cap},proxy]){try{module.observeDashboardCutoverOwnerBindingsV2(foreign)}catch{refused++}}
+    const labels=module.observeDashboardCutoverOwnerBindingsV2(cap);
+    process.stdout.write(JSON.stringify({traps,refused,hash:labels.ownerClaimHash,expected:JSON.parse(fs.readFileSync(root+'/owner-0001.json')).ownerClaimHash}));`);
+  assert.equal(result.traps, 0); assert.equal(result.refused, 5); assert.equal(result.hash, result.expected);
+}));
+
+for (const drift of ["source", "history", "process"]) test(`dashboard binding ${drift} drift refuses permanently`, () => fixture((home, checkout) => {
+  const result = run(home, checkout, `if(typeof module.observeDashboardCutoverOwnerBindingsV2!=='function')throw Error('MISSING_OWNER_BINDINGS_EXPORT');
+    const cap=await module.acquireDeploymentCutoverOwnerV1(maintenance);
+    module.observeDashboardCutoverOwnerBindingsV2(cap);
+    const drift=${JSON.stringify(drift)},cp=await import('node:child_process'),original=cp.default.spawnSync;
+    const target=drift==='source'?${JSON.stringify(path.join(checkout, "scripts/build-generation-maintenance-owner-observer.mjs"))}:root+'/owner-0001.json';
+    const originalBytes=fs.readFileSync(target);
+    if(drift==='process')cp.default.spawnSync=(file,args,options)=>file==='/bin/ps'?{status:0,signal:null,stdout:Buffer.from('malformed\\n'),stderr:Buffer.alloc(0)}:original(file,args,options);
+    else fs.appendFileSync(target,'\\n');
+    let refused=false,restoredRefused=false;
+    try{module.observeDashboardCutoverOwnerBindingsV2(cap)}catch{refused=true}
+    if(drift==='process')cp.default.spawnSync=original;else fs.writeFileSync(target,originalBytes);
+    try{module.observeDashboardCutoverOwnerBindingsV2(cap)}catch{restoredRefused=true}
+    process.stdout.write(JSON.stringify({refused,restoredRefused}));`);
+  assert.deepEqual(result, { refused: true, restoredRefused: true });
+}));
+
+for (const observerCall of [1, 3]) for (const nested of ["original", "foreign-proxy"]) test(`swallowed dashboard binding ${nested} reentry at observer call ${observerCall} burns original custody`, () => fixture((home, checkout) => {
+  const result = run(home, checkout, `if(typeof module.observeDashboardCutoverOwnerBindingsV2!=='function')throw Error('MISSING_OWNER_BINDINGS_EXPORT');
+    const cap=await module.acquireDeploymentCutoverOwnerV1(maintenance);
+    const cp=await import('node:child_process'),original=cp.default.spawnSync;let fired=false,traps=0,psCalls=0,nestedRefused=false;
+    const nested=${JSON.stringify(nested)}==='original'?cap:new Proxy({}, {get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')},ownKeys(){traps++;throw Error('TRAP')}});
+    cp.default.spawnSync=(file,args,options)=>{
+      if(file==='/bin/ps'){psCalls++;if(psCalls===${observerCall}){fired=true;try{module.observeDashboardCutoverOwnerBindingsV2(nested)}catch{nestedRefused=true}}}
+      return original(file,args,options);
+    };
+    let refused=false,sticky=false;
+    try{module.observeDashboardCutoverOwnerBindingsV2(cap)}catch{refused=true}
+    cp.default.spawnSync=original;try{module.observeDashboardCutoverOwnerBindingsV2(cap)}catch{sticky=true}
+    process.stdout.write(JSON.stringify({fired,refused,sticky,traps,nestedRefused,psCalls}));`);
+  assert.equal(result.fired, true); assert.equal(result.refused, true); assert.equal(result.sticky, true);
+  assert.equal(result.traps, 0); assert.equal(result.nestedRefused, true);
+  assert.equal(result.psCalls, observerCall + 1); // Current composite finishes; no later projection composite.
 }));
