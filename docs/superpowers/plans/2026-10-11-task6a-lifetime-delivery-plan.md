@@ -1,0 +1,305 @@
+# Independent Task6A lifetime delivery plan
+
+> Agentic workers: root-only manual execution; read-only independent reviewers.
+> Existing standing owner authorization selects reviewed PR delivery, preserves
+> all worktrees and overrides repeated choices/delegated implementation.
+
+**Goal:** Merge the independently testable original-close/FD-custody root fixes.
+**Architecture:** Main-based narrow PR, unchanged reviewed correction bytes,
+fresh source verification and separate unselected clean-main build.
+**Tech Stack:** Node>=22, TypeScript5.9.3, postgres3.4.8, macOS, node:test/esbuild.
+**Spec:** `../specs/2026-10-11-task6a-lifetime-delivery-design.md`.
+
+## Global constraints
+
+Root sole writer. Preserve original pair, every worktree/ref/live port. 8GiB disk
+floor. No live account/grant/DB/selector/security changes, dependency additions,
+direct-main commit, force push, dirty/guard bypass or aggregate release credit.
+
+## Task1: Fresh main-based source delivery
+
+File map/interfaces are the paired spec's four production/two test files and
+four original paired documents; all signatures remain unchanged.
+
+- [x] Verify real GitHub main and six matching preimages; create isolated branch
+  without fetching/moving the preserved live checkout or canonical shared refs.
+- [x] Commit this paired boundary design/plan; reapply the two original corrections
+  with normal `git cherry-pick c3d76237 00ab67e4`, inspecting every resulting path.
+  No new behavior or weakening of original RED/GREEN requirements is authorized.
+- [x] Fresh exact-source focused suite: actual socket test, transport, descriptor,
+  physical evidence and default private fixture skip. Actual native-close delay
+  must remain pending; error ending must join native close before rejection.
+- [x] Actual existing opted-in private descriptor fixture: read/recheck refusal
+  retains each genuine FD; explicit close calls each original once and EBADF.
+  Require natural child code0/signalnull, exact fixture removal and source pins.
+- [x] Strict noEmit including actual affected tests; version/English/path,
+  migration digests/12MC artifacts/diff checks. Record exact counts, not full-suite
+  or stock build claims. Root reviews raw original-close/resource evidence.
+- [x] Repair source-suite CLI preparation in `tests/ant.test.ts` after actual
+  private-all905/894PASS/2FAIL/9SKIP missing-dist result. First strengthen usage
+  assertion so missing CLI cannot satisfy help; observe RED with old runner.
+  Then invoke `process.execPath,['--import','tsx',srcCli,command]` with the same
+  isolated test environment. Add actual temporary feature-Git refusal assertion
+  requiring status2/RUNTIME_GUARD_FAIL/no ant output; do not touch the guard.
+  Focused GREEN and source-suite import policy, strict types and independent
+  exact-diff review precede a fresh unchanged stock private-all command.
+- [ ] Independent exact diff review (Critical0/Important0), fix/reverify findings;
+  commit exact evidence checkpoint, push scoped branch, create one reviewed PR.
+- [ ] Exact-head cloud review/security and no-open-thread gates; SHA-bound merge,
+  preserve source branches/worktrees, no branch deletion.
+
+## Task2: Separate clean standby-main build
+
+- [ ] Resolve actual merged main from GitHub and create a fresh independent clone
+  under its own parent, canonical origin, branch main and clean HEAD==origin/main.
+  Do not rebuild old live checkout with eight retained generations.
+- [ ] Verify lockfile/available disk before ordinary `npm ci`; no secret env,
+  inherited PG defaults, runtime skip or existing dependency mutation.
+- [ ] Run ordinary `npm run build` and capture original terminal exit plus complete
+  prebuild/compiler/assets/postbuild output and final source-owned manifest.
+  Verify full SHA/main/dirtyfalse, clean tree, unselected artifact and disk floor.
+- [ ] Record evidence, retain standby, and return the sole writer to queued
+  aggregate cold-pre32 work. Live cutover/OpenClaw rollback remain separate gates.
+
+## Task3: Genuine finalized fixture permissions
+
+Files: `scripts/__tests__/fixtures/deployment-cutover-bootstrap.mjs` and new
+`scripts/__tests__/deployment-cutover-fixture-permissions.test.js`.
+Interface: existing fixture callback and retained observer stay unchanged.
+
+- [ ] New actual retained-fixture positive regression under inherited077 and022;
+  assert observer scope and all finalized output directories0755, home0700.
+  Run RED against current helper; an early generic refusal is the expected defect.
+- [ ] Finalize only fresh authored `root/dist` directory topology to0755 after
+  outputs/authority are written, before callback. Require real directories/no
+  symlinks. Keep production owner and file/dependency/private-home policy intact.
+- [ ] GREEN new regression and full retained/default/bootstrap/genuine adjacent
+  script groups under077; review exact correction before committing.
+
+## Task4: Standalone version-test source immutability
+
+File: `scripts/__tests__/inject-version.test.js`; actual production script unchanged.
+Interface: existing four release/URL/idempotency assertions stay unchanged.
+
+- [ ] Capture five original script/package/release-input byte and physical pins
+  before each actual test; require identical pins afterward. Witness RED from
+  original source-writing tests; do not restore timestamps to mask it.
+- [ ] Per-test owned temporary ESM root copies those real inputs/script bytes.
+  Invoke process.execPath on copied script; clean only the exact created fixture.
+  No source .bak overwrite or source write, fake release version or runtime bypass.
+- [ ] GREEN all four cases plus physical invariance, independent exact diff review;
+  repeat source contracts/strict checks, commit/push one scoped correction, fresh
+  exact-head cloud review and unchanged stock private-all chain. Preserve9RKd5L.
+
+## Task5: Actual unsafe-history perturbation
+
+File: `scripts/__tests__/deployment-cutover.test.js`; observer policy unchanged.
+The adjacent otsUqX capture is337PASS/1FAIL, not a passing broad suite.
+
+- [ ] Add a pre-dispatch actual0755 assertion to unsafe-history; witness RED
+  under077 against its old mkdir-only preparation. Retain original refusal and
+  post-dispatch mode/no-repair assertions.
+- [ ] Explicitly chmod only the fresh owned unsafe-history directory0755; GREEN
+  targeted case under077 and022, genuine owner still must refuse without writes.
+- [ ] Fresh exact-diff review, source contracts/strict and full unchanged private
+  chain before merge. Keep failed otsUqX and earlier captures visible.
+
+Self-review: spec scopes causality/integration and all affected owners; steps keep
+code/integration/build distinct. No duplicate implementation, placeholder or live
+admission is invented. The approved original TDD plans/RED evidence travel intact.
+
+## Task6: Native owned scaffold fixture link mode
+
+**Goal:** Remove demonstrated fixture-mask dependence without changing real
+dependency identity or any expected topology/story/transition golden.
+**Spec:** `../specs/2026-10-11-scaffold-fixture-link-mode-design.md`.
+**Files:** the paired spec, this plan, and only
+`tests/product-compiler/node-scaffold-private-materializer-v2.test.ts`.
+**Interface:** fakeNpmCiV2's existing installed npm-bin link; same real materializer,
+topology builders, original assertions and private PostgreSQL lifecycle.
+**Constraints:** root-only implementation; read-only independent review; actual
+macOS Node22 fixture, no-follow native link change, no global umask adjustment,
+target byte/physical preservation,8GiB floor, no production source changes.
+
+- [x] Actual paired focused originals:022 GEKzl3 passes allthree literal profile
+  goldens;077 UqXqpv reproduces identical90e559f9/72d6c191 refusal. All1557 source/
+  tool pins including Node22/libnode match; complete strict private journals,
+  native init/PG0/null and test0/1/null after real quiescence/admin close.
+- [x] Separate actual native dNlInb control:022 link0755,077 link0700; lchmod0755
+  retains actual link inode, leaves target full physical/SHA pins unchanged.
+- [x] Add lstat import and actual link0755 assertion immediately after genuine
+  symlink creation. Keep golden assertions unchanged. Commit an explicit test
+  RED checkpoint because the private runner requires a clean worktree; this is
+  not a passing-test checkpoint. Expected077 RED448 versus493 at fixture link.
+
+  ```ts
+  const fixtureLink = await lstat(linkPath);
+  assert.equal(fixtureLink.isSymbolicLink(), true);
+  assert.equal(fixtureLink.mode & 0o777, 0o755);
+  ```
+
+- [x] Observe actual077 stronger RED with the reviewed external focused original
+  and complete journal/input/host pins; preserve the failed owner.
+- [x] Import lchmod and insert only `await lchmod(linkPath, 0o755)` before that
+  lstat assertion. Native API follows no target. Existing fixture cleanup stays
+  unchanged. Perform noEmit/diff checks and record a local verification checkpoint
+  so the genuine clean-source private runner can execute; no delivery claim yet.
+- [ ] Fresh focused077/022 GREEN, real all-four affected assertions and complete
+  product-compiler group with genuine prepared browser HOME. Independent review
+  of the added test owner and the whole main-relative scope; preserve failures.
+- [ ] Fresh unchanged private-all chain; exact-head cloud/security; SHA-bound
+  reviewed merge; actual clean-main stock build, then queued cold-pre32 handoff.
+
+Actual native checkpoint3915df47: stronger077 RED WDe6gy fails exactly448vs493
+at the authored symlink; all1557 pins and strict66-frame journal agree. The
+two-line no-follow correction is independently C0/I0/M0. Fresh sequential077
+E2MfgZ and022 Y9bZMd each1PASS0FAIL0SKIP, three historical profilegoldens and
+target byte/physical assertions complete. All1557 before/after/current pins
+match; strict64-frame private journals prove init/test/server exit+close0/null,
+two EOF each, twoquiescence, admin-ended then serverclosure. No global mask,
+production hash, expected golden or target change. Other scaffold families
+await the full product-compiler group in the unchanged private-all chain.
+
+Genuine prepared browser focus YNq1dU: existing renderer v1/v2/v3 files47PASS,
+0FAIL/SKIP, natural0/null;1729 input pins and full691-member browser payload
+unchanged, independent terminal C0/I0/M0. These include static/retry controls,
+not47 separate browser lifecycles; no descendant-closure/full-chain credit.
+
+## Fresh bounded verification checkpoint
+
+## Task7: Native aggregate and unsigned trust fixture finalization
+
+Files/interfaces: paired design's two changed fixture/test-support files and
+unchanged trust-audit test consumer; existing handles, C protocol and trust schema
+remain unchanged.
+
+- [x] Add real regular/nonlink/mode/dev/uid/gid/nlink/byte preconditions before
+  returning newly authored aggregate fixtures; actual077 RED must name the
+  permission precondition before protocol dispatch.
+- [x] Finalize only fresh wx-authored aggregate files to their declared0444/0555;
+  retain original bytes and native object identity. Focused077/022 GREEN must
+  reach every original protocol perturbation and assertion.
+- [x] Add trust marker pre-handoff native/byte verification; actual077 refusal,
+  then exclusive new marker creation and chmod0444, existing guard unchanged.
+  Focused077/022 trust controls, exact diff review and source strict checks.
+- [ ] Prepare a new private browser HOME with empty0700 LaunchAgents before
+  baseline capture, independently review immutable tools, repeat unchanged
+  private-all; old supplier/evidence stay visible and unchanged.
+- [ ] Fresh exact-head review/security, reviewed PR integration and genuinely
+  clean-main stock build remain required; no focused-test rollout inference.
+
+djSoak terminal:6745/6677PASS28FAIL0CANCEL40SKIP, compiler1405PASS. Complete
+strict2668-frame journal/current1741 pins/browser691 and byte-exact mirrored
+streams verified by root and independent reviewer; source freeze released.
+Three preparation families account for13+2+13 failures; no gate weakening.
+
+Task7 finite checkpoint: first stronger077 control6QwkFo50tests1PASS49FAIL
+hit an invalid process-GID oracle (20 versus actual parent0), so it earns no
+permission-causal RED credit. Correcting only that oracle to native parent GID
+produced rO9Fzd50tests1PASS49FAIL: all46 aggregate cases fail0400versus0444
+before protocol dispatch; three trust cases reject the builder before handle
+publication. The builder cleaned its marker, so that combined trust refusal is
+not an independently retained marker-mode measurement. Both failed owners remain.
+
+Nine fresh wx-authored aggregate chmod operations and one exclusive wx-authored
+trust marker chmod leave native policy, bytes and historical assertions unchanged.
+GREEN077 F3Rmnz and GREEN022 4wBulh each50PASS0FAIL0SKIP, natural0/null,
+capturefaults[]/reservefalse. All1566 before/after/current input pins plus artifacts,
+exact source inventory/HEAD/status and full original outputs agree under root and
+independent audit. The50 include all original protocol perturbations, one hostile
+input boundary and three trust-audit cases, not50 host admission lifecycles.
+Exact four-path cb10-relative review C0/I0; no complete chain, build, signing,
+privileged package admission or live rollout credit follows. New browser HOME
+provisioning v5 first-use C0/I0/M0 remains gated on this clean local checkpoint.
+
+## Task8: Actual unsafe helper-history ancestry perturbation
+
+Files: the existing helper-observation test and this paired plan/spec; production
+observer/census and interfaces remain unchanged. This repairs the demonstrated
+premerge verification fixture defect, not a newly discovered transport failure.
+
+- [x] Original biFtU4 naturally1/null; root and independent complete custody audit
+  agree:89groups8377PASS/1FAIL/99SKIP, no reserve/capture fault. Preserve owner.
+- [x] Require native literal0755 before unsafe observation; witness077 RED
+  against mkdir-only fixture. Catch removal of the actual ancestry mode guard,
+  unexpected repair/effects, or accidentally safe negative input.
+- [x] Chmod only fresh fixture root0755; preserve native dev/ino/mode after
+  refusal and zero writes/connections/effects for both real ancestry controls.
+- [ ] Full affected file077/022, stock full cutover group and genuine remaining
+  isolated/manifest gates; strict types/contracts and exact independent review.
+- [ ] Commit/push a scoped checkpoint, exact-head review/security, new unchanged
+  stock private-all with root and independent terminal audit; only then reviewed
+  merge and actual clean-main standby build. No old failed capture retro-PASS.
+
+Task8 actual checkpoint: stronger077 RED2tests1PASS/1FAIL448nversus493n before
+observation. Minimal fresh-root chmod yields full affected file23PASS under077
+and022, no skips; ordinary stock cutover441PASS/0FAIL/0SKIP. TS5.9.3 actual
+source plus affected test833roots1181files0diagnostics/noEmit; version2.3.79,
+English1936/path968/migration digests/12MC contracts and diff check pass.
+Independent exact three-path review C0/I0; empty duplicate heading corrected.
+These checks are not the unchanged full-chain or clean-main build gate.
+
+## Task9: Remaining isolated-lane fixture preparation
+
+Read-only inspection of the eight previously unexecuted isolated test files
+identified two further mask-dependent preparations. File Map adds only
+`tests/internal-production/owner-admission-v1.test.ts` and
+`tests/internal-production/baseline-restart-authority-retirement-v1.test.ts`
+plus this paired plan/spec. Preserve all current tests/guards and literal errors.
+
+- [x] Cold output fixture: require actual owned0755 directories,0644 outputs and
+ 0444 metadata before real verifier. Witness077 RED; then finalize only these
+ freshly authored outputs, preserving identity/bytes. Finalize the explicitly
+ recreated dependency too; keep every original drift/topology assertion.
+- [x] Private-chain acquisition perturbation: require actual0755/0700 before
+ real guard; witness077 RED; then chmod only the newly authored unsafe fixture
+ directory. Preserve original validation/cleanup causes and consumed-FD tests.
+- [ ] Focused077/022, exact diff/strict/source checks, and genuinely owned private
+ cluster running ordinary remaining isolated/manifest commands. Full unchanged
+ chain remains mandatory; do not start the long retry before this tail preflight.
+- [x] Two retirement compiled-output metadata trios: native0444/nlink1/body
+ preconditions, real077 RED for both builders, fresh-file chmod0444 and byte/
+ identity preservation. Keep all direct/cold protocol perturbations unchanged.
+
+Task9 actual checkpoint: paired cold-output/private-chain077 RED2FAIL at native
+0700versus0755; focused077/022 GREEN2PASS each. Two metadata builders each
+independently077 RED0400versus0444; correctly named paired direct/cold controls
+GREEN2PASS under077 and022. The first metadata command named a nonexistent
+direct test and actually ran only the cold control; the subsequent exact-name
+direct RED supplies its missing evidence, not an inferred two-test result.
+Stock manifest18PASS. Ordinary source/affected-helper strict check remains zero;
+expanding strict roots to the two large historical fixtures exposes257 existing
+diagnostics. Exact in-memory8c preimages have the same257 diagnostic multiset;
+no new diagnostics, not a passing all-fixture strict check. No production source,
+global mask, guard, golden, source compiler policy or historical error is changed.
+Remaining private tail, full unchanged chain and clean-main build are pending.
+
+## Earlier bounded verification checkpoint
+
+At4c61a68d, capsule `logs/setfarm-lifetime-source-capsule-Ydy8fh` captured18
+members135888B. Valid preflight05zOUN:23PASS/1explicitprivilegedSKIP, natural0/null.
+Earlier9E8xGh refused the diagnostic long TMPDIR (>103-byte socket bound); retained
+without positive or correction-RED credit. Successorv2 uses fresh owned0700 short
+temp root, not a production endpoint override. ProtectedWDukzs:6PASS/0SKIP,
+natural0/null, raw1133B SHA2d1d0a1dc63ccec502f931f9b117366044ec59287dd6dc8916e1714a438792e7;
+receipt02d78b5f277c20724090e5708f721e40fe58ee227060832f9f3eb02965711e02.
+All36 source/copy and4 fixed pins unchanged, no capture faults, minimum sampled
+free17,233,240,064B. Exact protected okUIfnYf fixture independently absent; its
+five genuine FDs retained after refusal and explicitly closed once/EBADF.
+
+Ordinary new-writer npmci ownerzH0RsR completed0/null,1553 input pins unchanged,
+no existing dependency mutation. First private-all ownerEr3snc naturally1/null:
+905tests/894PASS/2FAIL/9SKIP, both missing dist CLI; not a full-suite pass. Actual
+private server32890 definitely closed0/null after quiescence and admin close;
+exact `/tmp/setfarm-task6a-pg.ETt4VG` retained by its existing owner policy.
+
+Stronger actual help RED rejects old missing CLI (3FAIL/0PASS, including usage
+assertion) in the root tool transcript. Test-only source-CLI repair GREEN:
+ant4/source-import-policy1,5PASS/0SKIP; genuine feature Git fixture still refuses
+with status2/null before art. Final help assertion requires literal1/null, not
+merely nonempty usage. No production CLI/runtime guard/build manifest changed.
+Fresh strictTS5.9.3 including actual ant test:832roots1180files0diagnostics/noEmit;
+version2.3.79/English1934/path967/migration digests/all12MC checks pass. Source
+correction review C0/I0/M0; ant-review minor exit assertion corrected/reverified.
+Full unchanged private-all retry, exact-head cloud/security, reviewed merge and
+ordinary clean-main standby build remain pending; no release authority inferred.

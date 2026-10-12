@@ -39,6 +39,24 @@ test("cold launch output verification covers every dependency and rejects crosse
     for (const [name, bytes] of [["BUILD_INFO.json", info], ["PLATFORM_RELEASE_MANIFEST.json", manifest], ["PLATFORM_BUILD_OUTPUT_TREE.json", output]] as const) {
       writeFileSync(path.join(fixture, "dist", name), bytes, { mode: 0o444 });
     }
+    const fixtureModes = [
+      [path.join(fixture, "dist"), 0o755], [internal, 0o755],
+      ...files.map(locator => [path.join(fixture, locator), 0o644] as const),
+      ...["BUILD_INFO.json", "PLATFORM_RELEASE_MANIFEST.json", "PLATFORM_BUILD_OUTPUT_TREE.json"]
+        .map(name => [path.join(fixture, "dist", name), 0o444] as const),
+    ] as const;
+    for (const [target, mode] of fixtureModes) {
+      const before = lstatSync(target, { bigint: true });
+      const bytes = before.isFile() ? readFileSync(target) : undefined;
+      assert.equal(before.isSymbolicLink(), false);
+      assert.equal(mode === 0o755 ? before.isDirectory() : before.isFile(), true);
+      chmodSync(target, mode);
+      const actual = lstatSync(target, { bigint: true });
+      assert.equal(actual.isSymbolicLink(), false);
+      assert.equal(actual.mode & 0o7777n, BigInt(mode), target);
+      for (const key of ["dev", "ino", "uid", "gid", "nlink", "size"] as const) assert.equal(actual[key], before[key]);
+      if (bytes) assert.deepEqual(readFileSync(target), bytes);
+    }
     const rootStats = lstatSync(fixture, { bigint: true });
     const expected = { rootIdentity: { devDecimal: String(rootStats.dev), inoDecimal: String(rootStats.ino), uid: Number(rootStats.uid) },
       sourceSha: sha, sourceTreeHash: treeHash, buildInfoBytesHash: hashBytes(info), outputTreeBytesHash: hashBytes(output), releaseManifestBytesHash: hashBytes(manifest) };
@@ -57,6 +75,9 @@ test("cold launch output verification covers every dependency and rejects crosse
     unlinkSync(dependency); symlinkSync(path.join(fixture, "dist/spawner.js"), dependency);
     assert.throws(() => verify(expected), /LAUNCH_ENVIRONMENT_INVALID/);
     unlinkSync(dependency); writeFileSync(dependency, originalDependency, { mode: 0o644 });
+    chmodSync(dependency, 0o644);
+    assert.equal(lstatSync(dependency, { bigint: true }).mode & 0o7777n, 0o644n);
+    assert.deepEqual(readFileSync(dependency), originalDependency);
     const extra = path.join(fixture, "dist/unlisted.js"); writeFileSync(extra, "// unlisted\n");
     assert.throws(() => verify(expected), /LAUNCH_ENVIRONMENT_INVALID/);
     unlinkSync(extra);

@@ -98,7 +98,9 @@ export function holdTask6aRootOwnedJsonFileV1(target: string) {
         checkMetadata();
         if (!readBytes().equals(original)) refuse();
         checkMetadata();
-      } catch { invalid = true; close(); refuse(); }
+      // Revocation denies immediately; the returned owner's explicit close
+      // retains custody until its downstream originals have finished.
+      } catch { invalid = true; refuse(); }
     };
     recheck();
     return Object.freeze({ read: () => { recheck(); return Buffer.from(original); }, recheck, close });

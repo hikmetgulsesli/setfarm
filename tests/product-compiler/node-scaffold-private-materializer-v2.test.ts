@@ -14,7 +14,9 @@ import {
   chmod,
   chown,
   copyFile,
+  lchmod,
   link,
+  lstat,
   mkdir,
   readFile,
   readdir,
@@ -744,7 +746,22 @@ async function fakeNpmCiV2(
       const linkPath = path.join(binDirectory, command);
       const targetLocator = `${node.packagePath}/${target}`;
       const linkLocator = `${container}/.bin/${command}`;
+      const targetBefore = await lstat(targetPath, { bigint: true });
+      const targetBytesBefore = await readFile(targetPath);
+      assert.equal(targetBefore.isFile(), true);
       await symlink(path.posix.relative(path.posix.dirname(linkLocator), targetLocator), linkPath);
+      await lchmod(linkPath, 0o755);
+      const fixtureLink = await lstat(linkPath);
+      assert.equal(fixtureLink.isSymbolicLink(), true);
+      assert.equal(fixtureLink.mode & 0o777, 0o755);
+      const targetAfter = await lstat(targetPath, { bigint: true });
+      for (const field of [
+        "dev", "ino", "uid", "gid", "mode", "nlink", "size",
+        "mtimeNs", "ctimeNs", "birthtimeNs",
+      ] as const) {
+        assert.equal(targetAfter[field], targetBefore[field]);
+      }
+      assert.deepEqual(await readFile(targetPath), targetBytesBefore);
     }
   }
   await writeFile(path.join(nodeModulesRoot, ".package-lock.json"), `${JSON.stringify({

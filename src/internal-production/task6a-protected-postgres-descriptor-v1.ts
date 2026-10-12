@@ -58,7 +58,7 @@ export function holdTask6aProtectedPostgresDescriptorV1() {
       try {
         if (closed || invalid) refuse();
         checkIdentity(); file!.recheck(); checkIdentity();
-      } catch { invalid = true; close(); refuse(); }
+      } catch { invalid = true; refuse(); }
     };
     recheck();
     return Object.freeze({ read: () => { recheck(); return descriptor; }, recheck, close });
