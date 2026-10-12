@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import {
+  chmodSync,
   closeSync,
   constants as fsConstants,
   fstatSync,
@@ -8,6 +9,7 @@ import {
   mkdirSync,
   openSync,
   readdirSync,
+  readFileSync,
   readSync,
   realpathSync,
   rmSync,
@@ -375,7 +377,9 @@ export function buildPlatformReleaseBootstrapDarwinLocalPackageTrustAuditFixture
     const payloadPath = path.join(payloadRoot, "SETFARM_AUDIT_MARKER.txt");
     writeFileSync(payloadPath, "setfarm-local-package-trust-audit-v2\n", {
       mode: 0o444,
+      flag: "wx",
     });
+    chmodSync(payloadPath, 0o444);
     const packagePath = path.join(privateRoot.root, PACKAGE_BASENAME_V2);
     const state: FixtureStateV2 = Object.freeze({
       rootAlias: privateRoot.alias,
@@ -386,6 +390,17 @@ export function buildPlatformReleaseBootstrapDarwinLocalPackageTrustAuditFixture
       packageIdentifier:
         PLATFORM_RELEASE_BOOTSTRAP_DARWIN_LOCAL_PACKAGE_TRUST_AUDIT_PACKAGE_IDENTIFIER_V2,
     });
+    const marker = lstatSync(payloadPath, { bigint: true });
+    if (!marker.isFile() || marker.isSymbolicLink() || marker.nlink !== 1n
+      || marker.dev !== privateRoot.device
+      || marker.uid !== BigInt(process.getuid!())
+      || marker.gid !== lstatSync(payloadRoot, { bigint: true }).gid
+      || (marker.mode & 0o7777n) !== 0o444n
+      || !readFileSync(payloadPath).equals(Buffer.from("setfarm-local-package-trust-audit-v2\n"))) {
+      return failV2("DARWIN_LOCAL_PACKAGE_TRUST_AUDIT_BUILD_FAILED",
+        "New trust audit marker must have exact native0444 identity and authored bytes");
+    }
+    assertPrivateFixtureStateV2(state);
     const fixture: PlatformReleaseBootstrapDarwinLocalPackageTrustAuditFixtureV2 = {
       packageIdentifier: state.packageIdentifier,
       dispose(): void {

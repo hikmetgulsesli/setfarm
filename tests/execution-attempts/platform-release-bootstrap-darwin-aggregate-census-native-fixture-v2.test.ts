@@ -234,6 +234,20 @@ let semanticLockObserverBinary = "";
 let exactLockHolderBinary = "";
 let exactLockContenderBinary = "";
 
+function assertAuthoredFixtureFileV2(
+  target: string, bytes: string | Buffer, mode: number,
+): void {
+  const stat = lstatSync(target, { bigint: true });
+  const parent = lstatSync(path.dirname(target), { bigint: true });
+  assert.equal(stat.isFile() && !stat.isSymbolicLink(), true);
+  assert.equal(stat.dev, parent.dev);
+  assert.equal(stat.uid, BigInt(process.getuid!()));
+  assert.equal(stat.gid, parent.gid);
+  assert.equal(stat.nlink, 1n);
+  assert.equal(stat.mode & 0o7777n, BigInt(mode));
+  assert.deepEqual(readFileSync(target), Buffer.from(bytes));
+}
+
 function makeFixtureNamespaceV2(): FixtureNamespaceV2 {
   const alias = mkdtempSync(
     path.join(os.tmpdir(), "setfarm-darwin-aggregate-census-v2-"),
@@ -253,16 +267,24 @@ function makeFixtureNamespaceV2(): FixtureNamespaceV2 {
     canonicalJsonStringify(filesystemScope),
     { mode: 0o444, flag: "wx" },
   );
+  chmodSync(path.join(parent, filesystemScopeBasename), 0o444);
   writeFileSync(payload, "{\"payload\":\"same-byte-replacement\"}\n", {
     mode: 0o444,
     flag: "wx",
   });
+  chmodSync(payload, 0o444);
   const packageRoot = path.join(parent, nodeRootBasename);
   mkdirSync(packageRoot, { mode: 0o700 });
   writeFileSync(path.join(packageRoot, "member"), "member\n", {
     mode: 0o444,
     flag: "wx",
   });
+  chmodSync(path.join(packageRoot, "member"), 0o444);
+  assertAuthoredFixtureFileV2(path.join(parent, filesystemScopeBasename),
+    canonicalJsonStringify(filesystemScope), 0o444);
+  assertAuthoredFixtureFileV2(payload,
+    "{\"payload\":\"same-byte-replacement\"}\n", 0o444);
+  assertAuthoredFixtureFileV2(path.join(packageRoot, "member"), "member\n", 0o444);
   return Object.freeze({
     alias,
     parent,
@@ -303,6 +325,14 @@ function makeRecursiveFixtureNamespaceV2(): RecursiveFixtureNamespaceV2 {
   writeFileSync(bundle, fileBytes.bundle_file, { mode: 0o444, flag: "wx" });
   writeFileSync(manifest, fileBytes.manifest_file, { mode: 0o444, flag: "wx" });
   writeFileSync(runtime, fileBytes.bootstrap_runtime_file, { mode: 0o555, flag: "wx" });
+  chmodSync(launcher, 0o555);
+  chmodSync(bundle, 0o444);
+  chmodSync(manifest, 0o444);
+  chmodSync(runtime, 0o555);
+  assertAuthoredFixtureFileV2(launcher, fileBytes.launcher_file, 0o555);
+  assertAuthoredFixtureFileV2(bundle, fileBytes.bundle_file, 0o444);
+  assertAuthoredFixtureFileV2(manifest, fileBytes.manifest_file, 0o444);
+  assertAuthoredFixtureFileV2(runtime, fileBytes.bootstrap_runtime_file, 0o555);
   chmodSync(binDirectory, 0o555);
   chmodSync(libDirectory, 0o555);
   chmodSync(runtimeDirectory, 0o555);
@@ -555,6 +585,10 @@ function makeSemanticReadyRecursiveFixtureNamespaceV2():
     mode: 0o444,
     flag: "wx",
   });
+  chmodSync(fixture.payload, 0o444);
+  chmodSync(activeReceipt, 0o444);
+  assertAuthoredFixtureFileV2(fixture.payload, canonicalJsonStringify(claimValue), 0o444);
+  assertAuthoredFixtureFileV2(activeReceipt, canonicalJsonStringify(receiptValue), 0o444);
   return Object.freeze({
     ...fixture,
     activeReceipt,

@@ -13,7 +13,8 @@ const { registerHooks, isBuiltin } = nodeModule;
 // Diagnostic only: never acquire ownership, publish intent, or operate services.
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const closure = ["scripts/build-generation-maintenance-journal.mjs", "scripts/build-generation-maintenance-owner-observer.mjs",
-  "scripts/build-generation-retention.mjs", "scripts/deployment-cutover-owner.mjs", "scripts/deployment-cutover.mjs", "scripts/deployment-cutover-dependencies.mjs",
+  "scripts/build-generation-retention.mjs", "scripts/deployment-dashboard-cutover-adapter-v2.mjs",
+  "scripts/deployment-cutover-owner.mjs", "scripts/deployment-cutover.mjs", "scripts/deployment-cutover-dependencies.mjs",
   "scripts/deployment-cutover-retained-profile.mjs", "scripts/deployment-cutover-retained-profile.v1.json",
   "scripts/deployment-cutover-default-context.mjs",
   "scripts/deployment-cutover-passive-home.mjs", "scripts/deployment-cutover-passive-home.py",

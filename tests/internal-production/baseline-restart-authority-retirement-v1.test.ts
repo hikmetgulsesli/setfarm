@@ -413,6 +413,10 @@ function fstatSync(...args:any[]){globalThis.__acquisitionBeforeStat?.();return 
       });
       Reflect.set(globalThis, "__acquisitionBeforeStat", () => { if (mode === "acquisition" && scope === "workspace" && !invalid) { invalid = true; throw Error("fixture acquisition identity failure"); } });
       const unsafe = path.join(fixture, "unsafe"); mkdirSync(unsafe, { mode: mode === "acquisition" ? 0o755 : 0o700 });
+      chmodSync(unsafe, mode === "acquisition" ? 0o755 : 0o700);
+      const unsafeBefore = lstatSync(unsafe, { bigint: true });
+      assert.equal(unsafeBefore.isDirectory(), true); assert.equal(unsafeBefore.isSymbolicLink(), false);
+      assert.equal(unsafeBefore.mode & 0o7777n, mode === "acquisition" ? 0o755n : 0o700n);
       const authenticate = () => scope === "workspace" ? isolated.authenticateInternalProductionBaselineWorkspaceAnchorV1() : isolated.authenticatePrivateDirectoryChainV1(fixture, unsafe);
       const stack = mode === "retained-stack" ? [authenticate(), authenticate()] : [];
       const attempt = mode === "acquisition" ? authenticate : () => { while (stack.length) { stack.at(-1)!.close(); stack.pop(); } };
@@ -436,6 +440,9 @@ function fstatSync(...args:any[]){globalThis.__acquisitionBeforeStat?.();return 
       assert.throws(authenticate);
       assert.equal([...attempts.values()].reduce((a, b) => a + b, 0), attemptCount, "poisoned authentication must not close again");
       if (sentinel !== undefined) assert.equal(fstatSync(sentinel).ino, lstatSync(sentinelPath).ino);
+      const unsafeAfter = lstatSync(unsafe, { bigint: true });
+      assert.equal(unsafeAfter.dev, unsafeBefore.dev); assert.equal(unsafeAfter.ino, unsafeBefore.ino);
+      assert.equal(unsafeAfter.mode, unsafeBefore.mode);
     } finally {
       for (const name of ["Opened", "Closed", "BeforeClose", "BeforeStat"]) Reflect.deleteProperty(globalThis, `__acquisition${name}`);
       for (const fd of owned) closeSync(fd);
@@ -1889,7 +1896,17 @@ globalThis.__directHelperAfterOutputV1=()=>{if(!globalThis.__directHelperClaimOw
         visit(path.join(repository, "dist")); entries.sort((a, b) => Buffer.compare(Buffer.from(a.locator), Buffer.from(b.locator)));
         const body = { schema: "setfarm.platform-build-output-tree.v1", sourceSha: directProfile.source.sha, sourceTreeHash: directProfile.source.treeHash, entries };
         const artifacts = [Buffer.from('{"fixture":"build-info"}\n'), Buffer.from(`${JSON.stringify({ ...body, outputTreeHash: sha256(canonical(body)) })}\n`), Buffer.from('{"fixture":"release-manifest"}\n')];
-        for (const [index, name] of ["BUILD_INFO.json", "PLATFORM_BUILD_OUTPUT_TREE.json", "PLATFORM_RELEASE_MANIFEST.json"].entries()) writeFileSync(path.join(repository, "dist", name), artifacts[index]!, { mode: 0o444 });
+        for (const [index, name] of ["BUILD_INFO.json", "PLATFORM_BUILD_OUTPUT_TREE.json", "PLATFORM_RELEASE_MANIFEST.json"].entries()) {
+          const target = path.join(repository, "dist", name), bytes = artifacts[index]!;
+          writeFileSync(target, bytes, { mode: 0o444, flag: "wx" });
+          const before = lstatSync(target, { bigint: true });
+          chmodSync(target, 0o444);
+          const actual = lstatSync(target, { bigint: true });
+          assert.equal(actual.isFile(), true); assert.equal(actual.isSymbolicLink(), false);
+          assert.equal(actual.nlink, 1n); assert.equal(actual.mode & 0o7777n, 0o444n);
+          for (const key of ["dev", "ino", "uid", "gid", "nlink", "size"] as const) assert.equal(actual[key], before[key]);
+          assert.deepEqual(readFileSync(target), bytes);
+        }
         const identity = (target: string) => { const stats = lstatSync(target, { bigint: true }); return { devDecimal: String(stats.dev), inoDecimal: String(stats.ino), uid: Number(stats.uid), gid: Number(stats.gid), mode: Number(stats.mode & 0o7777n) }; };
         const directories = new Set<string>();
         for (const initial of [home, fixture, repository, environmentDirectory, path.join(repository, "dist"), path.join(home, "Library/LaunchAgents"), path.dirname(process.execPath)]) {
@@ -3668,7 +3685,17 @@ finally{if(child&&!accepted){child.kill('SIGTERM');await new Promise(resolve=>{i
     visit(path.join(root, "dist"));entries.sort((a, b) => Buffer.compare(Buffer.from(a.locator), Buffer.from(b.locator)));
     const body = { schema: "setfarm.platform-build-output-tree.v1", sourceSha: profile.profile.source.sha, sourceTreeHash: profile.profile.source.treeHash, entries };
     const artifacts = [Buffer.from('{"fixture":"build-info"}\n'), Buffer.from(`${JSON.stringify({ ...body, outputTreeHash: sha256(canonical(body)) })}\n`), Buffer.from('{"fixture":"release-manifest"}\n')];
-    for (const [index, name] of ["BUILD_INFO.json", "PLATFORM_BUILD_OUTPUT_TREE.json", "PLATFORM_RELEASE_MANIFEST.json"].entries()) writeFileSync(path.join(root, "dist", name), artifacts[index]!, { mode: 0o444 });
+    for (const [index, name] of ["BUILD_INFO.json", "PLATFORM_BUILD_OUTPUT_TREE.json", "PLATFORM_RELEASE_MANIFEST.json"].entries()) {
+      const target = path.join(root, "dist", name), bytes = artifacts[index]!;
+      writeFileSync(target, bytes, { mode: 0o444, flag: "wx" });
+      const before = lstatSync(target, { bigint: true });
+      chmodSync(target, 0o444);
+      const actual = lstatSync(target, { bigint: true });
+      assert.equal(actual.isFile(), true); assert.equal(actual.isSymbolicLink(), false);
+      assert.equal(actual.nlink, 1n); assert.equal(actual.mode & 0o7777n, 0o444n);
+      for (const key of ["dev", "ino", "uid", "gid", "nlink", "size"] as const) assert.equal(actual[key], before[key]);
+      assert.deepEqual(readFileSync(target), bytes);
+    }
     const identity = (target: string) => { const s = lstatSync(target, { bigint: true }); return { devDecimal: String(s.dev), inoDecimal: String(s.ino), uid: Number(s.uid), gid: Number(s.gid), mode: Number(s.mode & 0o7777n) }; };
     const dirs = new Set<string>();
     const add = (target: string) => { if (dirs.has(target)) return; if (path.dirname(target) !== target) add(path.dirname(target)); dirs.add(target); };

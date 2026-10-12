@@ -25,6 +25,51 @@ timer-induced custody release or stock-build claim from noEmit.
 
 ## Task1: One independently reviewed cold-phase composition
 
+### Prerequisite: finite bootstrap source-closure integration
+
+The genuine merged fixture run on 2026-10-12 failed 7/218 cases. Four census
+fixtures rejected two real script inputs in the compiler metafile; three healthy
+host cases refused the launcher's static adapter import. This root correction is
+causally necessary to qualify the aggregate before cold-phase implementation;
+it is not a new rollout permission or cold-phase RED result.
+
+File Map: `scripts/deployment-cutover.mjs` adds only the existing adapter to its
+Git-authenticated executable closure; `scripts/__tests__/fixtures/deployment-cutover-bootstrap.mjs`
+copies that same script and recognizes exactly adapter plus retention in census
+metadata, keeping them outside TS-to-dist transformation. New
+`scripts/__tests__/deployment-cutover-bootstrap-inputs.test.js` and existing
+`scripts/__tests__/deployment-cutover.test.js` cover unchanged
+bytes, missing/tampered/foreign adapter edges and actual cross-observer fault
+reach. The paired spec and external ledger retain capture identities and limits.
+Shared adjacent File Map: `tests/internal-production/cutover-feature-branch-bootstrap-fixture-v1.ts`
+adds only the same adapter and existing process-event `.mjs`/`.py` to copying,
+without changing the source-build companion's expected stage. Four existing
+bootstrap consumer tests are verified; no package command change (ordinary
+test:scripts glob already covers the new JS test).
+
+- [x] Witness strengthened cross-observer behavioral RED against the unchanged
+  authenticated closure; an earlier loader refusal is not fault-arm evidence.
+  Natural child56570 code1/null,3 intended-reach assertion failures, raw4745B
+  SHA78536c04134dda43b5678505810042b5126060c852ff339cd849aba8f647fc3e;
+  root and independent terminal custody audits passed (not test qualification).
+- [x] Correct finite source/copy membership without a wildcard resolver allow.
+  Focused original58638 code0/null,37/37 pass. Shared-helper original64357
+  code1/null,4 wrong-stage assertion failures (source-authentication versus
+  source-build), raw6126B SHAa2c2fc1c9774cfeda2fa250960c29d372c17ed4508f44e20efb0642ad95fd762.
+  This separate behavioral RED precedes the exact three-member copy fix.
+- [x] Verify intended host/census healthy companions, negative source guards,
+  permissions and process-event DATA controls; then actual-source strict noEmit.
+  Full original65433 code0/null,252/252 pass,0skip/cancel/todo; original21292
+  code0/null,actual TypeScript5.9.3 roots852/files1202/diagnostics0/noEmit.
+  Root and independent4380 current source/tool/copy pin audits match; exact
+  membership2188 and sole dependency binding match. Receipt4569332B
+  SHA325d2fc212d105d2b44b88842c6eae9a2dc044d201a1f4400359294f7204093d;
+  minimum sampled free10867150848B. This is not stock build or native cold proof.
+- [x] Two independent read-only exact-diff reviews before aggregate merge commit.
+  FULL19-path binary diff585b71f6ae42013658811986080515fd7079a07db0a3a16f9523479e9ac734c6,
+  C0/I0/M0 from both reviewers. This additive terminal record changes only the
+  plan after captured source-custody release; no retroactive pin qualification.
+
 Files and interfaces are exactly the spec File Map. Existing
 `verifyHeldPre32ContractSpineJournalIdentityV1(query)` remains unchanged, where
 `query(statement:string,parameters:readonly number[]):Promise<readonly unknown[]>`.

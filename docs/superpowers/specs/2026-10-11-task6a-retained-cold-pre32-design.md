@@ -31,6 +31,25 @@ Verify the actual emitted lazy boundary in addition to modeled import controls.
 
 ## File Map and exact interfaces
 
+Integration prerequisite (2026-10-12): the existing launcher's static adapter
+import and census's adapter-to-retention edge must be included in the finite
+bootstrap/fixture source closure. `scripts/deployment-cutover.mjs` authenticates
+ONLY the added `scripts/deployment-dashboard-cutover-adapter-v2.mjs` through its
+existing tracked-blob, held-file, mode and owned-byte checks. The bootstrap
+fixture copies this unchanged script before source pinning and accepts exactly
+this and `scripts/build-generation-retention.mjs` as non-TypeScript census
+inputs. Every other script/foreign/noncanonical input remains rejected; scripts
+never enter the TS-to-dist output loop. Existing host tests must witness actual
+fault intervention, not pass on an earlier import refusal. A fixture-only input
+`scripts/__tests__/deployment-cutover-bootstrap-inputs.test.js` owns
+finite-membership negatives. No adapter initializer, frozen
+migration, loader safety gate, services or database authority are modified.
+The shared `tests/internal-production/cutover-feature-branch-bootstrap-fixture-v1.ts`
+copies the same adapter and existing process-event `.mjs`/`.py` DATA owners. Its
+four existing bootstrap consumers retain feature-branch source-authentication
+and genuine clean-main source-build refusal companions, exact native1/null and
+no spawn error. A wrong earlier stage never qualifies these controls.
+
 - New `src/internal-production/task6a-cold-pre32-catalog-readonly-v1.ts` owns ONLY
   existing census absence SQL and five-field guard/error. It consumes structural
   `ReadOnlyCatalogTransactionV1`; export
