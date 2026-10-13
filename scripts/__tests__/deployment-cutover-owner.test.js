@@ -289,3 +289,68 @@ test("first publication refuses changed absent-store ancestry before creating a 
     process.stdout.write(JSON.stringify({refused,replaced,exists:fs.existsSync(root)}));`);
   assert.deepEqual(result, { refused: true, replaced: true, exists: false });
 }));
+
+test("dashboard bindings project only the original held claim and maintenance labels", () => fixture((home, checkout) => {
+  const result = run(home, checkout, `assertExport();
+    const cap=await module.acquireDeploymentCutoverOwnerV1(maintenance);
+    const before=fs.readdirSync(root).sort();
+    const labels=module.observeDashboardCutoverOwnerBindingsV2(cap);
+    const claim=JSON.parse(fs.readFileSync(root+'/owner-0001.json'));
+    const intent=JSON.parse(fs.readFileSync(root+'/intent.json'));
+    let forged=false;try{module.assertDeploymentCutoverOwnerV1(JSON.parse(JSON.stringify(labels)))}catch{forged=true}
+    process.stdout.write(JSON.stringify({labels,claim,intent,frozen:Object.isFrozen(labels),forged,
+      sameInventory:JSON.stringify(before)===JSON.stringify(fs.readdirSync(root).sort())}));
+    function assertExport(){if(typeof module.observeDashboardCutoverOwnerBindingsV2!=='function')throw Error('MISSING_OWNER_BINDINGS_EXPORT')}`);
+  assert.deepEqual(result.labels, {
+    schema: "setfarm.internal-production-dashboard-cutover-owner-bindings.v2", authority: "binding-only",
+    maintenanceIntentHash: result.intent.maintenanceIntentHash, ownerClaimHash: result.claim.ownerClaimHash,
+    controllerSourceHash: result.intent.controllerSourceHash, cutoverPlanHash: result.intent.cutoverPlanHash,
+  });
+  assert.equal(result.claim.maintenanceIntentHash, result.labels.maintenanceIntentHash);
+  assert.equal(result.frozen, true); assert.equal(result.forged, true); assert.equal(result.sameInventory, true);
+}));
+
+test("foreign dashboard-binding handles refuse without caller traps or idle owner burn", () => fixture((home, checkout) => {
+  const result = run(home, checkout, `if(typeof module.observeDashboardCutoverOwnerBindingsV2!=='function')throw Error('MISSING_OWNER_BINDINGS_EXPORT');
+    const cap=await module.acquireDeploymentCutoverOwnerV1(maintenance);let traps=0,refused=0;
+    const proxy=new Proxy(cap,{get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')},ownKeys(){traps++;throw Error('TRAP')}});
+    for(const foreign of [null,undefined,0,{...cap},proxy]){try{module.observeDashboardCutoverOwnerBindingsV2(foreign)}catch{refused++}}
+    const labels=module.observeDashboardCutoverOwnerBindingsV2(cap);
+    process.stdout.write(JSON.stringify({traps,refused,hash:labels.ownerClaimHash,expected:JSON.parse(fs.readFileSync(root+'/owner-0001.json')).ownerClaimHash}));`);
+  assert.equal(result.traps, 0); assert.equal(result.refused, 5); assert.equal(result.hash, result.expected);
+}));
+
+for (const drift of ["source", "history", "process"]) test(`dashboard binding ${drift} drift refuses permanently`, () => fixture((home, checkout) => {
+  const result = run(home, checkout, `if(typeof module.observeDashboardCutoverOwnerBindingsV2!=='function')throw Error('MISSING_OWNER_BINDINGS_EXPORT');
+    const cap=await module.acquireDeploymentCutoverOwnerV1(maintenance);
+    module.observeDashboardCutoverOwnerBindingsV2(cap);
+    const drift=${JSON.stringify(drift)},cp=await import('node:child_process'),original=cp.default.spawnSync;
+    const target=drift==='source'?${JSON.stringify(path.join(checkout, "scripts/build-generation-maintenance-owner-observer.mjs"))}:root+'/owner-0001.json';
+    const originalBytes=fs.readFileSync(target);
+    if(drift==='process')cp.default.spawnSync=(file,args,options)=>file==='/bin/ps'?{status:0,signal:null,stdout:Buffer.from('malformed\\n'),stderr:Buffer.alloc(0)}:original(file,args,options);
+    else fs.appendFileSync(target,'\\n');
+    let refused=false,restoredRefused=false;
+    try{module.observeDashboardCutoverOwnerBindingsV2(cap)}catch{refused=true}
+    if(drift==='process')cp.default.spawnSync=original;else fs.writeFileSync(target,originalBytes);
+    try{module.observeDashboardCutoverOwnerBindingsV2(cap)}catch{restoredRefused=true}
+    process.stdout.write(JSON.stringify({refused,restoredRefused}));`);
+  assert.deepEqual(result, { refused: true, restoredRefused: true });
+}));
+
+for (const observerCall of [1, 3]) for (const nested of ["original", "foreign-proxy"]) test(`swallowed dashboard binding ${nested} reentry at observer call ${observerCall} burns original custody`, () => fixture((home, checkout) => {
+  const result = run(home, checkout, `if(typeof module.observeDashboardCutoverOwnerBindingsV2!=='function')throw Error('MISSING_OWNER_BINDINGS_EXPORT');
+    const cap=await module.acquireDeploymentCutoverOwnerV1(maintenance);
+    const cp=await import('node:child_process'),original=cp.default.spawnSync;let fired=false,traps=0,psCalls=0,nestedRefused=false;
+    const nested=${JSON.stringify(nested)}==='original'?cap:new Proxy({}, {get(){traps++;throw Error('TRAP')},getPrototypeOf(){traps++;throw Error('TRAP')},ownKeys(){traps++;throw Error('TRAP')}});
+    cp.default.spawnSync=(file,args,options)=>{
+      if(file==='/bin/ps'){psCalls++;if(psCalls===${observerCall}){fired=true;try{module.observeDashboardCutoverOwnerBindingsV2(nested)}catch{nestedRefused=true}}}
+      return original(file,args,options);
+    };
+    let refused=false,sticky=false;
+    try{module.observeDashboardCutoverOwnerBindingsV2(cap)}catch{refused=true}
+    cp.default.spawnSync=original;try{module.observeDashboardCutoverOwnerBindingsV2(cap)}catch{sticky=true}
+    process.stdout.write(JSON.stringify({fired,refused,sticky,traps,nestedRefused,psCalls}));`);
+  assert.equal(result.fired, true); assert.equal(result.refused, true); assert.equal(result.sticky, true);
+  assert.equal(result.traps, 0); assert.equal(result.nestedRefused, true);
+  assert.equal(result.psCalls, observerCall + 1); // Current composite finishes; no later projection composite.
+}));
