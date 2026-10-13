@@ -469,8 +469,8 @@ const STAGED_CUSTODY_PROGRAM=String.raw`
       my @directory_paths=('/','/private','/private/tmp',$logical,$logical.'/source',$logical.'/vendor');
       my @actual_dirs=('/','/private','/private/tmp',$root,$root.'/scripts',$root.'/docs');
       my @leaf_rel=qw(source/task6a-origin-archive-v2.pm source/task6a-origin-native-v2.pm source/task6a-origin-map-v2.pm source/task6a-protected-origin-entry-v2.mjs vendor/node-v22.23.1-darwin-arm64.tar.gz vendor/node);
-      my @backing_rel=qw(scripts/task6a-origin-archive-v2.pm scripts/task6a-origin-native-v2.pm scripts/task6a-origin-map-v2.pm scripts/task6a-protected-origin-entry-v2.mjs package.json README.md);
-      my @sizes=(5864,3347,11684,1933,22734,7454);
+      my @backing_rel=qw(scripts/task6a-origin-archive-v2.pm scripts/task6a-origin-native-v2.pm scripts/task6a-origin-map-v2.pm scripts/task6a-protected-origin-entry-v2.mjs scripts/__tests__/fixtures/task6a-staged-vendor-backing-v2.txt scripts/__tests__/fixtures/task6a-staged-native-backing-v2.txt);
+      my @sizes=(5864,3347,11684,1933,76,82);
       my @permissions=(0400,0400,0400,0444,0400,0555);
       my @blobs=qw(da1fd458fcaba775be5ba09ef88157b5ee48dbda 59e1ae8de38cf2083a0294c55454083840eb47f1 9719bf4f3676b43b7858e3cabe3cee3e679120f8 e53be63cdcdf286dc89adbec9770668b1fdb9cc7);
       my (%paths,@bodies,%physical_seen);
@@ -501,8 +501,8 @@ const STAGED_CUSTODY_PROGRAM=String.raw`
           directory=>0,permission=>$permissions[$index],role=>'f'.$index,body=>$body};
         push @bodies,$body;
       }
-      $fail->() unless Digest::SHA::sha256_hex($bodies[4]) eq 'bf6cedd405c26f5f933e45436d8ec84b2780297377bb44f40deb6c44a91f6a6e'
-        &&Digest::SHA::sha256_hex($bodies[5]) eq '14a6a8f44d6531560feca82404d64d46ff259585fd74b7ea7d9d2b3ae62efd0e';
+      $fail->() unless Digest::SHA::sha256_hex($bodies[4]) eq '46bb5c40ae918a624f6c6e298334c4041d34d3dd90fa6aca1dd230a840999a75'
+        &&Digest::SHA::sha256_hex($bodies[5]) eq '28efd5ab10eb4eda1c139276cdbd76a3b7f6d7b23570ae7bf94d3b08ade79122';
       my $project=sub {
         my ($p,$s)=@_;$fail->() unless ref($s) eq 'ARRAY'&&@$s==13;
         my @result=@$s;$result[2]=($result[2]&~07777)|$p->{permission};
@@ -3155,7 +3155,7 @@ function systemObject(kind,record,expected,{sourceOverride}={}) {
       'CORE::GLOBAL::exec($tool,$tool,@$args);');
     source=replaceOnce(source,
       "my $staged_vendor_pin='ef28d8fab2c0e4314522d4bb1b7173270aa3937e93b92cb7de79c112ac1fa953';",
-      "my $staged_vendor_pin='bf6cedd405c26f5f933e45436d8ec84b2780297377bb44f40deb6c44a91f6a6e';");
+      "my $staged_vendor_pin='46bb5c40ae918a624f6c6e298334c4041d34d3dd90fa6aca1dd230a840999a75';");
     source=replaceOnce(source,'sub task6a_origin_hold_staged_custody {',String.raw`
   if($mode ne 'absent') {$staged_admission=$fixture_admission;}
   if($mode eq 'foreign-parent') {push @parent_originals,{fh=>$fixture_original};}
@@ -4065,8 +4065,10 @@ const STAGED_CUSTODY_BACKINGS=[
   ['source/task6a-origin-native-v2.pm','scripts/task6a-origin-native-v2.pm',3347,'59e1ae8de38cf2083a0294c55454083840eb47f1'],
   ['source/task6a-origin-map-v2.pm','scripts/task6a-origin-map-v2.pm',11684,'9719bf4f3676b43b7858e3cabe3cee3e679120f8'],
   ['source/task6a-protected-origin-entry-v2.mjs','scripts/task6a-protected-origin-entry-v2.mjs',1933,'e53be63cdcdf286dc89adbec9770668b1fdb9cc7'],
-  ['vendor/node-v22.23.1-darwin-arm64.tar.gz','package.json',22734,null],
-  ['vendor/node','README.md',7454,null],
+  // Explicit inert fixture bytes keep custody modeling independent of unrelated
+  // package/README edits. They are never parsed as archives or native images.
+  ['vendor/node-v22.23.1-darwin-arm64.tar.gz','scripts/__tests__/fixtures/task6a-staged-vendor-backing-v2.txt',76,null],
+  ['vendor/node','scripts/__tests__/fixtures/task6a-staged-native-backing-v2.txt',82,null],
 ];
 function stagedCustody(mode='healthy',slot=0,{sourceOverride}={}) {
   const source=sourceOverride??readFileSync(BOOTSTRAP,'utf8');
@@ -4088,7 +4090,7 @@ function stagedCustody(mode='healthy',slot=0,{sourceOverride}={}) {
     return {logical,path,size,dev:String(before.dev),ino:String(before.ino),
       sha256:createHash('sha256').update(bytes).digest('hex'),bytes:bytes.toString('base64')};
   });
-  assert.equal(backings[4].sha256,'bf6cedd405c26f5f933e45436d8ec84b2780297377bb44f40deb6c44a91f6a6e');
+  assert.equal(backings[4].sha256,'46bb5c40ae918a624f6c6e298334c4041d34d3dd90fa6aca1dd230a840999a75');
   const actual=systemObject('staged-custody',{mode,slot,root,backings},undefined,{sourceOverride:source});
   assert.equal(actual.status,0,actual.stderr.toString());
   assert.equal(actual.stderr.length,0);const value=JSON.parse(actual.stdout.toString());

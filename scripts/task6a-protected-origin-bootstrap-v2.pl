@@ -825,6 +825,275 @@ sub task6a_origin_helpers_settled {
     return JSON::PP::true;
 }
 
+# Private producer prerequisite only. No caller path or admission initializer;
+# both cold entry guards stay closed. Its originals never enter staged custody.
+my ($creator_uid,$creator_gid)=(0,0);
+my $creator_phase='absent';
+my ($creator_invalid,$creator_uncertain,$creator_disposal_started)=(0,0,0);
+my ($creator_root,$creator_creation);
+my $creator_source_count=0;
+my $creator_source_mode=0700;
+my (@creator_pending,@creator_originals,@creator_directory_checks,@creator_file_checks);
+my $creator_source_directory;
+my $creator_live=sub {
+    task6a_origin_refuse() if $creator_invalid||$creator_uncertain||$creator_disposal_started;
+    task6a_origin_refuse() unless $<==$creator_uid&&$>==$creator_uid
+        &&$( =~ /\A$creator_gid(?: |\z)/&&$) =~ /\A$creator_gid(?: |\z)/;
+    task6a_origin_refuse() unless $parent_phase eq 'absent'&&!@parent_originals
+        &&!@file_ledger&&!@directory_ledger&&!@physical_owned_handles
+        &&$physical_state eq 'new'&&$staged_phase eq 'absent'
+        &&!@staged_originals&&!@staged_pending&&!defined($staged_admission);
+    task6a_origin_refuse() unless task6a_origin_helpers_settled()
+        &&task6a_origin_now()<$bootstrap_deadline;
+};
+my $creator_epoch=sub {
+    $creator_live->();
+    for my $check(@creator_directory_checks) {$check->();}
+    for my $check(@creator_file_checks) {$check->();}
+    $creator_live->();
+};
+my $creator_seal_original=sub {
+    my ($cell)=@_;my ($fh,$fd,$present,$alias);
+    my $ok=eval {
+        $present=$staged_native_fh->($cell,1);
+        if($present) {
+            $fh=$$cell;$fd=CORE::fileno($fh);
+            task6a_origin_refuse() unless defined($fd)&&$fd>=3;
+            for my $old(@creator_originals) {
+                my ($original,$original_fd,$attempted,$closed)=$old->('binding');
+                next if $closed;
+                $staged_native_fh->(\$original,0);
+                my $live=CORE::fileno($original);
+                if($fh==$original||(defined($live)&&$live==$fd)) {
+                    $alias=1;task6a_origin_refuse();
+                }
+                task6a_origin_refuse() unless defined($live)&&$live==$original_fd;
+            }
+        }
+        1;
+    };my $error=$@;
+    unless($ok&&!length($error)) {$creator_uncertain=1 unless $alias;task6a_origin_refuse();}
+    return undef unless $present;
+    my ($attempted,$closed)=(0,0);
+    my $original_close=sub {CORE::close($fh)};
+    my $sealed=sub {
+        my ($op)=@_;
+        return ($fh,$fd,$attempted,$closed) if $op eq 'binding';
+        return $closed if $op eq 'closed';
+        task6a_origin_refuse() unless $op eq 'dispose';
+        return $closed if $attempted;
+        $attempted=1;
+        my $safe=eval {$staged_native_fh->(\$fh,0);
+            task6a_origin_refuse() unless defined(CORE::fileno($fh))&&CORE::fileno($fh)==$fd;1;};
+        my $safety_error=$@;return 0 unless $safe&&!length($safety_error);
+        my $result=eval {$original_close->()};my $close_error=$@;
+        my $end;my $inspected=eval {$staged_native_fh->(\$fh,0);$end=CORE::fileno($fh);1;};
+        my $inspection_error=$@;
+        $closed=1 if $result&&!length($close_error)&&$inspected
+            &&!length($inspection_error)&&!defined($end);
+        return $closed;
+    };
+    push @creator_originals,$sealed;
+    return $sealed;
+};
+my $creator_dispose=sub {
+    return 0 if $creator_disposal_started;
+    $creator_disposal_started=1;my $all=1;
+    for my $sealed(reverse @creator_originals) {
+        next if $sealed->('closed');
+        my $ok=eval {$sealed->('dispose')};my $error=$@;
+        $all=0 unless $ok&&!length($error);
+    }
+    $creator_uncertain=1 unless $all;
+    return $all&&!$creator_uncertain;
+};
+my $creator_burn=sub {
+    $creator_invalid=1;$creator_phase='burned';
+    unless($creator_disposal_started) {
+        my $ok=eval {$creator_dispose->()};my $error=$@;
+        $creator_uncertain=1 unless $ok&&!length($error);
+    }
+    task6a_origin_refuse();
+};
+my $creator_close=sub {
+    my ($sealed)=@_;
+    my $ok=eval {$sealed->('dispose')};my $error=$@;
+    unless($ok&&!length($error)&&$sealed->('closed')) {
+        $creator_uncertain=1;task6a_origin_refuse();
+    }
+};
+my $creator_open=sub {
+    my ($path,$flags,$mode)=@_;$creator_epoch->();
+    my $pending;push @creator_pending,\$pending;
+    my $returned;my $ok=eval {$returned=CORE::sysopen($pending,$path,$flags,$mode);1;};
+    my $error=$@;
+    # Retain/classify exposed output before inspecting return, exception, clock,
+    # flags or metadata. Unknown pending cells stay retained and burn forever.
+    my $sealed=$creator_seal_original->(\$pending);
+    $staged_plain_cell->(\$returned);
+    task6a_origin_refuse() unless $ok&&!length($error)&&defined($returned)
+        &&!ref($returned)&&$returned&&defined($sealed);
+    $creator_epoch->();my ($fh)=$sealed->('binding');
+    binmode($fh) or task6a_origin_refuse();$creator_epoch->();
+    my $set=fcntl($fh,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC());
+    task6a_origin_refuse() unless defined($set)&&$set;$creator_epoch->();
+    my $actual=fcntl($fh,Fcntl::F_GETFL(),0);my $descriptor=fcntl($fh,Fcntl::F_GETFD(),0);
+    task6a_origin_refuse() unless defined($actual)&&defined($descriptor)
+        &&($actual&Fcntl::O_ACCMODE())==($flags&Fcntl::O_ACCMODE())
+        &&(!($flags&Fcntl::O_NONBLOCK())||($actual&Fcntl::O_NONBLOCK()))
+        &&$descriptor==Fcntl::FD_CLOEXEC();$creator_epoch->();
+    return $sealed;
+};
+my $creator_same_object=sub {
+    my ($before,$now)=@_;
+    task6a_origin_refuse() unless @$before==13&&@$now==13;
+    for my $field(0,1,4,5) {task6a_origin_refuse() unless $before->[$field]==$now->[$field];}
+};
+my $creator_hold_directory=sub {
+    my ($path,$mode,$owned,$source)=@_;$creator_epoch->();
+    my @before=CORE::lstat($path);
+    task6a_origin_refuse() unless @before==13&&Fcntl::S_ISDIR($before[2])
+        &&($before[2]&07777)==$mode&&$before[4]==($owned?$creator_uid:0)
+        &&$before[5]==($owned?$creator_gid:0);
+    $creator_epoch->();
+    my $sealed=$creator_open->($path,Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_DIRECTORY(),0);
+    my ($fh,$fd)=$sealed->('binding');my @identity=@before;
+    my $check=sub {
+        $staged_native_fh->(\$fh,0);
+        task6a_origin_refuse() unless defined(CORE::fileno($fh))&&CORE::fileno($fh)==$fd;
+        my @held=CORE::stat($fh);my @named=CORE::lstat($path);
+        $creator_same_object->(\@identity,\@held);$creator_same_object->(\@identity,\@named);
+        for my $now(\@held,\@named) {
+            task6a_origin_refuse() unless Fcntl::S_ISDIR($now->[2])
+                &&($now->[2]&07777)==($source?$creator_source_mode:$mode);
+        }
+    };
+    push @creator_directory_checks,$check;$creator_epoch->();
+    $creator_creation=[@before] if $owned&&!$source;
+    $creator_source_directory=$sealed if $source;
+    return $sealed;
+};
+my $creator_read=sub {
+    my ($fh,$length,$single)=@_;my $bytes='';
+    while(length($bytes)<$length) {
+        $creator_epoch->();my $request=$length-length($bytes);
+        $request=65536 if !$single&&$request>65536;
+        my ($count,$errno);my $buffer='';my $ok=eval {$!=0;
+            $count=CORE::sysread($fh,$buffer,$request);$errno=0+$!;1;};my $error=$@;
+        $staged_plain_cell->(\$count);$staged_plain_cell->(\$buffer);
+        task6a_origin_refuse() unless $ok&&!length($error)&&defined($count)&&!ref($count)
+            &&$count>0&&$count<=$request&&$count==int($count)&&$errno==0
+            &&!utf8::is_utf8($buffer)&&length($buffer)==$count&&(!$single||$count==$length);
+        $bytes.=$buffer;$creator_epoch->();
+    }
+    unless($single) {
+        $creator_epoch->();my ($count,$errno);my $buffer='';
+        my $ok=eval {$!=0;$count=CORE::sysread($fh,$buffer,1);$errno=0+$!;1;};my $error=$@;
+        task6a_origin_refuse() unless $ok&&!length($error)&&defined($count)
+            &&!ref($count)&&$count==0&&$errno==0&&$buffer eq '';$creator_epoch->();
+    }
+    return $bytes;
+};
+my $creator_diagnostic=sub {
+    return {scope=>'source-creator-write-custody-diagnostic-only',
+        productionAuthority=>JSON::PP::false,sourceCount=>$creator_source_count};
+};
+sub task6a_origin_create_source_root {
+    my $ok=eval {
+        task6a_origin_refuse() unless @_==0&&$creator_phase eq 'absent';
+        $creator_phase='creating';$creator_epoch->();
+        $creator_hold_directory->('/',0755,0,0);
+        $creator_hold_directory->('/private',0755,0,0);
+        $creator_hold_directory->('/private/tmp',01777,0,0);
+        my @before=CORE::lstat('/dev/urandom');
+        task6a_origin_refuse() unless @before==13&&Fcntl::S_ISCHR($before[2])
+            &&$before[3]==1&&$before[4]==0&&$before[5]==0;$creator_epoch->();
+        my $entropy=$creator_open->('/dev/urandom',
+            Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK(),0);
+        my ($fh)=$entropy->('binding');
+        $creator_same_object->(\@before,[CORE::stat($fh)]);
+        my $nonce=$creator_read->($fh,32,1);
+        $creator_same_object->(\@before,[CORE::stat($fh)]);
+        $creator_same_object->(\@before,[CORE::lstat('/dev/urandom')]);
+        $creator_close->($entropy);$creator_epoch->();
+        $creator_root='/private/tmp/task6a-source-v2-'.unpack('H*',$nonce);
+        for my $path($creator_root,$creator_root.'/source') {
+            $creator_epoch->();my $result;my $made=eval {$result=CORE::mkdir($path,0700);1;};
+            my $error=$@;
+            task6a_origin_refuse() unless $made&&!length($error)&&$result;
+            $creator_epoch->();$creator_hold_directory->($path,0700,1,$path ne $creator_root);
+        }
+        $creator_epoch->();$creator_phase='writing';1;
+    };my $error=$@;$creator_burn->() unless $ok&&!length($error);
+    return $creator_diagnostic->();
+}
+sub task6a_origin_write_source_member {
+    my $ok=eval {
+        task6a_origin_refuse() unless @_==2&&$creator_phase eq 'writing'&&$creator_source_count<4;
+        $creator_epoch->();
+        my $role=$staged_scalar->(\$_[0]);my $bytes=$staged_bytes->(\$_[1],2097152);
+        my $policy=$staged_policy[$creator_source_count];
+        task6a_origin_refuse() unless $role eq $policy->[0]
+            &&Digest::SHA::sha1_hex('blob '.length($bytes)."\0".$bytes) eq $policy->[2];
+        my $path=$creator_root.'/'.$policy->[1];
+        my $sealed=$creator_open->($path,Fcntl::O_RDWR()|Fcntl::O_CREAT()
+            |Fcntl::O_EXCL()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK(),0600);
+        my ($fh,$fd)=$sealed->('binding');my @identity=CORE::stat($fh);
+        my $check=sub {
+            my ($mode,$size,$held)=@_;my @named=CORE::lstat($path);
+            $creator_same_object->(\@identity,\@named);
+            my @tuples=(\@named);
+            if($held) {
+                $staged_native_fh->(\$fh,0);
+                task6a_origin_refuse() unless defined(CORE::fileno($fh))&&CORE::fileno($fh)==$fd;
+                my @now=CORE::stat($fh);$creator_same_object->(\@identity,\@now);push @tuples,\@now;
+                my $flags=fcntl($fh,Fcntl::F_GETFL(),0);my $descriptor=fcntl($fh,Fcntl::F_GETFD(),0);
+                task6a_origin_refuse() unless defined($flags)&&($flags&Fcntl::O_ACCMODE())==Fcntl::O_RDWR()
+                    &&($flags&Fcntl::O_NONBLOCK())&&defined($descriptor)&&$descriptor==Fcntl::FD_CLOEXEC();
+            }
+            for my $now(@tuples) {
+                task6a_origin_refuse() unless Fcntl::S_ISREG($now->[2])&&($now->[2]&07777)==$mode
+                    &&$now->[3]==1&&$now->[4]==$creator_uid&&$now->[5]==$creator_gid&&$now->[7]==$size;
+            }
+        };
+        $check->(0600,0,1);$creator_epoch->();my ($count,$errno);
+        my $written=eval {$!=0;$count=CORE::syswrite($fh,$bytes,length($bytes));$errno=0+$!;1;};
+        my $write_error=$@;$staged_plain_cell->(\$count);
+        task6a_origin_refuse() unless $written&&!length($write_error)&&defined($count)
+            &&!ref($count)&&$count==length($bytes)&&$errno==0;
+        $creator_epoch->();$check->(0600,length($bytes),1);
+        my $seek=CORE::sysseek($fh,0,0);task6a_origin_refuse() unless defined($seek)&&$seek==0;
+        $creator_epoch->();my $observed=$creator_read->($fh,length($bytes),0);
+        task6a_origin_refuse() unless $observed eq $bytes
+            &&Digest::SHA::sha256_hex($observed) eq Digest::SHA::sha256_hex($bytes);
+        $check->(0600,length($bytes),1);$creator_epoch->();
+        my $changed=CORE::chmod($policy->[3],$fh);task6a_origin_refuse() unless $changed==1;
+        $creator_epoch->();$check->($policy->[3],length($bytes),1);
+        $creator_close->($sealed);
+        push @creator_file_checks,sub {$check->($policy->[3],length($bytes),0)};
+        $creator_epoch->();++$creator_source_count;1;
+    };my $error=$@;$creator_burn->() unless $ok&&!length($error);
+    return $creator_diagnostic->();
+}
+sub task6a_origin_finish_source_writes {
+    my $ok=eval {
+        task6a_origin_refuse() unless @_==0&&$creator_phase eq 'writing'
+            &&$creator_source_count==4&&@creator_file_checks==4;
+        $creator_epoch->();my ($fh)=$creator_source_directory->('binding');
+        my $changed=CORE::chmod(0555,$fh);task6a_origin_refuse() unless $changed==1;
+        $creator_source_mode=0555;$creator_epoch->();$creator_phase='written';1;
+    };my $error=$@;$creator_burn->() unless $ok&&!length($error);
+    return $creator_diagnostic->();
+}
+sub task6a_origin_release_source_creator {
+    unless(@_==0&&$creator_phase eq 'written'&&!$creator_invalid
+        &&!$creator_uncertain&&!$creator_disposal_started) {$creator_burn->();}
+    $creator_phase='released';my $ok=eval {$creator_dispose->()};my $error=$@;
+    $creator_burn->() unless $ok&&!length($error)&&@creator_originals==10
+        &&!grep {!$_->('closed')} @creator_originals;
+    my $out=$creator_diagnostic->();$out->{handlesClosed}=10;return $out;
+}
+
 # Pure framing declarations are part of the independently owner-admitted
 # bootstrap bytes. Test declarations alone cannot create execution authority.
 sub task6a_origin_refuse {die "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";}
