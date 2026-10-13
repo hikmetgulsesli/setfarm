@@ -4,7 +4,7 @@ import vm from "node:vm";
 import ts from "typescript";
 import { test } from "node:test";
 
-// Complete real consumer module. Acquisition/client and three producer ports
+// Complete real consumer module. Acquisition/client and producer/import ports
 // are modeled explicitly; these controls prove original lifetime/wiring only.
 // Actual producer bodies and native canonical PG are verified separately.
 const sourceUrl = new URL("../../src/internal-production/task6a-protected-postgres-backend-probe-v1.ts", import.meta.url);
@@ -21,6 +21,11 @@ function deferred<T>() {
 }
 async function turns() { for (let i = 0; i < 48; i++) await Promise.resolve(); }
 function observed<T>(original: Promise<T>): Promise<T> { void original.catch(() => {}); return original; }
+function assertClosed(events: string[]) {
+  for (const event of ["release", "client-close", "client-closed", "held-close"])
+    assert.equal(events.filter(value => value === event).length, 1, event);
+  assert.ok(events.indexOf("client-closed") < events.indexOf("held-close"));
+}
 
 function fixture() {
   const events: string[] = [], queries: string[] = [];
@@ -29,9 +34,14 @@ function fixture() {
     afterQueryRefuses: false, factoryThrows: false, revokeThrows: false, releaseThrows: false,
     queryCount: 0, queriesSettled: 0, revoked: false, pendingStatement: "",
     rejectingStatement: "", producerRefuses: "", rollbackSettled: false,
-    driftAfterStatement: "", lastSettledStatement: "" };
+    driftAfterStatement: "", lastSettledStatement: "", pendingImport: false,
+    importRejects: false, driftAfterImport: false, importSettled: false };
   const reserve = deferred<any>(), query = deferred<any>(), close = deferred<void>();
   const statement = deferred<any>();
+  const loading = deferred<any>();
+  observed(loading.promise); // RED old consumer may never request the gate.
+  const frozenJournalParameters = Object.freeze([31]);
+  const parameters: Array<unknown> = [];
   const rows: any[] = [[{ ...facts }], [{ ...facts }]];
   const transport = Object.freeze({ schema: "setfarm.postgres-socket-transport.v1",
     socketDirectory: "/Library/Application Support/Setfarm/PostgreSQL/run", port: 55439,
@@ -43,12 +53,13 @@ function fixture() {
       if (state.afterQueryRefuses && state.queriesSettled) throw Error("TEST_ONLY_AUTHORITY_DRIFT");
       if (state.driftAfterStatement && state.driftAfterStatement === state.lastSettledStatement)
         throw Error("TEST_ONLY_AUTHORITY_DRIFT");
+      if (state.driftAfterImport && state.importSettled) throw Error("TEST_ONLY_AUTHORITY_DRIFT");
     },
     close() { events.push("held-close"); if (state.heldCloseThrows) throw undefined; },
   };
   const reserved = {
-    unsafe(sql: string) {
-      events.push("query"); queries.push(sql);
+    unsafe(sql: string, values?: unknown) {
+      events.push("query"); queries.push(sql); parameters.push(values);
       const ordinal = sql === literalQuery ? state.queryCount++ : -1;
       const original = state.pendingStatement === sql ? statement.promise
         : state.rejectingStatement === sql ? Promise.reject(undefined)
@@ -92,10 +103,20 @@ function fixture() {
           return client;
         },
       };
+      // Modeled namespaces only: real canonical initialization/native ESM are
+      // separate controls. CommonJS dynamic import assimilates this gate; it
+      // is NOT the production import Promise or proof of its object identity.
+      if (name === "../db/contract-spine-migrations.js") {
+        events.push("canonical-import");
+        const original = state.pendingImport ? loading.promise
+          : state.importRejects ? Promise.reject(undefined) : Promise.resolve(canonical);
+        return original.then(value => { state.importSettled = true; return value; });
+      }
       const producers: Record<string, readonly [string, string]> = {
         "../db/contract-spine-runtime-access-readonly-verifier-v1.js": ["verifyContractSpineRuntimeAccessInTransactionReadOnlyV1", "ACCESS"],
         "../db/base-schema-readonly-verifier-v1.js": ["verifyOrdinaryBaseSchemaCatalogInTransactionReadOnlyV1", "BASE"],
         "../db/public-object-owner-readonly-verifier-v1.js": ["verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1", "OWNER"],
+        "./task6a-cold-pre32-catalog-readonly-v1.js": ["requireColdPre32CatalogAbsenceInTransactionV1", "COLD"],
       };
       const producer = producers[name];
       if (producer) return { [producer[0]]: async (transaction: any, owner?: string) => {
@@ -106,6 +127,12 @@ function fixture() {
       throw Error(`UNQUALIFIED_TEST_IMPORT:${name}`);
     },
   });
+  const canonical = { async verifyHeldPre32ContractSpineJournalIdentityV1(
+    query: (sql: string, parameters: readonly number[]) => Promise<unknown>) {
+    events.push("canonical-verifier");
+    await query("TEST_ONLY_JOURNAL_BODY", frozenJournalParameters);
+    if (state.producerRefuses === "JOURNAL") throw undefined;
+  } };
   const compiled = ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
   } }).outputText;
@@ -115,7 +142,83 @@ function fixture() {
   assert.equal(typeof probe, "function", "missing closed backend consumer");
   assert.deepEqual(Object.keys(module.exports), ["probeTask6aProtectedPostgresBackendV1"]);
   return { probe: probe as (...args: unknown[]) => Promise<void>, state, events, queries, rows,
-    reserve, query, close, statement, reserved };
+    reserve, query, close, statement, reserved, loading, canonical, parameters, frozenJournalParameters };
+}
+
+test("cold phase verifies canonical31 and later absence on the same reservation before rollback", async () => {
+  const f = fixture(); await f.probe();
+  assert.deepEqual(f.queries, [literalQuery, "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
+    "TEST_ONLY_ACCESS_BODY", "TEST_ONLY_BASE_BODY", "TEST_ONLY_OWNER_BODY",
+    "TEST_ONLY_JOURNAL_BODY", "TEST_ONLY_COLD_BODY", "ROLLBACK", literalQuery]);
+  const ordinal = f.queries.indexOf("TEST_ONLY_JOURNAL_BODY");
+  assert.ok(Array.isArray(f.parameters[ordinal]));
+  assert.deepEqual(Array.from(f.parameters[ordinal] as unknown[]), [31]);
+  assert.notEqual(f.parameters[ordinal], f.frozenJournalParameters);
+  assert.equal(f.events.filter(event => event === "canonical-import").length, 1);
+  assert.equal(f.events.filter(event => event === "canonical-verifier").length, 1);
+});
+test("pending canonical import retains the original probe and all reservation/FD custody", async () => {
+  const f = fixture(); f.state.pendingImport = true;
+  let settled = false; const original = observed(f.probe().finally(() => { settled = true; }));
+  let outcome: PromiseSettledResult<void> | undefined;
+  try {
+    await turns();
+    assert.equal(f.events.filter(event => event === "canonical-import").length, 1);
+    assert.equal(settled, false);
+    for (const sql of ["TEST_ONLY_JOURNAL_BODY", "TEST_ONLY_COLD_BODY", "ROLLBACK"])
+      assert.equal(f.queries.includes(sql), false);
+    for (const event of ["release", "client-close", "held-close"])
+      assert.equal(f.events.includes(event), false);
+    const before = [...f.events]; await assert.rejects(f.probe(), refused); assert.deepEqual(f.events, before);
+  } finally {
+    f.loading.resolve(f.canonical);
+    [outcome] = await Promise.allSettled([original]);
+  }
+  assert.equal(outcome?.status, "fulfilled");
+  assert.equal(f.state.rollbackSettled, true);
+  assertClosed(f.events);
+});
+test("rejected pending canonical import with undefined keeps custody until original settlement", async () => {
+  const f = fixture(); f.state.pendingImport = true;
+  const original = observed(f.probe());
+  let outcome: PromiseSettledResult<void> | undefined;
+  try {
+    await turns(); assert.equal(f.events.filter(event => event === "canonical-import").length, 1);
+    assert.equal(f.queries.includes("ROLLBACK"), false);
+    assert.equal(f.events.includes("held-close"), false);
+  } finally {
+    f.loading.reject(undefined); [outcome] = await Promise.allSettled([original]);
+  }
+  assert.equal(outcome?.status, "rejected");
+  if (outcome?.status === "rejected") assert.match(String(outcome.reason), refused);
+  assert.equal(f.queries.includes("TEST_ONLY_JOURNAL_BODY"), false);
+  assert.equal(f.queries.includes("TEST_ONLY_COLD_BODY"), false);
+  assert.equal(f.queries.filter(sql => sql === "ROLLBACK").length, 1);
+  assert.equal(f.queries.filter(sql => sql === literalQuery).length, 1);
+  assertClosed(f.events);
+});
+for (const fault of ["importRejects", "driftAfterImport"] as const) {
+  test(`${fault} refuses before canonical query and joins one rollback/native close`, async () => {
+    const f = fixture(); f.state[fault] = true;
+    await assert.rejects(f.probe(), refused);
+    assert.equal(f.events.filter(event => event === "canonical-import").length, 1);
+    assert.equal(f.queries.includes("TEST_ONLY_JOURNAL_BODY"), false);
+    assert.equal(f.queries.includes("TEST_ONLY_COLD_BODY"), false);
+    assert.equal(f.queries.filter(sql => sql === "ROLLBACK").length, 1);
+    assert.equal(f.queries.filter(sql => sql === literalQuery).length, 1);
+    assertClosed(f.events);
+  });
+}
+for (const producer of ["JOURNAL", "COLD"]) {
+  test(`${producer} post-query verifier rejection is not swallowed`, async () => {
+    const f = fixture(); f.state.producerRefuses = producer;
+    await assert.rejects(f.probe(), refused);
+    assert.ok(f.queries.includes(`TEST_ONLY_${producer}_BODY`));
+    if (producer === "JOURNAL") assert.equal(f.queries.includes("TEST_ONLY_COLD_BODY"), false);
+    assert.equal(f.queries.filter(sql => sql === "ROLLBACK").length, 1);
+    assert.equal(f.queries.filter(sql => sql === literalQuery).length, 1);
+    assertClosed(f.events);
+  });
 }
 
 test("closed probe performs two own-backend reads then releases only after client close", async () => {
@@ -128,7 +231,7 @@ test("closed probe performs two own-backend reads then releases only after clien
   assert.ok(f.events.indexOf("client-closed") < f.events.indexOf("held-close"));
 });
 for (const sql of ["BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY", "TEST_ONLY_ACCESS_BODY",
-  "TEST_ONLY_BASE_BODY", "TEST_ONLY_OWNER_BODY", "ROLLBACK"]) {
+  "TEST_ONLY_BASE_BODY", "TEST_ONLY_OWNER_BODY", "TEST_ONLY_JOURNAL_BODY", "TEST_ONLY_COLD_BODY", "ROLLBACK"]) {
   test(`pending original ${sql} keeps reservation and FD custody`, async () => {
     const f = fixture(); f.state.pendingStatement = sql;
     let completed = false;
@@ -156,6 +259,7 @@ for (const producer of ["ACCESS", "BASE", "OWNER"]) {
     await assert.rejects(f.probe(), refused);
     assert.equal(f.state.rollbackSettled, true);
     assert.equal(f.queries.filter(query => query === literalQuery).length, 1);
+    assert.equal(f.events.includes("canonical-import"), false);
   });
 }
 test("post-BEGIN custody drift still joins original pending rollback before release", async () => {
@@ -264,7 +368,8 @@ for (const fault of ["revokeThrows", "releaseThrows"] as const) {
     let completed = false;
     const original = observed(assert.rejects(f.probe(), refused).finally(() => { completed = true; }));
     try {
-      await turns(); assert.equal(completed, false);
+      for (let i = 0; i < 8 && !f.events.includes("client-close"); i++) await turns();
+      assert.equal(completed, false);
       assert.equal(f.events.includes("client-close"), true);
       assert.equal(f.events.includes("held-close"), false);
     } finally { f.close.resolve(); await original; }

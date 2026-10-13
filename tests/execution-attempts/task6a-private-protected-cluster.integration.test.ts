@@ -4,12 +4,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomInt } from "node:crypto";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { assertProtectedClusterPolicyV1 } from "./task6a-protected-cluster-policy.js";
 import { prepareTask6aProtectedNativeFixtureV1, type ProtectedNativeFixtureV1 } from "./task6a-protected-native-fixture-v1.js";
-import { assertTask6aNativeCleanupCertainV1, markTask6aNativeReleaseUncertainV1 } from "./task6a-native-load-commands-v1.js";
+import { assertTask6aNativeCleanupCertainV1, markTask6aNativeReleaseUncertainV1,
+  readNativeRegularV1, hashNativeBytesV1, insideTask6aNativeRootV1 } from "./task6a-native-load-commands-v1.js";
 import { extractTask6aOrdinaryBaseStatementsV2 } from "./task6a-held-pg31-base-ddl-v2.js";
+import { emitTask6aColdNativeV1 } from "./task6a-cold-native-emission-v1.js";
 
 // Standalone OS/HBA rehearsal: never import the ambient database test harness.
 // The root-capable driving UID is trusted; nobody/_www are the excluded actors.
@@ -280,11 +282,15 @@ test("private protected PG denies old identity and scoped admin impersonation ac
   assert.equal(new Set([runnerUid, serverUid, clientUid, oldUid]).size, 4);
   assert.ok(runnerUid > 0);
   let native:ProtectedNativeFixtureV1|undefined;
+  let closedGraphReady = false;
   let pgBin=defaultPgBin,fixtureNode=process.execPath;
   function asUser(user:string,executable:string,args:string[],timeout?:number):Result {
     native?.recheck();
+    if (closedGraphReady) exactClosedGraph();
     const result=asUserBase(user,executable,args,timeout,native?.environment);
-    native?.recheck();return result;
+    native?.recheck();
+    if (closedGraphReady) exactClosedGraph();
+    return result;
   }
   function asChecked(user:string,executable:string,args:string[],timeout?:number):string {
     const result=asUser(user,executable,args,timeout);assert.equal(result.status,0,`${user} ${executable}: ${result.stderr}`);
@@ -326,9 +332,38 @@ test("private protected PG denies old identity and scoped admin impersonation ac
   let descriptorHome: string | undefined, descriptorAnchor: fs.BigIntStats | undefined;
   let descriptorReady = false;
   const diagnosticSource = path.join(home, "closed-probe-transport.json");
-  const closedModule = path.join(home, "closed-probe.mjs");
+  const closedGraph = path.join(home, "closed-graph");
+  let closedModule: string | undefined, closedCanonicalURL: string | undefined;
+  const closedMembers = new Map<string, { hash: string; identity?: fs.BigIntStats }>();
+  let closedGraphIdentity: fs.BigIntStats | undefined;
   const baselineModule = path.join(home, "restricted-baseline-setup.mjs");
   let diagnosticAnchor: fs.BigIntStats | undefined;
+
+  const closedFields = ["dev", "ino", "uid", "gid", "mode", "nlink", "size", "birthtimeNs", "mtimeNs", "ctimeNs"] as const;
+  function exactClosedGraph(): void {
+    if (!closedProbeEnabled) return;
+    exactHome(); assert.ok(closedGraphIdentity && closedModule && closedCanonicalURL);
+    const directory = fs.lstatSync(closedGraph, { bigint: true });
+    assert.ok(directory.isDirectory() && !directory.isSymbolicLink());
+    for (const field of closedFields) assert.equal(directory[field], closedGraphIdentity[field]);
+    assert.equal(directory.uid, 0n); assert.equal(directory.gid, 0n);
+    assert.equal(directory.dev, anchor.dev); assert.equal(directory.mode & 0o7777n, 0o555n);
+    assert.deepEqual(fs.readdirSync(closedGraph).sort(), [...closedMembers.keys()].map(file => path.basename(file)).sort());
+    for (const [file, expected] of closedMembers) {
+      assert.ok(insideTask6aNativeRootV1(closedGraph, file) && expected.identity);
+      const captured = readNativeRegularV1(file);
+      for (const field of closedFields) assert.equal(captured.identity[field], expected.identity[field]);
+      assert.equal(captured.identity.dev, anchor.dev); assert.equal(captured.identity.uid, 0n);
+      assert.equal(captured.identity.gid, 0n); assert.equal(captured.identity.mode & 0o7777n, 0o444n);
+      assert.equal(hashNativeBytesV1(captured.bytes), expected.hash);
+    }
+    const aclPaths = [home, closedGraph, ...closedMembers.keys()];
+    for (let i = 0; i < aclPaths.length; i += 64) {
+      const part = aclPaths.slice(i, i + 64), lines = rootCommand("/bin/ls", ["-lde", ...part]).split("\n");
+      assert.equal(lines.length, part.length, "unknown/ACL rows refuse the closed graph");
+      for (const line of lines) assert.match(line, /^[d-][rwxStTs-]{9}[@+]?\s+/);
+    }
+  }
 
   function exactDescriptor(): void {
     assert.ok(descriptorHome && descriptorAnchor && descriptorReady);
@@ -341,16 +376,49 @@ test("private protected PG denies old identity and scoped admin impersonation ac
   }
   function closedProbeEvidence(phase: string): void {
     if (!closedProbeEnabled) return;
-    exactServer(); exactDescriptor();
+    exactServer(); exactDescriptor(); exactClosedGraph();
     const target = path.join(descriptorHome!, "transport.json");
-    for (const mode of ["healthy", "wrong-tuple", "delayed-close", "denied-access", "denied-column", "denied-membership", "denied-owner", "denied-base"] as const) {
+    for (const mode of ["healthy", "wrong-tuple", "delayed-close", "denied-access", "denied-column", "denied-membership", "denied-owner", "denied-base",
+      "phase-checksum", "phase-journal32", "phase-journal33", "phase-table", "phase-index", "phase-function", "phase-type", "phase-trigger"] as const) {
       const baseline = baselineSnapshot();
+      const baselineJournal = JSON.parse(baseline).journal as { version: number; name: string; checksum: string; state: string }[];
+      assert.equal(baselineJournal.length, 31);
       if (mode === "denied-access") baselineAdmin("GRANT UPDATE ON public.setfarm_schema_migrations TO setfarm_runtime");
       if (mode === "denied-column") baselineAdmin("GRANT UPDATE(state) ON public.setfarm_schema_migrations TO setfarm_runtime");
       if (mode === "denied-membership") admin("GRANT setfarm_owner TO setfarm_runtime");
       if (mode === "denied-owner") baselineAdmin("CREATE TABLE public.task6a_wrong_owner(id integer)");
       if (mode === "denied-base") baselineAdmin("ALTER TABLE public.runs ALTER COLUMN status SET DEFAULT 'corrupt'");
+      if (mode === "phase-checksum") {
+        assert.notEqual(baselineJournal[30]!.checksum, "0".repeat(64));
+        baselineAdmin("UPDATE public.setfarm_schema_migrations SET checksum=repeat('0',64) WHERE version=31");
+      }
+      if (mode === "phase-journal32" || mode === "phase-journal33") {
+        const version = mode === "phase-journal32" ? 32 : 33;
+        baselineAdmin(`INSERT INTO public.setfarm_schema_migrations(version,name,checksum,state)
+          VALUES (${version},'private_phase_canary_${version}',repeat('0',64),'applied')`);
+      }
+      // Owned private objects keep the three genuine baseline gates healthy;
+      // the later journal/cold producer must be the actual refusal boundary.
+      if (mode === "phase-table") baselineAdmin(`SET ROLE setfarm_owner;
+        CREATE TABLE public.internal_production_owner_reservations_v1(id integer)`);
+      if (mode === "phase-index") baselineAdmin(`SET ROLE setfarm_owner;
+        CREATE TABLE public.task6a_phase_anchor(id integer);
+        CREATE INDEX ip_op_sba_v1_plan_manifest_idx ON public.task6a_phase_anchor(id)`);
+      if (mode === "phase-function") baselineAdmin(`SET ROLE setfarm_owner;
+        CREATE FUNCTION public.ip_op_reject_immutable_v1() RETURNS trigger
+        LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END'`);
+      if (mode === "phase-type") baselineAdmin(`SET ROLE setfarm_owner;
+        CREATE TYPE public.internal_production_owner_reservations_v1 AS ENUM ('private_phase_canary')`);
+      if (mode === "phase-trigger") baselineAdmin(`SET ROLE setfarm_owner;
+        CREATE TABLE public.task6a_phase_anchor(id integer);
+        CREATE FUNCTION public.task6a_phase_triggerfn() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END';
+        CREATE TRIGGER ip_op_msc_v1_update_trg BEFORE UPDATE ON public.task6a_phase_anchor
+        FOR EACH ROW EXECUTE FUNCTION public.task6a_phase_triggerfn()`);
       const perturbed = baselineSnapshot();
+      const expectedJournalRows = (JSON.parse(perturbed).journal as { version: number; name: string; checksum: string; state: string }[])
+        .filter(row => row.version <= 31).map(row => [String(row.version), row.name, row.checksum, row.state]);
+      assert.equal(expectedJournalRows.length, 31);
+      if (mode.startsWith("phase-")) assert.notEqual(perturbed, baseline, "the real private canary must be observable");
       try {
       const transport = { schema: "setfarm.postgres-socket-transport.v1", socketDirectory: socket,
         port, database: mode === "wrong-tuple" ? "postgres" : "setfarm",
@@ -365,16 +433,31 @@ test("private protected PG denies old identity and scoped admin impersonation ac
       exactDescriptor();
       checked("/usr/bin/sudo", ["-n", "/usr/bin/install", "-m", "0444", "-o", "root", "-g", "wheel", diagnosticSource, target]);
       exactDescriptor();
+      exactClosedGraph();
       const result = asUser("_www", fixtureNode, ["--input-type=module", "-e",
         `const {runTask6aNativeClosedProbeV1}=await import(process.argv[1]);
-         await runTask6aNativeClosedProbeV1(process.argv[2],JSON.parse(process.argv[3]),process.argv[4]);`,
-        new URL(`file://${closedModule}`).href, target, JSON.stringify({ serverUid, clientGid, socketPath: socketFile }), mode], 30_000);
+         await runTask6aNativeClosedProbeV1(process.argv[2],JSON.parse(process.argv[3]),process.argv[4],JSON.parse(process.argv[5]));`,
+        pathToFileURL(closedModule!).href, target, JSON.stringify({ serverUid, clientGid, socketPath: socketFile }), mode,
+        JSON.stringify({ canonicalURL: closedCanonicalURL })], 30_000);
       assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+      exactClosedGraph();
       const lines = result.stdout.trim().split("\n"); assert.equal(lines.length, 1);
       const witness = JSON.parse(lines[0]!);
       assert.equal(witness.event, "native-closed-probe"); assert.equal(witness.authority, "diagnostic-only");
       assert.equal(witness.mode, mode); assert.equal(witness.fdCount, 5); assert.equal(witness.nativeSockets, 1);
       t.diagnostic(JSON.stringify({ phase, ...witness })); exactServer(); exactDescriptor();
+      const earlyRefusal = mode === "wrong-tuple" || mode.startsWith("denied-");
+      assert.deepEqual(witness.canonicalJournalRows, earlyRefusal ? [] : expectedJournalRows,
+        "actual ordered canonical journal DataRows required, not command-tag counts");
+      const phaseCounts: Record<string, string[]> = {
+        "phase-journal32": ["1", "0", "0", "0", "0"], "phase-journal33": ["1", "0", "0", "0", "0"],
+        "phase-table": ["0", "1", "0", "1", "0"], "phase-index": ["0", "1", "0", "0", "0"],
+        "phase-function": ["0", "0", "1", "0", "0"], "phase-type": ["0", "0", "0", "1", "0"],
+        "phase-trigger": ["0", "0", "0", "0", "1"],
+      };
+      assert.deepEqual(witness.coldCatalogRows, earlyRefusal || mode === "phase-checksum" ? []
+        : [phaseCounts[mode] ?? ["0", "0", "0", "0", "0"]],
+        "actual five exact cold counters required, not command-tag counts");
       assert.equal(baselineSnapshot(), perturbed,
         "probe must preserve sampled journal/ownership/ACL/default/effective-membership state");
       } finally {
@@ -385,6 +468,16 @@ test("private protected PG denies old identity and scoped admin impersonation ac
         if (mode === "denied-membership") admin("REVOKE setfarm_owner FROM setfarm_runtime");
         if (mode === "denied-owner") baselineAdmin("DROP TABLE public.task6a_wrong_owner");
         if (mode === "denied-base") baselineAdmin("ALTER TABLE public.runs ALTER COLUMN status SET DEFAULT 'running'::text");
+        if (mode === "phase-checksum") baselineAdmin(`UPDATE public.setfarm_schema_migrations
+          SET checksum='${baselineJournal[30]!.checksum}' WHERE version=31`);
+        if (mode === "phase-journal32" || mode === "phase-journal33") baselineAdmin(
+          `DELETE FROM public.setfarm_schema_migrations WHERE version=${mode === "phase-journal32" ? 32 : 33}`);
+        if (mode === "phase-table") baselineAdmin("DROP TABLE public.internal_production_owner_reservations_v1");
+        if (mode === "phase-index") baselineAdmin("DROP INDEX public.ip_op_sba_v1_plan_manifest_idx; DROP TABLE public.task6a_phase_anchor");
+        if (mode === "phase-function") baselineAdmin("DROP FUNCTION public.ip_op_reject_immutable_v1()");
+        if (mode === "phase-type") baselineAdmin("DROP TYPE public.internal_production_owner_reservations_v1");
+        if (mode === "phase-trigger") baselineAdmin(`DROP TRIGGER ip_op_msc_v1_update_trg ON public.task6a_phase_anchor;
+          DROP FUNCTION public.task6a_phase_triggerfn(); DROP TABLE public.task6a_phase_anchor`);
       }
       assert.equal(baselineSnapshot(), baseline, "fixture negative control must restore exact observed baseline");
     }
@@ -439,6 +532,17 @@ test("private protected PG denies old identity and scoped admin impersonation ac
         ORDER BY c.relname,a.attname) FROM pg_catalog.pg_attrdef d JOIN pg_catalog.pg_class c ON c.oid=d.adrelid
         JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_attribute a
         ON a.attrelid=d.adrelid AND a.attnum=d.adnum WHERE n.nspname='public'),
+      'functions',(SELECT jsonb_agg(jsonb_build_array(p.proname,pg_catalog.pg_get_function_identity_arguments(p.oid),
+        pg_catalog.pg_get_userbyid(p.proowner),p.proacl::text,p.prosrc,p.probin,p.proconfig::text)
+        ORDER BY p.proname,pg_catalog.pg_get_function_identity_arguments(p.oid)) FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'),
+      'types',(SELECT jsonb_agg(jsonb_build_array(y.typname,pg_catalog.pg_get_userbyid(y.typowner),y.typtype,y.typacl::text,
+        (SELECT jsonb_agg(e.enumlabel ORDER BY e.enumsortorder) FROM pg_catalog.pg_enum e WHERE e.enumtypid=y.oid))
+        ORDER BY y.typname) FROM pg_catalog.pg_type y JOIN pg_catalog.pg_namespace n ON n.oid=y.typnamespace
+        WHERE n.nspname='public'),
+      'triggers',(SELECT jsonb_agg(jsonb_build_array(n.nspname,c.relname,g.tgname,g.tgenabled,pg_catalog.pg_get_triggerdef(g.oid))
+        ORDER BY n.nspname,c.relname,g.tgname) FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class c ON c.oid=g.tgrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE NOT g.tgisinternal),
       'membership',(SELECT jsonb_agg(jsonb_build_array(r.rolname,pg_catalog.pg_has_role('setfarm_runtime',r.oid,'MEMBER'))
         ORDER BY r.rolname) FROM pg_catalog.pg_roles r))::text`);
   }
@@ -480,11 +584,12 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     server = undefined; uncertainLifecycle = false;
   }
   function fileDenials(): void {
+    const protectedFiles = [config, hba, ident, clientModule, ...closedMembers.keys()];
     for (const user of ["nobody", "_www"]) {
-      for (const target of [config, hba, ident, clientModule, path.join(home, "replacement"),
+      for (const target of [...protectedFiles, ...(closedProbeEnabled ? [path.join(closedGraph, "replacement")] : []), path.join(home, "replacement"),
         path.join(socket, "replacement"), path.join(data, "replacement")]) {
         const result = asUser(user, fixtureNode, ["-e", WRITE_PROBE, target,
-          [config, hba, ident, clientModule].includes(target) ? "a" : "wx"]);
+          protectedFiles.includes(target) ? "a" : "wx"]);
         assert.equal(result.status, 42, `${user} must not modify ${target}: ${result.stderr}`);
       }
     }
@@ -815,16 +920,25 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     assert.equal(bundle.outputFiles.length, 1);
     fs.writeFileSync(clientModule, bundle.outputFiles[0].contents, { mode: 0o444 });
     if (closedProbeEnabled) {
-      const probePath = fileURLToPath(new URL("../../src/internal-production/task6a-protected-postgres-backend-probe-v1.ts", import.meta.url));
-      const entryPath = fileURLToPath(new URL("./task6a-native-closed-probe-entry.ts", import.meta.url));
-      const closedBundle = await esbuild.build({ entryPoints: [entryPath], bundle: true,
-        platform: "node", format: "esm", write: false, logLevel: "silent",
-        plugins: [{ name: "private-diagnostic-holder-only", setup(build) {
-          build.onResolve({ filter: /^\.\/task6a-socket-physical-evidence-v1\.js$/ }, args =>
-            args.importer === probePath ? { path: entryPath } : undefined);
-        } }] });
-      assert.equal(closedBundle.outputFiles.length, 1);
-      fs.writeFileSync(closedModule, closedBundle.outputFiles[0].contents, { mode: 0o444 });
+      const emission = await emitTask6aColdNativeV1(closedGraph);
+      assert.equal(fs.existsSync(closedGraph), false); fs.mkdirSync(closedGraph, { mode: 0o700 });
+      let publishedBytes = 0;
+      for (const output of emission.outputs) {
+        assert.equal(path.dirname(output.path), closedGraph, "fixed compiler outputs must be flat exact graph members");
+        assert.match(path.basename(output.path), /^[A-Za-z0-9_-]+\.js$/);
+        assert.equal(closedMembers.has(output.path), false);
+        const bytes = Buffer.from(output.contents); publishedBytes += bytes.length;
+        assert.ok(publishedBytes <= 64 * 1024 * 1024);
+        assert.equal(hashNativeBytesV1(bytes), output.sha256, "recheck mutable byte snapshots BEFORE publishing");
+        fs.writeFileSync(output.path, bytes, { mode: 0o444, flag: "wx" });
+        assert.equal(hashNativeBytesV1(readNativeRegularV1(output.path).bytes), output.sha256);
+        closedMembers.set(output.path, { hash: output.sha256 });
+      }
+      const packageFile = path.join(closedGraph, "package.json"), packageBytes = Buffer.from('{"type":"module"}\n');
+      fs.writeFileSync(packageFile, packageBytes, { mode: 0o444, flag: "wx" });
+      closedMembers.set(packageFile, { hash: hashNativeBytesV1(packageBytes) });
+      closedModule = emission.entryPath; closedCanonicalURL = pathToFileURL(emission.canonicalPath).href;
+      assert.ok(closedMembers.has(closedModule) && closedMembers.has(emission.canonicalPath));
       const setupBundle = esbuild.buildSync({ entryPoints: [fileURLToPath(new URL(
         "./task6a-restricted-baseline-fixture-entry-v1.ts", import.meta.url))],
         bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent" });
@@ -855,8 +969,22 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     rootCommand("/usr/sbin/chown", ["root:wheel", config, hba, ident, clientModule]);
     rootCommand("/bin/chmod", ["0444", config, hba, ident, clientModule]);
     if (closedProbeEnabled) {
-      rootCommand("/usr/sbin/chown", ["root:wheel", closedModule, baselineModule]);
-      rootCommand("/bin/chmod", ["0444", closedModule, baselineModule]);
+      const files = [...closedMembers.keys(), baselineModule];
+      for (let i = 0; i < files.length; i += 64) {
+        rootCommand("/usr/sbin/chown", ["root:wheel", ...files.slice(i, i + 64)]);
+        rootCommand("/bin/chmod", ["0444", ...files.slice(i, i + 64)]);
+      }
+      rootCommand("/usr/sbin/chown", ["root:wheel", closedGraph]); rootCommand("/bin/chmod", ["0555", closedGraph]);
+      for (const [file, expected] of closedMembers) {
+        const captured = readNativeRegularV1(file); assert.equal(hashNativeBytesV1(captured.bytes), expected.hash);
+        expected.identity = captured.identity;
+      }
+      closedGraphIdentity = fs.lstatSync(closedGraph, { bigint: true }); exactClosedGraph();
+      closedGraphReady = true;
+      t.diagnostic(JSON.stringify({ event: "sealed-cold-native-graph", authority: "diagnostic-only", root: closedGraph,
+        entryURL: pathToFileURL(closedModule!).href, canonicalURL: closedCanonicalURL,
+        members: [...closedMembers].map(([file, value]) => ({ file, hash: value.hash,
+          physical: Object.fromEntries(closedFields.map(field => [field, String(value.identity![field])])) })) }));
       for (const target of ["/", "/Library", "/Library/Application Support"]) {
         const stat = fs.lstatSync(target, { bigint: true });
         assert.ok(stat.isDirectory() && !stat.isSymbolicLink());
@@ -951,6 +1079,10 @@ GRANT USAGE ON SEQUENCE task6a_probe.effects_id_seq TO task6a_runtime;`);
       assert.equal(observerModeUncertain, false, `observer mode restoration uncertain; retain ${home}`);
       assert.equal(nativeChildUncertain,false,`native child completion uncertain; retain ${home}`);
       assert.equal(heldChildrenPossiblyRunning, 0, `held PG31 child completion uncertain; retain ${home}`);
+      if (closedProbeEnabled) {
+        assert.equal(closedGraphReady, true, "unfinished graph preparation must retain the exact fixture");
+        exactClosedGraph();
+      }
       if (server) stop();
       if (descriptorHome) {
         exactDescriptor(); const members = fs.readdirSync(descriptorHome);
@@ -970,6 +1102,7 @@ GRANT USAGE ON SEQUENCE task6a_probe.effects_id_seq TO task6a_runtime;`);
       }
       exactHome();
       if (protectedRoot) {
+        exactClosedGraph();
         assert.equal(asUser("_postgres", "/bin/test", ["-e", pidFile]).status, 1);
         assert.equal(asUser("_postgres", "/bin/test", ["-e", socketFile]).status, 1);
         // System-owned executables only under root. No user-writable Node or

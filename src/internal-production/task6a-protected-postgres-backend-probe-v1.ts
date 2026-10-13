@@ -5,6 +5,7 @@ import type { ReadOnlyCatalogTransactionV1 } from "../db/read-only-catalog-trans
 import { verifyContractSpineRuntimeAccessInTransactionReadOnlyV1 } from "../db/contract-spine-runtime-access-readonly-verifier-v1.js";
 import { verifyOrdinaryBaseSchemaCatalogInTransactionReadOnlyV1 } from "../db/base-schema-readonly-verifier-v1.js";
 import { verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1 } from "../db/public-object-owner-readonly-verifier-v1.js";
+import { requireColdPre32CatalogAbsenceInTransactionV1 } from "./task6a-cold-pre32-catalog-readonly-v1.js";
 
 type Held = NonNullable<ReturnType<typeof holdTask6aProtectedPostgresSocketV1>>;
 type Client = ReturnType<typeof createTask6aSingleBackendSocketClientV1>;
@@ -75,6 +76,17 @@ export async function probeTask6aProtectedPostgresBackendV1(): Promise<void> {
       await verifyContractSpineRuntimeAccessInTransactionReadOnlyV1(transaction);
       await verifyOrdinaryBaseSchemaCatalogInTransactionReadOnlyV1(transaction);
       await verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1(transaction, fixed.descriptor.schemaOwner);
+      held.recheck();
+      // Retain the genuine lazy import before awaiting it. Canonical factory
+      // registration/source scans are reached only after all baseline checks;
+      // pending or rejected initialization cannot surrender this reservation.
+      const loading = import("../db/contract-spine-migrations.js"); originals.push(loading);
+      const canonical = await loading;
+      held.recheck();
+      await canonical.verifyHeldPre32ContractSpineJournalIdentityV1(
+        async (statement, parameters) => await transaction.unsafe(statement, [...parameters]),
+      );
+      await requireColdPre32CatalogAbsenceInTransactionV1(transaction);
     } finally {
       if (transactionAttempted) {
         // Cleanup must not be gated by a now-refused holder. Same reservation,

@@ -1325,15 +1325,18 @@ function censusTransport(locator, source) {
         "WITH required_columns","FROM public.finding_sets","FROM public.findings","FROM public.runs"];
       sql.begin=async(mode,body)=>{
         if(mode!=='isolation level repeatable read read only')throw Error('WRONG_SNAPSHOT');
-        return body(async strings=>{
-          const query=Array.from(strings).join('?');if(!query.includes(tokens[calls]??'UNEXPECTED_QUERY'))throw Error('WRONG_QUERY_ORDER');calls++;
+        const execute=async query=>{
+          if(!query.includes(tokens[calls]??'UNEXPECTED_QUERY'))throw Error('WRONG_QUERY_ORDER');calls++;
           if(calls===3)return [{laterJournalCount:'0',relationCount:'0',functionCount:'0',typeCount:'0',triggerCount:'0'}];
           if(calls===4)return [{catalogViolationCount:'0',aprbChildViolationCount:'0',ordinaryBatchViolationCount:'0',activeHeaderViolationCount:'0',
             ownerReservationsRelation:null,ownerAdmissionHeadRelation:null,producerSourceRelation:null,producerActivationRelation:null,producerActivationHeadRelation:null,producerCurrentRelation:null,
             activeRunCount:'0',openClaimCount:'0',executionAttemptCount:'0',activeRuntimeSessionCount:'0',activeCompletionOwnerCount:'0',unsettledMandatoryEffectCount:'0',
             artifactReservationCount:'0',publicationBatchCount:'0',artifactPublicationCount:'0',terminationOwnerCount:'0',findingOwnerCount:'0',recoveryOwnerCount:'0',operationalDeliveryCount:'0'}];
           return [];
-        });
+        };
+        const tx=async strings=>execute(Array.from(strings).join('?'));
+        tx.unsafe=async query=>{if(typeof query!=='string'||!query.includes('WITH expected_tables(name)'))throw Error('UNEXPECTED_UNSAFE_QUERY');return execute(query)};
+        return body(tx);
       };
       sql.end=async options=>{if(calls!==7||options.timeout!==1)throw Error('INCOMPLETE_CENSUS');return close(options)};
       return sql;
