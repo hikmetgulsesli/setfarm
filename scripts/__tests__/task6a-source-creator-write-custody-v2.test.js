@@ -535,7 +535,7 @@ test('source creator ordinary actual IO and modeled owner controls',{skip:!ordin
   });
   for(const [name,mode,from,to] of [
     ['readback comparison','readback-drift',String.raw`task6a_origin_refuse() unless $observed eq $bytes
-            &&Digest::SHA::sha256_hex($observed) eq Digest::SHA::sha256_hex($bytes);`,'# TEST omitted byte/readback agreement'],
+        &&Digest::SHA::sha256_hex($observed) eq Digest::SHA::sha256_hex($bytes);`,'# TEST omitted byte/readback agreement'],
     ['original inode comparison','inode-replacement','for my $field(0,1,4,5) {task6a_origin_refuse() unless $before->[$field]==$now->[$field];}',
       'for my $field(4,5) {task6a_origin_refuse() unless $before->[$field]==$now->[$field];}'],
     ['close response certainty','close-throw-after','$closed=1 if $result&&!length($close_error)&&$inspected',

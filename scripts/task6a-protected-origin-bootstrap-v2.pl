@@ -829,6 +829,12 @@ sub task6a_origin_helpers_settled {
 # both cold entry guards stay closed. Its originals never enter staged custody.
 my ($creator_uid,$creator_gid)=(0,0);
 my $creator_phase='absent';
+my $producer_phase='absent';
+my ($producer_creator_claimed,$producer_staged_started)=(0,0);
+my $creator_vendor_count=0;
+my ($creator_root_mode,$creator_vendor_mode)=(0700,0700);
+my ($creator_root_directory,$creator_vendor_directory);
+my ($creator_entry_readback,$creator_entry_commitment);
 my ($creator_invalid,$creator_uncertain,$creator_disposal_started)=(0,0,0);
 my ($creator_root,$creator_creation);
 my $creator_source_count=0;
@@ -840,10 +846,13 @@ my $creator_archive_phase='absent';
 my ($creator_native_readback,$creator_native_commitment,$creator_native_original);
 my ($creator_map_readback,$creator_map_commitment,$creator_map_original);
 my $creator_policy_phase='absent';
-my $creator_live=sub {
-    task6a_origin_refuse() if $creator_invalid||$creator_uncertain||$creator_disposal_started;
+my $creator_process_owner=sub {
     task6a_origin_refuse() unless $<==$creator_uid&&$>==$creator_uid
         &&$( =~ /\A$creator_gid(?: |\z)/&&$) =~ /\A$creator_gid(?: |\z)/;
+};
+my $creator_live=sub {
+    task6a_origin_refuse() if $creator_invalid||$creator_uncertain||$creator_disposal_started;
+    $creator_process_owner->();
     task6a_origin_refuse() unless $parent_phase eq 'absent'&&!@parent_originals
         &&!@file_ledger&&!@directory_ledger&&!@physical_owned_handles
         &&$physical_state eq 'new'&&$staged_phase eq 'absent'
@@ -970,12 +979,15 @@ my $creator_hold_directory=sub {
         $creator_same_object->(\@identity,\@held);$creator_same_object->(\@identity,\@named);
         for my $now(\@held,\@named) {
             task6a_origin_refuse() unless Fcntl::S_ISDIR($now->[2])
-                &&($now->[2]&07777)==($source?$creator_source_mode:$mode);
+                &&($now->[2]&07777)==($source==1?$creator_source_mode:$source==2?$creator_vendor_mode
+                    :$owned?$creator_root_mode:$mode);
         }
     };
     push @creator_directory_checks,$check;$creator_epoch->();
-    $creator_creation=[@before] if $owned&&!$source;
-    $creator_source_directory=$sealed if $source;
+    $creator_creation=[@before] if $owned&&$source==0;
+    $creator_root_directory=$sealed if $owned&&$source==0;
+    $creator_source_directory=$sealed if $source==1;
+    $creator_vendor_directory=$sealed if $source==2;
     return $sealed;
 };
 my $creator_read=sub {
@@ -1032,6 +1044,46 @@ sub task6a_origin_create_source_root {
     };my $error=$@;$creator_burn->() unless $ok&&!length($error);
     return $creator_diagnostic->();
 }
+my $creator_write_leaf=sub {
+    my ($path,$bytes,$mode)=@_;$creator_epoch->();
+    my $sealed=$creator_open->($path,Fcntl::O_RDWR()|Fcntl::O_CREAT()
+        |Fcntl::O_EXCL()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK(),0600);
+    my ($fh,$fd)=$sealed->('binding');my @identity=CORE::stat($fh);
+    my $check=sub {
+        my ($mode,$size,$held)=@_;my @named=CORE::lstat($path);
+        $creator_same_object->(\@identity,\@named);
+        my @tuples=(\@named);
+        if($held) {
+            $staged_native_fh->(\$fh,0);
+            task6a_origin_refuse() unless defined(CORE::fileno($fh))&&CORE::fileno($fh)==$fd;
+            my @now=CORE::stat($fh);$creator_same_object->(\@identity,\@now);push @tuples,\@now;
+            my $flags=fcntl($fh,Fcntl::F_GETFL(),0);my $descriptor=fcntl($fh,Fcntl::F_GETFD(),0);
+            task6a_origin_refuse() unless defined($flags)&&($flags&Fcntl::O_ACCMODE())==Fcntl::O_RDWR()
+                &&($flags&Fcntl::O_NONBLOCK())&&defined($descriptor)&&$descriptor==Fcntl::FD_CLOEXEC();
+        }
+        for my $now(@tuples) {
+            task6a_origin_refuse() unless Fcntl::S_ISREG($now->[2])&&($now->[2]&07777)==$mode
+                &&$now->[3]==1&&$now->[4]==$creator_uid&&$now->[5]==$creator_gid&&$now->[7]==$size;
+        }
+    };
+    $check->(0600,0,1);$creator_epoch->();my ($count,$errno);
+    my $written=eval {$!=0;$count=CORE::syswrite($fh,$bytes,length($bytes));$errno=0+$!;1;};
+    my $write_error=$@;$staged_plain_cell->(\$count);
+    task6a_origin_refuse() unless $written&&!length($write_error)&&defined($count)
+        &&!ref($count)&&$count==length($bytes)&&$errno==0;
+    $creator_epoch->();$check->(0600,length($bytes),1);
+    my $seek=CORE::sysseek($fh,0,0);task6a_origin_refuse() unless defined($seek)&&$seek==0;
+    $creator_epoch->();my $observed=$creator_read->($fh,length($bytes),0);
+    task6a_origin_refuse() unless $observed eq $bytes
+        &&Digest::SHA::sha256_hex($observed) eq Digest::SHA::sha256_hex($bytes);
+    $check->(0600,length($bytes),1);$creator_epoch->();
+    my $changed=CORE::chmod($mode,$fh);task6a_origin_refuse() unless $changed==1;
+    $creator_epoch->();$check->($mode,length($bytes),1);
+    $creator_close->($sealed);
+    push @creator_file_checks,sub {$check->($mode,length($bytes),0)};
+    $creator_epoch->();
+    return $observed;
+};
 sub task6a_origin_write_source_member {
     my $ok=eval {
         task6a_origin_refuse() unless @_==2&&$creator_phase eq 'writing'&&$creator_source_count<4;
@@ -1041,42 +1093,7 @@ sub task6a_origin_write_source_member {
         task6a_origin_refuse() unless $role eq $policy->[0]
             &&Digest::SHA::sha1_hex('blob '.length($bytes)."\0".$bytes) eq $policy->[2];
         my $path=$creator_root.'/'.$policy->[1];
-        my $sealed=$creator_open->($path,Fcntl::O_RDWR()|Fcntl::O_CREAT()
-            |Fcntl::O_EXCL()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK(),0600);
-        my ($fh,$fd)=$sealed->('binding');my @identity=CORE::stat($fh);
-        my $check=sub {
-            my ($mode,$size,$held)=@_;my @named=CORE::lstat($path);
-            $creator_same_object->(\@identity,\@named);
-            my @tuples=(\@named);
-            if($held) {
-                $staged_native_fh->(\$fh,0);
-                task6a_origin_refuse() unless defined(CORE::fileno($fh))&&CORE::fileno($fh)==$fd;
-                my @now=CORE::stat($fh);$creator_same_object->(\@identity,\@now);push @tuples,\@now;
-                my $flags=fcntl($fh,Fcntl::F_GETFL(),0);my $descriptor=fcntl($fh,Fcntl::F_GETFD(),0);
-                task6a_origin_refuse() unless defined($flags)&&($flags&Fcntl::O_ACCMODE())==Fcntl::O_RDWR()
-                    &&($flags&Fcntl::O_NONBLOCK())&&defined($descriptor)&&$descriptor==Fcntl::FD_CLOEXEC();
-            }
-            for my $now(@tuples) {
-                task6a_origin_refuse() unless Fcntl::S_ISREG($now->[2])&&($now->[2]&07777)==$mode
-                    &&$now->[3]==1&&$now->[4]==$creator_uid&&$now->[5]==$creator_gid&&$now->[7]==$size;
-            }
-        };
-        $check->(0600,0,1);$creator_epoch->();my ($count,$errno);
-        my $written=eval {$!=0;$count=CORE::syswrite($fh,$bytes,length($bytes));$errno=0+$!;1;};
-        my $write_error=$@;$staged_plain_cell->(\$count);
-        task6a_origin_refuse() unless $written&&!length($write_error)&&defined($count)
-            &&!ref($count)&&$count==length($bytes)&&$errno==0;
-        $creator_epoch->();$check->(0600,length($bytes),1);
-        my $seek=CORE::sysseek($fh,0,0);task6a_origin_refuse() unless defined($seek)&&$seek==0;
-        $creator_epoch->();my $observed=$creator_read->($fh,length($bytes),0);
-        task6a_origin_refuse() unless $observed eq $bytes
-            &&Digest::SHA::sha256_hex($observed) eq Digest::SHA::sha256_hex($bytes);
-        $check->(0600,length($bytes),1);$creator_epoch->();
-        my $changed=CORE::chmod($policy->[3],$fh);task6a_origin_refuse() unless $changed==1;
-        $creator_epoch->();$check->($policy->[3],length($bytes),1);
-        $creator_close->($sealed);
-        push @creator_file_checks,sub {$check->($policy->[3],length($bytes),0)};
-        $creator_epoch->();
+        my $observed=$creator_write_leaf->($path,$bytes,$policy->[3]);
         if($creator_source_count==0) {
             $creator_archive_readback=''.$observed;
             $creator_archive_commitment=Digest::SHA::sha256_hex($observed);
@@ -1088,6 +1105,10 @@ sub task6a_origin_write_source_member {
         if($creator_source_count==2) {
             $creator_map_readback=''.$observed;
             $creator_map_commitment=Digest::SHA::sha256_hex($observed);
+        }
+        if($creator_source_count==3) {
+            $creator_entry_readback=''.$observed;
+            $creator_entry_commitment=Digest::SHA::sha256_hex($observed);
         }
         ++$creator_source_count;1;
     };my $error=$@;$creator_burn->() unless $ok&&!length($error);
@@ -1217,10 +1238,185 @@ sub task6a_origin_initialize_created_policy_helpers {
 sub task6a_origin_release_source_creator {
     unless(@_==0&&$creator_phase eq 'written'&&!$creator_invalid
         &&!$creator_uncertain&&!$creator_disposal_started) {$creator_burn->();}
+    my $expected;
+    if(!$producer_creator_claimed) {
+        $expected=10;
+        $creator_burn->() unless $creator_source_count==4&&$creator_vendor_count==0
+            &&@creator_directory_checks==5&&@creator_file_checks==4&&$creator_root_mode==0700;
+    } elsif($producer_phase eq 'handoff') {
+        $expected=13;
+        $creator_burn->() unless $creator_source_count==4&&$creator_vendor_count==2
+            &&@creator_directory_checks==6&&@creator_file_checks==6
+            &&$creator_source_mode==0555&&$creator_vendor_mode==0555&&$creator_root_mode==0711;
+    } else {$creator_burn->();}
     $creator_phase='released';my $ok=eval {$creator_dispose->()};my $error=$@;
-    $creator_burn->() unless $ok&&!length($error)&&@creator_originals==10
+    $creator_burn->() unless $ok&&!length($error)&&@creator_originals==$expected
         &&!grep {!$_->('closed')} @creator_originals;
-    my $out=$creator_diagnostic->();$out->{handlesClosed}=10;return $out;
+    my $out=$creator_diagnostic->();$out->{handlesClosed}=$expected;return $out;
+}
+
+# Private fixed producer, never called by either closed production entry.
+my $producer_transport_epoch=sub {
+    $creator_epoch->() if $producer_phase eq 'observing'||$producer_phase eq 'vendor-fetching';
+};
+my ($producer_handoff_admission,$producer_handoff_snapshot);
+my $producer_handoff_guard=sub {
+    my ($assigned,$phase)=@_;
+    task6a_origin_refuse() unless $producer_phase eq 'handoff'&&$creator_phase eq 'released'
+        &&$creator_disposal_started&&!$creator_invalid&&!$creator_uncertain
+        &&@creator_originals==13&&@creator_directory_checks==6&&@creator_file_checks==6
+        &&$creator_source_count==4&&$creator_vendor_count==2;
+    for my $sealed(@creator_originals) {
+        my ($fh,$fd,$attempted,$closed)=$sealed->('binding');
+        task6a_origin_refuse() unless $attempted&&$closed;
+        $staged_native_fh->(\$fh,0);task6a_origin_refuse() if defined(CORE::fileno($fh));
+    }
+    $creator_process_owner->();
+    task6a_origin_refuse() unless $parent_phase eq 'absent'&&!@parent_originals
+        &&!@file_ledger&&!@directory_ledger&&!@physical_owned_handles&&$physical_state eq 'new'
+        &&!$staged_invalid&&!$staged_uncertain&&!$staged_disposal_started
+        &&$staged_phase eq $phase&&task6a_origin_helpers_settled()
+        &&task6a_origin_now()<$bootstrap_deadline;
+    unless($assigned) {
+        task6a_origin_refuse() if defined($staged_admission)||@staged_originals||@staged_pending;
+    } else {
+        my $admit=$staged_container->(\$staged_admission,'B::HV');
+        $staged_container->(\$producer_handoff_admission,'B::HV');
+        task6a_origin_refuse() unless $admit==$producer_handoff_admission;
+        if($phase eq 'active') {$staged_check_admission->();}
+        else {
+            my $now=$staged_read_admission->();
+            my $retained=$staged_container->(\$producer_handoff_snapshot,'B::HV');
+            my $retained_refs=$staged_container->(\($retained->{refs}),'B::AV');
+            my $retained_values=$staged_container->(\($retained->{values}),'B::AV');
+            task6a_origin_refuse() unless @{$now->{refs}}==11&&@$retained_refs==11
+                &&@{$now->{values}}==34&&@$retained_values==34;
+            for my $index(0..10) {
+                my $kind=($index==2||$index==3)?'B::AV':'B::HV';
+                $staged_container->(\($retained_refs->[$index]),$kind);
+                task6a_origin_refuse() unless $now->{refs}[$index]==$retained_refs->[$index];
+            }
+            for my $index(0..33) {
+                $staged_scalar->(\($retained_values->[$index]));
+                task6a_origin_refuse() unless $now->{values}[$index] eq $retained_values->[$index];
+            }
+        }
+        task6a_origin_refuse() unless $phase eq 'active'?
+            @staged_originals==12:!@staged_originals&&!@staged_pending;
+    }
+};
+sub task6a_origin_produce_source_vendor_staged_custody {
+    # A repeated call refuses without changing the existing owned held realm.
+    task6a_origin_refuse() unless $producer_phase eq 'absent';
+    my $arity=@_;$producer_phase='observing';
+    my $ok=eval {
+        task6a_origin_refuse() unless $arity==0;
+        task6a_origin_refuse() unless $creator_phase eq 'absent';$creator_epoch->();
+        $producer_creator_claimed=1;
+        my $observed=task6a_origin_observe_sources();$creator_epoch->();
+        my $record=$staged_container->(\$observed,'B::HV');
+        my $rows=$staged_container->(\($record->{sources}),'B::AV');
+        task6a_origin_refuse() unless @$rows==4;
+        my @source_bytes;
+        for my $index(0..3) {
+            $creator_epoch->();my $row=$staged_container->(\($rows->[$index]),'B::HV');
+            $staged_keys->($row,'byteLength,bytes,contentSha256,gitBlobSha,path');
+            my $policy=$staged_policy[$index];my $name=$policy->[1];$name=~s{\Asource/}{};
+            my $path=$staged_bytes->(\($row->{path}),1024);
+            my $blob=$staged_bytes->(\($row->{gitBlobSha}),40);
+            my $hash=$staged_bytes->(\($row->{contentSha256}),64);
+            my $size_sv=$staged_plain_cell->(\($row->{byteLength}));
+            task6a_origin_refuse() unless ($size_sv->FLAGS&B::SVf_IOK())
+                &&!($size_sv->FLAGS&(B::SVf_ROK()|B::SVf_POK()));
+            my $size=$staged_scalar->(\($row->{byteLength}));
+            my $bytes=$staged_bytes->(\($row->{bytes}),2097152);
+            task6a_origin_refuse() unless $path eq 'scripts/'.$name&&$blob eq $policy->[2]
+                &&$size==length($bytes)&&Digest::SHA::sha256_hex($bytes) eq $hash
+                &&Digest::SHA::sha1_hex('blob '.length($bytes)."\0".$bytes) eq $policy->[2];
+            push @source_bytes,''.$bytes;$creator_epoch->();
+        }
+        $producer_phase='creating';$creator_epoch->();task6a_origin_create_source_root();
+        for my $index(0..3) {
+            $creator_epoch->();task6a_origin_write_source_member($staged_policy[$index][0],$source_bytes[$index]);
+            $creator_epoch->();
+        }
+        task6a_origin_finish_source_writes();$creator_epoch->();$producer_phase='initializing';
+        task6a_origin_initialize_created_archive_helper();$creator_epoch->();
+        task6a_origin_initialize_created_policy_helpers();$creator_epoch->();
+        my @completed_cells=(\$creator_archive_readback,\$creator_native_readback,
+            \$creator_map_readback,\$creator_entry_readback);
+        my @commitment_cells=(\$creator_archive_commitment,\$creator_native_commitment,
+            \$creator_map_commitment,\$creator_entry_commitment);
+        my @sources;
+        for my $index(0..3) {
+            $creator_epoch->();my $bytes=$staged_bytes->($completed_cells[$index],2097152);
+            my $commitment=$staged_bytes->($commitment_cells[$index],64);
+            task6a_origin_refuse() unless Digest::SHA::sha256_hex($bytes) eq $commitment
+                &&Digest::SHA::sha1_hex('blob '.length($bytes)."\0".$bytes) eq $staged_policy[$index][2];
+            push @sources,{role=>$staged_policy[$index][0],relativePath=>$staged_policy[$index][1],
+                gitBlobSha=>$staged_policy[$index][2],bytes=>''.$bytes};$creator_epoch->();
+        }
+        $producer_phase='vendor-fetching';$creator_epoch->();
+        my $transport=task6a_origin_get_vendor();$creator_epoch->();
+        my $vendor_result=$staged_container->(\$transport,'B::HV');
+        my $filename=$staged_bytes->(\($vendor_result->{filename}),128);
+        my $archive=$staged_bytes->(\($vendor_result->{archiveBytes}),134217728);
+        task6a_origin_refuse() unless $filename eq 'node-v22.23.1-darwin-arm64.tar.gz'
+            &&Digest::SHA::sha256_hex($archive) eq $staged_vendor_pin;
+        $archive=''.$archive;$creator_epoch->();$producer_phase='selecting';
+        my $decoder=$creator_policy_code->(\$creator_archive_original);$creator_epoch->();
+        my $selected=$decoder->($archive);$creator_epoch->();
+        my $node=$staged_bytes->(\$selected,134217728);$node=''.$node;
+        my $native=$creator_policy_code->(\$creator_native_original);$creator_epoch->();
+        $native->($node);$creator_epoch->();my $node_hash=Digest::SHA::sha256_hex($node);
+        $producer_phase='writing';$creator_epoch->();my $vendor_path=$creator_root.'/vendor';
+        my $made;my $created=eval {$made=CORE::mkdir($vendor_path,0700);1;};my $mkdir_error=$@;
+        task6a_origin_refuse() unless $created&&!length($mkdir_error)&&$made;
+        $creator_epoch->();$creator_hold_directory->($vendor_path,0700,1,2);$creator_epoch->();
+        for my $kind(0..1) {
+            $creator_epoch->();my $bytes=$kind?$node:$archive;
+            my $expected=$kind?$node_hash:$staged_vendor_pin;
+            task6a_origin_refuse() unless Digest::SHA::sha256_hex($bytes) eq $expected;
+            my $path=$vendor_path.'/'.($kind?'node':$filename);
+            my $readback=$creator_write_leaf->($path,$bytes,$kind?0555:0400);
+            task6a_origin_refuse() unless Digest::SHA::sha256_hex($readback) eq $expected;
+            ++$creator_vendor_count;$creator_epoch->();
+        }
+        task6a_origin_refuse() unless $creator_vendor_count==2&&@creator_originals==13
+            &&@creator_file_checks==6&&@creator_directory_checks==6;
+        $producer_phase='sealing';$creator_epoch->();my ($vendor_fh)=$creator_vendor_directory->('binding');
+        my $sealed=CORE::chmod(0555,$vendor_fh);task6a_origin_refuse() unless $sealed==1;
+        $creator_vendor_mode=0555;$creator_epoch->();my ($root_fh)=$creator_root_directory->('binding');
+        $sealed=CORE::chmod(0711,$root_fh);task6a_origin_refuse() unless $sealed==1;
+        $creator_root_mode=0711;$creator_epoch->();
+        my $vendor={filename=>$filename,bytes=>$archive};
+        my $admission={creator=>{rootPath=>$creator_root,creationIdentity=>[@$creator_creation]},
+            sources=>\@sources,vendor=>$vendor,
+            selected=>{archiveRef=>$vendor,bytes=>$node,memberName=>'node-v22.23.1-darwin-arm64/bin/node'}};
+        $producer_phase='handoff';$creator_epoch->();task6a_origin_release_source_creator();
+        # Producer boundary: before-assignment.
+        $producer_handoff_guard->(0,'absent');
+        $producer_staged_started=1;
+        $producer_handoff_admission=$admission;$staged_admission=$admission;
+        $producer_handoff_snapshot=$staged_read_admission->();
+        # Producer boundary: before-hold.
+        $producer_handoff_guard->(1,'absent');task6a_origin_hold_staged_custody();
+        # Producer boundary: after-hold.
+        $producer_handoff_guard->(1,'active');
+        # Producer boundary: before-recheck.
+        $producer_handoff_guard->(1,'active');task6a_origin_recheck_staged_custody();
+        # Producer boundary: after-recheck.
+        $producer_handoff_guard->(1,'active');
+        # Producer boundary: before-held.
+        $producer_handoff_guard->(1,'active');$producer_phase='held';1;
+    };my $error=$@;
+    unless($ok&&!length($error)) {
+        $producer_phase='burned';
+        if($producer_staged_started) {eval {$staged_burn->()};}
+        eval {$creator_burn->()} if $producer_creator_claimed;task6a_origin_refuse();
+    }
+    return {scope=>'source-vendor-producer-custody-diagnostic-only',productionAuthority=>JSON::PP::false,
+        sourceCount=>4,vendorCount=>2,creatorHandlesClosed=>13,fileCount=>6,directoryCount=>6};
 }
 
 # Pure framing declarations are part of the independently owner-admitted
@@ -1735,6 +1931,7 @@ sub task6a_origin_capture {
 }
 sub task6a_origin_get_metadata {
     task6a_origin_refuse() unless @_==1;
+    $producer_transport_epoch->();
     my ($route)=@_;task6a_origin_text($route,256);
     # Only fixed policy-derived Git object/PR identities reach this edge.
     # Never follow API-returned URL fields, redirects or caller source paths.
@@ -1754,6 +1951,7 @@ sub task6a_origin_get_metadata {
         '--write-out',"\n%{http_code}\n%{content_type}\n%{url_effective}",$url,
     ],$seconds,4195328)};
     task6a_origin_refuse() if $@;
+    $producer_transport_epoch->();
     my $now=task6a_origin_now();task6a_origin_refuse() unless $now<$deadline&&$now<$bootstrap_deadline;
     task6a_origin_refuse() unless ref($r) eq 'HASH'&&defined($r->{status})&&$r->{status}==0
         &&JSON::PP::is_bool($r->{reaped})&&$r->{reaped}&&defined($r->{err})&&$r->{err} eq ''
@@ -1771,6 +1969,7 @@ sub task6a_origin_get_metadata {
 }
 sub task6a_origin_vendor_bytes {
     task6a_origin_refuse() unless @_==1;
+    $producer_transport_epoch->();
     my ($kind)=@_;task6a_origin_refuse() unless defined($kind)&&!ref($kind)
         &&($kind eq 'manifest'||$kind eq 'archive');
     my $manifest=$kind eq 'manifest';
@@ -1786,6 +1985,7 @@ sub task6a_origin_vendor_bytes {
         '--write-out',"\n%{http_code}\n%{content_type}\n%{url_effective}",$url,
     ],$seconds,$limit+1024)};
     task6a_origin_refuse() if $@;
+    $producer_transport_epoch->();
     my $now=task6a_origin_now();task6a_origin_refuse() unless $now<$deadline&&$now<$bootstrap_deadline;
     task6a_origin_refuse() unless ref($r) eq 'HASH'&&defined($r->{status})&&$r->{status}==0
         &&JSON::PP::is_bool($r->{reaped})&&$r->{reaped}&&defined($r->{err})&&$r->{err} eq ''

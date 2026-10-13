@@ -5,6 +5,8 @@ import {spawn,spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import test from 'node:test';
+import {ZERO,ONE,TWO,literalCommit,framedHash,coherentCommit,coherentTree,sourceGraph}
+  from './fixtures/task6a-origin-transport-fixtures-v2.js';
 
 const MEMBER='node-v22.23.1-darwin-arm64/bin/node';
 const HELPER=new URL('../task6a-origin-archive-v2.pm',import.meta.url);
@@ -4016,27 +4018,11 @@ sub task6a_origin_record {`);
   assert.equal(r.error,undefined);assert.equal(r.signal,null);return r;
 }
 const COMMIT='8aa0d2c6f44815339da3d6ecf8eac8ff1cc49d2c',TREE='5166646e62fa6f8c95f083c1d01ae81dd35a23fe',BLOB='ce013625030ba8dba906f756967f9e9ca394464a';
-const ZERO='0'.repeat(40),ONE='1'.repeat(40),TWO='2'.repeat(40);
-function literalCommit() {
-  return {sha:COMMIT,tree:{sha:ZERO},parents:[{sha:ONE},{sha:TWO}],verification:{verified:true,reason:'valid',
-    payload:`tree ${ZERO}\nparent ${ONE}\nparent ${TWO}\nauthor Example <dev@example.test> 1700000000 +0000\ncommitter Example <dev@example.test> 1700000000 +0000\n\nreviewed merge\n`,
-    signature:'-----BEGIN PGP SIGNATURE-----\n\nYWJj\n=AAAA\n-----END PGP SIGNATURE-----\n',
-  }};
-}
 function literalTree() {
   return {sha:TREE,truncated:false,tree:[{path:'foo',mode:'040000',type:'tree',sha:ONE},
     {path:'z',mode:'100644',type:'blob',sha:BLOB,size:6},{path:'foo.bar',mode:'100644',type:'blob',sha:BLOB,size:6}]};
 }
 function literalBlob() {return {sha:BLOB,size:6,encoding:'base64',content:'aGVsbG8K\n'};}
-function framedHash(kind,bytes) {return createHash('sha1').update(`${kind} ${bytes.length}\0`).update(bytes).digest('hex');}
-function coherentCommit(r) {
-  const p=r.verification.payload,s=r.verification.signature,i=p.indexOf('\n\n');
-  r.sha=framedHash('commit',Buffer.from(p.slice(0,i)+'\ngpgsig '+s.split('\n').join('\n ')+p.slice(i)));return r;
-}
-function coherentTree(r) {
-  const entries=[...r.tree].sort((a,b)=>Buffer.compare(Buffer.from(a.path+(a.type==='tree'?'/':'')),Buffer.from(b.path+(b.type==='tree'?'/':''))));
-  r.sha=framedHash('tree',Buffer.concat(entries.flatMap(e=>[Buffer.from(`${e.mode==='040000'?'40000':e.mode} ${e.path}\0`),Buffer.from(e.sha,'hex')])));return r;
-}
 function objectRefuses(kind,r,expected=r.sha,options) {
   const result=systemObject(kind,r,expected,options);assert.notEqual(result.status,0,'unsafe system object accepted');
   assert.match(result.stderr.toString(),/TASK6A_ORIGIN_BOOTSTRAP_REFUSED/);assert.equal(result.stdout.length,0);
@@ -5261,25 +5247,6 @@ test('composed physical consumers expose missing sticky burn and partial-handle 
   assert.equal(partial.status,0,partial.stderr.toString());const out=JSON.parse(partial.stdout);
   assert.equal(out.ownedCount,4);assert.equal(out.leakedCount,4);assert.equal(out.exactCloseOnce,false);
 });
-function sourceGraph({sourceBytes={}}={}) {
-  const sources=[['task6a-origin-archive-v2.pm',HELPER],['task6a-origin-native-v2.pm',NATIVE],['task6a-origin-map-v2.pm',MAP],['task6a-protected-origin-entry-v2.mjs',ENTRY]];
-  const blobs=sources.map(([path,url])=>{
-    const bytes=sourceBytes[path]??readFileSync(url);return {path,sha:framedHash('blob',bytes),size:bytes.length,bytes};
-  });
-  const scripts=coherentTree({truncated:false,tree:blobs.map(({path,sha,size})=>({path,sha,size,mode:'100644',type:'blob'}))});
-  const root=coherentTree({truncated:false,tree:[{path:'scripts',sha:scripts.sha,mode:'040000',type:'tree'}]});
-  const merge=literalCommit();merge.tree.sha=root.sha;merge.verification.payload=merge.verification.payload.replace(`tree ${ZERO}`,`tree ${root.sha}`);coherentCommit(merge);
-  const main={ref:'refs/heads/main',object:{type:'commit',sha:merge.sha}};
-  const pr={number:253,state:'closed',merged:true,merged_at:'2026-09-30T13:00:00Z',merge_commit_sha:merge.sha,
-    base:{ref:'main',repo:{full_name:'hikmetgulsesli/setfarm'}},head:{sha:TWO,repo:{full_name:'hikmetgulsesli/setfarm'}}};
-  return [
-    {route:'/git/ref/heads/main',data:main},{route:`/git/commits/${merge.sha}`,data:merge},
-    {route:`/commits/${merge.sha}/pulls?per_page=100&page=1`,data:[{number:253,merge_commit_sha:merge.sha}]},
-    {route:'/pulls/253',data:pr},{route:`/git/trees/${root.sha}`,data:root},{route:`/git/trees/${scripts.sha}`,data:scripts},
-    ...blobs.map(b=>({route:`/git/blobs/${b.sha}`,data:{sha:b.sha,size:b.size,encoding:'base64',content:b.bytes.toString('base64')}})),
-    {route:'/git/ref/heads/main',data:structuredClone(main)},
-  ];
-}
 test('archive selects only one exact regular Node member without installing unrelated paths',()=>{
   const r=invoke(archive([item('elsewhere',Buffer.alloc(0),{type:'2',link:'../../escape'}),item(MEMBER),item('npm/package.json',Buffer.from('{}'))]));
   assert.equal(r.status,0,r.stderr.toString());assert.deepEqual(r.stdout,BODY);
