@@ -3,6 +3,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 import { test } from "node:test";
+import { types } from "node:util";
 
 // Complete real consumer module. Acquisition/client and producer/import ports
 // are modeled explicitly; these controls prove original lifetime/wiring only.
@@ -91,6 +92,8 @@ function fixture() {
   const module = { exports: {} as Record<string, any> };
   const context = vm.createContext({ exports: module.exports, module, Object, Promise, Error, Set,
     require(name: string) {
+      if (name === "node:timers") return { setTimeout, clearTimeout };
+      if (name === "node:util") return { types };
       if (name === "./task6a-socket-physical-evidence-v1.js") return {
         holdTask6aProtectedPostgresSocketV1() {
           events.push("hold"); if (state.sourceRefuses) throw Error("TEST_ONLY_SOURCE_REFUSED"); return held;
@@ -140,7 +143,9 @@ function fixture() {
   assert.equal(events.length, 0, "module import must not acquire authority or a client");
   const probe = module.exports.probeTask6aProtectedPostgresBackendV1;
   assert.equal(typeof probe, "function", "missing closed backend consumer");
-  assert.deepEqual(Object.keys(module.exports), ["probeTask6aProtectedPostgresBackendV1"]);
+  assert.deepEqual(Object.keys(module.exports).sort(), ["probeTask6aProtectedPostgresBackendV1",
+    "holdTask6aProtectedPostgresBackendV2", "recheckTask6aProtectedPostgresBackendV2",
+    "closeTask6aProtectedPostgresBackendV2"].sort());
   return { probe: probe as (...args: unknown[]) => Promise<void>, state, events, queries, rows,
     reserve, query, close, statement, reserved, loading, canonical, parameters, frozenJournalParameters };
 }

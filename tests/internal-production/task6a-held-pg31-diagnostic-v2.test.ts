@@ -228,8 +228,8 @@ for (const lateFails of [false, true]) test(`held V31 drains concurrent facade w
 
 function censusFixture(coldCount = "0", activeRunCount = "0") {
   const queries: string[] = [];
-  const connection = async (parts: TemplateStringsArray) => {
-    const query = parts.join("?").replace(/\s+/g, " ").trim();
+  const unsafe = async (statement: string) => {
+    const query = statement.replace(/\s+/g, " ").trim();
     queries.push(query);
     if (query.includes("WITH expected_tables")) return [{ laterJournalCount: coldCount,
       relationCount: "0", functionCount: "0", typeCount: "0", triggerCount: "0" }];
@@ -246,7 +246,8 @@ function censusFixture(coldCount = "0", activeRunCount = "0") {
   };
   const invoke = (censusModule as any).observeHeldColdPre32LegacyDatabaseCensusV2;
   assert.equal(typeof invoke, "function", "connection-neutral held cold census is missing");
-  return { connection, queries, invoke: invoke as (connection: unknown) => Promise<Record<string, any>> };
+  const connection = Object.assign((parts: TemplateStringsArray) => unsafe(parts.join("?")), { unsafe });
+  return { connection, unsafe, queries, invoke: invoke as (connection: unknown) => Promise<Record<string, any>> };
 }
 
 test("held cold census observes existing inventory on the caller connection without lifecycle effects", async () => {
@@ -329,6 +330,9 @@ function privateFixture(pending?: { phase: string; gate: Promise<void>; entered:
         backendType: "client backend", otherBackendCount: state.cachedOther }];
     }
     if (parts) return census.connection(parts);
+    // The maintained cold producer now uses the same connection's unsafe SQL;
+    // route that complete literal body before the journal SELECT fallback.
+    if (query.includes("WITH expected_tables")) return census.unsafe(query);
     if (query.includes("FROM public.setfarm_schema_migrations")) {
       return contractSpinePre32SourceJournalIdentitiesV1().map(row => ({ ...row, state: "applied" }));
     }
