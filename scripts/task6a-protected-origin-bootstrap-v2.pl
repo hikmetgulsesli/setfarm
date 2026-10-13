@@ -835,6 +835,8 @@ my $creator_source_count=0;
 my $creator_source_mode=0700;
 my (@creator_pending,@creator_originals,@creator_directory_checks,@creator_file_checks);
 my $creator_source_directory;
+my ($creator_archive_readback,$creator_archive_commitment,$creator_archive_original);
+my $creator_archive_phase='absent';
 my $creator_live=sub {
     task6a_origin_refuse() if $creator_invalid||$creator_uncertain||$creator_disposal_started;
     task6a_origin_refuse() unless $<==$creator_uid&&$>==$creator_uid
@@ -1071,7 +1073,12 @@ sub task6a_origin_write_source_member {
         $creator_epoch->();$check->($policy->[3],length($bytes),1);
         $creator_close->($sealed);
         push @creator_file_checks,sub {$check->($policy->[3],length($bytes),0)};
-        $creator_epoch->();++$creator_source_count;1;
+        $creator_epoch->();
+        if($creator_source_count==0) {
+            $creator_archive_readback=''.$observed;
+            $creator_archive_commitment=Digest::SHA::sha256_hex($observed);
+        }
+        ++$creator_source_count;1;
     };my $error=$@;$creator_burn->() unless $ok&&!length($error);
     return $creator_diagnostic->();
 }
@@ -1084,6 +1091,56 @@ sub task6a_origin_finish_source_writes {
         $creator_source_mode=0555;$creator_epoch->();$creator_phase='written';1;
     };my $error=$@;$creator_burn->() unless $ok&&!length($error);
     return $creator_diagnostic->();
+}
+my $creator_namespace_exists=sub {
+    my ($parts)=@_;my $table=\%main::;
+    for my $part(@$parts) {
+        $creator_epoch->();$staged_container->(\$table,'B::HV');
+        my $key=$part.'::';return 0 unless exists($table->{$key});
+        my $sv=$staged_plain_cell->(\($table->{$key}));
+        task6a_origin_refuse() unless ref($sv) eq 'B::GV';
+        my $magic=$sv->MAGIC;task6a_origin_refuse() if defined($magic);
+        my $glob=$table->{$key};
+        {no strict 'refs';$table=*{$glob}{HASH};}
+        task6a_origin_refuse() unless defined($table);
+        $staged_container->(\$table,'B::HV');$creator_epoch->();
+    }
+    return 1;
+};
+sub task6a_origin_initialize_created_archive_helper {
+    my $ok=eval {
+        task6a_origin_refuse() unless @_==0&&$creator_phase eq 'written'
+            &&$creator_source_count==4&&@creator_originals==10
+            &&$creator_archive_phase eq 'absent';
+        $creator_archive_phase='initializing';$creator_epoch->();
+        my $bytes=$staged_bytes->(\$creator_archive_readback,2097152);
+        my $commitment=$staged_scalar->(\$creator_archive_commitment);
+        task6a_origin_refuse() unless Digest::SHA::sha1_hex('blob '.length($bytes)."\0".$bytes)
+            eq $staged_policy[0][2]&&$commitment =~ /\A[a-f0-9]{64}\z/
+            &&Digest::SHA::sha256_hex($bytes) eq $commitment;
+        $creator_epoch->();
+        task6a_origin_refuse() if $creator_namespace_exists->(['Task6aOriginArchiveV2']);
+        $creator_epoch->();
+        task6a_origin_refuse() if $creator_namespace_exists->(['IO','Uncompress','Gunzip']);
+        $creator_epoch->();my $cache=\%INC;$staged_container->(\$cache,'B::HV');
+        task6a_origin_refuse() if exists($INC{'IO/Uncompress/Gunzip.pm'});
+        $creator_epoch->();
+        my $result=eval $bytes;my $load_error=$@;
+        $staged_plain_cell->(\$result);
+        task6a_origin_refuse() unless !length($load_error)&&defined($result)&&!ref($result)&&$result eq '1';
+        $creator_epoch->();
+        my $original=UNIVERSAL::can('Task6aOriginArchiveV2','extract_node_v2');
+        my $sv=$staged_plain_cell->(\$original);
+        task6a_origin_refuse() unless ref($sv) eq 'B::IV'&&($sv->FLAGS&B::SVf_ROK());
+        my $cv=$sv->RV;task6a_origin_refuse() unless ref($cv) eq 'B::CV';
+        task6a_origin_refuse() if $cv->FLAGS & 0x00f00000;
+        my $magic=$cv->MAGIC;task6a_origin_refuse() if defined($magic);
+        $creator_epoch->();$creator_archive_original=$original;
+        $creator_archive_phase='initialized';$creator_epoch->();1;
+    };my $error=$@;
+    unless($ok&&!length($error)) {$creator_archive_phase='burned';$creator_burn->();}
+    return {scope=>'created-archive-helper-initializer-diagnostic-only',
+        productionAuthority=>JSON::PP::false,initialized=>JSON::PP::true};
 }
 sub task6a_origin_release_source_creator {
     unless(@_==0&&$creator_phase eq 'written'&&!$creator_invalid
