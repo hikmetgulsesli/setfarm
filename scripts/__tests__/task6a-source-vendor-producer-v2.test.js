@@ -86,7 +86,7 @@ function invoke(mode='healthy',{mutant,modelOwner=true}={}) {
   source=once(source,"'/usr/bin/curl'=>1,","'/usr/bin/curl'=>1,'/usr/bin/perl'=>1,");
   source=once(source,'sub task6a_origin_capture {','sub test_original_capture {');
   source=once(source,'sub task6a_origin_refuse {die',
-    'sub task6a_origin_refuse {push @test_failures, [caller(0)];die');
+    'sub task6a_origin_refuse {push @test_failures, [caller(0)];push @test_failure_contexts,[caller(1)];die');
   source=once(source,'CORE::sysopen($pending,$path,$flags,$mode)','test_open(\\$pending,$path,$flags,$mode,\'creator\')');
   source=once(source,'sysopen($pending,$path,$flags)','test_open(\\$pending,$path,$flags,0,\'staged\')');
   source=once(source,'CORE::close($fh)','test_close($fh,\'creator\')');
@@ -111,8 +111,8 @@ function invoke(mode='healthy',{mutant,modelOwner=true}={}) {
   if(mutant)source=mutant(source);
   const prefix=String.raw`
 BEGIN { @INC=('/System/Library/Perl/5.34/darwin-thread-multi-2level','/System/Library/Perl/5.34'); }
-use strict;use warnings;use JSON::PP ();use MIME::Base64 ();use Fcntl ();
-my $test_mode=$ARGV[0];my $test_group_expect=$ARGV[2];my (@test_events,@test_roots,@test_handles,@test_failures);my (%test_ids,%test_counts);
+use strict;use warnings;use JSON::PP ();use MIME::Base64 ();use Fcntl ();use Errno ();
+my $test_mode=$ARGV[0];my $test_group_expect=$ARGV[2];my (@test_events,@test_roots,@test_handles,@test_failures,@test_failure_contexts);my (%test_ids,%test_counts);
 my ($test_transport,$test_writes,$test_evals,$test_armed,$test_callbacks)=(0,0,0,0,0);
 my ($test_invalidate,$test_responses,$test_unknown);
 my ($test_decoders,$test_natives,$test_fault_id,$test_json_decodes)=(0,0,undef,0);
@@ -253,6 +253,129 @@ my $ok=eval {
     :task6a_origin_produce_source_vendor_staged_custody();1;
 };my $error=$@;
 my ($repeat_error,$before_repeat);$before_repeat=scalar(@test_events);
+my $physical;my @physical_copy_originals;
+if($ok&&$test_mode eq 'physical-replacement') {
+  my $root=$test_roots[0]{path};my $container=$root.'.retained-physical';
+  $physical={root=>$root,container=>$container,phase=>'held',copies=>[],renames=>[],errors=>[]};
+  my $same=sub {
+    my ($path,$identity,$mode)=@_;my @s=CORE::lstat($path);
+    die "TEST_PHYSICAL_IDENTITY\n" unless @s==13&&Fcntl::S_ISDIR($s[2])&&($s[2]&07777)==$mode;
+    for my $field(0,1,4,5) {die "TEST_PHYSICAL_IDENTITY\n" unless $s[$field]==$identity->[$field];}
+    return \@s;
+  };
+  my $move=sub {
+    my ($from,$to,$identity)=@_;$same->($from,$identity,0711);
+    my @destination=CORE::lstat($to);my $destination_errno=0+$!;
+    die "TEST_UNKNOWN_DESTINATION\n" unless !@destination&&$destination_errno==Errno::ENOENT();
+    push @{$physical->{renames}},{from=>$from,to=>$to,intent=>JSON::PP::true,returned=>JSON::PP::false};
+    CORE::rename($from,$to) or die "TEST_PHYSICAL_RENAME\n";
+    $physical->{renames}[-1]{returned}=JSON::PP::true;$same->($to,$identity,0711);
+    my @source=CORE::lstat($from);my $source_errno=0+$!;
+    die "TEST_UNKNOWN_SOURCE_VACANCY\n" unless !@source&&$source_errno==Errno::ENOENT();
+  };
+  my $ran=eval {
+    my $guards=sub {return {uid=>0+$<,euid=>0+$>,groups=>"$(",egroups=>"$)",deadline=>$bootstrap_deadline,
+      invalid=>0+$staged_invalid,uncertain=>0+$staged_uncertain,disposalStarted=>0+$staged_disposal_started,
+      phase=>$staged_phase,helpersBurned=>0+$helper_lifecycle_burned,helpersSettled=>task6a_origin_helpers_settled()};};
+    $physical->{creatorBefore}=[map {0+($test_counts{$_->{id}}//0)} grep {$_->{realm} eq 'creator'} @test_handles];
+    $physical->{stagedBefore}=[map {{id=>$_->{id},closed=>0+($test_counts{$_->{id}}//0),live=>defined(CORE::fileno($_->{fh}))?JSON::PP::true:JSON::PP::false,
+      identity=>[CORE::stat($_->{fh})]}} grep {$_->{realm} eq 'staged'} @test_handles];
+    die "TEST_PHYSICAL_ORIGINALS\n" unless @{$physical->{stagedBefore}}==12&&@{$physical->{creatorBefore}}==13
+      &&!(grep {$_!=1} @{$physical->{creatorBefore}})
+      &&!(grep {!$_->{live}||$_->{closed}!=0} @{$physical->{stagedBefore}});
+    $staged_check_admission->();my $admission=$staged_read_admission->();my @copies;
+    for my $index(0..5) {
+      my $bytes=$staged_scalar->(\($admission->{bytes}[$index]));my $expected=$staged_snapshot->{files}[$index];
+      die "TEST_COPY_COMMITMENT\n" unless length($bytes)==$expected->{size}&&Digest::SHA::sha256_hex($bytes) eq $expected->{sha256};
+      push @copies,$bytes;
+    }
+    my @original=CORE::lstat($root);$physical->{originalIdentity}=\@original;
+    $same->($root,\@original,0711);
+    CORE::mkdir($container,0700) or die "TEST_CONTAINER_CREATE\n";
+    my @container=CORE::lstat($container);$physical->{containerIdentity}=\@container;
+    $same->($container,\@container,0700);$physical->{phase}='container-created';
+    $physical->{beforeRenameRecheck}=task6a_origin_recheck_staged_custody();
+    $physical->{guardsBefore}=$guards->();$physical->{expectedBefore}=[map {[@{$_->{identity}}]} (@staged_directories,@staged_files)];
+    $physical->{beforeRenameClock}=task6a_origin_now();
+    die "TEST_EXPIRED_ORIGINAL_BUDGET\n" unless $physical->{beforeRenameClock}<$bootstrap_deadline;
+    $move->($root,$container.'/original',\@original);$physical->{phase}='original-preserved';
+    CORE::mkdir($root,0700) or die "TEST_REPLACEMENT_CREATE\n";
+    my @replacement=CORE::lstat($root);$physical->{replacementIdentity}=\@replacement;
+    die "TEST_SAME_REPLACEMENT\n" if $replacement[0]==$original[0]&&$replacement[1]==$original[1];
+    for my $dir('source','vendor') {CORE::mkdir($root.'/'.$dir,0700) or die "TEST_COPY_DIRECTORY\n";}
+    $physical->{phase}='copying';
+    for my $index(0..5) {
+      my $expected=$staged_snapshot->{files}[$index];my $row={path=>$expected->{path},openIntents=>1,writeIntents=>0,readIntents=>0,closeIntents=>0,closed=>JSON::PP::false};
+      push @{$physical->{copies}},$row;push @physical_copy_originals,undef;my $cell=\($physical_copy_originals[-1]);
+      $row->{originalOrdinal}=scalar(@physical_copy_originals);my $copied=eval {
+        my $opened=CORE::sysopen($$cell,$expected->{path},Fcntl::O_CREAT()|Fcntl::O_EXCL()|Fcntl::O_RDWR()|Fcntl::O_NOFOLLOW(),0600);
+        $row->{openReturned}=$opened?JSON::PP::true:JSON::PP::false;
+        die "TEST_COPY_OPEN\n" unless $opened;my $fh=$$cell;
+        $row->{fd}=CORE::fileno($fh);$row->{initialIdentity}=[CORE::stat($fh)];
+        binmode($fh) or die "TEST_COPY_BINARY\n";my $bytes=$copies[$index];$row->{writeIntents}++;
+        my $written=CORE::syswrite($fh,$bytes,length($bytes));$row->{writeReturned}=$written;
+        defined($written)&&$written==length($bytes) or die "TEST_COPY_WRITE\n";
+        defined(CORE::sysseek($fh,0,0)) or die "TEST_COPY_SEEK\n";my $read='';$row->{readIntents}++;
+        my $read_count=CORE::sysread($fh,$read,length($bytes));$row->{readReturned}=$read_count;
+        defined($read_count)&&$read_count==length($bytes)&&$read eq $bytes or die "TEST_COPY_READBACK\n";
+        my $eof=CORE::sysread($fh,my $tail,1);$row->{eofReturned}=$eof;defined($eof)&&$eof==0 or die "TEST_COPY_EOF\n";
+        CORE::chmod($expected->{mode},$fh)==1 or die "TEST_COPY_SEAL\n";
+        my @s=CORE::stat($fh);die "TEST_COPY_METADATA\n" unless @s==13&&Fcntl::S_ISREG($s[2])&&$s[3]==1
+          &&$s[4]==$original[4]&&$s[5]==$original[5]&&($s[2]&07777)==$expected->{mode};
+        $row->{identity}=\@s;$row->{sha256}=Digest::SHA::sha256_hex($read);$row->{size}=length($read);1;
+      };my $copy_error=$@;
+      $row->{copyError}=$copy_error;
+      if($row->{openReturned}&&defined($$cell)&&defined(CORE::fileno($$cell))) {
+        $row->{closeIntents}++;my $closed=eval {CORE::close($$cell)};$row->{closeError}=$@;
+        $row->{closeReturned}=$closed?JSON::PP::true:JSON::PP::false;
+        $row->{liveAfterClose}=defined(CORE::fileno($$cell))?JSON::PP::true:JSON::PP::false;
+        die "TEST_COPY_CLOSE_UNCERTAIN\n" unless $closed&&!length($row->{closeError})&&!$row->{liveAfterClose};
+        $row->{closed}=JSON::PP::true;
+      }
+      die $copy_error unless $copied;
+    }
+    for my $dir('source','vendor') {CORE::chmod(0555,$root.'/'.$dir)==1 or die "TEST_COPY_DIRECTORY_SEAL\n";}
+    CORE::chmod(0711,$root)==1 or die "TEST_COPY_ROOT_SEAL\n";$same->($root,\@replacement,0711);
+    $physical->{phase}='replaced';
+    $staged_require_live->();$physical->{guardsAtReplacement}=$guards->();
+    $physical->{expectedAtReplacement}=[map {[@{$_->{identity}}]} (@staged_directories,@staged_files)];
+    $physical->{originalsAtReplacement}=[map {[CORE::stat($_->{fh})]} (@staged_directories,@staged_files)];
+    $physical->{pathAtReplacement}=[CORE::lstat($root)];$physical->{replacementClock}=task6a_origin_now();
+    die "TEST_EXPIRED_ORIGINAL_BUDGET\n" unless $physical->{replacementClock}<$bootstrap_deadline;
+    $physical->{firstRefusalIndex}=scalar(@test_failures);
+    eval {task6a_origin_recheck_staged_custody()};$physical->{recheckError}=$@;$physical->{phaseAfterRecheck}=$staged_phase;
+    $physical->{firstRefusal}=$test_failures[$physical->{firstRefusalIndex}];
+    $physical->{firstRefusalContext}=$test_failure_contexts[$physical->{firstRefusalIndex}];
+    $physical->{afterRecheckClock}=task6a_origin_now();$physical->{afterRecheckDeadline}=$bootstrap_deadline;
+    $physical->{helpersSettledAfter}=task6a_origin_helpers_settled();$physical->{helpersBurnedAfter}=0+$helper_lifecycle_burned;
+    $physical->{stagedAfter}=[map {{id=>$_->{id},closes=>0+($test_counts{$_->{id}}//0),live=>defined(CORE::fileno($_->{fh}))?JSON::PP::true:JSON::PP::false}} grep {$_->{realm} eq 'staged'} @test_handles];
+    die "TEST_UNQUALIFIED_PHYSICAL_REFUSAL\n" unless $physical->{recheckError} eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n"
+      &&$staged_phase eq 'burned'&&@{$physical->{stagedAfter}}==12
+      &&!(grep {$_->{live}||$_->{closes}!=1} @{$physical->{stagedAfter}});
+    die "TEST_EARLIER_GUARD_REFUSAL\n" unless defined($physical->{firstRefusalContext})
+      &&$physical->{firstRefusalContext}[3] eq 'main::task6a_origin_directory_identity'
+      &&$physical->{afterRecheckClock}<$physical->{guardsBefore}{deadline}
+      &&$bootstrap_deadline==$physical->{guardsBefore}{deadline}
+      &&$physical->{helpersSettledAfter}&&!$physical->{helpersBurnedAfter};
+    for my $field(keys %{$physical->{guardsBefore}}) {
+      die "TEST_CHANGED_NONPHYSICAL_GUARD\n" unless $physical->{guardsBefore}{$field} eq $physical->{guardsAtReplacement}{$field};
+    }
+    for my $index(0..11) {for my $field(0,1,2,4,5) {
+      die "TEST_CHANGED_ORIGINAL_IDENTITY\n" unless $physical->{originalsAtReplacement}[$index][$field]==$physical->{expectedBefore}[$index][$field];
+    }}
+    $physical->{qualifiedBeforeRestore}=JSON::PP::true;
+    $same->($container,\@container,0700);$move->($root,$container.'/replacement',\@replacement);
+    $move->($container.'/original',$root,\@original);$physical->{phase}='restored';
+    my $before=scalar(@test_events);eval {task6a_origin_recheck_staged_custody()};$physical->{restoredError}=$@;
+    eval {task6a_origin_release_staged_custody()};$physical->{releaseError}=$@;
+    $physical->{restoredDelta}=scalar(@test_events)-$before;$physical->{finalPhase}=$staged_phase;
+    $physical->{phase}='complete';1;
+  };$physical->{ok}=$ran?JSON::PP::true:JSON::PP::false;$physical->{error}=$@;
+  # Failed/partial location remains retained. Never guess restoration or cleanup.
+}
+if(defined($physical)) {$physical->{copyOriginals}=[map {my $fh=$physical_copy_originals[$_];
+  {ordinal=>$_+1,live=>defined($fh)&&defined(CORE::fileno($fh))?JSON::PP::true:JSON::PP::false,
+    fd=>defined($fh)?CORE::fileno($fh):undef,actual=>defined($fh)&&defined(CORE::fileno($fh))?[CORE::stat($fh)]:undef}} 0..$#physical_copy_originals];}
 my ($retry_error,$retry_delta,$prior_live);
 if(!$ok&&$producer_staged_started) {
   $bootstrap_deadline=task6a_origin_now()+180;$helper_lifecycle_burned=0;$physical_state='new';$creator_uid=$<;
@@ -273,13 +396,13 @@ if($test_mode eq 'prior-creator') {
 }
 if($ok&&$test_mode eq 'reentry') {eval {task6a_origin_produce_source_vendor_staged_custody()};$repeat_error=$@;}
 my $repeat_delta=scalar(@test_events)-$before_repeat;
-if($ok) {$hold_release=task6a_origin_release_staged_custody();}
+if($ok&&$test_mode ne 'physical-replacement') {$hold_release=task6a_origin_release_staged_custody();}
 my @handles=map {{id=>$_->{id},realm=>$_->{realm},path=>$_->{path},fd=>$_->{fd},
   closeAttempts=>0+($test_counts{$_->{id}}//0),live=>defined(fileno($_->{fh}))?JSON::PP::true:JSON::PP::false}} @test_handles;
 my @helpers=map {{pid=>$_->{pid},settled=>$_->{settled}?JSON::PP::true:JSON::PP::false}} @helper_ledger;
 print JSON::PP->new->canonical->encode({ok=>$ok?JSON::PP::true:JSON::PP::false,error=>$error,
-  result=>$result,release=>$hold_release,events=>\@test_events,roots=>\@test_roots,handles=>\@handles,
-  transport=>$test_transport,writes=>$test_writes,evals=>$test_evals,armed=>$test_armed,failures=>\@test_failures,
+  result=>$result,release=>$hold_release,physical=>$physical,events=>\@test_events,roots=>\@test_roots,handles=>\@handles,
+  transport=>$test_transport,writes=>$test_writes,evals=>$test_evals,armed=>$test_armed,failures=>\@test_failures,failureContexts=>\@test_failure_contexts,
   callbacks=>$test_callbacks,helpers=>\@helpers,producerPhase=>$producer_phase,
   decoderUses=>$test_decoders,nativeUses=>$test_natives,faultID=>$test_fault_id,jsonDecodes=>$test_json_decodes,
   retryError=>$retry_error,retryDelta=>$retry_delta,priorLive=>$prior_live,priorCloseCounts=>$prior_owner,priorRelease=>$prior_release,priorError=>$prior_error,
@@ -289,8 +412,10 @@ print JSON::PP->new->canonical->encode({ok=>$ok?JSON::PP::true:JSON::PP::false,e
   const program=prefix+source+suffix;
   const r=spawnSync('/usr/bin/perl',['-f','-e',program,mode,
     Buffer.from(JSON.stringify(responses)).toString('base64'),String(process.getgid())],{
-    cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},timeout:20000,maxBuffer:2097152,
+    cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},timeout:mode==='physical-replacement'?undefined:20000,maxBuffer:2097152,
   });
+  if(mode==='physical-replacement')console.log(JSON.stringify({kind:'owned-source-physical-case',originalPid:r.pid,status:r.status,signal:r.signal,
+    spawnError:r.error?String(r.error):null,program,stdout:r.stdout?.toString()??null,stderr:r.stderr?.toString()??null}));
   assert.equal(r.error,undefined);assert.equal(r.signal,null);assert.equal(r.status,0,r.stderr.toString());
   assert.equal(r.stderr.length,0);const out=JSON.parse(r.stdout.toString());
   const snapshots=[];
@@ -310,11 +435,43 @@ print JSON::PP->new->canonical->encode({ok=>$ok?JSON::PP::true:JSON::PP::false,e
   }
   // Child is natural terminal0/null. Unknown owner remains unclosed until that
   // terminal; no guessed close or signal in the program or this parent.
-  for(const root of out.roots)cleanup(root);
+  if(mode!=='physical-replacement')for(const root of out.roots)cleanup(root);
   out.snapshots=snapshots;out.fixtureArchiveLength=archive.length;out.failureLines=out.failures.map(f=>program.split('\n').slice(f[2]-2,f[2]+1));return out;
 }
 if(!ordinary)test('source/vendor producer requires ordinary macOS UID',{skip:'no root or unsupported host fallback'},()=>{});
 else {
+  test('held source rejects same-byte physical replacement and stays burned after original restoration',()=>{
+    const r=invoke('physical-replacement'),p=r.physical;assert.equal(r.ok,true);assert.equal(p.ok,true,p.error);
+    assert.equal(p.phase,'complete');assert.equal(p.phaseAfterRecheck,'burned');assert.equal(p.finalPhase,'burned');
+    assert.deepEqual(p.beforeRenameRecheck,{scope:'staged-source-vendor-custody-diagnostic-only',productionAuthority:false,fileCount:6,directoryCount:6});
+    assert.deepEqual(p.guardsAtReplacement,p.guardsBefore);assert.equal(p.guardsBefore.phase,'active');
+    assert.equal(p.guardsBefore.invalid,0);assert.equal(p.guardsBefore.uncertain,0);assert.equal(p.guardsBefore.disposalStarted,0);
+    assert.equal(p.guardsBefore.helpersBurned,0);assert.equal(p.guardsBefore.helpersSettled,true);
+    assert.equal(p.afterRecheckDeadline,p.guardsBefore.deadline);assert.ok(p.helpersSettledAfter);assert.equal(p.helpersBurnedAfter,0);
+    for(const clock of [p.beforeRenameClock,p.replacementClock,p.afterRecheckClock])assert.ok(clock<p.guardsBefore.deadline);
+    assert.deepEqual(p.expectedAtReplacement,p.expectedBefore);assert.equal(p.originalsAtReplacement.length,12);
+    for(let i=0;i<12;i++)for(const field of [0,1,2,4,5])assert.equal(p.originalsAtReplacement[i][field],p.expectedBefore[i][field]);
+    assert.equal(p.pathAtReplacement[1],p.replacementIdentity[1]);assert.notEqual(p.pathAtReplacement[1],p.originalIdentity[1]);
+    assert.deepEqual(p.firstRefusal,r.failures[p.firstRefusalIndex]);
+    assert.equal(p.firstRefusalContext[3],'main::task6a_origin_directory_identity');assert.equal(p.qualifiedBeforeRestore,true);
+    assert.ok(r.failureLines[p.firstRefusalIndex].some(line=>line.includes('task6a_origin_refuse() unless defined($actual->[$field])&&$actual->[$field]==$expected->[$field]')));
+    for(const field of ['recheckError','restoredError','releaseError'])assert.match(p[field],/TASK6A_ORIGIN_BOOTSTRAP_REFUSED/);
+    assert.equal(p.stagedBefore.length,12);assert.ok(p.stagedBefore.every(h=>h.live&&h.closed===0));
+    assert.ok(p.stagedAfter.every(h=>!h.live&&h.closes===1));assert.equal(p.restoredDelta,0);
+    assert.equal(p.copies.length,6);assert.ok(p.copies.every(f=>f.openIntents===1&&f.writeIntents===1&&f.readIntents===1&&f.closeIntents===1&&f.closed));
+    assert.equal(p.copyOriginals.length,6);assert.ok(p.copyOriginals.every(f=>!f.live&&f.fd===null&&f.actual===null));
+    for(const f of p.copies){assert.equal(f.openReturned,true);assert.equal(f.closeReturned,true);assert.equal(f.liveAfterClose,false);
+      assert.equal(f.copyError,'');assert.equal(f.closeError,'');assert.ok(Number.isInteger(f.fd));assert.equal(f.initialIdentity.length,13);
+      assert.equal(f.writeReturned,f.size);assert.equal(f.readReturned,f.size);assert.equal(f.eofReturned,0);}
+    for(const h of r.handles){assert.equal(h.closeAttempts,1);assert.equal(h.live,false);}
+    assert.ok(r.helpers.every(h=>h.settled));assert.equal(r.transport,13);assert.equal(r.evals,3);assert.equal(r.callbacks,0);
+    const original=lstatSync(p.root),container=lstatSync(p.container),replacement=lstatSync(p.container+'/replacement');
+    assert.equal(original.dev,p.originalIdentity[0]);assert.equal(original.ino,p.originalIdentity[1]);
+    assert.equal(container.dev,p.containerIdentity[0]);assert.equal(container.ino,p.containerIdentity[1]);
+    assert.equal(replacement.dev,p.replacementIdentity[0]);assert.equal(replacement.ino,p.replacementIdentity[1]);assert.notEqual(replacement.ino,original.ino);
+    assert.ok(r.snapshots[0].files.every(f=>f.exact));
+    for(const f of r.snapshots[0].files)assert.deepEqual(readFileSync(p.root+'/'+f.path),readFileSync(p.container+'/replacement/'+f.path));
+  });
   test('owned source/vendor producer hands thirteen closed creator originals to twelve staged originals',()=>{
     const r=invoke();assert.equal(r.ok,true,JSON.stringify(r));assert.equal(r.transport,13);assert.equal(r.evals,3);assert.equal(r.writes,6);assert.equal(r.decoderUses,1);assert.equal(r.nativeUses,1);
     assert.deepEqual(r.result,{scope:'source-vendor-producer-custody-diagnostic-only',productionAuthority:false,
