@@ -3749,3 +3749,106 @@ queued remote ingress; idle launchers, local ESM registries and supplied Task4l
 candidate PIDs cannot provide it. A parent that exits while its child survives,
 plus an already queued entry, is the required first behavioral counterexample.
 Do not manufacture a missing-event-call RED: current UNKNOWN correctly refuses.
+
+### Task4n: actual parent tail and already queued legacy counterexample
+
+**Base:** d7cba4fd, source/vendor producer delivered; Task4m remains non-admitting.
+**Map:** existing adapter test and this paired spec/plan only. Root sole writer;
+independent read-only pre-effect/final reviews. No production owner change.
+
+- [x] Review exact finite recipe before effects: ordinary fixed Node programs,
+  exclusive0700 witness/0600 wx files, real registered parent originals, descendant
+  ignored stdio and same-result unref only after READY, bounded8s deadlines.
+- [x] Add one actual behavioral case using existing authentic local registry,
+  owner/participant/ingress fixture bridges. Register both pending queues before
+  READY/drain; preserve actual parent/helper/outer original custody and receipts.
+- [x] Require SAME JS/child originals settled and parent callback plus seven actual
+  events0/null while V5 remains UNKNOWN; no PG/ROOT/event/native/forbidden imports.
+  Release afterward: cooperative queued entry denied, actual legacy late write.
+- [x] Retain fixed programs/argv, actual creation DATA, optional real ps DATA,
+  before/after file absence/effect and all raw/original terminals. No PID adoption,
+  descendant-native-exit/global-family inference, path cleanup or signal.
+- [x] Focused case plus unchanged Task4m three cases; exact source contracts and
+  independent original/evidence review. No fabricated missing-call RED; any later
+  historical provider is a separate explicitly owned contract.
+- [ ] Scoped checkpoint/draft PR delivery/current handoff; leave whole admission,
+  historical cohort, backend/fence, clean-main/runtime and matrix/fleet gates open.
+
+Task4n's test-only `SETFARM_TASK4N_LOCAL_ONLY_CLAIM=1` adds a counterfactual
+assertion after all actual parent/UNKNOWN/queued/late evidence is recorded: it
+claims authenticated local settlement excludes the already observed late marker.
+Its expected behavioral RED is the real marker's presence, not a missing API or
+changed production guard. It grants nothing and changes only the disposable test
+program's final assertion. Preserve its originals before failure publication.
+
+Review amendments: publish a provisional occurrence ledger before dispatch,
+retain exact programs/argv and actual parent/helper custody as acquired, and seal
+terminal joins in finally. Add the narrowly armed post-dispatch assertion-loss
+RED (`SETFARM_TASK4N_ASSERTION_LOSS=1`); require its actual created witness identity
+and naturally joined parent callback/seven events, without healthy qualification.
+READY/release/late readers poll complete canonical/exact bytes under unchanged
+absolute deadlines and single exclusive writes. Preserve all older pre-amendment
+controls as historical inputs; run fresh frozen controls after these fixes.
+
+
+#### Task4n current finite verification, 2026-10-13
+
+Frozen test SHA256 be513aeeb3b2f9233c4c80a444cfab3c80e77f1de4728180e855b3abbec1eeda;
+spec bcd518f8b8302128d52e48686be569dbf1fa9854dae13dad4e9f7ebf9816e135.
+Captured plan900a2516 is retained; only this post-terminal evidence update changes
+that nominated input. Root source/guard owners remain unchanged from d7cba4fd.
+
+All raw/copy/original receipts are under the private workspace
+logs/2026-10-13-task4n-parent-tail-controls/. Four fresh outer originals naturally
+settled with unchanged seven before/after source pins:
+
+- focused-green-v2: original91210,0/null,1PASS/zero other statuses;
+  receipt649a7de9e9ddcd134d9468972dcb57951d815e7a5eb98bb07187eb83433368e1.
+- assertion-loss-red-v2: original94074,1/null, expected exact
+  ARMED_POST_DISPATCH_ASSERTION_LOSS after dispatch. Parent96114 naturally0/null,
+  callback/seven actual events and six cleanup joins retained. No drain was
+  started: disposable cooperative body accepted once. No UNKNOWN/late/ps credit.
+  receipt6c47a202b53457a64ebfe7c2296b6aa28a5b6155d71599c07239d3acbe2d4ec8.
+- local-only-claim-red-v2: original96116,1/null, intended real late-marker
+  contradiction after SAME local settlement/UNKNOWN. Parent98170 naturally0/null,
+  cooperative queued body0 and exact late effect retained before assertion.
+  receipt5da530f39f9e543f277c916f09763b67b0b21a06c5c0468ddbfb679c9a3f2678.
+- focused-adjacent-v2: original98990,0/null,4PASS/zero FAIL/CANCEL/SKIP/TODO,
+  116403.182792ms. Three unchanged Task4m cases plus actual parent-tail case;
+  final parent7028 naturally0/null. Receipt
+  03a2b65098520a592c961cb4c5be75eb4d8e8b40931e6792274fdf836807e944.
+  Raw stdout2481B SHA256
+  d2459646e033b3a872df4c8267591581ded10f5a58420e996f066f1182f2cc01;
+  stderr0B. No second interpretation of an earlier captured test version.
+
+Seven intent/result/originals triples remain at /private/tmp/setfarm-native-inputs-v2.
+with tags SC2P4l,92HGRo,iNA7tZ,FdxCPn,l0XbNf,g4htjB,TEdLiE and
+.joint-{intent,result,originals}.json suffixes. All actual outer EOF/stream close
+records agree. Each retains29 source pins/14 disclosed manual bridges; seven
+modeled compiler/tool command records are DATA, not actual compiler/native proof.
+Four actual witness paths/devino identities remain retained; no path deletion,
+PID signalling/adoption or descendant-original exit is inferred from ps/markers.
+
+Root terminal audit684 checks/0 failures; the initial commands-empty auditor
+incorrectly rejected the seven disclosed command doubles and is preserved as an
+unqualified overbroad-oracle attempt. No source/test changed to fix that auditor.
+Two independent whole source/material reviews C0/I0/M0; one3425-check audit and
+one6756-check audit report0 mismatches. The latter fully read1111 retained regular
+files/9804068B, seven SDK links recorded without following. Source copies are
+post-terminal nominations only, never a transitive or pre-effect freeze.
+Final stdout differs from .joint-originals by exactly +1 composite write/+1 close
+for original-publication itself; all other fields agree.
+
+Fresh source contracts: version2.3.79, English2037/path1012, Node syntax0/null and
+empty diff0/null. Syntax/diff have separate actual original argv/raw receipts;
+no TS source changed, stock build/emission or native effects were run here.
+First development GREEN/naive RED remain historical before review amendments.
+
+Task4n establishes the required finite counterexample, not Task4 completion.
+Historical owner-held cohort and queued remote ingress remain unknown; Task3
+controller capability, six-effect/crash, authenticated entry, reviewed whole
+clean-main/HTTP and broader matrix/fleet gates stay open. Live11:05UTC MC3080 and
+gateway18789 HTTP200;3333 remains refused,297 DB runs observed by health. No
+partial merge, live restart, account/grant/selector or startup/migration change.
+The scoped checkpoint is recorded by the primary owner in the current handoff
+and private ledger after this evidence-only plan update is committed.

@@ -4525,3 +4525,85 @@ effects. Idle foreign handles earn zero scope/drain/effect admissions, with
 trusted source/authentication reads disclosed; proxy/wrong-arity inputs earn
 zero traps and early ports. Existing quiet and
 reservation routes remain unchanged. No live services, Doctor or DB mutation.
+
+## Task4n: finite parent-tail and already queued legacy behavior witness
+
+2026-10-13, after source/vendor checkpoint d7cba4fd. Execute Task4m's required
+first behavioral counterexample before inventing a historical ingress capability.
+This is one ordinary finite test, not a production admission change. V5's current
+UNKNOWN/refusal remains the expected healthy result; no missing-event-call RED.
+
+Exact three-path File Map: existing `deployment-dashboard-cutover-adapter-v2.test.js`
+and this paired spec/plan. Reuse ownerSetup, participants, ingressPreparationSetup,
+the genuine inherited queuedGate and actual execFile interception before local
+bridge import. Adapter, declaration, local drains, native event provider, source
+bootstrap, V2 and guarded migration remain unchanged. Existing finite fixture
+native/build bridges remain disclosed; actual Node parent/descendant behavior is
+additional ordinary evidence, never Root/native/family authority.
+
+Use fixed literal parent/grandchild programs and exact argv/env. A fresh exclusive
+0700 ordinary-owned witness directory captures actual dev/ino/UID before spawn;
+only fixed0600 wx ready/release/late filenames are used. Preserve all paths.
+Grandchild registers a pending Promise callback before publishing READY. It polls
+only its fixed release file under one autonomous absolute8s deadline, writes its
+fixed late marker once when that already queued callback is released, then ends.
+Deadline/error is a failed witness branch, never a successful quiet result.
+
+Establish the test cleanup bracket before spawn/READY/drain/assertions. Parent
+and grandchild each have independent autonomous absolute8s failure deadlines;
+missing READY or stdin EOF cannot strand the registered parent. Finally end only
+its original stdin, join its callback/all stream+exit+close records, release/join
+the cooperative queue and join every owned ps helper, even after assertion loss.
+
+Parent retains the actual descendant creation result and events in its own
+process. After READY and own stdin EOF, clear readiness/failure timers and unref
+only that same disposable fixture descendant so the Node parent can naturally
+exit0 while it survives. Ignored descendant stdio must not retain any of the
+parent's three original pipes. Publish bounded creation/event/PID data before
+natural parent exit; these bytes never transfer original descendant custody.
+No unref/signal/disposal of the actual locally registered parent is permitted.
+
+Order: register cooperative queued callback and actual parent in the same genuine
+local producer; grandchild queues callback then READY; observe actual child-drain
+wait; end only actual parent stdin; require its callback and all seven original
+exit/close/stdio events; await both SAME local originals and V5 UNKNOWN. Before
+release require release/late files absent, real parent terminal0/null and zero
+PG/ROOT/event/native/forbidden-import ports. Then release both queues. Cooperative
+inherited entry must refuse without dispatching its body; uninstrumented legacy
+queued work must produce the exact late marker after parent/local settlement.
+That real late effect is the counterexample to local-only historical closure.
+
+Any real ps observations use the retained original execFile on fixed /bin/ps,
+fixed decimal PID argv and environment {PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}. Capture each helper's
+actual exit/close/outputEOF+close/callback. Alive/reparented/later-absent PID rows
+and the serialized descendant creation ledger stay secondary DATA. Never adopt
+them as descendant original exit, zero-owner, complete cohort or cleanup proof.
+The decisive assertion is an actual late effect after original parent settlement.
+
+Fixture finally releases only its own queued gates and original parent stdin;
+no guessed signal, kill, path rescue/deletion, retry or deadline renewal. Finite
+child deadlines bound unsuccessful witnesses. Preserve failed source/program/raw
+receipts and original main/helper terminals. Source/provider/witness paths remain
+retained, so sampled descendant absence never authorizes pathname cleanup.
+Full historical owner-held cohort and queued remote-ingress contract remains open.
+
+Task4n's test-only `SETFARM_TASK4N_LOCAL_ONLY_CLAIM=1` adds a counterfactual
+assertion after all actual parent/UNKNOWN/queued/late evidence is recorded: it
+claims authenticated local settlement excludes the already observed late marker.
+Its expected behavioral RED is the real marker's presence, not a missing API or
+changed production guard. It grants nothing and changes only the disposable test
+program's final assertion. Preserve its originals before failure publication.
+
+Create the provisional occurrence ledger before parent dispatch. Retain the fresh
+witness creation identity, exact fixed programs/argv and actual parent/helper
+records as acquired; finally publishes original terminal joins even after an
+early assertion. The test-only `SETFARM_TASK4N_ASSERTION_LOSS=1` fails immediately
+after actual dispatch and producer completion. Its expected RED must retain the
+same created path/identity and naturally joined parent callback/seven events;
+it supplies no UNKNOWN, late-effect or historical qualification.
+
+Path existence is not completed publication. Poll for complete canonical READY,
+exact release and exact late-marker bytes under the same original deadlines.
+Incomplete writes stay pending; completed malformed READY/release fails. Keep
+one exclusive write attempt per file, final metadata snapshots, no deadline
+renewal, rewrites or recovery adoption.

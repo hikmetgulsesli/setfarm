@@ -1314,6 +1314,191 @@ test('ingress preparation joins SAME real owned child before historical refusal 
   await assertIngressUnknown();
 `,{resources:true,owner:true,ingress:true,bounded:true}));
 
+// Task4n: one finite real parent tail; these programs/rows are DATA only.
+const legacyTailChildProgram=String.raw`
+const fs=require('node:fs'),path=require('node:path');
+const directory=process.argv[1],releasePath=path.join(directory,'release'),latePath=path.join(directory,'late');
+const deadline=process.hrtime.bigint()+8_000_000_000n;
+const failure=setTimeout(()=>process.exit(2),8000);let polling,resolve;
+const queued=new Promise(r=>{resolve=r});
+queued.then(()=>{
+  if(process.hrtime.bigint()>=deadline)process.exit(2);
+  fs.writeFileSync(latePath,'LEGACY_QUEUED_AFTER_PARENT\n',{flag:'wx',mode:0o600});
+  clearTimeout(failure);clearInterval(polling);
+});
+fs.writeFileSync(path.join(directory,'ready'),JSON.stringify({pid:process.pid,queued:true})+'\n',{flag:'wx',mode:0o600});
+polling=setInterval(()=>{
+  if(process.hrtime.bigint()>=deadline)process.exit(2);
+  let bytes;try{bytes=fs.readFileSync(releasePath,'utf8')}catch(error){if(error.code==='ENOENT')return;throw error}
+  if(bytes==='RELEASE_AFTER_LOCAL_UNKNOWN\n'||bytes==='FIXTURE_FINALLY_RELEASE\n'){
+    clearInterval(polling);resolve();
+  }else if(bytes.endsWith('\n'))process.exit(2);
+},10);
+`;
+const legacyTailParentProgram=String.raw`
+const cp=require('node:child_process'),fs=require('node:fs'),path=require('node:path');
+const directory=process.argv[1],source=Buffer.from(process.argv[2],'base64').toString('utf8');
+const deadline=process.hrtime.bigint()+8_000_000_000n;
+const failure=setTimeout(()=>process.exit(2),8000);let ended=false,ready=false,polling;
+const events=[],descendant=cp.spawn(process.execPath,['-e',source,directory],{
+  cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},stdio:'ignore'});
+for(const event of ['spawn','error','exit','close'])descendant.on(event,(a,b)=>events.push({event,
+  value:typeof a==='number'?a:null,signal:typeof b==='string'?b:null}));
+descendant.once('error',()=>process.exit(2));
+function finish(){
+  if(!ended||!ready)return;
+  clearInterval(polling);clearTimeout(failure);descendant.unref();
+  process.stdout.write(JSON.stringify({scope:'serialized-descendant-creation-DATA-only',
+    pid:descendant.pid,ready:true,unrefed:true,events})+'\n',error=>{if(error)process.exit(2)});
+}
+process.stdin.resume();process.stdin.once('end',()=>{ended=true;finish()});
+polling=setInterval(()=>{
+  if(process.hrtime.bigint()>=deadline)process.exit(2);
+  let bytes;try{bytes=fs.readFileSync(path.join(directory,'ready'),'utf8')}catch(error){if(error.code==='ENOENT')return;throw error}
+  if(bytes!==JSON.stringify({pid:descendant.pid,queued:true})+'\n'){
+    if(bytes.endsWith('\n'))process.exit(2);return;
+  }
+  ready=true;clearInterval(polling);finish();
+},10);
+`;
+test('ingress UNKNOWN retains parent-exit legacy queued tail beyond SAME local settlement',()=>exercise(
+  ownerSetup+participants+`
+  const witness=fs.realpathSync(fs.mkdtempSync('/private/tmp/setfarm-joint-legacy-tail-v1.'));
+  fs.chmodSync(witness,0o700);const witnessIdentity=fs.lstatSync(witness,{bigint:true});
+  const parentProgram=${JSON.stringify(legacyTailParentProgram)},legacyProgram=${JSON.stringify(legacyTailChildProgram)};
+  const parentArgs=['-e',parentProgram,witness,Buffer.from(legacyProgram).toString('base64')];
+  const events=[],psHelpers=[];let child,closed,callback,parentCallback,queued,releaseQueued,queuedResult;
+  const ledger=out.legacyTailWitness={scope:'finite-parent-tail-counterexample-only-no-historical-grant',
+    phase:'created',witness,identity:{dev:String(witnessIdentity.dev),ino:String(witnessIdentity.ino),
+      uid:Number(witnessIdentity.uid),mode:Number(witnessIdentity.mode&0o777n)},
+    programs:{parent:parentProgram,legacy:legacyProgram},parent:{command:${JSON.stringify(fixedNode)},argv:parentArgs,
+      pid:null,callback:null,events,terminalJoined:false},psHelpers};
+  assert.equal(witnessIdentity.isDirectory(),true);assert.equal(witnessIdentity.isSymbolicLink(),false);
+  assert.equal(Number(witnessIdentity.uid),process.getuid());assert.equal(Number(witnessIdentity.mode&0o777n),0o700);
+  cp.execFile=(command,args,done)=>{
+    assert.equal(command,${JSON.stringify(fixedNode)});assert.deepEqual(args,parentArgs);
+    child=originalExecFile(command,args,{cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},encoding:'utf8'},done);
+    ledger.parent.pid=child.pid;ledger.phase='parent-dispatched';
+    closed=new Promise(resolve=>child.once('close',resolve));
+    for(const event of ['exit','close'])child.on(event,(code,signal)=>events.push({event,code,signal}));
+    for(const [name,stream] of [['stdin',child.stdin],['stdout',child.stdout],['stderr',child.stderr]])
+      for(const event of name==='stdin'?['close']:['end','close'])stream.on(event,()=>events.push({event:name+':'+event}));
+    return child;
+  };syncBuiltinESMExports();
+`+ingressPreparationSetup+String.raw`
+  const releasePath=witness+'/release',readyPath=witness+'/ready',latePath=witness+'/late';
+  const absoluteDeadline=process.hrtime.bigint()+8_000_000_000n;
+  const waitFor=async predicate=>{while(!predicate()){
+    assert.ok(process.hrtime.bigint()<absoluteDeadline,'LEGACY_WITNESS_DEADLINE');
+    await new OriginalPromise(resolve=>setTimeout(resolve,10));
+  }};
+  const readPublished=p=>{try{return fs.readFileSync(p,'utf8')}catch(error){if(error.code==='ENOENT')return null;throw error}};
+  const completeReady=()=>{const bytes=readPublished(readyPath);if(bytes===null||!bytes.endsWith('\n'))return null;
+    const value=JSON.parse(bytes);assert.equal(Number.isInteger(value.pid),true);assert.ok(value.pid>0&&value.pid<=2147483647);
+    assert.equal(bytes,JSON.stringify({pid:value.pid,queued:true})+'\n');return value;
+  };
+  const snapshotFile=p=>{const before=fs.lstatSync(p,{bigint:true});
+    assert.equal(before.isFile(),true);assert.equal(before.isSymbolicLink(),false);
+    assert.equal(Number(before.uid),process.getuid());assert.equal(Number(before.nlink),1);
+    assert.equal(Number(before.mode&0o777n),0o600);const bytes=fs.readFileSync(p,'utf8');
+    const after=fs.lstatSync(p,{bigint:true});assert.equal(after.dev,before.dev);assert.equal(after.ino,before.ino);
+    return {bytes,dev:String(before.dev),ino:String(before.ino),mode:0o600};
+  };
+  const observePid=pid=>{
+    assert.equal(Number.isInteger(pid),true);assert.ok(pid>0&&pid<=2147483647);
+    const record={scope:'readonly-ps-DATA-not-original-descendant-custody',pid,events:[]};psHelpers.push(record);
+    let callbackResult;
+    const original=originalExecFile('/bin/ps',['-p',String(pid),'-o','pid=','-o','ppid=','-o','stat='],
+      {cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},encoding:'utf8'},(error,stdout,stderr)=>{
+        callbackResult={errorCode:error?.code??null,stdout,stderr};
+      });record.originalPid=original.pid;
+    const settled=new OriginalPromise(resolve=>original.once('close',(code,signal)=>{record.status=code;record.signal=signal;resolve()}));
+    for(const event of ['exit','close'])original.on(event,(code,signal)=>record.events.push({event,code,signal}));
+    for(const [name,stream] of [['stdout',original.stdout],['stderr',original.stderr]])
+      for(const event of ['end','close'])stream.on(event,()=>record.events.push({event:name+':'+event}));
+    record.original=settled.then(()=>{assert.ok(callbackResult);record.callback=callbackResult;return record});
+    record.original.catch(()=>{}); // retain the SAME original for finally, including rejection
+    return record.original;
+  };
+  let result,waiting,boundary,producer,primaryFailure,cooperativeDispatches=0;
+  try{
+    producer=local.withDashboardCutoverLocalProducerAsyncV2('medic-install',async()=>{
+      const gate=new OriginalPromise(resolve=>{releaseQueued=resolve});
+      queued=gate.then(()=>{try{
+        local.withDashboardCutoverLocalProducerSyncV2('workspace-cleanup',()=>{cooperativeDispatches++;});
+        return 'accepted';
+      }catch(error){return error.message}});
+      parentCallback=new OriginalPromise(resolve=>{
+        local.execFileDashboardCutoverLocalChildV3(${JSON.stringify(fixedNode)},parentArgs,(error,stdout,stderr)=>{
+          callback={error:error?.message??null,stdout,stderr};ledger.parent.callback=callback;resolve(callback);
+        });
+      });
+      parentCallback.catch(()=>{}); // defer known rejection to the independently recorded finally join
+    });await producer;
+    ${process.env.SETFARM_TASK4N_ASSERTION_LOSS==='1'?"assert.fail('ARMED_POST_DISPATCH_ASSERTION_LOSS');":''}
+    await waitFor(completeReady);const ready=snapshotFile(readyPath);ledger.ready=ready;ledger.phase='ready';
+    const queuedReady=JSON.parse(ready.bytes);assert.equal(queuedReady.queued,true);
+    assert.equal(fs.existsSync(releasePath),false);assert.equal(fs.existsSync(latePath),false);
+    waiting=observeIngressWait('acquireDashboardCutoverLocalChildDrainV3');
+    const work=adapter.prepareHeldDashboardCutoverJointIngressV5(loaded,approved,actualOwner);
+    const outcome=work.then(()=>({success:true}),error=>({error:error.message}));
+    boundary=await OriginalPromise.race([waiting.then(()=>'original-child-wait'),outcome.then(()=>'returned')]);ledger.boundary=boundary;
+    assert.equal(boundary,'original-child-wait');assertIngressPending();
+    globalThis.Promise=OriginalPromise;child.stdin.end();await closed;await parentCallback;result=await outcome;ledger.result=result;
+    assert.equal(callback.error,null);assert.equal(callback.stderr,'');const creation=JSON.parse(callback.stdout);ledger.creation=creation;
+    assert.equal(creation.scope,'serialized-descendant-creation-DATA-only');assert.equal(creation.pid,queuedReady.pid);
+    assert.equal(creation.ready,true);assert.equal(creation.unrefed,true);assert.ok(creation.events.some(e=>e.event==='spawn'));
+    for(const event of ['stdin:close','stdout:end','stdout:close','stderr:end','stderr:close'])
+      assert.equal(events.filter(row=>row.event===event).length,1);
+    for(const event of ['exit','close'])assert.deepEqual(events.find(row=>row.event===event),{event,code:0,signal:null});
+    assert.deepEqual(result,{error:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'});await assertIngressUnknown();
+    ledger.localOriginalsReady=true;ledger.phase='local-settled';
+    assert.equal(fs.existsSync(releasePath),false);assert.equal(fs.existsSync(latePath),false);
+    const alive=await observePid(creation.pid);assert.equal(alive.status,0);assert.equal(alive.signal,null);
+    assert.equal(alive.callback.errorCode,null);assert.equal(alive.callback.stderr,'');
+    for(const event of ['stdout:end','stdout:close','stderr:end','stderr:close'])assert.equal(alive.events.filter(row=>row.event===event).length,1);
+    for(const event of ['exit','close'])assert.deepEqual(alive.events.find(row=>row.event===event),{event,code:0,signal:null});
+    const columns=alive.callback.stdout.trim().split(/\s+/);assert.equal(columns.length,3);assert.equal(Number(columns[0]),creation.pid);
+    assert.ok(!columns[2].includes('Z'),'diagnostic target was already a zombie');
+    assert.notEqual(Number(columns[1]),child.pid,'parent still reported by diagnostic ps');
+    releaseQueued();queuedResult=await queued;ledger.queuedResult=queuedResult;ledger.cooperativeDispatches=cooperativeDispatches;
+    assert.equal(queuedResult,'DASHBOARD_CUTOVER_LOCAL_PRODUCER_DRAIN_REFUSED');
+    assert.equal(cooperativeDispatches,0);
+    fs.writeFileSync(releasePath,'RELEASE_AFTER_LOCAL_UNKNOWN\n',{flag:'wx',mode:0o600});
+    await waitFor(()=>readPublished(latePath)==='LEGACY_QUEUED_AFTER_PARENT\n');const late=snapshotFile(latePath);ledger.late=late;
+    assert.equal(late.bytes,'LEGACY_QUEUED_AFTER_PARENT\n');
+    const after=fs.lstatSync(witness,{bigint:true});assert.equal(after.dev,witnessIdentity.dev);assert.equal(after.ino,witnessIdentity.ino);
+    ledger.phase='complete';
+    ${process.env.SETFARM_TASK4N_LOCAL_ONLY_CLAIM==='1'?"assert.equal(fs.existsSync(latePath),false,'NAIVE_LOCAL_SETTLEMENT_EXCLUDES_LEGACY_TAIL');":''}
+  }catch(error){primaryFailure=error;ledger.failure={message:error.message};ledger.phase='failed';throw error;
+  }finally{
+    globalThis.Promise=OriginalPromise;WeakMap.prototype.set=weakSet;
+    const cleanup=ledger.cleanup=[],join=async(step,operation)=>{
+      try{await operation();cleanup.push({step,state:'fulfilled'});return true}
+      catch(error){cleanup.push({step,state:'rejected',message:error.message});return false}
+    };
+    if(child){
+      await join('parent-stdin-end',()=>{if(!child.stdin.writableEnded&&!child.stdin.destroyed)child.stdin.end()});
+      const terminal=await join('parent-original-close',()=>{assert.ok(closed,'MISSING_PARENT_CLOSE_ORIGINAL');return closed});
+      const delivered=await join('parent-original-callback',()=>{assert.ok(parentCallback,'MISSING_PARENT_CALLBACK_ORIGINAL');return parentCallback});
+      ledger.parent.terminalJoined=terminal&&delivered;ledger.parent.callback=callback??null;
+    }else if(parentCallback){await join('rejected-dispatch-callback',()=>parentCallback)}
+    if(releaseQueued){await join('cooperative-original',async()=>{releaseQueued();queuedResult=await queued;
+      ledger.queuedResult=queuedResult;ledger.cooperativeDispatches=cooperativeDispatches});
+    }
+    await join('fixture-release',()=>{if(!fs.existsSync(releasePath))fs.writeFileSync(releasePath,'FIXTURE_FINALLY_RELEASE\n',{flag:'wx',mode:0o600})});
+    if(producer)await join('producer-original',()=>producer);
+    const helpers=await OriginalPromise.allSettled(psHelpers.map(row=>row.original));
+    helpers.forEach((row,index)=>cleanup.push({step:'ps-original-'+index,state:row.status,
+      ...(row.status==='rejected'?{message:row.reason?.message??String(row.reason)}:{})}));
+    for(const row of psHelpers)delete row.original;
+    ledger.finallyJoined=cleanup.every(row=>row.state==='fulfilled')&&(!child||ledger.parent.terminalJoined);
+    if(!ledger.finallyJoined&&!primaryFailure){ledger.phase='failed';
+      const error=new Error('LEGACY_WITNESS_FINALLY_INCOMPLETE');ledger.failure={message:error.message};throw error;
+    }
+  }
+`,{resources:true,owner:true,ingress:true,bounded:true}));
+
 test('ingress preparation rejects idle foreign admission and proxy arity before authentic local conjunction',()=>exercise(
   ownerSetup+participants+ingressPreparationSetup+String.raw`
   const refusal={message:'DASHBOARD_CUTOVER_JOINT_ORIGINAL_OPERATION_REFUSED'};
