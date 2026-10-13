@@ -4,12 +4,14 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { startDashboard } from "./dashboard.js";
+import { assertOrdinaryDashboardDeploymentCutoverAdmissionV2 } from "../internal-production/baseline-deployment-cutover-v1.js";
 
 const port = parseInt(process.argv[2], 10) || 3333;
 
 const pidDir = path.join(os.homedir(), ".openclaw", "setfarm");
 const pidFile = path.join(pidDir, "dashboard.pid");
 
+assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
 fs.mkdirSync(pidDir, { recursive: true });
 fs.writeFileSync(pidFile, String(process.pid));
 
