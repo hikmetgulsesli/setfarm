@@ -300,9 +300,12 @@ async function observeLegacyDatabaseCensusWithContinuationV1<T>(
   afterCensus: (connection: import("postgres").Sql, census: LegacyDatabaseCensusV1) => Promise<T>,
   heldShareLocks = false,
   exactPre32JournalIdentity = false,
+  retainedGuard?: { check: () => void; revoke: () => void },
 ): Promise<T> {
   const postgresModule = await import("postgres");
+  retainedGuard?.check();
   const { observeLegacyFindingPublicationInventoryV1 } = await loadLegacyFindingPublicationObserverV2();
+  retainedGuard?.check();
   if (!databaseUrl) currentEntryFail("legacy zero-owner database is unavailable");
   let cutoverTarget: URL | undefined;
   if (profile === "cutover-local") {
@@ -325,23 +328,30 @@ async function observeLegacyDatabaseCensusWithContinuationV1<T>(
     const verifyHeldJournalIdentity = exactPre32JournalIdentity
       ? (await import("../db/contract-spine-migrations.js")).verifyHeldPre32ContractSpineJournalIdentityV1
       : null;
+    retainedGuard?.check();
     return await sql.begin(heldShareLocks
       ? "isolation level read committed read only" : "isolation level repeatable read read only", async (tx) => {
       const connection = tx as unknown as typeof sql;
+      retainedGuard?.check();
       await connection`SET LOCAL statement_timeout = '5s'`;
+      retainedGuard?.check();
       await connection`SET LOCAL lock_timeout = '1s'`;
+      retainedGuard?.check();
       if (heldShareLocks) {
         if (!coldBootstrap || profile !== "cutover-local") currentEntryFail("pre32 SHARE-lock profile is invalid");
         for (const table of PRE32_OWNER_WRITE_TABLES_V1) {
           await connection.unsafe(`LOCK TABLE public.${table} IN SHARE MODE`);
+          retainedGuard?.check();
         }
         if (verifyHeldJournalIdentity) {
           await verifyHeldJournalIdentity(async (statement, parameters) =>
             connection.unsafe(statement, [...parameters]));
+          retainedGuard?.check();
         }
         const journal = await connection<Array<{ version: number; state: string }>>`
           SELECT version,state FROM public.setfarm_schema_migrations WHERE version >= 26 ORDER BY version
         `;
+        retainedGuard?.check();
         if (journal.length !== 6 || journal.some((row, index) => !isPlainRecord(row)
           || !hasExactKeys(row, ["version", "state"]) || row.version !== index + 26 || row.state !== "applied")) {
           currentEntryFail("pre32 SHARE-lock census requires applied migration-26-through-31 tail");
@@ -349,10 +359,139 @@ async function observeLegacyDatabaseCensusWithContinuationV1<T>(
       }
       const census = await observeLegacyDatabaseCensusOnConnectionV2(
         connection, coldBootstrap, observeLegacyFindingPublicationInventoryV1);
+      retainedGuard?.check();
       return afterCensus(connection, census);
     }) as T;
   } finally {
+    retainedGuard?.revoke();
     await sql.end({ timeout: 1 });
+    retainedGuard?.check();
+  }
+}
+
+type DashboardPre32ScopeStateV2 = {
+  burned: boolean;
+  live: boolean;
+  active: boolean;
+  explicitAssertions: number;
+  callbackSettled: boolean;
+  callback: Promise<unknown> | null;
+  pending: Promise<void> | null;
+  read: (() => Promise<void>) | null;
+};
+
+const dashboardPre32ScopesV2 = new WeakMap<object, DashboardPre32ScopeStateV2>();
+// A failed invocation retains original pending callback/query custody; no retry.
+let dashboardPre32CurrentV2: DashboardPre32ScopeStateV2 | undefined;
+
+function dashboardPre32FailV2(): never {
+  currentEntryFail("dashboard retained pre32 transaction invalid");
+}
+
+function checkDashboardPre32StateV2(state: DashboardPre32ScopeStateV2, requireLive = false): void {
+  if (dashboardPre32CurrentV2 !== state || state.burned || (requireLive && !state.live)) {
+    state.burned = true;
+    dashboardPre32FailV2();
+  }
+}
+
+function readDashboardPre32ScopeV2(state: DashboardPre32ScopeStateV2): Promise<void> {
+  checkDashboardPre32StateV2(state, true);
+  if (state.active || !state.read) { state.burned = true; dashboardPre32FailV2(); }
+  state.active = true;
+  const pending = (async () => {
+    try { await state.read!(); checkDashboardPre32StateV2(state, true); }
+    catch { state.burned = true; dashboardPre32FailV2(); }
+    finally { state.active = false; }
+  })();
+  state.pending = pending;
+  // Observe detached rejection without turning it into success or retry.
+  void pending.then(() => { if (state.pending === pending) state.pending = null; },
+    () => { if (state.pending === pending) state.pending = null; });
+  return pending;
+}
+
+/** Original-transaction composition only; never owner or service authority. */
+export async function assertHeldDashboardCutoverPre32DatabaseV2(scope: object): Promise<void> {
+  const current = dashboardPre32CurrentV2;
+  if (current?.active) { current.burned = true; dashboardPre32FailV2(); }
+  const state = dashboardPre32ScopesV2.get(scope);
+  if (!state) dashboardPre32FailV2();
+  checkDashboardPre32StateV2(state, true);
+  if (state.explicitAssertions >= 32) { state.burned = true; dashboardPre32FailV2(); }
+  state.explicitAssertions += 1;
+  return readDashboardPre32ScopeV2(state);
+}
+
+/** URL remains a private provider input; callback receives no connection/SQL. */
+export async function withHeldDashboardCutoverPre32DatabaseV2<T>(
+  databaseUrl: string | undefined,
+  continuation: (scope: object, census: LegacyDatabaseCensusV1) => Promise<T>,
+): Promise<T> {
+  if (dashboardPre32CurrentV2) {
+    dashboardPre32CurrentV2.burned = true;
+    dashboardPre32FailV2();
+  }
+  if (typeof continuation !== "function" || types.isProxy(continuation)
+    || typeof databaseUrl !== "string"
+    || !/^postgres(?:ql)?:\/\/[^/?#@\s]+@(?:localhost|127\.0\.0\.1)(?::5432)?\/setfarm$/.test(databaseUrl)
+    || Object.keys(process.env).some(key => key.startsWith("PG"))) dashboardPre32FailV2();
+  const state: DashboardPre32ScopeStateV2 = {
+    burned: false, live: false, active: false, explicitAssertions: 0,
+    callbackSettled: false, callback: null, pending: null, read: null,
+  };
+  dashboardPre32CurrentV2 = state; // Before the first import or await.
+  const guard = {
+    check: () => checkDashboardPre32StateV2(state),
+    revoke: () => {
+      state.live = false;
+      if (!state.callbackSettled || state.pending) state.burned = true;
+    },
+  };
+  try {
+    const { verifyHeldPre32ContractSpineJournalIdentityV1 } = await import("../db/contract-spine-migrations.js");
+    guard.check();
+    const { observeLegacyFindingPublicationInventoryV1 } = await loadLegacyFindingPublicationObserverV2();
+    guard.check();
+    const result = await observeLegacyDatabaseCensusWithContinuationV1(databaseUrl, true, "cutover-local",
+      async (connection, census) => {
+        guard.check();
+        state.live = true;
+        state.read = async () => {
+          checkDashboardPre32StateV2(state, true);
+          await verifyHeldPre32ContractSpineJournalIdentityV1(async (statement, parameters) =>
+            connection.unsafe(statement, [...parameters]));
+          checkDashboardPre32StateV2(state, true);
+          await observeLegacyDatabaseCensusOnConnectionV2(connection, true, observeLegacyFindingPublicationInventoryV1);
+          checkDashboardPre32StateV2(state, true);
+        };
+        const scope = Object.freeze(Object.create(null)) as object;
+        dashboardPre32ScopesV2.set(scope, state);
+        try {
+          // Retain the actual callback promise even if begin races connection loss.
+          state.callback = (async () => continuation(scope, census))();
+          const returned = await state.callback as T;
+          checkDashboardPre32StateV2(state, true);
+          if (state.pending) { state.burned = true; dashboardPre32FailV2(); }
+          await readDashboardPre32ScopeV2(state); // Final recheck, outside explicit32 budget.
+          checkDashboardPre32StateV2(state, true);
+          return returned;
+        } finally {
+          state.live = false;
+          if (state.pending) {
+            state.burned = true;
+            await state.pending.catch(() => undefined);
+          }
+          state.callbackSettled = true;
+        }
+      }, true, true, guard);
+    guard.check();
+    dashboardPre32CurrentV2 = undefined;
+    return result;
+  } catch {
+    state.live = false;
+    state.burned = true;
+    dashboardPre32FailV2();
   }
 }
 
