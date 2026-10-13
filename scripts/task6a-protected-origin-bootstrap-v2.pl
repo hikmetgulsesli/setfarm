@@ -61,6 +61,89 @@ BEGIN {
         return CORE::unpack('H*',CORE::pack('N8',@hash));
     };
 }
+# Inert one-key compiler-byte prerequisite. No production readback issuer or
+# invocation exists. Ordinary controls initialize private state only in memory.
+my ($strict_completed_readback,$strict_loader_install,$strict_loader_recheck);
+my $strict_same_reference;
+{
+    # Perl5.34 HINT_NO_AMAGIC; lexical scope restores the outside hints.
+    BEGIN {$^H|=0x01000000;CORE::delete($^H{'overloading'});}
+    BEGIN {
+        $strict_same_reference=sub {
+            return 0 unless @_==2&&!defined(CORE::tied($_[0]))
+                &&!defined(CORE::tied($_[1]));
+            my ($candidate,$original)=@_;
+            return 0 unless CORE::ref($candidate) ne ''
+                &&CORE::ref($original) ne '';
+            return $candidate==$original?1:0;
+        };
+    }
+}
+BEGIN {
+    my $utf8_original=\&utf8::is_utf8;
+    my $phase='new';my $calls=0;my ($authenticated,$original_hook);
+    my $refuse=sub {$phase='burned';CORE::die "TASK6A_STRICT_BYTES_REFUSED\n";};
+    my $containers=sub {
+        $refuse->() if defined(CORE::tied(%INC))||defined(CORE::tied(@INC));
+    };
+    my $validate=sub {
+        $refuse->() unless @_==1&&!defined(CORE::tied($_[0]));
+        my $bytes=$_[0];
+        $refuse->() unless defined($bytes)&&CORE::ref($bytes) eq ''
+            &&!$utf8_original->($bytes)&&CORE::length($bytes)==4783;
+        my $digest;my $ok=eval {$digest=$preimport_sha256->($bytes);1;};
+        $refuse->() unless $ok&&$digest eq
+            'f1296224730dceb5dd308ee1e72c452c8b13ced7f3bf742ccd16e1e1c416bcb5';
+        return 1;
+    };
+    $original_hook=sub {
+        $refuse->() unless $phase eq 'installed'||$phase eq 'selected';
+        $containers->();
+        $refuse->() unless @_==2&&!defined(CORE::tied($_[0]))
+            &&!defined(CORE::tied($_[1]))
+            &&$strict_same_reference->($_[0],$original_hook);
+        my $filename=$_[1];
+        $refuse->() unless defined($filename)&&CORE::ref($filename) eq ''
+            &&!$utf8_original->($filename)&&CORE::length($filename)>0
+            &&CORE::length($filename)<=4096;
+        $refuse->() if ++$calls>128;
+        return () unless $filename eq 'strict.pm';
+        $refuse->() unless $phase eq 'installed';
+        # Fresh selection-local SV; authenticate this exact SV at handoff.
+        my $compiler_bytes=CORE::substr($authenticated,0);
+        $validate->($compiler_bytes);
+        $phase='selected';
+        return \$compiler_bytes;
+    };
+    $strict_loader_install=sub {
+        $refuse->() unless @_==0&&$phase eq 'new';
+        $containers->();
+        $refuse->() if defined(CORE::tied(%main::));
+        $refuse->() if CORE::exists($INC{'strict.pm'})
+            ||CORE::exists($main::{'strict::'});
+        $refuse->() if defined(CORE::tied($strict_completed_readback));
+        my $plain=$strict_completed_readback;
+        $validate->($plain);
+        $authenticated=CORE::substr($plain,0);
+        my $ok=eval {CORE::unshift(@INC,$original_hook);1;};
+        $refuse->() unless $ok;
+        $phase='installed';return 1;
+    };
+    $strict_loader_recheck=sub {
+        $refuse->() unless @_==0&&$phase eq 'selected';
+        # A failed native require can leave a non-creatable cache entry. Even
+        # its tied-lvalue inspection may croak; every such failure must burn.
+        my $ok=eval {
+            $containers->();
+            $refuse->() unless CORE::exists($INC{'strict.pm'})
+                &&!defined(CORE::tied($INC{'strict.pm'}))
+                &&$strict_same_reference->($INC{'strict.pm'},$original_hook);
+            1;
+        };
+        $refuse->() unless $ok;
+        return 1;
+    };
+}
 use strict;
 use warnings;
 use B ();
