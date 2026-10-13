@@ -1419,6 +1419,216 @@ sub task6a_origin_produce_source_vendor_staged_custody {
         sourceCount=>4,vendorCount=>2,creatorHandlesClosed=>13,fileCount=>6,directoryCount=>6};
 }
 
+# Fixed backend namespace prerequisite. Independent private occurrence; no
+# descriptor/server/identity/genesis publication or ordinary startup admission.
+my ($namespace_uid,$namespace_process_gid,$namespace_directory_gid)=(0,0,80);
+my @namespace_existing_gids=(0,0,80);
+my @namespace_paths=('/','/Library','/Library/Application Support','/Library/Application Support/Setfarm','/Library/Application Support/Setfarm/authority','/Library/Application Support/Setfarm/PostgreSQL');
+my $namespace_phase='absent';
+my ($namespace_invalid,$namespace_uncertain,$namespace_helper_unknown)=(0,0,0);
+my ($namespace_release_started,$namespace_release_complete,$namespace_release_ok)=(0,0,0);
+my ($namespace_deadline,$namespace_positive,$namespace_rechecks)=(0,0,0);
+my (@namespace_pending,@namespace_originals,@namespace_mkdir_intents,@namespace_seal_intents);
+my $namespace_process=sub {
+    task6a_origin_refuse() unless $<==$namespace_uid&&$>==$namespace_uid
+        &&$( =~ /\A$namespace_process_gid(?: |\z)/&&$) =~ /\A$namespace_process_gid(?: |\z)/;
+};
+my $namespace_other_realms_absent=sub {
+    task6a_origin_refuse() unless $parent_phase eq 'absent'&&!@parent_originals
+        &&$creator_phase eq 'absent'&&!@creator_originals&&!@creator_pending
+        &&$staged_phase eq 'absent'&&!@staged_originals&&!@staged_pending
+        &&!defined($staged_admission)&&!@file_ledger&&!@directory_ledger
+        &&$physical_state eq 'new'&&!@physical_owned_handles;
+};
+my $namespace_helpers=sub {
+    unless(task6a_origin_helpers_settled()&&!$helper_lifecycle_burned) {
+        $namespace_helper_unknown=1;$namespace_uncertain=1;task6a_origin_refuse();
+    }
+};
+my $namespace_live=sub {
+    task6a_origin_refuse() if $namespace_invalid||$namespace_uncertain||$namespace_release_started;
+    task6a_origin_refuse() unless $namespace_phase eq 'creating'||$namespace_phase eq 'held';
+    $namespace_process->();$namespace_other_realms_absent->();$namespace_helpers->();
+    my $now=task6a_origin_now();
+    task6a_origin_refuse() unless $now<$namespace_deadline&&$now<$bootstrap_deadline;
+};
+my $namespace_intent=sub {
+    $namespace_live->();task6a_origin_refuse() if $namespace_positive>=8192;
+    ++$namespace_positive;
+};
+my $namespace_call=sub {
+    my ($call)=@_;$namespace_intent->();return $call->();
+};
+my $namespace_same=sub {
+    my ($expected,$actual,$mode,$gid)=@_;
+    task6a_origin_refuse() unless @$expected==13&&@$actual==13;
+    for my $field(0,1) {task6a_origin_refuse() unless $actual->[$field]==$expected->[$field];}
+    task6a_origin_refuse() unless Fcntl::S_ISDIR($actual->[2])&&($actual->[2]&07777)==$mode
+        &&$actual->[4]==$namespace_uid&&$actual->[5]==$gid;
+};
+my $namespace_seal_original=sub {
+    my ($cell,$path)=@_;my ($fh,$fd,$present,$alias);
+    my $safe=eval {
+        $present=$staged_native_fh->($cell,1);
+        if($present) {
+            $fh=$$cell;$fd=CORE::fileno($fh);
+            task6a_origin_refuse() unless defined($fd)&&$fd>=3&&@namespace_originals<6;
+            for my $old(@namespace_originals) {
+                next if $old->{closed};my $original=$old->{fh};
+                $staged_native_fh->(\$original,0);
+                my $live=CORE::fileno($original);
+                if($fh==$original||(defined($live)&&$live==$fd)) {$alias=1;task6a_origin_refuse();}
+                task6a_origin_refuse() unless defined($live)&&$live==$old->{fd};
+            }
+        }
+        1;
+    };
+    unless($safe) {$namespace_uncertain=1 unless $alias;task6a_origin_refuse();}
+    return undef unless $present;
+    my $namespace_original_close=sub {CORE::close( $fh )};
+    my $record={fh=>$fh,fd=>$fd,path=>$path,close=>$namespace_original_close,
+        attempted=>0,closed=>0,state=>'live'};
+    push @namespace_originals,$record;return $record;
+};
+my $namespace_acl=sub {
+    my ($record)=@_;
+    my $r=$namespace_call->(sub {task6a_origin_capture('/bin/ls',['-ldne',$record->{path}],2,4096)});
+    $namespace_helpers->();
+    task6a_origin_refuse() unless ref($r) eq 'HASH'&&defined($r->{status})&&$r->{status}==0
+        &&JSON::PP::is_bool($r->{reaped})&&$r->{reaped}&&defined($r->{err})&&$r->{err} eq ''
+        &&defined($r->{out})&&!ref($r->{out})&&!utf8::is_utf8($r->{out})&&length($r->{out})<=4096;
+    my ($path,$gid)=@$record{qw(path gid)};
+    task6a_origin_refuse() unless $r->{out} =~ /\A[d][rwxStTs-]{9}\@?[ ]+
+        [1-9][0-9]{0,9}[ ]+\Q$namespace_uid\E[ ]+\Q$gid\E[ ]+(?:0|[1-9][0-9]{0,12})[ ]+
+        (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[ ]+
+        (?:[1-9]|[12][0-9]|3[01])[ ]+(?:(?:[01][0-9]|2[0-3]):[0-5][0-9]|[12][0-9]{3})[ ]+
+        \Q$path\E\n\z/x;
+};
+my $namespace_check=sub {
+    my ($record)=@_;$namespace_live->();my $fh=$record->{fh};
+    $staged_native_fh->(\$fh,0);
+    task6a_origin_refuse() unless defined(CORE::fileno($fh))&&CORE::fileno($fh)==$record->{fd};
+    for my $acl(0,1) {
+        my @held=$namespace_call->(sub {CORE::stat($fh)});
+        my @named=$namespace_call->(sub {CORE::lstat($record->{path})});
+        $namespace_same->($record->{identity},\@held,$record->{mode},$record->{gid});
+        $namespace_same->($record->{identity},\@named,$record->{mode},$record->{gid});
+        $namespace_acl->($record) unless $acl;
+    }
+    my $flags=$namespace_call->(sub {CORE::fcntl($fh,Fcntl::F_GETFL(),0)});
+    my $descriptor=$namespace_call->(sub {CORE::fcntl($fh,Fcntl::F_GETFD(),0)});
+    task6a_origin_refuse() unless defined($flags)&&($flags&Fcntl::O_ACCMODE())==Fcntl::O_RDONLY()
+        &&defined($descriptor)&&$descriptor==Fcntl::FD_CLOEXEC();$namespace_live->();
+};
+my $namespace_epoch=sub {
+    $namespace_live->();for my $record(@namespace_originals) {$namespace_check->($record);}$namespace_live->();
+};
+my $namespace_open=sub {
+    my ($path,$mode,$gid,$just_created)=@_;
+    # A definite mkdir must enroll its new original before another ACL helper.
+    # All previous originals were checked immediately before that mkdir.
+    $namespace_epoch->() unless $just_created;
+    my @before=$namespace_call->(sub {CORE::lstat($path)});
+    task6a_origin_refuse() unless @before==13&&Fcntl::S_ISDIR($before[2])
+        &&($before[2]&07777)==$mode&&$before[4]==$namespace_uid&&$before[5]==$gid;
+    my $namespace_open_flags=Fcntl::O_RDONLY()|Fcntl::O_DIRECTORY()|Fcntl::O_NOFOLLOW();
+    my $pending;push @namespace_pending,\$pending;$namespace_intent->();
+    my $returned;my $ok=eval {$returned=CORE::sysopen($pending,$path,$namespace_open_flags,$mode); # namespace original
+        1;};my $error=$@;
+    my $record=$namespace_seal_original->(\$pending,$path);
+    $staged_plain_cell->(\$returned);$staged_plain_cell->(\$error);
+    unless($ok&&!ref($error)&&!length($error)&&defined($returned)&&!ref($returned)&&$returned&&$record) {
+        $namespace_uncertain=1 unless $record;task6a_origin_refuse();
+    }
+    $record->{identity}=[@before];$record->{mode}=$mode;$record->{gid}=$gid;
+    my $fh=$record->{fh};my @held=$namespace_call->(sub {CORE::stat($fh)});
+    $namespace_same->($record->{identity},\@held,$mode,$gid);
+    my $set=$namespace_call->(sub {CORE::fcntl($fh,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC())});
+    task6a_origin_refuse() unless defined($set)&&$set;
+    $namespace_check->($record);$namespace_epoch->();return $record;
+};
+my $namespace_dispose=sub {
+    return $namespace_release_ok if $namespace_release_complete;
+    task6a_origin_refuse() if $namespace_release_started;
+    $namespace_release_started=1;$namespace_invalid=1;
+    $namespace_helper_unknown=1 unless task6a_origin_helpers_settled()&&!$helper_lifecycle_burned;
+    my $all=$namespace_uncertain?0:1;
+    unless($namespace_helper_unknown) {
+        for my $record(reverse @namespace_originals) {
+            next if $record->{attempted};$record->{attempted}=1;$record->{state}='closing';
+            my ($returned,$error,$safe);
+            $safe=eval {my $fh=$record->{fh};$staged_native_fh->(\$fh,0);
+                task6a_origin_refuse() unless defined(CORE::fileno($fh))&&CORE::fileno($fh)==$record->{fd};
+                if($record->{identity}) {my @now=CORE::stat($fh);
+                    task6a_origin_refuse() unless @now==13&&$now[0]==$record->{identity}[0]
+                        &&$now[1]==$record->{identity}[1]&&Fcntl::S_ISDIR($now[2]);}
+                $returned=$record->{close}->();1;};$error=$@;
+            $record->{returned}=$returned;$record->{error}=$error;
+            my $ended;my $inspected=eval {my $fh=$record->{fh};$staged_native_fh->(\$fh,0);
+                $ended=CORE::fileno($fh);$staged_plain_cell->(\$returned);$staged_plain_cell->(\$error);1;};
+            if($safe&&$inspected&&!ref($error)&&!length($error)
+                &&defined($returned)&&!ref($returned)&&$returned&&!defined($ended)) {
+                $record->{closed}=1;$record->{state}='closed';
+            } else {$all=0;$namespace_uncertain=1;$record->{state}='unknown';}
+        }
+    } else {$all=0;$namespace_uncertain=1;}
+    $namespace_release_ok=$all&&!$namespace_uncertain?1:0;$namespace_release_complete=1;
+    $namespace_phase=$namespace_release_ok?'released':'quarantined';return $namespace_release_ok;
+};
+my $namespace_burn=sub {
+    $namespace_invalid=1;$namespace_phase='burned';
+    eval {$namespace_dispose->()} unless $namespace_release_started;
+    task6a_origin_refuse();
+};
+my $namespace_diagnostic=sub {
+    return {scope=>'backend-namespace-custody-diagnostic-only',productionAuthority=>JSON::PP::false,
+        directoryCount=>scalar(@namespace_originals),
+        createdDirectoryCount=>scalar(grep {$_->{confirmed}} @namespace_mkdir_intents)};
+};
+sub task6a_origin_create_backend_namespace {
+    # Preclaim refusal must not burn, close or cache any existing occurrence.
+    task6a_origin_refuse() unless @_==0&&$namespace_phase eq 'absent';
+    $namespace_process->();$namespace_other_realms_absent->();
+    task6a_origin_refuse() unless task6a_origin_helpers_settled()&&!$helper_lifecycle_burned
+        &&task6a_origin_now()<$bootstrap_deadline;
+    $namespace_phase='creating';$namespace_deadline=task6a_origin_now()+180;
+    my $ok=eval {
+        for my $index(0..2) {$namespace_open->($namespace_paths[$index],0755,$namespace_existing_gids[$index]);}
+        for my $index(3..5) {
+            $namespace_epoch->();my $path=$namespace_paths[$index];my (@before,$errno);
+            @before=$namespace_call->(sub {$!=0;my @row=CORE::lstat($path);$errno=0+$!;return @row;});
+            task6a_origin_refuse() unless !@before&&$errno==POSIX::ENOENT();
+            my $intent={path=>$path,attempted=>1};push @namespace_mkdir_intents,$intent;
+            $namespace_intent->();my $returned;my $made=eval {$returned=CORE::mkdir($path, 0700); # namespace exclusive
+                1;};my $error=$@;$intent->{returned}=$returned;$intent->{error}=$error;
+            $staged_plain_cell->(\$returned);$staged_plain_cell->(\$error);
+            task6a_origin_refuse() unless $made&&!ref($error)&&!length($error)&&defined($returned)&&!ref($returned)&&$returned;
+            $intent->{confirmed}=1;
+            $namespace_open->($path,0700,$namespace_directory_gid,1);
+        }
+        for my $record(@namespace_originals[3..5]) {
+            $namespace_epoch->();my $fh=$record->{fh};
+            my $intent={path=>$record->{path},attempted=>1};push @namespace_seal_intents,$intent;
+            $namespace_intent->();my $returned;my $sealed=eval {$returned=CORE::chmod(0755,$fh);1;};
+            my $error=$@;$intent->{returned}=$returned;$intent->{error}=$error;
+            $staged_plain_cell->(\$returned);$staged_plain_cell->(\$error);
+            task6a_origin_refuse() unless $sealed&&!ref($error)&&!length($error)&&defined($returned)&&!ref($returned)&&$returned==1;
+            $record->{mode}=0755;$namespace_epoch->();
+        }
+        $namespace_epoch->();$namespace_phase='held';1;
+    };$namespace_burn->() unless $ok;return $namespace_diagnostic->();
+}
+sub task6a_origin_recheck_backend_namespace {
+    task6a_origin_refuse() unless @_==0&&$namespace_phase eq 'held'&&!$namespace_release_started;
+    if($namespace_rechecks>=64) {$namespace_burn->();}++$namespace_rechecks;
+    my $ok=eval {$namespace_epoch->();1;};$namespace_burn->() unless $ok;
+    return $namespace_diagnostic->();
+}
+sub task6a_origin_release_backend_namespace {
+    task6a_origin_refuse() unless @_==0&&$namespace_phase ne 'absent';
+    task6a_origin_refuse() unless $namespace_dispose->();return $namespace_diagnostic->();
+}
+
 # Pure framing declarations are part of the independently owner-admitted
 # bootstrap bytes. Test declarations alone cannot create execution authority.
 sub task6a_origin_refuse {die "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";}
