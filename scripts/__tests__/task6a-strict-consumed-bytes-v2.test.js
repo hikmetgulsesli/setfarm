@@ -144,7 +144,10 @@ BEGIN {
 `;
   }
   source=once(source,'use strict;\n',prelude+(options.beforeUse??'')+'use strict;\n'+(options.afterUse??'')+after);
-  if(options.candidate)source=once(source,PIN,sha(candidate));
+  // Alternate commitment is a loader-only model. The separate native issuer
+  // keeps its fixed genuine commitment and is never invoked by these cases.
+  if(options.candidate)source=once(source,"$refuse->() unless $ok&&$digest eq\n            '"+PIN+"';",
+    "$refuse->() unless $ok&&$digest eq\n            '"+sha(candidate)+"';");
   if(options.mutate)source=options.mutate(source);
   // Full attempted module is retained. Readback/path/ACL/initial-runtime trust
   // are explicit MODELS; genuine native file bytes and compilation are actual.

@@ -95,7 +95,9 @@ function coldEntryProbe(source) {
     "    @INC=('/System/Library/Perl/5.34/darwin-thread-multi-2level',\n        '/System/Library/Perl/5.34');",
     String.raw`    @INC=(sub {CORE::print STDOUT "TEST_FORBIDDEN_IMPORT\n";
         CORE::die "TEST_FORBIDDEN_IMPORT\n";});`);
-  assert.ok(Buffer.byteLength(candidate)<=131072,'cold probe source bound');
+  // Bound only this ordinary complete-source test input. The inert issuer
+  // increases maintained source to142680B; production runtime budgets stay exact.
+  assert.ok(Buffer.byteLength(candidate)<=196608,'cold probe source bound');
   const r=spawnSync('/usr/bin/perl',['-f','-e',
     'binmode STDIN; local $/; my $source=<STDIN>; eval $source; if($@){print STDERR $@;exit 64;}exit 0;'],{
     input:candidate,cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},

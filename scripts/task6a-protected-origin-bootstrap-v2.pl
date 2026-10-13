@@ -144,6 +144,235 @@ BEGIN {
         return 1;
     };
 }
+# Inert fixed native readback prerequisite. No production invocation or Root
+# admission. Initial native/kernel/MAC trust is a separately qualified premise.
+my ($strict_native_readback_issue,$strict_native_readback_recheck,$strict_native_readback_release);
+{
+    BEGIN {$^H|=0x01000000;CORE::delete($^H{'overloading'});}
+    BEGIN {
+        my $utf8_original=\&utf8::is_utf8;
+        my $installer_original=$strict_loader_install;
+        my $phase='new';my $claimed=0;my $revoked=0;
+        my ($revocation_outcome,$revocation_error);
+        my ($issue_error,$recheck_error,$release_error,$burn_revoke_error);
+        my $operations=0;my $rechecks=0;my $close_started=0;my $close_outcome;
+        my $validated;my @originals;
+        my @paths=('/','/System','/System/Library','/System/Library/Perl',
+            '/System/Library/Perl/5.34','/System/Library/Perl/5.34/strict.pm');
+        my $literal_refusal="TASK6A_NATIVE_READBACK_REFUSED\n";
+        my $charge=sub {
+            CORE::die $literal_refusal unless @_==0&&++$operations<=8192;
+        };
+        my $plain=sub {
+            return 0 unless @_==1&&!defined(CORE::tied($_[0]));
+            my $value=$_[0];return defined($value)&&CORE::ref($value) eq ''
+                &&!$utf8_original->($value)?1:0;
+        };
+        my $shape=sub {
+            CORE::die $literal_refusal unless @_==1&&!defined(CORE::tied($_[0]));
+            my $handle=$_[0];CORE::die $literal_refusal unless CORE::ref($handle) ne '';
+            # Native PVGV/PVIO shape, no overloaded dereference or class-name proof.
+            my $io=*{$handle}{IO};
+            CORE::die $literal_refusal unless defined($io)&&CORE::ref($io) ne ''
+                &&!defined(CORE::tied(*{$handle}));
+            return ($handle,$io);
+        };
+        my $same=sub {
+            CORE::die $literal_refusal unless @_==1;
+            my $record=$_[0];
+            my ($handle,$io)=$shape->(${ $record->{cell} });
+            CORE::die $literal_refusal unless $strict_same_reference->($handle,$record->{handle})
+                &&$strict_same_reference->($io,$record->{io});
+            return $handle;
+        };
+        my $tuple=sub {
+            CORE::die $literal_refusal unless @_==2;
+            my ($values,$file)=@_;
+            CORE::die $literal_refusal unless @$values==13;
+            for my $value(@$values) {
+                CORE::die $literal_refusal unless $plain->($value)
+                    &&$value=~/\A(?:0|[1-9][0-9]{0,19}|-[1-9][0-9]{0,18})\z/;
+            }
+            CORE::die $literal_refusal unless ($values->[2]&0170000)==($file?0100000:0040000)
+                &&($values->[2]&0022)==0&&$values->[4]==0&&$values->[5]==0;
+            CORE::die $literal_refusal if $file&&$values->[7]!=4783;
+        };
+        my $equal_tuple=sub {
+            CORE::die $literal_refusal unless @_==2;
+            my ($a,$b)=@_;
+            for my $index(0..7,9..12) {CORE::die $literal_refusal unless $a->[$index]==$b->[$index];}
+        };
+        my $acl=sub {
+            CORE::die $literal_refusal unless @_==2;
+            my ($handle,$record)=@_;my $fd=CORE::fileno($handle);
+            CORE::die $literal_refusal unless $plain->($fd)
+                &&$fd=~/\A(?:0|[1-9][0-9]{0,9})\z/&&$fd<=2147483647;
+            for my $kind('capabilities','security') {
+                my $attributes=CORE::pack('SSLLLLL',5,0,$kind eq 'security'?0x00400000:0,
+                    $kind eq 'capabilities'?0x80020000:0,0,0,0);
+                my $buffer="\xcc" x 8192;
+                my $packet={kind=>$kind,attributes=>$attributes,buffer_cell=>\$buffer};
+                CORE::push(@{$record->{acl_reads}},$packet);$!=0;$charge->();
+                my ($result,$errno);my $native_ok=eval {
+                    $result=CORE::syscall(228,$fd,$attributes,$buffer,8192,4);$errno=0+$!;1;
+                };
+                $packet->{error}=$@;$packet->{result}=$result;$packet->{errno}=$errno;
+                CORE::die $literal_refusal unless $native_ok&&$plain->($result)&&$result eq '0'&&$errno==0
+                    &&$plain->($buffer)&&CORE::length($buffer)==8192;
+                if($kind eq 'security') {
+                    CORE::die $literal_refusal unless CORE::substr($buffer,0,12) eq CORE::pack('LLL',12,8,0)
+                        &&CORE::substr($buffer,12) eq "\xcc" x 8180;
+                } else {
+                    CORE::die $literal_refusal unless CORE::unpack('L',CORE::substr($buffer,0,4))==36
+                        &&CORE::substr($buffer,36) eq "\xcc" x 8156;
+                    my @cap=CORE::unpack('L8',CORE::substr($buffer,4,32));
+                    CORE::die $literal_refusal unless ($cap[1]&0x400)&&($cap[5]&0x400);
+                }
+            }
+        };
+        my $check_originals=sub {
+            CORE::die $literal_refusal unless @_==0&&@originals==6;
+            for my $record(@originals) {
+                CORE::die $literal_refusal unless $record->{known}&&!$record->{close_attempted};
+                my $handle=$same->($record);$charge->();my @held=CORE::stat($handle);
+                $charge->();my @named=CORE::lstat($record->{path});
+                CORE::push(@{$record->{metadata}}, {held=>[@held],named=>[@named]});
+                $tuple->(\@held,$record->{file});$tuple->(\@named,$record->{file});
+                $equal_tuple->(\@held,$record->{tuple});$equal_tuple->(\@held,\@named);
+                $acl->($handle,$record);
+            }
+        };
+        my $read=sub {
+            CORE::die $literal_refusal unless @_==1;
+            my $record=$_[0];my $handle=$same->($record);
+            my $seek_record={};CORE::push(@{$record->{seeks}},$seek_record);$charge->();
+            my $offset;my $seek_ok=eval {$offset=CORE::sysseek($handle,0,0);1;};
+            $seek_record->{error}=$@;$seek_record->{result}=$offset;
+            CORE::die $literal_refusal unless $seek_ok&&$plain->($offset)
+                &&($offset eq '0'||$offset eq '0 but true');
+            my ($bytes,$extra);my $read_record={bytes_cell=>\$bytes,extra_cell=>\$extra};
+            CORE::push(@{$record->{reads}},$read_record);
+            my ($count,$eof);$charge->();
+            my $count_ok=eval {$count=CORE::sysread($handle,$bytes,4784);1;};
+            $read_record->{count_error}=$@;$read_record->{count}=$count;
+            CORE::die $literal_refusal unless $count_ok&&$plain->($count)&&$count eq '4783'&&$plain->($bytes)
+                &&CORE::length($bytes)==4783;
+            $charge->();my $eof_ok=eval {$eof=CORE::sysread($handle,$extra,1);1;};
+            $read_record->{eof_error}=$@;$read_record->{eof}=$eof;
+            CORE::die $literal_refusal unless $eof_ok&&$plain->($eof)&&$eof eq '0'&&$plain->($extra)
+                &&CORE::length($extra)==0;
+            CORE::die $literal_refusal unless $preimport_sha256->($bytes) eq
+                'f1296224730dceb5dd308ee1e72c452c8b13ced7f3bf742ccd16e1e1c416bcb5';
+            return CORE::substr($bytes,0);
+        };
+        my $revoke=sub {
+            return unless $claimed;
+            unless($revoked) {
+                $revoked=1;
+                my $ok=eval {$installer_original->(undef);1;};$revocation_error=$@;
+                $revocation_outcome=(!$ok&&$plain->($revocation_error)
+                    &&$revocation_error eq "TASK6A_STRICT_BYTES_REFUSED\n")?1:0;
+            }
+            CORE::die $literal_refusal unless $revocation_outcome;
+            # Unknown late values stay retained; never destroy or STORE through
+            # a foreign handoff while settling this issuer's known originals.
+            $strict_completed_readback=undef if $plain->($strict_completed_readback)
+                &&defined($validated)&&$strict_completed_readback eq $validated;
+        };
+        my $settle=sub {
+            return $close_outcome if $close_started;
+            $close_started=1;my $all=1;
+            for my $record(CORE::reverse(@originals)) {
+                unless($record->{known}) {$all=0;next;}
+                $record->{close_started}=1;
+                my ($handle,$io);my $admitted=eval {
+                    # Known original, not a changed output cell or IO alias.
+                    ($handle,$io)=$shape->($record->{handle});
+                    CORE::die $literal_refusal unless $strict_same_reference->($handle,$record->{handle})
+                        &&$strict_same_reference->($io,$record->{io});
+                    1;
+                };
+                $record->{close_admission_error}=$@;
+                unless($admitted) {$record->{close_ok}=0;$record->{live_ok}=0;$all=0;next;}
+                $record->{close_attempted}=1;
+                my $closed;my $close_ok=eval {$closed=CORE::close($handle);1;};
+                $record->{close_error}=$@;$record->{close_return}=$closed;
+                # Independently inspect this known original after a close throw;
+                # changed/tied shape stays unknown without fileno callbacks.
+                my $live;my $live_ok=eval {
+                    my ($after_handle,$after_io)=$shape->($record->{handle});
+                    CORE::die $literal_refusal unless $strict_same_reference->($after_handle,$record->{handle})
+                        &&$strict_same_reference->($after_io,$record->{io});
+                    $live=CORE::fileno($after_handle);1;
+                };
+                $record->{live_error}=$@;$record->{live_return}=$live;$record->{live_ok}=$live_ok?1:0;
+                my $ok=$close_ok&&$plain->($closed)&&$closed eq '1'&&$live_ok&&!defined($live);
+                $record->{close_ok}=$ok?1:0;$all=0 unless $ok;
+            }
+            $close_outcome=$all?1:0;return $close_outcome;
+        };
+        my $burn=sub {
+            $phase='burned';
+            my $revoke_ok=eval {$revoke->();1;};$burn_revoke_error=$@;
+            $settle->() if $claimed;
+            CORE::die $literal_refusal;
+        };
+        $strict_native_readback_issue=sub {
+            $burn->() unless @_==0&&$phase eq 'new';
+            my $ok=eval {
+                CORE::die $literal_refusal if defined(CORE::tied(%INC))||defined(CORE::tied(@INC))
+                    ||defined(CORE::tied(%main::))||defined(CORE::tied($strict_completed_readback));
+                CORE::die $literal_refusal unless CORE::keys(%INC)==0&&@INC==2
+                    &&!defined(CORE::tied($INC[0]))&&!defined(CORE::tied($INC[1]))
+                    &&$plain->($INC[0])&&$plain->($INC[1])
+                    &&$INC[0] eq '/System/Library/Perl/5.34/darwin-thread-multi-2level'
+                    &&$INC[1] eq '/System/Library/Perl/5.34'
+                    &&!defined($strict_completed_readback)&&!CORE::exists($main::{'strict::'});
+                $claimed=1;$phase='acquiring';
+                CORE::die $literal_refusal unless $^O eq 'darwin'
+                    &&CORE::unpack('H*',CORE::pack('L',1)) eq '01000000'
+                    &&CORE::length(CORE::pack('J',1))==8;
+                for my $index(0..5) {
+                    my $path=$paths[$index];
+                    my $fh;my $record={path=>$path,cell=>\$fh,file=>$index==5?1:0,known=>0,
+                        close_attempted=>0,open_started=>0,reads=>[],seeks=>[],acl_reads=>[],metadata=>[]};
+                    CORE::push(@originals,$record);$charge->();my @before=CORE::lstat($path);
+                    $record->{before}=[@before];$tuple->(\@before,$record->{file});$charge->();
+                    $record->{open_started}=1;
+                    my $opened;my $open_ok=eval {$opened=CORE::sysopen($fh,$path,0x01000100);1;};
+                    $record->{open_error}=$@;$record->{open_return}=$opened;
+                    CORE::die $literal_refusal unless $open_ok&&$plain->($opened)&&$opened eq '1';
+                    my ($handle,$io)=$shape->($fh);
+                    $record->{handle}=$handle;$record->{io}=$io;$record->{known}=1;
+                    $charge->();my @held=CORE::stat($handle);
+                    $record->{held_initial}=[@held];
+                    $tuple->(\@held,$record->{file});
+                    $equal_tuple->(\@before,\@held);$record->{tuple}=[@held];$acl->($handle,$record);
+                }
+                $validated=$read->($originals[5]);$check_originals->();
+                $strict_completed_readback=CORE::substr($validated,0);$phase='held';1;
+            };
+            $issue_error=$@;$burn->() unless $ok;return 1;
+        };
+        $strict_native_readback_recheck=sub {
+            $burn->() unless @_==0&&$phase eq 'held'&&++$rechecks<=64;
+            my $ok=eval {
+                $check_originals->();my $bytes=$read->($originals[5]);
+                CORE::die $literal_refusal unless $bytes eq $validated;
+                $check_originals->();1;
+            };
+            $recheck_error=$@;$burn->() unless $ok;return 1;
+        };
+        $strict_native_readback_release=sub {
+            $burn->() unless @_==0;
+            return $close_outcome if $phase eq 'released';
+            unless($claimed) {$phase='released';$close_outcome=1;return 1;}
+            my $ok=eval {$revoke->();1;};$release_error=$@;my $closed=$settle->();
+            $burn->() unless $ok&&$closed;
+            $phase='released';return 1;
+        };
+    }
+}
 use strict;
 use warnings;
 use B ();
