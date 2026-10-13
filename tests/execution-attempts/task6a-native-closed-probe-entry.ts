@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { Socket } from "node:net";
 import { registerHooks, type LoadHookSync } from "node:module";
+import { types } from "node:util";
 import { holdTask6aRootOwnedJsonFileV1 } from "../../src/internal-production/task6a-root-owned-json-file-v1.js";
 import { holdTask6aSocketPhysicalEvidenceV1 } from "../../src/internal-production/task6a-socket-physical-evidence-v1.js";
 import { parseTask6aPostgresSocketTransportV1 } from "../../src/internal-production/task6a-postgres-socket-transport-v1.js";
@@ -75,11 +76,15 @@ export function holdTask6aProtectedPostgresSocketV1() {
 export async function runTask6aNativeClosedProbeV1(file: string,
   identities: Readonly<{ serverUid: number; clientGid: number; socketPath: string }>,
   mode: "healthy" | "wrong-tuple" | "delayed-close" | "denied-access" | "denied-column" | "denied-membership" | "denied-owner" | "denied-base"
-    | "phase-checksum" | "phase-journal32" | "phase-journal33" | "phase-table" | "phase-index" | "phase-function" | "phase-type" | "phase-trigger",
+    | "phase-checksum" | "phase-journal32" | "phase-journal33" | "phase-table" | "phase-index" | "phase-function" | "phase-type" | "phase-trigger"
+    | "held-healthy" | "held-delayed-close" | "held-idle-expiry",
   coldGraph?: Readonly<{ canonicalURL: string }>) {
   assert.equal(context, undefined);
   assert.ok(["healthy", "wrong-tuple", "delayed-close", "denied-access", "denied-column", "denied-membership", "denied-owner", "denied-base",
-    "phase-checksum", "phase-journal32", "phase-journal33", "phase-table", "phase-index", "phase-function", "phase-type", "phase-trigger"].includes(mode));
+    "phase-checksum", "phase-journal32", "phase-journal33", "phase-table", "phase-index", "phase-function", "phase-type", "phase-trigger",
+    "held-healthy", "held-delayed-close", "held-idle-expiry"].includes(mode));
+  const heldMode = mode.startsWith("held-"), idleExpiry = mode === "held-idle-expiry";
+  const delayedClose = mode === "delayed-close" || mode === "held-delayed-close";
   const earlyRefusal = mode === "wrong-tuple" || mode.startsWith("denied-");
   const phaseRefusal = mode.startsWith("phase-");
   const denied = earlyRefusal || phaseRefusal;
@@ -100,11 +105,37 @@ export async function runTask6aNativeClosedProbeV1(file: string,
   let releaseDestroy: (() => void) | undefined;
   let resolveDestruction!: () => void;
   const destructionRequested = new Promise<void>(resolve => { resolveDestruction = resolve; });
+  let withholding = true;
   let observerFailure: unknown, observerFailed = false, settled = false;
   const rows: string[][] = [];
   const commands: string[] = [], transactionStates: string[] = [];
   const catalogRows: { names: string[]; values: (string | null)[] }[] = [];
   const canonicalJournalRows: string[][] = [], coldCatalogRows: string[][] = [];
+  const errorCodes: string[] = [];
+  type ApiRole = "hold" | "recheck" | "close";
+  type ApiRecord = { state: "unused" | "started" | "fulfilled" | "rejected" | "threw";
+    original?: Promise<unknown>; error?: unknown };
+  const apiOriginals: Record<ApiRole, ApiRecord> = {
+    hold: { state: "unused" }, recheck: { state: "unused" }, close: { state: "unused" },
+  };
+  function apiOriginal<T>(role: ApiRole, invoke: () => Promise<T>): Promise<T> {
+    const record = apiOriginals[role]; assert.equal(record.state, "unused");
+    record.state = "started"; ctx.events.push(`api-${role}-started`);
+    try {
+      const original = invoke(); record.original = original;
+      assert.equal(types.isPromise(original), true);
+      void original.then(() => { record.state = "fulfilled"; ctx.events.push(`api-${role}-fulfilled`); }, error => {
+        record.state = "rejected"; record.error = error; ctx.events.push(`api-${role}-rejected`);
+      });
+      return original;
+    } catch (error) { record.state = "threw"; record.error = error; throw error; }
+  }
+  const timerOriginals: Promise<void>[] = [];
+  const timerHandles: ReturnType<typeof setTimeout>[] = [];
+  function waitOwned(ms: 25 | 6500): Promise<void> {
+    const original = new Promise<void>(resolve => { timerHandles.push(setTimeout(resolve, ms)); });
+    timerOriginals.push(original); return original;
+  }
   const journalNames = ["version", "name", "checksum", "state"];
   const coldNames = ["laterJournalCount", "relationCount", "functionCount", "typeCount", "triggerCount"];
   let journalDescriptions = 0, coldDescriptions = 0;
@@ -216,6 +247,18 @@ export async function runTask6aNativeClosedProbeV1(file: string,
               } else {
                 assert.ok(catalogRows.length < 1024); catalogRows.push({ names: [...names], values });
               }
+            } else if (wire[0] === 69) { // Actual ErrorResponse fields; retain SQLSTATE only.
+              let offset = 0, fields = 0;
+              while (offset < frame.length && frame[offset] !== 0) {
+                assert.ok(++fields <= 32); const kind = frame[offset++]!;
+                const end = frame.indexOf(0, offset); assert.ok(end >= offset);
+                if (kind === 67) {
+                  const code = frame.subarray(offset, end).toString(); assert.match(code, /^[0-9A-Z]{5}$/);
+                  assert.ok(errorCodes.length < 8); errorCodes.push(code);
+                }
+                offset = end + 1;
+              }
+              assert.equal(offset, frame.length - 1); assert.equal(frame[offset], 0);
             } else if (wire[0] === 67) {
               assert.equal(frame.at(-1), 0); commands.push(frame.subarray(0, -1).toString());
             } else if (wire[0] === 90) {
@@ -225,9 +268,13 @@ export async function runTask6aNativeClosedProbeV1(file: string,
           }
         } catch (error) { observerFailed = true; observerFailure = error; }
       });
-      if (mode === "delayed-close") {
+      if (delayedClose) {
         const originalDestroy = this._destroy;
         this._destroy = function (this: Socket, error: Error | null, callback: (error?: Error | null) => void) {
+          if (!withholding) {
+            this._destroy = originalDestroy;
+            Reflect.apply(originalDestroy, this, [error, callback]); return;
+          }
           assert.equal(releaseDestroy, undefined);
           releaseDestroy = () => { this._destroy = originalDestroy; Reflect.apply(originalDestroy, this, [error, callback]); };
           resolveDestruction();
@@ -238,6 +285,10 @@ export async function runTask6aNativeClosedProbeV1(file: string,
   } as typeof actualConnect;
   let result: Promise<void> | undefined;
   let probeImportOriginal: Promise<typeof import("../../src/internal-production/task6a-protected-postgres-backend-probe-v1.js")> | undefined;
+  let probe: Awaited<NonNullable<typeof probeImportOriginal>> | undefined;
+  let holding: Promise<import("../../src/internal-production/task6a-protected-postgres-backend-probe-v1.js").Task6aProtectedBackendOwnerV2> | undefined;
+  let heldOwner: Awaited<NonNullable<typeof holding>> | undefined;
+  let closeIdentity = false;
   try {
     if (coldGraph) {
       canonicalObservation = createTask6aNativeCanonicalLoadObserverV1(coldGraph.canonicalURL, () => {
@@ -253,19 +304,40 @@ export async function runTask6aNativeClosedProbeV1(file: string,
     ctx.events.push("passive-hooks-installed");
     probeImportOriginal = import("../../src/internal-production/task6a-protected-postgres-backend-probe-v1.js");
     ctx.events.push("probe-import");
-    const { probeTask6aProtectedPostgresBackendV1 } = await probeImportOriginal;
+    probe = await probeImportOriginal;
     ctx.events.push("probe-import-settled");
-    result = probeTask6aProtectedPostgresBackendV1();
+    if (heldMode) {
+      holding = apiOriginal("hold", () => probe!.holdTask6aProtectedPostgresBackendV2());
+      heldOwner = await holding;
+      assert.ok(heldOwner); assert.equal(commands.filter(tag => tag === "BEGIN").length, 1);
+      assert.equal(commands.filter(tag => tag === "ROLLBACK").length, 0);
+      assert.equal(ctx.nativeCloses, 0); livePins(); ctx.events.push("held-owner-returned");
+      await waitOwned(idleExpiry ? 6500 : 25);
+      livePins();
+      if (idleExpiry) {
+        assert.equal(ctx.nativeCloses, 1); assert.deepEqual(errorCodes, ["25P03"]);
+        ctx.events.push("actual-idle-expiry-observed");
+      } else {
+        assert.equal(ctx.nativeCloses, 0); assert.equal(commands.filter(tag => tag === "ROLLBACK").length, 0);
+        ctx.events.push("held-after-actual-await");
+      }
+      const checking = apiOriginal("recheck", () => probe!.recheckTask6aProtectedPostgresBackendV2(heldOwner!));
+      if (idleExpiry) await assert.rejects(checking, /TASK6A_PROTECTED_POSTGRES_BACKEND_OWNER_REFUSED/);
+      else assert.equal(await checking, undefined);
+      result = apiOriginal("close", () => probe!.closeTask6aProtectedPostgresBackendV2(heldOwner!));
+      closeIdentity = probe.closeTask6aProtectedPostgresBackendV2(heldOwner) === result;
+      assert.equal(closeIdentity, true);
+    } else result = probe.probeTask6aProtectedPostgresBackendV1();
     void result.then(() => { settled = true; }, () => { settled = true; });
-    if (mode === "delayed-close") {
+    if (delayedClose) {
       await Promise.race([destructionRequested, result.then(() => {
         throw Error("probe settled before delayed destruction enrollment");
       }, error => { throw error; })]);
-      await new Promise(resolve => setTimeout(resolve, 25));
+      await waitOwned(25);
       assert.equal(settled, false); assert.equal(ctx.nativeCloses, 0); livePins();
       ctx.events.push("pending-native-close"); assert.ok(releaseDestroy); releaseDestruction();
     }
-    if (denied) await assert.rejects(result, /TASK6A_PROTECTED_POSTGRES_BACKEND_PROBE_REFUSED/);
+    if (denied || idleExpiry) await assert.rejects(result, /TASK6A_PROTECTED_POSTGRES_BACKEND_PROBE_REFUSED/);
     else assert.equal(await result, undefined);
     ctx.events.push("probe-settled");
     const baselineSnapshot = ctx.baseline.snapshot(), orphanSnapshot = orphanBaseline.snapshot();
@@ -297,18 +369,19 @@ export async function runTask6aNativeClosedProbeV1(file: string,
     if (observerFailed) throw observerFailure;
     assert.equal(wire.length, 0, "complete native PG message framing required");
     assert.equal(connected, 1); assert.equal(ctx.nativeCloses, 1); assert.ok(socket?.destroyed);
-    assert.equal(rows.length, denied ? 1 : 2, "real own-backend DataRows required; setup failure cannot pass");
+    assert.equal(rows.length, denied || idleExpiry ? 1 : heldMode ? 3 : 2,
+      "real own-backend DataRows required; setup failure cannot pass");
     const [pid, backendStart, session, role, database, local] = rows[0]!;
     assert.ok(Number.isSafeInteger(Number(pid)) && Number(pid) > 1); assert.ok(backendStart!.length > 0);
     assert.equal(session, mode === "wrong-tuple" ? "task6a_runtime" : "setfarm_runtime");
     assert.equal(role, session); assert.equal(database, mode === "wrong-tuple" ? "postgres" : "setfarm"); assert.equal(local, "t");
-    if (!denied) assert.deepEqual(rows[1], rows[0]);
+    if (!denied && !idleExpiry) for (const row of rows.slice(1)) assert.deepEqual(row, rows[0]);
     if (mode === "wrong-tuple") {
       assert.ok(!commands.includes("BEGIN")); assert.ok(!commands.includes("ROLLBACK"));
     } else {
       assert.equal(commands.filter(tag => tag === "BEGIN").length, 1);
-      assert.equal(commands.filter(tag => tag === "ROLLBACK").length, 1);
-      assert.ok(transactionStates.includes("T")); assert.equal(transactionStates.at(-1), "I");
+      assert.equal(commands.filter(tag => tag === "ROLLBACK").length, idleExpiry ? 0 : 1);
+      assert.ok(transactionStates.includes("T")); assert.equal(transactionStates.at(-1), idleExpiry ? "T" : "I");
       const access = catalogRows.find(row => row.names.includes("journalColumnWrite")); assert.ok(access);
       const field = (name: string) => access.values[access.names.indexOf(name)];
       assert.equal(field("journalWrite"), mode === "denied-access" || mode === "denied-membership" ? "t" : "f");
@@ -328,21 +401,30 @@ export async function runTask6aNativeClosedProbeV1(file: string,
     }
     for (const pin of ctx.pins) { assert.equal(pin.closes, 1); assert.throws(() => fs.fstatSync(pin.fd), (e: NodeJS.ErrnoException) => e.code === "EBADF"); }
     console.log(JSON.stringify({ event: "native-closed-probe", authority: "diagnostic-only", mode,
-      before: rows[0], after: denied ? null : rows.at(-1), events: ctx.events,
+      before: rows[0], after: denied || idleExpiry ? null : rows.at(-1), events: ctx.events,
       commands, transactionStates, refusedBaseDefault, catalogRows: catalogRows.length,
       baseline: coldGraph ? baselineSnapshot.records : null,
       canonicalLoad: canonicalObservation?.snapshot() ?? null,
       canonicalJournalRows, coldCatalogRows,
-      fdCount: ctx.pins.length, nativeSockets: connected }));
+      fdCount: ctx.pins.length, nativeSockets: connected, heldMode, ownerIssued: heldOwner !== undefined,
+      closeIdentity, errorCodes, apiOriginals: Object.fromEntries(Object.entries(apiOriginals)
+        .map(([role, record]) => [role, record.state])), ownedTimers: timerHandles.length }));
   } finally {
     // Release the same genuine destruction original on any assertion failure.
     let cleanupFailed = false, cleanupError: unknown;
     try {
+      withholding = false; // Monotonic: a later native destruction must pass through.
       try { releaseDestruction(); } catch (error) { cleanupFailed = true; cleanupError = error; }
       // A synchronous delegate fault must not skip either retained original.
       // Unknown pending originals stay pending; no retry or timer releases custody.
       try { if (probeImportOriginal) await probeImportOriginal.catch(() => {}); }
       catch (error) { cleanupFailed = true; cleanupError = error; }
+      try { if (holding) heldOwner ??= await holding.catch(() => undefined); }
+      catch (error) { cleanupFailed = true; cleanupError = error; }
+      try {
+        if (heldOwner && probe && !result)
+          result = apiOriginal("close", () => probe!.closeTask6aProtectedPostgresBackendV2(heldOwner!));
+      } catch (error) { cleanupFailed = true; cleanupError = error; }
       try { if (result) await result.catch(() => {}); }
       catch (error) { cleanupFailed = true; cleanupError = error; }
       try { if (nativeCloseOriginal) await nativeCloseOriginal; }
@@ -351,6 +433,10 @@ export async function runTask6aNativeClosedProbeV1(file: string,
       catch (error) { cleanupFailed = true; cleanupError = error; }
       try { await orphanBaseline.joinOriginals(); }
       catch (error) { cleanupFailed = true; cleanupError = error; }
+      try {
+        await Promise.allSettled(Object.values(apiOriginals).flatMap(record => record.original ? [record.original] : []));
+        await Promise.allSettled(timerOriginals);
+      } catch (error) { cleanupFailed = true; cleanupError = error; }
     } finally {
       const originalHook = loadHook; loadHook = undefined;
       try { originalHook?.deregister(); }

@@ -20,6 +20,11 @@ const enabled = process.env.SETFARM_TASK6A_TEST_PROTECTED_PG_FIXTURE === "1";
 const nativeEnabled = process.env.SETFARM_TASK6A_TEST_PROTECTED_NATIVE_FIXTURE === "1";
 const heldPg31Enabled = process.env.SETFARM_TASK6A_TEST_HELD_PG31_FIXTURE === "1";
 const closedProbeEnabled = process.env.SETFARM_TASK6A_TEST_CLOSED_PROBE_FIXTURE === "1";
+const sustainedProbeEnabled = process.env.SETFARM_TASK6A_TEST_SUSTAINED_PROBE_FIXTURE === "1";
+if (process.env.SETFARM_TASK6A_TEST_SUSTAINED_PROBE_FIXTURE !== undefined) {
+  assert.equal(sustainedProbeEnabled && closedProbeEnabled && enabled && !heldPg31Enabled && !nativeEnabled, true,
+    "sustained probe fixture requires protected/closed opt-ins without held PG31/native image copy");
+}
 if (process.env.SETFARM_TASK6A_TEST_CLOSED_PROBE_FIXTURE !== undefined) {
   assert.equal(closedProbeEnabled && enabled && !heldPg31Enabled && !nativeEnabled, true,
     "closed probe fixture requires base opt-in, without held PG31/native image copy");
@@ -378,8 +383,11 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     if (!closedProbeEnabled) return;
     exactServer(); exactDescriptor(); exactClosedGraph();
     const target = path.join(descriptorHome!, "transport.json");
-    for (const mode of ["healthy", "wrong-tuple", "delayed-close", "denied-access", "denied-column", "denied-membership", "denied-owner", "denied-base",
-      "phase-checksum", "phase-journal32", "phase-journal33", "phase-table", "phase-index", "phase-function", "phase-type", "phase-trigger"] as const) {
+    const modes = sustainedProbeEnabled
+      ? ["held-healthy", "held-delayed-close", "held-idle-expiry"] as const
+      : ["healthy", "wrong-tuple", "delayed-close", "denied-access", "denied-column", "denied-membership", "denied-owner", "denied-base",
+        "phase-checksum", "phase-journal32", "phase-journal33", "phase-table", "phase-index", "phase-function", "phase-type", "phase-trigger"] as const;
+    for (const mode of modes) {
       const baseline = baselineSnapshot();
       const baselineJournal = JSON.parse(baseline).journal as { version: number; name: string; checksum: string; state: string }[];
       assert.equal(baselineJournal.length, 31);
@@ -445,6 +453,14 @@ test("private protected PG denies old identity and scoped admin impersonation ac
       const witness = JSON.parse(lines[0]!);
       assert.equal(witness.event, "native-closed-probe"); assert.equal(witness.authority, "diagnostic-only");
       assert.equal(witness.mode, mode); assert.equal(witness.fdCount, 5); assert.equal(witness.nativeSockets, 1);
+      if (mode.startsWith("held-")) {
+        assert.equal(witness.heldMode, true); assert.equal(witness.ownerIssued, true);
+        assert.equal(witness.closeIdentity, true);
+        assert.equal(witness.apiOriginals.hold, "fulfilled");
+        assert.equal(witness.apiOriginals.recheck, mode === "held-idle-expiry" ? "rejected" : "fulfilled");
+        assert.equal(witness.apiOriginals.close, mode === "held-idle-expiry" ? "rejected" : "fulfilled");
+        assert.deepEqual(witness.errorCodes, mode === "held-idle-expiry" ? ["25P03"] : []);
+      }
       t.diagnostic(JSON.stringify({ phase, ...witness })); exactServer(); exactDescriptor();
       const earlyRefusal = mode === "wrong-tuple" || mode.startsWith("denied-");
       assert.deepEqual(witness.canonicalJournalRows, earlyRefusal ? [] : expectedJournalRows,
