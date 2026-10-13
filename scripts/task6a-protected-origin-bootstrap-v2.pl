@@ -17,7 +17,7 @@ BEGIN {
             &&!defined(CORE::tied($_[0]));
         my $plain=$_[0];
         CORE::die "TASK6A_PREIMPORT_BYTES_REFUSED\n" unless defined($plain)
-            &&!CORE::ref($plain)&&!$preimport_utf8_original->($plain);
+            &&CORE::ref($plain) eq ''&&!$preimport_utf8_original->($plain);
         my $length=CORE::length($plain);
         CORE::die "TASK6A_PREIMPORT_BYTES_REFUSED\n" if $length>524288;
         # FIPS180-4 4.2.2,5.1.1,5.3.3,6.2: fixed32-bit words and64-byte blocks.

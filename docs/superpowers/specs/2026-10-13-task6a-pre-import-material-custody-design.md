@@ -56,6 +56,10 @@ arity and tied input before any value access, copies the plain scalar once,
 rejects undefined/reference/UTF8-flagged input, and caps it at524288 bytes before work.
 Retain the interpreter's original UTF8-flag CODE inside the installation BEGIN;
 later package-name substitution cannot run a foreign callback or admit flagged bytes.
+Reference presence uses CORE::ref($plain) eq '', never boolean truth: a blessed
+reference can have class name0. An actual zero-class reference must refuse before
+length or byte conversion. This causal prerequisite remains in the same four-file
+checker map before the separate strict-source-buffer implementation.
 It opens no files, imports no module, invokes no tool/syscall/callback/eval and
 returns only a64-character lowercase digest, never admission or source policy.
 Production has no call, initializer or public checker API. Ordinary disclosed

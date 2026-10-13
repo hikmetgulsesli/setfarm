@@ -86,3 +86,38 @@ Next: independently nominate an original-FD ACL mechanism and actual consumed-PM
 byte selection, keeping the external initial runtime/delivered bootstrap/installer
 and native/cache lifetime prerequisites. Maintain PR280 DRAFT and continue the
 overall approved internal-production closure; this checkpoint is not completion.
+
+## Causal zero-class reference refinement
+
+Before the separate strict-buffer slice, checking reference presence exposed a
+checker boundary defect: Perl ref returns the class name, so boolean !ref accepts
+an actual blessed object named0. This is a byte-classifier prerequisite of the
+same approved objective. The four-file map remains bootstrap/checker test/paired
+checker documents; the two untracked strict nomination documents are a separate
+future slice and are not delivered with this fix.
+
+Add an actual bless({},'0') invalid-input control before changing the guard. It
+must refuse with the exact byte refusal, without coercion. Use explicit empty
+string comparison for CORE::ref, preserving the existing tie-first/plain-copy,
+retained UTF8 original, arithmetic, bounds and every other bootstrap byte. Capture
+the new genuine RED and frozen checker/entry controls, independently review them
+and deliver the smallest ordinary source fix. No imported/native/Root authority,
+privilege, old-owner change or build bypass follows from it.
+
+Actual RED10864 at retained.V0EAHO ends naturally0/null/emptyerr and reports
+zero-class refusal0; the outer test fails. Its completed attempted program and
+GREEN differ only by the predicate. Fresh frozen final controls are
+logs/2026-10-13-task6a-pre-import-commitment-controls/final-originals-zero-class-v1.json,
+SHA256134586441509b197efddaac707cc4a159dd36e8aabc5e37a4af33dc026289d43.
+Original11200 naturally0/null/emptyerr passes3 checker/entry controls, raw717B
+SHA256fd5061940576999249376cde6e6212967b4554de319aef9e65482a0bbb7bca4c.
+Fresh actual Perl11203 at retained/private/tmp/task6a-preimport-commitment.ZtiFWR
+ends0/null/emptyerr with147 mathematical vectors and13 refusals/class0refused1,
+FETCH0/foreign0. Cold11202 at retained.9xxHMK naturally2 preserves exact refusal.
+Version11210/English11213/path11215/diff11219 originals all naturally0/null:
+2.3.79/2055files/1014files/empty diff. Root175 and independent1198 checks have zero
+discrepancies; both source/material reviews are C0/I0/M0. All four captured/copy
+pins agree; only this plan receives the disclosed later result append. Reversing
+the one predicate reproduces7732d3ee exactly. This proportional campaign does not
+replay or borrow prior1652 controls as current amended-byte evidence. No full
+dependency, material, native, Root or admission qualification is implied.

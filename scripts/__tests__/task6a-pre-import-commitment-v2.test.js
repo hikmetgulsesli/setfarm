@@ -76,6 +76,7 @@ test('CORE byte commitments run in BEGIN before use and match independent standa
   const calls=vectors.map(v=>`CORE::print '${v.name}',"\t",$preimport_sha256->(${v.expression}),"\n";`).join('\n');
   const invalid=[['missing',''],['extra',"'a','b'"],['undefined','undef'],['array','[]'],
     ['hash','{}'],['code','sub {}'],['blessed',"CORE::bless({},'TestOnlyRef')"],
+    ['zero-class',"CORE::bless({},'0')"],
     ['over-cap',"'x' x 524289"],['unicode',"CORE::chr(256)"]];
   const refusals=invalid.map(([name,args])=>`{
     my $ok=eval {$preimport_sha256->(${args});1};my $error=$@;
