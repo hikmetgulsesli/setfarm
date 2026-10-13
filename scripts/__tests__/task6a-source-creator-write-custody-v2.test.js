@@ -32,6 +32,15 @@ function archiveFixture() {
   const sum=header.reduce((n,b)=>n+b,0);header.write(sum.toString(8).padStart(6,'0')+'\0 ',148);
   return gzipSync(Buffer.concat([header,payload,Buffer.alloc(512-payload.length),Buffer.alloc(1024)])).toString('base64');
 }
+function nativeFixture() {
+  const commands=[[0xe,12,'/usr/lib/dyld'],[0xc,24,'/usr/lib/libSystem.B.dylib']].map(([kind,offset,name])=>{
+    const bytes=Buffer.alloc(Math.ceil((offset+name.length+1)/8)*8);
+    bytes.writeUInt32LE(kind,0);bytes.writeUInt32LE(bytes.length,4);bytes.writeUInt32LE(offset,8);bytes.write(name,offset);return bytes;
+  });
+  const table=Buffer.concat(commands),header=Buffer.alloc(32);
+  [0xfeedfacf,0x0100000c,0,2,commands.length,table.length,0x200000,0].forEach((n,i)=>header.writeUInt32LE(n,4*i));
+  return Buffer.concat([header,table]).toString('base64');
+}
 function cleanupTree({path,dev,ino}) {
   assert.match(path,/^\/private\/tmp\/task6a-source-v2-[a-f0-9]{64}(?:\.original)?$/);
   if(!existsSync(path))return;
@@ -82,7 +91,10 @@ function invoke(mode='healthy',{modelOwner=true,mutant}={}) {
   let source=readFileSync(BOOTSTRAP,'utf8');
   assert.ok(source.startsWith(GUARD));
   assert.ok(/sub task6a_origin_create_source_root \{/.test(source),'creator interface is not implemented');
-  const initialize=mode.startsWith('initialize-');
+  const policy=mode.startsWith('policy-');
+  const initialize=mode.startsWith('initialize-')||policy;
+  if(policy)assert.ok(/sub task6a_origin_initialize_created_policy_helpers \{/.test(source),
+    'created policy helpers interface is not implemented');
   if(initialize)assert.ok(/sub task6a_origin_initialize_created_archive_helper \{/.test(source),
     'created archive initializer interface is not implemented');
   source=once(source,GUARD,'');source=once(source,'\ntask6a_origin_main();\n','\n');
@@ -108,6 +120,12 @@ function invoke(mode='healthy',{modelOwner=true,mutant}={}) {
     source=once(source,'my $result=eval $bytes;',
       'my $result=eval {test_creator_eval($bytes)};');
   }
+  if(policy) {
+    source=once(source,'my $native_result=eval $native_bytes;',
+      "$test_policy_late_mutate->('native');my $native_result=eval {test_creator_policy_eval('native',$native_bytes)};");
+    source=once(source,'my $map_result=eval $map_bytes;',
+      "$test_policy_late_mutate->('map');my $map_result=eval {test_creator_policy_eval('map',$map_bytes)};");
+  }
   if(mutant)source=mutant(source);
   const prefix=String.raw`
 BEGIN { @INC=('/System/Library/Perl/5.34/darwin-thread-multi-2level','/System/Library/Perl/5.34'); }
@@ -118,13 +136,14 @@ my $test_borrowed;my $test_fault_fd;my $test_invalidate;my $test_magic_fetches=0
 my $test_evals=0;
 my $test_late_mutate;
 my $test_initializer_callbacks=0;
+my %test_policy_evals=(native=>0,map=>0);my ($test_policy_drift,$test_policy_late_mutate);
 { package TestCreatorMagic;
   sub TIESCALAR {bless {fh=>$_[1]},$_[0]}
   sub FETCH {++$test_magic_fetches;return $_[0]{fh};}
 }
 { package TestInitializerHash;
   sub TIEHASH {bless {original=>$_[1]},$_[0]}
-  sub FETCH {++$test_initializer_callbacks;return $_[0]{original}{$_[1]};}
+  sub FETCH {++$test_initializer_callbacks;die "TEST_INITIALIZER_CALLBACK_REACHED\n" if $test_mode eq 'policy-post-native-cache-tied';return $_[0]{original}{$_[1]};}
   sub EXISTS {++$test_initializer_callbacks;die "TEST_INITIALIZER_CALLBACK_REACHED\n";}
   sub FIRSTKEY {++$test_initializer_callbacks;my $x=keys %{$_[0]{original}};each %{$_[0]{original}};}
   sub NEXTKEY {++$test_initializer_callbacks;each %{$_[0]{original}};}
@@ -132,7 +151,7 @@ my $test_initializer_callbacks=0;
 }
 { package TestInitializerScalar;
   sub TIESCALAR {bless {},$_[0]}
-  sub FETCH {++$test_initializer_callbacks;return 'TEST_CALLBACK_VALUE';}
+  sub FETCH {++$test_initializer_callbacks;die "TEST_INITIALIZER_CALLBACK_REACHED\n" if $test_mode=~/\Apolicy-/;return 'TEST_CALLBACK_VALUE';}
   sub STORE {++$test_initializer_callbacks;}
 }
 sub test_creator_open {
@@ -220,14 +239,44 @@ sub test_creator_eval {
     }
     return $result;
 }
+sub test_creator_policy_eval {
+    my ($kind,$bytes)=@_;++$test_policy_evals{$kind};
+    my $result=eval $bytes;my $error=$@;die $error if length($error);
+    if($test_mode eq 'policy-'.$kind.'-false'||$test_mode eq 'policy-'.$kind.'-throw') {
+        $test_armed=1;push @test_events,['armed',$test_mode,$kind];
+        die "TEST_LOST_POLICY_EVAL_RESPONSE\n" if $test_mode eq 'policy-'.$kind.'-throw';return 0;
+    }
+    if($test_mode=~/\Apolicy-(native|map)-(expired|unsettled|foreign)\z/&&$kind eq $1) {
+        $test_invalidate->();$test_armed=1;push @test_events,['armed',$test_mode,$kind];
+    }
+    $test_policy_drift->() if $kind eq 'native'&&$test_mode=~/\Apolicy-post-native-/;
+    return $result;
+}
 `;
   const bodies=NAMES.map(name=>readFileSync(new URL('../'+name,import.meta.url)).toString('base64'));
   const suffix=String.raw`
 $test_invalidate=sub {
-    $bootstrap_deadline=0 if $test_mode eq 'expired-write'||$test_mode eq 'initialize-expired';
-    push @helper_ledger,{settled=>0} if $test_mode eq 'unsettled-write'||$test_mode eq 'initialize-unsettled';
-    $staged_phase='active' if $test_mode eq 'foreign-write'||$test_mode eq 'initialize-foreign';
+    $bootstrap_deadline=0 if $test_mode eq 'expired-write'||$test_mode eq 'initialize-expired'||$test_mode=~/\Apolicy-(native|map)-expired\z/;
+    push @helper_ledger,{settled=>0} if $test_mode eq 'unsettled-write'||$test_mode eq 'initialize-unsettled'||$test_mode=~/\Apolicy-(native|map)-unsettled\z/;
+    $staged_phase='active' if $test_mode eq 'foreign-write'||$test_mode eq 'initialize-foreign'||$test_mode=~/\Apolicy-(native|map)-foreign\z/;
 };
+$test_policy_drift=sub {
+    eval 'package Task6aOriginMapV2;sub decoy {1};1;' or die $@ if $test_mode eq 'policy-post-native-namespace';
+    delete $INC{'JSON/PP.pm'} if $test_mode eq 'policy-post-native-cache-missing';
+    $INC{'JSON/PP.pm'}='/System/Library/Perl/5.34/darwin-thread-multi-2level/JSON/PP.pm' if $test_mode eq 'policy-post-native-cache-replaced';
+    tie $INC{'JSON/PP.pm'},'TestInitializerScalar' if $test_mode eq 'policy-post-native-cache-magic';
+    if($test_mode eq 'policy-post-native-cache-tied') {my %saved=%INC;tie %INC,'TestInitializerHash',\%saved;}
+    $test_armed=1;push @test_events,['armed',$test_mode,'native'];
+};
+$test_policy_late_mutate=sub {
+    my ($kind)=@_;
+    if($test_mode eq 'policy-late-'.$kind) {
+        if($kind eq 'native') {$creator_native_readback='die "TEST_LATE_NATIVE\n";';}
+        else {$creator_map_readback='die "TEST_LATE_MAP\n";';}
+        $test_armed=1;push @test_events,['armed',$test_mode,$kind];
+    }
+};
+my $test_map_fixture;{local $/;$test_map_fixture=<STDIN>;}
 $test_late_mutate=sub {
     if($test_mode eq 'initialize-late-drift') {
         $creator_archive_readback='package Task6aOriginArchiveV2;sub extract_node_v2 {"TEST_UNCHECKED_BYTES"};1;';
@@ -239,9 +288,11 @@ my @test_roles=('archive-helper','native-helper','map-helper','entry');
 my ($test_ok,$test_error,$test_diagnostic);
 my ($test_init_diagnostic,$test_init_phase,$test_private_code,$test_cv_class,$test_cv_file,$test_fixture_result);
 my $test_archive_uses=0;
+my ($test_policy_diagnostic,$test_native_result,$test_map_result);my $test_policy_uses=0;
 $test_ok=eval {
     task6a_origin_create_source_root();
     task6a_origin_initialize_created_archive_helper() if $test_mode eq 'initialize-premature';
+    task6a_origin_initialize_created_policy_helpers() if $test_mode eq 'policy-premature';
     if($test_mode eq 'root-replacement') {
         CORE::rename($creator_root,$creator_root.'.original') or die "TEST_ROOT_RENAME\n";
         my @old=CORE::lstat($creator_root.'.original');
@@ -313,6 +364,55 @@ $test_ok=eval {
         task6a_origin_initialize_created_archive_helper('unexpected') if $test_mode eq 'initialize-arity';
         ++$test_archive_uses;$test_fixture_result=$creator_archive_original->(MIME::Base64::decode_base64($ARGV[5]));
     }
+    if($test_mode=~/\Apolicy-/) {
+        task6a_origin_initialize_created_archive_helper() unless $test_mode eq 'policy-missing-archive';
+        $creator_native_readback.='changed' if $test_mode eq 'policy-native-corrupt';
+        $creator_map_readback.='changed' if $test_mode eq 'policy-map-corrupt';
+        $creator_native_commitment='0'x64 if $test_mode eq 'policy-native-commitment';
+        $creator_map_commitment='0'x64 if $test_mode eq 'policy-map-commitment';
+        if($test_mode eq 'policy-native-substituted') {$creator_native_readback.="\n# TEST_UNREVIEWED\n";$creator_native_commitment=Digest::SHA::sha256_hex($creator_native_readback);}
+        if($test_mode eq 'policy-map-substituted') {$creator_map_readback.="\n# TEST_UNREVIEWED\n";$creator_map_commitment=Digest::SHA::sha256_hex($creator_map_readback);}
+        eval 'package Task6aOriginNativeV2;sub decoy {1};1;' or die $@ if $test_mode eq 'policy-native-namespace';
+        eval 'package Task6aOriginMapV2;sub decoy {1};1;' or die $@ if $test_mode eq 'policy-map-namespace';
+        delete $INC{'JSON/PP.pm'} if $test_mode eq 'policy-cache-missing';
+        $INC{'JSON/PP.pm'}='/System/Library/Perl/5.34/JSON/../JSON/PP.pm' if $test_mode eq 'policy-cache-escape';
+        $INC{'JSON/PP.pm'}='/System/Library/Perl/5.34-extra/JSON/PP.pm' if $test_mode eq 'policy-cache-prefix';
+        $INC{'JSON/PP.pm'}=[] if $test_mode eq 'policy-cache-reference';
+        $INC{'JSON/PP.pm'}='' if $test_mode eq 'policy-cache-empty';
+        $INC{'JSON/PP.pm'}='a'x4097 if $test_mode eq 'policy-cache-oversized';
+        $INC{'JSON/PP.pm'}="\x{100}" if $test_mode eq 'policy-cache-utf8';
+        tie $INC{'JSON/PP.pm'},'TestInitializerScalar' if $test_mode eq 'policy-cache-magic';
+        if($test_mode eq 'policy-cache-tied') {my %saved=%INC;tie %INC,'TestInitializerHash',\%saved;}
+        if($test_mode eq 'policy-disk-drift') {
+            my $path=$creator_root.'/source/task6a-origin-native-v2.pm';
+            CORE::chmod(0600,$path)==1 or die "TEST_POLICY_MODE\n";
+            CORE::sysopen(my $disk,$path,Fcntl::O_WRONLY()|Fcntl::O_NOFOLLOW(),0) or die "TEST_POLICY_OPEN\n";
+            my $bad='!'x length($test_bodies[1]);CORE::syswrite($disk,$bad,length($bad))==length($bad) or die "TEST_POLICY_WRITE\n";
+            CORE::chmod(0400,$disk)==1 or die "TEST_POLICY_MODE\n";CORE::close($disk) or die "TEST_POLICY_CLOSE\n";
+        }
+        if($test_mode=~/\Apolicy-(native|map)-inode\z/) {
+            my $index=$1 eq 'native'?1:2;
+            my $path=$creator_root.'/source/'.($index==1?'task6a-origin-native-v2.pm':'task6a-origin-map-v2.pm');
+            CORE::chmod(0700,$creator_root.'/source')==1 or die "TEST_POLICY_DIR_MODE\n";
+            CORE::rename($path,$path.'.original') or die "TEST_POLICY_RENAME\n";
+            CORE::sysopen(my $replacement,$path,Fcntl::O_WRONLY()|Fcntl::O_CREAT()|Fcntl::O_EXCL(),0600) or die "TEST_POLICY_OPEN\n";
+            CORE::syswrite($replacement,$test_bodies[$index],length($test_bodies[$index]))==length($test_bodies[$index]) or die "TEST_POLICY_WRITE\n";
+            CORE::chmod(0400,$replacement)==1 or die "TEST_POLICY_MODE\n";CORE::close($replacement) or die "TEST_POLICY_CLOSE\n";
+            CORE::chmod(0555,$creator_root.'/source')==1 or die "TEST_POLICY_DIR_MODE\n";
+        }
+        if($test_mode eq 'policy-root') {
+            CORE::rename($creator_root,$creator_root.'.original') or die "TEST_POLICY_ROOT_RENAME\n";
+            my @old=CORE::lstat($creator_root.'.original');push @test_roots,{path=>$creator_root.'.original',dev=>$old[0],ino=>$old[1]};
+            CORE::mkdir($creator_root,0700) or die "TEST_POLICY_ROOT_NEW\n";
+            CORE::mkdir($creator_root.'/source',0555) or die "TEST_POLICY_SOURCE_NEW\n";
+        }
+        $test_armed=1 if $test_mode=~/\Apolicy-(?:native-(?:corrupt|commitment|namespace|substituted|inode)|map-(?:corrupt|commitment|namespace|substituted|inode)|cache-|disk-drift|root)/;
+        $test_policy_diagnostic=task6a_origin_initialize_created_policy_helpers();
+        task6a_origin_initialize_created_policy_helpers() if $test_mode eq 'policy-duplicate';
+        task6a_origin_initialize_created_policy_helpers('unexpected') if $test_mode eq 'policy-arity';
+        ++$test_policy_uses;$test_native_result=$creator_native_original->(MIME::Base64::decode_base64($ARGV[6]));
+        ++$test_policy_uses;$test_map_result=$creator_map_original->($test_map_fixture,77777);
+    }
     $test_diagnostic=task6a_origin_release_source_creator();
     task6a_origin_release_source_creator() if $test_mode eq 'duplicate-release';
     1;
@@ -320,6 +420,10 @@ $test_ok=eval {
 my ($test_init_retry,$test_init_retry_error);
 if($test_mode=~/\Ainitialize-/&&!$test_ok) {
     $test_init_retry=eval {task6a_origin_initialize_created_archive_helper();1;};$test_init_retry_error=$@;
+}
+my ($test_policy_retry,$test_policy_retry_error);
+if($test_mode=~/\Apolicy-/&&!$test_ok) {
+    $test_policy_retry=eval {task6a_origin_initialize_created_policy_helpers();1;};$test_policy_retry_error=$@;
 }
 my $retry=eval {task6a_origin_create_source_root();1;};my $retry_error=$@;
 if(defined($creator_root)) {
@@ -341,11 +445,17 @@ print JSON::PP->new->canonical->encode({ok=>$test_ok?JSON::PP::true:JSON::PP::fa
     archiveDefined=>$test_mode eq 'initialize-magical-namespace-value'?undef:
       UNIVERSAL::can('Task6aOriginArchiveV2','extract_node_v2')?JSON::PP::true:JSON::PP::false,
     initializerCallbacks=>$test_initializer_callbacks,
+    policyEvals=>\%test_policy_evals,policyUses=>$test_policy_uses,policyDiagnostic=>$test_policy_diagnostic,
+    policyPhase=>$creator_policy_phase,privateNative=>ref($creator_native_original),privateMap=>ref($creator_map_original),
+    nativeDefined=>UNIVERSAL::can('Task6aOriginNativeV2','assert_node_native_v2')?JSON::PP::true:JSON::PP::false,
+    mapDefined=>UNIVERSAL::can('Task6aOriginMapV2','parse_map_v2')?JSON::PP::true:JSON::PP::false,
+    nativeResult=>$test_native_result,mapResult=>$test_map_result,policyRetry=>$test_policy_retry?JSON::PP::true:JSON::PP::false,policyRetryError=>$test_policy_retry_error,
     armed=>$test_armed?JSON::PP::true:JSON::PP::false,faultFD=>$test_fault_fd,
     fileOpens=>$test_file_opens,writes=>$test_writes,reads=>$test_reads});
 `;
-  const r=spawnSync('/usr/bin/perl',['-f','-e',prefix+source+suffix,mode,...bodies,archiveFixture()],{
+  const r=spawnSync('/usr/bin/perl',['-f','-e',prefix+source+suffix,mode,...bodies,archiveFixture(),nativeFixture()],{
     cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},timeout:10000,maxBuffer:1048576,encoding:'utf8',
+    input:policy?readFileSync(new URL('./fixtures/task6a-origin-vmmap-interleaved-v2.txt',import.meta.url)):Buffer.alloc(0),
   });
   // Do not clean uncertain original termination or unparsable evidence.
   assert.equal(r.error,undefined);assert.equal(r.signal,null);assert.equal(r.status,0,r.stderr);
@@ -500,7 +610,9 @@ test('created archive initializer actual completed-readback controls',{skip:!ord
     assert.deepEqual(out.actualLive,[]);assert.equal(out.events.filter(x=>x[0]==='close').length,10);
   });
   for(const [name,mode,mutant] of [
-    ['cache container','initialize-tied-cache',source=>once(source,String.raw`my $cache=\%INC;$staged_container->(\$cache,'B::HV');`,String.raw`my $cache=\%INC;`)],
+    ['cache container','initialize-tied-cache',source=>once(source,String.raw`my $cache=\%INC;$staged_container->(\$cache,'B::HV');
+        task6a_origin_refuse() if exists($INC{'IO/Uncompress/Gunzip.pm'});`,String.raw`my $cache=\%INC;
+        task6a_origin_refuse() if exists($INC{'IO/Uncompress/Gunzip.pm'});`)],
     ['traversed stash containers','initialize-tied-namespace',source=>{
       source=once(source,String.raw`$creator_epoch->();$staged_container->(\$table,'B::HV');`,'$creator_epoch->();');
       return once(source,String.raw`$staged_container->(\$table,'B::HV');$creator_epoch->();`,'$creator_epoch->();');
@@ -509,5 +621,93 @@ test('created archive initializer actual completed-readback controls',{skip:!ord
     const out=invoke(mode,{mutant});refused(out);assert.equal(out.armed,true);assert.equal(out.initializerCallbacks,1);
     assert.equal(out.evals,0);assert.equal(out.archiveUses,0);assert.deepEqual(out.actualLive,[]);
     assert.equal(out.events.filter(x=>x[0]==='close').length,10);
+  });
+});
+
+test('created policy helpers actual completed-readback controls',{skip:!ordinary},async t=>{
+  for(const mode of ['policy-healthy','policy-disk-drift','policy-late-native','policy-late-map'])await t.test(`${mode} initializes both fixed parsers before pure fixture use`,()=>{
+    const out=invoke(mode);assert.equal(out.ok,true,JSON.stringify(out));assert.equal(out.evals,1);
+    assert.deepEqual(out.policyEvals,{native:1,map:1});assert.equal(out.policyUses,2);assert.equal(out.policyPhase,'initialized');
+    assert.equal(out.privateNative,'CODE');assert.equal(out.privateMap,'CODE');assert.equal(out.nativeDefined,true);assert.equal(out.mapDefined,true);
+    assert.deepEqual(out.policyDiagnostic,{scope:'created-policy-helper-initializer-diagnostic-only',productionAuthority:false,initialized:true,helperCount:2});
+    assert.deepEqual(out.nativeResult,{fileType:2,dynamicLinker:'/usr/lib/dyld',systemDependencies:['/usr/lib/libSystem.B.dylib'],productionAuthority:false});
+    assert.equal(out.mapResult.scope,'complete-map-format-diagnostic-only');assert.equal(out.mapResult.productionAuthority,false);
+    assert.equal(out.mapResult.regionCount,265);assert.equal(out.mapResult.currentExecutableCount,47);
+    assert.equal(out.mapResult.potentialExecutableCount,63);assert.equal(out.mapResult.anonymousPotentialExecutableCount,13);
+    assert.equal(out.phase,'released');assert.deepEqual(out.actualLive,[]);assert.equal(out.events.filter(x=>x[0]==='close').length,10);
+    if(mode!=='policy-healthy')assert.equal(out.armed,true);
+    if(mode==='policy-disk-drift')assert.equal(out.artifacts[0].files.find(x=>x.name===NAMES[1]).exact,false);
+  });
+  for(const mode of ['policy-premature','policy-missing-archive','policy-native-corrupt','policy-map-corrupt',
+    'policy-native-commitment','policy-map-commitment','policy-native-namespace','policy-map-namespace','policy-native-substituted','policy-map-substituted',
+    'policy-cache-missing','policy-cache-prefix','policy-cache-escape','policy-cache-reference','policy-cache-magic','policy-cache-tied',
+    'policy-cache-empty','policy-cache-oversized','policy-cache-utf8','policy-native-inode','policy-map-inode','policy-root'])
+    await t.test(`${mode} refuses without either policy eval or callback`,()=>{
+      const out=invoke(mode);refused(out);assert.deepEqual(out.policyEvals,{native:0,map:0});assert.equal(out.policyUses,0);
+      assert.equal(out.initializerCallbacks,0);assert.equal(out.policyPhase,'burned');assert.equal(out.privateNative,'');assert.equal(out.privateMap,'');
+      assert.equal(out.policyDiagnostic,null);assert.equal(out.policyRetry,false);assert.match(out.policyRetryError,/TASK6A_ORIGIN_BOOTSTRAP_REFUSED/);
+      assert.deepEqual(out.actualLive,[]);
+      if(mode!=='policy-premature')assert.equal(out.events.filter(x=>x[0]==='close').length,10);
+      if(!['policy-premature','policy-missing-archive'].includes(mode))assert.equal(out.armed,true);
+    });
+  for(const mode of ['policy-post-native-namespace','policy-post-native-cache-missing','policy-post-native-cache-replaced',
+    'policy-post-native-cache-magic','policy-post-native-cache-tied'])await t.test(`${mode} preserves native effect and refuses before map`,()=>{
+    const out=invoke(mode);refused(out);assert.equal(out.armed,true);assert.deepEqual(out.policyEvals,{native:1,map:0});
+    assert.equal(out.nativeDefined,true);assert.equal(out.mapDefined,false);assert.equal(out.privateNative,'CODE');assert.equal(out.privateMap,'');
+    assert.equal(out.initializerCallbacks,0);assert.equal(out.policyUses,0);assert.equal(out.policyDiagnostic,null);assert.deepEqual(out.actualLive,[]);
+    assert.equal(out.events.filter(x=>x[0]==='close').length,10);assert.equal(out.policyRetry,false);
+    assert.ok(out.events.some(x=>x[0]==='armed'&&x[1]===mode&&x[2]==='native'));
+  });
+  for(const kind of ['native','map'])for(const fault of ['false','throw','expired','unsettled','foreign'])await t.test(`policy-${kind}-${fault} runs actual eval before permanent failure`,()=>{
+    const mode=`policy-${kind}-${fault}`,out=invoke(mode);refused(out);assert.equal(out.armed,true);
+    assert.deepEqual(out.policyEvals,{native:1,map:kind==='map'?1:0});assert.equal(out.nativeDefined,true);assert.equal(out.mapDefined,kind==='map');
+    assert.equal(out.policyPhase,'burned');assert.equal(out.policyUses,0);assert.equal(out.policyDiagnostic,null);
+    assert.deepEqual(out.actualLive,[]);assert.equal(out.events.filter(x=>x[0]==='close').length,10);assert.equal(out.policyRetry,false);
+    assert.ok(out.events.some(x=>x[0]==='armed'&&x[1]===mode&&x[2]===kind));
+  });
+  for(const mode of ['policy-duplicate','policy-arity'])await t.test(`${mode} burns with no repeated eval or parser use`,()=>{
+    const out=invoke(mode);refused(out);assert.deepEqual(out.policyEvals,{native:1,map:1});assert.equal(out.policyUses,0);
+    assert.equal(out.policyPhase,'burned');assert.equal(out.policyRetry,false);assert.deepEqual(out.actualLive,[]);
+    assert.equal(out.events.filter(x=>x[0]==='close').length,10);
+  });
+  for(const [name,mode,from,to] of [
+    ['native fixed blob','policy-native-substituted',String.raw`task6a_origin_refuse() unless Digest::SHA::sha1_hex('blob '.length($native_bytes)."\0".$native_bytes)
+            eq $staged_policy[1][2]&&$native_commitment =~ /\A[a-f0-9]{64}\z/`,String.raw`task6a_origin_refuse() unless $native_commitment =~ /\A[a-f0-9]{64}\z/`],
+    ['map fixed blob','policy-map-substituted',String.raw`task6a_origin_refuse() unless Digest::SHA::sha1_hex('blob '.length($map_bytes)."\0".$map_bytes)
+            eq $staged_policy[2][2]&&$map_commitment =~ /\A[a-f0-9]{64}\z/`,String.raw`task6a_origin_refuse() unless $map_commitment =~ /\A[a-f0-9]{64}\z/`],
+    ['native commitment','policy-native-commitment','&&Digest::SHA::sha256_hex($native_bytes) eq $native_commitment;',';'],
+    ['map commitment','policy-map-commitment','&&Digest::SHA::sha256_hex($map_bytes) eq $map_commitment;',';'],
+    ['native deadline','policy-native-expired',String.raw`task6a_origin_refuse() unless task6a_origin_helpers_settled()
+        &&task6a_origin_now()<$bootstrap_deadline;`,String.raw`task6a_origin_refuse() unless task6a_origin_helpers_settled();`],
+    ['map helper settlement','policy-map-unsettled',String.raw`task6a_origin_refuse() unless task6a_origin_helpers_settled()
+        &&task6a_origin_now()<$bootstrap_deadline;`,String.raw`task6a_origin_refuse() unless task6a_origin_now()<$bootstrap_deadline;`],
+  ])await t.test(`${name} omission accepts independently armed fault in memory only`,()=>{
+    const out=invoke(mode,{mutant:source=>once(source,from,to)});assert.equal(out.armed,true);assert.equal(out.ok,true,JSON.stringify(out));
+    assert.deepEqual(out.policyEvals,{native:1,map:1});assert.equal(out.policyUses,2);assert.deepEqual(out.actualLive,[]);
+    assert.equal(out.events.filter(x=>x[0]==='close').length,10);
+  });
+  const mapBoundary=String.raw`$creator_native_original=$creator_policy_code->(\$native);$creator_epoch->();
+        task6a_origin_refuse() if $creator_namespace_exists->(['Task6aOriginMapV2']);
+        task6a_origin_refuse() unless $creator_policy_cache->() eq $cache_path;`;
+  for(const [name,mode,omitted] of [
+    ['map namespace','policy-post-native-namespace',"task6a_origin_refuse() if $creator_namespace_exists->(['Task6aOriginMapV2']);"],
+    ['cache equality','policy-post-native-cache-replaced','task6a_origin_refuse() unless $creator_policy_cache->() eq $cache_path;'],
+  ])await t.test(`second ${name} boundary omission accepts actual post-native drift in memory only`,()=>{
+    const out=invoke(mode,{mutant:source=>once(source,mapBoundary,mapBoundary.replace(omitted,'# TEST omitted second boundary'))});
+    assert.equal(out.armed,true);assert.equal(out.ok,true,JSON.stringify(out));assert.deepEqual(out.policyEvals,{native:1,map:1});
+    assert.equal(out.policyUses,2);assert.equal(out.initializerCallbacks,0);assert.deepEqual(out.actualLive,[]);
+  });
+  for(const mode of ['policy-post-native-cache-magic','policy-post-native-cache-tied'])await t.test(`second cache guard omission reaches one ${mode} callback`,()=>{
+    const out=invoke(mode,{mutant:source=>once(source,mapBoundary,mapBoundary.replace('task6a_origin_refuse() unless $creator_policy_cache->() eq $cache_path;','# TEST omitted second cache guard'))});
+    refused(out);assert.equal(out.armed,true);assert.deepEqual(out.policyEvals,{native:1,map:1});assert.equal(out.initializerCallbacks,1);
+    assert.equal(out.policyUses,0);assert.deepEqual(out.actualLive,[]);assert.equal(out.events.filter(x=>x[0]==='close').length,10);
+  });
+  await t.test('initial cache container omission reaches one callback before either eval',()=>{
+    const from=String.raw`my $creator_policy_cache=sub {
+    $creator_epoch->();my $cache=\%INC;$staged_container->(\$cache,'B::HV');`;
+    const out=invoke('policy-cache-tied',{mutant:source=>once(source,from,String.raw`my $creator_policy_cache=sub {
+    $creator_epoch->();my $cache=\%INC;`)});
+    refused(out);assert.equal(out.armed,true);assert.deepEqual(out.policyEvals,{native:0,map:0});assert.equal(out.initializerCallbacks,1);
+    assert.equal(out.policyUses,0);assert.deepEqual(out.actualLive,[]);assert.equal(out.events.filter(x=>x[0]==='close').length,10);
   });
 });

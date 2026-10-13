@@ -837,6 +837,9 @@ my (@creator_pending,@creator_originals,@creator_directory_checks,@creator_file_
 my $creator_source_directory;
 my ($creator_archive_readback,$creator_archive_commitment,$creator_archive_original);
 my $creator_archive_phase='absent';
+my ($creator_native_readback,$creator_native_commitment,$creator_native_original);
+my ($creator_map_readback,$creator_map_commitment,$creator_map_original);
+my $creator_policy_phase='absent';
 my $creator_live=sub {
     task6a_origin_refuse() if $creator_invalid||$creator_uncertain||$creator_disposal_started;
     task6a_origin_refuse() unless $<==$creator_uid&&$>==$creator_uid
@@ -1078,6 +1081,14 @@ sub task6a_origin_write_source_member {
             $creator_archive_readback=''.$observed;
             $creator_archive_commitment=Digest::SHA::sha256_hex($observed);
         }
+        if($creator_source_count==1) {
+            $creator_native_readback=''.$observed;
+            $creator_native_commitment=Digest::SHA::sha256_hex($observed);
+        }
+        if($creator_source_count==2) {
+            $creator_map_readback=''.$observed;
+            $creator_map_commitment=Digest::SHA::sha256_hex($observed);
+        }
         ++$creator_source_count;1;
     };my $error=$@;$creator_burn->() unless $ok&&!length($error);
     return $creator_diagnostic->();
@@ -1141,6 +1152,67 @@ sub task6a_origin_initialize_created_archive_helper {
     unless($ok&&!length($error)) {$creator_archive_phase='burned';$creator_burn->();}
     return {scope=>'created-archive-helper-initializer-diagnostic-only',
         productionAuthority=>JSON::PP::false,initialized=>JSON::PP::true};
+}
+my $creator_policy_cache=sub {
+    $creator_epoch->();my $cache=\%INC;$staged_container->(\$cache,'B::HV');
+    task6a_origin_refuse() unless exists($INC{'JSON/PP.pm'});
+    $creator_epoch->();my $path=$staged_bytes->(\($INC{'JSON/PP.pm'}),4096);
+    task6a_origin_refuse() unless $path eq '/System/Library/Perl/5.34/JSON/PP.pm'
+        ||$path eq '/System/Library/Perl/5.34/darwin-thread-multi-2level/JSON/PP.pm';
+    $creator_epoch->();return $path;
+};
+my $creator_policy_code=sub {
+    my ($cell)=@_;my $sv=$staged_plain_cell->($cell);
+    task6a_origin_refuse() unless ref($sv) eq 'B::IV'&&($sv->FLAGS&B::SVf_ROK());
+    my $cv=$sv->RV;task6a_origin_refuse() unless ref($cv) eq 'B::CV';
+    task6a_origin_refuse() if $cv->FLAGS & 0x00f00000;
+    my $magic=$cv->MAGIC;task6a_origin_refuse() if defined($magic);
+    return $$cell;
+};
+sub task6a_origin_initialize_created_policy_helpers {
+    my $ok=eval {
+        task6a_origin_refuse() unless @_==0&&$creator_phase eq 'written'
+            &&$creator_source_count==4&&@creator_originals==10
+            &&$creator_archive_phase eq 'initialized'&&$creator_policy_phase eq 'absent';
+        $creator_policy_phase='initializing';$creator_epoch->();
+        $creator_policy_code->(\$creator_archive_original);$creator_epoch->();
+        my $native_bytes=$staged_bytes->(\$creator_native_readback,2097152);
+        my $map_bytes=$staged_bytes->(\$creator_map_readback,2097152);
+        my $native_commitment=$staged_scalar->(\$creator_native_commitment);
+        my $map_commitment=$staged_scalar->(\$creator_map_commitment);
+        task6a_origin_refuse() unless Digest::SHA::sha1_hex('blob '.length($native_bytes)."\0".$native_bytes)
+            eq $staged_policy[1][2]&&$native_commitment =~ /\A[a-f0-9]{64}\z/
+            &&Digest::SHA::sha256_hex($native_bytes) eq $native_commitment;
+        task6a_origin_refuse() unless Digest::SHA::sha1_hex('blob '.length($map_bytes)."\0".$map_bytes)
+            eq $staged_policy[2][2]&&$map_commitment =~ /\A[a-f0-9]{64}\z/
+            &&Digest::SHA::sha256_hex($map_bytes) eq $map_commitment;
+        $creator_epoch->();
+        task6a_origin_refuse() if $creator_namespace_exists->(['Task6aOriginNativeV2']);
+        task6a_origin_refuse() if $creator_namespace_exists->(['Task6aOriginMapV2']);
+        my $cache_path=$creator_policy_cache->();$creator_epoch->();
+        task6a_origin_refuse() if $creator_namespace_exists->(['Task6aOriginNativeV2']);
+        task6a_origin_refuse() unless $creator_policy_cache->() eq $cache_path;
+        $creator_epoch->();
+        my $native_result=eval $native_bytes;my $native_error=$@;
+        $staged_plain_cell->(\$native_result);
+        task6a_origin_refuse() unless !length($native_error)&&defined($native_result)
+            &&!ref($native_result)&&$native_result eq '1';$creator_epoch->();
+        my $native=UNIVERSAL::can('Task6aOriginNativeV2','assert_node_native_v2');
+        $creator_native_original=$creator_policy_code->(\$native);$creator_epoch->();
+        task6a_origin_refuse() if $creator_namespace_exists->(['Task6aOriginMapV2']);
+        task6a_origin_refuse() unless $creator_policy_cache->() eq $cache_path;
+        $creator_epoch->();
+        my $map_result=eval $map_bytes;my $map_error=$@;
+        $staged_plain_cell->(\$map_result);
+        task6a_origin_refuse() unless !length($map_error)&&defined($map_result)
+            &&!ref($map_result)&&$map_result eq '1';$creator_epoch->();
+        my $map=UNIVERSAL::can('Task6aOriginMapV2','parse_map_v2');
+        $creator_map_original=$creator_policy_code->(\$map);$creator_epoch->();
+        $creator_policy_phase='initialized';$creator_epoch->();1;
+    };my $error=$@;
+    unless($ok&&!length($error)) {$creator_policy_phase='burned';$creator_burn->();}
+    return {scope=>'created-policy-helper-initializer-diagnostic-only',
+        productionAuthority=>JSON::PP::false,initialized=>JSON::PP::true,helperCount=>2};
 }
 sub task6a_origin_release_source_creator {
     unless(@_==0&&$creator_phase eq 'written'&&!$creator_invalid
