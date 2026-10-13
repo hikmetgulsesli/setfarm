@@ -18,6 +18,7 @@ const canonical = value => value === null || typeof value !== "object" ? JSON.st
 const same = (a, b, keys) => keys.every(key => a[key] === b[key]);
 let uncertain = false, occupied = false, modulesPromise, originalBuild;
 const handles = new WeakMap();
+let bindingProjectionActive = false, bindingProjectionOwner = null;
 
 function sourceSnapshot() {
   if (uncertain) fail();
@@ -148,6 +149,45 @@ export function assertDeploymentCutoverOwnerV1(capability) {
     if (committed(held.modules.store.observeDeploymentCutoverOwnerHistoryV1()) !== held.projection) fail();
     sourceAuthority(held.modules);
   } catch { held.valid = false; uncertain = true; fail(); }
+}
+
+// Labels only: the original opaque capability remains the owner authority.
+// Each assertion is a trusted composite with its existing FS/process resources.
+export function observeDashboardCutoverOwnerBindingsV2(capability) {
+  if (bindingProjectionActive) {
+    bindingProjectionOwner.valid = false;
+    uncertain = true;
+    fail();
+  }
+  const held = handles.get(capability);
+  if (!held || !held.valid || uncertain) fail();
+  bindingProjectionActive = true;
+  bindingProjectionOwner = held;
+  const check = () => {
+    if (!bindingProjectionActive || bindingProjectionOwner !== held || !held.valid || uncertain) fail();
+  };
+  try {
+    assertDeploymentCutoverOwnerV1(capability);
+    check();
+    const bindings = Object.freeze({
+      schema: "setfarm.internal-production-dashboard-cutover-owner-bindings.v2",
+      authority: "binding-only",
+      maintenanceIntentHash: held.maintenance.maintenanceIntentHash,
+      ownerClaimHash: held.claim.ownerClaimHash,
+      controllerSourceHash: held.maintenance.controllerSourceHash,
+      cutoverPlanHash: held.maintenance.cutoverPlanHash,
+    });
+    assertDeploymentCutoverOwnerV1(capability);
+    check();
+    return bindings;
+  } catch {
+    held.valid = false;
+    uncertain = true;
+    fail();
+  } finally {
+    bindingProjectionActive = false;
+    bindingProjectionOwner = null;
+  }
 }
 
 // A durable refusal can be published only by this process's current owner.
