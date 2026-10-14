@@ -4,8 +4,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 
-const importIndex = process.execArgv.indexOf("--import");
-const loader = importIndex >= 0 ? process.execArgv[importIndex + 1]! : createRequire(import.meta.url).resolve("tsx");
+const loader = createRequire(import.meta.url).resolve("tsx");
 const ts = createRequire(loader)("typescript") as typeof import("typescript");
 const source = new URL("../../src/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.ts", import.meta.url).href;
 const refused = "DASHBOARD_CUTOVER_LOCAL_PRODUCER_DRAIN_REFUSED";
