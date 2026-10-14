@@ -83,7 +83,6 @@ function transaction(value = data(), failAt = 0) {
     const sql = strings.join("?");
     calls.push({ sql, parameters, sameOriginal: true });
     if (calls.length === failAt) throw Error("PRIVATE_PROVIDER_DETAIL");
-    if (sql.includes("WITH expected_tables(name)")) return [value.cold];
     if (sql.includes("WITH required_columns(")) return [value.aggregate];
     if (sql.includes("FROM public.finding_sets ORDER BY")) return value.parents;
     if (sql.includes("FROM public.findings ORDER BY")) return value.children;
@@ -94,6 +93,7 @@ function transaction(value = data(), failAt = 0) {
     calls.push({ sql, parameters, sameOriginal: this === tx });
     if (calls.length === failAt) throw Error("PRIVATE_PROVIDER_DETAIL");
     if (calls.length <= 3) return [value.profile.relations, value.profile.columns, value.profile.indexes][calls.length - 1];
+    if (sql.includes("WITH expected_tables(name)")) return [value.cold];
     if (sql.includes("WHERE version <= $1")) return value.journal;
     if (sql === "SELECT version,state FROM public.setfarm_schema_migrations WHERE version >= 26 ORDER BY version") return value.tail;
     throw Error("UNNOMINATED_UNSAFE_SQL");
