@@ -338,6 +338,27 @@ async function seedActiveRecovery(
   return { recoveryCaseId: opened.recoveryCase.recoveryCaseId, dispatchId: authorized.dispatch.dispatchId };
 }
 
+// Copied terminal kernels retain the genuine ordinary database refusal guard.
+// Import its real read-only observer; never replace the guard with a test grant.
+function ordinaryDashboardGuardFixtureV2(databaseSource: string): string {
+  const declarations = [
+    "let _dashboardCutoverRefusedV2 = false;",
+    "let _dashboardCutoverObservationActiveV2 = false;",
+    "let _dashboardCutoverOrdinaryUsedV2 = false;",
+  ].map((declaration) => {
+    assert.equal(databaseSource.split(declaration).length, 2, "one genuine guard state declaration");
+    return declaration;
+  }).join("\n");
+  const marker = "function assertOrdinaryDashboardDatabaseAccessV2(): void {";
+  const endMarker = "\nconst LEGACY_ISOLATED_TEST_DATABASE_V1";
+  assert.equal(databaseSource.split(marker).length, 2, "one genuine ordinary database guard");
+  const start = databaseSource.indexOf(marker);
+  const end = databaseSource.indexOf(endMarker, start);
+  assert.ok(end > start, "ordinary database guard has one bounded copied-source region");
+  const observerUrl = new URL("../../src/internal-production/baseline-deployment-cutover-v1.ts", import.meta.url).href;
+  return `import { observeDeploymentCutoverIntentV1 } from ${JSON.stringify(observerUrl)};\n${declarations}\n${databaseSource.slice(start, end)}\n`;
+}
+
 describe("canonical run terminal owner", () => {
   it("P4 recovery source bootstrap actual terminal skips the second owner close only after deep proof", async () => {
     const source = await readFile(path.resolve(
@@ -555,6 +576,7 @@ describe("canonical run terminal owner", () => {
     try {
       const modulePath = path.join(fixture, "barrier.ts");
       writeFileSync(modulePath, `
+${ordinaryDashboardGuardFixtureV2(databaseSource)}
 const g=globalThis as any;
 type InternalProductionPgTransactionSql=any;
 type InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1=any;
@@ -852,6 +874,7 @@ ${barrier}
       const canonicalJsonUrl = pathToFileURL(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/product-compiler/canonical-json.ts")).href;
       const ownerAdmissionUrl = pathToFileURL(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src/internal-production/owner-admission-v1.ts")).href;
       writeFileSync(modulePath, `
+${ordinaryDashboardGuardFixtureV2(databaseSource)}
 import { hashCanonicalJson } from ${JSON.stringify(canonicalJsonUrl)};
 import { validateInternalProductionGlobalOwnerAdmissionFenceReleaseV1 } from ${JSON.stringify(ownerAdmissionUrl)};
 const g=globalThis as any;
@@ -1253,6 +1276,7 @@ export async function resolveInternalProductionRecoverySourceBootstrapRunReceipt
 `, "utf8");
       const modulePath = path.join(sourceDir, "db-kernel.ts");
       writeFileSync(modulePath, `
+${ordinaryDashboardGuardFixtureV2(production)}
 import {createHash} from "node:crypto";
 type InternalProductionPgTransactionSql=any; type OwnerReservationRowV1=any; type InternalProductionBoundOwnerReservationV1<T=any>=any; type OwnerAdmissionAuthorityRowV1=any; type WorkflowRunTerminalRowV1=any;
 const g=globalThis as any;
