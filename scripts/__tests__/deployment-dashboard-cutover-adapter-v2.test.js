@@ -33,7 +33,9 @@ const translations=[
 function jointFixture(resources=false,pre32=false,bounded=false,owner=false,ownerInputCopy=false,localDrainFault=false,quiet=false,ingress=false){
   const bridgeList=pre32?[...translations,
     ['src/internal-production/baseline-legacy-database-census-v1.ts',
-      'dist/internal-production/baseline-legacy-database-census-v1.js']]:[...translations];
+      'dist/internal-production/baseline-legacy-database-census-v1.js'],
+    ['src/internal-production/task6a-cold-pre32-catalog-readonly-v1.ts',
+      'dist/internal-production/task6a-cold-pre32-catalog-readonly-v1.js']]:[...translations];
   if(owner){
     assert.equal(resources,true);assert.ok(pre32||quiet||ingress);
     for(const name of ['baseline-deployment-cutover-records-v1','baseline-deployment-cutover-owner-store-v1',
@@ -297,7 +299,11 @@ async function exercise(body,{resources=false,pre32=false,bounded=pre32,owner=fa
     for(const name of ${resources?"['exec','execSync','execFile','execFileSync','fork']":"['spawn','spawnSync','exec','execSync','execFile','execFileSync','fork']"})cp[name]=(...args)=>{
       out.commands.push({name,args});throw Error('FORBIDDEN_EXTERNAL_EFFECT')};
     syncBuiltinESMExports();
-    try{${body};out.passed=true}catch(error){out.error=error.message;out.stack=error.stack;process.exitCode=1}
+    try{${body};out.passed=true}catch(error){
+      out.error=error.message;out.stack=error.stack;process.exitCode=1;
+      const probe=globalThis.pre32Probe;
+      if(probe)out.pre32Failure={open:probe.open,queries:probe.queries,coldCatalog:probe.coldCatalog};
+    }
     ${owner?"out.reservationFds=(out.reservationFds??[]).map(row=>{let state;try{originalStat(row.fd);state='live'}catch(error){state=error.code}return{...row,state}});":''}
     fs.writeFileSync(root+'.joint-originals.json',JSON.stringify(out),{flag:'wx',mode:0o600});
     process.stdout.write(JSON.stringify(out));`;
@@ -742,6 +748,11 @@ export default function postgres(url,options){
   };
   tx.unsafe=async(q,parameters)=>{
     p.queries++;p.events.push(q);
+    if(q.includes('WITH expected_tables(name)')){
+      const rows=[{laterJournalCount:'0',relationCount:'0',functionCount:'0',typeCount:'0',triggerCount:'0'}];
+      p.coldCatalog={kind:'unsafe',transaction,returnedRowCount:rows.length};
+      return rows;
+    }
     if(q.includes('oversizedRunCount')||q.includes('oversizedAttemptCount')||
       q.startsWith('SELECT id AS "runId"')||q.startsWith('SELECT id::text AS "claimId"')||
       q.startsWith('SELECT attempt_id AS "attemptId"')||q.startsWith('SELECT session_id AS "sessionId"')){
