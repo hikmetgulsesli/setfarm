@@ -4,6 +4,7 @@ import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
+import {gzipSync,gunzipSync} from 'node:zlib';
 import test from 'node:test';
 import {canonical,createFinalizedFixture,file,git,hash} from './helpers/dashboard-cutover-finalized-fixture-v2.js';
 
@@ -291,6 +292,7 @@ function resourceProgram(fixture){return `
 async function exercise(body,{resources=false,pre32=false,bounded=pre32,owner=false,ownerInputCopy=false,localDrainFault=false,quiet=false,ingress=false}={}){
   const fixture=jointFixture(resources,pre32,bounded,owner,ownerInputCopy,localDrainFault,quiet,ingress),{root}=fixture;
   const program=`import assert from 'node:assert/strict';import fs from 'node:fs';
+    import {gzipSync} from 'node:zlib';
     import path from 'node:path';
     import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
     const root=${JSON.stringify(root)},out={actual:false,ports:[],commands:[],nativeCalls:0};
@@ -305,7 +307,7 @@ async function exercise(body,{resources=false,pre32=false,bounded=pre32,owner=fa
       if(probe)out.pre32Failure={open:probe.open,queries:probe.queries,coldCatalog:probe.coldCatalog};
     }
     ${owner?"out.reservationFds=(out.reservationFds??[]).map(row=>{let state;try{originalStat(row.fd);state='live'}catch(error){state=error.code}return{...row,state}});":''}
-    fs.writeFileSync(root+'.joint-originals.json',JSON.stringify(out),{flag:'wx',mode:0o600});
+    fs.writeFileSync(root+'.joint-originals.json.gz',gzipSync(Buffer.from(JSON.stringify(out)),{level:3}),{flag:'wx',mode:0o600});
     process.stdout.write(JSON.stringify(out));`;
   file(path.dirname(root),path.basename(root)+'.joint-intent.json',JSON.stringify({fixture,program,node:fixedNode}));
   const child=spawn(fixedNode,['--input-type=module','-e',program],{
@@ -319,11 +321,19 @@ async function exercise(body,{resources=false,pre32=false,bounded=pre32,owner=fa
     stream.on('close',()=>{closed[name]=true});stream.on('data',b=>{if(name==='stdout')stdout+=b;else stderr+=b});
   }
   const [status,signal]=await new Promise(resolve=>child.on('close',(code,sig)=>resolve([code,sig])));
-  file(path.dirname(root),path.basename(root)+'.joint-result.json',JSON.stringify({fixture,program,status,signal,error,eof,closed,stdout,stderr}));
+  file(path.dirname(root),path.basename(root)+'.joint-result.json.gz',gzipSync(Buffer.from(JSON.stringify({fixture,program,status,signal,error,eof,closed,stdout,stderr})),{level:3}),0o600);
   console.log(JSON.stringify({kind:'joint-source-only-case',root,status,signal,eof,closed}));
   assert.equal(error,null);assert.equal(signal,null);assert.deepEqual(eof,{stdout:true,stderr:true});
   assert.deepEqual(closed,{stdout:true,stderr:true});assert.equal(stderr,'');
-  const original=JSON.parse(fs.readFileSync(root+'.joint-originals.json'));
+  assert.equal(fs.existsSync(root+'.joint-originals.json'),false,'raw original trace must not duplicate compressed evidence');
+  assert.equal(fs.existsSync(root+'.joint-result.json'),false,'raw result trace must not duplicate compressed evidence');
+  assert.equal(fs.existsSync(root+'.joint-originals.json.gz'),true);
+  assert.equal(fs.existsSync(root+'.joint-result.json.gz'),true);
+  const persisted=JSON.parse(gunzipSync(fs.readFileSync(root+'.joint-result.json.gz')));
+  assert.equal(persisted.stdout,stdout);assert.equal(persisted.stderr,stderr);
+  assert.equal(persisted.status,status);assert.equal(persisted.signal,signal);assert.equal(persisted.error,error);
+  assert.deepEqual(persisted.eof,eof);assert.deepEqual(persisted.closed,closed);
+  const original=JSON.parse(gunzipSync(fs.readFileSync(root+'.joint-originals.json.gz')));
   assert.equal(original.actual,false);if(!resources)assert.deepEqual(original.commands,[]);assert.equal(original.nativeCalls,0);
   assert.equal(status,0,original.stack);assert.equal(original.passed,true);
 }
