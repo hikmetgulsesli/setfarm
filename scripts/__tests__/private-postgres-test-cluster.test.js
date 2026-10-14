@@ -459,7 +459,7 @@ function wrapperBoundaryFixture(mode,commandMode='findings'){
     'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
     'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts',
   ]:['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
-    ...(commandMode==='all'?['test']:['run','test:findings'])];
+    ...(commandMode==='all'?['test']:commandMode==='after-scripts'?['run','test:after-scripts']:['run','test:findings'])];
   const guard=`
 import cp from 'node:child_process';import fs from 'node:fs';import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';import {registerHooks,syncBuiltinESMExports} from 'node:module';
@@ -561,7 +561,7 @@ process.once('exit',()=>{original.writeSync(1,Buffer.from('UNIT_BOUNDARY_RESULT 
       NODE_OPTIONS:'--import=data:text/javascript;base64,'+Buffer.from(guard).toString('base64')},
   });
 }
-for(const commandMode of ['findings','all','readonly-verifiers','receipt'])
+for(const commandMode of ['findings','all','readonly-verifiers','receipt','after-scripts'])
 for(const mode of commandMode==='all'?['normal']:
   ['normal','nonzero','mirror-error','journal-loss','close-fault','retained-db','cancel','before-server','before-test','attach-server','attach-test','input-error']){
   test('wrapper boundary '+commandMode+' '+mode+' retains ordered observed outcomes without native effects',async()=>{
@@ -640,4 +640,31 @@ for(const ending of ['end','error','close'])test('actual journal binding suppres
     assert.equal(controls.some(r=>r.stage==='stream-end'&&r.channel==='stdout'),ending==='end');
     assert.equal(journal.healthy,ending==='end');assert.equal(reader.end().incomplete,true);
   }finally{journal.close();closeSync(fd);}
+});
+
+// Fixed continuation keeps the original cluster ownership and cleanup protocol.
+test('after-scripts permits only fixed npm suffix argv in a frozen private cluster plan',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'after-scripts'});
+  assert.deepEqual(value.test,['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js','run','test:after-scripts']);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
+});
+test('after-scripts package command runs exactly the remaining seven package lanes',()=>{
+  const scripts=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).scripts;
+  const expected=['product-compiler','execution-attempts','findings','evidence','recovery','evals','internal-production']
+    .map(name=>'npm run test:'+name).join(' && ');
+  assert.equal(scripts['test:after-scripts'],expected);
+  assert.equal(scripts.test.split('npm run test:scripts && ')[1],expected);
+});
+test('after-scripts refuses extra args and caller commands before cluster effects',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  for(const mode of ['after-scripts;echo denied','https://127.0.0.1/','test:after-scripts'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'after-scripts','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.match(child.stderr,/PRIVATE_TEST_CLUSTER_MODE_INVALID/);
 });
