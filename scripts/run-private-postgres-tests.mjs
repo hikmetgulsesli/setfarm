@@ -16,7 +16,7 @@ const PG='/opt/homebrew/opt/postgresql@17/bin/';
 export function planPrivatePostgresTestsV1({root,port,mode}={}){
   if(typeof root!=='string'||!/^\/tmp\/setfarm-task6a-pg\.[A-Za-z0-9]+$/.test(root)
     ||!Number.isInteger(port)||port<1024||port>65535||port===5432
-    ||!['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure'].includes(mode))throw Error('PRIVATE_TEST_CLUSTER_PLAN_INVALID');
+    ||!['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure','after-local-custody'].includes(mode))throw Error('PRIVATE_TEST_CLUSTER_PLAN_INVALID');
   return Object.freeze({
     initdb:Object.freeze([
       '-D',root+'/data','--username=postgres','--auth-host=scram-sha-256',
@@ -37,7 +37,7 @@ export function planPrivatePostgresTestsV1({root,port,mode}={}){
       'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
       'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts',
     ]:['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
-      ...(mode==='findings'?['run','test:findings']:mode==='after-scripts'?['run','test:after-scripts']:mode==='after-terminal'?['run','test:after-terminal']:mode==='after-findings'?['run','test:after-findings']:mode==='after-internal-pure'?['run','test:after-internal-pure']:['test'])]),
+      ...(mode==='findings'?['run','test:findings']:mode==='after-scripts'?['run','test:after-scripts']:mode==='after-terminal'?['run','test:after-terminal']:mode==='after-findings'?['run','test:after-findings']:mode==='after-internal-pure'?['run','test:after-internal-pure']:mode==='after-local-custody'?['run','test:after-local-custody']:['test'])]),
   });
 }
 
@@ -304,7 +304,7 @@ async function main(){
       journal?.control('terminal-unavailable',{channel,reason});
     })]));
   const args=process.argv.slice(2);
-  if(args.length!==1||!['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure'].includes(args[0])){
+  if(args.length!==1||!['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure','after-local-custody'].includes(args[0])){
     mirrors.stderr.write(Buffer.from('PRIVATE_TEST_CLUSTER_MODE_INVALID\n'));process.exitCode=1;return;
   }
   let stage='preconditions',root=null,directoryFd=null,init=null,server=null,testChild=null,admin=null;
