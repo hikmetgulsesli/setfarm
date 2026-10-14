@@ -459,7 +459,7 @@ function wrapperBoundaryFixture(mode,commandMode='findings'){
     'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
     'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts',
   ]:['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
-    ...(commandMode==='all'?['test']:commandMode==='after-scripts'?['run','test:after-scripts']:['run','test:findings'])];
+    ...(commandMode==='all'?['test']:commandMode==='after-scripts'?['run','test:after-scripts']:commandMode==='after-terminal'?['run','test:after-terminal']:['run','test:findings'])];
   const guard=`
 import cp from 'node:child_process';import fs from 'node:fs';import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';import {registerHooks,syncBuiltinESMExports} from 'node:module';
@@ -561,7 +561,7 @@ process.once('exit',()=>{original.writeSync(1,Buffer.from('UNIT_BOUNDARY_RESULT 
       NODE_OPTIONS:'--import=data:text/javascript;base64,'+Buffer.from(guard).toString('base64')},
   });
 }
-for(const commandMode of ['findings','all','readonly-verifiers','receipt','after-scripts'])
+for(const commandMode of ['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal'])
 for(const mode of commandMode==='all'?['normal']:
   ['normal','nonzero','mirror-error','journal-loss','close-fault','retained-db','cancel','before-server','before-test','attach-server','attach-test','input-error']){
   test('wrapper boundary '+commandMode+' '+mode+' retains ordered observed outcomes without native effects',async()=>{
@@ -663,6 +663,68 @@ test('after-scripts refuses extra args and caller commands before cluster effect
   for(const mode of ['after-scripts;echo denied','https://127.0.0.1/','test:after-scripts'])
     assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
   const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'after-scripts','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.match(child.stderr,/PRIVATE_TEST_CLUSTER_MODE_INVALID/);
+});
+
+// Fixed post-terminal continuation is a closed list, not a new discovery mode.
+const POST_TERMINAL_OWNER_FILES=Object.freeze([
+  "run-termination.test.ts",
+  "runtime-completion.test.ts",
+  "runtime-hooks.test.ts",
+  "runtime-session-repository.test.ts",
+  "story-publication.integration.test.ts",
+  "terminal-claim-runtime-reconciler.test.ts",
+  "v3-deploy-receipt-repository.test.ts",
+  "v3-deploy-refusal.integration.test.ts",
+  "v3-downstream-evidence-publication.test.ts",
+  "v3-downstream-recovery-transition.test.ts",
+  "v3-implementation-refusal.integration.test.ts",
+  "v3-operational-retry-lifecycle.integration.test.ts",
+  "v3-plan-invalid-proposal-retry.integration.test.ts",
+  "v3-plan-product-build-authority.integration.test.ts",
+  "v3-plan-refusal.integration.test.ts",
+  "v3-platform-preclaim-claim.integration.test.ts",
+  "v3-platform-preclaim-terminal.integration.test.ts",
+  "v3-platform-preclaim-termination-race.integration.test.ts",
+  "v3-pre-dispatch-failure.integration.test.ts",
+  "v3-preparation-claim-authority.test.ts",
+  "v3-setup-build-failure-cause.integration.test.ts",
+  "v3-setup-build-untyped-build-failure.integration.test.ts",
+  "v3-stage-input-unresolved.integration.test.ts"
+]);
+test('after-terminal permits only fixed npm continuation argv in a frozen private cluster plan',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'after-terminal'});
+  assert.deepEqual(value.test,['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js','run','test:after-terminal']);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
+});
+test('after-terminal package command contains exactly23 fixed later owners and the unchanged five-package tail',()=>{
+  const scripts=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).scripts;
+  const execution=readFileSync(new URL('../run-execution-attempt-tests.ts',import.meta.url),'utf8');
+  const blocks=[...execution.matchAll(/const OWNER_BACKED_TESTS = new Set\(\[([\s\S]*?)\]\);/g)];
+  assert.equal(blocks.length,1,'one maintained owner inventory');
+  const owners=[...blocks[0][1].matchAll(/"([A-Za-z0-9.-]+\.test\.ts)"/g)].map(m=>m[1]).sort();
+  assert.equal(owners.length,38);assert.equal(owners.indexOf('run-terminal-transition.test.ts'),14);
+  assert.deepEqual(owners.slice(15),POST_TERMINAL_OWNER_FILES);
+  assert.equal(POST_TERMINAL_OWNER_FILES.length,23);assert.equal(new Set(POST_TERMINAL_OWNER_FILES).size,23);
+  assert.equal(POST_TERMINAL_OWNER_FILES.includes('run-terminal-transition.test.ts'),false);
+  const tail=['findings','evidence','recovery','evals','internal-production'].map(n=>'npm run test:'+n).join(' && ');
+  const expected='node --import tsx scripts/run-execution-attempt-tests.ts '
+    +POST_TERMINAL_OWNER_FILES.map(n=>'tests/execution-attempts/'+n).join(' ')+' && '+tail;
+  assert.equal(scripts['test:after-terminal'],expected);
+  assert.equal(scripts['test:after-scripts'].split('npm run test:execution-attempts && ')[1],tail);
+  assert.equal(scripts.test.split('npm run test:execution-attempts && ')[1],tail);
+});
+test('after-terminal refuses extra args and caller commands before cluster effects',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  for(const mode of ['after-terminal;echo denied','https://127.0.0.1/','test:after-terminal','after-terminal extra'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'after-terminal','extra'],{
     encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
   });
   assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
