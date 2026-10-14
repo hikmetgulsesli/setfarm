@@ -4,8 +4,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 
-const index = process.execArgv.indexOf("--import");
-const loader = index >= 0 ? process.execArgv[index + 1]! : createRequire(import.meta.url).resolve("tsx");
+const loader = createRequire(import.meta.url).resolve("tsx");
 const medic = new URL("../src/medic/medic-cron.ts", import.meta.url).href;
 const registry = new URL("../src/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.ts", import.meta.url).href;
 const logger = new URL("../src/lib/logger.ts", import.meta.url).href;

@@ -5,8 +5,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 
-const importIndex = process.execArgv.indexOf("--import");
-const loader = importIndex >= 0 ? process.execArgv[importIndex + 1]! : createRequire(import.meta.url).resolve("tsx");
+const loader = createRequire(import.meta.url).resolve("tsx");
 const gateway = new URL("../../src/installer/gateway-api.ts", import.meta.url).href;
 const logger = new URL("../../src/lib/logger.ts", import.meta.url).href;
 const drain = new URL("../../src/internal-production/baseline-dashboard-cutover-local-producer-drain-v2.ts", import.meta.url).href;
