@@ -96,8 +96,8 @@ function coldEntryProbe(source) {
     String.raw`    @INC=(sub {CORE::print STDOUT "TEST_FORBIDDEN_IMPORT\n";
         CORE::die "TEST_FORBIDDEN_IMPORT\n";});`);
   // Bound only this ordinary complete-source test input. The inert issuer
-  // increases maintained source to142680B; production runtime budgets stay exact.
-  assert.ok(Buffer.byteLength(candidate)<=196608,'cold probe source bound');
+  // native PM owner increases maintained source to197477B; production budgets stay exact.
+  assert.ok(Buffer.byteLength(candidate)<=262144,'cold probe source bound');
   const r=spawnSync('/usr/bin/perl',['-f','-e',
     'binmode STDIN; local $/; my $source=<STDIN>; eval $source; if($@){print STDERR $@;exit 64;}exit 0;'],{
     input:candidate,cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},

@@ -375,6 +375,7 @@ my ($strict_native_readback_issue,$strict_native_readback_recheck,$strict_native
 }
 # Inert fixed PM source-selection prerequisite. No production invocation,
 # native issuer, compiler-result owner or initial-runtime admission exists.
+my $pm_loader_native_state;
 my @pm_completed_readbacks;
 my ($pm_loader_install,$pm_loader_recheck,$pm_loader_revoke);
 {
@@ -624,10 +625,477 @@ my ($pm_loader_install,$pm_loader_recheck,$pm_loader_revoke);
             if($this_owned) {$revoke_event->{error}=$error;$revoke_event->{outcome}=$ok?1:0;}
             if(!$ok) {$revoke_error=$error;$refuse->();}return 1;
         };
+        # Read-only native-owner bridge; construction captures this created hook.
+        my $native_bridge_hook_original=$original_hook;
+        $pm_loader_native_state=sub {
+            CORE::die $literal_refusal unless @_==0
+                &&!defined(CORE::tied($phase))&&!defined(CORE::tied($calls))
+                &&!defined(CORE::tied($rechecks))&&!defined(CORE::tied($original_hook))
+                &&!defined(CORE::tied($native_bridge_hook_original));
+            CORE::die $literal_refusal unless $plain->($phase)
+                &&$phase=~/\A(?:new|installing|installed|burned|revoked)\z/
+                &&$plain->($calls)&&$calls=~/\A(?:0|[1-9][0-9]{0,19})\z/
+                &&$plain->($rechecks)&&$rechecks=~/\A(?:0|[1-9][0-9]{0,19})\z/
+                &&$same_original->($original_hook,$native_bridge_hook_original);
+            return [CORE::substr($phase,0),CORE::substr($calls,0),
+                CORE::substr($rechecks,0),$native_bridge_hook_original];
+        };
         # Private PM lifecycle closures end here.
     }
 }
 # End fixed PM source-selection prerequisite.
+# Inert fixed native PM readback prerequisite. No production invocation.
+# This supplies the preceding selector conditionally; initial native trust is separate.
+my ($pm_native_readback_issue,$pm_native_readback_recheck,$pm_native_readback_release);
+{
+    BEGIN {$^H|=0x01000000;CORE::delete($^H{'overloading'});}
+    BEGIN {
+        my $utf8_original=\&utf8::is_utf8;
+        my $bridge_original=$pm_loader_native_state;
+        my $installer_original=$pm_loader_install;
+        my $rechecker_original=$pm_loader_recheck;
+        my $sha_original=$preimport_sha256;
+        my $literal_refusal="TASK6A_NATIVE_PM_READBACK_REFUSED\n";
+        my $phase='new';my $claimed=0;my $rechecks=0;
+        my ($operations,$raw_reserved,$text_reserved)=(0,0,0);
+        my (@originals,@native_events,@target_events,@validated,@publications);
+        my ($issue_error,$recheck_error,$release_error,$burn_error);
+        my ($install_attempted,$install_succeeded,$hook_captured)=(0,0,0);
+        my ($revoked,$revocation_outcome,$revocation_error)=(0,undef,undef);
+        my ($settle_started,$settle_outcome)=(0,undef);
+        my @directories=(
+            '/',
+            '/System',
+            '/System/Library',
+            '/System/Library/Perl',
+            '/System/Library/Perl/5.34',
+            '/System/Library/Perl/5.34/Digest',
+            '/System/Library/Perl/5.34/Exporter',
+            '/System/Library/Perl/5.34/File',
+            '/System/Library/Perl/5.34/IO',
+            '/System/Library/Perl/5.34/JSON',
+            '/System/Library/Perl/5.34/Tie',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level',
+            '/System/Library/Perl/5.34/warnings',
+            '/System/Library/Perl/5.34/IO/Compress',
+            '/System/Library/Perl/5.34/IO/Uncompress',
+            '/System/Library/Perl/5.34/JSON/PP',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/Compress',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/Digest',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/Encode',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/File',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/IO',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/List',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/MIME',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/PerlIO',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/Scalar',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/Time',
+            '/System/Library/Perl/5.34/IO/Compress/Base',
+            '/System/Library/Perl/5.34/IO/Compress/Gzip',
+            '/System/Library/Perl/5.34/IO/Compress/Zlib',
+            '/System/Library/Perl/5.34/IO/Uncompress/Adapter',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/Compress/Raw',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/Encode/MIME',
+        );
+        my @leaves=(
+            ['Carp.pm','/System/Library/Perl/5.34/Carp.pm',35985,'020bba236b44c482c8a401b5f6676c0b5d27a76caaf7cae41dfb7a63b00488b3'],
+            ['Digest/base.pm','/System/Library/Perl/5.34/Digest/base.pm',1984,'06367faa5fb46a5794d3d7603d52075ab1533ad848184a5309a1cfac1058281a'],
+            ['Exporter.pm','/System/Library/Perl/5.34/Exporter.pm',18774,'073f49928a471678e14ce5c314aef306a93a58870dba423ff2f630d1de782cad'],
+            ['Exporter/Heavy.pm','/System/Library/Perl/5.34/Exporter/Heavy.pm',6530,'e53ad090aaa655b01ad1cff2af2daf6c92020ed349f9d48d55109cd1d142f6a0'],
+            ['File/GlobMapper.pm','/System/Library/Perl/5.34/File/GlobMapper.pm',15683,'1fc0b84c8fa4fc5b3cad7ae0a638a8fd3736efd5416c31afcc8ae58a03d525b3'],
+            ['IO/Compress/Base/Common.pm','/System/Library/Perl/5.34/IO/Compress/Base/Common.pm',22774,'7dbfdfdf0851619f00d98f5958203fd4ea9535ef008a87eec5cd19cd039710e5'],
+            ['IO/Compress/Gzip/Constants.pm','/System/Library/Perl/5.34/IO/Compress/Gzip/Constants.pm',3883,'108fdebbb31a16c6ff3ff2e9fb3220e197aa79ba9f7e995073da40da956315b3'],
+            ['IO/Compress/Zlib/Extra.pm','/System/Library/Perl/5.34/IO/Compress/Zlib/Extra.pm',5647,'57934980c670ff320d15164647da794882b9d3edee4d1586495f91dca4c9ed01'],
+            ['IO/Uncompress/Adapter/Inflate.pm','/System/Library/Perl/5.34/IO/Uncompress/Adapter/Inflate.pm',3259,'e93c905f15ba91ed6ef8cae083ed0cfd860bcbfcb763592e722a2e529ff5989b'],
+            ['IO/Uncompress/Base.pm','/System/Library/Perl/5.34/IO/Uncompress/Base.pm',38337,'adcbe73669c2f03ddce11fe3234b39e26057c9c7b8283ce4bf2e4d21ff64893a'],
+            ['IO/Uncompress/Gunzip.pm','/System/Library/Perl/5.34/IO/Uncompress/Gunzip.pm',32152,'f9cf9da150abe298dc8efa76e4cd385b641c377afb567db1d643e540ea3295ab'],
+            ['IO/Uncompress/RawInflate.pm','/System/Library/Perl/5.34/IO/Uncompress/RawInflate.pm',31841,'efa06d6eca40888d6f1f9bd3487339d9bbb788c823118171655701617bc922b8'],
+            ['JSON/PP.pm','/System/Library/Perl/5.34/JSON/PP.pm',100527,'b256804d959880439ce3e5b82497d01c080228276ae55979d3ababee48293a89'],
+            ['JSON/PP/Boolean.pm','/System/Library/Perl/5.34/JSON/PP/Boolean.pm',810,'264db0a8de27d592dceb964bbaab9a05a65197855a7bfd4f10ed20d14f86f379'],
+            ['PerlIO.pm','/System/Library/Perl/5.34/PerlIO.pm',14441,'183d8cc5992cd8197bd0621f0ac1c2346104327ecc4e7ccb53c26145481822b6'],
+            ['SelectSaver.pm','/System/Library/Perl/5.34/SelectSaver.pm',1076,'b951b99c894f701eac08b79265ff2ccbede0954f97a537d03fb78801ed645861'],
+            ['Symbol.pm','/System/Library/Perl/5.34/Symbol.pm',4905,'bd0e0df0aa0b830f87c2a991b3989abae21c9e9dce4edb2abc7125c3c7693621'],
+            ['Tie/Hash.pm','/System/Library/Perl/5.34/Tie/Hash.pm',7639,'12e565ea59a4a3a332d8fefa40a654f9482014c145f165bef3d065a59daee55a'],
+            ['XSLoader.pm','/System/Library/Perl/5.34/XSLoader.pm',11398,'c6efc1f25e87fb1c2343d471b868af1a755df601985065dbd22e22273d6b2192'],
+            ['bytes.pm','/System/Library/Perl/5.34/bytes.pm',3782,'7e3a78b180565c3caafa7f3dd5913acb91b06fe7c9f802bf948eb5a962df00f0'],
+            ['constant.pm','/System/Library/Perl/5.34/constant.pm',14724,'e67cdfa533d42cbe5265bcf3c270f055620cba38a9295b5d584b7efc37a0c156'],
+            ['B.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/B.pm',30093,'cf275fdd78b25aa726b0068003aee6e08cd380f2aea1378efbb8fe268d6bc95a'],
+            ['Compress/Raw/Zlib.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/Compress/Raw/Zlib.pm',47387,'7b9321c1d13ab20c19e2bd0deafc09a0c3fa30f526c68078145d9409f2ab2bc6'],
+            ['Config.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/Config.pm',3886,'e85c38637cedf6a9e29e6946201fbefeceba184e07b720b976c068ecab4d7283'],
+            ['Digest/SHA.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/Digest/SHA.pm',22174,'15efed6020da9028a7a5b2d41d7e6d8e6b1719aeae365bc592ffb4025f76d33d'],
+            ['DynaLoader.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/DynaLoader.pm',25540,'dde9744d54a185e1d38d52c98bf9349a83360d5fb31c82904e28d514a87c79fe'],
+            ['Encode.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/Encode.pm',32075,'134fddc376de04a40dea58e6055f7ce28bc4159487a47c260ac8feaf04201a54'],
+            ['Encode/Alias.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/Encode/Alias.pm',12545,'9ec57c436578d4c67b269c53dcb70db64bf845b7ba294da2b8fb998bc00a45ea'],
+            ['Encode/Config.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/Encode/Config.pm',6065,'a15072cf84ac4a431b91b1a893a7c8d4c4dd48adefa077cd3a9b271cf0aba3bf'],
+            ['Encode/Encoding.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/Encode/Encoding.pm',9063,'1daaf4400c4462c24d785b7eb91fbebc6eb868192aad410df48019fe7af6e39d'],
+            ['Encode/MIME/Name.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/Encode/MIME/Name.pm',3821,'1cabed37ee26cfd763999649f9ac9a5f1e5a81cbc5125b8d85ff19d60b72f906'],
+            ['Fcntl.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/Fcntl.pm',4044,'80511e494fc719cb63d252a95987ba24c04557947c1bf1584f5eeb6704786e9b'],
+            ['File/Glob.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/File/Glob.pm',12712,'ff854e2cccfcd78e6c22278c843ea61fda1d0164704b1aa8941fe05ff9dbbfe8'],
+            ['IO.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/IO.pm',1462,'d1db057bb61c36632e97e7216733ddf70ccd367f1f32393f9d7a4248cc4ec07e'],
+            ['IO/File.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/IO/File.pm',4872,'133658ff1c17332f46d01d34f872b71309c715656b47f39e31393e2d10d827e4'],
+            ['IO/Handle.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/IO/Handle.pm',16641,'af3d3b9f9bc2132644248480d21b2e7e5c1a7e0d7a3c1f121e89888a2153b9f1'],
+            ['IO/Seekable.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/IO/Seekable.pm',2891,'ce170c83abf1a599320c0f4369c8e6e123310b4603ac3791bee0e733d9e8e533'],
+            ['IO/Select.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/IO/Select.pm',9263,'a6804f44f8c90c88f8cc60cdd38538f65f3f92ce533fcda6933887c7228ad5d7'],
+            ['List/Util.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/List/Util.pm',24055,'0d3135c14b4d4156a0de8156f2d33f54c6f0b6233b2f6fe5d4b9122e9fef1a5a'],
+            ['MIME/Base64.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/MIME/Base64.pm',5433,'dfb1e3876b3e7f3cf9a3f23123c37464617e551802e618e54cabd7890c986cc8'],
+            ['POSIX.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/POSIX.pm',20384,'d941cf37b6dee5253b859cbb703a5785629a0bcdd86f61d1ec96fa464d69df90'],
+            ['PerlIO/scalar.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/PerlIO/scalar.pm',1069,'a4205c837c331d7945f0221600ae8b4bf6ea562812c71b535ac06693de26a859'],
+            ['Scalar/Util.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/Scalar/Util.pm',10189,'9ba58fcbefc535a73d3fc0da949d0fb1e524411dea4e8bee97529700607a98a4'],
+            ['Storable.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/Storable.pm',49923,'4a9ab42a68de934079da007e8df0ae3c66f33477c3f3218782596a83e3ea508c'],
+            ['Time/HiRes.pm','/System/Library/Perl/5.34/darwin-thread-multi-2level/Time/HiRes.pm',25689,'9bc6ece12a90e5c01d784a4efd672c49b8a7551ce6871b620efbd38cd4960f34'],
+            ['integer.pm','/System/Library/Perl/5.34/integer.pm',3254,'eb62cc3ee22a592bc673e07158927d1a6536075d33258fc67ff91e3f720cf463'],
+            ['overload.pm','/System/Library/Perl/5.34/overload.pm',53349,'3ea7fb212172cb9c01dacee5f7d90aa04da396f5bca442eca84ad2e94a200d99'],
+            ['overloading.pm','/System/Library/Perl/5.34/overloading.pm',1808,'5bba56c0acdcc449ca3b73500862a5750c907d97d652978038dbc7809c4fcd07'],
+            ['parent.pm','/System/Library/Perl/5.34/parent.pm',2702,'046169e129cfb7d4b302567de268409f175652192914abd33245cb9939f16626'],
+            ['strict.pm','/System/Library/Perl/5.34/strict.pm',4783,'f1296224730dceb5dd308ee1e72c452c8b13ced7f3bf742ccd16e1e1c416bcb5'],
+            ['utf8.pm','/System/Library/Perl/5.34/utf8.pm',10756,'9dd05cc86753dc3989926bdc0ed8425ff1ae8946f3298d61440891ee92026691'],
+            ['vars.pm','/System/Library/Perl/5.34/vars.pm',2458,'84de23fb5d39572d2b0dc5d4e1cd6363017fae8f54eff90d4c8121eb1edeeb57'],
+            ['warnings.pm','/System/Library/Perl/5.34/warnings.pm',53221,'7aa17d79aa23ee3635aa145902944e6dad909c0f5d6ca47d27bce7be864e42d2'],
+            ['warnings/register.pm','/System/Library/Perl/5.34/warnings/register.pm',759,'ce25ec34358642703ff05b546b2ac42b4f2081ab7610d8373dd94c6b78040cf4'],
+        );
+        my $raw_same=sub {
+            return 0 unless @_==2&&!defined(CORE::tied($_[0]))&&!defined(CORE::tied($_[1]));
+            my ($a,$b)=@_;return 0 unless CORE::ref($a) ne ''&&CORE::ref($b) ne '';
+            return $a==$b?1:0;
+        };
+        my $plain=sub {
+            return 0 unless @_==1&&!defined(CORE::tied($_[0]));
+            my $value=$_[0];return defined($value)&&CORE::ref($value) eq ''
+                &&!$utf8_original->($value)?1:0;
+        };
+        my $number=sub {
+            return 0 unless @_==1&&$plain->($_[0])&&CORE::length($_[0])<=21;
+            return $_[0]=~/\A(?:0|[1-9][0-9]{0,19}|-[1-9][0-9]{0,18})\z/?1:0;
+        };
+        my $error_plain=sub {return @_==1&&$plain->($_[0])&&CORE::length($_[0])<=4096?1:0;};
+        my $ports=sub {
+            CORE::die $literal_refusal unless @_==0
+                &&$raw_same->($pm_loader_native_state,$bridge_original)
+                &&$raw_same->($pm_loader_install,$installer_original)
+                &&$raw_same->($pm_loader_recheck,$rechecker_original)
+                &&$raw_same->($preimport_sha256,$sha_original);
+        };
+        my $initial_state;my $initial_ok=eval {$ports->();$initial_state=$bridge_original->();1;};
+        my $initial_error=$@;my $target_hook_original;
+        if($initial_ok&&CORE::ref($initial_state) eq 'ARRAY'&&!defined(CORE::tied(@$initial_state))
+            &&@$initial_state==4&&!defined(CORE::tied($initial_state->[3]))) {
+            $target_hook_original=$initial_state->[3];
+        }
+        my $observe=sub {
+            CORE::die $literal_refusal unless @_==0&&@target_events<512;
+            my $event={kind=>'observe',intent=>1};CORE::push(@target_events,$event);
+            my $state;my $ok=eval {$ports->();$state=$bridge_original->();1;};
+            $event->{error}=$@;$event->{result}=$state;
+            CORE::die $literal_refusal unless $ok&&$error_plain->($event->{error})
+                &&CORE::ref($state) eq 'ARRAY'&&!defined(CORE::tied(@$state))&&@$state==4;
+            for my $index(0..2) {CORE::die $literal_refusal unless $plain->($state->[$index]);}
+            CORE::die $literal_refusal unless $state->[0]=~/\A(?:new|installing|installed|burned|revoked)\z/
+                &&$number->($state->[1])&&$state->[1]>=0&&$number->($state->[2])&&$state->[2]>=0
+                &&$raw_same->($state->[3],$target_hook_original);
+            return $state;
+        };
+        my $target_call=sub {
+            CORE::die $literal_refusal unless @_==1&&@target_events<512;
+            my $kind=$_[0];my $event={kind=>$kind,intent=>1};CORE::push(@target_events,$event);
+            my $ok=eval {
+                $ports->();
+                if($kind eq 'install') {$event->{result}=$installer_original->();}
+                elsif($kind eq 'invalidate') {$event->{result}=$installer_original->(undef);}
+                elsif($kind eq 'check') {$event->{result}=$rechecker_original->();}
+                else {CORE::die $literal_refusal;}1;
+            };
+            $event->{error}=$@;$event->{ok}=$ok?1:0;return $event;
+        };
+        my $phase_guard=sub {
+            CORE::die $literal_refusal unless @_==0&&!defined(CORE::tied($phase))
+                &&$plain->($phase)&&($phase eq 'acquiring'||$phase eq 'held');
+        };
+        my $charge=sub {
+            CORE::die $literal_refusal unless @_==1&&$number->($_[0])&&$_[0]>=0
+                &&$operations<16384&&$text_reserved+5120<=33554432
+                &&$raw_reserved+$_[0]<=67108864;
+            $operations++;$text_reserved+=5120;$raw_reserved+=$_[0];
+        };
+        my $shape=sub {
+            CORE::die $literal_refusal unless @_==1&&!defined(CORE::tied($_[0]));
+            my $handle=$_[0];CORE::die $literal_refusal unless CORE::ref($handle) ne '';
+            my $io=*{$handle}{IO};
+            CORE::die $literal_refusal unless defined($io)&&CORE::ref($io) ne ''
+                &&!defined(CORE::tied(*{$handle}));return ($handle,$io);
+        };
+        my $same=sub {
+            CORE::die $literal_refusal unless @_==1;
+            my $record=$_[0];CORE::die $literal_refusal unless $record->{known}&&!$record->{close_attempted};
+            my ($handle,$io)=$shape->(${ $record->{cell} });
+            CORE::die $literal_refusal unless $raw_same->($handle,$record->{handle})
+                &&$raw_same->($io,$record->{io});return $handle;
+        };
+        my $native=sub {
+            CORE::die $literal_refusal unless @_==3;
+            my ($kind,$record,$request)=@_;$phase_guard->();
+            my $handle=$kind eq 'lstat'||$kind eq 'open'?undef:$same->($record);
+            my $raw=$kind eq 'capabilities'||$kind eq 'security'?8192:$kind eq 'read'||$kind eq 'eof'?$request:0;
+            $charge->($raw);
+            my $event={sequence=>$operations,kind=>$kind,index=>$record->{index},intent=>1};
+            CORE::push(@native_events,$event);my ($buffer,$attributes,$fd);
+            if($kind eq 'capabilities'||$kind eq 'security') {
+                $fd=$record->{acl_fd};CORE::die $literal_refusal unless $number->($fd)&&$fd>=0&&$fd<=2147483647;
+                $attributes=CORE::pack('SSLLLLL',5,0,$kind eq 'security'?0x00400000:0,
+                    $kind eq 'capabilities'?0x80020000:0,0,0,0);
+                $buffer="\xcc" x 8192;$event->{attributes}=$attributes;$event->{buffer_cell}=\$buffer;$event->{request}=8192;
+            }elsif($kind eq 'read'||$kind eq 'eof') {
+                CORE::die $literal_refusal unless $number->($request)&&$request>=1&&$request<=100528;
+                $buffer='';$event->{buffer_cell}=\$buffer;$event->{request}=$request;
+            }
+            $phase_guard->();$!=0;
+            my $ok=eval {
+                if($kind eq 'lstat') {$event->{values}=[CORE::lstat($record->{path})];}
+                elsif($kind eq 'stat') {$event->{values}=[CORE::stat($handle)];}
+                elsif($kind eq 'open') {
+                    $event->{result}=CORE::sysopen(${ $record->{cell} },$record->{path},0x01000100);
+                    $event->{errno}=0+$!;
+                    # Enroll a completed positive native original before postguards.
+                    if($plain->($event->{result})&&$event->{result} eq '1') {
+                        my ($opened_handle,$opened_io)=$shape->(${ $record->{cell} });
+                        for my $prior(@originals) {
+                            next unless $prior->{known};
+                            CORE::die $literal_refusal if $raw_same->($opened_handle,$prior->{handle})
+                                ||$raw_same->($opened_io,$prior->{io});
+                        }
+                        $record->{handle}=$opened_handle;$record->{io}=$opened_io;$record->{known}=1;
+                    }
+                }
+                elsif($kind eq 'fileno') {$event->{result}=CORE::fileno($handle);}
+                elsif($kind eq 'capabilities'||$kind eq 'security') {$event->{result}=CORE::syscall(228,$fd,$attributes,$buffer,8192,4);}
+                elsif($kind eq 'seek') {$event->{result}=CORE::sysseek($handle,0,0);}
+                elsif($kind eq 'read'||$kind eq 'eof') {$event->{result}=CORE::sysread($handle,$buffer,$request);}
+                else {CORE::die $literal_refusal;}
+                $event->{errno}=0+$! unless $kind eq 'open';1;
+            };
+            $event->{error}=$@;$event->{ok}=$ok?1:0;
+            CORE::die $literal_refusal unless $ok&&$error_plain->($event->{error})&&$event->{error} eq ''
+                &&$number->($event->{errno});
+            $phase_guard->();return $event;
+        };
+        my $tuple=sub {
+            CORE::die $literal_refusal unless @_==2;
+            my ($values,$record)=@_;
+            CORE::die $literal_refusal unless CORE::ref($values) eq 'ARRAY'&&!defined(CORE::tied(@$values))&&@$values==13;
+            for my $value(@$values) {CORE::die $literal_refusal unless $number->($value);}
+            CORE::die $literal_refusal unless ($values->[2]&0170000)==($record->{file}?0100000:0040000)
+                &&($values->[2]&0022)==0&&$values->[4]==0&&$values->[5]==0;
+            CORE::die $literal_refusal if $record->{file}&&$values->[7]!=$record->{size};
+        };
+        my $equal_tuple=sub {
+            CORE::die $literal_refusal unless @_==2;
+            my ($a,$b)=@_;for my $index(0..7,9..12) {CORE::die $literal_refusal unless $a->[$index]==$b->[$index];}
+        };
+        my $acl=sub {
+            CORE::die $literal_refusal unless @_==1;my $record=$_[0];
+            my $fd_event=$native->('fileno',$record,0);my $fd=$fd_event->{result};
+            CORE::die $literal_refusal unless $number->($fd)&&$fd>=0&&$fd<=2147483647;
+            $record->{acl_fd}=$fd;
+            for my $kind('capabilities','security') {
+                my $event=$native->($kind,$record,8192);my $buffer=${ $event->{buffer_cell} };
+                CORE::die $literal_refusal unless $plain->($event->{result})&&$event->{result} eq '0'
+                    &&$plain->($buffer)&&CORE::length($buffer)==8192;
+                if($kind eq 'security') {
+                    CORE::die $literal_refusal unless CORE::substr($buffer,0,12) eq CORE::pack('LLL',12,8,0)
+                        &&CORE::substr($buffer,12) eq "\xcc" x 8180;
+                }else {
+                    CORE::die $literal_refusal unless CORE::unpack('L',CORE::substr($buffer,0,4))==36
+                        &&CORE::substr($buffer,36) eq "\xcc" x 8156;
+                    my @cap=CORE::unpack('L8',CORE::substr($buffer,4,32));
+                    CORE::die $literal_refusal unless ($cap[1]&0x400)&&($cap[5]&0x400);
+                }
+            }
+        };
+        my $check_originals=sub {
+            CORE::die $literal_refusal unless @_==0&&@originals==86;
+            for my $record(@originals) {
+                $same->($record);
+                my $held=$native->('stat',$record,0);my $named=$native->('lstat',$record,0);
+                $tuple->($held->{values},$record);$tuple->($named->{values},$record);
+                $equal_tuple->($held->{values},$record->{tuple});$equal_tuple->($held->{values},$named->{values});
+                $acl->($record);
+            }
+        };
+        my $read=sub {
+            CORE::die $literal_refusal unless @_==1;my $record=$_[0];
+            my $seek=$native->('seek',$record,0);
+            CORE::die $literal_refusal unless $plain->($seek->{result})
+                &&($seek->{result} eq '0'||$seek->{result} eq '0 but true');
+            my $read=$native->('read',$record,$record->{size}+1);
+            CORE::die $literal_refusal unless $plain->($read->{result})&&$read->{result} eq "$record->{size}"
+                &&!defined(CORE::tied(${ $read->{buffer_cell} }));
+            my $bytes=${ $read->{buffer_cell} };
+            CORE::die $literal_refusal unless $plain->($bytes)&&CORE::length($bytes)==$record->{size};
+            my $eof=$native->('eof',$record,1);
+            CORE::die $literal_refusal unless $plain->($eof->{result})&&$eof->{result} eq '0'
+                &&!defined(CORE::tied(${ $eof->{buffer_cell} }))&&$plain->(${ $eof->{buffer_cell} })
+                &&CORE::length(${ $eof->{buffer_cell} })==0;
+            $ports->();my $digest=$sha_original->($bytes);
+            CORE::die $literal_refusal unless $plain->($digest)&&$digest eq $record->{sha};
+            $phase_guard->();return CORE::substr($bytes,0);
+        };
+        my $inputs=sub {
+            CORE::die $literal_refusal unless @_==0&&!defined(CORE::tied(@pm_completed_readbacks))
+                &&@pm_completed_readbacks==54&&@validated==54;
+            for my $index(0..53) {
+                CORE::die $literal_refusal unless $plain->($pm_completed_readbacks[$index])
+                    &&$plain->($validated[$index])&&$pm_completed_readbacks[$index] eq $validated[$index];
+            }
+        };
+        my $target_check=sub {
+            CORE::die $literal_refusal unless @_==0;
+            my $before=$observe->();CORE::die $literal_refusal unless $before->[0] eq 'installed'&&$before->[2]<63;
+            my $event=$target_call->('check');my $after=$observe->();
+            CORE::die $literal_refusal unless $event->{ok}&&$plain->($event->{result})&&$event->{result} eq '1'
+                &&$error_plain->($event->{error})&&$event->{error} eq ''&&$after->[0] eq 'installed'
+                &&$after->[2]==$before->[2]+1&&$after->[1]==$before->[1];
+            $inputs->();CORE::die $literal_refusal if defined(CORE::tied(@INC));
+            CORE::die $literal_refusal unless @INC==3&&$raw_same->($INC[0],$target_hook_original)
+                &&$plain->($INC[1])&&$INC[1] eq '/System/Library/Perl/5.34/darwin-thread-multi-2level'
+                &&$plain->($INC[2])&&$INC[2] eq '/System/Library/Perl/5.34';
+        };
+        my $revoke=sub {
+            return 1 unless $claimed;
+            unless($revoked) {
+                $revoked=1;$revocation_outcome=0;
+                my $ok=eval {
+                    my $before=$observe->();
+                    my $event=$target_call->('invalidate');
+                    # Causal phase proof BEFORE any further quota-charged check.
+                    my $after=$observe->();
+                    CORE::die $literal_refusal unless !$event->{ok}&&$error_plain->($event->{error})
+                        &&$event->{error} eq "TASK6A_PM_SOURCE_REFUSED\n"
+                        &&(($before->[0] eq 'new'||$before->[0] eq 'installed')?$after->[0] eq 'burned'
+                            :($before->[0] eq 'burned'||$before->[0] eq 'revoked')&&$after->[0] eq $before->[0])
+                        &&$after->[1]==$before->[1]&&$after->[2]==$before->[2];
+                    CORE::die $literal_refusal unless $after->[2]<64;
+                    my $proof=$target_call->('check');my $last=$observe->();
+                    CORE::die $literal_refusal unless !$proof->{ok}&&$error_plain->($proof->{error})
+                        &&$proof->{error} eq "TASK6A_PM_SOURCE_REFUSED\n"
+                        &&$last->[0] eq $after->[0]&&$last->[1]==$after->[1]&&$last->[2]==$after->[2]+1;1;
+                };
+                $revocation_error=$@;$revocation_outcome=$ok?1:0;
+            }
+            CORE::die $literal_refusal unless $revocation_outcome;return 1;
+        };
+        my $settle=sub {
+            return $settle_outcome if $settle_started;
+            $settle_started=1;my $all=1;
+            for my $record(CORE::reverse(@originals)) {
+                unless($record->{known}) {$all=0;next;}
+                $record->{close_started}=1;my ($handle,$io);
+                my $admitted=eval {
+                    ($handle,$io)=$shape->($record->{handle});
+                    CORE::die $literal_refusal unless $raw_same->($handle,$record->{handle})&&$raw_same->($io,$record->{io});1;
+                };
+                $record->{close_admission_error}=$@;
+                if($admitted) {
+                    $record->{close_attempted}=1;my $ok=eval {$record->{close_return}=CORE::close($handle);1;};
+                    $record->{close_error}=$@;$record->{close_native_ok}=$ok?1:0;
+                }
+                # Independent original-shape/liveness attempt even after close throw.
+                $record->{live_started}=1;my $live_ok=eval {
+                    my ($h,$i)=$shape->($record->{handle});
+                    CORE::die $literal_refusal unless $raw_same->($h,$record->{handle})&&$raw_same->($i,$record->{io});
+                    $record->{live_attempted}=1;$record->{live_return}=CORE::fileno($h);1;
+                };
+                $record->{live_error}=$@;$record->{live_native_ok}=$live_ok?1:0;
+                my $ok=$admitted&&$record->{close_native_ok}&&$plain->($record->{close_return})
+                    &&$record->{close_return} eq '1'&&$error_plain->($record->{close_error})&&$record->{close_error} eq ''
+                    &&$live_ok&&!defined($record->{live_return})&&$error_plain->($record->{live_error})&&$record->{live_error} eq '';
+                $record->{close_ok}=$ok?1:0;$all=0 unless $ok;
+            }
+            $settle_outcome=$all?1:0;return $settle_outcome;
+        };
+        my $burn=sub {
+            $phase='burned';my $ok=eval {$revoke->();1;};$burn_error=$@;
+            $settle->() if $claimed;CORE::die $literal_refusal;
+        };
+        my $fresh=sub {
+            CORE::die $literal_refusal unless @_==0&&$initial_ok&&$error_plain->($initial_error);
+            my $state=$observe->();
+            CORE::die $literal_refusal unless $state->[0] eq 'new'&&$state->[1]==0&&$state->[2]==0
+                &&!defined(CORE::tied(%main::))&&!defined(CORE::tied(%INC))&&!defined(CORE::tied(@INC))
+                &&!defined(CORE::tied(@pm_completed_readbacks))&&@pm_completed_readbacks==0
+                &&CORE::keys(%INC)==0&&@INC==2&&$plain->($INC[0])&&$plain->($INC[1])
+                &&$INC[0] eq '/System/Library/Perl/5.34/darwin-thread-multi-2level'
+                &&$INC[1] eq '/System/Library/Perl/5.34'
+                &&!CORE::exists($main::{'strict::'})&&!CORE::exists($main::{'warnings::'});
+        };
+        $pm_native_readback_issue=sub {
+            $burn->() unless @_==0&&$phase eq 'new';
+            my $ok=eval {
+                $fresh->();CORE::die $literal_refusal unless $phase eq 'new';
+                $claimed=1;$phase='acquiring';
+                CORE::die $literal_refusal unless $^O eq 'darwin'&&CORE::unpack('H*',CORE::pack('L',1)) eq '01000000'
+                    &&CORE::length(CORE::pack('J',1))==8;
+                for my $index(0..85) {
+                    my $leaf=$index>=32?$leaves[$index-32]:undef;my $fh;
+                    my $record={index=>$index,path=>$index<32?$directories[$index]:$leaf->[1],file=>$index>=32?1:0,
+                        size=>defined($leaf)?$leaf->[2]:0,sha=>defined($leaf)?$leaf->[3]:undef,
+                        cell=>\$fh,known=>0,close_attempted=>0,open_started=>0};
+                    CORE::push(@originals,$record);
+                    my $before=$native->('lstat',$record,0);$tuple->($before->{values},$record);
+                    $record->{open_started}=1;my $opened=$native->('open',$record,0);
+                    CORE::die $literal_refusal unless $plain->($opened->{result})&&$opened->{result} eq '1';
+                    CORE::die $literal_refusal unless $record->{known};
+                    my $held=$native->('stat',$record,0);$tuple->($held->{values},$record);
+                    my $named=$native->('lstat',$record,0);$tuple->($named->{values},$record);
+                    $equal_tuple->($before->{values},$held->{values});$equal_tuple->($held->{values},$named->{values});
+                    $record->{tuple}=[@{$held->{values}}];$acl->($record);
+                }
+                $check_originals->();
+                for my $index(0..53) {$validated[$index]=$read->($originals[$index+32]);}
+                $check_originals->();
+                for my $index(0..53) {my $bytes=$read->($originals[$index+32]);CORE::die $literal_refusal unless $bytes eq $validated[$index];}
+                $check_originals->();$fresh->();$phase_guard->();$phase='publishing';
+                for my $index(0..53) {
+                    CORE::die $literal_refusal unless $phase eq 'publishing'&&!defined(CORE::tied(@pm_completed_readbacks))
+                        &&@pm_completed_readbacks==$index&&$plain->($validated[$index]);
+                    my $event={index=>$index,intent=>1};CORE::push(@publications,$event);
+                    # Numeric push result avoids an extra retained whole byte cohort.
+                    my $published=eval {$event->{result}=CORE::push(@pm_completed_readbacks,CORE::substr($validated[$index],0));1;};
+                    $event->{error}=$@;
+                    CORE::die $literal_refusal unless $published&&$error_plain->($event->{error})&&$event->{error} eq ''
+                        &&$number->($event->{result})&&$event->{result}==$index+1&&$phase eq 'publishing';
+                }
+                $inputs->();my $before=$observe->();
+                CORE::die $literal_refusal unless $phase eq 'publishing'&&$before->[0] eq 'new'&&$before->[1]==0&&$before->[2]==0;
+                $install_attempted=1;$phase='install-attempted';my $event=$target_call->('install');
+                my $after=$observe->();$inputs->();
+                CORE::die $literal_refusal unless $phase eq 'install-attempted'&&$event->{ok}&&$plain->($event->{result})
+                    &&$event->{result} eq '1'&&$error_plain->($event->{error})&&$event->{error} eq ''
+                    &&$after->[0] eq 'installed'&&$after->[1]==0&&$after->[2]==0;
+                $target_check->();CORE::die $literal_refusal unless $phase eq 'install-attempted';
+                $install_succeeded=1;$hook_captured=1;$phase='held';1;
+            };
+            $issue_error=$@;$burn->() unless $ok;return 1;
+        };
+        $pm_native_readback_recheck=sub {
+            $burn->() unless @_==0&&$phase eq 'held'&&++$rechecks<=64;
+            my $ok=eval {
+                $check_originals->();
+                for my $index(0..53) {my $bytes=$read->($originals[$index+32]);CORE::die $literal_refusal unless $bytes eq $validated[$index];}
+                $check_originals->();$target_check->();$phase_guard->();1;
+            };
+            $recheck_error=$@;$burn->() unless $ok;return 1;
+        };
+        $pm_native_readback_release=sub {
+            if(@_!=0) {$burn->();}
+            return $settle_outcome if $phase eq 'released';
+            unless($claimed) {$phase='released';$settle_outcome=1;return 1;}
+            $phase='releasing';my $ok=eval {$revoke->();1;};$release_error=$@;
+            my $closed=$settle->();$burn->() unless $ok&&$closed;
+            $phase='released';return 1;
+        };
+        # Private native PM lifecycle closures end here.
+    }
+}
+# End native PM readback prerequisite.
 use strict;
 use warnings;
 use B ();

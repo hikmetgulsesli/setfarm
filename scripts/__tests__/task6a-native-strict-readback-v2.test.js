@@ -17,6 +17,14 @@ BEGIN {
 `;
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const names=['$strict_native_readback_issue','$strict_native_readback_recheck','$strict_native_readback_release'];
+// Mutate only the original six-handle native block, never the later PM owner.
+function inStrictNative(source,from,to) {
+  const begin='# Inert fixed native readback prerequisite.';
+  const end='# Inert fixed PM source-selection prerequisite.';
+  assert.equal(source.split(begin).length,2);assert.equal(source.split(end).length,2);
+  const a=source.indexOf(begin),z=source.indexOf(end);assert.ok(z>a);
+  return source.slice(0,a)+once(source.slice(a,z),from,to)+source.slice(z);
+}
 function once(source,from,to) {
   assert.equal(source.split(from).length,2,'unique disclosed memory substitution');
   return source.replace(from,()=>to);
@@ -417,7 +425,7 @@ function fixtureSource(source,home,kind='healthy') {
   source=once(source,String.raw`my @paths=('/','/System','/System/Library','/System/Library/Perl',
             '/System/Library/Perl/5.34','/System/Library/Perl/5.34/strict.pm');`,
     'my @paths=('+paths.map(quote).join(',')+'); # MODEL fixed owned fixture paths');
-  source=once(source,'&&($values->[2]&0022)==0&&$values->[4]==0&&$values->[5]==0;',
+  source=inStrictNative(source,'&&($values->[2]&0022)==0&&$values->[4]==0&&$values->[5]==0;',
     `&&($values->[2]&0022)==0&&$values->[4]==${modeledUID}&&$values->[5]==${modeledGID}; # MODEL owner policy`);
   fs.writeFileSync(home+'/fixture-policy-model.json',JSON.stringify({paths,initialMetadata,modeledUID,modeledGID,kind,
     scope:'owned negative filesystem fixtures; no genuine SIP/ACL/account/service mutations'})+'\n',{flag:'wx',mode:0o600});
@@ -570,7 +578,7 @@ for(const [kind,[from,to]] of Object.entries(nativeFaults))test(`retained actual
     :kind.startsWith('acl-')?'$result':kind.startsWith('read-')?'$count':kind.startsWith('EOF')?'$eof':kind.startsWith('seek-')?'$offset':'$opened';
   const result=invoke('native-fault-'+kind,{mutate:s=>{
     s=once(observeOriginals(s),'# Inert fixed native readback prerequisite.','my $test_fault_boundary;\n# Inert fixed native readback prerequisite.');
-    s=once(s,actual,actual+'$test_fault_boundary='+nativeValue+';'+to.slice(from.length));
+    s=inStrictNative(s,actual,actual+'$test_fault_boundary='+nativeValue+';'+to.slice(from.length));
     return once(s,'CORE::die $error unless $ok;\n',String.raw`
     CORE::print "native-fault-refused\t",$ok?0:1,"\n";
     CORE::print "native-fault-boundary\t",defined($test_fault_boundary)?$test_fault_boundary:'MISSING',"\n";

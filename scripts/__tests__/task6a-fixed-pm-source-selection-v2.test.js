@@ -343,6 +343,15 @@ BEGIN {
     CORE::exit(2);
 }
 `;
+// Restrict test mutations to the original selector; the native owner repeats
+// the same fixed manifest literals and must remain untouched.
+function inPmSelector(source,from,to) {
+  const begin='# Inert fixed PM source-selection prerequisite.';
+  const end='# End fixed PM source-selection prerequisite.';
+  assert.equal(source.split(begin).length,2);assert.equal(source.split(end).length,2);
+  const a=source.indexOf(begin),z=source.indexOf(end);assert.ok(z>a);
+  return source.slice(0,a)+once(source.slice(a,z),from,to)+source.slice(z);
+}
 function once(s,a,b) {assert.equal(s.split(a).length,2,'unique memory-only substitution: '+a);return s.replace(a,()=>b);}
 const definitions=String.raw`BEGIN {
     package Task6aPMTie;
@@ -417,10 +426,10 @@ function invoke(mode='healthy',options={}) {
   source=once(source,'\ntask6a_origin_main();\n','\n');
   source=once(source,'# Inert fixed PM source-selection prerequisite.', 'my ($pm_test_probe,$pm_test_arm);\n# Inert fixed PM source-selection prerequisite.');
   source=once(source,'        # Private PM lifecycle closures end here.',probe+'        # Private PM lifecycle closures end here.');
-  if(mode==='buffer-window')source=once(source,"['strict.pm','/System/Library/Perl/5.34/strict.pm',","['strict.pm',"+quote(home+'/strict.pm')+",");
+  if(mode==='buffer-window')source=inPmSelector(source,"['strict.pm','/System/Library/Perl/5.34/strict.pm',","['strict.pm',"+quote(home+'/strict.pm')+",");
   if(options.candidateKey) {
     const row=rows.find(r=>r.key===options.candidateKey);
-    source=once(source,"'"+row.sha256+"'],","'"+sha(options.candidate)+"'],");
+    source=inPmSelector(source,"'"+row.sha256+"'],","'"+sha(options.candidate)+"'],");
   }
   const read=inputs.map((row,i)=>String.raw`
     {
