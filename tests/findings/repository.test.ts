@@ -12,6 +12,7 @@ import { createAttemptRepository } from "../../src/execution/attempt-repository.
 import { createFindingSetV1, type FindingSetV1 } from "../../src/findings/finding-set.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { validateCurrentInternalProductionOwnerAdmissionHeadV1 } from "../../src/internal-production/owner-admission-head-v1.js";
+import { requireColdPre32CatalogAbsenceInTransactionV1 } from "../../src/internal-production/task6a-cold-pre32-catalog-readonly-v1.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
 import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
 import { applyP3LegacyFindingMigration32ForTestV1, createIsolatedMigration31TestDatabase, createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
@@ -206,11 +207,15 @@ it("cold pre32 catalog rejects unjournaled relations and orphan routines or trig
   });
   const compiled = transformSync(`${regions.join("\n")}\nexport {requireColdPre32CatalogAbsenceV1};`, { loader: "ts", format: "cjs", target: "node22" }).code;
   const module = { exports: {} as { requireColdPre32CatalogAbsenceV1: (sql: TestDatabase["sql"]) => Promise<void> } };
-  new Function("module", "exports", compiled)(module, module.exports);
+  new Function("module", "exports", "requireColdPre32CatalogAbsenceInTransactionV1", compiled)(
+    module, module.exports, requireColdPre32CatalogAbsenceInTransactionV1,
+  );
   const absent = { laterJournalCount: "0", relationCount: "0", functionCount: "0", typeCount: "0", triggerCount: "0" };
-  await module.exports.requireColdPre32CatalogAbsenceV1((async () => [absent]) as unknown as TestDatabase["sql"]);
+  // Keep the genuine cold leaf's unsafe read port in the modeled row fixture.
+  const modeledRows = (rows: unknown[]) => Object.assign(async () => rows, { unsafe: async () => rows }) as unknown as TestDatabase["sql"];
+  await module.exports.requireColdPre32CatalogAbsenceV1(modeledRows([absent]));
   for (const rows of [[], [absent, absent], [{ ...absent, typeCount: 0 }], [{ ...absent, triggerCount: "1" }], [{ ...absent, extra: "0" }]]) {
-    await assert.rejects(() => module.exports.requireColdPre32CatalogAbsenceV1((async () => rows) as unknown as TestDatabase["sql"]), /cold bootstrap migration32\/33 catalog or journal is not absent/);
+    await assert.rejects(() => module.exports.requireColdPre32CatalogAbsenceV1(modeledRows(rows)), /cold bootstrap migration32\/33 catalog or journal is not absent/);
   }
   const database = await createIsolatedMigration31TestDatabase();
   const { sql } = database;
