@@ -459,7 +459,7 @@ function wrapperBoundaryFixture(mode,commandMode='findings'){
     'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
     'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts',
   ]:['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
-    ...(commandMode==='all'?['test']:commandMode==='after-scripts'?['run','test:after-scripts']:commandMode==='after-terminal'?['run','test:after-terminal']:commandMode==='after-findings'?['run','test:after-findings']:['run','test:findings'])];
+    ...(commandMode==='all'?['test']:commandMode==='after-scripts'?['run','test:after-scripts']:commandMode==='after-terminal'?['run','test:after-terminal']:commandMode==='after-findings'?['run','test:after-findings']:commandMode==='after-internal-pure'?['run','test:after-internal-pure']:['run','test:findings'])];
   const guard=`
 import cp from 'node:child_process';import fs from 'node:fs';import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';import {registerHooks,syncBuiltinESMExports} from 'node:module';
@@ -561,7 +561,7 @@ process.once('exit',()=>{original.writeSync(1,Buffer.from('UNIT_BOUNDARY_RESULT 
       NODE_OPTIONS:'--import=data:text/javascript;base64,'+Buffer.from(guard).toString('base64')},
   });
 }
-for(const commandMode of ['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings'])
+for(const commandMode of ['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure'])
 for(const mode of commandMode==='all'?['normal']:
   ['normal','nonzero','mirror-error','journal-loss','close-fault','retained-db','cancel','before-server','before-test','attach-server','attach-test','input-error']){
   test('wrapper boundary '+commandMode+' '+mode+' retains ordered observed outcomes without native effects',async()=>{
@@ -770,6 +770,55 @@ test('after-findings refuses extra args and caller commands before cluster effec
   for(const mode of ['after-findings;echo denied','https://127.0.0.1/','test:after-findings','after-findings extra'])
     assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
   const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'after-findings','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.match(child.stderr,/PRIVATE_TEST_CLUSTER_MODE_INVALID/);
+});
+
+// Closed internal continuation: skip the completed pure node invocation only.
+const AFTER_INTERNAL_PURE_ALIASES=Object.freeze([
+  'test:dashboard-local-custody',
+  'test:dashboard-joint-original-operation',
+  'test:internal-production:create-only',
+  'test:internal-production:cutover',
+  'test:internal-production:isolated',
+  'test:internal-production:manifest',
+]);
+test('after-internal-pure permits only fixed npm continuation argv in a frozen private cluster plan',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'after-internal-pure'});
+  assert.deepEqual(value.test,['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js','run','test:after-internal-pure']);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
+});
+test('after-internal-pure package command derives the exact six unrun aliases from maintained internal inventories',()=>{
+  const scripts=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).scripts;
+  const pureParts=scripts['test:internal-production:pure'].split(' && ');
+  assert.deepEqual(pureParts.slice(1),[
+    'npm run test:dashboard-local-custody','npm run test:dashboard-joint-original-operation',
+  ]);
+  const internalParts=scripts['test:internal-production'].split(' && ');
+  const pure='npm run test:internal-production:pure';
+  assert.equal(internalParts.filter(value=>value===pure).length,1,'one maintained pure-lane boundary');
+  const pureIndex=internalParts.indexOf(pure);assert.ok(pureIndex>=0);
+  const later=internalParts.slice(pureIndex+1);
+  assert.deepEqual(later,[
+    'npm run test:internal-production:create-only','npm run test:internal-production:cutover',
+    'npm run test:internal-production:isolated','npm run test:internal-production:manifest',
+  ]);
+  const selected=[...pureParts.slice(1),...later];
+  assert.equal(selected.length,6);assert.equal(new Set(selected).size,6);
+  assert.deepEqual(selected,AFTER_INTERNAL_PURE_ALIASES.map(name=>'npm run '+name));
+  assert.equal(scripts['test:after-internal-pure'],selected.join(' && '));
+});
+test('after-internal-pure refuses extra args and caller commands before cluster effects',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  for(const mode of ['after-internal-pure;echo denied','https://127.0.0.1/',
+    'test:after-internal-pure','after-internal-pure extra'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'after-internal-pure','extra'],{
     encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
   });
   assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
