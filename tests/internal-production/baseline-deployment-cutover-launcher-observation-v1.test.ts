@@ -84,6 +84,9 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
     source = source.replace('await import("./baseline-positive-worktree-active-binding-cutover-database-v1.js")',
       `await import(${JSON.stringify(pathToFileURL(transportFile).href)})`);
     source = source.replace('"../product-compiler/canonical-json.js"', JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href));
+    const jointAdapter = '"../../scripts/deployment-dashboard-cutover-adapter-v2.mjs"';
+    assert.equal(source.split(jointAdapter).length, 2);
+    source = source.replace(jointAdapter, JSON.stringify(new URL("../../scripts/deployment-dashboard-cutover-adapter-v2.mjs", import.meta.url).href));
     if (defaultAction !== undefined) {
       const helpers = path.join(home, "default-helpers.mjs");
       fs.writeFileSync(helpers, `
@@ -741,7 +744,7 @@ test("default failed qualification permanently poisons recheck and census", () =
 
 test("default account acquisition drift refuses before native observation", () => defaultFixture((home, texts) => {
   const result = observe(home, texts, `
-    const info=os.userInfo;let calls=0;os.userInfo=()=>{const value=info();return {...value,username:++calls===1?'before':'after'}};
+    const info=os.userInfo;let calls=0;os.userInfo=()=>{const value=info();return active?{...value,username:++calls===1?'before':'after'}:value};
     evidence=()=>({samples:globalThis.samples,dbCalls:globalThis.dbCalls});
   `, undefined, `await context.qualifyPassiveHome();return context.observation;`);
   assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/, JSON.stringify(result));
