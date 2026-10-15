@@ -1,6 +1,6 @@
 # Ordinary migration 33 current-entry observers implementation plan
 
-> **Current checkpoint:** Actual RED on clean a723d269 proved both ordinary33 observer failures. The two-predicate fix was independently reviewed and committed clean as696b6c91; source noEmit passed. The same unchanged two-leaf regression then passed in a SECOND fresh cluster (original70509, natural37be66exit0,77 complete journal frames). Independent GREEN audit:559 checks, zero findings. Adjacent literal-route models pass16; the whole existing54-callback DB family is still UNRUN pending its clean reviewed selector checkpoint. No live startup or whole-goal qualification is claimed.
+> **Current checkpoint:** The actual two-leaf RED and minimal two-predicate fix are complete. The unchanged two-leaf regression passed in a second fresh private cluster; the existing whole migration file then passed54/54 with zero other outcomes in a third fresh cluster. Both GREEN originals ended naturally0 with strict complete cleanup, independently audited559 and981checks respectively, zero findings. Source noEmit and the16 adjacent-route modeled controls passed. This closes the ordinary isolated migration33 observer slice; protected native/OS/DB startup and the overall Setfarm objective remain unfinished.
 
 **Goal:** Prove and fix the two current-entry observers that reject a legitimate engine-adopted ordinary33 row, preserving guarded32 applied-only and every source/catalog/admission requirement.
 
@@ -76,8 +76,8 @@ Run it through the existing original-PID/full-raw terminal capture with a fresh 
 - [x] Only after the actual DB RED, root changes the two ordinary33 predicates. Do not alter the engine or digest owners,32 applied-only guards, exact names/checksums/catalog checks, loader, P3 grammar or source guards.
 - [x] Independently review that two-line diff and run cheap applicable source checks. Root records a normal clean fix checkpoint before the next outer invocation; the outer clean-source guard cannot be bypassed to run a dirty fix. The2-leaf test stays byte-identical across RED/GREEN.
 - [x] Invoke the same literal outer mode again, creating a SECOND fresh owned cluster. Require exactly2PASS/0FAIL/SKIP/CANCEL/TODO, legitimate engine-adopted33 observations, unchanged32/33 journal identities and genuine full catalog verification. Require the natural original terminal and verified private cleanup.
-- [ ] Run proportional adjacent existing checks for exact33 adoption, partial/malformed33 refusal, newer journal refusal and forged-adopted32 refusal; source/diff/contracts checks; record source/migration/digest bytes. Never count excluded cases as PASS.
-- [ ] Review the complete six-path final pins and actual records before normal scoped delivery. No native/Root/runtime/live migration or whole-goal qualification follows from this ordinary isolated regression.
+- [x] Run proportional adjacent existing checks for exact33 adoption, partial/malformed33 refusal, newer journal refusal and forged-adopted32 refusal; source/diff/contracts checks; record source/migration/digest bytes. Never count excluded cases as PASS.
+- [x] Review the complete six-path final pins and actual records before normal scoped delivery. No native/Root/runtime/live migration or whole-goal qualification follows from this ordinary isolated regression.
 
 ## Historical outside-preparation disposition
 
@@ -331,3 +331,38 @@ The earlier pending-audit text records its original checkpoint. Source review
 43checks0 is pinned b600d0aaa1d6e3d0696b0b8250636f817f7b6c5eaba468aee44961cf4fcfe8ca;
 the two-predicate inverse recovers every original db-pg byte. No source further
 changed during the focused GREEN. The next54 callbacks remain UNRUN.
+
+
+## Final ordinary migration33 verification
+
+Clean selector checkpoint1b807736ff014bc3909c54910af727c4889cf0a9 ran the
+unchanged whole migrations.test.ts (SHA25637d7969f9db1771af9c4cefe66a13085fac75bad2be41452c22367d826fc4b4c)
+through one new fixed private owner, original29337. Its natural67a739 exit0
+paired with maintained strict reader629b21:147 complete sealed frames, all
+three original0/null exit+close pairs, six EOFs, two ordered quiescence samples,
+adminEnded/serverClosedtrue. Actual footer:54tests/1suite/54PASS/0FAIL and
+0SKIP/CANCEL/TODO. The suite parent is not an extra test; all54 ordered unique
+titles match actual source registrations. The four required adjacent cases
+(source-newer33 endpoint, exact33 adoption, partial33 refusal and forged adopted32
+refusal) all passed. Source88adaab5 and the separate two-leaf9ce25 stayed exact.
+
+Final completion receipt9dd948c108b5fbea31714a1e44fb49cb1b65b0a18f1ffa8b6ad28b31f300c750
+is under logs/2026-10-15-private-migration33-adjacent-original-v1. Independent
+actual audit981checks0, C0/I0/M0:
+independent-actual-whole54-final-review-v1.json
+SHA2567f9cfba4a24e81a15463aa14cdab74f804d2e8c3d4366df9eef71850f2402b21.
+
+Independent source review chain covers all six final paths: the two-predicate
+inverse/all-other-source/unchanged leaf reviewb600d0aa (43checks0), followed by
+current literal-selector/unit/plan review97b6414e (36checks0) and current
+composition review472347eb (44checks0). The only later change is this final
+documentation of actual completed verification. No tests are rerun for this
+Markdown-only disposition. Source strict noEmit remains actual0 on the exact
+unchanged88adaab5 bytes. Normal scoped delivery is permitted; no clean-build
+exception, selected archive mutation or live activation is part of this slice.
+
+All earlier failed aggregates remain failed historical occurrences. The focused
+2GREEN and whole54GREEN are separate actual scopes, not a fabricated passing
+rerun of those aggregates. PM2 remains owner-closedUNRUN. No native/Root/initial
+TCB/V2/protected OS+DB exclusion, live migration, dashboard or workflow result
+is claimed by this completed ordinary slice.
