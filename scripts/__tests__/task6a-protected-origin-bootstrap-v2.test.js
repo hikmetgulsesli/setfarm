@@ -2156,12 +2156,18 @@ const PARENT_PORT_PROGRAM=String.raw`
       require Digest::SHA; require Encode; require Errno;
       my $fault='';my @owned;my %roles;my @events;my @queue;my $out;
       my $protocol=$q->{kind} eq 'parent-protocol';my %queues;
+      my @native_events;my ($model_ordinal,$model_time,$native_model_clocks,$native_model_calls)=(0,0,0,0);
       my $fcntl_calls=0;my (%read_ordinals,%stat_ordinals);my $lstat_ordinal=0;
       my $fail=sub {$fault='TEST_PARENT_PORT_HARNESS_FAULT';die "$fault\n";};
       my $check=sub {die "$fault\n" if length($fault);};
       my $event=sub {
         if(@events>=($protocol?512:64)) {$fault='TEST_PARENT_PORT_HARNESS_FAULT';return 0;}
-        push @events,{seq=>1+@events,@_};return 1;
+        my %e=@_;
+        if(defined($e{role})&&$e{role}=~/\Aobserver(?:-|\z)/) {
+          if(@native_events>=2048) {$fault='TEST_PARENT_PORT_HARNESS_FAULT';return 0;}
+          push @native_events,{seq=>1+@native_events,order=>++$model_ordinal,%e};return 1;
+        }
+        push @events,{seq=>1+@events,order=>++$model_ordinal,%e};return 1;
       };
       my $register_pair=sub {
         my ($a,$an,$b,$bn)=@_;
@@ -2264,11 +2270,103 @@ const PARENT_PORT_PROGRAM=String.raw`
           returnedFields=>scalar(@$tuple),capturedSynthetic=>$role eq 'entropy'?JSON::PP::true:JSON::PP::false,
           syntheticResponse=>JSON::PP::true);
       };
+      # Ordinary FIFO transport with explicitly MODELED native facts/PIDs.
+      # No external fork/wait/signal/native API is delegated by this model.
+      my $native_core_can_read=IO::Select->can('can_read');
+      $fail->() unless defined($native_core_can_read)&&ref($native_core_can_read) eq 'CODE';
+      my ($native_model_command,$native_model_sequence,$native_model_reaped)=(0,1,0);
+      my ($native_model_start,$native_model_deadline)=(0,15);
+      my @native_model_commands;my @native_model_packets;
+      my $native_role=sub {defined($_[0])&&$_[0]=~/\Aobserver-(?:input|stdout|stderr|setup)(?:-peer)?\z/};
+      my $native_event=sub {
+        $fail->() if @native_events>=2048;
+        push @native_events,{seq=>1+@native_events,order=>++$model_ordinal,@_};return 1;
+      };
+      my $native_charge=sub {$fail->() if ++$native_model_calls>4096;};
+      my $native_frame=sub {
+        my ($type,$phase,$payload,$address)=@_;$address//=0;
+        $fail->() unless $type>=1&&$type<=6&&$phase>=0&&$phase<=3&&length($payload)<=272;
+        return pack('a8L<L<L<L<Q<','T6ARP001',$type,$phase,$native_model_sequence++,length($payload),$address).$payload;
+      };
+      my $native_packet=sub {
+        my ($opcode)=@_;my $phase=$opcode-1;my $packet='';
+        my $bsd=pack('L<9',0,0,0,424242,$$,501,20,501,20).("\0"x84).pack('Q<Q<',1,0);
+        my $audit=pack('L<9',8,501,501,20,501,20,424242,1,1);
+        my %raw=(1=>pack('L<',$$),2=>$bsd,3=>pack('L<',256),4=>pack('L<',65536),
+          5=>pack('L<',424242),6=>$audit,7=>'',8=>pack('l<',3));
+        my %ret=(1=>$$,2=>136,3=>0,4=>0,5=>0,6=>0,7=>0,8=>0);
+        my $api=sub {my ($kind)=@_;return $native_frame->(6,$phase,
+          pack('L<l<l<L<',$kind,$ret{$kind},0,length($raw{$kind})).$raw{$kind},0);};
+        if($opcode==1) {$packet.=$api->($_) for (1,2,3,4,5,6);$packet.=$native_frame->(1,0,'',0);}
+        elsif($opcode==2||$opcode==3) {
+          $packet.=$api->($_) for (1,2,6);
+          my $row=("\0"x80).pack('Q<Q<',4096,4096);
+          $packet.=$native_frame->(2,$phase,pack('l<l<',96,0).$row,0);
+          $packet.=$native_frame->(2,$phase,pack('l<l<',0,22).("\0"x96),8192);
+          $packet.=$api->($_) for (6,2,1);
+          $packet.=$native_frame->(3,$phase,pack('L<L<l<l<',1,2,0,22),0);
+        } else {
+          $fail->() unless $opcode==4;$packet.=$api->($_) for (7,8);
+          $packet.=$native_frame->(5,3,pack('L<4',1,1,0,7),0);
+        }
+        $fail->() if length($packet)>4096;push @native_model_packets,$packet;return $packet;
+      };
+      my $native_stat=sub {
+        my ($fh,$role)=@_;$native_charge->();my @s=CORE::stat($fh);
+        $fail->() unless @s==13&&Fcntl::S_ISFIFO($s[2]);
+        $native_event->(op=>'stat',role=>$role,tuple=>[@s]);return @s;
+      };
+      my $native_read=sub {
+        my ($fh,$cell,$request,$offset,$role)=@_;$native_charge->();
+        $fail->() unless ref($cell) eq 'SCALAR'&&defined($request)&&$request>=1&&$request<=65536&&$offset==0
+          &&$role=~/\Aobserver-(?:stdout|stderr|setup)\z/;
+        $!=0;my $n=CORE::sysread($fh,$$cell,$request);my $errno=0+$!;
+        $native_event->(op=>'sysread',role=>$role,request=>$request,count=>$n,errno=>$errno,rawHex=>unpack('H*',$$cell));
+        $fail->() unless defined($n)&&$errno==0&&$n==length($$cell);
+        $!=$errno;return $n;
+      };
+      my $native_write=sub {
+        my ($fh,$bytes,$length,$offset,$role)=@_;$native_charge->();
+        $fail->() unless $role eq 'observer-input'&&$length==48&&$offset==0&&length($bytes)==48
+          &&$native_model_command<4&&$model_time<$native_model_deadline;
+        my $opcode=$native_model_command+1;
+        my $expected=pack('a8L<L<L<L<Q<Q<Q<','T6ARQ001',1,$opcode,$$,424242,1,int($native_model_deadline*1e9),0);
+        $fail->() unless $bytes eq $expected;
+        $!=0;my $n=CORE::syswrite($fh,$bytes,$length,$offset);my $errno=0+$!;
+        $native_event->(op=>'syswrite',role=>$role,request=>$length,count=>$n,errno=>$errno,rawHex=>unpack('H*',$bytes));
+        $fail->() unless defined($n)&&$n==48&&$errno==0;
+        my $seen='';$!=0;my $got=CORE::sysread($roles{'observer-input-peer'}{fh},$seen,48);my $read_errno=0+$!;
+        $native_event->(op=>'command-peer-read',role=>'observer-input-peer',count=>$got,errno=>$read_errno,rawHex=>unpack('H*',$seen));
+        $fail->() unless defined($got)&&$got==48&&$read_errno==0&&$seen eq $expected;
+        push @native_model_commands,$seen;++$native_model_command;
+        my $packet=$native_packet->($opcode);$!=0;
+        my $written=CORE::syswrite($roles{'observer-stdout-peer'}{fh},$packet,length($packet));my $packet_errno=0+$!;
+        $native_event->(op=>'modeled-packet-peer-write',role=>'observer-stdout-peer',count=>$written,
+          errno=>$packet_errno,rawHex=>unpack('H*',$packet),nativeFactsModeled=>JSON::PP::true);
+        $fail->() unless defined($written)&&$written==length($packet)&&$packet_errno==0;
+        $core_close->($roles{'observer-stdout-peer'}) or $fail->() if $opcode==4;
+        $!=$errno;return $n;
+      };
+      my $native_ready=sub {
+        my ($selector,$timeout)=@_;$native_charge->();$fail->() unless $timeout==0.01;
+        my @ready;
+        for my $fh($selector->handles()) {
+          my $r=$identify->($fh);$fail->() unless $r->{role}=~/\Aobserver-(stdout|stderr|setup)\z/;
+          my $peer=$roles{$r->{role}.'-peer'};$fail->() unless defined($peer);
+          my $actual=IO::Select->new($fh);my @physical=$native_core_can_read->($actual,0);
+          # Invoke only the retained original readiness method, not this model.
+          push @ready,$fh if @physical;
+        }
+        $fail->() unless @ready;
+        $native_event->(op=>'ready',role=>'observer',roles=>[map {$identify->($_)->{role}} @ready],timeout=>$timeout);
+        $!=0;return @ready;
+      };
       my %handlers;
       my @entropy_identity=(11,22,0020666,1,0,0,33,0,0,0,0,4096,0);
       $handlers{stat}=sub {
         $fail->() unless wantarray&&@_==1;
-        my $r=$identify->($_[0]);my $e=$next->('stat',$r->{role});my $ordinal=++$stat_ordinals{$r->{role}};
+        my $r=$identify->($_[0]);return $native_stat->($_[0],$r->{role}) if $protocol&&$native_role->($r->{role});
+        my $e=$next->('stat',$r->{role});my $ordinal=++$stat_ordinals{$r->{role}};
         my @tuple=$r->{role} eq 'entropy'?@entropy_identity:CORE::stat($_[0]);
         $fail->() unless @tuple==13;
         if(exists($e->{drift_field})) {
@@ -2304,6 +2402,13 @@ const PARENT_PORT_PROGRAM=String.raw`
       my $wnohang_fn='POSIX'->can('WNOHANG');$fail->() unless defined($wnohang_fn);
       my $wnohang=$wnohang_fn->();
       $handlers{waitpid}=sub {
+        if($protocol&&@_==2&&$_[0]==424243&&$_[1]==$wnohang) {
+          $native_charge->();$fail->() if $native_model_reaped;
+          my $got=$roles{'observer-input'}{closed}?424243:0;
+          $native_model_reaped=1 if $got;
+          $native_event->(op=>'waitpid',role=>'observer',pid=>424243,result=>$got,status=>0,errno=>0,
+            pidAndStatusModeled=>JSON::PP::true);$!=0;$?=0;return $got;
+        }
         $fail->() unless @_==2&&$_[0]==424242&&$_[1]==$wnohang;
         my $role=$protocol&&$roles{input}{closed}?'closed-input-child':'child';
         my $e=$next->('waitpid',$role);
@@ -2343,7 +2448,9 @@ const PARENT_PORT_PROGRAM=String.raw`
       };
       $handlers{sysread}=sub {
         $fail->() unless (@_==3||@_==4)&&ref($_[1]) eq 'SCALAR';
-        my $r=$identify->($_[0]);my $e=$next->('sysread',$r->{role});
+        my $r=$identify->($_[0]);
+        return $native_read->($_[0],$_[1],$_[2],@_==4?$_[3]:0,$r->{role}) if $protocol&&$native_role->($r->{role});
+        my $e=$next->('sysread',$r->{role});
         $fail->() unless $_[2]==$e->{length}&&(@_==4?$_[3]:0)==($e->{offset}//0);
         my $ordinal=++$read_ordinals{$r->{role}};
         my $buffer_ref=$_[1];$!=0;
@@ -2407,7 +2514,9 @@ const PARENT_PORT_PROGRAM=String.raw`
       };
       $handlers{syswrite}=sub {
         $fail->() unless @_>=2&&@_<=4;
-        my $r=$identify->($_[0]);my $e=$next->('syswrite',$r->{role});
+        my $r=$identify->($_[0]);
+        return $native_write->($_[0],$_[1],@_>=3?$_[2]:length($_[1]),@_==4?$_[3]:0,$r->{role}) if $protocol&&$native_role->($r->{role});
+        my $e=$next->('syswrite',$r->{role});
         my $length=@_>=3?$_[2]:length($_[1]);my $offset=@_==4?$_[3]:0;
         $fail->() unless $_[1] eq $e->{payload}&&$length==$e->{length}&&$offset==$e->{offset};
         if(exists($e->{failure})&&$e->{failure} ne 'errno') {
@@ -2451,6 +2560,14 @@ const PARENT_PORT_PROGRAM=String.raw`
       };
       $handlers{fcntl}=sub {
         $fail->() unless @_==3;my $r=$identify->($_[0]);
+        if($protocol&&$native_role->($r->{role})) {
+          $native_charge->();
+          $fail->() unless ($_[1]==Fcntl::F_SETFD()&&$_[2]==Fcntl::FD_CLOEXEC())
+            ||($_[1]==Fcntl::F_GETFL()&&$_[2]==0)||($_[1]==Fcntl::F_SETFL()&&($_[2]&Fcntl::O_NONBLOCK()));
+          $!=0;my $ret=CORE::fcntl($_[0],$_[1],$_[2]);my $errno=0+$!;
+          $native_event->(op=>'fcntl',role=>$r->{role},command=>$_[1],argument=>$_[2],result=>$ret,errno=>$errno);
+          $fail->() unless defined($ret)&&$errno==0;$!=$errno;return $ret;
+        }
         $fail->() if $protocol&&++$fcntl_calls>23;
         $fail->() unless ($_[1]==Fcntl::F_GETFL()&&$_[2]==0)
           ||($_[1]==Fcntl::F_SETFL()&&($_[2]&Fcntl::O_NONBLOCK()))
@@ -2484,7 +2601,13 @@ const PARENT_PORT_PROGRAM=String.raw`
         return $result;
       };
       $handlers{binmode}=sub {
-        $fail->() unless @_==1;my $r=$identify->($_[0]);my $e=$next->('binmode',$r->{role});
+        $fail->() unless @_==1;my $r=$identify->($_[0]);
+        if($protocol&&$native_role->($r->{role})) {
+          $native_charge->();$!=0;my $ret=CORE::binmode($_[0]);my $errno=0+$!;
+          $native_event->(op=>'binmode',role=>$r->{role},result=>$ret,errno=>$errno);
+          $fail->() unless $ret&&$errno==0;$!=$errno;return $ret;
+        }
+        my $e=$next->('binmode',$r->{role});
         $!=0;my $ok=CORE::binmode($_[0]);my $errno=0+$!;$fail->() unless $ok&&$errno==0;
         $event->(op=>'binmode',role=>$r->{role},result=>1,errno=>$errno);
         if(exists($e->{failure})) {
@@ -2496,7 +2619,9 @@ const PARENT_PORT_PROGRAM=String.raw`
         return $ok;
       };
       $handlers{close}=sub {
-        $fail->() unless @_==1;my $r=$identify->($_[0]);my $e=$next->('close',$r->{role});
+        $fail->() unless @_==1;my $r=$identify->($_[0]);
+        return $core_close->($r) if $protocol&&$native_role->($r->{role});
+        my $e=$next->('close',$r->{role});
         my $ok=$core_close->($r);$fail->() unless $ok&&$r->{closed};
         if(exists($e->{failure})) {
           $fail->() unless $protocol&&$r->{role}=~/\A(?:input|stdout|stderr|setup|entropy)\z/
@@ -2521,6 +2646,16 @@ const PARENT_PORT_PROGRAM=String.raw`
           $register_pair->($original,$name,$peer,$name.'-peer');
           $fail->() if $q->{record}{mode} eq 'allocation-fault';
           CORE::binmode($r) or $fail->();CORE::binmode($w) or $fail->();
+        }
+        if($protocol) {
+          for my $name('input','stdout','stderr','setup') {
+            CORE::pipe(my $r,my $w) or $fail->();
+            my ($original,$peer)=$name eq 'input'?($w,$r):($r,$w);
+            $register_pair->($original,'observer-'.$name,$peer,'observer-'.$name.'-peer');
+            CORE::binmode($r) or $fail->();CORE::binmode($w) or $fail->();
+          }
+          $core_close->($roles{'observer-setup-peer'}) or $fail->();
+          $core_close->($roles{'observer-stderr-peer'}) or $fail->();
         }
         # Package hook names are intentionally referenced again by string eval.
         no warnings 'once';
@@ -2706,7 +2841,7 @@ const PARENT_PORT_PROGRAM=String.raw`
             status=>$mode eq 'nonzero-reap'||$mode eq 'post-reap-signal'?256:0}];
           $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>0}} 1..46];
           if($mode eq 'deadline') {
-            $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} (0,0,(44)x38,(46)x6)];
+            $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} (0,0,(14)x38,(16)x6)];
           }
           if($mode eq 'post-reap-signal') {
             $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} ((0)x35,0,6)];
@@ -2753,7 +2888,7 @@ const PARENT_PORT_PROGRAM=String.raw`
           if(defined($ready_fault)) {
             my $late=$ready_fault eq 'duplicate'||$ready_fault eq 'foreign'||$ready_fault eq 'timeout';
             $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>0}} 1..($late?5:4)];
-            $queues{'clock:fixture'}[4]{value}=45 if $ready_fault eq 'timeout';
+            $queues{'clock:fixture'}[4]{value}=15 if $ready_fault eq 'timeout';
             $queues{'waitpid:child'}=[map {+{op=>'waitpid',role=>'child',got=>0,status=>0}}
               1..($ready_fault eq 'duplicate'||$ready_fault eq 'foreign'?3:2)];
           }
@@ -2792,7 +2927,7 @@ const PARENT_PORT_PROGRAM=String.raw`
                   {op=>'waitpid',role=>'closed-input-child',got=>424242,status=>0}];
               }
             } elsif($finish_case eq 'missing-reap') {
-              $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} ((0)x45,45,45,45)];
+              $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} ((0)x45,15,15,15)];
               $queues{'waitpid:closed-input-child'}=[
                 (map {+{op=>'waitpid',role=>'closed-input-child',got=>0,status=>0}} 1..13),
                 {op=>'waitpid',role=>'closed-input-child',got=>424242,status=>0}];
@@ -2802,7 +2937,7 @@ const PARENT_PORT_PROGRAM=String.raw`
               $queues{'waitpid:child'}=[{op=>'waitpid',role=>'child',got=>0,status=>0}];
             } else {
               my %zero_counts=('missing-setup'=>7,'missing-stdout'=>41,'missing-stderr'=>43);
-              $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} ((0)x$zero_counts{$finish_case},45)];
+              $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} ((0)x$zero_counts{$finish_case},15)];
               $queues{'waitpid:child'}=[map {+{op=>'waitpid',role=>'child',got=>0,status=>0}}
                 1..($finish_case eq 'missing-setup'?5:32)];
               if($finish_case eq 'missing-stderr') {
@@ -2849,7 +2984,7 @@ const PARENT_PORT_PROGRAM=String.raw`
             $queues{'stat:input'}=[map {+{op=>'stat',role=>'input'}} 1..41];
             $queues{'stat:stdout'}=[map {+{op=>'stat',role=>'stdout'}} 1..41];
             $queues{'waitpid:child'}=[map {+{op=>'waitpid',role=>'child',got=>0,status=>0}} 1..39];
-            $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} ((0)x41,45)];
+            $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} ((0)x41,15)];
             pop @{$queues{'ready:fixture'}};pop @{$queues{'sysread:stdout'}};
           }
           if(defined($split_frame)) {
@@ -2879,6 +3014,11 @@ const PARENT_PORT_PROGRAM=String.raw`
           my $clock_ordinal=0;
           local *Time::HiRes::clock_gettime=sub (;$) {
             $fail->() unless @_==1&&$_[0]==Time::HiRes::CLOCK_MONOTONIC();
+            if(defined(&test_parent_native_model_busy)&&test_parent_native_model_busy()) {
+              $fail->() if ++$native_model_clocks>512;
+              $native_event->(op=>'clock',role=>'observer',value=>$model_time,sharedMonotonic=>JSON::PP::true);
+              return $model_time;
+            }
             ++$clock_ordinal;
             my $e=$next->('clock','fixture');
             if($e->{nominated_throw}) {
@@ -2887,6 +3027,7 @@ const PARENT_PORT_PROGRAM=String.raw`
             }
             my $v=$e->{value};my $flags=B::svref_2object(\$v)->FLAGS;
             $fail->() unless ($flags&(B::SVf_IOK()|B::SVf_NOK()))&&!($flags&B::SVf_POK());
+            $fail->() unless $v>=$model_time;$model_time=$v;
             $event->(op=>'clock',role=>'fixture',value=>$v);
             test_change_parent_admission() if $admission_case&&$mode=~/\Aadmission-drift-/&&$clock_ordinal==3;
             if($mode eq 'fd-rebinding-input'&&$clock_ordinal==3) {
@@ -2901,6 +3042,11 @@ const PARENT_PORT_PROGRAM=String.raw`
           };
           local *IO::Select::can_write=sub {$fail->();};
           local *IO::Select::can_read=sub {
+            if(wantarray&&@_==2&&ref($_[0]) eq 'IO::Select') {
+              my @members=$_[0]->handles();
+              return $native_ready->($_[0],$_[1]) if @members
+                &&!grep {!$native_role->($identify->($_)->{role})} @members;
+            }
             my $entry_errno=0+$!;$fail->() unless wantarray&&@_==2&&ref($_[0]) eq 'IO::Select'&&$_[1]==0.01;
             my ($selector,$timeout)=@_;my $e=$next->('ready','fixture');my @ready;
             for my $fh($selector->handles()) {$identify->($fh);}
@@ -3123,6 +3269,13 @@ const PARENT_PORT_PROGRAM=String.raw`
         $check->();$fail->() if @queue;1;
       };my $primary=$@;
       $fault='TEST_PARENT_PORT_HARNESS_FAULT' unless $body_ok||length($fault);
+      my $native_before_cleanup;
+      if($protocol&&defined(&test_parent_native_model_snapshot)) {
+        $native_before_cleanup={sourceSnapshot=>test_parent_native_model_snapshot(),originals=>[
+          map {my $r=$roles{'observer-'.$_};+{role=>$r->{role},attempted=>$r->{attempted},closed=>$r->{closed},
+            liveFd=>CORE::fileno($r->{fh})}} ('input','stdout','stderr','setup')]};
+        $native_event->(op=>'backup-cleanup-begin',role=>'observer');
+      }
       my @cleanup_errors;
       for my $r(@owned) {
         next if $r->{closed};
@@ -3141,10 +3294,136 @@ const PARENT_PORT_PROGRAM=String.raw`
       }
       $out->{scope}=$protocol?'ordinary-parent-consumer-harness-only':'parent-external-ports-harness-only';
       $out->{consumerInvoked}=$protocol?JSON::PP::true:JSON::PP::false;
-      $out->{fixtureClosed}=scalar(@owned);$out->{events}=\@events;$out->{harnessFault}=undef;
+      $out->{fixtureClosed}=scalar(grep {!$native_role->($_->{role})} @owned);
+      $out->{events}=\@events;$out->{harnessFault}=undef;
+      if($protocol) {
+        my $snapshot=$native_before_cleanup->{sourceSnapshot};
+        $out->{nativeModel}={scope=>'modeled-native-wire-over-real-owned-FIFOs-only',nativeFactsModeled=>JSON::PP::true,
+          observerPidModeled=>424243,sourceSnapshot=>$snapshot,beforeCleanup=>$native_before_cleanup,events=>\@native_events,
+          clockCalls=>$native_model_clocks,nativeCalls=>$native_model_calls,
+          commandHex=>[map {unpack('H*',$_)} @native_model_commands],packetHex=>[map {unpack('H*',$_)} @native_model_packets],
+          fixtureOriginals=>scalar(grep {$native_role->($_->{role})} @owned),
+          allFixtureOriginals=>scalar(@owned),allFixtureClosed=>scalar(grep {$_->{closed}} @owned)};
+        $fail->() unless $out->{nativeModel}{fixtureOriginals}==8&&$out->{nativeModel}{allFixtureClosed}==@owned;
+        if($snapshot->{prepared}) {
+          $fail->() unless $snapshot->{reaped}&&!$snapshot->{uncertain}&&$snapshot->{status}==0
+            &&$snapshot->{allClosed}&&join(',',@{$snapshot->{closeAttempted}}) eq '1,1,1,1'
+            &&join(',',@{$snapshot->{definitelyClosed}}) eq '1,1,1,1';
+        }
+        if($out->{accepted}) {
+          $fail->() unless $snapshot->{expected}==4&&$snapshot->{end}==2&&$snapshot->{frames}==28
+            &&$snapshot->{inputBytes}==192&&$snapshot->{rawBytes}==1280&&$snapshot->{cleanupComplete}
+            &&@native_model_commands==4&&@native_model_packets==4;
+        }
+      }
       print JSON::PP->new->canonical->utf8->encode($out);exit 0;
     }
 `;
+function assertParentModeledNativeTrace(out) {
+  const m=out.nativeModel;
+  assert.equal(m.scope,'modeled-native-wire-over-real-owned-FIFOs-only');
+  assert.equal(m.nativeFactsModeled,true);assert.equal(m.observerPidModeled,424243);
+  assert.equal(m.fixtureOriginals,8);assert.equal(m.allFixtureOriginals,out.fixtureClosed+8);
+  assert.equal(m.allFixtureClosed,m.allFixtureOriginals);
+  assert.ok(m.clockCalls<=512&&m.nativeCalls<=4096&&m.events.length<=2048);
+  const originals=['observer-input','observer-stdout','observer-stderr','observer-setup'];
+  assert.deepEqual(m.beforeCleanup.originals.map(r=>r.role),originals);
+  const snapshot=m.sourceSnapshot;
+  assert.deepEqual(snapshot,m.beforeCleanup.sourceSnapshot);
+  for(const r of m.beforeCleanup.originals) {
+    if(snapshot.prepared) {
+      assert.deepEqual([r.attempted,r.closed,r.liveFd],[1,1,null],r.role+' was not closed by Source');
+    } else {
+      assert.deepEqual([r.attempted,r.closed],[0,0]);
+      assert.ok(Number.isInteger(r.liveFd)&&r.liveFd>=0,'unclaimed original must stay live until fixture backup');
+    }
+  }
+  const backup=m.events.find(e=>e.op==='backup-cleanup-begin');assert.ok(backup);
+  const roles=[...originals,...originals.map(r=>r+'-peer')];
+  for(const role of roles) {
+    const attempts=m.events.filter(e=>e.role===role&&e.op==='close-attempt');
+    const results=m.events.filter(e=>e.role===role&&e.op==='close-result');
+    assert.equal(attempts.length,1,role+' close retried');assert.equal(results.length,1);
+    assert.deepEqual([results[0].result,results[0].definite,results[0].errno],[1,1,0]);
+    assert.ok(attempts[0].order<results[0].order);
+    if(originals.includes(role)) assert.equal(results[0].order<backup.order,Boolean(snapshot.prepared));
+  }
+  const commands=m.commandHex.map(hex=>Buffer.from(hex,'hex'));
+  const packets=m.packetHex.map(hex=>Buffer.from(hex,'hex'));
+  assert.equal(commands.length,packets.length);assert.ok(commands.length<=4);
+  let sequence=1,wireFrames=0,nativeRaw=0;let firstParent,firstDeadline;
+  for(let phase=0;phase<commands.length;phase++) {
+    const c=commands[phase];assert.equal(c.length,48);assert.equal(c.subarray(0,8).toString(),'T6ARQ001');
+    assert.equal(c.readUInt32LE(8),1);assert.equal(c.readUInt32LE(12),phase+1);
+    const parent=c.readUInt32LE(16);assert.ok(parent>0);assert.equal(c.readUInt32LE(20),424242);
+    assert.equal(c.readBigUInt64LE(24),1n);assert.equal(c.readBigUInt64LE(40),0n);
+    if(phase===0) {firstParent=parent;firstDeadline=c.readBigUInt64LE(32);}
+    assert.equal(parent,firstParent);assert.equal(c.readBigUInt64LE(32),firstDeadline);
+    const packet=packets[phase];let offset=0;const api=[];const regions=[];let endType;
+    while(offset<packet.length) {
+      assert.ok(offset+32<=packet.length);const type=packet.readUInt32LE(offset+8);
+      assert.equal(packet.subarray(offset,offset+8).toString(),'T6ARP001');
+      assert.equal(packet.readUInt32LE(offset+12),phase);assert.equal(packet.readUInt32LE(offset+16),sequence++);
+      const size=packet.readUInt32LE(offset+20),address=packet.readBigUInt64LE(offset+24);
+      assert.ok(size<=272&&offset+32+size<=packet.length);
+      const payload=packet.subarray(offset+32,offset+32+size);offset+=32+size;++wireFrames;
+      if(type===6) {
+        const kind=payload.readUInt32LE(0),ret=payload.readInt32LE(4),raw=payload.subarray(16);
+        const lengths={1:4,2:136,3:4,4:4,5:4,6:36,7:0,8:4};
+        assert.equal(raw.length,lengths[kind]);assert.equal(payload.readUInt32LE(12),raw.length);
+        assert.equal(payload.readInt32LE(8),0);api.push(kind);nativeRaw+=raw.length;
+        if(kind===1) {assert.equal(ret,parent);assert.equal(raw.readUInt32LE(0),parent);}
+        if(kind===2) {
+          assert.equal(ret,136);assert.deepEqual([3,4,5,6,7,8].map(i=>raw.readUInt32LE(i*4)),[424242,parent,501,20,501,20]);
+          assert.equal(raw.readBigUInt64LE(120),1n);assert.equal(raw.readBigUInt64LE(128),0n);
+        }
+        if(kind===3) {assert.equal(ret,0);assert.equal(raw.readUInt32LE(0),256);}
+        if(kind===4) {assert.equal(ret,0);assert.equal(raw.readUInt32LE(0),65536);}
+        if(kind===5) {assert.equal(ret,0);assert.equal(raw.readUInt32LE(0),424242);}
+        if(kind===6) {
+          assert.equal(ret,0);assert.deepEqual(Array.from({length:9},(_,i)=>raw.readUInt32LE(i*4)),[8,501,501,20,501,20,424242,1,1]);
+        }
+        if(kind===7) assert.equal(ret,0);
+        if(kind===8) {assert.equal(ret,0);assert.equal(raw.readInt32LE(0),3);}
+      } else if(type===2) {
+        assert.equal(payload.length,104);const raw=payload.subarray(8);nativeRaw+=raw.length;
+        regions.push([payload.readInt32LE(0),payload.readInt32LE(4),address,
+          raw.readBigUInt64LE(80),raw.readBigUInt64LE(88)]);
+      } else {
+        endType=type;
+        if(phase===0) {assert.equal(type,1);assert.equal(payload.length,0);}
+        else if(phase===3) {assert.equal(type,5);assert.deepEqual(Array.from({length:4},(_,i)=>payload.readUInt32LE(i*4)),[1,1,0,7]);}
+        else {assert.equal(type,3);assert.deepEqual([payload.readUInt32LE(0),payload.readUInt32LE(4),payload.readInt32LE(8),payload.readInt32LE(12)],[1,2,0,22]);}
+        assert.equal(offset,packet.length,'trailing modeled old/future frame');
+      }
+    }
+    assert.deepEqual(api,phase===0?[1,2,3,4,5,6]:phase===3?[7,8]:[1,2,6,6,2,1]);
+    assert.equal(endType,phase===0?1:phase===3?5:3);
+    assert.deepEqual(regions,phase===0||phase===3?[]:[[96,0,0n,4096n,4096n],[0,22,8192n,0n,0n]]);
+  }
+  const writes=m.events.filter(e=>e.op==='syswrite');const peer=m.events.filter(e=>e.op==='command-peer-read');
+  assert.deepEqual(writes.map(e=>e.rawHex),m.commandHex);assert.deepEqual(peer.map(e=>e.rawHex),m.commandHex);
+  const reads=m.events.filter(e=>e.op==='sysread'&&e.role==='observer-stdout'&&e.count>0);
+  assert.equal(reads.map(e=>e.rawHex).join(''),m.packetHex.join(''));
+  assert.equal(snapshot.consumedRawHex,m.packetHex.join(''));
+  for(let i=0;i<writes.length;i++) {
+    assert.deepEqual([writes[i].count,writes[i].errno,peer[i].count,peer[i].errno],[48,0,48,0]);
+    assert.ok(writes[i].order<peer[i].order&&peer[i].order<reads[i].order);
+    assert.ok(out.events.filter(e=>e.op==='waitpid').every(e=>e.order<writes[i].order||e.order>reads[i].order),
+      'Node wait entered while a modeled target response was active');
+  }
+  const reaps=m.events.filter(e=>e.op==='waitpid'&&e.result===424243);
+  assert.equal(reaps.length,snapshot.prepared?1:0);
+  assert.ok(m.events.filter(e=>e.op==='waitpid').every(e=>e.pid===424243&&e.status===0&&e.errno===0));
+  if(out.accepted) {
+    assert.equal(commands.length,4);assert.equal(wireFrames,28);assert.equal(nativeRaw,1280);
+    assert.deepEqual([snapshot.frames,snapshot.rawBytes,snapshot.inputBytes],[28,1280,192]);
+    assert.deepEqual([snapshot.expected,snapshot.end,snapshot.reaped,snapshot.status,snapshot.allClosed,snapshot.cleanupComplete],[4,2,1,0,1,1]);
+    const nodeReap=out.events.find(e=>e.op==='waitpid'&&e.result===424242);assert.ok(nodeReap);
+    assert.ok(reads[2].order<nodeReap.order&&nodeReap.order<writes[3].order&&writes[3].order<reaps[0].order);
+  }
+}
+
 function systemObject(kind,record,expected,{sourceOverride}={}) {
   assert.ok(ordinaryHost(),'mutable test declarations require an ordinary macOS real/effective UID');
   assert.ok(existsSync(BOOTSTRAP),'system supervisor implementation missing');
@@ -3464,6 +3743,19 @@ function systemObject(kind,record,expected,{sourceOverride}={}) {
     }
   }
   if(kind==='parent-protocol') {
+    source=replaceOnce(source,'my ($parent_native_uid,$parent_native_gid)=(70,70);',
+      'my ($parent_native_uid,$parent_native_gid)=(501,20);');
+    source=replaceOnce(source,'$parent_native_cleanup_complete=sub {',String.raw`
+    sub test_parent_native_model_busy {return $native_busy?1:0;}
+    sub test_parent_native_model_snapshot {
+        return {prepared=>0+$native_prepared,claimed=>0+$native_claimed,expected=>0+$native_expected,
+          end=>0+$native_end,reaped=>0+$native_reaped,uncertain=>0+$native_uncertain,status=>$native_status,
+          allClosed=>$native_all_closed->()?1:0,cleanupComplete=>$parent_native_cleanup_complete->()?1:0,
+          closeAttempted=>[@native_close_attempted],definitelyClosed=>[@native_definitely_closed],
+          frames=>0+$native_frames,rawBytes=>0+$native_raw_bytes,inputBytes=>0+$native_input,
+          consumedRawHex=>unpack('H*',join('',@native_raw))};
+    }
+    $parent_native_cleanup_complete=sub {`);
     source=replaceOnce(source,'sub task6a_origin_parent_require_unburned {',String.raw`
 my ($test_saved_admission,%test_saved_fields,@test_saved_custody);
 my ($test_admission_mutated,$test_admission_restored)=(0,0);
@@ -3526,6 +3818,15 @@ sub test_initialize_parent {
     $parent_original_pid=424242;
     $parent_original_admission={pid=>424242,input=>$input,stdout=>$stdout,stderr=>$stderr,setup=>$setup};
     $parent_admission=$parent_original_admission;
+    $parent_native_original_pid=424243;$parent_native_target_pid=424242;$parent_native_birth_ordinal=1;
+    # The bootstrap-cap fixture creates this modeled observer at179; every
+    # other mode at0. This advances the ONE chronology before preparation.
+    $native_model_start=$mode eq 'finish-bootstrap-cap'?179:0;
+    $fail->() if $native_model_start<$model_time;$model_time=$native_model_start;
+    $parent_native_original_start=$native_model_start;
+    $native_model_deadline=$native_model_start+15;$native_model_deadline=180 if $native_model_deadline>180;
+    @parent_native_originals=map {+{fh=>$roles{'observer-'.$_}{fh}}} ('input','stdout','stderr','setup');
+    $parent_native_prepare->();
     if($admission_case||$mode eq 'fd-rebinding-input') {
         $test_saved_admission=$parent_admission;%test_saved_fields=%$parent_admission;
         @test_saved_custody=map {+{record=>$_,fh=>$_->{fh},fd=>$_->{fd},identity=>[@{$_->{identity}}]}} @parent_originals;
@@ -4016,9 +4317,11 @@ sub task6a_origin_record {`);
   }
   const r=spawnSync('/usr/bin/perl',argv,{
     input,cwd:'/',env,timeout:record?.fifoRace?500:10000,
-    maxBuffer:['staged-captor-ports','staged-custody'].includes(kind)?8388608:65536,
+    maxBuffer:kind==='parent-protocol'?262144:['staged-captor-ports','staged-custody'].includes(kind)?8388608:65536,
   });
-  assert.equal(r.error,undefined);assert.equal(r.signal,null);return r;
+  assert.equal(r.error,undefined);assert.equal(r.signal,null);
+  if(kind==='parent-protocol'&&r.status===0) assertParentModeledNativeTrace(JSON.parse(r.stdout));
+  return r;
 }
 const COMMIT='8aa0d2c6f44815339da3d6ecf8eac8ff1cc49d2c',TREE='5166646e62fa6f8c95f083c1d01ae81dd35a23fe',BLOB='ce013625030ba8dba906f756967f9e9ca394464a';
 function literalTree() {
@@ -5813,7 +6116,7 @@ for(const [failure,clockCount,waitCount,statCount,readyCount,errno] of [
   assert.equal(events.filter(e=>e.op==='stat').length,statCount);
   assert.equal(events.filter(e=>e.op==='ready').length,readyCount);
   assert.equal(events.filter(e=>e.op==='sysread'||e.op==='syswrite'||e.op==='sysopen').length,0);
-  if(failure==='timeout') assert.deepEqual(out.events.filter(e=>e.op==='clock').map(e=>e.value),[0,0,0,0,45]);
+  if(failure==='timeout') assert.deepEqual(out.events.filter(e=>e.op==='clock').map(e=>e.value),[0,0,0,0,15]);
 });
 for(const [role,clockCount,waitCount,statCount,readCount,readyCount,fcntlCount,fixtureClosed,roles,afterReap] of [
   ['setup',6,6,28,1,1,20,8,['setup','input','stdout','stderr'],[]],
@@ -5920,7 +6223,7 @@ for(const [missing,clockCount,waitCount,statCount,readyCount,readCount,writeCoun
   const out=parentProtocolTrace(`finish-missing-${missing}`);
   const events=assertParentDeniedDisposal(out,{roles,fixtureClosed:writeCount?10:8,waitCount,reapedBeforeRoles:afterReap});
   assert.equal(events.filter(e=>e.op==='clock').length,clockCount);
-  assert.equal(out.events.filter(e=>e.op==='clock').at(-1).value,45);
+  assert.equal(out.events.filter(e=>e.op==='clock').at(-1).value,15);
   assert.equal(events.filter(e=>e.op==='stat').length,statCount);
   assert.equal(events.filter(e=>e.op==='ready').length,readyCount);
   assert.equal(events.filter(e=>e.op==='sysread').length,readCount);
@@ -5931,7 +6234,7 @@ for(const [missing,clockCount,waitCount,statCount,readyCount,readCount,writeCoun
 test('Perl parent protocol refuses missing reap at protocol expiry then settles only its original cleanup PID',()=>{
   const out=parentProtocolTrace('finish-missing-reap');
   const events=assertParentDeniedDisposal(out,{roles:['setup','entropy','input','stderr','stdout'],fixtureClosed:10,waitCount:46});
-  assert.deepEqual(out.events.filter(e=>e.op==='clock').map(e=>e.value),[...Array(45).fill(0),45,45,45]);
+  assert.deepEqual(out.events.filter(e=>e.op==='clock').map(e=>e.value),[...Array(45).fill(0),15,15,15]);
   assert.equal(events.filter(e=>e.op==='clock').length,47);
   assert.equal(events.filter(e=>e.op==='stat').length,147);
   assert.equal(events.filter(e=>e.op==='ready').length,6);
@@ -6172,7 +6475,7 @@ test('Perl parent protocol mutation control witnesses forbidden nonzero-reap dia
   const baseline=parentProtocolTrace('nonzero-reap');assert.equal(baseline.accepted,false);
   const source=readFileSync(BOOTSTRAP,'utf8');
   const anchor='&&$parent_raw_status==0';
-  assert.equal(source.split(anchor).length-1,2,'raw-zero mutation must cover both actual predicates');
+  assert.equal(source.split(anchor).length-1,4,'raw-zero mutant covers both Node and both new observer settlement predicates');
   const mutant=parentProtocolTrace('nonzero-reap',{sourceOverride:source.replaceAll(anchor,'')});
   assert.equal(mutant.accepted,true);
   assert.deepEqual(mutant.consumer,{scope:'parent-entry-protocol-diagnostic-only',productionAuthority:false,
@@ -6236,7 +6539,7 @@ test('Perl parent protocol refuses original deadline expiry after otherwise vali
   assert.equal(out.accepted,false);assert.equal(out.refused,true);assert.equal(out.guardBurned,true);
   assert.equal(out.repeatRefused,true);assert.equal(out.effectsAfterRepeat,0);assert.equal(out.fixtureClosed,10);
   const events=out.consumerEvents,clocks=events.filter(e=>e.op==='clock');
-  assert.deepEqual(clocks.map(e=>e.value),[0,...Array(38).fill(44),46]);
+  assert.deepEqual(clocks.map(e=>e.value),[0,...Array(38).fill(14),16]);
   assert.equal(events.filter(e=>e.op==='waitpid').length,33);
   assert.equal(events.filter(e=>e.op==='ready').length,5);
   assert.equal(events.filter(e=>e.op==='sysread').length,10);
@@ -6250,16 +6553,23 @@ test('Perl parent protocol refuses original deadline expiry after otherwise vali
   assert.ok(closes.every((e,i)=>e.result===1&&e.definite===1&&attempts[i].seq<e.seq));
   assert.equal(events.filter(e=>e.op==='signal-attempt').length,0);
 });
-test('Perl parent protocol mutation control witnesses forbidden renewed-deadline diagnostic',()=>{
+test('Perl parent protocol mutation control witnesses local deadline renewal while native expiry blocks settlement',()=>{
   const baseline=parentProtocolTrace('deadline');assert.equal(baseline.accepted,false);
   const source=readFileSync(BOOTSTRAP,'utf8');
   const anchor='my $now=task6a_origin_now();task6a_origin_refuse() unless defined($parent_deadline)&&$now<$parent_deadline;';
-  const mutant=parentProtocolTrace('deadline',{sourceOverride:replaceOnce(source,anchor,
-    'my $now=task6a_origin_now();$parent_deadline=$now+45;$parent_deadline=$bootstrap_deadline if $bootstrap_deadline<$parent_deadline;task6a_origin_refuse() unless defined($parent_deadline)&&$now<$parent_deadline;')});
-  assert.equal(mutant.accepted,true);assert.equal(mutant.fixtureClosed,10);
-  assert.deepEqual(mutant.consumer,{scope:'parent-entry-protocol-diagnostic-only',productionAuthority:false,
-    challengeCount:3,inputBytes:229,outputBytes:220,handlesClosed:5,reaped:true});
-  assert.deepEqual(mutant.events.filter(e=>e.op==='clock').map(e=>e.value),[0,0,...Array(38).fill(44),...Array(6).fill(46)]);
+  const parentOnly=replaceOnce(source,anchor,
+    'my $now=task6a_origin_now();$parent_deadline=$now+45;$parent_deadline=$bootstrap_deadline if $bootstrap_deadline<$parent_deadline;task6a_origin_refuse() unless defined($parent_deadline)&&$now<$parent_deadline;$event->(op=>"local-renewal-accepted",role=>"fixture",observedAt=>$now,originalDeadline=>15,renewedDeadline=>$parent_deadline) if $now>=15;');
+  const mutant=parentProtocolTrace('deadline',{sourceOverride:parentOnly});
+  assert.equal(mutant.accepted,false,'native15 must refuse after the local parent guard renews');
+  assert.equal(mutant.consumer,undefined);assert.equal(mutant.fixtureClosed,10);
+  assert.equal(mutant.guardBurned,true);assert.equal(mutant.repeatRefused,true);assert.equal(mutant.effectsAfterRepeat,0);
+  assert.equal(baseline.events.filter(e=>e.op==='local-renewal-accepted').length,0);
+  const witnesses=mutant.events.filter(e=>e.op==='local-renewal-accepted');
+  assert.ok(witnesses.length>0);
+  assert.ok(witnesses.every(e=>e.observedAt===16&&e.originalDeadline===15&&e.renewedDeadline===61));
+  assert.equal(mutant.nativeModel.commandHex.length,3,'no STOP after original native expiry');
+  assert.deepEqual([mutant.nativeModel.sourceSnapshot.expected,mutant.nativeModel.sourceSnapshot.end],[3,2]);
+  assert.deepEqual(mutant.events.filter(e=>e.op==='clock').map(e=>e.value),[0,0,...Array(38).fill(14),...Array(6).fill(16)]);
   assert.equal(mutant.events.filter(e=>e.op==='stat').length,147);
   assert.equal(mutant.events.filter(e=>e.op==='waitpid').length,33);
   assert.equal(mutant.events.filter(e=>e.op==='sysread').length,11);
@@ -6347,7 +6657,7 @@ test('Perl parent protocol mutation control witnesses final END acceptance while
   assert.equal(acceptance.length,1);assert.equal(acceptance[0].physicalInputOpen,true);
   const inputClose=mutant.consumerEvents.find(e=>e.op==='close-attempt'&&e.role==='input');
   assert.ok(acceptance[0].seq<inputClose.seq);
-  assert.deepEqual(mutant.events.filter(e=>e.op==='clock').map(e=>e.value),[...Array(41).fill(0),45]);
+  assert.deepEqual(mutant.events.filter(e=>e.op==='clock').map(e=>e.value),[...Array(41).fill(0),15]);
 });
 for(const [frame,size,statCounts,waitCount] of [
   ['ready',6,[38,49,43,7,22],37],['pong1',70,[38,49,43,7,26],37],

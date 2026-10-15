@@ -1153,3 +1153,118 @@ has the v8 finite15s normal/45s parent total,50s+15s outer Perl capture,80s test
 fixed native schedules and existing raw/event/OS/IO/read/cleanup bounds. A separate
 95s+15s known-original Node recorder retains full TAP streams and actual wait.
 No privileged action, service change, compiler run, PM2 retry or V2 enabling occurs.
+
+
+### Current ordinary Source-owned native epochs — implementation candidate
+
+This section supersedes only the preparation-state statements in the preceding
+consumer-test section. The original test preparation was delivered at
+`0ebdb018247f2085c142bce891ee52cdc3f34355`. Root ran that original once with
+bootstrap bdb52017 unchanged. Its sole final assertion demonstrated omissions
+`[1,2]` after genuine native/custody eligibility. Independent same-original audit
+`7c8a5f7248e73ded53a399013ec70b258222b5260e6a7a49b7724d96b158988e`
+qualified2691 checks0:476 full frames,225 positive96B region rows and normal end
+per epoch,452 attempts,20 native events, three genuine PONGs/96 entropy bytes,
+26 once closes, two real reaps and six EOF observations. Setup/initializer,
+capability, IO and cleanup failures did not count as the behavioral RED.
+
+The five-path File Map remains exact. Bootstrap now receives the private native
+owner and the three consumer joins; the dedicated test adapts its existing
+modeled parent queues; the maintained helper records the real Source-owned
+exchange; these paired documents record the causal contract and verification.
+No additional production interface, binary publication or artifact selector is
+introduced. Every old bootstrap byte outside the declared declarations, native
+block, milestone/deadline/Node-poll/disposal joins remains unchanged. The existing
+Source publisher is preserved rather than replaced or described as absent.
+
+The private owner has zeroarg prepare, epoch1, epoch2, finish and disposal
+operations. Its original fork PID, target PID, birth ordinal/start and four FH
+records are private lexical state. The actual producer must supply those known
+originals and call prepare immediately after its real mint. Ordinary fixture
+initialization binds the same Perl-owned genuine Node/observer forks and FHs,
+then invokes the real Source prepare; it supplies no CODE, phase, result or
+success callback. This is a disclosed fixture constructor, not proof of the
+future production fork/publisher or protected initial realm.
+
+Prepare retains each eligible distinct original raw FH+IO before metadata and
+independently marks all known cross-owner aliases before a semantic refusal can
+enter cleanup. Unknown/aliased outputs are retained without another close lease.
+Metadata/configuration operates on private kept originals. Failed raw tuples
+remain diagnostics; a cleanup identity is published only after admission. The
+borrowed FH scalar is guarded before FETCH even after close; sealed FD/identity
+copies govern rechecks. PID refusal prevents wait/signal without losing safe
+known-FH retention. A trusted finite cleanup deadline is sealed before fallible
+metadata; cleanup does not coerce a rejected creation cell.
+
+After accepted READY and Node setup EOF/close, Source alone reads observer setup
+EOF, writes BIND then SAMPLE1 and consumes complete responses before the first
+CHALLENGE. After the third matching PONG, it writes SAMPLE2 and consumes its full
+response before END. No absent-owner fallback or no-op epoch exists. Source
+owns command writes, raw capture, strict phase/sequence/API/native binding/
+region parser and completion state. Scope comes from the actual complete48B
+command write and corresponding response, never the later parser time.
+
+After Node END, its existing five closes and actual natural0 wait, Source writes
+STOP, reads native right settlement/CLOSED and full observer EOF, closes all four
+observer endpoints once and consumes the actual observer natural0 wait. Five
+Node/entropy closes and four observer closes are separate obligations. On
+failure Source settles the original observer before any consuming Node wait or
+signal. An unknown observer keeps the Node lease unreaped; no fake wait0, cached
+reap, foreign PID or descendant is adopted. Stopped-query safety permits Node
+settlement only after the observer is actually reaped; composite cleanup also
+requires every one of the exact four known closes. A physical close failure
+cannot become complete merely because queries have stopped.
+
+The native lifetime is15s from the retained original observer creation, clipped
+to the existing bootstrap and parent deadlines. Every Source-native phase is
+also bounded (setup5s, BIND/SAMPLE3s, STOP1s). Disposal has a sealed finite total
+limit within45s and independent reserved known-close attempts. Fixed bounds are
+131072 normal OS actions,32768 IO actions,16384 read attempts,8322 frames,
+2MiB total retained observer output,1MiB native raw bytes,64KiB stderr,16B setup,
+192 FD3 input bytes, bounded193 write attempts,4076 cleanup actions plus20
+reserved physical-close actions. These limits may refuse earlier; blocking
+system calls are not claimed preemptible. Every consumed read and successful
+write prefix is retained before semantic guards; partial/error histories cannot
+qualify positive closure.
+
+The disk target policy remains70:70. Only the ordinary declaration-copy fixture
+uniquely projects the new native-owner literal to actual501:20 and binds the
+same literal-pinned Node26/C2/header/observer material. The maintained manifest
+is TEST-only locating DATA and grants no production authority. Source itself
+reads no new environment, path, PID, argv, DTO or provider interface. Generic
+unset selection is SKIP/UNRUN; selected malformed material fails before fork.
+The genuine helper is a passive observer of Source's exact known IO/waits and
+shares once ledgers. It no longer sends healthy STOP, reads the healthy observer
+or reaps it after the consumer. Its fallback never counts as Source proof.
+
+Two fixed negative controls substitute only the phase cell of a returned buffer
+after the complete genuine BSD packet/outcome and original buffer were retained.
+They separately cover before-first-challenge refusal and late SAMPLE2 observer-
+first cleanup. The raw native original remains immutable; modeled delivery is
+stored separately and cannot count as a genuine native result. Source must
+refuse without the forbidden Node write and settle known originals. Negative
+disposal can close known streams before EOF; that scope claims retained actual
+bytes, known once close and actual wait, not invented full EOF or a successful
+protocol.
+
+Existing424242 fixtures remain explicitly modeled. They use distinct owned FIFO
+roles/observer424243 and complete modeled raw packets through the real Source
+parser, with separate native traces. Original Node refusal/lease/effect oracles
+remain visible; additional genuine Node effects cannot be hidden as native.
+One shared monotonic chronology governs native and parent deadlines. Tests for
+44→46 renewal are causally projected around the earliest joint15s boundary.
+The parent-only renewal mutation witnesses that its local predicate was reached
+while the unchanged native15s deadline correctly prevents settlement; it no
+longer claims the composed owner should accept an expired lifetime. The nonzero
+status mutation covers all exact four composed zero-status predicates without
+changing the native packet/deadline policy. Parent-ports-only fixtures retain
+their independent original handle/call contracts and16 parent-clock leaves are
+outside the adapted consumer queue family.
+
+This candidate is UNRUN. Future GREEN requires actual Source-origin completed
+native phases and Source-owned custody; a test witness is never gate credit.
+C2/737624 remains an ordinary unpromoted artifact outside the fixed staged6/12
+protected cohort. Mapped-image file identity, initial native/compiler trust,
+Root staging, production constructor/publisher composition, PM2 owner-closed
+UNRUN, V2, migration32/33 startup admission and whole-project completion remain
+separate and fail closed. No runtime/guard waiver follows from this slice.

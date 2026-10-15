@@ -8554,3 +8554,98 @@ privileged installation, git mutation or active source edit was performed by the
 preparer. New RED/GREEN remains UNRUN. Full mapped-image binding, protected cohort
 promotion, initial TCB/compiler closure, production publisher composition, PM2,
 V2, main rollout and whole-project acceptance remain unqualified.
+
+
+### Current consumer-native integration checkpoint (after eligible actual RED)
+
+The earlier file-only/UNRUN statements describe the historical test-preparation
+checkpoint. That four-path test preparation was delivered clean at0ebdb018.
+Root's actual once-only run used unchanged bootstrap bdb52017 and failed only
+the final omissions[1,2] assertion after complete genuine native/custody checks.
+Retained actual terminal is in
+`logs/2026-10-15-task6a-consumer-epoch-red-pre-effect-v1`; independent audit
+`7c8a5f7248e73ded53a399013ec70b258222b5260e6a7a49b7724d96b158988e`
+qualified2691 checks0. This actual eligible RED authorizes the smallest reviewed
+implementation; it is not a missing-export/setup failure and is never relabelled
+as a GREEN of the changed Source.
+
+The current outside candidate uses the same exact five-path File Map:
+
+| Path | Causal change |
+| --- | --- |
+| scripts/task6a-protected-origin-bootstrap-v2.pl | Private real native owner/prepare, milestone gates, joint deadline and observer-first Node wait/disposal joins |
+| scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js | Complete modeled observer raw queues, retained Node oracles and explicit joint-deadline mutation refinement |
+| scripts/__tests__/fixtures/task6a-consumer-epoch-native-v1.mjs | Current Source declaration-copy, transparent genuine observer IO/wait capture, independent command-origin decoder and two fixed modeled delivery negatives |
+| docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md | Current conditional ownership/bytes/limits contract |
+| docs/superpowers/plans/2026-09-30-task6a-protected-origin-bootstrap-v2.md | Actual RED, causal File Map, fresh verification and limits |
+
+Prepare is a causally necessary private zeroarg refinement: ownership must exist
+before a consumer failure that precedes READY. The real fixture binds actual
+fork/FHs and invokes original Source prepare; setup/parser/protocol remain
+Source alone. All eligible originals enter retained ownership before metadata;
+alias/unknown outputs are not guessed closed. Disk70:70 remains fixed; the
+ordinary memory copy has one uniquely anchored501:20 projection. Existing
+publisher2733+ and cold/main/V2/migration guards remain unchanged.
+
+Implementation review found and corrected outside-only drafts before any
+execution: independent known-original enrollment, raw FH+IO aliases, original
+cell-before-FETCH/private metadata, sealed early cleanup deadline, separate
+stopped-query/full-four-close predicates, complete partial-write history,
+numeric initial state, alias scan ordering and admitted cleanup tuple publication.
+Immutable early snapshots/reports remain retained. Current Source-onlyv4 review
+`6c5958c7dd212c9cab5610bbf2eb94862213b1d3e9f18a06a35703b7c9eee85d`
+returned28 checks0 C0/I0/M0. Root separately performed syntax-only f4f18a; that
+parse result is not a behavioral GREEN, native query or production admission.
+Complete composed helper/program/material review is still required.
+
+- [x] Actual eligible once-only omission RED and independent same-original audit.
+- [x] Nominate the private original prepare refinement and exact five-path map.
+- [x] Prepare Source-owned BIND/S1, S2, STOP/right+CLOSED/EOF/wait and failure fence.
+- [ ] Complete both independent full five-path/program/capture/material reviews.
+- [ ] Root applies only the five reviewed files, verifies current pins/inverse and
+  unchanged guard bodies, then makes the ordinary clean test checkpoint before
+  any invocation. No uncommitted-source/stock-build bypass is used.
+- [ ] Root runs ONE fresh exact healthy callback using the strict owned fixture
+  manifest and final once-GREEN recorder. It must report actual Source samples2,
+  witness samples0, omissions[], actual229/220/96 bytes, current Source pin and
+  complete Source observer STOP/fullEOF/four-close/reap plus Node five-close proof.
+- [ ] Independently audit those same originals. A failed arm, setup, unsupported
+  capability, parser/IO/cleanup failure or old-source program has no GREEN credit.
+- [ ] Root nominates/runs each of the two fixed negative callbacks separately,
+  retaining genuine pre-model raw/outcome and distinct synthetic delivery. Require
+  forbidden-write refusal, Source observer-first cleanup, no helper fence credit,
+  known once-close/liveness and actual original waits; do not invent EOF of an
+  early-closed failure stream.
+- [ ] Root runs the reviewed exact affected modeled parent family selectors. The
+  main modeled positive is first. Closed title inventories exclude the distinct
+  configured actual-native callback and unrelated PM2/parent-clock work. The
+  central queue change can justify the exact720 modeled leaves, never a wholefile
+  or global test:scripts wildcard. No selected skip is a PASS.
+- [ ] Recheck exact current five files/results and causal limits, then normal
+  scoped commit/push/PR delivery with Root as sole writer/delivery owner.
+
+The independent modeled family adaptation preserves real FIFO operations and
+complete modeled wire while keeping modeled/native evidence separate. Existing
+Node traces retain all additional actual Node polls/closes; observer effects are
+separately visible. Joint15s replaces old modeled44→46 expectations with an
+explicit within/over15 chronology. The local renewal control is renamed to
+`Perl parent protocol mutation control witnesses local deadline renewal while native expiry blocks settlement`:
+its passive witness proves the parent-only mutant's predicate was reached, while
+unchanged native expiry must still refuse. No observer deadline or raw parser is
+weakened. The nonzero status omission mutation covers its exact four composed
+predicates and remains a modeled mutation, not native authority.
+
+The existing reviewed95s normal/15s reserve parent recorder retains the actual
+original Node terminal/full TAP streams and before/after copies. The inner
+fixture retains actual Perl50s+15s capture, Source/native15s/45s lifetime, fixed
+raw/IO/event quotas and exact originals. The actual outer tool completion is
+retained separately; self intendedExit DATA does not substitute for that result.
+All preparation and verification statuses above remain UNRUN until Root retains
+the corresponding original. No implementation/program was executed by the
+preparer. Previous v8/RED originals and failed drafts stay immutable.
+
+Production startup remains closed: this ordinary Source-owned epoch slice does
+not promote C2 into staged6/12, prove full mapped-image identity/initial compiler
+trust, create a production launcher constructor, authorize PM2, clear V2 or
+migrate/activate a live installation. Existing fixed producer/publisher work and
+those code-owned gates remain distinct. No full-goal or rollout claim is made.

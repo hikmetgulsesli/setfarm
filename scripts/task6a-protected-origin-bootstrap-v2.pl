@@ -1475,6 +1475,10 @@ my @physical_owned_handles;
 # No production initializer: only a future separately admitted launcher may
 # establish custody. Ordinary tests initialize a uniquely anchored memory copy.
 my ($parent_admission,$parent_original_admission,$parent_original_pid);
+my ($parent_native_original_pid,$parent_native_target_pid,$parent_native_birth_ordinal,$parent_native_original_start,$parent_native_deadline);
+my @parent_native_originals;
+my ($parent_native_epoch1,$parent_native_epoch2,$parent_native_finish,
+    $parent_native_dispose,$parent_native_node_wait_allowed,$parent_native_prepare,$parent_native_cleanup_complete);
 my @parent_originals;
 my $parent_phase='absent';
 my $parent_invalid=0;
@@ -1520,6 +1524,10 @@ my $parent_close=sub {
 my $parent_dispose=sub {
     return if $parent_cleanup_started;
     $parent_cleanup_started=1;my $closed=1;
+    # Source, not a test fence, settles the querying observer before any Node
+    # reap/shutdown. Unknown observer preserves the original unreaped Node lease.
+    my $native_settled;my $native_ok=eval {$native_settled=$parent_native_dispose->();1;};
+    my $native_error=$@;$parent_uncertain=1 unless $native_ok&&!length($native_error)&&$native_settled;
     for my $index(0..$#parent_originals) {
         next unless defined($parent_originals[$index]);
         next if $parent_definitely_closed[$index];
@@ -1538,7 +1546,7 @@ my $parent_dispose=sub {
         my $ok=eval {task6a_origin_shutdown_helper($parent_original_pid,\$parent_reaped,\$parent_uncertain,\$parent_raw_status);1;};
         my $error=$@;$parent_uncertain=1 unless $ok&&!length($error);
     }
-    $parent_cleanup_complete=$closed&&(!$parent_authenticated||($parent_reaped&&!$parent_uncertain));
+    $parent_cleanup_complete=$closed&&$parent_native_cleanup_complete->()&&(!$parent_authenticated||($parent_reaped&&!$parent_uncertain));
 };
 my $parent_check_admission=sub {
     task6a_origin_refuse() unless ref($parent_admission) eq 'HASH'&&ref($parent_original_admission) eq 'HASH'
@@ -1563,6 +1571,7 @@ my $parent_check_admission=sub {
 };
 my $parent_epoch=sub {
     task6a_origin_parent_require_unburned();
+    task6a_origin_refuse() unless $parent_native_node_wait_allowed->();
     $parent_check_admission->();
     my $now=task6a_origin_now();task6a_origin_refuse() unless defined($parent_deadline)&&$now<$parent_deadline;
     my $ok=eval {task6a_origin_poll($parent_original_pid,\$parent_reaped,\$parent_uncertain,\$parent_raw_status);1;};
@@ -1635,6 +1644,7 @@ sub task6a_origin_consume_entry_protocol {
         $parent_recheck_originals->();$parent_authenticated=1;$parent_phase='starting';
         $parent_start=task6a_origin_now();$parent_deadline=$parent_start+45;
         $parent_deadline=$bootstrap_deadline if $bootstrap_deadline<$parent_deadline;
+        $parent_deadline=$parent_native_deadline if defined($parent_native_deadline)&&$parent_native_deadline<$parent_deadline;
         $parent_epoch->();
         for my $index(0..3) {
             my $fh=$parent_originals[$index]{fh};binmode($fh) or task6a_origin_refuse();
@@ -1654,6 +1664,7 @@ sub task6a_origin_consume_entry_protocol {
                 task6a_origin_refuse() unless @parent_originals==5&&$parent_input_bytes==229&&$parent_output_bytes==220
                     &&@parent_nonces==3&&$parent_matched==3;
                 for my $index(0..4) {task6a_origin_refuse() unless $parent_definitely_closed[$index];}
+                $parent_native_finish->();
                 $parent_phase='settled';$parent_cleanup_started=1;$parent_cleanup_complete=1;
                 $diagnostic={scope=>'parent-entry-protocol-diagnostic-only',productionAuthority=>JSON::PP::false,
                     challengeCount=>3,inputBytes=>229,outputBytes=>220,handlesClosed=>5,reaped=>JSON::PP::true};
@@ -1709,9 +1720,11 @@ sub task6a_origin_consume_entry_protocol {
             }
             if($parent_ready&&$parent_phase eq 'active'&&$parent_matched==@parent_nonces) {
                 if($parent_matched==3) {
+                    $parent_native_epoch2->();
                     $parent_write->("END\n",1);$parent_end_written=1;
                     $parent_close->(0);$parent_phase='ending';$parent_epoch->();
                 } else {
+                    $parent_native_epoch1->() if $parent_matched==0;
                     my $nonce=$parent_entropy->();$parent_write->('CHALLENGE '.$nonce."\n",0);
                     push @parent_nonces,$nonce;
                 }
@@ -1783,6 +1796,426 @@ my $staged_native_fh=sub {
     task6a_origin_refuse() if defined($io_magic);
     return 1;
 };
+
+# Inert private parent/native owner. No production initializer or artifact path.
+{
+    BEGIN {$^H|=0x01000000;CORE::delete($^H{'overloading'});}
+    # Fixed protected target policy. Only an ordinary declaration-copy fixture
+    # projects these two literals; this is not a production profile selector.
+    my ($parent_native_uid,$parent_native_gid)=(70,70);
+    my ($native_invalid,$native_busy,$native_claimed)=(0,0,0);
+    my ($native_inflight,$native_expected,$native_sequence)=(-1,0,1);
+    my ($native_reaped,$native_uncertain,$native_status)=(0,0,undef);
+    my ($native_deadline,$native_cleanup_deadline,$native_stage_deadline);
+    my ($native_os,$native_io,$native_reads,$native_clean)=(0,0,0,0);
+    my ($native_bytes,$native_raw_bytes,$native_frames,$native_input)=(0,0,0,0);
+    my ($native_pending,$native_primary)=('','');
+    my (@native_raw,@native_errors,@native_forced,@native_native,@native_closed);
+    my (@native_eof,@native_close_attempted,@native_definitely_closed);
+    my ($native_birth,$native_audit,$native_name);
+    my ($native_ack,$native_end,$native_closed_frame)=(0,0,0);
+    my $native_owned_pid;my @native_writes;
+    my ($native_rows,$native_attempts,$native_cursor,$native_ended)=(0,0,0,0);
+    my ($native_dispose_started,$native_dispose_ok,$native_prepared,$native_prepare_claimed,$native_physical)=(0,0,0,0,0);
+    my @native_keeper;
+    my $native_error=sub {
+        my ($error)=@_;$error='' unless defined($error);
+        push @native_errors,substr($error,0,1024) if @native_errors<64;
+        $native_invalid=1 if length($error)>1024||@native_errors>=64;
+    };
+    my $native_charge=sub {
+        my ($io,$cleanup)=@_;
+        if($cleanup&&$cleanup==2) {task6a_origin_refuse() if ++$native_physical>20;}
+        elsif($cleanup) {task6a_origin_refuse() if ++$native_clean>4076;}
+        else {task6a_origin_refuse() if ++$native_os>131072||($io&&++$native_io>32768);}
+    };
+    my $native_clock=sub {$native_charge->(0,$native_dispose_started?1:0);return task6a_origin_now();};
+    my $native_now=sub {
+        my $now=$native_clock->();
+        task6a_origin_refuse() unless defined($native_deadline)&&$now<$native_deadline
+            &&(!defined($native_stage_deadline)||$now<$native_stage_deadline);
+        return $now;
+    };
+    my $native_pid=sub {
+        my ($cell)=@_;my $sv=$staged_plain_cell->($cell);
+        task6a_origin_refuse() if $sv->FLAGS&(B::SVf_ROK()|B::SVf_POK());
+        task6a_origin_refuse() unless $sv->FLAGS&B::SVf_IOK();
+        my $value=$$cell;
+        task6a_origin_refuse() unless $value>=1&&$value<=2147483647&&$value==int($value);
+        return $value;
+    };
+    my $native_shape=sub {
+        my ($cell)=@_;$staged_native_fh->($cell,0);
+        my $gv=B::svref_2object($cell)->RV;my $io=$gv->IO;
+        return [$$gv,$$io];
+    };
+    my $native_all_closed=sub {
+        return 0 unless @native_keeper==4&&@native_definitely_closed==4;
+        for my $index(0..3) {return 0 unless defined($native_keeper[$index])&&$native_definitely_closed[$index];}
+        return 1;
+    };
+    my $native_close=sub {
+        my ($index)=@_;return $native_definitely_closed[$index] if $native_close_attempted[$index];
+        $native_close_attempted[$index]=1;
+        my $record=$native_keeper[$index];
+        task6a_origin_refuse() unless ref($record) eq 'HASH'&&$record->{close_allowed};
+        $staged_native_fh->(\($record->{fh}),0);$record->{known}=1;
+        my ($ret,$errno);my $ok=eval {$native_charge->(0,2);$staged_native_fh->(\($record->{fh}),0);
+            if(defined($record->{fd})) {$native_charge->(0,2);my $fd=fileno($record->{fh});task6a_origin_refuse() unless defined($fd)&&$fd==$record->{fd};}
+            if(defined($record->{identity})) {$native_charge->(0,2);my @now=stat($record->{fh});$parent_same_identity->($record->{identity},\@now);}
+            $native_charge->(0,2);$!=0;$ret=close($record->{fh});$errno=0+$!;1;};my $error=$@;
+        $record->{close_return}=$ret;$record->{close_errno}=$errno;$record->{close_error}=$error;
+        my ($live,$live_error);my $live_ok=eval {$native_charge->(0,2);
+            $staged_native_fh->(\($record->{fh}),0);$live=fileno($record->{fh});1;};$live_error=$@;
+        $record->{live_fileno}=$live;$record->{live_error}=$live_error;
+        $native_definitely_closed[$index]=1 if $ok&&$ret&&!length($error)&&$live_ok&&!defined($live)&&!length($live_error);
+        $native_error->('close-'.$index) unless $native_definitely_closed[$index];
+        return $native_definitely_closed[$index];
+    };
+    my $native_poll=sub {
+        my ($cleanup)=@_;return if $native_reaped||$native_uncertain;
+        $native_charge->(0,$cleanup);
+        my $ok=eval {task6a_origin_refuse() unless defined($native_owned_pid);task6a_origin_poll($native_owned_pid,\$native_reaped,\$native_uncertain,\$native_status);1;};
+        my $error=$@;$native_error->($error) if length($error);
+        $native_uncertain=1 unless $ok&&!length($error);
+    };
+    my $native_handles=sub {
+        $staged_vector->(\@parent_native_originals);
+        task6a_origin_refuse() unless @parent_native_originals==4&&@native_keeper==4;
+        my %fds;
+        for my $index(0..3) {
+            my $record=$staged_container->(\($parent_native_originals[$index]),'B::HV');
+            my $kept=$native_keeper[$index];task6a_origin_refuse() unless defined($kept)&&$record==$kept->{record};
+            # Guard the ORIGINAL lent scalar before FETCH, including closed cells.
+            my $shape=$native_shape->(\($record->{fh}));
+            task6a_origin_refuse() unless $shape->[0]==$kept->{shape}[0]&&$shape->[1]==$kept->{shape}[1];
+            next if $native_definitely_closed[$index];
+            task6a_origin_refuse() unless $kept->{close_allowed}&&!$native_close_attempted[$index];
+            $native_charge->(0,0);my $fd=fileno($kept->{fh});task6a_origin_refuse() unless defined($fd)&&$fd==$kept->{fd}&&!$fds{$fd}++;
+            $native_charge->(0,0);my @now=stat($kept->{fh});$parent_same_identity->($kept->{identity},\@now);
+            task6a_origin_refuse() unless Fcntl::S_ISFIFO($now[2]);
+        }
+    };
+    my $native_guard=sub {
+        task6a_origin_refuse() if $native_invalid||$native_uncertain||($native_reaped&&$native_expected<4)||$native_dispose_started;
+        $native_now->();$native_handles->();
+        task6a_origin_refuse() unless $native_pid->(\$parent_native_target_pid)==$native_pid->(\$parent_original_pid)
+            &&$native_pid->(\$parent_native_original_pid)==$native_owned_pid&&$native_owned_pid!=$parent_original_pid;
+    };
+    my $native_record=sub {
+        my ($bytes)=@_;
+        # Exact consumed original bytes enter bounded private retention before
+        # any header, semantic, event or native-value predicate.
+        push @native_raw,$bytes;$native_bytes+=length($bytes);
+        task6a_origin_refuse() if $native_bytes>2097152;
+    };
+    my $native_bsd=sub {
+        my ($raw,$initial)=@_;task6a_origin_refuse() unless length($raw)==136;
+        my @v=unpack('L<9',substr($raw,0,36));
+        task6a_origin_refuse() unless $v[3]==$parent_original_pid&&$v[4]==$$
+            &&$v[5]==$parent_native_uid&&$v[6]==$parent_native_gid
+            &&$v[7]==$parent_native_uid&&$v[8]==$parent_native_gid;
+        my ($seconds,$micros)=unpack('Q<Q<',substr($raw,120,16));
+        task6a_origin_refuse() unless $seconds>0&&$micros<1000000;
+        my $birth=substr($raw,12,24).substr($raw,120,16);
+        if($initial) {$native_birth=$birth;}
+        else {task6a_origin_refuse() unless defined($native_birth)&&$birth eq $native_birth;}
+    };
+    my $native_audit_check=sub {
+        my ($raw,$initial)=@_;task6a_origin_refuse() unless length($raw)==36&&unpack('L<',substr($raw,0,4))==8;
+        my @v=unpack('L<8',substr($raw,4,32));
+        task6a_origin_refuse() unless $v[1]==$parent_native_uid&&$v[2]==$parent_native_gid
+            &&$v[3]==$parent_native_uid&&$v[4]==$parent_native_gid&&$v[5]==$parent_original_pid;
+        if($initial) {$native_audit=substr($raw,4,32);}
+        else {task6a_origin_refuse() unless defined($native_audit)&&substr($raw,4,32) eq $native_audit;}
+    };
+    my $native_parse=sub {
+        while(length($native_pending)>=32) {
+            my ($magic,$type,$phase,$sequence,$length,$address)=unpack('a8L<L<L<L<Q<',substr($native_pending,0,32));
+            task6a_origin_refuse() unless $magic eq 'T6ARP001'&&$type>=1&&$type<=6&&$phase==$native_inflight
+                &&$sequence==$native_sequence&&$length<=272&&$native_inflight>=0&&!$native_closed_frame;
+            last if length($native_pending)<32+$length;
+            my $payload=substr($native_pending,32,$length);substr($native_pending,0,32+$length,'');
+            ++$native_sequence;task6a_origin_refuse() if ++$native_frames>8322;
+            if($type==6) {
+                task6a_origin_refuse() unless $length>=16;
+                my ($api,$ret,$errno,$rawlen)=unpack('L<l<l<L<',$payload);my $raw=substr($payload,16);
+                my @schedule=$phase==0?(1,2,3,4,5,6):$phase==3?(7,8):(1,2,6,6,2,1);
+                my %lengths=(1=>4,2=>136,3=>4,4=>4,5=>4,6=>36,7=>0,8=>4);
+                task6a_origin_refuse() unless @native_native<@schedule&&$api==$schedule[@native_native]
+                    &&exists($lengths{$api})&&$rawlen==$lengths{$api}&&$length==16+$rawlen;
+                task6a_origin_refuse() if ($phase==1||$phase==2)&&@native_native>=3&&!$native_ended;
+                $native_raw_bytes+=$rawlen;task6a_origin_refuse() if $native_raw_bytes>1048576;
+                push @native_native,[$api,$ret,$errno,$raw];
+                if($api==1) {task6a_origin_refuse() unless $ret==$$&&unpack('L<',$raw)==$$;}
+                elsif($api==2) {task6a_origin_refuse() unless $ret==136;$native_bsd->($raw,$phase==0);}
+                elsif($api==3) {$native_name=unpack('L<',$raw);task6a_origin_refuse() unless $ret==0&&$native_name>0;}
+                elsif($api==4) {my $v=unpack('L<',$raw);task6a_origin_refuse() unless $ret==0&&($v&65536)&&!($v&1048576);}
+                elsif($api==5) {task6a_origin_refuse() unless $ret==0&&unpack('L<',$raw)==$parent_original_pid;}
+                elsif($api==6) {task6a_origin_refuse() unless $ret==0;$native_audit_check->($raw,$phase==0);}
+                elsif($api==7) {task6a_origin_refuse() unless $ret==0;}
+                elsif($api==8) {task6a_origin_refuse() unless $ret==0&&unpack('l<',$raw)==3;}
+            } elsif($type==2) {
+                task6a_origin_refuse() unless ($phase==1||$phase==2)&&$length==104&&@native_native==3&&!$native_ended&&$address==$native_cursor;
+                my ($ret,$errno)=unpack('l<l<',$payload);my $raw=substr($payload,8,96);
+                $native_raw_bytes+=96;task6a_origin_refuse() if $native_raw_bytes>1048576||++$native_attempts>4097;
+                if($ret==96) {
+                    my ($start,$size)=unpack('Q<Q<',substr($raw,80,16));
+                    task6a_origin_refuse() unless $raw=~/[^\0]/&&++$native_rows<=4096&&$size>0&&$start>=$native_cursor
+                        &&$start<=281474976710656&&$size<=281474976710656-$start&&$start+$size>$native_cursor;
+                    $native_cursor=$start+$size;
+                } else {task6a_origin_refuse() unless $ret==0&&$errno==22&&$native_rows>0;$native_ended=1;}
+            } elsif($type==1) {
+                task6a_origin_refuse() unless $phase==0&&$length==0&&@native_native==6&&!$native_ack;
+                $native_ack=1;$native_inflight=-1;
+            } elsif($type==3) {
+                task6a_origin_refuse() unless ($phase==1||$phase==2)&&$length==16&&@native_native==6&&$native_ended;
+                my @v=unpack('L<L<l<l<',$payload);
+                task6a_origin_refuse() unless $v[0]==$native_rows&&$v[1]==$native_attempts&&$v[2]==0&&$v[3]==22;
+                $native_end=$phase;$native_inflight=-1;
+            } elsif($type==5) {
+                task6a_origin_refuse() unless $phase==3&&$length==16&&@native_native==2
+                    &&join(',',unpack('L<4',$payload)) eq '1,1,0,7';
+                $native_closed_frame=1;$native_inflight=-1;
+            } else {
+                # Genuine FAILURE is retained above but can never be admission.
+                task6a_origin_refuse() unless $type==4&&$length==16;
+                my ($stage,$reason,$api,$cause)=unpack('L<4',$payload);
+                task6a_origin_refuse() unless $stage>=1&&$stage<=5&&$reason>=1&&$reason<=12&&$api<=14&&$cause<$sequence;
+                task6a_origin_refuse();
+            }
+            # No queued old/future frame may pass into another requested phase.
+            task6a_origin_refuse() if $native_inflight<0&&length($native_pending);
+        }
+    };
+    my $native_pump=sub {
+        my ($cleanup)=@_;my @live=grep {!$native_eof[$_]&&!$native_definitely_closed[$_]} (1,2,3);
+        return unless @live;
+        my $selector=IO::Select->new(map {$native_keeper[$_]{fh}} @live);
+        $native_charge->(1,$cleanup);$!=0;my @ready=$selector->can_read(0.01);my $errno=0+$!;
+        task6a_origin_refuse() unless $errno==0;
+        my %seen;for my $fh(@ready) {
+            my ($index)=grep {$fh==$native_keeper[$_]{fh}} @live;
+            task6a_origin_refuse() unless defined($index)&&!$seen{$index}++;
+            task6a_origin_refuse() if ++$native_reads>16384;
+            my $record=$native_keeper[$index];my $cap=$index==1?2097152:$index==2?65536:16;
+            my $remaining=$cap+1-($record->{bytes}//0);task6a_origin_refuse() unless $remaining>0;
+            my $request=$remaining<65536?$remaining:65536;my $buffer='';
+            $native_charge->(1,$cleanup);$!=0;my $count=sysread($fh,$buffer,$request);my $read_errno=0+$!;
+            $record->{last_read}=[$count,$read_errno,$buffer];
+            if(defined($count)&&$count>0) {$record->{bytes}=($record->{bytes}//0)+$count;$native_record->($buffer);}
+            task6a_origin_refuse() unless defined($count)&&$count>=0&&$count<=$request&&$read_errno==0&&length($buffer)==$count;
+            task6a_origin_refuse() if ($record->{bytes}//0)>$cap;
+            if($count==0) {$native_eof[$index]=1;$native_close->($index);next;}
+            task6a_origin_refuse() unless $index==1;
+            unless($cleanup) {$native_pending.=$buffer;$native_parse->();}
+        }
+    };
+    my $native_wait=sub {
+        my ($kind)=@_;
+        while(1) {
+            $native_guard->();
+            if($kind==0?$native_eof[3]:$kind==1?$native_ack:$kind==2?$native_end==1:$kind==3?$native_end==2:
+                $native_closed_frame&&$native_eof[1]&&$native_eof[2]&&$native_eof[3]&&$native_reaped) {
+                $native_now->();last;
+            }
+            $native_poll->(0);
+            task6a_origin_refuse() if $native_uncertain||($native_reaped&&$kind!=4);
+            $native_pump->(0);
+        }
+    };
+    my $native_command=sub {
+        my ($opcode)=@_;$native_guard->();
+        task6a_origin_refuse() unless $native_inflight==-1&&$opcode==$native_expected+1&&!length($native_pending);
+        task6a_origin_refuse() if $opcode<4&&($parent_reaped||$parent_uncertain||!$parent_known_live);
+        task6a_origin_refuse() unless $opcode<4||($parent_reaped&&!$parent_uncertain&&$parent_raw_status==0);
+        my $bytes=pack('a8L<L<L<L<Q<Q<Q<','T6ARQ001',1,$opcode,$$,$parent_original_pid,$parent_native_birth_ordinal,int($native_deadline*1e9),0);
+        task6a_origin_refuse() unless length($bytes)==48;
+        $native_inflight=$opcode-1;@native_native=();($native_rows,$native_attempts,$native_cursor,$native_ended)=(0,0,0,0);
+        my $at=0;while($at<48) {
+            $native_guard->();$native_charge->(1,0);$!=0;
+            my $count=syswrite($native_keeper[0]{fh},$bytes,48-$at,$at);my $errno=0+$!;
+            # Every actual attempt/prefix survives later partial-write failure.
+            my $written=defined($count)&&$count>0?substr($bytes,$at,$count):'';
+            push @native_writes,[$count,$errno,$at,$written];
+            task6a_origin_refuse() if @native_writes>193;
+            $native_keeper[0]{last_write}=[$count,$errno,$written];
+            task6a_origin_refuse() unless defined($count)&&$count>0&&$count<=48-$at&&$errno==0;
+            $at+=$count;$native_input+=$count;task6a_origin_refuse() if $native_input>192;
+        }
+        ++$native_expected;
+    };
+    $parent_native_cleanup_complete=sub {
+        return 1 unless $native_prepare_claimed||$native_claimed||@native_keeper;
+        return $native_dispose_ok&&$native_all_closed->();
+    };
+    $parent_native_node_wait_allowed=sub {
+        # Cleanup/barrier custody comes from sealed keepers, never a borrowed
+        # vector/PID cell that may have drifted after eligible enrollment.
+        return 1 unless @native_keeper||defined($native_owned_pid);
+        return 1 if $native_reaped&&!$native_uncertain;
+        return 0 if $native_uncertain||$native_invalid||$native_dispose_started||$native_inflight>=0;
+        return 1;
+    };
+    $parent_native_dispose=sub {
+        return $native_reaped&&!$native_uncertain if $native_dispose_started;
+        # Cleanup/barrier custody comes from sealed keepers, never a borrowed
+        # vector/PID cell that may have drifted after eligible enrollment.
+        return 1 unless @native_keeper||defined($native_owned_pid);
+        $native_dispose_started=1;$native_invalid=1;$native_busy=1;
+        my $now;my $clock_ok=eval {$now=$native_clock->();1;};$native_error->($@) unless $clock_ok;
+        # A sealed trusted clock deadline was acquired before any handle metadata.
+        # Never coerce an unvalidated borrowed creation field while burned.
+        $clock_ok=0 unless defined($native_cleanup_deadline);
+        eval {$native_close->(0);1;};$native_error->($@) if length($@);
+        # One nonblocking actual settlement observation remains independent of
+        # a spent normal/stage deadline. It never authorizes another query.
+        eval {$native_poll->(1);1;};$native_error->($@) if length($@);
+        my ($term,$kill)=(0,0);my $start=$now;
+        my $loop_ok=eval {task6a_origin_refuse() unless $clock_ok;while(!$native_reaped&&!$native_uncertain&&$native_clock->()<$native_cleanup_deadline) {
+            eval {$native_poll->(1);1;};$native_error->($@) if length($@);
+            last if $native_reaped||$native_uncertain;
+            my $elapsed=$native_clock->()-$start;
+            my $signal=(!$term&&$elapsed>=2)?'TERM':(!$kill&&$elapsed>=7)?'KILL':undef;
+            if(defined($signal)) {
+                $term=1 if $signal eq 'TERM';$kill=1 if $signal eq 'KILL';
+                my $ok=eval {$native_charge->(0,1);$!=0;my $ret=kill($signal,$native_owned_pid);
+                    push @native_forced,[$signal,$ret,0+$!];1;};$native_error->($@) unless $ok;
+            }
+            eval {$native_pump->(1);1;};$native_error->($@) if length($@);
+        }
+        1;};$native_error->($@) unless $loop_ok;
+        for my $index(0..3) {eval {$native_close->($index);1;};$native_error->($@) if length($@);}
+        $native_dispose_ok=$native_reaped&&!$native_uncertain&&$native_all_closed->();
+        $native_busy=0;return $native_reaped&&!$native_uncertain;
+    };
+    $parent_native_prepare=sub {
+        my $arity=@_;task6a_origin_refuse() if $native_prepare_claimed++;
+        $native_busy=1;my $ok=eval {
+            # Retain eligible raw originals independently of unrelated PID,
+            # target/birth semantics or a borrowed parent-baseline predicate.
+            $staged_vector->(\@parent_native_originals);my $count=@parent_native_originals;
+            my ($admission_failed,%gv,%io)=($count==4?0:1);
+            for my $index(0..($count<4?$count:4)-1) {
+                my $admitted=eval {
+                    my $r=$staged_container->(\($parent_native_originals[$index]),'B::HV');
+                    my $shape=$native_shape->(\($r->{fh}));
+                    task6a_origin_refuse() if $gv{$shape->[0]}||$io{$shape->[1]};
+                    my $fh=$r->{fh};
+                    $native_keeper[$index]={fh=>$fh,record=>$r,shape=>$shape,known=>1,close_allowed=>1};
+                    $gv{$shape->[0]}=1;$io{$shape->[1]}=1;1;
+                };my $error=$@;
+                unless($admitted&&!length($error)) {$admission_failed=1;$native_error->($error);}
+            }
+            # Mark ALL cross-owner aliases before any semantic refusal can
+            # enter cleanup. Unknown parent shapes quarantine native candidates;
+            # no borrowed Node IO becomes a second native close obligation.
+            my $parent_scan_failed=0;
+            my $parents_ok=eval {$staged_vector->(\@parent_originals);task6a_origin_refuse() if @parent_originals>5;1;};
+            unless($parents_ok) {$parent_scan_failed=1;for my $kept(@native_keeper) {$kept->{close_allowed}=0 if defined($kept);}}
+            if($parents_ok) {for my $old(@parent_originals) {
+                next unless defined($old);
+                my $scan_ok=eval {
+                    my $r=$staged_container->(\$old,'B::HV');my $shape=$native_shape->(\($r->{fh}));
+                    for my $kept(@native_keeper) {
+                        next unless defined($kept);
+                        if($shape->[0]==$kept->{shape}[0]||$shape->[1]==$kept->{shape}[1]) {$kept->{close_allowed}=0;$parent_scan_failed=1;}
+                    }1;
+                };my $error=$@;
+                unless($scan_ok&&!length($error)) {
+                    $parent_scan_failed=1;$native_error->($error);
+                    for my $kept(@native_keeper) {$kept->{close_allowed}=0 if defined($kept);}
+                }
+            }}
+            # Even a rejected cell leaves the other eligible originals enrolled.
+            my $start=$native_clock->();$native_cleanup_deadline=$start+30;
+            $native_cleanup_deadline=$bootstrap_deadline if $bootstrap_deadline<$native_cleanup_deadline;
+            task6a_origin_refuse() unless $arity==0&&!$native_invalid&&!$native_dispose_started;
+            $native_owned_pid=$native_pid->(\$parent_native_original_pid);
+            $native_pid->(\$parent_native_target_pid);
+            task6a_origin_refuse() unless $parent_native_target_pid==$parent_original_pid&&$native_owned_pid!=$parent_original_pid
+                &&$native_pid->(\$parent_native_birth_ordinal)==1;
+            task6a_origin_refuse() if $admission_failed||$parent_scan_failed;
+            my $start_sv=$staged_plain_cell->(\$parent_native_original_start);
+            task6a_origin_refuse() if $start_sv->FLAGS&(B::SVf_ROK()|B::SVf_POK());
+            task6a_origin_refuse() unless $start_sv->FLAGS&(B::SVf_IOK()|B::SVf_NOK());
+            task6a_origin_refuse() unless $parent_native_original_start>=0&&$parent_native_original_start<=$start;
+            $native_deadline=$parent_native_original_start+15;
+            my $total=$parent_native_original_start+45;
+            $native_cleanup_deadline=$total if $total<$native_cleanup_deadline;
+            $native_deadline=$parent_deadline if defined($parent_deadline)&&$parent_deadline<$native_deadline;
+            $native_deadline=$bootstrap_deadline if $bootstrap_deadline<$native_deadline;
+            $parent_native_deadline=$native_deadline;
+            # Second pass: metadata and configuration only use retained originals.
+            my %fds;for my $old(@parent_originals) {
+                next unless defined($old);my $r=$staged_container->(\$old,'B::HV');$native_shape->(\($r->{fh}));
+                $native_charge->(0,0);my $fd=fileno($r->{fh});$fds{$fd}=1 if defined($fd);
+            }
+            my $fd_failed=0;
+            for my $index(0..3) {
+                my $kept=$native_keeper[$index];my $fd_ok=eval {
+                    $native_charge->(0,0);my $fd=fileno($kept->{fh});
+                    if(!defined($fd)||$fds{$fd}++) {
+                        # Distinct IO with a borrowed FD is not a second close lease.
+                        $kept->{close_allowed}=0;task6a_origin_refuse();
+                    }
+                    $kept->{fd}=$fd;1;
+                };my $error=$@;
+                unless($fd_ok&&!length($error)) {$fd_failed=1;$native_error->($error);}
+            }
+            task6a_origin_refuse() if $fd_failed;
+            for my $index(0..3) {
+                my $kept=$native_keeper[$index];my $fh=$kept->{fh};
+                $native_charge->(0,0);my @tuple=stat($fh);$kept->{raw_identity}=[@tuple];
+                task6a_origin_refuse() unless @tuple==13&&Fcntl::S_ISFIFO($tuple[2]);
+                $kept->{identity}=[@tuple];
+                $native_charge->(0,0);binmode($fh) or task6a_origin_refuse();
+                $native_charge->(0,0);fcntl($fh,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()) or task6a_origin_refuse();
+                $native_charge->(0,0);my $flags=fcntl($fh,Fcntl::F_GETFL(),0);task6a_origin_refuse() unless defined($flags);
+                $native_charge->(0,0);fcntl($fh,Fcntl::F_SETFL(),$flags|Fcntl::O_NONBLOCK()) or task6a_origin_refuse();
+            }
+            $native_prepared=1;1;
+        };my $error=$@;$native_busy=0;
+        unless($ok&&!length($error)) {
+            $native_primary=$error unless length($native_primary);$native_invalid=1;
+            my $cleanup_ok=eval {$parent_native_dispose->();1;};$native_error->($@) unless $cleanup_ok;
+            task6a_origin_refuse();
+        }
+        return 1;
+    };
+    my $native_run=sub {
+        my ($step,$arity)=@_;my $ok=eval {
+            task6a_origin_refuse() unless $arity==0&&!$native_invalid&&!$native_dispose_started;
+            $native_busy=1;
+            if($step==1) {
+                task6a_origin_refuse() if $native_claimed++;
+                task6a_origin_refuse() unless $parent_ready&&$parent_eof[3]&&$parent_definitely_closed[3]&&$parent_matched==0;
+                task6a_origin_refuse() unless $native_prepared;
+                my $start=$native_clock->();
+                $native_stage_deadline=$start+5;$native_wait->(0);
+                task6a_origin_refuse() if $native_keeper[3]{bytes};
+                $native_stage_deadline=$native_clock->()+3;$native_command->(1);$native_wait->(1);
+                $native_stage_deadline=$native_clock->()+3;$native_command->(2);$native_wait->(2);
+            } elsif($step==2) {
+                task6a_origin_refuse() unless $native_claimed==1&&$native_end==1&&$parent_matched==3;
+                $native_stage_deadline=$native_clock->()+3;$native_command->(3);$native_wait->(3);
+            } else {
+                task6a_origin_refuse() unless $step==3&&$native_end==2&&$parent_reaped&&!$parent_uncertain&&$parent_raw_status==0;
+                $native_stage_deadline=$native_clock->()+1;$native_command->(4);$native_close->(0);$native_wait->(4);
+                task6a_origin_refuse() unless defined($native_status)&&$native_status==0&&$native_input==192&&!length($native_pending)
+                    &&!@native_errors&&!@native_forced&&$native_all_closed->();
+                $native_dispose_started=1;$native_dispose_ok=1;
+            }
+            $native_busy=0;1;
+        };my $error=$@;
+        unless($ok&&!length($error)) {$native_primary=$error unless length($native_primary);$native_invalid=1;$native_busy=0;task6a_origin_refuse();}
+        return 1;
+    };
+    $parent_native_epoch1=sub {$native_run->(1,scalar @_)};
+    $parent_native_epoch2=sub {$native_run->(2,scalar @_)};
+    $parent_native_finish=sub {$native_run->(3,scalar @_)};
+}
+# End inert private parent/native owner.
 
 my $staged_admission;
 my $staged_snapshot;
