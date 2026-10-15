@@ -1479,7 +1479,7 @@ my ($parent_constructor,$parent_constructor_finish,$parent_constructor_dispose,
     $parent_constructor_material_allowed,$parent_constructor_observe_wait,$parent_native_can_claim,
     $parent_constructor_deadline,$parent_constructor_cleanup_deadline,
     $parent_constructor_owns_node,$parent_constructor_shutdown_node,
-    $parent_constructor_children_settled,$parent_constructor_physical_bindings);
+    $parent_constructor_children_settled,$parent_constructor_physical_bindings,$parent_constructor_fresh);
 my ($physical_can_claim,$physical_claim,$physical_require_live,$physical_epoch,
     $physical_hold_private,$physical_release_private,$physical_open,$physical_disposal_allowed,
     $physical_cleanup_private,$physical_cleanup_complete,$physical_constructor_dispose);
@@ -3770,6 +3770,13 @@ sub task6a_origin_produce_source_vendor_staged_custody {
         }
         return (\@cells,$all);
     };
+    $parent_constructor_fresh=sub {
+        return @_==0&&$constructor_phase eq 'new'&&!$constructor_claimed&&!$constructor_busy
+            &&!$constructor_dispose_started&&!$constructor_complete&&!$constructor_uncertain
+            &&!defined($constructor_node)&&!defined($constructor_observer)&&!$constructor_published
+            &&!defined($constructor_start)&&!defined($constructor_deadline)&&!defined($constructor_cleanup_deadline)
+            &&!@constructor_fhs&&!@constructor_files&&!@constructor_errors&&!@constructor_events;
+    };
     $parent_constructor_material_allowed=sub {return !$constructor_claimed||$constructor_complete;};
     $parent_constructor_dispose=sub {
         return $constructor_complete if $constructor_dispose_started;
@@ -4816,10 +4823,101 @@ sub task6a_origin_observe_sources {
         reviewAuthority=>JSON::PP::false,mainSha=>$main,treeSha=>$merge->{treeSha},
         headSha=>$merge->{parentShas}[1],prNumber=>$number,sources=>\@sources};
 }
+# One private Source-owned occurrence; no caller supplies an owner or outcome.
+my ($source_outer_phase,$source_outer_claimed,$source_outer_complete)=('new',0,0);
+my ($source_outer_stage,$source_outer_primary_stage)=('new','');
+my ($source_outer_primary,$source_outer_primary_plain,$source_outer_primary_admission_error);
+my ($source_outer_producer,$source_outer_consumer,$source_outer_release);
+my ($source_outer_release_attempted,$source_outer_unwind_started)=(0,0);
+my @source_outer_secondary;
+my $source_outer_plain_error=sub {
+    my ($cell)=@_;my $sv=$staged_plain_cell->($cell);
+    task6a_origin_refuse() if $sv->FLAGS&B::SVf_ROK();
+    task6a_origin_refuse() unless defined($$cell);return 1;
+};
+my $source_outer_note=sub {
+    my ($stage,$completed,$returned,$error,$boolean_result)=@_;
+    task6a_origin_refuse() if @source_outer_secondary>=4;
+    my $row={stage=>$stage,completed=>$completed?1:0,returned=>$returned,error=>$error};
+    push @source_outer_secondary,$row;
+    my $plain=eval {
+        $source_outer_plain_error->(\($row->{error}));
+        if($boolean_result) {
+            my $sv=$staged_plain_cell->(\($row->{returned}));
+            task6a_origin_refuse() if $sv->FLAGS&B::SVf_ROK();
+        }
+        1;
+    };$row->{admission_error}=$@;$row->{plain}=$plain?1:0;
+    $row->{success}=$plain&&$completed&&!length($row->{error})
+        &&(!$boolean_result||(defined($row->{returned})&&$row->{returned}))?1:0;
+    return $row->{success};
+};
+my $source_outer_occurrence=sub {
+    # Refuse before claim/catch: another existing realm is never ours to burn.
+    task6a_origin_refuse() unless @_==0&&$source_outer_phase eq 'new'
+        &&!$source_outer_claimed&&!$source_outer_complete&&!$source_outer_unwind_started
+        &&$producer_phase eq 'absent'&&!$producer_creator_claimed&&!$producer_staged_started
+        &&$creator_phase eq 'absent'&&!$creator_invalid&&!$creator_uncertain&&!$creator_disposal_started
+        &&!@creator_originals&&!@creator_pending&&!@creator_directory_checks&&!@creator_file_checks
+        &&!defined($creator_root)&&!defined($creator_creation)
+        &&$staged_phase eq 'absent'&&!$staged_invalid&&!$staged_uncertain&&!$staged_disposal_started
+        &&!@staged_originals&&!@staged_pending&&!defined($staged_admission)
+        &&$parent_phase eq 'absent'&&!$parent_invalid&&!$parent_authenticated
+        &&!@parent_originals&&!defined($parent_original_pid)&&!defined($parent_admission)&&!defined($parent_original_admission)
+        &&!@parent_native_originals&&!defined($parent_native_original_pid)&&!defined($parent_native_target_pid)
+        &&defined($parent_constructor_fresh)&&$parent_constructor_fresh->()
+        &&$parent_native_can_claim->()&&$physical_can_claim->()&&task6a_origin_helpers_settled();
+    $source_outer_claimed=1;$source_outer_phase='active';
+    my $ok=eval {
+        $source_outer_stage='publisher';$source_outer_producer=task6a_origin_produce_source_vendor_staged_custody();
+        $source_outer_stage='consumer';$source_outer_consumer=task6a_origin_consume_entry_protocol();
+        # These are the existing settlement/material permissions, not a new
+        # diagnostic or caller-supplied capability. No validator is repeated.
+        task6a_origin_refuse() unless $parent_constructor_children_settled->()
+            &&$parent_constructor_material_allowed->()&&$physical_cleanup_complete->()
+            &&task6a_origin_helpers_settled();
+        $source_outer_stage='release';$source_outer_release_attempted=1;
+        $source_outer_release=task6a_origin_release_staged_custody();
+        $source_outer_complete=1;$source_outer_phase='settled';$source_outer_stage='complete';1;
+    };my $error=$@;
+    unless($ok) {
+        # Retain the actual primary before any cleanup/admission eval. A raw
+        # reference remains retained without Boolean/string/length callbacks.
+        $source_outer_primary=$error;$source_outer_primary_stage=$source_outer_stage;
+        my $plain=eval {$source_outer_plain_error->(\$source_outer_primary);1;};
+        $source_outer_primary_admission_error=$@;$source_outer_primary_plain=$plain?1:0;
+        $source_outer_phase='burned';$source_outer_unwind_started=1;
+        if($source_outer_stage eq 'consumer') {
+            # Always delegate owned disposal first. Its existing role/helper
+            # fence permits safe-known partial closes and retains unknowns.
+            my ($returned,$done,$cleanup_error);
+            $done=eval {$returned=$parent_constructor_dispose->();1;};$cleanup_error=$@;
+            my $disposed=$source_outer_note->('constructor-dispose',$done,$returned,$cleanup_error,1);
+            my $permission=eval {
+                task6a_origin_refuse() unless $disposed&&$parent_constructor_children_settled->()
+                    &&$parent_constructor_material_allowed->()&&$physical_cleanup_complete->()
+                    &&task6a_origin_helpers_settled();1;
+            };my $permission_error=$@;
+            my $allowed=$source_outer_note->('staged-release-permission',$permission,$permission,$permission_error,1);
+            if($allowed&&$staged_phase eq 'active'&&!$source_outer_release_attempted) {
+                $source_outer_release_attempted=1;my ($released,$release_done,$release_error);
+                $release_done=eval {$released=task6a_origin_release_staged_custody();1;};$release_error=$@;
+                $source_outer_release=$released;
+                $source_outer_note->('staged-release',$release_done,$released,$release_error,0);
+            }
+        }
+        # Publisher owns its existing partial creator/staged unwind. A failed
+        # public staged release is never retried or given another close right.
+        task6a_origin_refuse();
+    }
+    return 1;
+};
+
 sub task6a_origin_main {
     task6a_origin_refuse() unless $<==0&&$>==0&&@ARGV==0;
-    # Publisher and held execution components exist; final orchestration, outer
-    # settlement and initial trust/startup gates still keep both entries closed.
+    $source_outer_occurrence->();
+    # The Source-owned component chain is present; initial trust and startup
+    # admission stay closed by the cold entry and this final refusal.
     task6a_origin_refuse();
 }
 task6a_origin_main();

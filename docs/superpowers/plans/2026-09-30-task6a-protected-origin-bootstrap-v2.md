@@ -8924,3 +8924,21 @@ G1 Source implementation, its own genuine GREEN/negative occurrences, initial tr
 - [ ] Root alone applies the reviewed four paths, obtains a clean delivered checkpoint, fresh resource/material preflight and one selected original RED occurrence.
 - [ ] Independently qualify sole strict0vs3 after all limited baseline eligibility; preserve actual0PASS1FAIL and provisional flags.
 - [ ] Only then prepare separately authorized thin Source-owned outer composition and genuine GREEN/failure controls; keep both disk initial guards and final main refusal closed.
+
+
+## G1 Source-owned outer occurrence implementation preparation (2026-10-15)
+
+The G1 existing-main original is an eligible behavioral RED: one admitted main, no component/helper/launcher/material effect, natural Perl0 and Node1 with sole strict actual0 versus expected3. Root disposition4c369aaa joins independent244+1417 checks0. Original selfqualification flags and FAILED0PASS1FAIL remain immutable. The physical milestone and focused correction evidence is prior ordinary component feasibility, not a duplicate G1 premise.
+
+The five-path candidate adds one private zeroarg once occurrence called by existing main after its unchanged disk Root/arity guard and before its unchanged final refusal. Cold BEGIN is byteexact. Freshness is outside its catch: exact NEW/empty constructor freshness is distinct from material-disposal permission, and prior producer/creator/staged/parent/native/physical ownership is refused without disposal. The Source outer alone calls publisher→consumer→guarded staged release, keeps actual primary stage/raw exception before bounded secondary outcomes, delegates only its claimed constructor's cached disposer, and never retries a public staged release. Unknown role/helper retains physical4+staged12. Known settled roles/helpers preserve existing safe-known physical close rights under acquisition uncertainty while denying positive completion/material permission. No new public export/selector, caller owner/PID/FH/evidence, physical-release API or guard/quota change is supplied.
+
+The ordinary G1 program replaces the manual fixture chain with one actual main call. Passive admitted-main/producer/consumer/release snapshots prove Source caller, same Perl, one claim and order; consumer entry observes actual13 creator originals once-closed and12 staged originals live, release entry observes actual constructor/role/helper settlement and physical4 Source-onceclosed, final snapshot observes Source release12 and outer completion. Canonical final main refusal is expected even on complete outer success; completion is never inferred from that outward error. All existing127 actual helper/raw,36 material originals,2 Source-owned children, two native epochs, four physical validators and exact32 additional ACL request proofs remain mandatory. Nominal helper/census/clock counts are not future runtime guarantees.
+
+File Map: bootstrap private occurrence/freshness/main join; dedicated test current Sourcepin and registrar wording; maintained fixture G1 program/raw/custody/entry oracles; paired spec and plan. Historical private-native fixtures remain superseded/UNRUN, not current passes. Existing model Sourcepin is honestly refreshed; Source component bodies and model projections remain unchanged apart from the declared outer code. Freshness/primary-secondary/failure programs are separately nominated before execution. This candidate is PREPARED/UNRUN, no actual G1 GREEN or control claim. Initial trust/image/cohort/protected0/70/main final refusal/PG/service/V2/startup gates remain closed/open as previously stated.
+
+- [x] Qualified one existing-main original RED through same-original audits; no component authority from RED.
+- [x] Prepare and Source-only review private thin outer/freshness join (40 checks0).
+- [ ] Full five-path/program/material/current final capture independent review.
+- [ ] Root exact apply/current validation/clean delivery/fresh preflight and one own G1 ordinary GREEN original.
+- [ ] Focused actual assigned publisher failure, settled consumer failure with primary-secondary contrast, release false/throw and closed hybrid unknown role/helper controls; independent original audits.
+- [ ] Remaining protected trust, cohort, Root/runtime and startup obligations; no admission flip in this slice.
