@@ -1155,7 +1155,7 @@ fixed native schedules and existing raw/event/OS/IO/read/cleanup bounds. A separ
 No privileged action, service change, compiler run, PM2 retry or V2 enabling occurs.
 
 
-### Current ordinary Source-owned native epochs — implementation candidate
+### Historical implementation-candidate checkpoint after the eligible RED
 
 This section supersedes only the preparation-state statements in the preceding
 consumer-test section. The original test preparation was delivered at
@@ -1261,8 +1261,9 @@ changing the native packet/deadline policy. Parent-ports-only fixtures retain
 their independent original handle/call contracts and16 parent-clock leaves are
 outside the adapted consumer queue family.
 
-This candidate is UNRUN. Future GREEN requires actual Source-origin completed
-native phases and Source-owned custody; a test witness is never gate credit.
+At this implementation-candidate checkpoint invocation was UNRUN. The required
+GREEN was actual Source-origin completed native phases and Source-owned custody;
+a test witness is never gate credit. The actual outcomes are recorded below.
 C2/737624 remains an ordinary unpromoted artifact outside the fixed staged6/12
 protected cohort. Mapped-image file identity, initial native/compiler trust,
 Root staging, production constructor/publisher composition, PM2 owner-closed
@@ -1301,6 +1302,46 @@ review `ec22d29f235c4ed6c38013f3bdd6e5923929078b1cefb21f188965fb06e6a146`.
 This failure-only genuine fixture template is not executed by the closed
 modeled4/6/676/ports34 routes; those keep their own original graphs and results.
 This correction gives no new PASS, EOF, cleanup or runtime admission credit.
-The corrected negative controls are still UNRUN and need fresh full-program,
-material and capture nominations after clean application. Existing gates,
+At that repair-preparation checkpoint the corrected negatives were UNRUN and
+required fresh full-program, material and capture nominations after application.
+The later corrected originals and their limits are recorded below. Existing gates,
 ordinary-only artifact scope and all production/Root/V2 exclusions remain.
+
+
+## 2026-10-15: actual ordinary consumer verification checkpoint
+
+The implementation was committed at94b86702; the failure-only helper grouping
+correction was committed at9d2b946b. Bootstrapc268 and modeled test01e82a are
+unchanged between those graphs. The one healthy Source-origin original on94b
+completed Source samples2, witness0 and omissions[], with26 once-closes and full
+observed streams; its own same-original audit is
+`ec22d29f235c4ed6c38013f3bdd6e5923929078b1cefb21f188965fb06e6a146`.
+
+Four disjoint original modeled routes4/6/676/34 completed720 distinct callbacks
+with zero test failures, skips, cancellations or todos on94b. The remaining676
+recorder itself exited1 because five expected titles were ordered incorrectly;
+its actual Node exited0 with676 PASS. That recorder failure stays recorded. The
+source-order classification and aggregate in the paired plan preserve this
+distinction without replay or overlap. This is modeled callback evidence only.
+
+After the grouping correction, each fixed negative ran once on9d2: before-first-
+CHALLENGE phase0 delivery and before-END phase2 delivery. Genuine original raw
+was retained before changing only the four-byte delivered phase cell. Each outer
+Node and Perl completed naturally0 with full capture EOF. Both original fork
+children naturally exited2, not healthy0. The controls established canonical
+Source refusal, the forbidden successor write's absence, observer-first waits
+and26/27 known once-closes (8/9 by Source). Node stdout/stderr were early-closed
+with actual EOF0/0; no full inner EOF is invented. No C2 NAME-deallocation or
+CLOSED record was captured in either negative, so no native-right settlement
+proof or healthy native-protocol result is claimed from those failure paths.
+
+The paired plan links both actual terminals and the separate semantic/custody
+audits. Captured before/after/copied input commitments remain unchanged: the
+healthy/modeled graph used helper54b44; corrected negatives used helper0c0f with
+speca4a2/plan52f9. This evidence-only reconciliation changes the two documents
+after all originals ended; all three implementation/test code pins stay exact.
+It does not relabel a captured document or claim the final five-file graph was
+replayed. Ordinary501:20 metadata and an unpromoted C2 artifact do not establish
+Root, mapped-image/initial TCB trust, protected staged6/12, a production fork
+constructor, V2/startup admission, PG activation, PM2, family closure or overall
+project completion. Existing guards stay closed.

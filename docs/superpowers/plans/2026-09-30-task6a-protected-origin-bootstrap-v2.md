@@ -8556,7 +8556,7 @@ promotion, initial TCB/compiler closure, production publisher composition, PM2,
 V2, main rollout and whole-project acceptance remain unqualified.
 
 
-### Current consumer-native integration checkpoint (after eligible actual RED)
+### Historical integration preparation after the eligible actual RED
 
 The earlier file-only/UNRUN statements describe the historical test-preparation
 checkpoint. That four-path test preparation was delivered clean at0ebdb018.
@@ -8569,7 +8569,8 @@ qualified2691 checks0. This actual eligible RED authorizes the smallest reviewed
 implementation; it is not a missing-export/setup failure and is never relabelled
 as a GREEN of the changed Source.
 
-The current outside candidate uses the same exact five-path File Map:
+At this preparation checkpoint the outside candidate used the same exact
+five-path File Map:
 
 | Path | Causal change |
 | --- | --- |
@@ -8596,7 +8597,9 @@ Immutable early snapshots/reports remain retained. Current Source-onlyv4 review
 `6c5958c7dd212c9cab5610bbf2eb94862213b1d3e9f18a06a35703b7c9eee85d`
 returned28 checks0 C0/I0/M0. Root separately performed syntax-only f4f18a; that
 parse result is not a behavioral GREEN, native query or production admission.
-Complete composed helper/program/material review is still required.
+At this preparation checkpoint complete composed helper/program/material review
+was still required. The checkbox state below is historical; the actual
+verification checkpoint at the end records the later completed originals.
 
 - [x] Actual eligible once-only omission RED and independent same-original audit.
 - [x] Nominate the private original prepare refinement and exact five-path map.
@@ -8640,9 +8643,10 @@ original Node terminal/full TAP streams and before/after copies. The inner
 fixture retains actual Perl50s+15s capture, Source/native15s/45s lifetime, fixed
 raw/IO/event quotas and exact originals. The actual outer tool completion is
 retained separately; self intendedExit DATA does not substitute for that result.
-All preparation and verification statuses above remain UNRUN until Root retains
-the corresponding original. No implementation/program was executed by the
-preparer. Previous v8/RED originals and failed drafts stay immutable.
+At that preparation checkpoint the unchecked invocation steps were UNRUN until
+Root retained the corresponding original. No implementation/program was executed
+by the preparer. Later actual results below supersede only those status labels;
+previous v8/RED originals and failed drafts stay immutable.
 
 Production startup remains closed: this ordinary Source-owned epoch slice does
 not promote C2 into staged6/12, prove full mapped-image identity/initial compiler
@@ -8651,7 +8655,7 @@ migrate/activate a live installation. Existing fixed producer/publisher work and
 those code-owned gates remain distinct. No full-goal or rollout claim is made.
 
 
-## 2026-10-15: actual unsolicited fixture failure; minimal repair pending
+## 2026-10-15: historical unsolicited failure and grouping-repair preparation
 
 Historical preparation UNRUN labels above are checkpoint statements, not a
 relabeling of later originals. The Source-origin healthy actual already has its
@@ -8697,6 +8701,105 @@ terminal and classification. Then:
 - [ ] Obtain full pre-effect reviews and run each nominated negative once with
       unchanged semantic/refusal/known-close/wait/partial-EOF oracles.
 
-Corrected negatives remain UNRUN here. No healthy, first4 or unaffected modeled
+At that repair-preparation checkpoint corrected negatives remained UNRUN. Their
+later originals are recorded below. No healthy, first4 or unaffected modeled
 route is repeated absent a new causal reason. No PM2, protected cohort,
 production constructor, V2, database startup or whole-project claim follows.
+
+
+## 2026-10-15: current actual consumer outcomes and document reconciliation
+
+This is a two-document evidence checkpoint, not a new implementation or test
+run. The implementation commit is94b8670202c46e99a58565663f0a186c4ae16472; the
+grouping-only fixture commit is9d2b946b58c7d9f22580084cf40e06ebae956c07. Both
+retain bootstrapc268 and modeled test01e82a. The helper changed54b44 to0c0f
+only by grouping its fallback `grep`; the actual failed originaled6cc5 remains
+a mechanical harness failure with incomplete grandchild custody, not a negative
+PASS, Source RED or evidence supplied by the corrected run.
+
+File Map (exactly2 paths):
+
+1. `docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md`: frame preparation statuses as historical and append actual outcomes/limits.
+2. This plan: the same historical framing, exact original/audit references and final scoped-delivery checklist.
+
+### Healthy and disjoint modeled originals
+
+The one healthy Source-origin original on94b passed with Source samples2,
+witness0, omissions[],229/220 protocol bytes,96 entropy bytes,476 frames,452
+region attempts,26 once-closes and full observed streams. Its separate audit
+returned3518 checks0; it is not a replay on the later helper.
+
+- Healthy audit: `logs/2026-10-15-task6a-consumer-native-integration-candidate-v2/once-green-pre-effect-v1/independent-actual-source-native-healthy-audit-v1.json`, SHA256 `ec22d29f235c4ed6c38013f3bdd6e5923929078b1cefb21f188965fb06e6a146`.
+
+| Original route | Node | Actual callback PASS | Original recorder exit | Qualification |
+| --- | --- | --- | --- | --- |
+| first4 | 80731 natural0 | 4 | 0 | Exact ordered callbacks and full captured EOF |
+| mutation6 | 81659 natural0 | 6 | 0 | Exact ordered callbacks and full captured EOF |
+| remaining676 | 81909 natural0 | 676 | 1 | All Source callbacks passed; recorder's expected list had five titles in the wrong order |
+| ports34 | 82987 natural0 | 34 | 0 | Exact ordered callbacks and full captured EOF |
+
+The720 callback titles are disjoint, with zero actual test FAIL/CANCEL/SKIP/TODO.
+The remaining676 recorder stays FAILED1; independent analysis of the same raw
+TAP and frozen Source order did not re-execute or fabricate a recorder PASS.
+These are modeled Source/real owned FIFO callback assertions, not individual
+serialized native child custody or genuine observer capability.
+
+- Aggregate: `logs/2026-10-15-task6a-consumer-verification-preparation-index-v1/root-modeled720-same-original-aggregate-v1.json`, SHA256 `bc9d295e3946b85523ef89190e5615f34167aa3d0a5a151d7be1e7171b741086`.
+- Same-original676 classification: `logs/2026-10-15-task6a-consumer-modeled-remaining676-pre-effect-v1/independent-remaining676-same-original-classification-v1.json`, SHA256 `2d0ac07650e4773b44c9b16349feba2c33423c9c4449ccd99f3ba005cc440166` (61 checks0).
+
+### Corrected fixed negatives, one original each
+
+Both corrected callbacks ran once on9d2 after complete program/material
+reviews. Only the returned four-byte phase word was modeled after retaining the
+genuine BSD packet/outcome and entire original buffer. The healthy case and
+modeled cohorts were not replayed.
+
+| Negative | Actual outer terminal | Direct Node / Perl | Original fork Node / observer | Retained result |
+| --- | --- | --- | --- | --- |
+| unsolicited-phase |263405 exit0 |84273 /84276 natural0 |84278 /84279 natural2 | Before first CHALLENGE, Source refuses phase0 delivered as1; Node input0B;26 known once-closes,8 Source |
+| observer-first-failure |3a5866 exit0 |84533 /84538 natural0 |84541 /84542 natural2 | After3 matched PONGs, Source refuses phase2 delivered as1 before END; Node input225B;27 known once-closes,9 Source |
+
+Each selected callback reports PASS1/zero other statuses, no forced ending or
+capture errors, full outer Node/Perl EOF, stable13 before/after/copied input
+pins, and observer actual reap before any later consuming Node wait/signal.
+Both children exit2/status512/signal0 are retained literally. Known close
+results and independent post-close fileno are recorded; helper fallback/fence
+supplies no Source cleanup credit. Node stdout6B/216B and stderr0B have observed
+EOF0/0 after failure disposal. They are partial bytes, not full inner EOF. No
+NAME-deallocation/CLOSED record was captured, so these negatives give no native-
+right cleanup or successful native-protocol credit.
+
+Retained references (not substituted for the originals):
+
+- Early actual: `logs/2026-10-15-task6a-consumer-native-negatives-pre-effect-v2/unsolicited-phase/actual-root-tool-terminal-v1.json`, SHA256 `39ee9b1d1a6ee41b7b7d6b172d0dcd923319560b917439dfc6b115ddc710ba68`.
+- Early semantic audit: `logs/2026-10-15-task6a-consumer-native-negatives-pre-effect-v2/unsolicited-phase/independent-actual-fixed-negative-audit-v1.json`, SHA256 `94d6f45a333a9f83f61bac3cf7bee9738535ad1334bbbc90a2bb3fd4064e98e0` (148 checks0).
+- Early recorder/custody audit: `logs/2026-10-15-task6a-consumer-native-negatives-pre-effect-v2/unsolicited-phase/independent-actual-recorder-custody-seat2-review-v1.json`, SHA256 `6403660d8d6cff561522e472b50087cb4999c73701c842ab42cb80968364be31` (159 checks0).
+- Late actual: `logs/2026-10-15-task6a-consumer-native-negatives-pre-effect-v2/observer-first-failure/actual-root-tool-terminal-v1.json`, SHA256 `e64f5330a2fbb7e91c01bc47e71c077ed59cb34b6e340bd19476cb173991ae28`.
+- Late semantic audit: `logs/2026-10-15-task6a-consumer-native-negatives-pre-effect-v2/observer-first-failure/independent-actual-fixed-negative-audit-v1.json`, SHA256 `697efb782b34b52e994272ffc5c7e1293474a5dce390c203d6a3086ebd527d01` (2022 checks0).
+- Late recorder/custody audit: `logs/2026-10-15-task6a-consumer-native-negatives-pre-effect-v2/observer-first-failure/independent-actual-recorder-custody-seat2-review-v2.json`, SHA256 `dde20b800aab2947ebcbdf3e7c2040d274ff914a3122e57e658da7b7e9cc384b` (162 checks0). Its v1 overbroad entropy field assertion remains retained; v2 corrects the audit's return/errno index only, without any native replay.
+
+### Captured graphs and remaining limits
+
+The healthy and modeled originals captured the94b graph with helper54b44,
+spec93f404 and planfe84. The corrected negatives captured the9d2 graph with
+helper0c0f, speca4a2 and plan52f9. Each original keeps its actual before/after/
+copied commitments. This two-document update occurs after all those originals
+ended. Current code pins c268/01e82/0c0f are unchanged; the final spec/plan hashes
+are new documentation, not relabeled captured inputs or a claimed wholefile
+replay on the final five-file graph.
+
+- [x] Retain and independently audit the sole eligible omission RED.
+- [x] Retain and independently audit one genuine Source-origin healthy original.
+- [x] Complete the disjoint4/6/676/34 modeled callbacks with their original recorder outcomes preserved.
+- [x] Commit the reviewed grouping-only fixture fix after the earlier originals ended.
+- [x] Regenerate/review/run each corrected negative once; retain full semantic and separate recorder/custody audits.
+- [ ] Root completes final current documentation review, applicable source-contract checks, normal branch delivery and exact DRAFT PR readback.
+
+This closes only this ordinary consumer verification slice. C2/737624 stays
+unpromoted outside staged6/12. No mapped-image file binding, full initial native/
+compiler/dyld TCB freeze, protected OS/database exclusion, production original
+fork constructor, Root installation, migration32/33 live activation, V2/startup,
+PM2, process-family closure or whole-project acceptance is established. Current
+cold/main/refusal/namespace/staged/publisher guards remain unchanged. No selected
+stock-build/archive bypass or further heavy producer is authorized by this
+evidence-only update.
