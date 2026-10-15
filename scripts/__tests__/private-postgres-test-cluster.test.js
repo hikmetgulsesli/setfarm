@@ -459,7 +459,7 @@ function wrapperBoundaryFixture(mode,commandMode='findings'){
     'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
     'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts',
   ]:['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
-    ...(commandMode==='all'?['test']:commandMode==='after-scripts'?['run','test:after-scripts']:commandMode==='after-terminal'?['run','test:after-terminal']:commandMode==='after-findings'?['run','test:after-findings']:commandMode==='after-internal-pure'?['run','test:after-internal-pure']:commandMode==='after-local-custody'?['run','test:after-local-custody']:['run','test:findings'])];
+    ...(commandMode==='all'?['test']:commandMode==='after-scripts'?['run','test:after-scripts']:commandMode==='after-terminal'?['run','test:after-terminal']:commandMode==='after-findings'?['run','test:after-findings']:commandMode==='after-internal-pure'?['run','test:after-internal-pure']:commandMode==='after-local-custody'?['run','test:after-local-custody']:commandMode==='after-cutover'?['run','test:after-cutover']:['run','test:findings'])];
   const guard=`
 import cp from 'node:child_process';import fs from 'node:fs';import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';import {registerHooks,syncBuiltinESMExports} from 'node:module';
@@ -561,7 +561,7 @@ process.once('exit',()=>{original.writeSync(1,Buffer.from('UNIT_BOUNDARY_RESULT 
       NODE_OPTIONS:'--import=data:text/javascript;base64,'+Buffer.from(guard).toString('base64')},
   });
 }
-for(const commandMode of ['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure','after-local-custody'])
+for(const commandMode of ['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure','after-local-custody','after-cutover'])
 for(const mode of commandMode==='all'?['normal']:
   ['normal','nonzero','mirror-error','journal-loss','close-fault','retained-db','cancel','before-server','before-test','attach-server','attach-test','input-error']){
   test('wrapper boundary '+commandMode+' '+mode+' retains ordered observed outcomes without native effects',async()=>{
@@ -862,4 +862,54 @@ test('after-local-custody refuses extra args and caller commands before cluster 
   });
   assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
   assert.equal(child.stdout,'');assert.match(child.stderr,/PRIVATE_TEST_CLUSTER_MODE_INVALID/);
+});
+
+
+// Closed post-cutover continuation runs only the two previously unrun lanes.
+const AFTER_CUTOVER_ALIASES=Object.freeze([
+  'test:internal-production:isolated',
+  'test:internal-production:manifest',
+]);
+test('after-cutover permits only fixed npm continuation argv in a frozen private cluster plan',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'after-cutover'});
+  assert.deepEqual(value.test,['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js','run','test:after-cutover']);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
+});
+test('after-cutover package command derives only the final two aliases from the maintained five-lane continuation',()=>{
+  const scripts=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).scripts;
+  const prior=scripts['test:after-local-custody'].split(' && ');
+  assert.deepEqual(prior,[
+    'npm run test:dashboard-joint-original-operation',
+    'npm run test:internal-production:create-only',
+    'npm run test:internal-production:cutover',
+    'npm run test:internal-production:isolated',
+    'npm run test:internal-production:manifest',
+  ]);
+  const selected=prior.slice(3);
+  assert.equal(selected.length,2);assert.equal(new Set(selected).size,2);
+  assert.deepEqual(selected,AFTER_CUTOVER_ALIASES.map(name=>'npm run '+name));
+  for(const name of AFTER_CUTOVER_ALIASES)assert.equal(typeof scripts[name],'string');
+  assert.equal(scripts['test:after-cutover'],selected.join(' && '));
+});
+test('after-cutover retains the closed mode inventory and refuses caller selectors or extra argv before cluster effects',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  for(const mode of ['after-cutover;echo denied','https://127.0.0.1/',
+    'test:after-cutover','after-cutover extra','AFTER-CUTOVER'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'after-cutover','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.match(child.stderr,/PRIVATE_TEST_CLUSTER_MODE_INVALID/);
+  const source=readFileSync(MODULE,'utf8');
+  const inventories=[...source.matchAll(/!\[([^\]\n]+)\]\.includes\((mode|args\[0\])\)/g)];
+  assert.equal(inventories.length,2,'one pure-plan and one CLI closed mode inventory');
+  assert.deepEqual(inventories.map(match=>match[2]).sort(),['args[0]','mode']);
+  const expected=['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal',
+    'after-findings','after-internal-pure','after-local-custody','after-cutover'];
+  for(const inventory of inventories)
+    assert.deepEqual([...inventory[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),expected);
 });
