@@ -1,5 +1,3438 @@
 # Task6A Protected Source-Entry Bootstrap v2 Implementation Plan
 
+## S10e C remap-policy implementation plan
+
+> **For agentic workers:** Root alone writes. Parallel agents perform read-only
+> independent review; no implementation or delivery delegation.
+
+**Goal:** Implement and test actual C remap sequencing against memory-only
+effect ports without qualifying physical native ownership.
+**Architecture:** Fixed eight-occurrence/eight-action private caller subledger;
+six once-only disposals, two new-target acquisitions, sticky uncertainty.
+**Tech Stack:** C11, the pinned local clang/ld/nm/otool, Node node:test and a
+finite C memory-model driver; zero remap syscalls/guard/Mach operations.
+**Spec:** Paired design, S10e private C remap-policy unit nomination.
+
+### Global constraints and File Map
+
+Add ONLY private C header/implementation and new JS test. Modify existing
+paired plan/spec. Prospective public File Map14. Freeze all original native
+sources/entries/tests/drivers/recipes and user originals. No real owner fixture,
+integrated linking, runtime flag, safety bypass, service/DB change or rollout.
+
+### Task S10e: private policy and actual-C behavioral coverage
+
+**Files:** Create scripts/task6a-origin-native-remap-policy-v2.h;
+create scripts/__tests__/task6a-origin-native-remap-policy-v2.test.js;
+after RED create scripts/task6a-origin-native-remap-policy-v2.c.
+**Consumes:** Exact header/interface and operation/result contract in paired spec.
+**Produces:** sf_remap_policy_run_v2 with private same-C-owner results;
+not a physical receipt, restoration permission or token.
+
+- [x] Independently review ACTUAL paired source nomination and preservation.
+  Only then author the header and C-driver test; candidate C remains absent.
+- [x] Write the test first. Header is the exact spec declaration. Driver builds
+  six synthetic source occurrences and model bindings with literal OFD values.
+  The absent-source branch defines only:
+  ```c
+  enum sf_remap_result_v2 sf_remap_policy_run_v2(
+      struct sf_remap_policy_v2 *p, const struct sf_remap_ports_v2 *ports) {
+      (void)p; (void)ports; return SF_R_UNAVAILABLE;
+  }
+  ```
+  Its independent success consumer requires COMPLETE, source states SETTLED,
+  targets HELD ids7/8, model3=11/model4=22 and model5..8 absent. Literal71 is
+  reserved ONLY for the UNAVAILABLE missing-implementation path.
+- [x] Review the ACTUAL written header/test and exact new RED recipe before
+  compile/link/execution; default invocation remains off. No accepted replay.
+  Fixed opt-in: SETFARM_ALLOW_NATIVE_REMAP_POLICY_MODEL_V2=1; reject any other
+  defined value and every old native effect opt-in. One finite recipe only.
+- [x] Run ONE exact reviewed RED invocation:
+  `/opt/homebrew/Cellar/node/26.4.0/bin/node --test scripts/__tests__/task6a-origin-native-remap-policy-v2.test.js`
+  with ONLY the named opt-in. Require natural compile/link/nm/otool success and
+  actual driver71, then the unwrapped independent test assertion must FAIL.
+  Record all original channels/artifacts; a setup failure is not RED.
+- [x] Implement the smallest C policy ONLY after that real RED. Validate all
+  canonical inputs before effects; enter once; premark each call; seal actual
+  callback result; stop on UNKNOWN; register new targets before validation.
+  Literal operation schedule:
+  ```
+  close(3), close(4), close(5), close(6),
+  duplicate(7,3), duplicate(8,4), close(7), close(8)
+  ```
+  COMPLETE requires the exact resulting states and eight returned actions.
+- [x] Review actual implementation plus new GREEN recipe/inputs. Run the same
+  literal success and finite error matrix against ACTUAL C only after that gate.
+  Model fixtures supply no physical OS error or original ownership evidence.
+  Active same-owner port reentry is causally necessary sticky-burn coverage:
+  reproduce the continuing-after-burn defect with an actual-C behavioral RED,
+  then seal the returned receipt/known acquisition and stop before later ports.
+  Cover all eight operation callbacks and both binding callbacks. Do not narrow
+  callback confinement silently to avoid this root-policy defect.
+- [x] Create ONE separately reviewed omit-first-close derivative in a new fixture
+  and run the same unwrapped model oracle. Require specific behavioral failure;
+  compiler/driver crash cannot qualify sensitivity. No source history rewrite.
+- [ ] Root verifies exact File Map, English contract, new C compile smoke,
+  raw receipts, inverse historical docs, original/native pins and clean scope.
+  Three read-only actual-diff reviews precede normal scoped commit/push.
+  Keep DRAFT and all integrated/native-terminal/CONTROL/P2 gates closed.
+
+### Literal compiler recipe constraints before its later effect review
+
+Copies: task6a-origin-native-remap-policy-v2.h, driver.c, and policy.c only
+when source is present. Every quoted include uses that exact header basename;
+all copied bytes are immutable. Fixed
+compiler flags: --no-default-config --target=arm64-apple-macos26.5,
+-resource-dir /Library/Developer/CommandLineTools/usr/lib/clang/21,
+-isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk,
+-integrated-as -nostdinc -fno-modules -fno-implicit-modules
+-fno-implicit-module-maps -fno-lto -fno-builtin -fstack-protector-strong
+-std=c11 -O0 -Wall -Wextra -Werror -c. Own quoted header only; no SDK include.
+Link with fixed clang/ld, -nostdlib -Wl,-Z and exact SDK libSystem.B.tbd.
+No weakening compiler protections. Objects receive custody/hash checks;
+the linked executable receives exact provider import/dependency checks before
+entry. This is not an independent per-object import qualification. No catch-all
+import widening. Resource-directory bindings are rechecked before each tool,
+before executable entry and during final closure.
+Driver includes only the copied task6a-origin-native-remap-policy-v2.h;
+it has no explicit I/O/allocation/syscall function;
+it returns a bounded integer code through ordinary main.
+Artifacts remain preserved; never automatic recursive deletion.
+
+### Actual policy outcomes and remaining delivery boundary
+
+Missing-source RED20:02UTC: five natural statuses0,0,0,0,71; fourteen checked
+input closes; unwrapped FAIL. First import-refused attempt before that is not
+RED and was preserved separately. Initial C then authored; review-discovered
+active-reentry defect reproduced by actual-C RED20:08UTC, six statuses
+0,0,0,0,0,150/seventeen closes, before its three local stop-on-burn corrections.
+Baseline GREEN20:10UTC: six zeros/seventeen closes/1PASS0FAIL0SKIP through
+the finite matrix. Copy-only omission20:14UTC: six statuses0,0,0,0,0,81/
+seventeen closes/unwrapped FAIL, original source unchanged. Exact executable
+imports remain only stack_chk_fail/stack_chk_guard; one direct System dependency.
+No implicit dependency acceptance, accepted-recipe replay or gate bypass.
+
+Private originals: logs/2026-10-06-task6a-s10e-native-policy-red-original.json,
+logs/2026-10-06-task6a-s10e-active-reentry-red-original.json,
+logs/2026-10-06-task6a-s10e-native-policy-green-original.json and
+logs/2026-10-06-task6a-s10e-omission-original.json. They are not public File Map
+entries and must not be staged. This unit's source and behavior verification
+are complete; final exact-diff review/scoped PR delivery follows the final gate
+above. Integrated physical bootstrap, original-owner terminal, both censuses,
+full native capacity, CONTROL and P2/P3/P4/P5/A-E remain unqualified.
+
+## S10d delayed-disposal source worklist
+
+> **For agentic workers:** Root alone writes and delivers. Parallel seats
+> perform read-only research/review. This is NOT an executable implementation plan.
+
+**Goal:** Remove the six unobservable preexec application-close actions from the
+source candidate without replacing individual witnesses with an aggregate.
+**Architecture:** Keep a checked fixed parent layout through exec, inherit all
+nine numbers, then observe six closes and two remaps on the original guarded
+child thread between two complete census boundaries.
+**Tech Stack:** Existing paired source documents and public Darwin/POSIX
+contracts; installed library inspection through the read-only dyld_info CLI.
+**Spec:** Paired design, S10d delayed-disposal source nomination.
+
+### Constraints and File Map
+
+ONLY this existing plan and its paired design change. Public File Map stays
+eleven; initializer, entry, tests, all drivers and accepted recipes are frozen.
+The original two, journal HASH ONLY, CLI/build artifacts and retained trees stay
+preserved. No child, native compile/load/probe, scanner, provider mutation,
+retained owner, service/DB/security change or rollout is admitted.
+
+- [x] Identify the structural incompatibility: public posix_spawn has one
+  aggregate result, not six observed original-thread close-return receipts.
+- [x] Select delayed-child disposal over fork-before-Node or late handoff.
+  This selection is SOURCE-ONLY and does not qualify a launch contract.
+- [x] Specify actual observed parent layout Nr3/Nw4/Sr5/Sw6/A7/B8, no guessed
+  pipe allocation, reseeking/retry or unsealed result. Nominate nine inherit
+  builders and zero application preexec close/dup actions.
+- [x] Specify child lifetime FD occurrences9+2=11, distinguish reused numbers,
+  and retain inherited child stdio as originals. Do not label this the full
+  Mach/VM/guard/receiver/provider ledger capacity.
+- [x] Specify complete entry{0..8}, guarded close3/4/5/6, dup7->3 and8->4,
+  close7/8, complete postremap{0..4} before Node. Every close is once-marked
+  and observed; any unknown prevents duplication/Node acceptance.
+- [x] State the changed census precondition8<L<=wider(INT_MAX)+1, sentinel
+  rejection, wide loop, checked conversion and ALL [0,L) classification.
+  No arbitrary scan cap, limit mutation or numeric runtime budget.
+- [x] Bound the installed arm64e function observation and public wrapper/backend
+  evidence. No whole-provider identity, unexpected-error unchanged-state
+  conclusion or lifetime-health certificate follows.
+- [ ] Qualify parent source origins, exact installed inheritance and ambient
+  dispositions, pre-main provider paths, both census histories/exclusion
+  intervals and finite time/resource budgets. Source numbers are not receipts.
+- [ ] Resolve preguard nine-original/stash child failures and every restore/
+  mask/backend/unreturned row using valid ORIGINAL-owner terminals. Keep
+  EVERY-original, sole-restore, no JS/exit/retry/owner-death-credit invariants.
+- [ ] Complete full occurrence capacities, Node/provider/compiler/input/ABI
+  closure and integrated FSM, THEN separately review a complete written
+  authoring nomination and actual new effect recipe. No ordinary-continuity
+  advertisement on a refusal stub, frozen recipe repinning or accepted replay.
+- [ ] A prospective remap primitive requires a separately complete contract
+  and finite real guarded fixture recipe; it supplies no whole-child retention
+  qualification. Do not author a helper/test from this research worklist.
+- [ ] Independently review the ACTUAL paired additions, verify inverse-byte
+  preservation plus native/original pins, and deliver only documentation.
+  No project completion or DRAFT promotion follows.
+
+## S10c bounded source-research worklist
+
+> **For agentic workers:** Root is the sole writer. Parallel agents research
+> and independently review read-only; no native effects or delivery authority.
+
+**Goal:** Separate a conditional exhaustive-census proof and actual guard-state
+provenance from unproved integrated producer requirements.
+**Architecture:** Preserve the selected eleven-action spawn candidate and every
+existing gate. Prove only the conditional number-set implication; classify
+terminal states from actual success/error provenance rather than one generic
+DISABLE assumption.
+**Tech Stack:** Existing source documents and public POSIX/Darwin contracts;
+no implementation, compile/preprocess, scanner, child birth or runtime change.
+**Spec:** Paired design, S10c conditional census lemma and guard-state audit.
+
+### Constraints and File Map
+
+Modify ONLY this existing plan and its paired existing design. No source/test
+file, fixture, accepted recipe, driver or published PR file-count expansion.
+Original two, journal HASH ONLY, CLI/builds and every retained tree remain
+preserved. Exact current-child census, individual source dispositions,
+EVERY-original settlement and original-guard restoration are unchanged.
+This research worklist is NOT the integrated executable implementation plan.
+
+- [x] Establish conditional induction: certified exec S0={0..4}, preserved
+  finite soft ceiling L>4, all new numbers below L, then complete immutable
+  F_GETFD classification of [0,L). Successful enumeration can still reveal
+  extras; acceptance requires exactly {0..4}, with no adoption/guessed close.
+- [x] Enumerate counterexamples: old100 after lowering to64; raise1024/acquire900/
+  lower64 despite equal endpoint samples; opening an already-scanned number.
+  These are written examples, not executed descriptor or limit mutations.
+- [x] Distinguish a future eligibility ceiling C from scan truncation:
+  reject L>C before birth without changing limits; never scan min(L,C).
+  No numeric C, timing guarantee or resource budget is selected.
+- [x] Separate stable soft ceiling from sampled effective minimum. Keep all
+  creation/import paths and pre-main/provider/handler exclusions explicit.
+- [x] Classify actual guard save/query/restore results, unusable failed outputs,
+  legal saved-state domain and target DISABLE versus ENABLE. Successful target
+  restoration does not certify earlier continuity; nonzero/unreturned restore
+  has no generic unchanged-DISABLE postcondition and is never retried.
+- [x] Record fork-before-Node as unselected: Darwin library-safety caveat,
+  held-lock rules, atfork/guard/Mach genesis and ambient-FD gaps prevent direct
+  embedding qualification. No fork or replacement architecture is invoked.
+- [ ] Qualify actual Darwin/provider numeric semantics and EVERY acquisition,
+  duplication/import/replacement path through the proposed census boundary.
+- [ ] Qualify complete exec provenance, ceiling history and mutation-free
+  full scan interval, including unresolved reservations/in-flight acquisitions.
+  Equal samples, current getdtablesize or arbitrary caps
+  are not substitutes. Specify sentinel/range/error/overflow handling and
+  finite deadline/resource budget before any scanner recipe. Require
+  4<L<=wider(INT_MAX)+1 before birth, wider iteration and checked d narrowing;
+  reject rather than truncate.
+- [ ] Resolve each still-open guard/retention row with actual provider
+  postconditions and legal same-original-owner terminals. No pause, guessed
+  mask, restoration retry, busy-spin, owner-death cleanup or new wait resource.
+- [ ] Complete integrated occurrence capacities, compiler/input/ABI/Node
+  profile, six individual source dispositions and complete FSM/error recipe.
+  Conditional census proof and public source snapshots do not discharge them.
+- [ ] Independently review the ACTUAL paired additions and verify unchanged
+  historical bytes/frozen originals before a documentation-only delivery.
+  No ready/merge/clean-main build/rollout or native correctness claim.
+
+## S10b source-only inheritance and disposition refinement worklist
+
+Root sole writer. This is paired source-design work after S10a RED and DRAFT
+delivery at6b352f2c, not an executable implementation plan or effect admission.
+Existing S10a invocation is accepted historical evidence and MUST NOT replay.
+Only this named plan and paired spec may change at this checkpoint; all native
+source/CJS/tests/fixtures and original preservation targets remain frozen.
+
+**Goal:** Resolve the concrete public-spawn FD topology and separate its evidence
+classes before completing the integrated ordinary-continuity design.
+**Architecture:** Prefer the public eleven-action CLOEXEC_DEFAULT candidate for
+source research; preserve the exact current-child census/checked-original gates.
+Reject private libproc enumeration and soft-limit scans. Six parent originals,
+eleven queued-action records, three borrowed observations and five child
+originals are separate classes; no seventeen-original shortcut.
+**Spec:** Paired design, S10b public inheritance candidate subsection.
+
+### Source checkpoint requirements, not native run instructions
+
+- [x] Main read installed public spawn/flag/action declarations and manuals,
+  private-labelled libproc, and public current Apple action/flag/order documents.
+  The older Apple archive omits the selected Darwin extensions; do not use it
+  as evidence of CLOEXEC_DEFAULT/addinherit_np.
+- [x] Main read pinned published Node26.4 cleanup/FreeEnvironment and bundled Unix
+  stream close, plus public POSIX spawn inheritance/order/error contract.
+  Preserve retrieval originals/metadata privately; public source is not matched
+  installed backend or lifetime health.
+- [x] Correct source/target collision premise: actual0..2 valid, initially3/4
+  EBADF, exclusive nominated mutation, Nr/Nw/Sr/Sw may occupy3/4, distinct A/B
+  from F_DUPFD_CLOEXEC(minimum5), FOUR source closes before both destination
+  dup2 actions, then A/B closes, then three stdio inherit actions.
+- [ ] Independently review actual paired written refinement and root diff.
+  Reviews may qualify source consistency only, never child/effect admission.
+- [ ] Bind six acquisition/disposal records, eleven exact action/history records
+  and separately initialized/destroyed spawn objects in the complete literal
+  parent FSM. Bind child0..4 genesis/continuity/once dispositions in its one C
+  ledger, with Kp/Kc/VM/urefs/D/receiver/birth stored separately. Unknown hidden
+  effects or capacity overflow cannot be turned into absent obligations.
+- [ ] Resolve composite launch witness vs the unchanged exact current-child
+  census. Builder return0 means queued, spawn return0/PID is not bootstrap,
+  public exec-inherited{0..4} is not post-dyld current-global{0..4}, and six
+  child source-close returns are not individually observed. Explicit relevant
+  alias closure must not silently replace the stronger existing gate.
+- [ ] Bind literal synchronous entry, exact Node flags/bootstrap/hook/type profile
+  and matched provider provenance. No unmanaged0..4 ownership, raw close/fclose,
+  FD passing/rebinding, Workers or arbitrary cleanup/AtExit registration.
+  Bind clean env/argv/snapshot/preloads and exclude lazy stdio getter/TTY
+  replacement and indirect warning/console activation. NODE_CHANNEL_FD and
+  NODE_UNIQUE_ID are separate from NODE_OPTIONS; ReallyExit runs AtExit BEFORE
+  the environment exit handler. Public flags alone do not exclude those paths.
+  Private check_settled means protocol/Mach closed plus original stdio live;
+  its CLOSED enum is not every-original settlement. Caller-owned teardown
+  returns before finish marks/once-closes0..2 and restores EVERY original guard.
+- [ ] Complete minimal public role-specific C/C++ input/search/link/provider
+  nomination. errno.h/sys/errno.h are candidate additions; sys/stat.h is causal
+  only if fstat is selected. Preserve frozen331 vs303-union1649=1778 distinction;
+  the latter is NOT a superset of the former. No bootstrap service APIs for
+  mach_ports_register/lookup; no private Node declarations or cast bypass.
+- [ ] Resolve bootstrap/provider/lifetime-clock-room retained-failure terminal.
+  Nonqualified classification grants no return/exit, guessed cleanup, spin,
+  newly acquired wait, restoration or owner-death certificate.
+- [ ] Only after all source gates close and paired complete-design review passes,
+  write the actual separately reviewed executable plan and new producer/test
+  epoch. Existing S10a consumer bytes are preserved; changed source/self pins
+  must refuse historical opt-ins before effects. No stub solely to turn RED green.
+
+Prospective source File Map remains the existing initializer C/new entry/test,
+own typed bootstrap header/C++20 main and paired plan/spec (seven roles, thirteen
+prospective aggregate files). Only two documents change NOW; actual PR remains
+eleven files. No build/native test is needed for this documentation checkpoint.
+Syntax/English/diff/secret checks and fresh original-two/journal-HASH-ONLY/CLI/
+build/frozen-source preservation are required before any source-only delivery.
+Normal reviewed scoped commit/push may keep PR275 DRAFT; no ready, merge, clean
+main build, service/DB/security change, CONTROL/P2 or cutover follows.
+
+
+
+## S10a isolated pre-channel native-contract RED implementation plan
+
+> **For agentic workers:** Root implements inline, sole writer. Independent
+> agents review actual written design/source/receipts read-only; no delegated
+> native effects, delivery or historical replay.
+
+**Goal:** Demonstrate the real owned addon lacks the required continuity contract
+before any initializer invocation or scoped channel-owner acquisition.
+**Architecture:** A NEW fixed consumer loads an actually compiled addon, inspects
+the closed native contract and never invokes initialize. Real Node-API delegates
+witness registration; checked input/artifact custody and natural child settlement
+must succeed before the narrowly identified missing-contract assertion fails.
+**Tech Stack:** Fixed installed Node26.4/Node-API8, CLT/SDK26.5 C11 and builtin
+Node tests; no provider/install, embedding, service/DB or security change.
+**Spec:** Named design, S10a independently bounded pre-channel RED subsection.
+
+**Observed checkpoint, 2026-10-06 16:27 UTC:** ONE actual new missing-contract
+RED c3618c/session17931 ->304bea CLOSED1 at source746f4451. Real compile/link,
+two exports/seventeen imports/two dependencies, six natural children0/0/0/0/0/2,
+fault0/create0,set0/four once images/callback0, full245 originals/245 checked-once
+closes/failures[] preceded MissingNativeContract. Overall1FAIL/7historicalSKIP/
+0PASS; not all-pass or Green. Immediate3aaf9f preservation252 closes/errors[].
+Three independent new-epoch audits C0/I0/M0 qualify ONLY this specific RED;
+private original SHA124dbde7e3e7f15a47a14fa46c34c27c00fb55248b30d4b4de57a92776043343.
+Independent read-only Mach-O parsing and245-original hash/material audit agree;
+closure evidence is source-backed receipt, not a kernel close-syscall trace.
+Keep the accepted fixture/recipe frozen; NEVER repoll17931 or rerun this epoch.
+The invocation below is now HISTORICAL evidence, not a fresh run instruction.
+DRAFT checkpoint delivery remains pending; every integrated S10 gate stays closed.
+
+### Scope, sequencing and exact nominations
+
+This is the explicit narrow sequencing exception to the integrated S10 worklist:
+a complete written/reviewed pre-channel recipe may precede resolution of channel
+bootstrap/retention/FD/provider gaps because it cannot enter those phases.
+Review of this actual written recipe admits test authoring ONLY. Actual authored
+source, complete nominations, a fresh preservation gate and paired source/effect
+review must precede ONE new invocation. Research opinions alone admit neither.
+
+File Map: modify ONLY the existing initializer test plus this named plan/spec
+(three existing files within the published eleven). Production initializer C626,
+production entry bd837, task-port/ABI/frame sources/tests and every historical
+driver/helper/body/PREFIX/SUFFIX remain byte-identical. No C++ main/own header,
+native parent, pipe, registered child, Mach stash/right, or retained-owner effect.
+"Pre-channel" is not zero heap/VM/Node/test-process/stdio/diagnostic resources.
+
+Inputs: frozen C6267af24fc2ced81af7a781352313d357b00ab25bb199513025e69126372da4d;
+production entry bd83726b1f9270eec4cb1eddb929e97ae767f525a1cdab0003257729dd552c94
+held but NEVER copied/launched; immutable frame inventory54575f8e; historical
+test f7a624958fb2d9fdd3fda214795ac11c9a3ec9b52adf6a20486e0ddd1b828a15.
+The exact code below consumes existing frozen hash/PREFIX/SUFFIX/parseTrace,
+guardHold/guardSpawn/assertGuardSettlement/directoryGuard helpers, IMAGE30,
+selectors38, literal85+114 public header rows and tools7. All these definitions
+remain unchanged; neither historical invoke helper is called.
+
+Prospective self-test SHA: 746f4451c8925246811649f42fe6f56263b870e099aedd5912c8d27b52c0656a
+Prospective self-test bytes: 87879
+Consumer SHA: 31d299b836e74feaf3db7989f37f40eaf2dcfa998ba4685e4be2e2cb5cec3081 (1076 bytes, final LF).
+PREFIX + LF + SUFFIX SHA: aebe55f767c97fe5865719731767ea9290945150408381fca4166ee829a312ca
+PREFIX + LF + unchanged C626 bytes + LF + SUFFIX SHA:
+d4dd3cfbfe3929f7afdc6ea608f69d97eec77ab2338f4b2a96950af166b639f0 (6622 bytes).
+These are deterministic prospective byte nominations, NOT observed compile/load
+or runtime success. The future actual source must match before effect review.
+
+FIRST prediction: source/unused-entry/self/frame4 + IMAGE30 + tools7 + headers199
+=240 originals before fixture creation. Five generated originals (consumer,
+compiled-C copy, object, addon, natural-exit native trace) produce245, not246.
+All originals stay held through process and trace checks; distinct descriptors,
+full positional hashing/rereads/material checks, original-input receipts and
+checked-once closure occur even on intended RED. Thirty-nine aliases, eight
+absence predicates and material ancestor/fixture checks are separate guards,
+not additional held-file originals. No guard-trace or guard preparation.
+The NEW C11-only routing inventory1e3082/independent input audit nominates N->R->S,
+quoted-relative-first and include_next only later roots: nine seeds, eleven actual
+compiled-source includes,190 reachable contexts inside the already held203 public
+headers,487 header edges,18 presence probes,367 negative paths and only the pthread
+alias. Thirteen held headers are preservation surplus, not compiler-used evidence.
+Per-edge regular targets must already be held; unknown selectors/targets or computed
+includes refuse BEFORE fixture/tools. All367 negative paths and their nearest
+existing ancestor FULL material tuples are rechecked before tools and in final
+custody checks; the eight legacy absence guards are an overlapping subset.
+Root edgeSHAa5568707/probesc9413238/absence8cdeba87 and exact six unresolved rows
+are nominated in code, not inferred from counts. Absent private Availability
+branches, MVS-only stdbool/stdarg next branches and sentinel-guarded arm/i386 limits
+next branches are inactive/negative under the fixed C11/arm64 source profile;
+root read their actual public conditionals. This lexical input binding is not an
+independent compiler/backend/predefined-macro or lifetime trust certificate.
+
+Fresh fixture only: /private/tmp/setfarm-native-contract-preflight. random0700,
+two exclusive0600 authored files, object0644/addon0755, trace0600. Keep fixtures
+and private original receipts; do not delete/reuse any accepted historical path.
+Six naturally settled children: compile, link, nm exports, nm imports, otool
+dependencies, fixed Node with exactly one consumer argv. Fixed child environment
+PATH=/usr/bin:/bin, LANG=C, LC_ALL=C, TMPDIR=fixture; stdio ignore/pipe/pipe,
+shell false, bounded1MiB output, checked matching exit/close, null signal and both
+EOFs. No timeout/kill/forced owner-death cleanup or green from default skips.
+
+Expected real trace: fault0; events exactly create:0,set:0; images exactly
+create,set,register,version once each, actual held libnode/addon attribution;
+callbackEntries0, no throw or callback-entry/return. Two Mach-O module exports,
+seventeen imports and two dependencies must match the code below. The pthread
+imports remain because the callback is compiled, not because it executes.
+Consumer natural exit2, empty stdout and exact S10A_NATIVE_CONTRACT_MISSING LF
+are necessary but insufficient without the preceding native/FIRST witnesses.
+Generic compiler/link/load/export/trace/provider/settlement failures do not
+qualify this RED and are retained/classified separately.
+
+### Task 1: Author the distinct test-only epoch
+
+**Files:** existing initializer test and named plan/spec only.
+**Interfaces:** consume the frozen helpers listed above; produce only
+invokeContractPreflight(), fixed literal CONTRACT_PREFLIGHT_CONSUMER and a
+MissingNativeContract RED. No production interface/owner/activation is produced.
+
+- [x] Step 1: Obtain paired actual written-plan/spec review and refresh original
+  two/journal HASH ONLY/CLI/build/frozen-file preservation. Do not execute tests
+  or author production changes during this gate.
+- [x] Step 2: Insert this exact block immediately AFTER the existing
+  const guardEnabled = guardFlag === '1'; line INCLUDING its original LF.
+  Preserve the inserted fenced block's leading and trailing LF exactly; do not
+  insert before that original LF. Leave the original line bytes unchanged.
+  Historical opt-ins refuse the new self-test epoch before tools/fixtures/load.
+  New opt-in is closed, mutually exclusive and requires externally nominated
+  actual self SHA; do not compute an effect admission from the source itself.
+
+```js
+
+// S10a is a NEW pre-channel source epoch. Historical recipes stay frozen/closed.
+const preflightFlag = process.env.SETFARM_TASK6A_NATIVE_CONTRACT_PREFLIGHT_RED;
+assert.ok(preflightFlag === undefined || preflightFlag === '1', 'closed contract preflight opt-in');
+const preflightEnabled = preflightFlag === '1';
+assert.ok(!(preflightEnabled && (enabled || guardEnabled)), 'native modes are exclusive');
+assert.equal(enabled || guardEnabled, false, 'historical native recipes are closed in the S10a epoch');
+const preflightSelfSha = process.env.SETFARM_TASK6A_NATIVE_CONTRACT_PREFLIGHT_SELF_SHA256;
+assert.ok(preflightEnabled ? /^[a-f0-9]{64}$/.test(preflightSelfSha || '') :
+  preflightSelfSha === undefined, 'externally nominated preflight self-test epoch');
+```
+
+- [x] Step 3: Append this exact code AFTER the existing final historical test.
+  No historical definition/body/literal is edited. Neither historical invocation
+  helper (invokeInertInitializer/invokeGuardInitializer) nor consumer is invoked.
+
+```js
+
+
+// S10a: separate consumer; never invoke old cases or initialize.
+const CONTRACT_PREFLIGHT_CONSUMER = String.raw`'use strict';
+const assert = require('node:assert/strict');
+try {
+  assert.equal(process.argv.length, 2, 'sole fixed consumer argument');
+  const native = require('./initializer.node');
+  assert.equal(Object.hasOwn(native, 'initialize'), true);
+  assert.equal(typeof native.initialize, 'function');
+  if (!Object.hasOwn(native, 'continuityContract')) {
+    assert.deepEqual(Reflect.ownKeys(native), ['initialize']);
+    process.stderr.write('S10A_NATIVE_CONTRACT_MISSING\n');
+    process.exitCode = 2;
+  } else {
+    assert.deepEqual(Reflect.ownKeys(native).sort(), ['continuityContract', 'initialize']);
+    assert.equal(typeof native.continuityContract, 'function');
+    const record = native.continuityContract();
+    assert.equal(Object.getPrototypeOf(record), Object.prototype);
+    assert.deepEqual(Reflect.ownKeys(record).sort(), ['implementation', 'protocolVersion']);
+    assert.deepEqual(record, {protocolVersion: 2, implementation: 'ordinary-continuity-v2'});
+  }
+} catch {
+  process.stderr.write('S10A_NATIVE_PREFLIGHT_OTHER_FAILURE\n');
+  process.exitCode = 3;
+}
+`;
+
+function bindPreflightHeaderSearch(held,checks,receipt,compiledSource) {
+  const roots=[['N',HEADERS],['R',RESOURCE+'/include'],['S',SDK+'/usr/include']];
+  const rank=p=>roots.findIndex(([,root])=>p===root||p.startsWith(root+'/'));
+  const label=p=>{const i=rank(p);assert.ok(i>=0);return roots[i][0]+'/'+p.slice(roots[i][1].length+1);};
+  const physical=(base,name)=>fileURLToPath(new URL(name,'file://'+base));
+  const queue=[],contexts=new Set(),edges=[],probes=[],unresolved=[],absences=new Map(),directories=new Map(),seeds=[];
+  const negative=(p,code)=>{
+    let nearest=p.slice(0,p.lastIndexOf('/'));
+    for(;;) {
+      try {
+        const stat=fs.lstatSync(nearest,{bigint:true});assert.ok(stat.isDirectory());
+        if(!directories.has(nearest)) {
+          directories.set(nearest,stat);
+          checks.push(()=>assert.ok(same(stat,fs.lstatSync(nearest,{bigint:true})),
+            'header-search absence ancestor unchanged'));
+        }
+        break;
+      } catch(error) {
+        if(error.code!=='ENOENT')throw error;
+        nearest=nearest.slice(0,nearest.lastIndexOf('/'));assert.ok(nearest.length>0);
+      }
+    }
+    if(!absences.has(p)) {
+      absences.set(p,[code,nearest]);
+      checks.push(()=>assert.throws(()=>fs.lstatSync(p),error=>error.code===code,
+        'per-edge header-search negative binding'));
+    }
+    return ['absent',p,code,nearest];
+  };
+  const candidate=p=>{
+    assert.ok(rank(p)>=0,'public search roots only');
+    let stat;
+    try{stat=fs.lstatSync(p,{bigint:true});}
+    catch(error){if(error.code==='ENOENT'||error.code==='ENOTDIR')
+      return {observation:negative(p,error.code)};throw error;}
+    let resolved=p,observation=['regular',p];
+    if(stat.isSymbolicLink()) {
+      assert.equal(p,SDK+'/usr/include/pthread.h','only nominated C11 header alias');
+      const target=fs.readlinkSync(p);assert.equal(target,'pthread/pthread.h');
+      resolved=physical(p,target);observation=['selector',p,target,resolved];
+    }else assert.ok(stat.isFile(),'regular header candidate');
+    const original=held.find(item=>item.path===resolved);
+    assert.ok(original,'every resolved header is already a nominated held original: '+resolved);
+    original.check();assert.ok(same(original.stat,fs.lstatSync(resolved,{bigint:true})));
+    return {p:resolved,observation};
+  };
+  const resolve=(name,origin,next,quoted)=>{
+    assert.ok(!name.includes('\0')&&!name.startsWith('/'),'relative include name');
+    const candidates=[];
+    if(next)for(let i=origin.rank+1;i<roots.length;i++)candidates.push([roots[i][1]+'/'+name,i]);
+    else {
+      if(quoted){const p=physical(origin.p,name),i=rank(p);if(i>=0)candidates.push([p,i]);}
+      for(let i=0;i<roots.length;i++)candidates.push([roots[i][1]+'/'+name,i]);
+    }
+    const seen=new Set(),bindings=[];
+    for(const [p,i]of candidates) {
+      if(seen.has(p))continue;seen.add(p);
+      const actual=candidate(p);bindings.push(actual.observation);
+      if(actual.p)return {p:actual.p,rank:i,bindings};
+    }
+    return {error:next?'not-present-in-later-roots':'not-present-in-ordered-roots',bindings};
+  };
+  const add=actual=>{
+    const key=actual.p+'\0'+actual.rank;
+    if(!contexts.has(key)){contexts.add(key);queue.push({p:actual.p,rank:actual.rank});}
+  };
+  const origin={p:HEADERS+'/candidate.cc',rank:0};
+  for(const name of ['node_api.h','pthread.h','signal.h','stdlib.h','dlfcn.h','fcntl.h','stdio.h','string.h','unistd.h']) {
+    const actual=resolve(name,origin,false,false);assert.equal(actual.error,undefined);
+    seeds.push([name,label(actual.p),actual.bindings]);add(actual);
+  }
+  assert.deepEqual(seeds.map(row=>row[1]),['N/node_api.h','S/pthread/pthread.h','S/signal.h',
+    'S/stdlib.h','S/dlfcn.h','S/fcntl.h','S/stdio.h','S/string.h','S/unistd.h']);
+  const sourceIncludes=[...compiledSource.matchAll(/^\s*#\s*include\s+<([^>]+)>/gm)].map(m=>m[1]);
+  assert.deepEqual(sourceIncludes,['node_api.h','dlfcn.h','fcntl.h','stdio.h','stdlib.h','string.h','unistd.h',
+    'node_api.h','pthread.h','signal.h','stdlib.h'],'all eleven actual compiled-source includes');
+  for(const name of sourceIncludes)assert.equal(resolve(name,origin,false,false).error,undefined);
+  for(let q=0;q<queue.length;q++) {
+    const from=queue[q],original=held.find(item=>item.path===from.p);assert.ok(original);
+    const text=original.read().toString();
+    for(const m of text.matchAll(/__has_include(_next)?\s*\(\s*([<"])([^>"]+)[>"]\s*\)/g)) {
+      const actual=resolve(m[3],from,!!m[1],m[2]==='"');
+      probes.push([label(from.p),from.rank,m[1]?'has_include_next':'has_include',m[3],
+        actual.p?label(actual.p):null,actual.bindings,actual.error||null]);
+      if(actual.p)add(actual);
+    }
+    const lines=text.split('\n');
+    for(let i=0;i<lines.length;i++) {
+      const m=/^\s*#\s*(include|include_next|import)\s+(.+)$/.exec(lines[i]);if(!m)continue;
+      const literal=/^[<"]([^>"]+)[>"]/.exec(m[2]);
+      assert.ok(literal,'no unbound computed include');
+      const actual=resolve(literal[1],from,m[1]==='include_next',m[2].startsWith('"'));
+      edges.push([label(from.p),from.rank,i+1,m[1],literal[1],actual.p?label(actual.p):null,actual.bindings]);
+      if(actual.error)unresolved.push([label(from.p),from.rank,i+1,m[1],literal[1],actual.error]);else add(actual);
+    }
+  }
+  assert.equal(contexts.size,190);assert.equal(edges.length,487);assert.equal(probes.length,18);
+  assert.equal(absences.size,367);
+  assert.equal(hash(JSON.stringify(edges)),'a55687071ca8562f37378a9eee4352fea3ecfdd406033d5f8368bbe9fd9af687');
+  assert.equal(hash(JSON.stringify(probes)),'c941323849240c731ac02508c1d412c0b99995940dc6ca999aa04616749f831a');
+  const absenceRows=[...absences].map(([p,row])=>[p,...row]).sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0);
+  assert.equal(hash(JSON.stringify(absenceRows)),'8cdeba87c5cc7bc51bd67e57a62f666817420194329b1a541743874220b8e833');
+  assert.deepEqual(unresolved,[
+    ['S/Availability.h',2,200,'include','AvailabilityInternalPrivate.h','not-present-in-ordered-roots'],
+    ['S/Availability.h',2,319,'include','AvailabilityProhibitedInternal.h','not-present-in-ordered-roots'],
+    ['R/stdbool.h',1,16,'include_next','stdbool.h','not-present-in-later-roots'],
+    ['R/stdarg.h',1,29,'include_next','stdarg.h','not-present-in-later-roots'],
+    ['S/i386/limits.h',2,62,'include_next','limits.h','not-present-in-later-roots'],
+    ['S/arm/limits.h',2,65,'include_next','limits.h','not-present-in-later-roots'],
+  ],'only nominated conditional absent edges, not missing active inputs');
+  receipt.headerSearch={roots,seeds,contexts:contexts.size,edges,probes,unresolved,
+    absences:absenceRows,
+    absenceAncestors:[...directories].map(([p,stat])=>({path:p,...guardMaterial(stat)})),
+    compiledSourceIncludes:sourceIncludes,compilerUsedClosure:false};
+}
+
+async function invokeContractPreflight() {
+  const held=[],checks=[],failures=[],processes=[],aliases=[],artifacts=[],ancestors=[];
+  let closed=0,result,dir=null,fixture=null;
+  const receipt={kind:'S10a-native-contract-preflight-FIRST',recipe:'missing-native-contract-v1',startedAt:new Date().toISOString(),
+    ownerAuthority:false,retentionQualified:false,channelAcquired:false,processes,aliases,artifacts,ancestors};
+  const acquire=(path,expected)=>{const item=guardHold(path,expected);held.push(item);return item;};
+  const produced=(path,expected)=>{
+    try{const item=acquire(path,expected);artifacts.push(item.first);return item;}
+    catch(error){if(error.code==='ENOENT'){artifacts.push({path,absentAt:new Date().toISOString()});return null;}throw error;}
+  };
+  const settle=async(command,args)=>{precheck();const actual=await guardSpawn(command,args,dir);processes.push(actual);return actual;};
+  const precheck=()=>{
+    assert.equal(new Set(held.map(item=>item.fd)).size,held.length,'distinct original descriptors');
+    for(const check of checks)check();for(const item of held)item.check();
+  };
+  const alias=(path,inode,target,uid,gid,size,mtimeNs,ctimeNs)=>{
+    const stat=fs.lstatSync(path,{bigint:true});assert.ok(stat.isSymbolicLink());
+    assert.equal(stat.ino,BigInt(inode));assert.equal(stat.uid,BigInt(uid));assert.equal(stat.gid,BigInt(gid));
+    assert.equal(stat.nlink,1n);assert.equal(fs.readlinkSync(path),target);
+    if(size!==undefined)assert.equal(stat.size,BigInt(size));
+    if(mtimeNs!==undefined)assert.equal(stat.mtimeNs,BigInt(mtimeNs));
+    if(ctimeNs!==undefined)assert.equal(stat.ctimeNs,BigInt(ctimeNs));
+    const resolved=fs.realpathSync(path);aliases.push({path,target,resolved,...guardMaterial(stat)});
+    checks.push(()=>{assert.ok(same(stat,fs.lstatSync(path,{bigint:true})));
+      assert.equal(fs.readlinkSync(path),target);assert.equal(fs.realpathSync(path),resolved);});
+  };
+  try {
+    assert.equal(process.platform,'darwin');assert.equal(process.getuid(),501);assert.equal(process.geteuid(),501);
+    assert.equal(fs.realpathSync(process.execPath),NODE,'fixed test runtime');
+    const source=acquire(sourcePath,{uid:501,inode:216276870,size:1373,
+      sha:'6267af24fc2ced81af7a781352313d357b00ab25bb199513025e69126372da4d'}),entry=acquire(entryPath,{uid:501,
+      inode:216276871,sha:'bd83726b1f9270eec4cb1eddb929e97ae767f525a1cdab0003257729dd552c94'});
+    const self=acquire(fileURLToPath(import.meta.url),{uid:501,sha:preflightSelfSha});
+    const inventory=acquire(fileURLToPath(new URL('./task6a-origin-native-continuity-frame-v2.test.js',import.meta.url)),
+      {uid:501,inode:216283209,size:60175,sha:'54575f8e27cfcd4ed33bca4a08206e191a09f89af66ffa0e44417482411548b7'});
+    assert.equal(IMAGE_PINS.length,30);assert.equal(SELECTORS.length,38);
+    for(const [relative,inode,sha]of IMAGE_PINS)acquire(CELLAR+relative,{uid:501,inode,sha,limit:100_000_000});
+    for(const [relative,inode,target]of SELECTORS)alias('/opt/homebrew/'+relative,inode,target,501,80);
+    alias(SDK+'/usr/include/pthread.h',14866985,'pthread/pthread.h',0,0,17,
+      '1782608311515232577','1782608364253587548');
+    const tools=[
+      [CLANG,14827087,290664032,'f30550eab15fdf5ab8c0dc54c52679711241e5d4b636b027e18c09fef531775d'],
+      [LD,14827148,4953232,'28d85b9af18c923db12e0b4ce70b80ee217f2b7cade0e872baa9e8ddc396c08d'],
+      [NM,14827169,33125008,'9097f9662024989b801a1448eea2a71a4e916537a595cbaf34d4d051480236f6'],
+      [OTOOL,14827173,138208,'61ff2c63cf68eeeadf9c4700dadb8271740ff4960f98500f30db82b31521c0de'],
+      [CLT+'/usr/share/man/man1/ld.1',14830332,62981,'8570994697756ef9bf0146983a6971892d99cb830a2b36f93fb0d049835e81d5'],
+      [SDK+'/SDKSettings.json',14830457,7774,'f8d005f09381389167f9e0aeaa169bc9e7dff162ef22ca2fd8e98df7ff1acafe'],
+      [SDK+'/usr/lib/libSystem.B.tbd',14867668,334178,'20cfce043f11a083e2eb6111efe3579919a8082fa4cc912a7bd839af2010ec57'],
+    ];
+    for(const [path,inode,size,sha]of tools)acquire(path,{uid:0,inode,size,sha,limit:size});
+    const matches=[...inventory.read().toString().matchAll(/^const HEADER_ROWS = `\n([^`$]*)\n`\.trim\(\);$/gm)];
+    assert.equal(matches.length,1,'one literal original header nomination');
+    const originalRows=matches[0][1];assert.equal(hash(originalRows+'\n'),
+      '55e1f4b0f341f5eef4d375bdf31ec29081fcc8771ef2cf51fe9bbe897e649c0f');
+    assert.equal(hash(GUARD_HEADER_ADDITIONS+'\n'),'cd580f87d21fc6695a955bf4ba7a93eaba40e7a8ebed476c6a8c2fd93897ae01');
+    assert.equal(originalRows.split('\n').length,85);assert.equal(GUARD_HEADER_ADDITIONS.split('\n').length,114);
+    assert.equal(GUARD_HEADER_644.size,22);
+    const roots={R:RESOURCE+'/include',S:SDK+'/usr/include'},labels=new Set();
+    for(const [body,original]of[[originalRows,true],[GUARD_HEADER_ADDITIONS,false]])for(const row of body.split('\n')) {
+      const match=(original?/^([RS]\/[A-Za-z0-9_/.]+)\|([0-9]+)\|([0-9]+)\|(444|644)\|([a-f0-9]{64})$/:
+        /^([RS]\/[A-Za-z0-9_/.]+)\|([0-9]+)\|([0-9]+)\|([a-f0-9]{64})$/).exec(row);
+      assert.ok(match,'strict literal header row');const [label,inode,size]=match.slice(1,4);
+      assert.equal(label.includes('..'),false);assert.equal(labels.has(label),false);labels.add(label);
+      const mode=original?parseInt(match[4],8):GUARD_HEADER_644.has(label)?0o644:0o444;
+      acquire(roots[label[0]]+label.slice(1),{uid:0,inode,size,mode,sha:match[original?5:4]});
+    }
+    assert.equal(labels.size,199);receipt.publicHeaderCount=199;
+    const absent=[roots.R+'/AvailabilityInternalPrivate.h',roots.S+'/AvailabilityInternalPrivate.h',
+      roots.R+'/AvailabilityProhibitedInternal.h',roots.S+'/AvailabilityProhibitedInternal.h',
+      roots.R+'/__xnu_libcxx_sentinel.h',roots.S+'/__xnu_libcxx_sentinel.h',roots.S+'/stdarg.h',roots.S+'/stdbool.h'];
+    for(const path of absent) {
+      const check=()=>assert.throws(()=>fs.lstatSync(path),error=>error.code==='ENOENT','nominated absent input');
+      check();checks.push(check);
+    }
+    receipt.absentInputs=absent;
+    const parents=new Set();for(const item of held){const parts=item.path.split('/').filter(Boolean);let p='';
+      for(const part of parts.slice(0,-1)){p+='/'+part;parents.add(p);}}
+    for(const path of parents){directoryGuard(path,checks);const stat=fs.lstatSync(path,{bigint:true});
+      ancestors.push({path,...guardMaterial(stat)});}
+    assert.equal(fs.lstatSync(SDK,{bigint:true}).ino,14162438n);
+    assert.equal(fs.lstatSync(RESOURCE,{bigint:true}).ino,6714331n);
+    assert.equal(held.length,240,'nominated original inputs before fixture creation');
+    const candidate=source.read().toString();
+    bindPreflightHeaderSearch(held,checks,receipt,PREFIX+'\n'+candidate+'\n'+SUFFIX);
+    precheck(); // Includes Node-first shadows and conditional presence bindings before fixture/tools.
+    dir=fs.mkdtempSync('/private/tmp/setfarm-native-contract-preflight.');fs.chmodSync(dir,0o700);
+    directoryGuard(dir,checks,true);fixture=guardMaterial(fs.lstatSync(dir,{bigint:true}));
+    receipt.dir=dir;receipt.fixture=fixture;receipt.sourceHash=source.sha;receipt.entryHash=entry.sha;
+    receipt.testHash=self.sha;receipt.inventoryHash=inventory.sha;
+    receipt.instrumentationHash=hash(PREFIX+'\n'+SUFFIX);
+    receipt.consumerHash=hash(CONTRACT_PREFLIGHT_CONSUMER);
+    const copy=dir+'/initializer.c',consumerFile=dir+'/contract-preflight.cjs';
+    const object=dir+'/initializer.o',addon=dir+'/initializer.node';
+    const compiled=Buffer.from(PREFIX+'\n'+candidate+'\n'+SUFFIX);
+    receipt.compiledSourceHash=hash(compiled);
+    for(const [path,body]of[[consumerFile,Buffer.from(CONTRACT_PREFLIGHT_CONSUMER)],[copy,compiled]]) {
+      fs.writeFileSync(path,body,{flag:'wx',mode:0o600});
+      assert.ok(produced(path,{uid:501,sha:hash(body),mode:0o600}),'authored original held before compiler');
+    }
+    const compile=await settle(CLANG,['--no-default-config','--target=arm64-apple-macos26.5',
+      '-resource-dir',RESOURCE,'-isysroot',SDK,'-integrated-as','-nostdinc','-isystem',HEADERS,
+      '-isystem',RESOURCE+'/include','-isystem',SDK+'/usr/include',
+      '-fno-modules','-fno-implicit-modules','-fno-implicit-module-maps','-fno-lto',
+      '-fstack-protector-strong','-fvisibility=hidden','-std=c11','-O0','-Wall','-Wextra','-Werror',
+      '-c',copy,'-o',object]);
+    const objectHeld=produced(object,{uid:501,mode:0o644});
+    assertGuardSettlement(compile);assert.equal(compile.code,0);assert.equal(compile.stdout,'');assert.equal(compile.stderr,'');
+    assert.ok(objectHeld,'actual compiled object');
+    const link=await settle(CLANG,['--no-default-config','--target=arm64-apple-macos26.5',
+      '-resource-dir',RESOURCE,'-isysroot',SDK,'--ld-path='+LD,'-bundle','-fno-lto','-nostdlib',
+      '-Wl,-Z','-Wl,-syslibroot,'+SDK,object,LIBNODE,SDK+'/usr/lib/libSystem.B.tbd','-o',addon]);
+    const addonHeld=produced(addon,{uid:501,mode:0o755});
+    assertGuardSettlement(link);assert.equal(link.code,0);assert.equal(link.stdout,'');assert.equal(link.stderr,'');
+    assert.ok(addonHeld,'actual linked addon');
+    const exports=await settle(NM,['-gjU',addon]);assertGuardSettlement(exports);assert.equal(exports.code,0);assert.equal(exports.stderr,'');
+    assert.deepEqual(exports.stdout.trim().split('\n').sort(),['_napi_register_module_v1','_node_api_module_get_api_version_v1']);
+    const imports=await settle(NM,['-uj',addon]);assertGuardSettlement(imports);assert.equal(imports.code,0);assert.equal(imports.stderr,'');
+    assert.deepEqual(imports.stdout.trim().split('\n').sort(),['_napi_create_function','_napi_set_named_property',
+      '_napi_throw_error','__Exit','_atexit','_dladdr','_open','_fdopen$DARWIN_EXTSN','_close','_fclose',
+      '_fprintf','_strcmp','_memcpy','___stack_chk_fail','___stack_chk_guard',
+      '_pthread_setcancelstate','_pthread_sigmask'].sort(),'exact preflight imports; not guard invocation witnesses');
+    const deps=await settle(OTOOL,['-L',addon]);assertGuardSettlement(deps);assert.equal(deps.code,0);assert.equal(deps.stderr,'');
+    assert.deepEqual(deps.stdout.trim().split('\n').slice(1).map(line=>line.trim().split(' (')[0]).sort(),
+      ['/opt/homebrew/opt/node/lib/libnode.147.dylib','/usr/lib/libSystem.B.dylib']);
+    const actual=await settle(NODE,[consumerFile]);
+    const trace=produced(dir+'/native-trace',{uid:501,mode:0o600,limit:8192});
+    assertGuardSettlement(actual);assert.ok(trace,'actual natural-exit native trace');
+    const nativeTrace=trace.read().toString(),parsed=parseTrace(nativeTrace);
+    assert.deepEqual(parsed.events,['create:0','set:0'],'actual registration, no initializer call');
+    assert.deepEqual(parsed.images.map(image=>[image.name,image.count]),
+      [['create',1],['set',1],['register',1],['version',1]]);
+    for(const image of parsed.images) {
+      const expected=['create','set'].includes(image.name)?LIBNODE:addon;
+      assert.equal(fs.realpathSync(image.path),expected,'actual owned NAPI/addon image');
+      const original=held.find(item=>item.path===expected);assert.ok(original);original.check();
+      assert.ok(same(original.stat,fs.statSync(image.path,{bigint:true})));
+    }
+    assert.equal(held.length,245,'240 inputs plus exactly five generated originals');
+    assert.equal(artifacts.length,5);assert.equal(processes.length,6);
+    receipt.callbackEntries=0;receipt.nativeWitness=parsed;
+    result={code:actual.code,stdout:actual.stdout,stderr:actual.stderr,nativeTrace,receipt};
+    receipt.loadedProviderScope='dladdr attribution only, not shared-cache bytes/backend/TCB';
+  }catch(error){failures.push(error);}
+  finally {
+    for(const check of checks)try{check();}catch(error){failures.push(error);}
+    for(const item of held)try{item.check();}catch(error){failures.push(error);}
+    receipt.originalInputs=held.map(item=>item.first);
+    receipt.distinctOriginalInputs=new Set(held.map(item=>item.fd)).size;
+    for(const item of [...held].reverse())try{item.close();closed++;}catch(error){failures.push(error);}
+    receipt.checkedOnceCloses=closed;receipt.completedAt=new Date().toISOString();
+    receipt.failures=failures.map(error=>({name:error.name,message:error.message}));
+    // Full original artifact/process receipt exists even when the real oracle fails.
+    process.stdout.write(JSON.stringify(receipt)+'\n');
+  }
+  if(failures.length)throw new AggregateError(failures,'preflight fixture failed; original artifacts retained, not the intended RED');
+  assert.equal(receipt.distinctOriginalInputs,held.length);assert.equal(closed,held.length);
+  return result;
+}
+
+class MissingNativeContract extends Error {
+  constructor() {
+    super('real owned addon is missing continuityContract before initialize');
+    this.name='MissingNativeContract';
+  }
+}
+test('ordinary continuity preflight requires a real native contract before initialize',
+  {skip:!preflightEnabled},async()=>{
+    const actual=await invokeContractPreflight();
+    assert.equal(actual.receipt.distinctOriginalInputs,245);
+    assert.equal(actual.receipt.checkedOnceCloses,245);
+    assert.deepEqual(actual.receipt.failures,[]);
+    assert.equal(actual.receipt.callbackEntries,0);
+    assert.equal(actual.stdout,'');
+    if(actual.code===2) {
+      assert.equal(actual.stderr,'S10A_NATIVE_CONTRACT_MISSING\n');
+      throw new MissingNativeContract(); // Genuine TDD RED, never assert.throws.
+    }
+    assert.equal(actual.code,0,'generic preflight faults cannot qualify missing-contract RED');
+    assert.equal(actual.stderr,'');
+  });
+```
+
+- [x] Step 4: Read-only syntax/diff/secret/English checks and source-preservation
+  reconstruction: removing EXACTLY the new insertion and append reproduces
+  historical test SHAf7a62495. Confirm future actual self/consumer/instrumented-C
+  hashes against the nominations above; do not repin mismatches. Default native
+  skips, if observed, give zero positive credit. Request paired actual source
+  AND ONE-new-effect recipe review, including245/17 predictions, before opt-in.
+
+### Task 2: One genuine missing-contract RED, no Green stub
+
+- [x] Step 1: After paired actual source/effect review and fresh root preservation
+  gate, execute this literal environment nomination with the fixed Node binary:
+
+```sh
+SETFARM_TASK6A_NATIVE_CONTRACT_PREFLIGHT_RED=1 \
+SETFARM_TASK6A_NATIVE_CONTRACT_PREFLIGHT_SELF_SHA256=746f4451c8925246811649f42fe6f56263b870e099aedd5912c8d27b52c0656a \
+/opt/homebrew/Cellar/node/26.4.0/bin/node --test \
+scripts/__tests__/task6a-origin-native-cooperative-initializer-v2.test.js
+```
+
+  Expect seven historical SKIPs and ONE real FAIL named MissingNativeContract,
+  only after real native trace/245 originals/245 closes/six children succeed.
+  Preserve full original process output, full FIRST receipt and fixture. Never
+  wrap the missing-contract oracle in assert.throws or label this an all-pass.
+- [x] Step 2: Independent read-only audit of ONLY the new receipt and actual
+  artifacts against reviewed byte/operation/input nominations. If evidence
+  differs, classify that failure and form a NEW reviewed recipe; do not replay
+  accepted cases or claim the intended RED from generic refusal.
+- [ ] Step 3: Record genuine RED and exact private-receipt identity in this
+  plan/spec, run proportional non-native source verification, and deliver only
+  a separately reviewed incomplete DRAFT checkpoint. Root alone stages scoped
+  files/commits/pushes. No ready, merge, clean-main rollout or project completion.
+
+There is intentionally NO minimal "Green" metadata patch in this bounded task.
+The next implementation unit requires the complete integrated initialize FSM,
+legal bootstrap/retention terminals, embedding/FD/input/provider nominations and
+separately reviewed source/effects. The same literal contract consumer is kept
+for that new producer epoch; this frozen-C RED opt-in must refuse changed C or
+self epochs rather than repin/replay history. No false implementation advertisement.
+
+Self-review: this plan covers ONLY the named isolated spec unit and gives all new
+test code/actual compiler argv/consumer bytes/closure dispositions. Integrated
+S10 gaps remain explicitly outside this unit, not silently omitted or relaxed.
+
+
+## S10 source-design worklist - not an executable implementation plan
+
+> **For agentic workers:** Root writes inline, sole writer; independent agents
+> perform read-only source research/review. No delegated effects or delivery.
+
+**Goal:** Resolve the actual inherited-obligation bootstrap and terminal-owner
+contract for one integrated ordinary descriptor-free continuity runtime.
+**Architecture:** A closed actual native contract preflight precedes all channel
+owner setup; the full parent/callback FSM retains every unknown original and
+permits acceptance only after authentic join/live-child/checked settlement.
+**Tech Stack:** Fixed public Node-API8/CLT/SDK C11 and Node builtin tests;
+matched public Node C++20 embedding is selected (installed v8config.h requires
+C++20 or later), with its exact compiler recipe and input/provider graph still
+unqualified. No install, private API, signing,
+global signal-policy or service/DB change.
+**Spec:** Named design, S10 integrated ordinary continuity source nomination.
+**Current evidence:** S9 delivered aef57119/treeac319e66; RESTc1a659 exact
+OPEN/DRAFT275/head/body/eleven files/8932+/7-. Guardian7698ea success onexacthead;
+formalreviews5bfd2b empty. Earlier S9 pending text below is its precommit epoch.
+No positive channel, retained-owner, CONTROL, P2, ready/merge or rollout credit.
+
+### Global constraints / prospective File Map
+
+The initial prospective source unit explicitly names initializer C, existing
+initializer test, fixed CJS entry and named spec/plan: five within aggregate
+eleven. The selected native-embedding refinement below adds a typed own header
+and native main: seven prospective files within thirteen, not actual authored
+files or an enlarged published PR. The test's literal native parent is an
+explicitly new fixture-only role, not an
+operational parent delivery. No native file/test changes are admitted yet.
+Freeze task-port/ABI/frame C/tests/all six drivers, historical bodies/recipes,
+original two/journal HASH ONLY/CLI/builds/worktrees/fixtures. Root fresh60c051
+written-design gate at22:59:46.941-47.357UTC checked252 distinct originals/full
+hashes/rereads/materialpath/252oncecloses/123dirs/40aliases/8absences/errors[];
+material127dee51/preservationmatched. Native effects were false. Canonical SF
+dc26d8 and MC4be019 clean before this documentation-only nomination.
+
+- [x] Select integrated ordinary continuity over another codec/sleep, full
+  task-self transport or a standalone false-ready metadata stub. Independent
+  research identified exact child-bootstrap/entry/input limitations; no source
+  author/effect permission follows from research opinions.
+- [x] Nominate closed native exports continuityContract/initialize and exact
+  protocol2/ordinary-continuity-v2 record without ready/PID/custody authority.
+  Implementation identity requires a real integrated initialize FSM, not an
+  inert stub. First real missing-export RED stops before initialize or owner
+  setup; generic compiler/link/load/image/trace failures cannot qualify.
+- [x] Record causal writer SIGPIPE refinement in the spec/File Map: each actual
+  original writer must checked SET73/GET74==1 before any write; original endpoints
+  sealed first, no global handler/mask/type mutation or inferred child result.
+  Fcntl is already a public declared input, but running-kernel behaviour and
+  spawn/alias propagation are not dynamically qualified. No closed-reader test.
+- [x] Identify precise bootstrap gate: Kc and protocol FDs exist before callback
+  guard initialization. Disable/query failure and pre-callback registration/load/
+  export exits have no admitted terminal retention branch. No S9 Exit72, guessed
+  mask, pause, new wait resource or busy-spin fills this gap. Published pause
+  research uses an unchecked mask query and does not supply the missing fallback.
+- [ ] Resolve that gate through an explicit original-owner/phase/error contract
+  that preserves physical originals, same-owner containment and EVERY applicable
+  original-obligation restoration rule. A parent retaining only a journal after
+  discarding the actual child is not automatically containment. Review concrete
+  ownership-ordering alternatives; no native retained-owner experiment.
+- [x] Refine the setup-retry question into a permanently burned source candidate:
+  actual DISABLE with NULL oldstate, successful read-only current-mask capture,
+  then immutable-mask waiting; never positive recovery or transaction retry.
+  Pinned public libpthread yield/guard wrappers were read. Yield is not blocking
+  or low-CPU evidence, and its backend/cancellation/health graph is unqualified.
+- [x] Identify public mach_wait_until as a separate mask-free wait candidate;
+  inspect its published dispatch, calling-thread wait and existing timer path.
+  No argument recipe or call is admitted. Zero's internal no-timer sentinel is
+  not a public infinite-wait contract. The subsequent independent review below
+  selected checked finite retention-only deadlines and rejected maximum;
+  acceptance is never renewed and no timer port is added.
+- [x] Select checked finite50,000,000-Mach-tick backoff for further written
+  refinement after independent source review; reject zero/MAX infinite-wait
+  shortcuts. Check clock after every result and repeat the same finite deadline
+  until actually reached. Overflow/invalid clock room and anomalous return health
+  remain unresolved; no source/test/effect admission or millisecond guarantee.
+- [x] State the lifetime clock-room assumption and distinguish sampled pre-birth
+  refusal from post-birth infrastructure/health loss. The latter is not cleanup
+  or healthy containment; an exhaustive legal terminal remains an open gate.
+- [ ] Close pre-callback startup separately. Compare a guarded public native
+  Node-embedding entry with a pure-C channel child; the former requires a new
+  C++ entry/input/File Map nomination, while the latter does not qualify Node
+  startup. Embedding is now selected for further written refinement, not a
+  complete lifecycle or executable admission. Do not return,
+  exit or replace the original child merely because its addon failed to load.
+- [x] Select the independently reviewed native-embedding architecture and map
+  scripts/task6a-origin-native-cooperative-bootstrap-v2.h plus
+  scripts/task6a-origin-native-cooperative-main-v2.cc explicitly. One C object/
+  original-thread ledger/guard precedes Node setup; real linked binding uses
+  the actual public callback type and literal8. Preserve mask/stdio through
+  scoped public embedder flags, not runtime/security-guard bypass or a blanket
+  V8/libuv lifetime guarantee. Private C
+  protocol originals never belong to partial Node setup/destructors. Remaining
+  exact interfaces/FD layout/teardown/inputs and retention branches stay open.
+- [x] Nominate the typed own bootstrap/register/check/finish/retain bridge,
+  unbound acquisition-free addon state, child FD3 NONCE/END/EOF and FD4 STATUS,
+  fixed public process/environment flags and default-platform phase ordering.
+  Correct immutable identity read versus mutable access, phase-local catches
+  and caller-owned versus Node-internal teardown. Complete witnesses, spawn
+  collisions/aliases/stdio, entry-byte ownership and runtime settlement remain
+  unqualified; this source nomination admits no implementation or invocation.
+- [ ] Freeze finite ledger capacities/bindings/once-only dispositions and each
+  operation-specific unknown transition, complete native NONCE/STATUS/END flow,
+  original deadline, actual receiver join/authentication/live-child-beforeEND,
+  natural EOF/exclusive reap and final closure. Keep inherited-stash obligations
+  distinct from lookup VM/urefs and status bytes distinct from primitive receipts.
+- [ ] Nominate complete new public header/conditional graph, canonical link
+  stubs/aliases, exact imports/function-address witnesses, parent/frame source/
+  object/executable artifacts and complete FIRST counts. Existing199/IMAGE30
+  do not expand automatically. BSM arm64e-stub/fixed-arm64 compatibility remains
+  unqualified; source routing receipts b1e086/905fde are not compiler/runtime gates.
+- [x] Inventory the eleven public header roots read-only, then extend lexical
+  include-next/presence routing:302 held/reread/checked-once closed,131 new to199,
+  926 edges,32 ancestors,errors[]. Manifestba00d982; nine unresolved conditional/
+  next edges and the omitted Node front search path prevent complete nomination.
+  Compare matching BSM/System stub target lists without inferring a new BSM link.
+- [x] Attribute separate MachTime303 epoch81451d/f28c10bd; combined candidate/
+  frozen199 union331 is not a full FIRST count. Independent input review confirms
+  stored287/302 claims, fresh302 hashes and supplied MachTime material tuple,
+  not a complete future compiler/embedding graph or effect recipe.
+- [ ] Self-review the complete written design for scope, contradiction, exact
+  error dispositions and false authority. Obtain paired independent written
+  design review, then write the actual step-by-step implementation/test recipe.
+  No outline or interface constant is treated as a complete executable plan.
+
+This worklist authorizes only continued written source-design research/review.
+Source/test authoring, preflight compile/load, registered birth and channel
+effects remain separately closed. Safe design progress continues without
+loosening gates or claiming this unresolved stage is complete.
+
+## S9 finite actual-callback guard implementation plan
+
+> **For agentic workers:** Root implements inline, sole writer; independent
+> agents research/review read-only. No delegated effects or delivery.
+
+**Goal:** Characterize checked cancellation save/disable, NULL-set mask capture
+and saved-state restoration in the actual inert callback, without owner release.
+**Architecture:** One finite acquisition-free production guard block plus a
+separate actual primitive-witness fragment/consumer in the existing S1 test.
+Keep retained-owner restoration/retention/channel FSM separate and unqualified.
+**Tech Stack:** Existing builtin Node tests, fixed installed CLT/SDK/public C11;
+no install or private API.
+**Spec:** Named design, S9 separately bounded finite callback guard transaction.
+**Status:** Paired written design/source gate admitted test authoring only;
+Actual RED6a5ff7/audit6660cc qualified at testcbe89b44/Ccbafba3d. Only afterward
+root added the minimal finite guard, C6267af24/36lines1373B. Testf7a62495/
+1023lines65623B differs only by two-line historical S1 source-epoch refusal.
+Paired actual source/disabled-baseline review/freshf4f12d preceded ONE successful
+disabled baseline d47de7; independent ONLYnewbaseline auditcad2da qualified it.
+Separate paired enabled-characterization review/fresh636def preceded ONE
+successful returning-enabled sample14ada7; independent audit8b6ddd qualified
+only the returning API transaction. Separately reviewed ONE omission control
+1fe3f3 passed after fresh72d3d7; independent ONLYnewcontrol audit19c9b8 qualifies
+specific whole-block omission sensitivity only.
+No safe re-enable/owner qualification or delivery yet.
+S8 delivered d511f06f, exact cloud
+954df5 OPEN/DRAFT275 eleven files. Earlier S8 pending text is precommit history.
+
+### Global constraints / File Map / interfaces
+
+- Only initializer C/test and named plan/spec, four within aggregate eleven.
+  Preserve historical PREFIX/SUFFIX/four S1 test bodies and do not replay them;
+  preserve entry/frame/all six drivers/task-port/ABI/retained roots/original two.
+- No candidate resource acquisition or owner reentry. Cancellation disable is
+  a restoration obligation, not zero obligations. EVERY-original-obligation
+  retained-owner boundary remains unchanged; S9 does not certify it or safe
+  ENABLE restoration. _Exit72 only nonqualifying finite diagnostic abort.
+- Real successful valid save -> real NULL-set query -> exactly one saved-state
+  restoration even if query failed -> restoration0/previousDISABLE -> query0
+  -> canonical real NAPI refusal. Never consume failed outputs/retry/guess.
+- Fixture preparation/restoration separately recorded, actual public calls,
+  same original invocation thread; no trace FD until callback/harness finished.
+- No fabricated errors, signal/cancel injection, mask/type/handler mutation,
+  accepted replay, service/DB/security/access changes, ready promotion or merge.
+
+### Task S9a: nominate inputs and write the actual behavioural RED
+
+- [x] Paired actual written-design review resolves finite-transaction scope and
+  error contract; root self-review includes contradiction and placeholder scan.
+  Fresh current11/preservation5/resource gate precedes test authoring only.
+  Reviewed plan522dcfe8/spec63727f7f: paired C0/I0/M1; important scope/order
+  findings closed. Rootb0d977 SOURCE-only21:54:42.832-.845UTC errors[]/16held/
+  fullrereads/materialpath/16checkedoncecloses/22ancestors/preservationmatched.
+  Resources3f2bf3 8458708KiB96%/memory66%/noheat. Only duplicated-word nit
+  corrected below; no C/test/helper authoring or native-effect admission yet.
+- [x] Freeze combined public header/source graph, SDK pthread.h alias, feature
+  macro order, tool/image/selector rows and exact prospective imports. Original
+  85 unchanged; new headers separately nominated, not admitted by incidental
+  inclusion. Derive counts from actual helper (S1 image/header30, selectors38).
+  Paired complete actual recipe/measuredplan a9b6ae24/specccf1e15b C0/I0/M0;
+  fresh source-only1dea29 at22:09:39UTC held252/252checkedcloses/123ancestors/
+  40aliases/8absences/current11+preserve5+IMAGE30+tools7+public199/errors[].
+  Combined conservative graph190/483/outside0; four conditional edges remain
+  unresolved, not compiler-used or backend closure. This gate preceded RED only.
+- [x] Add closed absent-or1 guard flag mutually exclusive with inert flag,
+  separate guard instrumentation/trace parser/consumer/helper and three cases.
+  Keep historical strings/bodies byte-identical. New typed delegates call real
+  APIs; no mock status or opaque-mask equality. No FD opened in guarded interval.
+  Own-copy omission delimiters must identify exactly one production block.
+- [x] Consumer checks natural settlement and canonical original NAPI refusal
+  first; valid empty production events produce only specific missing-guard
+  rejection. Require actual preparation/production/harness order, state values,
+  checked returns and same thread; distinguish generic faults from omission.
+  Inner guard-enter/guard-leave markers are distinct: unchanged outer historical
+  entry -> actual preparation -> guard-enter -> production3 -> guard-leave ->
+  harness restoration -> unchanged outer historical return. Do not change PREFIX
+  or conflate trace ordering. Behavioural expectation example:
+
+  ```js
+  assertBaseline(result); // unchanged real NAPI/refusal prerequisite
+  assertGuardTransaction(result.guard, 'disabled');
+  // Require real fixture prep, production disable/query/restore and fixture
+  // restoration. Empty production list throws only GuardWitnessMissing.
+  ```
+
+- [x] Add full FIRST copy/object/addon/both-trace/source/test/tools/images/header
+  commitments BEFORE semantic assertions, exact positional rereads/materialpath
+  bindings/checked-once-close counters and complete child channels. Review full
+  actual helper/recipe, not an outline. Strong stack guards remain enabled.
+  Actual helper: four original source/entry/self/frame-inventory inputs,
+  30 IMAGE rows (Node executable included), seven tools/settings/System/manual,
+  199 public headers =240 distinct base FDs; six successful owned artifacts
+  (entry/source/object/addon/native trace/guard trace) =246 checked-once closes.
+  No duplicates/implicit S1 counts. Eight explicit absences include SDKstdbool.h;
+  38 Homebrew selectors plus one SDKpthread alias. Strict original85 DATA
+  extraction only from pinned frameTest54575/hash55e1, no import/evaluation;
+  literal new114 hashcd580f87 and22 fixed644 exceptions. Actual recipe one
+  compile, one explicit bundle link, two NM calls, OTOOL and original Node child.
+  Exact two exports/nineteen imports checked before callback; all four real
+  pthread function-address image witnesses expect exactly libsystem_pthread,
+  based on installed pthread/System TBD source researchddf2e9/3effee, not kernel
+  alternative/backend/shared-cache hash proof. Observe images before preparation.
+  FIRST artifacts acquired before stage assertions, receipt emitted after
+  original rereads/all closes BEFORE canonical callback/guard consumer; natural
+  child exit-close/EOF2/NULLsignal/complete bounded channels. No accepted replay.
+- [x] Actual syntaxac3497/diff8b9b08 and default17cce4 CLOSED0: seven SKIP,
+  zero PASS/FAIL/CANCEL41.599167ms/no acquisition. Ccbaf unchanged; preliminary
+  fragment5dfefee8 review C0/I0/M0; historical71f3b8 PREFIX/SUFFIX/four bodies
+  byte-identical. e41a3a114 rows/exactcd580f87; inventory10196a five held/rereads/
+  five checked closes/direct includes only original7+pthread/signal.
+- [x] Syntax/diff/default-only checks: seven SKIP/zero PASS/no acquisition.
+  Paired actual complete test/C RED-only review plus fresh full nominated-input
+  gate before ONE anchored real missing-guard RED on unchanged Ccbafba3d:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CALLBACK_GUARD_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^native callback guard restores an actually disabled saved state$' scripts/__tests__/task6a-origin-native-cooperative-initializer-v2.test.js
+  ```
+
+  Require actual compile/link/load/callback/canonical refusal/natural settlement
+  and full FIRST evidence before the unchanged missing-guard assertion fails.
+  Save full original privately; independently audit only the new RED artifacts.
+  No production implementation before qualified actual behavioural RED.
+  Completed ONEbf50ab session6932 ->6a5ff7 CLOSED1:0PASS1FAIL0SKIP/CANCEL,
+  2331.600458ms/case2288.210333, SOLE GuardWitnessMissing after actual callback
+  canonical refusal. ONEcompile0/link0/exact NM19+2/direct System1356 before
+  originalNode2/nullsignal/naturalexitclose/EOF2/empty stdout/canonical stderr;
+  FIRSTsix fullartifact/source/test/tool/image/header/selector/processchannel
+  commitments/246distinct246checkedcloses/failures[] BEFORE consumer. Full
+  original retained privately; only new fixtureokCzX4/dir216309907 remains.
+  IndependentONLYnewRED audit6660cc22:12:46.922-.927UTC held9 originals/
+  fullhashes/tworereads/FIRSTmaterialpath/9checkedoncecloses/errors[]; six-file
+  exactinventory/compiledderivative/realNAPI5/provider4 exactpthread/guard prep,
+  enter,leave,harness restoration only/zero production operations. Qualifies
+  missing guard only, not restoration safety/TCB/retained-owner/CONTROL/P2.
+
+### Task S9b: minimal guard, independent cases and draft checkpoint
+
+- [x] After qualified RED, add public includes and exactly one uniquely
+  delimited guard block inside initializer_refuse, before canonical refusal:
+
+  ```c
+  int saved, previous;
+  sigset_t original_mask;
+  if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &saved) != 0) _Exit(72);
+  if (saved != PTHREAD_CANCEL_ENABLE && saved != PTHREAD_CANCEL_DISABLE) _Exit(72);
+  int mask_result = pthread_sigmask(SIG_SETMASK, NULL, &original_mask);
+  if (pthread_setcancelstate(saved, &previous) != 0 ||
+      previous != PTHREAD_CANCEL_DISABLE) _Exit(72);
+  if (mask_result != 0) _Exit(72);
+  ```
+
+  No new acquisition/wait/retention/function interface. Preserve registration
+  and canonical NAPI refusal. Failed query output never consumed; restore once.
+  Root14c352 C6267af24/36lines1373B, +14lines including public includes/macros,
+  exact unique guard delimiters and acquisition-free diagnostic scope comment.
+  Registration/canonical refusal unchanged. C/test unchanged until6660cc.
+  Causally necessary test-utility safety refinement: historical S1 opt-in must
+  refuse non-Ccbaf source immediately after holding original source/entry,
+  BEFORE tools/fixture/compile, rather than compile new pthread source under
+  its old unnominated-header recipe. Two-line hash epoch check only, reviewed
+  C0/I0/M0; preserve PREFIX/SUFFIX/four bodies and new guard helper/consumer.
+  Qualified RED stays historical at testcbe89; no replay/retroactive repinning.
+  Current testf7a62495/1023lines65623B; legacy rejection source-reviewed only,
+  not a replayed dynamic coverage claim. Subsequent source/effects reviewed anew.
+- [x] Separately review actual source/disabled baseline effect, fresh input
+  gate, execute ONE new implemented epoch disabled baseline (same anchor,
+  not RED replay); require exact real witnesses/full FIRST/natural settlement.
+  Independently audit only that new receipt/artifacts.
+  Paired actual C626/testf7/planfbd830d2/spec2be09cd6 C0/I0/M0; freshf4f12d
+  22:17:03.808-04.230UTC errors[]/252distinctoriginalFDs/rereads/materialpath/
+  252checkedoncecloses/123ancestors/40alias/8absences/current11+preserve5/
+  IMAGE30/tools7/public199; materialef82a4bd/alias0aee4491. Resources8443364KiB
+  96%/memory66%/noheat. Root5b9338syntax0/f8ae39default7SKIP0PASS0FAIL/CANCEL
+  41.680041ms/3f1a67onlytwolegacyassertlines recover exactREDtestcbe89.
+  ONEc89998session42747 ->d47de7 CLOSED0:1PASS0FAIL0SKIP/CANCEL2304.140875ms/
+  case2261.086208. Actualcompile0/link0/exact2exports19imports/directSystem1356
+  BEFORE Node2 naturalexitclose/nullsignal/EOF2/empty stdout/canonicalstderr;
+  FIRSTsix fullartifact/source/test/tool/image/header/selector/processchannel
+  commitments/246distinct246checkedcloses/failures[] BEFORE unchangedconsumer.
+  NewfixturevZtQIS/dir216310653 retained; original private receipt saved. Actual
+  disabled production transaction only; independentONLYnewbaseline auditcad2da
+  22:20:40.286-.292UTC errors[]/9heldoriginalFDs/full positionalhashes/rereads/
+  FIRSTmaterialpath/ninecheckedoncecloses/exactsixinventory/compiledderivative.
+  Actualsevenevents/production disable saved0/query0 NULL/restore0 previous0;
+  fixtureincomingENABLE1 separatelyrestored0/previous0. NAPI5/provider4 intact.
+  Qualifies savedDISABLE transaction only; no safe re-enable/retained-owner credit.
+- [x] Separate actual enabled-characterization review/input gate/ONE exact
+  'native callback guard characterizes returning enabled restoration'. Require
+  returning savedENABLE restore only, not safe re-enable/pendingcancel proof;
+  abnormal/nonreturning execution cannot qualify. Independently audit new sample.
+  Paired C626/testf7/planc3fa9ad2/specdbd68ee2 C0/I0/M0; fresh636def at
+  22:22:53.750-54.134UTC errors[]/252originalFDs/rereads/materialpath/252once
+  closes/123ancestors/40aliases/8absences/current11+preserve5+public199/IMAGE30/
+  tools7; material7d413254/alias0aee4491/resources8438640KiB96%/memory66%/noheat.
+  Earlier360254 source-only presentation truncated; complete636def is effect
+  gate, not a repeated native sample. ONE3d9e18session65925 ->14ada7 CLOSED0:
+  1PASS0FAIL0SKIP/CANCEL2357.56975ms/case2308.952833. Actualcompile/link0,
+  NMexact19+2/directSystem1356 BEFORE originalNode2/naturalexitclose/NULLsignal/
+  EOF2/empty stdout/canonicalstderr/FIRSTsix/fullsource-test-tool-image-header-
+  selector/processchannels/246distinct246checkedcloses/failures[] BEFORE oracle.
+  NewfixtureymJIyE/dir216310804 retained; original saved privately. Only returning
+  ENABLE transaction, no pending-cancel absence/safe re-enable/owner proof.
+  IndependentONLYnewenabled audit8b6ddd22:25:26.488-.495UTC errors[]/nineheld/
+  positionalhashes/rereads/FIRSTmaterialpath/nineoncecloses/exactsixinventory/
+  compiledPREP1derivative/NAPI5/provider4 matched. Actualpreparation1/production
+  disable0 saved1/query0NULL/restore1previous0; harnessincomingENABLE1 restored
+  separately1previous1. Returning transaction only; no control effect yet.
+- [x] Separate omission review/input gate/ONE exact
+  'native callback guard oracle rejects guard-block omission'. Own-copy omit
+  only production guard block; original NAPI/refusal/settlement first; specific
+  GuardWitnessMissing from unchanged consumer, no generic fault accepted.
+  Independently audit new sample; never replay historical accepted cases.
+  Paired C626/testf7/plan8691d195/spec514b00c2 C0/I0/M0; fresh72d3d7 at
+  22:32:39.657-40.038UTC errors[]/252held/distinct/full positional rereads/
+  materialpath/252checkedoncecloses/123ancestors/40aliases/8absences/current11+
+  preserve5+public199/IMAGE30/tools7. Material3c7b3ef9/alias0aee4491; resources
+  8431800KiB available/memory66%/no thermal warning. Earlierc01d57 was a shell
+  parse diagnostic on the read-only gate text, before any native effect; corrected
+  full72d3d7 is the gate. ONE8a8b35session85044 ->1fe3f3 CLOSED0:
+  1PASS0FAIL0SKIP/CANCEL2278.7935ms/case2235.715458. Fixed compile/link0,
+  NMexact19+2/directSystem1356 BEFORE Node2 naturalexitclose/NULLsignal/EOF2/
+  canonicalstderr; fullFIRSTsix/246distinct246oncecloses/failures[] BEFORE oracle.
+  Owned mutant796B/hash6da05ac4 removes only the unique guard block; original
+  includes/macro/NAPI refusal and instrumentation remain unchanged. Actual
+  provider4/same-thread preparation/enter/leave/harness restoration with no
+  production calls precede the specific GuardWitnessMissing rejection. No
+  generic compile/link/provider/thread/partial trace fault qualifies. Full
+  original retained privately; only newfixture0ooFNj/dir216311179 retained,
+  independent ONLYnewcontrol audit19c9b8 at22:40:03.399-.405UTC errors[]/nine
+  distinct held originals/full positional hashes/two rereads/FIRSTmaterialpath/
+  ninecheckedoncecloses/exact six-file inventory/directory identity/compiled
+  PREFIX+PREP0+GUARD_PREFIX+796B mutant+SUFFIX matched; NAPI5/provider4/guard
+  prep-enter-leave-harnessrestore and zero production calls intact. This is whole-block sensitivity,
+  not individual failure-branch, safe re-enable, retention or owner proof.
+- [ ] Update measured named docs; focused default/syntax/version/English/path/
+  diff checks, full final source/diff/preservation/public-exposure review and
+  fresh gate before root scoped commit/normal push/existing DRAFT275 update.
+  Verify actual cloud head/body. No ready/merge/build/rollout/owner authority.
+  Measured docs updated after qualified19c9b8. Root788ae7syntax0/856f0b default
+  sevenSKIP0PASS0FAIL/CANCEL42.309208ms/no acquisition; ed33b3/fdb791diff0/
+  78a3f3version2.3.79/193722English1936files/2a5221paths971files all0. Prior
+  aggregate-code/preservation/public-exposure/body reviews C0/I0/M0 are scoped
+  observations, not silently carried to new doc pins. Final paired review and
+  fresh complete252 delivery gate precede four-file staging/normal delivery.
+- [ ] Continue causally into separately designed retained-owner error ledger
+  and owned channel/receiver/join/auth/live-child-beforeEND; S9 is not retention,
+  CONTROL, P2 or cutover closure. Preserve genuine FAIL5 and unresolved gates.
+
+## S8 pure nonce-bound END decoder implementation plan
+
+> **For agentic workers:** Root implements inline and remains sole writer;
+> independent agents research/review read-only, never delivery/effects.
+
+**Goal:** Match frozen END bytes against supplied nonce without owner authority.
+**Architecture:** One appended pure C predicate after real missing-function RED;
+one separate independent literal driver in existing builtin Node test.
+**Tech Stack:** Existing fixed installed CLT/Public SDK C11/Node; no new header.
+**Spec:** Named design, S8 separately bounded nonce-bound END decoder proposal.
+**Status:** Paired SOURCE/design C0/I0/M0 and fresh78722c admitted test authoring
+only. Actualtest54575f8e/1098lines60175B with independent4012-byte END_DECODE_DRIVER
+2f1eb4bb was authored while C8a1eea16 lacked the decoder. Paired actual-test
+RED-only reviews/freshecc0c1 preceded REDbc3e80/auditba215f. Only afterward root
+appended13lines minimal decoder, C314eb004/87lines4510B/original3777prefix intact.
+Paired baseline reviews/freshc9c07d preceded ONEbaseline4df659/audit364ace.
+Separate pairedcontrolreviews/fresh004169 preceded control1f7d89/audite76b65;
+ordinarybytebinding/specificsensitivity only. Scoped draft delivery pending.
+
+### Global constraints / File Map / interface
+
+- Modify only existing frame C/test and named plan/spec, aggregate eleven.
+  Preserve original74line3777B C prefix/allfive historical drivers/other7pins/
+  originaltwo/retainedroots/builds/fixtures/journalHASHONLY/CLI selector.
+- New unsigned sf_continuity_decode_end_v2(const uint8_t *end_bytes,size_t,
+  const uint8_t expected_nonce[16]); NULL/exact32 BEFORE caller access; valid
+  readable32/readable16 caller storage. SFENDV2!/BE2/allfourreservedzero/all16
+  nonceequal, exactly0/1; no writes/output/snapshot/I/O/heap/nativeeffects.
+  Payloadalias+16 onlybytesafety, futureindependentownerbaseline notderivedEND.
+  No ENDsend/shutdown/unknownownerrelease/join/auth/channel/CONTROL/P2 authority.
+- New absent-or1 SETFARM_TASK6A_NATIVE_CONTINUITY_END_DECODER_TEST oneof6 flags;
+  default12SKIP0PASS/noacquisition.
+  Original85headers/sevenabsences/tools/strongstack/oncecloses unchanged.
+  No acceptedcase/fullmatrix/genuine replay or new bot/security/service effects.
+
+### Task S8a: independent literal oracle and actual missing-decoder RED
+
+- [x] Paired SOURCE/design review +fresh16-current-input/preservation/resource
+  gate before root actual test authoring; C8a/test0b17 remain unchanged.
+  Plan67db00da/specabdc9bae pairedC0/I0/M0;fresh78722c at21:06:17UTC held16/
+  rereads/materialpath/16checkedoncecloses/current11/preservation22dirs/exact
+  2docsM187+/3-/indexempty/originalC/test/fivedrivers/other7/preservationmatched.
+  Resources8385952KiB97%/memory66%/throttled0/noheat; source-only noteffectclearance.
+- [x] Add separate END_DECODE_CASES/END_DECODE_DRIVER/new closedflag and modes
+  end-decode-baseline/end-decode-nonce-omission/failed-linkbranch extension.
+  Exact test names: 'continuity END decoder accepts only exact bound frames'
+  and 'continuity END decoder oracle rejects nonce-comparison omission'.
+  Independently fix full32-byte END pattern/zero/ff literals and separate16-byte
+  nonce literals, plus NONCE and STATUS1 wrong-kind literals; no roundtrip.
+  Probe helper owns framearena34/expectedarena18/canaries0xa5/fullsnapshots:
+  always initialize known storage, choose callerNULL/alias flags only at call,
+  require both entirearenas unchanged before classifyingreturn. Exactly0 on
+  refusals/exactly1 onmatches; actual>1 returnsnon71code72, canary/storage faults
+  non71. Firstwrongexpected returns71 onlywanted0/actual1/intactallstorage.
+  Main strict79callorder: NULLframe/NULLexpected+length0..31/33/SIZE_MAX=36;
+  magic8/version4/littleendian1/reserved8(each12..15 separately1/255)/wrongkind2
+  =59; pattern/zero/ffmatches=62; payloadalias+16=63;16wrongexpectednonce XOR1
+  =79. EACHwrongexpected resetsfromindependentpatternliteral, frameunchanged.
+  Aliasnotindependentbinding; STATUS1notisolatedmagic; observationsnotreadproof.
+  MutationONLYunique 'if (end_bytes[16 + i] != expected_nonce[i]) return 0;'
+  to '(void)expected_nonce[i];' inownedcopy. Firstmismatchcall64after63probes,
+  notall16controlcoverage. Syntax/diff/default12SKIP0PASS/noacquisition;
+  C/allfive historical drivers byte-identical before actual RED.
+  Rootd924acsyntax0/fcd912diff0/636314default12SKIP0PASS0FAIL44.422458ms/
+  noacquisition. Actualtest54575f8e1098lines60175B; newEND_DECODE_DRIVER4012B
+  SHA2f1eb4bbcf7794fe218610cf3c1280ee9362e6af09efdf142e1715f6a5b808f5.
+  31e722 originalC/allfivehistoricaldrivers byte-identical; no END implementation.
+- [x] Paired COMPLETE actualtest/C RED-only review and fresh109-original-input/
+  preservation/resource gate precede ONE serial anchored actual missing decoder:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_END_DECODER_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity END decoder accepts only exact bound frames$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Require2compile0/link1 solelymissingdecoder/nootherundefined/warnings/image/
+  inspection/driver/FIRSTfourfullartifact/source/test/tool/channelcommitments/
+  99distinct99checkedcloses BEFOREunchangedlink0assertfails. Savefulloriginal
+  outside repo; independentONLYnewRED artifact audit. No sourcegrep/mockRED.
+  Historical completed command, never replay. Paired actualRED-only C0/I0/M0
+  and freshecc0c1 at21:11:07UTC held109originals/rereads/materialpath/109checked
+  oncecloses/current11/original85/sevenabsences/tools/preservation56dirs/
+  resources8385596KiB97%/memory66%/noheat preceded ONEbc3e80 CLOSED1:
+  1FAIL/0PASS/0SKIP1044.047416ms/case999.770792. Actualtwo compile0/link1 SOLE
+  missing _sf_continuity_decode_end_v2 referenced_probe/nootherundefined/warnings/
+  image/inspection/driver/FIRSTfourfullcommitments/99distinct99checkedcloses.
+  FixtureihN3GL/dir216290856/501:0m700 retained;10atimechanges separate.
+  IndependentONLYnewREDba215f C0/I0/M0 at21:13:11UTC heldfourartifacts+C/test+
+  durableoriginal/sevendistinctFDs/rereadstwice/allFIRSTmaterial/path/hash/
+  7checkedoncecloses/exactinventory+directory/executableabsence/literal4012driver
+  matched. Qualifiesactualmissingfeature only/currentnotretroTCB.
+
+### Task S8b: minimal predicate, separate baseline/control, draft checkpoint
+
+- [x] Only after qualifiedactualRED append minimal pure decoder: static8magic,
+  NULL/exact32 guard;8magicchecks; BE2/fourzeroreservedchecks;16noncecompare
+  withuniqueend_bytesanchor;return1. Preserve original3777-byte C prefix.
+  Root appended only13lines afterba215f; currentC314eb00487lines4510B;900016
+  original3777-byte prefix hashes8a1eea16 and is byte-identical; test54575unchanged.
+- [x] Separate pairedactualsource/effect review/fresh109gate precede ONEnew
+  implementedepoch baseline (sameanchoredcommand, not RED replay). Require
+  driver0/all79calls/fixed2compile0/link0/NMexact2guards/directSystemBEFOREdriver/
+  FIRSTfivefullcommitments/100distinct100checkedcloses/naturalexit-close/
+  signalNULL/bothEOF/emptychannels; independentONLYnewbaseline audit.
+  Paired actual-source/baseline-only C0/I0/M0 and freshc9c07d at21:17:32UTC
+  held109 originals/rereads/materialpath/109checkedoncecloses/current11/original85/
+  sevenabsences/tools/preservation56dirs/resources8375052KiB97%/memory66%/noheat
+  preceded ONE4df659 CLOSED0:1PASS/0FAIL/0SKIP1606.855084ms/case1564.531917.
+  Actual2compile0/link0/NMexact2guards/directSystem1356 BEFOREdriver0/all79calls/
+  FIRSTfivefullcommitments/100distinct100checkedcloses/naturalexit-close/
+  signalNULL/bothEOF/emptychannels. FixtureQyGZgg/dir216291105/501:0m700 retained;
+  13atimechanges separate/noninvariant. IndependentONLYnewbaseline364ace C0/I0/M0
+  at21:20:40UTC heldfiveartifacts+C/test+durableoriginal/eightdistinctFDs/
+  rereadstwice/allFIRSTmaterial/path/hash/8checkedoncecloses/exactinventory+
+  directory/literal4012driver/prefix3777 matched; currentconsistency notretroTCB.
+- [x] Separate pairedcontrol-only review/fresh109gate precede ONE:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_END_DECODER_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity END decoder oracle rejects nonce-comparison omission$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Requireuniqueownedcompareomission/specificdriver71 AFTER63probes/firstwrong
+  expectednonce acceptedexactly1/allstorageunchanged; genericfailurenonpositive.
+  SameFIRSTfivefullcommitments/100checkedcloses/naturalsettlement/ONLYcontrolaudit.
+  Historical completed command, never replay. Paired CONTROL-only C0/I0/M0
+  and fresh004169 at21:21:14UTC held109originals/rereads/materialpath/109checked
+  oncecloses/current11/original85/sevenabsences/tools/preservation56dirs/
+  resources8370932KiB97%/memory67%/noheat preceded ONE1f7d89 CLOSED0:
+  1PASS/0FAIL/0SKIP1605.700917ms/case1561.2355. Actualtwo compile0/link0/exacttwo
+  guardimports/directSystem1356 BEFOREdriver71/actual1firstwrongexpected AFTER63
+  intactprobes/fullarenas+canaries unchanged; FIRSTfivefullcommitments/
+  100distinct100checkedcloses/naturalexit-close/signalNULL/bothEOF/emptychannels.
+  FixtureW0aoTE/dir216291270/501:0m700 retained;13atimechangesnoninvariant.
+  IndependentONLYcontrol e76b65 C0/I0/M0 at21:24:24UTC heldfiveartifacts+C/test+
+  durableoriginal/eightdistinctFDs/rereadstwice/allFIRSTmaterial/path/hash/
+  8checkedoncecloses/exactinventory+directory/literal4012driver matched;
+  candidate4481B/d0b4e6a2 onlyuniqueENDcomparisonomission/prefix3777STATUSintact.
+  Narrowfirstmismatchsensitivity/currentconsistency only, notall16/immutableTCB.
+- [ ] Finalsyntax/default12SKIP0PASS/version/English/path/diff/current11/prefix/
+  fivehistoricaldrivers/other7/originaltwo/journalHASHONLY/CLIbuild/resources/
+  exposure/pairedreview before root scoped4commit/normalpush/OPEN DRAFT275body.
+  No ready/merge/build/rollout/ENDdispatcher/retention/channel/CONTROL/P2.
+
+## S7 pure END producer implementation plan
+
+> **For agentic workers:** Root implements inline and remains sole writer;
+> independent agents are read-only researchers/reviewers, never delivery/effects.
+
+**Goal:** Produce the frozen END frame without shutdown or ownership authority.
+**Architecture:** One appended pure C producer after real missing-function RED;
+one separate independent literal driver in the existing builtin Node test.
+**Tech Stack:** Existing fixed installed CLT/Public SDK C11/Node, no new header.
+**Spec:** Named design, S7 separately bounded pure END producer proposal.
+**Status:** Paired source/design C0/I0/M0 and fresh source-onlyc1ff11 admitted
+actual test authoring. Test0b17b528/966lines53463B and separate3134-byte END_DRIVER
+96d4c863 now exist; at this authoring epoch Cae609f68 has no END producer.
+Paired actual-test RED-only review/fresh109 gate preceded REDd40e36/audit131181.
+Only afterward root appended14lines minimal producer, C8a1eea16/74lines3777B,
+original3028-byte prefix intact. Paired baseline reviews/freshc7d52b preceded
+ONE baselinec4af90/audite1813a. Separate pairedcontrolreviews/fresh16dc48
+preceded control51240c/audit522eaa; ordinary bytes/specific sensitivity only.
+Scoped draft delivery completedadab380a/exactcloudbodya573f6; delivery-pending
+wording below describes precommit epoch, not currentstatus. No END transmission/
+shutdown authority follows.
+
+### Global constraints / File Map / interface
+
+- Modify existing frame C/test and named plan/spec only, aggregate eleven.
+  Preserve original60line3028B C prefix/allfour historical drivers/other7pins.
+- New unsigned sf_continuity_encode_end_v2(uint8_t *,size_t,const uint8_t[16]);
+  NULL/exact32 BEFORE access, return0/unchanged output or1/bytes only; valid
+  caller writable32/readable16; snapshot16 BEFORE allwrites/overlap0/8/16.
+  Exact SFENDV2!/BE2/fourzeroreserved/originalnonce16. No I/O/heap/nativechannel/
+  Node/Mach/cancel/signal/custody/cleanup/ENDconsumption/shutdown/deadline effect.
+- Future END permission remains knownclosure/join/authenticate/livechild only;
+  uncertainowner staysretained evenvalid END. No byte-predicate authority.
+- New absent-or1 SETFARM_TASK6A_NATIVE_CONTINUITY_END_TEST, oneof5flags;
+  default10SKIP0PASS no acquisition. Original85headers/sevenabsences/toolpins/
+  strongstack/oncecloses/fixturepreservation unchanged. No acceptedcase replay.
+
+### Task S7a: independent literal oracle and actual missing-encoder RED
+
+- [x] Paired SOURCE/design review and fresh16-current-input/preservation/resource
+  gate before root actual test authoring. Cae609f60/test386851 remain unchanged.
+  Plan525c9bba/spec95b29fb9 pairedC0/I0/M0;freshc1ff11 held16/rereads/materialpath/
+  checked16closes/current11/preservation22dirs/resources5009396KiB98%/memory66%/
+  throttled0/noheat. This admits test authoring only, not native effects.
+- [x] Add separate END_CASES and END_DRIVER. Independent full literals:
+
+  ```c
+  static const uint8_t patterned[16]={
+    0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+    0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+  };
+  static const uint8_t zero[16]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+  static const uint8_t ff[16]={
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+  };
+  static const uint8_t pattern_frame[32]={
+    'S','F','E','N','D','V','2','!',0,0,0,2,0,0,0,0,
+    0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+    0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+  };
+  static const uint8_t zero_frame[32]={
+    'S','F','E','N','D','V','2','!',0,0,0,2,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  };
+  static const uint8_t ff_frame[32]={
+    'S','F','E','N','D','V','2','!',0,0,0,2,0,0,0,0,
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+  };
+  ```
+
+  Declare exact new API/include onlystddef/stdint. Refusal helper owns arena34/
+  snapshot34 and input16 initialized patterned; call NULLout/NULLnonce,0..31/
+  33/SIZE_MAX, verify all34+16 unchanged/return0 (36calls). Accepted helper owns
+  arena34/canaries0xa5/input16 from independent suppliedliteral. Non-overlap or
+  embed nonce at output+0/+8/+16. Require canaries/input/return1, ALL31 output
+  bytes except15 vs full literal BEFORE reservedbyte check:
+
+  ```c
+  for (size_t i=0; i<32; i++) if (i!=15 && out[i]!=expected[i]) return 72;
+  if (out[15]!=expected[15]) return out[15]==1 ? 71 : 72;
+  ```
+
+  Exactly12 successes pattern/zero/ff each separate+3overlaps; baseline48calls.
+  Code71 onlyfirstacceptedcall after36refusals/specificreserved1, notall12control
+  coverage. Other returns/storage/canary faults non71. New test names:
+  'continuity END encoder produces only literal bound frames' and
+  'continuity END encoder oracle rejects reserved-byte mutation'. Add closed
+  end-baseline/end-reserved modes/newflag/mutualexclusion/driver+casedispatch/
+  failed-linkbranch. Mutation unique end_frame[15] = 0; to1 in ownedcopy ONLY.
+  Syntax/diff/default10SKIP0PASS, allfourhistoricaldrivers/C unchanged.
+  Root143fdf syntax0/b108a1 diff0/644ae5 default10SKIP/0PASS/0FAIL42.471625ms
+  no acquisition.17b148 C/allfourhistoricaldrivers byte-identical; separate
+  literalEND_DRIVER3134B SHA96d4c8638914f7143039056fdd52a748c1018c41d95b0c0ce638c9fc0c063397.
+- [x] Paired COMPLETE actualtest/C RED-only review +fresh109-original-input gate
+  precede ONE serial fixed anchored RED:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_END_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity END encoder produces only literal bound frames$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Requireactual2compile0/link1 solelymissingnewENDencoder/no warnings/other
+  undefined/image/inspection/driver/full FIRST4artifact/source/test/tool/channel
+  commitments/99distinct99checkedcloses BEFORE unchangedlink0assertfails.
+  Save fulloriginaloutside repo; independent ONLYnewRED artifact audit.
+  Historical completed command, never replay it. Paired ACTUAL RED-only C0/I0/M0
+  at Cae/test0b17/planb57d9471/spec8c3706c5 and fresh6fb62d held109/rereads/
+  materialpath/checked109closes/current11/original85headers/sevenabsences/tools/
+  preservation56dirs/graph60headers109edgesoutside0/resources5201632KiB98%/
+  memory65%/noheat preceded ONEd40e36 CLOSED1:1FAIL/0PASS/0SKIP1038.60125ms/
+  case995.624333. Actual2compile0/link1solemissingENDencoder/no warnings/other
+  undefined/image/inspection/driver; FIRST4artifact/source/test/tool/channel
+  commitments BEFOREunchangedlink0assert/99distinct99checkedcloses. Fixture
+  1spYq4/dir216289755/501:0m700 retained;10atimechanges separate/noninvariant.
+  IndependentONLYnewRED131181 heldsix originals/rereads twice/allfirstmaterial/
+  path/hash/checkedonce6closes/exact4inventory+directory matched; missingfeature only.
+
+### Task S7b: minimal producer, separate baseline/control, draft checkpoint
+
+- [x] After ONLYqualified original RED append minimal pure encoder:
+
+  ```c
+  unsigned sf_continuity_encode_end_v2(uint8_t *end_frame, size_t capacity,
+                                      const uint8_t nonce[16]) {
+      static const uint8_t magic[8] = {'S','F','E','N','D','V','2','!'};
+      uint8_t snapshot[16];
+      if (end_frame == NULL || nonce == NULL || capacity != 32) return 0;
+      for (size_t i = 0; i < 16; i++) snapshot[i] = nonce[i];
+      for (size_t i = 0; i < 8; i++) end_frame[i] = magic[i];
+      end_frame[8] = 0; end_frame[9] = 0; end_frame[10] = 0; end_frame[11] = 2;
+      end_frame[12] = 0; end_frame[13] = 0; end_frame[14] = 0; end_frame[15] = 0;
+      for (size_t i = 0; i < 16; i++) end_frame[16 + i] = snapshot[i];
+      return 1;
+  }
+  ```
+
+  Root appended only14lines after131181; current C8a1eea16/74lines3777B,
+  original3028-byte prefix identical0b95f0; actual test0b17 remains unchanged.
+
+- [x] Separate pairedactualsource/effect review/fresh109gate precede ONEnew
+  baseline atimplementedepoch(sameanchoredcommand,notREDreplay). Require
+  driver0/all48calls/2compile0/link0/NMexact2guards/directSystemBEFOREdriver/
+  FIRST5artifact/source/test/tool/fullmaterialcommitments/100distinct100checked
+  closes/naturalexit-close/signalNULL/bothEOF/emptychannels. IndependentONLYnew
+  baselineartifactualaudit. No acceptedoldsample/fullmatrixreplay.
+  Paired actual-source/baseline-only C0/I0/M0 and freshc7d52b at20:47:16UTC
+  held109 originals/rereads/materialpath/109checkedcloses/current11/original85/
+  sevenabsences/tools/preservation56dirs preceded ONEc4af90 CLOSED0:
+  1PASS/0FAIL/0SKIP1616.222958ms/case1573.368625. Actual2compile0/link0/
+  exact2guardimports/directSystem1356 BEFOREdriver0/all48literalcalls/
+  naturalexit-close/signalNULL/bothEOF/emptychannels/100distinct100checkedcloses.
+  FullFIRST5artifact/source/test/tool commitments retained in private original;
+  fixturec9heNS/dir216289908/501:0m700;13atimechanges separate/noninvariant.
+  IndependentONLYnewbaseline e1813a C0/I0/M0 at20:54:35UTC heldfiveartifacts+
+  C/test+durableoriginal/eightdistinctFDs/rereadstwice/allFIRSTmaterial/path/hash/
+  checkedonce8closes/exactinventory+directory/driver96d4/prefixae matched.
+  Currentconsistency only, notretroTCB. This audit admits no control by itself.
+- [x] Separate pairedcontrol-only review/fresh109gate precede ONE:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_END_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity END encoder oracle rejects reserved-byte mutation$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Requireuniqueownedreserved15zero->one/specificdriver71 AFTER36refusals and
+  return1/canaries/input/31otherbytes; genericfailurecannotPASS. SameFIRST5
+  commitments/100checkedcloses/naturalsettlement; independentONLYcontrolaudit.
+  Historical completed command, never replay. Paired actualCONTROL-only C0/I0/M0
+  and fresh16dc48 20:54:37UTC held109/rereads/materialpath/109checkedoncecloses/
+  current11/original85/sevenabsences/tools/preservation56dirs/resources5205104
+  KiB98%/memory65%/noheat preceded ONE51240c CLOSED0:1PASS/0FAIL/0SKIP
+  1594.174583ms/case1549.973. Actual2compile0/link0/NMexact2guards/directSystem
+  1356 BEFOREdriver71/onlyreserved15one after36refusals+return1+canaries+input+
+  all31otherbytes; emptychannels/signalNULL/bothEOF/naturalexit-close/
+  100distinct100checkedcloses/FIRST5fullcommitments. FixtureUoMFjR/dir216290158/
+  501:0m700 retained;14atimechanges separate/noninvariant. IndependentONLYcontrol
+  522eaa C0/I0/M0 at20:57:24UTC heldfiveartifacts+C/test+durableoriginal/eight
+  distinctFDs/rereadstwice/allFIRSTmaterial/path/hash/8checkedoncecloses/
+  exactinventory+directory matched; candidatef9462ab9 onlyuniqueowned15zero->one.
+  Specificsensitivity/currentconsistency only, notENDsend/immutableTCB authority.
+- [ ] Finalsyntax/default10SKIP0PASS/version/English/path/diff/current11/prefix/
+  fourhistoricaldrivers/other7pins/originaltwo/journalHASHONLY/CLIbuild/resources/
+  exposure/pairedreview before root scoped4commit/normalpush/OPEN DRAFT275body.
+  No ready/merge/build/rollout/ENDdispatcher/nativechannel/CONTROL/P2permission.
+  Root49d427syntax0/0ec1c4version2.3.79/1b5130English1936/1687b3paths971/diff0;
+  default2fa65810SKIP/0PASS/0FAIL41.829375ms/noacquisition. Pairedfinalsource/
+  delivery review and freshcurrent11/preservation/resource/exposure gate pending.
+
+## S6 pure initial nonce extractor implementation plan
+
+> **For agentic workers:** Root implements inline and remains sole writer.
+> Independent agents are read-only researchers/reviewers, never delivery/effects.
+
+**Goal:** Extract the exact initial NONCE frame without I/O or authority.
+**Architecture:** Append one pure C decoder after real missing-function RED;
+add one separate independent literal driver to the existing builtin test.
+**Tech Stack:** Fixed installed CLT/Public SDK C11/builtin Node, no new header.
+**Spec:** Named design's S6 pure initial nonce extractor section.
+**Status:** Paired source/design C0/I0/M0 and fresh source-only2d7ca9 admitted
+test authoring only. Actual test38619c8d/851lines48027B with independent5983-byte
+driver3e862521 was authored while C6e3b10aa had no initial nonce decoder.
+Paired actual-test RED-only review and fresh109 gate preceded missing-function
+REDcc8fef and independent original-artifact audit9220cc. Only afterward root
+appended the minimal15-line decoder; Cae609f68/60lines3028B preserves original
+2277-byte S5 prefix. Separate baseline8ad726/independent auditb76704 and specific
+control ddd832/audit6038b6 qualify ordinary extraction/sensitivity only. Scoped
+draft delivery completed2349e944/exactcloudbodyc91cde; earlier delivery-pending
+wording below describes precommit epoch. Channel gates stay open.
+
+### Global constraints / File Map / interface
+
+- Modify only existing frame C/test and named plan/spec, aggregate eleven.
+  Preserve C45lines2277B prefix/S3a4dc/S4a860fc/S51b7b drivers/otherseven pins.
+- New unsigned sf_continuity_decode_nonce_v2(const uint8_t *,size_t,uint8_t[16]).
+  Refuse0/unchanged output, success1/structural extraction only. Both pointers/
+  exact32 before accesses; valid readable32/writable16 caller storage. Validate
+  ALL16 header bytes; snapshot payload16 beforeALLwrites. Write16 only; overlap
+  0/8/16 supported. Arbitrary payload, no expected baseline/provenance authority.
+- No I/O/heap/Node/Mach/signal/cancel/channel/custody/cleanup/END/deadline effects.
+  Existing wrong-nonce rules persist for future independently bound channel.
+- New absent-or1 SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_DECODER_TEST, oneof4flags;
+  default8SKIP0PASS no acquisition. Existing recipe/85originalheaders/sevenabsent/
+  tools/strongstack/oncecloses/retainedroots/twooriginalfiles/journal unchanged.
+- No historical accepted sample/full native matrix replay; root sole writer.
+
+### Task S6a: independent literal oracle and actual missing-function RED
+
+- [x] Paired read-only whole-design/source review and fresh source-only current11/
+  preservation/resource gate before root actual test authoring.
+  Reviewed planbca97baf/spec43aba;2d7ca9 held16/rereads/materialpath/checked16
+  closes/current11/preservation22dirs/resources5225804KiB98%/memory66%/noheat.
+  Prior7fbc41 olddoc-epoch mismatch retained; explicit newdoc nomination only.
+- [x] Add NONCE_DECODE_CASES and separate NONCE_DECODE_DRIVER using exact full
+  pattern/zero/ff frames and independent nonce literals from S6 design. Declare
+  only new API; include stddef/stdint. Driver helpers own known extents, not
+  malformed lengths: separate input33/output18 and overlap arena34. Refused
+  calls compare all input/output/arena to snapshots. Accepted overlap expected
+  arena starts as snapshot then substitutes literal expected16 at output offset;
+  compare ALL34 bytes, not just canaries. Output=input+0/+8/+16 is valid extent.
+  Build exactly90 baseline calls described in spec, reserved15=1 LAST after89.
+  The independent payload replacement table is:
+
+  ```c
+  static const uint8_t replacements[16]={
+    0xff,0xee,0xdd,0xcc,0xbb,0xaa,0x99,0x88,
+    0x77,0x66,0x55,0x44,0x33,0x22,0x11,0x00
+  };
+  ```
+
+  Special final probe must classify solely:
+
+  ```c
+  static int reserved_one(void) {
+    uint8_t input[32],saved[32],arena[18];
+    for (size_t i=0; i<32; i++) input[i]=pattern_frame[i];
+    input[15]=1;
+    for (size_t i=0; i<32; i++) saved[i]=input[i];
+    for (size_t i=0; i<18; i++) arena[i]=0xa5;
+    unsigned actual=sf_continuity_decode_nonce_v2(input,32,arena+1);
+    for (size_t i=0; i<32; i++) if (input[i]!=saved[i]) return 90;
+    if (arena[0]!=0xa5 || arena[17]!=0xa5) return 90;
+    if (actual==0) {
+      for (size_t i=0; i<18; i++) if (arena[i]!=0xa5) return 90;
+      return 0;
+    }
+    if (actual!=1) return 80;
+    for (size_t i=0; i<16; i++) if (arena[1+i]!=patterned[i]) return 72;
+    return 71;
+  }
+  ```
+
+  pattern_frame/patterned are the full independent literals fixed in S5a above,
+  copied into the new standalone driver, never obtained from production code.
+  Normal accepted/refused helpers return0 only when
+  all literal behavior matches; every generic discrepancy is non71. New tests:
+  'continuity nonce decoder extracts only exact input frames' and
+  'continuity nonce decoder oracle rejects reserved-one acceptance'. Add exact
+  closed modes nonce-decode-baseline/nonce-decode-reserved, select new driver/map;
+  add missing-link receipt branch alongside existing encoder/nonce branches.
+  Mutation unique `if (bytes[15] != 0) return 0;` to
+  `if (bytes[15] != 0 && bytes[15] != 1) return 0;` only in owned candidate.
+  This preserves preceding reserved15=255 refusal; complete omission would fail
+  generically there. Existing C/drivers remain unchanged while authoring test.
+  Root30f260 syntax0/4b11e1 diff0;6499d0 default8SKIP/0PASS/0FAIL42.639708ms
+  no acquisition. 4e0a99 original C and allthree historical drivers byte-identical;
+  new independent driver5983B SHA3e86252188b03662b3198c145c6fff6f3e1ae73ee58e3259571ac9667b964bca.
+- [x] Verify syntax/diff/default8SKIP0PASS no acquisition; paired COMPLETE actual
+  test/helper/driver/source RED-only review and fresh109-original-input gate.
+  Run only this anchored serial RED once:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_DECODER_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity nonce decoder extracts only exact input frames$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Actualtwo compile0/link1 sole undefined decoder/no warnings/otherundefined,
+  no image/inspection/driver; complete originalfourartifact/channel/source/test/
+  tool commitments/99distinct99checkedcloses BEFORE unchanged link0assert fails.
+  Save durable original outside repo; independent ONLYnewRED artifact audit.
+  Historical completed command, never replay it. Paired ACTUAL RED-only C0/I0/M0
+  at C6e/test386/plan2a1c546b/speca8bfc572 and freshf20328 held109/rereads/
+  materialpath/checked109closes/current11/original85headers/sevenabsences/tools/
+  preservation56dirs/graph60headers109edgesoutside0/resources5218776KiB98%/
+  memory65%/noheat preceded ONEcc8fef CLOSED1:1FAIL/0PASS/0SKIP1023.979709ms/
+  case982.849125. Bothcompile0/link1 solemissingnonce decoder/no warnings/other
+  undefined/image/inspection/driver. Complete FIRST4artifact/source/test/tool/
+  channel commitments before unchangedlink0assert/99distinct99checkedcloses.
+  Fixture9vDZdE/dir216288800/501:0m700 retained;10atimechanges separate.
+  Independent ONLYnewRED9220cc heldsix originals/rereads twice/allfirstmaterial/
+  path/hash commitments/checkedonce6closes/exactfourinventory+directory matched.
+  This qualifies missingfeature only; no immutable runtime TCB claim.
+
+### Task S6b: minimal extractor, separate baseline/control and draft delivery
+
+- [x] Only after qualified actual RED append minimal implementation:
+
+  ```c
+  unsigned sf_continuity_decode_nonce_v2(const uint8_t *bytes, size_t length,
+                                        uint8_t nonce_out[16]) {
+      static const uint8_t magic[8] = {'S','F','N','O','N','C','2','!'};
+      uint8_t snapshot[16];
+      if (bytes == NULL || nonce_out == NULL || length != 32) return 0;
+      for (size_t i = 0; i < 8; i++) if (bytes[i] != magic[i]) return 0;
+      if (bytes[8] || bytes[9] || bytes[10] || bytes[11] != 2 ||
+          bytes[12] || bytes[13] || bytes[14]) return 0;
+      if (bytes[15] != 0) return 0;
+      for (size_t i = 0; i < 16; i++) snapshot[i] = bytes[16 + i];
+      for (size_t i = 0; i < 16; i++) nonce_out[i] = snapshot[i];
+      return 1;
+  }
+  ```
+
+  Root appended only15lines after9220cc; current Cae609f68/60lines3028B,
+  original2277-byte prefix unchanged. Actual test38619c8d remains unchanged.
+
+- [x] Separate paired actualsource/effect review and fresh109 gate precede ONEnew
+  baseline at implemented epoch (same anchored command, not RED-epoch replay).
+  Require90calls/driver0/two compile0/link0/exact2guards/directSystem BEFORE
+  driver/emptychannels/naturalexit-close/signalNULL/bothEOF/firstfiveartifacts/
+  100distinct100checkedcloses. Independent ONLYnewbaseline originalartifact audit.
+  Paired C0/I0/M0 at Cae609f68/test386/plan24b4af49/spec750b9422 and freshcafa7c
+  held109/rereads/materialpath/checked109closes/current11/original85headers/
+  sevenabsences/tools/preservation56dirs/graph60headers109edgesoutside0/
+  resources5210792KiB98%/memory65%/noheat preceded ONE8ad726 CLOSED0:
+  1PASS/0FAIL/0SKIP1616.090041ms/case1573.906709. Actualtwo compile0/link0/
+  exacttwo guards/directSystem1356 before driver0/all90literalcalls; natural
+  exit-close/signalNULL/bothEOF/emptychannels/100distinct100checkedcloses.
+  Complete FIRST5artifact/source/test/tool commitments; fixtureLiUv6l/
+  dir216288952/501:0m700 retained,13atimechanges separate/noninvariant.
+  Independent ONLYnewbaseline b76704 heldseven originals/rereads twice/allfirst
+  material/path/hash commitments/checkedonce7closes/exactfiveinventory+directory
+  matched; original2277prefix/literaldriver unchanged. Accepted baseline never replayed.
+- [x] Separate paired control-only review and fresh109 gate precede ONE:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_DECODER_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity nonce decoder oracle rejects reserved-one acceptance$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Require specific driver71 ONLY after preceding89 calls, original C/test
+  unchanged/unique reserved-one weakening/fivefirstartifacts/100checkedcloses/naturalsettlement;
+  independent ONLYnewcontrol audit. No other generic failure qualifies.
+  Historical completed command, never replay it. Paired CONTROL-only C0/I0/M0
+  at Cae/test386/plan257d8984/spec92100f01 and freshf5a397 held109/rereads/
+  materialpath/checked109closes/current11/original85headers/sevenabsences/tools/
+  preservation56dirs/graph60headers109edgesoutside0/resources5207528KiB98%/
+  memory66%/noheat preceded ONEddd832 CLOSED0:1PASS/0FAIL/0SKIP1596.682708ms/
+  case1554.803667. Two compile0/link0/exacttwo guards/directSystem1356 before
+  driver71/only-reserved-one-accepted-with-exact-nonce after89precedingcalls;
+  naturalexit-close/signalNULL/bothEOF/emptychannels/100distinct100checkedcloses.
+  Complete FIRST5artifact/source/test/tool commitments; fixturep00fOI/
+  dir216289012/501:0m700 retained,13atimechanges separate/noninvariant.
+  Independent ONLYnewcontrol6038b6 heldseven originals/rereads twice/allfirst
+  material/path/hash commitments/checkedonce7closes/exactfiveinventory+directory
+  matched; owned candidate differs ONLY unique reserved15 condition exempts1.
+  Original C/test/prefix/literaldriver unchanged; narrow sensitivity only, not
+  exhaustivemutation/immutableTCB/channel/END/CONTROL/P2credit.
+- [x] Syntax/default8SKIP0PASS/version/English/path/diff checks:41ce4a syntax0,
+  03da97 default8SKIP/0PASS/0FAIL42.16025ms no acquisition;91eefa version2.3.79/
+  4672ee English1936/08af6a paths971/652290diff0. Originalprefix/drivers unchanged.
+- [ ] Fresh current11/prefix/drivers/
+  originaltwo/journalhashonly/CLIbuild/resources/exposure checks and pairedfinal
+  review precede scoped4file root commit/normalpush/existingDRAFT275bodyupdate.
+  No ready/merge/cleanmainbuild/rollout/owner/channel/CONTROL/P2 admission.
+
+## S5 pure nonce producer implementation plan
+
+> **For agentic workers:** Root implements inline and remains sole writer;
+> independent agents perform read-only research/review, never delivery or effects.
+
+**Goal:** Produce the existing exact NONCE input frame without authority.
+**Architecture:** One appended pure C function plus a separate independent
+literal C driver in the existing builtin test. No nonce reader/END/channel hook.
+**Tech Stack:** Existing fixed CLT/Public SDK C11/builtin Node; no install/header.
+**Spec:** Named design, S5 separately bounded pure nonce producer proposal.
+**Status:** Paired source/design review admitted test authoring only. Actual
+nonce driver/helper was authored before qualified missing-function RED775578/
+c820c0. Minimal nonce encoder was appended only afterward; the original31-line/
+1509-byte S4 prefix stays unchanged. New baselineba57aa passed its ordinary
+producer oracle and independent artifact audit7a7523. Separate control54de11
+passed its specific reserved-byte oracle and independent artifact auditdabbb9.
+Scoped draft delivery completed at a674ba94 with exact cloud/bodybc1552;
+earlier delivery-pending wording below describes the precommit epoch.
+
+### Global constraints / File Map / interface
+
+- Modify only scripts/task6a-origin-native-continuity-frame-v2.c, its existing
+  scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js and named
+  plan/spec; aggregate eleven. Other seven code/test files and original31-line/
+  1509-byte C prefix stay unchanged. Preserve S3 DRIVERa4dc and S4 DRIVERa860fc.
+- Append unsigned sf_continuity_encode_nonce_v2(uint8_t *,size_t,const uint8_t[16]).
+  Return0/1, NULL/exact32 before any access, caller-valid32/16 storage, snapshot16
+  before every write for valid overlap. SFNONC2!/BE2/reserved0/nonce16 exactly.
+- No heap/I/O/nonce-generation/JS/Mach/signal/cancel/channel/owner/deadline effect
+  or authority; arbitrary nonce bytes accepted without entropy/replay claims.
+- Exact new SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_TEST=1; reject malformed and
+  multiple S3/S4/S5 opt-ins. Default6SKIP/0PASS, no acquisition. New anchored
+  cases only, serial fixed env-i Node; no accepted sample/full-matrix replay.
+- Same85 original headers/seven absences/fixedtools/compile/link/inspection/
+  originalFD/checked-once-close/child-settlement recipe; never auto-admit headers
+  or weaken stack protection. Retain original fixtures/roots/two files/journal.
+
+### Task S5a: literal oracle and missing-function RED
+
+- [x] Independently review complete spec/interface/pre-access/storage/overlap,
+  File Map/source-only boundaries before actual test authoring.
+- [x] Add NONCE_CASES and separate NONCE_DRIVER. Its full expected fixtures are:
+
+  ```c
+  static const uint8_t patterned[16]={
+    0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+    0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+  };
+  static const uint8_t zero[16]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+  static const uint8_t ff[16]={
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+  };
+  static const uint8_t pattern_frame[32]={
+    'S','F','N','O','N','C','2','!',0,0,0,2,0,0,0,0,
+    0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+    0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+  };
+  static const uint8_t zero_frame[32]={
+    'S','F','N','O','N','C','2','!',0,0,0,2,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  };
+  static const uint8_t ff_frame[32]={
+    'S','F','N','O','N','C','2','!',0,0,0,2,0,0,0,0,
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+    0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+  };
+  ```
+
+  Driver declares exact new API, includes onlystddef/stdint. Refusal probe owns
+  arena34 and nonce16 initialized from patterned; snapshots both independently,
+  calls actual API and requires return0/all34+16 unchanged. Exercise NULLout,
+  NULLnonce, every capacity0..31 then33/SIZE_MAX (36 refusals). Accepted probe
+  owns arena34/canaries0xa5, mutable separate input16 from selected independent
+  nonce, or embeds that nonce at output+0/+8/+16. It calls with capacity32, checks
+  canaries+separate input unchanged+return1, ALL31 bytes except15 against the
+  supplied full literal frame, then byte15:
+
+  ```c
+  if (arena[0] != 0xa5 || arena[33] != 0xa5) return 91;
+  for (size_t i=0; i<16; i++) if (input[i] != supplied[i]) return 90;
+  if (actual != 1) return 80;
+  for (size_t i=0; i<32; i++) if (i != 15 && out[i] != expected[i]) return 72;
+  if (out[15] != expected[15]) return out[15] == 1 ? 71 : 72;
+  ```
+
+  Baseline finishes12 accepted calls: pattern/zero/ff each with separate nonce
+  and three overlap offsets. Never derive expected frames via production code.
+  Add exact names 'continuity nonce encoder produces only literal input frames'
+  and 'continuity nonce encoder oracle rejects reserved-byte mutation'.
+  Extend helper's closed modes with nonce-baseline/nonce-reserved; select new
+  literal driver/cases, retain both historical drivers unchanged. Add new flag
+  and pairwise mutual exclusion. For nonce-reserved only replace the unique
+  anchor 'nonce_frame[15] = 0;' with 'nonce_frame[15] = 1;' in owned copy.
+  Failed-link branch must include this producer, preserve four originals/full
+  actual result through checks/closures and emit diagnostic before link0assert.
+  Paired C0/I0/M0 at pland37923ba/specd7048d49; independent source-onlye51079
+  current11/preservation/fullheld16/reread/materialpath/checked16closes preceded
+  authoring. Actualtestd4ab3c45 is674lines; Caff unchanged/no nonce function.
+  Rootab6ca9 syntax/diff0;8c8417 default6SKIP/0PASS/0FAIL42.09675ms, no input/
+  fixture/child acquisition. This is opt-out evidence, not nonce acceptance.
+- [x] Review COMPLETE actual test/helper/driver and still-missing nonce function;
+  refresh exact current11/85originalheaders/sevenabsences/tool/preservation/
+  resources, then run only the new RED baseline once:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity nonce encoder produces only literal input frames$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Require actual two compile0/link1 sole undefined new nonce encoder/no image/
+  inspection/driver, exact four-file retained inventory, complete original
+  channels/metadata/hashes/99distinct99checkedcloses. Unchanged link0assert
+  MUST fail. Independently audit ONLYnewRED original artifacts/source/test;
+  generic compiler/setup/refusal is not missing-feature evidence.
+  Historical completed RED command, never replay it. Paired actual-test
+  C0/I0/M0 at Caff/testd4ab/planfd4368/spec92bf and correctedfreshec7866
+  fullheld109/checked109closes/current11/85originalheaders/sevenabsences/tools/
+  preservation/graph60headers109edges/resources5233408KiB98%/memory65%/noheat
+  preceded ONE775578 CLOSED1:1FAIL/0PASS/0SKIP1024.334167ms/case982.587083.
+  Both compile0, link1 sole missingnonceencoder/no warnings/otherundefined;
+  no image/inspection/driver. Complete first four-artifact/source/test/tool/
+  channel commitments precede unchangedlink0assert/99distinct99checkedcloses.
+  Fixture IVQAU3/dir216287498/501:0m700 retained. Independentc820c0 ONLYnewRED
+  four artifacts+C/test/held6/rereads twice/allfirstmaterialhash/pathcommitments/
+  checked6closes/exactfourinventory match. This qualifies missingfeature only.
+  Audit91b99e failed on a copied65hex nomination; correcting only that copied
+  literal restored the original64hex test nomination, no source/guard/hash change.
+
+### Task S5b: minimal producer, independent baseline and reserved-control
+
+- [x] Only after qualified original RED append minimal new implementation:
+
+  ```c
+  unsigned sf_continuity_encode_nonce_v2(uint8_t *nonce_frame, size_t capacity,
+                                        const uint8_t nonce[16]) {
+      static const uint8_t magic[8] = {'S','F','N','O','N','C','2','!'};
+      uint8_t snapshot[16];
+      if (nonce_frame == NULL || nonce == NULL || capacity != 32) return 0;
+      for (size_t i = 0; i < 16; i++) snapshot[i] = nonce[i];
+      for (size_t i = 0; i < 8; i++) nonce_frame[i] = magic[i];
+      nonce_frame[8] = 0; nonce_frame[9] = 0; nonce_frame[10] = 0; nonce_frame[11] = 2;
+      nonce_frame[12] = 0; nonce_frame[13] = 0; nonce_frame[14] = 0; nonce_frame[15] = 0;
+      for (size_t i = 0; i < 16; i++) nonce_frame[16 + i] = snapshot[i];
+      return 1;
+  }
+  ```
+
+- [x] Separate complete actual-source/effect review and freshinputgate precede
+  ONEnewbaseline at this new implementation epoch (same anchored S5 command,
+  not replay of the missing-function epoch). Require driver0/all48calls, two
+  compile0/link0/strict2guardimports/directSystem before execution, emptychannels/
+  naturalexit-close/signalNULL/bothEOF/allfiveoriginalartifact commitments/
+  100distinct100checkedcloses. IndependentONLYnewbaseline audit before control.
+  Paired C0/I0/M0 at C6e3b10aa/testd4ab/plan a76df932/spec d97de6b2 and fresh
+  4b051c full109-original-input/reread/materialpath/checked109closes/85original
+  headers/sevenabsences/tools/preservation/resources5235104KiB98%/memory66%/
+  throttled0/noheat preceded ONEba57aa CLOSED0:1PASS/0FAIL/0SKIP1594.972625ms/
+  case1552.816875. Both compile0/link0/exacttwo guards/directSystem1356 before
+  actualdriver0/all48literal calls/emptychannels/naturalexit-close/signalNULL/
+  bothEOF/100distinct100checkedcloses. First five-artifact/source/test/tool/
+  channel commitments emitted; fixtureXp2rXJ/dir216287700/501:0m700 retained.
+  Readatime13changes separate/noninvariant; independentONLYnewbaseline7a7523
+  heldseven distinct original FDs/rereads twice/allfirstmaterial/path/hash
+  commitments/checkedonce7closes/exactfiveinventory+directory matched.
+  Accepted baseline must never be replayed; no native authority credit.
+- [x] Separate unique-reserved-byte control review/freshgate precede ONE:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_NONCE_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity nonce encoder oracle rejects reserved-byte mutation$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Actualspecificdriver71 after36refusals and31otherframebytes, not generic
+  failure; same complete fixture/result/closure recipe. IndependentONLYcontrol
+  originalartifact audit. No accepted baseline/RED/S4/S3/S2/S1/genuine replay.
+  Historical completed command, never replay it. Paired CONTROL-only C0/I0/M0
+  at C6e3b10aa/testd4ab/plan c68cd9f8/spec2d07762b plus fresh e62381 held109/
+  checked109closes/current11/85originalheaders/sevenabsences/tools/preservation/
+  resources5230220KiB98%/memory66%/throttled0/noheat precede ONE54de11 CLOSED0:
+  1PASS/0FAIL/0SKIP1587.786084ms/case1547.440958. Actualtwo compile0/link0/
+  exacttwo guards/directSystem1356 before driver71/only-reserved-byte-mutated-
+  to-one; all36refusals and31other first-frame bytes precede diagnostic71.
+  Naturalexit-close/signalNULL/bothEOF/emptychannels/100distinct100checkedcloses;
+  complete first five-artifact/source/test/tool commitments,13atimechanges
+  separate. Fixture dDMVjg/dir216287935/501:0m700 retained, original C/test
+  unchanged. IndependentONLYnewcontrol dabbb9 heldseven originalFDs/rereads
+  twice/allfirstmaterial/path/hash commitments/checkedonce7closes/exactfive
+  inventory+directory matched; only unique reserved15 zero-to-one copy mutation.
+  This is not
+  all12 accepted-case control coverage, entropy/replay/channel/CONTROL/P2credit.
+- [x] Verify default6SKIP0PASS opt-out, syntax/version/English/path/diff, original
+  31lineCprefix and allothersevenpins/S3+S4drivers/elevenFileMap unchanged.
+  9c81d5 syntax0;2427a1 default6SKIP/0PASS/0FAIL41.1185ms, no inputs/fixtures/
+  children. a9458d version2.3.79/890edd English1936/45f871 paths971 all0.
+- [ ] Independent scoped review/currentinventory precede normal root commit/push/
+  existingDRAFT275 body update; no ready/merge/build/channel/host/CONTROL/P2credit.
+
+## S4 pure status producer implementation plan
+
+> Root remains the sole source/Git/effect writer. Independent reviewers are
+> read-only; no menu/repeated approval or implicit native effect admission.
+
+**Goal:** Produce the exact native-status frame without exporting authority.
+**Architecture:** Append one pure encoder to frame C; independent literal C
+driver in its builtin test. Existing decoder and accepted S3 driver stay unchanged.
+**Tech Stack:** Fixed installed C11 CLT/Public SDK and builtin Node; no install.
+**Spec:** Named design, S4 separately bounded pure status producer proposal.
+**Status:** Original missing-encoder link RED189506 qualified; minimal encoder
+appended only afterward. Separate baselinec80fb5 and version-controlc6a622 passed
+their strict ordinary producer oracles; independent audits43236b/c7b567 match
+original commitments. Scoped draft delivery completed75c863a3; exact cloud
+head/OPEN/DRAFT11map6046+/7- and measured body verified417cd3. Guardian security
+is not code approval; reviews[] remain nonpositive. Precommit delivery-pending
+wording below describes its historical epoch, not a replay instruction. This is
+not native-channel, CONTROL, P2, clean-main or host qualification.
+
+### File Map / exact interface / constraints
+
+- Modify scripts/task6a-origin-native-continuity-frame-v2.c by appending ONLY
+  unsigned sf_continuity_encode_status_v2(uint8_t *,size_t,unsigned,const uint8_t[16]).
+- Modify scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js with
+  new closed opt-in, independent literal encoder driver and two new anchored
+  cases. Existing S3 driver/decoder cases remain unchanged and never replayed.
+- Modify only this named plan/spec. Aggregate stays eleven; other seven
+  code/test files and original16-line decoder bytes stay unchanged.
+- Only0/refusal or1/encoded; exact32/state1..3/valid caller storage. Rejections
+  do not access caller output/nonce; success writes32 and snapshots nonce first.
+- No I/O/allocation/Mach/callback/signal/retention/controller/service/DB effect.
+  Stack memory, loader/runtime/compiler TCB and state3 uncertain retention are
+  explicitly not qualified by pure encoding. Never require state3 write success
+  to keep an uncertain owner alive.
+- New exact SETFARM_TASK6A_NATIVE_CONTINUITY_FRAME_ENCODER_TEST=1; default2extra
+  SKIPs/no inputs; reject malformed/both-opt-ins. Fixed env-i Node, serial
+  anchored new cases only, no S3/S2/S1/genuine replay or ALL matrix.
+
+### Task S4a: independent producer oracle and missing-symbol RED
+
+- [x] Independently review exact design/interface/overlap/storage conditions,
+  File Map and test/effect boundaries before test authoring.
+- [x] Add a separate literal encoder driver. Declare exact encoder prototype;
+  expected three32-byte frames are independent full arrays:
+
+  ```c
+  static const uint8_t one[32] = {
+    'S','F','S','T','A','T','2','!',0,0,0,2,0,0,0,1,
+    0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+    0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+  };
+  /* Two separate literal arrays differ only at the literal state2/state3 byte. */
+  ```
+
+  No decoder call/roundtrip oracle. Driver fixtures cover every spec case,
+  literal expected0/1, sentinel boundaries and refusal/separate-nonce immutability.
+  Overlap out/out+8/out+16 expects the original pre-write nonce snapshot. Driver71
+  ONLYversion byte1 after return1/canaries/nonce and ALL31 other output bytes,
+  including state/encoded nonce, match the independent fixture. Those31 checks
+  precede version71; trailing corruption must produce a non71 failure. Other failure
+  codes must not reach control acceptance. No explicit driver output/system calls.
+  Add cases 'continuity status encoder produces only literal bound frames' and
+  'continuity status encoder oracle rejects version-byte mutation'. Keep S3
+  DRIVER literal byte-identical and select it only for historical S3 cases.
+- [x] Review COMPLETE actual test/encoder driver/helper and original missing
+  function before effects; fresh all source/input/tool/preservation/resource gates.
+  Missing-function RED uses reviewed S3 exact two compiles/one link, candidate
+  lacks encoder, driver references it, link produces sole undefined encoder
+  symbol. Require real compile0/link1/that exact cause/no executable/driver;
+  test's unchanged link0 assertion fails. Preserve original four owned files.
+  Only run the new anchored baseline once under the new opt-in:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_FRAME_ENCODER_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity status encoder produces only literal bound frames$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Completed historical RED invocation, never replay it. Paired actual-test
+  C0/I0/M0 at C96d1503b/test0d8c4351/plan449bc7f/spec236fe65; independent
+  c150a3 holds109 originals/checked109closes (11sources+85originalheaders+
+  tools/documents/preservation), seven absences and lexical60headers/109edges.
+  Original two files, journalhashonly and oldCLI unchanged; disk6005648KiB98%,
+  memory64%/throttled0/nothermal. ONE189506 CLOSED1 records1FAIL/0PASS/0SKIP
+  1026.601916ms/case984.135125: two compile0; link1 sole undefined encoder
+  referenced by driver refused/encoded. No warnings/other undefined symbols,
+  executable/inspection/driver; full original four artifacts/source/test/tools
+  hashes/inodes/bytes/modes/mtime/ctime/channels emitted before link0 assertion.
+  Fixture /private/tmp/setfarm-continuity-frame.LGd5iU remains visible, dirino
+  216284847/501:0m700. Runtime99distinct99checkedcloses; readatime changes
+  separate/noninvariant. Independent e04e95 audits ONLYnewRED four artifacts+
+  originalC/test via six held descriptors/full rereads/materialpath/checked
+  six closes. C96/test0d8/drivera860fc match original commitments. No replay,
+  retroactive immutable TCB or GREEN/control/channel/CONTROL/P2 credit.
+
+### Task S4b: minimal producer and separately reviewed measurements
+
+The checked RED/baseline/control steps are historical completed invocations.
+Never replay accepted S4/S3/S2/S1/genuine samples for this completion loop.
+Remaining unchecked delivery verification is default-off/static only.
+
+- [x] Only after original missing-symbol RED, append minimal implementation:
+
+  ```c
+  unsigned sf_continuity_encode_status_v2(uint8_t *out, size_t capacity,
+                                         unsigned state, const uint8_t nonce[16]) {
+      static const uint8_t magic[8] = {'S','F','S','T','A','T','2','!'};
+      uint8_t snapshot[16];
+      if (out == NULL || nonce == NULL || capacity != 32 ||
+          state < 1 || state > 3) return 0;
+      for (size_t i = 0; i < 16; i++) snapshot[i] = nonce[i];
+      for (size_t i = 0; i < 8; i++) out[i] = magic[i];
+      out[8] = 0; out[9] = 0; out[10] = 0; out[11] = 2;
+      out[12] = 0; out[13] = 0; out[14] = 0; out[15] = (uint8_t)state;
+      for (size_t i = 0; i < 16; i++) out[16 + i] = snapshot[i];
+      return 1;
+  }
+  ```
+
+- [x] Review whole current source/test/driver and unchanged original decoder;
+  refresh input containment, two compiles/one link/strict two-stack-import/
+  directSystem inspection recipe and original artifact/child settlement gates.
+  One reviewed new baseline requires actual driver0, empty channels, natural
+  exit/close/signalNULL/bothEOF, all original metadata/checked once closes.
+  Paired C0/I0/M0 at Caff322f6/test0d8c4351/plan1c92851a/spec5a7b9863;
+  fresh06de2d holds109originals/checked109closes/sevenabsences/85originalheaders,
+  same tools/preservation/root identities, lexical60headers/109edges contained;
+  root114988 pins/diff0. Disk5256348KiB98%, memory63%/throttled0/nothermal.
+  ONEnewbaselinec80fb5 CLOSED0:1PASS/0FAIL/0SKIP1687.9725ms/case1647.036625,
+  actualtwo compile0/link0/empty channels; exact two stack-guard imports and
+  only directSystem1356 before actualdriver0/all52literal calls, signalNULL/
+  naturalexit-close/bothEOF/100distinct100checkedcloses. Freshfixture
+  /private/tmp/setfarm-continuity-frame.2oJyu9 dir216286531/501:0m700, allfive
+  artifact/source/test/tool original commitments emitted first;13readatime
+  changes separate/noninvariant. Independent43236b audits ONLYnewbaseline five
+  artifacts+C/test via seven held descriptors/rereads twice/materialpath/all
+  original commitments/checked seven closes. Exact five-file inventory and
+  originalC/test/decoder/driver match; ordinary producer qualification only.
+  Do not replay this accepted baseline or infer channel/cleanup/CONTROL/P2.
+- [x] Separately review ONLYunique out[11]=2 to1 owned-copy mutation. Literal
+  encoder driver unchanged; fresh input/tool/preservation/resource gates then
+  one new version-control case, actual specificdriver71, not generic failure.
+  No original production mutation or accepted-case replay; retain fixture.
+  Paired C0/I0/M0 at unchangedCaff322f6/test0d8c4351/plan13bd185b/spec5b658751
+  and fresh7d7341 full109-input/reread/materialpath/checked109closes/85original
+  headers/sevenabsences/tools/preservation/resources5251916KiB98%/memory63%/
+  throttled0/nothermal preceded ONEc6a622 CLOSED0:1PASS/0FAIL/0SKIP1588.949875ms/
+  case1547.824708. Actualtwo compile0/link0/exact two guards/directSystem1356,
+  actualdriver71 only-version-byte-mutated-to-one: all40 refusals then return1,
+  intact canaries/nonce and all31 other output bytes precede version1. Empty
+  outputs/signalNULL/naturalexit-close/bothEOF/100distinct100checkedcloses.
+  Freshfixture /private/tmp/setfarm-continuity-frame.83NCTY dir216286674/501:0m700,
+  all five original artifact/source/test/tool commitments emitted first;13
+  readatime changes separate/noninvariant. Independentc7b567 ONLYnewcontrol
+  five artifacts+C/test/rereads twice/materialpath/all first commitments/seven
+  checked closes/exact inventory/unique version mutation+unchangeddriver matched.
+  Original production source/test/decoder stay unchanged. This qualifies the
+  specific version mutation only, not exhaustive corruption or immutable TCB.
+- [x] Verify default4SKIP/0PASS opt-out only, syntax/contracts/diff/unchanged
+  seven other code pins/original16-line decoder bytes/current eleven-file scope. Independent
+  review precedes normal scoped existingDRAFT commit/push/body update. No
+  ready/merge/build/native-channel/cutover/host rollout credit.
+  Root6d5e34 syntax0;9a3487 default4SKIP/0PASS/0FAIL41.311ms;56b81b version2.3.79,
+  b4c9c6 English1936,d5eef5 paths971;7fd953 diff0/indexempty/exact4M/HEADacdf.
+  Skips are opt-out only, never producer acceptance. Final independent review
+  and ordinary scoped DRAFT commit/push/body update remain delivery steps.
+
+## S3 pure native-status decoder implementation plan
+
+> Root is the sole source/Git/effect writer; independent agents remain read-only.
+> This is a new scoped recipe, never a replay of accepted S1/S2/native samples.
+
+**Goal:** Parse the fixed32-byte native-status frame without producing authority.
+**Architecture:** One pure C decoder; a separate independently literal C driver
+calls its real implementation. No channel/retention/CONTROL or host integration.
+**Tech Stack:** Fixed installed CLT/Public SDK C11; builtin Node test, no install.
+**Spec:** Named design, S3 separately bounded pure native-status decoder proposal.
+**Status:** Real missing-source RED a4f158 preceded minimal source; separate
+baseline99317b and nonce-control9356e0 passed their strict ordinary decoder
+oracles. Scoped draft review/delivery completed at acdf31d4, not runtime qualification.
+
+### Exact File Map / interfaces / constraints
+
+- Create scripts/task6a-origin-native-continuity-frame-v2.c; consumes public
+  stddef/stdint and valid caller-owned byte storage; produces only unsigned
+  sf_continuity_decode_status_v2(const uint8_t *,size_t,const uint8_t[16]).
+- Create scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js;
+  independent literal driver, closed baseline/nonce-omission modes, default2SKIP.
+- Modify only named plan/spec. Seven delivered code/test pins stay unchanged;
+  draft275's earlier nine-file map stays historical; S3 delivered eleven at acdf31d4.
+- API returns0/refusal orstate1/2/3 only, no I/O/allocation/Mach/signals/resource
+  mutation. Parsing is not cleanup, ownership, retained dispatcher or P2 proof.
+- Exact opt-in SETFARM_TASK6A_NATIVE_CONTINUITY_FRAME_TEST=1 and fixed env-i Node;
+  serial anchored single cases. No ALL/new native-owner experiment/TFP retry.
+- Hold exact inputs/artifacts; retain one fresh0700 five-file fixture per case,
+  original checked natural settlements/rereads/once closes; no artifact deletion.
+
+### Task S3a: design review and independent missing-source RED
+
+- [x] Review complete source-only spec/plan including fixed decoder API, caller
+  storage preconditions, all byte checks, independent fixtures and exact effect
+  bounds. This review admits test authoring only, not compile/link/driver effects.
+  Paired C0/I0/M0 at plan2096fa9d/spec359a0a9b preceded test authoring.
+- [x] Write the test first. Its independent driver prototype is:
+
+  ```c
+  unsigned sf_continuity_decode_status_v2(const uint8_t *, size_t,
+                                         const uint8_t expected_nonce[16]);
+  static const uint8_t nonce[16] = {
+    0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+    0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+  };
+  static const uint8_t one[32] = {
+    'S','F','S','T','A','T','2','!',0,0,0,2,0,0,0,1,
+    0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+    0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+  };
+  /* State2 and3 are separate literal arrays, not production-generated values. */
+  ```
+
+  Driver calls actual separately compiled API with literal expected1/2/3;
+  NULL/short0..31/long33/SIZE_MAX/magic8/version4/highstate3/state0,4,255/
+  nonce16 cases expect0. Use valid32/33-byte storage and16-byte expected nonce;
+  check input immutability independently around every call. Failure exits are
+  distinct groups, with71 ONLYwrongnonce accepted asstate1 after preceding
+  groups passed,72 for another wrongnonce state. No driver output/system calls.
+  Test baseline asserts availability frame-observed before driver0; missing C
+  returns source-unavailable before any CLT/fixture/compiler child acquisition.
+- [x] Independently review the complete actual test/driver and missing-source
+  branch; freshly nominate held test and absent candidate, preservation/resources.
+  Run only this RED once, preserve original FAIL/no compiler/fixture evidence:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_FRAME_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity status decoder accepts only exact bound frames$' scripts/__tests__/task6a-origin-native-continuity-frame-v2.test.js
+  ```
+
+  Historical invocation, not a continuation replay instruction. Paired RED-only
+  C0/I0/M0 at testb0321da7/plan653ee6ec/spec2bbdd54d; independent748628 fullheld10/
+  checked10closes/candidateENOENT,478694exposure0/85ac67 originaltwo preservation/
+  resources6193260KiBfree98%/mem58/nothermal. ONE a4f158 CLOSED1 records
+  1FAIL/0PASS/0SKIP43.094792ms, actualsource-unavailable versusframe-observed.
+  No CLT/header/fixture/compiler/link/driver acquisition. Original output retained.
+
+### Task S3b: minimal decoder and separately reviewed ordinary measurements
+
+The checked S3a/S3b commands below are historical completed invocations, not
+continuation replay instructions. Do not repeat accepted baseline/control cases.
+All S3 default-opt-out/delivery steps are completed and historical as well.
+New S4 unchecked steps have their own recipes; no implicit effects from S3.
+
+- [x] Only after original missing-source RED, create minimal production code:
+
+  ```c
+  #include <stddef.h>
+  #include <stdint.h>
+  unsigned sf_continuity_decode_status_v2(const uint8_t *bytes, size_t length,
+                                         const uint8_t expected_nonce[16]) {
+      static const uint8_t magic[8] = {'S','F','S','T','A','T','2','!'};
+      if (bytes == NULL || expected_nonce == NULL || length != 32) return 0;
+      for (size_t i = 0; i < 8; i++) if (bytes[i] != magic[i]) return 0;
+      if (bytes[8] || bytes[9] || bytes[10] || bytes[11] != 2 ||
+          bytes[12] || bytes[13] || bytes[14] ||
+          bytes[15] < 1 || bytes[15] > 3) return 0;
+      for (size_t i = 0; i < 16; i++)
+          if (bytes[16 + i] != expected_nonce[i]) return 0;
+      return bytes[15];
+  }
+  ```
+
+- [x] Independently review complete candidate/test/driver, fresh input include
+  graph containment, exact compiler/link/image inspection argv, allowed imports
+  and original artifact/child closure before effects. Compile exactly twice:
+
+  ```text
+  CLANG --no-default-config --target=arm64-apple-macos26.5
+  -resource-dir RESOURCE -isysroot SDK -integrated-as -nostdinc
+  -isystem RESOURCE/include -isystem SDK/usr/include
+  -fno-modules -fno-implicit-modules -fno-implicit-module-maps
+  -fno-lto -fstack-protector-strong -std=c11 -O0 -Wall -Wextra -Werror
+  -c COPY -o OBJECT
+  ```
+
+  COPY/OBJECT are candidate.c/candidate.o then driver.c/driver.o under the one
+  original fixture. Link exactly once with the fixed CLT LD:
+
+  ```text
+  CLANG --no-default-config --target=arm64-apple-macos26.5
+  -resource-dir RESOURCE -isysroot SDK --ld-path=LD -fno-lto -nostdlib
+  -Wl,-Z -Wl,-syslibroot,SDK candidate.o driver.o
+  SDK/usr/lib/libSystem.B.tbd -o decoder
+  ```
+
+  All child envs exactly PATH=/usr/bin:/bin,LANG=C,LC_ALL=C,TMPDIR=owned fixture.
+  Each compile/link must actualexit0/emptyoutputs/signalNULL/bothEOF/close;
+  inspect actual nm -uj decoder and otool -L decoder with strict output grammar
+  and exact ___stack_chk_fail/___stack_chk_guard protection imports/only direct
+  libSystem dependency before running
+  decoder with no arguments. Preserve stack protection; no dynamic lookup,
+  extra source/object/library/search/sign policy. Execute no uninspected image.
+  Paired baseline C0/I0/M0 at C96d1503b/testb0321da7/plan9c8afa9f/spec2bbdd54d;
+  fresh927e04 holds96=11sources+85originalheaders/allcheckedcloses,86f17e lexical
+  include containment60headers/109edges,6c8ae1tools/5194c3manual/f75d91preservation.
+  Original85manifest/sevenabsences unchanged; no compiler-used/fullTCB inference.
+  Resource6177628KiBfree98%/mem58/nothermal; rootd8cca4 originalsource/test checks.
+- [x] After fresh complete baseline source/effect/physical/resource review, run
+  the same anchored baseline once; require actual driver0 with full original
+  source/copy/object/binary/tool commitments, settlements/checks/closes. Preserve
+  any failed setup/result as failure; diagnose causally, never blind-repeat.
+  ONE9ce151/session12903->99317b CLOSED0:1PASS0FAIL0SKIP1674.32775ms. Actual
+  two compiles/link0, emptyoutputs/signalNULL/bothEOF; exact two stack imports,
+  directSystem1356, actualdriver0. Firstresult commits source/test/driver/two
+  copies/objects/binary hashes/inodes/sizes/modes/mtime/ctime and fixture binding,
+  headerNom55e1f4b0/85rows/sevenabsences/100distinctinputs100checkedcloses.
+  Independent4a1427 audits ONLYnew five-file baseline fixture and two pinned
+  source inputs/full7checkedcloses/source+literaldriver consistency, no replay.
+- [x] Separately review nonce-omission: change ONLYunique nonce comparison in
+  owned candidate copy, independent driver unchanged. Fresh gate then one case
+  anchored 'continuity status oracle rejects nonce-comparison omission'. Require
+  actual driver71/emptyoutputs/signalNULL/bothEOF and all original commitments/
+  checked closes. Setup/compiler/link/generic failures cannot pass. No baseline
+  replay and no acceptance of mutated production source.
+  Paired control-only C0/I0/M0 at the same C/test/doc pins; baseline audit4a1427
+  plus freshc7b239 held96/e21f8dtools/e24588preservation/bebd94manual gates;
+  resource6357888KiBfree97%/mem59/nothermal. ONE33b3b2/session1807->9356e0
+  CLOSED0:1PASS0FAIL0SKIP1616.845708ms. Actual two compiles/link0/same strict
+  inspection; actualdriver71/signalNULL/bothEOF/emptyoutputs, exactwrongnonce
+  acceptance case,100distinctinputs100checkedcloses and all original artifact
+  commitments. Same independent driver, original production C unchanged.
+  Independent4d69b0 audits ONLYnew five-file control fixture and two pinned
+  sources/full7checkedcloses/unique mutation+unchanged literaldriver. Additional
+  within-read evidence is not an immutable continuous TCB claim. No baseline
+  or other accepted-case replay; no broad native, service or database effects.
+- [x] Verify default2SKIP/syntax/contracts/diff/exact prospective eleven-file
+  scope; independently review before normal existingDRAFT commit/push/update.
+  No ready/merge/build/rollout/native-channel clearance follows from this slice.
+  Historical delivery5705ca default2SKIP0PASS0FAIL42.033833ms/syntax/contracts0,
+  paired final C0/I0/M0/dc947f held11/checkcloses/exposure0/fresh originaltwo keys.
+  Root47b2ce creates acdf31d4/four735+/9-; reviewed normalpush and finalcloud
+  4869f1 verify OPEN/DRAFT275/exactacdf/baseae5/eleven5623+/7-/expectedbody.
+
+## S2 syntax-only layout prerequisite implementation plan
+
+> Root remains the sole source/Git/effect writer; parallel agents only inspect
+> source/inputs and review independently. No repeated routine approval menu.
+
+**Goal:** Characterize the nominated public USER arm64 layout without runtime
+Mach, link, addon, signal, retention or CONTROL/P2 effects.
+**Architecture:** Candidate declares only the two layout typedefs; independent
+test-copy suffix checks literal ABI assertions via fixed syntax-only clang.
+**Tech Stack:** Installed CLT clang21/MacOSX26.5 public C headers; fixed Node26.4,
+builtin node:test; no package/dependency install.
+**Spec:** This named design, S2 separately bounded syntax-only layout prerequisite.
+**Status:** Original missing-source RED59a658 observed; minimal C/test now exist.
+First baseline acquisition refused at db21c6 before fixture/compiler creation;
+after the reviewed exact-size correction, separate baseline60a4ad and payload31
+control0bd1dd passed. This qualifies ordinary compiler layout/sensitivity only,
+not runtime message/BSM/complete TCB/retention/CONTROL/P2. Scoped draft delivery
+was independently reviewed and completed at a4f83db2, without gate promotion.
+
+### File Map / exact interfaces / constraints
+
+- Create scripts/task6a-origin-native-continuity-abi-v2.c: includes only
+  mach/message.h, stddef.h, stdint.h; produces sf_continuity_message_v2
+  (mach_msg_header_t header plus uint8_t payload[32]) and
+  sf_continuity_frame_v2 (uint8_t[32]); no runtime function/global.
+- Create scripts/__tests__/task6a-origin-native-continuity-abi-v2.test.js:
+  consumes ONLY baseline/payload31 modes; produces syntax-observed with actual
+  compiler status/EOF/settlement and original source/copy/input/fixture commitments,
+  or source-unavailable before any compiler/fixture effect.
+- Modify only named spec/plan; prior five code/test files remain unchanged.
+  Earlier published draft map7 stays historical; delivered S2 map is9 at a4f83db2.
+- Exact opt-in SETFARM_TASK6A_NATIVE_CONTINUITY_ABI_TEST=1; default two SKIPs
+  with no input/helper acquisition. Malformed opt-in refuses, no caller selectors.
+- Public layout only: no libbsm signature/link/receipt/codec or TCB proof;
+  full channel/retention/CONTROL/protected/P2 gates stay open.
+- Candidate and independent suffix are held into one fresh0700 fixture's sole
+  exclusive0600 C copy. No object/binary/cache/trace, installation or deletion.
+- Use the independently recorded85-header literal superset, seven exact
+  guarded-include absences and fixed compiler/SDK/resource inputs from S2 spec.
+  Original positional FD checks/once closes, directory bindings and owned-child
+  natural exit/close/both EOFs are mandatory; no missing receipts filled later.
+
+### Task S2a: review design, write real missing-source RED test
+
+S2a and the completed S2b invocations below are historical execution records,
+not new continuation/replay instructions. The original accepted baseline and
+payload31 case must not be replayed in this completion loop. The completed
+delivery/default-opt-out verification is also historical; any new
+diagnostic needs its separately scoped source/effect recipe.
+
+- [x] Independently review exact S2 File Map, primitive-free scope, input
+  nomination and command/oracles. Review actual complete test/suffix/transport
+  before effects; no implicit clearance from this plan.
+- [x] Write the test first. Independent suffix literally checks:
+
+  ```c
+  _Static_assert(sizeof(mach_msg_header_t)==24,"SFCNT_HEADER_SIZE_24");
+  _Static_assert(sizeof(((sf_continuity_message_v2 *)0)->payload)==32,
+                 "SFCNT_PAYLOAD_SIZE_32");
+  _Static_assert(offsetof(sf_continuity_message_v2,payload)==24,
+                 "SFCNT_PAYLOAD_OFFSET_24");
+  _Static_assert(sizeof(sf_continuity_message_v2)==56,"SFCNT_MESSAGE_SIZE_56");
+  _Static_assert(sizeof(sf_continuity_frame_v2)==32,"SFCNT_FRAME_SIZE_32");
+  _Static_assert(sizeof(mach_msg_audit_trailer_t)==52,"SFCNT_AUDIT_SIZE_52");
+  _Static_assert(offsetof(mach_msg_audit_trailer_t,msgh_audit)==20,
+                 "SFCNT_AUDIT_OFFSET_20");
+  _Static_assert(sizeof(natural_t)==4,"SFCNT_NATURAL_SIZE_4");
+  _Static_assert(round_msg(sizeof(sf_continuity_message_v2))+
+                 sizeof(mach_msg_audit_trailer_t)==108,"SFCNT_CAPACITY_108");
+  ```
+
+  Add six independent header offset assertions with literal0/4/8/12/16/20;
+  reject KERNEL/__MVS__/non-Apple/non-arm64 before qualification. Define the
+  complete closed held-input/settlement helper in this test, not production.
+  Baseline consumer is assert.equal(actual.availability,'syntax-observed'),
+  then literal compiler0/empty outputs/natural settlement checks. Missing C
+  therefore fails for missing behaviour without acquiring CLT/fixture/child.
+- [x] Nominate exact test/source absence and run ONLY anchored RED:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_CONTINUITY_ABI_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^continuity ABI compiles the independent user-layout oracle$' scripts/__tests__/task6a-origin-native-continuity-abi-v2.test.js
+  ```
+
+  Preserve actual1FAIL/0PASS source-unavailable result; no compiler effect.
+  Original59a658 CLOSED1:1FAIL/0PASS/0SKIP42.644042ms at test7b5064ef,
+  assertion actualsource-unavailable versus syntax-observed. Paired RED-only
+  C0/I0/M0 and fresh independent351879 held93/checkedallcloses/85originalrows/
+  7absences plus rootc4f60e preceded this single invocation. No CLT/fixture/child.
+
+### Task S2b: minimal typedefs, reviewed syntax-only GREEN and sensitivity
+
+- [x] After original RED, create only:
+
+  ```c
+  #include <mach/message.h>
+  #include <stddef.h>
+  #include <stdint.h>
+  typedef struct {
+      mach_msg_header_t header;
+      uint8_t payload[32];
+  } sf_continuity_message_v2;
+  typedef uint8_t sf_continuity_frame_v2[32];
+  ```
+
+  Candidate33431bd8 created after original59a658. Future-helper review identified
+  incomplete original compiler-result emission and missing explicit distinct-FD/
+  separately reported read-atime checks. Root adds only these test-copy witnesses;
+  the independent oracle,85nomination rows, command and production typedefs stay
+  unchanged. Complete current-source/effect review was separately performed below.
+  Paired complete baseline source/effect review C0/I0/M0 at C33431/testf55ec /
+  planb6947/spec5a93 plus independent53ac70 full94held/checkedcloses/preservation/
+  resource gates preceded original db21c6 CLOSED1:1FAIL/0PASS/0SKIP44.643666ms.
+  Its generic100MB input bound rejected the already nominated290664032-byte
+  clang before fixture/compiler acquisition. Root confirms unchanged inode14827087
+  and exact byte size; narrows other inputs to1MiB and adds an exact clang size
+  pin plus that file's streaming bound. Hash/inode/owner/mode/material/close
+  checks and the oracle/command are unchanged. This is a causal harness correction,
+  not a successful layout result or an accepted-baseline replay. Fresh complete
+  current-source/effect/physical gates were required before corrected baseline
+  and were closed by the separately recorded reviews/receipts below.
+
+- [x] Independently review complete candidate/test/suffix/header nomination,
+  seven absences, checked ownership and this closed argv before effects:
+
+  ```text
+  CLANG --no-default-config --target=arm64-apple-macos26.5
+  -resource-dir RESOURCE -isysroot SDK -nostdinc
+  -isystem RESOURCE/include -isystem SDK/usr/include
+  -fno-modules -fno-implicit-modules -fno-implicit-module-maps
+  -std=c11 -O0 -Wall -Wextra -Werror -fsyntax-only -x c OWNED_COPY
+  ```
+
+  CLANG/RESOURCE/SDK are the fixed S2 spec paths, not caller parameters; compile
+  env exactly PATH=/usr/bin:/bin,LANG=C,LC_ALL=C,TMPDIR=owned fixture. No linker,
+  -c/-o/-E, native binary/load, implicit configuration, modules or extra include.
+  Paired corrected C0/I0/M0 at C33431/test1ee9/plan a329/spec5a93; fresh
+  independent88b521/8e63a3/38b984 validates94held inputs,85original nomination
+  rows/seven absences/exact pinned tools/preservation and resource health.
+- [x] After fresh source/resource gates, run anchored baseline ONCE and preserve
+  original complete result. It requires compiler0/empty outputs/all original
+  commitments, natural settlement/checks/once closes. Diagnose any failure;
+  do not silently repeat or weaken assertions.
+  Actual60a4ad CLOSED0:1PASS/0FAIL/0SKIP525.094958ms. Original compiler0,
+  signalnull/both EOFs/empty stdoutstderr;91distinct inputs/91checked closes.
+  Original source33431/test1ee9/clangf305 and85-header nomination55e1f4b0
+  committed in the first result, plus1693-byte copy SHA49bb28d2 and inode.
+  Independent92e3fd verifies ONLYthe original baseline fixture and exact one-file
+  inventory/current held consistency/literal source+oracle bytes. Additional
+  metadata is current-read evidence, not a retroactive original commitment.
+- [x] Separately review and run ONLY payload31 control ONCE, same runner/env
+  except anchored test-name 'continuity ABI rejects the padded payload-length mutant'.
+  Change only unique payload[32] declaration to[31], not independent oracle.
+  Require actual compiler1/empty stdout/exactly one static-assert error labelled
+  SFCNT_PAYLOAD_SIZE_32/one-error summary/no warnings plus complete original
+  settlement/checks/closes. Generic failure cannot pass. Keep original fixture.
+  Paired control C0/I0/M0, baseline audit92e3fd and fresh f5e06d/f5d399/d0e9b3/
+  b86011/resource gates preceded ONE0bd1dd CLOSED0:1PASS/0FAIL/0SKIP522.3485ms.
+  Actual compiler1 emits exactly SFCNT_PAYLOAD_SIZE_32 and31==32 note with
+  one-error summary, no warning/othererror/stdout; both EOFs/natural settlement/
+  91distinct inputs/91checked closes. Original1693-byte copy SHA b38cb646 and
+  inode/header nomination committed in the first result. No baseline replay.
+  Independent52c5b1 verifies ONLYthe new control fixture's original binding/
+  bytes/exact one-file inventory and source mutation plus unchanged oracle.
+  Three audit FD closes are distinct from the original91; extra metadata is
+  current-read evidence, not an immutable/cross-epoch TCB proof.
+- [x] Verify default two SKIPs (opt-out only), syntax/diff/version/English/path
+  contracts, exact nine-file aggregate and scoped exposure; independently
+  review before ordinary commit/push to the existing DRAFT275. No ready/merge,
+  clean-main build, host rollout or other native clearance follows from S2.
+  Root787586 records default2SKIP0PASS0FAIL41.163959ms, syntax/contracts/diff0;
+  paired source review and fresh f420d7/08b41c preservation/resource checks passed.
+  Actual640e84 commits four598+/0- files at a4f83db2; reviewed normal push and
+  exact-head PR/body verification5d1e9b confirms OPEN/DRAFT/nine4897+/7-.
+
+## S1 inert Node-API prerequisite implementation plan
+
+> Root executes inline as sole writer/delivery/effect owner. Parallel workers
+> independently inspect source and effect recipes read-only. Standing owner
+> authority selects this bounded diagnostic; no repeated routine approval menu.
+
+**Goal:** Measure actual native ABI/load/callback refusal without transferring
+or inspecting a task right or admitting CONTROL/protected-origin/P2.
+**Architecture:** One fixed owned Node child loads one adjacent C addon and
+calls one inert native callback. Real typed test-copy delegates independently
+record callback execution; canonical JavaScript text alone is insufficient.
+**Tech Stack:** Public Node-API8 C headers, fixed Node26.4/libnode147, CLT clang/ld,
+MacOSX26.5 SDK, builtin node:test; no package installation or node-gyp.
+**Spec:** Existing named design, S1 separately bounded inert Node-API prerequisite.
+**Status:** Missing-source RED recorded; minimal C/CJS and test now exist locally.
+First compilation/link stopped on a deprecated-option warning before inspection
+or addon load. After the reviewed correction, four separately anchored cases
+passed: actual baseline, omission, native-message and argv. This qualifies only
+the ordinary instrumented S1 sample, not transport/CONTROL/protected/P2 or T4.
+
+### Global constraints / File Map / interfaces
+
+- Create `scripts/task6a-origin-native-cooperative-initializer-v2.c`.
+- Create `scripts/task6a-origin-native-cooperative-entry-v2.cjs`.
+- Create `scripts/__tests__/task6a-origin-native-cooperative-initializer-v2.test.js`.
+- Modify only this named plan and its named spec for the causal refinement.
+- Existing task-port C7deb/testb2fc/builtin entry stay unchanged. The initial
+  published draft checkpoint is4; published S1 checkpoint23f36357 and the current
+  aggregate are7. This remains incomplete draft feedback.
+- Default opt-out has no native effects; opt-in exactly
+  `SETFARM_TASK6A_NATIVE_INERT_INITIALIZER_TEST=1` in the test process only.
+- No Mach/ports/TFP/query/threads, target/path/provider selectors, policy/security/
+  credentials/service/DB changes or new runtime integration. All current gates
+  and roots/builds/fixtures/journal/original dirty files are preserved.
+- Production consumes a napi_env and original napi_value exports at the standard
+  NAPI_MODULE_INIT interface; produces only initialize(). It always throws the
+  fixed native unavailable error, never transport/readiness or positive authority.
+- NAPI_VERSION8; production source calls create_function/set_named_property/throw_error
+  plus libSystem `_Exit`. Compiler security/runtime imports are distinct and stay
+  enabled; unmodified binary closure is not inferred from the derivative.
+  NAPI failure => owned child exit72, never acceptance.
+- Entry prints actual native error.message, extra argv refuses BEFORE require.
+- Instrumentation delegates actual NAPI functions, records actual callback entry
+  and return plus image identity, never a mock status or JS self-certification.
+
+### Task S1a: exact design review, then real missing-behavior RED
+
+- [x] Self-review this design for contradiction with the full-channel no-effect
+  gate; keep only the inert exception explicit. Independent read-only reviewers
+  inspect all new file responsibilities, status checks, loader identity,
+  resource custody and four behavioral oracles. Review is not an effect run.
+- [x] Write the new test first. Its closed helper holds original sources first;
+  missing source returns `{availability:'source-unavailable'}` before fixture,
+  CLT, Node child or addon acquisition. Baseline assertion is:
+
+  ```js
+  const actual = await invokeInertInitializer('baseline');
+  assert.equal(actual.availability, 'inert-native-observed');
+  assert.equal(actual.code, 2);
+  assert.equal(actual.stdout, '');
+  assert.equal(actual.stderr, 'cooperative transport unavailable\n',
+    'native-error-message');
+  assert.equal(actual.trace.callbackEntries, 1, 'native-callback-entry');
+  ```
+
+  Native helper consumes only the closed baseline/omission/native-message/argv
+  modes. Build test-copy prefix with actual typed delegates/trampoline, no source
+  body callback marker substitute. Exact prefix/helper/command/environment and
+  ownership recipe receive independent review before any invocation.
+- [x] Run anchored RED only after test-source review:
+
+  ```sh
+  /usr/bin/env -i PATH=/usr/bin:/bin LANG=C LC_ALL=C SETFARM_TASK6A_NATIVE_INERT_INITIALIZER_TEST=1 /opt/homebrew/Cellar/node/26.4.0/bin/node --test --test-concurrency=1 --test-name-pattern='^inert native initializer delegates actual callback and refuses$' scripts/__tests__/task6a-origin-native-cooperative-initializer-v2.test.js
+  ```
+
+  Invoke from the sole isolated writer root, serially, with no other native
+  effect batch active. env -i excludes NODE_OPTIONS/preloads and ambient loader
+  selectors before even the test runner starts. All owned helper children also
+  use fixed scrubbed PATH/LANG/LC_ALL and fixture-local TMPDIR.
+  Expected one assertion FAIL: actual source-unavailable vs inert-native-observed;
+  no syntax error, compiler or loader effects. Preserve the original closed
+  result. Do not fabricate GREEN, skip the missing behavior or weaken the oracle.
+  Original3f8262 CLOSED1: oneFAIL/zeroPASS/zeroSKIP,41.756834ms;
+  ERR_ASSERTION source-unavailable vs inert-native-observed at test17e1e4e7.
+  Both exact RED-only reviews C0/I0/M0; no compiler/link/addon effect.
+
+### Task S1b: minimal inert native implementation / checked measured GREEN
+
+- [x] Implement only the native registration/callback and fixed entry described
+  in the spec after RED. Native control flow is exactly:
+
+  ```c
+  if (napi_create_function(env, "initialize", 10, initializer_refuse,
+                          NULL, &fn) != napi_ok) _Exit(72);
+  if (napi_set_named_property(env, exports, "initialize", fn) != napi_ok)
+      _Exit(72);
+  return exports;
+  /* initializer_refuse, called later by JS, not during registration: */
+  if (napi_throw_error(env, "ORIGIN_COOPERATIVE_TRANSPORT_UNAVAILABLE",
+                       "cooperative transport unavailable") != napi_ok)
+      _Exit(72);
+  return NULL;
+  ```
+
+  No extra native API, test knob or source-owned file write. JS guards argv and
+  sole initialize export, require is outside callback catch, invokes once and
+  prints actual native message. Unexpected load/setup exceptions cannot match.
+  Future-GREEN review corrections: positional original held-FD reads instead of
+  pathname reopen; guarded stream setup/data failures remain latched until
+  original child close; typed real export wrappers capture env/exports and
+  delegate the original macro bodies; delegate/export image checks occur at
+  their actual invocations, not atexit. Trace is explicit exclusive0600 checked
+  open/fdopen/write/fclose; failed fdopen close failure exits74, otherwise73.
+  All are test-copy-only custody/witness changes, not production authority.
+- [x] Review exact complete source/test and effects before compiler/addon use.
+  Compile argv: `--no-default-config --target=arm64-apple-macos26.5
+  -std=c11 -O0 -Wall -Wextra -Werror -fno-modules -fno-lto
+  -fvisibility=hidden -nostdinc -isystem NODE_HEADERS -isystem RESOURCE/include
+  -isystem SDK/usr/include -isysroot SDK -c OWNED_C -o OWNED_OBJECT`.
+  Link through fixed clang with explicit fixed LD,
+  `--no-default-config --target=arm64-apple-macos26.5 -bundle -fno-lto -nostdlib
+  -Wl,-Z -Wl,-syslibroot,SDK OWNED_OBJECT CELLAR_LIBNODE
+  SDK/usr/lib/libSystem.B.tbd -o OWNED_ADDON`.
+  Constants are the already pinned CLT/SDK/resource paths and exact Cellar
+  Node26.4/libnode147; no ambient search inputs. Separate derivative prefix
+  imports from production. Inspect actual exports/imports/dependency load
+  commands before load; errors/extra symbols refuse.
+  The pinned installed ld.1 specifies default undefined-error. First actual
+  baseline fdee93 CLOSED1 (0PASS/1FAIL) compiled/linked but stopped on exact
+  deprecated explicit-flag warning before inspection/Node load. Remove only
+  `-Wl,-undefined,error`, retain default error semantics and strict empty stderr;
+  no warning suppression/acceptance, `-U` or dynamic lookup. Preserve artifacts
+  and this failed receipt; review the changed recipe before a fresh invocation.
+  Read-only retained derivative inspection establishes the actual fdopen SDK
+  alias and memcpy/stack-protection imports. The test now requires that exact
+  derivative set, keeps protection enabled and does not credit an unmodified
+  production-binary import closure or native callback from this inspection.
+- [x] Fresh physical/resource/preservation gate, then run the SAME anchored
+  baseline command. Require original compile/link0, Node2, stdout empty,
+  actual canonical stderr, checked native order/count/status/image trace,
+  both EOF/original close and all held reread/stat/path/checked closes.
+  Retain all fixtures, sources/objects/addon/trace and original output. No force
+  kill, deletion, uncertain disposal, original-receipt replay or host mutation.
+  Paired exact reviews C0/I0/M0 at Ccbafba3d/CJSbd83726b/test4cf92b3d/
+  spec547265cb/planb9ed3ff4. Fresh7/tool/preservation gate5b9171/4e900c/3a9174
+  CLOSED0; own helper rechecks recorded30files/38selectors before/after.
+  ONE corrected baseline1daa29/session52693 ->fd884c CLOSED0:
+  1PASS/0FAIL/0SKIP1233.145042ms, actual callback/refusal plus exact five
+  invocation-site image/count witnesses. No baseline replay after acceptance.
+  Independent1efa83/d8eb34/8c7479/2d11ce confirms bounded post-audit/current7/
+  preservation/tools/allclose. Original receipt did NOT emit object/addon/trace
+  hashes/inodes: independent artifact checks are current held consistency plus
+  literal trace expectations, NOT cross-epoch immutable comparison. Keep this
+  limitation; internal helper checks are not an unmodified/P2/continuous receipt.
+
+### Task S1c: independent oracle sensitivity and scoped checkpoint
+
+- [x] Write/run one closed omission control: actual module still loads and
+  registers initialize, modified entry never invokes it yet prints canonical
+  stderr/exit2. Parse its structurally valid create/set-only trace without
+  helper faults; unchanged baseline oracle checks callbackEntries before full
+  semantic order/count checks and must fail native-callback-entry only.
+  Original8184c4 CLOSED0:1PASS/0FAIL/0SKIP1072.43525ms. Same canonical JS
+  stderr, valid create/set-only trace, precise callback-entry oracle rejection.
+- [x] Write/run one closed C-message control: change native thrown literal,
+  original entry stays byte-identical. Real stderr changes; unchanged oracle
+  must fail native-error-message, while callback/status/image facts remain real.
+  Original710fec/session26538 ->c856cd CLOSED0:1PASS/0FAIL/0SKIP1172.114792ms.
+  Actual changed native stderr, original entry bytes, precise native-error-message
+  rejection, complete real callback/delegate/export witnesses unchanged.
+- [x] Write/run extra-argv refusal with no addon file: expected argv stderr,
+  Node2/empty stdout/no native trace, independently verified before-load refusal.
+  Originala958fd CLOSED0:1PASS/0FAIL/0SKIP607.814541ms; no compile/link/addon
+  in this case. All three were separately reviewed and serial, each after fresh
+  custody/resource checks. No four-case omnibus or other native matrix replay.
+- [x] Confirm default opt-out, syntax/diff/version/English/path contracts and
+  independent source/test review on exact pins. Native outcomes are ordinary
+  measured S1 only, not native transport/CONTROL/P2/full matrix approval.
+  Exact test4cf92b3d default4SKIP/0PASS/0FAIL41.854792ms, syntax/diff0;
+  ea461f version2.3.79/1577d2 English1934/2dcd1a paths969 CLOSED0.
+  Both exact source/effect reviews C0/I0/M0; final receipt/docs aggregate review
+  and public seven-file exposure check precede the scoped checkpoint below.
+  Independent35f5f4 checks ONLY the three original control fixtures:11files,
+  exact5+5+1 inventories, original/derived entry and compiled-source hashes,
+  literal traces/currentheldstat/path/allclose; no replay or immutable original
+  object/addon/trace commitment. Preserve the warning failure and original RED.
+- [x] Scoped conventional checkpoint and normal draft-branch update after fresh
+  held/preservation/exposure checks. Do not mark ready/merge/rebuild/rollout from
+  S1 or replay the retained genuineFAIL5. Full-channel and T4 gates remain open.
+  Final paired C0/I0/M0 at plan3cfec8e8/specf883759d; root syntax/diff/version/
+  English1934/paths969 and fullheld7/scoped exposure checks pass. Scoped commit
+  23f36357e8109d25f863c102796e7c19d0b18624/tree7873d2f8/parent6c2225 contains
+  EXACT5 delta files675+/31-. Normal push f83665 and existing DRAFT275 body edit
+  8ead6a CLOSED0. Root4f08f6/independent81bc9d,d41b40 confirms actual OPEN/
+  DRAFTtrue/head23f36357/baseae5/exact7files3910+/7-. Final7eac81/76b5d3/50d316
+  confirms cleanroot/index, source pins, preserved originals/journal/tools/CLI.
+  Current security check SUCCESS is not acquisition/CONTROL/P2 acceptance;
+  historical Codex feedback applies only to d589, no current-head review proven.
+
+## Feedback-only draft checkpoint — not positive-path delivery
+
+Root may normally push this existing scoped branch and open ONE explicitly
+DRAFT PR against main for independent feedback on the incomplete diagnostic.
+This bounded review handoff is separate from T4 delivery below. It does not
+permit ready-for-review promotion, merge, clean-main build, rollout or a new
+native experiment. Strict genuine acceptance remains unmet; green cloud checks,
+bot comments, accepted review requests or silence cannot reopen that gate.
+
+**File Map:** Initial published checkpoint has four files: task-port C/test and
+these named spec/plan. Published S1 checkpoint23f36357 extends the draft to
+those four plus its three inert source/test files (seven total), still incomplete.
+No external operational log/journal, credentials, runtime artifacts or retained
+cluster data are staged/published. Normal push only; no force/history rewrite,
+main write, branch-protection/access/provider configuration or paid activation.
+
+- [x] Complete independent aggregate source/test/docs review of baseae5a7b0e
+  through0872e09c. C7deb/testb2fc/current research docs match. Both C0/I0/M0
+  assessments permit only an honest incomplete feedback draft, after this
+  refinement is reviewed. Exact source/verification pins remain in receipts.
+- [x] Review this exact refinement/body and public four-file exposure, fresh
+  HEAD/index/worktree/remote/preservation/resource gates, then normal scoped push
+  and one DRAFT PR. Verify actual returned PR/head/base/draft state and file map.
+  Paired C0/I0/M0 at plan3207ef17/specd818e433; scoped docs commitd589ae1d.
+  Normal push d6a5c3 and ONE draft create019f4a CLOSED0. Actual PR275
+  b159cc/ebdd8a confirms OPEN/DRAFTtrue/head d589ae1d/baseae5a7b0e/exact4files.
+  This is a historical feedback checkpoint, not qualification of later heads.
+- [x] State prominently in the PR: genuine nominal actualFAIL5 at test43ec,
+  finite15 passed in separate batches at C7deb/testb2fc, default16SKIP is opt-out
+  only, implementation incomplete. No full-matrix/native-uncertainty/CONTROL/
+  protected/P2/clean-main/host rollout or all-tests-pass claim.
+- [x] Request existing review integrations once only if available as ordinary
+  review feedback, never coding-agent assignment/new settings/paid activation.
+  Copilot CLI request aefea6 returned0 but actual reviewer/timeline absent;
+  Codex request ec5089/comment5996758004 and Gemini97101f/comment5996758515.
+  No retries. No actual Copilot/Gemini response or formalAPPROVED inferred.
+- [ ] Settle actual current-head feedback with fully paginated checks/comments/
+  reviews/threads and explicit head association. At14:44UTC on d589ae1d,
+  Codex RUNNING, GitGuardian SUCCESS, formalreviews/threads empty; not settled.
+  quota/absence/accepted request is not response or formalAPPROVED. Review any
+  suggested code/native verification separately before applying it.
+- [ ] Keep the PR draft and T4 delivery unchecked. Continue safe source research
+  or scoped reviewed fixes; no native retry, permission change, automatic
+  advancement or merger from draft feedback. The genuine-positive gate remains
+  separately required before positive-path delivery can be considered.
+
+## Source-only runtime-initialization channel research gate
+
+> Root is the sole writer. Independent workers review/research read-only.
+> This is a research gate, not a native implementation or effect recipe.
+
+**Goal:** Decide whether a separately reviewed postexec initializer/channel
+design has a complete, fail-closed acquisition contract without policy changes.
+**Architecture:** One fixed ordinary owning parent, one private inherited
+registered initialization channel, postexec-only self-right and authenticated
+message custody. Do not replace or relabel the genuine task_for_pid FAIL5.
+**Tech Stack:** Published Apple XNU/Mach contracts, installed SDK and fixed Node
+metadata only at this stage; no addon, new loader/compiler or native experiment.
+**Spec:** Existing named spec, Source-only runtime-initialization channel candidate.
+**File Map:** Modify ONLY this plan and its existing named spec for research.
+C7deb/testb2fc/delivered NAME/entry/bootstrap/maps, packages/DB/services/selectors
+and every retained root/build/fixture/journal/originaltwo remain unchanged.
+**Status:** Checkpoint82272c9b is locally committed/clean, unmerged. This research
+does not open genuine-positive/T4delivery/CONTROL/protected/P2 gates.
+
+- [x] Read primary installed three-slot registration contracts and published
+  userspace wrapper; identify per-slot copied references and separate VM allocation.
+  Empty baseline means exactly3NULL, not count0. Lookup errors suppress cleanup
+  status and cannot prove ownership absent.
+- [x] Read primary published self-port policy/message ownership/foreign CONTROL
+  contracts. INFO_EXT is receive-only; no supported immovable-send inspection
+  was established. COPY_SEND can guard-fault; received dispositions transform;
+  pseudo-receive can rename returned resources. Published .6 is not host .10.
+- [x] Compare unchanged failed TFP path, separate postexec initialization and host
+  policy change; choose only source-only separate-initializer research. Reject
+  preexec task substitution and no policy/permission/security/guard changes.
+- [x] Record proposed message/authentication/lifetime/disposition invariants in
+  the named spec; retain every uncertainty and the new initializer TCB boundary.
+- [x] Independent full contract review: exact three-slot baseline/refusal/restore,
+  per-occurrence right and VM accounting, sender borrow/COPY_SEND, transformed
+  receiver ownership, audit trailer bounds/authentication, no hidden retry,
+  live unreaped generation, late cleanup and unknown-owner retention. Record
+  findings; fix source-only ambiguities before calling this research gate closed.
+  Paired C0/I0/M0 at plan9e9fae/speca3e after burn-cleanup M1 clarification,
+  before source-only docs commit0872e09c. This closes contract review ONLY;
+  the next complete-error/continuity/executable-design decision remains open.
+- [x] Bounded primary-source prerequisite audit: published spawn/exec slot
+  inheritance is supported, installed full startup continuity is not proven;
+  current SEND/PID/audit facts do not exercise foreign CONTROL. Published
+  conversion policy is conditional on a kernel-managed predicate whose
+  non-monitor backing starts true, not presumed false from DevToolsSecurity.
+  Record these distinctions in the spec's Source-only prerequisite findings.
+  This does not close any actual-host/complete-custody/executable-design gate.
+- [x] Bounded primary-source error audit records COPY_SEND baseline versus copied
+  message refs, coalesced pseudo-return urefs/saturation, descriptor/header
+  receive distinctions, partial body errors and unobservable copy-back. Root
+  personally read full relevant .121.6 C contexts; both independent read-only
+  design assessments support only conservative retained-failure containment.
+  Published pseudo-receive discards final copy-back status after namespace
+  installation; lookup suppresses VM-cleanup status on RPC failure. No generic
+  error=>empty/closed rule, unchecked destructor, retry or running-host inference.
+  Source-only File Map stays this plan/spec; all five code/test pins unchanged.
+- [x] Independently review the written literal noncomplex continuity-only
+  research contract in the named spec: P_BASELINE/P_CHANNEL/P_BORN,
+  C_LOOKED_UP/C_STASH_CLEARED/C_SENT, P_RECEIVED/C_LOCAL_CLOSED,
+  P_RECEIVER_JOINED/P_AUTHENTICATED/P_END/P_SETTLED and sticky RETAINED_FAILED_OWNER.
+  Require explicit header disposition, NULL reply/voucher, fixed nonce/payload/bounds/
+  interrupt options; each receive/send/lookup occurrence and VM/stash obligation;
+  checked successful clearing/restoration/disposal/join before reap; every
+  unproven phase burns acceptance into RETAINED_FAILED_OWNER without retry or
+  owner exit. At most one admitted attempt/retained owner, explicit resource/
+  deadline/external-death assumptions. Actual postexec original-channel receipt
+  plus authenticated live original-child sender and successful cleanup is the
+  only continuity oracle; omitted-registration control must fail that same
+  oracle, not compilation/harness. No task-self descriptor/CONTROL/P2 claim.
+  Native result states are LOCAL_CLOSED_AFTER_SEND,
+  KNOWN_LOCAL_CLOSED_REFUSAL and UNCERTAIN_RETAINED_FAILURE; the record alone
+  cannot certify cleanup. Child remains live awaiting original END after known
+  local closure. Unknown callback ownership forbids JS/S1_Exit fallthrough;
+  the literal native retention dispatcher and binary-frame/ABI/primitive-witness
+  recipes remain required before a separately reviewed executable proposal.
+  Successful path has four separate lookup VM originals and sealed R/S/L/Kp/Kc/D
+  distinctions. Seal every valid lookup slot occurrence and original VM before
+  semantic validation; require acquisition count3/[valid L,NULL,NULL]. Unexpected
+  slots/counts retain all acquired/unknown obligations without an unbounded walk.
+  Owner reads captured receiver fields/authenticates only after actual join;
+  fresh original-child live/unreaped check precedes END.
+  Known all-NULL semantic absence is finite only after complete
+  checked local/parent closure and actual receiver join/natural child settlement;
+  unknown RPC/headercopyback/disposal/frame errors are never expected PASS.
+  This step is docs-only, ONLY plan/spec File Map; no implementation file,
+  compiler/addon invocation or effect recipe is admitted.
+  Paired final C0/I0/M0 before source-only checkpoint292c79ba after an I1 fix:
+  seal every valid lookup occurrence and original VM before semantic validation;
+  actual receiver join precedes owner buffer inspection/authentication. This
+  closes that literal source-contract review only, not executable admission.
+- [ ] Independently review the additional explicit32-byte frame layouts,
+  56-byte prospective user message and52-byte audit trailer/108-byte capacity;
+  keep received-header transformation distinct from sent COPY_SEND. Require
+  explicit payload-length assertion because padding can hide32-to31 drift.
+  Public BSM parsing remains a separate future linked dependency; layout-only
+  characterization cannot close it. Compare normal pre-acquisition private-pipe
+  wait with the unresolved FD/error/cancellation fallback and unchanged-mask
+  signal-wait source path; never label poll/nanosleep allocation-free by assumption.
+  Current File Map stays ONLY plan/spec; no code/compiler/native effect admitted.
+  Preferred next source wait is original-thread unchanged-mask public sigsuspend
+  after checked public cancellation disable/save. Prove no intervening mask
+  mutation; no signals/handlers/security changes. Retained wait returns never
+  renew acceptance/acquisition or permit owner exit. Restore saved cancellation
+  only after every thread-owned resource/receiver/child has definitely settled;
+  pending cancellation can make restoration nonreturning. Published contracts
+  are not installed backend/handler closure; finite zero-Mach witnesses and the
+  full executable/effect review remain open.
+- [ ] Determine whether the complete send/receive error table and postexec
+  registration/loader continuity permit a separately scoped executable design.
+  If not, record the precise unsupported contract and continue only safe source
+  research; do not fill the gap with unchecked destruction or fabricated closure.
+  If supported, present and review that complete design and exact new source/test
+  File Map/TCB/compiler/loader/control recipes before implementation. This gate
+  contains no admitted source-code/native invocation or blanket future clearance.
+
+## Ordinary direct-parent task-port acquisition implementation subplan
+
+> **For agentic workers:** Root executes inline as the sole source/Git/effect
+> writer. Parallel workers perform read-only investigation and independent
+> review; no delegated edits, deliveries or native effects. Steps use checkboxes.
+
+**Goal:** Observe actual task_for_pid result availability for the fixed ordinary
+parent's own Node child without admitting usable CONTROL or protected origin.
+**Architecture:** One fixed C parent owns the target and its exclusive reap.
+One joinable pthread makes the sole request; main monitors/drains and retains
+target status until checked join. A late request never qualifies anything.
+**Tech Stack:** C11 atomics, Darwin pthread/Mach/wait APIs, builtin Node26.4.0
+tests and the unchanged delivered builtin entry; no added packages.
+**Spec:** docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md,
+section
+Ordinary direct-parent task-port acquisition slice.
+**Status:** T1 refusal, T2 synthetic lifecycle and finite T3 controls verified
+below in separate pinned batches. ONE genuine own-child request returned actual
+kernel failure5; strict nominal remains FAIL, not skipped. Positive-path T3 and
+T4 remain open; no CONTROL or protected admission and no permission changes.
+
+### Global constraints and File Map
+
+- Base delivered mainae5a7b0e56e999255c4beb6937ea63e563f930e8/tree96bfaba0.
+  Isolated independent clone .worktrees/setfarm-native-control-capability-20261005-v1,
+  branchfix/task6a-native-control-capability-v1; old NAME and build roots retained.
+- Create scripts/task6a-origin-native-task-port-v2.c: one ordinary owning parent
+  and its joinable request thread, not a sibling worker/public target consumer.
+- Create scripts/__tests__/task6a-origin-native-task-port-v2.test.js: builtin-only
+  closed ordinary fixtures, actual lifecycle controls and independent oracles.
+- Modify only this plan and its existing named protected design. Delivered NAME,
+  entry/bootstrap/map helpers, packages, DB, services and selectors unchanged.
+- Extra argv/root/UID mismatch refuse before pipe/thread/spawn. No caller
+  PID/path/options/configuration, credential/policy/security change or root effect.
+- Fixed Node26.4.0 + adjacent entrybbcf752e; scrubbed environment/private pipes.
+  Main alone owns birth/waits/signals/failure ledger; worker never touches them.
+- READY/IN_FLIGHT/BURNED/BURNED_IN_FLIGHT admission; strong CAS with exhaustive
+  state handling. An admitted call is not retractable and may enter kernel after
+  burn. Preserve its captured target generation until actual thread settlement.
+- Main uses only exact WEXITED|WNOHANG|WNOWAIT death observation before join;
+  no consuming reap unless !thread_created || checked_join_success.
+- Completion release/acquire plus successful sole pthread_join before reading
+  returned fields/consuming status/owner exit. No cancellation/detachment/kill
+  or invented timeout closure. Unknown settlement retains failed bounded owner.
+- Nonrenewable3s validity, bounded buffers/50ms pending backoff. Main post-join
+  port queries still assume kernel return; no hard bound/continuous monitoring.
+- Register non-null/non-dead returned candidate before classification, even on
+  API error; burned returns allow once local disposal only, no forward queries.
+- Positive outcome task-for-pid-right/unqualified; productionAuthority,
+  controlUsable, completeNativeClosure, protectedOrigin all literalfalse.
+- No lockdown/suspend/VM/maps/native closure, P2/genesis/32/33/service cutover.
+- Default tests visibly skip. Closed test-process opt-ins never reach children:
+  refusal, compile, lifecycle, 1. No broad native glob invocation or frozen replay.
+- Retain every fresh fixture/failed output/old root/build/journal/originaltwo.
+  Compiler/native/CI/build recipes require separate exact-source/effect review.
+
+### T1: Reviewed refusal consumer and actual ordinary refusal
+
+**Files:** new test, new C, existing spec/plan only.
+**Interface:** test-private
+invokeOwnedTaskPortProbe(args,stage='execute',fixture='delivered',control='none')
+returns settled code/stdout/stderr/entryStarted plus original fixture custody.
+Args are only [] or ['unexpected']; no helper export or production selector.
+
+- [x] Review source-only design and exact four-file map; self-review scope,
+  ambiguity, caller selection and false authority. Commit only reviewed docs.
+- [x] Add the literal refusal consumer, enabled only in test mode refusal:
+```javascript
+const actual = await invokeOwnedTaskPortProbe(['unexpected']);
+assert.equal(actual.code, 2);
+assert.equal(actual.stdout, '');
+assert.equal(actual.stderr, 'TASK6A_NATIVE_TASK_PORT_PROBE_REFUSED\n');
+assert.equal(actual.entryStarted, false);
+```
+  Before C exists the helper returns explicitly source-unavailable/null without
+  compiling; source-unavailable is test-support RED, not a kernel witness.
+- [x] Execute only that test with the new source absent; preserve failing raw
+  assertion and prove no compiler/native effect. Do not manufacture code2.
+- [x] Add only the minimal refusal justified by this RED:
+```c
+#include <stdio.h>
+int main(void) {
+    fputs("TASK6A_NATIVE_TASK_PORT_PROBE_REFUSED\n", stderr);
+    return 2;
+}
+```
+- [x] Adapt actual test support from the delivered NAME test's held regular
+  inputs, fixed tool/SDK/resource, fresh directory identity, calibrated startup
+  marker, separate object/link and exact natural exit+close/bothEOF finalizers.
+  Rename SOURCE/test interface/output literal only initially; no native wrapper,
+  pthread or fixture mutation is admitted by this refusal step.
+- [x] Review full literal helper/source/compile/link/dependency/env/output recipe
+  twice, record exact pins/fresh preservation/resources, then run one refusal
+  GREEN. Missing support is not a semantic pass. Commit reviewed refusal slice.
+
+T1 receipt: docs365479a31c8ad9f3d81abd89c646abb629eabb2f committed only after
+two independent reviews. Absent-source f6e9b5 CLOSED1,38.873709ms, actualnull
+versus literal2/source-unavailable, before adding C. This is support RED only.
+Minimal refusalC104b49361ce264aade761b9409ce04c2676a19b3b81d629be34be8f62db972ce,
+testb813bea38d67e84d1be125bcadf6cd69f26b19db8e0832d3394a84cfe9c4cfec passed
+two full literal/effect C0 reviews after correcting stream setup: errors latch
+and await original close, never release held inputs from early Promise reject.
+Inventory e97868/af32f2/b37728 and rootb18b05 fresh pins/resources preceded ONE
+argvGREEN1503ff naturally CLOSED0,1PASS/0FAIL/0SKIP863.371666ms. Compiler0,
+linker0, calibrationNode2, actual C2/empty stdout/canonical refusal stderr,
+no probe entry-start marker; original exit+close/bothEOF/finalheld/allclose.
+Original refusal fixture receipt1503ff retained source104b,
+object752d0188ae4ca07a7c5e081173798124aaecb81c53e7f965bb37db1ed37bdeda,
+binary55fb703930d4ea72a33b78cacd8fa770a785291312d847bdf9bcdc53db817abc,
+entry42b2bb659ff4174613a0b707477e310afb2249967c84a84a8d38082f714224da.
+Original startup calibration retained same
+entry and actual marker d450ae291ad1e5d6cfe2513659ad7dbd7bc63744f01ff17d318da399df1edba9.
+Root4c590e post at02:22:08 UTC verified exact six artifact files/two private
+directories/noextras/no probe marker,held6final/allclosed; independent post
+audit is separate. Default2f9efa1SKIP/0PASS40.728667ms, version2.3.79,
+English1933/path968/diff0. No thread/Mach/CONTROL/protected credit or replay.
+
+### T2: Thread/lifecycle consumer RED and minimal owner implementation
+
+**Files:** same C/test/spec/plan.
+**Interfaces:** C-local request result publication and owner eligibility:
+```c
+#include <mach/mach.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <sys/types.h>
+enum Admission { READY, IN_FLIGHT, BURNED, BURNED_IN_FLIGHT };
+struct Request {
+    pid_t child;
+    mach_port_t self;
+    uint64_t deadline_ns;
+    atomic_int admission;
+    atomic_bool done;
+    bool attempted;
+    int unavailable_reason;
+    kern_return_t status;
+    mach_port_t returned;
+};
+struct failure {
+    const char *operation;
+    int code, resource;
+    uint64_t observations;
+};
+struct owner {
+    pid_t child;
+    int born, reaped, status, burned, child_uncertain, observed_dead;
+    int input, output, error;
+    int output_eof, error_eof;
+    size_t output_bytes, error_bytes;
+    uint64_t deadline;
+    mach_port_t task_port;
+    int task_port_owned;
+    struct failure failures[32];
+    size_t failure_count;
+    int failure_overflow;
+    pthread_t request_thread;
+    bool thread_created, thread_join_attempted, thread_joined;
+    struct Request request;
+};
+/* child/self/deadline are immutable after pthread_create.
+ * Result fields are worker-only until release(done), acquire(done), checked join.
+ * Main alone mutates owner fields outside request; initialize thread booleans
+ * false, FD slots -1, task_port MACH_PORT_NULL and both atomics explicitly.
+ * thread_joined becomes true only after the sole pthread_join returned zero.
+ */
+static bool can_consume_target_status(const struct owner *o) {
+    return !o->thread_created || o->thread_joined;
+}
+```
+  This extends the delivered NAME owner's finite ledger/pipe lifetime record
+  with observed-death and actual request-thread state, replacing NAME-right
+  fields with task_port/task_port_owned. It is not a DTO/public authority.
+
+- [x] Add one closed test-copy lifecycle control whose request shim returns an
+  explicitly synthetic failure without a target Mach call. Require actual
+  pthread creation/termination/join and actual child exit/EOF/reap/pipe custody.
+  A second closed finite delayed shim must cross the original validity budget:
+  main must observe child death without consuming it, join, then actually reap.
+  The shim never fabricates an acquired right or successful disposal.
+- [x] Define independent trace oracle using thread-safe per-event publication,
+  not the old unsynchronized trace counter. Require partial ordering, not a
+  scheduler-dependent total order:
+```javascript
+assert.ok(event('create-request') < event('worker-enter'));
+assert.ok(event('worker-return') < event('actual-join-success'));
+assert.ok(event('actual-join-success') < event('target-reap'));
+assert.equal(count('target-reap'), 1);
+assert.equal(count('after-reap-target-call'), 0);
+assert.equal(actual.stdout, '');
+assert.equal(actual.code, 2);
+```
+  event/count consume primitive retained trace from actual test-copy operations.
+  create-request is the trace event immediately BEFORE the actual pthread_create
+  attempt. Record distinct create-success only after its actual zero return;
+  assert count('create-success')===1, but do not order that event before worker
+  entry because the worker may run before pthread_create returns. Trace sequence
+  numbers/publication must be synchronized independently of owner/result state.
+  No native-call or protected credit follows from the synthetic request shim.
+- [x] Paired literal/effect review precedes compiler/thread/child invocation.
+  Run affected lifecycle consumer against refusal-only C as actual behavioral
+  RED: it lacks birth/thread/join/reap events. Preserve artifacts/raw result.
+- [x] Implement only source obligations justified by these consumers: fixed
+  ordinary argc/UID checks; checked child/pipes/spawn/signal setup; immutable
+  request; exhaustive strong-CAS admission/burn; one request function; pending
+  non-consuming waitid; bounded streams/cleanup; done+sole join; guarded target
+  consumption and original right registration/once disposal. Reuse NAME's
+  finite protocol/failure ledger only after separating its pre-join wait path.
+- [x] Extend declarations/compiler review with exact pthread/atomic headers and
+  actual libSystem exports. No ambient -lpthread/default search/config/helper.
+  Review full new source and test-copy transforms before affected GREENs.
+- [x] Run the finite lifecycle controls, preserve actual operations/traces/raw
+  parent exit/close/EOF and independently audit artifacts. No real taskgated
+  delay or capability result is inferred. Commit only after full diff review.
+
+T2 receipt: actual behavioral RED63343c CLOSED1,800.004709ms BEFORE owner C;
+compile/link0, actual refusal2/valid emptytrace, literal target-spawn0!==1.
+Independent post9be23c exact7artifacts C0; no compiler failure used as RED.
+C6f7c4c983806b20aeef8c9543fa1e03a52acbb7e5d2f366a9aa2493b0bc4970b and
+testef5e5cc029b001078e4e4535ab3e4e5f95da8f5576e03e1c0d065480ec29f78b
+passed paired full literal source/effect C0. Cleanup relative anchor corrected
+to fresh clock AFTER input close/join; header9d621c/b77f7d/728b69 held, pthread
+symlink and SDK atomic-header absence rechecked. Fresh92bee2/2b7974/cccc46/
+2add91 and root225000 physical/resource/preservation gates preceded effects.
+ONE two-case97a6af/session89272->bf0f0e naturally CLOSED0,2PASS4864.632125ms:
+normal actualcreate/workerreturn/checkedjoin then targetreap; delayed actual
+non-consuming death/EOF beforeworkerreturn/join/reap. No genuine task_for_pid:
+request shim returns synthetic KERN_FAILURE/null, no candidate disposal.
+Separate changed-source argv e382b5 CLOSED0,1PASS700.165917ms, actualrefusal2/
+empty stdout/canonical stderr/no entrymarker, beforepipe/thread/target work.
+Independent1d2559 at02:59:22.886 C0 checked original20artifact hashes/modes,
+six private700 directories/exact inventories/no target markers/three calibrated
+markers. Trace84a77cc54185228adc6e5be1ba6ea46bc190ac443b0acffc0aa8cd3cbaab91fa
+and4991d15e41c7146ba1ab80e632ffe15243d5390fe88d071e6696042e689dc488
+each witness actualoncebirth/create/workerreturn/join/reap, bothEOF and six once
+pipe dispositions with all nominated harnessfaults0; join-before-reap in both,
+delayed death-before-join. a7a1e9/0889d3/fb10b5 currentinputs/originaltwo/journal/
+tool/oldCLI keys preserved; disk6686612KiBfree/memory59%/no thermal. Full raw
+receipts retained in the owner-local completion evidence ledger.
+cfca11 version2.3.79/English1933/path968/diff0/default3SKIP0PASS41.983459ms.
+Always-unqualified owner still has no successful binding/audit/challenge path.
+This finite matrix does not cover every uncertainty/create/join/external-death
+path. T3 controls, genuine capability and T4 delivery remain separately gated.
+
+### T3: Independent negative controls and one genuine request
+
+**Files:** same four-file map; no runtime integration.
+
+Initial T3 control pair uses the unchanged always-unqualified T2 owner, not a
+new positive path. The helper accepts two additional closed test-copy controls:
+join-eligibility and delayed-no-consume-gate, only under lifecycle test opt-in.
+No production argv/environment selector or actual failed join is introduced.
+
+- join-eligibility renames only the scratch copy's main to
+  taskport_production_main, appends a zero-input main that calls the actual
+  can_consume_target_status helper with literal field states, then prints its
+  three booleans. No production main, spawn, thread or target call runs. The
+  shared test-only finalizer writes a valid empty trace. Require code0,
+  stderr empty, JSON stdout exactly [true,false,true] and trace empty. This is
+  predicate coverage only, not failed pthread_join or retained-owner evidence.
+- delayed-no-consume-gate uses the finite delayed synthetic request shim.
+  Remove ONLY !can_consume_target_status(o) from consume_target_status's guard
+  in the private C copy. Do NOT alter can_consume_target_status itself or the
+  main completed-break guard: those retain main until actual successful join.
+  Actual waitpid may consume early, but the worker never delegates task_for_pid
+  and performs no PID operation after the synthetic delay. Keep independent
+  reap/signals registry; all birth/thread/EOF/once-close/fault facts must pass.
+  The SAME normal oracle must then reject precisely join-before-reap ordering,
+  using message "actual join must precede target reap". Require an actual
+  completed join before fixture exit, never kill/exit an unknown owner.
+
+Exact semantic-mutation anchor in the current C copy:
+```c
+if (!o->born || o->reaped || o->child_uncertain || !can_consume_target_status(o)) return;
+```
+Replace only that unique line with:
+```c
+if (!o->born || o->reaped || o->child_uncertain) return;
+```
+Pair-review full transforms/primitive oracles and fresh gates before compiling
+or executing either new control. Preserve original outputs/artifacts and
+distinguish pure predicate from actual synthetic-thread semantic evidence.
+
+Initial pair receipt 2026-10-05: test2530/C6f7c4/plan0a91 full paired C0/I0/M0;
+fresh f6fee0/efa17a/d3d5ec/8f6be9 root/head62896/tools/headers/originals/journal
+gates closed. ONE selected ordinary run0939c5 naturally CLOSED0, two passes,
+no failures/skips,4705.937625ms. Predicate C0/[true,false,true]/empty stderr and
+trace; mutant actual target-reap BEFORE worker-return BEFORE actual join,
+normal facts/faultzero satisfied before precise ordering rejection. All original
+raw retained in external completion ledger. Independent99e7e6 post CLOSED0:
+14 nominated artifact hashes/four private directories, full held final bytes/
+stat/path/all closed, exact inventories/no target marker/two calibration markers;
+1cb92f/f6a388/0ce6ed source/originals/tools/selector preserved. Disk6680420KiB,
+memory59%/throttle0/no thermal. This closes only predicate and semantic control,
+not actual failed join, unknown settlement, genuine request or T3 completion.
+
+Historical pre-effect design for the five finite T3 controls, selected after
+two independent source-only investigations. Its then-required exact test/effect
+review and execution are closed by the receipt below; this is not a replay
+instruction:
+
+- create-failure: probe_create retains its once-attempt guard, emits
+  create-request/create-synthetic-failure and returns EAGAIN before real create.
+  Actual production main must record request-create, close input, drain both
+  actual EOFs and consume target once; zero worker/request/join/create-success.
+- burn-before-admission: pure scratch main, explicitly initialized atomics,
+  checked monotonic future deadline. Call actual burn_request on READY, then
+  actual request_task_port synchronously. Literal results attempted=false,
+  done=true, unavailable_reason=3, admission=BURNED, null/KERN_FAILURE; empty
+  trace/stderr. No child/thread or concurrent race is claimed.
+- early-target-exit: closed helper fixture early-exit only paired with this
+  control; private entry bytes exactly import process from 'node:process';
+  newline process.exit(2); newline. Pin delivered entry separately, do not label
+  this scratch entry exact-delivered. Require actual birth/EOF/reap/six closes,
+  no thread/request/join, and ready-eof or early-child-exit (scheduler-dependent).
+- post-join-budget: test wrapper performs actual checked join, records it,
+  then waits finite3.2s before returning success. Scratch copy captures actual
+  owner's deadline/unburned state immediately before its real pthread_join;
+  wrapper independently samples CLOCK_MONOTONIC before join and after delay.
+  Require pre-join-within-budget and join-return-after-budget primitive events,
+  actual join < join-delay-complete < input-close < target-reap. Same lifecycle
+  oracle requires all once/faultzero/EOF facts; classification oracle requires
+  request-burned and forbids request-unavailable/denied/invalid/unqualified.
+- post-join-no-budget-gate: same finite physical join/delay, replace ONLY unique
+  int timely = on_time(o); with int timely = !o->burned; in scratch C. Later main
+  expiry must not mask omission: require task-port-denied from synthetic failure,
+  then SAME specific oracle rejects 'post-join expiry must burn request result'.
+  No forward queries or genuine task_for_pid/candidate/disposal occurs.
+
+All new flags/transforms/fixture enum remain private test code, not production
+selectors. Main exit predicate and unknown-owner retention remain unchanged.
+Only new selected cases execute; retain all original outputs/artifacts and
+distinguish nominated failure/sequential admission/expiry semantics from kernel
+capability, concurrent admission, failed join or protected authority evidence.
+
+Five-control receipt: final paired test5ae0/plane60/C6f7c4 C0/I0/M0 and fresh
+1d9d07/e24397 gates preceded ONE91f0e4 CLOSED0,5PASS/0FAIL/0SKIP10088.042083ms.
+Create failure actual request-create35 + secondary child-stderr; pure burn
+[false,true,3,true,true,true]; early exit actual normal2/early-child-exit cause.
+Both postjoin traces prewithin < actualjoin < delaycomplete < returnafter <
+inputclose < reap. Baseline request-burned0; mutant task-port-denied5 and SAME
+precise expiry oracle rejection. Full original parent channels/hash receipts
+retained externally. Independent1ef9ed03:28:45.986 audited35ORIGINAL files/
+10private dirs, full held final/stat/path/one-link/modes/inventories/allclosed;
+no targetmarkers, five real calibrationmarkers. Earlyfixture53B05a7b2 literal,
+othersbbcf unchanged; burnemptytrace. 399bb3/1a57d3/31d24e source/originals/
+journal/tools/selector stable. Disk6667976KiB/memory60%/throttle0/no thermal.
+No real Mach request/candidate/disposal or positive/protected evidence. This
+batch does not retroactively claim a current-pin all-ten-test native run; T2
+and initial pair retain their exact historical pins/receipts, defaultskip only.
+
+- [x] Add actual finite create-failure-before-real-create test copy, normal
+  join-before-reap baseline, delayed admitted request, burn-before-admission,
+  early target EOF/exit and post-join budget checks. Nominate synthetic responses
+  explicitly; actual kernel denial/disposal cannot be fabricated.
+- [x] Cover join-failure eligibility initially through a finite pure lifecycle
+  copy using the actual can_consume_target_status helper and literal truth table:
+```javascript
+assert.deepEqual(actualEligibility, [true, false, true]);
+// no created thread; created+unjoined; created+successfully joined
+```
+  This is predicate coverage, NOT an actual failed pthread_join or complete
+  retained-owner behavioral witness. No genuinely unjoined owner is killed.
+  Any future nominated join error after actual successful join requires its own
+  independently proven physical settlement/fixture-rescue recipe before effects;
+  do not silently implement rescue in the production C program.
+- [x] Inject a test-only omitted join-before-reap gate in a finite delayed
+  lifecycle copy. Its actual early consume must be rejected by the same ordering
+  oracle. No task_for_pid executes in this mutant, so no unrelated PID lookup
+  can result from the deliberately broken test copy. This is semantic control.
+- [ ] Review each finite effect pattern and execute only new/affected cases.
+  Keep untested genuine uncertainty/external owner-death paths explicit.
+#### Historical design sequence — superseded, not replay instructions
+
+The following nominal/postjoin/phase/observer design paragraphs record the
+sequence already executed at the separately pinned receipts below. References
+to restoring uncompiled drafts or running RED/GREEN/one genuine request are
+historical only; they authorize no restoration, retry, compile or native effect.
+Current state is C7deb/testb2fc: genuine nominal failed5, local cleanup passed;
+only a newly reviewed finite regression recipe may be admitted separately.
+
+Strict nominal consumer contract refinement: first use the existing
+synthetic-failure control under test-process mode1, verifying actual lifecycle
+facts before demanding the positive DTO. Its expected actual code2-vs0 RED is
+consumer-contract evidence only, not causal coverage of successful acquisition.
+After the separately justified postjoin path and exact review, the SAME consumer
+may be connected to a newly reviewed genuine-request copy for ONE real request.
+No synthetic failure can establish positive-path GREEN or genuine capability.
+
+Exact canonical positive diagnostic, independently required by the consumer:
+```json
+{"schema":"setfarm.task6a-native-task-port-diagnostic.v2","outcome":"task-for-pid-right/unqualified","requestAttempted":true,"requestThreadJoined":true,"taskRightBound":true,"auditStable":true,"challengesCompleted":3,"inputBytes":229,"outputBytes":220,"childReaped":true,"childExitCode":0,"childSignal":null,"stdoutEof":true,"stderrEof":true,"taskRightDisposed":true,"controlUsable":false,"productionAuthority":false,"completeNativeClosure":false,"protectedOrigin":false}
+```
+Require actual code0/empty stderr, exactly one <=2048B JSON line, exact scalar/
+key set and canonical bytes (no duplicate/contradictory fields). Raw primitive
+trace remains independent; it must eventually establish actual one request,
+original candidate, checked join before type/PID/two exact-count opaque audits,
+three distinct complete challenges, audit2 before END/inputclose, target normal0/
+EOF/reap/six closes and successful once original-right disposal. No token/PID/
+port values or positive CONTROL claim appear in DTO.
+
+Postjoin source refinement after consumer-contract RED: register original right
+before classification as before; only checked joined/on-time statusSUCCESS/valid
+candidate sets private result_ready. Failed/late candidates retain cleanup-only
+once disposal. Accepted right remains owned through guarded protocol/actual
+settlement, then once local disposal. Latch protocol_started before entering.
+Forward guard requires checked join, exact owner right, result_ready, unchanged
+deadline, unburned owner and original live/unreaped/certain child. Bracket local
+SEND/non-dead type, pid_for_task, each exact-count full opaque audit, entropy,
+reads and writes before/after; no task_name_for_pid/reacquisition/query on burn.
+Reuse only delivered NAME frame/write/nonce/audit structure, replacing ALL
+consuming observe_child/settle calls with existing WNOWAIT/gated settlement.
+Use existing relative backoff and bounded pipes, no new poll/dependency path.
+Three unique32B nonces =>3x75B input/3x70B PONG; audit2 beforeEND. Only after
+successful END write mark terminal beforeinputclose/ENDread. Expected death in
+terminal phase burns request admission but does not invent early-live failure;
+no forward queries in terminal. Final actual join/reap/status0/EOF/stderr0/
+input229/output220/protocolcomplete/disposal-success/finaldeadline/no-failures
+all required before canonical unqualified diagnostic. No postjoin kernel-call
+hard bound or continuous monitoring is claimed. ProductionC draft requires new
+paired full source/effect review and fresh gates before any compile/native call.
+
+Three source-review phase findings receive focused RED-before-fix controls on
+the uncompiled postjoin draft66e7c5 (restore the root's unverified c1d0 bracket
+draft first; no user changes reverted):
+
+- forward-observer-expiry: scratch pure main calls actual forward_ready with
+  literal eligible owner fields and initialized atomics. Only this private copy
+  redirects CLOCK_MONOTONIC to1s, then a labelled synthetic zero-event WNOWAIT
+  boundary advances it to4s across original3s deadline. No child/thread/Mach/PID
+  operation occurs. Require code0/empty stderr, exactly one labelled synthetic
+  observer event and literal [false,true,true] (deny,burn,deadline cause).
+  Unfixed guard is expected to return [true,false,false]. This is a pure clock
+  boundary contract, not actual waitid latency or genuine child ownership.
+- preterminal-stdout-eof: scratch pure main opens three actual pipes, closes
+  five original ends, calls actual drain_stream on the remaining stdout reader
+  with its writer really closed, then finalizes all original slots once. No
+  target/thread/Mach call. Require code0/empty stderr, actual three acquisitions/
+  six closes/one stdoutEOF only, literal [true,true,true,true] (burn,EOF,slot
+  consumed,early-stdout-eof cause). Unfixed draft returns [false,true,true,false].
+- ready-extra: closed private Node fixture waits stdin EOF or20s fallback and
+  emits one READY newline plusX write. Pin unchanged delivered entry separately,
+  label ready-extra-builtin-test. Require no request/thread creation, actual
+  childexit2/reap/EOF/six once closes/faultzero, protocol-frame refusal and an
+  independent read witness of the actual seven bytes before admission. Unfixed
+  draft accepts six bytes and creates a thread before later unexpected-output;
+  target remains alive before parent closes input, eliminating early-exit bypass.
+
+Only these three REDs compile/run after exact paired source/effect review/fresh
+gates; all task_for_pid uses remain synthetic/null. Then minimal production
+fixes: fresh clock after live observer and stderr drain before forward I/O;
+born/outputEOF guard, burn nonterminal stdout EOF, preserve terminal expectedEOF;
+READY reads bounded whole chunks and rejects excess bytes before create, with
+fresh deadline brackets. Re-run only affected controls after new review, record
+actual RED/GREEN channels/artifacts. No genuine request or positive-path GREEN
+is established by these finite controls.
+
+- [x] Add strict nominal request consumer under mode1. It requires exactly one
+  diagnostic line and literal false authority flags, actual request/binding,
+  three challenges, stable opaque audits, joined thread/reaped child/EOF/disposal.
+  The helper records raw settled target channels; JSON alone cannot certify order.
+- [x] Paired complete source/effect review, fresh physical input/tool/SDK/private
+  output/resource/originals/journal gates, then ONE genuine ordinary own-child
+  task_for_pid experiment. Real denial must fail nominal, never skip/fallback.
+  Record denial as capability evidence rather than edit security/policy to pass.
+  A late/pending request remains failed/unqualified and retains its owner.
+- [ ] Establish genuine positive-path acceptance. The observed kernel failure
+  does not satisfy this step or justify changing host security/privilege/policy.
+
+Genuine observer refinement, ordinary own-child only: add closed test-copy
+control genuine-request and connect mode1's existing exact nominal DTO consumer
+to it only after new full paired source/effect review. Real wrapper definitions
+precede macro redirection; an atomic once-request latch delegates task_for_pid
+only captured spawned PID/self, no synthetic success or retry. Keep actual
+status/candidate unchanged and private; only read worker-written fields after
+successful actual join. Main-only independent original-candidate registry,
+deadline/owner-burn capture and quotas type1/PID1/audit2/disposal1 block wrong
+right/self, expired/burned/dead/reaped/uncertain forward operations. Disposal
+consumes original attempt before realcall and remains allowed for cleanup after
+burn/reap. Actual native errors/late returns remain actual, not harness success.
+
+Observe real private input/output pipe bytes independently: READY, three unique
+CHALLENGE frames, matching PONGs, second exact-count opaque stable audit BEFORE
+END write/inputclose, END response afterclose. Bound buffers/tickets and verify
+actual229/220 totals; do not copy producer's counters as authority. Record
+actualnormal0/reap/bothEOF/six original closes and once successful original
+disposal. Never export PID/port/token bytes in DTO. Sticky independent faults
+are distinct from actual kernel failures. Completion/unknown-owner retention
+remain unchanged; no rescue/forcedkill/timeoutclosure.
+
+New genuine trace oracle replaces synthetic/code2 lifecycle oracle for this
+consumer; strict19-field DTO assertion remains unchanged. ONE real selected
+invocation only after exact complete test/C/compile/link/effect review and fresh
+originalsource/tools/SDK/resources. Any real denial fails nominal; no skip,
+fallback, policy/security/credential/root change, CONTROL/VM/map operation or
+protected/P2 admission. Existing13 passes retain their originaltestabfc pin;
+new observer does not silently retroactively qualify a changed helper matrix.
+
+#### Closed experiment receipts — original pins, no replay
+
+Current-source finite phase receipts: exact consumer testabfc634351c4048ac7b8ac26ee8281a7cf5b3bdff989460a47bf8179190b158e
+first ran with draft C66e:3f4307 CLOSED1,3FAIL2047.865542ms. Actual clock crossing
+allowed forward work, actual pipe EOF did not burn, and coalesced READY extra
+byte allowed creation. Minimal C7deb4988a7c17d1c09b8119b9da8586919038047f4a158d79edfbb45d574d1c2
+repairs only fresh-clock bracket, preterminal EOF burn and whole READY chunk;
+same oracles a490ff CLOSED0,3PASS2019.191583ms. Post e3b820 checked21original
+files/6dirs/all original closes. Current-C affected9,acf697/session11892->c34a5c
+CLOSED0,9PASS19055.830708ms; separate argv692d5e CLOSED0,1PASS626.019292ms.
+Post9557f4 checked69originalfiles/20dirs/all held-final bytes/paths/closes. These
+13passes are separate batches at C7deb/testabfc/plan22e, NOT one exhaustive
+matrix and NOT retroactive verification of the changed genuine observer.
+
+Nominal historical consumer-contract RED4b1cbf at C6f7c4/test834/plan3b was
+synthetic failure/null, actual parent2 vs required0. It is NOT genuine kernel
+denial or causal positive-path GREEN. New genuine observer test
+43ec12a8b6a05505d5217f9451023f4b658bb84b71de719495689b1acdae3453
+has actual once-request, join-synchronized original candidate registry, native
+query/disposal quotas and independent wire/audit/closure oracle. Full paired
+C0/I0/M0 reviews and fresh37d65d physical/resource/preservation gate plus root
+db02ac pins admitted only one scrubbed, anchored mode1/concurrency1 invocation.
+6661a3/session10561->c46c8e CLOSED1: actual compile/link0/calibration2, genuine
+task_for_pid status5/invalid candidate, parent2/empty stdout. Worker-return then
+successful actual join before reap, normal child2/bothEOF/sixFDcloses/fault0.
+Strict nominal0PASS/1FAIL/0SKIP1121.021667ms at genuine-status-0. No native
+type/PID/audit/disposal or positive exchange occurred; denial5 was primary and
+entry refusal/earlyEOF after inputclose secondary. Independent765dd4 CLOSED0
+at04:40:22.278 checked7originalfiles/2dirs, full held-final bytes/stat/path/dir
+inventories and all checked closes; trace1c3887 confirms one actual failure5,
+join-before-reap/normal2/EOF2/sixcloses and zero query/disposal/faults. All
+original inputs, two dirty files, backups, journal and old CLI retained.
+All original artifacts/raw receipt retained in the external master ledger;
+closed sessions must not be repolled or replayed. No further native effect is
+admitted. Source-only alternative feasibility may be investigated; any new
+design/file map/fixture/effect needs its own review and fresh gates. Positive
+protocol/CONTROL/protected/P2 remain unqualified, not a code-fix mandate.
+
+Remaining finite coverage refinement (not positive acquisition): the actual
+failure returned no valid candidate, so it cannot witness local disposal of a
+candidate returned with an API error or after burn. The smallest causal tests
+can create ONE fresh local MACH_PORT_RIGHT_DEAD_NAME reference in the worker,
+return synthetic KERN_FAILURE with that valid numeric name and exercise actual
+production candidate registration and once mach_port_deallocate after checked
+join. It is not a task right, genuine Tfp or CONTROL support. A delayed variant
+uses the existing finite3.2s synthetic wait, then allocates only locally; no
+target PID operation occurs after the delay. Original generation remains
+unreaped until actual join. Keep source C unchanged; tests only add closed
+local-candidate-error/local-candidate-late controls and explicit private labels.
+Worker latches one local allocation before delegating, records actual result,
+initializes NULL, and main reads candidate only after realjoin. Main latches
+one original deallocation before delegation, permits local cleanup after
+burn/death but no type/PID/audit/TFP/forward wire actions. No aliases, reallocation,
+retry, fabricated-success or fixture rescue. Allocation/cleanup failure must
+remain a failed diagnostic. Source disposition omission must fail independent
+trace assertions; no new production behavior is implemented for these tests.
+Treat EVERY unproven allocation error, including NULL output/MIG response
+failure, as sticky unknown ownership; no definite-failure status allowlist is
+admitted. After realjoin main reports the actual allocation status/uncertainty,
+then atexit retains the failed owner rather than publishing closure. This
+conservative correction addresses independent source review I1 before effects;
+not an actual observed kernel failure or a production-code repair.
+Require full source/effect review and fresh gates before either selected local
+experiment; no effect is admitted by this design text. These two coverage
+checks cannot repair host denial or satisfy genuine-positive T3/T4/P2.
+
+Local cleanup coverage receipt (existing behavior, no new production fix):
+faeed1/session38140->3efc38 CLOSED0,2PASS4928.8935ms at C7deb/test
+b2fc65797aac521aa5282b94034cb0a4fa478e753a36b2c5441830e3717f49e9,
+plan22ff/specc54. Both actual fresh local one-uref allocations and once original
+deallocations succeeded after checked join, before target reap. Immediate
+synthetic error classified denial5; delayed synthetic error classified burn,
+with target inputclose/death/EOFs before local allocation/join. Both childnormal2,
+pipe3/sixclose/EOF2/reap1 and fault0; zero TFP/type/PID/audit/forward/unknown/rescue.
+Independent original1c203a read then32d601 CLOSED0 at05:02:05.997 verified
+14originalfiles/4dirs, full held-final stat/path/bytes/inventories and all closes.
+Traceb5bf1537/f066b6db match original nominated receipts. a75d36/47a9db/cfd11b/
+db90f8/ddf2fa at05:02:24 pins/originals/journal/oldCLI/tools/headers preserved;
+disk6635092KiB/memory59/throttle0/nothermal. Unknown allocation/join retention
+is conservatively reviewed source, not an executed finite uncertainty proof.
+Prior13controlled passes remain at testabfc. The current-helper finite regression
+receipt below separately verifies the affected12 plus argv at testb2fc; local2
+remain their original closed current-test receipts, not replayed. Genuine nominal
+remains actualfailure5 at test43ec, not a pass.
+
+Current-helper regression checkpoint: both complete independent source/effect
+reviews C0/I0/M0 at C7deb/testb2fc/plane53b/spec5c9 after the historical-label M1
+fix. Fresh16f8a9 held pins/root/HEAD/exact4M/absences/allclose and0afde9/501948/
+212c47 resources at05:16:20.797 preceded only exact anchored finite12 lifecycle
+selector and separate anchored argv refusal. ecb995/session72718->0cf261 CLOSED0,
+12PASS/0FAIL/0SKIP21040.572666ms; argv286c5e CLOSED0,1PASS711.764666ms. Do not
+poll72718 again. Each actual compile/link0 and startup calibration2; fixed
+source/test/helper, private retained artifacts and natural exit/close/bothEOF.
+Pure predicates/clock remain explicitly synthetic; stdout EOF uses actual pipes;
+normal/delayed/create/early-exit/budget/READY and precise omission-mutant oracles
+observe their original finite lifecycle. No genuine TFP, local allocation,
+forward native queries, unknown-owner injection or security/policy effect.
+Independent41c5fe read ORIGINAL raw FIRST;5059bf CLOSED0 at05:19:06.087 checked
+90originalfiles/26private dirs, exact nominated hashes, full held-final byte/
+stat/path/inventories and all checked closes. All13targetmarkers absent and
+13real14B calibration markers match; actual traces/oracles/fault0 retained.
+1aac45/de0b65/6d829f/025669/b53345 source/HEAD/originals/backups/journal/oldCLI/
+tool/SDK/header custody unchanged. Disk6615372KiB/memory59/throttle0/nothermal.
+Fresh static927dec/c89acb/ffe9cd0, default136794 only16SKIP/0PASS43.658334ms,
+version97ef15 2.3.79, English0bda88 1933 and patha835c3 968 all pass. An earlier
+mistyped nonexistent version-script command0db2f4 failed MODULE_NOT_FOUND and
+was corrected by reading package.json's actual check:version recipe; it is not
+a test/source failure or a passed check. No full npm/PG/ALL/build/host rollout.
+These are separate12+argv+local2 finite receipts at current C7deb/testb2fc,
+not a single all16 matrix or genuine positive/uncertainty/protected proof.
+
+No positive-path merge/delivery is admitted. An honest reviewed checkpoint may
+be committed on the existing scoped branch while all genuine-positive/P2 gates
+remain open; this must not be represented as implementation or project completion.
+Any changed-helper verification uses a newly reviewed finite selector/fresh
+artifacts, never replays old closed receipts or the genuine kernel failure.
+
+### T4: Narrow delivery and next independent gate
+
+- [x] Record actual finite matrix and remaining uncertainty/owner-death coverage;
+  static version/English/path/diff and default opt-out checks. No full npm/PG/ALL
+  replay from a builtin C/test/docs change.
+- [ ] Independent full diff reviews, scoped conventional commits/push/PR,
+  exact-head cloud/security/latefeedback gates and normal SHA-bound merge.
+- [ ] New independent clean-main no-script CI, normal guarded build, original
+  input/output/artifact/retention/host verification; retain all old roots/builds.
+- [ ] Outcome is acquisition-only. Any CONTROL-consuming lockdown/VM/map/initial
+  trusted-loader/root/protected/P2/genesis/service/cutover step is separately
+  designed/reviewed; no task-port JSON reopens those gates.
+
 ## Ordinary native NAME identity viability implementation subplan
 
 **Goal:** Determine actual ordinary own-Node NAME/audit binding support without
@@ -12,7 +3445,8 @@ section Ordinary native NAME identity viability slice.
 **Tech:** C11/Darwin NAME APIs, existing builtin Node entry, ordinary Node tests.
 **Status:** Ordinary implementation and the finite current-source 22-case
 host matrix are verified in separate closed batches. Final independent review,
-reviewed PR delivery and a new clean-main build remain open. No exhaustive
+PR274 delivery, new clean-main build and artifact/host checks are closed below.
+No exhaustive
 uncertainty/root-UID coverage, protected/P2 or cutover admission.
 
 The pre-effect recipes below are retained historical design records, not new
@@ -239,8 +3673,9 @@ Actual final14c7538a/session73105→2a8e22 CLOSED0:
 14-case gates and fresh994f27. CurrentC aggregate2+5+1+14=22 native cases,
 not one22-test run, exhaustive uncertainty/root-UID coverage or full npm/DB
 suite. No old ALL/privatePG/build replay. Native compile occurs in each fixture;
-separate pure compile-only current-C run is unnecessary. Reviewed PR delivery,
-clean-main build and host verification remain open; no protected/P2 admission.
+separate pure compile-only current-C run is unnecessary. This pre-delivery
+receipt's formerly open delivery/build/host steps are closed by N4 below;
+no protected/P2 admission.
 
 First actual nominal receipt eb7047 naturally CLOSED0 (do not replay):
 source5db27dcb/test1185aefe, strict positive1PASS/zeroFAIL/CANCEL/SKIP/TODO,
@@ -301,14 +3736,32 @@ still requires paired exact-source review and fresh root checks.
 - [x] Focused current-source matrix and default opt-out/static contracts:
   1bfbdc23SKIP/0PASS46.313958ms;119137 version2.3.79, English1932files,
   paths967files and diff-check exit0. Skips are not native acceptance.
-- [ ] Proportional clean committed-source build checks; do not replay frozen
+- [x] Proportional clean committed-source build checks; do not replay frozen
   full ALL or old build/test sessions.
-- [ ] Independent complete diff review, ordinary scoped commits/push/PR with
+- [x] Independent complete diff review, ordinary scoped commits/push/PR with
   exact-head bot feedback, normal SHA-bound merge only.
-- [ ] New independent clean-main build and artifact/host/retention verification,
+- [x] New independent clean-main build and artifact/host/retention verification,
   preserving every old source/build/worktree and original two files.
-- [ ] Record actual narrow outcome; P2 protected owner/control/maps/root invocation,
+- [x] Record actual narrow outcome; P2 protected owner/control/maps/root invocation,
   P3/P4/P5/cutover/B/C/D/E remain independently gated.
+
+N4 closed 2026-10-05 01:46 UTC: feature087b465fa315755887aa9f8a529d45fd8508d9f8
+passed two complete independent reviews and exact-head Codex completion with no
+major findings; GitGuardian passed. PR274 merged normally at01:33:27 UTC as
+ae5a7b0e56e999255c4beb6937ea63e563f930e8/tree96bfaba0. Gemini/Copilot completion
+is not credited. Fresh independent clean-main clone retained all old roots.
+ONE no-script CI f7eaa4/session20616->ca9586 CLOSED0 and ONE normal guarded
+build d88949/session12418->fea2cd->dfbd36 CLOSED0 at01:42:53.035 UTC;
+buildc0c1820b-08d9-45cb-a4fe-25657d16fa46. Root artifact9698b6 and independent
+full artifact review01:45:08–52 C0 verified2095Git inputs,858build outputs,
+three immutable authorities and empty retention ledgers;6524 held inputs final
+stable/all closed. Output942a56728bf6d434786247f31a79b96cc4047534461fe30f35862a502778aa93.
+Independent post-host inventory confirmed originaltwo/journal/tools/old CLI
+selector preserved: MC3080/api/projects200, gateway18789200, dashboard3333
+refused000/exit7, not restarted or repointed. Default merged test409322 had
+23SKIP/0PASS (not native acceptance). Full raw receipts and exact wrappers are
+retained in the owner-local completion evidence ledger.
+These are closed historical invocations, not instructions to replay them.
 
 
 
