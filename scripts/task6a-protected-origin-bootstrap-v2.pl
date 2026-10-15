@@ -892,11 +892,15 @@ my ($pm_native_readback_issue,$pm_native_readback_recheck,$pm_native_readback_re
         };
         my $acl=sub {
             CORE::die $literal_refusal unless @_==1;my $record=$_[0];
-            my $fd_event=$native->('fileno',$record,0);my $fd=$fd_event->{result};
+            my $fd_event=$native->('fileno',$record,0);
+            CORE::die $literal_refusal unless $number->($fd_event->{result});
+            my $fd=$fd_event->{result};
             CORE::die $literal_refusal unless $number->($fd)&&$fd>=0&&$fd<=2147483647;
             $record->{acl_fd}=$fd;
             for my $kind('capabilities','security') {
-                my $event=$native->($kind,$record,8192);my $buffer=${ $event->{buffer_cell} };
+                my $event=$native->($kind,$record,8192);
+                CORE::die $literal_refusal unless $plain->(${ $event->{buffer_cell} });
+                my $buffer=${ $event->{buffer_cell} };
                 CORE::die $literal_refusal unless $plain->($event->{result})&&$event->{result} eq '0'
                     &&$plain->($buffer)&&CORE::length($buffer)==8192;
                 if($kind eq 'security') {
@@ -1096,6 +1100,338 @@ my ($pm_native_readback_issue,$pm_native_readback_recheck,$pm_native_readback_re
     }
 }
 # End native PM readback prerequisite.
+# Inert fixed XS native readback prerequisite. No production invocation.
+# Conditional fixed source-file custody only; native loaded-image trust is separate.
+my ($xs_native_readback_issue,$xs_native_readback_recheck,$xs_native_readback_release);
+{
+    BEGIN {$^H|=0x01000000;CORE::delete($^H{'overloading'});}
+    BEGIN {
+        my $xs_literal_refusal="TASK6A_NATIVE_XS_READBACK_REFUSED\n";
+        my $xs_phase='new';my $xs_claimed=0;my $xs_rechecks=0;
+        my ($xs_operations,$xs_raw_reserved,$xs_text_reserved)=(0,0,0);
+        my (@xs_originals,@xs_native_events,@xs_validated);
+        my $xs_utf8_original=\&utf8::is_utf8;
+        my $xs_sha_original=$preimport_sha256;
+        my $xs_identity_original=$strict_same_reference;
+        my ($xs_issue_error,$xs_recheck_error,$xs_burn_error);
+        my $xs_settle_started=0;my $xs_settle_outcome;my $xs_settle_error='';
+        my $xs_release_api_started=0;my $xs_release_api_outcome;my $xs_release_api_error='';
+        my @xs_directories=(
+            '/',
+            '/System',
+            '/System/Library',
+            '/System/Library/Perl',
+            '/System/Library/Perl/5.34',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/B',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Compress',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Digest',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Encode',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Fcntl',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/File',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/IO',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/List',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/MIME',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/POSIX',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/PerlIO',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Storable',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Time',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Compress/Raw',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Digest/SHA',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/File/Glob',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/List/Util',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/MIME/Base64',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/PerlIO/scalar',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Time/HiRes',
+            '/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Compress/Raw/Zlib',
+        );
+        my @xs_leaves=(
+            ['/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/B/B.bundle',238208,'cb67010fc8fd0cd9526017d1eedd509fc16e46128c80d9484814dafb278b095e'],
+            ['/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Compress/Raw/Zlib/Zlib.bundle',187504,'6375b83850447c7b08e3f22c446790d5d9eb3c64ceeb12a7960febd19aa67e98'],
+            ['/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Digest/SHA/SHA.bundle',151888,'0aee84231c0297e0d51e7f8523fac64cd3c8887daa644d58e957642436ec1628'],
+            ['/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Encode/Encode.bundle',154672,'0d6d427f6caefb29744bee9cdde231aff56ce675397b85d296ee2767b23d6156'],
+            ['/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Fcntl/Fcntl.bundle',118688,'fa9d85d04cc25eaf10ea9bfe761ddde566568c222a14f6b5043de9ed971f42ab'],
+            ['/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/File/Glob/Glob.bundle',137824,'10171bdaecea588bdbc099f46f4a891dc03fa31e2155cb33476c3807f338a014'],
+            ['/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/IO/IO.bundle',120224,'16943647611acf30476a89c564c14a9cf15617c17e9b44c73c81ccea724801b4'],
+            ['/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/List/Util/Util.bundle',188608,'bb0c14ea99a66b4cab6d9c4ae3b39e13bd27b72b239e8d7f209d8f0e276055e9'],
+            ['/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/MIME/Base64/Base64.bundle',118400,'1c7ec3c9d946c9da29e4077d0bdea7b3c89366e33d45bfa97a60f3293dcdb263'],
+            ['/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/POSIX/POSIX.bundle',242592,'300b45401ae71f3b09666c107ef94404a994d11a61528202b7b184978799c754'],
+            ['/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/PerlIO/scalar/scalar.bundle',119376,'3203586f1bcc6609dd971d822a96a7ef87b9e9ed7ade6df926580cd3400d641d'],
+            ['/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Storable/Storable.bundle',271712,'8357bfed40e3cc39bc90cd29f180a256f1ee9adb200218ad4276633eb3355921'],
+            ['/System/Library/Perl/5.34/darwin-thread-multi-2level/auto/Time/HiRes/HiRes.bundle',119840,'759c7cc87b97b1084eb8fdf3d5dd4ca3fb80b9a291823408aba1ca001316b336'],
+        );
+        my $xs_raw_same=sub {
+            return 0 unless @_==2&&!defined(CORE::tied($_[0]))&&!defined(CORE::tied($_[1]));
+            my ($xs_a,$xs_b)=@_;return 0 unless CORE::ref($xs_a) ne ''&&CORE::ref($xs_b) ne '';
+            return $xs_a==$xs_b?1:0;
+        };
+        my $xs_plain=sub {
+            return 0 unless @_==1&&!defined(CORE::tied($_[0]));
+            my $xs_value=$_[0];return defined($xs_value)&&CORE::ref($xs_value) eq ''
+                &&!$xs_utf8_original->($xs_value)?1:0;
+        };
+        my $xs_number=sub {
+            return 0 unless @_==1&&$xs_plain->($_[0])&&CORE::length($_[0])<=21;
+            return $_[0]=~/\A(?:0|[1-9][0-9]{0,19}|-[1-9][0-9]{0,18})\z/?1:0;
+        };
+        my $xs_error_plain=sub {return @_==1&&$xs_plain->($_[0])&&CORE::length($_[0])<=4096?1:0;};
+        my $xs_ports_guard=sub {
+            CORE::die $xs_literal_refusal unless @_==0
+                &&!defined(CORE::tied($preimport_sha256))&&!defined(CORE::tied($strict_same_reference))
+                &&!defined(CORE::tied($xs_sha_original))&&!defined(CORE::tied($xs_identity_original))
+                &&!defined(CORE::tied($xs_utf8_original))
+                &&$xs_raw_same->($preimport_sha256,$xs_sha_original)
+                &&$xs_raw_same->($strict_same_reference,$xs_identity_original)
+                &&$xs_raw_same->(\&utf8::is_utf8,$xs_utf8_original);
+        };
+        my $xs_phase_guard=sub {
+            CORE::die $xs_literal_refusal unless @_==0&&!defined(CORE::tied($xs_phase))
+                &&$xs_plain->($xs_phase)&&($xs_phase eq 'acquiring'||$xs_phase eq 'reading'
+                    ||$xs_phase eq 'held'||$xs_phase eq 'rechecking');
+            $xs_ports_guard->();
+        };
+        my $xs_charge=sub {
+            CORE::die $xs_literal_refusal unless @_==1&&$xs_number->($_[0])&&$_[0]>=0
+                &&$xs_operations<16384&&$xs_text_reserved+5120<=33554432
+                &&$xs_raw_reserved+$_[0]<=67108864;
+            $xs_operations++;$xs_text_reserved+=5120;$xs_raw_reserved+=$_[0];
+        };
+        my $xs_shape=sub {
+            CORE::die $xs_literal_refusal unless @_==1&&!defined(CORE::tied($_[0]));
+            my $xs_handle=$_[0];CORE::die $xs_literal_refusal unless CORE::ref($xs_handle) ne '';
+            my $xs_io=*{$xs_handle}{IO};
+            CORE::die $xs_literal_refusal unless defined($xs_io)&&CORE::ref($xs_io) ne ''
+                &&!defined(CORE::tied(*{$xs_handle}));return ($xs_handle,$xs_io);
+        };
+        my $xs_same=sub {
+            CORE::die $xs_literal_refusal unless @_==1;
+            my $xs_record=$_[0];CORE::die $xs_literal_refusal unless $xs_record->{known}&&!$xs_record->{close_attempted};
+            my ($xs_handle,$xs_io)=$xs_shape->(${ $xs_record->{cell} });
+            CORE::die $xs_literal_refusal unless $xs_raw_same->($xs_handle,$xs_record->{handle})
+                &&$xs_raw_same->($xs_io,$xs_record->{io});return $xs_handle;
+        };
+        my $xs_native=sub {
+            CORE::die $xs_literal_refusal unless @_==3;
+            my ($xs_kind,$xs_record,$xs_request)=@_;$xs_phase_guard->();my $xs_expected_phase=CORE::substr($xs_phase,0);
+            my $xs_handle=$xs_kind eq 'lstat'||$xs_kind eq 'open'?undef:$xs_same->($xs_record);
+            my $xs_raw=$xs_kind eq 'capabilities'||$xs_kind eq 'security'?8192:$xs_kind eq 'read'||$xs_kind eq 'eof'?$xs_request:0;
+            $xs_charge->($xs_raw);
+            my $xs_event={sequence=>$xs_operations,kind=>$xs_kind,index=>$xs_record->{index},intent=>1};
+            CORE::push(@xs_native_events,$xs_event);my ($xs_buffer,$xs_attributes,$xs_fd);
+            if($xs_kind eq 'capabilities'||$xs_kind eq 'security') {
+                $xs_fd=$xs_record->{acl_fd};CORE::die $xs_literal_refusal unless $xs_number->($xs_fd)&&$xs_fd>=0&&$xs_fd<=2147483647;
+                $xs_attributes=CORE::pack('SSLLLLL',5,0,$xs_kind eq 'security'?0x00400000:0,
+                    $xs_kind eq 'capabilities'?0x80020000:0,0,0,0);
+                $xs_buffer="\xcc" x 8192;$xs_event->{attributes}=$xs_attributes;$xs_event->{buffer_cell}=\$xs_buffer;$xs_event->{request}=8192;
+            }elsif($xs_kind eq 'read'||$xs_kind eq 'eof') {
+                CORE::die $xs_literal_refusal unless $xs_number->($xs_request)&&$xs_request>=1&&$xs_request<=271713;
+                $xs_buffer='';$xs_event->{buffer_cell}=\$xs_buffer;$xs_event->{request}=$xs_request;
+            }
+            $xs_phase_guard->();$!=0;
+            my $xs_ok=eval {
+                if($xs_kind eq 'lstat') {$xs_event->{values}=[CORE::lstat($xs_record->{path})];}
+                elsif($xs_kind eq 'stat') {$xs_event->{values}=[CORE::stat($xs_handle)];}
+                elsif($xs_kind eq 'open') {
+                    $xs_event->{result}=CORE::sysopen(${ $xs_record->{cell} },$xs_record->{path},0x01000100);
+                    $xs_event->{errno}=0+$!;
+                    # Enroll a completed positive native original before postguards.
+                    if($xs_plain->($xs_event->{result})&&$xs_event->{result} eq '1') {
+                        my ($xs_opened_handle,$xs_opened_io)=$xs_shape->(${ $xs_record->{cell} });
+                        for my $xs_prior(@xs_originals) {
+                            next unless $xs_prior->{known};
+                            CORE::die $xs_literal_refusal if $xs_raw_same->($xs_opened_handle,$xs_prior->{handle})
+                                ||$xs_raw_same->($xs_opened_io,$xs_prior->{io});
+                        }
+                        $xs_record->{handle}=$xs_opened_handle;$xs_record->{io}=$xs_opened_io;$xs_record->{known}=1;
+                    }
+                }
+                elsif($xs_kind eq 'fileno') {$xs_event->{result}=CORE::fileno($xs_handle);}
+                elsif($xs_kind eq 'capabilities'||$xs_kind eq 'security') {$xs_event->{result}=CORE::syscall(228,$xs_fd,$xs_attributes,$xs_buffer,8192,4);}
+                elsif($xs_kind eq 'seek') {$xs_event->{result}=CORE::sysseek($xs_handle,0,0);}
+                elsif($xs_kind eq 'read'||$xs_kind eq 'eof') {$xs_event->{result}=CORE::sysread($xs_handle,$xs_buffer,$xs_request);}
+                else {CORE::die $xs_literal_refusal;}
+                $xs_event->{errno}=0+$! unless $xs_kind eq 'open';1;
+            };
+            $xs_event->{error}=$@;$xs_event->{ok}=$xs_ok?1:0;
+            CORE::die $xs_literal_refusal unless $xs_ok&&$xs_error_plain->($xs_event->{error})&&$xs_event->{error} eq ''
+                &&$xs_number->($xs_event->{errno});
+            $xs_phase_guard->();CORE::die $xs_literal_refusal unless $xs_phase eq $xs_expected_phase;return $xs_event;
+        };
+        my $xs_tuple=sub {
+            CORE::die $xs_literal_refusal unless @_==2;
+            my ($xs_values,$xs_record)=@_;
+            CORE::die $xs_literal_refusal unless CORE::ref($xs_values) eq 'ARRAY'&&!defined(CORE::tied(@$xs_values))&&@$xs_values==13;
+            for my $xs_value(@$xs_values) {CORE::die $xs_literal_refusal unless $xs_number->($xs_value);}
+            CORE::die $xs_literal_refusal unless ($xs_values->[2]&0170000)==($xs_record->{file}?0100000:0040000)
+                &&($xs_values->[2]&0022)==0&&$xs_values->[4]==0&&$xs_values->[5]==0;
+            CORE::die $xs_literal_refusal if $xs_record->{file}&&$xs_values->[7]!=$xs_record->{size};
+        };
+        my $xs_equal_tuple=sub {
+            CORE::die $xs_literal_refusal unless @_==2;
+            my ($xs_a,$xs_b)=@_;for my $xs_index(0..7,9..12) {CORE::die $xs_literal_refusal unless $xs_a->[$xs_index]==$xs_b->[$xs_index];}
+        };
+        my $xs_acl=sub {
+            CORE::die $xs_literal_refusal unless @_==1;my $xs_record=$_[0];
+            my $xs_fd_event=$xs_native->('fileno',$xs_record,0);
+            CORE::die $xs_literal_refusal unless $xs_number->($xs_fd_event->{result});
+            my $xs_fd=$xs_fd_event->{result};
+            CORE::die $xs_literal_refusal unless $xs_number->($xs_fd)&&$xs_fd>=0&&$xs_fd<=2147483647;
+            $xs_record->{acl_fd}=$xs_fd;
+            for my $xs_kind('capabilities','security') {
+                my $xs_event=$xs_native->($xs_kind,$xs_record,8192);
+                CORE::die $xs_literal_refusal unless $xs_plain->(${ $xs_event->{buffer_cell} });
+                my $xs_buffer=${ $xs_event->{buffer_cell} };
+                CORE::die $xs_literal_refusal unless $xs_plain->($xs_event->{result})&&$xs_event->{result} eq '0'
+                    &&$xs_plain->($xs_buffer)&&CORE::length($xs_buffer)==8192;
+                if($xs_kind eq 'security') {
+                    CORE::die $xs_literal_refusal unless CORE::substr($xs_buffer,0,12) eq CORE::pack('LLL',12,8,0)
+                        &&CORE::substr($xs_buffer,12) eq "\xcc" x 8180;
+                }else {
+                    CORE::die $xs_literal_refusal unless CORE::unpack('L',CORE::substr($xs_buffer,0,4))==36
+                        &&CORE::substr($xs_buffer,36) eq "\xcc" x 8156;
+                    my @xs_cap=CORE::unpack('L8',CORE::substr($xs_buffer,4,32));
+                    CORE::die $xs_literal_refusal unless ($xs_cap[1]&0x400)&&($xs_cap[5]&0x400);
+                }
+            }
+        };
+        my $xs_check_originals=sub {
+            CORE::die $xs_literal_refusal unless @_==0&&@xs_originals==41;
+            for my $xs_record(@xs_originals) {
+                $xs_same->($xs_record);
+                my $xs_held=$xs_native->('stat',$xs_record,0);my $xs_named=$xs_native->('lstat',$xs_record,0);
+                $xs_tuple->($xs_held->{values},$xs_record);$xs_tuple->($xs_named->{values},$xs_record);
+                $xs_equal_tuple->($xs_held->{values},$xs_record->{tuple});$xs_equal_tuple->($xs_held->{values},$xs_named->{values});
+                $xs_acl->($xs_record);
+            }
+        };
+        my $xs_read=sub {
+            CORE::die $xs_literal_refusal unless @_==1;my $xs_record=$_[0];
+            my $xs_seek=$xs_native->('seek',$xs_record,0);
+            CORE::die $xs_literal_refusal unless $xs_plain->($xs_seek->{result})
+                &&($xs_seek->{result} eq '0'||$xs_seek->{result} eq '0 but true');
+            my $xs_read=$xs_native->('read',$xs_record,$xs_record->{size}+1);
+            CORE::die $xs_literal_refusal unless $xs_plain->($xs_read->{result})&&$xs_read->{result} eq "$xs_record->{size}"
+                &&!defined(CORE::tied(${ $xs_read->{buffer_cell} }));
+            my $xs_bytes=${ $xs_read->{buffer_cell} };
+            CORE::die $xs_literal_refusal unless $xs_plain->($xs_bytes)&&CORE::length($xs_bytes)==$xs_record->{size};
+            my $xs_eof=$xs_native->('eof',$xs_record,1);
+            CORE::die $xs_literal_refusal unless $xs_plain->($xs_eof->{result})&&$xs_eof->{result} eq '0'
+                &&!defined(CORE::tied(${ $xs_eof->{buffer_cell} }))&&$xs_plain->(${ $xs_eof->{buffer_cell} })
+                &&CORE::length(${ $xs_eof->{buffer_cell} })==0;
+            $xs_ports_guard->();my $xs_digest=$xs_sha_original->($xs_bytes);
+            CORE::die $xs_literal_refusal unless $xs_plain->($xs_digest)&&$xs_digest eq $xs_record->{sha};
+            $xs_phase_guard->();return CORE::substr($xs_bytes,0);
+        };
+        my $xs_settle=sub {
+            return $xs_settle_outcome if $xs_settle_started;
+            $xs_settle_started=1;my $xs_all=1;my @xs_settle_errors;
+            for my $xs_record(CORE::reverse(@xs_originals)) {
+                unless($xs_record->{known}) {$xs_all=0;next;}
+                $xs_record->{close_started}=1;my ($xs_handle,$xs_io);
+                my $xs_admitted=eval {
+                    ($xs_handle,$xs_io)=$xs_shape->($xs_record->{handle});
+                    CORE::die $xs_literal_refusal unless $xs_raw_same->($xs_handle,$xs_record->{handle})&&$xs_raw_same->($xs_io,$xs_record->{io});1;
+                };
+                $xs_record->{close_admission_error}=$@;
+                if($xs_admitted) {
+                    $xs_record->{close_attempted}=1;my $xs_ok=eval {$xs_record->{close_return}=CORE::close($xs_handle);1;};
+                    $xs_record->{close_error}=$@;$xs_record->{close_native_ok}=$xs_ok?1:0;
+                }
+                # Independent original-shape/liveness attempt even after close throw.
+                $xs_record->{live_started}=1;my $xs_live_ok=eval {
+                    my ($xs_h,$xs_i)=$xs_shape->($xs_record->{handle});
+                    CORE::die $xs_literal_refusal unless $xs_raw_same->($xs_h,$xs_record->{handle})&&$xs_raw_same->($xs_i,$xs_record->{io});
+                    $xs_record->{live_attempted}=1;$xs_record->{live_return}=CORE::fileno($xs_h);1;
+                };
+                $xs_record->{live_error}=$@;$xs_record->{live_native_ok}=$xs_live_ok?1:0;
+                my $xs_ok=$xs_admitted&&$xs_record->{close_native_ok}&&$xs_plain->($xs_record->{close_return})
+                    &&$xs_record->{close_return} eq '1'&&$xs_error_plain->($xs_record->{close_error})&&$xs_record->{close_error} eq ''
+                    &&$xs_live_ok&&!defined($xs_record->{live_return})&&$xs_error_plain->($xs_record->{live_error})&&$xs_record->{live_error} eq '';
+                $xs_record->{close_ok}=$xs_ok?1:0;$xs_all=0 unless $xs_ok;CORE::push(@xs_settle_errors,[$xs_record->{index},$xs_record->{close_admission_error},$xs_record->{close_error},$xs_record->{live_error}]) unless $xs_ok;
+            }
+            $xs_settle_error=$xs_all?'':$xs_literal_refusal;$xs_settle_outcome=$xs_all?1:0;return $xs_settle_outcome;
+        };
+        my $xs_burn=sub {
+            $xs_phase='burned';
+            if($xs_claimed) {my $xs_ok=eval {$xs_settle->();1;};$xs_burn_error=$@;}
+            CORE::die $xs_literal_refusal;
+        };
+        $xs_native_readback_issue=sub {
+            $xs_burn->() unless @_==0&&!defined(CORE::tied($xs_phase))&&$xs_phase eq 'new';
+            my $xs_ok=eval {
+                $xs_ports_guard->();CORE::die $xs_literal_refusal unless $xs_phase eq 'new'
+                    &&!defined(CORE::tied(@xs_originals))&&@xs_originals==0
+                    &&!defined(CORE::tied(@xs_validated))&&@xs_validated==0;
+                $xs_claimed=1;$xs_phase='acquiring';
+                CORE::die $xs_literal_refusal unless $^O eq 'darwin'
+                    &&CORE::unpack('H*',CORE::pack('L',1)) eq '01000000'&&CORE::length(CORE::pack('J',1))==8;
+                for my $xs_index(0..40) {
+                    my $xs_leaf=$xs_index>=28?$xs_leaves[$xs_index-28]:undef;my $xs_fh;
+                    my $xs_record={index=>$xs_index,path=>$xs_index<28?$xs_directories[$xs_index]:$xs_leaf->[0],
+                        file=>$xs_index>=28?1:0,size=>defined($xs_leaf)?$xs_leaf->[1]:0,
+                        sha=>defined($xs_leaf)?$xs_leaf->[2]:undef,cell=>\$xs_fh,known=>0,close_attempted=>0,open_started=>0};
+                    CORE::push(@xs_originals,$xs_record);
+                    my $xs_before=$xs_native->('lstat',$xs_record,0);$xs_tuple->($xs_before->{values},$xs_record);
+                    $xs_record->{open_started}=1;my $xs_opened=$xs_native->('open',$xs_record,0);
+                    CORE::die $xs_literal_refusal unless $xs_plain->($xs_opened->{result})&&$xs_opened->{result} eq '1'
+                        &&$xs_record->{known};
+                    my $xs_held=$xs_native->('stat',$xs_record,0);$xs_tuple->($xs_held->{values},$xs_record);
+                    my $xs_named=$xs_native->('lstat',$xs_record,0);$xs_tuple->($xs_named->{values},$xs_record);
+                    $xs_equal_tuple->($xs_before->{values},$xs_held->{values});$xs_equal_tuple->($xs_held->{values},$xs_named->{values});
+                    $xs_record->{tuple}=[@{$xs_held->{values}}];$xs_acl->($xs_record);
+                }
+                $xs_check_originals->();$xs_phase='reading';
+                for my $xs_index(0..12) {$xs_validated[$xs_index]=$xs_read->($xs_originals[$xs_index+28]);}
+                $xs_check_originals->();
+                for my $xs_index(0..12) {
+                    my $xs_bytes=$xs_read->($xs_originals[$xs_index+28]);
+                    CORE::die $xs_literal_refusal unless $xs_plain->($xs_validated[$xs_index])&&$xs_bytes eq $xs_validated[$xs_index];
+                }
+                $xs_check_originals->();$xs_ports_guard->();
+                CORE::die $xs_literal_refusal unless $xs_phase eq 'reading'&&@xs_validated==13;
+                $xs_phase='held';1;
+            };
+            $xs_issue_error=$@;$xs_burn->() unless $xs_ok;return 1;
+        };
+        $xs_native_readback_recheck=sub {
+            $xs_rechecks++;$xs_burn->() unless @_==0&&$xs_rechecks<=64
+                &&!defined(CORE::tied($xs_phase))&&$xs_phase eq 'held';
+            $xs_phase='rechecking';
+            my $xs_ok=eval {
+                $xs_ports_guard->();CORE::die $xs_literal_refusal unless $xs_phase eq 'rechecking'
+                    &&!defined(CORE::tied(@xs_validated))&&@xs_validated==13;
+                $xs_check_originals->();
+                for my $xs_index(0..12) {
+                    my $xs_bytes=$xs_read->($xs_originals[$xs_index+28]);
+                    CORE::die $xs_literal_refusal unless !defined(CORE::tied($xs_validated[$xs_index]))
+                        &&$xs_plain->($xs_validated[$xs_index])&&$xs_bytes eq $xs_validated[$xs_index];
+                }
+                $xs_check_originals->();$xs_phase_guard->();
+                CORE::die $xs_literal_refusal unless $xs_phase eq 'rechecking';
+                $xs_phase='held';1;
+            };
+            $xs_recheck_error=$@;$xs_burn->() unless $xs_ok;return 1;
+        };
+        $xs_native_readback_release=sub {
+            if($xs_release_api_started) {
+                $xs_burn->() unless @_==0;
+                CORE::die $xs_literal_refusal unless $xs_release_api_outcome;return 1;
+            }
+            $xs_release_api_started=1;$xs_phase='releasing';
+            my $xs_ok=eval {CORE::die $xs_literal_refusal unless @_==0;$xs_ports_guard->();1;};
+            $xs_release_api_error=$@;
+            my $xs_closed;my $xs_settled=eval {$xs_closed=$xs_settle->();1;};my $xs_settlement_error=$@;
+            $xs_release_api_outcome=$xs_ok&&$xs_settled&&$xs_closed?1:0;
+            $xs_release_api_error=$xs_settlement_error if $xs_ok&&!$xs_settled;
+            $xs_release_api_error=$xs_literal_refusal if !$xs_release_api_outcome&&$xs_release_api_error eq '';
+            $xs_phase=$xs_release_api_outcome?'released':'burned';
+            CORE::die $xs_literal_refusal unless $xs_release_api_outcome;return 1;
+        };
+        # Private XS lifecycle closures end here.
+    }
+}
+# End fixed XS native readback prerequisite.
 use strict;
 use warnings;
 use B ();

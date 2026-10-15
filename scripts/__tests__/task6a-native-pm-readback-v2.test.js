@@ -281,12 +281,15 @@ const nativeProbe=String.raw`
                 CORE::print $prefix,'kind',"\t",$event->{kind},"\n";
                 CORE::print $prefix,'index',"\t",$event->{index},"\n";
                 for my $field('result','error','errno') {
-                    my $value=$event->{$field};
-                    CORE::print $prefix,$field,"\t",!defined($value)?'UNDEF':CORE::ref($value) ne ''?'REFERENCE':CORE::unpack('H*',$value),"\n";
+                    if(defined(CORE::tied($event->{$field}))) {CORE::print $prefix,$field,"\tTIED\n";}
+                    else {my $value=$event->{$field};CORE::print $prefix,$field,"\t",!defined($value)?'UNDEF':CORE::ref($value) ne ''?'REFERENCE':CORE::unpack('H*',$value),"\n";}
                 }
                 CORE::print $prefix,'tuple',"\t",CORE::join(',',@{$event->{values}}),"\n" if defined($event->{values});
                 CORE::print $prefix,'attributes',"\t",CORE::unpack('H*',$event->{attributes}),"\n" if defined($event->{attributes});
-                CORE::print $prefix,'buffer',"\t",CORE::unpack('H*',${'${'} $event->{buffer_cell} }),"\n" if defined($event->{buffer_cell});
+                if(defined($event->{buffer_cell})) {
+                    if(defined(CORE::tied(${'${'} $event->{buffer_cell} }))) {CORE::print $prefix,"buffer\tTIED\n";}
+                    else {CORE::print $prefix,'buffer',"\t",CORE::unpack('H*',${'${'} $event->{buffer_cell} }),"\n";}
+                }
                 CORE::print $prefix,'request',"\t",$event->{request},"\n" if defined($event->{request});
             }
         };
@@ -1068,3 +1071,62 @@ for(const scenario of ownerProtocolCases) {
   t.diagnostic(JSON.stringify({home:r.home,pid:r.pid,scope:'genuine originals plus memoryMODELEDport/alias/duplicate/counter fault; testownergenuineorphan cleanup only; noRoot/TCB'}));
  });
 }
+
+function pmOutputTieMutation(kind) {
+  return source=>{
+    const defs=String.raw`my ($pm_output_armed,$pm_output_genuine,$pm_output_outside_fetch);
+BEGIN {$pm_output_armed=0;$pm_output_outside_fetch=0;}
+BEGIN {
+    package Task6aPmOutputTie;our $fetch=0;
+    sub TIESCALAR {CORE::bless({value=>$_[1]},$_[0]);}
+    sub FETCH {$fetch++;return $_[0]{value};}
+    sub STORE {CORE::die "TEST_PM_TIE_STORE\n";}
+}
+`;
+    source=once(source,'# Inert fixed native PM readback prerequisite.',defs+'# Inert fixed native PM readback prerequisite.');
+    const boundary=String.raw`$event->{error}=$@;$event->{ok}=$ok?1:0;
+            CORE::die $literal_refusal unless $ok&&$error_plain->($event->{error})`;
+    const effect=kind==='tied-fileno-result'?String.raw`
+                CORE::tie($event->{result},'Task6aPmOutputTie',$pm_output_genuine->{result});
+                my $outside=$event->{result};CORE::die "TEST_PM_FD_ARM\n" unless $outside eq $pm_output_genuine->{result};
+`:String.raw`
+                CORE::tie(${'${'} $event->{buffer_cell} },'Task6aPmOutputTie',$pm_output_genuine->{buffer});
+                my $outside=${'${'} $event->{buffer_cell} };CORE::die "TEST_PM_BUFFER_ARM\n" unless $outside eq $pm_output_genuine->{buffer};
+`;
+    const condition=kind==='tied-fileno-result'?"$kind eq 'fileno'":"$kind eq 'capabilities'";
+    source=once(source,boundary,String.raw`$event->{error}=$@;$event->{ok}=$ok?1:0;
+            if(!$pm_output_armed&&CONDITION) {
+                $pm_output_genuine={kind=>$kind,ok=>$ok?1:0,result=>$event->{result},errno=>$event->{errno},error=>$event->{error},
+                    attributes=>$event->{attributes},buffer=>defined($event->{buffer_cell})?CORE::substr(${'${'} $event->{buffer_cell} },0):undef};
+                EFFECT
+                $pm_output_outside_fetch=$Task6aPmOutputTie::fetch;CORE::die "TEST_PM_OUTPUT_UNARMED\n" unless $pm_output_outside_fetch==1;
+                $Task6aPmOutputTie::fetch=0;$pm_output_armed=1;
+            }
+            CORE::die $literal_refusal unless $ok&&$error_plain->($event->{error})`.replace('CONDITION',condition).replace('EFFECT',effect).replaceAll("${'${'}",'${'));
+    const output=String.raw`
+            CORE::print "pm-output-armed\t",$pm_output_armed,"\n";CORE::print "pm-output-outside-fetch\t",$pm_output_outside_fetch,"\n";
+            CORE::print "pm-output-inside-fetch\t",$Task6aPmOutputTie::fetch,"\n";
+            if(defined($pm_output_genuine)) {
+                CORE::print "pm-output-genuine-kind\t",$pm_output_genuine->{kind},"\n";CORE::print "pm-output-genuine-ok\t",$pm_output_genuine->{ok},"\n";
+                for my $field('result','errno','error','attributes','buffer') {my $value=$pm_output_genuine->{$field};CORE::print 'pm-output-genuine-',$field,"\t",!defined($value)?'UNDEF':CORE::ref($value) ne ''?'REFERENCE':CORE::unpack('H*',$value),"\n";}
+            }
+`;
+    return once(source,'            for my $record(@originals) {\n                my $index=$record->{index};',output+'            for my $record(@originals) {\n                my $index=$record->{index};');
+  };
+}
+
+const pmOutputTieEarly=earlyFaultOutput();
+const pmOutputTieRuntime=String.raw`CORE::exit(0);`;
+function assertPmOutputTie(o,kind){
+  assert.equal(o['pm-output-armed'],'1');assert.equal(o['pm-output-outside-fetch'],'1');
+  assert.equal(o['pm-output-genuine-ok'],'1');assert.equal(o['pm-output-genuine-error'],'');
+  assert.match(Buffer.from(o['pm-output-genuine-errno'],'hex').toString(),/^(?:0|[1-9][0-9]*)$/);
+  if(kind==='tied-fileno-result'){assert.equal(o['pm-output-genuine-kind'],'fileno');assert.match(Buffer.from(o['pm-output-genuine-result'],'hex').toString(),/^(?:0|[1-9][0-9]*)$/);}
+  else{assert.equal(o['pm-output-genuine-kind'],'capabilities');assert.equal(o['pm-output-genuine-result'],'30');const packet=Buffer.from(o['pm-output-genuine-buffer'],'hex');assert.equal(packet.length,8192);assert.equal(packet.readUInt32LE(0),36);assert.ok(packet.readUInt32LE(8)&0x400);assert.ok(packet.readUInt32LE(24)&0x400);assert.ok(packet.subarray(36).every(b=>b===0xcc));assert.equal(Buffer.from(o['pm-output-genuine-attributes'],'hex').length,24);}
+  assert.equal(o['pm-output-inside-fetch'],'0');assert.equal(o['native-issue'],'0');assert.equal(o['native-fault-error'],Buffer.from('TASK6A_NATIVE_PM_READBACK_REFUSED\n').toString('hex'));assert.equal(o['native-actual-dispatches'],kind==='tied-fileno-result'?'5':'6');
+  assert.equal(o['native-known'],'1');assert.equal(o['native-originals'],'1');for(const k of ['close-attempts','live-attempts','close-ok'])assert.equal(o['native-'+k],'1');
+  assert.equal(o['end-native-release'],'1');assert.equal(o['end-cleanup-ok'],'1');assert.equal(o['end-native-error'],'');
+}
+for(const kind of ['tied-fileno-result','tied-ACL-buffer'])test('genuine native PM output rejects MODELED tied original scalar: '+kind,async t=>{
+  const r=await invokeNative(kind,{mutate:pmOutputTieMutation(kind),earlyFailure:pmOutputTieEarly,runtime:pmOutputTieRuntime});assertPmOutputTie(r.observations,kind);t.diagnostic(JSON.stringify({home:r.home,pid:r.pid,scope:'genuine native original then MODELtie/shared original-cell ACL guard root; no Root/TCB'}));
+});
