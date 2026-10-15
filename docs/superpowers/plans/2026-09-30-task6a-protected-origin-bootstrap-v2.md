@@ -8803,3 +8803,22 @@ PM2, process-family closure or whole-project acceptance is established. Current
 cold/main/refusal/namespace/staged/publisher guards remain unchanged. No selected
 stock-build/archive bypass or further heavy producer is authorized by this
 evidence-only update.
+
+
+## Source-owned constructor test-first checkpoint — prepared, no new test run
+
+Parent: clean delivered5abc83fbe0a227845cadd8e1a1f8d8a4a36d9a3a. Current Sourcec268, dedicated01e82 and helper0c0 are the original parents. This is file-only preparation; the new callback, producer invocation and actual0→2 behavioral assertion remain UNRUN. Existing Source/native healthy, fixed negatives and720 modeled results retain their original graphs and are not rerun or relabelled here.
+
+Causal evidence: authentic Node22 material v3 independent same-original audit b24eccee (228 checks0), selected112,928,848 bytes/2e3f1286 and archive50,067,502 bytes/ef28d8; protected-profile ordinary compile v2 independent material65ddfac2 and custody934db484. Both binary inputs are unexecuted by this preparation. Approved constructor recipev3 b78bde27 and planning270eb851 choose this production-relevant genuine Node22 cohort instead of a foreign Homebrew selected-path substitution.
+
+File Map7: bootstrap; dedicated test; existing native fixture helper; observer C; ABI header; this plan; paired spec. Phase A applies only test/helper/spec/plan, leaving bootstrapC268 and native code untouched. The fixed test manifest is TEST DATA only. The four-source typed transport helper remains the maintained pure sourceGraph, while the new file-backed emitter prevents authentic50MB bodies from exceeding argv and preserves exact13 occurrence order. Genuine Source publication, actual helper original capture, creator13→staged12 closure and canonical existing consumer outcome must all qualify before the final expected2 launcher assertion.
+
+- [ ] Independently review the complete emitted Perl/emitter/Node/helper, all eighteen Source-memory projections, exact four-path deltas and Root's once-RED recorder/material binding.
+- [ ] Root applies only Phase A's four paths, verifies syntax/current pins and clean test-preparation commit, then performs source/resource/sole-producer preflight.
+- [ ] Root invokes exactly `Perl Source constructor mints its own held Node22 and observer originals before entry protocol` once via direct Node26 TAP/concurrency1 and the fixed manifest. No global `test:scripts`, PM2, whole-file or overlapping native replay.
+- [ ] Independently audit that same original. Only natural complete custody plus eligible material/producer and sole final strict actual0/expected2 constitutes the new behavioral RED. Setup, capture, timeout, false raw binding or unknown settlement requires classification before any retry.
+- [ ] After eligible RED, prepare/review the minimal seven-path Source-owned constructor implementation and exact profile/payload binding, then a fresh scoped GREEN. No implementation candidate or completed constructor result is supplied by Phase A.
+
+The baseline test never calls the former test-owned child mint/initializer. It records positive original creation-origin, not a total fork counter or missing-export flag; Source ACL/transport helpers remain separate. Source/staged current public recheck burns and disposes on failure, so future live-child constructor composition must use the already specified private non-disposing validation and retain staged/capsule leases while an observer is unknown. Preclaim must preserve prior realms; actual observer settlement precedes Node wait, material release and complete cleanup. Protected Root/initial image/compiler trust, code-owned current-entry gates, DB activation and functional startup remain distinct unqualified gates.
+
+Current resource contract: inner448MiB cumulative Source/data reservation plus32MiB Node records; outer32MiB; total512MiB. No base64 body argv, duplicated selected input, binary execution, build or Root action. Actual runtime remains unmeasured; Source's original180s bootstrap chronology is unchanged, inner captor195+15s and outer220+15s are fixed absolute limits. All claims here are proposed test preparation until actual reviewed execution.
