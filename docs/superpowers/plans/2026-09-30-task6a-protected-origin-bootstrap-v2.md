@@ -8649,3 +8649,54 @@ not promote C2 into staged6/12, prove full mapped-image identity/initial compile
 trust, create a production launcher constructor, authorize PM2, clear V2 or
 migrate/activate a live installation. Existing fixed producer/publisher work and
 those code-owned gates remain distinct. No full-goal or rollout claim is made.
+
+
+## 2026-10-15: actual unsolicited fixture failure; minimal repair pending
+
+Historical preparation UNRUN labels above are checkpoint statements, not a
+relabeling of later originals. The Source-origin healthy actual already has its
+separate retained audit `ec22d29f235c4ed6c38013f3bdd6e5923929078b1cefb21f188965fb06e6a146`.
+The first unsolicited-phase attempt then completed with tool `ed6cc5` exit1,
+Node81366 natural1 (1143-byte complete outer TAP; no capture errors or force),
+and Perl81370 natural60 (215-byte stderr). At emitted line707, `grep BLOCK LIST`
+consumed the boolean `@children && stream_done()` and attempted to dereference
+an empty string. The exact original is retained under
+`logs/2026-10-15-task6a-consumer-native-negatives-pre-effect-v1/unsolicited-phase`;
+independent classification `cf2fcc3c6be2c707e81ed5c91e5646d06fa242034a1984ef32614a454db6d750`
+records17 checks and this mechanical harness defect. There is no eligible
+negative PASS/Source RED or complete inner-grandchild custody claim.
+
+File Map (exactly3 paths):
+
+1. `scripts/__tests__/fixtures/task6a-consumer-epoch-native-v1.mjs`: change only
+   the embedded fallback predicate to
+   `last if (grep{!$_->{reaped}&&!$_->{unknown}} @children)==0 && stream_done();`.
+2. `docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md`:
+   append the observed cause and unchanged contract.
+3. This plan: retain the causal ledger and pending serialized verification.
+
+The helper inverse must recover its exact54b44d6c parent. Sourcec268 and
+modeled test01e82a are not in this correction and remain byte exact. This only
+groups the existing predicate: no fabricated EOF, successful exit, child wait,
+cleanup, query or relaxed guard. The old original and its incomplete custody
+remain untouched; no original child is adopted, replayed or cleaned up by this
+preparation.
+
+At this preparation checkpoint Root is completing the independently reviewed,
+closed modeled6/676/ports34 routes on their existing frozen graph. They do not
+execute this genuine helper fallback; their actual results remain separately
+retained and need no replay solely for this literal correction. Root may apply
+these3 paths only after that active modeled campaign has reached its own
+terminal and classification. Then:
+
+- [ ] Independently review this exact grouping-only candidate and paired docs.
+- [ ] Root applies, verifies exact Source/model preservation, and delivers the
+      clean three-path correction; no active Source edit by the preparer.
+- [ ] Regenerate fresh negative2 full programs, manifests, pinned material and
+      once recorders from the corrected helper; retain the failed original.
+- [ ] Obtain full pre-effect reviews and run each nominated negative once with
+      unchanged semantic/refusal/known-close/wait/partial-EOF oracles.
+
+Corrected negatives remain UNRUN here. No healthy, first4 or unaffected modeled
+route is repeated absent a new causal reason. No PM2, protected cohort,
+production constructor, V2, database startup or whole-project claim follows.

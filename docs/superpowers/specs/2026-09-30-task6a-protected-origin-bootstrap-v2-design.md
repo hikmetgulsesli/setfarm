@@ -1268,3 +1268,39 @@ protected cohort. Mapped-image file identity, initial native/compiler trust,
 Root staging, production constructor/publisher composition, PM2 owner-closed
 UNRUN, V2, migration32/33 startup admission and whole-project completion remain
 separate and fail closed. No runtime/guard waiver follows from this slice.
+
+
+## 2026-10-15: genuine fixture fallback grouping correction
+
+The first unsolicited-phase original failed mechanically in the test helper,
+not at a Source refusal oracle. Original tool completion `ed6cc5` was exit1;
+Node81366 was natural1 with complete outer TAP capture (1143 bytes), no capture
+errors or forced ending. Perl81370 was natural60 with215 stderr bytes:
+`Can't use string ("") as a HASH ref while "strict refs" in use` at emitted
+`program.original.pl:707`. The unparenthesized `grep BLOCK LIST` allowed
+`@children && stream_done()` to become its list, so a false stream predicate
+supplied an empty string to the hash-reference block. This original is an
+ineligible harness failure: it proves neither the negative Source behavior nor
+complete inner Node/observer settlement. All original raw and terminal records
+remain immutable.
+
+This correction has exactly three maintained paths:
+
+- `scripts/__tests__/fixtures/task6a-consumer-epoch-native-v1.mjs`: group the
+  existing `grep` result before testing `&& stream_done()` in the failure-only
+  fallback. Preserve its child predicates, actual stream state, deadlines,
+  signals, raw retention and eligibility rules.
+- This paired specification: record the observed mechanical cause and scope.
+- `docs/superpowers/plans/2026-09-30-task6a-protected-origin-bootstrap-v2.md`:
+  record serialized review, application and fresh-negative verification.
+
+Sourcec268 and dedicated modeled test01e82a remain byte exact. The earlier
+UNRUN statements describe their preparation checkpoints; the separately retained
+healthy Source-origin actual is qualified by its own original and independent
+review `ec22d29f235c4ed6c38013f3bdd6e5923929078b1cefb21f188965fb06e6a146`.
+This failure-only genuine fixture template is not executed by the closed
+modeled4/6/676/ports34 routes; those keep their own original graphs and results.
+This correction gives no new PASS, EOF, cleanup or runtime admission credit.
+The corrected negative controls are still UNRUN and need fresh full-program,
+material and capture nominations after clean application. Existing gates,
+ordinary-only artifact scope and all production/Root/V2 exclusions remain.
