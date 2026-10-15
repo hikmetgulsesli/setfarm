@@ -5,6 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
+
+const loaderIndex = process.execArgv.indexOf("--import");
+const loader = loaderIndex >= 0 ? process.execArgv[loaderIndex + 1]! : createRequire(import.meta.url).resolve("tsx");
+let receiptSequence = 0;
 
 const secrets = ["postgresql://fixture:PG_SENTINEL@localhost/fixture", "TOKEN_SENTINEL", "/var/run/com.apple.launchd.SocketSentinel/Listeners"];
 const labels = ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard"];
@@ -29,7 +34,7 @@ function fixture(body: (home: string, texts: string[]) => void): void {
       + block("inherited environment", [`SETFARM_ENV_DIR => ${home}/ai/setrox/setfarm/scripts`, `SSH_AUTH_SOCK => ${secrets[2]}`])
       + block("default environment", ["PATH => /usr/bin:/bin:/usr/sbin:/sbin"]) + "}\n";
   });
-  try { body(home, texts); } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  try { body(home, texts); } finally { console.log(JSON.stringify({ retainedLauncherFixture: home })); }
 }
 function observe(home: string, texts: string[], fault = "", census?: string, defaultAction?: string): any {
   const originalUrl = new URL("../../src/internal-production/baseline-deployment-cutover-launcher-observation-v1.ts", import.meta.url);
@@ -79,6 +84,9 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
     source = source.replace('await import("./baseline-positive-worktree-active-binding-cutover-database-v1.js")',
       `await import(${JSON.stringify(pathToFileURL(transportFile).href)})`);
     source = source.replace('"../product-compiler/canonical-json.js"', JSON.stringify(new URL("../../src/product-compiler/canonical-json.ts", import.meta.url).href));
+    const jointAdapter = '"../../scripts/deployment-dashboard-cutover-adapter-v2.mjs"';
+    assert.equal(source.split(jointAdapter).length, 2);
+    source = source.replace(jointAdapter, JSON.stringify(new URL("../../scripts/deployment-dashboard-cutover-adapter-v2.mjs", import.meta.url).href));
     if (defaultAction !== undefined) {
       const helpers = path.join(home, "default-helpers.mjs");
       fs.writeFileSync(helpers, `
@@ -148,7 +156,7 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
     fs.writeFileSync(file, source);
     url = pathToFileURL(file).href;
   }
-  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+  const invocation = ["--import", loader, "--input-type=module", "-e", `
     import os from "node:os"; import fs from "node:fs"; import cp from "node:child_process";
     import {inspect as render} from "node:util"; import {syncBuiltinESMExports} from "node:module";
     const identity = os.userInfo(); os.userInfo = () => ({...identity,homedir:${JSON.stringify(home)}});
@@ -196,7 +204,11 @@ function observe(home: string, texts: string[], fault = "", census?: string, def
       if (run && ${defaultAction === undefined}) { try { await run(); } catch (retry) { retryError = render(retry,{depth:null}); } }
       process.stdout.write(JSON.stringify({error:render(error,{depth:null}),launcherStage:error.cutoverLauncherStage,cleanupFailed:error.cutoverCleanupFailed,retryError,prints,conversions,evidence:evidence()}));
     }
-  `], { encoding: "utf8", env: {}, timeout: 15000 });
+  `];
+  const receipt = ++receiptSequence;
+  fs.writeFileSync(path.join(home, `intent-${receipt}.json`), JSON.stringify(invocation), { flag: "wx", mode: 0o600 });
+  const child = spawnSync(process.execPath, invocation, { encoding: "utf8", env: {}, timeout: 15000 });
+  fs.writeFileSync(path.join(home, `result-${receipt}.json`), JSON.stringify(child), { flag: "wx", mode: 0o600 });
   assert.equal(child.status, 0, child.stderr); return JSON.parse(child.stdout);
 }
 
@@ -732,7 +744,7 @@ test("default failed qualification permanently poisons recheck and census", () =
 
 test("default account acquisition drift refuses before native observation", () => defaultFixture((home, texts) => {
   const result = observe(home, texts, `
-    const info=os.userInfo;let calls=0;os.userInfo=()=>{const value=info();return {...value,username:++calls===1?'before':'after'}};
+    const info=os.userInfo;let calls=0;os.userInfo=()=>{const value=info();return active?{...value,username:++calls===1?'before':'after'}:value};
     evidence=()=>({samples:globalThis.samples,dbCalls:globalThis.dbCalls});
   `, undefined, `await context.qualifyPassiveHome();return context.observation;`);
   assert.match(result.error, /DEPLOYMENT_CUTOVER_LAUNCHER_OBSERVATION_INVALID/, JSON.stringify(result));

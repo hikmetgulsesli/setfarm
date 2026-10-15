@@ -7,6 +7,30 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 
+function bindActualColdLeaf(source: string): string {
+  const edge = '"./task6a-cold-pre32-catalog-readonly-v1.js"';
+  assert.equal(source.split(edge).length, 2);
+  return source.replace(edge, JSON.stringify(new URL(
+    "../../src/internal-production/task6a-cold-pre32-catalog-readonly-v1.ts", import.meta.url,
+  ).href));
+}
+
+test("fixed retained physical census interfaces refuse foreign originals before connection", async () => {
+  const api = await import("../../src/internal-production/baseline-legacy-database-census-v1.js");
+  const functions = api as unknown as Record<string, (...args: object[]) => unknown>;
+  let traps = 0;
+  const foreign = new Proxy({}, { get() { traps += 1; throw Error("TRAP"); },
+    getPrototypeOf() { traps += 1; throw Error("TRAP"); }, ownKeys() { traps += 1; throw Error("TRAP"); } });
+  for (const name of ["runHeldDashboardCutoverPre32PhysicalReservationV4",
+    "assertHeldDashboardCutoverPre32PhysicalMetadataV4", "assertHeldDashboardCutoverPre32ActiveBindingV4"]) {
+    assert.equal(typeof functions[name], "function", `MISSING_FIXED_PHYSICAL_CENSUS_INTERFACE:${name}`);
+    if (name.startsWith("run") || name.endsWith("ActiveBindingV4"))
+      await assert.rejects(async () => functions[name]!(foreign, foreign, foreign));
+    else assert.throws(() => functions[name]!(foreign, foreign, foreign));
+  }
+  assert.equal(traps, 0);
+});
+
 test("pre32 fixed-table lock entry refuses an absent private database URL before connection", () => {
   const url = new URL("../../src/internal-production/baseline-legacy-database-census-v1.ts", import.meta.url).href;
   const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
@@ -30,7 +54,7 @@ test("pre32 SHARE-lock diagnostic locks its fixed table set before journal and l
   // listed owner table, or retaining the old repeatable-read transaction mode.
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pre32-writer-locks-")));
   try {
-    let source = fs.readFileSync(new URL("../../src/internal-production/baseline-legacy-database-census-v1.ts", import.meta.url), "utf8");
+    let source = bindActualColdLeaf(fs.readFileSync(new URL("../../src/internal-production/baseline-legacy-database-census-v1.ts", import.meta.url), "utf8"));
     const marker = 'const postgresModule = await import("postgres");';
     assert.equal(source.split(marker).length, 2);
     source = source.replace(marker, `const postgresModule={default:()=>{
@@ -62,6 +86,7 @@ test("pre32 SHARE-lock diagnostic locks its fixed table set before journal and l
         throw Error('UNEXPECTED_TAGGED_QUERY');
       };
       tx.unsafe=async sql=>{
+        if(sql.includes('WITH expected_tables(name)'))return tx([sql]);
         globalThis.probe.queries.push(sql);
         if(process.env.FAKE_SCENARIO==='lock-failure'&&sql==='LOCK TABLE public.claim_log IN SHARE MODE')
           throw Error('PRIVATE_DATABASE_DETAIL');
@@ -234,7 +259,7 @@ test("cutover profile validates real driver options before one read-only transac
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cutover-driver-")));
   try {
     const original = new URL("../../src/internal-production/baseline-legacy-database-census-v1.ts", import.meta.url);
-    let source = fs.readFileSync(original, "utf8");
+    let source = bindActualColdLeaf(fs.readFileSync(original, "utf8"));
     const marker = 'const postgresModule = await import("postgres");';
     assert.equal(source.split(marker).length, 2);
     source = source.replace(marker, `
@@ -270,7 +295,7 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pre32-same-transaction-")));
   try {
     const original = new URL("../../src/internal-production/baseline-legacy-database-census-v1.ts", import.meta.url);
-    let source = fs.readFileSync(original, "utf8");
+    let source = bindActualColdLeaf(fs.readFileSync(original, "utf8"));
     const marker = 'const postgresModule = await import("postgres");';
     assert.equal(source.split(marker).length, 2);
     source = source.replace(marker, `
@@ -307,6 +332,7 @@ test("pre32 legacy census and active rows share one read-only transaction and bo
         };
         class Result extends Array {}
         tx.unsafe=async statement=>{
+          if(statement.includes('WITH expected_tables(name)'))return tx([statement]);
           let label,rows=[];
           if(statement.startsWith('LOCK TABLE ')){
             globalThis.probe.queries.push(statement);

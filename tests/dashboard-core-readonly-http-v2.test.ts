@@ -1,0 +1,77 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { pathToFileURL, fileURLToPath } from "node:url";
+const writer=fileURLToPath(new URL("..",import.meta.url));
+const handler=pathToFileURL(writer+"/src/server/dashboard-core-readonly-http-v2.ts").href;
+const facade=pathToFileURL(writer+"/src/db-pg.ts").href;
+const loader=pathToFileURL(writer+"/node_modules/tsx/dist/loader.mjs").href;
+// Actual adapter/catalog, inert facade only: not PG, listener or startup evidence.
+// Wrong routing, pre-serialization headers, partial material or retry must fail.
+function run(body:string, mode:Record<string,unknown>={}):void {
+ const source=[
+ "import assert from 'node:assert/strict';import {registerHooks,syncBuiltinESMExports} from 'node:module';",
+ "import fs from 'node:fs';import {IncomingMessage,ServerResponse} from 'node:http';import {Socket} from 'node:net';",
+ "const p={reads:[],files:[],value:[],pending:false,..."+JSON.stringify(mode)+"};globalThis.testHttpPorts=p;",
+ "registerHooks({load(url,c,next){if(url==="+JSON.stringify(facade)+")return{format:'module',shortCircuit:true,source:",
+ JSON.stringify("export async function readDashboardCoreResponseV2(r){const p=globalThis.testHttpPorts;p.reads.push(r);if(p.readFault)throw Error('PRIVATE_CANARY');if(p.pending)await new Promise(resolve=>{p.resolve=resolve});return p.value}")+"};return next(url,c)}});",
+ "const read=fs.readFileSync,list=fs.readdirSync,exists=fs.existsSync;",
+ "fs.readdirSync=function(name,opts){if(String(name).includes('/workflows')||String(name).endsWith('/references')){p.files.push(String(name));if(p.materialFault)throw Error('PRIVATE_MATERIAL');const result=list.call(this,name,opts);if(p.emptyMaterial)return [];if(p.missingWorkflow)return result.filter(x=>(typeof x==='string'?x:x.name)!=='feature-dev');if(p.missingRule)return result.filter(x=>(typeof x==='string'?x:x.name)!=='critical-preamble.md');if(p.missingReference)return result.filter(x=>(typeof x==='string'?x:x.name)!=='next-best-practices.md');return result;}return list.call(this,name,opts)};",
+ "fs.readFileSync=function(name,opts){if(String(name).endsWith('/index.html')){p.files.push('html');if(p.materialFault)throw Error('PRIVATE_MATERIAL');return p.staticBlank?Buffer.alloc(0):p.staticUtf8?Buffer.from([255]):Buffer.from('<html>fixed</html>')}if(String(name).endsWith('/logo.jpeg')||String(name).endsWith('/GeistPixel-Square.woff2')){p.files.push('asset');return p.staticBlank?Buffer.alloc(0):Buffer.from('asset')}if(String(name).endsWith('/critical-preamble.md')){if(p.ruleBlank)return Buffer.from('  ');if(p.ruleUtf8)return Buffer.from([255]);}if(String(name).endsWith('/feature-dev/workflow.yml')){if(p.yamlFault)return Buffer.from('steps: [');if(p.stepFault)return Buffer.from('id: feature-dev\\nname: Feature\\nsteps: [{id: x, agent: 23}]');}return read.call(this,name,opts)};",
+ "fs.existsSync=function(name){if(p.missingWorkflowFile && String(name).endsWith('/feature-dev/workflow.yml'))return false;if(String(name).endsWith('/index.html')||String(name).endsWith('/_fragments'))return true;return exists.call(this,name)};syncBuiltinESMExports();",
+ "if(p.referenceFailure){const previous=fs.readFileSync;fs.readFileSync=function(name,opts){if(String(name).endsWith('/next-best-practices.md'))throw Error('PRIVATE_REFERENCE');return previous.call(this,name,opts)};syncBuiltinESMExports()}",
+ "let m;try{m=await import("+JSON.stringify(handler)+")}catch(e){if(e.code==='ERR_MODULE_NOT_FOUND')assert.fail('missing terminal restricted HTTP handler');throw e}assert.equal(typeof m.handleDashboardCoreReadonlyHttpV2,'function','missing terminal handler export');",
+ "function response(){const res=new ServerResponse(new IncomingMessage(new Socket()));const out={heads:[],ends:[],destroyed:0};res.writeHead=function(code,headers){out.heads.push({code,headers});if(p.writeFault)throw Error('PRIVATE_WRITE');return this};res.end=function(bytes){out.ends.push(Buffer.from(bytes).toString('utf8'));if(p.endFault)throw Error('PRIVATE_END');return this};res.destroy=function(){out.destroyed++;return this};return{res,out}}",
+ "function request(url,method='GET'){return{url,method,get headers(){throw Error('TOKEN_PORT')},on(){throw Error('BODY_PORT')}}}",
+ "async function call(url,method='GET'){const {res,out}=response();await m.handleDashboardCoreReadonlyHttpV2(request(url,method),res);return out}",
+ "function json(out){assert.equal(out.ends.length,1);assert.equal(Number(out.heads[0].headers['Content-Length']),Buffer.byteLength(out.ends[0]));return JSON.parse(out.ends[0])}",
+ body
+ ].join("\n");
+ const result=spawnSync(process.execPath,["--import",loader,"--input-type=module","-e",source],{encoding:"utf8",timeout:15000,maxBuffer:1024*1024,env:{PATH:"/usr/bin:/bin",LANG:"C",LC_ALL:"C"}});
+ assert.equal(result.status,0,result.stderr);assert.equal(result.signal,null);assert.equal(result.stderr,"");
+}
+for(const [url,request] of [
+ ["/api/runs",{kind:"runs",includeTerminal:false}],
+ ["/api/runs?workflow=&include_terminal=YES",{kind:"runs",includeTerminal:true}],
+ ["/api/runs?workflow=A&workflow=B&include_terminal=other",{kind:"runs",workflowId:"A",includeTerminal:false}],
+ ["/api/runs/a%20b",{kind:"run",id:"a%20b"}],
+ ["/api/runs/a/stories",{kind:"stories",id:"a"}],
+ ["/api/runs/a/observations",{kind:"observations",id:"a"}],
+] as const)test("closed route "+url,()=>run("const out=await call("+JSON.stringify(url)+");assert.equal(out.heads[0].code,200);assert.deepEqual(json(out),[]);assert.deepEqual(p.reads,["+JSON.stringify(request)+"]);assert.equal(p.files.length,0)"));
+for(const [url,method] of [
+ ["/api/rules","POST"],["/api/rules/import","POST"],["/api/runs","HEAD"],["/","OPTIONS"],
+ ["/api/runs/a/events","GET"],["/api/runs/a/steps","GET"],["/api/runs/a/b","GET"],["/api/medic","GET"],
+ ["/unknown","GET"],["/fonts/other.woff2","GET"],["//api/runs","GET"],["http://host/api/runs","GET"],
+ ["/api/../api/runs","GET"],["/api/%2e%2e/api/runs","GET"],["/api/runs#x","GET"],["/api/runs%","GET"],
+ ["/api/runs?x=%FF","GET"],["/api\\runs","GET"],["/api/runs a","GET"],["/api/runs?x=%00","GET"]
+])test("denied zero ports "+method+" "+url,()=>run("const out=await call("+JSON.stringify(url)+","+JSON.stringify(method)+");assert.equal(out.heads[0].code,503);assert.deepEqual(json(out),{error:'Dashboard unavailable'});assert.equal(p.reads.length,0);assert.equal(p.files.length,0)"));
+test("oversized raw target denies zero ports",()=>run("const out=await call('/api/runs?x='+ 'a'.repeat(16384));assert.equal(out.heads[0].code,503);assert.equal(p.reads.length,0);assert.equal(p.files.length,0)"));
+test("populated run preserved",()=>run("const out=await call('/api/runs/a');assert.equal(out.heads[0].code,200);assert.deepEqual(json(out),{id:'a',steps:[{id:'s'}]})",{value:{id:"a",steps:[{id:"s"}]}}));
+test("missing run404",()=>run("const out=await call('/api/runs/a');assert.equal(out.heads[0].code,404);assert.deepEqual(json(out),{error:'Run not found'})",{value:null}));
+test("private failure redacted",()=>run("const out=await call('/api/runs');assert.equal(out.heads[0].code,503);assert.deepEqual(json(out),{error:'Dashboard unavailable'});assert.equal(p.reads.length,1)",{readFault:true}));
+for(const route of ["/api/workflows","/api/rules","/api/rules/export","/"])test("required material refuses "+route,()=>run("const out=await call('"+route+"');assert.equal(out.heads[0].code,503);assert.deepEqual(json(out),{error:'Dashboard unavailable'})",{materialFault:true}));
+for(const route of ["/","/logo.jpeg","/fonts/GeistPixel-Square.woff2","/api/workflows"])test("fixed material succeeds "+route,()=>run("const out=await call('"+route+"');assert.equal(out.heads[0].code,200);assert.equal(out.ends.length,1);assert.equal(Number(out.heads[0].headers['Content-Length']),Buffer.byteLength(out.ends[0]));assert.equal(p.reads.length,0)"));
+test("rules normalize and preserve first-value filters",()=>run("p.value=[{id:'a',title:'React A',content:'b',category:'implementation',project_type:'react',enabled:0},{id:'b',title:'Next B',content:'c',category:'implementation',project_type:'nextjs',enabled:1}];const out=await call('/api/rules?source=custom&project_type=react&project_type=nextjs&search=REACT');assert.deepEqual(json(out),[{id:'a',title:'React A',content:'b',category:'implementation',project_type:'react',enabled:false,readonly:false}]);assert.deepEqual(p.reads,[{kind:'rules'}])"));
+test("export ignores filters with pretty envelope attachment",()=>run("p.value=[{id:'a',title:'A',content:'b',enabled:1}];const out=await call('/api/rules/export?search=nomatch');const value=json(out);assert.equal(value.version,1);assert.ok(Number.isFinite(Date.parse(value.exportedAt)));assert.equal(value.rules.length,33);assert.deepEqual(value.rules.at(-1),{id:'a',title:'A',content:'b',enabled:true,readonly:false});assert.ok(out.ends[0].includes('\\n  \"version\": 1'));assert.equal(out.heads[0].headers['Content-Disposition'],'attachment; filename=\"setfarm-rules.json\"')"));
+for(const mode of ['emptyMaterial','missingWorkflow'])test('required workflow membership '+mode,()=>run("const out=await call('/api/workflows');assert.equal(out.heads[0].code,503);assert.deepEqual(json(out),{error:'Dashboard unavailable'})",{[mode]:true}));
+for(const mode of ['emptyMaterial','missingRule'])test('required rule membership '+mode,()=>run("const out=await call('/api/rules');assert.equal(out.heads[0].code,503);assert.deepEqual(json(out),{error:'Dashboard unavailable'});assert.equal(p.reads.length,0)",{[mode]:true}));
+test('five populated bundled workflows',()=>run("const out=await call('/api/workflows');assert.equal(out.heads[0].code,200);assert.equal(json(out).length,5)"));
+test('encoded spaces remain legal rule search',()=>run("p.value=[{id:'a',title:'React A',content:'b',enabled:1}];const out=await call('/api/rules?source=custom&search=React%20A');assert.equal(out.heads[0].code,200);assert.equal(json(out).length,1)"));
+test("exact4MiB complete JSON accepted",()=>run("p.value='a'.repeat(4*1024*1024-2);const out=await call('/api/runs');assert.equal(out.heads[0].code,200);assert.equal(Buffer.byteLength(out.ends[0]),4*1024*1024)"));
+test("UTF8 overflow refuses whole response",()=>run("p.value='é'.repeat(2*1024*1024);const out=await call('/api/runs');assert.equal(out.heads[0].code,503);assert.deepEqual(json(out),{error:'Dashboard unavailable'});assert.equal(out.heads.length,1)"));
+test("final export envelope cap",()=>run("p.value=[{id:'a',title:'A',content:'a'.repeat(4*1024*1024-60)}];const out=await call('/api/rules/export');assert.equal(out.heads[0].code,503);assert.deepEqual(json(out),{error:'Dashboard unavailable'})"));
+test("serialization failure before headers",()=>run("p.value=1n;const out=await call('/api/runs');assert.equal(out.heads[0].code,503);assert.deepEqual(json(out),{error:'Dashboard unavailable'});assert.equal(out.heads.length,1)"));
+test("client loss retains pending original",()=>run("const {res,out}=response();let settled=false;const original=m.handleDashboardCoreReadonlyHttpV2(request('/api/runs'),res).then(()=>{settled=true});await new Promise(r=>setImmediate(r));assert.equal(p.reads.length,1);assert.equal(out.heads.length,0);res.emit('close');await new Promise(r=>setImmediate(r));assert.equal(settled,false);p.resolve();await original;assert.equal(out.heads.length,0);assert.equal(out.ends.length,0);assert.equal(p.reads.length,1)",{pending:true}));
+test("async transport error retains pending original",()=>run("const {res,out}=response();let settled=false;const original=m.handleDashboardCoreReadonlyHttpV2(request('/api/runs'),res).then(()=>{settled=true});await new Promise(r=>setImmediate(r));res.emit('error',Error('PRIVATE_TRANSPORT'));assert.equal(settled,false);p.resolve();await original;assert.equal(out.heads.length,0);assert.equal(out.ends.length,0);assert.equal(out.destroyed,1)",{pending:true}));
+for(const fault of ["writeFault","endFault"])test("transport closes without second response "+fault,()=>run("const out=await call('/api/runs');assert.equal(out.heads.length,1);assert.equal(out.destroyed,1);assert.equal(p.reads.length,1)",{[fault]:true}));
+for(const mode of ['ruleBlank','ruleUtf8'])test('corrupt required markdown '+mode,()=>run("const out=await call('/api/rules');assert.equal(out.heads[0].code,503);assert.deepEqual(json(out),{error:'Dashboard unavailable'});assert.equal(p.reads.length,0)",{[mode]:true}));
+for(const mode of ['yamlFault','stepFault'])test('corrupt required workflow '+mode,()=>run("const out=await call('/api/workflows');assert.equal(out.heads[0].code,503);assert.deepEqual(json(out),{error:'Dashboard unavailable'})",{[mode]:true}));
+test('ordinary enumeration failure remains best-effort',()=>run("const catalog=await import('./src/server/dashboard-core-static-v2.ts');assert.deepEqual(catalog.loadDashboardWorkflowsV2(),[]);assert.deepEqual(catalog.parseDashboardSystemRulesV2(),[])",{materialFault:true}));
+for(const route of ['/','/logo.jpeg','/fonts/GeistPixel-Square.woff2'])test('empty static refuses '+route,()=>run("const out=await call('"+route+"');assert.equal(out.heads[0].code,503);assert.deepEqual(json(out),{error:'Dashboard unavailable'})",{staticBlank:true}));
+test('invalid UTF8 HTML refuses',()=>run("const out=await call('/');assert.equal(out.heads[0].code,503);assert.deepEqual(json(out),{error:'Dashboard unavailable'})",{staticUtf8:true}));
+test('actual Node response framing into owned memory stream',()=>run("const {Duplex}=await import('node:stream');const chunks=[];const stream=new Duplex({read(){},write(chunk,encoding,done){chunks.push(Buffer.from(chunk));done()}});const req=new IncomingMessage(stream);req.url='/api/runs';req.method='GET';req.httpVersionMajor=1;req.httpVersionMinor=1;const res=new ServerResponse(req);res.assignSocket(stream);await m.handleDashboardCoreReadonlyHttpV2(req,res);await new Promise(r=>setImmediate(r));const wire=Buffer.concat(chunks).toString('utf8');assert.ok(wire.startsWith('HTTP/1.1 200'));assert.ok(/content-length: 2\\r\\n/i.test(wire));assert.equal(wire.split('\\r\\n\\r\\n')[1],'[]');stream.destroy()"));
+test('required workflow file refuses when directory remains',()=>run("const out=await call('/api/workflows');assert.equal(out.heads[0].code,503);assert.deepEqual(json(out),{error:'Dashboard unavailable'})",{missingWorkflowFile:true}));
+test('required reference membership refuses',()=>run("const out=await call('/api/rules');assert.equal(out.heads[0].code,503);assert.equal(p.reads.length,0)",{missingReference:true}));
+test('ordinary missing workflow retains remaining catalog',()=>run("const catalog=await import('./src/server/dashboard-core-static-v2.ts');const data=catalog.loadDashboardWorkflowsV2();assert.equal(data.length,4);assert.ok(!data.some(x=>x.id==='feature-dev'))",{missingWorkflowFile:true}));
+test('late required reference read failure refuses complete rules',()=>run("const out=await call('/api/rules');assert.equal(out.heads[0].code,503);assert.equal(p.reads.length,0)",{referenceFailure:true}));
+test('ordinary late reference failure retains partial material',()=>run("const catalog=await import('./src/server/dashboard-core-static-v2.ts');const data=catalog.parseDashboardSystemRulesV2();assert.ok(data.length>=20 && data.length<32);assert.ok(data.some(x=>x.id==='frag-critical-preamble'));assert.ok(!data.some(x=>x.id==='ref-next-best-practices'))",{referenceFailure:true}));

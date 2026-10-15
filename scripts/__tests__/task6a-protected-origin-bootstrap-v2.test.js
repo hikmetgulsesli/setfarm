@@ -5,6 +5,9 @@ import {spawn,spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import test from 'node:test';
+import {registerConsumerEpochNativeTest,registerSourceConstructorNativeTest,registerPhysicalOwnerLifetimeTest} from './fixtures/task6a-consumer-epoch-native-v1.mjs';
+import {ZERO,ONE,TWO,literalCommit,framedHash,coherentCommit,coherentTree,sourceGraph}
+  from './fixtures/task6a-origin-transport-fixtures-v2.js';
 
 const MEMBER='node-v22.23.1-darwin-arm64/bin/node';
 const HELPER=new URL('../task6a-origin-archive-v2.pm',import.meta.url);
@@ -93,7 +96,9 @@ function coldEntryProbe(source) {
     "    @INC=('/System/Library/Perl/5.34/darwin-thread-multi-2level',\n        '/System/Library/Perl/5.34');",
     String.raw`    @INC=(sub {CORE::print STDOUT "TEST_FORBIDDEN_IMPORT\n";
         CORE::die "TEST_FORBIDDEN_IMPORT\n";});`);
-  assert.ok(Buffer.byteLength(candidate)<=131072,'cold probe source bound');
+  // Bound this ordinary complete-source fixture input at512KiB so the authentic
+  //343849B Source is observed; all production budgets and cold refusal stay exact.
+  assert.ok(Buffer.byteLength(candidate)<=524288,'cold probe source bound');
   const r=spawnSync('/usr/bin/perl',['-f','-e',
     'binmode STDIN; local $/; my $source=<STDIN>; eval $source; if($@){print STDERR $@;exit 64;}exit 0;'],{
     input:candidate,cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
@@ -469,8 +474,8 @@ const STAGED_CUSTODY_PROGRAM=String.raw`
       my @directory_paths=('/','/private','/private/tmp',$logical,$logical.'/source',$logical.'/vendor');
       my @actual_dirs=('/','/private','/private/tmp',$root,$root.'/scripts',$root.'/docs');
       my @leaf_rel=qw(source/task6a-origin-archive-v2.pm source/task6a-origin-native-v2.pm source/task6a-origin-map-v2.pm source/task6a-protected-origin-entry-v2.mjs vendor/node-v22.23.1-darwin-arm64.tar.gz vendor/node);
-      my @backing_rel=qw(scripts/task6a-origin-archive-v2.pm scripts/task6a-origin-native-v2.pm scripts/task6a-origin-map-v2.pm scripts/task6a-protected-origin-entry-v2.mjs package.json README.md);
-      my @sizes=(5864,3347,11684,1933,22734,7454);
+      my @backing_rel=qw(scripts/task6a-origin-archive-v2.pm scripts/task6a-origin-native-v2.pm scripts/task6a-origin-map-v2.pm scripts/task6a-protected-origin-entry-v2.mjs scripts/__tests__/fixtures/task6a-staged-vendor-backing-v2.txt scripts/__tests__/fixtures/task6a-staged-native-backing-v2.txt);
+      my @sizes=(5864,3347,11684,1933,76,82);
       my @permissions=(0400,0400,0400,0444,0400,0555);
       my @blobs=qw(da1fd458fcaba775be5ba09ef88157b5ee48dbda 59e1ae8de38cf2083a0294c55454083840eb47f1 9719bf4f3676b43b7858e3cabe3cee3e679120f8 e53be63cdcdf286dc89adbec9770668b1fdb9cc7);
       my (%paths,@bodies,%physical_seen);
@@ -501,8 +506,8 @@ const STAGED_CUSTODY_PROGRAM=String.raw`
           directory=>0,permission=>$permissions[$index],role=>'f'.$index,body=>$body};
         push @bodies,$body;
       }
-      $fail->() unless Digest::SHA::sha256_hex($bodies[4]) eq 'bf6cedd405c26f5f933e45436d8ec84b2780297377bb44f40deb6c44a91f6a6e'
-        &&Digest::SHA::sha256_hex($bodies[5]) eq '14a6a8f44d6531560feca82404d64d46ff259585fd74b7ea7d9d2b3ae62efd0e';
+      $fail->() unless Digest::SHA::sha256_hex($bodies[4]) eq '46bb5c40ae918a624f6c6e298334c4041d34d3dd90fa6aca1dd230a840999a75'
+        &&Digest::SHA::sha256_hex($bodies[5]) eq '28efd5ab10eb4eda1c139276cdbd76a3b7f6d7b23570ae7bf94d3b08ade79122';
       my $project=sub {
         my ($p,$s)=@_;$fail->() unless ref($s) eq 'ARRAY'&&@$s==13;
         my @result=@$s;$result[2]=($result[2]&~07777)|$p->{permission};
@@ -2151,12 +2156,76 @@ const PARENT_PORT_PROGRAM=String.raw`
       require Digest::SHA; require Encode; require Errno;
       my $fault='';my @owned;my %roles;my @events;my @queue;my $out;
       my $protocol=$q->{kind} eq 'parent-protocol';my %queues;
+      my @native_events;my ($model_ordinal,$model_time,$native_model_clocks,$native_model_calls)=(0,0,0,0);
       my $fcntl_calls=0;my (%read_ordinals,%stat_ordinals);my $lstat_ordinal=0;
       my $fail=sub {$fault='TEST_PARENT_PORT_HARNESS_FAULT';die "$fault\n";};
       my $check=sub {die "$fault\n" if length($fault);};
+      # TEST MODEL ONLY: actual fixed physical FH acquisition/hash/metadata with
+      # exact modeled ls transport/settlement. No helper process is dispatched.
+      my (@physical_events,@physical_owned,@physical_boundaries);
+      my ($physical_model_actions,$physical_model_clocks,$physical_model_acls)=(0,0,0);
+      my %physical_paths=map {$_=>1} ('/','/usr','/usr/bin','/usr/bin/perl');
+      my $physical_event=sub {
+        $fail->() if ++$physical_model_actions>4096;
+        push @physical_events,{seq=>1+@physical_events,order=>++$model_ordinal,@_};
+      };
+      my $physical_shape=sub {
+        my ($fh)=@_;my $sv=B::svref_2object(\$fh);
+        return undef unless $sv->FLAGS&B::SVf_ROK();my $gv=$sv->RV;
+        return undef unless ref($gv) eq 'B::GV';my $io=$gv->IO;
+        return undef unless ref($io) eq 'B::IO';return [$$gv,$$io];
+      };
+      my $physical_find=sub {
+        my ($fh)=@_;my $shape=$physical_shape->($fh);return undef unless defined($shape);
+        my @matches=grep {defined($_->{shape})&&$_->{shape}[0]==$shape->[0]&&$_->{shape}[1]==$shape->[1]} @physical_owned;
+        $fail->() if @matches>1;return $matches[0];
+      };
+      my $physical_open=sub {
+        $fail->() unless $protocol&&@_==3&&!defined($_[0])&&$physical_paths{$_[1]}
+          &&@physical_owned<4&&!(grep {$_->{path} eq $_[1]} @physical_owned);
+        my ($path,$flags)=@_[1,2];my $want=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()
+          |($path eq '/usr/bin/perl'?Fcntl::O_NONBLOCK():Fcntl::O_DIRECTORY());
+        $fail->() unless $flags==$want;
+        my ($ret,$errno,$status,$error);{local $@;eval {$ret=CORE::sysopen($_[0],$path,$flags);$errno=0+$!;$status=$?;1;};$error=$@;}
+        # The actual output enters the independent fixture keeper before metadata.
+        my $r={fh=>$_[0],path=>$path,returned=>$ret,errno=>$errno,status=>$status,errorHex=>unpack('H*',$error),sourceAttempts=>0,fixtureAttempts=>0,closed=>0};
+        push @physical_owned,$r if defined($_[0]);
+        $fail->() unless !length($error)&&defined($ret)&&$ret==1&&defined($_[0]);
+        $r->{shape}=$physical_shape->($_[0]);$r->{fd}=CORE::fileno($_[0]);$r->{rawIdentity}=[CORE::stat($_[0])];
+        $fail->() unless defined($r->{shape})&&defined($r->{fd})&&$r->{fd}>=3&&@{$r->{rawIdentity}}==13;
+        $physical_event->(op=>'actual-fixed-open',path=>$path,fd=>$r->{fd},rawIdentity=>$r->{rawIdentity},returned=>$ret,errno=>$errno,status=>$status);
+        $!=$errno;$?=$status;return $ret;
+      };
+      my $physical_acl=sub {
+        my ($tool,$args,$seconds,$limit)=@_;
+        $fail->() unless $protocol&&$tool eq '/bin/ls'&&ref($args) eq 'ARRAY'&&@$args==2
+          &&$args->[0] eq '-lde'&&$physical_paths{$args->[1]}&&$seconds==2&&$limit==4096&&++$physical_model_acls<=32;
+        my $path=$args->[1];my @s=CORE::lstat($path);$fail->() unless @s==13&&$s[4]==0&&$s[5]==0;
+        my $mode=$s[2]&07777;my $rwx='';
+        for my $shift(6,3,0){$rwx.=($mode&(4<<$shift)?'r':'-').($mode&(2<<$shift)?'w':'-').($mode&(1<<$shift)?'x':'-');}
+        my $row=(Fcntl::S_ISDIR($s[2])?'d':'-').$rwx.' 1 root wheel '.$s[7].' Jan 1 2026 '.$path."\n";
+        $physical_event->(op=>'modeled-fixed-ls-capture',path=>$path,argv=>[@$args],seconds=>$seconds,limit=>$limit,
+          outHex=>unpack('H*',$row),nativeHelperDelegated=>JSON::PP::false,pidAndSettlementModeled=>JSON::PP::true);
+        return {out=>$row,err=>'',status=>0,pid=>900000+$physical_model_acls,reaped=>JSON::PP::true};
+      };
+      my $physical_close=sub {
+        my ($r,$fixture)=@_;$fail->() if $r->{closed}||$r->{sourceAttempts}||$r->{fixtureAttempts};
+        my $fd=CORE::fileno($r->{fh});$fail->() unless defined($fd)&&$fd==$r->{fd};
+        $fixture?++$r->{fixtureAttempts}:++$r->{sourceAttempts};
+        my ($ret,$errno,$status,$error);{local $@;eval {$ret=CORE::close($r->{fh});$errno=0+$!;$status=$?;1;};$error=$@;}
+        my ($live,$live_error);{local $@;eval {$live=CORE::fileno($r->{fh});1;};$live_error=$@;}
+        $r->{closed}=$ret&&!length($error)&&!defined($live)&&!length($live_error)?1:0;
+        $physical_event->(op=>$fixture?'fixture-backup-close':'source-original-close',path=>$r->{path},returned=>$ret,errno=>$errno,status=>$status,errorHex=>unpack('H*',$error),live=>$live,liveErrorHex=>unpack('H*',$live_error));
+        $!=$errno;$?=$status;$fail->() unless $r->{closed};return $ret;
+      };
       my $event=sub {
         if(@events>=($protocol?512:64)) {$fault='TEST_PARENT_PORT_HARNESS_FAULT';return 0;}
-        push @events,{seq=>1+@events,@_};return 1;
+        my %e=@_;
+        if(defined($e{role})&&$e{role}=~/\Aobserver(?:-|\z)/) {
+          if(@native_events>=2048) {$fault='TEST_PARENT_PORT_HARNESS_FAULT';return 0;}
+          push @native_events,{seq=>1+@native_events,order=>++$model_ordinal,%e};return 1;
+        }
+        push @events,{seq=>1+@events,order=>++$model_ordinal,%e};return 1;
       };
       my $register_pair=sub {
         my ($a,$an,$b,$bn)=@_;
@@ -2259,11 +2328,104 @@ const PARENT_PORT_PROGRAM=String.raw`
           returnedFields=>scalar(@$tuple),capturedSynthetic=>$role eq 'entropy'?JSON::PP::true:JSON::PP::false,
           syntheticResponse=>JSON::PP::true);
       };
+      # Ordinary FIFO transport with explicitly MODELED native facts/PIDs.
+      # No external fork/wait/signal/native API is delegated by this model.
+      my $native_core_can_read=IO::Select->can('can_read');
+      $fail->() unless defined($native_core_can_read)&&ref($native_core_can_read) eq 'CODE';
+      my ($native_model_command,$native_model_sequence,$native_model_reaped)=(0,1,0);
+      my ($native_model_start,$native_model_deadline)=(0,15);
+      my @native_model_commands;my @native_model_packets;
+      my $native_role=sub {defined($_[0])&&$_[0]=~/\Aobserver-(?:input|stdout|stderr|setup)(?:-peer)?\z/};
+      my $native_event=sub {
+        $fail->() if @native_events>=2048;
+        push @native_events,{seq=>1+@native_events,order=>++$model_ordinal,@_};return 1;
+      };
+      my $native_charge=sub {$fail->() if ++$native_model_calls>4096;};
+      my $native_frame=sub {
+        my ($type,$phase,$payload,$address)=@_;$address//=0;
+        $fail->() unless $type>=1&&$type<=6&&$phase>=0&&$phase<=3&&length($payload)<=272;
+        return pack('a8L<L<L<L<Q<','T6ARP001',$type,$phase,$native_model_sequence++,length($payload),$address).$payload;
+      };
+      my $native_packet=sub {
+        my ($opcode)=@_;my $phase=$opcode-1;my $packet='';
+        my $bsd=pack('L<9',0,0,0,424242,$$,501,20,501,20).("\0"x84).pack('Q<Q<',1,0);
+        my $audit=pack('L<9',8,501,501,20,501,20,424242,1,1);
+        my %raw=(1=>pack('L<',$$),2=>$bsd,3=>pack('L<',256),4=>pack('L<',65536),
+          5=>pack('L<',424242),6=>$audit,7=>'',8=>pack('l<',3));
+        my %ret=(1=>$$,2=>136,3=>0,4=>0,5=>0,6=>0,7=>0,8=>0);
+        my $api=sub {my ($kind)=@_;return $native_frame->(6,$phase,
+          pack('L<l<l<L<',$kind,$ret{$kind},0,length($raw{$kind})).$raw{$kind},0);};
+        if($opcode==1) {$packet.=$api->($_) for (1,2,3,4,5,6);$packet.=$native_frame->(1,0,'',0);}
+        elsif($opcode==2||$opcode==3) {
+          $packet.=$api->($_) for (1,2,6);
+          my $row=("\0"x80).pack('Q<Q<',4096,4096);
+          $packet.=$native_frame->(2,$phase,pack('l<l<',96,0).$row,0);
+          $packet.=$native_frame->(2,$phase,pack('l<l<',0,22).("\0"x96),8192);
+          $packet.=$api->($_) for (6,2,1);
+          $packet.=$native_frame->(3,$phase,pack('L<L<l<l<',1,2,0,22),0);
+        } else {
+          $fail->() unless $opcode==4;$packet.=$api->($_) for (7,8);
+          $packet.=$native_frame->(5,3,pack('L<4',1,1,0,7),0);
+        }
+        $fail->() if length($packet)>4096;push @native_model_packets,$packet;return $packet;
+      };
+      my $native_stat=sub {
+        my ($fh,$role)=@_;$native_charge->();my @s=CORE::stat($fh);
+        $fail->() unless @s==13&&Fcntl::S_ISFIFO($s[2]);
+        $native_event->(op=>'stat',role=>$role,tuple=>[@s]);return @s;
+      };
+      my $native_read=sub {
+        my ($fh,$cell,$request,$offset,$role)=@_;$native_charge->();
+        $fail->() unless ref($cell) eq 'SCALAR'&&defined($request)&&$request>=1&&$request<=65536&&$offset==0
+          &&$role=~/\Aobserver-(?:stdout|stderr|setup)\z/;
+        $!=0;my $n=CORE::sysread($fh,$$cell,$request);my $errno=0+$!;
+        $native_event->(op=>'sysread',role=>$role,request=>$request,count=>$n,errno=>$errno,rawHex=>unpack('H*',$$cell));
+        $fail->() unless defined($n)&&$errno==0&&$n==length($$cell);
+        $!=$errno;return $n;
+      };
+      my $native_write=sub {
+        my ($fh,$bytes,$length,$offset,$role)=@_;$native_charge->();
+        $fail->() unless $role eq 'observer-input'&&$length==48&&$offset==0&&length($bytes)==48
+          &&$native_model_command<4&&$model_time<$native_model_deadline;
+        my $opcode=$native_model_command+1;
+        my $expected=pack('a8L<L<L<L<Q<Q<Q<','T6ARQ001',1,$opcode,$$,424242,1,int($native_model_deadline*1e9),0);
+        $fail->() unless $bytes eq $expected;
+        $!=0;my $n=CORE::syswrite($fh,$bytes,$length,$offset);my $errno=0+$!;
+        $native_event->(op=>'syswrite',role=>$role,request=>$length,count=>$n,errno=>$errno,rawHex=>unpack('H*',$bytes));
+        $fail->() unless defined($n)&&$n==48&&$errno==0;
+        my $seen='';$!=0;my $got=CORE::sysread($roles{'observer-input-peer'}{fh},$seen,48);my $read_errno=0+$!;
+        $native_event->(op=>'command-peer-read',role=>'observer-input-peer',count=>$got,errno=>$read_errno,rawHex=>unpack('H*',$seen));
+        $fail->() unless defined($got)&&$got==48&&$read_errno==0&&$seen eq $expected;
+        push @native_model_commands,$seen;++$native_model_command;
+        my $packet=$native_packet->($opcode);$!=0;
+        my $written=CORE::syswrite($roles{'observer-stdout-peer'}{fh},$packet,length($packet));my $packet_errno=0+$!;
+        $native_event->(op=>'modeled-packet-peer-write',role=>'observer-stdout-peer',count=>$written,
+          errno=>$packet_errno,rawHex=>unpack('H*',$packet),nativeFactsModeled=>JSON::PP::true);
+        $fail->() unless defined($written)&&$written==length($packet)&&$packet_errno==0;
+        $core_close->($roles{'observer-stdout-peer'}) or $fail->() if $opcode==4;
+        $!=$errno;return $n;
+      };
+      my $native_ready=sub {
+        my ($selector,$timeout)=@_;$native_charge->();$fail->() unless $timeout==0.01;
+        my @ready;
+        for my $fh($selector->handles()) {
+          my $r=$identify->($fh);$fail->() unless $r->{role}=~/\Aobserver-(stdout|stderr|setup)\z/;
+          my $peer=$roles{$r->{role}.'-peer'};$fail->() unless defined($peer);
+          my $actual=IO::Select->new($fh);my @physical=$native_core_can_read->($actual,0);
+          # Invoke only the retained original readiness method, not this model.
+          push @ready,$fh if @physical;
+        }
+        $fail->() unless @ready;
+        $native_event->(op=>'ready',role=>'observer',roles=>[map {$identify->($_)->{role}} @ready],timeout=>$timeout);
+        $!=0;return @ready;
+      };
       my %handlers;
       my @entropy_identity=(11,22,0020666,1,0,0,33,0,0,0,0,4096,0);
       $handlers{stat}=sub {
+        if($protocol&&@_==1&&defined($physical_find->($_[0]))) {my @v=CORE::stat($_[0]);$physical_event->(op=>'actual-stat',path=>$physical_find->($_[0])->{path},tuple=>[@v]);return @v;}
         $fail->() unless wantarray&&@_==1;
-        my $r=$identify->($_[0]);my $e=$next->('stat',$r->{role});my $ordinal=++$stat_ordinals{$r->{role}};
+        my $r=$identify->($_[0]);return $native_stat->($_[0],$r->{role}) if $protocol&&$native_role->($r->{role});
+        my $e=$next->('stat',$r->{role});my $ordinal=++$stat_ordinals{$r->{role}};
         my @tuple=$r->{role} eq 'entropy'?@entropy_identity:CORE::stat($_[0]);
         $fail->() unless @tuple==13;
         if(exists($e->{drift_field})) {
@@ -2284,6 +2446,7 @@ const PARENT_PORT_PROGRAM=String.raw`
         $event->(op=>'stat',role=>$r->{role},fields=>scalar(@tuple));return @tuple;
       };
       $handlers{lstat}=sub {
+        if($protocol&&@_==1&&!ref($_[0])&&$physical_paths{$_[0]}) {my @v=CORE::lstat($_[0]);$physical_event->(op=>'actual-lstat',path=>$_[0],tuple=>[@v]);return @v;}
         $fail->() unless wantarray&&@_==1&&!ref($_[0])&&$_[0] eq '/dev/urandom';
         my $e=$next->('lstat','entropy');my $ordinal=++$lstat_ordinal;my @tuple=@entropy_identity;
         if(exists($e->{entropy_field})) {
@@ -2299,6 +2462,13 @@ const PARENT_PORT_PROGRAM=String.raw`
       my $wnohang_fn='POSIX'->can('WNOHANG');$fail->() unless defined($wnohang_fn);
       my $wnohang=$wnohang_fn->();
       $handlers{waitpid}=sub {
+        if($protocol&&@_==2&&$_[0]==424243&&$_[1]==$wnohang) {
+          $native_charge->();$fail->() if $native_model_reaped;
+          my $got=$roles{'observer-input'}{closed}?424243:0;
+          $native_model_reaped=1 if $got;
+          $native_event->(op=>'waitpid',role=>'observer',pid=>424243,result=>$got,status=>0,errno=>0,
+            pidAndStatusModeled=>JSON::PP::true);$!=0;$?=0;return $got;
+        }
         $fail->() unless @_==2&&$_[0]==424242&&$_[1]==$wnohang;
         my $role=$protocol&&$roles{input}{closed}?'closed-input-child':'child';
         my $e=$next->('waitpid',$role);
@@ -2313,6 +2483,7 @@ const PARENT_PORT_PROGRAM=String.raw`
         $event->(op=>'signal-attempt',role=>'child',signal=>$_[0],pid=>$_[1]);return $e->{result};
       };
       $handlers{sysopen}=sub {
+        return $physical_open->(@_) if $protocol&&@_==3&&!ref($_[1])&&$physical_paths{$_[1]};
         $fail->() unless @_==3&&!defined($_[0])&&$_[1] eq '/dev/urandom'
           &&$_[2]==(Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK());
         my $e=$next->('sysopen','entropy');
@@ -2337,8 +2508,11 @@ const PARENT_PORT_PROGRAM=String.raw`
         $event->(op=>'sysopen',role=>'entropy',fd=>fileno($r));return 1;
       };
       $handlers{sysread}=sub {
+        if($protocol&&(@_==3||@_==4)&&defined($physical_find->($_[0]))) {my $cell=$_[1];$fail->() unless ref($cell) eq 'SCALAR'&&$_[2]>=1&&$_[2]<=65536;my $n=@_==4?CORE::sysread($_[0],$$cell,$_[2],$_[3]):CORE::sysread($_[0],$$cell,$_[2]);my ($e,$st)=(0+$!,$?);$physical_event->(op=>'actual-read',path=>$physical_find->($_[0])->{path},returned=>$n,errno=>$e,status=>$st,bufferBytes=>length($$cell),bufferSHA256=>Digest::SHA::sha256_hex($$cell));$!=$e;$?=$st;return $n;}
         $fail->() unless (@_==3||@_==4)&&ref($_[1]) eq 'SCALAR';
-        my $r=$identify->($_[0]);my $e=$next->('sysread',$r->{role});
+        my $r=$identify->($_[0]);
+        return $native_read->($_[0],$_[1],$_[2],@_==4?$_[3]:0,$r->{role}) if $protocol&&$native_role->($r->{role});
+        my $e=$next->('sysread',$r->{role});
         $fail->() unless $_[2]==$e->{length}&&(@_==4?$_[3]:0)==($e->{offset}//0);
         my $ordinal=++$read_ordinals{$r->{role}};
         my $buffer_ref=$_[1];$!=0;
@@ -2402,7 +2576,10 @@ const PARENT_PORT_PROGRAM=String.raw`
       };
       $handlers{syswrite}=sub {
         $fail->() unless @_>=2&&@_<=4;
-        my $r=$identify->($_[0]);my $e=$next->('syswrite',$r->{role});
+        if($protocol&&defined(&test_parent_physical_model_snapshot)) {push @physical_boundaries,test_parent_physical_model_snapshot();$fail->() if @physical_boundaries>8;}
+        my $r=$identify->($_[0]);
+        return $native_write->($_[0],$_[1],@_>=3?$_[2]:length($_[1]),@_==4?$_[3]:0,$r->{role}) if $protocol&&$native_role->($r->{role});
+        my $e=$next->('syswrite',$r->{role});
         my $length=@_>=3?$_[2]:length($_[1]);my $offset=@_==4?$_[3]:0;
         $fail->() unless $_[1] eq $e->{payload}&&$length==$e->{length}&&$offset==$e->{offset};
         if(exists($e->{failure})&&$e->{failure} ne 'errno') {
@@ -2445,7 +2622,16 @@ const PARENT_PORT_PROGRAM=String.raw`
           coreErrno=>$error,observed=>$got);$!=$return_errno;return $n;
       };
       $handlers{fcntl}=sub {
+        if($protocol&&@_==3&&defined($physical_find->($_[0]))) {my $v=CORE::fcntl($_[0],$_[1],$_[2]);my ($e,$st)=(0+$!,$?);$physical_event->(op=>'actual-fcntl',path=>$physical_find->($_[0])->{path},command=>$_[1],argument=>$_[2],returned=>$v,errno=>$e,status=>$st);$!=$e;$?=$st;return $v;}
         $fail->() unless @_==3;my $r=$identify->($_[0]);
+        if($protocol&&$native_role->($r->{role})) {
+          $native_charge->();
+          $fail->() unless ($_[1]==Fcntl::F_SETFD()&&$_[2]==Fcntl::FD_CLOEXEC())
+            ||($_[1]==Fcntl::F_GETFL()&&$_[2]==0)||($_[1]==Fcntl::F_SETFL()&&($_[2]&Fcntl::O_NONBLOCK()));
+          $!=0;my $ret=CORE::fcntl($_[0],$_[1],$_[2]);my $errno=0+$!;
+          $native_event->(op=>'fcntl',role=>$r->{role},command=>$_[1],argument=>$_[2],result=>$ret,errno=>$errno);
+          $fail->() unless defined($ret)&&$errno==0;$!=$errno;return $ret;
+        }
         $fail->() if $protocol&&++$fcntl_calls>23;
         $fail->() unless ($_[1]==Fcntl::F_GETFL()&&$_[2]==0)
           ||($_[1]==Fcntl::F_SETFL()&&($_[2]&Fcntl::O_NONBLOCK()))
@@ -2479,7 +2665,14 @@ const PARENT_PORT_PROGRAM=String.raw`
         return $result;
       };
       $handlers{binmode}=sub {
-        $fail->() unless @_==1;my $r=$identify->($_[0]);my $e=$next->('binmode',$r->{role});
+        if($protocol&&@_==1&&defined($physical_find->($_[0]))) {my $v=CORE::binmode($_[0]);my ($e,$st)=(0+$!,$?);$physical_event->(op=>'actual-binmode',path=>$physical_find->($_[0])->{path},returned=>$v,errno=>$e,status=>$st);$!=$e;$?=$st;return $v;}
+        $fail->() unless @_==1;my $r=$identify->($_[0]);
+        if($protocol&&$native_role->($r->{role})) {
+          $native_charge->();$!=0;my $ret=CORE::binmode($_[0]);my $errno=0+$!;
+          $native_event->(op=>'binmode',role=>$r->{role},result=>$ret,errno=>$errno);
+          $fail->() unless $ret&&$errno==0;$!=$errno;return $ret;
+        }
+        my $e=$next->('binmode',$r->{role});
         $!=0;my $ok=CORE::binmode($_[0]);my $errno=0+$!;$fail->() unless $ok&&$errno==0;
         $event->(op=>'binmode',role=>$r->{role},result=>1,errno=>$errno);
         if(exists($e->{failure})) {
@@ -2491,7 +2684,10 @@ const PARENT_PORT_PROGRAM=String.raw`
         return $ok;
       };
       $handlers{close}=sub {
-        $fail->() unless @_==1;my $r=$identify->($_[0]);my $e=$next->('close',$r->{role});
+        if($protocol&&@_==1) {my $r=$physical_find->($_[0]);return $physical_close->($r,0) if defined($r);}
+        $fail->() unless @_==1;my $r=$identify->($_[0]);
+        return $core_close->($r) if $protocol&&$native_role->($r->{role});
+        my $e=$next->('close',$r->{role});
         my $ok=$core_close->($r);$fail->() unless $ok&&$r->{closed};
         if(exists($e->{failure})) {
           $fail->() unless $protocol&&$r->{role}=~/\A(?:input|stdout|stderr|setup|entropy)\z/
@@ -2516,6 +2712,16 @@ const PARENT_PORT_PROGRAM=String.raw`
           $register_pair->($original,$name,$peer,$name.'-peer');
           $fail->() if $q->{record}{mode} eq 'allocation-fault';
           CORE::binmode($r) or $fail->();CORE::binmode($w) or $fail->();
+        }
+        if($protocol) {
+          for my $name('input','stdout','stderr','setup') {
+            CORE::pipe(my $r,my $w) or $fail->();
+            my ($original,$peer)=$name eq 'input'?($w,$r):($r,$w);
+            $register_pair->($original,'observer-'.$name,$peer,'observer-'.$name.'-peer');
+            CORE::binmode($r) or $fail->();CORE::binmode($w) or $fail->();
+          }
+          $core_close->($roles{'observer-setup-peer'}) or $fail->();
+          $core_close->($roles{'observer-stderr-peer'}) or $fail->();
         }
         # Package hook names are intentionally referenced again by string eval.
         no warnings 'once';
@@ -2701,7 +2907,7 @@ const PARENT_PORT_PROGRAM=String.raw`
             status=>$mode eq 'nonzero-reap'||$mode eq 'post-reap-signal'?256:0}];
           $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>0}} 1..46];
           if($mode eq 'deadline') {
-            $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} (0,0,(44)x38,(46)x6)];
+            $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} (0,0,(14)x38,(16)x6)];
           }
           if($mode eq 'post-reap-signal') {
             $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} ((0)x35,0,6)];
@@ -2748,7 +2954,7 @@ const PARENT_PORT_PROGRAM=String.raw`
           if(defined($ready_fault)) {
             my $late=$ready_fault eq 'duplicate'||$ready_fault eq 'foreign'||$ready_fault eq 'timeout';
             $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>0}} 1..($late?5:4)];
-            $queues{'clock:fixture'}[4]{value}=45 if $ready_fault eq 'timeout';
+            $queues{'clock:fixture'}[4]{value}=15 if $ready_fault eq 'timeout';
             $queues{'waitpid:child'}=[map {+{op=>'waitpid',role=>'child',got=>0,status=>0}}
               1..($ready_fault eq 'duplicate'||$ready_fault eq 'foreign'?3:2)];
           }
@@ -2787,7 +2993,7 @@ const PARENT_PORT_PROGRAM=String.raw`
                   {op=>'waitpid',role=>'closed-input-child',got=>424242,status=>0}];
               }
             } elsif($finish_case eq 'missing-reap') {
-              $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} ((0)x45,45,45,45)];
+              $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} ((0)x45,15,15,15)];
               $queues{'waitpid:closed-input-child'}=[
                 (map {+{op=>'waitpid',role=>'closed-input-child',got=>0,status=>0}} 1..13),
                 {op=>'waitpid',role=>'closed-input-child',got=>424242,status=>0}];
@@ -2797,7 +3003,7 @@ const PARENT_PORT_PROGRAM=String.raw`
               $queues{'waitpid:child'}=[{op=>'waitpid',role=>'child',got=>0,status=>0}];
             } else {
               my %zero_counts=('missing-setup'=>7,'missing-stdout'=>41,'missing-stderr'=>43);
-              $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} ((0)x$zero_counts{$finish_case},45)];
+              $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} ((0)x$zero_counts{$finish_case},15)];
               $queues{'waitpid:child'}=[map {+{op=>'waitpid',role=>'child',got=>0,status=>0}}
                 1..($finish_case eq 'missing-setup'?5:32)];
               if($finish_case eq 'missing-stderr') {
@@ -2844,7 +3050,7 @@ const PARENT_PORT_PROGRAM=String.raw`
             $queues{'stat:input'}=[map {+{op=>'stat',role=>'input'}} 1..41];
             $queues{'stat:stdout'}=[map {+{op=>'stat',role=>'stdout'}} 1..41];
             $queues{'waitpid:child'}=[map {+{op=>'waitpid',role=>'child',got=>0,status=>0}} 1..39];
-            $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} ((0)x41,45)];
+            $queues{'clock:fixture'}=[map {+{op=>'clock',role=>'fixture',value=>$_}} ((0)x41,15)];
             pop @{$queues{'ready:fixture'}};pop @{$queues{'sysread:stdout'}};
           }
           if(defined($split_frame)) {
@@ -2874,6 +3080,16 @@ const PARENT_PORT_PROGRAM=String.raw`
           my $clock_ordinal=0;
           local *Time::HiRes::clock_gettime=sub (;$) {
             $fail->() unless @_==1&&$_[0]==Time::HiRes::CLOCK_MONOTONIC();
+            if(defined(&test_parent_physical_model_busy)&&test_parent_physical_model_busy()) {
+              $fail->() if ++$physical_model_clocks>4096;
+              $physical_event->(op=>'clock',role=>'physical',value=>$model_time,sharedMonotonic=>JSON::PP::true);
+              return $model_time;
+            }
+            if(defined(&test_parent_native_model_busy)&&test_parent_native_model_busy()) {
+              $fail->() if ++$native_model_clocks>512;
+              $native_event->(op=>'clock',role=>'observer',value=>$model_time,sharedMonotonic=>JSON::PP::true);
+              return $model_time;
+            }
             ++$clock_ordinal;
             my $e=$next->('clock','fixture');
             if($e->{nominated_throw}) {
@@ -2882,6 +3098,7 @@ const PARENT_PORT_PROGRAM=String.raw`
             }
             my $v=$e->{value};my $flags=B::svref_2object(\$v)->FLAGS;
             $fail->() unless ($flags&(B::SVf_IOK()|B::SVf_NOK()))&&!($flags&B::SVf_POK());
+            $fail->() unless $v>=$model_time;$model_time=$v;
             $event->(op=>'clock',role=>'fixture',value=>$v);
             test_change_parent_admission() if $admission_case&&$mode=~/\Aadmission-drift-/&&$clock_ordinal==3;
             if($mode eq 'fd-rebinding-input'&&$clock_ordinal==3) {
@@ -2896,6 +3113,11 @@ const PARENT_PORT_PROGRAM=String.raw`
           };
           local *IO::Select::can_write=sub {$fail->();};
           local *IO::Select::can_read=sub {
+            if(wantarray&&@_==2&&ref($_[0]) eq 'IO::Select') {
+              my @members=$_[0]->handles();
+              return $native_ready->($_[0],$_[1]) if @members
+                &&!grep {!$native_role->($identify->($_)->{role})} @members;
+            }
             my $entry_errno=0+$!;$fail->() unless wantarray&&@_==2&&ref($_[0]) eq 'IO::Select'&&$_[1]==0.01;
             my ($selector,$timeout)=@_;my $e=$next->('ready','fixture');my @ready;
             for my $fh($selector->handles()) {$identify->($fh);}
@@ -2928,12 +3150,13 @@ const PARENT_PORT_PROGRAM=String.raw`
           my $source=MIME::Base64::decode_base64($ARGV[0]);
           my $loaded=eval($source."\n1;\n");my $startup_error=$@;$check->();
           $fail->() unless $loaded&&!length($startup_error);
+          no warnings 'redefine';local *main::task6a_origin_capture=$physical_acl;
           my $initialized=eval {test_initialize_parent(map {$roles{$_}{fh}} ('input','stdout','stderr','setup')) unless $mode eq 'absent';1;};
           my $initialize_error=$@;$check->();$fail->() unless $initialized&&!length($initialize_error);
           my $fresh=eval {task6a_origin_parent_require_unburned();1;};my $fresh_error=$@;$check->();
           $fail->() unless $fresh&&!length($fresh_error);
           my $before_consumer=scalar(@events);
-          my $consumer=eval {$mode eq 'arity'?task6a_origin_consume_entry_protocol(1):task6a_origin_consume_entry_protocol()};
+          my $consumer=eval {$mode eq 'arity'?test_consume_initialized_parent_protocol(1):test_consume_initialized_parent_protocol()};
           my $primary=$@;$check->();
           if(ref($consumer) eq 'HASH'&&!length($primary)) {
             for my $list(values %queues) {$fail->() if @$list;}
@@ -2943,7 +3166,7 @@ const PARENT_PORT_PROGRAM=String.raw`
               # Repeat the real settled consumer, without initializer/queue reset.
               # Preserve the first diagnostic before the second call burns.
               my $before_repeat=scalar(@events);
-              my $again=eval {task6a_origin_consume_entry_protocol();1;};my $again_error=$@;$check->();
+              my $again=eval {test_consume_initialized_parent_protocol();1;};my $again_error=$@;$check->();
               my $guard=eval {task6a_origin_parent_require_unburned();1;};my $guard_error=$@;$check->();
               $fail->() unless !$again&&$again_error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n"
                 &&!$guard&&$guard_error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
@@ -2961,7 +3184,7 @@ const PARENT_PORT_PROGRAM=String.raw`
               $fail->() unless $ok&&!length($error);$restored=1;
             }
             my $before_repeat=scalar(@events);
-            my $repeat=eval {task6a_origin_consume_entry_protocol();1;};my $repeat_error=$@;$check->();
+            my $repeat=eval {test_consume_initialized_parent_protocol();1;};my $repeat_error=$@;$check->();
             my $guard=eval {task6a_origin_parent_require_unburned();1;};my $guard_error=$@;$check->();
             $fail->() unless !$repeat&&$repeat_error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n"
               &&($guard&&!length($guard_error)||!$guard&&$guard_error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n");
@@ -3118,7 +3341,17 @@ const PARENT_PORT_PROGRAM=String.raw`
         $check->();$fail->() if @queue;1;
       };my $primary=$@;
       $fault='TEST_PARENT_PORT_HARNESS_FAULT' unless $body_ok||length($fault);
+      my $native_before_cleanup;
+      if($protocol&&defined(&test_parent_native_model_snapshot)) {
+        $native_before_cleanup={sourceSnapshot=>test_parent_native_model_snapshot(),originals=>[
+          map {my $r=$roles{'observer-'.$_};+{role=>$r->{role},attempted=>$r->{attempted},closed=>$r->{closed},
+            liveFd=>CORE::fileno($r->{fh})}} ('input','stdout','stderr','setup')]};
+        $native_event->(op=>'backup-cleanup-begin',role=>'observer');
+      }
+      my $physical_before_cleanup=$protocol&&defined(&test_parent_physical_model_snapshot)?test_parent_physical_model_snapshot():undef;
+      my @physical_before_backup=map {+{path=>$_->{path},fd=>$_->{fd},shape=>[@{$_->{shape}}],sourceAttempts=>$_->{sourceAttempts},fixtureAttempts=>$_->{fixtureAttempts},live=>CORE::fileno($_->{fh})}} @physical_owned;
       my @cleanup_errors;
+      for my $r(@physical_owned) {next if $r->{closed};my $v=eval {$physical_close->($r,1)};push @cleanup_errors,'physical:'.$r->{path} unless $v&&!length($@)&&$r->{closed};}
       for my $r(@owned) {
         next if $r->{closed};
         if($r->{attempted}) {push @cleanup_errors,$r->{role};next;}
@@ -3136,10 +3369,151 @@ const PARENT_PORT_PROGRAM=String.raw`
       }
       $out->{scope}=$protocol?'ordinary-parent-consumer-harness-only':'parent-external-ports-harness-only';
       $out->{consumerInvoked}=$protocol?JSON::PP::true:JSON::PP::false;
-      $out->{fixtureClosed}=scalar(@owned);$out->{events}=\@events;$out->{harnessFault}=undef;
+      $out->{fixtureClosed}=scalar(grep {!$native_role->($_->{role})} @owned);
+      $out->{events}=\@events;$out->{harnessFault}=undef;
+      if($protocol){$out->{physicalModel}={scope=>'actual fixed physical component with modeled ls transport and settlement only',
+        captureTransportModeled=>JSON::PP::true,nativeHelperDelegates=>0,sourceSnapshot=>$physical_before_cleanup,
+        beforeFixtureBackup=>\@physical_before_backup,boundaries=>\@physical_boundaries,events=>\@physical_events,
+        aclSamples=>$physical_model_acls,clockSamples=>$physical_model_clocks,actions=>$physical_model_actions,
+        knownActualOriginals=>scalar(@physical_owned),fixtureClosed=>scalar(grep {$_->{closed}} @physical_owned),
+        sourceCloseCredit=>scalar(grep {$_->{sourceAttempts}&&$_->{closed}} @physical_owned)};}
+
+      if($protocol) {
+        my $snapshot=$native_before_cleanup->{sourceSnapshot};
+        $out->{nativeModel}={scope=>'modeled-native-wire-over-real-owned-FIFOs-only',nativeFactsModeled=>JSON::PP::true,
+          observerPidModeled=>424243,sourceSnapshot=>$snapshot,beforeCleanup=>$native_before_cleanup,events=>\@native_events,
+          clockCalls=>$native_model_clocks,nativeCalls=>$native_model_calls,
+          commandHex=>[map {unpack('H*',$_)} @native_model_commands],packetHex=>[map {unpack('H*',$_)} @native_model_packets],
+          fixtureOriginals=>scalar(grep {$native_role->($_->{role})} @owned),
+          allFixtureOriginals=>scalar(@owned),allFixtureClosed=>scalar(grep {$_->{closed}} @owned)};
+        $fail->() unless $out->{nativeModel}{fixtureOriginals}==8&&$out->{nativeModel}{allFixtureClosed}==@owned;
+        if($snapshot->{prepared}) {
+          $fail->() unless $snapshot->{reaped}&&!$snapshot->{uncertain}&&$snapshot->{status}==0
+            &&$snapshot->{allClosed}&&join(',',@{$snapshot->{closeAttempted}}) eq '1,1,1,1'
+            &&join(',',@{$snapshot->{definitelyClosed}}) eq '1,1,1,1';
+        }
+        if($out->{accepted}) {
+          $fail->() unless $snapshot->{expected}==4&&$snapshot->{end}==2&&$snapshot->{frames}==28
+            &&$snapshot->{inputBytes}==192&&$snapshot->{rawBytes}==1280&&$snapshot->{cleanupComplete}
+            &&@native_model_commands==4&&@native_model_packets==4;
+        }
+      }
       print JSON::PP->new->canonical->utf8->encode($out);exit 0;
     }
 `;
+function assertParentModeledNativeTrace(out) {
+  const m=out.nativeModel;
+  assert.equal(m.scope,'modeled-native-wire-over-real-owned-FIFOs-only');
+  assert.equal(m.nativeFactsModeled,true);assert.equal(m.observerPidModeled,424243);
+  assert.equal(m.fixtureOriginals,8);assert.equal(m.allFixtureOriginals,out.fixtureClosed+8);
+  assert.equal(m.allFixtureClosed,m.allFixtureOriginals);
+  assert.ok(m.clockCalls<=512&&m.nativeCalls<=4096&&m.events.length<=2048);
+  const originals=['observer-input','observer-stdout','observer-stderr','observer-setup'];
+  assert.deepEqual(m.beforeCleanup.originals.map(r=>r.role),originals);
+  const snapshot=m.sourceSnapshot;
+  assert.deepEqual(snapshot,m.beforeCleanup.sourceSnapshot);
+  for(const r of m.beforeCleanup.originals) {
+    if(snapshot.prepared) {
+      assert.deepEqual([r.attempted,r.closed,r.liveFd],[1,1,null],r.role+' was not closed by Source');
+    } else {
+      assert.deepEqual([r.attempted,r.closed],[0,0]);
+      assert.ok(Number.isInteger(r.liveFd)&&r.liveFd>=0,'unclaimed original must stay live until fixture backup');
+    }
+  }
+  const backup=m.events.find(e=>e.op==='backup-cleanup-begin');assert.ok(backup);
+  const roles=[...originals,...originals.map(r=>r+'-peer')];
+  for(const role of roles) {
+    const attempts=m.events.filter(e=>e.role===role&&e.op==='close-attempt');
+    const results=m.events.filter(e=>e.role===role&&e.op==='close-result');
+    assert.equal(attempts.length,1,role+' close retried');assert.equal(results.length,1);
+    assert.deepEqual([results[0].result,results[0].definite,results[0].errno],[1,1,0]);
+    assert.ok(attempts[0].order<results[0].order);
+    if(originals.includes(role)) assert.equal(results[0].order<backup.order,Boolean(snapshot.prepared));
+  }
+  const commands=m.commandHex.map(hex=>Buffer.from(hex,'hex'));
+  const packets=m.packetHex.map(hex=>Buffer.from(hex,'hex'));
+  assert.equal(commands.length,packets.length);assert.ok(commands.length<=4);
+  let sequence=1,wireFrames=0,nativeRaw=0;let firstParent,firstDeadline;
+  for(let phase=0;phase<commands.length;phase++) {
+    const c=commands[phase];assert.equal(c.length,48);assert.equal(c.subarray(0,8).toString(),'T6ARQ001');
+    assert.equal(c.readUInt32LE(8),1);assert.equal(c.readUInt32LE(12),phase+1);
+    const parent=c.readUInt32LE(16);assert.ok(parent>0);assert.equal(c.readUInt32LE(20),424242);
+    assert.equal(c.readBigUInt64LE(24),1n);assert.equal(c.readBigUInt64LE(40),0n);
+    if(phase===0) {firstParent=parent;firstDeadline=c.readBigUInt64LE(32);}
+    assert.equal(parent,firstParent);assert.equal(c.readBigUInt64LE(32),firstDeadline);
+    const packet=packets[phase];let offset=0;const api=[];const regions=[];let endType;
+    while(offset<packet.length) {
+      assert.ok(offset+32<=packet.length);const type=packet.readUInt32LE(offset+8);
+      assert.equal(packet.subarray(offset,offset+8).toString(),'T6ARP001');
+      assert.equal(packet.readUInt32LE(offset+12),phase);assert.equal(packet.readUInt32LE(offset+16),sequence++);
+      const size=packet.readUInt32LE(offset+20),address=packet.readBigUInt64LE(offset+24);
+      assert.ok(size<=272&&offset+32+size<=packet.length);
+      const payload=packet.subarray(offset+32,offset+32+size);offset+=32+size;++wireFrames;
+      if(type===6) {
+        const kind=payload.readUInt32LE(0),ret=payload.readInt32LE(4),raw=payload.subarray(16);
+        const lengths={1:4,2:136,3:4,4:4,5:4,6:36,7:0,8:4};
+        assert.equal(raw.length,lengths[kind]);assert.equal(payload.readUInt32LE(12),raw.length);
+        assert.equal(payload.readInt32LE(8),0);api.push(kind);nativeRaw+=raw.length;
+        if(kind===1) {assert.equal(ret,parent);assert.equal(raw.readUInt32LE(0),parent);}
+        if(kind===2) {
+          assert.equal(ret,136);assert.deepEqual([3,4,5,6,7,8].map(i=>raw.readUInt32LE(i*4)),[424242,parent,501,20,501,20]);
+          assert.equal(raw.readBigUInt64LE(120),1n);assert.equal(raw.readBigUInt64LE(128),0n);
+        }
+        if(kind===3) {assert.equal(ret,0);assert.equal(raw.readUInt32LE(0),256);}
+        if(kind===4) {assert.equal(ret,0);assert.equal(raw.readUInt32LE(0),65536);}
+        if(kind===5) {assert.equal(ret,0);assert.equal(raw.readUInt32LE(0),424242);}
+        if(kind===6) {
+          assert.equal(ret,0);assert.deepEqual(Array.from({length:9},(_,i)=>raw.readUInt32LE(i*4)),[8,501,501,20,501,20,424242,1,1]);
+        }
+        if(kind===7) assert.equal(ret,0);
+        if(kind===8) {assert.equal(ret,0);assert.equal(raw.readInt32LE(0),3);}
+      } else if(type===2) {
+        assert.equal(payload.length,104);const raw=payload.subarray(8);nativeRaw+=raw.length;
+        regions.push([payload.readInt32LE(0),payload.readInt32LE(4),address,
+          raw.readBigUInt64LE(80),raw.readBigUInt64LE(88)]);
+      } else {
+        endType=type;
+        if(phase===0) {assert.equal(type,1);assert.equal(payload.length,0);}
+        else if(phase===3) {assert.equal(type,5);assert.deepEqual(Array.from({length:4},(_,i)=>payload.readUInt32LE(i*4)),[1,1,0,7]);}
+        else {assert.equal(type,3);assert.deepEqual([payload.readUInt32LE(0),payload.readUInt32LE(4),payload.readInt32LE(8),payload.readInt32LE(12)],[1,2,0,22]);}
+        assert.equal(offset,packet.length,'trailing modeled old/future frame');
+      }
+    }
+    assert.deepEqual(api,phase===0?[1,2,3,4,5,6]:phase===3?[7,8]:[1,2,6,6,2,1]);
+    assert.equal(endType,phase===0?1:phase===3?5:3);
+    assert.deepEqual(regions,phase===0||phase===3?[]:[[96,0,0n,4096n,4096n],[0,22,8192n,0n,0n]]);
+  }
+  const writes=m.events.filter(e=>e.op==='syswrite');const peer=m.events.filter(e=>e.op==='command-peer-read');
+  assert.deepEqual(writes.map(e=>e.rawHex),m.commandHex);assert.deepEqual(peer.map(e=>e.rawHex),m.commandHex);
+  const reads=m.events.filter(e=>e.op==='sysread'&&e.role==='observer-stdout'&&e.count>0);
+  assert.equal(reads.map(e=>e.rawHex).join(''),m.packetHex.join(''));
+  assert.equal(snapshot.consumedRawHex,m.packetHex.join(''));
+  const physical=out.physicalModel;assert.ok(physical);assert.equal(physical.captureTransportModeled,true);assert.equal(physical.nativeHelperDelegates,0);
+  assert.ok(physical.actions<=4096&&physical.clockSamples<=4096&&physical.aclSamples<=32);
+  assert.ok(physical.sourceSnapshot);assert.equal(physical.knownActualOriginals,physical.sourceSnapshot.state==='new'?0:4);
+  for(const r of physical.beforeFixtureBackup){assert.equal(r.sourceAttempts,0);assert.equal(r.fixtureAttempts,0);assert.equal(r.live,r.fd);assert.ok(Number.isInteger(r.fd)&&r.fd>=3);}
+  assert.equal(physical.sourceCloseCredit,0,'fixture backup must not count as Source physical release');
+  assert.equal(physical.fixtureClosed,physical.knownActualOriginals);
+  for(const b of physical.boundaries){assert.equal(b.state,'active');assert.equal(b.burned,0);assert.equal(b.released,0);assert.equal(b.originals.length,4);assert.ok(b.originals.every(r=>r.live===r.fd&&!r.attempted&&!r.closed));}
+
+  for(let i=0;i<writes.length;i++) {
+    assert.deepEqual([writes[i].count,writes[i].errno,peer[i].count,peer[i].errno],[48,0,48,0]);
+    assert.ok(writes[i].order<peer[i].order&&peer[i].order<reads[i].order);
+    assert.ok(out.events.filter(e=>e.op==='waitpid').every(e=>e.order<writes[i].order||e.order>reads[i].order),
+      'Node wait entered while a modeled target response was active');
+  }
+  const reaps=m.events.filter(e=>e.op==='waitpid'&&e.result===424243);
+  assert.equal(reaps.length,snapshot.prepared?1:0);
+  assert.ok(m.events.filter(e=>e.op==='waitpid').every(e=>e.pid===424243&&e.status===0&&e.errno===0));
+  if(out.accepted) {
+    assert.equal(commands.length,4);assert.equal(wireFrames,28);assert.equal(nativeRaw,1280);
+    assert.deepEqual([snapshot.frames,snapshot.rawBytes,snapshot.inputBytes],[28,1280,192]);
+    assert.deepEqual([snapshot.expected,snapshot.end,snapshot.reaped,snapshot.status,snapshot.allClosed,snapshot.cleanupComplete],[4,2,1,0,1,1]);
+    const nodeReap=out.events.find(e=>e.op==='waitpid'&&e.result===424242);assert.ok(nodeReap);
+    assert.ok(reads[2].order<nodeReap.order&&nodeReap.order<writes[3].order&&writes[3].order<reaps[0].order);
+  }
+}
+
 function systemObject(kind,record,expected,{sourceOverride}={}) {
   assert.ok(ordinaryHost(),'mutable test declarations require an ordinary macOS real/effective UID');
   assert.ok(existsSync(BOOTSTRAP),'system supervisor implementation missing');
@@ -3150,12 +3524,20 @@ function systemObject(kind,record,expected,{sourceOverride}={}) {
   assert.ok(original.startsWith(COLD_ENTRY_GUARD),'cold entry must be source prefix');
   let source=replaceOnce(original,COLD_ENTRY_GUARD,'');
   source=replaceOnce(source,'\ntask6a_origin_main();\n','\n');
+  if(kind==='staged-custody'||kind==='staged-captor-ports') {
+    // These copied fixtures install an ordinary-sub denied exec port. Normalize
+    // the constructor's two block-form calls even though neither is invoked.
+    source=replaceOnce(source,'exec {$node_view->{path}} $node_view->{path},$entry_view->{path};',
+      'CORE::GLOBAL::exec($node_view->{path},$node_view->{path},$entry_view->{path});');
+    source=replaceOnce(source,'exec {$constructor_capsule_path} $constructor_capsule_path;',
+      'CORE::GLOBAL::exec($constructor_capsule_path,$constructor_capsule_path);');
+  }
   if(kind==='staged-custody') {
     source=replaceOnce(source,'exec {$tool} $tool,@$args;',
       'CORE::GLOBAL::exec($tool,$tool,@$args);');
     source=replaceOnce(source,
       "my $staged_vendor_pin='ef28d8fab2c0e4314522d4bb1b7173270aa3937e93b92cb7de79c112ac1fa953';",
-      "my $staged_vendor_pin='bf6cedd405c26f5f933e45436d8ec84b2780297377bb44f40deb6c44a91f6a6e';");
+      "my $staged_vendor_pin='46bb5c40ae918a624f6c6e298334c4041d34d3dd90fa6aca1dd230a840999a75';");
     source=replaceOnce(source,'sub task6a_origin_hold_staged_custody {',String.raw`
   if($mode ne 'absent') {$staged_admission=$fixture_admission;}
   if($mode eq 'foreign-parent') {push @parent_originals,{fh=>$fixture_original};}
@@ -3459,6 +3841,34 @@ function systemObject(kind,record,expected,{sourceOverride}={}) {
     }
   }
   if(kind==='parent-protocol') {
+    source=replaceOnce(source,'$physical_can_claim=sub {',String.raw`
+    $main::test_parent_physical_busy=0;
+    sub test_parent_physical_model_busy {return $main::test_parent_physical_busy?1:0;}
+    sub test_parent_physical_model_snapshot {
+      return {state=>$physical_state,burned=>$file_lifecycle_burned,released=>$file_lifecycle_released,
+        cleanupAttempted=>$physical_cleanup_attempted,cleanupOK=>$physical_cleanup_ok,
+        files=>scalar(@file_ledger),directories=>scalar(@directory_ledger),
+        originals=>[map {+{path=>$_->{path},fd=>$_->{fd},shape=>[@{$_->{shape}}],attempted=>$_->{attempted},closed=>$_->{closed},live=>CORE::fileno($_->{fh})}} @physical_kept]};
+    }
+    $physical_can_claim=sub {`);
+    for(const anchor of ['$physical_open=sub {','$physical_require_live=sub {','$physical_epoch=sub {','$physical_hold_private=sub {']) {
+      source=replaceOnce(source,anchor,anchor+'\n    local $main::test_parent_physical_busy=1;');
+    }
+    source=replaceOnce(source,'my $parent_consume_protocol=sub {',
+      'my $parent_consume_protocol;sub test_consume_initialized_parent_protocol {$parent_consume_protocol->(@_)}\n$parent_consume_protocol=sub {');
+    source=replaceOnce(source,'my ($parent_native_uid,$parent_native_gid)=(70,70);',
+      'my ($parent_native_uid,$parent_native_gid)=(501,20);');
+    source=replaceOnce(source,'$parent_native_cleanup_complete=sub {',String.raw`
+    sub test_parent_native_model_busy {return $native_busy?1:0;}
+    sub test_parent_native_model_snapshot {
+        return {prepared=>0+$native_prepared,claimed=>0+$native_claimed,expected=>0+$native_expected,
+          end=>0+$native_end,reaped=>0+$native_reaped,uncertain=>0+$native_uncertain,status=>$native_status,
+          allClosed=>$native_all_closed->()?1:0,cleanupComplete=>$parent_native_cleanup_complete->()?1:0,
+          closeAttempted=>[@native_close_attempted],definitelyClosed=>[@native_definitely_closed],
+          frames=>0+$native_frames,rawBytes=>0+$native_raw_bytes,inputBytes=>0+$native_input,
+          consumedRawHex=>unpack('H*',join('',@native_raw))};
+    }
+    $parent_native_cleanup_complete=sub {`);
     source=replaceOnce(source,'sub task6a_origin_parent_require_unburned {',String.raw`
 my ($test_saved_admission,%test_saved_fields,@test_saved_custody);
 my ($test_admission_mutated,$test_admission_restored)=(0,0);
@@ -3511,6 +3921,7 @@ sub test_restore_parent_admission {
 }
 sub test_initialize_parent {
     my ($input,$stdout,$stderr,$setup)=@_;
+    task6a_origin_hold_system_perl_physical(); # genuine fixed component, modeled ls transport only
     @parent_originals=map {+{fh=>$_}} ($input,$stdout,$stderr,$setup);
     my %fds;
     for my $record(@parent_originals) {
@@ -3521,6 +3932,15 @@ sub test_initialize_parent {
     $parent_original_pid=424242;
     $parent_original_admission={pid=>424242,input=>$input,stdout=>$stdout,stderr=>$stderr,setup=>$setup};
     $parent_admission=$parent_original_admission;
+    $parent_native_original_pid=424243;$parent_native_target_pid=424242;$parent_native_birth_ordinal=1;
+    # The bootstrap-cap fixture creates this modeled observer at179; every
+    # other mode at0. This advances the ONE chronology before preparation.
+    $native_model_start=$mode eq 'finish-bootstrap-cap'?179:0;
+    $fail->() if $native_model_start<$model_time;$model_time=$native_model_start;
+    $parent_native_original_start=$native_model_start;
+    $native_model_deadline=$native_model_start+15;$native_model_deadline=180 if $native_model_deadline>180;
+    @parent_native_originals=map {+{fh=>$roles{'observer-'.$_}{fh}}} ('input','stdout','stderr','setup');
+    $parent_native_prepare->();
     if($admission_case||$mode eq 'fd-rebinding-input') {
         $test_saved_admission=$parent_admission;%test_saved_fields=%$parent_admission;
         @test_saved_custody=map {+{record=>$_,fh=>$_->{fh},fd=>$_->{fd},identity=>[@{$_->{identity}}]}} @parent_originals;
@@ -3553,6 +3973,29 @@ sub test_observe_parent_final_end {
 sub task6a_origin_parent_require_unburned {`);
     }
   }
+  if(kind==='composed-physical') {
+    source=replaceOnce(source,'$physical_can_claim=sub {',String.raw`
+    sub test_composed_physical_snapshot {
+      return {state=>$physical_state,burned=>$file_lifecycle_burned,released=>$file_lifecycle_released,
+        cleanupAttempted=>$physical_cleanup_attempted,cleanupOK=>$physical_cleanup_ok,
+        acquisitionUnknown=>$physical_acquisition_unknown,
+        originals=>[map {+{path=>$_->{path},fd=>$_->{fd},attempted=>$_->{attempted},closed=>$_->{closed},live=>CORE::fileno($_->{fh})}} @physical_kept]};
+    }
+    sub test_composed_fixture_backup {
+      task6a_origin_refuse() unless @_==0&&@physical_kept==4;
+      my @rows;my $all=1;
+      for my $r(@physical_kept) {
+        unless($r->{safe}&&!$r->{alias}&&!$r->{attempted}&&!$r->{closed}
+          &&defined(CORE::fileno($r->{fh}))&&CORE::fileno($r->{fh})==$r->{fd}){$all=0;push @rows,{path=>$r->{path},quarantined=>JSON::PP::true,sourceCloseCredit=>JSON::PP::false};next;}
+        my ($ret,$error);{local $@;eval {$ret=CORE::close($r->{fh});1;};$error=$@;}
+        my ($live,$live_error);{local $@;eval {$live=CORE::fileno($r->{fh});1;};$live_error=$@;}
+        push @rows,{path=>$r->{path},fd=>$r->{fd},returned=>$ret,errorHex=>unpack('H*',$error),live=>$live,liveErrorHex=>unpack('H*',$live_error),sourceCloseCredit=>JSON::PP::false};
+        $all=0 unless $ret&&!length($error)&&!defined($live)&&!length($live_error);
+      }
+      task6a_origin_refuse() unless $all;return \@rows;
+    }
+    $physical_can_claim=sub {`);
+  }
   if(kind==='composed-physical'&&record.mode.startsWith('ledger-')) {
     source=replaceOnce(source,'sub task6a_origin_record {',String.raw`
 sub test_contaminate_physical_ledger {
@@ -3566,7 +4009,7 @@ sub test_contaminate_physical_ledger {
 sub task6a_origin_record {`);
   }
   if(kind==='composed-physical'&&record.mode==='unknown-helper') {
-    source=replaceOnce(source,'$pid=fork();',"$pid=fork(); {no warnings 'once'; $main::capture_test_pid=$pid if defined($pid)&&$pid>0;}");
+    source=replaceOnce(source,'$pid=fork();task6a_origin_refuse() unless defined($pid);',"$pid=fork(); {no warnings 'once'; $main::capture_test_pid=$pid if defined($pid)&&$pid>0;}task6a_origin_refuse() unless defined($pid);");
     source=replaceOnce(source,"'/usr/bin/curl'=>1,","'/usr/bin/perl'=>1,'/usr/bin/curl'=>1,");
   }
   const program=String.raw`
@@ -3918,12 +4361,19 @@ sub task6a_origin_record {`);
           &&@main::test_composed_close_attempts==0;
         task6a_origin_close_files();
       }
+      my $physical_before_fixture=test_composed_physical_snapshot();
       my %after=map {$_=>1} @{task6a_origin_fds()};
       my @leaked=grep {$after{$_}} @main::test_composed_owned;
+      # Only this existing helper control has independently joined its OWN real
+      # child above. The Source helper latch remains burned/uncertain; backup
+      # closes known fixture-accessible FDs without repairing Source receipts.
+      my $fixture_backup=$r->{mode} eq 'unknown-helper'?test_composed_fixture_backup():[];
+
       my %attempts; ++$attempts{$_} for @main::test_composed_close_attempts;
       my $replacement_alive=defined($main::test_replacement_fh)&&defined(fileno($main::test_replacement_fh));
       CORE::close($main::test_replacement_fh) or die "test replacement cleanup failed\n" if $replacement_alive;
-      $out={%{$diagnostic||{}},replacementAlive=>$replacement_alive?JSON::PP::true:JSON::PP::false,
+      $out={%{$diagnostic||{}},physicalBeforeFixture=>$physical_before_fixture,fixtureBackup=>$fixture_backup,
+        replacementAlive=>$replacement_alive?JSON::PP::true:JSON::PP::false,
         priorAlive=>$prior_alive?JSON::PP::true:JSON::PP::false,
         unknownStaysBurned=>$unknown_stays_burned?JSON::PP::true:JSON::PP::false,
         ownedCount=>scalar(@main::test_composed_owned),leakedCount=>scalar(@leaked),
@@ -4011,32 +4461,18 @@ sub task6a_origin_record {`);
   }
   const r=spawnSync('/usr/bin/perl',argv,{
     input,cwd:'/',env,timeout:record?.fifoRace?500:10000,
-    maxBuffer:['staged-captor-ports','staged-custody'].includes(kind)?8388608:65536,
+    maxBuffer:kind==='parent-protocol'?262144:['staged-captor-ports','staged-custody'].includes(kind)?8388608:65536,
   });
-  assert.equal(r.error,undefined);assert.equal(r.signal,null);return r;
+  assert.equal(r.error,undefined);assert.equal(r.signal,null);
+  if(kind==='parent-protocol'&&r.status===0) assertParentModeledNativeTrace(JSON.parse(r.stdout));
+  return r;
 }
 const COMMIT='8aa0d2c6f44815339da3d6ecf8eac8ff1cc49d2c',TREE='5166646e62fa6f8c95f083c1d01ae81dd35a23fe',BLOB='ce013625030ba8dba906f756967f9e9ca394464a';
-const ZERO='0'.repeat(40),ONE='1'.repeat(40),TWO='2'.repeat(40);
-function literalCommit() {
-  return {sha:COMMIT,tree:{sha:ZERO},parents:[{sha:ONE},{sha:TWO}],verification:{verified:true,reason:'valid',
-    payload:`tree ${ZERO}\nparent ${ONE}\nparent ${TWO}\nauthor Example <dev@example.test> 1700000000 +0000\ncommitter Example <dev@example.test> 1700000000 +0000\n\nreviewed merge\n`,
-    signature:'-----BEGIN PGP SIGNATURE-----\n\nYWJj\n=AAAA\n-----END PGP SIGNATURE-----\n',
-  }};
-}
 function literalTree() {
   return {sha:TREE,truncated:false,tree:[{path:'foo',mode:'040000',type:'tree',sha:ONE},
     {path:'z',mode:'100644',type:'blob',sha:BLOB,size:6},{path:'foo.bar',mode:'100644',type:'blob',sha:BLOB,size:6}]};
 }
 function literalBlob() {return {sha:BLOB,size:6,encoding:'base64',content:'aGVsbG8K\n'};}
-function framedHash(kind,bytes) {return createHash('sha1').update(`${kind} ${bytes.length}\0`).update(bytes).digest('hex');}
-function coherentCommit(r) {
-  const p=r.verification.payload,s=r.verification.signature,i=p.indexOf('\n\n');
-  r.sha=framedHash('commit',Buffer.from(p.slice(0,i)+'\ngpgsig '+s.split('\n').join('\n ')+p.slice(i)));return r;
-}
-function coherentTree(r) {
-  const entries=[...r.tree].sort((a,b)=>Buffer.compare(Buffer.from(a.path+(a.type==='tree'?'/':'')),Buffer.from(b.path+(b.type==='tree'?'/':''))));
-  r.sha=framedHash('tree',Buffer.concat(entries.flatMap(e=>[Buffer.from(`${e.mode==='040000'?'40000':e.mode} ${e.path}\0`),Buffer.from(e.sha,'hex')])));return r;
-}
 function objectRefuses(kind,r,expected=r.sha,options) {
   const result=systemObject(kind,r,expected,options);assert.notEqual(result.status,0,'unsafe system object accepted');
   assert.match(result.stderr.toString(),/TASK6A_ORIGIN_BOOTSTRAP_REFUSED/);assert.equal(result.stdout.length,0);
@@ -4065,8 +4501,10 @@ const STAGED_CUSTODY_BACKINGS=[
   ['source/task6a-origin-native-v2.pm','scripts/task6a-origin-native-v2.pm',3347,'59e1ae8de38cf2083a0294c55454083840eb47f1'],
   ['source/task6a-origin-map-v2.pm','scripts/task6a-origin-map-v2.pm',11684,'9719bf4f3676b43b7858e3cabe3cee3e679120f8'],
   ['source/task6a-protected-origin-entry-v2.mjs','scripts/task6a-protected-origin-entry-v2.mjs',1933,'e53be63cdcdf286dc89adbec9770668b1fdb9cc7'],
-  ['vendor/node-v22.23.1-darwin-arm64.tar.gz','package.json',22734,null],
-  ['vendor/node','README.md',7454,null],
+  // Explicit inert fixture bytes keep custody modeling independent of unrelated
+  // package/README edits. They are never parsed as archives or native images.
+  ['vendor/node-v22.23.1-darwin-arm64.tar.gz','scripts/__tests__/fixtures/task6a-staged-vendor-backing-v2.txt',76,null],
+  ['vendor/node','scripts/__tests__/fixtures/task6a-staged-native-backing-v2.txt',82,null],
 ];
 function stagedCustody(mode='healthy',slot=0,{sourceOverride}={}) {
   const source=sourceOverride??readFileSync(BOOTSTRAP,'utf8');
@@ -4088,7 +4526,7 @@ function stagedCustody(mode='healthy',slot=0,{sourceOverride}={}) {
     return {logical,path,size,dev:String(before.dev),ino:String(before.ino),
       sha256:createHash('sha256').update(bytes).digest('hex'),bytes:bytes.toString('base64')};
   });
-  assert.equal(backings[4].sha256,'bf6cedd405c26f5f933e45436d8ec84b2780297377bb44f40deb6c44a91f6a6e');
+  assert.equal(backings[4].sha256,'46bb5c40ae918a624f6c6e298334c4041d34d3dd90fa6aca1dd230a840999a75');
   const actual=systemObject('staged-custody',{mode,slot,root,backings},undefined,{sourceOverride:source});
   assert.equal(actual.status,0,actual.stderr.toString());
   assert.equal(actual.stderr.length,0);const value=JSON.parse(actual.stdout.toString());
@@ -5224,11 +5662,17 @@ for(const mode of ['success','acl-row','acl-marker','acl-stderr','acl-nonzero','
       assert.equal(out.productionAuthority,false);assert.ok(out.leafSamples>=2,'leaf ACL never composed');
     }else if(noCapture) assert.equal(out.leafSamples,0,'invalid initial state started helpers');
     else assert.equal(out.leafSamples,mode==='partial-capture'?1:2);
-    assert.equal(out.ownedCount,mode==='prior-contamination'?1:noCapture?0:4);assert.equal(out.leakedCount,0);
+    assert.equal(out.ownedCount,mode==='prior-contamination'?1:noCapture?0:4);assert.equal(out.leakedCount,mode==='unknown-helper'?4:0);
     assert.equal(out.replacementAlive,mode==='ledger-replace','cleanup adopted a descriptor it did not own');
     assert.equal(out.priorAlive,mode==='prior-contamination','composition closed a preexisting raw-owner descriptor');
     assert.equal(out.unknownStaysBurned,mode==='unknown-helper');
-    assert.equal(out.exactCloseOnce,true,'not every owned descriptor received exactly one closure attempt');
+    assert.equal(out.exactCloseOnce,mode!=='unknown-helper','known-close and helper-retention policies must remain distinct');
+    if(mode==='unknown-helper'){
+      assert.equal(out.physicalBeforeFixture.cleanupAttempted,0);assert.equal(out.physicalBeforeFixture.cleanupOK,0);
+      assert.equal(out.physicalBeforeFixture.originals.length,4);assert.ok(out.physicalBeforeFixture.originals.every(r=>r.live===r.fd&&!r.attempted&&!r.closed));
+      assert.equal(out.fixtureBackup.length,4);for(const r of out.fixtureBackup){assert.equal(r.returned,1);assert.equal(r.errorHex,'');assert.equal(r.live,null);assert.equal(r.liveErrorHex,'');assert.equal(r.sourceCloseCredit,false);}
+    }else assert.deepEqual(out.fixtureBackup,[]);
+
     assert.equal(out.firstRefused,burnsBeforeRelease);assert.equal(out.restoredRefused,burnsBeforeRelease);
     assert.equal(out.closeRefused,mode!=='success');
     assert.equal(out.releasedRefused,true);assert.equal(out.reopenRefused,true);assert.equal(out.repeatCloseRefused,true);
@@ -5248,36 +5692,22 @@ test('composed physical consumers expose omitted leaf ACL and final ancestry che
 });
 test('composed physical consumers expose missing sticky burn and partial-handle ownership',()=>{
   const source=readFileSync(BOOTSTRAP,'utf8');
-  const noBurn=replaceOnce(source,String.raw`    $physical_state='burned' unless $physical_state eq 'released';
+  // Two independent validity burns protect this failure: the new local full
+  // epoch latch and the existing central fail/disposition edge. Omit both exact
+  // copied effects so this causal mutant can reach the restored raw consumer.
+  const noEpochBurn=replaceOnce(source,"    unless($ok) {$physical_state='burned' unless $physical_state eq 'released';$file_lifecycle_burned=1 if $physical_owns_ledgers;task6a_origin_refuse();}",
+    '    unless($ok) {task6a_origin_refuse();}');
+  const noBurn=replaceOnce(noEpochBurn,String.raw`    $physical_state='burned' unless $physical_state eq 'released';
     $file_lifecycle_burned=1 if $physical_owns_ledgers;
     task6a_origin_physical_cleanup();`, '    # Test-only removal of lifecycle effects.');
   const burn=systemObject('composed-physical',{mode:'acl-row'},'',{sourceOverride:noBurn});assert.equal(burn.status,0,burn.stderr.toString());
   assert.equal(JSON.parse(burn.stdout).restoredRefused,false,'missing burn did not revive the actual held-file consumer');
-  const noOwnership=source.replaceAll('push(@physical_owned_handles,$fh) if $physical_owns_ledgers&&$physical_internal;',
-    '# Test-only omission of partial-start handle ownership.');
+  const noOwnership=replaceOnce(source,'push @physical_kept,$r;',
+    '# Test-only omission of the independently retained partial-start original and close obligation.');
   const partial=systemObject('composed-physical',{mode:'partial-capture'},'',{sourceOverride:noOwnership});
   assert.equal(partial.status,0,partial.stderr.toString());const out=JSON.parse(partial.stdout);
   assert.equal(out.ownedCount,4);assert.equal(out.leakedCount,4);assert.equal(out.exactCloseOnce,false);
 });
-function sourceGraph({sourceBytes={}}={}) {
-  const sources=[['task6a-origin-archive-v2.pm',HELPER],['task6a-origin-native-v2.pm',NATIVE],['task6a-origin-map-v2.pm',MAP],['task6a-protected-origin-entry-v2.mjs',ENTRY]];
-  const blobs=sources.map(([path,url])=>{
-    const bytes=sourceBytes[path]??readFileSync(url);return {path,sha:framedHash('blob',bytes),size:bytes.length,bytes};
-  });
-  const scripts=coherentTree({truncated:false,tree:blobs.map(({path,sha,size})=>({path,sha,size,mode:'100644',type:'blob'}))});
-  const root=coherentTree({truncated:false,tree:[{path:'scripts',sha:scripts.sha,mode:'040000',type:'tree'}]});
-  const merge=literalCommit();merge.tree.sha=root.sha;merge.verification.payload=merge.verification.payload.replace(`tree ${ZERO}`,`tree ${root.sha}`);coherentCommit(merge);
-  const main={ref:'refs/heads/main',object:{type:'commit',sha:merge.sha}};
-  const pr={number:253,state:'closed',merged:true,merged_at:'2026-09-30T13:00:00Z',merge_commit_sha:merge.sha,
-    base:{ref:'main',repo:{full_name:'hikmetgulsesli/setfarm'}},head:{sha:TWO,repo:{full_name:'hikmetgulsesli/setfarm'}}};
-  return [
-    {route:'/git/ref/heads/main',data:main},{route:`/git/commits/${merge.sha}`,data:merge},
-    {route:`/commits/${merge.sha}/pulls?per_page=100&page=1`,data:[{number:253,merge_commit_sha:merge.sha}]},
-    {route:'/pulls/253',data:pr},{route:`/git/trees/${root.sha}`,data:root},{route:`/git/trees/${scripts.sha}`,data:scripts},
-    ...blobs.map(b=>({route:`/git/blobs/${b.sha}`,data:{sha:b.sha,size:b.size,encoding:'base64',content:b.bytes.toString('base64')}})),
-    {route:'/git/ref/heads/main',data:structuredClone(main)},
-  ];
-}
 test('archive selects only one exact regular Node member without installing unrelated paths',()=>{
   const r=invoke(archive([item('elsewhere',Buffer.alloc(0),{type:'2',link:'../../escape'}),item(MEMBER),item('npm/package.json',Buffer.from('{}'))]));
   assert.equal(r.status,0,r.stderr.toString());assert.deepEqual(r.stdout,BODY);
@@ -5841,7 +6271,7 @@ for(const [failure,clockCount,waitCount,statCount,readyCount,errno] of [
   assert.equal(events.filter(e=>e.op==='stat').length,statCount);
   assert.equal(events.filter(e=>e.op==='ready').length,readyCount);
   assert.equal(events.filter(e=>e.op==='sysread'||e.op==='syswrite'||e.op==='sysopen').length,0);
-  if(failure==='timeout') assert.deepEqual(out.events.filter(e=>e.op==='clock').map(e=>e.value),[0,0,0,0,45]);
+  if(failure==='timeout') assert.deepEqual(out.events.filter(e=>e.op==='clock').map(e=>e.value),[0,0,0,0,15]);
 });
 for(const [role,clockCount,waitCount,statCount,readCount,readyCount,fcntlCount,fixtureClosed,roles,afterReap] of [
   ['setup',6,6,28,1,1,20,8,['setup','input','stdout','stderr'],[]],
@@ -5948,7 +6378,7 @@ for(const [missing,clockCount,waitCount,statCount,readyCount,readCount,writeCoun
   const out=parentProtocolTrace(`finish-missing-${missing}`);
   const events=assertParentDeniedDisposal(out,{roles,fixtureClosed:writeCount?10:8,waitCount,reapedBeforeRoles:afterReap});
   assert.equal(events.filter(e=>e.op==='clock').length,clockCount);
-  assert.equal(out.events.filter(e=>e.op==='clock').at(-1).value,45);
+  assert.equal(out.events.filter(e=>e.op==='clock').at(-1).value,15);
   assert.equal(events.filter(e=>e.op==='stat').length,statCount);
   assert.equal(events.filter(e=>e.op==='ready').length,readyCount);
   assert.equal(events.filter(e=>e.op==='sysread').length,readCount);
@@ -5959,7 +6389,7 @@ for(const [missing,clockCount,waitCount,statCount,readyCount,readCount,writeCoun
 test('Perl parent protocol refuses missing reap at protocol expiry then settles only its original cleanup PID',()=>{
   const out=parentProtocolTrace('finish-missing-reap');
   const events=assertParentDeniedDisposal(out,{roles:['setup','entropy','input','stderr','stdout'],fixtureClosed:10,waitCount:46});
-  assert.deepEqual(out.events.filter(e=>e.op==='clock').map(e=>e.value),[...Array(45).fill(0),45,45,45]);
+  assert.deepEqual(out.events.filter(e=>e.op==='clock').map(e=>e.value),[...Array(45).fill(0),15,15,15]);
   assert.equal(events.filter(e=>e.op==='clock').length,47);
   assert.equal(events.filter(e=>e.op==='stat').length,147);
   assert.equal(events.filter(e=>e.op==='ready').length,6);
@@ -6200,7 +6630,7 @@ test('Perl parent protocol mutation control witnesses forbidden nonzero-reap dia
   const baseline=parentProtocolTrace('nonzero-reap');assert.equal(baseline.accepted,false);
   const source=readFileSync(BOOTSTRAP,'utf8');
   const anchor='&&$parent_raw_status==0';
-  assert.equal(source.split(anchor).length-1,2,'raw-zero mutation must cover both actual predicates');
+  assert.equal(source.split(anchor).length-1,4,'raw-zero mutant covers both Node and both new observer settlement predicates');
   const mutant=parentProtocolTrace('nonzero-reap',{sourceOverride:source.replaceAll(anchor,'')});
   assert.equal(mutant.accepted,true);
   assert.deepEqual(mutant.consumer,{scope:'parent-entry-protocol-diagnostic-only',productionAuthority:false,
@@ -6264,7 +6694,7 @@ test('Perl parent protocol refuses original deadline expiry after otherwise vali
   assert.equal(out.accepted,false);assert.equal(out.refused,true);assert.equal(out.guardBurned,true);
   assert.equal(out.repeatRefused,true);assert.equal(out.effectsAfterRepeat,0);assert.equal(out.fixtureClosed,10);
   const events=out.consumerEvents,clocks=events.filter(e=>e.op==='clock');
-  assert.deepEqual(clocks.map(e=>e.value),[0,...Array(38).fill(44),46]);
+  assert.deepEqual(clocks.map(e=>e.value),[0,...Array(38).fill(14),16]);
   assert.equal(events.filter(e=>e.op==='waitpid').length,33);
   assert.equal(events.filter(e=>e.op==='ready').length,5);
   assert.equal(events.filter(e=>e.op==='sysread').length,10);
@@ -6278,16 +6708,23 @@ test('Perl parent protocol refuses original deadline expiry after otherwise vali
   assert.ok(closes.every((e,i)=>e.result===1&&e.definite===1&&attempts[i].seq<e.seq));
   assert.equal(events.filter(e=>e.op==='signal-attempt').length,0);
 });
-test('Perl parent protocol mutation control witnesses forbidden renewed-deadline diagnostic',()=>{
+test('Perl parent protocol mutation control witnesses local deadline renewal while native expiry blocks settlement',()=>{
   const baseline=parentProtocolTrace('deadline');assert.equal(baseline.accepted,false);
   const source=readFileSync(BOOTSTRAP,'utf8');
   const anchor='my $now=task6a_origin_now();task6a_origin_refuse() unless defined($parent_deadline)&&$now<$parent_deadline;';
-  const mutant=parentProtocolTrace('deadline',{sourceOverride:replaceOnce(source,anchor,
-    'my $now=task6a_origin_now();$parent_deadline=$now+45;$parent_deadline=$bootstrap_deadline if $bootstrap_deadline<$parent_deadline;task6a_origin_refuse() unless defined($parent_deadline)&&$now<$parent_deadline;')});
-  assert.equal(mutant.accepted,true);assert.equal(mutant.fixtureClosed,10);
-  assert.deepEqual(mutant.consumer,{scope:'parent-entry-protocol-diagnostic-only',productionAuthority:false,
-    challengeCount:3,inputBytes:229,outputBytes:220,handlesClosed:5,reaped:true});
-  assert.deepEqual(mutant.events.filter(e=>e.op==='clock').map(e=>e.value),[0,0,...Array(38).fill(44),...Array(6).fill(46)]);
+  const parentOnly=replaceOnce(source,anchor,
+    'my $now=task6a_origin_now();$parent_deadline=$now+45;$parent_deadline=$bootstrap_deadline if $bootstrap_deadline<$parent_deadline;task6a_origin_refuse() unless defined($parent_deadline)&&$now<$parent_deadline;$event->(op=>"local-renewal-accepted",role=>"fixture",observedAt=>$now,originalDeadline=>15,renewedDeadline=>$parent_deadline) if $now>=15;');
+  const mutant=parentProtocolTrace('deadline',{sourceOverride:parentOnly});
+  assert.equal(mutant.accepted,false,'native15 must refuse after the local parent guard renews');
+  assert.equal(mutant.consumer,undefined);assert.equal(mutant.fixtureClosed,10);
+  assert.equal(mutant.guardBurned,true);assert.equal(mutant.repeatRefused,true);assert.equal(mutant.effectsAfterRepeat,0);
+  assert.equal(baseline.events.filter(e=>e.op==='local-renewal-accepted').length,0);
+  const witnesses=mutant.events.filter(e=>e.op==='local-renewal-accepted');
+  assert.ok(witnesses.length>0);
+  assert.ok(witnesses.every(e=>e.observedAt===16&&e.originalDeadline===15&&e.renewedDeadline===61));
+  assert.equal(mutant.nativeModel.commandHex.length,3,'no STOP after original native expiry');
+  assert.deepEqual([mutant.nativeModel.sourceSnapshot.expected,mutant.nativeModel.sourceSnapshot.end],[3,2]);
+  assert.deepEqual(mutant.events.filter(e=>e.op==='clock').map(e=>e.value),[0,0,...Array(38).fill(14),...Array(6).fill(16)]);
   assert.equal(mutant.events.filter(e=>e.op==='stat').length,147);
   assert.equal(mutant.events.filter(e=>e.op==='waitpid').length,33);
   assert.equal(mutant.events.filter(e=>e.op==='sysread').length,11);
@@ -6375,7 +6812,7 @@ test('Perl parent protocol mutation control witnesses final END acceptance while
   assert.equal(acceptance.length,1);assert.equal(acceptance[0].physicalInputOpen,true);
   const inputClose=mutant.consumerEvents.find(e=>e.op==='close-attempt'&&e.role==='input');
   assert.ok(acceptance[0].seq<inputClose.seq);
-  assert.deepEqual(mutant.events.filter(e=>e.op==='clock').map(e=>e.value),[...Array(41).fill(0),45]);
+  assert.deepEqual(mutant.events.filter(e=>e.op==='clock').map(e=>e.value),[...Array(41).fill(0),15]);
 });
 for(const [frame,size,statCounts,waitCount] of [
   ['ready',6,[38,49,43,7,22],37],['pong1',70,[38,49,43,7,26],37],
@@ -6902,7 +7339,7 @@ test('descriptor snapshot refuses partial readdir failure before any inherited-F
   assert.equal(r.stdout.length,0);assert.match(r.stderr.toString(),/TASK6A_ORIGIN_BOOTSTRAP_REFUSED/);
 });
 test('actual helper timeout burns, terminates and definitely reaps only its captured child',()=>{
-  const sourceOverride=replaceOnce(ordinaryPerlCaptureSource(),'$pid=fork();',"$pid=fork(); {no warnings 'once'; $main::capture_test_pid=$pid if defined($pid)&&$pid>0;}");
+  const sourceOverride=replaceOnce(ordinaryPerlCaptureSource(),'$pid=fork();task6a_origin_refuse() unless defined($pid);',"$pid=fork(); {no warnings 'once'; $main::capture_test_pid=$pid if defined($pid)&&$pid>0;}task6a_origin_refuse() unless defined($pid);");
   const start=performance.now(),actual=systemObject('timeout-proof',{},'',{sourceOverride});
   assert.equal(actual.status,0,actual.stderr.toString());const out=JSON.parse(actual.stdout);
   assert.equal(out.refused,true);assert.equal(out.definitelyReaped,true);assert.ok(out.pid>1);
@@ -6922,7 +7359,7 @@ for(const fail of [false,true]) test(`supervisor retains definite helper settlem
   assert.equal(out.settled,true);assert.equal(out.afterIndependentReap,true);assert.equal(out.refused,fail);assert.equal(out.forgedRefused,true);
 });
 test('supervisor helper uncertainty stays burned outside the captor even after independent reap',()=>{
-  const sourceOverride=replaceOnce(ordinaryPerlCaptureSource(),'$pid=fork();',"$pid=fork(); {no warnings 'once'; $main::capture_test_pid=$pid if defined($pid)&&$pid>0;}");
+  const sourceOverride=replaceOnce(ordinaryPerlCaptureSource(),'$pid=fork();task6a_origin_refuse() unless defined($pid);',"$pid=fork(); {no warnings 'once'; $main::capture_test_pid=$pid if defined($pid)&&$pid>0;}task6a_origin_refuse() unless defined($pid);");
   const r=systemObject('lifecycle',{lostClock:true},'',{sourceOverride});assert.equal(r.status,0,r.stderr.toString());
   const out=JSON.parse(r.stdout);assert.equal(out.refused,true);assert.equal(out.settled,false);
   assert.equal(out.afterIndependentReap,false);assert.equal(out.forgedRefused,true);
@@ -6953,4 +7390,290 @@ test('default npm graph dispatches a real protected-bootstrap pure leaf without 
   assert.equal(r.error,undefined);assert.equal(r.signal,null);assert.equal(r.status,0,r.stdout+r.stderr);
   assert.match(r.stdout,/(?:ℹ|#) pass 1\b/);assert.match(r.stdout,/(?:ℹ|#) skipped 0\b/);
 });
+
+// Six closed MODELED branch controls; actual dataFHs with explicitly modeled process/ACL delivery, never production admission.
+const CONSTRUCTOR_MODEL_SOURCE_SHA="e964e1ce5145d26ab5bf5b1b7eed9e8b01d263490d06074c4412dd8a629660d0";
+const CONSTRUCTOR_MODEL_PORTS="BEGIN {@INC=('/System/Library/Perl/5.34/darwin-thread-multi-2level','/System/Library/Perl/5.34');}\nuse strict;use warnings;use B ();use Fcntl ();use POSIX ();use Time::HiRes ();use IO::Select ();use Cwd ();use Hash::Util ();use Scalar::Util ();use Digest::SHA ();use JSON::PP ();use MIME::Base64 ();use Encode ();use Errno ();use File::Temp ();\nbinmode STDIN;local $/;our $m_request=JSON::PP->new->decode(<STDIN>);\nour (@m_events,@m_raw,@m_waits,@m_forks,@m_closes,@m_backups,@m_clock_values);\nour ($m_physical_deliveries,$m_foreign_callbacks)=(0,0);\n{package TestPhysicalForeign;use overload 'bool'=>sub {++$main::m_foreign_callbacks;return 1},'\"\"'=>sub {++$main::m_foreign_callbacks;return 'foreign'},fallback=>1;}\n# Class-name '0' genuinely inherits coercion traps; reference admission must precede Boolean/string use.\n{no strict 'refs';@{'0::ISA'}=('TestPhysicalForeign');}\nour (%m_paths,%m_io);our ($m_fault,$m_calls,$m_clocks,$m_time,$m_last_time,$m_capture,$m_capture_number,$m_launcher_forks,$m_arm,$m_mismatch_io,$m_forbidden,$m_native_waits) = ('',0,0,0,0,undef,0,0,'',undef,0,0);\nour $m_physical_root=File::Temp::tempdir('setfarm-ctor-model.XXXXXXXX',DIR=>'/private/tmp',CLEANUP=>0);\nour $m_logical='/private/tmp/task6a-staged-memory-fixture';\nsub m_fail {$m_fault=$_[0] unless length($m_fault);die \"TEST_CONSTRUCTOR_MODEL_HARNESS_FAULT:$m_fault\\n\";}\nsub m_event {m_fail('event quota') if ++$m_calls>8192;push @m_events,{order=>scalar(@m_events)+1,@_};}\nsub m_shape {my $cell=\\$_[0];my $v=B::svref_2object($cell);m_fail('raw FH shape') unless $v->FLAGS&B::SVf_ROK();my $g=$v->RV;my $i=$g->IO;return [$$g,$$i];}\nsub m_seal_record {\n    my ($r)=@_;my $fh=$r->{fh};my $shape=m_shape($fh);\n    m_fail('duplicate IO original') if exists($m_io{$shape->[1]});\n    $r->{shape}=$shape;$m_io{$shape->[1]}=$r;\n    $r->{fd}=CORE::fileno($fh);$r->{rawStat}=[CORE::stat($fh)] if $r->{kind} ne 'directory-handle';\n    m_fail('positive original missing FD') unless defined($r->{fd})&&$r->{fd}>=3;\n    m_event(op=>'actual-original',role=>$r->{role},fd=>$r->{fd});return $r;\n}\nsub m_record {\n    my ($fh,$role,$path,$kind)=@_;\n    my $r={fh=>$fh,role=>$role,path=>$path,kind=>$kind,attempted=>0,closed=>0};push @m_raw,$r;\n    return m_seal_record($r);\n}\nsub m_lookup {my $shape=m_shape($_[0]);my $r=$m_io{$shape->[1]};m_fail('foreign IO') unless defined($r)&&$r->{shape}[0]==$shape->[0];return $r;}\nsub m_clock {\n    m_fail('clock arguments') unless @_==1&&$_[0]==Time::HiRes::CLOCK_MONOTONIC();m_fail('clock quota') if ++$m_clocks>1024;\n    my $v=$m_time;\n    if($m_arm eq 'native-early') {$v=$m_native_waits||@m_clock_values&&$m_clock_values[-1]==29?45:29;}\n    m_fail('nonmonotonic clock') if $v<$m_last_time;$m_last_time=$v;push @m_clock_values,$v;return $v;\n}\nsub m_forbidden {\n    my ($port)=@_;\n    if($m_arm eq 'normal-boundary'||$m_arm eq 'file-use') {++$m_forbidden;m_event(op=>'forbidden-downstream',port=>$port);}\n}\nsub m_project {\n    my ($path,$tuple)=@_;m_fail('unknown metadata path') unless exists($m_paths{$path})&&@$tuple==13;\n    my @v=@$tuple;my $p=$m_paths{$path};$v[2]=($v[2]&~07777)|$p->{mode};$v[4]=0;$v[5]=0;return @v;\n}\nsub m_open (*$$;$) {\n    my ($path,$flags,$mode)=@_[1..3];m_event(op=>'sysopen',path=>$path,flags=>$flags,mode=>defined($mode)?$mode:0,physicalDispatch=>defined(&test_constructor_model_physical_busy)&&test_constructor_model_physical_busy()?1:0);\n    m_fail('unknown open path') unless exists($m_paths{$path});my $p=$m_paths{$path};my $want=Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|($p->{directory}?Fcntl::O_DIRECTORY():Fcntl::O_NONBLOCK());\n    my $write=$p->{capsule}&&($flags&Fcntl::O_WRONLY());\n    m_fail('open flags') unless $flags==$want||($p->{capsule}&&$flags==(Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()))||($write&&$flags==(Fcntl::O_WRONLY()|Fcntl::O_CREAT()|Fcntl::O_EXCL()|Fcntl::O_NOFOLLOW())&&$mode==0600);\n    if($path eq '/usr'&&$m_request->{scenario}=~/\\Aphysical-(?:alias|unknown)\\z/&&++$m_physical_deliveries==1) {\n      my @first=grep {$_->{role} eq 'physical:/'} @m_raw;m_fail('known physical predecessor') unless @first==1&&defined(CORE::fileno($first[0]{fh}));\n      $_[0]=$m_request->{scenario} eq 'physical-alias'?$first[0]{fh}:[];\n      m_event(op=>'modeled-physical-output',scenario=>$m_request->{scenario},realOpenDelegate=>JSON::PP::false,priorFD=>$first[0]{fd},deliveredKind=>$m_request->{scenario} eq 'physical-alias'?'same original GV/IO':'unclassifiable DATA reference');\n      return 1;\n    }\n    my $ret=defined($mode)?CORE::sysopen($_[0],$p->{actual},$flags,$mode):CORE::sysopen($_[0],$p->{actual},$flags);my ($errno,$status)=(0+$!,$?);\n    my $role=defined(&test_constructor_model_physical_busy)&&test_constructor_model_physical_busy()?'physical:'.$path:$p->{role};\n    my $r=m_record($_[0],$role,$path,'file') if defined($_[0]);\n    m_fail('actual open failed') unless $ret&&defined($r);$r->{openReturned}=$ret;$r->{openErrno}=$errno;$!=$errno;$?=$status;\n    if($r->{role} eq 'physical:/'&&$m_request->{scenario} eq 'physical-reference-open'&&++$m_physical_deliveries==1){m_event(op=>'modeled-physical-open-return',genuineReturn=>$ret,returnedClass=>'0',actualAssignedFD=>$r->{fd});return bless({},'0');}\n    if($r->{role} eq 'physical:/'&&$m_request->{scenario} eq 'physical-reference-exception'){m_event(op=>'modeled-physical-open-exception',genuineReturn=>$ret,exceptionClass=>'0',actualAssignedFD=>$r->{fd});die bless({},'0');}\n    if($r->{role} eq 'physical:/'&&$m_arm eq 'physical-postopen-deadline'){$m_time=30;m_event(op=>'modeled-postopen-clock',actualAssignedFD=>$r->{fd},deliveredClock=>30);}\n    return $ret;\n}\nsub m_fileno (*) {my $r=m_lookup($_[0]);my $actual=CORE::fileno($_[0]);m_forbidden('fileno');m_event(op=>'fileno',role=>$r->{role},actual=>$actual);if(defined($m_mismatch_io)&&$r->{shape}[1]==$m_mismatch_io){return $actual if !defined($actual)&&$r->{attempted}==1&&$r->{closed}==1;m_fail('mismatch actual not armed') unless defined($actual)&&$actual==$r->{fd};m_event(op=>'modeled-fileno',actual=>$actual,delivered=>$actual+1000000);return $actual+1000000;}return $actual;}\nsub m_stat (;*) {my $r=m_lookup($_[0]);my @actual=CORE::stat($_[0]);m_forbidden('stat');m_event(op=>'stat',role=>$r->{role},actual=>\\@actual);return @actual if $r->{kind} eq 'pipe';return m_project($r->{path},\\@actual);}\nsub m_lstat (;*) {my ($path)=@_;m_fail('unknown lstat') unless exists($m_paths{$path});my @v=CORE::lstat($m_paths{$path}{actual});if($path eq '/'&&$m_arm eq 'physical-preopen-deadline'&&defined(&test_constructor_model_physical_busy)&&test_constructor_model_physical_busy()){$m_time=30;m_event(op=>'modeled-preopen-clock',deliveredClock=>30,actualTuple=>\\@v);}m_forbidden('lstat');m_event(op=>'lstat',path=>$path,actual=>\\@v);return m_project($path,\\@v);}\nsub m_close (;*) {\n    my $r=m_lookup($_[0]);m_event(op=>'close-dispatch',role=>$r->{role});m_fail('second physical close') if $r->{attempted}++;\n    my ($ret,$errno,$status,$error);{local $@;eval {$ret=CORE::close($_[0]);$errno=0+$!;$status=$?;1;};$error=$@;}\n    my ($live,$live_error);{local $@;eval {$live=CORE::fileno($_[0]);1;};$live_error=$@;}\n    $r->{closed}=$ret&&!length($error)&&!defined($live)&&!length($live_error)?1:0;\n    push @m_closes,{role=>$r->{role},physicalHelper=>$r->{physicalHelper}?1:0,returned=>$ret,errno=>$errno,status=>$status,errorHex=>unpack('H*',$error),live=>$live,liveErrorHex=>unpack('H*',$live_error)};\n    m_fail('actual close uncertain') unless $r->{closed};$!=$errno;$?=$status;\n    if($r->{role} eq 'physical:/'&&$m_request->{scenario} eq 'physical-reference-close'&&++$m_physical_deliveries==1){m_event(op=>'modeled-physical-close-return',genuineReturn=>$ret,actualClosed=>$r->{closed},returnedClass=>'TestPhysicalForeign');return bless({},'TestPhysicalForeign');}\n    return $ret;\n}\nsub m_binmode (*;$) {my $r=m_lookup($_[0]);m_event(op=>'binmode',role=>$r->{role});return CORE::binmode($_[0]);}\nsub m_fcntl (*$$) {my $r=m_lookup($_[0]);if($m_arm eq 'physical-postopen-deadline'&&$m_time>=30&&$r->{role}=~/^physical:/){++$m_forbidden;m_event(op=>'late-physical-metadata',role=>$r->{role},command=>$_[1]);}m_fail('unknown fcntl command') unless $_[1]==Fcntl::F_GETFL()||$_[1]==Fcntl::F_SETFL()||$_[1]==Fcntl::F_GETFD()||$_[1]==Fcntl::F_SETFD();m_event(op=>'fcntl',role=>$r->{role},command=>$_[1],argument=>$_[2]);return CORE::fcntl($_[0],$_[1],$_[2]);}\nsub m_seek (*$$) {my $r=m_lookup($_[0]);m_forbidden('seek');m_fail('seek args') unless $_[1]==0&&$_[2]==0;m_event(op=>'seek',role=>$r->{role});return CORE::sysseek($_[0],$_[1],$_[2]);}\nsub m_pipe (**) {\n    my $ret=CORE::pipe($_[0],$_[1]);my ($errno,$status)=(0+$!,$?);m_fail('actual pipe') unless $ret;\n    my $n=defined($m_capture)?scalar(@{$m_capture->{pairs}}):scalar(grep {$_->{role}=~/^constructor-pipe-/} @m_raw)/2;\n    my $prefix=defined($m_capture)?'capture'.$m_capture->{id}.'-'.$n:'constructor-pipe-'.$n;\n    # Both positive native outputs enter the independent backup keeper before\n    # the first fallible shape/metadata/event observation.\n    my @r=map {+{fh=>$_->[0],role=>$prefix.$_->[1],path=>'pipe',kind=>'pipe',physicalHelper=>defined($m_capture)&&$m_capture->{physical}?1:0,attempted=>0,closed=>0}} ([$_[0],'-r'],[$_[1],'-w']);push @m_raw,@r;\n    m_seal_record($_) for @r;\n    for my $r(@r){my $f=CORE::fcntl($r->{fh},Fcntl::F_GETFL(),0);m_fail('nonblock pipe') unless defined($f)&&CORE::fcntl($r->{fh},Fcntl::F_SETFL(),$f|Fcntl::O_NONBLOCK());}\n    push @{$m_capture->{pairs}},\\@r if defined($m_capture);$!=$errno;$?=$status;return $ret;\n}\nsub m_read (*\\$$;$) {\n    my $r=m_lookup($_[0]);my $buffer=$_[1];m_fail('read buffer reference') unless ref($buffer) eq 'SCALAR';my $request=$_[2];m_fail('read bound') unless defined($request)&&$request>=1&&$request<=65536;\n    m_forbidden('read');m_event(op=>'read',role=>$r->{role},requested=>$request);\n    if(defined($m_capture)&&$r->{role}=~/^capture\\Q$m_capture->{id}\\E-([123])-r$/) {\n        my $index=$1;m_fail('unexpected capture read') unless exists($m_capture->{output}{$index})&&!$m_capture->{eof}{$index};\n        my $actual='';my $actual_n=CORE::sysread($_[0],$actual,$request);my $actual_errno=0+$!;my $b=$m_capture->{output}{$index};\n        $m_capture->{output}{$index}='';$m_capture->{eof}{$index}=1 unless length($b);m_fail('modeled read cap') if length($b)>$request;\n        m_event(op=>'modeled-capture-read',role=>$r->{role},actualReturn=>$actual_n,actualErrno=>$actual_errno,actualHex=>unpack('H*',$actual),deliveredHex=>unpack('H*',$b));$$buffer=$b;$!=0;return length($b);\n    }\n    if($r->{path} eq '/dev/urandom'){my $b='';my $n=CORE::sysread($_[0],$b,$request);my $e=0+$!;$$buffer=$b;$!=$e;return $n;}\n    return @_==4?CORE::sysread($_[0],$$buffer,$_[2],$_[3]):CORE::sysread($_[0],$$buffer,$_[2]);\n}\nsub m_write (*$;$$) {my $r=m_lookup($_[0]);m_fail('write outside Source capsule') unless $m_paths{$r->{path}}{capsule};m_event(op=>'capsule-data-write',role=>$r->{role},requested=>$_[2]);return @_==4?CORE::syswrite($_[0],$_[1],$_[2],$_[3]):CORE::syswrite($_[0],$_[1],$_[2]);}\nsub m_mkdir (_;$) {my ($path,$mode)=@_;m_fail('capsule mkdir literal') unless $path=~m{\\A/private/tmp/setfarm-task6a-observer-v2\\.[0-9a-f]{64}\\z}&&$mode==0700&&!exists($m_paths{$path});my $actual=$m_physical_root.'/capsule';my $ret=CORE::mkdir($actual,0700);m_fail('actual private model mkdir') unless $ret;$m_paths{$path}={actual=>$actual,directory=>1,mode=>0700,role=>'capsule-root'};$m_paths{$path.'/task6a-origin-owned-child-observer-v2'}={actual=>$actual.'/observer-data',directory=>0,mode=>0600,role=>'capsule-data',capsule=>1};m_event(op=>'modeled-path-mkdir',logical=>$path,actual=>$actual);return $ret;}\nsub m_chmod (@) {m_fail('chmod arity') unless @_==2;my ($mode,$fh)=@_;my $r=m_lookup($fh);m_fail('chmod scope') unless ($r->{role} eq 'capsule-root'&&$mode==0500)||($r->{role} eq 'capsule-data'&&$mode==0555);my $ret=CORE::chmod($mode,$fh);m_fail('actual owned model chmod') unless $ret==1;$m_paths{$r->{path}}{mode}=$mode;m_event(op=>'chmod-owned-data',role=>$r->{role},mode=>$mode);return $ret;}\nsub m_opendir (*$) {m_fail('census path') unless $_[1] eq '/dev/fd';my $ret=CORE::opendir($_[0],$_[1]);m_fail('actual census open') unless $ret;m_record($_[0],'census','/dev/fd','directory-handle');return $ret;}\nsub m_readdir (*) {m_lookup($_[0]);my $v=CORE::readdir($_[0]);m_event(op=>'census-read',value=>$v);return $v;}\nsub m_closedir (*) {my $r=m_lookup($_[0]);m_fail('census secondclose') if $r->{attempted}++;my $ret=CORE::closedir($_[0]);$r->{closed}=$ret?1:0;m_fail('census close') unless $ret;m_event(op=>'census-close');return $ret;}\nsub m_fork () {\n    if(defined($m_capture)){m_fail('capture repeatfork') if $m_capture->{forked}++;push @m_forks,{kind=>'modeled-helper',token=>$m_capture->{pid},realDelegate=>JSON::PP::false};return $m_capture->{pid};}\n    m_fail('unexpected model fork') unless $m_request->{scenario} eq 'unknown-observer';\n    ++$m_launcher_forks;push @m_forks,{kind=>'modeled-constructor',ordinal=>$m_launcher_forks,realDelegate=>JSON::PP::false};\n    return 424242 if $m_launcher_forks==1;die \"TEST_MODELED_OBSERVER_FORK_THROW\\n\" if $m_launcher_forks==2;m_fail('third model fork');\n}\nsub m_wait ($$) {\n    my ($pid,$flags)=@_;m_fail('wait flags') unless $flags==POSIX::WNOHANG();m_event(op=>'modeled-wait',token=>$pid);push @m_waits,{token=>$pid,flags=>$flags,physicalHelper=>defined($m_capture)&&$m_capture->{physical}?1:0,realDelegate=>JSON::PP::false};\n    if(defined($m_capture)){m_fail('foreign capture token') unless $pid==$m_capture->{pid};my $done=$m_capture->{eof}{1}&&$m_capture->{eof}{2}&&$m_capture->{eof}{3};$?=0;$!=0;return $done?$pid:0;}\n    if($m_request->{scenario} eq 'unknown-observer'){++$m_forbidden;die \"TEST_MODELED_FORBIDDEN_NODE_WAIT\\n\";}\n    if($m_request->{scenario} eq 'native-early'){m_fail('native token') unless $pid==424243;++$m_native_waits;$?=0;$!=0;return $m_native_waits==1?0:424243;}\n    if($m_request->{scenario} eq 'outcome-join'){m_fail('join token') unless $pid==424242;$?=0;$!=0;return 424242;}\n    m_fail('unselected wait token');\n}\nsub m_kill (@) {m_event(op=>'forbidden-signal',args=>[@_]);++$m_forbidden;die \"TEST_MODELED_FORBIDDEN_SIGNAL\\n\";}\nsub m_exec {m_event(op=>'forbidden-exec');m_fail('exec forbidden');}\nsub m_ready {\n    m_fail('selector shape') unless @_==2&&ref($_[0]) eq 'IO::Select'&&$_[1]==0.01&&defined($m_capture);\n    m_event(op=>'modeled-ready',capture=>$m_capture->{id},physicalHelper=>$m_capture->{physical}?1:0);my @result;\n    for my $fh($_[0]->handles){my $r=m_lookup($fh);m_fail('selector foreign role') unless $r->{role}=~/^capture\\Q$m_capture->{id}\\E-([123])-r$/;push @result,$fh unless $m_capture->{eof}{$1};}return @result;\n}\nsub m_capture {\n    my ($actual,$tool,$args,$seconds,$limit)=@_;m_fail('nested/foreign ACL capture') if defined($m_capture);\n    m_fail('literal ACL request') unless $tool eq '/bin/ls'&&ref($args) eq 'ARRAY'&&@$args==2&&$args->[0] eq '-lde'&&exists($m_paths{$args->[1]})&&$seconds==2&&$limit==4096;\n    my $p=$m_paths{$args->[1]};my $bits=$p->{mode};my $type=$p->{directory}?'d':'-';\n    my $rwx='';for my $shift(6,3,0){$rwx.=($bits&(4<<$shift)?'r':'-').($bits&(2<<$shift)?'w':'-').($bits&(1<<$shift)?'x':'-');}\n    substr($rwx,8,1)='t' if $bits&01000;\n    m_fail('closed helper occurrence quota') if ++$m_capture_number>128;\n    $m_capture={id=>$m_capture_number,physical=>defined(&test_constructor_model_physical_busy)&&test_constructor_model_physical_busy()?1:0,pid=>500000+$m_capture_number,pairs=>[],output=>{1=>$type.$rwx.' 1 root wheel 16 Jan 1 2026 '.$args->[1].\"\\n\",2=>'',3=>''},eof=>{}};\n    my ($v,$error);{local $@;eval {$v=$actual->($tool,$args,$seconds,$limit);1;};$error=$@;}\n    my $c=$m_capture;$m_capture=undef;m_fail('captor genuine Source refusal '.$error) if length($error);\n    m_fail('captor raw response') unless $c->{forked}==1&&$v->{pid}==$c->{pid}&&$v->{status}==0&&$v->{reaped}&&$c->{eof}{1}&&$c->{eof}{2}&&$c->{eof}{3};return $v;\n}\nsub m_backup {\n    for my $r(reverse @m_raw){my $live=CORE::fileno($r->{fh});next unless defined($live);my $row={role=>$r->{role},beforeFD=>$live,returned=>undef,errorHex=>'',live=>undef};push @m_backups,$row;\n        if(!defined($r->{fd})||$live!=$r->{fd}){$row->{quarantined}=JSON::PP::true;next;}\n        my ($ret,$error);{local $@;eval {$ret=$r->{kind} eq 'directory-handle'?CORE::closedir($r->{fh}):CORE::close($r->{fh});1;};$error=$@;}\n        $row->{returned}=$ret;$row->{errorHex}=unpack('H*',$error);my $le;{local $@;eval {$row->{live}=CORE::fileno($r->{fh});1;};$le=$@;}$row->{liveErrorHex}=unpack('H*',$le);\n    }\n}\neval q{BEGIN {\n *CORE::GLOBAL::sysopen=\\&main::m_open;*CORE::GLOBAL::fileno=\\&main::m_fileno;*CORE::GLOBAL::stat=\\&main::m_stat;*CORE::GLOBAL::lstat=\\&main::m_lstat;\n *CORE::GLOBAL::close=\\&main::m_close;*CORE::GLOBAL::binmode=\\&main::m_binmode;*CORE::GLOBAL::fcntl=\\&main::m_fcntl;*CORE::GLOBAL::sysseek=\\&main::m_seek;\n *CORE::GLOBAL::pipe=\\&main::m_pipe;*CORE::GLOBAL::sysread=\\&main::m_read;*CORE::GLOBAL::syswrite=\\&main::m_write;*CORE::GLOBAL::mkdir=\\&main::m_mkdir;*CORE::GLOBAL::chmod=\\&main::m_chmod;\n *CORE::GLOBAL::opendir=\\&main::m_opendir;*CORE::GLOBAL::readdir=\\&main::m_readdir;*CORE::GLOBAL::closedir=\\&main::m_closedir;\n *CORE::GLOBAL::fork=\\&main::m_fork;*CORE::GLOBAL::waitpid=\\&main::m_wait;*CORE::GLOBAL::kill=\\&main::m_kill;*CORE::GLOBAL::exec=\\&main::m_exec;\n}};die $@ if $@;\n";
+const CONSTRUCTOR_MODEL_RUNNER="m_fail('request shape') unless ref($m_request) eq 'HASH'&&join(',',sort keys %$m_request) eq 'backings,lease,mutation,operation,root,scenario';\nmy %scenarios=map {$_=>1} qw(lease descriptor unknown-observer normal-boundary native-early outcome-join physical-lease physical-alias physical-unknown physical-reference-open physical-reference-close physical-reference-exception physical-preopen-deadline physical-postopen-deadline physical-neutral-dispose physical-sticky-epoch);\nm_fail('closed scenario') unless defined($m_request->{scenario})&&$scenarios{$m_request->{scenario}};\nm_fail('closed operation') unless defined($m_request->{operation})&&$m_request->{operation}=~/\\A(?:none|hold|recheck|release|use|close)\\z/;\nm_fail('closed lease') unless defined($m_request->{lease})&&$m_request->{lease}=~/\\A(?:none|live|unknown)\\z/;\nm_fail('closed mutation') unless defined($m_request->{mutation})&&$m_request->{mutation}=~/\\A(?:none|lease-hold|lease-recheck|lease-release|file-use|file-close|observer-guard|material-retention|normal-cleanup|early-clip|physical-lease-hold|physical-lease-recheck|physical-lease-release|physical-error-coercion|physical-preopen-clock|physical-postopen-clock|physical-neutral-cleanup|physical-epoch-burn)\\z/;\nmy @relative=qw(scripts/task6a-origin-archive-v2.pm scripts/task6a-origin-native-v2.pm scripts/task6a-origin-map-v2.pm scripts/task6a-protected-origin-entry-v2.mjs scripts/__tests__/fixtures/task6a-staged-vendor-backing-v2.txt scripts/__tests__/fixtures/task6a-staged-native-backing-v2.txt);\nmy @leaves=qw(source/task6a-origin-archive-v2.pm source/task6a-origin-native-v2.pm source/task6a-origin-map-v2.pm source/task6a-protected-origin-entry-v2.mjs vendor/node-v22.23.1-darwin-arm64.tar.gz vendor/node);\nmy @sizes=(5864,3347,11684,1933,76,82);my @modes=(0400,0400,0400,0444,0400,0555);\nmy @blobs=qw(da1fd458fcaba775be5ba09ef88157b5ee48dbda 59e1ae8de38cf2083a0294c55454083840eb47f1 9719bf4f3676b43b7858e3cabe3cee3e679120f8 e53be63cdcdf286dc89adbec9770668b1fdb9cc7);\nmy @source_roles=qw(archive-helper native-helper map-helper entry);\nm_fail('root literal shape') unless defined($m_request->{root})&&!ref($m_request->{root})&&$m_request->{root}=~m{\\A/[A-Za-z0-9._/-]+\\z};\nmy $root=$m_request->{root};my @directories=('/','/private','/private/tmp',$m_logical,$m_logical.'/source',$m_logical.'/vendor');my @actual=('/','/private','/private/tmp',$root,$root.'/scripts',$root.'/docs');\nfor my $i(0..5){my @v=CORE::lstat($actual[$i]);m_fail('actual directory') unless @v==13&&Fcntl::S_ISDIR($v[2]);$m_paths{$directories[$i]}={actual=>$actual[$i],directory=>1,mode=>$i==2?01777:$i==3?0711:$i>=4?0555:($v[2]&07777),role=>'stage-d'.$i};}\n$m_paths{'/dev/urandom'}={actual=>'/dev/urandom',directory=>0,mode=>0666,role=>'entropy'};\nm_fail('six backing records') unless ref($m_request->{backings}) eq 'ARRAY'&&@{$m_request->{backings}}==6;\nmy @bodies;\nfor my $i(0..5){my $b=$m_request->{backings}[$i];m_fail('backing closed fields') unless ref($b) eq 'HASH'&&join(',',sort keys %$b) eq 'bytes,logical,path,sha256,size'&&$b->{path} eq $root.'/'.$relative[$i]&&$b->{logical} eq $leaves[$i]&&$b->{size}==$sizes[$i];\n    my $body=MIME::Base64::decode_base64($b->{bytes});m_fail('backing exact encoded bytes') unless length($body)==$sizes[$i]&&MIME::Base64::encode_base64($body,'') eq $b->{bytes}&&Digest::SHA::sha256_hex($body) eq $b->{sha256};\n    my $fh;CORE::sysopen($fh,$b->{path},Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK()) or m_fail('backing verification open');my $actual='';my $n=CORE::sysread($fh,$actual,$sizes[$i]+1);my @v=CORE::stat($fh);my $closed=CORE::close($fh);my $live=CORE::fileno($fh);\n    m_fail('backing genuine bytes/liveness') unless defined($n)&&$n==$sizes[$i]&&$actual eq $body&&@v==13&&Fcntl::S_ISREG($v[2])&&$v[3]==1&&$closed&&!defined($live);\n    m_fail('source blob') if $i<4&&Digest::SHA::sha1_hex('blob '.length($body).\"\\0\".$body) ne $blobs[$i];\n    $m_paths{$m_logical.'/'.$leaves[$i]}={actual=>$b->{path},directory=>0,mode=>$modes[$i],role=>'stage-f'.$i};push @bodies,$body;\n}\nmy @creation=m_project($m_logical,[CORE::lstat($root)]);$creation[2]=($creation[2]&~07777)|0700;\nfor my $p('/usr','/usr/bin','/usr/bin/perl'){my @v=CORE::lstat($p);m_fail('fixed actual physical metadata') unless @v==13&&$v[4]==0&&$v[5]==0&&($p eq '/usr/bin/perl'?Fcntl::S_ISREG($v[2]):Fcntl::S_ISDIR($v[2]));$m_paths{$p}={actual=>$p,directory=>$p eq '/usr/bin/perl'?0:1,mode=>$v[2]&07777,role=>'physical:'.$p};}\nour $m_admission={creator=>{rootPath=>$m_logical,creationIdentity=>\\@creation},sources=>[map {+{role=>$source_roles[$_],relativePath=>$leaves[$_],gitBlobSha=>$blobs[$_],bytes=>$bodies[$_]}} (0..3)]};\n$m_admission->{vendor}={filename=>'node-v22.23.1-darwin-arm64.tar.gz',bytes=>$bodies[4]};$m_admission->{selected}={archiveRef=>$m_admission->{vendor},bytes=>$bodies[5],memberName=>'node-v22.23.1-darwin-arm64/bin/node'};\nmy $source=MIME::Base64::decode_base64($ARGV[0]);m_fail('source argument encoding') unless MIME::Base64::encode_base64($source,'') eq $ARGV[0];\nmy ($out,$primary,$loaded_error);\n{\n    no warnings qw(redefine once);\n    local *Time::HiRes::clock_gettime=\\&m_clock;local *IO::Select::can_read=\\&m_ready;\n    my $loaded=eval($source.\"\\n1;\\n\");$loaded_error=$@;\n    if($loaded&&!length($loaded_error)){\n        my $capture=\\&main::task6a_origin_capture;\n        local *main::task6a_origin_capture=sub {m_capture($capture,@_)};\n        my $ok=eval {$out=test_constructor_model_drive($m_request->{scenario});1;};$primary=$@;\n    }else{$primary='MODEL_SOURCE_SETUP:'.$loaded_error;}\n}\nmy @before_backup=map {+{role=>$_->{role},kind=>$_->{kind},path=>$_->{path},originalFD=>$_->{fd},physicalHelper=>$_->{physicalHelper}?1:0,live=>CORE::fileno($_->{fh}),sourcePrimitiveAttempts=>$_->{attempted},sourcePrimitiveClosed=>$_->{closed},shape=>$_->{shape},rawStat=>$_->{rawStat}}} @m_raw;\nm_backup();\nmy $result={schema=>'setfarm.constructor-modeled-branch-result.v1',scenario=>$m_request->{scenario},mutation=>$m_request->{mutation},lease=>$m_request->{lease},operation=>$m_request->{operation},\n    scope=>'MODELED branches with genuine dataFH primitives; all process/PID/ACL child outputs explicitly modeled',productionAuthority=>JSON::PP::false,realForkDelegates=>0,realWaitDelegates=>0,realSignalDelegates=>0,realExecDelegates=>0,\n    harnessFault=>$m_fault,sourceLoaded=>!length($loaded_error)?1:0,primaryHex=>unpack('H*',$primary//''),out=>$out,events=>\\@m_events,closes=>\\@m_closes,waits=>\\@m_waits,forks=>\\@m_forks,\n    clockValues=>\\@m_clock_values,clockCalls=>$m_clocks,portAttempts=>$m_calls,clockCap=>1024,portCap=>8192,originalsBeforeBackup=>\\@before_backup,backupCloses=>\\@m_backups,physicalDataRoot=>$m_physical_root,\n    limits=>['fake PID outcomes never prove process closure','fixture backup never Source closure credit','no native query, target exec, Root/image/cohort/startup qualification']};\nmy $json=JSON::PP->new->canonical->encode($result);die \"MODEL_RESULT_CAP\\n\" if length($json)>2097152;CORE::print STDOUT $json,\"\\n\" or die \"MODEL_RESULT_WRITE\\n\";\n";
+const CONSTRUCTOR_MODEL_PROJECTIONS=[["# Cold entry stays closed before any candidate PM/XS import.\nBEGIN {\n    CORE::print STDERR \"TASK6A_ORIGIN_BOOTSTRAP_REFUSED\\n\";\n    CORE::exit(2);\n}\n",""],["\ntask6a_origin_main();\n","\n"],["my $staged_vendor_pin='ef28d8fab2c0e4314522d4bb1b7173270aa3937e93b92cb7de79c112ac1fa953';","my $staged_vendor_pin='46bb5c40ae918a624f6c6e298334c4041d34d3dd90fa6aca1dd230a840999a75';"],["CORE::sysopen($fh,$path,$flags,$mode)","CORE::GLOBAL::sysopen($fh,$path,$flags,$mode)"],["CORE::mkdir($constructor_capsule_root,0700)","CORE::GLOBAL::mkdir($constructor_capsule_root,0700)"],["CORE::chmod(0555,$writer->{fh})","CORE::GLOBAL::chmod(0555,$writer->{fh})"],["CORE::chmod(0500,$root->{fh})","CORE::GLOBAL::chmod(0500,$root->{fh})"],["exec {$tool} $tool,@$args;","CORE::GLOBAL::exec($tool,$tool,@$args);"],["exec {$node_view->{path}} $node_view->{path},$entry_view->{path};","CORE::GLOBAL::exec($node_view->{path},$node_view->{path},$entry_view->{path});"],["exec {$constructor_capsule_path} $constructor_capsule_path;","CORE::GLOBAL::exec($constructor_capsule_path,$constructor_capsule_path);"],["sub task6a_origin_hold_staged_custody {","$staged_admission=$m_admission;\nsub task6a_origin_hold_staged_custody {"],["$parent_native_cleanup_complete=sub {","    # TEST-COPY ONLY passive view for earliest native-cleanup deadline control.\n    sub test_constructor_model_native_snapshot {\n        return {cleanupDeadline=>$native_cleanup_deadline,ownedToken=>$native_owned_pid,invalid=>$native_invalid,\n          reaped=>$native_reaped,uncertain=>$native_uncertain,primaryHex=>unpack('H*',$native_primary),\n          keeper=>[map {+{known=>$_->{known},closeAllowed=>$_->{close_allowed},shape=>[@{$_->{shape}}],live=>CORE::fileno($_->{fh})}} @native_keeper],\n          closeAttempts=>[@native_close_attempted],closed=>[@native_definitely_closed]};\n    }\n\n    $parent_native_cleanup_complete=sub {"],["$parent_constructor_material_allowed=sub {","    # TEST-COPY ONLY fixed modeled state/closure exposure. No production hook.\n    sub test_constructor_model_snapshot {\n        my @stage=map {my @b=$_->('binding');+{fd=>$b[1],attempted=>$b[2]?1:0,closed=>$b[3]?1:0,live=>CORE::fileno($b[0]),shape=>m_shape($b[0])}} @staged_originals;\n        return {phase=>$constructor_phase,claimed=>$constructor_claimed,complete=>$constructor_complete,uncertain=>$constructor_uncertain,\n          physical=>test_constructor_model_physical_snapshot(),acquisition=>{%constructor_acquisition},deadlines=>[$constructor_start,$constructor_deadline,$constructor_cleanup_deadline],materialAllowed=>$parent_constructor_material_allowed->()?1:0,\n          staged=>{phase=>$staged_phase,invalid=>$staged_invalid,uncertain=>$staged_uncertain,disposing=>$staged_disposal_started,originals=>\\@stage},\n          files=>[map {+{path=>$_->{path},fd=>$_->{fd},shape=>[@{$_->{shape}}],attempted=>$_->{close_attempted},closed=>$_->{closed},live=>CORE::fileno($_->{fh})}} @constructor_files],\n          pipes=>[map {+{fd=>$_->{fd},attempted=>$_->{close_attempted},closed=>$_->{closed},live=>CORE::fileno($_->{fh})}} @constructor_fhs],\n          node=>defined($constructor_node)?{%$constructor_node}:undef,observer=>defined($constructor_observer)?{%$constructor_observer}:undef,\n          parent=>{reaped=>$parent_reaped,uncertain=>$parent_uncertain,status=>$parent_raw_status,knownLive=>$parent_known_live},errors=>[@constructor_errors]};\n    }\n    sub test_constructor_model_drive {\n        my ($scenario)=@_;my $canonical=\"TASK6A_ORIGIN_BOOTSTRAP_REFUSED\\n\";my $out={scenario=>$scenario};\n        if($scenario eq 'lease'||$scenario eq 'physical-lease') {\n            task6a_origin_hold_staged_custody();$physical_claim->();\n            # Explicit MODEL-only live/unknown lease, each program has a fresh12.\n            $constructor_claimed=1;$constructor_complete=0;$constructor_phase='running';\n            $constructor_uncertain=$m_request->{lease} eq 'unknown'?1:0;\n            $constructor_acquisition{observer}=$constructor_uncertain?'unknown':'enrolled';\n            my %entry=(hold=>\\&task6a_origin_hold_staged_custody,recheck=>\\&task6a_origin_recheck_staged_custody,release=>\\&task6a_origin_release_staged_custody);\n            %entry=(hold=>\\&task6a_origin_hold_system_perl_physical,recheck=>\\&task6a_origin_recheck_system_perl_physical,release=>\\&task6a_origin_release_system_perl_physical) if $scenario eq 'physical-lease';\n            $out->{before}=test_constructor_model_snapshot();my $at=@m_events;\n            my $v;my $ok=eval {$v=$entry{$m_request->{operation}}->();1;};my $error=$@;\n            $out->{outcome}={ok=>$ok?1:0,errorHex=>unpack('H*',$error),canonical=>$error eq $canonical?1:0};\n            $out->{after}=test_constructor_model_snapshot();$out->{afterEvents}=[@m_events[$at..$#m_events]] if @m_events>$at;\n            $out->{afterEvents}=[] unless exists($out->{afterEvents});return $out;\n        }\n        if($scenario=~/\\Aphysical-(?:alias|unknown|reference-open|reference-close)\\z/) {\n            task6a_origin_hold_staged_custody();\n            $constructor_start=0;$constructor_deadline=30;$constructor_cleanup_deadline=45;$parent_constructor_deadline=30;$parent_constructor_cleanup_deadline=45;\n            $constructor_claimed=1;$constructor_phase='preparing';$out->{before}=test_constructor_model_snapshot();\n            my $ok=eval {$physical_claim->();$physical_release_private->() if $scenario eq 'physical-reference-close';1;};my $error=$@;\n            $out->{outcome}={ok=>$ok?1:0,canonical=>$error eq $canonical?1:0,errorHex=>unpack('H*',$error)};\n            $out->{afterFailure}=test_constructor_model_snapshot();$out->{disposeReturned}=$parent_constructor_dispose->();$out->{after}=test_constructor_model_snapshot();\n            my $at=@m_events;my @repeats;for my $f(\\&task6a_origin_hold_system_perl_physical,\\&task6a_origin_recheck_system_perl_physical,\\&task6a_origin_release_system_perl_physical){my $v=eval {$f->();1;};my $e=$@;push @repeats,{ok=>$v?1:0,canonical=>$e eq $canonical?1:0};}\n            $out->{repeats}=\\@repeats;$out->{repeatEventDelta}=@m_events-$at;$out->{foreignCallbacks}=$m_foreign_callbacks;return $out;\n        }\n        if($scenario=~/\\Aphysical-(?:reference-exception|preopen-deadline|postopen-deadline|neutral-dispose|sticky-epoch)\\z/) {\n            task6a_origin_hold_staged_custody();\n            $constructor_start=0;$constructor_deadline=30;$constructor_cleanup_deadline=45;\n            $parent_constructor_deadline=30;$parent_constructor_cleanup_deadline=45;\n            $constructor_claimed=1;$constructor_phase='preparing';$out->{before}=test_constructor_model_snapshot();\n            if($scenario eq 'physical-neutral-dispose') {\n                my $at=@m_events;$out->{disposeReturned}=$parent_constructor_dispose->();\n                $out->{after}=test_constructor_model_snapshot();$out->{eventDelta}=@m_events-$at;return $out;\n            }\n            $m_arm=$scenario;\n            if($scenario eq 'physical-sticky-epoch') {\n                $physical_claim->();$out->{held}=test_constructor_model_snapshot();\n                # Closed MODEL role outcome: no native child/fork/wait/signal.\n                $constructor_node={pid=>424242,role=>'node',reaped=>0,uncertain=>0,status=>undef};\n                $constructor_acquisition{node}='enrolled';$constructor_acquisition{observer}='unknown';\n                # Borrowed original row drift is DATA, after the real fixed4 hold.\n                my $original_path=$directory_ledger[0]{path};$directory_ledger[0]{path}='/usr';\n                my $ok=eval {$physical_epoch->();1;};my $error=$@;\n                $out->{outcome}={ok=>$ok?1:0,canonical=>$error eq $canonical?1:0,errorHex=>unpack('H*',$error)};\n                $directory_ledger[0]{path}=$original_path;$out->{afterFailure}=test_constructor_model_snapshot();\n                my $at=@m_events;my $again=eval {$physical_epoch->();1;};my $again_error=$@;\n                $out->{retry}={ok=>$again?1:0,canonical=>$again_error eq $canonical?1:0,errorHex=>unpack('H*',$again_error)};\n                $out->{retryEventDelta}=@m_events-$at;$out->{disposeReturned}=$parent_constructor_dispose->();\n                $out->{after}=test_constructor_model_snapshot();return $out;\n            }\n            my $ok=eval {$physical_claim->();1;};my $error=$@;\n            $out->{outcome}={ok=>$ok?1:0,canonical=>$error eq $canonical?1:0,errorHex=>unpack('H*',$error)};\n            $out->{afterFailure}=test_constructor_model_snapshot();$out->{disposeReturned}=$parent_constructor_dispose->();\n            $out->{after}=test_constructor_model_snapshot();$out->{foreignCallbacks}=$m_foreign_callbacks;\n            $out->{forbiddenDispatches}=$m_forbidden;return $out;\n        }\n        $out->{absentDispose}={returned=>$parent_constructor_dispose->(),eventCount=>scalar(@m_events),claimed=>$constructor_claimed};\n        $constructor_start=0;$constructor_deadline=30;$constructor_cleanup_deadline=45;$parent_constructor_deadline=30;$parent_constructor_cleanup_deadline=45;\n        $physical_claim->() unless $scenario eq 'unknown-observer';\n        $constructor_claimed=1;$constructor_phase='preparing';\n        if($scenario eq 'descriptor'||$scenario eq 'normal-boundary') {\n            my $path=$m_logical.'/source/task6a-origin-archive-v2.pm';\n            # Real constructor_open seals the actual FD BEFORE modeled mismatch.\n            my $r=$constructor_open->($path,Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK(),0);\n            my $actual=m_lookup($r->{fh});$out->{original}={fd=>$r->{fd},shape=>[@{$r->{shape}}],rawStat=>[CORE::stat($r->{fh})],openReturned=>$r->{open_return},actualFd=>CORE::fileno($r->{fh})};\n            if($scenario eq 'descriptor') {$m_mismatch_io=$actual->{shape}[1];$m_arm=$m_request->{operation} eq 'use'?'file-use':'file-close';}\n            else {$m_time=30;$m_arm='normal-boundary';}\n            my $at=@m_events;my ($v,$ok,$error);\n            if($scenario eq 'descriptor'&&$m_request->{operation} eq 'close') {\n                $ok=eval {$v=$constructor_close->($r);1;};$error=$@;\n                my $after_first=@m_closes;my $again=$constructor_close->($r);$out->{repeatPrimitiveCloseDelta}=@m_closes-$after_first;$out->{repeatReturned}=$again;\n                $out->{claimedDisposeReturned}=$parent_constructor_dispose->();my $after_dispose=@m_closes;$out->{repeatDisposeReturned}=$parent_constructor_dispose->();$out->{repeatDisposeCloseDelta}=@m_closes-$after_dispose;\n            }else {$ok=eval {$v=$constructor_file_check->($r,0,0400,undef);1;};$error=$@;}\n            $out->{outcome}={ok=>$ok?1:0,returned=>$v,errorHex=>unpack('H*',$error),canonical=>$error eq $canonical?1:0};\n            $out->{originalAfter}={fd=>CORE::fileno($r->{fh}),attempted=>$r->{close_attempted},closed=>$r->{closed},closeErrorHex=>unpack('H*',$r->{close_error}//'')};\n            $out->{afterEvents}=[@m_events[$at..$#m_events]] if @m_events>$at;$out->{afterEvents}=[] unless exists($out->{afterEvents});\n            $out->{forbiddenDispatches}=$m_forbidden;$out->{physical}=test_constructor_model_physical_snapshot();return $out;\n        }\n        if($scenario eq 'unknown-observer') {\n            # Named predecessor projection only; the genuine holder/epoch,\n            # capsule acquisition/parser and constructor predicates still run.\n            $constructor_claimed=0;$constructor_phase='new';$constructor_start=undef;$constructor_deadline=undef;$constructor_cleanup_deadline=undef;\n            $parent_constructor_deadline=undef;$parent_constructor_cleanup_deadline=undef;\n            task6a_origin_hold_staged_custody();$producer_phase='held';$creator_phase='released';$creator_root=$m_logical;\n            $out->{before}=test_constructor_model_snapshot();my ($ok,$error);\n            $ok=eval {$parent_constructor->();1;};$error=$@;\n            $out->{outcome}={ok=>$ok?1:0,errorHex=>unpack('H*',$error),canonical=>$error eq $canonical?1:0};$out->{after}=test_constructor_model_snapshot();\n            my $at=@m_events;my @repeat;\n            for my $entry(\\&task6a_origin_hold_staged_custody,\\&task6a_origin_recheck_staged_custody,\\&task6a_origin_release_staged_custody,\\&task6a_origin_consume_entry_protocol) {\n                my $ok=eval {$entry->();1;};my $e=$@;push @repeat,{ok=>$ok?1:0,canonical=>$e eq $canonical?1:0,errorHex=>unpack('H*',$e)};\n            }\n            $out->{repeats}=\\@repeat;$out->{repeatEventDelta}=@m_events-$at;return $out;\n        }\n        if($scenario eq 'native-early') {\n            my @pairs;for(1..4){pipe(my $r,my $w) or die \"MODEL_PIPE\\n\";push @pairs,[$r,$w];}\n            @parent_native_originals=map {+{fh=>$_->[0]}} @pairs;\n            $parent_original_pid=424242;$parent_native_original_pid=424243;$parent_native_target_pid=0;$parent_native_birth_ordinal=1;$parent_native_original_start=29;\n            $m_arm='native-early';my $ok=eval {$parent_native_prepare->();1;};my $error=$@;\n            $out->{outcome}={ok=>$ok?1:0,errorHex=>unpack('H*',$error),canonical=>$error eq $canonical?1:0};$out->{native}=test_constructor_model_native_snapshot();$out->{physical}=test_constructor_model_physical_snapshot();return $out;\n        }\n        if($scenario eq 'outcome-join') {\n            $constructor_published=1;$constructor_node={pid=>424242,role=>'node',reaped=>0,uncertain=>0,status=>undef};\n            $constructor_observer={pid=>424243,role=>'observer',reaped=>1,uncertain=>0,status=>0};\n            %constructor_acquisition=(node=>'enrolled',observer=>'enrolled');$parent_original_pid=424242;$parent_reaped=0;$parent_uncertain=0;$parent_raw_status=undef;$parent_known_live=1;\n            $m_time=44;$out->{before}=test_constructor_model_snapshot();my $v=$parent_constructor_shutdown_node->();$out->{returned}=$v;$out->{after}=test_constructor_model_snapshot();$out->{physical}=test_constructor_model_physical_snapshot();return $out;\n        }\n        die \"MODEL_UNKNOWN_SCENARIO\\n\";\n    }\n\n    $parent_constructor_material_allowed=sub {"],["$physical_can_claim=sub {","    $main::test_constructor_physical_busy=0;\n    sub test_constructor_model_physical_busy {return $main::test_constructor_physical_busy?1:0;}\n    sub test_constructor_model_physical_snapshot {\n      return {state=>$physical_state,burned=>$file_lifecycle_burned,released=>$file_lifecycle_released,\n        cleanupAttempted=>$physical_cleanup_attempted,cleanupOK=>$physical_cleanup_ok,\n        acquisitionUnknown=>$physical_acquisition_unknown,lease=>$physical_constructor_lease,\n        pending=>[map {+{path=>$_->{path},state=>$_->{state},alias=>$_->{alias},safe=>$_->{safe}}} @physical_pending],\n        originals=>[map {+{path=>$_->{path},fd=>$_->{fd},shape=>[@{$_->{shape}}],attempted=>$_->{attempted},closed=>$_->{closed},live=>CORE::fileno($_->{fh})}} @physical_kept]};\n    }\n    $physical_can_claim=sub {"],["$physical_open=sub {","$physical_open=sub {\n    local $main::test_constructor_physical_busy=1;"],["$physical_require_live=sub {","$physical_require_live=sub {\n    local $main::test_constructor_physical_busy=1;"],["$physical_epoch=sub {","$physical_epoch=sub {\n    local $main::test_constructor_physical_busy=1;"],["$physical_hold_private=sub {","$physical_hold_private=sub {\n    local $main::test_constructor_physical_busy=1;"]];
+const CONSTRUCTOR_MODEL_MUTATIONS={"lease-hold":["sub task6a_origin_hold_staged_custody {\n    # Refuse before the hold catch can burn a live constructor's material owner.\n    task6a_origin_refuse() if defined($parent_constructor_material_allowed)&&!$parent_constructor_material_allowed->();\n","sub task6a_origin_hold_staged_custody {\n    # Refuse before the hold catch can burn a live constructor's material owner.\n"],"lease-recheck":["sub task6a_origin_recheck_staged_custody {\n    # Refuse before the public burn catch while a constructor material lease lives.\n    task6a_origin_refuse() if defined($parent_constructor_material_allowed)&&!$parent_constructor_material_allowed->();\n","sub task6a_origin_recheck_staged_custody {\n    # Refuse before the public burn catch while a constructor material lease lives.\n"],"lease-release":["sub task6a_origin_release_staged_custody {\n    # A live/unknown constructor holds a non-disposing lease on these originals.\n    task6a_origin_refuse() if defined($parent_constructor_material_allowed)&&!$parent_constructor_material_allowed->();\n    # No validity/admission/helper/deadline operation in release.\n    unless(@_==0&&$staged_phase eq 'active'&&!$staged_invalid\n        &&!$staged_uncertain&&!$staged_disposal_started) {$staged_burn->();}\n    $staged_phase='released';\n","sub task6a_origin_release_staged_custody {\n    # A live/unknown constructor holds a non-disposing lease on these originals.\n    # No validity/admission/helper/deadline operation in release.\n    unless(@_==0&&$staged_phase eq 'active'&&!$staged_invalid\n        &&!$staged_uncertain&&!$staged_disposal_started) {$staged_burn->();}\n    $staged_phase='released';\n"],"file-use":["        my $live_fd=fileno($fh);task6a_origin_refuse() unless defined($record->{fd})&&defined($live_fd)&&$live_fd==$record->{fd};","        my $live_fd=fileno($fh);"],"file-close":["            if(defined($record->{fd})) {my $live_fd=fileno($record->{fh});task6a_origin_refuse() unless defined($live_fd)&&$live_fd==$record->{fd};}",""],"observer-guard":["task6a_origin_refuse() if $constructor_acquisition{observer} eq 'pending'||$constructor_acquisition{observer} eq 'unknown';",""],"material-retention":["if($observer_settled&&$node_settled&&task6a_origin_helpers_settled()) {","if(task6a_origin_helpers_settled()) {"],"normal-cleanup":["my ($record,$directory,$mode,$hash)=@_;$constructor_now->(0);","my ($record,$directory,$mode,$hash)=@_;$constructor_now->(1);"],"early-clip":["            my $start=$native_clock->();$native_cleanup_deadline=$start+30;\n            $native_cleanup_deadline=$bootstrap_deadline if $bootstrap_deadline<$native_cleanup_deadline;\n            $native_cleanup_deadline=$parent_constructor_cleanup_deadline if defined($parent_constructor_cleanup_deadline)&&$parent_constructor_cleanup_deadline<$native_cleanup_deadline;","            my $start=$native_clock->();$native_cleanup_deadline=$start+30;\n            $native_cleanup_deadline=$bootstrap_deadline if $bootstrap_deadline<$native_cleanup_deadline;"],"physical-lease-hold":["sub task6a_origin_hold_system_perl_physical {\n    task6a_origin_refuse() if defined($parent_constructor_material_allowed)&&!$parent_constructor_material_allowed->();\n","sub task6a_origin_hold_system_perl_physical {\n"],"physical-lease-recheck":["sub task6a_origin_recheck_system_perl_physical {\n    task6a_origin_refuse() if defined($parent_constructor_material_allowed)&&!$parent_constructor_material_allowed->();\n","sub task6a_origin_recheck_system_perl_physical {\n"],"physical-lease-release":["sub task6a_origin_release_system_perl_physical {\n    task6a_origin_refuse() if defined($parent_constructor_material_allowed)&&!$parent_constructor_material_allowed->();\n","sub task6a_origin_release_system_perl_physical {\n"],"physical-error-coercion":["        my $error_plain=eval {\n            my $sv=$staged_plain_cell->(\\$error);task6a_origin_refuse() if $sv->FLAGS&B::SVf_ROK();1;\n        };","        my $error_plain=!length($error);"],"physical-preopen-clock":["        task6a_origin_refuse() unless task6a_origin_now()<$parent_material_deadline->();\n        $r->{state}='pending';","        $r->{state}='pending';"],"physical-postopen-clock":["            &&$classified&&!length($r->{classification_error})&&$aliases&&!length($alias_error)&&$r->{state} eq 'known';\n        task6a_origin_refuse() unless task6a_origin_now()<$parent_material_deadline->();\n        return $returned;","            &&$classified&&!length($r->{classification_error})&&$aliases&&!length($alias_error)&&$r->{state} eq 'known';\n        return $returned;"],"physical-neutral-cleanup":["        return $physical_can_claim->() unless $physical_constructor_lease;","        return $physical_cleanup_private->() unless $physical_constructor_lease;"],"physical-epoch-burn":["    unless($ok) {$physical_state='burned' unless $physical_state eq 'released';$file_lifecycle_burned=1 if $physical_owns_ledgers;task6a_origin_refuse();}\n    return {scope=>'composed-system-perl-physical-candidate-diagnostic-only',","    unless($ok) {task6a_origin_refuse();}\n    return {scope=>'composed-system-perl-physical-candidate-diagnostic-only',"]};
+function constructorModeledSource(original,{mutation}) {
+  let source=original;const projections=[];
+  for(const [from,to] of CONSTRUCTOR_MODEL_PROJECTIONS){source=replaceOnce(source,from,to);projections.push([from,to]);}
+  if(mutation!=='none'){assert.ok(Object.hasOwn(CONSTRUCTOR_MODEL_MUTATIONS,mutation));const [from,to]=CONSTRUCTOR_MODEL_MUTATIONS[mutation];source=replaceOnce(source,from,to);projections.push([from,to]);}
+  return {source,projections};
+}
+// Full obtained model buffers are DATA; this does not assert child wait/EOF authority.
+let constructorModelOccurrence=0,constructorModelPublicationBytes=0;
+const CONSTRUCTOR_MODEL_PUBLICATION_CAP=3145728;
+function publishConstructorModelOriginal(metadata,rawStdout,rawStderr){
+  const occurrence=++constructorModelOccurrence,id='constructor-model-'+String(occurrence).padStart(3,'0');
+  const streams=[['stdout',rawStdout],['stderr',rawStderr]].map(([name,raw])=>{
+    const gzip=gzipSync(raw),chunks=[];for(let at=0;at<gzip.length;at+=4096)chunks.push(gzip.subarray(at,Math.min(at+4096,gzip.length)));
+    return{name,raw,gzip,chunks,rawBytes:raw.length,rawSHA256:createHash('sha256').update(raw).digest('hex'),gzipBytes:gzip.length,gzipSHA256:createHash('sha256').update(gzip).digest('hex')};
+  });
+  const descriptors=streams.map(({name,rawBytes,rawSHA256,gzipBytes,gzipSHA256,chunks})=>({name,rawBytes,rawSHA256,gzipBytes,gzipSHA256,chunkCount:chunks.length}));
+  const records=['CONSTRUCTOR_MODEL_ORIGINAL '+JSON.stringify({...metadata,schema:'setfarm.constructor-model-original.v2',occurrence,id,publication:'begin',rawComplete:false,streams:descriptors,publicationCap:CONSTRUCTOR_MODEL_PUBLICATION_CAP})];
+  for(const stream of streams)for(const [index,chunk]of stream.chunks.entries())records.push('CONSTRUCTOR_MODEL_RAW_CHUNK '+JSON.stringify({schema:'setfarm.constructor-model-raw-chunk.v1',id,occurrence,stream:stream.name,index,count:stream.chunks.length,offset:index*4096,bytes:chunk.length,sha256:createHash('sha256').update(chunk).digest('hex'),base64:chunk.toString('base64')}));
+  records.push('CONSTRUCTOR_MODEL_COMPLETE '+JSON.stringify({schema:'setfarm.constructor-model-complete.v1',id,occurrence,publication:'complete',rawComplete:true,streams:descriptors}));
+  // Include LF and one normal TAP '# ' prefix per record in this budget. The
+  // unchanged outer4MiB cap remains authoritative for extra reporter framing.
+  const charge=records.reduce((n,line)=>n+Buffer.byteLength(line)+3,0);
+  if(records.some(line=>Buffer.byteLength(line)>8192)||constructorModelPublicationBytes+charge>CONSTRUCTOR_MODEL_PUBLICATION_CAP){
+    // A publication-quota failure is capture failure, never complete model DATA
+    // or semantic credit. No null member, shortened chunk or success is emitted.
+    console.log('CONSTRUCTOR_MODEL_PUBLICATION_FAILURE '+JSON.stringify({schema:'setfarm.constructor-model-publication-failure.v1',id,occurrence,rawComplete:false,streams:descriptors,requiredBytes:charge,usedBytes:constructorModelPublicationBytes,cap:CONSTRUCTOR_MODEL_PUBLICATION_CAP}));
+    throw Error('CONSTRUCTOR_MODEL_PUBLICATION_QUOTA: obtained buffers are not qualified as externally retained complete');
+  }
+  constructorModelPublicationBytes+=charge;
+  for(const line of records)console.log(line);
+}
+
+function constructorModeledBranch(scenario,{operation='none',lease='none',mutation='none'}={}) {
+  const original=readFileSync(BOOTSTRAP,'utf8');assert.equal(createHash('sha256').update(original).digest('hex'),CONSTRUCTOR_MODEL_SOURCE_SHA);
+  const {source,projections}=constructorModeledSource(original,{scenario,operation,lease,mutation});
+  const root=fileURLToPath(new URL('../../',import.meta.url)).replace(/\/$/,'');
+  const backings=STAGED_CUSTODY_BACKINGS.map(([logical,relative,size,blob])=>{
+    const path=root+'/'+relative,a=lstatSync(path,{bigint:true});assert.ok(a.isFile()&&!a.isSymbolicLink()&&a.nlink===1n&&a.size===BigInt(size));
+    const bytes=readFileSync(path),b=lstatSync(path,{bigint:true});for(const k of ['dev','ino','mode','uid','gid','size','mtimeNs','ctimeNs'])assert.equal(a[k],b[k]);
+    if(blob!==null)assert.equal(createHash('sha1').update(Buffer.concat([Buffer.from('blob '+bytes.length+'\0'),bytes])).digest('hex'),blob);
+    return {logical,path,size,sha256:createHash('sha256').update(bytes).digest('hex'),bytes:bytes.toString('base64')};
+  });
+  const input=JSON.stringify({scenario,operation,lease,mutation,root,backings});
+  const argv=['-f','-e',CONSTRUCTOR_MODEL_PORTS+'\n'+CONSTRUCTOR_MODEL_RUNNER,Buffer.from(source).toString('base64')];
+  const env={PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'};
+  const total=Buffer.byteLength('/usr/bin/perl')+1+argv.reduce((n,s)=>n+Buffer.byteLength(s)+1,0)+Object.entries(env).reduce((n,[k,v])=>n+Buffer.byteLength(k+'='+v)+1,0);
+  assert.ok(total<=786432&&Buffer.byteLength(input)<=262144);
+  const r=spawnSync('/usr/bin/perl',argv,{input,cwd:'/',env,timeout:10000,maxBuffer:4194304});
+  const rawStdout=Buffer.isBuffer(r.stdout)?r.stdout:Buffer.alloc(0),rawStderr=Buffer.isBuffer(r.stderr)?r.stderr:Buffer.alloc(0);
+  publishConstructorModelOriginal({scenario,operation,lease,mutation,status:r.status,signal:r.signal,error:r.error?String(r.error):null,
+    sourceSHA256:CONSTRUCTOR_MODEL_SOURCE_SHA,programSHA256:createHash('sha256').update(argv[2]).digest('hex'),
+    projectedSourceSHA256:createHash('sha256').update(source).digest('hex'),stdinSHA256:createHash('sha256').update(input).digest('hex'),
+    stdoutBytes:rawStdout.length,stdoutSHA256:createHash('sha256').update(rawStdout).digest('hex'),
+    stderrBytes:rawStderr.length,stderrSHA256:createHash('sha256').update(rawStderr).digest('hex'),productionAuthority:false},rawStdout,rawStderr);
+  assert.equal(r.error,undefined);assert.equal(r.signal,null);assert.equal(r.status,0,r.stderr.toString());assert.equal(r.stderr.length,0);
+  const out=JSON.parse(r.stdout);assert.equal(out.schema,'setfarm.constructor-modeled-branch-result.v1');assert.equal(out.scenario,scenario);assert.equal(out.mutation,mutation);
+  assert.equal(out.harnessFault,'');assert.equal(out.sourceLoaded,1);assert.equal(out.primaryHex,'');assert.equal(out.productionAuthority,false);
+  assert.deepEqual([out.realForkDelegates,out.realWaitDelegates,out.realSignalDelegates,out.realExecDelegates],[0,0,0,0]);
+  assert.ok(out.clockCalls<=1024&&out.portAttempts<=8192);assert.equal(out.clockValues.length,out.clockCalls);assert.ok(out.clockValues.every((v,i)=>i===0||v>=out.clockValues[i-1]));
+  assert.ok(out.events.every((e,i)=>e.order===i+1));assert.ok(out.forks.every(f=>f.realDelegate===false));assert.ok(out.waits.every(w=>w.realDelegate===false));
+  for(const b of out.backupCloses){assert.equal(b.quarantined,undefined);assert.equal(b.returned,1);assert.equal(b.errorHex,'');assert.equal(b.live,null);assert.equal(b.liveErrorHex,'');}
+  assert.ok(out.originalsBeforeBackup.every(o=>o.live===null||out.backupCloses.some(b=>b.role===o.role&&b.beforeFD===o.live)));
+  assertModelPhysicalHelperOriginals(out);
+  out.projections=projections;return out;
+}
+function assertModelPhysicalHelperOriginals(result) {
+  const raw=result.originalsBeforeBackup.filter(r=>r.physicalHelper===1),groups=new Map();
+  for(const r of raw){const m=/^capture([0-9]+)-([0-3])-(r|w)$/.exec(r.role);assert.ok(m,'added physical helper must have exact known data-pipe role');
+    const group=groups.get(m[1])??[];group.push(r);groups.set(m[1],group);
+    assert.equal(r.kind,'pipe');assert.equal(r.sourcePrimitiveAttempts,1);assert.equal(r.sourcePrimitiveClosed,1);assert.equal(r.live,null);
+    assert.equal(result.backupCloses.filter(b=>b.role===r.role).length,0,'fixture backup cannot receive added physical helper closure credit');
+    const close=result.closes.filter(c=>c.role===r.role);assert.equal(close.length,1);assert.equal(close[0].physicalHelper,1);assert.equal(close[0].returned,1);assert.equal(close[0].live,null);
+  }
+  for(const [id,rows] of groups){assert.equal(rows.length,8);assert.equal(new Set(rows.map(r=>r.role)).size,8);assert.equal(new Set(rows.map(r=>r.originalFD)).size,8);
+    assert.ok(result.waits.some(w=>w.physicalHelper===1&&w.token===500000+Number(id)),'physical ACL helper retains its explicitly modeled wait occurrence');
+  }
+  assert.ok(groups.size<=32,'added physical ACL captures are finite; every reached helper stays visible');
+}
+function assertModelPhysicalOriginals(result,{closed=0}={}) {
+  const snapshot=result.out.physical??result.out.after?.physical??result.out.before?.physical;
+  assert.ok(snapshot,'modeled constructor occurrence must expose its actual physical component');
+  assert.equal(snapshot.originals.length,4);assert.equal(snapshot.lease,1);
+  const wanted=['/','/usr','/usr/bin','/usr/bin/perl'];assert.deepEqual(snapshot.originals.map(r=>r.path),wanted);
+  for(const record of snapshot.originals){const raw=modelOriginalByShape(result,record);
+    assert.equal(raw.role,'physical:'+record.path);assert.equal(raw.originalFD,record.fd);
+    assert.equal(raw.sourcePrimitiveAttempts,closed);assert.equal(raw.sourcePrimitiveClosed,closed);
+    assert.equal(raw.live,closed?null:record.fd);assert.equal(record.attempted,closed);assert.equal(record.closed,closed);assert.equal(record.live,raw.live);
+    const backups=result.backupCloses.filter(r=>r.role===raw.role);assert.equal(backups.length,closed?0:1);
+    if(!closed)assert.equal(backups[0].beforeFD,record.fd);
+  }
+}
+function assertModelFreshTwelve(s){
+  assert.deepEqual([s.phase,s.invalid,s.uncertain,s.disposing],['active',0,0,0]);assert.equal(s.originals.length,12);
+  assert.equal(new Set(s.originals.map(r=>r.live)).size,12);for(const r of s.originals){assert.ok(Number.isInteger(r.live)&&r.live>=3);assert.equal(r.fd,r.live);assert.equal(r.attempted,0);assert.equal(r.closed,0);assert.equal(r.shape.length,2);}
+}
+function modelOriginalByShape(result,record) {
+  assert.equal(record.shape.length,2);assert.ok(record.shape.every(v=>Number.isSafeInteger(v)&&v>0));
+  const rows=result.originalsBeforeBackup.filter(r=>r.shape.length===2&&r.shape.every((v,i)=>v===record.shape[i]));
+  assert.equal(rows.length,1,'Source keeper must name exactly one independently retained actual data original');return rows[0];
+}
+function assertUnknownModelStageRetained(result) {
+  assertModelFreshTwelve(result.out.before.staged);assertModelFreshTwelve(result.out.after.staged);
+  assert.deepEqual(result.out.after.staged,result.out.before.staged);
+  for(const record of result.out.after.staged.originals){
+    const raw=modelOriginalByShape(result,record);assert.equal(raw.originalFD,record.fd);assert.equal(raw.live,record.fd);
+    assert.equal(raw.sourcePrimitiveAttempts,0);assert.equal(raw.sourcePrimitiveClosed,0);
+  }
+}
+function assertUnknownModelMaterialRetained(result) {
+  assertUnknownModelStageRetained(result);assertModelPhysicalOriginals(result);
+  const files=result.out.after.files,closed=[0,0,0,0,1,1,0];assert.equal(files.length,7);
+  assert.deepEqual(files.map(f=>f.closed),closed);assert.deepEqual(files.map(f=>f.attempted),closed);
+  const roles=['stage-d0','stage-d1','stage-d2','capsule-root','entropy','capsule-data','capsule-data'];
+  assert.deepEqual(files.slice(0,3).map(f=>f.path),['/','/private','/private/tmp']);assert.equal(files[4].path,'/dev/urandom');
+  assert.match(files[3].path,/^\/private\/tmp\/setfarm-task6a-observer-v2\.[0-9a-f]{64}$/);
+  assert.equal(files[5].path,files[3].path+'/task6a-origin-owned-child-observer-v2');assert.equal(files[6].path,files[5].path);
+  for(const [i,file] of files.entries()){
+    const raw=modelOriginalByShape(result,file);assert.equal(raw.role,roles[i]);assert.equal(raw.path,file.path);assert.equal(raw.originalFD,file.fd);
+    assert.equal(raw.sourcePrimitiveAttempts,closed[i]);assert.equal(raw.sourcePrimitiveClosed,closed[i]);
+    assert.equal(file.live,closed[i]?null:file.fd);assert.equal(raw.live,file.live);
+    if(!closed[i])assert.ok(Number.isInteger(file.live)&&file.live>=3);
+  }
+}
+function assertNativeModelFourSourceCloses(result) {
+  const native=result.out.native;assert.equal(native.keeper.length,4);
+  const pipes=result.originalsBeforeBackup.filter(r=>/^constructor-pipe-[0-3]-[rw]$/.test(r.role));assert.equal(pipes.length,8);assert.equal(new Set(pipes.map(r=>r.role)).size,8);
+  const census=result.originalsBeforeBackup.filter(r=>r.role==='census');assert.equal(census.length,11);
+  for(const r of census){assert.equal(r.kind,'directory-handle');assert.equal(r.sourcePrimitiveAttempts,1);assert.equal(r.sourcePrimitiveClosed,1);assert.equal(r.live,null);assert.equal(result.backupCloses.filter(b=>b.role===r.role).length,0,'actual census Source closes cannot be fixture backup credit');}
+  assert.equal(result.events.filter(e=>e.op==='census-close').length,11);
+  assert.deepEqual(native.closeAttempts,[1,1,1,1]);assert.deepEqual(native.closed,[1,1,1,1]);
+  for(const [i,keeper] of native.keeper.entries()){
+    assert.deepEqual([keeper.known,keeper.closeAllowed,keeper.live],[1,1,null]);
+    const raw=modelOriginalByShape(result,keeper);assert.equal(raw.role,'constructor-pipe-'+i+'-r');assert.equal(raw.kind,'pipe');
+    assert.ok(Number.isInteger(raw.originalFD)&&raw.originalFD>=3);assert.equal(raw.sourcePrimitiveAttempts,1);assert.equal(raw.sourcePrimitiveClosed,1);assert.equal(raw.live,null);
+    const peers=result.originalsBeforeBackup.filter(r=>r.role==='constructor-pipe-'+i+'-w');assert.equal(peers.length,1);const peer=peers[0];
+    assert.equal(peer.kind,'pipe');assert.equal(peer.sourcePrimitiveAttempts,0);assert.equal(peer.sourcePrimitiveClosed,0);assert.equal(peer.live,peer.originalFD);assert.ok(Number.isInteger(peer.live)&&peer.live>=3);
+    const backups=result.backupCloses.filter(r=>r.role===peer.role);assert.equal(backups.length,1);assert.equal(backups[0].beforeFD,peer.originalFD);
+    assert.equal(result.backupCloses.filter(r=>r.role===raw.role).length,0,'fixture backup cannot receive Source read-end close credit');
+  }
+  assert.equal(result.backupCloses.filter(r=>!r.role.startsWith('physical:')).length,4);
+}
+test('constructor modeled material lease preserves staged originals for live and unknown owners',()=>{
+  for(const lease of ['live','unknown'])for(const operation of ['hold','recheck','release']){
+    const b=constructorModeledBranch('lease',{lease,operation});assertModelFreshTwelve(b.out.before.staged);assertModelFreshTwelve(b.out.after.staged);
+    assert.deepEqual(b.out.after.staged,b.out.before.staged);assert.equal(b.out.before.materialAllowed,0);assert.equal(b.out.after.materialAllowed,0);assert.equal(b.out.outcome.canonical,1);assert.equal(b.out.outcome.ok,0);assert.deepEqual(b.out.afterEvents,[]);
+    const m=constructorModeledBranch('lease',{lease,operation,mutation:'lease-'+operation});assertModelFreshTwelve(m.out.before.staged);assertModelPhysicalOriginals(b);assertModelPhysicalOriginals(m);
+    assert.ok(m.out.afterEvents.length>0||m.out.after.staged.phase!=='active'||m.out.after.staged.originals.some(r=>r.closed||r.attempted),'removing only selected public pre-catch guard must reach epoch/burn/close');
+  }
+});
+test('constructor modeled sealed descriptor mismatch refuses use and unknown close',()=>{
+  for(const operation of ['use','close']){
+    const b=constructorModeledBranch('descriptor',{operation});assert.equal(b.out.original.openReturned,1);assert.equal(b.out.original.actualFd,b.out.original.fd);assert.equal(b.out.original.rawStat.length,13);
+    assert.ok(b.events.some(e=>e.op==='modeled-fileno'&&e.actual===b.out.original.fd&&e.delivered===e.actual+1000000));assert.equal(b.out.originalAfter.fd,b.out.original.fd);assert.equal(b.closes.filter(r=>!r.role.startsWith('physical:')&&!r.physicalHelper).length,0);
+    if(operation==='use'){assert.equal(b.out.outcome.canonical,1);assert.equal(b.out.afterEvents.filter(e=>e.op==='stat'||e.op==='lstat'||e.op==='seek'||e.op==='read').length,0);}
+    else{assert.equal(b.out.originalAfter.attempted,1);assert.equal(b.out.originalAfter.closed,0);assert.equal(b.out.repeatPrimitiveCloseDelta,0);assert.equal(b.out.claimedDisposeReturned,0);assert.equal(b.out.repeatDisposeCloseDelta,0);}
+    assertModelPhysicalOriginals(b,{closed:operation==='close'?1:0});
+    assert.equal(b.out.absentDispose.returned,1);assert.equal(b.out.absentDispose.claimed,0);
+    const m=constructorModeledBranch('descriptor',{operation,mutation:'file-'+operation});
+    if(operation==='use')assert.ok(m.out.afterEvents.some(e=>e.op==='stat'),'removing sealed-FD use equality reaches actual metadata port');
+    else{const target=m.closes.filter(r=>!r.role.startsWith('physical:')&&!r.physicalHelper);assert.equal(target.length,1);assert.equal(target[0].returned,1);assert.equal(m.out.originalAfter.fd,null);}
+    assertModelPhysicalOriginals(m,{closed:operation==='close'?1:0});
+  }
+});
+test('constructor modeled observer fork exception quarantines material without Node wait',()=>{
+  const b=constructorModeledBranch('unknown-observer');assertModelFreshTwelve(b.out.before.staged);
+  assert.equal(b.out.outcome.canonical,1);assert.deepEqual([b.out.after.phase,b.out.after.claimed,b.out.after.complete,b.out.after.uncertain,b.out.after.materialAllowed],['quarantined',1,0,1,0]);
+  assert.deepEqual(b.out.after.acquisition,{node:'enrolled',observer:'unknown'});assert.equal(b.out.after.node.pid,424242);assert.equal(b.out.after.node.reaped,0);assert.equal(b.out.after.observer,null);
+  assertUnknownModelMaterialRetained(b);assert.deepEqual([b.out.after.physical.state,b.out.after.physical.burned,b.out.after.physical.cleanupAttempted],['burned',1,0]);assert.equal(b.out.after.pipes.length,16);assert.ok(b.out.after.pipes.every(f=>f.closed===1&&f.live===null));
+  const forks=b.forks.filter(f=>f.kind==='modeled-constructor');assert.deepEqual(forks.map(f=>f.ordinal),[1,2]);assert.equal(b.waits.filter(w=>w.token===424242||w.token===424243).length,0);
+  assert.equal(b.events.filter(e=>e.op==='forbidden-signal'||e.op==='forbidden-exec').length,0);assert.ok(b.out.repeats.every(r=>r.canonical===1&&!r.ok));assert.equal(b.out.repeatEventDelta,0);
+  const m=constructorModeledBranch('unknown-observer',{mutation:'observer-guard'});assert.ok(m.waits.some(w=>w.token===424242),'guard deletion must reach data-only forbidden Node wait trap');
+  const retention=constructorModeledBranch('unknown-observer',{mutation:'material-retention'});assert.equal(retention.out.outcome.canonical,1);
+  assert.deepEqual(retention.out.after.acquisition,{node:'enrolled',observer:'unknown'});assertUnknownModelStageRetained(retention);
+  assert.equal(retention.out.after.files.length,7);assert.deepEqual(retention.out.after.files.map(f=>f.closed),[1,1,1,1,1,1,1]);
+  for(const file of retention.out.after.files){const raw=modelOriginalByShape(retention,file);assert.equal(raw.path,file.path);assert.equal(raw.originalFD,file.fd);assert.deepEqual([file.attempted,file.live,raw.sourcePrimitiveAttempts,raw.sourcePrimitiveClosed,raw.live],[1,null,1,1,null]);}
+  assert.equal(retention.waits.filter(w=>w.token===424242||w.token===424243).length,0);
+  assert.throws(()=>assertUnknownModelMaterialRetained(retention),{code:'ERR_ASSERTION'},'premature actual Source data-file closure must fail the exact quarantine oracle before backup');
+});
+test('constructor modeled normal and cleanup boundaries retain the original deadlines',()=>{
+  const n=constructorModeledBranch('normal-boundary');assertModelPhysicalOriginals(n);assert.equal(n.out.outcome.canonical,1);assert.equal(n.out.forbiddenDispatches,0);assert.equal(n.out.originalAfter.fd,n.out.original.fd);
+  const nm=constructorModeledBranch('normal-boundary',{mutation:'normal-cleanup'});assertModelPhysicalOriginals(nm);assert.ok(nm.out.forbiddenDispatches>0,'cleanup-time normal mutation must reach downstream metadata');
+  const e=constructorModeledBranch('native-early');assertModelPhysicalOriginals(e);assert.equal(e.out.outcome.canonical,1);assert.equal(e.out.native.cleanupDeadline,45);assert.equal(e.out.native.ownedToken,424243);const ew=e.waits.filter(w=>!w.physicalHelper);assert.equal(ew.length,1);assert.equal(ew[0].token,424243);
+  assert.ok(e.clockValues.includes(29)&&e.clockValues.includes(45));assertNativeModelFourSourceCloses(e);assert.equal(e.events.filter(v=>v.op==='forbidden-signal').length,0);assert.equal(e.events.filter(v=>v.op==='modeled-ready'&&!v.physicalHelper).length,0);
+  const em=constructorModeledBranch('native-early',{mutation:'early-clip'});assertModelPhysicalOriginals(em);assert.equal(em.out.native.cleanupDeadline,59);assert.ok(em.waits.filter(w=>!w.physicalHelper).length>1,'removing earliest clip permits extra data-only dispatch');
+  const j=constructorModeledBranch('outcome-join');assertModelPhysicalOriginals(j);assert.equal(j.out.returned,1);const jw=j.waits.filter(w=>!w.physicalHelper);assert.equal(jw.length,1);assert.equal(jw[0].token,424242);assert.equal(j.out.before.parent.reaped,0);
+  assert.deepEqual(j.out.after.parent,{reaped:1,uncertain:0,status:0,knownLive:''});assert.equal(j.out.after.node.reaped,1);assert.equal(j.out.after.node.status,0);assert.ok(j.clockValues.every(v=>v<=44));
+});
+
+test('physical modeled acquisition preserves alias and unknown custody and rejects foreign results',()=>{
+  for(const scenario of ['physical-alias','physical-unknown','physical-reference-open','physical-reference-close']){
+    const r=constructorModeledBranch(scenario);assert.equal(r.out.outcome.ok,0);assert.equal(r.out.outcome.canonical,1);
+    assert.equal(r.out.foreignCallbacks,0);assert.ok(r.out.repeats.every(v=>v.ok===0&&v.canonical===1));assert.equal(r.out.repeatEventDelta,0);
+    assert.equal(r.forks.filter(v=>v.kind==='modeled-constructor').length,0);assert.ok(r.forks.every(v=>v.kind==='modeled-helper'));
+    const raw=r.originalsBeforeBackup.filter(v=>v.role.startsWith('physical:'));
+    const closeRows=r.closes.filter(v=>v.role.startsWith('physical:'));
+    assert.equal(raw.length,scenario==='physical-reference-close'?4:1);assert.equal(closeRows.length,raw.length);
+    for(const v of raw){assert.equal(v.sourcePrimitiveAttempts,1);assert.equal(v.sourcePrimitiveClosed,1);assert.equal(v.live,null);assert.equal(r.backupCloses.filter(b=>b.role===v.role).length,0);}
+    const after=r.out.after.physical;assert.equal(after.lease,1);assert.equal(after.cleanupAttempted,1);
+    if(scenario==='physical-reference-open'){
+      assert.equal(after.originals.length,1);assert.equal(after.originals[0].closed,1);assert.equal(after.cleanupOK,1);
+      assert.ok(r.events.some(e=>e.op==='modeled-physical-open-return'&&e.genuineReturn===1&&e.returnedClass==='0'));
+    }else{
+      assert.equal(r.out.after.complete,0);assert.equal(r.out.after.materialAllowed,0);assertModelFreshTwelve(r.out.after.staged);
+      if(scenario==='physical-reference-close'){
+        assert.deepEqual(after.originals.map(v=>v.attempted),[1,1,1,1]);assert.deepEqual(after.originals.map(v=>v.closed),[0,1,1,1]);assert.equal(after.cleanupOK,0);
+        assert.ok(r.events.some(e=>e.op==='modeled-physical-close-return'&&e.genuineReturn===1&&e.actualClosed===1));
+      }else{
+        assert.equal(after.acquisitionUnknown,1);assert.equal(after.cleanupOK,0);assert.equal(after.originals.filter(v=>v.attempted&&v.closed).length,1);
+        assert.ok(r.events.some(e=>e.op==='modeled-physical-output'&&e.realOpenDelegate===false));
+      }
+    }
+  }
+});
+
+test('physical modeled public lease guards preserve originals for live and unknown owners',()=>{
+  for(const lease of ['live','unknown'])for(const operation of ['hold','recheck','release']){
+    const b=constructorModeledBranch('physical-lease',{lease,operation});
+    assertModelFreshTwelve(b.out.before.staged);assert.deepEqual(b.out.after.staged,b.out.before.staged);assertModelPhysicalOriginals(b);
+    assert.equal(b.out.outcome.ok,0);assert.equal(b.out.outcome.canonical,1);assert.deepEqual(b.out.afterEvents,[]);
+    assert.deepEqual(b.out.after.physical,b.out.before.physical);assert.equal(b.out.after.materialAllowed,0);
+    const m=constructorModeledBranch('physical-lease',{lease,operation,mutation:'physical-lease-'+operation});
+    assertModelFreshTwelve(m.out.before.staged);assert.deepEqual(m.out.after.staged,m.out.before.staged);
+    assert.ok(m.out.afterEvents.length>0||m.out.after.physical.state!==m.out.before.physical.state||m.out.after.physical.burned!==m.out.before.physical.burned,
+      'single public physical guard omission must reach real component validation or invalidate its occurrence; child settlement may still prevent closure');
+  }
+});
+
+function assertPhysicalModelKept(result,count,{closed=true}={}){
+  const p=result.out.after.physical,raw=result.originalsBeforeBackup.filter(r=>r.role.startsWith('physical:'));
+  assert.equal(p.originals.length,count);assert.equal(raw.length,count);
+  for(const k of p.originals){const r=raw.find(r=>r.path===k.path);assert.ok(r);assert.equal(r.originalFD,k.fd);assert.deepEqual(r.shape,k.shape);
+    assert.equal(k.attempted,closed?1:0);assert.equal(k.closed,closed?1:0);assert.equal(r.sourcePrimitiveAttempts,closed?1:0);assert.equal(r.sourcePrimitiveClosed,closed?1:0);assert.equal(k.live,closed?null:k.fd);assert.equal(r.live,closed?null:r.originalFD);
+    const backup=result.backupCloses.filter(b=>b.role===r.role);assert.equal(backup.length,closed?0:1);if(!closed){assert.equal(backup[0].returned,1);assert.equal(backup[0].live,null);}
+  }
+}
+test('physical modeled exception admission preserves the assigned original without callbacks',()=>{
+  const b=constructorModeledBranch('physical-reference-exception');assert.equal(b.out.outcome.canonical,1);assert.equal(b.out.foreignCallbacks,0);assert.equal(b.out.after.physical.acquisitionUnknown,1);assert.equal(b.out.disposeReturned,0);assert.equal(b.out.after.complete,0);assert.equal(b.out.after.materialAllowed,0);assertPhysicalModelKept(b,1);assertModelFreshTwelve(b.out.before.staged);assert.deepEqual(b.out.after.staged,b.out.before.staged);
+  const proof=b.events.filter(e=>e.op==='modeled-physical-open-exception');assert.equal(proof.length,1);assert.equal(proof[0].genuineReturn,1);assert.equal(proof[0].exceptionClass,'0');assert.equal(proof[0].actualAssignedFD,b.originalsBeforeBackup.find(r=>r.role==='physical:/').originalFD);
+  const m=constructorModeledBranch('physical-reference-exception',{mutation:'physical-error-coercion'});assert.ok(m.out.foreignCallbacks>0,'unsafe exception coercion must be observed by the same retained class0 trap');
+});
+test('physical modeled acquisition clips dispatch and retained custody at one original deadline',()=>{
+  const pre=constructorModeledBranch('physical-preopen-deadline');assert.equal(pre.out.outcome.canonical,1);assert.equal(pre.out.after.physical.pending.length,1);assert.equal(pre.out.after.physical.pending[0].state,'not-started');assertPhysicalModelKept(pre,0);assert.equal(pre.events.filter(e=>e.op==='sysopen'&&['/','/usr','/usr/bin','/usr/bin/perl'].includes(e.path)&&e.physicalDispatch===1).length,0);assert.deepEqual(pre.clockValues.filter(v=>v>=30),pre.clockValues.filter(v=>v===30));
+  const pm=constructorModeledBranch('physical-preopen-deadline',{mutation:'physical-preopen-clock'});assertPhysicalModelKept(pm,1);assert.ok(pm.events.some(e=>e.op==='sysopen'&&e.physicalDispatch===1&&e.path==='/'),'omitted dispatch clock must reach one actual original, then the unchanged later refusal');
+  const post=constructorModeledBranch('physical-postopen-deadline');assert.equal(post.out.outcome.canonical,1);assertPhysicalModelKept(post,1);
+  // Known no-child roles and settled helpers permit the failed hold's safe
+  // once-close before constructor disposal; raw capture must prove that close.
+  const failed=post.out.afterFailure.physical;assert.equal(failed.originals.length,1);
+  assert.deepEqual([failed.state,failed.burned,failed.released,failed.cleanupAttempted,failed.cleanupOK],['burned',1,1,1,1]);
+  assert.deepEqual(failed,post.out.after.physical,'later constructor disposal must not acquire a second close right');
+  assert.deepEqual([failed.originals[0].attempted,failed.originals[0].closed,failed.originals[0].live],[1,1,null]);
+  const opened=post.events.filter(e=>e.op==='actual-original'&&e.role==='physical:/'),late=post.events.filter(e=>e.op==='modeled-postopen-clock'),close=post.events.filter(e=>e.op==='close-dispatch'&&e.role==='physical:/');
+  assert.equal(opened.length,1);assert.equal(late.length,1);assert.equal(close.length,1);assert.equal(opened[0].fd,failed.originals[0].fd);assert.equal(late[0].actualAssignedFD,failed.originals[0].fd);assert.equal(late[0].deliveredClock,30);assert.ok(opened[0].order<late[0].order);assert.equal(late[0].order+1,close[0].order);
+  const actualClose=post.closes.filter(e=>e.role==='physical:/');assert.equal(actualClose.length,1);assert.equal(actualClose[0].returned,1);assert.equal(actualClose[0].errorHex,'');assert.equal(actualClose[0].live,null);assert.equal(actualClose[0].liveErrorHex,'');
+  assert.equal(post.out.forbiddenDispatches,0);
+  const mm=constructorModeledBranch('physical-postopen-deadline',{mutation:'physical-postopen-clock'});assertPhysicalModelKept(mm,1);assert.ok(mm.out.forbiddenDispatches>0,'omitted success edge must reach real downstream fcntl after the retained late original');
+  for(const r of [pre,pm,post,mm]){assert.equal(r.out.after.complete,1);assert.equal(r.out.after.uncertain,0);assert.equal(r.out.after.physical.cleanupOK,1);assertModelFreshTwelve(r.out.before.staged);assert.deepEqual(r.out.after.staged,r.out.before.staged);assert.equal(r.forks.filter(f=>f.kind==='modeled-constructor').length,0);assert.ok(r.clockValues.every((v,i)=>i===0||v>=r.clockValues[i-1]));}
+});
+test('physical modeled no-lease disposal leaves its untouched occurrence neutral',()=>{
+  const b=constructorModeledBranch('physical-neutral-dispose');assert.equal(b.out.disposeReturned,1);assert.equal(b.out.after.complete,1);assert.equal(b.out.after.uncertain,0);assert.equal(b.out.after.materialAllowed,1);assert.deepEqual(b.out.after.physical,b.out.before.physical);assert.equal(b.out.after.physical.state,'new');assert.equal(b.out.after.physical.lease,0);assert.equal(b.out.after.physical.cleanupAttempted,0);assert.equal(b.out.eventDelta,0);assertPhysicalModelKept(b,0);assertModelFreshTwelve(b.out.before.staged);assert.deepEqual(b.out.after.staged,b.out.before.staged);
+  const m=constructorModeledBranch('physical-neutral-dispose',{mutation:'physical-neutral-cleanup'});assert.equal(m.out.disposeReturned,0);assert.equal(m.out.after.complete,0);assert.equal(m.out.after.uncertain,1);assert.deepEqual(m.out.after.physical,m.out.before.physical);assertPhysicalModelKept(m,0);
+});
+test('physical modeled failed epoch stays burned after restoration while unknown owners retain leases',()=>{
+  const assertOnlyKnownHelperWaits=(result,expectedHelpers)=>{
+    const helpers=result.forks.filter(f=>f.kind==='modeled-helper');assert.equal(helpers.length,expectedHelpers);assert.equal(helpers.length,result.forks.length);
+    const tokens=helpers.map(f=>f.token);assert.equal(new Set(tokens).size,tokens.length);assert.ok(tokens.every(t=>Number.isInteger(t)&&t>1&&t!==424242&&t!==424243));
+    assert.ok(helpers.every(f=>f.realDelegate===false));
+    for(const w of result.waits){assert.equal(w.realDelegate,false);assert.equal(w.flags,1);assert.notEqual(w.token,424242);assert.notEqual(w.token,424243);assert.equal(tokens.filter(t=>t===w.token).length,1,'every retained poll must join one unique modeled helper fork');}
+    for(const t of tokens)assert.ok(result.waits.some(w=>w.token===t),'every known helper retains its observed poll history');
+  };
+  const b=constructorModeledBranch('physical-sticky-epoch');assert.equal(b.out.held.physical.state,'active');assert.equal(b.out.held.physical.originals.length,4);assert.equal(b.out.outcome.canonical,1);assert.equal(b.out.afterFailure.physical.state,'burned');assert.equal(b.out.afterFailure.physical.burned,1);assert.equal(b.out.retry.ok,0);assert.equal(b.out.retry.canonical,1);assert.equal(b.out.retryEventDelta,0);assert.equal(b.out.disposeReturned,0);assert.equal(b.out.after.materialAllowed,0);assert.equal(b.out.after.complete,0);assert.equal(b.out.after.physical.cleanupAttempted,0);assertPhysicalModelKept(b,4,{closed:false});assertModelFreshTwelve(b.out.before.staged);assert.deepEqual(b.out.after.staged,b.out.before.staged);assertOnlyKnownHelperWaits(b,35);assert.equal(b.events.filter(e=>e.op==='forbidden-signal'||e.op==='forbidden-exec').length,0);
+  const m=constructorModeledBranch('physical-sticky-epoch',{mutation:'physical-epoch-burn'});assert.equal(m.out.outcome.canonical,1);assert.equal(m.out.afterFailure.physical.state,'active');assert.equal(m.out.afterFailure.physical.burned,0);assert.equal(m.out.retry.ok,1);assert.ok(m.out.retryEventDelta>0,'omitting the local sticky burn permits a real seven-ACL revalidation of restored borrowed rows');assertPhysicalModelKept(m,4,{closed:false});assertOnlyKnownHelperWaits(m,42);
+});
+
+// Explicitly unselected fixture is UNRUN; no native test credit.
+registerConsumerEpochNativeTest();
+registerSourceConstructorNativeTest();
+// The same test-only registrar includes the closed G1 Source-owned main route.
+// Its ordinary material opt-in remains unset in generic pure runs.
+registerPhysicalOwnerLifetimeTest();
 }

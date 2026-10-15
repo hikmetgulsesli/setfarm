@@ -1910,6 +1910,13 @@ export function observeCurrentFinalizedSetfarmSourceBuildV1() {
   return Object.freeze({ branch: "main", clean: true, ...observed.buildSource, originMainSha: observed.checkoutSource.originMainSha });
 }
 
+// Retained filesystem proof for this module's own finalized generation. This
+// trusted context is not native/loaded-code/owner or service-startup authority.
+export function holdCurrentFinalizedSetfarmSourceBuildV1() {
+  if (arguments.length) fail("current finalized source/build holder takes no arguments");
+  return holdFinalizedSetfarmSourceBuildAtRootV1(repositoryRootV1(), true);
+}
+
 let selectedDeploymentObservationUncertainV1 = false;
 
 // Builtins only: the retention import closure must never load compiled modules.

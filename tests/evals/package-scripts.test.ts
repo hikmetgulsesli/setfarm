@@ -41,7 +41,7 @@ if (process.argv[1]?.endsWith('/scripts/run-private-postgres-tests.mjs')) {
     assert.match(scripts["eval:convergence"] ?? "", /src\/evals\/convergence-runner\.ts/);
   });
 
-  it("dispatches the held PG31 lifecycle regression from the default test graph", async () => {
+  it("dispatches held PG31 and sustained backend regressions from the default test graph", async () => {
     // A standalone command is insufficient: resolve actual npm-run edges from
     // npm test, then execute the selected lifecycle leaf at a bounded port.
     // Do not execute unrelated all-tests/isolated-PG helpers to prove discovery.
@@ -58,20 +58,27 @@ if (process.argv[1]?.endsWith('/scripts/run-private-postgres-tests.mjs')) {
         for (const match of command.matchAll(/tests\/[a-zA-Z0-9_./*-]+\.test\.ts/g)) selected.add(match[0]);
       }
     }
-    const target = "tests/internal-production/task6a-held-pg31-diagnostic-v2.test.ts";
-    const discovered = [...selected].some(selector => new RegExp(`^${selector
-      .replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`).test(target));
-    assert.equal(discovered, true, "default npm test graph never dispatches the retained PG31 lifecycle suite");
-    const child = spawnSync(process.execPath, ["--import", "tsx", "--test",
-      "--test-name-pattern=^private held diagnostic retains one backend", target], {
-      // Inheriting NODE_TEST_CONTEXT can silently suppress this child runner.
-      // A clean whitelist also excludes PG credentials and loader injection.
-      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
-      encoding: "utf8", timeout: 20000, maxBuffer: 65536,
-    });
-    assert.equal(child.error, undefined); assert.equal(child.signal, null);
-    assert.equal(child.status, 0, child.stdout + child.stderr);
-    assert.match(child.stdout, /private held diagnostic retains one backend/);
-    assert.match(child.stdout, /(?:ℹ|#) pass 1\b/);
+    for (const [target, pattern, label] of [
+      ["tests/internal-production/task6a-held-pg31-diagnostic-v2.test.ts",
+        "^private held diagnostic retains one backend", "private held diagnostic retains one backend"],
+      ["tests/internal-production/task6a-sustained-protected-backend-owner-v2.test.ts",
+        "^sustained owner retains its reservation after initialization and an actual await$",
+        "sustained owner retains its reservation after initialization and an actual await"],
+    ]) {
+      const discovered = [...selected].some(selector => new RegExp(`^${selector
+        .replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`).test(target));
+      assert.equal(discovered, true, `default npm test graph never dispatches ${target}`);
+      const child = spawnSync(process.execPath, ["--import", "tsx", "--test",
+        `--test-name-pattern=${pattern}`, target], {
+        // Inheriting NODE_TEST_CONTEXT can silently suppress this child runner.
+        // A clean whitelist also excludes PG credentials and loader injection.
+        env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+        encoding: "utf8", timeout: 20000, maxBuffer: 65536,
+      });
+      assert.equal(child.error, undefined); assert.equal(child.signal, null);
+      assert.equal(child.status, 0, child.stdout + child.stderr);
+      assert.ok(child.stdout.includes(label), child.stdout);
+      assert.match(child.stdout, /(?:ℹ|#) pass 1\b/);
+    }
   });
 });

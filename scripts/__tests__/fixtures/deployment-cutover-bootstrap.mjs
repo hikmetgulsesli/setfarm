@@ -9,6 +9,26 @@ import { fileURLToPath } from "node:url";
 import { materialize } from "./deployment-cutover-dependencies.mjs";
 
 const repo = new URL("../../../", import.meta.url);
+// Actual compiler inputs, not a wildcard scripts permission. These unchanged
+// scripts are copied before Git authentication and never transformed into dist.
+const censusScriptInputs = Object.freeze([
+  "scripts/build-generation-retention.mjs",
+  "scripts/deployment-dashboard-cutover-adapter-v2.mjs",
+]);
+export function censusTypeScriptSourceLocators(inputs) {
+  assert.ok(Array.isArray(inputs), "census inputs must be an array");
+  const seen = new Set(), scripts = new Set(), sources = [];
+  for (const input of inputs) {
+    assert.equal(typeof input, "string");
+    assert.ok(!seen.has(input), "census inputs must be unique"); seen.add(input);
+    if (censusScriptInputs.includes(input)) { scripts.add(input); continue; }
+    assert.match(input, /^src\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.ts$/);
+    assert.equal(path.posix.normalize(input), input, "census input must be canonical");
+    sources.push(input.slice(4, -3));
+  }
+  assert.deepEqual([...scripts].sort(), [...censusScriptInputs].sort(), "census script closure must be exact");
+  return sources;
+}
 const canonical = value => value === null || typeof value !== "object" ? JSON.stringify(value)
   : Array.isArray(value) ? `[${value.map(canonical).join(",")}]`
     : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
@@ -32,14 +52,15 @@ function finalizeOutputDirectories(directory) {
   fs.chmodSync(directory, 0o755);
 }
 export function fixture(body, instrument = source => source, { genuine = false, census = false, envAbsence = false, helpers = false, phaseClosure = false, prepare = () => {}, sourceInstrument = (_locator, source) => source,
-  extraSources = {}, temporaryParent = os.tmpdir() } = {}) {
+  extraSources = {}, temporaryParent = os.tmpdir(), retain = false } = {}) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(temporaryParent, "cutover-bootstrap-")));
   const root = path.join(home, "ai/setrox/controller");
   try {
-    for (const name of ["deployment-cutover.mjs", "deployment-cutover-owner.mjs", "build-generation-retention.mjs", "build-generation-maintenance-owner-observer.mjs", "build-generation-maintenance-journal.mjs",
+    for (const name of ["deployment-cutover.mjs", "deployment-cutover-owner.mjs", "build-generation-retention.mjs", "deployment-dashboard-cutover-adapter-v2.mjs", "build-generation-maintenance-owner-observer.mjs", "build-generation-maintenance-journal.mjs",
       "deployment-cutover-retained-profile.mjs", "deployment-cutover-retained-profile.v1.json",
       "deployment-cutover-default-context.mjs",
-      "deployment-cutover-passive-home.mjs", "deployment-cutover-passive-home.py"]) {
+      "deployment-cutover-passive-home.mjs", "deployment-cutover-passive-home.py",
+      "dashboard-cutover-process-events-v4.mjs", "dashboard-cutover-process-events-v4.py"]) {
       let source = fs.readFileSync(new URL(`scripts/${name}`, repo), "utf8");
       if (name === "deployment-cutover.mjs") {
         // Keep even an accidental runtime-store call inside this owned fixture.
@@ -68,10 +89,8 @@ export function fixture(body, instrument = source => source, { genuine = false, 
     if (census) {
       const metadata = buildSync({ absWorkingDir: fileURLToPath(repo), entryPoints: ["src/internal-production/baseline-legacy-database-census-v1.ts"],
         bundle: true, write: false, metafile: true, packages: "external", platform: "node", format: "esm" }).metafile;
-      for (const input of Object.keys(metadata.inputs)) {
-        assert.match(input, /^src\/.+\.ts$/);
-        const locator = input.slice(4, -3); if (!sources.includes(locator)) sources.push(locator);
-      }
+      for (const locator of censusTypeScriptSourceLocators(Object.keys(metadata.inputs)))
+        if (!sources.includes(locator)) sources.push(locator);
     }
     for (const locator of sources) write(root, `src/${locator}.ts`, sourceInstrument(locator, fs.readFileSync(new URL(`src/${locator}.ts`, repo), "utf8")));
     write(root, "src/cli/cli.ts", "export const fixtureCli = true;\n"); sources.push("cli/cli");
@@ -107,7 +126,7 @@ export function fixture(body, instrument = source => source, { genuine = false, 
     const buildHash = commitHash({ schema: "setfarm.internal-production-controller-build.v1", stableBuildInfo: { schema: "setfarm.internal-production-stable-setfarm-build-info.v1", ...stable }, buildInputSetHash, outputTreeHash: output.outputTreeHash, releaseManifestHash: commitHash(manifest) });
     finalizeOutputDirectories(path.join(root, "dist"));
     body(root, { branch: "main", clean: true, sha, treeHash, buildHash, originMainSha: sha }, home);
-  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  } finally { if (!retain) fs.rmSync(home, { recursive: true, force: true }); }
 }
 export function run(root, args = ["inspect", "--json"], extraEnv = {}) {
   return spawnSync(process.execPath, [path.join(root, "scripts/deployment-cutover.mjs"), ...args], {

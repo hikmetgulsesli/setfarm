@@ -154,6 +154,16 @@ helper.authenticateP3ProjectedReadinessTestCapabilityV1();
 function commandArguments(): string[] {
   const separator = process.argv.indexOf("--");
   const command = separator >= 0 ? process.argv.slice(separator + 1) : [];
+  // One closed findings selector; the existing six-cell grammar stays unchanged.
+  const fixedColdPre32Command = [
+    "node", "--import", "tsx", "--test", "--test-concurrency=1",
+    "--test-name-pattern=^cold pre32 catalog rejects unjournaled relations and orphan routines or triggers without writes$",
+    "tests/findings/repository.test.ts",
+  ] as const;
+  if (command.length === fixedColdPre32Command.length
+    && command.every((cell, index) => cell === fixedColdPre32Command[index])) {
+    return command;
+  }
   if (
     command.length !== 6
     || command[0] !== "node"
@@ -623,7 +633,7 @@ async function main(): Promise<void> {
   const templateDatabaseName = `${prefix}_template`;
   const primaryDatabaseName = `${prefix}_primary`;
   const setupNonce = randomBytes(32);
-  const testShards = command[5] === P3_RECOVERY_LIFECYCLE_TEST_FILE_V1
+  const testShards = command[command.length - 1] === P3_RECOVERY_LIFECYCLE_TEST_FILE_V1
     ? P3_RECOVERY_LIFECYCLE_TEST_SHARDS_V1
     : Object.freeze([undefined] as const);
   const testNonces = testShards.map(() => randomBytes(32));

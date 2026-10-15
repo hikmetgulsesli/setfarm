@@ -450,7 +450,15 @@ test('captured child binding persists real redactor output before every terminal
 
 // Ordinary Node-only boundary fixture: NO PG process, SQL or password file.
 function wrapperBoundaryFixture(mode,commandMode='findings'){
-  const expectedTestArgs=commandMode==='receipt'?[
+  const expectedTestArgs=commandMode==='migration33-adjacent-full'?[
+    '--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
+    '--import','tsx','--test','--test-concurrency=1',
+    'tests/execution-attempts/migrations.test.ts',
+  ]:commandMode==='migration33-observers'?[
+    '--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
+    '--import','tsx','--test','--test-concurrency=1',
+    'tests/execution-attempts/migration33-current-entry-observers.test.ts',
+  ]:commandMode==='receipt'?[
     '--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
     '--import','tsx','--test','--test-concurrency=1',
     'tests/internal-production/baseline-post-handoff-receipt-v1.test.ts',
@@ -459,7 +467,7 @@ function wrapperBoundaryFixture(mode,commandMode='findings'){
     'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
     'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts',
   ]:['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
-    ...(commandMode==='all'?['test']:['run','test:findings'])];
+    ...(commandMode==='all'?['test']:commandMode==='after-scripts'?['run','test:after-scripts']:commandMode==='after-terminal'?['run','test:after-terminal']:commandMode==='after-findings'?['run','test:after-findings']:commandMode==='after-internal-pure'?['run','test:after-internal-pure']:commandMode==='after-local-custody'?['run','test:after-local-custody']:commandMode==='after-cutover'?['run','test:after-cutover']:commandMode==='after-receipt'?['run','test:after-receipt']:['run','test:findings'])];
   const guard=`
 import cp from 'node:child_process';import fs from 'node:fs';import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';import {registerHooks,syncBuiltinESMExports} from 'node:module';
@@ -561,7 +569,7 @@ process.once('exit',()=>{original.writeSync(1,Buffer.from('UNIT_BOUNDARY_RESULT 
       NODE_OPTIONS:'--import=data:text/javascript;base64,'+Buffer.from(guard).toString('base64')},
   });
 }
-for(const commandMode of ['findings','all','readonly-verifiers','receipt'])
+for(const commandMode of ['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full'])
 for(const mode of commandMode==='all'?['normal']:
   ['normal','nonzero','mirror-error','journal-loss','close-fault','retained-db','cancel','before-server','before-test','attach-server','attach-test','input-error']){
   test('wrapper boundary '+commandMode+' '+mode+' retains ordered observed outcomes without native effects',async()=>{
@@ -640,4 +648,407 @@ for(const ending of ['end','error','close'])test('actual journal binding suppres
     assert.equal(controls.some(r=>r.stage==='stream-end'&&r.channel==='stdout'),ending==='end');
     assert.equal(journal.healthy,ending==='end');assert.equal(reader.end().incomplete,true);
   }finally{journal.close();closeSync(fd);}
+});
+
+// Fixed continuation keeps the original cluster ownership and cleanup protocol.
+test('after-scripts permits only fixed npm suffix argv in a frozen private cluster plan',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'after-scripts'});
+  assert.deepEqual(value.test,['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js','run','test:after-scripts']);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
+});
+test('after-scripts package command runs exactly the remaining seven package lanes',()=>{
+  const scripts=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).scripts;
+  const expected=['product-compiler','execution-attempts','findings','evidence','recovery','evals','internal-production']
+    .map(name=>'npm run test:'+name).join(' && ');
+  assert.equal(scripts['test:after-scripts'],expected);
+  assert.equal(scripts.test.split('npm run test:scripts && ')[1],expected);
+});
+test('after-scripts refuses extra args and caller commands before cluster effects',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  for(const mode of ['after-scripts;echo denied','https://127.0.0.1/','test:after-scripts'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'after-scripts','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.match(child.stderr,/PRIVATE_TEST_CLUSTER_MODE_INVALID/);
+});
+
+// Fixed post-terminal continuation is a closed list, not a new discovery mode.
+const POST_TERMINAL_OWNER_FILES=Object.freeze([
+  "run-termination.test.ts",
+  "runtime-completion.test.ts",
+  "runtime-hooks.test.ts",
+  "runtime-session-repository.test.ts",
+  "story-publication.integration.test.ts",
+  "terminal-claim-runtime-reconciler.test.ts",
+  "v3-deploy-receipt-repository.test.ts",
+  "v3-deploy-refusal.integration.test.ts",
+  "v3-downstream-evidence-publication.test.ts",
+  "v3-downstream-recovery-transition.test.ts",
+  "v3-implementation-refusal.integration.test.ts",
+  "v3-operational-retry-lifecycle.integration.test.ts",
+  "v3-plan-invalid-proposal-retry.integration.test.ts",
+  "v3-plan-product-build-authority.integration.test.ts",
+  "v3-plan-refusal.integration.test.ts",
+  "v3-platform-preclaim-claim.integration.test.ts",
+  "v3-platform-preclaim-terminal.integration.test.ts",
+  "v3-platform-preclaim-termination-race.integration.test.ts",
+  "v3-pre-dispatch-failure.integration.test.ts",
+  "v3-preparation-claim-authority.test.ts",
+  "v3-setup-build-failure-cause.integration.test.ts",
+  "v3-setup-build-untyped-build-failure.integration.test.ts",
+  "v3-stage-input-unresolved.integration.test.ts"
+]);
+test('after-terminal permits only fixed npm continuation argv in a frozen private cluster plan',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'after-terminal'});
+  assert.deepEqual(value.test,['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js','run','test:after-terminal']);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
+});
+test('after-terminal package command contains exactly23 fixed later owners and the unchanged five-package tail',()=>{
+  const scripts=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).scripts;
+  const execution=readFileSync(new URL('../run-execution-attempt-tests.ts',import.meta.url),'utf8');
+  const blocks=[...execution.matchAll(/const OWNER_BACKED_TESTS = new Set\(\[([\s\S]*?)\]\);/g)];
+  assert.equal(blocks.length,1,'one maintained owner inventory');
+  const owners=[...blocks[0][1].matchAll(/"([A-Za-z0-9.-]+\.test\.ts)"/g)].map(m=>m[1]).sort();
+  assert.equal(owners.length,39);assert.equal(owners.indexOf('run-terminal-transition.test.ts'),15);
+  assert.equal(owners.filter(file=>file==='migration33-current-entry-observers.test.ts').length,1);
+  assert.deepEqual(owners.slice(16),POST_TERMINAL_OWNER_FILES);
+  assert.equal(POST_TERMINAL_OWNER_FILES.length,23);assert.equal(new Set(POST_TERMINAL_OWNER_FILES).size,23);
+  assert.equal(POST_TERMINAL_OWNER_FILES.includes('run-terminal-transition.test.ts'),false);
+  const tail=['findings','evidence','recovery','evals','internal-production'].map(n=>'npm run test:'+n).join(' && ');
+  const expected='node --import tsx scripts/run-execution-attempt-tests.ts '
+    +POST_TERMINAL_OWNER_FILES.map(n=>'tests/execution-attempts/'+n).join(' ')+' && '+tail;
+  assert.equal(scripts['test:after-terminal'],expected);
+  assert.equal(scripts['test:after-scripts'].split('npm run test:execution-attempts && ')[1],tail);
+  assert.equal(scripts.test.split('npm run test:execution-attempts && ')[1],tail);
+});
+test('after-terminal refuses extra args and caller commands before cluster effects',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  for(const mode of ['after-terminal;echo denied','https://127.0.0.1/','test:after-terminal','after-terminal extra'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'after-terminal','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.match(child.stderr,/PRIVATE_TEST_CLUSTER_MODE_INVALID/);
+});
+
+// Closed findings continuation: one repaired callback, six later owners, four lanes.
+const AFTER_FINDINGS_OWNER_FILES=Object.freeze([
+  "v3-evidence-only-worker.test.ts",
+  "v3-github-review-authorization.integration.test.ts",
+  "v3-recovery-claim-authority.test.ts",
+  "v3-recovery-coordinator.test.ts",
+  "v3-recovery-lifecycle-reconciler.test.ts",
+  "v3-recovery-work-router.test.ts"
+]);
+test('after-findings permits only fixed npm continuation argv in a frozen private cluster plan',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'after-findings'});
+  assert.deepEqual(value.test,['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js','run','test:after-findings']);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
+});
+test('after-findings package command contains one fixed callback, six exact later owners and unchanged four-package tail',()=>{
+  const scripts=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).scripts;
+  const source=readFileSync(new URL('../run-finding-tests.ts',import.meta.url),'utf8');
+  const blocks=[...source.matchAll(/const OWNER_BACKED_TESTS = new Set\(\[([\s\S]*?)\]\);/g)];
+  assert.equal(blocks.length,1,'one maintained findings owner inventory');
+  const owners=[...blocks[0][1].matchAll(/"([A-Za-z0-9.-]+\.test\.ts)"/g)].map(m=>m[1]).sort();
+  assert.equal(owners.length,10);assert.equal(owners.indexOf('repository.test.ts'),3);
+  assert.deepEqual(owners.slice(4),AFTER_FINDINGS_OWNER_FILES);
+  assert.equal(AFTER_FINDINGS_OWNER_FILES.length,6);assert.equal(new Set(AFTER_FINDINGS_OWNER_FILES).size,6);
+  const first="node --import tsx scripts/run-isolated-postgres-tests.ts -- node --import tsx --test --test-concurrency=1 '--test-name-pattern=^cold pre32 catalog rejects unjournaled relations and orphan routines or triggers without writes$' tests/findings/repository.test.ts";
+  const later='node --import tsx scripts/run-finding-tests.ts '
+    +AFTER_FINDINGS_OWNER_FILES.map(n=>'tests/findings/'+n).join(' ');
+  const tail=['evidence','recovery','evals','internal-production'].map(n=>'npm run test:'+n).join(' && ');
+  assert.equal(scripts['test:after-findings'],first+' && '+later+' && '+tail);
+  for(const prior of [scripts.test,scripts['test:after-scripts'],scripts['test:after-terminal']])
+    assert.equal(prior.split('npm run test:findings && ')[1],tail);
+});
+test('after-findings refuses extra args and caller commands before cluster effects',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  for(const mode of ['after-findings;echo denied','https://127.0.0.1/','test:after-findings','after-findings extra'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'after-findings','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.match(child.stderr,/PRIVATE_TEST_CLUSTER_MODE_INVALID/);
+});
+
+// Closed internal continuation: skip the completed pure node invocation only.
+const AFTER_INTERNAL_PURE_ALIASES=Object.freeze([
+  'test:dashboard-local-custody',
+  'test:dashboard-joint-original-operation',
+  'test:internal-production:create-only',
+  'test:internal-production:cutover',
+  'test:internal-production:isolated',
+  'test:internal-production:manifest',
+]);
+test('after-internal-pure permits only fixed npm continuation argv in a frozen private cluster plan',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'after-internal-pure'});
+  assert.deepEqual(value.test,['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js','run','test:after-internal-pure']);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
+});
+test('after-internal-pure package command derives the exact six unrun aliases from maintained internal inventories',()=>{
+  const scripts=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).scripts;
+  const pureParts=scripts['test:internal-production:pure'].split(' && ');
+  assert.deepEqual(pureParts.slice(1),[
+    'npm run test:dashboard-local-custody','npm run test:dashboard-joint-original-operation',
+  ]);
+  const internalParts=scripts['test:internal-production'].split(' && ');
+  const pure='npm run test:internal-production:pure';
+  assert.equal(internalParts.filter(value=>value===pure).length,1,'one maintained pure-lane boundary');
+  const pureIndex=internalParts.indexOf(pure);assert.ok(pureIndex>=0);
+  const later=internalParts.slice(pureIndex+1);
+  assert.deepEqual(later,[
+    'npm run test:internal-production:create-only','npm run test:internal-production:cutover',
+    'npm run test:internal-production:isolated','npm run test:internal-production:manifest',
+  ]);
+  const selected=[...pureParts.slice(1),...later];
+  assert.equal(selected.length,6);assert.equal(new Set(selected).size,6);
+  assert.deepEqual(selected,AFTER_INTERNAL_PURE_ALIASES.map(name=>'npm run '+name));
+  assert.equal(scripts['test:after-internal-pure'],selected.join(' && '));
+});
+test('after-internal-pure refuses extra args and caller commands before cluster effects',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  for(const mode of ['after-internal-pure;echo denied','https://127.0.0.1/',
+    'test:after-internal-pure','after-internal-pure extra'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'after-internal-pure','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.match(child.stderr,/PRIVATE_TEST_CLUSTER_MODE_INVALID/);
+});
+
+// Closed post-local continuation excludes completed/composed local coverage.
+const AFTER_LOCAL_CUSTODY_ALIASES=Object.freeze([
+  'test:dashboard-joint-original-operation',
+  'test:internal-production:create-only',
+  'test:internal-production:cutover',
+  'test:internal-production:isolated',
+  'test:internal-production:manifest',
+]);
+test('after-local-custody permits only fixed npm continuation argv in a frozen private cluster plan',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'after-local-custody'});
+  assert.deepEqual(value.test,['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js','run','test:after-local-custody']);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
+});
+test('after-local-custody package command derives exactly five unrun aliases from the maintained six-lane continuation',()=>{
+  const scripts=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).scripts;
+  const prior=scripts['test:after-internal-pure'].split(' && ');
+  assert.equal(prior.length,6);
+  assert.equal(prior[0],'npm run test:dashboard-local-custody');
+  const selected=prior.slice(1);
+  assert.equal(selected.length,5);assert.equal(new Set(selected).size,5);
+  assert.deepEqual(selected,AFTER_LOCAL_CUSTODY_ALIASES.map(name=>'npm run '+name));
+  for(const name of AFTER_LOCAL_CUSTODY_ALIASES)assert.equal(typeof scripts[name],'string');
+  assert.equal(scripts['test:after-local-custody'],selected.join(' && '));
+});
+test('after-local-custody refuses extra args and caller commands before cluster effects',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  for(const mode of ['after-local-custody;echo denied','https://127.0.0.1/',
+    'test:after-local-custody','after-local-custody extra'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'after-local-custody','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.match(child.stderr,/PRIVATE_TEST_CLUSTER_MODE_INVALID/);
+});
+
+
+// Closed post-cutover continuation runs only the two previously unrun lanes.
+const AFTER_CUTOVER_ALIASES=Object.freeze([
+  'test:internal-production:isolated',
+  'test:internal-production:manifest',
+]);
+test('after-cutover permits only fixed npm continuation argv in a frozen private cluster plan',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'after-cutover'});
+  assert.deepEqual(value.test,['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js','run','test:after-cutover']);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
+});
+test('after-cutover package command derives only the final two aliases from the maintained five-lane continuation',()=>{
+  const scripts=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).scripts;
+  const prior=scripts['test:after-local-custody'].split(' && ');
+  assert.deepEqual(prior,[
+    'npm run test:dashboard-joint-original-operation',
+    'npm run test:internal-production:create-only',
+    'npm run test:internal-production:cutover',
+    'npm run test:internal-production:isolated',
+    'npm run test:internal-production:manifest',
+  ]);
+  const selected=prior.slice(3);
+  assert.equal(selected.length,2);assert.equal(new Set(selected).size,2);
+  assert.deepEqual(selected,AFTER_CUTOVER_ALIASES.map(name=>'npm run '+name));
+  for(const name of AFTER_CUTOVER_ALIASES)assert.equal(typeof scripts[name],'string');
+  assert.equal(scripts['test:after-cutover'],selected.join(' && '));
+});
+test('after-cutover retains the closed mode inventory and refuses caller selectors or extra argv before cluster effects',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  for(const mode of ['after-cutover;echo denied','https://127.0.0.1/',
+    'test:after-cutover','after-cutover extra','AFTER-CUTOVER'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'after-cutover','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.match(child.stderr,/PRIVATE_TEST_CLUSTER_MODE_INVALID/);
+  const source=readFileSync(MODULE,'utf8');
+  const inventories=[...source.matchAll(/!\[([^\]\n]+)\]\.includes\((mode|args\[0\])\)/g)];
+  assert.equal(inventories.length,2,'one pure-plan and one CLI closed mode inventory');
+  assert.deepEqual(inventories.map(match=>match[2]).sort(),['args[0]','mode']);
+  const expected=['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal',
+    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full'];
+  for(const inventory of inventories)
+    assert.deepEqual([...inventory[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),expected);
+});
+
+
+// Closed post-receipt continuation selects only the five remaining isolated files, then manifest.
+const AFTER_RECEIPT_FILES=Object.freeze([
+  'tests/internal-production/baseline-restart-authority-retirement-v1.test.ts',
+  'tests/internal-production/baseline-service-restart-helper-v1.test.ts',
+  'tests/internal-production/baseline-service-restart-sequence-v1.test.ts',
+  'tests/internal-production/baseline-spawner-startup-admission-v1.test.ts',
+  'tests/internal-production/owner-admission-v1.test.ts',
+]);
+test('after-receipt permits only fixed npm continuation argv in a frozen private cluster plan',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'after-receipt'});
+  assert.deepEqual(value.test,['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js','run','test:after-receipt']);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
+});
+test('after-receipt package command derives only the five remaining isolated wrappers then manifest',()=>{
+  const scripts=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).scripts;
+  const wrapper='env -u SETFARM_PG_URL node --import tsx scripts/run-isolated-postgres-tests.ts -- node --import tsx --test --test-concurrency=1 ';
+  const prior=scripts['test:internal-production:isolated'].split(' && ');
+  assert.deepEqual(prior,[
+    'tests/internal-production/baseline-owner-producer-manifest-activation-controller-v1.test.ts',
+    'tests/internal-production/baseline-post-handoff-cli.test.ts',
+    'tests/internal-production/baseline-post-handoff-receipt-v1.test.ts',
+    ...AFTER_RECEIPT_FILES,
+  ].map(file=>wrapper+file));
+  const selected=prior.slice(3);
+  assert.equal(selected.length,5);assert.equal(new Set(selected).size,5);
+  assert.deepEqual(selected,AFTER_RECEIPT_FILES.map(file=>wrapper+file));
+  assert.equal(typeof scripts['test:internal-production:manifest'],'string');
+  assert.equal(scripts['test:after-receipt'],[...selected,'npm run test:internal-production:manifest'].join(' && '));
+});
+test('after-receipt retains the closed mode inventory and refuses caller selectors or extra argv before cluster effects',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  for(const mode of ['after-receipt;echo denied','https://127.0.0.1/',
+    'test:after-receipt','after-receipt extra','AFTER-RECEIPT',
+    'tests/internal-production/baseline-restart-authority-retirement-v1.test.ts'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'after-receipt','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.match(child.stderr,/PRIVATE_TEST_CLUSTER_MODE_INVALID/);
+  const source=readFileSync(MODULE,'utf8');
+  const inventories=[...source.matchAll(/!\[([^\]\n]+)\]\.includes\((mode|args\[0\])\)/g)];
+  assert.equal(inventories.length,2,'one pure-plan and one CLI closed mode inventory');
+  assert.deepEqual(inventories.map(match=>match[2]).sort(),['args[0]','mode']);
+  const expected=['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal',
+    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full'];
+  for(const inventory of inventories)
+    assert.deepEqual([...inventory[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),expected);
+});
+
+
+test('migration33-observers plans only the fixed P3 observer test argv',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'migration33-observers'});
+  assert.deepEqual(value.test,[
+    '--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
+    '--import','tsx','--test','--test-concurrency=1',
+    'tests/execution-attempts/migration33-current-entry-observers.test.ts',
+  ]);
+  assert.equal(value.test.length,10);
+  assert.deepEqual(value.test.filter(cell=>cell.endsWith('.test.ts')),[
+    'tests/execution-attempts/migration33-current-entry-observers.test.ts',
+  ]);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'receipt'}).server);
+});
+
+test('migration33-observers keeps literal mode inventory and refuses caller selectors or extra argv',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const literalModes=['findings','all','readonly-verifiers','receipt','after-scripts',
+    'after-terminal','after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt',
+    'migration33-observers','migration33-adjacent-full'];
+  assert.equal(new Set(literalModes).size,13);
+  for(const mode of literalModes){
+    const value=plan({root,port:55439,mode});
+    assert.equal(Object.isFrozen(value.test),true);
+  }
+  for(const mode of ['migration33-observers;echo denied','migration33-observers extra',
+    'migration33-observers/other','test:migration33-observers','migration33-observer',
+    'tests/execution-attempts/migration33-current-entry-observers.test.ts',
+    '--test-name-pattern=.*','https://127.0.0.1/',undefined,null,{}])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  for(const args of [
+    ['migration33-observers','extra'],
+    ['migration33-observers','tests/execution-attempts/migration33-current-entry-observers.test.ts'],
+    ['migration33-observers','--test-name-pattern=.*'],
+  ]){
+    const result=spawnSync(process.execPath,[fileURLToPath(MODULE),...args],{
+      encoding:'utf8',timeout:5000,maxBuffer:65536,
+      env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+    });
+    assert.equal(result.error,undefined);assert.equal(result.signal,null);
+    assert.equal(result.status,1);assert.equal(result.stdout,'');
+    assert.equal(result.stderr,'PRIVATE_TEST_CLUSTER_MODE_INVALID\n');
+  }
+});
+
+
+test('migration33-adjacent-full plans only the fixed whole migrations P3 test argv',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'migration33-adjacent-full'});
+  assert.deepEqual(value.test,[
+    '--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
+    '--import','tsx','--test','--test-concurrency=1',
+    'tests/execution-attempts/migrations.test.ts',
+  ]);
+  assert.equal(value.test.length,10);
+  assert.deepEqual(value.test.filter(cell=>cell.endsWith('.test.ts')),[
+    'tests/execution-attempts/migrations.test.ts',
+  ]);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'migration33-observers'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'receipt'}).server);
+  for(const mode of ['migration33-adjacent-full;echo denied','migration33-adjacent-full extra',
+    'migration33-adjacent-full/other','test:migration33-adjacent-full',
+    'tests/execution-attempts/migrations.test.ts','--test-name-pattern=.*'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const refused=spawnSync(process.execPath,[fileURLToPath(MODULE),'migration33-adjacent-full','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,
+    env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(refused.error,undefined);assert.equal(refused.signal,null);assert.equal(refused.status,1);
+  assert.equal(refused.stdout,'');assert.equal(refused.stderr,'PRIVATE_TEST_CLUSTER_MODE_INVALID\n');
 });

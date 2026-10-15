@@ -22,6 +22,21 @@ const observeWithHeldRuntimeCandidate = observeHeldPositiveWorktreePhysicalCatal
   callback: (entries: readonly Readonly<{ root: string }>[], withHeld: WithHeldRuntimeCandidate) => Promise<void>,
 ) => ReturnType<typeof observeHeldPositiveWorktreePhysicalCatalogV2>;
 
+test("fixed retained physical interfaces refuse foreign originals before discovery", async () => {
+  const api = await import("../../src/internal-production/baseline-positive-worktree-physical-catalog-v2.js");
+  const functions = api as unknown as Record<string, (...args: object[]) => unknown>;
+  let traps = 0;
+  const foreign = new Proxy({}, { get() { traps += 1; throw Error("TRAP"); },
+    getPrototypeOf() { traps += 1; throw Error("TRAP"); }, ownKeys() { traps += 1; throw Error("TRAP"); } });
+  for (const name of ["runHeldDashboardCutoverJointPhysicalReservationV4",
+    "assertHeldDashboardCutoverJointPhysicalReservationV4", "assertHeldDashboardCutoverJointPhysicalOwnerEntryV4"]) {
+    assert.equal(typeof functions[name], "function", `MISSING_FIXED_PHYSICAL_INTERFACE:${name}`);
+    if (name.startsWith("run")) await assert.rejects(async () => functions[name]!(foreign, foreign, foreign));
+    else assert.throws(() => functions[name]!(foreign, foreign, foreign));
+  }
+  assert.equal(traps, 0);
+});
+
 function fixture() {
   const ownerHomeRoot = mkdtempSync(path.join(realpathSync(os.tmpdir()), "setfarm-positive-physical-v2-"));
   const workspaceRoot = path.join(ownerHomeRoot, "ai", "setrox");

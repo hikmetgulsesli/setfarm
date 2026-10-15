@@ -18,6 +18,7 @@ const OWNER_BACKED_TESTS = new Set([
   "compiler-claim-fence.test.ts",
   "concurrency.test.ts",
   "migration-runtime-preservation.test.ts",
+  "migration33-current-entry-observers.test.ts",
   "operational-event-delivery.test.ts",
   "operational-outbox-publisher.test.ts",
   "operational-outbox-repository.test.ts",

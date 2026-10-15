@@ -8490,3 +8490,491 @@ after the reviewed complete recipe, not as a substitute for actual staged RED.
 - [ ] Actual opt-in trusted-owner installation uses only fixed system tools: fetch the actual admitted bootstrap blob to a newly root-owned private stage, check typed base64/size and framed Git identity against the independently admitted delivered blob, then execute exact protected system Perl program. Never root-execute the user-owned test Node/local mutable file or derive authority from a receipt DTO.
 - [ ] Run actual private vendor/source/native/credential-drop/direct-PID/private-pipe/held-byte/lifetime positives and wrong-entry/argv-title spoof/replay/foreignPID/source-native replacement/parent-loss/cleanup-uncertainty denials. Only delivered source and real official archive count; fakes prove protocol only. Capture actual child UID/groups/start/maps and exact root/source/vendor identities, definite cleanup or preserved failure evidence.
 - [ ] Independent post-run PID/root absence or exact preserved-tree validation, then PG31/HTTP/selector/namespace read-only checks. Standby unselected and all live guards unchanged. Record exact remaining compiler/fence/genesis/32/33/admission/live handoff outcomes without claiming Task6A completion.
+
+
+### Next ordinary consumer epoch test — file-only preparation (2026-10-15)
+
+The supported ordinary v8 component GREEN is retained at
+`logs/2026-10-15-task6a-combined-test-preparation-v8/actual-KI4Qkk`; independent
+same-original audit `a5a3a0a960c6c7bbe89d282670b883632220d309234e3727c747d345a6473f45`
+qualified2511 checks0, not production/Root/V2 startup. That actual original is not
+replayed or relabelled as the new consumer regression.
+
+File Map is exactly the five paths in the paired new spec section. The added
+test-only fixture helper is causally necessary to keep complete genuine owner,
+capture and decoder code out of the existing dedicated test. Bootstrap is an
+unchanged bdb52017/221411B DATA snapshot in this preparation; no implementation
+candidate exists. Tests/helper/spec/plan are outside candidate copies only.
+
+- [x] Read current consumer READY-to-CHALLENGE and match3-to-END behavior; preserve
+  the existing modeled424242 fixture's scope instead of claiming real custody.
+- [x] Prepare one complete literal real-fork consumer program and portable
+  maintained test fixture with observer-only pumping, transparent genuine CORE
+  delegates, shared once waits/closes, fixed finite quotas and oracle-only fences.
+- [x] Preserve v8 originals and link the actual ordinary supported-native audit.
+- [ ] Two independent complete program/material/capture reviews before execution.
+- [ ] Root alone performs one nominated ordinary original. All raw material is
+  retained before assertions. Only full native/custody eligibility then actual
+  omission[1,2] vs required[] qualifies the single behavioral RED; setup, unsupported
+  capability, initializer/export, IO or cleanup errors do not.
+- [ ] After eligible actual RED, write/review the smallest private producer/consumer
+  integration in the nominated bootstrap path. A genuine Source native phase is
+  required for future GREEN; no injected no-op, witness relabel or guard bypass.
+- [ ] Root alone verifies GREEN and appropriate adjacent cases on a fresh pinned
+  source/test graph, then exact review/delivery. Do not silently count a generic
+  unconfigured fixture SKIP as native coverage or replay old campaigns.
+
+Selected ordinary test is exactly
+`Perl parent protocol requires native epochs before first challenge and END`.
+An explicit TEST-only owned fixture manifest locates literal-pinned material;
+generic unset selection is SKIP/UNRUN. Selected invalid material is setup failure
+before fork. The unchanged source reads no new selector/environment/provider.
+Before and after pins include current Source, entry, emitted full Perl program,
+manifest and ordinary artifact. Root applies/reviews/commits only the four
+test/helper/spec/plan targets on a clean checkpoint before the single RED run,
+preserving bootstrap bdb bytes. The nominated standalone entry imports that
+applied maintained helper and registers exactly this callback. The recorder
+refuses before spawn unless all four applied targets equal candidate pins.
+Copied runtime-layout files remain nonselected reference DATA, not live/stock
+startup. Actual source uses three fresh urandom64hex nonces,229/220 bytes, three
+PONGs and five closes, with native sample witness scopes separately recorded.
+
+The prewrite fence records Source's write attempt before obtaining each witness.
+It restores incoming errno/status before the real syswrite and preserves its
+actual outgoing state after logging. Native waits never drain consumer streams.
+An active/unknown observer forbids consuming Node wait or signalling Node before
+observer settlement; no postreap native query is permitted. Known cleanup is
+shared, once-attempted and independently checked. The final omission assertion
+runs only after all actual natural endings/EOF/pins/bytes/native bindings qualify.
+
+Preparation directory:
+`logs/2026-10-15-task6a-consumer-epoch-red-pre-effect-v1`.
+No tests, callbacks, Perl evaluation, native queries, C build, PG, services,
+privileged installation, git mutation or active source edit was performed by the
+preparer. New RED/GREEN remains UNRUN. Full mapped-image binding, protected cohort
+promotion, initial TCB/compiler closure, production publisher composition, PM2,
+V2, main rollout and whole-project acceptance remain unqualified.
+
+
+### Historical integration preparation after the eligible actual RED
+
+The earlier file-only/UNRUN statements describe the historical test-preparation
+checkpoint. That four-path test preparation was delivered clean at0ebdb018.
+Root's actual once-only run used unchanged bootstrap bdb52017 and failed only
+the final omissions[1,2] assertion after complete genuine native/custody checks.
+Retained actual terminal is in
+`logs/2026-10-15-task6a-consumer-epoch-red-pre-effect-v1`; independent audit
+`7c8a5f7248e73ded53a399013ec70b258222b5260e6a7a49b7724d96b158988e`
+qualified2691 checks0. This actual eligible RED authorizes the smallest reviewed
+implementation; it is not a missing-export/setup failure and is never relabelled
+as a GREEN of the changed Source.
+
+At this preparation checkpoint the outside candidate used the same exact
+five-path File Map:
+
+| Path | Causal change |
+| --- | --- |
+| scripts/task6a-protected-origin-bootstrap-v2.pl | Private real native owner/prepare, milestone gates, joint deadline and observer-first Node wait/disposal joins |
+| scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js | Complete modeled observer raw queues, retained Node oracles and explicit joint-deadline mutation refinement |
+| scripts/__tests__/fixtures/task6a-consumer-epoch-native-v1.mjs | Current Source declaration-copy, transparent genuine observer IO/wait capture, independent command-origin decoder and two fixed modeled delivery negatives |
+| docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md | Current conditional ownership/bytes/limits contract |
+| docs/superpowers/plans/2026-09-30-task6a-protected-origin-bootstrap-v2.md | Actual RED, causal File Map, fresh verification and limits |
+
+Prepare is a causally necessary private zeroarg refinement: ownership must exist
+before a consumer failure that precedes READY. The real fixture binds actual
+fork/FHs and invokes original Source prepare; setup/parser/protocol remain
+Source alone. All eligible originals enter retained ownership before metadata;
+alias/unknown outputs are not guessed closed. Disk70:70 remains fixed; the
+ordinary memory copy has one uniquely anchored501:20 projection. Existing
+publisher2733+ and cold/main/V2/migration guards remain unchanged.
+
+Implementation review found and corrected outside-only drafts before any
+execution: independent known-original enrollment, raw FH+IO aliases, original
+cell-before-FETCH/private metadata, sealed early cleanup deadline, separate
+stopped-query/full-four-close predicates, complete partial-write history,
+numeric initial state, alias scan ordering and admitted cleanup tuple publication.
+Immutable early snapshots/reports remain retained. Current Source-onlyv4 review
+`6c5958c7dd212c9cab5610bbf2eb94862213b1d3e9f18a06a35703b7c9eee85d`
+returned28 checks0 C0/I0/M0. Root separately performed syntax-only f4f18a; that
+parse result is not a behavioral GREEN, native query or production admission.
+At this preparation checkpoint complete composed helper/program/material review
+was still required. The checkbox state below is historical; the actual
+verification checkpoint at the end records the later completed originals.
+
+- [x] Actual eligible once-only omission RED and independent same-original audit.
+- [x] Nominate the private original prepare refinement and exact five-path map.
+- [x] Prepare Source-owned BIND/S1, S2, STOP/right+CLOSED/EOF/wait and failure fence.
+- [ ] Complete both independent full five-path/program/capture/material reviews.
+- [ ] Root applies only the five reviewed files, verifies current pins/inverse and
+  unchanged guard bodies, then makes the ordinary clean test checkpoint before
+  any invocation. No uncommitted-source/stock-build bypass is used.
+- [ ] Root runs ONE fresh exact healthy callback using the strict owned fixture
+  manifest and final once-GREEN recorder. It must report actual Source samples2,
+  witness samples0, omissions[], actual229/220/96 bytes, current Source pin and
+  complete Source observer STOP/fullEOF/four-close/reap plus Node five-close proof.
+- [ ] Independently audit those same originals. A failed arm, setup, unsupported
+  capability, parser/IO/cleanup failure or old-source program has no GREEN credit.
+- [ ] Root nominates/runs each of the two fixed negative callbacks separately,
+  retaining genuine pre-model raw/outcome and distinct synthetic delivery. Require
+  forbidden-write refusal, Source observer-first cleanup, no helper fence credit,
+  known once-close/liveness and actual original waits; do not invent EOF of an
+  early-closed failure stream.
+- [ ] Root runs the reviewed exact affected modeled parent family selectors. The
+  main modeled positive is first. Closed title inventories exclude the distinct
+  configured actual-native callback and unrelated PM2/parent-clock work. The
+  central queue change can justify the exact720 modeled leaves, never a wholefile
+  or global test:scripts wildcard. No selected skip is a PASS.
+- [ ] Recheck exact current five files/results and causal limits, then normal
+  scoped commit/push/PR delivery with Root as sole writer/delivery owner.
+
+The independent modeled family adaptation preserves real FIFO operations and
+complete modeled wire while keeping modeled/native evidence separate. Existing
+Node traces retain all additional actual Node polls/closes; observer effects are
+separately visible. Joint15s replaces old modeled44→46 expectations with an
+explicit within/over15 chronology. The local renewal control is renamed to
+`Perl parent protocol mutation control witnesses local deadline renewal while native expiry blocks settlement`:
+its passive witness proves the parent-only mutant's predicate was reached, while
+unchanged native expiry must still refuse. No observer deadline or raw parser is
+weakened. The nonzero status omission mutation covers its exact four composed
+predicates and remains a modeled mutation, not native authority.
+
+The existing reviewed95s normal/15s reserve parent recorder retains the actual
+original Node terminal/full TAP streams and before/after copies. The inner
+fixture retains actual Perl50s+15s capture, Source/native15s/45s lifetime, fixed
+raw/IO/event quotas and exact originals. The actual outer tool completion is
+retained separately; self intendedExit DATA does not substitute for that result.
+At that preparation checkpoint the unchecked invocation steps were UNRUN until
+Root retained the corresponding original. No implementation/program was executed
+by the preparer. Later actual results below supersede only those status labels;
+previous v8/RED originals and failed drafts stay immutable.
+
+Production startup remains closed: this ordinary Source-owned epoch slice does
+not promote C2 into staged6/12, prove full mapped-image identity/initial compiler
+trust, create a production launcher constructor, authorize PM2, clear V2 or
+migrate/activate a live installation. Existing fixed producer/publisher work and
+those code-owned gates remain distinct. No full-goal or rollout claim is made.
+
+
+## 2026-10-15: historical unsolicited failure and grouping-repair preparation
+
+Historical preparation UNRUN labels above are checkpoint statements, not a
+relabeling of later originals. The Source-origin healthy actual already has its
+separate retained audit `ec22d29f235c4ed6c38013f3bdd6e5923929078b1cefb21f188965fb06e6a146`.
+The first unsolicited-phase attempt then completed with tool `ed6cc5` exit1,
+Node81366 natural1 (1143-byte complete outer TAP; no capture errors or force),
+and Perl81370 natural60 (215-byte stderr). At emitted line707, `grep BLOCK LIST`
+consumed the boolean `@children && stream_done()` and attempted to dereference
+an empty string. The exact original is retained under
+`logs/2026-10-15-task6a-consumer-native-negatives-pre-effect-v1/unsolicited-phase`;
+independent classification `cf2fcc3c6be2c707e81ed5c91e5646d06fa242034a1984ef32614a454db6d750`
+records17 checks and this mechanical harness defect. There is no eligible
+negative PASS/Source RED or complete inner-grandchild custody claim.
+
+File Map (exactly3 paths):
+
+1. `scripts/__tests__/fixtures/task6a-consumer-epoch-native-v1.mjs`: change only
+   the embedded fallback predicate to
+   `last if (grep{!$_->{reaped}&&!$_->{unknown}} @children)==0 && stream_done();`.
+2. `docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md`:
+   append the observed cause and unchanged contract.
+3. This plan: retain the causal ledger and pending serialized verification.
+
+The helper inverse must recover its exact54b44d6c parent. Sourcec268 and
+modeled test01e82a are not in this correction and remain byte exact. This only
+groups the existing predicate: no fabricated EOF, successful exit, child wait,
+cleanup, query or relaxed guard. The old original and its incomplete custody
+remain untouched; no original child is adopted, replayed or cleaned up by this
+preparation.
+
+At this preparation checkpoint Root is completing the independently reviewed,
+closed modeled6/676/ports34 routes on their existing frozen graph. They do not
+execute this genuine helper fallback; their actual results remain separately
+retained and need no replay solely for this literal correction. Root may apply
+these3 paths only after that active modeled campaign has reached its own
+terminal and classification. Then:
+
+- [ ] Independently review this exact grouping-only candidate and paired docs.
+- [ ] Root applies, verifies exact Source/model preservation, and delivers the
+      clean three-path correction; no active Source edit by the preparer.
+- [ ] Regenerate fresh negative2 full programs, manifests, pinned material and
+      once recorders from the corrected helper; retain the failed original.
+- [ ] Obtain full pre-effect reviews and run each nominated negative once with
+      unchanged semantic/refusal/known-close/wait/partial-EOF oracles.
+
+At that repair-preparation checkpoint corrected negatives remained UNRUN. Their
+later originals are recorded below. No healthy, first4 or unaffected modeled
+route is repeated absent a new causal reason. No PM2, protected cohort,
+production constructor, V2, database startup or whole-project claim follows.
+
+
+## 2026-10-15: current actual consumer outcomes and document reconciliation
+
+This is a two-document evidence checkpoint, not a new implementation or test
+run. The implementation commit is94b8670202c46e99a58565663f0a186c4ae16472; the
+grouping-only fixture commit is9d2b946b58c7d9f22580084cf40e06ebae956c07. Both
+retain bootstrapc268 and modeled test01e82a. The helper changed54b44 to0c0f
+only by grouping its fallback `grep`; the actual failed originaled6cc5 remains
+a mechanical harness failure with incomplete grandchild custody, not a negative
+PASS, Source RED or evidence supplied by the corrected run.
+
+File Map (exactly2 paths):
+
+1. `docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md`: frame preparation statuses as historical and append actual outcomes/limits.
+2. This plan: the same historical framing, exact original/audit references and final scoped-delivery checklist.
+
+### Healthy and disjoint modeled originals
+
+The one healthy Source-origin original on94b passed with Source samples2,
+witness0, omissions[],229/220 protocol bytes,96 entropy bytes,476 frames,452
+region attempts,26 once-closes and full observed streams. Its separate audit
+returned3518 checks0; it is not a replay on the later helper.
+
+- Healthy audit: `logs/2026-10-15-task6a-consumer-native-integration-candidate-v2/once-green-pre-effect-v1/independent-actual-source-native-healthy-audit-v1.json`, SHA256 `ec22d29f235c4ed6c38013f3bdd6e5923929078b1cefb21f188965fb06e6a146`.
+
+| Original route | Node | Actual callback PASS | Original recorder exit | Qualification |
+| --- | --- | --- | --- | --- |
+| first4 | 80731 natural0 | 4 | 0 | Exact ordered callbacks and full captured EOF |
+| mutation6 | 81659 natural0 | 6 | 0 | Exact ordered callbacks and full captured EOF |
+| remaining676 | 81909 natural0 | 676 | 1 | All Source callbacks passed; recorder's expected list had five titles in the wrong order |
+| ports34 | 82987 natural0 | 34 | 0 | Exact ordered callbacks and full captured EOF |
+
+The720 callback titles are disjoint, with zero actual test FAIL/CANCEL/SKIP/TODO.
+The remaining676 recorder stays FAILED1; independent analysis of the same raw
+TAP and frozen Source order did not re-execute or fabricate a recorder PASS.
+These are modeled Source/real owned FIFO callback assertions, not individual
+serialized native child custody or genuine observer capability.
+
+- Aggregate: `logs/2026-10-15-task6a-consumer-verification-preparation-index-v1/root-modeled720-same-original-aggregate-v1.json`, SHA256 `bc9d295e3946b85523ef89190e5615f34167aa3d0a5a151d7be1e7171b741086`.
+- Same-original676 classification: `logs/2026-10-15-task6a-consumer-modeled-remaining676-pre-effect-v1/independent-remaining676-same-original-classification-v1.json`, SHA256 `2d0ac07650e4773b44c9b16349feba2c33423c9c4449ccd99f3ba005cc440166` (61 checks0).
+
+### Corrected fixed negatives, one original each
+
+Both corrected callbacks ran once on9d2 after complete program/material
+reviews. Only the returned four-byte phase word was modeled after retaining the
+genuine BSD packet/outcome and entire original buffer. The healthy case and
+modeled cohorts were not replayed.
+
+| Negative | Actual outer terminal | Direct Node / Perl | Original fork Node / observer | Retained result |
+| --- | --- | --- | --- | --- |
+| unsolicited-phase |263405 exit0 |84273 /84276 natural0 |84278 /84279 natural2 | Before first CHALLENGE, Source refuses phase0 delivered as1; Node input0B;26 known once-closes,8 Source |
+| observer-first-failure |3a5866 exit0 |84533 /84538 natural0 |84541 /84542 natural2 | After3 matched PONGs, Source refuses phase2 delivered as1 before END; Node input225B;27 known once-closes,9 Source |
+
+Each selected callback reports PASS1/zero other statuses, no forced ending or
+capture errors, full outer Node/Perl EOF, stable13 before/after/copied input
+pins, and observer actual reap before any later consuming Node wait/signal.
+Both children exit2/status512/signal0 are retained literally. Known close
+results and independent post-close fileno are recorded; helper fallback/fence
+supplies no Source cleanup credit. Node stdout6B/216B and stderr0B have observed
+EOF0/0 after failure disposal. They are partial bytes, not full inner EOF. No
+NAME-deallocation/CLOSED record was captured, so these negatives give no native-
+right cleanup or successful native-protocol credit.
+
+Retained references (not substituted for the originals):
+
+- Early actual: `logs/2026-10-15-task6a-consumer-native-negatives-pre-effect-v2/unsolicited-phase/actual-root-tool-terminal-v1.json`, SHA256 `39ee9b1d1a6ee41b7b7d6b172d0dcd923319560b917439dfc6b115ddc710ba68`.
+- Early semantic audit: `logs/2026-10-15-task6a-consumer-native-negatives-pre-effect-v2/unsolicited-phase/independent-actual-fixed-negative-audit-v1.json`, SHA256 `94d6f45a333a9f83f61bac3cf7bee9738535ad1334bbbc90a2bb3fd4064e98e0` (148 checks0).
+- Early recorder/custody audit: `logs/2026-10-15-task6a-consumer-native-negatives-pre-effect-v2/unsolicited-phase/independent-actual-recorder-custody-seat2-review-v1.json`, SHA256 `6403660d8d6cff561522e472b50087cb4999c73701c842ab42cb80968364be31` (159 checks0).
+- Late actual: `logs/2026-10-15-task6a-consumer-native-negatives-pre-effect-v2/observer-first-failure/actual-root-tool-terminal-v1.json`, SHA256 `e64f5330a2fbb7e91c01bc47e71c077ed59cb34b6e340bd19476cb173991ae28`.
+- Late semantic audit: `logs/2026-10-15-task6a-consumer-native-negatives-pre-effect-v2/observer-first-failure/independent-actual-fixed-negative-audit-v1.json`, SHA256 `697efb782b34b52e994272ffc5c7e1293474a5dce390c203d6a3086ebd527d01` (2022 checks0).
+- Late recorder/custody audit: `logs/2026-10-15-task6a-consumer-native-negatives-pre-effect-v2/observer-first-failure/independent-actual-recorder-custody-seat2-review-v2.json`, SHA256 `dde20b800aab2947ebcbdf3e7c2040d274ff914a3122e57e658da7b7e9cc384b` (162 checks0). Its v1 overbroad entropy field assertion remains retained; v2 corrects the audit's return/errno index only, without any native replay.
+
+### Captured graphs and remaining limits
+
+The healthy and modeled originals captured the94b graph with helper54b44,
+spec93f404 and planfe84. The corrected negatives captured the9d2 graph with
+helper0c0f, speca4a2 and plan52f9. Each original keeps its actual before/after/
+copied commitments. This two-document update occurs after all those originals
+ended. Current code pins c268/01e82/0c0f are unchanged; the final spec/plan hashes
+are new documentation, not relabeled captured inputs or a claimed wholefile
+replay on the final five-file graph.
+
+- [x] Retain and independently audit the sole eligible omission RED.
+- [x] Retain and independently audit one genuine Source-origin healthy original.
+- [x] Complete the disjoint4/6/676/34 modeled callbacks with their original recorder outcomes preserved.
+- [x] Commit the reviewed grouping-only fixture fix after the earlier originals ended.
+- [x] Regenerate/review/run each corrected negative once; retain full semantic and separate recorder/custody audits.
+- [ ] Root completes final current documentation review, applicable source-contract checks, normal branch delivery and exact DRAFT PR readback.
+
+This closes only this ordinary consumer verification slice. C2/737624 stays
+unpromoted outside staged6/12. No mapped-image file binding, full initial native/
+compiler/dyld TCB freeze, protected OS/database exclusion, production original
+fork constructor, Root installation, migration32/33 live activation, V2/startup,
+PM2, process-family closure or whole-project acceptance is established. Current
+cold/main/refusal/namespace/staged/publisher guards remain unchanged. No selected
+stock-build/archive bypass or further heavy producer is authorized by this
+evidence-only update.
+
+
+## Historical Source-owned constructor test-first checkpoint — preparation only
+
+Parent: clean delivered5abc83fbe0a227845cadd8e1a1f8d8a4a36d9a3a. Current Sourcec268, dedicated01e82 and helper0c0 are the original parents. This is file-only preparation; the new callback, producer invocation and actual0→2 behavioral assertion remain UNRUN. Existing Source/native healthy, fixed negatives and720 modeled results retain their original graphs and are not rerun or relabelled here.
+
+Causal evidence: authentic Node22 material v3 independent same-original audit b24eccee (228 checks0), selected112,928,848 bytes/2e3f1286 and archive50,067,502 bytes/ef28d8; protected-profile ordinary compile v2 independent material65ddfac2 and custody934db484. Both binary inputs are unexecuted by this preparation. Approved constructor recipev3 b78bde27 and planning270eb851 choose this production-relevant genuine Node22 cohort instead of a foreign Homebrew selected-path substitution.
+
+File Map7: bootstrap; dedicated test; existing native fixture helper; observer C; ABI header; this plan; paired spec. Phase A applies only test/helper/spec/plan, leaving bootstrapC268 and native code untouched. The fixed test manifest is TEST DATA only. The four-source typed transport helper remains the maintained pure sourceGraph, while the new file-backed emitter prevents authentic50MB bodies from exceeding argv and preserves exact13 occurrence order. Genuine Source publication, actual helper original capture, creator13→staged12 closure and canonical existing consumer outcome must all qualify before the final expected2 launcher assertion.
+
+- [ ] Independently review the complete emitted Perl/emitter/Node/helper, all eighteen Source-memory projections, exact four-path deltas and Root's once-RED recorder/material binding.
+- [ ] Root applies only Phase A's four paths, verifies syntax/current pins and clean test-preparation commit, then performs source/resource/sole-producer preflight.
+- [ ] Root invokes exactly `Perl Source constructor mints its own held Node22 and observer originals before entry protocol` once via direct Node26 TAP/concurrency1 and the fixed manifest. No global `test:scripts`, PM2, whole-file or overlapping native replay.
+- [ ] Independently audit that same original. Only natural complete custody plus eligible material/producer and sole final strict actual0/expected2 constitutes the new behavioral RED. Setup, capture, timeout, false raw binding or unknown settlement requires classification before any retry.
+- [ ] After eligible RED, prepare/review the minimal seven-path Source-owned constructor implementation and exact profile/payload binding, then a fresh scoped GREEN. No implementation candidate or completed constructor result is supplied by Phase A.
+
+The baseline test never calls the former test-owned child mint/initializer. It records positive original creation-origin, not a total fork counter or missing-export flag; Source ACL/transport helpers remain separate. Source/staged current public recheck burns and disposes on failure, so future live-child constructor composition must use the already specified private non-disposing validation and retain staged/capsule leases while an observer is unknown. Preclaim must preserve prior realms; actual observer settlement precedes Node wait, material release and complete cleanup. Protected Root/initial image/compiler trust, code-owned current-entry gates, DB activation and functional startup remain distinct unqualified gates.
+
+Current resource contract: inner448MiB cumulative Source/data reservation plus32MiB Node records; outer32MiB; total512MiB. No base64 body argv, duplicated selected input, binary execution, build or Root action. Actual runtime remains unmeasured; Source's original180s bootstrap chronology is unchanged, inner captor195+15s and outer220+15s are fixed absolute limits. All claims here are proposed test preparation until actual reviewed execution.
+
+
+### Historical constructor implementation preparation (superseded by actual ordinary GREEN below)
+
+The existing consumer baseline is now an actual qualified behavioral RED, not a prediction. Root original715159 completed outer0; direct Node96886 naturally1 with the sole strict final0-versus-2 assertion after genuine producer/custody eligibility. Actual home `actual-6LrMeq`, program8b9b49bc, semantic24827c0b and case94a074b1 are retained under the original constructor-RED nomination. Independent whole1570 checks (1b76bd13) and custody1394 checks (7d3dd4a3) were C0/I0/M0. All55 original helpers settled,13 creator originals closed,12 staged originals held/released, no launcher original was minted and no Node22/observer was executed. No original is replayed or relabeled PASS.
+
+File Map7: (1) bootstrap private fixed capsule/constructor/mandatory consumer join/lease and disposal joins; (2) dedicated test explicit real-private-protocol unit adapter and constructor registrations; (3) test-only helper current-source projections, passive raw/original observations and final oracles; (4) maintained C152988; (5) exact ABI2887; (6) paired spec; (7) this plan. No new binary runtime path/provider/PID/command/env interface. The private payload is the independently compiled/audited35784-byte5374233d artifact; ordinary execution projects only known737624 bytes and ordinary identity in the declaration copy. Root alone applies, runs and delivers.
+
+- [x] Authentic Node22 archive/member DATA and protected-profile ordinary compile were captured and independently audited; neither selected executable was invoked by those prerequisites.
+- [x] New behavior-first test preparation was delivered clean on5b44; Root obtained the qualified baseline0-versus-2 RED once with unchanged c268.
+- [x] Review complete current seven-file implementation, exact old-body inverse, capsule/pipe/fork prefixes, exception/unknown quarantine, fixed FD/deadline/ACL guards, transparent helper projections, full emitted programs and original capture bindings. Early snapshots and findings remain historical; they grant no execution clearance.
+- [x] Root applies only the independently reviewed candidate, verifies exact current pins and syntax-only material, delivers a clean checkpoint, checks8GiB/resource floor, and invokes the one literal constructor GREEN route. Require actual Node0/PASS1, both genuine Source originals and all semantic/material/once-close/full-EOF predicates. Self-published semantic flags remain DATA until the separately retained actual outer terminal and same-original audit qualify them.
+- [ ] Run the two separately nominated physical partial-acquisition controls only after complete program/capture reviews. Genuine original bytes/outcomes precede modeled delivery; early-closed failure streams retain honest partial scope. Unknown fork/lease/deadline/FD branches use bounded explicit models, with no unknown real PID adoption.
+- [ ] Verify the changed old-model adapters using closed family selectors and cheap adjacent contracts as causally required. They target the exact genuine private protocol body, preserve existing burn/close/Node/refusal oracles, and claim no public constructor or real native support for modeled424242.
+- [ ] Independent final Source/program/material/result review, then normal scoped delivery. Preserve cold/main/controller, PM2 UNRUN and every startup/Root admission gate. Ordinary constructor success would close this bounded ownership gap only; functional startup and protected activation remain separate.
+
+### Current actual ordinary constructor GREEN and staged-adapter correction
+
+- [x] Full seven-path/current helper/program/material/capture reviews completed before Root application. Current delivered parent is a13f438113e0322639c623f739af424e99f06012, production Source7ff8 unchanged after application.
+- [x] Root invoked the genuine ordinary constructor once:39efa6→4c32dc natural outer0, direct Node6037/Perl6039/Source originals6155 and6156 natural0,1PASS/0other in9.529s.222 frames contain98 genuine positive96-byte rows plus actual0/EINVAL terminal per phase;95 helpers and42 pins qualified. Same-original audits8aaa16ad/3275 andf23ef295/3368 checks were C0/I0/M0. These are ordinary conditional results only.
+
+Adjacent-nine original9ef7c0 is retained as FAILED: outer2/direct Node6828 natural1,6PASS/3FAIL/0other, no capture errors or forces. The first three share copied-Source syntax failure eval3899 (`} $node_view`); six parent-protocol callbacks genuinely passed. The two new constructor block-form exec declarations need exact ordinary-sub syntax normalization only where the copied staged fixtures install their denied exec override. This is a fixture parser barrier, not a Source constructor failure.
+
+File Map3: dedicated test plus paired spec/plan. Preserve the old failed originals and all Source/helper/native/control pins. The complete outer Perl program and before/after eval source for both staged adapter branches are retained as static DATA, never executed by the preparer. No assertion, runtime guard, cleanup or exec authorization is relaxed.
+
+- [ ] Independent current three-path/diff/reconstructed-program review. Root applies serially after the two physical controls close on their original pins; no active source change while a producer remains live.
+- [ ] Root runs once exactly the failed staged3 plus existing `staged captor foundation retains actual ACL capture and original closure`: selected4PASS/0FAIL/CANCEL/TODO, exact raw capture/EOF/known-original cleanup. The6 prior parent PASS are not rerun. Fixture opt-ins remain unset, and both fixed staged backing leaves76/82B join the input pins.
+- [ ] Complete the separately reviewed physical2 and modeled4 controls, proportionate affected-model verification and independent final review/delivery. Cold/main/V2/PM2 owner-closed UNRUN, protected Root/TCB/mapped-image/cohort and actual startup gates remain open or closed as previously specified; no overall completion follows from ordinary GREEN.
+
+### Historical four modeled branches — corrected v2 preparation checkpoint
+
+Parent4f3040bfbe83cb600811c33de552b555320a1a5d includes the reviewed fixture syntax fix; Source7ff8/helper e8f3 remain unchanged. The original plan5df8 and design review dc8fc9 are retained history; the fresh refinement/current anchors and full generated programs accompany this candidate.
+
+- [x] The genuine ordinary constructor original passed once and was independently audited (3275+3368 checks); it is not replayed by these models.
+- [x] Physical controls ran once each: pipe Node7785/Perl7787 natural0/1PASS in8.036s; post-enrollment Node7989/Perl7991 natural0/1PASS in10.154s. Source Node8113 exited2 and observer8114 received Source TERM15; observer reap preceded Node wait. Whole72619dba/3018 and custody2e7174b9/5785 checks qualified the bounded physical results. No unobserved child EOF/native healthy credit follows; raw pipe inode precision remains distinct from JS numeric diagnostics.
+- [x] Focused fixture correction actual1eae49 completed outer0/direct Node9768 natural0,4PASS/0other/no errors or forces/fullEOF. Same-original custody6ac208f8/391 checks qualified19 pins and exact selected titles. Original nine9ef7c0 remains FAILED6PASS/3FAIL; the old6PASS were not replayed.
+- [x] Preserve modeled candidate-v1 UNRUN and its complete whole467/seat2 977 static-check reports, each C0/I2/M0. Fix exact unknown-observer7-file/12-staged identity+disposition oracle and exact4 native Source once-closes linked before fixture backup. Add a single material-retention guard mutant; passive getters only expose sealed shape DATA. Source7ff8/helper e8f3/native code are unchanged. Caps1024/8192 are unchanged; runtime sufficiency remains UNRUN, with exhaustion ineligible.
+- [ ] Independently review this exact3-path candidate and every one of24 modeled scenarios, Source projections/mutations, actual-data keeper/backup boundaries, finite quotas and full original capture binding. Only four TAP callbacks register; six lease states and mutation companions are inner assertions, not inflated PASS totals.
+- [ ] Root serially applies and clean-delivers the exact candidate, then invokes the closed four-title selector once with native/constructor fixture opt-ins unset. Require actual selected4PASS/0FAIL/CANCEL/TODO, original full TAP/EOF and separate same-original review. Every fork/wait/kill/exec response inside these models is data-only; no real unknown process is created or adopted.
+- [x] Root separately recorded seven Source/static contract checks natural0 (noEmit, version, English, path, frozen-migration check, Mission Control check and diff) at actual-summary38ed37a9; those checks provide no modeled-callback or functional startup result.
+- [ ] Final scoped Source/test/docs disposition and remaining protected startup prerequisites. No modeled or ordinary conditional result clears protected Root/TCB/mapped-image/cohort/DB/V2/current-entry or functional startup; PM2 remains owner-closed UNRUN.
+
+## Modeled fixture correction after the original four-callback failure
+
+Root applied and delivered modeled-v2 on clean4cf83231258349eaec2ce633974c71a01740fb78; Source7ff8/helper e8f3/native code are unchanged. Original06ed7a/session38742→d7db6b remains FAILED: outer2/direct Node14461 natural1,2PASS/2FAIL/0other, full outer Node EOF, no capture errors/forces/unknown. All24 inner scenario programs actually ran and supplied retained spawnSync status0/raw DATA. This does not invent separately captured inner PID/wait/EOF authority. Whole f7b9d7aa/781 and custody b660a904/10105 checks audited the same original. Controls1(material lease) and3(unknown observer/material retention) genuinely passed and are retained without replay.
+
+Both failures are fixture-only. Descriptor CLOSE MUTANT15 performed genuine CORE close1 and independently observed fileno undef, then its still-armed modeled-fileno adapter wrongly rejected the Source post-close liveness probe; baseline close14 was clean. Only the same retained actual record with independently established attempted1/closed1 may now forward that genuine undef. Pre-close sealed-FD equality, wrong-FD delivery, raw event, unknown/unarmed refusal and actual close primitive are unchanged. Outcome-join23 produced the correct Source same-original reaped1/uncertain0/status0 and raw Perl false knownLive empty string; only the exact expected diagnostic scalar changes from numeric0 to empty string. Production Source boolean/wait logic is unchanged.
+
+File Map stays3: dedicated test and paired spec/plan. V1/v2 artifacts and failed transcripts remain immutable. Full24 inventory/13 projections/9 mutations are reconstructed with the corrected shared program; proposed actual selection is ONLY failed callbacks2 and4, containing descriptor4 plus deadline/join5 inner scenarios. No healthy/native/physical or passed1/3 replay. New selected2 and inner9 remain UNRUN pending exact current reviews, Root clean application/delivery and one serial original. Observed cap maxima6603/8192 ports and798/1024 clocks refer only to the24 original reached scenarios, not a universal bound or future guarantee. No native/Root/TCB/image/cohort/DB/V2/startup/whole-goal or PM2 owner-closed UNRUN credit changes.
+
+## Physical-owner lifetime: corrected v2 test-only RED preparation
+
+Current delivered11da1de2bee995c5c18e4017c3f7e66003f31fb0 retains Source7ff8/helper e8f3 before this additive fixture. The existing actual zeroarg producer13-closed→12-held, Source-owned two-child constructor/native/protocol and custody proof remain valid ordinary originals. Current four modeled branches have composed coverage: original controls1&3 PASS plus the focused2&4 original73c3b9/direct Node16507 natural0/2PASS/nine inner scenarios. Whole f248ebaa/709 and custody acdf69c2/712 checks qualified the latter; Root eb7ee2b1 records composition. The original full-four remains FAILED2PASS/2FAIL; it is not rewritten as a four-PASS run.
+
+Approved physical design bbf182ff/12611B and scoped whole d55dace6/20 plus custody4d1728f6/40 checks require physical claim only after genuine13→12, non-disposing validity, pending-cell acquisition on false/throw, observer-first role/helper settlement, sticky unknown quarantine and exact independent known closes. No Source implementation is prepared here. The exact RED File Map is four paths: dedicated test, maintained test-only helper and paired spec/plan. Future implementation adds Source as the fifth path; C/header/payload/public interfaces stay unchanged.
+
+One new closed ordinary-host callback preserves all existing callbacks. Its TEST-only literal manifest locates the existing authentic Node22 archive/selected material and qualified ordinary observer; no new material is acquired. The emitted declaration copy has45 exact traced projections: inherited37 ordinary/capture projections plus8 passive fixed physical-site/snapshot/quota projections. Component-specific raw opens at hold_file3913/hold_ancestry4006 and cleanup4025 retain exact actual output/return/errno/status, Source starting/owns/internal context and GV/IO/FD; generic creator/staged/capsule '/' opens never count as physical originals. Passive state/epoch/write observations supply no Source owner, initializer or gate. No physical hold is invoked by the harness.
+
+Current genuine constructor eligibility must complete first: actual two Source launcher origins, Node22 READY/setup EOF, Source FD3/native bindings and two nonempty96B epochs, three fresh nonce/PONGs, Node0→STOP/CLOSED→observer0/full healthy EOF, exact once-close evidence, genuine creator13 closed/staged12 released, all95 helper originals settled, unchanged pins and complete capture. Root must independently join physical state new/0/empty and zero component acquisition events. Only then the strict final expected4 versus actual0 physical assertion can be eligible behavioral RED. Exports, missing setup/material, unrelated exceptions, forced/unknown cleanup, malformed capture or counter exhaustion never qualify. Publication remains provisional DATA with qualifiedBehaviorRED:false/qualifiedOrdinaryGREEN:false until actual natural TAP and independent original review.
+
+Limits are retained195s normal/210s final inner capture, Source bootstrap180/constructor30/native15/cleanup45,448MiB Source+raw plus32MiB Node records and separately32MiB Root capture (512MiB),8GiB floor snapshots, helper cap127 plus two launchers129, clock observations65536, census calls129/entries65536, physical events256/acquisitions4, reads32768/raw256MiB/raw-writes65536, per-stream caps unchanged. Current RED predicts95 helpers. Future physical scheduling is four acquisition ACL plus the existing seven-ACL post-hold validator once, then three seven-ACL epochs:32 added logical captures,127 total; current preparation executes none and proves no future timing bound. Complete changed-Source/program review must rebind actual private validator taps, release/pending state and exact physical gates before any future GREEN or denial dispatch.
+
+The immutable v1 preparation remains UNRUN after complete whole389/custody464 static reviews found only missing positive observation completeness (I1). V2 requires exactly two launcher markers joined to retained raw Source fork origins/PIDs/private role events/order and exactly eight before-write markers paired one-to-one immediately before independent actual Node4/FD3four writes. Three fixed DATA-only companions delete all markers, the first launcher marker, or the first write marker from BOTH traces while retaining every nonphysical event; each copied result must be rejected before the final physical assertion. They run no additional Source/native case and create no owner/gate. Source, all45 projections and the entire emitted Perl semantics remain exact, aside from fresh v2 fixture-path literals. Root v1 binding remains historical/incomplete; a new complete Root capture binding and both current reviews are required.
+
+Cold/main, Root/TCB/mapped-image/cohort/OSDB/V2/32/33 and3333 startup remain closed/unqualified. PM2 remains owner-closed UNRUN. No prior healthy/physical/model run is replayed by this preparation.
+
+
+## Physical-owner lifetime: bounded implementation and verification sequence
+
+Qualified current gap: clean24aa5402 Source7ff8. Root original289fce/session78256→fc81d0 outer0; Node20473natural1 and Perl20475natural0; sole strict expected4 actual0 after existing genuine constructor/native/custody. Source20597/20598 and95 helper originals settled0,2×100 positive96B native rows with normal EINVAL ends, two Source phases/witness0,42 stable pins. Whole51106842 and custodyf58c3eea qualify7298 independent checks0; Root6f5f8e69 unlocks only a separately reviewed Source candidate. Original0PASS1FAIL stays immutable, not a PASS label.
+
+File Map5: scripts/task6a-protected-origin-bootstrap-v2.pl; scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js; scripts/__tests__/fixtures/task6a-consumer-epoch-native-v1.mjs; paired spec and this plan. Approved designbbf182ff and placement75211d25 specify the same private join. Root alone owns active edits/Git/delivery and all actual producers. This outside preparation executes no Node/Perl/test/compiler/native/PG/service/material action.
+
+- [x] Qualify the sole physical0-vs4 original with two independent same-original audits; preserve provisional publications and all prior originals.
+- [ ] Complete immutable five-path Source/test/helper/docs candidate, traced Source/declaration/profile/program inverses, full fixed material/program/argv/stdin nominations and finite resource accounting.
+- [ ] Independent complete current Source plus helper/program/material/adapter review; Root exact application/current review and clean checkpoint before any actual effect.
+- [ ] Run separately captured closed affected A80/B22 and causally affected C4/expanded private-family routes after their exact title/program inventories clear review. Preserve passed old subsets without unrelated replay; no wildcard/PM2/full-suite substitution.
+- [ ] One genuine strengthened physical GREEN: Source-minted actual pair, four component originals before forks and live across both native epochs; exact Source-origin commands/responses/nonces; Node0→STOP/CLOSED→observer0/helper settlement; final physical epoch/four Source once-closes/liveness before staged12 release; natural selected1PASS/full EOF/current pins and independent original audits.
+- [ ] Separately review and run the two genuine assigned-output false/throw controls: actual first fixed output precedes modeled delivery; Source owns/once-closes it and releases only after known settlement; no launcher/native/healthy-epoch credit in this prefix. Nominal73 helpers/26 material originals, not observed PASS.
+- [ ] Closed unknown/alias/lease/deadline/epoch omission models, exact sticky restoration and known-partial dispositions; no real unknown process or test-supplied success gate. Re-nominate old D partial-pipe/post-enrollment cases with actual new physical4 lifetime/once-close observations (nominal104 helpers/36 material originals); preserve old originals as history and do not duplicate the public healthy occurrence.
+- [ ] Independent final bounded review/delivery, then continue remaining startup gates. Ordinary component success cannot close cold/main/initialTCB/mapped-image/cohort/Root/OSDB/V2/PM2/3333.
+
+Healthy32 extra ACL captures are4 acquisition+existing posthold7 once+three7 continuation/final validators. Expected127helpers/129forks/128census are arithmetic only. Keep original30/45/bootstrap180 and existing caps/reservation; oldclock35156/census96/entries2344 history does not promise future timing or cap sufficiency. Any failure/capture/unknown/quota issue is ineligible for GREEN and retained honestly. No active Source fix or actual new verification is claimed by these unchecked preparation items. The complete new10-model-callback/50-program matrix and A80/B22/C4/cold3/remaining680/ports34 disjoint routes remain proposed. Source-only C0 reviews71715835/e5b58b48 and historical full genuine reviewa703ed7d are recorded with their exact scope; the corrected whole composition still requires complete fresh review and Root binding before any actual effect.
+
+
+## G1 outer-occurrence test-first preparation (2026-10-15)
+
+All seven genuine ordinary physical cases are now qualified by Root disposition da112a06554eab0cb485946529631b50b017d7b1d4f0a883e6e67afd39058db9, with their retained same-original audits. The full physical milestone still requires the focused-two actual six models and composed823-callback/50-model qualification before Root dispatches G1. The original focused13 remains FAILED11PASS/2FAIL. G1 remains PREPARED/UNRUN; its existing-main entry is not yet a Source-owned publisher→consumer→staged-release chain. This four-path preparation uses reviewed future focused-two dedicated test66e1a321, unchanged Source4d6bb531 and helper7ad43d2c as exact preimages; a prepared future pin is not an applied or qualified current pin.
+
+The closed G1 title is `Perl Source main owns one publisher consumer release occurrence`. The full ordinary declaration copy keeps all existing projections and adds only one main UID/processGID predicate projection plus passive admitted-main and three component-entry observations. Its suffix invokes main once, captures the current canonical refusal, and supplies no producer/consumer/release call or owner/cleanup initializer. Before the sole strict actual0-versus-expected3 assertion, the original Perl terminal/full streams, fixed material/program pins, positive main marker and exact zero component/helper/launcher/material effects must all qualify. Published semantic/case DATA stays provisional; original actual outer terminal/TAP and independent same-original audits remain mandatory. No missing-export/setup error earns RED. The prior physical healthy run supplies feasibility/history, not a duplicate same-occurrence premise or new native/custody credit.
+
+File Map RED: dedicated test registration annotation, maintained test-helper G1 route/program/oracle, this spec and paired plan. Future production implementation adds only the bootstrap as the fifth path after eligible actual RED and separate Root authority. No new production export/selector, physical release API, caller PID/FH/capability or initial guard/main-refusal change.
+
+The approved outer failure contract distinguishes role/helper uncertainty from physical acquisition uncertainty: unknown observer/Node/helper defers physical disposal. With definite role/helper settlement, uncertain physical acquisition permits existing independently safe-known once-closes; unresolved/alias outputs remain quarantined, staged12 is retained and completion is denied. Primary cause precedes bounded secondary cleanup outcomes. The outer must not reverse those existing safe-known close rights or add a new gate.
+
+G1 Source implementation, its own genuine GREEN/negative occurrences, initial trust/image/cohort/protected0/70 startup continuation, service/PG/V2 promotion and final startup completion remain open. This preparation has no Source/test/interpreter/native/compiler/service/Git effects.
+
+- [ ] Root qualifies focused-two actual six models and the composed823-callback/50-model physical milestone; retain genuine-seven dispositionda112a06 and reconcile reviewed future test66e1a321 preimage.
+- [ ] Independently review this complete four-path G1 RED program/material/capture nomination.
+- [ ] Root alone applies the reviewed four paths, obtains a clean delivered checkpoint, fresh resource/material preflight and one selected original RED occurrence.
+- [ ] Independently qualify sole strict0vs3 after all limited baseline eligibility; preserve actual0PASS1FAIL and provisional flags.
+- [ ] Only then prepare separately authorized thin Source-owned outer composition and genuine GREEN/failure controls; keep both disk initial guards and final main refusal closed.
+
+
+## G1 Source-owned outer occurrence implementation preparation (2026-10-15)
+
+The G1 existing-main original is an eligible behavioral RED: one admitted main, no component/helper/launcher/material effect, natural Perl0 and Node1 with sole strict actual0 versus expected3. Root disposition4c369aaa joins independent244+1417 checks0. Original selfqualification flags and FAILED0PASS1FAIL remain immutable. The physical milestone and focused correction evidence is prior ordinary component feasibility, not a duplicate G1 premise.
+
+The five-path candidate adds one private zeroarg once occurrence called by existing main after its unchanged disk Root/arity guard and before its unchanged final refusal. Cold BEGIN is byteexact. Freshness is outside its catch: exact NEW/empty constructor freshness is distinct from material-disposal permission, and prior producer/creator/staged/parent/native/physical ownership is refused without disposal. The Source outer alone calls publisher→consumer→guarded staged release, keeps actual primary stage/raw exception before bounded secondary outcomes, delegates only its claimed constructor's cached disposer, and never retries a public staged release. Unknown role/helper retains physical4+staged12. Known settled roles/helpers preserve existing safe-known physical close rights under acquisition uncertainty while denying positive completion/material permission. No new public export/selector, caller owner/PID/FH/evidence, physical-release API or guard/quota change is supplied.
+
+The ordinary G1 program replaces the manual fixture chain with one actual main call. Passive admitted-main/producer/consumer/release snapshots prove Source caller, same Perl, one claim and order; consumer entry observes actual13 creator originals once-closed and12 staged originals live, release entry observes actual constructor/role/helper settlement and physical4 Source-onceclosed, final snapshot observes Source release12 and outer completion. Canonical final main refusal is expected even on complete outer success; completion is never inferred from that outward error. All existing127 actual helper/raw,36 material originals,2 Source-owned children, two native epochs, four physical validators and exact32 additional ACL request proofs remain mandatory. Nominal helper/census/clock counts are not future runtime guarantees.
+
+File Map: bootstrap private occurrence/freshness/main join; dedicated test current Sourcepin and registrar wording; maintained fixture G1 program/raw/custody/entry oracles; paired spec and plan. Historical private-native fixtures remain superseded/UNRUN, not current passes. Existing model Sourcepin is honestly refreshed; Source component bodies and model projections remain unchanged apart from the declared outer code. Freshness/primary-secondary/failure programs are separately nominated before execution. This candidate is PREPARED/UNRUN, no actual G1 GREEN or control claim. Initial trust/image/cohort/protected0/70/main final refusal/PG/service/V2/startup gates remain closed/open as previously stated.
+
+- [x] Qualified one existing-main original RED through same-original audits; no component authority from RED.
+- [x] Prepare and Source-only review private thin outer/freshness join (40 checks0).
+- [ ] Full five-path/program/material/current final capture independent review.
+- [ ] Root exact apply/current validation/clean delivery/fresh preflight and one own G1 ordinary GREEN original.
+- [ ] Focused actual assigned publisher failure, settled consumer failure with primary-secondary contrast, release false/throw and closed hybrid unknown role/helper controls; independent original audits.
+- [ ] Remaining protected trust, cohort, Root/runtime and startup obligations; no admission flip in this slice.
+
+
+### G1 separately nominated simple failure controls (PREPARED/UNRUN)
+
+The immutable healthy program59ae078b and its relevant decoder/custody/Source entry oracles remain byteexact. This follow-on changes only the fixture helper and paired docs, using the exact reviewed healthy five-path candidate as a FUTURE preimage until Root applies it; no current-pin adoption is claimed. Five closed callbacks cover first genuine creator FH assigned then modeled false; genuine settled post-second-fork consumer refusal with Source staged unwind; that same genuine prefix with a distinct modeled secondary cleanup exception after actual cached disposal; and staged close false/throw after actual primitive once-close/liveness retention. No unknown process ports are used in these five. The first two release variants own their own genuine native/protocol prefix; no historical healthy occurrence is substituted.
+
+Raw first outcomes precede delivery. Publisher owns only its one actual known acquired original, not fabricated13/12. Settled consumer failure delegates Source-owned observer-first disposal before outer staged12 release. Secondary failure keeps the primary consumer cause/stage and conservatively retains staged12; successful cached constructor disposal creates no new close entitlement. Release failure records all12 actual primitive once-attempts versus Source-sealed closed flags (first0, others11), denies outer completion and never retries non-idempotent public release. Every original known helper process/raw stream is independently retained/settled; no fixture owner-cleanup callback is installed.
+
+All five programs, their exact50 ordinary projections (51 for the one explicit secondary outcome-delivery site), arming/control proofs, fixed routes/materials, environment/argv/stdin and future42 pin proposals are separately frozen. Nominal helper/fork/material counts11/11/1,104/106/36,104/106/36,127/129/36,127/129/36 fit unchanged caps but are not actual runtime proof. Full capture/current review precedes each Root-only effect. Hybrid unknown observer/helper controls remain separately pending, unregistered and UNRUN in this simple candidate. They remain required for G1 completion. No Source/T/C/header/payload/guard/quota change and no actual execution occurs here.
+
+
+### G1 simple-control refinement: freshness versus disposal permission
+
+The own ordinary G1 healthy original is now independently qualified by Root’s ordinary-only disposition (full Source-owned chain/native/raw/custody); original flags remain provisional and G1 completion still requires failures/hybrids. This unexecuted control refinement leaves Sourcee964, testf8a, the healthy program59ae and all existing healthy oracles byteexact. In the already-required completed `g1-release-false` prefix only, passively call actual private constructor freshness and material-disposal predicates: freshness must be0 while material permission is1. Full Source ownership/primary/once snapshots before and after must be identical except a labeled passive monotonic observation; no realm state, helper, validator or deadline is supplied. Other4 control programs/runtime paths remain byteexact. Paired helper/docs changes are prepared, not applied or passed. Root owns separate exact capture/current reviews and effects.
+
+
+### G1 closed hybrid uncertainty controls and preclaim probes (PREPARED/UNRUN)
+
+These two complete callbacks follow the separately reviewed healthy and five simple controls. No Source/test/healthy/simple program byte changes; only fixture helper registration/emission/oracles and paired docs are appended on the exact preceding future candidate. Current Root application is recorded separately, never inferred from a future pin. After each first actual primary snapshot, repeat main once with empty argv and once with local wrong @ARGV: full first/probe entry arrays remain retained; no component dispatch, cleanup/once right, primary or owned-original change is permitted. The extra admitted marker belongs only to the repeat; wrong argv refuses before its marker. No owner/phase initializer occurs.
+
+Unknown observer uses fresh genuine Source publisher/staged12/physical4/capsule prefix and104 known genuine settled helpers, then BOTH constructor fork ports are closed modeled DATA before any actual Node can start. Source itself enrolls the modeled Node token and retains observer-creation uncertainty; no caller owner/phase/lease setter or component success is supplied. A second explicit delivery retains the actual canonical consumer error before passing a class0 reference to the outer catch; zero Boolean/string callbacks and primary consumer stage retention are required. No model token reaches OS wait/signal/fallback/metadata/exec/native ports. Actual16 pipe originals are Source-onceclosed, capsule entropy+writer alone were already closed; other5 capsule originals, physical4 and staged12 remain live/unattempted in final Source snapshots. OS-exit closes earn no Source credit.
+
+Unknown helper keeps actual publisher and77 known settled helper originals, then models only the first full physical epoch ACL-helper fork+wait at exact capture index77 (occurrence78), tool /bin/ls argv[-lde,/], after all4 physical originals are genuinely Source-held. The18 constructor pre-physical staged ACLs are included (55+18+4 acquisition ACLs=77). Faulted helper creates no process; real Source pipe/FH acquisition and parent-close outcomes remain genuine. A closed modeled wait returns -1/ECHILD10; no successful ACL output/status/parser admission is invented. The faulted raw streams retain empty original bytes and honest EOF-not-observed flags with known raw-file closes. Source helper-uncertainty ledger blocks physical/staged disposal; physical4+staged12 remain live, no capsule/launcher/native query exists.
+
+All127 helper/129fork/65536clock/129census/65536entries,180/30/45 deadlines, read/write/raw and480+32MiB disk/8GiBfloor limits stay unchanged. Modeled operations have their own128 row cap and fixed role2/helper1 dispatch limits. Current nominal104/105 and77+1/78 helper/census counts are expectations, not runtime sufficiency proof. Each full program/closed portmap/projections/routes/material42/argv/stdin/semantic schema needs full current review and separate Root capture before dispatch. Healthy and hybrid emitted programs and relevant oracles remain byteexact; no duplicate healthy is nominated. G1 and protected startup completion remain unqualified.
+
+
+### G1 hybrid passive scalar observation correction (PREPARED/UNRUN successor)
+
+The first observer-uncertainty original remains FAILED: Root33323b/session94152→3bb939 returned2, Node56798 returned1, and Perl56800 returned0 at actual-BVAUIg. Its strict repeated-primary snapshot detected secondary.returned FLAGS4353→21765 because the test-only g1_raw_view formatted the aliased original numeric0 with unpack. No case/semantic success was published; this is a fixture observation defect, not a Source failure or a qualified hybrid result.
+
+Root's isolated regression 4b133b (receipt0048ab6a78d06aaae20919cc11dedc47130cf7ef022d7ac2d3b47d9f1b65abaf) retained old-getter Perl1 and local-copy Perl0. All six numeric0/string0/empty/canonical-error/undef/class0-reference cases remain repeated-stable with zero coercion callbacks. The successor changes only sourceMainHybridProgram's local suffix: original FLAGS and reference admission still precede reading a plain value into a local copy; defined/hex formatting uses that copy. Full original FLAGS and strict deep-equality checks stay unchanged. SOURCE_MAIN_SUFFIX itself, Source, test registration, healthy and all five simple complete programs/functions/oracles are byte-for-byte preserved.
+
+File Map is exactly existing helper plus this spec and paired plan. Both hybrid runtime bases are fresh in complete-hybrid-controls-snapshot-v4; the failed observer original and old helper/unrun-helper fixture remain immutable. All nested fivePathContext values and future42/affected19 projections use the same final five-path map. Only helper/docs future rows change for the unchanged six affected titles/eight complete invocations. Process-port scopes, Source ownership and primary/secondary snapshots, class0 admission, 180/30/45/195+15 deadlines, raw/clock/census/disk quotas, unknown-role/helper retention and Source-versus-exit closure credit stay unchanged.
+
+Root alone may bind/review/apply/current-check/clean-deliver/fresh-preflight and run each corrected hybrid once, then the six affected callbacks. No healthy/simple replay is caused by this hybrid-local formatting correction. Full G1, initial trust, protected startup, services and bounded V3 remain incomplete until the remaining original runtime evidence and gates qualify.

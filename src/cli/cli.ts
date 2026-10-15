@@ -1,60 +1,57 @@
 #!/usr/bin/env node
 
-import { assertRuntimeIntegrityOrExit } from "./runtime-guard.js";
-import { installWorkflow } from "../installer/install.js";
-import { uninstallAllWorkflows, uninstallWorkflow, checkActiveRuns } from "../installer/uninstall.js";
-import { getWorkflowStatus, listRuns, stopWorkflow } from "../installer/status.js";
-import { runWorkflow } from "../installer/run.js";
-import { listBundledWorkflows } from "../installer/workflow-fetch.js";
-import { readRecentLogs } from "../lib/logger.js";
-import { emitEvent, getRecentEvents, getRunEvents, type SetfarmEvent } from "../installer/events.js";
-import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/daemonctl.js";
-import { startSpawner, stopSpawner, getSpawnerStatus, isSpawnerRunning } from "../server/spawnerctl.js";
-import { assertOrdinarySpawnerDeploymentCutoverAdmissionV1 } from "../internal-production/baseline-deployment-cutover-v1.js";
-import { assertTask6aPreSchemaOrdinaryStartupV2 } from "../internal-production/baseline-task6a-preschema-ordinary-refusal-v2.js";
-import {
-  claimStep,
-  completeStep,
-  failStep,
-  getStories,
-  peekStep,
-} from "../installer/step-ops.js";
-import { refreshRunContractSafe } from "../installer/contract-ledger.js";
-import { ensureCliSymlink } from "../installer/symlink.js";
-import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
-import { getSql, pgQuery, pgGet, pgRun, pgClose, now } from "../db-pg.js";
-import { installMedicCron, uninstallMedicCron, isMedicCronInstalled } from "../medic/medic-cron.js";
-import { missionControlApi } from "../runtime-config.js";
-import { resolveConvergenceEvalResultDir } from "../runtime-config.js";
-import {
-  extractProtocolArgument,
-  resolveNewRunProtocol,
-  selectNewRunProtocolMode,
-} from "../execution/run-protocol.js";
-import {
-  executeRunOperationalAction,
-  resolveRunOperationalActionTarget,
-} from "../execution/run-operational-action.js";
-import { parseOperationalActionArguments } from "./operational-action-arguments.js";
-import { runDefaultActivationPreflight } from "../execution/activation-preflight.js";
-import { ContentAddressedEvalResultStore } from "../evals/report.js";
-import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
-import {
-  createV3ReleaseAdmissionRepository,
-  readAndClearInternalCanaryAdmissionEnvironment,
-} from "../execution/v3-release-admission-repository.js";
-import { parseInternalCanaryAdmissionContext } from "../execution/v3-release-admission.js";
-import { readClaimEnvelopeFile } from "../execution/claim-authority.js";
-import { requestRuntimeCompletion } from "../execution/runtime-completion.js";
-import { V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES } from "../execution/v3-implementation-output.js";
-import {
-  BoundedFileReadError,
-  readUtf8RegularFileAtMostSync,
-} from "../lib/bounded-file-read.js";
+import type { SetfarmEvent } from "../installer/events.js";
+import { assertOrdinarySpawnerDeploymentCutoverAdmissionV1, assertOrdinaryDashboardDeploymentCutoverAdmissionV2 } from "../internal-production/baseline-deployment-cutover-v1.js";
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+
+// Initial refusal only, not a held absence epoch or historical ingress closure.
+// Exact preflight retains its existing non-authoritative diagnostic exception.
+const entryArgs = process.argv.slice(2);
+const exactEntryDiagnostic = entryArgs.length === 3 && entryArgs[0] === "platform-release"
+  && entryArgs[1] === "preflight" && entryArgs[2] === "--json";
+if (!exactEntryDiagnostic) {
+  try { assertOrdinarySpawnerDeploymentCutoverAdmissionV1(); }
+  catch {
+    process.stderr.write("DEPLOYMENT_CUTOVER_CLI_ENTRY_REFUSED\n");
+    process.exit(1);
+  }
+}
+
+// Fixed literal imports cannot resolve/evaluate business code before the fence.
+const { assertRuntimeIntegrityOrExit } = await import("./runtime-guard.js");
+const { installWorkflow } = await import("../installer/install.js");
+const { uninstallAllWorkflows, uninstallWorkflow, checkActiveRuns } = await import("../installer/uninstall.js");
+const { getWorkflowStatus, listRuns, stopWorkflow } = await import("../installer/status.js");
+const { runWorkflow } = await import("../installer/run.js");
+const { listBundledWorkflows } = await import("../installer/workflow-fetch.js");
+const { readRecentLogs } = await import("../lib/logger.js");
+const { emitEvent, getRecentEvents, getRunEvents } = await import("../installer/events.js");
+const { startDaemon, stopDaemon, getDaemonStatus, isRunning } = await import("../server/daemonctl.js");
+const { startSpawner, stopSpawner, getSpawnerStatus, isSpawnerRunning } = await import("../server/spawnerctl.js");
+const { assertTask6aPreSchemaOrdinaryStartupV2 } = await import("../internal-production/baseline-task6a-preschema-ordinary-refusal-v2.js");
+const { claimStep, completeStep, failStep, getStories, peekStep } = await import("../installer/step-ops.js");
+const { refreshRunContractSafe } = await import("../installer/contract-ledger.js");
+const { ensureCliSymlink } = await import("../installer/symlink.js");
+const { runMedicCheck, getMedicStatus, getRecentMedicChecks } = await import("../medic/medic.js");
+const { getSql, pgQuery, pgGet, pgRun, pgClose, now } = await import("../db-pg.js");
+const { installMedicCron, uninstallMedicCron, isMedicCronInstalled } = await import("../medic/medic-cron.js");
+const { missionControlApi } = await import("../runtime-config.js");
+const { resolveConvergenceEvalResultDir } = await import("../runtime-config.js");
+const { extractProtocolArgument, resolveNewRunProtocol, selectNewRunProtocolMode } = await import("../execution/run-protocol.js");
+const { executeRunOperationalAction, resolveRunOperationalActionTarget } = await import("../execution/run-operational-action.js");
+const { parseOperationalActionArguments } = await import("./operational-action-arguments.js");
+const { runDefaultActivationPreflight } = await import("../execution/activation-preflight.js");
+const { ContentAddressedEvalResultStore } = await import("../evals/report.js");
+const { hashCanonicalJson } = await import("../product-compiler/canonical-json.js");
+const { createV3ReleaseAdmissionRepository, readAndClearInternalCanaryAdmissionEnvironment } = await import("../execution/v3-release-admission-repository.js");
+const { parseInternalCanaryAdmissionContext } = await import("../execution/v3-release-admission.js");
+const { readClaimEnvelopeFile } = await import("../execution/claim-authority.js");
+const { requestRuntimeCompletion } = await import("../execution/runtime-completion.js");
+const { V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES } = await import("../execution/v3-implementation-output.js");
+const { BoundedFileReadError, readUtf8RegularFileAtMostSync } = await import("../lib/bounded-file-read.js");
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -439,12 +436,7 @@ async function main() {
       process.exit(1);
     }
 
-    // Stop dashboard if running
-    if (isRunning().running) {
-      stopDaemon();
-      console.log("Dashboard stopped.");
-    }
-
+    // The uninstaller validates every cleanup target before stopping the daemon.
     await uninstallAllWorkflows();
     console.log("Setfarm fully uninstalled (workflows, agents, crons, database, skill).");
     return;
@@ -468,6 +460,7 @@ async function main() {
     console.log(`\nDone. Start a workflow with: setfarm workflow run <name> "your task"`);
 
     // Auto-start dashboard if not already running
+    assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
     if (!isRunning().running) {
       try {
         const result = await startDaemon(3333);
@@ -526,6 +519,7 @@ async function main() {
       if (!Number.isNaN(parsed)) port = parsed;
     }
 
+    assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
     if (isRunning().running) {
       const status = getDaemonStatus();
       console.log(`Dashboard already running (PID ${status?.pid})`);

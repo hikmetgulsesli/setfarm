@@ -1651,6 +1651,27 @@ test("P4 completion bootstrap head barrier serializes target mint and atomic rel
   assert.match(release, /releaseDrainedRuntimeSessionInTransaction[\s\S]*state='accepted'[\s\S]*closeInternalProductionOwnerReservationV1[\s\S]*state: "owner_released"[\s\S]*owner release result CAS/, "session release, acceptance, owner close/head and lifecycle successor remain one transaction");
 });
 
+// Copied terminal kernels retain the genuine ordinary database refusal guard.
+// Import its real read-only observer; never replace the guard with a test grant.
+function ordinaryDashboardGuardFixtureV2(databaseSource: string): string {
+  const declarations = [
+    "let _dashboardCutoverRefusedV2 = false;",
+    "let _dashboardCutoverObservationActiveV2 = false;",
+    "let _dashboardCutoverOrdinaryUsedV2 = false;",
+  ].map((declaration) => {
+    assert.equal(databaseSource.split(declaration).length, 2, "one genuine guard state declaration");
+    return declaration;
+  }).join("\n");
+  const marker = "function assertOrdinaryDashboardDatabaseAccessV2(): void {";
+  const endMarker = "\nconst LEGACY_ISOLATED_TEST_DATABASE_V1";
+  assert.equal(databaseSource.split(marker).length, 2, "one genuine ordinary database guard");
+  const start = databaseSource.indexOf(marker);
+  const end = databaseSource.indexOf(endMarker, start);
+  assert.ok(end > start, "ordinary database guard has one bounded copied-source region");
+  const observerUrl = new URL("../../src/internal-production/baseline-deployment-cutover-v1.ts", import.meta.url).href;
+  return `import { observeDeploymentCutoverIntentV1 } from ${JSON.stringify(observerUrl)};\n${declarations}\n${databaseSource.slice(start, end)}\n`;
+}
+
 test("P4 completion bootstrap barrier executes tagged-SQL target, ordinary, source, adoption, and release races", async () => {
   const production = readFileSync(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
   const start = production.indexOf("type InternalProductionCompletionBootstrapHeadLockModeV1");
@@ -1662,6 +1683,7 @@ test("P4 completion bootstrap barrier executes tagged-SQL target, ordinary, sour
     const modulePath = path.join(fixture, "barrier.ts");
     writeFileSync(modulePath, `
 import {createHash} from "node:crypto";
+${ordinaryDashboardGuardFixtureV2(production)}
 type InternalProductionPgTransactionSql=any; type OwnerAdmissionHeadRowV1=any; type OwnerAdmissionMigrationApplicationV1=any;
 const OWNER_ADMISSION_SHA256_V1=/^[a-f0-9]{64}$/;
 const canonical=(v:any):string=>v===null||typeof v!=="object"?JSON.stringify(v):Array.isArray(v)?"["+v.map(canonical).join(",")+"]":"{"+Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+canonical(v[k])).join(",")+"}";

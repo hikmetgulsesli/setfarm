@@ -17571,6 +17571,9 @@ function legacyDatabaseCensusSqlTransportFixtureV1(
   rowsExpression = 'JSON.parse(process.env.P4_LEGACY_CENSUS_ROWS ?? "[]")',
   coldCatalogRows: readonly Record<string, unknown>[] = [{ laterJournalCount: "0", relationCount: "0", functionCount: "0", typeCount: "0", triggerCount: "0" }],
 ): string {
+  const coldCatalogSource = readFileSync(path.join(sourceRoot, "src/internal-production/task6a-cold-pre32-catalog-readonly-v1.ts"), "utf8");
+  const coldQueries = [...coldCatalogSource.matchAll(/transaction\.unsafe<Array<Record<string, unknown>>>\(`([\s\S]*?)`\)/g)];
+  assert.equal(coldQueries.length, 1, "one genuine fixed cold catalog SQL literal is required");
   return `const fixtureRows=${rowsExpression};
     const coldQueryOffset=coldBootstrap ? 1 : 0;
     let queryCalls=0, constructed=false, begun=false, ended=false;
@@ -17578,12 +17581,6 @@ function legacyDatabaseCensusSqlTransportFixtureV1(
       if(!constructed || !begun || ended) throw new Error("DATABASE_QUERY_OUTSIDE_SNAPSHOT");
       queryCalls+=1;
       const query=Array.from(strings).join("?");
-      if(coldBootstrap && queryCalls===3){
-        for(const token of ["public.setfarm_schema_migrations", "pg_catalog.pg_class", "pg_catalog.pg_proc", "pg_catalog.pg_type", "pg_catalog.pg_trigger", "version >= 32"]){
-          if(!query.includes(token))throw new Error("MISSING_COLD_CATALOG_CONTRACT_"+token);
-        }
-        return ${JSON.stringify(coldCatalogRows)};
-      }
       if(queryCalls===1){
         if(!query.includes("SET LOCAL statement_timeout = '5s'")) throw new Error("MISSING_STATEMENT_TIMEOUT");
       }else if(queryCalls===2){
@@ -17620,6 +17617,17 @@ function legacyDatabaseCensusSqlTransportFixtureV1(
       }else throw new Error("EXTRA_DATABASE_QUERY");
       return fixtureRows;
     }, {
+      unsafe: async (...args: unknown[]) => {
+        if(!constructed || !begun || ended) throw new Error("DATABASE_QUERY_OUTSIDE_SNAPSHOT");
+        if(!coldBootstrap || queryCalls!==2) throw new Error("WRONG_COLD_CATALOG_QUERY_ORDER");
+        if(args.length!==1 || args[0]!==${JSON.stringify(coldQueries[0]![1])}) throw new Error("WRONG_COLD_CATALOG_QUERY_ARGUMENTS");
+        const query=args[0] as string;
+        queryCalls+=1;
+        for(const token of ["public.setfarm_schema_migrations", "pg_catalog.pg_class", "pg_catalog.pg_proc", "pg_catalog.pg_type", "pg_catalog.pg_trigger", "version >= 32"]){
+          if(!query.includes(token))throw new Error("MISSING_COLD_CATALOG_CONTRACT_"+token);
+        }
+        return ${JSON.stringify(coldCatalogRows)};
+      },
       begin: async (mode: unknown, callback: (tx: unknown) => Promise<unknown>) => {
         if(!constructed || begun || ended || mode!=="isolation level repeatable read read only") throw new Error("WRONG_DATABASE_SNAPSHOT_MODE");
         begun=true;
@@ -17660,6 +17668,8 @@ function createLegacyDatabaseCensusFixture(rows: readonly Record<string, unknown
     legacyDatabaseCensusSqlTransportFixtureV1(undefined, coldCatalogRows),
   );
   fixtureFile(root, "src/internal-production/baseline-legacy-database-census-v1.ts", censusSource);
+  fixtureFile(root, "src/internal-production/task6a-cold-pre32-catalog-readonly-v1.ts",
+    readFileSync(path.join(sourceRoot, "src/internal-production/task6a-cold-pre32-catalog-readonly-v1.ts")));
   fixtureFile(root, "src/internal-production/baseline-post-handoff-receipt-v1.ts", source);
   fixtureFile(
     root,

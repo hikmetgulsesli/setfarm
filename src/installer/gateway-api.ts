@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { execFile } from "node:child_process";
+import { execFileDashboardCutoverLocalChildV3 as execFile } from "../internal-production/baseline-dashboard-cutover-local-producer-drain-v2.js";
 import { logger } from "../lib/logger.js";
 
 // Fetch with AbortController timeout — prevents medic/cron from hanging forever
@@ -109,14 +109,13 @@ async function findOpenclawBinary(): Promise<string> {
 }
 
 /** Run an openclaw CLI command and return stdout. */
-function runCli(args: string[]): Promise<string> {
-  return new Promise(async (resolve, reject) => {
-    if (DISABLE_CLI_FALLBACK) {
-      reject(new Error("OpenClaw CLI fallback disabled for this process"));
-      return;
-    }
-    const bin = await findOpenclawBinary();
-    const finalArgs = bin === "npx" ? ["openclaw", ...args] : args;
+async function runCli(args: string[]): Promise<string> {
+  if (DISABLE_CLI_FALLBACK) {
+    throw new Error("OpenClaw CLI fallback disabled for this process");
+  }
+  const bin = await findOpenclawBinary();
+  const finalArgs = bin === "npx" ? ["openclaw", ...args] : args;
+  return new Promise((resolve, reject) => {
     execFile(bin, finalArgs, { timeout: 30_000 }, (err, stdout, stderr) => {
       if (err) reject(new Error(stderr || err.message));
       else resolve(stdout);

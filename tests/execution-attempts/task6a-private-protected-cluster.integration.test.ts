@@ -4,12 +4,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomInt } from "node:crypto";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { assertProtectedClusterPolicyV1 } from "./task6a-protected-cluster-policy.js";
 import { prepareTask6aProtectedNativeFixtureV1, type ProtectedNativeFixtureV1 } from "./task6a-protected-native-fixture-v1.js";
-import { assertTask6aNativeCleanupCertainV1, markTask6aNativeReleaseUncertainV1 } from "./task6a-native-load-commands-v1.js";
+import { assertTask6aNativeCleanupCertainV1, markTask6aNativeReleaseUncertainV1,
+  readNativeRegularV1, hashNativeBytesV1, insideTask6aNativeRootV1 } from "./task6a-native-load-commands-v1.js";
 import { extractTask6aOrdinaryBaseStatementsV2 } from "./task6a-held-pg31-base-ddl-v2.js";
+import { emitTask6aColdNativeV1 } from "./task6a-cold-native-emission-v1.js";
 
 // Standalone OS/HBA rehearsal: never import the ambient database test harness.
 // The root-capable driving UID is trusted; nobody/_www are the excluded actors.
@@ -17,6 +19,16 @@ import { extractTask6aOrdinaryBaseStatementsV2 } from "./task6a-held-pg31-base-d
 const enabled = process.env.SETFARM_TASK6A_TEST_PROTECTED_PG_FIXTURE === "1";
 const nativeEnabled = process.env.SETFARM_TASK6A_TEST_PROTECTED_NATIVE_FIXTURE === "1";
 const heldPg31Enabled = process.env.SETFARM_TASK6A_TEST_HELD_PG31_FIXTURE === "1";
+const closedProbeEnabled = process.env.SETFARM_TASK6A_TEST_CLOSED_PROBE_FIXTURE === "1";
+const sustainedProbeEnabled = process.env.SETFARM_TASK6A_TEST_SUSTAINED_PROBE_FIXTURE === "1";
+if (process.env.SETFARM_TASK6A_TEST_SUSTAINED_PROBE_FIXTURE !== undefined) {
+  assert.equal(sustainedProbeEnabled && closedProbeEnabled && enabled && !heldPg31Enabled && !nativeEnabled, true,
+    "sustained probe fixture requires protected/closed opt-ins without held PG31/native image copy");
+}
+if (process.env.SETFARM_TASK6A_TEST_CLOSED_PROBE_FIXTURE !== undefined) {
+  assert.equal(closedProbeEnabled && enabled && !heldPg31Enabled && !nativeEnabled, true,
+    "closed probe fixture requires base opt-in, without held PG31/native image copy");
+}
 if (process.env.SETFARM_TASK6A_TEST_HELD_PG31_FIXTURE !== undefined) {
   assert.equal(heldPg31Enabled && nativeEnabled && enabled, true,
     "held PG31 fixture requires all three explicit opt-ins");
@@ -144,10 +156,20 @@ const single=createTask6aSingleBackendSocketClientV1(candidate,(channel,payload)
 let reserved;
 try {
   reserved=await single.sql.reserve();
-  const before=(await reserved.unsafe('SELECT pg_backend_pid() AS pid, session_user AS session, current_user AS role, current_database() AS database, inet_client_addr() IS NULL AS socket'))[0];
-  assert.equal(before.session,'task6a_runtime');assert.equal(before.role,'task6a_runtime');
-  assert.equal(before.database,'postgres');assert.equal(before.socket,true);
-  assert.ok(Number.isSafeInteger(before.pid)&&before.pid>1);
+  const lifetimeQuery='SELECT self.pid AS pid, self.backend_start::text AS "backendStart", session_user AS session, current_user AS role, current_database() AS database, inet_client_addr() IS NULL AS socket FROM pg_catalog.pg_stat_activity self WHERE self.pid = pg_catalog.pg_backend_pid()';
+  function checkedLifetime(rows) {
+    assert.equal(rows.length,1);const facts=rows[0];
+    assert.deepEqual(Object.keys(facts).sort(),['backendStart','database','pid','role','session','socket']);
+    assert.equal(facts.session,'task6a_runtime');assert.equal(facts.role,'task6a_runtime');
+    assert.equal(facts.database,'postgres');assert.equal(facts.socket,true);
+    assert.ok(Number.isSafeInteger(facts.pid)&&facts.pid>1);
+    assert.equal(typeof facts.backendStart,'string');
+    assert.match(facts.backendStart,/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{1,6})?[+-][0-9]{2}(?::[0-9]{2})?$/);
+    return facts;
+  }
+  // Preserve microsecond text and all role/database/transport facts, not PID alone.
+  function sameLifetime(before,after) {assert.deepEqual(after,before);}
+  const before=checkedLifetime(await reserved.unsafe(lifetimeQuery));
   await reserved.unsafe('LISTEN task6a_single_backend_fixture');
   await reserved.unsafe("SELECT pg_notify('task6a_single_backend_fixture','same-backend-notification')");
   let timer;
@@ -155,10 +177,17 @@ try {
     const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('single backend notification timeout')),3000);});
     assert.equal(await Promise.race([singleNotification,timeout]),'same-backend-notification');
   } finally {clearTimeout(timer);}
-  const after=(await reserved.unsafe('SELECT pg_backend_pid() AS pid'))[0];
-  assert.equal(after.pid,before.pid);
+  const after=checkedLifetime(await reserved.unsafe(lifetimeQuery));
+  sameLifetime(before,after);
+  // Genuine SQL projection perturbation, not a forged driver row or actual drift.
+  const perturbed=checkedLifetime(await reserved.unsafe(lifetimeQuery.replace('self.backend_start::text',"(self.backend_start + interval '1 microsecond')::text")));
+  assert.equal(perturbed.pid,before.pid);assert.notEqual(perturbed.backendStart,before.backendStart);
+  assert.deepEqual({...perturbed,backendStart:before.backendStart},before);
+  try {assert.throws(()=>sameLifetime(before,perturbed),assert.AssertionError);}
+  catch(error) {console.error(JSON.stringify({event:'projection-canary-rejection-failed',before,after,perturbed}));throw error;}
   assert.deepEqual(single.observe(),{nativeSocketCreations:1,revoked:false});
   physical.recheck();
+  console.log(JSON.stringify({event:'reserved-backend-lifetime',before,after,projectionCanaryRejected:true,nativeSocketCreations:1}));
 } finally {single.revoke();reserved?.release();await single.close();}
 await assert.rejects(single.sql.unsafe('SELECT 1'));
 assert.deepEqual(single.observe(),{nativeSocketCreations:1,revoked:true});
@@ -258,11 +287,15 @@ test("private protected PG denies old identity and scoped admin impersonation ac
   assert.equal(new Set([runnerUid, serverUid, clientUid, oldUid]).size, 4);
   assert.ok(runnerUid > 0);
   let native:ProtectedNativeFixtureV1|undefined;
+  let closedGraphReady = false;
   let pgBin=defaultPgBin,fixtureNode=process.execPath;
   function asUser(user:string,executable:string,args:string[],timeout?:number):Result {
     native?.recheck();
+    if (closedGraphReady) exactClosedGraph();
     const result=asUserBase(user,executable,args,timeout,native?.environment);
-    native?.recheck();return result;
+    native?.recheck();
+    if (closedGraphReady) exactClosedGraph();
+    return result;
   }
   function asChecked(user:string,executable:string,args:string[],timeout?:number):string {
     const result=asUser(user,executable,args,timeout);assert.equal(result.status,0,`${user} ${executable}: ${result.stderr}`);
@@ -301,6 +334,170 @@ test("private protected PG denies old identity and scoped admin impersonation ac
   let server: Readonly<{ pid: number; identity: string; pidFile: string }> | undefined;
   let dataAnchor: fs.BigIntStats | undefined;
   let failure: unknown;
+  let descriptorHome: string | undefined, descriptorAnchor: fs.BigIntStats | undefined;
+  let descriptorReady = false;
+  const diagnosticSource = path.join(home, "closed-probe-transport.json");
+  const closedGraph = path.join(home, "closed-graph");
+  let closedModule: string | undefined, closedCanonicalURL: string | undefined;
+  const closedMembers = new Map<string, { hash: string; identity?: fs.BigIntStats }>();
+  let closedGraphIdentity: fs.BigIntStats | undefined;
+  const baselineModule = path.join(home, "restricted-baseline-setup.mjs");
+  let diagnosticAnchor: fs.BigIntStats | undefined;
+
+  const closedFields = ["dev", "ino", "uid", "gid", "mode", "nlink", "size", "birthtimeNs", "mtimeNs", "ctimeNs"] as const;
+  function exactClosedGraph(): void {
+    if (!closedProbeEnabled) return;
+    exactHome(); assert.ok(closedGraphIdentity && closedModule && closedCanonicalURL);
+    const directory = fs.lstatSync(closedGraph, { bigint: true });
+    assert.ok(directory.isDirectory() && !directory.isSymbolicLink());
+    for (const field of closedFields) assert.equal(directory[field], closedGraphIdentity[field]);
+    assert.equal(directory.uid, 0n); assert.equal(directory.gid, 0n);
+    assert.equal(directory.dev, anchor.dev); assert.equal(directory.mode & 0o7777n, 0o555n);
+    assert.deepEqual(fs.readdirSync(closedGraph).sort(), [...closedMembers.keys()].map(file => path.basename(file)).sort());
+    for (const [file, expected] of closedMembers) {
+      assert.ok(insideTask6aNativeRootV1(closedGraph, file) && expected.identity);
+      const captured = readNativeRegularV1(file);
+      for (const field of closedFields) assert.equal(captured.identity[field], expected.identity[field]);
+      assert.equal(captured.identity.dev, anchor.dev); assert.equal(captured.identity.uid, 0n);
+      assert.equal(captured.identity.gid, 0n); assert.equal(captured.identity.mode & 0o7777n, 0o444n);
+      assert.equal(hashNativeBytesV1(captured.bytes), expected.hash);
+    }
+    const aclPaths = [home, closedGraph, ...closedMembers.keys()];
+    for (let i = 0; i < aclPaths.length; i += 64) {
+      const part = aclPaths.slice(i, i + 64), lines = rootCommand("/bin/ls", ["-lde", ...part]).split("\n");
+      assert.equal(lines.length, part.length, "unknown/ACL rows refuse the closed graph");
+      for (const line of lines) assert.match(line, /^[d-][rwxStTs-]{9}[@+]?\s+/);
+    }
+  }
+
+  function exactDescriptor(): void {
+    assert.ok(descriptorHome && descriptorAnchor && descriptorReady);
+    assert.equal(path.dirname(descriptorHome), "/Library/Application Support");
+    assert.match(path.basename(descriptorHome), /^setfarm-task6a-descriptor\.[A-Za-z0-9]{8}$/);
+    const stat = fs.lstatSync(descriptorHome, { bigint: true });
+    assert.ok(stat.isDirectory() && !stat.isSymbolicLink()); assert.equal(fs.realpathSync(descriptorHome), descriptorHome);
+    assert.equal(stat.dev, descriptorAnchor.dev); assert.equal(stat.ino, descriptorAnchor.ino);
+    assert.equal(stat.uid, 0n); assert.equal(stat.mode & 0o7777n, 0o755n);
+  }
+  function closedProbeEvidence(phase: string): void {
+    if (!closedProbeEnabled) return;
+    exactServer(); exactDescriptor(); exactClosedGraph();
+    const target = path.join(descriptorHome!, "transport.json");
+    const modes = sustainedProbeEnabled
+      ? ["held-healthy", "held-delayed-close", "held-idle-expiry"] as const
+      : ["healthy", "wrong-tuple", "delayed-close", "denied-access", "denied-column", "denied-membership", "denied-owner", "denied-base",
+        "phase-checksum", "phase-journal32", "phase-journal33", "phase-table", "phase-index", "phase-function", "phase-type", "phase-trigger"] as const;
+    for (const mode of modes) {
+      const baseline = baselineSnapshot();
+      const baselineJournal = JSON.parse(baseline).journal as { version: number; name: string; checksum: string; state: string }[];
+      assert.equal(baselineJournal.length, 31);
+      if (mode === "denied-access") baselineAdmin("GRANT UPDATE ON public.setfarm_schema_migrations TO setfarm_runtime");
+      if (mode === "denied-column") baselineAdmin("GRANT UPDATE(state) ON public.setfarm_schema_migrations TO setfarm_runtime");
+      if (mode === "denied-membership") admin("GRANT setfarm_owner TO setfarm_runtime");
+      if (mode === "denied-owner") baselineAdmin("CREATE TABLE public.task6a_wrong_owner(id integer)");
+      if (mode === "denied-base") baselineAdmin("ALTER TABLE public.runs ALTER COLUMN status SET DEFAULT 'corrupt'");
+      if (mode === "phase-checksum") {
+        assert.notEqual(baselineJournal[30]!.checksum, "0".repeat(64));
+        baselineAdmin("UPDATE public.setfarm_schema_migrations SET checksum=repeat('0',64) WHERE version=31");
+      }
+      if (mode === "phase-journal32" || mode === "phase-journal33") {
+        const version = mode === "phase-journal32" ? 32 : 33;
+        baselineAdmin(`INSERT INTO public.setfarm_schema_migrations(version,name,checksum,state)
+          VALUES (${version},'private_phase_canary_${version}',repeat('0',64),'applied')`);
+      }
+      // Owned private objects keep the three genuine baseline gates healthy;
+      // the later journal/cold producer must be the actual refusal boundary.
+      if (mode === "phase-table") baselineAdmin(`SET ROLE setfarm_owner;
+        CREATE TABLE public.internal_production_owner_reservations_v1(id integer)`);
+      if (mode === "phase-index") baselineAdmin(`SET ROLE setfarm_owner;
+        CREATE TABLE public.task6a_phase_anchor(id integer);
+        CREATE INDEX ip_op_sba_v1_plan_manifest_idx ON public.task6a_phase_anchor(id)`);
+      if (mode === "phase-function") baselineAdmin(`SET ROLE setfarm_owner;
+        CREATE FUNCTION public.ip_op_reject_immutable_v1() RETURNS trigger
+        LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END'`);
+      if (mode === "phase-type") baselineAdmin(`SET ROLE setfarm_owner;
+        CREATE TYPE public.internal_production_owner_reservations_v1 AS ENUM ('private_phase_canary')`);
+      if (mode === "phase-trigger") baselineAdmin(`SET ROLE setfarm_owner;
+        CREATE TABLE public.task6a_phase_anchor(id integer);
+        CREATE FUNCTION public.task6a_phase_triggerfn() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END';
+        CREATE TRIGGER ip_op_msc_v1_update_trg BEFORE UPDATE ON public.task6a_phase_anchor
+        FOR EACH ROW EXECUTE FUNCTION public.task6a_phase_triggerfn()`);
+      const perturbed = baselineSnapshot();
+      const expectedJournalRows = (JSON.parse(perturbed).journal as { version: number; name: string; checksum: string; state: string }[])
+        .filter(row => row.version <= 31).map(row => [String(row.version), row.name, row.checksum, row.state]);
+      assert.equal(expectedJournalRows.length, 31);
+      if (mode.startsWith("phase-")) assert.notEqual(perturbed, baseline, "the real private canary must be observable");
+      try {
+      const transport = { schema: "setfarm.postgres-socket-transport.v1", socketDirectory: socket,
+        port, database: mode === "wrong-tuple" ? "postgres" : "setfarm",
+        user: mode === "wrong-tuple" ? "task6a_runtime" : "setfarm_runtime", osUid: clientUid };
+      const staging = fs.lstatSync(diagnosticSource, { bigint: true }); assert.ok(diagnosticAnchor);
+      assert.ok(staging.isFile() && !staging.isSymbolicLink()); assert.equal(staging.nlink, 1n);
+      assert.equal(staging.dev, diagnosticAnchor.dev); assert.equal(staging.ino, diagnosticAnchor.ino);
+      assert.equal(staging.uid, BigInt(runnerUid)); assert.equal(staging.mode & 0o7777n, 0o600n);
+      // Prepared before sealing; the root0711 parent is never widened.
+      fs.writeFileSync(diagnosticSource, JSON.stringify(transport) + "\n", { flag: "w" });
+      assert.equal(fs.lstatSync(diagnosticSource, { bigint: true }).ino, diagnosticAnchor.ino);
+      exactDescriptor();
+      checked("/usr/bin/sudo", ["-n", "/usr/bin/install", "-m", "0444", "-o", "root", "-g", "wheel", diagnosticSource, target]);
+      exactDescriptor();
+      exactClosedGraph();
+      const result = asUser("_www", fixtureNode, ["--input-type=module", "-e",
+        `const {runTask6aNativeClosedProbeV1}=await import(process.argv[1]);
+         await runTask6aNativeClosedProbeV1(process.argv[2],JSON.parse(process.argv[3]),process.argv[4],JSON.parse(process.argv[5]));`,
+        pathToFileURL(closedModule!).href, target, JSON.stringify({ serverUid, clientGid, socketPath: socketFile }), mode,
+        JSON.stringify({ canonicalURL: closedCanonicalURL })], 30_000);
+      assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, "");
+      exactClosedGraph();
+      const lines = result.stdout.trim().split("\n"); assert.equal(lines.length, 1);
+      const witness = JSON.parse(lines[0]!);
+      assert.equal(witness.event, "native-closed-probe"); assert.equal(witness.authority, "diagnostic-only");
+      assert.equal(witness.mode, mode); assert.equal(witness.fdCount, 5); assert.equal(witness.nativeSockets, 1);
+      if (mode.startsWith("held-")) {
+        assert.equal(witness.heldMode, true); assert.equal(witness.ownerIssued, true);
+        assert.equal(witness.closeIdentity, true);
+        assert.equal(witness.apiOriginals.hold, "fulfilled");
+        assert.equal(witness.apiOriginals.recheck, mode === "held-idle-expiry" ? "rejected" : "fulfilled");
+        assert.equal(witness.apiOriginals.close, mode === "held-idle-expiry" ? "rejected" : "fulfilled");
+        assert.deepEqual(witness.errorCodes, mode === "held-idle-expiry" ? ["25P03"] : []);
+      }
+      t.diagnostic(JSON.stringify({ phase, ...witness })); exactServer(); exactDescriptor();
+      const earlyRefusal = mode === "wrong-tuple" || mode.startsWith("denied-");
+      assert.deepEqual(witness.canonicalJournalRows, earlyRefusal ? [] : expectedJournalRows,
+        "actual ordered canonical journal DataRows required, not command-tag counts");
+      const phaseCounts: Record<string, string[]> = {
+        "phase-journal32": ["1", "0", "0", "0", "0"], "phase-journal33": ["1", "0", "0", "0", "0"],
+        "phase-table": ["0", "1", "0", "1", "0"], "phase-index": ["0", "1", "0", "0", "0"],
+        "phase-function": ["0", "0", "1", "0", "0"], "phase-type": ["0", "0", "0", "1", "0"],
+        "phase-trigger": ["0", "0", "0", "0", "1"],
+      };
+      assert.deepEqual(witness.coldCatalogRows, earlyRefusal || mode === "phase-checksum" ? []
+        : [phaseCounts[mode] ?? ["0", "0", "0", "0", "0"]],
+        "actual five exact cold counters required, not command-tag counts");
+      assert.equal(baselineSnapshot(), perturbed,
+        "probe must preserve sampled journal/ownership/ACL/default/effective-membership state");
+      } finally {
+        assert.equal(synchronousChildUncertain, false,
+          "retain perturbed fixture without further SQL when child completion is uncertain");
+        if (mode === "denied-access") baselineAdmin("REVOKE UPDATE ON public.setfarm_schema_migrations FROM setfarm_runtime");
+        if (mode === "denied-column") baselineAdmin("REVOKE UPDATE(state) ON public.setfarm_schema_migrations FROM setfarm_runtime");
+        if (mode === "denied-membership") admin("REVOKE setfarm_owner FROM setfarm_runtime");
+        if (mode === "denied-owner") baselineAdmin("DROP TABLE public.task6a_wrong_owner");
+        if (mode === "denied-base") baselineAdmin("ALTER TABLE public.runs ALTER COLUMN status SET DEFAULT 'running'::text");
+        if (mode === "phase-checksum") baselineAdmin(`UPDATE public.setfarm_schema_migrations
+          SET checksum='${baselineJournal[30]!.checksum}' WHERE version=31`);
+        if (mode === "phase-journal32" || mode === "phase-journal33") baselineAdmin(
+          `DELETE FROM public.setfarm_schema_migrations WHERE version=${mode === "phase-journal32" ? 32 : 33}`);
+        if (mode === "phase-table") baselineAdmin("DROP TABLE public.internal_production_owner_reservations_v1");
+        if (mode === "phase-index") baselineAdmin("DROP INDEX public.ip_op_sba_v1_plan_manifest_idx; DROP TABLE public.task6a_phase_anchor");
+        if (mode === "phase-function") baselineAdmin("DROP FUNCTION public.ip_op_reject_immutable_v1()");
+        if (mode === "phase-type") baselineAdmin("DROP TYPE public.internal_production_owner_reservations_v1");
+        if (mode === "phase-trigger") baselineAdmin(`DROP TRIGGER ip_op_msc_v1_update_trg ON public.task6a_phase_anchor;
+          DROP FUNCTION public.task6a_phase_triggerfn(); DROP TABLE public.task6a_phase_anchor`);
+      }
+      assert.equal(baselineSnapshot(), baseline, "fixture negative control must restore exact observed baseline");
+    }
+  }
 
   function exactHome(): void {
     const stat = fs.lstatSync(home, { bigint: true });
@@ -331,6 +528,39 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     const result = sqlAs("_postgres", "task6a_admin", sql);
     assert.equal(result.status, 0, result.stderr);
     return result.stdout.trim();
+  }
+  function baselineAdmin(sql: string): string {
+    exactServer();
+    const result = asUser("_postgres", path.join(pgBin, "psql"), ["-X", "-w", "-A", "-t",
+      "-v", "ON_ERROR_STOP=1", "-h", socket, "-p", String(port),
+      "-U", "task6a_admin", "-d", "setfarm", "-c", sql]);
+    assert.equal(result.status, 0, result.stderr); return result.stdout.trim();
+  }
+  function baselineSnapshot(): string {
+    return baselineAdmin(`SELECT jsonb_build_object(
+      'journal',(SELECT jsonb_agg(to_jsonb(j) ORDER BY version) FROM public.setfarm_schema_migrations j),
+      'relations',(SELECT jsonb_agg(jsonb_build_array(c.relname,pg_catalog.pg_get_userbyid(c.relowner),c.relacl::text)
+        ORDER BY c.relname) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'),
+      'columnACL',(SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,a.attacl::text)
+        ORDER BY c.relname,a.attname) FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND a.attnum>0 AND NOT a.attisdropped),
+      'defaults',(SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,pg_catalog.pg_get_expr(d.adbin,d.adrelid))
+        ORDER BY c.relname,a.attname) FROM pg_catalog.pg_attrdef d JOIN pg_catalog.pg_class c ON c.oid=d.adrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_attribute a
+        ON a.attrelid=d.adrelid AND a.attnum=d.adnum WHERE n.nspname='public'),
+      'functions',(SELECT jsonb_agg(jsonb_build_array(p.proname,pg_catalog.pg_get_function_identity_arguments(p.oid),
+        pg_catalog.pg_get_userbyid(p.proowner),p.proacl::text,p.prosrc,p.probin,p.proconfig::text)
+        ORDER BY p.proname,pg_catalog.pg_get_function_identity_arguments(p.oid)) FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'),
+      'types',(SELECT jsonb_agg(jsonb_build_array(y.typname,pg_catalog.pg_get_userbyid(y.typowner),y.typtype,y.typacl::text,
+        (SELECT jsonb_agg(e.enumlabel ORDER BY e.enumsortorder) FROM pg_catalog.pg_enum e WHERE e.enumtypid=y.oid))
+        ORDER BY y.typname) FROM pg_catalog.pg_type y JOIN pg_catalog.pg_namespace n ON n.oid=y.typnamespace
+        WHERE n.nspname='public'),
+      'triggers',(SELECT jsonb_agg(jsonb_build_array(n.nspname,c.relname,g.tgname,g.tgenabled,pg_catalog.pg_get_triggerdef(g.oid))
+        ORDER BY n.nspname,c.relname,g.tgname) FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class c ON c.oid=g.tgrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE NOT g.tgisinternal),
+      'membership',(SELECT jsonb_agg(jsonb_build_array(r.rolname,pg_catalog.pg_has_role('setfarm_runtime',r.oid,'MEMBER'))
+        ORDER BY r.rolname) FROM pg_catalog.pg_roles r))::text`);
   }
   function processIdentity(pid: number): string {
     return checked("/bin/ps", ["-p", String(pid), "-o", "uid=", "-o", "lstart=", "-o", "command="]);
@@ -370,11 +600,12 @@ test("private protected PG denies old identity and scoped admin impersonation ac
     server = undefined; uncertainLifecycle = false;
   }
   function fileDenials(): void {
+    const protectedFiles = [config, hba, ident, clientModule, ...closedMembers.keys()];
     for (const user of ["nobody", "_www"]) {
-      for (const target of [config, hba, ident, clientModule, path.join(home, "replacement"),
+      for (const target of [...protectedFiles, ...(closedProbeEnabled ? [path.join(closedGraph, "replacement")] : []), path.join(home, "replacement"),
         path.join(socket, "replacement"), path.join(data, "replacement")]) {
         const result = asUser(user, fixtureNode, ["-e", WRITE_PROBE, target,
-          [config, hba, ident, clientModule].includes(target) ? "a" : "wx"]);
+          protectedFiles.includes(target) ? "a" : "wx"]);
         assert.equal(result.status, 42, `${user} must not modify ${target}: ${result.stderr}`);
       }
     }
@@ -448,7 +679,7 @@ test("private protected PG denies old identity and scoped admin impersonation ac
       }
     }
   }
-  function boundary(): void {
+  function boundary(phase: "before-restart" | "after-restart"): void {
     exactServer();
     const dataStat = fs.lstatSync(data, { bigint: true });
     assert.ok(dataAnchor && dataStat.isDirectory() && !dataStat.isSymbolicLink());
@@ -517,7 +748,18 @@ test("private protected PG denies old identity and scoped admin impersonation ac
         port, database: "postgres", user: "task6a_runtime", osUid: clientUid }),
       JSON.stringify({ serverUid, clientGid, otherUid: oldUid, ...physicalSnapshots })], 30_000);
     assert.equal(client.status, 0, `actual source connector failed: ${client.stderr}`);
-    assert.equal(client.stdout.trim(), "peer transport and single backend lifecycle verified");
+    const output=client.stdout.trim().split("\n");assert.equal(output.length,2);
+    assert.equal(output[1], "peer transport and single backend lifecycle verified");
+    const witness=JSON.parse(output[0]);
+    assert.deepEqual(Object.keys(witness).sort(),["after","before","event","nativeSocketCreations","projectionCanaryRejected"]);
+    assert.equal(witness.event,"reserved-backend-lifetime");assert.equal(witness.projectionCanaryRejected,true);
+    assert.equal(witness.nativeSocketCreations,1);assert.deepEqual(witness.after,witness.before);
+    assert.deepEqual(Object.keys(witness.before).sort(),["backendStart","database","pid","role","session","socket"]);
+    assert.ok(Number.isSafeInteger(witness.before.pid)&&witness.before.pid>1);
+    assert.equal(typeof witness.before.backendStart,"string");assert.ok(witness.before.backendStart.length>0);
+    assert.equal(witness.before.session,"task6a_runtime");assert.equal(witness.before.role,"task6a_runtime");
+    assert.equal(witness.before.database,"postgres");assert.equal(witness.before.socket,true);
+    t.diagnostic(JSON.stringify({phase,...witness}));
     assert.equal(admin("SELECT count(*) FROM task6a_probe.effects WHERE note='gated-queued-after-loss'"), "0",
       "queued effects must not execute on a replacement backend");
     fileDenials();
@@ -693,6 +935,34 @@ test("private protected PG denies old identity and scoped admin impersonation ac
       bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent" });
     assert.equal(bundle.outputFiles.length, 1);
     fs.writeFileSync(clientModule, bundle.outputFiles[0].contents, { mode: 0o444 });
+    if (closedProbeEnabled) {
+      const emission = await emitTask6aColdNativeV1(closedGraph);
+      assert.equal(fs.existsSync(closedGraph), false); fs.mkdirSync(closedGraph, { mode: 0o700 });
+      let publishedBytes = 0;
+      for (const output of emission.outputs) {
+        assert.equal(path.dirname(output.path), closedGraph, "fixed compiler outputs must be flat exact graph members");
+        assert.match(path.basename(output.path), /^[A-Za-z0-9_-]+\.js$/);
+        assert.equal(closedMembers.has(output.path), false);
+        const bytes = Buffer.from(output.contents); publishedBytes += bytes.length;
+        assert.ok(publishedBytes <= 64 * 1024 * 1024);
+        assert.equal(hashNativeBytesV1(bytes), output.sha256, "recheck mutable byte snapshots BEFORE publishing");
+        fs.writeFileSync(output.path, bytes, { mode: 0o444, flag: "wx" });
+        assert.equal(hashNativeBytesV1(readNativeRegularV1(output.path).bytes), output.sha256);
+        closedMembers.set(output.path, { hash: output.sha256 });
+      }
+      const packageFile = path.join(closedGraph, "package.json"), packageBytes = Buffer.from('{"type":"module"}\n');
+      fs.writeFileSync(packageFile, packageBytes, { mode: 0o444, flag: "wx" });
+      closedMembers.set(packageFile, { hash: hashNativeBytesV1(packageBytes) });
+      closedModule = emission.entryPath; closedCanonicalURL = pathToFileURL(emission.canonicalPath).href;
+      assert.ok(closedMembers.has(closedModule) && closedMembers.has(emission.canonicalPath));
+      const setupBundle = esbuild.buildSync({ entryPoints: [fileURLToPath(new URL(
+        "./task6a-restricted-baseline-fixture-entry-v1.ts", import.meta.url))],
+        bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent" });
+      assert.equal(setupBundle.outputFiles.length, 1);
+      fs.writeFileSync(baselineModule, setupBundle.outputFiles[0].contents, { mode: 0o444 });
+      fs.writeFileSync(diagnosticSource, "{}\n", { mode: 0o600, flag: "wx" });
+      diagnosticAnchor = fs.lstatSync(diagnosticSource, { bigint: true });
+    }
     if (heldPg31Enabled) {
       const heldBundle = esbuild.buildSync({ entryPoints: [fileURLToPath(new URL(
         "./task6a-held-pg31-fixture-entry-v2.ts", import.meta.url))],
@@ -700,16 +970,53 @@ test("private protected PG denies old identity and scoped admin impersonation ac
       assert.equal(heldBundle.outputFiles.length, 1);
       fs.writeFileSync(heldModule, heldBundle.outputFiles[0].contents, { mode: 0o444 });
     }
-    fs.writeFileSync(hba, "local all task6a_admin peer map=task6a_fixture\nlocal all task6a_runtime peer map=task6a_fixture\nlocal all all reject\nlocal replication all reject\nhost all all 0.0.0.0/0 reject\nhost all all ::0/0 reject\nhost replication all 0.0.0.0/0 reject\nhost replication all ::0/0 reject\n", { mode: 0o444 });
-    fs.writeFileSync(ident, "task6a_fixture _postgres task6a_admin\ntask6a_fixture _www task6a_runtime\n", { mode: 0o444 });
+    fs.writeFileSync(hba, "local all task6a_admin peer map=task6a_fixture\nlocal all task6a_runtime peer map=task6a_fixture\n" +
+      (closedProbeEnabled ? "local setfarm setfarm_runtime peer map=task6a_fixture\n" : "") +
+      "local all all reject\nlocal replication all reject\nhost all all 0.0.0.0/0 reject\nhost all all ::0/0 reject\nhost replication all 0.0.0.0/0 reject\nhost replication all ::0/0 reject\n", { mode: 0o444 });
+    fs.writeFileSync(ident, "task6a_fixture _postgres task6a_admin\ntask6a_fixture _www task6a_runtime\n" +
+      (closedProbeEnabled ? "task6a_fixture _www setfarm_runtime\n" : ""), { mode: 0o444 });
     fs.writeFileSync(config, `data_directory='${data}'\nhba_file='${hba}'\nident_file='${ident}'\nlisten_addresses=''\nport=${port}\nunix_socket_directories='${socket}'\nunix_socket_permissions=0777\nunix_socket_group=''\nshared_buffers='16MB'\nmax_connections=10\n`, { mode: 0o444 });
     assertProtectedClusterPolicyV1({ home, port, config: fs.readFileSync(config, "utf8"),
-      hba: fs.readFileSync(hba, "utf8"), ident: fs.readFileSync(ident, "utf8") });
+      hba: fs.readFileSync(hba, "utf8"), ident: fs.readFileSync(ident, "utf8"),
+      ...(closedProbeEnabled ? { closedProbe: true as const } : {}) });
     rootCommand("/usr/sbin/chown", ["_postgres:_postgres", data]);
     rootCommand("/usr/sbin/chown", ["_postgres:_www", socket]);
     rootCommand("/bin/chmod", ["0710", socket]);
     rootCommand("/usr/sbin/chown", ["root:wheel", config, hba, ident, clientModule]);
     rootCommand("/bin/chmod", ["0444", config, hba, ident, clientModule]);
+    if (closedProbeEnabled) {
+      const files = [...closedMembers.keys(), baselineModule];
+      for (let i = 0; i < files.length; i += 64) {
+        rootCommand("/usr/sbin/chown", ["root:wheel", ...files.slice(i, i + 64)]);
+        rootCommand("/bin/chmod", ["0444", ...files.slice(i, i + 64)]);
+      }
+      rootCommand("/usr/sbin/chown", ["root:wheel", closedGraph]); rootCommand("/bin/chmod", ["0555", closedGraph]);
+      for (const [file, expected] of closedMembers) {
+        const captured = readNativeRegularV1(file); assert.equal(hashNativeBytesV1(captured.bytes), expected.hash);
+        expected.identity = captured.identity;
+      }
+      closedGraphIdentity = fs.lstatSync(closedGraph, { bigint: true }); exactClosedGraph();
+      closedGraphReady = true;
+      t.diagnostic(JSON.stringify({ event: "sealed-cold-native-graph", authority: "diagnostic-only", root: closedGraph,
+        entryURL: pathToFileURL(closedModule!).href, canonicalURL: closedCanonicalURL,
+        members: [...closedMembers].map(([file, value]) => ({ file, hash: value.hash,
+          physical: Object.fromEntries(closedFields.map(field => [field, String(value.identity![field])])) })) }));
+      for (const target of ["/", "/Library", "/Library/Application Support"]) {
+        const stat = fs.lstatSync(target, { bigint: true });
+        assert.ok(stat.isDirectory() && !stat.isSymbolicLink());
+        assert.equal(stat.uid, 0n); assert.equal(stat.mode & 0o7777n, 0o755n);
+      }
+      descriptorHome = checked("/usr/bin/sudo", ["-n", "/usr/bin/mktemp", "-d",
+        "/Library/Application Support/setfarm-task6a-descriptor.XXXXXXXX"]);
+      descriptorAnchor = fs.lstatSync(descriptorHome, { bigint: true });
+      assert.equal(path.dirname(descriptorHome), "/Library/Application Support");
+      assert.match(path.basename(descriptorHome), /^setfarm-task6a-descriptor\.[A-Za-z0-9]{8}$/);
+      assert.ok(descriptorAnchor.isDirectory() && !descriptorAnchor.isSymbolicLink());
+      assert.equal(descriptorAnchor.uid, 0n); assert.equal(descriptorAnchor.mode & 0o7777n, 0o700n);
+      checked("/usr/bin/sudo", ["-n", "/bin/chmod", "0755", descriptorHome]);
+      descriptorReady = true; exactDescriptor();
+      t.diagnostic(`private diagnostic descriptor ${descriptorHome}; ${descriptorAnchor.dev}/${descriptorAnchor.ino}`);
+    }
     if (heldPg31Enabled) {
       rootCommand("/usr/sbin/chown", ["root:wheel", heldModule]);
       rootCommand("/bin/chmod", ["0444", heldModule]);
@@ -760,7 +1067,22 @@ GRANT USAGE ON SCHEMA task6a_probe TO task6a_runtime;
 GRANT SELECT,INSERT ON task6a_probe.effects TO task6a_runtime;
 GRANT USAGE ON SEQUENCE task6a_probe.effects_id_seq TO task6a_runtime;`);
     if(native)admin("CREATE FUNCTION task6a_probe.native_add(a int,b int) RETURNS int LANGUAGE plpgsql AS 'BEGIN RETURN a+b; END'; GRANT EXECUTE ON FUNCTION task6a_probe.native_add(int,int) TO task6a_runtime;");
-    boundary();await nativeEvidence(); await physicalRevocation(); stop(); start(); boundary();await nativeEvidence(); await physicalRevocation();
+    if (closedProbeEnabled) {
+      admin("CREATE ROLE setfarm_runtime LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS");
+      admin("CREATE ROLE setfarm_owner NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS NOREPLICATION");
+      admin("CREATE DATABASE setfarm OWNER setfarm_owner");
+      const statements = extractTask6aOrdinaryBaseStatementsV2(fs.readFileSync(new URL("../../src/db-pg.ts", import.meta.url), "utf8"));
+      const setup = asUser("_postgres", fixtureNode, ["--input-type=module", "-e",
+        `const {prepareTask6aPrivateRestrictedBaselineFixtureV1}=await import(process.argv[1]);
+         await prepareTask6aPrivateRestrictedBaselineFixtureV1(JSON.parse(process.argv[2]),JSON.parse(process.argv[3]));
+         console.log('restricted baseline31/base52 prepared; guarded32 pending');`,
+        new URL(`file://${baselineModule}`).href, JSON.stringify({ schema: "setfarm.postgres-socket-transport.v1",
+          socketDirectory: socket, port, database: "setfarm", user: "task6a_admin", osUid: serverUid }), JSON.stringify(statements)], 120000);
+      assert.equal(setup.status, 0, setup.stderr); assert.equal(setup.stderr, "");
+      assert.equal(setup.stdout.trim(), "restricted baseline31/base52 prepared; guarded32 pending");
+      t.diagnostic(setup.stdout.trim());
+    }
+    boundary("before-restart"); closedProbeEvidence("before-restart"); await nativeEvidence(); await physicalRevocation(); stop(); start(); boundary("after-restart"); closedProbeEvidence("after-restart"); await nativeEvidence(); await physicalRevocation();
     await heldPg31Evidence(); stop();
   } catch (error) {
     failure = error; throw error;
@@ -773,9 +1095,30 @@ GRANT USAGE ON SEQUENCE task6a_probe.effects_id_seq TO task6a_runtime;`);
       assert.equal(observerModeUncertain, false, `observer mode restoration uncertain; retain ${home}`);
       assert.equal(nativeChildUncertain,false,`native child completion uncertain; retain ${home}`);
       assert.equal(heldChildrenPossiblyRunning, 0, `held PG31 child completion uncertain; retain ${home}`);
+      if (closedProbeEnabled) {
+        assert.equal(closedGraphReady, true, "unfinished graph preparation must retain the exact fixture");
+        exactClosedGraph();
+      }
       if (server) stop();
+      if (descriptorHome) {
+        exactDescriptor(); const members = fs.readdirSync(descriptorHome);
+        // Setup may fail before first install. Only this exact newly allocated
+        // empty directory or its one qualified member is owned cleanup.
+        assert.ok(members.length === 0 || members.length === 1 && members[0] === "transport.json");
+        if (members.length) {
+          const target = path.join(descriptorHome, "transport.json"), stat = fs.lstatSync(target, { bigint: true });
+          assert.ok(stat.isFile() && !stat.isSymbolicLink()); assert.equal(stat.uid, 0n);
+          assert.equal(stat.dev, descriptorAnchor!.dev); assert.equal(stat.nlink, 1n); assert.equal(stat.mode & 0o7777n, 0o444n);
+          exactDescriptor(); checked("/usr/bin/sudo", ["-n", "/bin/rm", target]);
+        }
+        exactDescriptor(); assert.deepEqual(fs.readdirSync(descriptorHome), []);
+        checked("/usr/bin/sudo", ["-n", "/bin/rmdir", descriptorHome]);
+        assert.equal(fs.existsSync(descriptorHome), false);
+        t.diagnostic("verified exact private diagnostic descriptor removed; fixed Setfarm namespace untouched");
+      }
       exactHome();
       if (protectedRoot) {
+        exactClosedGraph();
         assert.equal(asUser("_postgres", "/bin/test", ["-e", pidFile]).status, 1);
         assert.equal(asUser("_postgres", "/bin/test", ["-e", socketFile]).status, 1);
         // System-owned executables only under root. No user-writable Node or

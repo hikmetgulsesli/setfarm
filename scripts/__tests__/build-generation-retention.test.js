@@ -72,13 +72,14 @@ function fixturePinnedInputSet(root, sourceSha) {
   return { ...body, buildInputSetHash: hashCanonicalFixture(body) };
 }
 
-function writeFinalizedRuntimeDist(root) {
+function writeFinalizedRuntimeDist(root, rejectEvaluation = false) {
   const sourceSha = git(root, ["rev-parse", "HEAD^{commit}"]);
   const { sourceTreeHash, entries, buildInputSetHash } = fixturePinnedInputSet(root, sourceSha);
-  const serviceBytes = Buffer.from("export const fixtureRuntime = true;\n", "utf8");
-  const spawnerBytes = Buffer.from("export const fixtureSpawner = true;\n", "utf8");
-  const dashboardBytes = Buffer.from("export const fixtureDashboard = true;\n", "utf8");
-  const cliBytes = Buffer.from("export const fixtureCli = true;\n", "utf8");
+  const guard = rejectEvaluation ? "throw Error('FORBIDDEN_DIST_EVALUATION');\n" : "";
+  const serviceBytes = Buffer.from(guard + "export const fixtureRuntime = true;\n", "utf8");
+  const spawnerBytes = Buffer.from(guard + "export const fixtureSpawner = true;\n", "utf8");
+  const dashboardBytes = Buffer.from(guard + "export const fixtureDashboard = true;\n", "utf8");
+  const cliBytes = Buffer.from(guard + "export const fixtureCli = true;\n", "utf8");
   const outputEntries = [
     ["dist/cli/cli.js", 0o755, cliBytes],
     ["dist/server/daemon.js", 0o644, dashboardBytes],
@@ -271,6 +272,28 @@ function runModule(root, expression) {
     encoding: "utf8",
     env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
   });
+}
+
+// New own-generation holder fixtures remain available for receipt inspection.
+// None follows the real selected installation or touches native/launchd ports.
+function heldCurrentFixture(body, instrument = "") {
+  const root = realpathSync(createFixture());
+  git(root, ["config", "remote.origin.url", "https://github.com/hikmetgulsesli/setfarm.git"]);
+  const expected = {
+    sha: git(root, ["rev-parse", "HEAD"]),
+    treeHash: git(root, ["rev-parse", "HEAD^{tree}"]),
+    buildHash: writeFinalizedRuntimeDist(root, true),
+  };
+  console.log(JSON.stringify({ kind: "owned-held-current-build-fixture", root }));
+  const result = runModule(root, `import assert from 'node:assert/strict';import fs from 'node:fs';
+    import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
+    const root=${JSON.stringify(root)},expected=${JSON.stringify(expected)};
+    ${instrument}
+    syncBuiltinESMExports();const module=await import('./scripts/build-generation-retention.mjs');
+    assert.equal(typeof module.holdCurrentFinalizedSetfarmSourceBuildV1,'function','missing own-generation holder');
+    const hold=module.holdCurrentFinalizedSetfarmSourceBuildV1;
+    ${body}`);
+  assert.equal(result.status, 0, result.stderr + result.stdout);
 }
 
 function selectedDeploymentFixture(body) {
@@ -1451,6 +1474,7 @@ describe("OA18 build-generation retention authority", () => {
       "canonicalJsonV1",
       "classifyBuildGenerationRetentionPublisherRecordV1",
       "hashCanonicalJsonV1",
+      "holdCurrentFinalizedSetfarmSourceBuildV1",
       "holdSelectedSetfarmDeploymentBuildV1",
       "inspectBuildGenerationRetentionV1",
       "inspectBuildGenerationRotationLedgerV1",
@@ -1484,6 +1508,83 @@ describe("OA18 build-generation retention authority", () => {
       assert.equal(existsSync(join(root, ".setfarm")), false);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
+
+  it("held current finalized proof retains own originals through await without selected-CLI or mutation ports", () => {
+    heldCurrentFixture(`
+      tracking=true;const held=hold();
+      assert.deepEqual(Object.keys(held).sort(),['close','observation','recheck']);assert.ok(Object.isFrozen(held));
+      assert.ok(Object.isFrozen(held.observation));assert.ok(Object.isFrozen(held.observation.checkoutSource));
+      assert.ok(Object.isFrozen(held.observation.buildSource));
+      assert.deepEqual(held.observation,{checkoutSource:{branch:'main',clean:true,sha:expected.sha,
+        treeHash:expected.treeHash,originMainSha:expected.sha},buildSource:expected});
+      assert.ok(pending.size>10);const pins=[...pending];
+      await Promise.resolve();for(const fd of pins)assert.doesNotThrow(()=>fs.fstatSync(fd));held.recheck();
+      assert.deepEqual([...pending],pins);held.close();held.close();assert.equal(pending.size,0);
+      assert.throws(()=>held.recheck(),e=>e.code==='BUILD_GENERATION_AUTHORITY_CORRUPTION');
+      assert.equal(forbidden,0);`, `
+      process.chdir('/');process.env.SETFARM_REPO_DIR='/foreign';process.env.SETFARM_DIR='/foreign';
+      const pending=new Set(),open=fs.openSync,close=fs.closeSync,spawn=cp.spawnSync;
+      let tracking=false,forbidden=0;
+      fs.openSync=(...args)=>{const fd=open(...args);if(tracking)pending.add(fd);return fd};
+      fs.closeSync=fd=>{close(fd);pending.delete(fd)};
+      for(const name of ['writeFileSync','mkdirSync','renameSync','unlinkSync','rmdirSync','chmodSync',
+        'fchmodSync','linkSync','fsyncSync','readlinkSync'])fs[name]=()=>{forbidden++;throw Error('FORBIDDEN_PORT')};
+      cp.spawnSync=(command,...args)=>{if(command!=='/usr/bin/git'){forbidden++;throw Error('NON_GIT_PROCESS')}return spawn(command,...args)};`);
+  });
+
+  it("held current finalized proof rejects supplied arguments without ports or caller traps and preserves valid acquisition", () => {
+    heldCurrentFixture(`
+      const hostile=new Proxy({},{get(){traps++;throw Error('caller trap')}});
+      armed=true;
+      for(const arg of [undefined,null,root,{},hostile])
+        assert.throws(()=>hold(arg),e=>e.code==='BUILD_GENERATION_AUTHORITY_CORRUPTION');
+      assert.throws(()=>hold(undefined,hostile),e=>e.code==='BUILD_GENERATION_AUTHORITY_CORRUPTION');
+      assert.equal(ports,0);assert.equal(traps,0);armed=false;
+      const held=hold();assert.equal(held.observation.buildSource.buildHash,expected.buildHash);held.close();`, `
+      let armed=false,ports=0,traps=0;
+      for(const name of ['lstatSync','openSync','readFileSync','realpathSync','readlinkSync']){
+        const original=fs[name];fs[name]=(...args)=>{if(armed){ports++;throw Error('PREVALIDATION_PORT')}return original(...args)};
+      }
+      const spawn=cp.spawnSync;cp.spawnSync=(...args)=>{if(armed){ports++;throw Error('PREVALIDATION_PROCESS')}return spawn(...args)};`);
+  });
+
+  for (const fault of ['source-replacement','output-replacement','source-aba','output-aba']) {
+    it(`held current finalized proof permanently refuses ${fault} after await without automatic close`, () => {
+      heldCurrentFixture(`
+        tracking=true;const held=hold(),pins=[...pending];await Promise.resolve();
+        const file=root+${JSON.stringify(fault.startsWith('source') ? '/src/service.ts' : '/dist/service.js')};
+        const bytes=fs.readFileSync(file);
+        if(${JSON.stringify(fault)}.endsWith('replacement')){
+          fs.renameSync(file,root+'/.git/held-original');fs.writeFileSync(file,bytes,{mode:0o644});
+        }else{const changed=Buffer.from(bytes);changed[0]^=1;fs.writeFileSync(file,changed);fs.writeFileSync(file,bytes)}
+        assert.throws(()=>held.recheck(),e=>e.code==='BUILD_GENERATION_AUTHORITY_CORRUPTION');
+        for(const fd of pins)assert.doesNotThrow(()=>fs.fstatSync(fd));assert.deepEqual([...pending],pins);
+        assert.throws(()=>hold(),e=>e.code==='BUILD_GENERATION_AUTHORITY_CORRUPTION');
+        assert.deepEqual([...pending],pins);held.close();held.close();assert.equal(pending.size,0);`, `
+        const pending=new Set(),open=fs.openSync,close=fs.closeSync;let tracking=false;
+        fs.openSync=(...args)=>{const fd=open(...args);if(tracking)pending.add(fd);return fd};
+        fs.closeSync=fd=>{close(fd);pending.delete(fd)};`);
+    });
+  }
+
+  for (const kind of ['file','directory']) {
+    it(`held current finalized proof consumes ${kind} close loss once without closing a reused descriptor`, () => {
+      heldCurrentFixture(`
+        const held=hold();armed=true;
+        assert.throws(()=>held.close(),e=>e.code==='BUILD_GENERATION_AUTHORITY_CORRUPTION');held.close();
+        assert.throws(()=>held.recheck(),e=>e.code==='BUILD_GENERATION_AUTHORITY_CORRUPTION');
+        assert.throws(()=>hold(),e=>e.code==='BUILD_GENERATION_AUTHORITY_CORRUPTION');
+        assert.equal(attempts,1);assert.equal(reused,chosen);
+        assert.equal(fs.fstatSync(reused).ino,fs.statSync(root+'/tracked.txt').ino);`, `
+        const close=fs.closeSync;let armed=false,chosen=null,reused=null,attempts=0;
+        fs.closeSync=fd=>{
+          if(armed&&chosen===null&&fs.fstatSync(fd).${kind === 'file' ? 'isFile' : 'isDirectory'}()){
+            chosen=fd;attempts++;close(fd);reused=fs.openSync(root+'/tracked.txt','r');throw Error('PRIVATE_CLOSE_LOSS');
+          }
+          if(fd===chosen)attempts++;return close(fd);
+        };`);
+    });
+  }
 
   for (const fault of ["dirty-source", "stale-build", "output-bytes", "wrong-origin", "terminal-mode", "extra-output", "output-symlink", "output-hardlink", "dist-symlink"]) {
     it(`current finalized source observer refuses ${fault} without creating retention state`, () => {

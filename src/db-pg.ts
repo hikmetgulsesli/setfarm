@@ -8,6 +8,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { types } from "node:util";
 import { runtimeConfig } from "./runtime-config.js";
+import { observeDeploymentCutoverIntentV1 } from "./internal-production/baseline-deployment-cutover-v1.js";
+import { copyDashboardCoreRequestV2, classifyDashboardCoreResponseFailureV2 } from "./db/dashboard-core-response-v2.js";
 import { observeLegacyFindingPublicationInventoryV1, requireFindingPublicationV1, type FindingPublicationParentRowV1, type FindingPublicationChildRowV1 } from "./findings/finding-publication-v1.js";
 import { LEGACY_FINDING_PUBLICATION_MAX_SETS_V1, LEGACY_FINDING_PUBLICATION_MAX_CHILDREN_V1 } from "./findings/legacy-finding-publication-inventory-v1.js";
 import {
@@ -34,6 +36,7 @@ import {
 } from "./db/bootstrap-main-claim-handoff-v1-migration.js";
 import { computeContractSpineMigrationChecksumV1 } from "./db/contract-spine-migration-checksum.js";
 import { verifyOrdinaryBaseSchemaCatalogReadOnlyV1 } from "./db/base-schema-readonly-verifier-v1.js";
+import { verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1 } from "./db/public-object-owner-readonly-verifier-v1.js";
 import { verifyContractSpineCurrentHeadJournalReadOnlyV1 } from "./db/contract-spine-readonly-verifier-v1.js";
 import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "./db/contract-spine-migration-digests.generated.js";
 import { OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V3_STATEMENTS } from "./db/operational-failure-cause-authority-v3-migration.js";
@@ -149,6 +152,129 @@ let _task6aRestrictedConnectionEpoch = 0;
 let _task6aRestrictedClosing = false;
 let _isolatedTestPgUrl: string | null = null;
 
+// Restriction only: this never grants a reader or service startup. Previously
+// returned ordinary handles require independent process drain, not fake revocation.
+let _dashboardCutoverRefusedV2 = false;
+let _dashboardCutoverObservationActiveV2 = false;
+let _dashboardCutoverOrdinaryUsedV2 = false;
+
+// This is cold process admission, not writer-drain or listener-start authority.
+// Original import/preparation work and an occupied read survive permanent refusal.
+type DashboardReaderModuleV2 = typeof import("./db/dashboard-core-readonly-reader-v2.js");
+const _dashboardReaderV2: {
+  phase: "UNPREPARED" | "PREPARING" | "READY" | "REFUSED";
+  capturedUrl: string | null;
+  importOriginal: Promise<DashboardReaderModuleV2> | null;
+  prepareOriginal: Promise<void> | null;
+  readOriginal: Promise<unknown> | null;
+  owner: ReturnType<DashboardReaderModuleV2["createDashboardCoreReadonlyReaderV2"]> | null;
+  refuseConsumed: boolean;
+  reading: boolean;
+} = { phase: "UNPREPARED", capturedUrl: null, importOriginal: null,
+  prepareOriginal: null, readOriginal: null, owner: null, refuseConsumed: false, reading: false };
+const DASHBOARD_READER_REFUSED_V2 = "DASHBOARD_CUTOVER_CORE_READER_REFUSED";
+const DASHBOARD_READER_DUPLICATE_V2 = "DASHBOARD_CUTOVER_CORE_READER_DUPLICATE_PREPARATION_REFUSED";
+
+function failDashboardReaderV2(code = DASHBOARD_READER_REFUSED_V2): never { throw new Error(code); }
+function revokeDashboardReaderV2(): void {
+  _dashboardReaderV2.phase = "REFUSED";
+  _dashboardCutoverRefusedV2 = true;
+  if (_dashboardReaderV2.owner && !_dashboardReaderV2.refuseConsumed) {
+    _dashboardReaderV2.refuseConsumed = true; // Before lookup/invocation and reentry.
+    try { _dashboardReaderV2.owner.refuse(); } catch { /* Refusal cannot restore authority. */ }
+  }
+}
+function requireDashboardReaderPhaseV2(phase: "PREPARING" | "READY"): void {
+  if (_dashboardReaderV2.phase !== phase) { revokeDashboardReaderV2(); failDashboardReaderV2(); }
+}
+
+export async function prepareDashboardCutoverCoreReaderV2(): Promise<void> {
+  if (_dashboardReaderV2.phase === "REFUSED") failDashboardReaderV2();
+  if (_dashboardReaderV2.phase === "PREPARING") {
+    revokeDashboardReaderV2(); failDashboardReaderV2(DASHBOARD_READER_DUPLICATE_V2);
+  }
+  if (_dashboardReaderV2.phase === "READY") failDashboardReaderV2(DASHBOARD_READER_DUPLICATE_V2);
+  const warm = _sql !== null || _schemaReady || _schemaReadyPromise !== null || _isMigrating
+    || _verificationOnlyMode || _isolatedTestPgUrl !== null || _task6aNoDefaultMigration
+    || _task6aRestrictedClosing || _task6aRestrictedConnectionEpoch !== 0
+    || _dashboardCutoverOrdinaryUsedV2 || _dashboardCutoverRefusedV2 || _dashboardCutoverObservationActiveV2;
+  _dashboardReaderV2.phase = "PREPARING";
+  _dashboardCutoverRefusedV2 = true; // Permanent ordinary fence before all ports.
+  try {
+    if (warm || arguments.length !== 0) failDashboardReaderV2();
+    if (observeDeploymentCutoverIntentV1().state !== "open") failDashboardReaderV2();
+    requireDashboardReaderPhaseV2("PREPARING");
+    if (types.isProxy(runtimeConfig)) failDashboardReaderV2();
+    const configured = Object.getOwnPropertyDescriptor(runtimeConfig, "setfarmPgUrl");
+    const raw = process.env.SETFARM_PG_URL;
+    if (!configured || !Object.hasOwn(configured, "value") || typeof configured.value !== "string"
+      || (raw !== undefined && (typeof raw !== "string" || !raw || raw !== configured.value))
+      || (raw === undefined && configured.value !== "postgresql://postgres@localhost:5432/setfarm")) failDashboardReaderV2();
+    _dashboardReaderV2.capturedUrl = configured.value;
+    requireDashboardReaderPhaseV2("PREPARING");
+    const originalImport = import("./db/dashboard-core-readonly-reader-v2.js");
+    _dashboardReaderV2.importOriginal = originalImport;
+    const module = await originalImport;
+    requireDashboardReaderPhaseV2("PREPARING");
+    // Register even a late returned owner before detecting constructor revocation.
+    _dashboardReaderV2.owner = module.createDashboardCoreReadonlyReaderV2(_dashboardReaderV2.capturedUrl!);
+    requireDashboardReaderPhaseV2("PREPARING");
+    const originalPreparation = _dashboardReaderV2.owner.prepare();
+    _dashboardReaderV2.prepareOriginal = originalPreparation;
+    if (!types.isPromise(originalPreparation) || types.isProxy(originalPreparation)) failDashboardReaderV2();
+    await originalPreparation;
+    requireDashboardReaderPhaseV2("PREPARING");
+    _dashboardReaderV2.phase = "READY";
+  } catch {
+    revokeDashboardReaderV2(); failDashboardReaderV2();
+  }
+}
+
+export async function readDashboardCoreResponseV2(request: unknown): Promise<unknown> {
+  requireDashboardReaderPhaseV2("READY");
+  if (_dashboardReaderV2.reading) failDashboardReaderV2("DASHBOARD_CUTOVER_CORE_READER_BUSY");
+  // Genuine source-branded request refusal occurs before any resource reservation.
+  const copied = copyDashboardCoreRequestV2(arguments.length === 1 ? request : undefined);
+  _dashboardReaderV2.reading = true;
+  try {
+    const originalRead = _dashboardReaderV2.owner!.read(copied);
+    _dashboardReaderV2.readOriginal = originalRead;
+    if (!types.isPromise(originalRead) || types.isProxy(originalRead)) failDashboardReaderV2();
+    const data = await originalRead;
+    requireDashboardReaderPhaseV2("READY");
+    return data;
+  } catch (error) {
+    requireDashboardReaderPhaseV2("READY");
+    if (classifyDashboardCoreResponseFailureV2(error)?.disposition === "operation-refusal") throw error;
+    revokeDashboardReaderV2(); failDashboardReaderV2();
+  } finally {
+    // A burned original remains occupied; cleanup completion is not certified here.
+    if (_dashboardReaderV2.phase === "READY") _dashboardReaderV2.reading = false;
+  }
+}
+
+function assertOrdinaryDashboardDatabaseAccessV2(): void {
+  const refuse = (): never => { throw new Error("DASHBOARD_CUTOVER_ORDINARY_DATABASE_REFUSED"); };
+  if (_dashboardCutoverRefusedV2) refuse();
+  if (_dashboardCutoverObservationActiveV2) {
+    _dashboardCutoverRefusedV2 = true;
+    refuse();
+  }
+  _dashboardCutoverObservationActiveV2 = true;
+  try {
+    if (observeDeploymentCutoverIntentV1().state !== "absent") _dashboardCutoverRefusedV2 = true;
+  } catch {
+    _dashboardCutoverRefusedV2 = true;
+  } finally {
+    _dashboardCutoverObservationActiveV2 = false;
+  }
+  // A swallowed nested failure must not let the original acquisition proceed.
+  if (_dashboardCutoverRefusedV2) refuse();
+  // Survives failed acquisition/configuration, borrowed SQL and pgClose. The
+  // subsequent private-reader profile must not mistake any such process for cold.
+  _dashboardCutoverOrdinaryUsedV2 = true;
+}
+
 const LEGACY_ISOLATED_TEST_DATABASE_V1 = /^setfarm_contract_spine_test_[0-9]+_[a-f0-9]{12}$/;
 const P3_ISOLATED_TEST_DATABASE_V1 = /^setfarm_p3_[a-f0-9]{24}_(?:template|primary|clone_[a-f0-9]{12}|empty_[a-f0-9]{12})$/;
 
@@ -180,6 +306,7 @@ function isExactIsolatedTestDatabaseNameV1(database: string): boolean {
 }
 
 export function pgConfigureIsolatedTestDatabase(rawUrl: string): void {
+  assertOrdinaryDashboardDatabaseAccessV2();
   if (_sql || _schemaReady || _schemaReadyPromise || _isMigrating
     || (_task6aNoDefaultMigration && _task6aRestrictedClosing)) {
     throw new Error("ISOLATED_TEST_DATABASE_ALREADY_CONNECTED");
@@ -243,6 +370,7 @@ type SetfarmSqlV1 = ReturnType<typeof postgres> & Readonly<{
 }>;
 
 function getSql(): SetfarmSqlV1 {
+  assertOrdinaryDashboardDatabaseAccessV2();
   if (!_sql) {
     const url = resolvePgUrl();
     _sql = postgres(url, {
@@ -594,6 +722,7 @@ async function resolveCurrentOwnerProducerManifestSetActivationWithChainInTransa
 }
 
 export async function resolveCurrentInternalProductionOwnerProducerManifestSetActivationInTransactionV1(sql: InternalProductionPgTransactionSql): Promise<InternalProductionOwnerProducerManifestSetActivationCurrentV1 | null> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   return (await resolveCurrentOwnerProducerManifestSetActivationWithChainInTransactionV1(sql))?.current ?? null;
 }
 
@@ -1784,6 +1913,7 @@ export async function lockInternalProductionBaselineCompletionOwnerBootstrapTarg
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{ requestId: string }>,
 ): Promise<Readonly<{ ownerAdmissionHeadVersion: number; ownerAdmissionHeadHash: string; targetOwnerReservationRef: string; targetOwnerReservationHash: string }>> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   exactObjectKeys(input, ["requestId"], "INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_TARGET_LOCK_INPUT_INVALID");
   if (typeof input.requestId !== "string" || input.requestId.length < 1 || input.requestId.length > 200 || /[\u0000-\u001f\u007f]/.test(input.requestId)) throw new Error("INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_TARGET_LOCK_INPUT_INVALID");
   const key = sql as unknown as object;
@@ -1807,6 +1937,7 @@ export async function lockInternalProductionBaselineCompletionOwnerBootstrapRele
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{ requestId: string; targetGuardReceiptRef: string; targetGuardReceiptHash: string; operationRef: string; operationHash: string }>,
 ): Promise<Readonly<{ ownerAdmissionHeadVersion: number; ownerAdmissionHeadHash: string; targetOwnerReservationRef: string; targetOwnerReservationHash: string }>> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   exactObjectKeys(input, ["requestId", "targetGuardReceiptRef", "targetGuardReceiptHash", "operationRef", "operationHash"], "INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_RELEASE_LOCK_INPUT_INVALID");
   if (typeof input.requestId !== "string" || input.requestId.length < 1 || input.requestId.length > 200 || /[\u0000-\u001f\u007f]/.test(input.requestId)) throw new Error("INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_RELEASE_LOCK_INPUT_INVALID");
   if (typeof input.targetGuardReceiptHash !== "string" || !OWNER_ADMISSION_SHA256_V1.test(input.targetGuardReceiptHash) || input.targetGuardReceiptRef !== `setfarm://internal-production/baseline-completion-owner-bootstrap-target-guard-receipt/sha256/${input.targetGuardReceiptHash}` || typeof input.operationHash !== "string" || !OWNER_ADMISSION_SHA256_V1.test(input.operationHash) || input.operationRef !== `setfarm://internal-production/baseline-spawner-bootstrap-restart-operation/sha256/${input.operationHash}`) throw new Error("INTERNAL_PRODUCTION_COMPLETION_BOOTSTRAP_RELEASE_LOCK_INPUT_INVALID");
@@ -3231,6 +3362,7 @@ export async function beginOrAdoptInternalProductionOwnerReservationV1(
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{ producerImplementationId: string; ownerKey: string }>,
 ): Promise<InternalProductionOwnerReservationV1> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   return OWNER_ADMISSION_CONTROLLER_V1.beginOrAdoptInternalProductionOwnerReservationV1(sql, input);
 }
 
@@ -3244,6 +3376,7 @@ export async function bindInternalProductionOwnerReservationV1<
     canonicalOwnerIdentity: InternalProductionCanonicalOwnerIdentityV1<Category>;
   }>,
 ): Promise<InternalProductionBoundOwnerReservationV1<Category>> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   return OWNER_ADMISSION_CONTROLLER_V1.bindInternalProductionOwnerReservationV1(sql, input);
 }
 
@@ -3256,6 +3389,7 @@ export async function closeInternalProductionOwnerReservationV1(
     terminalAuthorityHash: string;
   }>,
 ): Promise<InternalProductionOwnerReservationCloseV1> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   return OWNER_ADMISSION_CONTROLLER_V1.closeInternalProductionOwnerReservationV1(sql, input);
 }
 
@@ -3589,6 +3723,7 @@ export async function lockInternalProductionRecoverySourceBootstrapRunInsertionF
   sql: InternalProductionPgTransactionSql,
   input: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1,
 ): Promise<InternalProductionRecoverySourceBootstrapRunInsertionAuthorityV1> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   let operation: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;
   try {
     operation = createInternalProductionRecoverySourceBootstrapRunOperationAuthorityV1(input);
@@ -3640,6 +3775,7 @@ export async function bindInternalProductionRecoverySourceBootstrapRunInTransact
   runOwnerReservationRef: string;
   runOwnerReservationHash: string;
   }>> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   let operation: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;
   try {
     exactObjectKeys(input, ["recoveryOperationAuthority", "runId", "operationRunBindingHash", "reciprocalRunOperationBindingHash"], "INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_RUN_BINDING_INPUT_INVALID");
@@ -4840,6 +4976,7 @@ export async function classifyInternalProductionRecoverySourceBootstrapRunPersis
     recoveryOperationAuthority: InternalProductionRecoverySourceBootstrapRunOperationAuthorityV1;
   }>,
 ): Promise<InternalProductionRecoverySourceBootstrapRunPersistenceV1> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   const expectedRunId = recoverySourceBootstrapExpectedRunIdV1(input.recoveryOperationAuthority);
   const ownerRows = await sql<RecoverySourceBootstrapOwnerProjectionRowV1[]>`
     SELECT head.head_version::integer AS "headVersion",
@@ -4927,6 +5064,7 @@ export async function assertInternalProductionRecoverySourceBootstrapRunDelivery
     runContext: string | Readonly<Record<string, unknown>>;
   }>,
 ): Promise<void> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   const migrationRows = await sql<Array<{
     version: number;
     name: string;
@@ -5148,6 +5286,7 @@ export async function resolveInternalProductionRecoverySourceBootstrapActualRunT
   terminalAuthorityRef: string;
   terminalAuthorityHash: string;
 }> | null> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   exactObjectKeys(input, ["runId"], "INTERNAL_PRODUCTION_RECOVERY_SOURCE_BOOTSTRAP_ACTUAL_TERMINAL_INPUT_INVALID");
   createInternalProductionWorkflowRunCanonicalOwnerIdentityV1(input.runId);
   const migrationRows = await sql<Array<{
@@ -5201,6 +5340,7 @@ export async function resolveInternalProductionWorkflowRunTerminalAuthorityPairI
   terminalAuthorityRef: string;
   terminalAuthorityHash: string;
 }>> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   exactObjectKeys(input, ["runId"], "INTERNAL_PRODUCTION_WORKFLOW_RUN_TERMINAL_INPUT_INVALID");
   const resolved = await resolveLockedWorkflowRunOwnerByRunIdV1(
     sql,
@@ -5265,6 +5405,7 @@ export async function resolveInternalProductionClaimTerminalAuthorityPairInTrans
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{ claimIdText: string }>,
 ): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   return resolveP3TerminalCloseInputInTransactionV1(
     sql,
     input,
@@ -5277,6 +5418,7 @@ export async function resolveInternalProductionExecutionAttemptTerminalAuthority
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{ attemptId: string }>,
 ): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   return resolveP3TerminalCloseInputInTransactionV1(
     sql,
     input,
@@ -5289,6 +5431,7 @@ export async function resolveInternalProductionRuntimeSessionTerminalAuthorityPa
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{ sessionId: string }>,
 ): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   return resolveP3TerminalCloseInputInTransactionV1(
     sql,
     input,
@@ -5301,6 +5444,7 @@ export async function resolveInternalProductionCompletionOwnerTerminalAuthorityP
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{ requestId: string }>,
 ): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   return resolveP3TerminalCloseInputInTransactionV1(
     sql,
     input,
@@ -5313,6 +5457,7 @@ export async function resolveInternalProductionMandatoryEffectTerminalAuthorityP
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{ requestId: string; effectKey: string }>,
 ): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   return resolveP3TerminalCloseInputInTransactionV1(
     sql,
     input,
@@ -5325,6 +5470,7 @@ export async function resolveInternalProductionTerminationTerminalAuthorityPairI
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{ requestId: string }>,
 ): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   return resolveP3TerminalCloseInputInTransactionV1(
     sql,
     input,
@@ -5337,6 +5483,7 @@ export async function resolveInternalProductionFindingTerminalAuthorityPairInTra
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{ findingSetHash: string }>,
 ): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   return resolveP3TerminalCloseInputInTransactionV1(
     sql,
     input,
@@ -5349,6 +5496,7 @@ export async function resolveInternalProductionOperationalDeliveryTerminalAuthor
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{ eventKey: string; consumer: "jsonl" | "webhook" }>,
 ): Promise<InternalProductionResolvedOwnerTerminalCloseInputV1> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   return resolveP3TerminalCloseInputInTransactionV1(
     sql,
     input,
@@ -5361,6 +5509,7 @@ export async function resolveInternalProductionOwnerReservationCloseInTransactio
   sql: InternalProductionPgTransactionSql,
   input: Readonly<{ closeRef: string; closeHash: string }>,
 ): Promise<InternalProductionOwnerReservationCloseV1> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   return OWNER_ADMISSION_REPOSITORY_V1.resolveClose(sql, input);
 }
 
@@ -5391,6 +5540,7 @@ async function lockInternalProductionV31InsertionFenceV1(
 export async function lockInternalProductionWorkflowRunInsertionFenceV1(
   sql: InternalProductionPgTransactionSql,
 ): Promise<void> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   await lockInternalProductionV31InsertionFenceV1(sql, false);
 }
 
@@ -5553,6 +5703,7 @@ export async function stageInternalProductionCurrentEntryMigration32InTransactio
   transaction: InternalProductionCurrentEntryMigration32TransactionV1,
   evidence: BootstrapMainClaimHandoffGuardedMigration32EvidenceV1,
 ): Promise<void> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   if (arguments.length !== 2) {
     throw new TypeError("INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_INPUT_INVALID");
   }
@@ -5582,6 +5733,7 @@ export async function stageInternalProductionCurrentEntryMigration32InTransactio
 export async function commitInternalProductionCurrentEntryMigration32TransactionV1(
   transaction: InternalProductionCurrentEntryMigration32TransactionV1,
 ): Promise<BootstrapMainClaimHandoffGuardedMigration32ApplyResultV1> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   if (arguments.length !== 1) {
     throw new TypeError("INTERNAL_PRODUCTION_MIGRATION_32_TRANSACTION_INPUT_INVALID");
   }
@@ -5722,7 +5874,7 @@ async function observeExactCurrentEntryMigration33V1(): Promise<InternalProducti
     || row.name.length < 1
     || typeof row.checksum !== "string"
     || !/^[a-f0-9]{64}$/.test(row.checksum)
-    || row.state !== "applied"
+    || (row.state !== "applied" && row.state !== "adopted")
   ) throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_33_INVALID");
   const projection = Object.freeze({
     schema: "setfarm.internal-production-current-entry-migration-33-schema-projection.v1" as const,
@@ -5785,7 +5937,7 @@ export async function observeInternalProductionCurrentEntryMigration33ReadOnlyV1
     if (migration33.name !== migrationName
       || migration33.checksum
         !== V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY.checksum
-      || migration33.state !== "applied") throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_33_INVALID");
+      || (migration33.state !== "applied" && migration33.state !== "adopted")) throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_33_INVALID");
     await verifyV3RecoveryClaimRuntimePublicationV1(sql);
     return Object.freeze({
       schema: "setfarm.internal-production-current-entry-migration-33-read-only-observation.v1" as const,
@@ -5861,6 +6013,7 @@ export async function initializeInternalProductionCurrentEntryDatabaseV1(
 }
 
 async function ensureSchemaReady(): Promise<void> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   if (_task6aNoDefaultMigration && _task6aRestrictedClosing) {
     throw new Error("TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED");
   }
@@ -5881,6 +6034,7 @@ async function ensureSchemaReady(): Promise<void> {
 }
 
 export async function pgQuery<T = any>(sql: string, params: any[] = []): Promise<T[]> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   await ensureSchemaReady();
   const s = getSql();
   if (params.length === 0) {
@@ -5890,11 +6044,13 @@ export async function pgQuery<T = any>(sql: string, params: any[] = []): Promise
 }
 
 export async function pgGet<T = any>(sql: string, params: any[] = []): Promise<T | undefined> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   const rows = await pgQuery<T>(sql, params);
   return rows[0];
 }
 
 export async function pgRun(sql: string, params: any[] = []): Promise<{ changes: number }> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   await ensureSchemaReady();
   const s = getSql();
   const result = params.length === 0 ? await s.unsafe(sql) : await s.unsafe(sql, params);
@@ -5902,6 +6058,7 @@ export async function pgRun(sql: string, params: any[] = []): Promise<{ changes:
 }
 
 export async function pgExec(sql: string): Promise<void> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   await ensureSchemaReady();
   const s = getSql();
   await s.unsafe(sql);
@@ -5910,6 +6067,7 @@ export async function pgExec(sql: string): Promise<void> {
 export type PgTransactionSql = InternalProductionPgTransactionSql;
 
 export async function pgBegin<T>(fn: (sql: PgTransactionSql) => Promise<T>): Promise<T> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   await ensureSchemaReady();
   const s = getSql();
   return s.begin(fn as any) as any;
@@ -5931,6 +6089,7 @@ export type PgMigrationOptions = Readonly<{
 export async function prepareTask6aRestrictedSpawnerDatabaseV1(
   expectedSchemaOwner: string,
 ): Promise<void> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   if (_task6aNoDefaultMigration || _sql || _schemaReady || _schemaReadyPromise
     || _isMigrating || _verificationOnlyMode) {
     throw new Error("TASK6A_RESTRICTED_DATABASE_STARTUP_ALREADY_USED");
@@ -5943,35 +6102,12 @@ async function verifyExpectedPublicObjectOwnerReadOnlyV1(
   sql: ReturnType<typeof postgres>, expectedOwner: string,
 ): Promise<void> {
   await sql.begin("isolation level repeatable read read only", async (transaction) => {
-    await transaction.unsafe("SELECT pg_catalog.set_config('lock_timeout', '1000ms', true)");
-    await transaction.unsafe("SELECT pg_catalog.set_config('statement_timeout', '5000ms', true)");
-    const rows = await transaction.unsafe<Array<{
-      roleExists: boolean;
-      ownerReachable: boolean | null;
-      objectCount: number;
-      ownerMatches: boolean;
-    }>>(`
-      WITH expected AS (
-        SELECT oid FROM pg_catalog.pg_roles WHERE rolname = $1
-      ), objects AS (
-        SELECT c.relowner FROM pg_catalog.pg_class c
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'public'
-      )
-      SELECT EXISTS(SELECT 1 FROM expected) AS "roleExists",
-        pg_catalog.pg_has_role(session_user, (SELECT oid FROM expected), 'MEMBER') AS "ownerReachable",
-        (SELECT count(*)::integer FROM objects) AS "objectCount",
-        NOT EXISTS(SELECT 1 FROM objects
-          WHERE relowner IS DISTINCT FROM (SELECT oid FROM expected)) AS "ownerMatches"
-    `, [expectedOwner]);
-    if (rows.length !== 1 || !rows[0]?.roleExists || rows[0].ownerReachable !== false
-      || rows[0].objectCount === 0 || !rows[0].ownerMatches) {
-      throw new Error("SETFARM_BASE_SCHEMA_OWNER_MISMATCH");
-    }
+    await verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1(transaction, expectedOwner);
   });
 }
 
 export async function pgMigrate(options: PgMigrationOptions = {}): Promise<void> {
+  assertOrdinaryDashboardDatabaseAccessV2();
   if (!options || typeof options !== "object" || types.isProxy(options)
     || Array.isArray(options) || Object.getPrototypeOf(options) !== Object.prototype) {
     throw new Error("SETFARM_BASE_SCHEMA_VERIFY_MODE_INVALID");
@@ -6287,6 +6423,7 @@ export async function pgCheckpoint(): Promise<void> {
 }
 
 export async function pgClose(): Promise<void> {
+  if (_dashboardReaderV2.phase !== "UNPREPARED") revokeDashboardReaderV2();
   if (_task6aNoDefaultMigration) {
     if (_task6aRestrictedClosing) throw new Error("TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED");
     _task6aRestrictedClosing = true;

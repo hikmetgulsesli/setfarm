@@ -10,6 +10,20 @@ const safe = Object.freeze({
   ident: "task6a_fixture _postgres task6a_admin\ntask6a_fixture _www task6a_runtime\n",
 });
 
+test("closed probe profile permits only the additional exact private peer boundary", () => {
+  const probe = { ...safe, closedProbe: true as const,
+    hba: safe.hba.replace("local all all reject", "local setfarm setfarm_runtime peer map=task6a_fixture\nlocal all all reject"),
+    ident: safe.ident + "task6a_fixture _www setfarm_runtime\n" };
+  assert.doesNotThrow(() => assertProtectedClusterPolicyV1(probe));
+  for (const input of [
+    { ...probe, closedProbe: undefined },
+    { ...probe, hba: probe.hba.replace("local setfarm setfarm_runtime", "local all setfarm_runtime") },
+    { ...probe, hba: probe.hba.replace("setfarm_runtime peer", "setfarm_runtime trust") },
+    { ...probe, ident: probe.ident + "task6a_fixture nobody setfarm_runtime\n" },
+    { ...probe, ident: probe.ident.replace("_www setfarm_runtime", "_www task6a_admin") },
+  ]) assert.throws(() => assertProtectedClusterPolicyV1(input), /TASK6A_PROTECTED_CLUSTER_POLICY_REFUSAL/);
+});
+
 test("protected cluster launch policy refuses trust before privileged fixture startup", () => {
   assert.throws(() => assertProtectedClusterPolicyV1({ ...safe,
     hba: "local all all trust\n" }), /TASK6A_PROTECTED_CLUSTER_POLICY_REFUSAL/);

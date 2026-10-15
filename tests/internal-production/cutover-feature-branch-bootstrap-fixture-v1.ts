@@ -11,6 +11,7 @@ const closure = [
   "scripts/build-generation-maintenance-journal.mjs",
   "scripts/build-generation-maintenance-owner-observer.mjs",
   "scripts/build-generation-retention.mjs",
+  "scripts/deployment-dashboard-cutover-adapter-v2.mjs",
   "scripts/deployment-cutover-owner.mjs",
   "scripts/deployment-cutover.mjs",
   "scripts/deployment-cutover-dependencies.mjs",
@@ -19,6 +20,8 @@ const closure = [
   "scripts/deployment-cutover-default-context.mjs",
   "scripts/deployment-cutover-passive-home.mjs",
   "scripts/deployment-cutover-passive-home.py",
+  "scripts/dashboard-cutover-process-events-v4.mjs",
+  "scripts/dashboard-cutover-process-events-v4.py",
   "package-lock.json",
 ] as const;
 const env = { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" };
@@ -35,6 +38,8 @@ function git(root: string, args: string[]): string {
 function refusal(root: string, verb: string, expectedStage: string): void {
   const child = spawnSync(process.execPath, [path.join(root, "scripts", "deployment-cutover.mjs"), verb, "--json"],
     { encoding: "utf8", timeout: 15000, env });
+  assert.equal(child.error, undefined);
+  assert.equal(child.signal, null);
   assert.equal(child.status, 1);
   assert.equal(child.stdout, "");
   const lines = child.stderr.trimEnd().split("\n");

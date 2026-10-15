@@ -925,6 +925,78 @@ test("bootstrap preserves owner stage when its own cleanup also fails", () => fi
   },
 }));
 
+for (const route of ["transport", "python-data"]) {
+  test(`bootstrap enrolls fixed process-event ${route} DATA without execution`, () => {
+    const sentinel = 'raise Exception("PROCESS_EVENTS_PYTHON_MUST_NOT_EVALUATE")\n';
+    const importSource = route === "transport"
+      ? "const transport=await import('../../scripts/dashboard-cutover-process-events-v4.mjs');const data=transport.fixtureOwnedPythonBytesV4;"
+      : "const transport=await import('../../scripts/dashboard-cutover-process-events-v4.py');const data=transport.default;";
+    const originalSource = pre32Source("valid");
+    const entry = "export async function observeCodeOwnedPositiveWorktreePre32HostPairV4(){";
+    assert.equal(originalSource.split(entry).length - 1, 1, "ARMED_FIXED_ENDPOINT");
+    const extraSource = originalSource.replace(entry,
+      `${entry}${importSource}if(data!==${JSON.stringify(sentinel)})throw Error('OWNED_PROCESS_EVENT_DATA_MISMATCH');`);
+    fixture((root, expected, home) => {
+      write(home, "bootstrap-test-source.js", fs.readFileSync(new URL(import.meta.url)), 0o600);
+      for (const name of ["dashboard-cutover-process-events-v4.mjs", "dashboard-cutover-process-events-v4.py"]) {
+        assert.equal(git(root, "show", `HEAD:scripts/${name}`), fs.readFileSync(path.join(root, "scripts", name), "utf8").trimEnd());
+      }
+      const control = run(root);
+      const result = run(root, ["inspect-pre32-host-pair", "--json"]);
+      write(home, "process-events-bootstrap-original.json", JSON.stringify({
+        schema: "setfarm.process-events-bootstrap-test-original.v4", route, root, expected,
+        envelope: "spawnSync-status-signal-output-only-not-stream-custody",
+        control: { status: control.status, signal: control.signal, error: control.error?.code ?? null, stdout: control.stdout, stderr: control.stderr },
+        result: { status: result.status, signal: result.signal, error: result.error?.code ?? null, stdout: result.stdout, stderr: result.stderr },
+      }, null, 2) + "\n", 0o600);
+      console.log(`PROCESS_EVENTS_BOOTSTRAP_ORIGINAL ${home}`);
+      assert.equal(control.status, 0, control.stderr);
+      assert.deepEqual(JSON.parse(control.stdout).sourceBuild, expected);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).pre32HostPair.authority, "diagnostic-only");
+      assert.equal(fs.readFileSync(path.join(root, ".setfarm/pre32-called"), "utf8"), "x");
+    }, source => source, {
+      retain: true,
+      extraSources: { "internal-production/baseline-positive-worktree-host-pair-v2": extraSource },
+      prepare(root) {
+        write(root, "scripts/dashboard-cutover-process-events-v4.mjs", 'import source from "./dashboard-cutover-process-events-v4.py";\nexport const fixtureOwnedPythonBytesV4=source;\n');
+        write(root, "scripts/dashboard-cutover-process-events-v4.py", sentinel);
+      },
+    });
+  });
+}
+
+for (const fault of ["modified", "missing", "query", "fragment", "foreign-url", "load-time-replacement"]) {
+  test(`bootstrap refuses process-event Python DATA ${fault}`, () => {
+    const sentinel = 'raise Exception("PROCESS_EVENTS_PYTHON_MUST_NOT_EVALUATE")\n';
+    const entry = "export async function observeCodeOwnedPositiveWorktreePre32HostPairV4(){";
+    const originalSource = pre32Source("valid"); assert.equal(originalSource.split(entry).length - 1, 1);
+    const specifier = fault === "foreign-url" ? "../../scripts/foreign-process-events.py"
+      : "../../scripts/dashboard-cutover-process-events-v4.py" + (fault === "query" ? "?owned=1" : fault === "fragment" ? "#owned" : "");
+    const extraSource = originalSource.replace(entry, `${entry}const data=await import(${JSON.stringify(specifier)});if(data.default!==${JSON.stringify(sentinel)})throw Error('SWAPPED_PROCESS_DATA_ACCEPTED');`);
+    fixture((root, expected, home) => {
+      write(home, "bootstrap-test-source.js", fs.readFileSync(new URL(import.meta.url)), 0o600);
+      const control = run(root); assert.equal(control.status, 0, control.stderr);
+      if (fault === "modified") fs.appendFileSync(path.join(root, "scripts/dashboard-cutover-process-events-v4.py"), "PRIVATE_SENTINEL\n");
+      if (fault === "missing") fs.unlinkSync(path.join(root, "scripts/dashboard-cutover-process-events-v4.py"));
+      const result = run(root, ["inspect-pre32-host-pair", "--json"]);
+      write(home, "process-events-bootstrap-original.json", JSON.stringify({ fault, root, expected, control: { status: control.status, signal: control.signal, stdout: control.stdout, stderr: control.stderr }, result: { status: result.status, signal: result.signal, error: result.error?.code ?? null, stdout: result.stdout, stderr: result.stderr }, envelope: "spawnSync-not-stream-custody" }, null, 2) + "\n", 0o600);
+      console.log(`PROCESS_EVENTS_BOOTSTRAP_ORIGINAL ${home}`);
+      assert.equal(result.status, 1); assert.equal(result.signal, null); assert.equal(result.error, undefined); assert.equal(result.stdout, "");
+      assert.match(result.stderr, /^DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n/);
+      assert.doesNotMatch(result.stderr, /PRIVATE_SENTINEL|SWAPPED_PROCESS_DATA_ACCEPTED/);
+      const marker = path.join(root, ".setfarm/pre32-called");
+      if (fault !== "load-time-replacement") assert.equal(fs.existsSync(marker), false);
+      else { assert.equal(fs.readFileSync(marker, "utf8"), "x"); assert.equal(fs.readFileSync(path.join(root, "scripts/dashboard-cutover-process-events-v4.py"), "utf8"), "SWAPPED_PROCESS_DATA"); }
+    }, source => fault === "load-time-replacement" ? source.replace('const source = entry.bytes.toString("utf8");',
+      'if(entry.locator==="scripts/dashboard-cutover-process-events-v4.py")fs.writeFileSync(entry.target,"SWAPPED_PROCESS_DATA");const source = entry.bytes.toString("utf8");') : source,
+    { retain: true, extraSources: { "internal-production/baseline-positive-worktree-host-pair-v2": extraSource }, prepare(root) {
+      write(root, "scripts/dashboard-cutover-process-events-v4.py", sentinel);
+      write(root, "scripts/foreign-process-events.py", sentinel);
+    } });
+  });
+}
+
 test("bootstrap supplies authenticated Python bytes as data without evaluating them", () => fixture((root, expected) => {
   const result = run(root);
   assert.equal(result.status, 0, result.stderr);
@@ -1131,9 +1203,11 @@ for (const fault of ["dirty-script", "wrong-origin", "output-bytes"]) test(`fres
   assert.match(result.stderr, /DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED/); assert.equal(fs.existsSync(path.join(root, ".setfarm")), false);
 }));
 
-for (const locator of ["scripts/build-generation-retention.mjs", "dist/internal-production/baseline-deployment-cutover-records-v1.js"]) {
+for (const locator of ["scripts/build-generation-retention.mjs", "scripts/deployment-dashboard-cutover-adapter-v2.mjs", "dist/internal-production/baseline-deployment-cutover-records-v1.js"]) {
   test(`load-time replacement of ${locator} never evaluates swapped bytes`, () => fixture(root => {
-    const result = run(root); assert.notEqual(result.status, 0); assert.equal(result.stdout, "");
+    const result = run(root, locator.includes("adapter-v2") ? ["inspect-host", "--json"] : ["inspect", "--json"]);
+    assert.equal(result.error, undefined); assert.equal(result.signal, null);
+    assert.equal(result.status, 1); assert.equal(result.stdout, "");
     assert.match(result.stderr, /^DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n$/);
     assert.equal(fs.existsSync(path.join(root, "executed-marker")), false);
     assert.match(fs.readFileSync(path.join(root, locator), "utf8"), /executed-marker/);
@@ -1171,6 +1245,9 @@ function hostCommandFixture(root, home, fault, cp, fs, path) {
   const original = cp.spawnSync, labels = ["com.setrox.setfarm-spawner", "com.setrox.setfarm-dashboard"];
   const oldRoot = path.join(home, "ai/setrox/old"), node = fs.realpathSync(process.execPath);
   let scans = 0, prints = 0;
+  // Fixed fixture-only receipts, outside the authenticated source tree. A generic
+  // earlier import refusal must not qualify a cross-observer fault arm.
+  const event = name => fs.appendFileSync(path.join(home, "host-fixture-events.jsonl"), `${JSON.stringify(name)}\n`);
   const row = (pid, command, ppid = 1, pgid = pid) => `${process.getuid()} ${pid} ${ppid} ${pgid} S Wed Sep 16 01:02:03 2026 ${command}\n`;
   const reply = (stdout, status = 0) => ({ status, signal: null, stdout: Buffer.from(stdout), stderr: Buffer.alloc(0) });
   cp.spawnSync = (command, args, options) => {
@@ -1180,29 +1257,36 @@ function hostCommandFixture(root, home, fault, cp, fs, path) {
       const label = labels.find(item => args[1] === `gui/${process.getuid()}/${item}`);
       if (!label) throw Error("unexpected service target");
       prints++;
+      event("launchctl-print");
       const plistPath = path.join(home, "Library/LaunchAgents", `${label}.plist`);
       const converted = original("/usr/bin/plutil", ["-convert", "json", "-o", "-", "-"], { input: fs.readFileSync(plistPath) });
       const plist = JSON.parse(converted.stdout), program = plist.ProgramArguments[0];
       const block = (name, lines) => `\t${name} = {\n${lines.map(line => `\t\t${line}\n`).join("")}\t}\n`;
       const state = fault === "launcher-drift" && prints > 4 ? "spawn scheduled" : "not running";
-      return reply(`gui/${process.getuid()}/${label} = {\n\tpath = ${plistPath}\n\tprogram = ${program}\n\tstate = ${state}\n\tactive count = 0\n\ttype = LaunchAgent\n\trun interval = 60 seconds\n\tproperties = runatload\n`
+      const response = reply(`gui/${process.getuid()}/${label} = {\n\tpath = ${plistPath}\n\tprogram = ${program}\n\tstate = ${state}\n\tactive count = 0\n\ttype = LaunchAgent\n\trun interval = 60 seconds\n\tproperties = runatload\n`
         + block("arguments", plist.ProgramArguments)
         + block("environment", Object.entries({ ...plist.EnvironmentVariables, OSLogRateLimit: "64", XPC_SERVICE_NAME: label }).map(([k, v]) => `${k} => ${v}`))
         + block("inherited environment", [`SETFARM_ENV_DIR => ${home}/ai/setrox/setfarm/scripts`, "SSH_AUTH_SOCK => /var/run/com.apple.launchd.Fixture/Listeners"])
         + block("default environment", ["PATH => /usr/bin:/bin:/usr/sbin:/sbin"]) + "}\n");
+      if (state === "spawn scheduled") event("fault:launcher-drift");
+      return response;
     }
     if (command === "/bin/ps" && JSON.stringify(args) === JSON.stringify(["-ww", "-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="])) {
       scans++;
+      event("process-scan");
       if (fault === "cli-drift" && scans === 1) {
         const link = path.join(home, ".local/bin/setfarm"); fs.renameSync(link, `${link}.preserved`); fs.symlinkSync(`${oldRoot}/dist/cli/cli.js`, link);
+        event("fault:cli-drift");
       }
       const dashboardRoot = fault === "mixed-root" ? root : oldRoot;
-      return reply(row(process.pid, `${node} /fixture/controller.mjs`, process.ppid, process.pid)
+      const response = reply(row(process.pid, `${node} /fixture/controller.mjs`, process.ppid, process.pid)
         + row(4103, `${node} ${dashboardRoot}/dist/server/daemon.js 3333`)
         + (fault === "starter" || (fault === "family-drift" && scans > 2) ? row(4105, `${node} ${oldRoot}/dist/cli/cli.js spawner start`, 4100, 4100) : ""));
+      if (fault === "family-drift" && scans > 2) event("fault:family-drift");
+      return response;
     }
-    if (command === "/bin/ps" && JSON.stringify(args) === JSON.stringify(["-ww", "-p", "4103", "-o", "comm="])) return reply(`${node}\n`);
-    if (command === "/usr/sbin/lsof" && JSON.stringify(args) === JSON.stringify(["-nP", "-iTCP:3333", "-sTCP:LISTEN", "-F0pcfn"])) return reply("p4103\0cnode\0\nf21\0n127.0.0.1:3333\0\n");
+    if (command === "/bin/ps" && JSON.stringify(args) === JSON.stringify(["-ww", "-p", "4103", "-o", "comm="])) { event("process-command"); return reply(`${node}\n`); }
+    if (command === "/usr/sbin/lsof" && JSON.stringify(args) === JSON.stringify(["-nP", "-iTCP:3333", "-sTCP:LISTEN", "-F0pcfn"])) { event("listener-scan"); return reply("p4103\0cnode\0\nf21\0n127.0.0.1:3333\0\n"); }
     throw Error("unexpected host command");
   };
 }
@@ -1241,15 +1325,18 @@ function censusTransport(locator, source) {
         "WITH required_columns","FROM public.finding_sets","FROM public.findings","FROM public.runs"];
       sql.begin=async(mode,body)=>{
         if(mode!=='isolation level repeatable read read only')throw Error('WRONG_SNAPSHOT');
-        return body(async strings=>{
-          const query=Array.from(strings).join('?');if(!query.includes(tokens[calls]??'UNEXPECTED_QUERY'))throw Error('WRONG_QUERY_ORDER');calls++;
+        const execute=async query=>{
+          if(!query.includes(tokens[calls]??'UNEXPECTED_QUERY'))throw Error('WRONG_QUERY_ORDER');calls++;
           if(calls===3)return [{laterJournalCount:'0',relationCount:'0',functionCount:'0',typeCount:'0',triggerCount:'0'}];
           if(calls===4)return [{catalogViolationCount:'0',aprbChildViolationCount:'0',ordinaryBatchViolationCount:'0',activeHeaderViolationCount:'0',
             ownerReservationsRelation:null,ownerAdmissionHeadRelation:null,producerSourceRelation:null,producerActivationRelation:null,producerActivationHeadRelation:null,producerCurrentRelation:null,
             activeRunCount:'0',openClaimCount:'0',executionAttemptCount:'0',activeRuntimeSessionCount:'0',activeCompletionOwnerCount:'0',unsettledMandatoryEffectCount:'0',
             artifactReservationCount:'0',publicationBatchCount:'0',artifactPublicationCount:'0',terminationOwnerCount:'0',findingOwnerCount:'0',recoveryOwnerCount:'0',operationalDeliveryCount:'0'}];
           return [];
-        });
+        };
+        const tx=async strings=>execute(Array.from(strings).join('?'));
+        tx.unsafe=async query=>{if(typeof query!=='string'||!query.includes('WITH expected_tables(name)'))throw Error('UNEXPECTED_UNSAFE_QUERY');return execute(query)};
+        return body(tx);
       };
       sql.end=async options=>{if(calls!==7||options.timeout!==1)throw Error('INCOMPLETE_CENSUS');return close(options)};
       return sql;
@@ -1312,10 +1399,45 @@ test("trusted host inspection joins real diagnostics without publishing authorit
 }));
 
 for (const fault of ["cli-drift", "launcher-drift", "family-drift"]) test(`host inspection rejects cross-observer ${fault}`, () => hostFixture((root, oldRoot, home) => {
-  const result = run(root, ["inspect-host", "--json"]); assert.notEqual(result.status, 0); assert.equal(result.stdout, "");
+  const result = run(root, ["inspect-host", "--json"]);
+  assert.equal(result.error, undefined); assert.equal(result.signal, null);
+  assert.equal(result.status, 1); assert.equal(result.stdout, "");
   assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
+  const evidence = path.join(home, "host-fixture-events.jsonl");
+  assert.ok(fs.existsSync(evidence), "the intended host observer must run before refusal");
+  const events = fs.readFileSync(evidence, "utf8").trim().split("\n").map(line => JSON.parse(line));
+  assert.ok(events.includes(`fault:${fault}`), "the intended cross-observer fault must actually be armed");
   assert.equal(fs.existsSync(path.join(home, "ai/setrox/data")), false);
 }, fault));
+
+for (const fault of ["tampered", "missing", "query", "fragment", "foreign"]) {
+  test(`authenticated adapter closure rejects ${fault} before host observation`, () => hostFixture((root, oldRoot, home) => {
+    const adapter = path.join(root, "scripts/deployment-dashboard-cutover-adapter-v2.mjs");
+    assert.ok(fs.existsSync(adapter), "fixture must copy the actual adapter");
+    if (fault === "tampered") fs.appendFileSync(adapter, '\nprocess.stdout.write("UNVERIFIED_ADAPTER_EXECUTED");\n');
+    if (fault === "missing") fs.unlinkSync(adapter);
+    const result = run(root, ["inspect-host", "--json"]);
+    assert.equal(result.error, undefined); assert.equal(result.signal, null);
+    assert.equal(result.status, 1); assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "DEPLOYMENT_CUTOVER_BOOTSTRAP_REFUSED\n");
+    assert.equal(fs.existsSync(path.join(home, "host-fixture-events.jsonl")), false, "no modeled host calls before refusal");
+    assert.equal(fs.existsSync(path.join(home, "ai/setrox/data")), false);
+  }, "", {
+    sourceInstrument(locator, source) {
+      if (locator !== "internal-production/baseline-deployment-cutover-launcher-observation-v1"
+        || !["query", "fragment", "foreign"].includes(fault)) return source;
+      const original = "../../scripts/deployment-dashboard-cutover-adapter-v2.mjs";
+      assert.equal(source.split(original).length, 2);
+      return source.replace(original, fault === "foreign" ? "../../scripts/foreign-adapter.mjs"
+        : original + (fault === "query" ? "?fixture" : "#fixture"));
+    },
+    prepare(root) {
+      if (fault === "foreign") write(root, "scripts/foreign-adapter.mjs",
+        fs.readFileSync(path.join(root, "scripts/deployment-dashboard-cutover-adapter-v2.mjs"), "utf8")
+          + '\nprocess.stdout.write("FOREIGN_ADAPTER_EXECUTED");\n');
+    },
+  }));
+}
 
 for (const [fault, blocker] of [["mixed-root", "dashboard-cli-root-disagreement"], ["starter", "non-dashboard-process-family"]]) {
   test(`host inspection reports ${fault} as a blocker, never ready authority`, () => hostFixture((root, oldRoot, home) => {

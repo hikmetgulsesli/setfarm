@@ -83,6 +83,26 @@ effects remain absent in actual private PG rows. Repeat across fixture restart.
 No production Setfarm directory/path override, root Node, new host account,
 live DB/schema/service/selector/archive or dependency change.
 
+### Reserved lifetime witness correction (2026-10-11)
+
+The private fixture must compare the entire actual reserved tuple before and
+after fixed LISTEN/notification: PID, backend_start textual value, session role,
+current role, database and null client address. Query only its own pg_stat_activity
+row; require exactly one row and those exact fields. Timestamp ::text preserves
+PostgreSQL microseconds; no Date conversion, rounding or PID-only comparison.
+Retain both actual tuples in a bounded child JSON witness and parent diagnostic
+explicitly labeled before/after private restart. Compare within each reserved
+lifetime, never require equal identities across restart.
+
+An actual read-only SQL canary adds one microsecond ONLY to the after-query's
+backend_start projection. PID and other fields remain genuine/unchanged; the
+same full-tuple oracle must reject it. This is intentional query perturbation,
+not actual backend drift or authentication evidence. A PID-only oracle must
+fail this canary's rejection assertion. Existing source client, fixture ownership,
+loss/queued-write tests, native image opt-ins and cleanup are unchanged. These
+witnesses do not supply production ancestry, zero historical owners, initializer
+readiness or dashboard admission.
+
 ## Follow-on gate
 
 Only the later zero-input protected initializer can compose this primitive with
