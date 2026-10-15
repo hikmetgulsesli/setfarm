@@ -1478,7 +1478,11 @@ my ($parent_admission,$parent_original_admission,$parent_original_pid);
 my ($parent_constructor,$parent_constructor_finish,$parent_constructor_dispose,
     $parent_constructor_material_allowed,$parent_constructor_observe_wait,$parent_native_can_claim,
     $parent_constructor_deadline,$parent_constructor_cleanup_deadline,
-    $parent_constructor_owns_node,$parent_constructor_shutdown_node);
+    $parent_constructor_owns_node,$parent_constructor_shutdown_node,
+    $parent_constructor_children_settled,$parent_constructor_physical_bindings);
+my ($physical_can_claim,$physical_claim,$physical_require_live,$physical_epoch,
+    $physical_hold_private,$physical_release_private,$physical_open,$physical_disposal_allowed,
+    $physical_cleanup_private,$physical_cleanup_complete,$physical_constructor_dispose);
 my $parent_material_deadline=sub {
     return $parent_constructor_deadline if defined($parent_constructor_deadline)
         &&defined($parent_constructor_material_allowed)&&!$parent_constructor_material_allowed->()
@@ -1588,6 +1592,7 @@ my $parent_check_admission=sub {
 };
 my $parent_epoch=sub {
     task6a_origin_parent_require_unburned();
+    $physical_require_live->();
     task6a_origin_refuse() unless $parent_native_node_wait_allowed->();
     $parent_check_admission->();
     my $now=task6a_origin_now();task6a_origin_refuse() unless defined($parent_deadline)&&$now<$parent_deadline;
@@ -1738,11 +1743,11 @@ my $parent_consume_protocol=sub {
             }
             if($parent_ready&&$parent_phase eq 'active'&&$parent_matched==@parent_nonces) {
                 if($parent_matched==3) {
-                    $parent_native_epoch2->();
+                    $physical_epoch->();$parent_native_epoch2->();
                     $parent_write->("END\n",1);$parent_end_written=1;
                     $parent_close->(0);$parent_phase='ending';$parent_epoch->();
                 } else {
-                    $parent_native_epoch1->() if $parent_matched==0;
+                    if($parent_matched==0) {$physical_epoch->();$parent_native_epoch1->();}
                     my $nonce=$parent_entropy->();$parent_write->('CHALLENGE '.$nonce."\n",0);
                     push @parent_nonces,$nonce;
                 }
@@ -3323,6 +3328,223 @@ sub task6a_origin_produce_source_vendor_staged_custody {
         sourceCount=>4,vendorCount=>2,creatorHandlesClosed=>13,fileCount=>6,directoryCount=>6};
 }
 
+# Private system-Perl occurrence. No caller can supply originals or settlement.
+{
+    my (@physical_pending,@physical_kept);
+    my ($physical_acquisition_unknown,$physical_constructor_lease)=(0,0);
+    my $physical_shape=sub {
+        my ($cell)=@_;$staged_native_fh->($cell,0);
+        my $gv=B::svref_2object($cell)->RV;my $io=$gv->IO;return [$$gv,$$io];
+    };
+    my $physical_helpers_definite=sub {
+        $staged_vector->(\@helper_ledger);
+        for my $i(0..$#helper_ledger) {
+            my $r=$staged_container->(\($helper_ledger[$i]),'B::HV');
+            return 0 unless exists($r->{settled})&&$staged_scalar->(\($r->{settled}));
+        }
+        return 1;
+    };
+    $physical_disposal_allowed=sub {
+        return 0 unless $physical_helpers_definite->();
+        return 1 unless $physical_constructor_lease;
+        return defined($parent_constructor_children_settled)&&$parent_constructor_children_settled->();
+    };
+    # Collect independently: one malformed borrowed cell cannot hide later aliases.
+    my $physical_foreign=sub {
+        my @cells;my $all=1;
+        for my $records(\@parent_originals,\@parent_native_originals) {
+            my $vector_ok=eval {$staged_vector->($records);1;};
+            unless($vector_ok) {$all=0;next;}
+            for my $i(0..$#$records) {
+                my $ok=eval {
+                    $staged_plain_cell->(\($records->[$i]));
+                    if(defined($records->[$i])) {
+                        my $r=$staged_container->(\($records->[$i]),'B::HV');
+                        task6a_origin_refuse() unless exists($r->{fh});
+                        $staged_native_fh->(\($r->{fh}),1);push @cells,\($r->{fh});
+                    }
+                    1;
+                };$all=0 unless $ok;
+            }
+        }
+        my $vector_ok=eval {$staged_vector->(\@staged_originals);1;};
+        if($vector_ok) {
+            for my $i(0..$#staged_originals) {
+                my $ok=eval {
+                    my $sv=$staged_plain_cell->(\($staged_originals[$i]));
+                    task6a_origin_refuse() unless ref($sv) eq 'B::IV'&&($sv->FLAGS&B::SVf_ROK());
+                    my $cv=$sv->RV;task6a_origin_refuse() unless ref($cv) eq 'B::CV';
+                    task6a_origin_refuse() if $cv->FLAGS&0x00f00000;
+                    my $magic=$cv->MAGIC;task6a_origin_refuse() if defined($magic);
+                    my ($fh,$fd,$attempted,$closed)=$staged_originals[$i]->('binding');
+                    $closed=$staged_scalar->(\$closed);
+                    task6a_origin_refuse() unless $closed eq '0'||$closed eq '1';
+                    unless($closed) {$staged_native_fh->(\$fh,0);push @cells,\$fh;}
+                    1;
+                };$all=0 unless $ok;
+            }
+        } else {$all=0;}
+        if(defined($parent_constructor_physical_bindings)) {
+            my ($bindings,$known);my $ok=eval {($bindings,$known)=$parent_constructor_physical_bindings->();1;};
+            if($ok) {push @cells,@$bindings;$all=0 unless $known;} else {$all=0;}
+        }
+        return (\@cells,$all);
+    };
+    my $physical_aliases=sub {
+        my ($kept)=@_;my $all=1;my ($foreign,$known)=([],0);
+        my $got=eval {($foreign,$known)=$physical_foreign->();1;};$all=0 unless $got&&$known;
+        for my $r(@$kept) {
+            next unless defined($r->{shape});
+            for my $other(@$kept) {
+                next if $r==$other||!defined($other->{shape});
+                if($r->{shape}[0]==$other->{shape}[0]||$r->{shape}[1]==$other->{shape}[1]
+                    ||(defined($r->{fd})&&defined($other->{fd})&&$r->{fd}==$other->{fd})) {
+                    # The first original owns the unique close entitlement.
+                    if($r->{ordinal}>$other->{ordinal}) {$r->{alias}=1;$r->{safe}=0;$r->{state}='alias';}
+                    $all=0;
+                }
+            }
+            for my $cell(@$foreign) {
+                my $ok=eval {
+                    if($staged_native_fh->($cell,1)) {
+                    my $shape=$physical_shape->($cell);my $fd=CORE::fileno($$cell);
+                    if($shape->[0]==$r->{shape}[0]||$shape->[1]==$r->{shape}[1]
+                        ||(defined($fd)&&defined($r->{fd})&&$fd==$r->{fd})) {
+                        $r->{alias}=1;$r->{safe}=0;$r->{state}='alias';$all=0;
+                    }}
+                    1;
+                };unless($ok&&!length($@)) {$r->{safe}=0;$all=0;}
+            }
+        }
+        unless($got&&$known) {$_->{safe}=0 for @$kept;}
+        $physical_acquisition_unknown=1 unless $all;
+        return $all;
+    };
+    $physical_open=sub {
+        my ($cell,$path,$flags)=@_;
+        task6a_origin_refuse() unless $physical_owns_ledgers&&$physical_internal
+            &&@physical_pending<4&&!$physical_acquisition_unknown;
+        my $r={cell=>$cell,path=>$path,ordinal=>1+@physical_pending,state=>'not-started',safe=>0,alias=>0,attempted=>0,closed=>0};
+        push @physical_pending,$r;
+        task6a_origin_refuse() unless task6a_origin_now()<$parent_material_deadline->();
+        $r->{state}='pending';
+        my ($returned,$errno,$status);my $ok=eval {$returned=sysopen($$cell,$path,$flags);$errno=0+$!;$status=$?;1;};my $error=$@;
+        $errno=0+$! unless defined($errno);$status=$? unless defined($status);
+        $r->{returned}=$returned;$r->{errno}=$errno;$r->{status}=$status;$r->{error}=$error;
+        my $error_plain=eval {
+            my $sv=$staged_plain_cell->(\$error);task6a_origin_refuse() if $sv->FLAGS&B::SVf_ROK();1;
+        };
+        $physical_acquisition_unknown=1 unless $error_plain;
+        my $classified=eval {
+            if($staged_native_fh->($cell,1)) {
+                $r->{fh}=$$cell;$r->{shape}=$physical_shape->($cell);$r->{state}='known';
+                push @physical_kept,$r;
+                $r->{fd}=CORE::fileno($r->{fh});
+                task6a_origin_refuse() unless defined($r->{fd})&&$r->{fd}>=3;
+                $r->{safe}=1;
+            } else {$r->{state}=($error_plain&&!length($error)&&$ok)?'absent':'unknown';$physical_acquisition_unknown=1 if $r->{state} eq 'unknown';}
+            1;
+        };$r->{classification_error}=$@;
+        unless($classified&&!length($r->{classification_error})) {$r->{state}='unknown';$physical_acquisition_unknown=1;}
+        my $aliases=eval {$physical_aliases->(\@physical_kept)};my $alias_error=$@;
+        $physical_acquisition_unknown=1 unless $aliases&&!length($alias_error);
+        push @physical_owned_handles,$r->{fh} if $r->{state} eq 'known'&&$r->{safe}&&!$r->{alias};
+        my $returned_sv=$staged_plain_cell->(\$returned);
+        task6a_origin_refuse() if $returned_sv->FLAGS&B::SVf_ROK();
+        task6a_origin_refuse() unless $error_plain&&$ok&&!length($error)&&defined($returned)&&$returned
+            &&$classified&&!length($r->{classification_error})&&$aliases&&!length($alias_error)&&$r->{state} eq 'known';
+        task6a_origin_refuse() unless task6a_origin_now()<$parent_material_deadline->();
+        return $returned;
+    };
+    $physical_can_claim=sub {
+        task6a_origin_refuse() unless @_==0&&$physical_state eq 'new'&&!$physical_owns_ledgers&&!$physical_internal
+            &&!$physical_cleanup_attempted&&!$physical_cleanup_ok&&!$file_lifecycle_burned&&!$file_lifecycle_released
+            &&!$physical_acquisition_unknown&&!$physical_constructor_lease;
+        for my $a(\@file_ledger,\@directory_ledger,\@physical_owned_handles,\@physical_pending,\@physical_kept,\@physical_directories) {
+            $staged_vector->($a);task6a_origin_refuse() if @$a;
+        }
+        $staged_plain_cell->(\$physical_file);task6a_origin_refuse() if defined($physical_file);return 1;
+    };
+    $physical_require_live=sub {
+        task6a_origin_refuse() unless @_==0&&$physical_state eq 'active'&&$physical_owns_ledgers&&!$physical_internal
+            &&!$file_lifecycle_burned&&!$file_lifecycle_released&&!$physical_cleanup_attempted
+            &&!$physical_acquisition_unknown&&@physical_pending==4&&@physical_kept==4
+            &&task6a_origin_now()<$parent_material_deadline->();
+        for my $a(\@file_ledger,\@directory_ledger,\@physical_directories,\@physical_owned_handles) {$staged_vector->($a);}
+        task6a_origin_refuse() unless @physical_owned_handles==4&&@file_ledger==1&&@directory_ledger==3&&@physical_directories==3;
+        for my $i(0..3) {
+            my $cell=$i<3?\($directory_ledger[$i]):\($file_ledger[0]);
+            my $row=$staged_container->($cell,'B::HV');
+            task6a_origin_refuse() unless exists($row->{path})&&exists($row->{fh})&&exists($row->{identity});
+            task6a_origin_refuse() unless $staged_scalar->(\($row->{path})) eq $physical_kept[$i]{path};
+            $staged_native_fh->(\($row->{fh}),0);my $shape=$physical_shape->(\($row->{fh}));
+            my $fd=CORE::fileno($row->{fh});my $r=$physical_kept[$i];
+            task6a_origin_refuse() unless $shape->[0]==$r->{shape}[0]&&$shape->[1]==$r->{shape}[1]&&defined($fd)&&$fd==$r->{fd};
+            my $identity=$staged_container->(\($row->{identity}),'B::AV');
+            $staged_vector->($identity);task6a_origin_refuse() unless @$identity==13;
+            for my $n(0..12) {$staged_scalar->(\($identity->[$n]));}
+        }
+        for my $i(0..3) {
+            my $r=$physical_kept[$i];$staged_native_fh->(\($physical_owned_handles[$i]),0);
+            my $shape=$physical_shape->(\($physical_owned_handles[$i]));my $fd=CORE::fileno($physical_owned_handles[$i]);
+            task6a_origin_refuse() unless $r->{safe}&&!$r->{alias}&&!$r->{attempted}&&!$r->{closed}
+                &&$shape->[0]==$r->{shape}[0]&&$shape->[1]==$r->{shape}[1]&&defined($fd)&&$fd==$r->{fd};
+        }
+        task6a_origin_refuse() unless task6a_origin_physical_records()&&$physical_aliases->(\@physical_kept);return 1;
+    };
+    $physical_cleanup_private=sub {
+        return $physical_cleanup_ok if $physical_cleanup_attempted;
+        return 0 unless $physical_owns_ledgers;
+        return 0 unless $physical_disposal_allowed->();
+        $physical_cleanup_attempted=1;$file_lifecycle_released=1;my $all=1;
+        for my $r(@physical_kept) {
+            next if $r->{alias};
+            unless($r->{safe}&&defined($r->{fd})) {$all=0;next;}
+            if($r->{attempted}) {$all=0 unless $r->{closed};next;}
+            $r->{attempted}=1;my ($returned,$errno,$status);
+            my $ok=eval {
+                my $shape=$physical_shape->(\($r->{fh}));my $fd=CORE::fileno($r->{fh});
+                task6a_origin_refuse() unless $shape->[0]==$r->{shape}[0]&&$shape->[1]==$r->{shape}[1]&&defined($fd)&&$fd==$r->{fd};
+                $returned=close($r->{fh});$errno=0+$!;$status=$?;1;
+            };my $error=$@;
+            $r->{close_return}=$returned;$r->{close_errno}=$errno;$r->{close_status}=$status;$r->{close_error}=$error;
+            my $live;my $observed=eval {$physical_shape->(\($r->{fh}));$live=CORE::fileno($r->{fh});1;};my $live_error=$@;
+            $r->{live}=$live;$r->{live_error}=$live_error;
+            my $admitted=eval {
+                my $sv=$staged_plain_cell->(\$returned);task6a_origin_refuse() if $sv->FLAGS&B::SVf_ROK();
+                my $error_sv=$staged_plain_cell->(\$error);task6a_origin_refuse() if $error_sv->FLAGS&B::SVf_ROK();1;
+            };$r->{close_admission_error}=$@;
+            $r->{closed}=1 if $admitted&&$ok&&!length($error)&&defined($returned)&&$returned&&$observed&&!length($live_error)&&!defined($live);
+            $all=0 unless $r->{closed};
+        }
+        $all=0 if $physical_acquisition_unknown||grep {$_->{state} eq 'pending'||$_->{state} eq 'unknown'||$_->{alias}} @physical_pending;
+        $physical_cleanup_ok=$all?1:0;$file_lifecycle_burned=1 unless $all;
+        return $physical_cleanup_ok;
+    };
+    $physical_claim=sub {
+        $physical_can_claim->();$physical_constructor_lease=1;
+        $physical_hold_private->();return 1;
+    };
+    $physical_release_private=sub {
+        task6a_origin_refuse() unless $physical_constructor_lease&&$physical_disposal_allowed->();
+        my $valid=eval {$physical_epoch->();1;};my $error=$@;
+        $physical_state=$valid&&!length($error)?'released':'burned';$file_lifecycle_burned=1 unless $valid&&!length($error);
+        my $closed=task6a_origin_physical_cleanup();
+        task6a_origin_refuse() unless $valid&&!length($error)&&$closed;return 1;
+    };
+    $physical_constructor_dispose=sub {
+        # Neutral only for the exact untouched occurrence; no owner/once intent.
+        return $physical_can_claim->() unless $physical_constructor_lease;
+        $physical_state='burned' unless $physical_state eq 'released';
+        $file_lifecycle_burned=1 if $physical_owns_ledgers;
+        return task6a_origin_physical_cleanup();
+    };
+    $physical_cleanup_complete=sub {
+        return 1 unless $physical_constructor_lease;
+        return $physical_cleanup_attempted&&$physical_cleanup_ok&&!$physical_acquisition_unknown;
+    };
+}
+
 # Private fixed Source constructor. This occurrence is not startup admission.
 {
     my ($constructor_phase,$constructor_claimed,$constructor_busy)=('new',0,0);
@@ -3346,6 +3568,7 @@ sub task6a_origin_produce_source_vendor_staged_custody {
         my ($cleanup)=@_;$constructor_charge->($cleanup,0);my $now=task6a_origin_now();
         task6a_origin_refuse() unless defined($cleanup?$constructor_cleanup_deadline:$constructor_deadline)
             &&$now<($cleanup?$constructor_cleanup_deadline:$constructor_deadline);
+        $physical_require_live->() if !$cleanup&&$constructor_claimed;
         return $now;
     };
     my $constructor_shape=sub {
@@ -3518,6 +3741,35 @@ sub task6a_origin_produce_source_vendor_staged_custody {
         task6a_origin_refuse() unless $parent_constructor_owns_node->()&&defined($constructor_observer)&&$constructor_observer->{reaped}&&!$constructor_observer->{uncertain};
         return $constructor_settle->($constructor_node);
     };
+    $parent_constructor_children_settled=sub {
+        return 1 unless $constructor_claimed;
+        for my $role('observer','node') {
+            my $state=$constructor_acquisition{$role};
+            return 0 if $state eq 'pending'||$state eq 'unknown';
+            next if $state eq 'not-started'||$state eq 'absent';
+            my $r=$role eq 'observer'?$constructor_observer:$constructor_node;
+            return 0 unless $state eq 'enrolled'&&defined($r)&&$r->{reaped}&&!$r->{uncertain};
+        }
+        return 1;
+    };
+    $parent_constructor_physical_bindings=sub {
+        my @cells;my $all=1;
+        for my $records(\@constructor_files,\@constructor_fhs) {
+            my $vector_ok=eval {$staged_vector->($records);1;};
+            unless($vector_ok) {$all=0;next;}
+            for my $i(0..$#$records) {
+                my $ok=eval {
+                    my $r=$staged_container->(\($records->[$i]),'B::HV');
+                    task6a_origin_refuse() unless exists($r->{closed})&&exists($r->{fh});
+                    my $closed=$staged_scalar->(\($r->{closed}));
+                    task6a_origin_refuse() unless $closed eq '0'||$closed eq '1';
+                    $staged_native_fh->(\($r->{fh}),0);
+                    push @cells,\($r->{fh}) unless $closed;1;
+                };$all=0 unless $ok;
+            }
+        }
+        return (\@cells,$all);
+    };
     $parent_constructor_material_allowed=sub {return !$constructor_claimed||$constructor_complete;};
     $parent_constructor_dispose=sub {
         return $constructor_complete if $constructor_dispose_started;
@@ -3541,6 +3793,8 @@ sub task6a_origin_produce_source_vendor_staged_custody {
         if($observer_settled&&$node_settled&&task6a_origin_helpers_settled()) {
             for my $record(reverse @constructor_files) {my $ok=eval {$constructor_close->($record)};$all=0 unless $ok&&!length($@);}
         }
+        my $physical_closed=eval {$physical_constructor_dispose->()};my $physical_error=$@;
+        $all=0 unless $physical_closed&&!length($physical_error)&&$physical_cleanup_complete->();
         $all=0 if $constructor_uncertain||!task6a_origin_helpers_settled();$constructor_complete=$all?1:0;$constructor_uncertain=1 unless $all;
         $constructor_phase=$all?'closed':'quarantined';return $constructor_complete;
     };
@@ -3554,7 +3808,9 @@ sub task6a_origin_produce_source_vendor_staged_custody {
             if($record->{transferred} ne '') {task6a_origin_refuse() if defined(fileno($record->{fh}));}
             else {task6a_origin_refuse() unless $record->{closed};}
         }
+        $physical_release_private->();
         for my $record(reverse @constructor_files) {$constructor_close->($record) or task6a_origin_refuse();}
+        task6a_origin_refuse() unless $physical_cleanup_complete->();
         $constructor_complete=1;$constructor_dispose_started=1;$constructor_phase='closed';return 1;
     };
     $parent_constructor=sub {
@@ -3565,7 +3821,7 @@ sub task6a_origin_produce_source_vendor_staged_custody {
             &&!@parent_native_originals&&!defined($parent_native_original_pid)&&!defined($parent_native_target_pid)
             &&$parent_native_can_claim->()&&$producer_phase eq 'held'&&$creator_phase eq 'released'
             &&$staged_phase eq 'active'&&task6a_origin_helpers_settled();
-        $staged_require_live->();
+        $physical_can_claim->();$staged_require_live->();
         my $start=task6a_origin_now();task6a_origin_refuse() unless $start<$bootstrap_deadline;
         $constructor_start=$start;$constructor_deadline=$start+30;$constructor_cleanup_deadline=$start+45;
         $constructor_deadline=$bootstrap_deadline if $bootstrap_deadline<$constructor_deadline;
@@ -3573,7 +3829,7 @@ sub task6a_origin_produce_source_vendor_staged_custody {
         $parent_constructor_deadline=$constructor_deadline;$parent_constructor_cleanup_deadline=$constructor_cleanup_deadline;
         $constructor_parent_pid=$$;$constructor_claimed=1;$constructor_busy=1;$constructor_phase='preparing';
         my $ok=eval {
-            $SIG{CHLD}='DEFAULT';$^F=2;$staged_epoch->();
+            $SIG{CHLD}='DEFAULT';$^F=2;$staged_epoch->();$physical_claim->();
             $constructor_capsule->();$staged_epoch->();
             my $node_view=$staged_record_checks[11]->(\($staged_files[5]));
             my $entry_view=$staged_record_checks[9]->(\($staged_files[3]));
@@ -3910,8 +4166,9 @@ sub task6a_origin_hold_file {
             &&$before[7]>=0&&$before[7]<=$limit&&@file_ledger<256;
         $record={path=>$path,sha256=>$hash,identity=>\@before,fh=>undef};
         push(@file_ledger,$record);
-        sysopen(my $fh,$path,Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK()) or task6a_origin_refuse();
-        push(@physical_owned_handles,$fh) if $physical_owns_ledgers&&$physical_internal;
+        my $fh;
+        if($physical_owns_ledgers&&$physical_internal) {$physical_open->(\$fh,$path,Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK());}
+        else {sysopen($fh,$path,Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_NONBLOCK()) or task6a_origin_refuse();}
         $record->{fh}=$fh;
         binmode($fh) or task6a_origin_refuse();
         fcntl($fh,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()) or task6a_origin_refuse();
@@ -4003,8 +4260,9 @@ sub task6a_origin_hold_ancestry {
             task6a_origin_refuse() unless $parent eq '/private/tmp'?$mode==01777
                 :($mode==0755||$mode==0711||$mode==0700||$mode==0555);
             my $record={path=>$parent,identity=>\@before,fh=>undef};push(@directory_ledger,$record);
-            sysopen(my $fh,$parent,Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_DIRECTORY()) or task6a_origin_refuse();
-            push(@physical_owned_handles,$fh) if $physical_owns_ledgers&&$physical_internal;
+            my $fh;
+            if($physical_owns_ledgers&&$physical_internal) {$physical_open->(\$fh,$parent,Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_DIRECTORY());}
+            else {sysopen($fh,$parent,Fcntl::O_RDONLY()|Fcntl::O_NOFOLLOW()|Fcntl::O_DIRECTORY()) or task6a_origin_refuse();}
             $record->{fh}=$fh;
             fcntl($fh,Fcntl::F_SETFD(),Fcntl::FD_CLOEXEC()) or task6a_origin_refuse();
             task6a_origin_check_directory($record);
@@ -4023,18 +4281,7 @@ sub task6a_origin_recheck_ancestry {
         directoryCount=>scalar(@directory_ledger)};
 }
 sub task6a_origin_physical_cleanup {
-    return $physical_cleanup_ok if $physical_cleanup_attempted;
-    return 0 unless $physical_owns_ledgers;
-    $physical_cleanup_attempted=1;
-    $file_lifecycle_released=1;
-    # Capture handle ownership immediately after each successful open, before
-    # any subsequent fallible check. Never adopt a contaminated live ledger.
-    for my $fh(@physical_owned_handles) {
-        my $closed=eval {defined(fileno($fh))&&close($fh)};
-        $file_lifecycle_burned=1 unless $closed&&!$@;
-    }
-    $physical_cleanup_ok=$file_lifecycle_burned?0:1;
-    return $physical_cleanup_ok;
+    return $physical_cleanup_private->();
 }
 sub task6a_origin_physical_fail {
     $physical_state='burned' unless $physical_state eq 'released';
@@ -4043,39 +4290,53 @@ sub task6a_origin_physical_fail {
     task6a_origin_refuse();
 }
 sub task6a_origin_guard_raw_physical {
+    task6a_origin_refuse() if !$physical_internal&&defined($parent_constructor_material_allowed)&&!$parent_constructor_material_allowed->();
     task6a_origin_physical_fail() if $physical_owns_ledgers&&!$physical_internal;
 }
 sub task6a_origin_physical_records {
-    return 0 unless @file_ledger==1&&@directory_ledger==3&&@physical_directories==3
-        &&defined($physical_file)&&$file_ledger[0]==$physical_file
-        &&$physical_file->{path} eq '/usr/bin/perl';
-    my @paths=('/','/usr','/usr/bin');
-    for my $index(0..2) {
-        return 0 unless $directory_ledger[$index]==$physical_directories[$index]
-            &&$directory_ledger[$index]{path} eq $paths[$index];
-    }
-    return 1;
-}
-sub task6a_origin_recheck_system_perl_physical {
     my $ok=eval {
+        for my $a(\@file_ledger,\@directory_ledger,\@physical_directories) {$staged_vector->($a);}
+        task6a_origin_refuse() unless @file_ledger==1&&@directory_ledger==3&&@physical_directories==3;
+        my $file=$staged_container->(\$physical_file,'B::HV');
+        my $row=$staged_container->(\($file_ledger[0]),'B::HV');
+        task6a_origin_refuse() unless $file==$row&&exists($file->{path})
+            &&$staged_scalar->(\($file->{path})) eq '/usr/bin/perl';
+        my @paths=('/','/usr','/usr/bin');
+        for my $i(0..2) {
+            my $original=$staged_container->(\($physical_directories[$i]),'B::HV');
+            my $row=$staged_container->(\($directory_ledger[$i]),'B::HV');
+            task6a_origin_refuse() unless $original==$row&&exists($row->{path})
+                &&$staged_scalar->(\($row->{path})) eq $paths[$i];
+        }
+        1;
+    };return $ok?1:0;
+}
+$physical_epoch=sub {
+    my $ok=eval {
+        $physical_require_live->();
         task6a_origin_refuse() unless @_==0&&$physical_state eq 'active'
             &&$physical_owns_ledgers&&!$physical_internal&&!$file_lifecycle_burned
             &&!$file_lifecycle_released&&task6a_origin_physical_records()
-            &&task6a_origin_helpers_settled()&&task6a_origin_now()<$bootstrap_deadline;
+            &&task6a_origin_helpers_settled()&&task6a_origin_now()<$parent_material_deadline->();
         task6a_origin_recheck_ancestry();
         task6a_origin_recheck_files();
         task6a_origin_acl_free('/usr/bin/perl');
         task6a_origin_recheck_files();
         task6a_origin_recheck_ancestry();
         task6a_origin_refuse() unless task6a_origin_physical_records()
-            &&task6a_origin_helpers_settled()&&task6a_origin_now()<$bootstrap_deadline;
+            &&task6a_origin_helpers_settled()&&task6a_origin_now()<$parent_material_deadline->();
         1;
     };
-    task6a_origin_physical_fail() unless $ok;
+    unless($ok) {$physical_state='burned' unless $physical_state eq 'released';$file_lifecycle_burned=1 if $physical_owns_ledgers;task6a_origin_refuse();}
     return {scope=>'composed-system-perl-physical-candidate-diagnostic-only',
         productionAuthority=>JSON::PP::false,fileCount=>1,directoryCount=>3};
+};
+sub task6a_origin_recheck_system_perl_physical {
+    task6a_origin_refuse() if defined($parent_constructor_material_allowed)&&!$parent_constructor_material_allowed->();
+    my $r;my $ok=eval {$r=$physical_epoch->(@_);1;};
+    task6a_origin_physical_fail() unless $ok;return $r;
 }
-sub task6a_origin_hold_system_perl_physical {
+$physical_hold_private=sub {
     task6a_origin_physical_fail() unless @_==0&&$physical_state eq 'new'
         &&!$file_lifecycle_burned&&!$file_lifecycle_released
         &&@file_ledger==0&&@directory_ledger==0;
@@ -4084,7 +4345,7 @@ sub task6a_origin_hold_system_perl_physical {
     $physical_internal=1;
     my $ok=eval {
         task6a_origin_refuse() unless task6a_origin_helpers_settled()
-            &&task6a_origin_now()<$bootstrap_deadline;
+            &&task6a_origin_now()<$parent_material_deadline->();
         task6a_origin_hold_ancestry('/usr/bin/perl');
         task6a_origin_acl_free('/usr/bin/perl');
         task6a_origin_hold_file('/usr/bin/perl',
@@ -4093,15 +4354,20 @@ sub task6a_origin_hold_system_perl_physical {
         @physical_directories=@directory_ledger;
         $physical_internal=0;
         $physical_state='active';
-        task6a_origin_recheck_system_perl_physical();
+        $physical_epoch->();
         1;
     };
     $physical_internal=0;
     task6a_origin_physical_fail() unless $ok;
     return {scope=>'composed-system-perl-physical-candidate-diagnostic-only',
         productionAuthority=>JSON::PP::false,fileCount=>1,directoryCount=>3};
+};
+sub task6a_origin_hold_system_perl_physical {
+    task6a_origin_refuse() if defined($parent_constructor_material_allowed)&&!$parent_constructor_material_allowed->();
+    return $physical_hold_private->(@_);
 }
 sub task6a_origin_release_system_perl_physical {
+    task6a_origin_refuse() if defined($parent_constructor_material_allowed)&&!$parent_constructor_material_allowed->();
     my $valid=eval {
         task6a_origin_refuse() unless @_==0;
         task6a_origin_recheck_system_perl_physical();
@@ -4552,8 +4818,8 @@ sub task6a_origin_observe_sources {
 }
 sub task6a_origin_main {
     task6a_origin_refuse() unless $<==0&&$>==0&&@ARGV==0;
-    # The source publisher and held execution path are not implemented yet.
-    # Keep both ordinary and privileged invocation closed until their TDD gates.
+    # Publisher and held execution components exist; final orchestration, outer
+    # settlement and initial trust/startup gates still keep both entries closed.
     task6a_origin_refuse();
 }
 task6a_origin_main();
