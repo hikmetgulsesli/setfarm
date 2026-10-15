@@ -1067,3 +1067,89 @@ method invocation on the candidate or caller-provided classification callback.
 Only after this gate may actual CORE::fileno and native reference/FD comparisons
 run. B operations and exact negative witnesses still require the complete
 literal two-reviewed recipe; this selection is not already proven execution.
+
+
+### Ordinary native epoch omission test, preparation checkpoint (2026-10-15)
+
+The first ordinary component has actual supported raw-region evidence: the
+separately retained v8 original completed both traversals, all three original
+processes naturally exited0, six streams reached EOF and24 known handles closed
+once with independent liveness checks. Independent same-original audit
+`a5a3a0a960c6c7bbe89d282670b883632220d309234e3727c747d345a6473f45`
+reports2511 checks0,477 frames,225/226 positive96B rows plus normal ends and44384
+native raw bytes. This is an ordinary capability result, not protected image,
+Root, startup, V2, compiler-transitive or whole-project admission.
+
+The next test invokes the genuine current parent consumer from a declaration-only
+memory copy. The disk Source and its cold/main guards remain unchanged. The copy
+removes exactly the cold prefix and final main call, injects one private zeroarg
+test initializer for the same Perl-owned genuine Node and four pipe originals,
+and adds passive acceptance observations at the unchanged READY/PONG/END branches.
+It does not call the vendor/staged production publisher or install a Source gate.
+
+The consumer is the sole reader of its Node pipes. Native BIND/SAMPLE waits pump
+only the observer pipes while the consumer runs. Genuine CORE delegates retain
+the real Node bytes, urandom32B reads, syscall return/errno/status, waits and closes
+in the shared original ledger. Incoming errno/status are saved before a witness
+and restored immediately before the genuine Source syswrite; actual postcall
+state is retained before logging and restored on return. No synthetic wait0,
+nonce, stat, FD, return, native packet or cached reap is supplied to Source.
+
+Before forwarding the first actual CHALLENGE attempt, an oracle-only fence records
+whether a Source-origin native epoch completed, then obtains genuine BIND/SAMPLE1
+if absent. At the actual END attempt, after the third accepted genuine PONG, the
+second fence similarly obtains SAMPLE2 if absent. These witnesses keep the real
+Node alive and unreaped until both queries finish; they never count as Source
+gates. Scope is bound to the actual complete48B FD3 command write, its phase and
+first response sequence; the matching completed response inherits that command
+record. It is never inferred from later parser time after a witness has ended or
+from a test-provided success callback. The independent decoder compares all command
+writes, raw responses, native identity, actual PONGs, ownership and natural waits.
+Actual distinct64hex challenges come from the consumer's real urandom reads;
+fixed v8 test nonces are not reused.
+
+On witness failure, settle the original observer first. If it is active, unknown
+or unsettled, Source wait/kill delegates throw before CORE::waitpid/kill, causing
+Source uncertainty and preserving the unreaped original Node lease. No query is
+made after a consuming Node reap. Failure, forced cleanup, partial raw capture,
+unknown ownership, malformed material or an unsupported capability is ineligible
+for the omission assertion. Every known close is once-intent with independent
+liveness, shared between Source and harness; no retry/adoption of unknown FDs.
+
+Only after the actual consumer accepts229 input/220 output bytes, three distinct
+nonce/PONG pairs, closes its five originals, and both native phases plus all
+custody/EOF/natural cleanup checks pass, the test asserts omissions equal[] against
+the predicted current[1,2]. This is a new test preparation, not an already observed
+RED. A missing export/initializer/artifact, setup error or unsupported native call
+does not qualify as behavioral RED. Future GREEN must demonstrate genuine
+Source-origin completed native phases outside witness scope, not a no-op injected
+gate or a relabelled witness; production fork/publisher/Root composition remains
+a separate requirement.
+
+The maintained fixture uses only a test opt-in locator manifest. Unset means
+explicit SKIP/UNRUN without native credit. A selected missing/malformed manifest
+fails setup before any fork. Its strict canonical JSON may locate the exact
+literal-pinned ordinary Node26/C2/header/observer cohort; it accepts no caller PID,
+argv, command, provider or CODE. Current Source and entry are read only from fixed
+maintained URLs and verified against their literal pins. Regular nofollow held and
+named metadata, owner/mode/nlink/size and before/after pins are checked. Node's
+observed file GID80 is retained separately from the ordinary process501:20 profile;
+the test-owned material/observer are501:20. Fixed child environments exclude the
+selection environment. Manifest and receipt DATA grant no Source/Root authority.
+
+This causally adds one fixture helper to the former four-path integration map:
+
+| Path | Role in this phase |
+| --- | --- |
+| scripts/task6a-protected-origin-bootstrap-v2.pl | Unchanged pinned DATA; future implementation only after eligible actual RED |
+| scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js | Import/register the ordinary test inside its existing ordinary-host branch |
+| scripts/__tests__/fixtures/task6a-consumer-epoch-native-v1.mjs | Complete fixed owner template, capture and independent decoder; no import-time child |
+| docs/superpowers/specs/2026-09-30-task6a-protected-origin-bootstrap-v2-design.md | This bounded contract |
+| docs/superpowers/plans/2026-09-30-task6a-protected-origin-bootstrap-v2.md | Test-first sequence, material and limits |
+
+The extra helper keeps complete real custody code out of the existing456KB test.
+No one-off logs path or test opt-in is added to production bootstrap. The fixture
+has the v8 finite15s normal/45s parent total,50s+15s outer Perl capture,80s test,
+fixed native schedules and existing raw/event/OS/IO/read/cleanup bounds. A separate
+95s+15s known-original Node recorder retains full TAP streams and actual wait.
+No privileged action, service change, compiler run, PM2 retry or V2 enabling occurs.

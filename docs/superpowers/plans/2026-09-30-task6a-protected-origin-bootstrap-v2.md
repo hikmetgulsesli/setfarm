@@ -8490,3 +8490,67 @@ after the reviewed complete recipe, not as a substitute for actual staged RED.
 - [ ] Actual opt-in trusted-owner installation uses only fixed system tools: fetch the actual admitted bootstrap blob to a newly root-owned private stage, check typed base64/size and framed Git identity against the independently admitted delivered blob, then execute exact protected system Perl program. Never root-execute the user-owned test Node/local mutable file or derive authority from a receipt DTO.
 - [ ] Run actual private vendor/source/native/credential-drop/direct-PID/private-pipe/held-byte/lifetime positives and wrong-entry/argv-title spoof/replay/foreignPID/source-native replacement/parent-loss/cleanup-uncertainty denials. Only delivered source and real official archive count; fakes prove protocol only. Capture actual child UID/groups/start/maps and exact root/source/vendor identities, definite cleanup or preserved failure evidence.
 - [ ] Independent post-run PID/root absence or exact preserved-tree validation, then PG31/HTTP/selector/namespace read-only checks. Standby unselected and all live guards unchanged. Record exact remaining compiler/fence/genesis/32/33/admission/live handoff outcomes without claiming Task6A completion.
+
+
+### Next ordinary consumer epoch test — file-only preparation (2026-10-15)
+
+The supported ordinary v8 component GREEN is retained at
+`logs/2026-10-15-task6a-combined-test-preparation-v8/actual-KI4Qkk`; independent
+same-original audit `a5a3a0a960c6c7bbe89d282670b883632220d309234e3727c747d345a6473f45`
+qualified2511 checks0, not production/Root/V2 startup. That actual original is not
+replayed or relabelled as the new consumer regression.
+
+File Map is exactly the five paths in the paired new spec section. The added
+test-only fixture helper is causally necessary to keep complete genuine owner,
+capture and decoder code out of the existing dedicated test. Bootstrap is an
+unchanged bdb52017/221411B DATA snapshot in this preparation; no implementation
+candidate exists. Tests/helper/spec/plan are outside candidate copies only.
+
+- [x] Read current consumer READY-to-CHALLENGE and match3-to-END behavior; preserve
+  the existing modeled424242 fixture's scope instead of claiming real custody.
+- [x] Prepare one complete literal real-fork consumer program and portable
+  maintained test fixture with observer-only pumping, transparent genuine CORE
+  delegates, shared once waits/closes, fixed finite quotas and oracle-only fences.
+- [x] Preserve v8 originals and link the actual ordinary supported-native audit.
+- [ ] Two independent complete program/material/capture reviews before execution.
+- [ ] Root alone performs one nominated ordinary original. All raw material is
+  retained before assertions. Only full native/custody eligibility then actual
+  omission[1,2] vs required[] qualifies the single behavioral RED; setup, unsupported
+  capability, initializer/export, IO or cleanup errors do not.
+- [ ] After eligible actual RED, write/review the smallest private producer/consumer
+  integration in the nominated bootstrap path. A genuine Source native phase is
+  required for future GREEN; no injected no-op, witness relabel or guard bypass.
+- [ ] Root alone verifies GREEN and appropriate adjacent cases on a fresh pinned
+  source/test graph, then exact review/delivery. Do not silently count a generic
+  unconfigured fixture SKIP as native coverage or replay old campaigns.
+
+Selected ordinary test is exactly
+`Perl parent protocol requires native epochs before first challenge and END`.
+An explicit TEST-only owned fixture manifest locates literal-pinned material;
+generic unset selection is SKIP/UNRUN. Selected invalid material is setup failure
+before fork. The unchanged source reads no new selector/environment/provider.
+Before and after pins include current Source, entry, emitted full Perl program,
+manifest and ordinary artifact. Root applies/reviews/commits only the four
+test/helper/spec/plan targets on a clean checkpoint before the single RED run,
+preserving bootstrap bdb bytes. The nominated standalone entry imports that
+applied maintained helper and registers exactly this callback. The recorder
+refuses before spawn unless all four applied targets equal candidate pins.
+Copied runtime-layout files remain nonselected reference DATA, not live/stock
+startup. Actual source uses three fresh urandom64hex nonces,229/220 bytes, three
+PONGs and five closes, with native sample witness scopes separately recorded.
+
+The prewrite fence records Source's write attempt before obtaining each witness.
+It restores incoming errno/status before the real syswrite and preserves its
+actual outgoing state after logging. Native waits never drain consumer streams.
+An active/unknown observer forbids consuming Node wait or signalling Node before
+observer settlement; no postreap native query is permitted. Known cleanup is
+shared, once-attempted and independently checked. The final omission assertion
+runs only after all actual natural endings/EOF/pins/bytes/native bindings qualify.
+
+Preparation directory:
+`logs/2026-10-15-task6a-consumer-epoch-red-pre-effect-v1`.
+No tests, callbacks, Perl evaluation, native queries, C build, PG, services,
+privileged installation, git mutation or active source edit was performed by the
+preparer. New RED/GREEN remains UNRUN. Full mapped-image binding, protected cohort
+promotion, initial TCB/compiler closure, production publisher composition, PM2,
+V2, main rollout and whole-project acceptance remain unqualified.

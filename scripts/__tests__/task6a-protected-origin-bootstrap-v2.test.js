@@ -5,6 +5,7 @@ import {spawn,spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import test from 'node:test';
+import {registerConsumerEpochNativeTest} from './fixtures/task6a-consumer-epoch-native-v1.mjs';
 import {ZERO,ONE,TWO,literalCommit,framedHash,coherentCommit,coherentTree,sourceGraph}
   from './fixtures/task6a-origin-transport-fixtures-v2.js';
 
@@ -6924,4 +6925,6 @@ test('default npm graph dispatches a real protected-bootstrap pure leaf without 
   assert.equal(r.error,undefined);assert.equal(r.signal,null);assert.equal(r.status,0,r.stdout+r.stderr);
   assert.match(r.stdout,/(?:ℹ|#) pass 1\b/);assert.match(r.stdout,/(?:ℹ|#) skipped 0\b/);
 });
+// Explicitly unselected fixture is UNRUN; no native test credit.
+registerConsumerEpochNativeTest();
 }
