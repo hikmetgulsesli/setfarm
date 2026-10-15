@@ -1469,6 +1469,7 @@ function sourceMainHybridProgram(original,base,routes,username,caseKind){
   const emitted=physicalLifetimeProgram(original,base,routes,username,faultKind);let program=emitted.program;
   let suffix=replaceOne(SOURCE_MAIN_SUFFIX,"caseKind=>'outer-main'","caseKind=>'"+caseKind+"'");
   suffix=replaceOne(suffix,'my $g1_before=g1_source_snapshot();',SOURCE_MAIN_HYBRID_GETTER+'my $g1_before=g1_source_snapshot();');
+  suffix=replaceOne(suffix,"    return {plain=>1,flags=>$flags,defined=>defined($$cell)?1:0,hex=>defined($$cell)?unpack('H*',$$cell):undef};","    my $copy=$$cell;\n    return {plain=>1,flags=>$flags,defined=>defined($copy)?1:0,hex=>defined($copy)?unpack('H*',$copy):undef};");
   suffix=replaceOne(suffix,'    productionAuthority=>JSON::PP::false};',"    controlObservation=>{kind=>$g1_control_kind,proof=>$g1_control_proof,modelForks=>\\@g1_model_forks,modelOperations=>\\@g1_model_operations,exceptionCallbacks=>0+$g1_exception_callbacks,stagedOwners=>g1_staged_owner_snapshot(),stagedDisposalStarted=>0+$staged_disposal_started},\n    productionAuthority=>JSON::PP::false};");
   suffix=replaceOne(suffix,"my $g1_after=g1_source_snapshot();","my $g1_after=g1_source_snapshot();\n"+SOURCE_MAIN_HYBRID_PRECLAIM_PROBES);
   suffix=replaceOne(suffix,"sourceEntries=>\\@g1_events,","sourceEntries=>\\@g1_first_entries,allSourceEntries=>\\@g1_events,");
