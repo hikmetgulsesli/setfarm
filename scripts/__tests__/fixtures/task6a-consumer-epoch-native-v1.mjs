@@ -906,6 +906,7 @@ function assertPhysicalObservation(result){
 
 export function registerPhysicalOwnerLifetimeTest(){
   registerSourceMainOccurrenceTest();
+  registerSourceMainFailureTests();
   for(const [caseKind,title]of [['healthy',PHYSICAL_LIFETIME_TITLE],['physical-open-false','Perl Source physical claim retains a genuine assigned original after modeled false'],['physical-open-throw','Perl Source physical claim retains a genuine assigned original after modeled throw'],['unsolicited-phase','Perl Source physical constructor refuses unsolicited phase before first challenge'],['observer-first-failure','Perl Source physical constructor keeps Node unreaped until failed observer settles']]){
   if(!process.env[PHYSICAL_LIFETIME_ENV]){test(title,{skip:'explicit constructor fixture unset; UNRUN, no native or launcher credit'},()=>{});continue;}
   test(title,async()=>{
@@ -1256,3 +1257,200 @@ function registerSourceMainOccurrenceTest(){
       mainAdmittedCount:1,sourceComponentDispatchCount:3,launcherOriginalCount:2,helperOriginalCount:127,sourceMaterialOriginalCount:36,physicalOriginalCount:4,sourceEpochCount:2,witnessEpochCount:0,capsuleSHA256:OBSERVER_SHA});
   });
 }
+
+
+// Complete simple G1 controls; no modeled process creation or ownership.
+const SOURCE_MAIN_CONTROL_PREFIX="# Separate TEST-only failure deliveries after actual native outcomes.\nour ($g1_control_kind,$g1_control_proof,$g1_exception_callbacks)=('__G1_CONTROL_KIND__',undef,0);\nour (@g1_model_forks,@g1_model_operations);\nsub g1_after_open {\n    my ($cell,$path,$realm,$returned,$errno,$status,$error)=@_;return {handled=>0} unless $g1_control_kind eq 'g1-publisher-false'&&$realm eq 'creator'&&!defined($g1_control_proof);\n    die \"G1_PUBLISHER_CONTROL_ARM\\n\" unless $path eq '/'&&defined($returned)&&$returned==1&&!length($error)&&@ctor_handles==1;\n    my $record=$ctor_handles[0];my $shape=ctor_phy_shape($cell);my $fd=CORE::fileno($$cell);my @tuple=CORE::stat($$cell);\n    die \"G1_PUBLISHER_NATIVE_ORIGINAL\\n\" unless @tuple==13&&defined($fd)&&$fd>=3&&$record->{fd}==$fd;\n    $g1_control_proof={kind=>$g1_control_kind,genuineReturn=>$returned,errno=>$errno,status=>$status,errorHex=>unpack('H*',$error),actualFD=>$fd,actualShape=>$shape,actualStat=>\\@tuple,path=>$path,modeledDelivery=>0};\n    $!=$errno;$?=$status;return {handled=>1,returned=>0};\n}\nsub g1_after_close {\n    my ($record,$returned,$errno,$status,$error)=@_;return {handled=>0} unless ($g1_control_kind eq 'g1-release-false'||$g1_control_kind eq 'g1-release-throw')&&$record->{realm} eq 'staged'&&!defined($g1_control_proof);\n    die \"G1_RELEASE_CONTROL_ARM\\n\" unless $record->{closeAttempts}==1&&defined($returned)&&$returned==1&&!length($error)&&!defined($record->{live});\n    $g1_control_proof={kind=>$g1_control_kind,path=>$record->{path},originalFD=>$record->{fd},primitiveReturn=>$returned,errno=>$errno,status=>$status,errorHex=>unpack('H*',$error),primitiveLive=>$record->{live},modeledDelivery=>$g1_control_kind};\n    $!=$errno;$?=$status;die \"G1_MODELED_STAGED_CLOSE_THROW\\n\" if $g1_control_kind eq 'g1-release-throw';return {handled=>1,returned=>0};\n}\nsub g1_secondary_delivery {\n    my ($original)=@_;my ($returned,$completed,$error);{local $@;$completed=eval {$returned=$original->();1;};$error=$@;}\n    die \"G1_SECONDARY_CONTROL_ARM\\n\" unless $completed&&defined($returned)&&$returned==1&&CORE::ref($error) eq ''&&!length($error);\n    $g1_control_proof={kind=>$g1_control_kind,genuineDisposeReturn=>$returned,disposeCompleted=>1,disposeErrorHex=>unpack('H*',$error),sourceConstructor=>test_ctor_snapshot(),modeledDelivery=>'distinct secondary exception after actual cached same-owner disposal'};\n    die \"G1_MODELED_SECONDARY_CLEANUP_THROW\\n\";\n}\n";
+const SOURCE_MAIN_CONTROL_PREFIX_HOOKS=[["ctor_event('source-open',$realm,$path,defined($returned)?0+$returned:undef,$errno,unpack('H*',$error));$!=$errno;$?=$status;die $error if length($error);return $returned;","ctor_event('source-open',$realm,$path,defined($returned)?0+$returned:undef,$errno,unpack('H*',$error));my $delivery=g1_after_open($cell,$path,$realm,$returned,$errno,$status,$error);return $delivery->{returned} if $delivery->{handled};$!=$errno;$?=$status;die $error if length($error);return $returned;"],["$record->{live}=$live;$record->{liveErrorHex}=unpack('H*',$live_error);\n    $!=$errno;$?=$status;die $error if length($error);return $returned;","$record->{live}=$live;$record->{liveErrorHex}=unpack('H*',$live_error);\n    my $delivery=g1_after_close($record,$returned,$errno,$status,$error);return $delivery->{returned} if $delivery->{handled};$!=$errno;$?=$status;die $error if length($error);return $returned;"]];
+const SOURCE_MAIN_CONTROL_PROJECTIONS={"g1-consumer-secondary-error":[["$done=eval {$returned=$parent_constructor_dispose->();1;};$cleanup_error=$@;","$done=eval {$returned=g1_secondary_delivery($parent_constructor_dispose);1;};$cleanup_error=$@;"]]};
+const SOURCE_MAIN_CONTROL_GETTER="sub g1_staged_owner_snapshot {\n    return [map {my ($fh,$fd,$attempted,$closed)=$_->('binding');{fd=>$fd,attempted=>$attempted,closed=>$closed,live=>CORE::fileno($fh)}} @staged_originals];\n}\n";
+function sourceMainFailureProgram(original,base,routes,username,caseKind){
+  assert.ok(SOURCE_MAIN_CONTROLS.some(([kind])=>kind===caseKind));
+  const faultKind=caseKind==='g1-consumer-refusal'||caseKind==='g1-consumer-secondary-error'?'post-second-fork-refusal':caseKind;
+  const emitted=physicalLifetimeProgram(original,base,routes,username,faultKind);let program=emitted.program;
+  let suffix=replaceOne(SOURCE_MAIN_SUFFIX,"caseKind=>'outer-main'","caseKind=>'"+caseKind+"'");
+  suffix=replaceOne(suffix,'my $g1_before=g1_source_snapshot();',SOURCE_MAIN_CONTROL_GETTER+'my $g1_before=g1_source_snapshot();');
+  suffix=replaceOne(suffix,'    productionAuthority=>JSON::PP::false};',"    controlObservation=>{kind=>$g1_control_kind,proof=>$g1_control_proof,modelForks=>\\@g1_model_forks,modelOperations=>\\@g1_model_operations,exceptionCallbacks=>0+$g1_exception_callbacks,stagedOwners=>g1_staged_owner_snapshot(),stagedDisposalStarted=>0+$staged_disposal_started},\n    productionAuthority=>JSON::PP::false};");
+  if(caseKind==='g1-release-false'){
+    suffix=replaceOne(suffix,'my $g1_after=g1_source_snapshot();','my $g1_after=g1_source_snapshot();\n'+SOURCE_MAIN_COMPLETED_FRESHNESS_PROBE);
+    suffix=replaceOne(suffix,'controlObservation=>{kind=>','controlObservation=>{freshnessProof=>$g1_freshness_proof,kind=>');
+  }
+  program=replaceOne(program,PHYSICAL_LIFETIME_SUFFIX,suffix);
+  program=replaceOne(program,'\n#line 1 "Source.constructor.declarations.pl"\n','\n'+SOURCE_MAIN_OBSERVER+'\n#line 1 "Source.constructor.declarations.pl"\n');
+  const projections=[...emitted.projections];
+  for(const pair of [...SOURCE_MAIN_PROJECTIONS,...(SOURCE_MAIN_CONTROL_PROJECTIONS[caseKind]??[])]){program=replaceOne(program,...pair);projections.push(pair);}
+  for(const pair of SOURCE_MAIN_CONTROL_PREFIX_HOOKS)program=replaceOne(program,...pair);
+  program=replaceOne(program,'# Passive TEST-only recording.',replaceOne(SOURCE_MAIN_CONTROL_PREFIX,'__G1_CONTROL_KIND__',caseKind)+'\n# Passive TEST-only recording.');
+  return {program,projections};
+}
+const SOURCE_MAIN_CONTROLS=[
+ ['g1-publisher-false','Perl Source main retains publisher failure after a genuine assigned original'],
+ ['g1-consumer-refusal','Perl Source main unwinds settled consumer refusal without fixture cleanup'],
+ ['g1-consumer-secondary-error','Perl Source main preserves primary consumer refusal across secondary cleanup failure'],
+ ['g1-release-false','Perl Source main refuses modeled false after genuine staged once-close'],
+ ['g1-release-throw','Perl Source main refuses modeled throw after genuine staged once-close']
+];
+function assertG1ActualCaptures(result,home,expected,modeled=0){
+  assert.equal(result.captures.length,expected+modeled);const actual=result.forks.filter(f=>f.role==='source-helper');assert.equal(actual.length,expected);
+  assert.equal(result.sourceHelpers.length,expected+modeled);assert.ok(result.forks.every(f=>f.role==='source-helper'||f.role==='source-launcher'));
+  for(const f of actual){assert.equal(f.reaped,1);assert.equal(f.uncertain,0);assert.equal(f.rawStatus,0);assert.deepEqual(f.signals,[]);assert.ok(f.stack.some(s=>s[2]==='main::ctor_original_capture'));assert.equal(result.sourceHelpers.find(h=>h.pid===f.pid)?.settled,1);assert.equal(result.captures[f.captureIndex].resultPID,f.pid);}
+  for(const c of result.captures){
+    const isModel=c.modeledProcess===1;
+    assert.equal(c.returned,isModel?0:1);assert.equal(c.errorHex,isModel?Buffer.from('TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n').toString('hex'):'');
+    if(!isModel){assert.equal(c.resultStatus,0);assert.equal(c.resultReaped,1);assert.ok(actual.some(f=>f.pid===c.resultPID&&f.captureIndex===c.index));}
+    assert.equal(c.streams.length,3);
+    for(const st of c.streams){assert.equal(st.received,st.written);assert.equal(st.closeAttempted,1);assert.equal(st.closeReturned,1);assert.equal(st.closeErrorHex,'');assert.equal(st.live,null);assert.equal(st.liveErrorHex,'');assert.equal(st.pendingHex,undefined);assert.equal(st.pendingDelivered,undefined);assert.equal(st.eof,isModel?0:1);
+      const fp=constructorPin(path.join(home,st.path),st.cap);assert.equal(fp.bytes,st.received);assert.equal(fp.sha256,st.sha256);assert.equal(st.rawIdentity.length,13);for(const [n,i]of [[0,0],[1,1],[2,2],[3,3],[4,4],[5,5],[6,7]])assert.equal(fp.identity[n],st.rawIdentity[i]);
+      if(isModel){assert.equal(fp.bytes,0);}else if(st.name==='stdout'){assert.equal(fp.bytes,c.outBytes);assert.equal(fp.sha256,c.outSHA256);}else assert.equal(fp.bytes,0);
+    }
+  }
+  assert.equal(result.captures.filter(c=>c.modeledProcess===1).length,modeled);
+}
+function assertG1MaterialPrimitive(h,closed){
+  assert.equal(h.closeAttempts,closed?1:0);assert.equal(h.finalLive,closed?null:h.fd);
+  if(closed){assert.equal(h.closeReturned,1);assert.equal(h.closeErrorHex,'');assert.equal(h.live,null);assert.equal(h.liveErrorHex,'');}
+  else{assert.ok(Number.isSafeInteger(h.fd)&&h.fd>=3);assert.equal(h.closeReturned,undefined);}
+}
+function assertG1Failure(result,caseKind,home,systemPerlBefore){
+  const canonical=Buffer.from('TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n').toString('hex'),c=result.controlObservation,o=result.outer,cs=result.constructorSnapshot,p=result.physicalObservation;
+  assert.equal(result.caseKind,caseKind);assert.equal(result.schema,'setfarm.source-constructor-fixture-result.v1');assert.equal(result.sourceSHA256,CONSTRUCTOR_SOURCE_SHA);assert.equal(result.productionAuthority,false);
+  assert.equal(result.cleanupStarted,1);assert.equal(result.cleanupCallbackInstalled,0);assert.equal(result.cleanupErrorHex,'');assert.equal(result.fallbackUsed,0);assert.deepEqual(result.errors,[]);
+  assert.ok(result.rawReadCalls<=32768&&result.rawBytes<=268435456&&result.rawWriteCalls<=65536&&result.reservedBytes<=469762048&&result.waitCalls<=65536&&result.signalCalls<=128&&result.cleanupWaitCalls<=4096&&result.cleanupSignalCalls<=128);
+  assert.deepEqual(physicalSystemPerlPin(),systemPerlBefore);assert.equal(o.phase,'burned');assert.equal(o.complete,0);assert.equal(o.claimed,1);assert.equal(o.unwindStarted,1);assert.equal(result.mainErrorHex,canonical);
+  const release=caseKind.startsWith('g1-release-'),publisher=caseKind==='g1-publisher-false',unknown=caseKind==='g1-unknown-observer'||caseKind==='g1-unknown-helper',secondary=caseKind==='g1-consumer-secondary-error';
+  const componentNames=publisher?['producer-entry']:release?['producer-entry','consumer-entry','staged-release-entry']:caseKind==='g1-consumer-refusal'?['producer-entry','consumer-entry','staged-release-entry']:['producer-entry','consumer-entry'];
+  // On consumer unwind a release entry is genuinely called while the retained
+  // outer stage remains consumer. Validate that actual stage explicitly here.
+  if(caseKind==='g1-consumer-refusal'){
+    const e=result.sourceEntries;assert.deepEqual(e.map(x=>x.event),['main-admitted',...componentNames]);assert.equal(e[3].snapshot.outer.stage,'consumer');
+    const without={...result,sourceEntries:e.slice(0,3)};assertSourceMainEntries(without,['producer-entry','consumer-entry'],false);
+    assert.equal(e[3].perlPID,result.parentPID);assert.ok(e[3].stack.some(s=>s[2]==='main::task6a_origin_main'));assert.equal(e[3].snapshot.constructor.complete,1);assert.equal(e[3].snapshot.helpersSettled,1);assert.equal(e[3].snapshot.physical.cleanupOK,1);
+  }else assertSourceMainEntries(result,componentNames,false);
+  assert.equal(o.primaryStage,publisher?'publisher':release?'release':'consumer');assert.equal(o.stage,o.primaryStage);
+  if(caseKind==='g1-unknown-observer'){assert.equal(o.primary.plain,0);assert.equal(o.primary.refType,'0');assert.equal(o.primaryPlain,0);assert.equal(c.exceptionCallbacks,0);assert.equal(c.proof.actualConsumerErrorHex,canonical);}
+  else{assert.equal(o.primary.plain,1);assert.equal(o.primaryPlain,1);assert.equal(o.primary.hex,canonical);}
+  if(publisher){
+    assert.equal(result.producer,null);assert.equal(result.consumer,null);assert.equal(result.release,null);assert.equal(o.releaseAttempted,0);assert.deepEqual(o.secondary,[]);
+    assertG1ActualCaptures(result,home,11);assert.equal(result.transportCount,11);assert.equal(result.sourceWriteBytes,0);assert.equal(result.handles.length,1);assert.equal(result.handles[0].realm,'creator');assertG1MaterialPrimitive(result.handles[0],true);
+    assert.equal(c.proof.kind,caseKind);assert.equal(c.proof.genuineReturn,1);assert.equal(c.proof.modeledDelivery,0);assert.equal(c.proof.path,'/');assert.equal(c.proof.actualStat.length,13);assert.equal(c.proof.actualFD,result.handles[0].fd);assert.equal(c.proof.actualShape.length,2);
+    assert.equal(result.after.creatorPhase,'burned');assert.equal(result.after.stagedPhase,'absent');assert.equal(result.after.stagedCount,0);assert.equal(p.after.state,'new');assert.equal(p.after.ownedCount,0);assert.equal(cs.claimed,0);assert.deepEqual(result.launcherStreams,[]);assert.deepEqual(result.launcherCloses,[]);assert.equal(result.forks.filter(f=>f.role==='source-launcher').length,0);
+    return {actualHelperCount:11,modeledProcessCount:0,actualLauncherCount:0,actualMaterialCount:1,sourceEpochCount:0};
+  }
+  assert.equal(result.producerRunOK,1);assert.equal(result.producer.creatorHandlesClosed,13);assert.equal(result.transportCount,13);assert.equal(result.sourceWriteBytes,163019178);
+  const held=result.beforeConsumer;assert.deepEqual([held.creatorCount,held.stagedCount,held.helperCount],[13,12,55]);assert.deepEqual(held.creatorCloseCounts,Array(13).fill(1));assert.deepEqual(held.stagedCloseCounts,Array(12).fill(0));assert.ok(held.stagedLive.every(fd=>Number.isSafeInteger(fd)&&fd>=3));assert.equal(held.helpersSettled,1);
+  if(release){
+    assert.equal(o.releaseAttempted,1);assert.deepEqual(o.secondary,[]);assert.equal(result.release,null);assert.equal(result.releaseErrorHex,canonical);assertSourceMainHealthyPrefixWithoutRelease(result,home,systemPerlBefore);
+    if(caseKind==='g1-release-false'){const f=c.freshnessProof;assert.equal(f.constructorFresh,0);assert.equal(f.materialAllowed,1);const strip=s=>{const {passiveMonotonic,...state}=s;return state;};assert.deepEqual(strip(f.after),strip(f.before));assert.equal(f.before.constructor.complete,1);assert.equal(f.before.constructor.claimed,1);assert.deepEqual(f.before.outer,o);assert.deepEqual(f.after.outer,o);}else assert.equal(c.freshnessProof,undefined);
+    assert.equal(result.after.stagedPhase,'burned');assert.equal(result.cleanup.stagedUncertain,1);assert.equal(c.stagedDisposalStarted,1);assert.equal(c.stagedOwners.length,12);
+    assert.deepEqual(c.stagedOwners.map(s=>[s.attempted,s.closed,s.live]),[[1,0,null],...Array.from({length:11},()=>[1,1,null])]);
+    const staged=result.handles.filter(h=>h.realm==='staged');assert.equal(staged.length,12);for(const h of staged)assertG1MaterialPrimitive(h,true);
+    assert.equal(c.proof.kind,caseKind);assert.equal(c.proof.primitiveReturn,1);assert.equal(c.proof.primitiveLive,null);assert.equal(c.proof.path,staged[0].path);assert.equal(c.proof.originalFD,staged[0].fd);
+    return {actualHelperCount:127,modeledProcessCount:0,actualLauncherCount:2,actualMaterialCount:36,sourceEpochCount:2};
+  }
+  assert.equal(result.consumer,null);const launchers=result.forks.filter(f=>f.role==='source-launcher');
+  if(!unknown){
+    assertG1ActualCaptures(result,home,104);assert.equal(launchers.length,2);assert.equal(cs.complete,1);assert.equal(cs.uncertain,0);assert.equal(cs.phase,'closed');assert.deepEqual(cs.acquisition,{node:'enrolled',observer:'enrolled'});assert.equal(cs.node.reaped,1);assert.equal(cs.observer.reaped,1);assert.equal(cs.node.uncertain,0);assert.equal(cs.observer.uncertain,0);
+    const e=result.launcherEvents,observer=e.find(x=>x.kind==='wait'&&x.pid===cs.observer.pid&&x.returned===cs.observer.pid);assert.ok(observer);const node=e.filter(x=>x.kind==='wait'&&x.pid===cs.node.pid);assert.ok(node.length&&node.every(x=>x.order>observer.order));
+    assert.equal(result.controlProof.kind,'post-second-fork-refusal');assert.deepEqual(result.controlProof.originalPIDs,launchers.map(f=>f.pid));assert.equal(result.launcherStreams.length,0);assert.equal(result.launcherCloses.length,16);assert.ok(cs.pipes.every(f=>f.attempted===1&&f.closed===1&&f.live===null));assert.ok(cs.files.every(f=>f.attempted===1&&f.closed===1&&f.live===null));
+    assert.equal(p.acquisitions.length,4);assert.equal(p.after.cleanupOK,1);assert.equal(p.after.state,'burned');assert.equal(p.after.private.keeper.length,4);assert.ok(p.after.private.keeper.every(k=>k.attempted===1&&k.closed===1&&k.live===null));const physicalCloses=p.events.filter(x=>x.event==='actual-fixed-close');assert.equal(physicalCloses.length,4);assert.ok(physicalCloses.every(x=>x.order>node.at(-1).order));
+    const staged=result.handles.filter(h=>h.realm==='staged');assert.equal(staged.length,12);for(const h of result.handles)assertG1MaterialPrimitive(h,secondary?h.realm!=='staged':true);
+    if(secondary){assert.equal(o.releaseAttempted,0);assert.equal(result.after.stagedPhase,'active');assert.equal(o.secondary.length,2);assert.equal(o.secondary[0].stage,'constructor-dispose');assert.equal(o.secondary[0].error.hex,Buffer.from('G1_MODELED_SECONDARY_CLEANUP_THROW\n').toString('hex'));assert.equal(o.secondary[0].success,0);assert.equal(o.secondary[1].stage,'staged-release-permission');assert.equal(o.secondary[1].success,0);assert.equal(c.proof.genuineDisposeReturn,1);assert.equal(c.stagedOwners.length,12);assert.ok(c.stagedOwners.every(s=>s.attempted===0&&s.closed===0&&s.live>=3));}
+    else{assert.equal(o.releaseAttempted,1);assert.equal(result.release.handlesClosed,12);assert.equal(result.after.stagedPhase,'released');assert.equal(o.secondary.length,3);assert.ok(o.secondary.every(s=>s.success===1));assert.ok(staged.every(h=>h.launcherOrderBeforeClose>=Math.max(...physicalCloses.map(x=>x.order))));}
+    return {actualHelperCount:104,modeledProcessCount:0,actualLauncherCount:2,actualMaterialCount:36,sourceEpochCount:0};
+  }
+  assert.fail('closed simple G1 case inventory');
+}
+function assertSourceMainHealthyPrefixWithoutRelease(result,home,systemPerlBefore){
+    const caseKind='healthy';
+    assert.equal(result.schema,'setfarm.source-constructor-fixture-result.v1');assert.equal(result.sourceSHA256,CONSTRUCTOR_SOURCE_SHA);assert.equal(result.producerRunOK,1);assert.equal(result.producerErrorHex,'');assert.equal(result.errors.length,0);
+    assert.deepEqual([result.producer.sourceCount,result.producer.vendorCount,result.producer.creatorHandlesClosed,result.producer.fileCount,result.producer.directoryCount],[4,2,13,6,6]);
+    const held=result.beforeConsumer;assert.deepEqual([held.producerPhase,held.creatorPhase,held.stagedPhase,held.parentPhase],['held','released','active','absent']);assert.equal(held.parentOriginalCount,0);assert.equal(held.creatorCount,13);assert.equal(held.stagedCount,12);assert.ok(held.now<held.deadline);
+    assert.ok(held.creatorCloseCounts.every(n=>n===1));assert.ok(held.creatorLive.every(n=>n===null));assert.ok(held.stagedCloseCounts.every(n=>n===0));assert.ok(held.stagedLive.every(n=>Number.isInteger(n)&&n>=3));assert.equal(held.helpersSettled,1);
+    assert.equal(result.transportCount,13);assert.equal(result.captures.filter(c=>c.modeledTransport).length,13);assert.equal(result.rawReadCalls<=32768,true);assert.equal(result.rawBytes<=268435456,true);assert.ok(result.reservedBytes<=469762048);assert.equal(result.sourceWriteBytes,163019178);assert.equal(result.fallbackUsed,0);assert.ok(result.waitCalls<=65536);assert.ok(result.signalCalls<=128);assert.ok(result.cleanupWaitCalls<=4096);assert.ok(result.cleanupSignalCalls<=128);assert.ok(result.rawWriteCalls<=65536);
+    assert.equal(result.cleanupStarted,1);assert.equal(result.cleanupErrorHex,'');assert.equal(result.cleanup.creatorPhase,'released');assert.equal(result.cleanup.creatorUncertain,0);assert.equal(result.cleanup.helpersSettled,1);
+    assert.equal(result.handles.length,caseKind.startsWith('physical-open-')?26:36);assert.equal(result.handles.filter(h=>h.realm==='physical').length,caseKind.startsWith('physical-open-')?1:4);assert.equal(result.handles.filter(h=>h.realm==='capsule').length,caseKind.startsWith('physical-open-')?0:7);assert.equal(result.capsuleWriteBytes,caseKind.startsWith('physical-open-')?0:35784);assert.equal(result.handles.filter(h=>h.realm==='creator').length,13);assert.equal(result.handles.filter(h=>h.realm==='staged').length,12);
+    for(const h of result.handles){assert.equal(h.closeAttempts,1);assert.equal(h.closeReturned,1);assert.equal(h.closeErrorHex,'');assert.equal(h.live,null);assert.equal(h.finalLive,null);assert.equal(h.liveErrorHex,'');}
+    for(const c of result.captures){assert.equal(c.returned,1);assert.equal(c.errorHex,'');assert.equal(c.resultStatus,0);assert.equal(c.resultReaped,1);assert.equal(c.streams.length,3);for(const s of c.streams){assert.equal(s.eof,1);assert.equal(s.received,s.written);assert.equal(s.closeAttempted,1);assert.equal(s.closeReturned,1);assert.equal(s.closeErrorHex,'');assert.equal(s.live,null);assert.equal(s.liveErrorHex,'');assert.equal(s.pendingHex,undefined);assert.equal(s.pendingDelivered,undefined);const p=constructorPin(path.join(home,s.path),s.cap);assert.equal(p.bytes,s.received);assert.equal(p.sha256,s.sha256);assert.equal(s.rawIdentity.length,13);for(const [n,i]of [[0,0],[1,1],[2,2],[3,3],[4,4],[5,5],[6,7]])assert.equal(p.identity[n],s.rawIdentity[i]);if(s.name==='stdout'){assert.equal(p.bytes,c.outBytes);assert.equal(p.sha256,c.outSHA256);}else assert.equal(p.bytes,0);}}
+    const helpers=result.forks.filter(f=>f.role==='source-helper'),launchers=result.forks.filter(f=>f.role==='source-launcher');assert.equal(helpers.length,result.captures.length);assert.equal(helpers.length,result.sourceHelpers.length);assert.equal(held.helperCount,55);assert.ok(helpers.length>=held.helperCount);assert.ok(result.forks.every(f=>f.role==='source-helper'||f.role==='source-launcher'));
+    for(const f of helpers){assert.equal(f.reaped,1);assert.equal(f.uncertain,0);assert.equal(f.rawStatus,0);assert.equal(f.signals.length,0);assert.ok(f.stack.some(s=>s[2]==='main::ctor_original_capture'));assert.equal(result.sourceHelpers.find(h=>h.pid===f.pid)?.settled,1);assert.equal(result.captures[f.captureIndex].resultPID,f.pid);}
+    assert.equal(result.consumerErrorHex,'');assert.equal(result.consumer.scope,'parent-entry-protocol-diagnostic-only');assert.deepEqual([result.consumer.challengeCount,result.consumer.inputBytes,result.consumer.outputBytes,result.consumer.handlesClosed],[3,229,220,5]);
+    assert.equal(result.parentFinal.phase,'settled');assert.equal(result.parentFinal.reaped,1);assert.equal(result.parentFinal.uncertain,0);assert.equal(result.nativeTargetPID,result.parentOriginalPID);
+    const owned=new Set([result.parentOriginalPID,result.nativeOriginalPID]);assert.equal(owned.size,2);assert.ok(launchers.every(f=>owned.has(f.pid)));assert.ok([...owned].every(pid=>launchers.some(f=>f.pid===pid)));
+    for(const f of launchers){assert.equal(f.reaped,1);assert.equal(f.uncertain,0);assert.equal(f.rawStatus,0);assert.equal(f.signals.length,0);assert.ok(!f.stack.some(s=>s[2]==='main::ctor_original_capture'));}
+    assert.equal(result.childOwnedHandles.length,5);assert.equal(result.observerOwnedHandles.length,4);assert.ok([...result.childOwnedHandles,...result.observerOwnedHandles].every(h=>h.live===null));
+    const cs=result.constructorSnapshot;assert.deepEqual([cs.phase,cs.claimed,cs.complete,cs.uncertain],['closed',1,1,0]);assert.equal(cs.productionAuthority,false);assert.deepEqual(cs.errors,[]);
+    assert.equal(cs.capsuleSHA256,OBSERVER_SHA);assert.match(cs.capsuleRoot,/^\/private\/tmp\/setfarm-task6a-observer-v2\.[0-9a-f]{64}$/);assert.equal(cs.capsulePath,cs.capsuleRoot+'/task6a-origin-owned-child-observer-v2');
+    const capsule=constructorPin(cs.capsulePath,35784,{gid:0});assert.equal(capsule.bytes,35784);assert.equal(capsule.sha256,OBSERVER_SHA);
+    assert.equal(cs.files.length,7);assert.ok(cs.files.every(f=>f.attempted===1&&f.closed===1&&f.live===null));
+    assert.equal(cs.pipes.length,16);assert.ok(cs.pipes.every(p=>p.live===null));assert.equal(cs.pipes.filter(p=>p.transferred==='').length,8);assert.ok(cs.pipes.filter(p=>p.transferred==='').every(p=>p.attempted===1&&p.closed===1));
+    assert.deepEqual(cs.events.filter(e=>e[0]==='fork-original').map(e=>[e[1],e[2]]),[['node',result.parentOriginalPID],['observer',result.nativeOriginalPID]]);
+    assert.equal(result.launcherCloses.length,17);assert.equal(new Set(result.launcherCloses.map(c=>c.role)).size,17);
+    for(const c of result.launcherCloses){assert.equal(c.attempted,1);assert.equal(c.returned,1);assert.equal(c.errorHex,'');assert.equal(c.live,null);assert.equal(c.liveErrorHex,'');}
+    const expectedNames=['node-stdout.bin','node-stderr.bin','node-setup.bin','observer-stdout.bin','observer-stderr.bin','observer-setup.bin','entropy.bin','node-input.bin','fd3-input.bin'];
+    assert.deepEqual(result.launcherStreams.map(s=>s.name).sort(),expectedNames.toSorted());const launchBytes=new Map();
+    for(const st of result.launcherStreams){assert.equal(st.received,st.written);assert.equal(st.closeAttempted,1);assert.equal(st.closeReturned,1);assert.equal(st.closeErrorHex,'');assert.equal(st.live,null);assert.equal(st.liveErrorHex,'');assert.equal(st.pendingHex,undefined);assert.equal(st.pendingDelivered,undefined);
+      const p=constructorPin(path.join(home,st.path),st.cap);assert.equal(p.bytes,st.received);assert.equal(p.sha256,st.sha256);assert.equal(st.rawIdentity.length,13);for(const [n,i]of [[0,0],[1,1],[2,2],[3,3],[4,4],[5,5],[6,7]])assert.equal(p.identity[n],st.rawIdentity[i]);
+      const b=stableRead(path.join(home,st.path),st.cap);assert.equal(b.length,st.received);assert.equal(hash(b),st.sha256);launchBytes.set(st.name,b);if(/(?:stdout|stderr|setup)\.bin$/.test(st.name))assert.equal(st.eof,1);
+    }
+    for(const name of ['node-stderr.bin','node-setup.bin','observer-stderr.bin','observer-setup.bin'])assert.equal(launchBytes.get(name).length,0);
+    const ni=launchBytes.get('node-input.bin').toString('ascii'),no=launchBytes.get('node-stdout.bin').toString('ascii'),fd3=launchBytes.get('fd3-input.bin');
+    assert.equal(Buffer.byteLength(ni),229);assert.equal(Buffer.byteLength(no),220);assert.equal(launchBytes.get('entropy.bin').length,96);assert.equal(fd3.length,192);
+    const nonces=[...ni.matchAll(/^CHALLENGE ([0-9a-f]{64})\n/gm)].map(m=>m[1]);assert.equal(nonces.length,3);assert.equal(new Set(nonces).size,3);assert.equal(ni,nonces.map(n=>'CHALLENGE '+n+'\n').join('')+'END\n');assert.equal(no,'READY\n'+nonces.map(n=>'PONG '+n+'\n').join('')+'END\n');
+    assert.equal(Buffer.concat(nonces.map(n=>Buffer.from(n,'hex'))).toString('hex'),launchBytes.get('entropy.bin').toString('hex'));
+    for(let i=0;i<4;i++){const c=fd3.subarray(48*i,48*(i+1));assert.equal(c.subarray(0,8).toString(),'T6ARQ001');assert.equal(c.readUInt32LE(8),1);assert.equal(c.readUInt32LE(12),i+1);assert.equal(c.readUInt32LE(16),result.parentPID);assert.equal(c.readUInt32LE(20),result.parentOriginalPID);assert.equal(c.readBigUInt64LE(24),1n);assert.equal(c.readBigUInt64LE(40),0n);}
+    const frames=decodeFrames(launchBytes.get('observer-stdout.bin'));assertNativeBinding(frames,result.parentOriginalPID,result.parentPID);assertRegionPhases(frames);assert.equal(frames.filter(f=>f.type===4).length,0);assert.deepEqual(frames.filter(f=>f.type===3).map(f=>f.phase),[1,2]);
+    for(const phase of [1,2])assert.ok(frames.some(f=>f.type===2&&f.phase===phase&&f.payload.readInt32LE(0)===96),'each Source epoch retains genuine nonempty96B native rows');
+    const ev=result.launcherEvents;assert.ok(ev.every((e,i)=>e.order===i+1));const cmdWrites=ev.filter(e=>e.kind==='write'&&e.role==='observer-input-w');assert.ok(cmdWrites.every(e=>e.origin==='actual-source-write'));
+    const commandOrder=i=>{const e=cmdWrites.find(e=>e.offset+Buffer.from(e.bytesHex,'hex').length>=48*i);assert.ok(e);return e.order;};
+    let rawAt=0;const frameEnds=frames.map(f=>{rawAt+=32+f.payload.length;return [f,rawAt];});
+    const frameOrder=f=>{const end=frameEnds.find(([v])=>v===f)[1];const e=ev.find(e=>e.kind==='read'&&e.role==='observer-stdout-r'&&e.offset+e.bytes>=end);assert.ok(e);return e.order;};
+    const sample1=frames.find(f=>f.type===3&&f.phase===1),sample2=frames.find(f=>f.type===3&&f.phase===2),closed=frames.find(f=>f.type===5);
+    assert.ok(commandOrder(1)<frameOrder(frames.find(f=>f.type===1))&&commandOrder(2)<frameOrder(sample1));
+    const nodeWrites=ev.filter(e=>e.kind==='write'&&e.role==='node-input-w');assert.equal(nodeWrites.length,4);assert.ok(nodeWrites.every(e=>e.origin==='actual-source-write'));
+    assert.ok(frameOrder(sample1)<nodeWrites[0].order);const pong3=ev.find(e=>e.kind==='read'&&e.role==='node-stdout-r'&&e.offset+e.bytes>=216);assert.ok(pong3&&pong3.order<commandOrder(3));assert.ok(commandOrder(3)<frameOrder(sample2)&&frameOrder(sample2)<nodeWrites[3].order);
+    const nodeReap=ev.find(e=>e.kind==='wait'&&e.pid===result.parentOriginalPID&&e.returned===result.parentOriginalPID);assert.ok(nodeReap&&nodeReap.status===0&&nodeReap.order<commandOrder(4));
+    const observerReap=ev.find(e=>e.kind==='wait'&&e.pid===result.nativeOriginalPID&&e.returned===result.nativeOriginalPID);assert.ok(observerReap&&observerReap.status===0&&commandOrder(4)<observerReap.order);assert.ok(frameOrder(closed)>commandOrder(4));
+    assert.equal(launchers.length,2);assert.equal(result.consumerErrorHex,'');
+    assert.deepEqual(physicalSystemPerlPin(),systemPerlBefore);const physicalOriginalCount=assertPhysicalObservation(result);const traceDeletionControls=assertPhysicalTraceDeletionControls(result);
+    return {helpers,launchers,physicalOriginalCount,traceDeletionControls};
+}
+function registerSourceMainFailureTests(){
+  for(const [caseKind,title]of SOURCE_MAIN_CONTROLS){
+    if(!process.env[PHYSICAL_LIFETIME_ENV]){test(title,{skip:'explicit bounded G1 control material unset; no behavioral or custody credit'},()=>{});continue;}
+    test(title,async()=>{
+    assert.equal(process.platform,'darwin');assert.equal(process.arch,'arm64');assert.equal(process.getuid(),501);assert.equal(process.geteuid(),501);assert.equal(process.getgid(),20);assert.equal(process.getegid(),20);assert.equal(process.execPath,NODE);
+    assert.equal(hash(stableRead(NODE,1048576,{gid:80,executable:true})),NODE_SHA);
+    const manifestPath=process.env[PHYSICAL_LIFETIME_ENV];assert.ok(path.isAbsolute(manifestPath));const manifestBytes=stableRead(manifestPath,16384),m=JSON.parse(manifestBytes);assert.equal(manifestBytes.toString(),JSON.stringify(m,null,2)+'\n');
+    assert.deepEqual(Object.keys(m).sort(),['abiPath','archivePath','cSourcePath','caseKind','emitterSHA256','manifestBodyPath','observerPath','profile','programSHA256','schema','selectedPath','sourceSHA256','username']);
+    assert.equal(m.schema,'setfarm.test-source-main-control-material.v1');assert.equal(m.caseKind,caseKind);assert.equal(m.sourceSHA256,CONSTRUCTOR_SOURCE_SHA);assert.deepEqual(m.profile,{platform:'darwin',arch:'arm64',uid:501,euid:501,gid:20,egid:20,creatorFileGid:0});
+    assert.equal(m.username,constructorUserInfo().username);assert.equal(fs.lstatSync('/private/tmp').gid,0);
+    const base=path.dirname(manifestPath),bs=fs.lstatSync(base);assert.ok(bs.isDirectory()&&!bs.isSymbolicLink()&&bs.uid===501&&bs.gid===20&&(bs.mode&0o022)===0);
+    const sourcePath=fileURLToPath(SOURCE_URL),sourceBytes=stableRead(sourcePath,524288);assert.equal(hash(sourceBytes),CONSTRUCTOR_SOURCE_SHA);
+    const systemPerlBefore=physicalSystemPerlPin(),routes=constructorRoutes(base,m);assert.equal(routes.length,13);const before=[];
+    for(const r of routes){const p=constructorPin(r.bodyPath,r.bytes);assert.equal(p.bytes,r.bytes);assert.equal(p.sha256,r.sha256);before.push(p);}
+    const selected=constructorPin(m.selectedPath,134217728);assert.equal(selected.bytes,112928848);assert.equal(selected.sha256,CONSTRUCTOR_SELECTED_SHA);before.push(selected);
+    for(const [filename,sha]of [[m.observerPath,OBSERVER_SHA],[m.cSourcePath,C2_SHA],[m.abiPath,ABI_SHA]]){const p=constructorPin(filename,1048576);assert.equal(p.sha256,sha);before.push(p);}
+    const emitted=sourceMainFailureProgram(sourceBytes.toString(),base,routes,m.username,caseKind),programBytes=Buffer.from(emitted.program);assert.equal(hash(programBytes),m.programSHA256);
+    assert.ok(stableRead(path.join(base,'constructor.program.original.pl'),1048576).equals(programBytes));
+    const emitter=Buffer.from(constructorEmitter(routes)),emitterPin=constructorPin(path.join(base,'transport-emitter.original.pl'),65536);assert.equal(emitterPin.sha256,hash(emitter));assert.equal(emitterPin.sha256,m.emitterSHA256);before.push(emitterPin);
+    const stat=fs.statfsSync(base,{bigint:true});assert.ok(stat.bavail*stat.bsize-536870912n>=8589934592n,'512MiB reservation must preserve 8GiB disk floor');
+    const home=fs.mkdtempSync(path.join(base,'actual-'));fs.chmodSync(home,0o700);constructorWriteJSON(path.join(home,'material-before.original.json'),{manifestSHA256:hash(manifestBytes),sourceSHA256:hash(sourceBytes),pins:before,systemPerl:systemPerlBefore,projections:emitted.projections,newDiskByteCap:536870912});
+    const terminal=await captureConstructorPerl(home,programBytes);
+    assert.equal(terminal.errors.length,0);assert.equal(terminal.forced.length,0);assert.ok(terminal.exitKnown&&terminal.closed&&terminal.within195s);assert.equal(terminal.exitCode,0);assert.equal(terminal.signal,null);
+    for(const s of Object.values(terminal.streams)){assert.ok(s.eof&&!s.overflow&&s.closeAttempted&&s.closeResult===1);assert.equal(s.received,s.written);assert.equal(s.written,s.retained);assert.equal(s.liveAfterClose,null);assert.equal(s.liveAfterCloseError,'EBADF');}
+    assert.equal(terminal.streams.stderr.received,0);const result=constructorReadOriginal(home,terminal);constructorWriteJSON(path.join(home,'original.json'),result);
+    const after=before.map(p=>constructorPin(p.path,p.bytes));assert.deepEqual(after,before);assert.deepEqual(physicalSystemPerlPin(),systemPerlBefore);assert.equal(hash(stableRead(sourcePath,524288)),CONSTRUCTOR_SOURCE_SHA);assert.equal(hash(stableRead(manifestPath,16384)),hash(manifestBytes));constructorWriteJSON(path.join(home,'material-after.original.json'),{pins:after,systemPerl:systemPerlBefore});
+    const proof=assertG1Failure(result,caseKind,home,systemPerlBefore);
+    const semantic={schema:'setfarm.source-main-control-semantic.v1',caseKind,home,sourceSHA256:CONSTRUCTOR_SOURCE_SHA,programSHA256:m.programSHA256,
+      controlCandidatePassed:true,qualifiedOrdinaryGREEN:false,productionAuthority:false,mainAdmittedCount:1,sourceComponentDispatchCount:result.sourceEntries.length-1,
+      ...proof,outer:result.outer,sourceEntries:result.sourceEntries,controlObservation:result.controlObservation,physicalObservation:result.physicalObservation,
+      scope:'provisional DATA; independent same-original raw/terminal/audit required; modeled ports earn no genuine process/ACL/native credit; retained actual FHs observed before OS exit, no fixture owner backup'};
+    constructorWriteJSON(path.join(home,'semantic-before-assertion.original.json'),semantic);
+    constructorWriteJSON(path.join(base,'actual-case-original.json'),{schema:'setfarm.source-main-control-case.v1',caseKind,home,sourceSHA256:CONSTRUCTOR_SOURCE_SHA,programSHA256:m.programSHA256,
+      terminalSHA256:fileHash(path.join(home,'terminal.original.json')),semanticSHA256:fileHash(path.join(home,'semantic-before-assertion.original.json')),
+      controlCandidatePassed:true,qualifiedOrdinaryGREEN:false,productionAuthority:false,mainAdmittedCount:1,sourceComponentDispatchCount:result.sourceEntries.length-1,...proof});
+    });
+  }
+}
+
+const SOURCE_MAIN_COMPLETED_FRESHNESS_PROBE="# Passive evaluation of the two existing private predicates. No state setter,\n# validator/helper, clock renewal, claim or disposal operation is invoked.\nmy $g1_freshness_proof;\n{\n    my $before=g1_source_snapshot();\n    my $fresh=$parent_constructor_fresh->();\n    my $allowed=$parent_constructor_material_allowed->();\n    my $after=g1_source_snapshot();\n    $g1_freshness_proof={constructorFresh=>$fresh?1:0,materialAllowed=>$allowed?1:0,before=>$before,after=>$after};\n}\n";
