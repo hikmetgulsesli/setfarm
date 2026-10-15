@@ -459,7 +459,7 @@ function wrapperBoundaryFixture(mode,commandMode='findings'){
     'tests/execution-attempts/base-schema-readonly-verifier-v1.integration.test.ts',
     'tests/execution-attempts/contract-spine-readonly-verifier-v1.integration.test.ts',
   ]:['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
-    ...(commandMode==='all'?['test']:commandMode==='after-scripts'?['run','test:after-scripts']:commandMode==='after-terminal'?['run','test:after-terminal']:commandMode==='after-findings'?['run','test:after-findings']:commandMode==='after-internal-pure'?['run','test:after-internal-pure']:commandMode==='after-local-custody'?['run','test:after-local-custody']:commandMode==='after-cutover'?['run','test:after-cutover']:['run','test:findings'])];
+    ...(commandMode==='all'?['test']:commandMode==='after-scripts'?['run','test:after-scripts']:commandMode==='after-terminal'?['run','test:after-terminal']:commandMode==='after-findings'?['run','test:after-findings']:commandMode==='after-internal-pure'?['run','test:after-internal-pure']:commandMode==='after-local-custody'?['run','test:after-local-custody']:commandMode==='after-cutover'?['run','test:after-cutover']:commandMode==='after-receipt'?['run','test:after-receipt']:['run','test:findings'])];
   const guard=`
 import cp from 'node:child_process';import fs from 'node:fs';import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';import {registerHooks,syncBuiltinESMExports} from 'node:module';
@@ -561,7 +561,7 @@ process.once('exit',()=>{original.writeSync(1,Buffer.from('UNIT_BOUNDARY_RESULT 
       NODE_OPTIONS:'--import=data:text/javascript;base64,'+Buffer.from(guard).toString('base64')},
   });
 }
-for(const commandMode of ['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure','after-local-custody','after-cutover'])
+for(const commandMode of ['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt'])
 for(const mode of commandMode==='all'?['normal']:
   ['normal','nonzero','mirror-error','journal-loss','close-fault','retained-db','cancel','before-server','before-test','attach-server','attach-test','input-error']){
   test('wrapper boundary '+commandMode+' '+mode+' retains ordered observed outcomes without native effects',async()=>{
@@ -909,7 +909,61 @@ test('after-cutover retains the closed mode inventory and refuses caller selecto
   assert.equal(inventories.length,2,'one pure-plan and one CLI closed mode inventory');
   assert.deepEqual(inventories.map(match=>match[2]).sort(),['args[0]','mode']);
   const expected=['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal',
-    'after-findings','after-internal-pure','after-local-custody','after-cutover'];
+    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt'];
+  for(const inventory of inventories)
+    assert.deepEqual([...inventory[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),expected);
+});
+
+
+// Closed post-receipt continuation selects only the five remaining isolated files, then manifest.
+const AFTER_RECEIPT_FILES=Object.freeze([
+  'tests/internal-production/baseline-restart-authority-retirement-v1.test.ts',
+  'tests/internal-production/baseline-service-restart-helper-v1.test.ts',
+  'tests/internal-production/baseline-service-restart-sequence-v1.test.ts',
+  'tests/internal-production/baseline-spawner-startup-admission-v1.test.ts',
+  'tests/internal-production/owner-admission-v1.test.ts',
+]);
+test('after-receipt permits only fixed npm continuation argv in a frozen private cluster plan',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'after-receipt'});
+  assert.deepEqual(value.test,['/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js','run','test:after-receipt']);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'all'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'all'}).server);
+});
+test('after-receipt package command derives only the five remaining isolated wrappers then manifest',()=>{
+  const scripts=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).scripts;
+  const wrapper='env -u SETFARM_PG_URL node --import tsx scripts/run-isolated-postgres-tests.ts -- node --import tsx --test --test-concurrency=1 ';
+  const prior=scripts['test:internal-production:isolated'].split(' && ');
+  assert.deepEqual(prior,[
+    'tests/internal-production/baseline-owner-producer-manifest-activation-controller-v1.test.ts',
+    'tests/internal-production/baseline-post-handoff-cli.test.ts',
+    'tests/internal-production/baseline-post-handoff-receipt-v1.test.ts',
+    ...AFTER_RECEIPT_FILES,
+  ].map(file=>wrapper+file));
+  const selected=prior.slice(3);
+  assert.equal(selected.length,5);assert.equal(new Set(selected).size,5);
+  assert.deepEqual(selected,AFTER_RECEIPT_FILES.map(file=>wrapper+file));
+  assert.equal(typeof scripts['test:internal-production:manifest'],'string');
+  assert.equal(scripts['test:after-receipt'],[...selected,'npm run test:internal-production:manifest'].join(' && '));
+});
+test('after-receipt retains the closed mode inventory and refuses caller selectors or extra argv before cluster effects',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  for(const mode of ['after-receipt;echo denied','https://127.0.0.1/',
+    'test:after-receipt','after-receipt extra','AFTER-RECEIPT',
+    'tests/internal-production/baseline-restart-authority-retirement-v1.test.ts'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const child=spawnSync(process.execPath,[fileURLToPath(MODULE),'after-receipt','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(child.error,undefined);assert.equal(child.signal,null);assert.equal(child.status,1);
+  assert.equal(child.stdout,'');assert.match(child.stderr,/PRIVATE_TEST_CLUSTER_MODE_INVALID/);
+  const source=readFileSync(MODULE,'utf8');
+  const inventories=[...source.matchAll(/!\[([^\]\n]+)\]\.includes\((mode|args\[0\])\)/g)];
+  assert.equal(inventories.length,2,'one pure-plan and one CLI closed mode inventory');
+  assert.deepEqual(inventories.map(match=>match[2]).sort(),['args[0]','mode']);
+  const expected=['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal',
+    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt'];
   for(const inventory of inventories)
     assert.deepEqual([...inventory[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),expected);
 });
