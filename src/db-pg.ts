@@ -5874,7 +5874,7 @@ async function observeExactCurrentEntryMigration33V1(): Promise<InternalProducti
     || row.name.length < 1
     || typeof row.checksum !== "string"
     || !/^[a-f0-9]{64}$/.test(row.checksum)
-    || row.state !== "applied"
+    || (row.state !== "applied" && row.state !== "adopted")
   ) throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_33_INVALID");
   const projection = Object.freeze({
     schema: "setfarm.internal-production-current-entry-migration-33-schema-projection.v1" as const,
@@ -5937,7 +5937,7 @@ export async function observeInternalProductionCurrentEntryMigration33ReadOnlyV1
     if (migration33.name !== migrationName
       || migration33.checksum
         !== V3_RECOVERY_CLAIM_RUNTIME_PUBLICATION_V1_MIGRATION_JOURNAL_IDENTITY.checksum
-      || migration33.state !== "applied") throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_33_INVALID");
+      || (migration33.state !== "applied" && migration33.state !== "adopted")) throw new Error("INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_33_INVALID");
     await verifyV3RecoveryClaimRuntimePublicationV1(sql);
     return Object.freeze({
       schema: "setfarm.internal-production-current-entry-migration-33-read-only-observation.v1" as const,

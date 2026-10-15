@@ -1,6 +1,6 @@
 # Ordinary migration 33 current-entry observers implementation plan
 
-> **Root preparation checkpoint:** Tests and literal routing are now applied on e4c0acb2. Modeled selector RED and all14 new modeled controls are observed; the separate existing owner-inventory expectation was updated for the one new enrollment and passes. The original217-test modeled run remains216PASS1FAIL; its exact repaired callback then passes1, giving217 distinct composed controls. Both actual DB leaves remain UNRUN and db-pg.ts is unchanged. Root is the sole writer/producer; the original outside-preparation notes below are historical.
+> **Current checkpoint:** Clean preparation a723d269 ran the exact two leaves against a fresh private PostgreSQL cluster. Both reached legitimate engine-adopted33 and failed at their intended observers; natural original exit1 and strict cleanup were independently verified. Root has now changed only the two ordinary33 state predicates. The same two-leaf fresh-cluster GREEN and adjacent checks remain pending; no runtime or whole-goal qualification is claimed.
 
 **Goal:** Prove and fix the two current-entry observers that reject a legitimate engine-adopted ordinary33 row, preserving guarded32 applied-only and every source/catalog/admission requirement.
 
@@ -59,21 +59,21 @@ Run it through the existing original-PID/full-raw terminal capture with a fresh 
 
 ## Sequence A: selector/preparation TDD and clean delivery
 
-- [x] Reconfirm original63046 final FAILED1/strict-cleanup records and the separately completed owner-fixture1/manifest18 results; freshly verify clean e4c0acb2ff788f64edb18c9986d37484b1247456 and completed delivery readback. Root may then add the unchanged candidate2-leaf file, this plan and new modeled selector assertions only. Keep both the outer runner and db-pg.ts unchanged until their respective eligible modeled/actual RED checkpoints. These preparation tests and both DB leaves are still UNRUN.
+- [x] Reconfirm original63046 final FAILED1/strict-cleanup records and the separately completed owner-fixture1/manifest18 results; freshly verify clean e4c0acb2ff788f64edb18c9986d37484b1247456 and completed delivery readback. Root may then add the unchanged candidate2-leaf file, this plan and new modeled selector assertions only. Keep both the outer runner and db-pg.ts unchanged until their respective eligible modeled/actual RED checkpoints. At that initial Sequence A checkpoint, these preparation tests and both DB leaves were UNRUN; their later actual results are recorded below.
 - [x] Before modifying the outer selector, run only the new ordinary modeled pure-plan test against existing source: actual plan(migration33-observers) must refuse PRIVATE_TEST_CLUSTER_PLAN_INVALID. This is the selector's causal modeled RED, not DB regression RED. A syntax/import error is not accepted.
 - [x] Add the literal outer enum entries and fixed argv branch. Update only wrapperBoundaryFixture's expected fixed argv and include the new literal in the existing modeled boundary mode table. Add malformed/extra caller input assertions that require refusal before any cluster effect.
 - [x] Validate the modeled selector/boundary controls and unchanged existing modes, plus existing isolated-command parser regressions. Require fixed10-cell argv, unchanged initdb/server arrays, frozen results, ordinary test failures propagated, cancellation/uncertainty refused and no modeled native/DB effects. No PG producer yet.
-- [ ] Add the one OWNER_BACKED_TESTS enrollment. Independently review the five-path preparation slice and preserve exact source/test/model pins. Root makes a normal clean checkpoint of these five paths on the sole branch; db-pg.ts remains byte-identical. This may contain the deliberately not-yet-run regression, so report it as test/selector preparation, not passing feature qualification. No generic success or clean-build bypass.
+- [x] Add the one OWNER_BACKED_TESTS enrollment. Independently review the five-path preparation slice and preserve exact source/test/model pins. Root makes a normal clean checkpoint of these five paths on the sole branch; db-pg.ts remains byte-identical. This may contain the deliberately not-yet-run regression, so report it as test/selector preparation, not passing feature qualification. No generic success or clean-build bypass.
 
 ## Sequence B: actual original DB RED before production fix
 
-- [ ] Read-only verify exact clean tracked checkpoint, mode/material/source pins, adequate disk and no previous owned producer. Call the one fixed outer command above through the owned recorder. It must create a fresh private cluster; root retains its original exit/close/EOF and strict journal.
-- [ ] Both leaves must reach real source-known engine adoption33, fully verify it as current, assert applied32 and before/after journal identity, then reject at their respective existing observer with INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_33_INVALID. Require exactly2intended failures, not capability/marker/import/setup failures. No fake32 body or live database is used.
-- [ ] Consume the same-original natural terminal: testCode1, complete journal/EOF/exit/close, two successful quiescence samples, adminEnded/serverClosedtrue. If cancellation or uncertain ownership occurs, preserve refusal; do not adopt that root or call it RED qualification.
+- [x] Read-only verify exact clean tracked checkpoint, mode/material/source pins, adequate disk and no previous owned producer. Call the one fixed outer command above through the owned recorder. It must create a fresh private cluster; root retains its original exit/close/EOF and strict journal.
+- [x] Both leaves must reach real source-known engine adoption33, fully verify it as current, assert applied32 and before/after journal identity, then reject at their respective existing observer with INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_33_INVALID. Require exactly2intended failures, not capability/marker/import/setup failures. No fake32 body or live database is used.
+- [x] Consume the same-original natural terminal: testCode1, complete journal/EOF/exit/close, two successful quiescence samples, adminEnded/serverClosedtrue. If cancellation or uncertain ownership occurs, preserve refusal; do not adopt that root or call it RED qualification.
 
 ## Sequence C: minimum fix and separate fresh GREEN
 
-- [ ] Only after the actual DB RED, root changes the two ordinary33 predicates. Do not alter the engine or digest owners,32 applied-only guards, exact names/checksums/catalog checks, loader, P3 grammar or source guards.
+- [x] Only after the actual DB RED, root changes the two ordinary33 predicates. Do not alter the engine or digest owners,32 applied-only guards, exact names/checksums/catalog checks, loader, P3 grammar or source guards.
 - [ ] Independently review that two-line diff and run cheap applicable source checks. Root records a normal clean fix checkpoint before the next outer invocation; the outer clean-source guard cannot be bypassed to run a dirty fix. The2-leaf test stays byte-identical across RED/GREEN.
 - [ ] Invoke the same literal outer mode again, creating a SECOND fresh owned cluster. Require exactly2PASS/0FAIL/SKIP/CANCEL/TODO, legitimate engine-adopted33 observations, unchanged32/33 journal identities and genuine full catalog verification. Require the natural original terminal and verified private cleanup.
 - [ ] Run proportional adjacent existing checks for exact33 adoption, partial/malformed33 refusal, newer journal refusal and forged-adopted32 refusal; source/diff/contracts checks; record source/migration/digest bytes. Never count excluded cases as PASS.
@@ -207,3 +207,37 @@ and delivery, then ONE new private migration33-observers cluster for actual
 two-leaf DB RED. Both actual leaves must reach genuine32 applied/engine33
 adopted/fullverified premises and reject only at their intended observer. No
 db-pg.ts edit is permitted before that actual eligible RED and cleanup.
+
+
+## Actual two-leaf DB RED and minimal production correction
+
+On clean preparation a723d26988496e7d5f9996037a129074d1492d8b, the
+fixed migration33-observers owner created one new private cluster. Original
+46031 ended naturally at tool56f6c8 exit1:2tests/0PASS/2FAIL/0other. Both
+failures were INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_33_INVALID at
+the intended observers (db-pg.ts5878 and5940), after the awaited unchanged
+preparation helper. Its linear assertions establish actual applied32, engine
+adopted33 and full catalog verification by reached-control-flow inference; no
+separate SQL-row serialization is claimed. The strict80-frame journal, all
+original exits/closes and six EOFs, two quiescence samples, adminEnded and
+serverClosed were complete. The projected directory is gone and is not reused.
+
+The independent653-check review reports zero inconsistencies. Its receipt is
+logs/2026-10-15-private-migration33-red-original-v1/independent-actual-two-leaf-db-red-review-v1.json
+with SHA2563c5624b12b065d73e526a7be99d30ee8fc86dd5e713577b05d99401a919d991d.
+This actual RED permits exactly File Map item6: both ordinary33 observers now
+accept applied or adopted. Guarded32 remains applied-only. Migration bodies,
+checksums, exact identity/catalog/full verification, source routing and all
+entry/startup guards remain unchanged. The4599-byte two-leaf test remains
+SHA2569ce25bb675aa208d17ce3ad4c81646f8915298087fdd1b5f72bf3325b778fc69.
+
+Next: source noEmit and independent current diff review, clean normal fix
+checkpoint, then one SECOND fresh same-mode owner for exactly2DBGREEN. The
+selected stock build remains blocked by the separate protected transition;
+no dirty-build override or selected archive mutation is used as verification.
+
+Source verification after the two-predicate correction: fixed Node TypeScript
+noEmit command ended naturally0 (e701a9/session54316 to0fdf21), with empty
+stdout/stderr; diff checkb87eb2 also ended0. Source db-pg.ts is348326B/SHA256
+88adaab5a7cb434a506685ea6bb24db7b5d71e0921d08be528c261003b43f743.
+This compiles src only without selected build, dist output or guard bypass.
