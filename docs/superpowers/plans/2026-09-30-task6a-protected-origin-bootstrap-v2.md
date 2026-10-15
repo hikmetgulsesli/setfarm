@@ -8805,7 +8805,7 @@ stock-build/archive bypass or further heavy producer is authorized by this
 evidence-only update.
 
 
-## Source-owned constructor test-first checkpoint — prepared, no new test run
+## Historical Source-owned constructor test-first checkpoint — preparation only
 
 Parent: clean delivered5abc83fbe0a227845cadd8e1a1f8d8a4a36d9a3a. Current Sourcec268, dedicated01e82 and helper0c0 are the original parents. This is file-only preparation; the new callback, producer invocation and actual0→2 behavioral assertion remain UNRUN. Existing Source/native healthy, fixed negatives and720 modeled results retain their original graphs and are not rerun or relabelled here.
 
@@ -8824,7 +8824,7 @@ The baseline test never calls the former test-owned child mint/initializer. It r
 Current resource contract: inner448MiB cumulative Source/data reservation plus32MiB Node records; outer32MiB; total512MiB. No base64 body argv, duplicated selected input, binary execution, build or Root action. Actual runtime remains unmeasured; Source's original180s bootstrap chronology is unchanged, inner captor195+15s and outer220+15s are fixed absolute limits. All claims here are proposed test preparation until actual reviewed execution.
 
 
-### Current constructor implementation preparation (not executed)
+### Historical constructor implementation preparation (superseded by actual ordinary GREEN below)
 
 The existing consumer baseline is now an actual qualified behavioral RED, not a prediction. Root original715159 completed outer0; direct Node96886 naturally1 with the sole strict final0-versus-2 assertion after genuine producer/custody eligibility. Actual home `actual-6LrMeq`, program8b9b49bc, semantic24827c0b and case94a074b1 are retained under the original constructor-RED nomination. Independent whole1570 checks (1b76bd13) and custody1394 checks (7d3dd4a3) were C0/I0/M0. All55 original helpers settled,13 creator originals closed,12 staged originals held/released, no launcher original was minted and no Node22/observer was executed. No original is replayed or relabeled PASS.
 
@@ -8832,8 +8832,21 @@ File Map7: (1) bootstrap private fixed capsule/constructor/mandatory consumer jo
 
 - [x] Authentic Node22 archive/member DATA and protected-profile ordinary compile were captured and independently audited; neither selected executable was invoked by those prerequisites.
 - [x] New behavior-first test preparation was delivered clean on5b44; Root obtained the qualified baseline0-versus-2 RED once with unchanged c268.
-- [ ] Review complete current seven-file implementation, exact old-body inverse, capsule/pipe/fork prefixes, exception/unknown quarantine, fixed FD/deadline/ACL guards, transparent helper projections, full emitted programs and original capture bindings. Early snapshots and findings remain historical; they grant no execution clearance.
-- [ ] Root applies only the independently reviewed candidate, verifies exact current pins and syntax-only material, delivers a clean checkpoint, checks8GiB/resource floor, and invokes the one literal constructor GREEN route. Require actual Node0/PASS1, both genuine Source originals and all semantic/material/once-close/full-EOF predicates. Self-published semantic flags remain DATA until the separately retained actual outer terminal and same-original audit qualify them.
+- [x] Review complete current seven-file implementation, exact old-body inverse, capsule/pipe/fork prefixes, exception/unknown quarantine, fixed FD/deadline/ACL guards, transparent helper projections, full emitted programs and original capture bindings. Early snapshots and findings remain historical; they grant no execution clearance.
+- [x] Root applies only the independently reviewed candidate, verifies exact current pins and syntax-only material, delivers a clean checkpoint, checks8GiB/resource floor, and invokes the one literal constructor GREEN route. Require actual Node0/PASS1, both genuine Source originals and all semantic/material/once-close/full-EOF predicates. Self-published semantic flags remain DATA until the separately retained actual outer terminal and same-original audit qualify them.
 - [ ] Run the two separately nominated physical partial-acquisition controls only after complete program/capture reviews. Genuine original bytes/outcomes precede modeled delivery; early-closed failure streams retain honest partial scope. Unknown fork/lease/deadline/FD branches use bounded explicit models, with no unknown real PID adoption.
 - [ ] Verify the changed old-model adapters using closed family selectors and cheap adjacent contracts as causally required. They target the exact genuine private protocol body, preserve existing burn/close/Node/refusal oracles, and claim no public constructor or real native support for modeled424242.
 - [ ] Independent final Source/program/material/result review, then normal scoped delivery. Preserve cold/main/controller, PM2 UNRUN and every startup/Root admission gate. Ordinary constructor success would close this bounded ownership gap only; functional startup and protected activation remain separate.
+
+### Current actual ordinary constructor GREEN and staged-adapter correction
+
+- [x] Full seven-path/current helper/program/material/capture reviews completed before Root application. Current delivered parent is a13f438113e0322639c623f739af424e99f06012, production Source7ff8 unchanged after application.
+- [x] Root invoked the genuine ordinary constructor once:39efa6→4c32dc natural outer0, direct Node6037/Perl6039/Source originals6155 and6156 natural0,1PASS/0other in9.529s.222 frames contain98 genuine positive96-byte rows plus actual0/EINVAL terminal per phase;95 helpers and42 pins qualified. Same-original audits8aaa16ad/3275 andf23ef295/3368 checks were C0/I0/M0. These are ordinary conditional results only.
+
+Adjacent-nine original9ef7c0 is retained as FAILED: outer2/direct Node6828 natural1,6PASS/3FAIL/0other, no capture errors or forces. The first three share copied-Source syntax failure eval3899 (`} $node_view`); six parent-protocol callbacks genuinely passed. The two new constructor block-form exec declarations need exact ordinary-sub syntax normalization only where the copied staged fixtures install their denied exec override. This is a fixture parser barrier, not a Source constructor failure.
+
+File Map3: dedicated test plus paired spec/plan. Preserve the old failed originals and all Source/helper/native/control pins. The complete outer Perl program and before/after eval source for both staged adapter branches are retained as static DATA, never executed by the preparer. No assertion, runtime guard, cleanup or exec authorization is relaxed.
+
+- [ ] Independent current three-path/diff/reconstructed-program review. Root applies serially after the two physical controls close on their original pins; no active source change while a producer remains live.
+- [ ] Root runs once exactly the failed staged3 plus existing `staged captor foundation retains actual ACL capture and original closure`: selected4PASS/0FAIL/CANCEL/TODO, exact raw capture/EOF/known-original cleanup. The6 prior parent PASS are not rerun. Fixture opt-ins remain unset, and both fixed staged backing leaves76/82B join the input pins.
+- [ ] Complete the separately reviewed physical2 and modeled4 controls, proportionate affected-model verification and independent final review/delivery. Cold/main/V2/PM2 owner-closed UNRUN, protected Root/TCB/mapped-image/cohort and actual startup gates remain open or closed as previously specified; no overall completion follows from ordinary GREEN.

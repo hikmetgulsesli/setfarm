@@ -3434,6 +3434,14 @@ function systemObject(kind,record,expected,{sourceOverride}={}) {
   assert.ok(original.startsWith(COLD_ENTRY_GUARD),'cold entry must be source prefix');
   let source=replaceOnce(original,COLD_ENTRY_GUARD,'');
   source=replaceOnce(source,'\ntask6a_origin_main();\n','\n');
+  if(kind==='staged-custody'||kind==='staged-captor-ports') {
+    // These copied fixtures install an ordinary-sub denied exec port. Normalize
+    // the constructor's two block-form calls even though neither is invoked.
+    source=replaceOnce(source,'exec {$node_view->{path}} $node_view->{path},$entry_view->{path};',
+      'CORE::GLOBAL::exec($node_view->{path},$node_view->{path},$entry_view->{path});');
+    source=replaceOnce(source,'exec {$constructor_capsule_path} $constructor_capsule_path;',
+      'CORE::GLOBAL::exec($constructor_capsule_path,$constructor_capsule_path);');
+  }
   if(kind==='staged-custody') {
     source=replaceOnce(source,'exec {$tool} $tool,@$args;',
       'CORE::GLOBAL::exec($tool,$tool,@$args);');
