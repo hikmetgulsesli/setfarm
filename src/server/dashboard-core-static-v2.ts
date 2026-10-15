@@ -201,5 +201,3 @@ export function mergeDashboardRulesV2(systemRules:readonly ParsedRule[], custom:
 
   return all;
 }
-
-

@@ -419,4 +419,3 @@ for (const kind of ["undefined", "thenable"] as const)
     assert.equal(slot.attempted, true); assert.equal(Object.hasOwn(slot, "original"), true);
     assert.equal(slot.uncertain, true);
   });
-
