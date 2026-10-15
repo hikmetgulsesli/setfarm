@@ -3084,7 +3084,7 @@ const PARENT_PORT_PROGRAM=String.raw`
           my $fresh=eval {task6a_origin_parent_require_unburned();1;};my $fresh_error=$@;$check->();
           $fail->() unless $fresh&&!length($fresh_error);
           my $before_consumer=scalar(@events);
-          my $consumer=eval {$mode eq 'arity'?task6a_origin_consume_entry_protocol(1):task6a_origin_consume_entry_protocol()};
+          my $consumer=eval {$mode eq 'arity'?test_consume_initialized_parent_protocol(1):test_consume_initialized_parent_protocol()};
           my $primary=$@;$check->();
           if(ref($consumer) eq 'HASH'&&!length($primary)) {
             for my $list(values %queues) {$fail->() if @$list;}
@@ -3094,7 +3094,7 @@ const PARENT_PORT_PROGRAM=String.raw`
               # Repeat the real settled consumer, without initializer/queue reset.
               # Preserve the first diagnostic before the second call burns.
               my $before_repeat=scalar(@events);
-              my $again=eval {task6a_origin_consume_entry_protocol();1;};my $again_error=$@;$check->();
+              my $again=eval {test_consume_initialized_parent_protocol();1;};my $again_error=$@;$check->();
               my $guard=eval {task6a_origin_parent_require_unburned();1;};my $guard_error=$@;$check->();
               $fail->() unless !$again&&$again_error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n"
                 &&!$guard&&$guard_error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n";
@@ -3112,7 +3112,7 @@ const PARENT_PORT_PROGRAM=String.raw`
               $fail->() unless $ok&&!length($error);$restored=1;
             }
             my $before_repeat=scalar(@events);
-            my $repeat=eval {task6a_origin_consume_entry_protocol();1;};my $repeat_error=$@;$check->();
+            my $repeat=eval {test_consume_initialized_parent_protocol();1;};my $repeat_error=$@;$check->();
             my $guard=eval {task6a_origin_parent_require_unburned();1;};my $guard_error=$@;$check->();
             $fail->() unless !$repeat&&$repeat_error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n"
               &&($guard&&!length($guard_error)||!$guard&&$guard_error eq "TASK6A_ORIGIN_BOOTSTRAP_REFUSED\n");
@@ -3743,6 +3743,8 @@ function systemObject(kind,record,expected,{sourceOverride}={}) {
     }
   }
   if(kind==='parent-protocol') {
+    source=replaceOnce(source,'my $parent_consume_protocol=sub {',
+      'my $parent_consume_protocol;sub test_consume_initialized_parent_protocol {$parent_consume_protocol->(@_)}\n$parent_consume_protocol=sub {');
     source=replaceOnce(source,'my ($parent_native_uid,$parent_native_gid)=(70,70);',
       'my ($parent_native_uid,$parent_native_gid)=(501,20);');
     source=replaceOnce(source,'$parent_native_cleanup_complete=sub {',String.raw`
