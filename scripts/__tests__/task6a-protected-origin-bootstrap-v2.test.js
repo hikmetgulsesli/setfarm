@@ -4009,7 +4009,7 @@ sub test_contaminate_physical_ledger {
 sub task6a_origin_record {`);
   }
   if(kind==='composed-physical'&&record.mode==='unknown-helper') {
-    source=replaceOnce(source,'$pid=fork();',"$pid=fork(); {no warnings 'once'; $main::capture_test_pid=$pid if defined($pid)&&$pid>0;}");
+    source=replaceOnce(source,'$pid=fork();task6a_origin_refuse() unless defined($pid);',"$pid=fork(); {no warnings 'once'; $main::capture_test_pid=$pid if defined($pid)&&$pid>0;}task6a_origin_refuse() unless defined($pid);");
     source=replaceOnce(source,"'/usr/bin/curl'=>1,","'/usr/bin/perl'=>1,'/usr/bin/curl'=>1,");
   }
   const program=String.raw`
@@ -7339,7 +7339,7 @@ test('descriptor snapshot refuses partial readdir failure before any inherited-F
   assert.equal(r.stdout.length,0);assert.match(r.stderr.toString(),/TASK6A_ORIGIN_BOOTSTRAP_REFUSED/);
 });
 test('actual helper timeout burns, terminates and definitely reaps only its captured child',()=>{
-  const sourceOverride=replaceOnce(ordinaryPerlCaptureSource(),'$pid=fork();',"$pid=fork(); {no warnings 'once'; $main::capture_test_pid=$pid if defined($pid)&&$pid>0;}");
+  const sourceOverride=replaceOnce(ordinaryPerlCaptureSource(),'$pid=fork();task6a_origin_refuse() unless defined($pid);',"$pid=fork(); {no warnings 'once'; $main::capture_test_pid=$pid if defined($pid)&&$pid>0;}task6a_origin_refuse() unless defined($pid);");
   const start=performance.now(),actual=systemObject('timeout-proof',{},'',{sourceOverride});
   assert.equal(actual.status,0,actual.stderr.toString());const out=JSON.parse(actual.stdout);
   assert.equal(out.refused,true);assert.equal(out.definitelyReaped,true);assert.ok(out.pid>1);
@@ -7359,7 +7359,7 @@ for(const fail of [false,true]) test(`supervisor retains definite helper settlem
   assert.equal(out.settled,true);assert.equal(out.afterIndependentReap,true);assert.equal(out.refused,fail);assert.equal(out.forgedRefused,true);
 });
 test('supervisor helper uncertainty stays burned outside the captor even after independent reap',()=>{
-  const sourceOverride=replaceOnce(ordinaryPerlCaptureSource(),'$pid=fork();',"$pid=fork(); {no warnings 'once'; $main::capture_test_pid=$pid if defined($pid)&&$pid>0;}");
+  const sourceOverride=replaceOnce(ordinaryPerlCaptureSource(),'$pid=fork();task6a_origin_refuse() unless defined($pid);',"$pid=fork(); {no warnings 'once'; $main::capture_test_pid=$pid if defined($pid)&&$pid>0;}task6a_origin_refuse() unless defined($pid);");
   const r=systemObject('lifecycle',{lostClock:true},'',{sourceOverride});assert.equal(r.status,0,r.stderr.toString());
   const out=JSON.parse(r.stdout);assert.equal(out.refused,true);assert.equal(out.settled,false);
   assert.equal(out.afterIndependentReap,false);assert.equal(out.forgedRefused,true);
@@ -7403,6 +7403,32 @@ function constructorModeledSource(original,{mutation}) {
   if(mutation!=='none'){assert.ok(Object.hasOwn(CONSTRUCTOR_MODEL_MUTATIONS,mutation));const [from,to]=CONSTRUCTOR_MODEL_MUTATIONS[mutation];source=replaceOnce(source,from,to);projections.push([from,to]);}
   return {source,projections};
 }
+// Full obtained model buffers are DATA; this does not assert child wait/EOF authority.
+let constructorModelOccurrence=0,constructorModelPublicationBytes=0;
+const CONSTRUCTOR_MODEL_PUBLICATION_CAP=3145728;
+function publishConstructorModelOriginal(metadata,rawStdout,rawStderr){
+  const occurrence=++constructorModelOccurrence,id='constructor-model-'+String(occurrence).padStart(3,'0');
+  const streams=[['stdout',rawStdout],['stderr',rawStderr]].map(([name,raw])=>{
+    const gzip=gzipSync(raw),chunks=[];for(let at=0;at<gzip.length;at+=4096)chunks.push(gzip.subarray(at,Math.min(at+4096,gzip.length)));
+    return{name,raw,gzip,chunks,rawBytes:raw.length,rawSHA256:createHash('sha256').update(raw).digest('hex'),gzipBytes:gzip.length,gzipSHA256:createHash('sha256').update(gzip).digest('hex')};
+  });
+  const descriptors=streams.map(({name,rawBytes,rawSHA256,gzipBytes,gzipSHA256,chunks})=>({name,rawBytes,rawSHA256,gzipBytes,gzipSHA256,chunkCount:chunks.length}));
+  const records=['CONSTRUCTOR_MODEL_ORIGINAL '+JSON.stringify({...metadata,schema:'setfarm.constructor-model-original.v2',occurrence,id,publication:'begin',rawComplete:false,streams:descriptors,publicationCap:CONSTRUCTOR_MODEL_PUBLICATION_CAP})];
+  for(const stream of streams)for(const [index,chunk]of stream.chunks.entries())records.push('CONSTRUCTOR_MODEL_RAW_CHUNK '+JSON.stringify({schema:'setfarm.constructor-model-raw-chunk.v1',id,occurrence,stream:stream.name,index,count:stream.chunks.length,offset:index*4096,bytes:chunk.length,sha256:createHash('sha256').update(chunk).digest('hex'),base64:chunk.toString('base64')}));
+  records.push('CONSTRUCTOR_MODEL_COMPLETE '+JSON.stringify({schema:'setfarm.constructor-model-complete.v1',id,occurrence,publication:'complete',rawComplete:true,streams:descriptors}));
+  // Include LF and one normal TAP '# ' prefix per record in this budget. The
+  // unchanged outer4MiB cap remains authoritative for extra reporter framing.
+  const charge=records.reduce((n,line)=>n+Buffer.byteLength(line)+3,0);
+  if(records.some(line=>Buffer.byteLength(line)>8192)||constructorModelPublicationBytes+charge>CONSTRUCTOR_MODEL_PUBLICATION_CAP){
+    // A publication-quota failure is capture failure, never complete model DATA
+    // or semantic credit. No null member, shortened chunk or success is emitted.
+    console.log('CONSTRUCTOR_MODEL_PUBLICATION_FAILURE '+JSON.stringify({schema:'setfarm.constructor-model-publication-failure.v1',id,occurrence,rawComplete:false,streams:descriptors,requiredBytes:charge,usedBytes:constructorModelPublicationBytes,cap:CONSTRUCTOR_MODEL_PUBLICATION_CAP}));
+    throw Error('CONSTRUCTOR_MODEL_PUBLICATION_QUOTA: obtained buffers are not qualified as externally retained complete');
+  }
+  constructorModelPublicationBytes+=charge;
+  for(const line of records)console.log(line);
+}
+
 function constructorModeledBranch(scenario,{operation='none',lease='none',mutation='none'}={}) {
   const original=readFileSync(BOOTSTRAP,'utf8');assert.equal(createHash('sha256').update(original).digest('hex'),CONSTRUCTOR_MODEL_SOURCE_SHA);
   const {source,projections}=constructorModeledSource(original,{scenario,operation,lease,mutation});
@@ -7420,16 +7446,11 @@ function constructorModeledBranch(scenario,{operation='none',lease='none',mutati
   assert.ok(total<=786432&&Buffer.byteLength(input)<=262144);
   const r=spawnSync('/usr/bin/perl',argv,{input,cwd:'/',env,timeout:10000,maxBuffer:4194304});
   const rawStdout=Buffer.isBuffer(r.stdout)?r.stdout:Buffer.alloc(0),rawStderr=Buffer.isBuffer(r.stderr)?r.stderr:Buffer.alloc(0);
-  const zippedOut=gzipSync(rawStdout),zippedErr=gzipSync(rawStderr);
-  // Lossless small original-model records flow through the Root-owned TAP
-  // capture. They are DATA, never OS/native/constructor admission receipts.
-  console.log('CONSTRUCTOR_MODEL_ORIGINAL '+JSON.stringify({schema:'setfarm.constructor-model-original.v1',scenario,operation,lease,mutation,
-    status:r.status,signal:r.signal,error:r.error?String(r.error):null,sourceSHA256:CONSTRUCTOR_MODEL_SOURCE_SHA,
-    programSHA256:createHash('sha256').update(argv[2]).digest('hex'),projectedSourceSHA256:createHash('sha256').update(source).digest('hex'),stdinSHA256:createHash('sha256').update(input).digest('hex'),
-    stdoutBytes:rawStdout.length,stdoutSHA256:createHash('sha256').update(rawStdout).digest('hex'),stdoutGzipBase64:zippedOut.length<=65536?zippedOut.toString('base64'):null,
-    stderrBytes:rawStderr.length,stderrSHA256:createHash('sha256').update(rawStderr).digest('hex'),stderrGzipBase64:zippedErr.length<=65536?zippedErr.toString('base64'):null,
-    rawComplete:zippedOut.length<=65536&&zippedErr.length<=65536,productionAuthority:false}));
-  assert.ok(zippedOut.length<=65536&&zippedErr.length<=65536,'oversize model DATA cannot qualify as retained complete');
+  publishConstructorModelOriginal({scenario,operation,lease,mutation,status:r.status,signal:r.signal,error:r.error?String(r.error):null,
+    sourceSHA256:CONSTRUCTOR_MODEL_SOURCE_SHA,programSHA256:createHash('sha256').update(argv[2]).digest('hex'),
+    projectedSourceSHA256:createHash('sha256').update(source).digest('hex'),stdinSHA256:createHash('sha256').update(input).digest('hex'),
+    stdoutBytes:rawStdout.length,stdoutSHA256:createHash('sha256').update(rawStdout).digest('hex'),
+    stderrBytes:rawStderr.length,stderrSHA256:createHash('sha256').update(rawStderr).digest('hex'),productionAuthority:false},rawStdout,rawStderr);
   assert.equal(r.error,undefined);assert.equal(r.signal,null);assert.equal(r.status,0,r.stderr.toString());assert.equal(r.stderr.length,0);
   const out=JSON.parse(r.stdout);assert.equal(out.schema,'setfarm.constructor-modeled-branch-result.v1');assert.equal(out.scenario,scenario);assert.equal(out.mutation,mutation);
   assert.equal(out.harnessFault,'');assert.equal(out.sourceLoaded,1);assert.equal(out.primaryHex,'');assert.equal(out.productionAuthority,false);
@@ -7500,7 +7521,11 @@ function assertUnknownModelMaterialRetained(result) {
   }
 }
 function assertNativeModelFourSourceCloses(result) {
-  const native=result.out.native;assert.equal(native.keeper.length,4);assert.equal(result.originalsBeforeBackup.filter(r=>!r.role.startsWith('physical:')&&!r.physicalHelper).length,8);
+  const native=result.out.native;assert.equal(native.keeper.length,4);
+  const pipes=result.originalsBeforeBackup.filter(r=>/^constructor-pipe-[0-3]-[rw]$/.test(r.role));assert.equal(pipes.length,8);assert.equal(new Set(pipes.map(r=>r.role)).size,8);
+  const census=result.originalsBeforeBackup.filter(r=>r.role==='census');assert.equal(census.length,11);
+  for(const r of census){assert.equal(r.kind,'directory-handle');assert.equal(r.sourcePrimitiveAttempts,1);assert.equal(r.sourcePrimitiveClosed,1);assert.equal(r.live,null);assert.equal(result.backupCloses.filter(b=>b.role===r.role).length,0,'actual census Source closes cannot be fixture backup credit');}
+  assert.equal(result.events.filter(e=>e.op==='census-close').length,11);
   assert.deepEqual(native.closeAttempts,[1,1,1,1]);assert.deepEqual(native.closed,[1,1,1,1]);
   for(const [i,keeper] of native.keeper.entries()){
     assert.deepEqual([keeper.known,keeper.closeAllowed,keeper.live],[1,1,null]);
