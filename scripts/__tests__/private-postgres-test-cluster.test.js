@@ -450,7 +450,11 @@ test('captured child binding persists real redactor output before every terminal
 
 // Ordinary Node-only boundary fixture: NO PG process, SQL or password file.
 function wrapperBoundaryFixture(mode,commandMode='findings'){
-  const expectedTestArgs=commandMode==='migration33-observers'?[
+  const expectedTestArgs=commandMode==='migration33-adjacent-full'?[
+    '--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
+    '--import','tsx','--test','--test-concurrency=1',
+    'tests/execution-attempts/migrations.test.ts',
+  ]:commandMode==='migration33-observers'?[
     '--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
     '--import','tsx','--test','--test-concurrency=1',
     'tests/execution-attempts/migration33-current-entry-observers.test.ts',
@@ -565,7 +569,7 @@ process.once('exit',()=>{original.writeSync(1,Buffer.from('UNIT_BOUNDARY_RESULT 
       NODE_OPTIONS:'--import=data:text/javascript;base64,'+Buffer.from(guard).toString('base64')},
   });
 }
-for(const commandMode of ['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers'])
+for(const commandMode of ['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal','after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full'])
 for(const mode of commandMode==='all'?['normal']:
   ['normal','nonzero','mirror-error','journal-loss','close-fault','retained-db','cancel','before-server','before-test','attach-server','attach-test','input-error']){
   test('wrapper boundary '+commandMode+' '+mode+' retains ordered observed outcomes without native effects',async()=>{
@@ -914,7 +918,7 @@ test('after-cutover retains the closed mode inventory and refuses caller selecto
   assert.equal(inventories.length,2,'one pure-plan and one CLI closed mode inventory');
   assert.deepEqual(inventories.map(match=>match[2]).sort(),['args[0]','mode']);
   const expected=['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal',
-    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers'];
+    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full'];
   for(const inventory of inventories)
     assert.deepEqual([...inventory[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),expected);
 });
@@ -968,7 +972,7 @@ test('after-receipt retains the closed mode inventory and refuses caller selecto
   assert.equal(inventories.length,2,'one pure-plan and one CLI closed mode inventory');
   assert.deepEqual(inventories.map(match=>match[2]).sort(),['args[0]','mode']);
   const expected=['findings','all','readonly-verifiers','receipt','after-scripts','after-terminal',
-    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers'];
+    'after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt','migration33-observers','migration33-adjacent-full'];
   for(const inventory of inventories)
     assert.deepEqual([...inventory[1].matchAll(/'([^']+)'/g)].map(match=>match[1]),expected);
 });
@@ -995,8 +999,8 @@ test('migration33-observers keeps literal mode inventory and refuses caller sele
   const {planPrivatePostgresTestsV1:plan}=await implementation();
   const literalModes=['findings','all','readonly-verifiers','receipt','after-scripts',
     'after-terminal','after-findings','after-internal-pure','after-local-custody','after-cutover','after-receipt',
-    'migration33-observers'];
-  assert.equal(new Set(literalModes).size,12);
+    'migration33-observers','migration33-adjacent-full'];
+  assert.equal(new Set(literalModes).size,13);
   for(const mode of literalModes){
     const value=plan({root,port:55439,mode});
     assert.equal(Object.isFrozen(value.test),true);
@@ -1019,4 +1023,32 @@ test('migration33-observers keeps literal mode inventory and refuses caller sele
     assert.equal(result.status,1);assert.equal(result.stdout,'');
     assert.equal(result.stderr,'PRIVATE_TEST_CLUSTER_MODE_INVALID\n');
   }
+});
+
+
+test('migration33-adjacent-full plans only the fixed whole migrations P3 test argv',async()=>{
+  const {planPrivatePostgresTestsV1:plan}=await implementation();
+  const value=plan({root,port:55439,mode:'migration33-adjacent-full'});
+  assert.deepEqual(value.test,[
+    '--import','tsx','scripts/run-isolated-postgres-tests.ts','--','node',
+    '--import','tsx','--test','--test-concurrency=1',
+    'tests/execution-attempts/migrations.test.ts',
+  ]);
+  assert.equal(value.test.length,10);
+  assert.deepEqual(value.test.filter(cell=>cell.endsWith('.test.ts')),[
+    'tests/execution-attempts/migrations.test.ts',
+  ]);
+  assert.equal(Object.isFrozen(value),true);assert.equal(Object.isFrozen(value.test),true);
+  assert.deepEqual(value.initdb,plan({root,port:55439,mode:'migration33-observers'}).initdb);
+  assert.deepEqual(value.server,plan({root,port:55439,mode:'receipt'}).server);
+  for(const mode of ['migration33-adjacent-full;echo denied','migration33-adjacent-full extra',
+    'migration33-adjacent-full/other','test:migration33-adjacent-full',
+    'tests/execution-attempts/migrations.test.ts','--test-name-pattern=.*'])
+    assert.throws(()=>plan({root,port:55439,mode}),/PRIVATE_TEST_CLUSTER_PLAN_INVALID/);
+  const refused=spawnSync(process.execPath,[fileURLToPath(MODULE),'migration33-adjacent-full','extra'],{
+    encoding:'utf8',timeout:5000,maxBuffer:65536,
+    env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},
+  });
+  assert.equal(refused.error,undefined);assert.equal(refused.signal,null);assert.equal(refused.status,1);
+  assert.equal(refused.stdout,'');assert.equal(refused.stderr,'PRIVATE_TEST_CLUSTER_MODE_INVALID\n');
 });

@@ -1,6 +1,6 @@
 # Ordinary migration 33 current-entry observers implementation plan
 
-> **Current checkpoint:** Clean preparation a723d269 ran the exact two leaves against a fresh private PostgreSQL cluster. Both reached legitimate engine-adopted33 and failed at their intended observers; natural original exit1 and strict cleanup were independently verified. Root has now changed only the two ordinary33 state predicates. The same two-leaf fresh-cluster GREEN and adjacent checks remain pending; no runtime or whole-goal qualification is claimed.
+> **Current checkpoint:** Actual RED on clean a723d269 proved both ordinary33 observer failures. The two-predicate fix was independently reviewed and committed clean as696b6c91; source noEmit passed. The same unchanged two-leaf regression then passed in a SECOND fresh cluster (original70509, natural37be66exit0,77 complete journal frames). Independent GREEN audit:559 checks, zero findings. Adjacent literal-route models pass16; the whole existing54-callback DB family is still UNRUN pending its clean reviewed selector checkpoint. No live startup or whole-goal qualification is claimed.
 
 **Goal:** Prove and fix the two current-entry observers that reject a legitimate engine-adopted ordinary33 row, preserving guarded32 applied-only and every source/catalog/admission requirement.
 
@@ -74,8 +74,8 @@ Run it through the existing original-PID/full-raw terminal capture with a fresh 
 ## Sequence C: minimum fix and separate fresh GREEN
 
 - [x] Only after the actual DB RED, root changes the two ordinary33 predicates. Do not alter the engine or digest owners,32 applied-only guards, exact names/checksums/catalog checks, loader, P3 grammar or source guards.
-- [ ] Independently review that two-line diff and run cheap applicable source checks. Root records a normal clean fix checkpoint before the next outer invocation; the outer clean-source guard cannot be bypassed to run a dirty fix. The2-leaf test stays byte-identical across RED/GREEN.
-- [ ] Invoke the same literal outer mode again, creating a SECOND fresh owned cluster. Require exactly2PASS/0FAIL/SKIP/CANCEL/TODO, legitimate engine-adopted33 observations, unchanged32/33 journal identities and genuine full catalog verification. Require the natural original terminal and verified private cleanup.
+- [x] Independently review that two-line diff and run cheap applicable source checks. Root records a normal clean fix checkpoint before the next outer invocation; the outer clean-source guard cannot be bypassed to run a dirty fix. The2-leaf test stays byte-identical across RED/GREEN.
+- [x] Invoke the same literal outer mode again, creating a SECOND fresh owned cluster. Require exactly2PASS/0FAIL/SKIP/CANCEL/TODO, legitimate engine-adopted33 observations, unchanged32/33 journal identities and genuine full catalog verification. Require the natural original terminal and verified private cleanup.
 - [ ] Run proportional adjacent existing checks for exact33 adoption, partial/malformed33 refusal, newer journal refusal and forged-adopted32 refusal; source/diff/contracts checks; record source/migration/digest bytes. Never count excluded cases as PASS.
 - [ ] Review the complete six-path final pins and actual records before normal scoped delivery. No native/Root/runtime/live migration or whole-goal qualification follows from this ordinary isolated regression.
 
@@ -241,3 +241,93 @@ noEmit command ended naturally0 (e701a9/session54316 to0fdf21), with empty
 stdout/stderr; diff checkb87eb2 also ended0. Source db-pg.ts is348326B/SHA256
 88adaab5a7cb434a506685ea6bb24db7b5d71e0921d08be528c261003b43f743.
 This compiles src only without selected build, dist output or guard bypass.
+
+
+## Bounded full adjacent migrations selector — preparation only
+
+The actual two-leaf ordinary33 RED was eligible, and only the two planned state
+predicates were corrected. That focused regression and the broader existing
+migration family are separate verification scopes. Root explicitly selected the
+whole unchanged `tests/execution-attempts/migrations.test.ts` file as proportional
+adjacent coverage:54 literal callbacks,3 top-level pure and51 DB-suite callbacks.
+These are static source registration counts, not observed PASS results. This
+accepts the finite whole-file cost without replaying any earlier healthy private
+package prefix. All new adjacent routing tests and the54 callbacks are UNRUN at
+this outside preparation checkpoint.
+
+Additional bounded File Map for this selector is exactly three existing paths:
+`scripts/run-private-postgres-tests.mjs`,
+`scripts/__tests__/private-postgres-test-cluster.test.js`, and this plan. There
+is no package alias, owner-list enrollment, inner grammar, SQL, migration/digest,
+new DB leaf, P3 dirty exception, runtime, privilege or bootstrap change. The
+previous six-path migration33 fix File Map remains the parent causal scope.
+
+Root first applies only the appended pure-plan test (and causal plan) against
+the maintained missing selector. Exact title:
+`migration33-adjacent-full plans only the fixed whole migrations P3 test argv`.
+The intended modeled routing RED is `PRIVATE_TEST_CLUSTER_PLAN_INVALID` at its
+actual plan invocation. Import/syntax/missing-export/setup failure is not that
+RED; no PG producer is allowed at this step. Existing12 mode bodies are not
+selected for this first causal single test.
+
+After actual routing RED, root applies the remaining test-fixture bookkeeping
+and minimal implementation: append literal `migration33-adjacent-full` as the
+13th member of both closed outer inventories; insert one fixed argv branch;
+add its exact argv to wrapperBoundaryFixture, append it to the existing modeled
+12-boundary loop and reconcile the three complete12-mode expectations to13.
+The existing `migration33-observers` command and every old mode branch remain
+byteexact. The new single plan/refusal test plus12 reused modeled boundary
+bodies contribute13 new controls; no arbitrary command, filename, regex, URL,
+environment or selected-subset interface is added. Whole-command input remains
+one fixed mode with caller extra args refused before any cluster effects.
+
+The exact outer test vector is10 cells: `--import`, `tsx`,
+`scripts/run-isolated-postgres-tests.ts`, `--`, `node`, `--import`, `tsx`,
+`--test`, `--test-concurrency=1`,
+`tests/execution-attempts/migrations.test.ts`. Its inner command is the existing
+six-cell grammar; there is no test-name-pattern argument or wildcard. All old
+initdb/server/capture/redaction/clean-source/identity/quiescence/cleanup bytes
+remain unchanged. Model GREEN and independent review precede a normal clean
+selector checkpoint. If the current plan advanced after this outside snapshot,
+apply only this append and preserve all newer verified result text.
+
+After the corrected source's separate fresh two-leaf GREEN and clean reviewed
+selector delivery, root may invoke ONE new private owner:
+`/opt/homebrew/Cellar/node/26.4.0/bin/node scripts/run-private-postgres-tests.mjs migration33-adjacent-full`.
+Use fresh PATH/LANG/LC_ALL, no ambient PG URLs, no closed-root/server adoption,
+and retain the actual whole-file footer plus original terminal/strict cleanup.
+Expected54 is a source registration expectation only; actual outcomes, including
+skips or extra hook failures, decide qualification. No selected stock build,
+retention/discard/promotion or guard bypass is part of this ordinary isolated
+verification. Initial TCB/Root/V2/runtime/startup/whole-goal gates stay separate.
+
+
+Actual separate focused verification on clean696b6c91: original70509 ended
+naturally0 at37be66; maintained strict reader7cb60f reports77 complete frames,
+2PASS/0FAIL/0SKIP/CANCEL/TODO, matching observed exit/close/EOF, private
+quiescence/admin/server closure. Independent final audit is pending. Same
+4599-byte leaf9ce25 and corrected source88adaab5 remain exact. This actual
+focused GREEN does not relabel original46031 RED or qualify live startup.
+
+Adjacent routing TDD: only the appended pure-plan callback was first applied;
+actualefd080 exited1 with exactly1test/0PASS/1FAIL/0other and
+PRIVATE_TEST_CLUSTER_PLAN_INVALID at the intended plan invocation. Only after
+that actual routing RED were the literal mode13, fixed vector and unit
+bookkeeping applied. No PG effect occurred at this modeled selector step.
+
+
+Actual adjacent modeled GREEN: originalfb6a93/session55963 ended naturally0 at
+5b8432. Exactly16 selected controls passed,0failed/skipped/cancelled/todo:
+13new controls (12 reused boundary bodies plus1plan/refusal), and the3existing
+complete-inventory contracts changed by adding mode13. Healthy unrelated
+controls were not replayed. Syntax and diff7994a2 passed. The54 real DB callbacks
+remain UNRUN pending independent current3pathreview and cleancheckpoint.
+
+
+The focused same-original GREEN audit is complete:559 checks, zero findings,
+receipt logs/2026-10-15-private-migration33-green-original-v1/independent-green-final-review-v1.json
+SHA256ac74a35458b991a8bff44f4e1b8d2af3900b9871f42e16c78a060be905788617.
+The earlier pending-audit text records its original checkpoint. Source review
+43checks0 is pinned b600d0aaa1d6e3d0696b0b8250636f817f7b6c5eaba468aee44961cf4fcfe8ca;
+the two-predicate inverse recovers every original db-pg byte. No source further
+changed during the focused GREEN. The next54 callbacks remain UNRUN.
