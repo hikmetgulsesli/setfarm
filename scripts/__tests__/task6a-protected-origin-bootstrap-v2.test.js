@@ -5,7 +5,7 @@ import {spawn,spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import test from 'node:test';
-import {registerConsumerEpochNativeTest,registerSourceConstructorNativeTest} from './fixtures/task6a-consumer-epoch-native-v1.mjs';
+import {registerConsumerEpochNativeTest,registerSourceConstructorNativeTest,registerPhysicalOwnerLifetimeTest} from './fixtures/task6a-consumer-epoch-native-v1.mjs';
 import {ZERO,ONE,TWO,literalCommit,framedHash,coherentCommit,coherentTree,sourceGraph}
   from './fixtures/task6a-origin-transport-fixtures-v2.js';
 
@@ -7389,4 +7389,5 @@ test('constructor modeled normal and cleanup boundaries retain the original dead
 // Explicitly unselected fixture is UNRUN; no native test credit.
 registerConsumerEpochNativeTest();
 registerSourceConstructorNativeTest();
+registerPhysicalOwnerLifetimeTest();
 }
