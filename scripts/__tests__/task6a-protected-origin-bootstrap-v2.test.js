@@ -7673,5 +7673,7 @@ test('physical modeled failed epoch stays burned after restoration while unknown
 // Explicitly unselected fixture is UNRUN; no native test credit.
 registerConsumerEpochNativeTest();
 registerSourceConstructorNativeTest();
+// The same test-only registrar includes the closed G1 existing-main RED route.
+// Its ordinary material opt-in remains unset in generic pure runs.
 registerPhysicalOwnerLifetimeTest();
 }
