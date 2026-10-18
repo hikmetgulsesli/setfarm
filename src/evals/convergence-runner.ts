@@ -34,6 +34,7 @@ import type { ArtifactCapacityLimits } from "../product-compiler/artifact-capaci
 import {
   resolveProductArtifactCapacity,
   resolveProductArtifactDir,
+  resolveConvergenceEvalResultDir,
   runtimeConfig,
   type ArtifactStorePublicationAuthorityMode,
 } from "../runtime-config.js";
@@ -2427,7 +2428,7 @@ type CliOptions = Readonly<{
 function parseCli(argv: readonly string[]): CliOptions {
   const root = packageRoot();
   let suiteFile = path.join(root, "evals", "suites", "product-convergence-v1.json");
-  let outputRoot = path.join(root, ".setfarm", "evals", "results");
+  let outputRoot = resolveConvergenceEvalResultDir();
   let releaseSha: string | undefined;
   let execute = false;
   let json = false;
