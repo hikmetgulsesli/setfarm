@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 import { z } from "zod";
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 
 import { computeEvidenceBundleHash, EvidenceBundleV2Schema, type EvidenceBundleV2 } from "../evidence/evidence-bundle-v2.js";
 import { FindingSetV1Schema, type FindingSetV1 } from "../findings/finding-set.js";
@@ -277,12 +278,19 @@ async function publishFindingSetWithOwnerInTransactionV1(
     findingSet.findingSetHash,
   ]);
   const beforeParents = await transaction.unsafe<ExactFindingSetRow[]>(
-    "SELECT * FROM finding_sets WHERE finding_set_hash=$1 FOR UPDATE",
+    selectedFreshInstallationRootV1()
+      ? "SELECT * FROM finding_sets WHERE finding_set_hash=$1"
+      : "SELECT * FROM finding_sets WHERE finding_set_hash=$1 FOR UPDATE",
     [findingSet.findingSetHash],
   );
   const expectedIds = findingSet.findings.map((finding) => finding.findingId);
   const beforeChildren = await transaction.unsafe<ExactFindingRow[]>(
-    `SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+    selectedFreshInstallationRootV1()
+      ? `SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+       FROM findings
+      WHERE finding_set_hash=$1
+      ORDER BY array_position($2::text[],finding_id),finding_id`
+      : `SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
        FROM findings
       WHERE finding_set_hash=$1
       ORDER BY array_position($2::text[],finding_id),finding_id
@@ -375,11 +383,18 @@ async function publishFindingSetWithOwnerInTransactionV1(
     }
   }
   const parents = await transaction.unsafe<ExactFindingSetRow[]>(
-    "SELECT * FROM finding_sets WHERE finding_set_hash=$1 FOR UPDATE",
+    selectedFreshInstallationRootV1()
+      ? "SELECT * FROM finding_sets WHERE finding_set_hash=$1"
+      : "SELECT * FROM finding_sets WHERE finding_set_hash=$1 FOR UPDATE",
     [findingSet.findingSetHash],
   );
   const children = await transaction.unsafe<ExactFindingRow[]>(
-    `SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+    selectedFreshInstallationRootV1()
+      ? `SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+       FROM findings
+      WHERE finding_set_hash=$1
+      ORDER BY array_position($2::text[],finding_id),finding_id`
+      : `SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
        FROM findings
       WHERE finding_set_hash=$1
       ORDER BY array_position($2::text[],finding_id),finding_id

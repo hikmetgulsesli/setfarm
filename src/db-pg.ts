@@ -10,7 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { types } from "node:util";
 import { runtimeConfig } from "./runtime-config.js";
-import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "./installation/fresh-installation-selection-v1.js";
+import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1, selectedFreshInstallationRootV1 } from "./installation/fresh-installation-selection-v1.js";
 import { observeDeploymentCutoverIntentV1 } from "./internal-production/baseline-deployment-cutover-v1.js";
 import { copyDashboardCoreRequestV2, classifyDashboardCoreResponseFailureV2 } from "./db/dashboard-core-response-v2.js";
 import { observeLegacyFindingPublicationInventoryV1, requireFindingPublicationV1, type FindingPublicationParentRowV1, type FindingPublicationChildRowV1 } from "./findings/finding-publication-v1.js";
@@ -3314,12 +3314,24 @@ P3TerminalResolverConfigV1<"finding"> = Object.freeze({
   ),
   lockProjection: async (sql, input) => {
     const identity = createInternalProductionFindingCanonicalOwnerIdentityV1(input as never);
-    const sets = await sql<FindingPublicationParentRowV1[]>`
+    const sets = selectedFreshInstallationRootV1()
+      ? await sql<FindingPublicationParentRowV1[]>`
+      SELECT finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
+             source_sha,source_tree_hash,finding_ids,payload FROM finding_sets
+       WHERE finding_set_hash=${identity.ownerKey}
+    `
+      : await sql<FindingPublicationParentRowV1[]>`
       SELECT finding_set_hash,finding_set_id,run_id,story_id,packet_hash,slice_hash,
              source_sha,source_tree_hash,finding_ids,payload FROM finding_sets
        WHERE finding_set_hash=${identity.ownerKey} FOR UPDATE
     `;
-    const children = await sql<FindingPublicationChildRowV1[]>`
+    const children = selectedFreshInstallationRootV1()
+      ? await sql<FindingPublicationChildRowV1[]>`
+      SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,
+             source_fingerprint,payload FROM findings
+       WHERE finding_set_hash=${identity.ownerKey} ORDER BY finding_id
+    `
+      : await sql<FindingPublicationChildRowV1[]>`
       SELECT finding_set_hash,finding_id,origin,classification,invariant_ref,status,
              source_fingerprint,payload FROM findings
        WHERE finding_set_hash=${identity.ownerKey} ORDER BY finding_id FOR UPDATE
@@ -3364,7 +3376,10 @@ P3TerminalResolverConfigV1<"operational-delivery"> = Object.freeze({
   lockProjection: async (sql, input) => {
     const identity = createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1(input as never);
     const exact = input as Readonly<{ eventKey: string; consumer: "jsonl" | "webhook" }>;
-    const events = await sql`SELECT event_key,event_hash FROM operational_events
+    const events = selectedFreshInstallationRootV1()
+      ? await sql`SELECT event_key,event_hash FROM operational_events
+       WHERE event_key=${exact.eventKey}`
+      : await sql`SELECT event_key,event_hash FROM operational_events
        WHERE event_key=${exact.eventKey} FOR UPDATE`;
     const rows = await sql<Array<{ event_key: string; consumer: "jsonl" | "webhook"; state: string }>>`
       SELECT event_key,consumer,state FROM operational_event_deliveries
