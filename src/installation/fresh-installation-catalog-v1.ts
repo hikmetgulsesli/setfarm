@@ -8,6 +8,17 @@ const CATALOG_SQL = `WITH public_relations AS (
   WHERE r.oid=d.datdba OR r.rolname='sf_runtime_'||substring(d.datname FROM 17)
 ), relevant_roles AS (
   SELECT oid FROM protected_roles UNION SELECT oid FROM pg_catalog.pg_roles WHERE rolname='pg_database_owner'
+), current_database_acl AS (
+  SELECT a.grantor,a.grantee,a.privilege_type,a.is_grantable FROM pg_catalog.pg_database d
+    CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(d.datacl,pg_catalog.acldefault('d',d.datdba))) a
+    WHERE d.datname=current_database()
+), expected_database_acl AS (
+  SELECT d.datdba AS grantor,d.datdba AS grantee,p.privilege_type,false AS is_grantable
+    FROM pg_catalog.pg_database d CROSS JOIN unnest(ARRAY['CREATE','TEMPORARY','CONNECT']) p(privilege_type)
+    WHERE d.datname=current_database()
+  UNION ALL SELECT d.datdba,r.oid,'CONNECT',false FROM pg_catalog.pg_database d
+    JOIN pg_catalog.pg_roles r ON r.rolname='sf_runtime_'||substring(d.datname FROM 17)
+    WHERE d.datname=current_database()
 ), external_acl_objects AS (
   SELECT 'function' AS kind,'pg_catalog.pg_proc'::regclass AS classid,p.oid AS object_id,0 AS subid,p.proacl AS acl,
     pg_catalog.acldefault('f',p.proowner) AS default_acl
@@ -86,7 +97,12 @@ const CATALOG_SQL = `WITH public_relations AS (
       JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname='public')
   ) AS body
 ) SELECT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(body::text,'UTF8')),'hex') AS hash FROM snapshot
-  WHERE (SELECT count(*) FROM protected_roles)=2 AND NOT EXISTS (
+  WHERE (SELECT count(*) FROM protected_roles)=2
+    AND NOT EXISTS ((SELECT * FROM current_database_acl EXCEPT SELECT * FROM expected_database_acl)
+      UNION ALL (SELECT * FROM expected_database_acl EXCEPT SELECT * FROM current_database_acl))
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+      WHERE n.nspname<>'public' AND p.oid>=16384)
+    AND NOT EXISTS (
     SELECT 1 FROM external_acl_entries WHERE grantee IN (SELECT oid FROM relevant_roles)
       AND NOT (grantee IN (SELECT oid FROM protected_roles) AND kind='function' AND object_id='pg_catalog.pg_control_system()'::regprocedure::oid
         AND subid=0 AND privilege_type='EXECUTE' AND NOT is_grantable))
