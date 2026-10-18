@@ -114,14 +114,16 @@ test("selected unsupported CLI action refuses before spawn, SQL or ordinary modu
   assert.equal(result.stdout, "SELECTED_CLI_NEGATIVE_CHECKED\n");
 });
 
-test("interim selected dashboard refuses mutations and live observation before route effects", () => {
+test("selected dashboard permits the exact ACK handler while retaining other mutation and live-observation refusals", () => {
   // Pure DATA request classification, with no listener, private client or positive authority.
-  const source = declaration("src/server/dashboard.ts", "isFreshInstallationReadOnlyDashboardRequestV1");
+  const classifierName = read("src/server/dashboard.ts").includes("function isFreshInstallationDashboardRequestV1(")
+    ? "isFreshInstallationDashboardRequestV1" : "isFreshInstallationReadOnlyDashboardRequestV1";
+  const source = declaration("src/server/dashboard.ts", classifierName);
   const compiled = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   const classify = new Function(
-    compiled + ";return isFreshInstallationReadOnlyDashboardRequestV1;",
+    compiled + ";return " + classifierName + ";",
   )() as (method: string | undefined, pathname: string) => boolean;
   for (const method of ["GET", "HEAD", "OPTIONS"]) {
     for (const pathname of ["/", "/api/runs", "/api/rules", "/api/runs/component/stories"]) {
@@ -129,12 +131,16 @@ test("interim selected dashboard refuses mutations and live observation before r
     }
     assert.equal(classify(method, "/api/runs/component/deployment-observation"), false);
   }
+  assert.equal(classify("POST", "/api/runs/component/project-transfer-ack"), true);
   for (const method of [undefined, "POST", "PUT", "PATCH", "DELETE", "CONNECT", "TRACE", "get"]) {
     for (const pathname of ["/api/scrape", "/api/rules", "/api/rules/import", "/api/rules/component",
-      "/api/runs/component/project-transfer-ack"]) assert.equal(classify(method, pathname), false);
+      "/api/runs//project-transfer-ack", "/api/runs/a/b/project-transfer-ack",
+      "/api/runs/component/project-transfer-ack/", "/api/runs/component/project-transfer-ack/extra",
+      "/api/runs/component/deployment-observation"]) assert.equal(classify(method, pathname), false);
+    if (method !== "POST") assert.equal(classify(method, "/api/runs/component/project-transfer-ack"), false);
   }
   const dashboard = read("src/server/dashboard.ts");
-  const gate = dashboard.indexOf("!isFreshInstallationReadOnlyDashboardRequestV1(req.method, p)");
+  const gate = dashboard.indexOf("!isFreshInstallationDashboardRequestV1(req.method, p)");
   assert.ok(gate >= 0 && gate < dashboard.indexOf('if (p === "/api/scrape" && req.method === "POST")'));
   assert.ok(gate < dashboard.indexOf('if (p === "/api/rules" && req.method === "POST")'));
   assert.ok(gate < dashboard.indexOf('if (deploymentObservationMatch && req.method === "GET")'));

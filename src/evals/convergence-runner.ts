@@ -2241,11 +2241,21 @@ function endpoint(service: "setfarm" | "mission_control", pathname: string): str
   return `${base}${pathname}`;
 }
 
-async function fetchResponse(url: string): Promise<Response> {
-  return fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+async function fetchResponse(url: string, missionControlToken?: string): Promise<Response> {
+  return fetch(url, {
+    headers: {
+      accept: "application/json",
+      ...(missionControlToken ? { "x-mc-token": missionControlToken } : {}),
+    },
+    signal: AbortSignal.timeout(10_000),
+    ...(missionControlToken ? { redirect: "error" as const } : {}),
+  });
 }
 
 export function createFetchConvergenceHttpPort(): ConvergenceHttpPort {
+  // Explicit evaluator input for MC's AUTH_TOKEN. Never borrow generic AUTH_TOKEN
+  // or attach this credential to Setfarm, health checks, URLs or evidence.
+  const missionControlToken = String(process.env.MC_AUTH_TOKEN || "");
   return {
     async health(service) {
       const response = await fetchResponse(endpoint(service, service === "setfarm" ? "/" : "/api/health"));
@@ -2255,7 +2265,10 @@ export function createFetchConvergenceHttpPort(): ConvergenceHttpPort {
       const pathname = service === "setfarm"
         ? `/api/runs/${encodeURIComponent(runId)}/operational-snapshot`
         : `/api/setfarm/runs/${encodeURIComponent(runId)}/operational-snapshot`;
-      const response = await fetchResponse(endpoint(service, pathname));
+      const response = await fetchResponse(
+        endpoint(service, pathname),
+        service === "mission_control" ? missionControlToken : undefined,
+      );
       if (!response.ok) throw new Error("EVAL_OPERATIONAL_SNAPSHOT_UNAVAILABLE");
       return response.json();
     },
@@ -2266,7 +2279,11 @@ export function createFetchConvergenceHttpPort(): ConvergenceHttpPort {
       );
       const response = await fetch(url, {
         method: "POST",
-        headers: { accept: "application/json" },
+        headers: {
+          accept: "application/json",
+          ...(missionControlToken ? { "x-mc-token": missionControlToken } : {}),
+        },
+        redirect: "error",
         signal: AbortSignal.timeout(30_000),
       });
       const payload = await response.json().catch(() => null) as null | {
