@@ -238,3 +238,9 @@ heartbeat and one bounded clean workflow through its actual gates.
   Both scoped reviews approved patch9487a671…315a5 as C0/I0/M0. The source reader
   prechecks declared sizes and bounds every read;64MiB is a source-data cap,
   not a CPU or aggregate-request bound. Clean-main build follows PR integration.
+- The second PR review found incoming owner-role grants were not checked.
+  RED928a63 proved a separate new login could receive the owner role without
+  runtime verification refusing. Check membership edges in both directions for
+  owner/runtime roles. The real GRANT/REVOKE regression also checks incoming
+  runtime-role grants, restored verification and exact grantee-OID teardown.
+  GREEN0781c8 passed52 tests with zero failures/skips; no-emitbe6792 passed.

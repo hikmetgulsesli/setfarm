@@ -245,3 +245,30 @@ test("source capture rejects changed and ignored extra executing source without 
   }
   assert.equal(await fixture.capture.captureFreshInstallationSourceShaV1(), fixture.sha);
 });
+
+test("runtime verification refuses incoming grants of its owner or runtime role", { timeout: 120_000 }, async t => {
+  const installation = await create(t);
+  await installation.initialize();
+  const control = postgres(targetUrl(installation.databaseName), { max: 1, onnotice() {} });
+  const grantee = installation.ownerRole.replace("sf_owner_", "sf_grantee_");
+  let granteeOid: number | undefined;
+  try {
+    await control.unsafe(`CREATE ROLE ${quote(grantee)} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
+    const created = await control<Array<{ oid: number }>>`SELECT oid::integer AS oid FROM pg_catalog.pg_roles WHERE rolname=${grantee}`;
+    granteeOid = created[0]!.oid;
+    for (const role of [installation.ownerRole, installation.runtimeRole]) {
+      await control.unsafe(`GRANT ${quote(role)} TO ${quote(grantee)}`);
+      try { await assert.rejects(installation.verifyRuntime(), /FRESH_INSTALLATION_RUNTIME_VERIFY_FAILED/); }
+      finally { await control.unsafe(`REVOKE ${quote(role)} FROM ${quote(grantee)}`); }
+    }
+    await installation.verifyRuntime();
+  } finally {
+    try {
+      if (granteeOid !== undefined) {
+        const current = await control<Array<{ oid: number }>>`SELECT oid::integer AS oid FROM pg_catalog.pg_roles WHERE rolname=${grantee}`;
+        assert.equal(current[0]?.oid, granteeOid, "grantee identity changed; refusing cleanup");
+        await control.unsafe(`DROP ROLE ${quote(grantee)}`);
+      }
+    } finally { await control.end({ timeout: 3 }); }
+  }
+});

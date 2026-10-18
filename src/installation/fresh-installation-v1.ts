@@ -155,7 +155,7 @@ export async function createFreshInstallationV1(options: FreshInstallationOption
             AND NOT rolreplication AND NOT rolbypassrls AND NOT rolinherit
             AND rolcanlogin=(rolname=$1))
             AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m
-              JOIN pg_catalog.pg_roles r ON r.oid=m.member WHERE r.rolname IN ($2,$1))
+              JOIN pg_catalog.pg_roles r ON r.oid=m.member OR r.oid=m.roleid WHERE r.rolname IN ($2,$1))
             AND bool_and(CASE WHEN rolname=$2 THEN oid=$3 ELSE oid=$4 END)
             AND current_user=$1 AND session_user=$1 AS valid
           FROM pg_catalog.pg_roles WHERE rolname IN ($2,$1)`, [runtimeRole, ownerRole, ownerOid, runtimeOid]);
