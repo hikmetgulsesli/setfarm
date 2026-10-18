@@ -179,7 +179,7 @@ heartbeat and one bounded clean workflow through its actual gates.
 
 ## Progress
 
-- Design approved by the owner's instruction: “sorunları gier ve devam”.
+- Design approved by the owner's instruction to fix the issues and continue.
 - RED: existing owner-admission parser refused valid fresh genesis (tool70105f,
   1failed/4passed); missing production initializer failed3 explicit assertions
   (723dce). Neither result is a completed integration run.
