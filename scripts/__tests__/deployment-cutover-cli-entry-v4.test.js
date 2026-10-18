@@ -47,9 +47,9 @@ test("static runtime closure is fixed, event types erased and existing CLI body 
     assert.equal(call.arguments.length, 1); assert.ok(ts.isStringLiteral(call.arguments[0]));
   }
   const tail = source.slice(source.indexOf("const __filename ="));
-  // 411b9b60 body minus the relocated diagnostic branch, plus the ordinary else's closing brace.
+  // b3b0039c body plus two pre-schema guards and their post-await cutover rechecks.
   // Other command changes must explicitly update this reviewed regression pin.
-  assert.equal(hash(tail), "a22271769ec5f0e8bdcff38871fc04e27f8f2ca62971adbae6641e1e010b62b9");
+  assert.equal(hash(tail), "1830d5ee58bd6b88f25e7845a5e0864f07f5b7ea1ad0f6ecd8f581b2dd790551");
 });
 
 function businessBindings(source) {

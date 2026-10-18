@@ -254,6 +254,13 @@ function ordinaryCheckoutWithoutFixedWorkspaceV2(): boolean {
 }
 
 /** Additional sampled refusal before the existing ordinary startup gates. */
+/** The synchronous entry cannot establish the read-only journal prerequisite. */
+export function assertTask6aPreSchemaSynchronousOrdinaryStartupV3(): void {
+  if (ordinaryCheckoutWithoutFixedWorkspaceV2()) return;
+  if (observeTask6aFixedCurrentEntryOperationPresenceV2().state === "absent") return;
+  fail();
+}
+
 export async function assertTask6aPreSchemaOrdinaryStartupV2(): Promise<void> {
   if (ordinaryCheckoutWithoutFixedWorkspaceV2()) return;
   const before = observeTask6aFixedCurrentEntryOperationPresenceV2();

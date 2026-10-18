@@ -454,6 +454,8 @@ async function main() {
 
     // Auto-start dashboard if not already running
     assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
+    await assertTask6aPreSchemaOrdinaryStartupV2();
+    assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
     if (!isRunning().running) {
       try {
         const result = await startDaemon(3333);
@@ -512,6 +514,8 @@ async function main() {
       if (!Number.isNaN(parsed)) port = parsed;
     }
 
+    assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
+    await assertTask6aPreSchemaOrdinaryStartupV2();
     assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
     if (isRunning().running) {
       const status = getDaemonStatus();
