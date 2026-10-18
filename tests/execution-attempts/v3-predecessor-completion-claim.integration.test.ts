@@ -9,7 +9,7 @@ import { completeSingleStepClaimAndState } from "../../src/execution/claim-attem
 import { publishSingleClaimRuntime, publishLoopClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
 import { createRuntimeCompletionEffectRepository } from "../../src/execution/runtime-completion-effect-repository.js";
 import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
-import { createRuntimeCompletionRepository, requestRuntimeCompletion } from "../../src/execution/runtime-completion.js";
+import { createRuntimeCompletionRepository, requestRuntimeCompletion, quarantineExpiredRuntimeCompletionForRecoveryInTransaction } from "../../src/execution/runtime-completion.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
@@ -223,6 +223,7 @@ it("selects another ready run and confines the wait to exact lower single nonsto
       const cases: Array<{name:string; change?:string; want:string}>= [
         {name:"requested",want:"ready-target"}, {name:"draining",change:"UPDATE runtime_completion_requests SET state='draining'",want:"ready-target"},
         {name:"processing",change:"UPDATE runtime_completion_requests SET state='processing'",want:"ready-target"},
+        {name:"quarantined",change:"UPDATE runtime_completion_requests SET state='quarantined'",want:"ready-target"},
         {name:"accepted",change:"UPDATE runtime_completion_requests SET state='accepted'",want:"blocked-target"},
         {name:"rejected",change:"UPDATE runtime_completion_requests SET state='rejected'",want:"blocked-target"},
         {name:"legacy run",change:"UPDATE runs SET protocol='legacy' WHERE id='blocked'",want:"blocked-target"},
@@ -255,6 +256,77 @@ it("selects another ready run and confines the wait to exact lower single nonsto
         const rows=await tx.unsafe<Array<{id:string}>>(query,[DESIGN_AGENT,null,60_000]);
         assert.equal(rows[0]?.id,c.want,c.name);
       });
+    });
+  } finally { await database.cleanup(); }
+});
+
+
+it("keeps a genuinely quarantined completed predecessor behind both public publication barriers", {timeout:180_000}, async(t)=>{
+  const database=await createIsolatedTestDatabase();
+  try {
+    const runId="run-predecessor-quarantined-publication";
+    await seedRun(database,runId);
+    const managed=await prepareCompletedPredecessor(database,runId);
+    // Existing isolated-PG expiry fixture pattern: change only this mutable
+    // lease, then require the real recovery API's owner/version/phase checks.
+    // This is not an elapsed live lease or a production recovery qualification.
+    const expiredRows=await database.sql.unsafe<Array<{request_id:string}>>(
+      `UPDATE runtime_completion_requests
+          SET lease_expires_at = date_trunc('milliseconds', clock_timestamp()) - INTERVAL '1 second'
+        WHERE request_id = $1 AND state = 'processing' AND apply_phase = 'effects_committed'
+        RETURNING request_id`, [managed.processing.requestId],
+    );
+    assert.equal(expiredRows.length,1,"expire only the exact isolated completion fixture");
+    const expired=await managed.completions.findById(managed.processing.requestId);
+    assert.ok(expired?.ownerInstanceId && expired.leaseExpiresAt);
+    const quarantined=await database.sql.begin(transaction=>quarantineExpiredRuntimeCompletionForRecoveryInTransaction(
+      transaction, {
+        requestId:expired.requestId,
+        expectedOwnerInstanceId:expired.ownerInstanceId!,
+        expectedLeaseExpiresAt:expired.leaseExpiresAt!,
+        expectedUpdatedAt:expired.updatedAt,
+        expectedApplyPhase:expired.applyPhase,
+        diagnostic:"isolated predecessor quarantine barrier regression",
+      },
+    ));
+    assert.equal(quarantined.state,"quarantined");
+    const rows=await database.sql<Array<{state:string;apply_phase:string;outcome:string;step_status:string;runtime_state:string}>>`
+      SELECT c.state,c.apply_phase,cl.outcome,s.status AS step_status,runtime.state AS runtime_state
+      FROM runtime_completion_requests c JOIN claim_log cl ON cl.id=c.claim_id
+      JOIN steps s ON s.id=c.step_db_id AND s.run_id=c.run_id
+      JOIN runtime_sessions runtime ON runtime.session_id=c.runtime_session_id AND runtime.claim_id=c.claim_id
+      WHERE c.request_id=${quarantined.requestId}
+    `;
+    assert.deepEqual({...rows[0]},{state:"quarantined",apply_phase:"effects_committed",outcome:"completed",step_status:"done",runtime_state:"drained"});
+    await database.sql`
+      INSERT INTO steps (id,run_id,step_id,agent_id,step_index,input_template,expects,status,type)
+      VALUES (${`${runId}-loop`},${runId},'work-loop','feature-dev_worker',3,'','','pending','loop')
+    `;
+    await database.sql`
+      INSERT INTO stories (id,run_id,story_index,story_id,title,status,claim_generation)
+      VALUES (${`${runId}-story`},${runId},1,'US-001','Quarantined predecessor boundary','pending',0)
+    `;
+    await t.test("single publication waits with no sequence, CAS, claim, runtime or reservation",async()=>{
+      const before=await publicationSnapshot(database.sql,runId);
+      assert.equal(await publishSingleClaimRuntime(database.sql,{
+        runId,stepDbId:`${runId}-design`,workflowStepId:"design",claimAgentId:DESIGN_AGENT,
+        runtimeIntent:runtimeIntent("RTS_predecessor-quarantined-design"),
+      }),undefined,"quarantined is still unaccepted; wait until explicit resolution or termination");
+      assert.deepEqual(await publicationSnapshot(database.sql,runId),before);
+    });
+    await t.test("initial loop publication also waits without changing its pending story",async()=>{
+      const before=await publicationSnapshot(database.sql,runId);
+      assert.equal(await publishLoopClaimRuntime(database.sql,{
+        runId,stepDbId:`${runId}-loop`,workflowStepId:"work-loop",storyDbId:`${runId}-story`,
+        storyId:"US-001",claimAgentId:"feature-dev_worker",parallelLimit:2,
+        runtimeIntent:runtimeIntent("RTS_predecessor-quarantined-loop"),
+      }),undefined,"initial loop cannot bypass the same unaccepted predecessor");
+      assert.deepEqual(await publicationSnapshot(database.sql,runId),before);
+      const pending=await database.sql<Array<{step_status:string;story_status:string;claim_generation:number}>>`
+        SELECT s.status AS step_status,st.status AS story_status,st.claim_generation FROM steps s
+        JOIN stories st ON st.run_id=s.run_id WHERE s.id=${`${runId}-loop`} AND st.id=${`${runId}-story`}
+      `;
+      assert.deepEqual({...pending[0]},{step_status:"pending",story_status:"pending",claim_generation:0});
     });
   } finally { await database.cleanup(); }
 });

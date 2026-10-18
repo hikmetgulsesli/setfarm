@@ -49,7 +49,7 @@ node --import tsx --test tests/installation/fresh-installation-completion-finali
 ## Task 2: Reproduce and correct successor publication
 
 - [ ] Adopt the reviewed isolated PostgreSQL tests, recording RED before Source changes.
-- [ ] Add the fixed shared predicate: same run, lower-index single predecessor, non-story completed claim, exactly bound completion, and completion state requested/draining/processing.
+- [ ] Add the fixed shared predicate: same run, lower-index single predecessor, non-story completed claim, exactly bound completion, and completion state requested/draining/processing/quarantined.
 - [ ] Apply it to pending candidate selection and recheck new publication under the run lock before sequence allocation or state mutation. Preserve existing replay and authority authentication.
 - [ ] Cover accepted predecessor, no-birth waiting, other ready runs, unrelated/current/later/loop/story completions and existing replay. Record GREEN with the isolated database harness.
 
@@ -58,6 +58,12 @@ node --import tsx scripts/run-execution-attempt-tests.ts tests/execution-attempt
 ```
 
 ## Task 3: Verify, review and exercise the maintained system
+
+PR #293 review found that quarantine is another legal unaccepted state after committed completion effects. The minimal correction adds it only to the shared barrier. First record RED with the existing candidate SQL plus a real recovery-quarantine API fixture and public single/loop no-birth checks. The isolated fixture expires its exact mutable lease using the maintained database-clock pattern; it does not claim elapsed production recovery. Preserve accepted-only readers, exit active-owner states, recovery guards and replay ordering.
+
+At `afc1cd5c`, the finalizer/exit component tests passed 25/25, predecessor PostgreSQL regressions passed 24/24, and existing completion, publication and terminal-reconciler modules passed 55/55, 46/46 and 3/3. These remain source-bound evidence; the quarantine correction needs its own RED/GREEN and current type/contracts checks.
+
+The installation, builder and evaluator layers are unchanged. After reviewed delivery, use an actual clean-main stock build, new release-bound installation/activation, maintained service admission and the evaluator's complete fresh preflight/canary/eight-case run. The earlier release's QA7 and standalone preflight remain historical component evidence and receive no new-release credit.
 
 - [ ] Run the focused completion/publication/preclaim lifecycle tests and TypeScript/maintained contract checks.
 - [ ] Obtain independent review of the complete diff and resolve findings without weakening gates.

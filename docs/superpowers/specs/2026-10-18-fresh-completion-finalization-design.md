@@ -14,6 +14,8 @@ Before selecting a pending successor, exclude work with a known unsettled, succe
 
 Use one fixed SQL predicate shared by candidate selection and transaction-time readiness. It introduces no caller-selected authority, configurable bypass or new environment flag.
 
+Quarantine also leaves a completed predecessor unaccepted. Keep it behind the same causal barrier until explicit resolution or run termination. Quarantine is not an active lease owner for process-exit retention; that separate three-state check and the existing recovery guards remain unchanged.
+
 The same run exposed a third causal lifecycle defect: process-exit cleanup released a drained session while its completion request still owned finalization. Keep proving physical drain, then check the exact run/session/claim under the existing run-first transaction lock order. An active completion request retains session ownership and suppresses release/event/worktree cleanup. Ordinary acceptance performs release. Keep the recovery requirement for a drained session unchanged.
 
 ## Alternatives assessed
