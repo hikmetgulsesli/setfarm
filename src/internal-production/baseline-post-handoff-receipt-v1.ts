@@ -21422,6 +21422,7 @@ export async function resolveInternalProductionLegacyFindingPublicationInventory
   if (!isPlainRecord(input) || !hasExactKeys(input, ["migrationApplication", "migrationSourceSha"]) || !isPlainRecord(input.migrationApplication)) currentEntryFail("legacy finding migration provenance shape is invalid");
   const { validateOwnerAdmissionMigrationApplicationV1 } = await import("./owner-admission-head-v1.js");
   const application = validateOwnerAdmissionMigrationApplicationV1(input.migrationApplication, requireSha256(input.migrationApplication.evidenceHash, "migration application evidence hash"));
+  if (application.schema !== "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1") currentEntryFail("legacy finding migration provenance requires its original guarded32 application");
   const authorization = await resolveInternalProductionPreManifestMigration32AuthorizationV1({ authorizationRef: application.authorizationRef, authorizationHash: application.authorizationHash });
   const consumption = await resolveInternalProductionPreManifestMigration32AuthorizationConsumptionV1({ consumptionRef: application.authorizationConsumptionRef, consumptionHash: application.authorizationConsumptionHash });
   for (const key of ["authorizationRef", "authorizationHash", "currentEntryOperationRef", "currentEntryOperationHash", "sealedSpawnerAdmissionRef", "sealedSpawnerAdmissionHash"] as const) {

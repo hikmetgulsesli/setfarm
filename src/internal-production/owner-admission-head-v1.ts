@@ -13,12 +13,14 @@ import {
   type InternalProductionOwnerReservationV1,
 } from "./owner-admission-v1.js";
 import { hashCanonicalJson, canonicalJsonStringify } from "../product-compiler/canonical-json.js";
+import { types } from "node:util";
+import { parseFreshInstallationApplicationV1, type FreshInstallationApplicationV1 } from "../installation/fresh-installation-origin-v1.js";
 
 type OwnerAdmissionAuthorityRowV1 = Readonly<{
   authority_ref: string; authority_hash: string; authority_kind: string; phase_key: string;
   predecessor_head_hash: string; successor_head_hash: string; authority_body: unknown;
 }>;
-type OwnerAdmissionMigrationApplicationV1 = Readonly<{
+export type OwnerAdmissionMigrationApplicationV1 = FreshInstallationApplicationV1 | Readonly<{
   schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1"; evidenceHash: string;
   authorizationRef: string; authorizationHash: string; authorizationConsumptionRef: string;
   authorizationConsumptionHash: string; applicationHash: string;
@@ -68,6 +70,13 @@ export function validateOwnerAdmissionMigrationApplicationV1(
   value: unknown,
   evidenceHash: string,
 ): OwnerAdmissionMigrationApplicationV1 {
+  if (value && typeof value === "object") {
+    if (types.isProxy(value)) throw new Error("INTERNAL_PRODUCTION_OWNER_ADMISSION_HEAD_CORRUPTION");
+    const schema = Object.getOwnPropertyDescriptor(value, "schema");
+    if (schema && Object.hasOwn(schema, "value") && schema.value === "setfarm.fresh-installation-schema-application.v1") {
+      return parseFreshInstallationApplicationV1(value, evidenceHash);
+    }
+  }
   exactObjectKeys(value, [
     "schema", "evidenceHash", "authorizationRef", "authorizationHash",
     "authorizationConsumptionRef", "authorizationConsumptionHash", "applicationHash",
