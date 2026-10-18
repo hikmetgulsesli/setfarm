@@ -290,3 +290,22 @@ heartbeat and one bounded clean workflow through its actual gates.
   rollback and genuine COMMIT loss. No-emit2cf1e9 and digests11b461 passed.
   The earlier74-case run predates only this final principal-list refinement;
   report it separately from the affected current-source rerun.
+- Review4306871922 found a PUBLIC privilege added before initialization could be
+  adopted into the baseline. RED6e68b8 reproduced it. REDcc4cbc also proved a new
+  benign routine inside `pg_catalog` escaped default-EXECUTE baseline checks.
+  Compare PUBLIC rights against initdb-only `pg_init_privs` for exact catalog/
+  object/subcolumn identity, otherwise the object's hard-wired default ACL. No
+  extension or user default-privilege declaration becomes trusted policy. Refuse
+  exposed nonpublic normal-OID functions (>=16384), including in `pg_catalog`;
+  other-database PUBLIC exclusion remains explicit. Installed PostgreSQL17
+  headersbd2bbf/f6a79b confirm initdb identity and OID boundary semantics.
+  Initial run2608d5 failed3 clean-baseline cases because `information_schema`
+  grants are absent from `pg_init_privs`. Actual read-only diagnosticbef0a0 and
+  installed `information_schema.sql`3cfe8b establish its canonical PUBLIC USAGE
+  and SELECT rights. Permit only those non-grantable rights on the initial
+  namespace and initial r/v relations (both OIDs<16384), with a real pre-init
+  PUBLIC UPDATE regression. Current affected GREENb9dc3d passed8/8, zero
+  failures/skips/cancellations,34.771773s. No-emitd1ba3c and digest545a7c passed;
+  digest/source-binding regression5e4ef7 passed16/16 before the final narrow
+  information-schema exception. Earlier74-case and current8-case runs are
+  separate evidence, not a claimed current full78-case run.

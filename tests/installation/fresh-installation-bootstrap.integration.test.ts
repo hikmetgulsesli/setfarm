@@ -305,18 +305,36 @@ test("runtime verification refuses extra system-function grants without executin
   } finally { await control.end({ timeout: 3 }); }
 });
 
-test("fresh bootstrap refuses an extra system grant before catalog capture", { timeout: 120_000 }, async t => {
+for (const target of ["runtime", "PUBLIC", "PUBLIC_information_schema_UPDATE"]) test(`fresh bootstrap refuses an extra ${target} system grant before catalog capture`, { timeout: 120_000 }, async t => {
   const installation = await create(t);
   const control = postgres(targetUrl(installation.databaseName), { max: 1, onnotice() {} });
   try {
-    await control.unsafe(`GRANT EXECUTE ON FUNCTION pg_catalog.pg_read_file(text) TO ${quote(installation.runtimeRole)}`);
+    const grantee = target === "runtime" ? quote(installation.runtimeRole) : "PUBLIC";
+    const permission = target === "PUBLIC_information_schema_UPDATE" ? "UPDATE ON TABLE information_schema.sql_features" : "EXECUTE ON FUNCTION pg_catalog.pg_read_file(text)";
+    await control.unsafe(`GRANT ${permission} TO ${grantee}`);
     try { await assert.rejects(installation.initialize(), /FRESH_INSTALLATION_SCHEMA_FAILED/); }
-    finally { await control.unsafe(`REVOKE EXECUTE ON FUNCTION pg_catalog.pg_read_file(text) FROM ${quote(installation.runtimeRole)}`); }
+    finally { await control.unsafe(`REVOKE ${permission} FROM ${grantee}`); }
     assert.equal(existsSync(path.join(installation.directory, "schema-prepared.json")), false);
     assert.equal(existsSync(path.join(installation.directory, "schema-committed.json")), false);
     const rows = await control<Array<{ count: number }>>`
       SELECT count(*)::integer AS count FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'`;
     assert.equal(rows[0]?.count, 0);
+  } finally { await control.end({ timeout: 3 }); }
+});
+
+for (const namespace of ["pg_catalog", "fresh_foreign"]) test(`fresh bootstrap refuses a new nonpublic routine in ${namespace} before catalog capture`, { timeout: 120_000 }, async t => {
+  const installation = await create(t);
+  const control = postgres(targetUrl(installation.databaseName), { max: 1, onnotice() {} });
+  try {
+    if (namespace !== "pg_catalog") await control.unsafe(`CREATE SCHEMA ${quote(namespace)}`);
+    await control.unsafe(`CREATE FUNCTION ${quote(namespace)}.fresh_foreign_noop_v1() RETURNS integer LANGUAGE sql AS 'SELECT 1'`);
+    const rows = await control<Array<{ oid: number }>>`
+      SELECT p.oid::integer AS oid FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+      WHERE n.nspname=${namespace} AND p.proname='fresh_foreign_noop_v1'`;
+    assert.ok(rows[0]!.oid >= 16384);
+    await assert.rejects(installation.initialize(), /FRESH_INSTALLATION_SCHEMA_FAILED/);
+    assert.equal(existsSync(path.join(installation.directory, "schema-prepared.json")), false);
+    assert.equal(existsSync(path.join(installation.directory, "schema-committed.json")), false);
   } finally { await control.end({ timeout: 3 }); }
 });
 

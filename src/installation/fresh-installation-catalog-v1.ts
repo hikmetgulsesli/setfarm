@@ -9,31 +9,44 @@ const CATALOG_SQL = `WITH public_relations AS (
 ), relevant_roles AS (
   SELECT oid FROM protected_roles UNION SELECT oid FROM pg_catalog.pg_roles WHERE rolname='pg_database_owner'
 ), external_acl_objects AS (
-  SELECT 'function' AS kind,p.oid AS object_id,0 AS subid,coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner)) AS acl
+  SELECT 'function' AS kind,'pg_catalog.pg_proc'::regclass AS classid,p.oid AS object_id,0 AS subid,p.proacl AS acl,
+    pg_catalog.acldefault('f',p.proowner) AS default_acl
     FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname<>'public'
-  UNION ALL SELECT 'relation',c.oid,0,coalesce(c.relacl,pg_catalog.acldefault(CASE WHEN c.relkind='S' THEN 's' ELSE 'r' END::"char",c.relowner))
+  UNION ALL SELECT 'relation','pg_catalog.pg_class'::regclass,c.oid,0,c.relacl,
+    pg_catalog.acldefault(CASE WHEN c.relkind='S' THEN 's' ELSE 'r' END::"char",c.relowner)
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname<>'public' AND c.relkind IN ('r','p','v','m','f','S')
-  UNION ALL SELECT 'column',c.oid,a.attnum,a.attacl FROM pg_catalog.pg_attribute a
+  UNION ALL SELECT 'column','pg_catalog.pg_class'::regclass,c.oid,a.attnum,a.attacl,'{}'::aclitem[] FROM pg_catalog.pg_attribute a
     JOIN pg_catalog.pg_class c ON c.oid=a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname<>'public' AND a.attnum>0 AND NOT a.attisdropped AND a.attacl IS NOT NULL
-  UNION ALL SELECT 'type',t.oid,0,coalesce(t.typacl,pg_catalog.acldefault('T',t.typowner))
+  UNION ALL SELECT 'type','pg_catalog.pg_type'::regclass,t.oid,0,t.typacl,pg_catalog.acldefault('T',t.typowner)
     FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname<>'public'
-  UNION ALL SELECT 'namespace',n.oid,0,coalesce(n.nspacl,pg_catalog.acldefault('n',n.nspowner))
+  UNION ALL SELECT 'namespace','pg_catalog.pg_namespace'::regclass,n.oid,0,n.nspacl,pg_catalog.acldefault('n',n.nspowner)
     FROM pg_catalog.pg_namespace n WHERE n.nspname<>'public'
-  UNION ALL SELECT 'language',oid,0,coalesce(lanacl,pg_catalog.acldefault('l',lanowner)) FROM pg_catalog.pg_language
-  UNION ALL SELECT 'foreign-wrapper',oid,0,coalesce(fdwacl,pg_catalog.acldefault('F',fdwowner)) FROM pg_catalog.pg_foreign_data_wrapper
-  UNION ALL SELECT 'foreign-server',oid,0,coalesce(srvacl,pg_catalog.acldefault('S',srvowner)) FROM pg_catalog.pg_foreign_server
-  UNION ALL SELECT 'large-object',oid,0,coalesce(lomacl,pg_catalog.acldefault('L',lomowner)) FROM pg_catalog.pg_largeobject_metadata
-  UNION ALL SELECT 'tablespace',oid,0,coalesce(spcacl,pg_catalog.acldefault('t',spcowner)) FROM pg_catalog.pg_tablespace
-  UNION ALL SELECT 'parameter',oid,0,paracl FROM pg_catalog.pg_parameter_acl
-  UNION ALL SELECT 'other-database',oid,0,coalesce(datacl,pg_catalog.acldefault('d',datdba)) FROM pg_catalog.pg_database
+  UNION ALL SELECT 'language','pg_catalog.pg_language'::regclass,oid,0,lanacl,pg_catalog.acldefault('l',lanowner) FROM pg_catalog.pg_language
+  UNION ALL SELECT 'foreign-wrapper','pg_catalog.pg_foreign_data_wrapper'::regclass,oid,0,fdwacl,pg_catalog.acldefault('F',fdwowner) FROM pg_catalog.pg_foreign_data_wrapper
+  UNION ALL SELECT 'foreign-server','pg_catalog.pg_foreign_server'::regclass,oid,0,srvacl,pg_catalog.acldefault('S',srvowner) FROM pg_catalog.pg_foreign_server
+  UNION ALL SELECT 'large-object','pg_catalog.pg_largeobject_metadata'::regclass,oid,0,lomacl,pg_catalog.acldefault('L',lomowner) FROM pg_catalog.pg_largeobject_metadata
+  UNION ALL SELECT 'tablespace','pg_catalog.pg_tablespace'::regclass,oid,0,spcacl,pg_catalog.acldefault('t',spcowner) FROM pg_catalog.pg_tablespace
+  UNION ALL SELECT 'parameter','pg_catalog.pg_parameter_acl'::regclass,oid,0,paracl,'{}'::aclitem[] FROM pg_catalog.pg_parameter_acl
+  UNION ALL SELECT 'other-database','pg_catalog.pg_database'::regclass,oid,0,datacl,pg_catalog.acldefault('d',datdba) FROM pg_catalog.pg_database
     WHERE datname<>current_database()
-  UNION ALL SELECT 'default',oid,0,defaclacl FROM pg_catalog.pg_default_acl
+  UNION ALL SELECT 'default','pg_catalog.pg_default_acl'::regclass,oid,0,defaclacl,'{}'::aclitem[] FROM pg_catalog.pg_default_acl
 ), external_acl_entries AS (
   SELECT o.kind,o.object_id,o.subid,a.grantor,a.grantee,a.privilege_type,a.is_grantable
-    FROM external_acl_objects o CROSS JOIN LATERAL pg_catalog.aclexplode(o.acl) a
+    FROM external_acl_objects o CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(o.acl,o.default_acl)) a
     WHERE (a.grantee=0 AND o.kind<>'other-database') OR a.grantee IN (SELECT oid FROM relevant_roles)
+), initial_public_entries AS (
+  SELECT o.kind,o.object_id,o.subid,a.privilege_type,a.is_grantable
+    FROM external_acl_objects o LEFT JOIN pg_catalog.pg_init_privs i
+      ON i.classoid=o.classid AND i.objoid=o.object_id AND i.objsubid=o.subid AND i.privtype='i'
+    CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(i.initprivs,o.default_acl)) a
+    WHERE a.grantee=0 AND o.kind<>'other-database' AND NOT (o.kind='function' AND o.object_id>=16384)
+  UNION ALL SELECT 'namespace',n.oid,0,'USAGE',false FROM pg_catalog.pg_namespace n
+    WHERE n.nspname='information_schema' AND n.oid<16384
+  UNION ALL SELECT 'relation',c.oid,0,'SELECT',false FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='information_schema' AND n.oid<16384 AND c.oid<16384 AND c.relkind IN ('r','v')
 ), snapshot AS (
   SELECT jsonb_build_object(
     'database',(SELECT jsonb_build_array(oid,datname,datdba,datistemplate,datallowconn,datconnlimit,dattablespace,datacl)
@@ -76,7 +89,10 @@ const CATALOG_SQL = `WITH public_relations AS (
   WHERE (SELECT count(*) FROM protected_roles)=2 AND NOT EXISTS (
     SELECT 1 FROM external_acl_entries WHERE grantee IN (SELECT oid FROM relevant_roles)
       AND NOT (grantee IN (SELECT oid FROM protected_roles) AND kind='function' AND object_id='pg_catalog.pg_control_system()'::regprocedure::oid
-        AND subid=0 AND privilege_type='EXECUTE' AND NOT is_grantable))`;
+        AND subid=0 AND privilege_type='EXECUTE' AND NOT is_grantable))
+    AND NOT EXISTS (SELECT 1 FROM external_acl_entries a WHERE a.grantee=0 AND NOT EXISTS (
+      SELECT 1 FROM initial_public_entries i WHERE i.kind=a.kind AND i.object_id=a.object_id AND i.subid=a.subid
+        AND i.privilege_type=a.privilege_type AND (i.is_grantable OR NOT a.is_grantable)))`;
 
 export async function readFreshInstallationCatalogHashV1(sql: CatalogSqlV1): Promise<string> {
   const rows = await sql.unsafe<Array<{ hash: string }>>(CATALOG_SQL);
