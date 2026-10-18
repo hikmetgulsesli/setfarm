@@ -5861,7 +5861,7 @@ async function authenticateRunningSingleStepOwnerSidecarsV1(
                 predecessor_head_hash,successor_head_hash,authority_body
            FROM internal_production_owner_admission_authorities_v1
           WHERE authority_ref=$1 AND authority_hash=$2
-          FOR SHARE`,
+          ${selectedFreshInstallationRootV1() !== null ? "" : "FOR SHARE"}`,
         [row.reservation_ref, row.reservation_hash],
       );
       const bindingRef = `setfarm://internal-production/bound-owner-reservations/${bound.bindingHash}`;
@@ -5870,7 +5870,7 @@ async function authenticateRunningSingleStepOwnerSidecarsV1(
                 predecessor_head_hash,successor_head_hash,authority_body
            FROM internal_production_owner_admission_authorities_v1
           WHERE authority_ref=$1 AND authority_hash=$2
-          FOR SHARE`,
+          ${selectedFreshInstallationRootV1() !== null ? "" : "FOR SHARE"}`,
         [bindingRef, bound.bindingHash],
       );
       const reservationAuthority = reservationAuthorities[0];

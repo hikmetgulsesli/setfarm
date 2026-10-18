@@ -11,6 +11,16 @@ import { freshSourceCheckoutFixture } from "./fresh-source-checkout-fixture.js";
 
 const ABSENT_HASH = "0".repeat(64);
 const QUERIES = [
+  // Both immutable authority SQL texts are identical; exact declaration scope
+  // distinguishes reservation/binding reads without guessing uniqueness.
+  { id: "running-single-reservation-authority", file: "src/installer/step-ops.ts",
+    ownerFunction: "authenticateRunningSingleStepOwnerSidecarsV1", ownerVariable: "reservationAuthorities",
+    marker: "FROM internal_production_owner_admission_authorities_v1 WHERE authority_ref=$1 AND authority_hash=$2",
+    args: ["setfarm://component/authority-absent", ABSENT_HASH], immutableRead: true, legacyLock: "FOR SHARE" },
+  { id: "running-single-binding-authority", file: "src/installer/step-ops.ts",
+    ownerFunction: "authenticateRunningSingleStepOwnerSidecarsV1", ownerVariable: "bindingAuthorities",
+    marker: "FROM internal_production_owner_admission_authorities_v1 WHERE authority_ref=$1 AND authority_hash=$2",
+    args: ["setfarm://component/binding-absent", ABSENT_HASH], immutableRead: true, legacyLock: "FOR SHARE" },
   { id: "published-event", file: "src/execution/operational-outbox-repository.ts",
     marker: "SELECT * FROM operational_events WHERE event_key = $1 FOR UPDATE", args: ["component-event-absent"] },
   { id: "delivery-event", file: "src/execution/operational-event-delivery-repository.ts",
@@ -89,11 +99,19 @@ const QUERIES = [
 
 function normalizedSqlSource(value: string): string { return value.replace(/\s+/g, " ").trim(); }
 
-type SqlMarkerInput = Readonly<{ id: string; file: string; marker: string; ownerFunction?: string }>;
+type SqlMarkerInput = Readonly<{ id: string; file: string; marker: string; ownerFunction?: string; ownerVariable?: string }>;
 function inNamedFunction(node: ts.Node, name: string | undefined): boolean {
   if (name === undefined) return true;
   for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
     if (ts.isFunctionDeclaration(current) && current.name?.text === name) return true;
+  }
+  return false;
+}
+
+function inNamedVariable(node: ts.Node, name: string | undefined): boolean {
+  if (name === undefined) return true;
+  for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
+    if (ts.isVariableDeclaration(current) && ts.isIdentifier(current.name) && current.name.text === name) return true;
   }
   return false;
 }
@@ -105,7 +123,7 @@ function matchingSqlArguments(root: string, input: SqlMarkerInput): readonly str
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
       && node.expression.name.text === "unsafe" && node.arguments[0]
-      && inNamedFunction(node, input.ownerFunction)
+      && inNamedFunction(node, input.ownerFunction) && inNamedVariable(node, input.ownerVariable)
       && normalizedSqlSource(node.arguments[0].getText(tree)).includes(normalizedSqlSource(input.marker))) matches.push(node.arguments[0]);
     ts.forEachChild(node, visit);
   };
@@ -212,11 +230,14 @@ test("selected event, claim and compiler immutable reads retain mutable locks wi
     });
   } finally { await control.end({ timeout: 3 }); }
 
-  assert.equal(QUERIES.length, 22);
+  assert.equal(QUERIES.length, 24);
   assert.equal(QUERIES.filter(input => "selectedShareLock" in input).length, 1);
-  assert.equal(QUERIES.filter(input => "immutableRead" in input).length, 12);
+  assert.equal(QUERIES.filter(input => "immutableRead" in input).length, 14);
   assert.equal(QUERIES.filter(input => "selectedLock" in input).length, 4);
   const queries = QUERIES.map(input => ({ ...input, expression: exactSqlArgument(fixture.root, input) }));
+  const canonicalMigration = readFileSync(path.join(fixture.root, "src/db/bootstrap-main-claim-handoff-v1-migration.ts"), "utf8");
+  const immutableBody = canonicalMigration.match(/CREATE FUNCTION public\.setfarm_forbid_internal_production_owner_admission_authority_mutation\(\)[\s\S]*?AS \$function\$([\s\S]*?)\$function\$/)?.[1];
+  assert.ok(immutableBody, "canonical immutable authority trigger body is missing");
   for (const selected of [true, false]) {
     const environment = { ...process.env };
     for (const key of Object.keys(environment)) {
@@ -240,6 +261,17 @@ test("selected event, claim and compiler immutable reads retain mutable locks wi
         const who=await sql.unsafe("SELECT current_user AS role,current_database() AS database");
         assert.equal(who[0].role,${JSON.stringify(installation.runtimeRole)});
         assert.equal(who[0].database,${JSON.stringify(installation.databaseName)});
+        // Canonical migration32's actual append-only protection exists before
+        // either nonlocking read; no DDL/replication bypass is granted.
+        const guards=await sql.unsafe("SELECT t.tgname,t.tgtype::integer AS type,t.tgenabled, p.prosrc AS body,p.prosecdef,p.proconfig, (p.proowner=c.relowner AND o.rolname=$1 AND p.pronargs=0 AND l.lanname='plpgsql' AND t.tgnargs=0 AND octet_length(t.tgargs)=0 AND t.tgqual IS NULL AND t.tgconstraint=0 AND NOT t.tgdeferrable AND NOT t.tginitdeferred) AS valid FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace JOIN pg_catalog.pg_proc p ON p.oid=t.tgfoid JOIN pg_catalog.pg_roles o ON o.oid=c.relowner JOIN pg_catalog.pg_language l ON l.oid=p.prolang WHERE n.nspname='public' AND c.relname='internal_production_owner_admission_authorities_v1' AND NOT t.tgisinternal ORDER BY t.tgname LIMIT 3",[${JSON.stringify(installation.ownerRole)}]);
+        assert.equal(guards.length,2);
+        assert.deepEqual(guards.map(row=>[row.tgname,row.type,row.tgenabled]),[
+          ['trg_internal_production_owner_admission_authority_immutable',27,'O'],
+          ['trg_internal_production_owner_admission_authority_truncate_forb',34,'O']]);
+        for(const row of guards){assert.equal(row.body,${JSON.stringify(immutableBody)});
+          assert.equal(row.prosecdef,false);assert.deepEqual(row.proconfig,['search_path=pg_catalog, public']);assert.equal(row.valid,true);}
+        let replicationCode=null;try{await sql.unsafe("SET session_replication_role='replica'");}catch(error){replicationCode=error?.code??'NON_PG_ERROR';}
+        assert.equal(replicationCode,'42501');
         for(const query of queries){
           // Only the source-owned SQL argument expression is evaluated. The
           // selector is the real leaf function, never a supplied boolean port.
@@ -282,7 +314,7 @@ test("selected event, claim and compiler immutable reads retain mutable locks wi
           }
         }
         assert.deepEqual(failures,[],"genuine immutable-lock permission behavior disagrees");
-        // These twelve immutable tables exclude the two separately tested
+        // These thirteen immutable tables exclude the two separately tested
         // migration25 timestamp-only KEY SHARE privilege exceptions.
         for(const [table,column] of [
           ["operational_events","payload"], ["v3_story_claim_runtime_bindings_v1","bound_at"],
@@ -290,7 +322,8 @@ test("selected event, claim and compiler immutable reads retain mutable locks wi
           ["artifact_publication_batch_plan_items","artifact_hash"], ["semantic_artifacts","artifact_hash"],
           ["evidence_bundles","payload"], ["finding_sets","payload"], ["findings","payload"],
           ["accepted_candidates","payload"], ["product_packets","packet_hash"],
-          ["v3_release_admissions","payload"]
+          ["v3_release_admissions","payload"],
+          ["internal_production_owner_admission_authorities_v1","authority_body"]
         ]){
           const rights=await sql.unsafe(
             "SELECT pg_catalog.has_any_column_privilege(current_user,$1::text,'UPDATE') AS update_any,"+
