@@ -29,13 +29,15 @@ test("fresh restricted runtime locks the actual empty recovery chain and settles
     const credential = JSON.parse(readFileSync(path.join(installation.directory, "runtime-credentials.json"), "utf8"));
     runtime = postgres(credential.runtimeUrl, { max: 1, connect_timeout: 3, onnotice() {} });
     const runId = "component-terminal-recovery-empty";
-    await runtime`INSERT INTO runs(id,workflow_id,task,protocol,protocol_version,compiler_release_sha) VALUES(${runId},'component','recovery lock component','v3',1,${"a".repeat(40)})`;
+    // Default-protocol component row only. Calling the actual V3 helper here
+    // proves its PG lock rights; it does not fabricate public V3 admission.
+    await runtime`INSERT INTO runs(id,workflow_id,task) VALUES(${runId},'component','recovery lock component')`;
     await runtime.begin(async tx => {
       await tx`SELECT id FROM runs WHERE id=${runId} FOR UPDATE`;
       const snapshot = await recovery.lockV3TerminalRecoveryChainInTransaction(tx, runId);
       assert.equal(Object.isFrozen(snapshot), true);
-      assert.deepEqual(snapshot.deliveries, []);
-      assert.deepEqual(snapshot.cases, []);
+      assert.equal(snapshot.deliveries.length, 0);
+      assert.equal(snapshot.cases.length, 0);
       for (const status of ["failed", "cancelled", "completed"] as const) {
         const result = await recovery.settleV3TerminalRecoveryChainInTransaction(tx, {
           runId, status, diagnostic: "component only", transitionTime: new Date(), snapshot,
