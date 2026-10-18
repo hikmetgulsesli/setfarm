@@ -267,7 +267,7 @@ test("selected event, claim and compiler immutable reads retain mutable locks wi
         assert.equal(guards.length,2);
         assert.deepEqual(guards.map(row=>[row.tgname,row.type,row.tgenabled]),[
           ['trg_internal_production_owner_admission_authority_immutable',27,'O'],
-          ['trg_internal_production_owner_admission_authority_truncate_forbidden',34,'O']]);
+          ['trg_internal_production_owner_admission_authority_truncate_forb',34,'O']]);
         for(const row of guards){assert.equal(row.body,${JSON.stringify(immutableBody)});
           assert.equal(row.prosecdef,false);assert.deepEqual(row.proconfig,['search_path=pg_catalog, public']);assert.equal(row.valid,true);}
         let replicationCode=null;try{await sql.unsafe("SET session_replication_role='replica'");}catch(error){replicationCode=error?.code??'NON_PG_ERROR';}
