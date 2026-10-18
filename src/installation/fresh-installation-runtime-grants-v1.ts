@@ -18,6 +18,10 @@ const GRANTS: readonly Grant[] = Object.freeze([
   // claim-runtime-publication:377; completion/failure/terminal settlement.
   { table: "claim_log", privilege: "INSERT", columns: ["id", "run_id", "step_id", "story_id", "agent_id", "claimed_at"] },
   { table: "claim_log", privilege: "UPDATE", columns: ["outcome", "abandoned_at", "duration_ms", "diagnostic"] },
+  // Normal claim exclusion/withdrawal/completion locks this mutable table even
+  // when no recovery delivery exists. FOR UPDATE needs one UPDATE column;
+  // updated_at is writable, but no recovery state/identity/lease DML is granted.
+  { table: "recovery_dispatch_deliveries", privilege: "UPDATE", columns: ["updated_at"] },
   { table: "runtime_sessions", privilege: "INSERT", columns: ["session_id", "run_id", "step_db_id", "workflow_step_id", "story_db_id", "story_id", "claim_id", "attempt_id", "claim_agent_id", "runtime_agent_id", "runtime_kind", "owner_instance_id", "session_key", "worktree", "runtime_path", "transcript_path", "state", "heartbeat_at", "created_at", "updated_at"] },
   { table: "runtime_sessions", privilege: "UPDATE", columns: ["attempt_id", "diagnostic", "drain_evidence", "drain_requested_at", "drained_at", "heartbeat_at", "pid", "process_group_id", "process_identity", "process_started_at", "released_at", "runtime_path", "session_key", "started_at", "state", "state_version", "transcript_path", "updated_at", "worktree"] },
   // Expired downstream-evidence adoption rotates generation/fence/acquired time
@@ -83,7 +87,7 @@ const GRANTS: readonly Grant[] = Object.freeze([
   { table: "v3_preparation_authority_claims_v2", privilege: "INSERT", columns: ["authority_hash", "claim_id"] },
   { table: "v3_preparation_authority_attempts_v2", privilege: "INSERT", columns: ["authority_hash", "claim_id", "attempt_id", "slice_hash"] },
   // Normal verification/final-test evidence publication uses these existing
-  // guarded append APIs; no recovery dispatch/delivery/finding mutation right.
+  // guarded append APIs; no recovery dispatch/state/identity mutation right.
   { table: "evidence_bundles", privilege: "INSERT", columns: ["evidence_bundle_hash", "evidence_id", "run_id", "story_id", "packet_hash", "slice_hash", "source_sha", "source_tree_hash", "attempt_id", "aggregate_verdict", "payload"] },
   { table: "finding_sets", privilege: "INSERT", columns: ["finding_set_hash", "finding_set_id", "run_id", "story_id", "packet_hash", "slice_hash", "source_sha", "source_tree_hash", "finding_ids", "payload"] },
   { table: "findings", privilege: "INSERT", columns: ["finding_set_hash", "finding_id", "origin", "classification", "invariant_ref", "status", "source_fingerprint", "payload"] },

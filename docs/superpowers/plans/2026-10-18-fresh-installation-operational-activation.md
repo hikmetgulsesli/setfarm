@@ -70,3 +70,48 @@ Medic INSERT/retention regression first failed42501 (c7b261), then all seven sch
 The fourth review identifies ordinary dashboard rules CRUD missing from the fixed fresh grant map. Add only the existing source SQL's eleven INSERT columns and eight UPDATE columns, plus rules in the fixed DELETE list. Preserve rule id/readonly/source ownership columns and DDL denial; execute both source INSERT forms, import/edit/toggle and id-scoped DELETE as an actual restricted-role component. This completes the same working MC/dashboard business contract, enables no shared scraping/deployment/process effect, and does not qualify HTTP routes or protected legacy operations. File map remains grant helper plus operational-schema test; dashboard source is unchanged. Selected interim HTTP effects remain closed until the relevant Unit3 composition is reviewed.
 
 Rules component first failed genuine42501 (5c82a4), then all eight operational schema/rollback/grant cases passed (0050d0), including both source INSERT forms, import/edit/toggle/delete and id/readonly UPDATE plus TRUNCATE denial. Independent scoped rule grant/fixture review C0/I0/M0. TypeScript noEmit passede3f161; English/whitespace passed0a5765. Focused total64 unique cases; actual compiled activation/claims/live runtime still unrun.
+
+## Compiled lifecycle correction: normal claim exclusion lock
+
+PR288 was reviewed and merged as74c847ee; its stock clean-main build passed.
+Actual compiled fresh initialization, owner COMMIT-response-loss recovery,
+restricted activation verification, source/current authority, reservation,
+run persistence, single and loop publication and exact replay executed. The
+original120s aggregate child bound expired during the sequence; the diagnostic
+successor measured forward progress and a600s aggregate QA bound exposed the
+next genuine failure: PostgreSQL42501 on recovery_dispatch_deliveries while
+withdrawing the normal loop claim. Both failed original captures are retained;
+neither is a passing whole-lifecycle qualification.
+
+The ordinary claim-mutation authority locks an existing active recovery delivery
+before excluding a competing recovery owner, even when no delivery exists. The
+schema-only runtime already has SELECT, but PostgreSQL FOR UPDATE additionally
+requires some column UPDATE privilege. Preserve that mutable exclusion lock and
+all original predicates. Add only UPDATE(updated_at) on this mutable table to
+the fixed fresh grant contract. The timestamp is actually writable under this
+column privilege; this is not an immutable-table exception or a claim that SQL
+ACLs enforce application row predicates. No recovery state, identity, lease,
+INSERT, DELETE, TRUNCATE or recovery-dispatch feature is enabled.
+
+File-map refinement is limited to fresh-installation-runtime-grants-v1.ts and
+the operational-schema restricted-PG regression. Execute the exact ordinary
+claim-mutation, withdrawal and completion exclusion SQL on empty and populated
+component rows; prove contention still blocks and disallowed business/identity
+mutations remain denied. Run RED first, apply the one-column fix, then focused
+PG, TypeScript and published-migration checks plus independent review. Deliver
+through a reviewed PR and stock clean-main build. A NEW source-pinned instance
+must pass the complete actual compiled lifecycle before Unit3 source wiring.
+Never repair grants or rewrite source pins in an earlier activated instance.
+
+Correction evidence: exact empty-query regression first failed42501 (6019af),
+then all9 schema/rollback/grant cases passed (1f88a5). The populated component
+first exposed a test-only JSONB double-encoding error (feb8f5); passing its
+unchanged object directly fixed the fixture without changing constraints.
+All10 cases then passed (e28afe), including four exact populated source locks,
+real second-connection55P03 contention and post-release success, timestamp
+advance, protected42501 mutations, and the actual normal claim authority's
+recovery-owner refusal with unchanged business snapshots. Independent narrow
+grant and whole fixture review C0/I0/M0 includes that fixture correction.
+TypeScript14a3d9, English93d745, semantic migrations400d54 and paths65fd24
+passed. This remains component evidence; actual compiled lifecycle after the
+new reviewed clean-main build and all Unit3/live outcomes remain open.
