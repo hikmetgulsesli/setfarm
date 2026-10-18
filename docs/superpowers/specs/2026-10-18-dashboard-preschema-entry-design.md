@@ -67,6 +67,8 @@ admission probe.
 - `scripts/__tests__/deployment-cutover-cli-entry-v4.test.js`: explicitly update
   the reviewed body pin only for the two added guarded CLI paths.
 - This specification and its paired implementation plan: scope and evidence.
+- `tests/dashboard-daemon-readiness.test.ts`: genuine daemon/parent lifecycle
+  with controlled admission ports, delayed/failing checks and local listeners.
 
 ## Validation and limits
 
@@ -88,3 +90,34 @@ These are ordinary source tests. They do not run or qualify the40 DATA vectors,
 native identity acquisition, initial TCB, OS/DB32/33, protected startup,3333 or a
 real Setfarm run. A normal clean-main build follows reviewed PR delivery under
 the existing build guard. No new dependency or guard-bypass environment flag.
+
+## Reviewed lifecycle correction
+
+PR284 finding4305328630 identifies a causal gap: asynchronous preflights make
+the parent's fixed one-second PID check insufficient. PID publication is not
+listener readiness. Use a private child IPC channel to report the exact child
+PID and requested port only after both checks and HTTP listening. Bound the
+spawned child's readiness wait at30seconds, after the parent's own admission.
+Refuse malformed/error/exit outcomes and terminate only the owned
+newly spawned child on failure. Unref/disconnect only after readiness. Close
+parent log descriptors after spawning. The child removes its own PID record on
+normal exit and failed startup, preserving a record with another PID. Existing
+running status behavior remains unchanged.
+
+Register exit cleanup before PID publication so a write-then-throw failure is
+covered. The value check before unlink is best-effort ownership checking; it
+does not establish atomic ownership against concurrent record replacement.
+After confirmed forced termination, the parent applies the same exact-PID
+check because SIGKILL cannot execute the child's exit handler. Unconfirmed
+termination never permits parent removal of that record.
+
+Readiness timeout is followed by a separate two-second TERM grace and a
+four-second termination-confirmation deadline. An unconfirmed termination
+remains failure. These timers are not a whole-start-command or CPU bound.
+
+This is ordinary component QA: compile only the reviewed daemon/parent and
+async server-entry body into an owned temporary fixture. Stub external
+admission observations, use ephemeral loopback ports and retain real child,
+PID and listener lifecycle. No live Task6A operation, DB,3333, native identity
+or selected40-case model execution. Test delayed first/second checks, failure
+after PID publication and listener failure before implementation.

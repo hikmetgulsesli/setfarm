@@ -24,7 +24,7 @@ server entry sharing a private HTTP constructor. Preserve all other guards.
 
 ## Task 1: Enforce entry ordering
 
-**Files:** The specification's eleven-path File Map defines the complete scope.
+**Files:** The specification's twelve-path File Map defines the complete scope.
 
 **Interfaces:** Keep `startDashboard(...): http.Server`. Add
 `startDashboardWithPreSchemaAdmissionV3(...): Promise<http.Server>` and
@@ -64,3 +64,13 @@ for the additional refusal only; it grants no broader startup authority.
 - [ ] Update continuity with exact tests, builds, current native/model limits and
   the next permitted action. Do not mark a missing through33 proof, protected
   transition, native test or real run complete.
+
+## PR284 lifecycle correction
+
+- [x] Record genuine delayed/failing-preflight RED before production edits.
+- [x] Replace fixed PID delay with bounded child IPC readiness after listening;
+  preserve initial refusal ordering and remove only the child's own PID record.
+- [x] Verify delayed success, post-PID failure, listener failure, maintained
+  entry/HTTP/CLI regressions, TypeScript and contracts. Independently review the
+  correction, including write-then-throw and confirmed forced termination.
+- [ ] Obtain a fresh exact-head GitHub review before delivery.
