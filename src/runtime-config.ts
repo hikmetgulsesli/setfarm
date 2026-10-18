@@ -1,3 +1,4 @@
+import { FRESH_INSTALLATION_ARTIFACT_CAPACITY_LIMITS_V1 } from "./installation/fresh-installation-artifact-policy-v1.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -161,6 +162,8 @@ function capacityEnvInteger(
 export function resolveProductArtifactCapacity(
   env: NodeJS.ProcessEnv = process.env,
 ): ArtifactCapacityLimits {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) return FRESH_INSTALLATION_ARTIFACT_CAPACITY_LIMITS_V1;
   return normalizeArtifactCapacityLimits({
     maxPayloadBytes: capacityEnvInteger(
       env,
@@ -187,6 +190,8 @@ export type ArtifactStorePublicationAuthorityMode =
 export function resolveArtifactStorePublicationAuthorityMode(
   env: NodeJS.ProcessEnv = process.env,
 ): ArtifactStorePublicationAuthorityMode {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) return "standalone";
   const raw = env.SETFARM_ARTIFACT_STORE_AUTHORITY_V1?.trim();
   if (!raw || raw === "disabled") return "standalone";
   if (raw === "enabled") return "hybrid-required";

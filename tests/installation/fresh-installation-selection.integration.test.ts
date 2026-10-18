@@ -179,3 +179,38 @@ test("selected project-root aliases cannot retarget default or explicit runtime 
   }
   await installation.verifyRuntime();
 });
+
+test("a prepared schema-only process refuses a later activation stage permanently",{timeout:120000},async t=>{
+  const installation=await create(t);await installation.initialize();
+  await child(installation.directory,load+`
+    await db.prepareSelectedFreshInstallationDatabaseV1();
+    const fs=await import("node:fs"),path=await import("node:path");
+    const marker=path.join(process.env.SETFARM_INSTALLATION_DIR,"activation-prepared.json");
+    fs.writeFileSync(marker,"{}\\n",{mode:0o600,flag:"wx"});
+    assert.throws(()=>db.getSql(),/FRESH_INSTALLATION_SELECTION_REFUSED|FRESH_INSTALLATION_DATABASE_NOT_PREPARED/);
+    fs.unlinkSync(marker);
+    assert.throws(()=>db.getSql(),/FRESH_INSTALLATION_SELECTION_REFUSED|FRESH_INSTALLATION_DATABASE_NOT_PREPARED/);
+    await assert.rejects(db.prepareSelectedFreshInstallationDatabaseV1(),/FRESH_INSTALLATION_DATABASE_NOT_PREPARED/);
+    await db.pgClose();
+  `+done);
+  await installation.verifyRuntime();
+});
+
+test("selected artifact limits and standalone authority mode remain pinned",{timeout:120000},async t=>{
+  const installation=await create(t);await installation.initialize();
+  for(const [key,value] of [["SETFARM_ARTIFACT_MAX_PAYLOAD_BYTES","1"],["SETFARM_ARTIFACT_ROOT_QUOTA_BYTES","2"],["SETFARM_ARTIFACT_MIN_FREE_BYTES","0"],["SETFARM_ARTIFACT_STORE_AUTHORITY_V1","enabled"]]) {
+    await child(installation.directory,`
+      const config=await import(root+"/src/runtime-config.ts");
+      const expected={maxPayloadBytes:4194304,rootQuotaBytes:536870912,minFreeBytes:8589934592};
+      assert.deepEqual(config.resolveProductArtifactCapacity(),expected);
+      assert.deepEqual(config.resolveProductArtifactCapacity({SETFARM_ARTIFACT_MAX_PAYLOAD_BYTES:"1"}),expected);
+      assert.equal(config.resolveArtifactStorePublicationAuthorityMode({SETFARM_ARTIFACT_STORE_AUTHORITY_V1:"enabled"}),"standalone");
+      const prior=process.env[${JSON.stringify(key)}];process.env[${JSON.stringify(key)}]=${JSON.stringify(value)};
+      assert.throws(()=>config.resolveProductArtifactCapacity(),/FRESH_INSTALLATION_SELECTION_REFUSED/);
+      if(prior===undefined)delete process.env[${JSON.stringify(key)}];else process.env[${JSON.stringify(key)}]=prior;
+      assert.throws(()=>config.resolveArtifactStorePublicationAuthorityMode(),/FRESH_INSTALLATION_SELECTION_REFUSED/);
+    `+done);
+    await child(installation.directory,`await assert.rejects(import(root+"/src/runtime-config.ts"),/FRESH_INSTALLATION_SELECTION_REFUSED/);`+done,{[key]:value});
+  }
+  await installation.verifyRuntime();
+});

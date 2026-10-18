@@ -106,7 +106,9 @@ async function deriveCurrentAuthorityAForController(): Promise<InternalProductio
   if (canonicalJsonStringify(sourceAfter) !== canonicalJsonStringify(source)) throw new Error("CURRENT_SOURCE_DRIFT");
   const body = { schema: "setfarm.internal-production-owner-producer-source-build-authority-a.v1", plan: "A", manifestHash: INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash, currentEntryOperationRef: operation.operationRef, currentEntryOperationHash: operation.operationHash, setfarmSource: source, productBuildAuthorityV2DeliveryEvidenceRef: response.deliveryEvidenceRef, productBuildAuthorityV2DeliveryEvidenceHash: response.deliveryEvidenceHash, productBuildAuthorityV2Observation: observation, vendorProducerCommit, vendorProducerCommitAncestorProof: { schema: "setfarm.internal-production-vendor-ancestor-proof.v1", vendorProducerCommit, setfarmSourceSha: source.sha, mergeBase: vendorProducerCommit, verified: true }, ownerCategoryRegistryHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1, ownerCategoryCensusMapHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1 } as const;
   const sourceBuildAuthorityHash = hashCanonicalJson(body);
-  return validateInternalProductionOwnerProducerSourceBuildAuthorityV1({ ...body, sourceBuildAuthorityRef: `setfarm://internal-production/owner-producer-source-build-authority/A/sha256/${sourceBuildAuthorityHash}`, sourceBuildAuthorityHash });
+  const authority = validateInternalProductionOwnerProducerSourceBuildAuthorityV1({ ...body, sourceBuildAuthorityRef: `setfarm://internal-production/owner-producer-source-build-authority/A/sha256/${sourceBuildAuthorityHash}`, sourceBuildAuthorityHash });
+  if (authority.schema !== "setfarm.internal-production-owner-producer-source-build-authority-a.v1") throw new Error("CURRENT_SOURCE_DRIFT");
+  return authority;
 }
 
 function receiptFrom(source: InternalProductionOwnerProducerSourceBuildAuthorityAV1, activationRef: string, activationHash: string, headRef: string, headHash: string): InternalProductionBaselineOwnerProducerManifestActivationReceiptV1 {

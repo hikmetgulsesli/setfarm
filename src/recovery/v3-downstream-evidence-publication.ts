@@ -1,3 +1,4 @@
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import type postgres from "postgres";
 import { z } from "zod";
 
@@ -401,7 +402,9 @@ async function putEvidenceBundle(
   );
   if (inserted.length === 0) {
     const existing = await transaction.unsafe<Array<{ payload: unknown }>>(
-      "SELECT payload FROM evidence_bundles WHERE evidence_bundle_hash = $1 FOR KEY SHARE",
+      selectedFreshInstallationRootV1() !== null
+        ? "SELECT payload FROM evidence_bundles WHERE evidence_bundle_hash = $1"
+        : "SELECT payload FROM evidence_bundles WHERE evidence_bundle_hash = $1 FOR KEY SHARE",
       [bundleHash],
     );
     if (
@@ -424,13 +427,19 @@ async function putFindingSet(
   await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [findingSet.findingSetHash]);
   const expectedIds = findingSet.findings.map((finding) => finding.findingId);
   const readParent = () => transaction.unsafe<FindingPublicationParentRow[]>(
-    "SELECT * FROM finding_sets WHERE finding_set_hash=$1 FOR UPDATE",
+    selectedFreshInstallationRootV1() !== null
+      ? "SELECT * FROM finding_sets WHERE finding_set_hash=$1"
+      : "SELECT * FROM finding_sets WHERE finding_set_hash=$1 FOR UPDATE",
     [findingSet.findingSetHash],
   );
   const readChildren = () => transaction.unsafe<FindingPublicationChildRow[]>(
-    `SELECT finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
-       FROM findings WHERE finding_set_hash=$1
-      ORDER BY array_position($2::text[],finding_id),finding_id FOR UPDATE`,
+    selectedFreshInstallationRootV1() !== null
+      ? `SELECT finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+           FROM findings WHERE finding_set_hash=$1
+          ORDER BY array_position($2::text[],finding_id),finding_id`
+      : `SELECT finding_id,origin,classification,invariant_ref,status,source_fingerprint,payload
+           FROM findings WHERE finding_set_hash=$1
+          ORDER BY array_position($2::text[],finding_id),finding_id FOR UPDATE`,
     [findingSet.findingSetHash, expectedIds],
   );
   const parentMatches = (row: FindingPublicationParentRow | undefined) => Boolean(row

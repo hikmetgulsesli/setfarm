@@ -1,3 +1,4 @@
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import { randomUUID } from "node:crypto";
 
 import type postgres from "postgres";
@@ -231,7 +232,9 @@ async function lockExactDeliveryWithEventInTransactionV1(
 }>> {
   createInternalProductionOperationalDeliveryCanonicalOwnerIdentityV1({ eventKey, consumer });
   const events = await transaction.unsafe<CanonicalEventRow[]>(
-    "SELECT * FROM operational_events WHERE event_key=$1 FOR UPDATE",
+    selectedFreshInstallationRootV1() !== null
+      ? "SELECT * FROM operational_events WHERE event_key=$1"
+      : "SELECT * FROM operational_events WHERE event_key=$1 FOR UPDATE",
     [eventKey],
   );
   const deliveries = await transaction.unsafe<DeliveryRow[]>(
@@ -376,7 +379,7 @@ export function createOperationalEventDeliveryRepository(sql: Sql) {
                  AND delivery.attempt_count>=3
             )
             ORDER BY event.event_key
-            FOR UPDATE OF event SKIP LOCKED`,
+            ${selectedFreshInstallationRootV1() !== null ? "" : "FOR UPDATE OF event SKIP LOCKED"}`,
           [consumer],
         );
         const eventByKey = new Map(expiredEvents.map((event) => [event.event_key, event]));

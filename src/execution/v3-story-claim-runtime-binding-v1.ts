@@ -1,3 +1,4 @@
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import type postgres from "postgres";
 
 import {
@@ -535,7 +536,9 @@ export async function loadAndRevalidateV3StoryClaimRuntimeBindingV1(
       WHERE binding.claim_id = $1 OR binding.runtime_session_id = $2
       ORDER BY binding.claim_id
       LIMIT 2
-      FOR UPDATE OF binding, claim, runtime, step`,
+      ${selectedFreshInstallationRootV1() !== null
+        ? "FOR UPDATE OF claim, runtime, step"
+        : "FOR UPDATE OF binding, claim, runtime, step"}`,
     [input.claimId, input.runtimeSessionId],
   );
   const row = rows[0];
