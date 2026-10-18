@@ -11,6 +11,8 @@ import { freshSourceCheckoutFixture } from "./fresh-source-checkout-fixture.js";
 
 // Schema-only real-PG components. No compiled activation, owner reservation,
 // terminal authority or successful public close is fabricated by these tests.
+// The actual public access guard is expected to refuse before any resolver SQL.
+// Whole projection execution is a separate real-PG component, never public admission.
 const EVENTS = [
   { eventKey: "component-terminal-delivered", consumer: "webhook", state: "delivered" },
   { eventKey: "component-terminal-skipped", consumer: "jsonl", state: "skipped" },
@@ -86,7 +88,9 @@ const CHILD = String.raw`
     if (input.mode === "public" || input.mode === "legacy" || input.mode === "contended") {
       let failure;
       try {
-        await transaction(tx => db.resolveInternalProductionOperationalDeliveryTerminalAuthorityPairInTransactionV1(tx, exact));
+        await transaction(tx => input.mode === "public"
+          ? db.resolveInternalProductionOperationalDeliveryTerminalAuthorityPairInTransactionV1(tx, exact)
+          : projection.lockProjection(tx, exact));
       } catch (error) { failure = error; }
       assert.ok(failure, "component must never issue a terminal close capability");
       if (input.mode === "legacy") {
@@ -96,15 +100,9 @@ const CHILD = String.raw`
         assert.equal(failure.code, "55P03", "the exact mutable delivery must remain row-locked");
         assert.match(traces.find(value => /FROM operational_event_deliveries/.test(value)) ?? "", /FOR UPDATE/);
       } else {
-        assert.equal(failure.message, "INTERNAL_PRODUCTION_OPERATIONAL_DELIVERY_OWNER_UNAVAILABLE",
-          "real public resolver must reach the unchanged missing-owner guard, not an immutable row-lock privilege error");
-        const event = traces.find(value => /FROM operational_events/.test(value));
-        assert.ok(event);
-        assert.doesNotMatch(event, /\bFOR\s+(?:UPDATE|NO\s+KEY\s+UPDATE|SHARE|KEY\s+SHARE)\b/i);
-        assert.match(traces.find(value => /FROM operational_event_deliveries/.test(value)) ?? "", /FOR UPDATE/);
-        assert.match(traces.find(value => /FROM internal_production_owner_reservations_v1/.test(value)) ?? "", /FOR UPDATE/);
-        const sidecars = await sql.unsafe("SELECT count(*)::integer AS count FROM internal_production_owner_reservations_v1 WHERE category='operational-delivery'");
-        assert.equal(sidecars[0].count, 0, "no authenticated sidecar may be manufactured");
+        assert.equal(failure.message, "DASHBOARD_CUTOVER_ORDINARY_DATABASE_REFUSED",
+          "schema-only fixture must preserve the actual public ordinary access refusal");
+        assert.equal(traces.length, 0, "public refusal must precede every terminal resolver SQL statement");
       }
     } else if (input.mode === "projection") {
       for (const row of input.events.filter(row => row.state !== "pending")) {
@@ -212,11 +210,11 @@ test("fresh operational terminal reads preserve owner authority and mutable lock
       assert.equal(child.status,0,child.stderr);
       assert.equal(child.stdout,"OPERATIONAL_TERMINAL_COMPONENT_CHECKED:"+mode+"\n");
     };
-    await t.test("actual public selected resolver reaches unchanged missing-owner refusal", () => run("public"));
+    await t.test("actual public resolver retains its pre-SQL schema-only access refusal", () => run("public"));
     await t.test("actual whole projection preserves all terminal identities hashes and guards", () => run("projection"));
-    await t.test("legacy public resolver retains immutable lock refusal", () => run("legacy", false));
+    await t.test("legacy whole projection retains immutable lock refusal", () => run("legacy", false));
     await t.test("immutable mutation and replication privileges remain absent", () => run("privileges"));
-    await t.test("actual public resolver still contends on the mutable delivery row", async () => {
+    await t.test("actual whole projection still contends on the mutable delivery row", async () => {
       let ready!: () => void, release!: () => void;
       const acquired = new Promise<void>(resolve => { ready = resolve; });
       const released = new Promise<void>(resolve => { release = resolve; });

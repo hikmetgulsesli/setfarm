@@ -156,8 +156,20 @@ test("fresh finding normal-publication and terminal reads need no immutable UPDA
         const readProjection=compile('const read='+projectionSource+';');
         const runProjection=input=>sql.begin(tx=>readProjection(tx,input));
         if(selected){
-          let publicError;try{await sql.begin(tx=>db.resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(tx,{findingSetHash:value.findingSetHash}));}catch(error){publicError=error;}
-          if(publicError?.message!=='INTERNAL_PRODUCTION_FINDING_OWNER_UNAVAILABLE') failures.push({id:'public-boundary',code:publicError?.code??publicError?.message??'UNEXPECTED_SUCCESS'});
+          // This owned schema-only component has not passed operational admission.
+          // The actual public API must preserve its early refusal; no ready/owner
+          // authority is fabricated to reach a deeper public path.
+          let publicError,publicSqlCalls=0;
+          try{await sql.begin(tx=>{
+            const observed=new Proxy(tx,{
+              apply(target,receiver,args){publicSqlCalls++;return Reflect.apply(target,target,args);},
+              get(target,key){const value=Reflect.get(target,key,target);
+                if(key==='unsafe')return(...args)=>{publicSqlCalls++;return Reflect.apply(value,target,args);};return value;}
+            });
+            return db.resolveInternalProductionFindingTerminalAuthorityPairInTransactionV1(observed,{findingSetHash:value.findingSetHash});
+          });}catch(error){publicError=error;}
+          assert.equal(publicError?.message,'DASHBOARD_CUTOVER_ORDINARY_DATABASE_REFUSED');
+          assert.equal(publicSqlCalls,0,'actual schema-only public refusal precedes resolver SQL');
           if(failures.length===0){
             const result=await runProjection({findingSetHash:value.findingSetHash});
             assert.equal(result.status,'published');assert.deepEqual(result.identity,identity);

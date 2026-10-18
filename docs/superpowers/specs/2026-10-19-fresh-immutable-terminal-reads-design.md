@@ -12,9 +12,9 @@ Do not grant immutable UPDATE, DELETE or TRUNCATE, change canonical migrations, 
 
 ## Evidence and test boundary
 
-Record real restricted-role RED before production changes. The operational test calls the actual public resolver with a real owned PostgreSQL transaction and component event/delivery rows but deliberately no owner sidecar. The correct post-fix result is the unchanged `INTERNAL_PRODUCTION_OPERATIONAL_DELIVERY_OWNER_UNAVAILABLE`, after the immutable read and mutable delivery lock. This is an authority refusal, not a fabricated successful close. A separately extracted whole production projection exercises exact terminal identities, states and hashes on real rows. A held delivery row must still produce `55P03`; legacy mode must still produce `42501`; immutable DML and replication bypass must stay denied.
+Record real restricted-role RED before production changes. The first actual test run established that the schema-only fixture's public resolver correctly refuses with `DASHBOARD_CUTOVER_ORDINARY_DATABASE_REFUSED` before issuing any resolver SQL. Preserve and test that guard; do not forge compiled activation or an owner sidecar to reach past it. Separately execute the extracted whole genuine production projection on real restricted-role transactions to test exact terminal identities, states and hashes, absent/nonterminal row refusal, legacy immutable-lock `42501` and held mutable-delivery `55P03`. Immutable DML and replication bypass remain denied. These projection components are not public operational admission.
 
-The finding regression exercises normal publication and its terminal projection with the same real restricted-role boundary. Source components and schema-only test fixtures do not establish compiled operational readiness or issued owner capability. Actual authentic public terminal close remains a post-merge release-bound runtime qualification.
+The finding regression executes the six actual publication/terminal SQL initializers and the whole terminal projection with the same real restricted-role boundary; its public call must retain the actual pre-SQL access refusal. Source components and schema-only test fixtures do not establish compiled operational readiness or issued owner capability. Actual authentic public terminal close remains a post-merge release-bound runtime qualification.
 
 ## Alternatives
 
