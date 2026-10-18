@@ -233,3 +233,23 @@ Deliver source through reviewed PR; the required next phase is a stock clean
 main build and NEW actual installation, then actual compiled entry/listener,
 claimStep and running-step reauthentication before maintained workflow/live
 readiness. Never treat these source/DATA negatives as that positive proof.
+
+## PR290 correction: private runs do not own shared gateway cron cleanup
+
+The exact265d9a95 cloud review found a real P1 before merge/runtime: returning
+false from gatewayAgentCronsEnabled enters syncActiveCrons' legacy disabled
+branch, which deletes the same workflow's shared gateway crons. The same
+lifecycle assumption also exists in ensure/repair/direct removal. Refine the
+file map to agent-cron.ts plus the new private-agent-cron lifecycle regression.
+Use a fixed captured-selection exclusion at all eight public shared lifecycle
+seams, before parameters, SQL, gateway access, logging or catch scopes. Selected
+count is zero. Keep the existing enabled predicate and every legacy function
+body, including disabled legacy stale-cron cleanup, unchanged. This is an
+in-goal root fix for the promised private runtime; no gateway framework, shared
+cron migration, deletion, or changed legacy policy is authorized.
+
+The actual old source-body regression first recorded10 failures, including
+fake gateway deletion on selected sync (66d807). After the fixed eight fences,
+all53 new/legacy cron plus source/private-asset cases passed (434f36), with
+no real gateway or SQL effects in these DATA components. Runtime workflow
+advance remains part of the later actual installation qualification.
