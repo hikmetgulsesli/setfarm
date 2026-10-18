@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { freshInstallationSelectionV1, selectedFreshInstallationRootV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -15,6 +16,8 @@ export function resolveBundledWorkflowDir(workflowId: string): string {
 }
 
 export function resolveOpenClawStateDir(): string {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) return freshInstallationSelectionV1.paths.openclaw;
   const env = process.env.OPENCLAW_STATE_DIR?.trim();
   if (env) {
     return env;
@@ -23,6 +26,8 @@ export function resolveOpenClawStateDir(): string {
 }
 
 export function resolveOpenClawConfigPath(): string {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) return path.join(freshInstallationSelectionV1.paths.openclaw, "openclaw.json");
   const env = process.env.OPENCLAW_CONFIG_PATH?.trim();
   if (env) {
     return env;
@@ -31,6 +36,8 @@ export function resolveOpenClawConfigPath(): string {
 }
 
 export function resolveSetfarmRoot(): string {
+  const selected = selectedFreshInstallationRootV1();
+  if (selected) return selected;
   return path.join(resolveOpenClawStateDir(), "setfarm");
 }
 
@@ -43,6 +50,8 @@ export function resolveWorkflowDir(workflowId: string): string {
 }
 
 export function resolveWorkflowWorkspaceRoot(): string {
+  const selected = selectedFreshInstallationRootV1();
+  if (selected) return path.join(selected, "workspaces", "workflows");
   return path.join(resolveOpenClawStateDir(), "workspaces", "workflows");
 }
 
@@ -60,6 +69,8 @@ export function resolveSetfarmCli(): string {
 }
 
 export function resolvePlatformRoot(): string {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) return freshInstallationSelectionV1.paths.repository;
   const env = process.env.SETFARM_PLATFORM_ROOT?.trim();
   if (env) return env;
   // From dist/installer/paths.js -> ../..

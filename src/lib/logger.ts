@@ -2,10 +2,13 @@ import fs from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 
 const DEFAULT_LOG_DIR = path.join(os.homedir(), ".openclaw", "setfarm", "logs");
 
 function resolveLogDir(): string {
+  const selected = selectedFreshInstallationRootV1();
+  if (selected) return path.join(selected, "logs");
   if (process.env.SETFARM_DB_PATH) {
     return path.join(path.dirname(process.env.SETFARM_DB_PATH), "logs");
   }

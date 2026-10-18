@@ -1,11 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import { pgGet } from "../db-pg.js";
 import type { CanonicalOperationalEventV1 } from "../execution/schemas/operational-event-v1.js";
 import { recordEventObservation } from "./observations.js";
 
 function getEventsDir(): string {
+  const selected = selectedFreshInstallationRootV1();
+  if (selected) return selected;
   return process.env.SETFARM_DB_PATH
     ? path.dirname(process.env.SETFARM_DB_PATH)
     : path.join(os.homedir(), ".openclaw", "setfarm");

@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { assertFreshInstallationSelectionUnchangedV1, freshInstallationSelectionV1 } from "../installation/fresh-installation-selection-v1.js";
 
 export type RuntimeIdentityInput = {
   runId: string;
@@ -70,6 +71,8 @@ export function buildRunSlug(projectSlug: string, runId: string): string {
 }
 
 export function resolveProjectsRoot(env: NodeJS.ProcessEnv = process.env): string {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) return freshInstallationSelectionV1.paths.projects;
   const configured =
     env.SETFARM_PROJECTS_ROOT?.trim() ||
     env.SETFARM_WORKSPACE_PROJECTS_ROOT?.trim() ||
@@ -79,6 +82,7 @@ export function resolveProjectsRoot(env: NodeJS.ProcessEnv = process.env): strin
 }
 
 export function resolveRuntimeIdentity(input: RuntimeIdentityInput): RuntimeIdentity {
+  assertFreshInstallationSelectionUnchangedV1();
   const productSlug = slugifyIdentity(input.projectSlug || input.projectName || "setfarm-project");
   const projectName = String(input.projectName || "").trim() || displayNameFromSlug(productSlug);
   const runSlug = buildRunSlug(productSlug, input.runId);
