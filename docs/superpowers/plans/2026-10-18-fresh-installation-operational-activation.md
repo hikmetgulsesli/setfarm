@@ -110,6 +110,30 @@ through a reviewed PR and stock clean-main build. A NEW source-pinned instance
 must pass the complete actual compiled lifecycle before Unit3 source wiring.
 Never repair grants or rewrite source pins in an earlier activated instance.
 
+The I3 ordinary termination subsequently exposed the same lock-privilege cause
+on recovery_cases: the actual terminal helper correctly locks cases even for an
+empty chain. The 2026-10-19 scoped correction adds only UPDATE(updated_at), with
+its own owner-only ALWAYS statement guard installed and verified before grants.
+Preserve and independently verify migration17's existing pointer-column ROW/O
+trigger and function alongside the new statement/A extension. Unknown trigger
+inventory, collisions, function/trigger/ACL drift refuse without repair. Published
+migration sources and digests, mutable lock order, CAS, provenance and owner
+admission remain unchanged.
+
+This causal File Map adds tests/installation/fresh-installation-terminal-recovery-locks.integration.test.ts;
+the production file remains installation/fresh-installation-runtime-grants-v1.ts,
+with the existing operational-schema rollback regression extended. Genuine
+restricted-role tests invoke the whole recovery helper and empty settlement,
+execute exact normal terminal SQL and six whole P3 projections, preserve real
+contention, and deny actual mutation, replica bypass and populated settlement.
+Default-protocol schema component rows do not claim public V3 admission; the
+selected schema-only public terminal guard must still refuse before SQL. Root
+captured decisive RED42501 on recovery_cases at cc8c893c before production edit.
+The first capture instead failed a V3 seed constraint and is retained as an
+invalid RED. A genuine activated ordinary terminal close with exact owner closure,
+canonical outbox/replay and unchanged full8 remains a separate operational gate.
+No old activated instance is repaired by this correction.
+
 Correction evidence: exact empty-query regression first failed42501 (6019af),
 then all9 schema/rollback/grant cases passed (1f88a5). The populated component
 first exposed a test-only JSONB double-encoding error (feb8f5); passing its
