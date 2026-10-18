@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { types } from "node:util";
 import { runtimeConfig } from "./runtime-config.js";
+import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "./installation/fresh-installation-selection-v1.js";
 import { observeDeploymentCutoverIntentV1 } from "./internal-production/baseline-deployment-cutover-v1.js";
 import { copyDashboardCoreRequestV2, classifyDashboardCoreResponseFailureV2 } from "./db/dashboard-core-response-v2.js";
 import { observeLegacyFindingPublicationInventoryV1, requireFindingPublicationV1, type FindingPublicationParentRowV1, type FindingPublicationChildRowV1 } from "./findings/finding-publication-v1.js";
@@ -153,6 +154,82 @@ let _task6aNoDefaultMigration = false;
 let _task6aRestrictedConnectionEpoch = 0;
 let _task6aRestrictedClosing = false;
 let _isolatedTestPgUrl: string | null = null;
+const _freshDatabaseV1 = {
+  phase: "UNPREPARED" as "UNPREPARED" | "PREPARING" | "VERIFIED" | "REFUSED" | "CLOSED",
+  owner: null as ReturnType<typeof postgres> | null,
+  epoch: 0,
+  preparation: null as Promise<void> | null,
+};
+
+function assertFreshSelectionV1(): void {
+  try { assertFreshInstallationSelectionUnchangedV1(); }
+  catch (error) {
+    if (freshInstallationSelectionV1 && _freshDatabaseV1.phase !== "CLOSED") _freshDatabaseV1.phase = "REFUSED";
+    throw error;
+  }
+}
+function requireSelectedFreshDatabaseV1(): void {
+  assertFreshSelectionV1();
+  if (freshInstallationSelectionV1 && (_freshDatabaseV1.phase !== "VERIFIED"
+    || !_freshDatabaseV1.owner || _sql !== _freshDatabaseV1.owner || !_schemaReady)) {
+    throw new Error("FRESH_INSTALLATION_DATABASE_NOT_PREPARED");
+  }
+}
+
+/** Database verification only. No service, manifest activation or claim readiness. */
+export function prepareSelectedFreshInstallationDatabaseV1(): Promise<void> {
+  try { assertFreshSelectionV1(); } catch { return Promise.reject(new Error("FRESH_INSTALLATION_DATABASE_NOT_PREPARED")); }
+  const selected = freshInstallationSelectionV1;
+  if (!selected) return Promise.resolve();
+  if (_freshDatabaseV1.phase === "PREPARING" || _freshDatabaseV1.phase === "VERIFIED") return _freshDatabaseV1.preparation!;
+  if (_freshDatabaseV1.phase !== "UNPREPARED") return Promise.reject(new Error("FRESH_INSTALLATION_DATABASE_NOT_PREPARED"));
+  if (_sql || _schemaReady || _schemaReadyPromise || _isMigrating || _verificationOnlyMode
+    || _isolatedTestPgUrl || _task6aNoDefaultMigration || _dashboardReaderV2.phase !== "UNPREPARED") {
+    _freshDatabaseV1.phase = "REFUSED";
+    return Promise.reject(new Error("FRESH_INSTALLATION_DATABASE_NOT_PREPARED"));
+  }
+  _freshDatabaseV1.phase = "PREPARING";
+  const epoch = ++_freshDatabaseV1.epoch;
+  let owner: ReturnType<typeof postgres>;
+  try { owner = postgres(selected.state.runtimeUrl, { max: 50, connect_timeout: 5, idle_timeout: 5, onnotice() {} }); }
+  catch {
+    _freshDatabaseV1.phase = "REFUSED";
+    return Promise.reject(new Error("FRESH_INSTALLATION_DATABASE_NOT_PREPARED"));
+  }
+  _freshDatabaseV1.owner = owner; // Register before the first awaited continuation, including close races.
+  const unchanged = (): void => {
+    assertFreshSelectionV1();
+    if (_freshDatabaseV1.phase !== "PREPARING" || _freshDatabaseV1.epoch !== epoch || _freshDatabaseV1.owner !== owner) {
+      throw new Error("FRESH_INSTALLATION_DATABASE_NOT_PREPARED");
+    }
+  };
+  _freshDatabaseV1.preparation = (async () => {
+    try {
+      assertOrdinaryDashboardDatabaseAccessV2();
+      const [{ captureFreshInstallationSourceShaV1 }, { verifyFreshInstallationRuntimeConnectionV1 }] = await Promise.all([
+        import("./installation/fresh-installation-source-v1.js"), import("./installation/fresh-installation-runtime-v1.js"),
+      ]);
+      unchanged();
+      if (await captureFreshInstallationSourceShaV1() !== selected.state.origin.sourceSha) throw new Error();
+      unchanged();
+      await verifyFreshInstallationRuntimeConnectionV1(owner, selected.state.origin, selected.state.catalogHash,
+        selected.state.ownerOid, selected.state.runtimeOid, unchanged);
+      unchanged();
+      if (await captureFreshInstallationSourceShaV1() !== selected.state.origin.sourceSha) throw new Error();
+      unchanged();
+      _sql = owner;
+      _schemaReady = true;
+      _freshDatabaseV1.phase = "VERIFIED";
+    } catch {
+      if (_freshDatabaseV1.phase !== "CLOSED") _freshDatabaseV1.phase = "REFUSED";
+      if (_sql === owner) _sql = null;
+      _schemaReady = false;
+      try { await owner.end({ timeout: 5 }); } catch { /* The process remains permanently refused. */ }
+      throw new Error("FRESH_INSTALLATION_DATABASE_NOT_PREPARED");
+    }
+  })();
+  return _freshDatabaseV1.preparation;
+}
 
 // Restriction only: this never grants a reader or service startup. Previously
 // returned ordinary handles require independent process drain, not fake revocation.
@@ -191,6 +268,8 @@ function requireDashboardReaderPhaseV2(phase: "PREPARING" | "READY"): void {
 }
 
 export async function prepareDashboardCutoverCoreReaderV2(): Promise<void> {
+  assertFreshSelectionV1();
+  if (freshInstallationSelectionV1) throw new Error("FRESH_INSTALLATION_INCOMPATIBLE_DATABASE_PROFILE");
   if (_dashboardReaderV2.phase === "REFUSED") failDashboardReaderV2();
   if (_dashboardReaderV2.phase === "PREPARING") {
     revokeDashboardReaderV2(); failDashboardReaderV2(DASHBOARD_READER_DUPLICATE_V2);
@@ -308,6 +387,8 @@ function isExactIsolatedTestDatabaseNameV1(database: string): boolean {
 }
 
 export function pgConfigureIsolatedTestDatabase(rawUrl: string): void {
+  assertFreshSelectionV1();
+  if (freshInstallationSelectionV1) throw new Error("FRESH_INSTALLATION_INCOMPATIBLE_DATABASE_PROFILE");
   assertOrdinaryDashboardDatabaseAccessV2();
   if (_sql || _schemaReady || _schemaReadyPromise || _isMigrating
     || (_task6aNoDefaultMigration && _task6aRestrictedClosing)) {
@@ -372,6 +453,7 @@ type SetfarmSqlV1 = ReturnType<typeof postgres> & Readonly<{
 }>;
 
 function getSql(): SetfarmSqlV1 {
+  requireSelectedFreshDatabaseV1();
   assertOrdinaryDashboardDatabaseAccessV2();
   if (!_sql) {
     const url = resolvePgUrl();
@@ -6015,6 +6097,8 @@ export async function initializeInternalProductionCurrentEntryDatabaseV1(
 }
 
 async function ensureSchemaReady(): Promise<void> {
+  requireSelectedFreshDatabaseV1();
+  if (freshInstallationSelectionV1) return;
   assertOrdinaryDashboardDatabaseAccessV2();
   if (_task6aNoDefaultMigration && _task6aRestrictedClosing) {
     throw new Error("TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED");
@@ -6091,6 +6175,8 @@ export type PgMigrationOptions = Readonly<{
 export async function prepareTask6aRestrictedSpawnerDatabaseV1(
   expectedSchemaOwner: string,
 ): Promise<void> {
+  assertFreshSelectionV1();
+  if (freshInstallationSelectionV1) throw new Error("FRESH_INSTALLATION_INCOMPATIBLE_DATABASE_PROFILE");
   assertOrdinaryDashboardDatabaseAccessV2();
   if (_task6aNoDefaultMigration || _sql || _schemaReady || _schemaReadyPromise
     || _isMigrating || _verificationOnlyMode) {
@@ -6109,6 +6195,8 @@ async function verifyExpectedPublicObjectOwnerReadOnlyV1(
 }
 
 export async function pgMigrate(options: PgMigrationOptions = {}): Promise<void> {
+  assertFreshSelectionV1();
+  if (freshInstallationSelectionV1) throw new Error("FRESH_INSTALLATION_DEFAULT_MIGRATION_FORBIDDEN");
   assertOrdinaryDashboardDatabaseAccessV2();
   if (!options || typeof options !== "object" || types.isProxy(options)
     || Array.isArray(options) || Object.getPrototypeOf(options) !== Object.prototype) {
@@ -6217,6 +6305,19 @@ export async function pgCheckpoint(): Promise<void> {
 }
 
 export async function pgClose(): Promise<void> {
+  if (freshInstallationSelectionV1) {
+    _freshDatabaseV1.phase = "CLOSED";
+    _freshDatabaseV1.epoch += 1;
+    _schemaReady = false;
+    _schemaReadyPromise = null;
+    const owner = _freshDatabaseV1.owner;
+    if (_sql === owner) _sql = null;
+    if (owner) {
+      try { await owner.end({ timeout: 5 }); }
+      catch { throw new Error("FRESH_INSTALLATION_DATABASE_CLOSE_UNCONFIRMED"); }
+    }
+    return;
+  }
   if (_dashboardReaderV2.phase !== "UNPREPARED") revokeDashboardReaderV2();
   if (_task6aNoDefaultMigration) {
     if (_task6aRestrictedClosing) throw new Error("TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED");

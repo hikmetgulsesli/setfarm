@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "./installation/fresh-installation-selection-v1.js";
 import { applyRuntimeEnvFileV1, normalizeRuntimePathV1 } from "./internal-production/baseline-spawner-launch-environment-v1.js";
 import { resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
 import {
@@ -16,7 +17,7 @@ import {
 } from "./execution/v3-seal-capacity.js";
 
 const loadedEnvKeys = new Set<string>();
-let runtimeEnvironmentModeV1: "unloaded" | "ordinary" | "refused" | "cold-helper" | "cold-child" | "direct-helper" | "direct-child" = "unloaded";
+let runtimeEnvironmentModeV1: "unloaded" | "ordinary" | "fresh" | "refused" | "cold-helper" | "cold-child" | "direct-helper" | "direct-child" = "unloaded";
 let inheritedEffectiveEnvironmentV1: Readonly<Record<string, string>> | null = null;
 
 function environmentIdentityV1(environment: Readonly<Record<string, string | undefined>>): string {
@@ -43,6 +44,15 @@ function loadEnvFile(envDir: string, filename: string, overrideFileValues: boole
 }
 
 export function loadRuntimeEnv(): void {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) {
+    if (runtimeEnvironmentModeV1 !== "unloaded" && runtimeEnvironmentModeV1 !== "fresh") {
+      throw new Error("FRESH_INSTALLATION_SELECTION_REFUSED");
+    }
+    runtimeEnvironmentModeV1 = "fresh";
+    ensureRuntimePath();
+    return;
+  }
   const refuse = (): never => { runtimeEnvironmentModeV1 = "refused"; throw new Error("INTERNAL_PRODUCTION_INHERITED_RUNTIME_CONFIGURATION_INVALID"); };
   if (runtimeEnvironmentModeV1 === "refused") refuse();
   let snapshot: ReturnType<typeof resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1>;
@@ -79,6 +89,7 @@ export function loadRuntimeEnv(): void {
     loadEnvFile(envDir, ".env.local", true);
   }
   if (inheritedKeys().length !== 0) refuse();
+  assertFreshInstallationSelectionUnchangedV1();
   ensureRuntimePath();
 }
 
@@ -96,7 +107,7 @@ function trimUrl(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
-export const runtimeConfig = {
+const ordinaryRuntimeConfig = {
   missionControlInternalUrl: trimUrl(process.env.MC_INTERNAL_URL || "http://127.0.0.1:3080"),
   setfarmPgUrl: (process.env.SETFARM_PG_URL || "postgresql://postgres@localhost:5432/setfarm").split(/\s+/)[0],
   projectsDir: envPath("PROJECTS_DIR", join(homedir(), "projects")),
@@ -105,10 +116,18 @@ export const runtimeConfig = {
   scriptsDir: envPath("SCRIPTS_DIR", join(homedir(), ".openclaw", "scripts")),
   cliPath: envPath("CLI_PATH", join(homedir(), ".local", "bin")),
 };
+export const runtimeConfig: typeof ordinaryRuntimeConfig = freshInstallationSelectionV1
+  ? Object.freeze({ ...ordinaryRuntimeConfig, setfarmPgUrl: freshInstallationSelectionV1.state.runtimeUrl,
+    projectsDir: freshInstallationSelectionV1.paths.projects, setfarmDir: freshInstallationSelectionV1.paths.root,
+    setfarmRepoDir: freshInstallationSelectionV1.paths.repository, scriptsDir: freshInstallationSelectionV1.paths.scripts,
+    cliPath: freshInstallationSelectionV1.paths.cli })
+  : ordinaryRuntimeConfig;
 
 export function resolveProductArtifactDir(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) return freshInstallationSelectionV1.paths.artifacts;
   const explicit = env.SETFARM_PRODUCT_ARTIFACT_DIR?.trim();
   return explicit
     ? expandRuntimePath(explicit)
@@ -118,6 +137,8 @@ export function resolveProductArtifactDir(
 export function resolveConvergenceEvalResultDir(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) return freshInstallationSelectionV1.paths.evals;
   const explicit = env.SETFARM_CONVERGENCE_RESULT_DIR?.trim();
   return explicit
     ? expandRuntimePath(explicit)
