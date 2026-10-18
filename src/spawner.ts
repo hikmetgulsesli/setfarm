@@ -5760,11 +5760,37 @@ async function finalizeExitedStoryRuntime(active: ActiveProcess): Promise<void> 
       [claimId],
     );
     if (completed?.outcome !== null && completed?.outcome !== undefined) {
-      await pgBegin((sql) => releaseDrainedRuntimeSessionInTransaction(sql, {
-        sessionId: active.runtimeSessionId,
-        claimId,
-        ownerInstanceId: active.runtimeOwnerInstanceId,
-      }));
+      const released = await pgBegin(async (sql) => {
+        // Completion publication/finalization locks this run before its runtime.
+        // Keep the same order so an in-flight completion owns release atomically.
+        const runs = await sql.unsafe<Array<{ id: string }>>(
+          "SELECT id FROM runs WHERE id = $1 FOR UPDATE",
+          [active.runId],
+        );
+        if (runs.length !== 1) throw new Error("EXITED_RUNTIME_RUN_NOT_FOUND");
+        const runtimes = await sql.unsafe<Array<{ session_id: string }>>(
+          `SELECT session_id FROM runtime_sessions
+            WHERE session_id = $1 AND run_id = $2 AND claim_id = $3
+              AND owner_instance_id = $4 FOR UPDATE`,
+          [active.runtimeSessionId, active.runId, claimId, active.runtimeOwnerInstanceId],
+        );
+        if (runtimes.length !== 1) throw new Error("EXITED_RUNTIME_OWNER_IDENTITY_CHANGED");
+        const pending = await sql.unsafe<Array<{ request_id: string }>>(
+          `SELECT request_id FROM runtime_completion_requests
+            WHERE run_id = $1 AND claim_id = $2 AND runtime_session_id = $3
+              AND state IN ('requested', 'draining', 'processing')
+            LIMIT 1`,
+          [active.runId, claimId, active.runtimeSessionId],
+        );
+        if (pending.length > 0) return false;
+        await releaseDrainedRuntimeSessionInTransaction(sql, {
+          sessionId: active.runtimeSessionId,
+          claimId,
+          ownerInstanceId: active.runtimeOwnerInstanceId,
+        });
+        return true;
+      });
+      if (!released) return;
       emitEvent({
         ts: new Date().toISOString(),
         event: "runtime.released",
@@ -9131,22 +9157,26 @@ async function applyAndAcceptRuntimeCompletionEffects(
     ownerAttemptCount: request.ownerAttemptCount,
     result,
   });
-  const completionBootstrap = await import("./execution/runtime-completion.js") as unknown as Record<string, unknown>;
-  const createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1 = completionBootstrap.createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1;
-  const continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1 = completionBootstrap.continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1;
-  if (typeof createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1 !== "function" || createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1.length !== 0 || typeof continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1 !== "function" || continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1.length !== 1) throw new Error("INTERNAL_PRODUCTION_BASELINE_COMPLETION_BOOTSTRAP_PORT_UNAVAILABLE");
-  const verification = await (createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1 as () => Promise<unknown | null>)();
-  if (verification === null) {
-    await completions.acceptAndRelease({
-      requestId: request.requestId,
-      ownerInstanceId: request.ownerInstanceId!,
-      ownerAttemptCount: request.ownerAttemptCount,
-      result,
-    });
-  } else {
-    await (continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1 as (input: unknown) => Promise<void>)({ verification });
-    return;
-  }
+  const continuedBaselineBootstrap = await withRuntimeCompletionOwnerCapability(request, async () => {
+    const completionBootstrap = await import("./execution/runtime-completion.js") as unknown as Record<string, unknown>;
+    const createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1 = completionBootstrap.createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1;
+    const continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1 = completionBootstrap.continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1;
+    if (typeof createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1 !== "function" || createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1.length !== 0 || typeof continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1 !== "function" || continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1.length !== 1) throw new Error("INTERNAL_PRODUCTION_BASELINE_COMPLETION_BOOTSTRAP_PORT_UNAVAILABLE");
+    const verification = await (createInternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1 as () => Promise<unknown | null>)();
+    if (verification === null) {
+      await completions.acceptAndRelease({
+        requestId: request.requestId,
+        ownerInstanceId: request.ownerInstanceId!,
+        ownerAttemptCount: request.ownerAttemptCount,
+        result,
+      });
+      return false;
+    } else {
+      await (continueInternalProductionBaselineCompletionOwnerBootstrapAfterCleanBuildV1 as (input: unknown) => Promise<void>)({ verification });
+      return true;
+    }
+  });
+  if (continuedBaselineBootstrap) return;
   if (request.storyId) {
     await cleanupQuiescedStoryWorktree(
       request.runId,

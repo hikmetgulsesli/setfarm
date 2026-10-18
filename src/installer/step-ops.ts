@@ -1,3 +1,4 @@
+import { V3_PENDING_SINGLE_PREDECESSOR_COMPLETION_SQL_V1 } from "../execution/v3-predecessor-completion-claim-barrier-v1.js";
 import { selectedFreshInstallationRootV1, freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
 import { assertFreshInstallationOperationalEntryV1 } from "../installation/fresh-installation-entry-v1.js";
 import { getSql, pgQuery, pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
@@ -7312,6 +7313,7 @@ export async function claimStep(
              OR s.status = 'running'
            )
            AND r.status IN ('running', 'resuming')
+           AND NOT ${V3_PENDING_SINGLE_PREDECESSOR_COMPLETION_SQL_V1}
            AND NOT ${PR_EACH_DELIVERY_BLOCKED_STEP_SQL}
            AND (
              $2::text IS NULL

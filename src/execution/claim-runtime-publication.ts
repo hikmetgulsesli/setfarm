@@ -1,4 +1,5 @@
 import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
+import { hasPendingV3SinglePredecessorCompletionInTransactionV1 } from "./v3-predecessor-completion-claim-barrier-v1.js";
 import type postgres from "postgres";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
@@ -1479,6 +1480,9 @@ export async function publishSingleClaimRuntime(
       });
       if (replay) return replay;
     }
+    if (await hasPendingV3SinglePredecessorCompletionInTransactionV1(transaction, rawInput)) {
+      return undefined;
+    }
     const requests = await transaction.unsafe<Array<{ request_id: string }>>(
       "SELECT request_id FROM run_termination_requests WHERE run_id = $1 AND state <> 'terminalized' LIMIT 1",
       [rawInput.runId],
@@ -1992,6 +1996,9 @@ export async function publishLoopClaimRuntime(
         storyClaimAuthority,
       });
       if (replay) return replay;
+    }
+    if (await hasPendingV3SinglePredecessorCompletionInTransactionV1(transaction, rawInput)) {
+      return undefined;
     }
     if (recoveryHandoff) {
       const committedDispatchOwners = await transaction.unsafe<Array<{

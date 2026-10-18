@@ -45,6 +45,7 @@ const OWNER_BACKED_TESTS = new Set([
   "v3-platform-preclaim-terminal.integration.test.ts",
   "v3-platform-preclaim-termination-race.integration.test.ts",
   "v3-pre-dispatch-failure.integration.test.ts",
+  "v3-predecessor-completion-claim.integration.test.ts",
   "v3-preparation-claim-authority.test.ts",
   "v3-setup-build-failure-cause.integration.test.ts",
   "v3-setup-build-untyped-build-failure.integration.test.ts",
