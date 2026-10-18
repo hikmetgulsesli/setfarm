@@ -16942,16 +16942,6 @@ async function verifyBootstrapMainClaimHandoffGuardedMigration32ApplicationProve
     && !Array.isArray(application)
     ? application as Record<string, unknown>
     : null;
-  if (applicationRecord?.schema === "setfarm.fresh-installation-schema-application.v1") {
-    if (expected || rows.length !== 1 || !row || payloadRecord?.schema !== "setfarm.internal-production-owner-admission-head.v1"
-      || payloadRecord.version !== 0 || Object.keys(payloadRecord).length !== 3) {
-      throw new ContractSpineMigrationError("MIGRATION_ADOPTION_MISMATCH", "Fresh installation cannot satisfy legacy guarded32 retry evidence");
-    }
-    const parsed = validateOwnerAdmissionMigrationApplicationV1(applicationRecord, row.migration_application_evidence_hash);
-    if (parsed.schema !== "setfarm.fresh-installation-schema-application.v1") throw new Error("FRESH_INSTALLATION_ORIGIN_INVALID");
-    await verifyFreshApplicationOnConnectionV1(sql, parsed, row.release_sha);
-    return;
-  }
   const applicationKeys = applicationRecord ? Object.keys(applicationRecord).sort() : [];
   const requiredKeys = [...GUARDED_MIGRATION_32_APPLICATION_KEYS].sort();
   const applicationBody = applicationRecord
@@ -21222,6 +21212,24 @@ export async function withHeldContractSpineV31DiagnosticV2<T>(
 }
 
 // SETFARM_SEMANTIC_MIGRATION_REGION:fresh-installation-bootstrap-v1:BEGIN
+async function verifyFreshInstallationGenesisApplicationV1(sql: TransactionSql): Promise<void> {
+  const rows = await sql.unsafe<Array<{
+    release_sha: string | null; migration_application_evidence_hash: string; head_payload: unknown;
+  }>>(`SELECT migration.release_sha,head.migration_application_evidence_hash,head.head_payload
+    FROM public.setfarm_schema_migrations migration JOIN public.internal_production_owner_admission_head_v1 head
+      ON head.singleton=TRUE WHERE migration.version=32`);
+  const row = rows[0], payload = row?.head_payload;
+  if (rows.length !== 1 || !row || !payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("FRESH_INSTALLATION_GENESIS_INVALID");
+  }
+  const head = payload as Record<string, unknown>;
+  if (head.schema !== "setfarm.internal-production-owner-admission-head.v1" || head.version !== 0
+    || Object.keys(head).length !== 3) throw new Error("FRESH_INSTALLATION_GENESIS_INVALID");
+  const application = validateOwnerAdmissionMigrationApplicationV1(head.migrationApplication, row.migration_application_evidence_hash);
+  if (application.schema !== "setfarm.fresh-installation-schema-application.v1") throw new Error("FRESH_INSTALLATION_GENESIS_INVALID");
+  await verifyFreshApplicationOnConnectionV1(sql, application, row.release_sha);
+}
+
 async function verifyFreshApplicationOnConnectionV1(
   sql: Sql | TransactionSql, application: FreshInstallationApplicationV1, releaseSha: string | null,
 ): Promise<void> {
@@ -21299,7 +21307,7 @@ export async function initializeFreshInstallationContractSpineV1(transaction: Tr
     [migration32.name, checksum(migration32), origin.sourceSha],
   );
   await verifyBootstrapMainClaimHandoffV1Schema(transaction);
-  await verifyBootstrapMainClaimHandoffGuardedMigration32ApplicationProvenance(transaction);
+  await verifyFreshInstallationGenesisApplicationV1(transaction);
   for (const statement of migration33.statements) await transaction.unsafe(statement);
   await transaction.unsafe(
     `INSERT INTO public.setfarm_schema_migrations
