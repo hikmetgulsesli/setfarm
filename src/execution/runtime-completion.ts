@@ -29,6 +29,8 @@ import {
   type RuntimeCompletionSubmissionEvidenceV1,
 } from "./schemas/runtime-completion-submission-evidence-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
+import { assertFreshInstallationOperationalEntryV1 } from "../installation/fresh-installation-entry-v1.js";
 import { releaseDrainedRuntimeSessionInTransaction } from "./runtime-session-repository.js";
 import { currentRuntimeCompletionOwnerCapability } from "./runtime-completion-owner-context.js";
 import { compileV3ImplementationTransportProposalV1 } from "./v3-implementation-output.js";
@@ -2795,6 +2797,10 @@ export async function createInternalProductionBaselineCompletionOwnerBootstrapCl
 ): Promise<InternalProductionBaselineCompletionOwnerBootstrapCleanBuildVerificationV1 | null> {
   const capability = currentRuntimeCompletionOwnerCapability();
   if (!capability) completionBootstrapFailV1("OWNER_CONTEXT_REQUIRED");
+  if (selectedFreshInstallationRootV1() !== null) {
+    assertFreshInstallationOperationalEntryV1();
+    return null;
+  }
   const receipt = await import("../internal-production/baseline-post-handoff-receipt-v1.js") as unknown as Record<string, unknown>;
   const observeDelivery = receipt.observeCurrentInternalProductionBaselineTask12P0DeliveryAuthorityV1;
   const observeCurrentEntry = receipt.observeInternalProductionCurrentEntryAuthorityStatusV1;
