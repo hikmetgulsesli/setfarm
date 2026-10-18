@@ -37,6 +37,7 @@
 - Modify migration source-integrity manifest/generated digests only for dependencies/regions affected by32/33.
 - Create `tests/installation/fresh-installation-origin.test.ts`, `fresh-installation-bootstrap.integration.test.ts` and `fresh-installation-source-integrity.test.ts`: actual parser behavior, real PostgreSQL and mutation-based source binding; no default test-fixture bypass.
 - Create `tests/installation/fresh-source-checkout-fixture.ts`: one bounded committed copy of actual production source for source-mode integration tests; reuse installed dependencies and delete only that suite-owned temporary directory.
+- Create `tests/installation/fresh-installation-test-support.ts` and `fresh-installation-initial-catalog-policy.integration.test.ts`: reuse the exact OID-checked fresh test provisioning/teardown and prove initial ACL/unknown-routine refusal before prepared evidence/COMMIT.
 - Create `tests/installation/commit-ack-proxy.ts`: test-owned bounded loopback proxy that loses one actual server COMMIT response, without parsing/logging frontend statements or credentials.
 - Retarget the existing lifecycle-source boundary test in `tests/spawner-gateway-recovery.test.ts` to the extracted helper, preserving its current no-repair assertions.
 
@@ -309,3 +310,24 @@ heartbeat and one bounded clean workflow through its actual gates.
   digest/source-binding regression5e4ef7 passed16/16 before the final narrow
   information-schema exception. Earlier74-case and current8-case runs are
   separate evidence, not a claimed current full78-case run.
+
+- Review4306925807/4306925812 are causal correctness fixes to this same bootstrap:
+  hashing an invalid initial current-database ACL admitted PUBLIC CONNECT/runtime
+  grant options and caught PUBLIC CREATE only after commit; filtering routine
+  ACLs missed a new nonpublic function after PUBLIC was revoked. Genuine RED
+  8e603b failed all5 new cases for those exact reasons. Require the exact normalized
+  owner/runtime database ACL (owner CREATE/TEMPORARY/CONNECT and runtime CONNECT,
+  owner grantor, no grant options/other grants) before catalog publication, and
+  independently refuse normal-OID nonpublic routines regardless of ACL exposure.
+  Affected GREENbda6aa passed5/5 with no skips/cancellations; each refused case
+  proves no prepared/committed record and no public relations/routines. Final
+  noemit, migration digest check and whitespace571e20 exited0. Only migration33
+  semantic digest changed. Combined current-source regression/review/delivery
+  remain separate gates; Unit2a is safely frozen locally at4504e724 meanwhile.
+
+- Final combined current-source run0b7d4e:48passed/0failed/0skipped/0cancelled,
+  95.024267s across bootstrap, new initial-policy integration, origin parser,
+  fresh source binding and migration digest mutation tests. This includes actual
+  normal template0 initialization/restricted verification/reopen, genuine server
+  COMMIT-response loss and all5 new rollback cases. Two independent correction
+  reviews returned C0/I0/M0. Exact-head cloud review/clean-main build remain pending.
