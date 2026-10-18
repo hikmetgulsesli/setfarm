@@ -328,6 +328,7 @@ test("fresh restricted runtime locks the actual empty recovery chain and settles
           }),preparedAt:new Date(now),
         });
         assert.equal(plan.effects[0]!.effectKey,effectKey);
+        t.diagnostic("RECOVERY_PROJECTION_COMPONENT_PHASE:requests:before");
         for (const [request,claim,session] of [
           [requestId,claimId,sessionId],[emptyRequestId,emptyClaimId,"RTS_component-terminal-projection-0002"],
         ] as const) {
@@ -336,14 +337,19 @@ test("fresh restricted runtime locks the actual empty recovery chain and settles
             VALUES($1,$2,$3,$4,'component-terminal-step','test','{}'::jsonb,'component',$5,'component',NOW(),'processing',NOW(),'executing')`,
             [request,session,Number(claim),runId,outputHash]);
         }
+        t.diagnostic("RECOVERY_PROJECTION_COMPONENT_PHASE:requests:after");
+        t.diagnostic("RECOVERY_PROJECTION_COMPONENT_PHASE:plan:before");
         await tx.unsafe(`UPDATE runtime_completion_requests
           SET apply_phase='owner_committed',claim_outcome='failed',claim_committed_at=$2,
-              completion_plan=$3::jsonb,completion_plan_hash=$4,prepared_at=$2,updated_at=$2
+              completion_plan=$3::text::jsonb,completion_plan_hash=$4,prepared_at=$2,updated_at=$2
           WHERE request_id=$1`,[requestId,now,JSON.stringify(plan),planHash]);
+        t.diagnostic("RECOVERY_PROJECTION_COMPONENT_PHASE:plan:after");
         const effectInput={schema:"setfarm.runtime-completion-effect-input.v1",planHash,plan,effect:plan.effects[0]!.payload};
+        t.diagnostic("RECOVERY_PROJECTION_COMPONENT_PHASE:effects:before");
         await tx.unsafe(`INSERT INTO runtime_completion_effects(request_id,effect_key,ordinal,effect_type,input_hash,payload,mandatory,state,applied_at)
-          VALUES($1,$2,0,'terminal.finalize',$3,$4::jsonb,TRUE,'applied',NOW())`,
+          VALUES($1,$2,0,'terminal.finalize',$3,$4::text::jsonb,TRUE,'applied',NOW())`,
           [requestId,effectKey,canonical.hashCanonicalJson(effectInput),JSON.stringify(effectInput)]);
+        t.diagnostic("RECOVERY_PROJECTION_COMPONENT_PHASE:effects:after");
         await tx.unsafe("UPDATE runtime_completion_requests SET state='rejected',rejected_at=NOW() WHERE request_id=ANY($1::text[])",[[requestId,emptyRequestId]]);
         await tx.unsafe(`INSERT INTO run_termination_requests(request_id,run_id,target_status,state,requested_by,requested_at,drained_at,terminalized_at,diagnostic)
           VALUES($1,$2,'failed','terminalized','component',NOW(),NOW(),NOW(),'component')`,[terminationId,runId]);
