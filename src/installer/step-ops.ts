@@ -1,4 +1,5 @@
-import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
+import { selectedFreshInstallationRootV1, freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
+import { assertFreshInstallationOperationalEntryV1 } from "../installation/fresh-installation-entry-v1.js";
 import { getSql, pgQuery, pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
 import type { PgTransactionSql } from "../db-pg.js";
 import type { LoopConfig, Story } from "./types.js";
@@ -350,7 +351,27 @@ const PR_EACH_DELIVERY_BLOCKED_STEP_SQL = `(
 const ACTIONABLE_RETRY_OUTPUT_RE = /\b(?:PR_REVIEW_COMMENTS_OPEN|APP_INTEGRATION_[A-Z_]*REGRESSION|POST_MERGE_QUALITY_REGRESSION|VULNERABILITIES|SECURITY_FINDINGS?|STATUS:\s*retry)\b|actionable PR review comments/i;
 const PR_REVIEW_COMMENT_RETRY_LIMIT = 3;
 
+/** Fixed public API fence: selected calls require the actual already-prepared
+ * client/source; this function never prepares, activates or accepts authority. */
+function assertStepOperationInstallationV1(): void {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) assertFreshInstallationOperationalEntryV1();
+}
+function useLegacySharedOutputTmpV1(): boolean {
+  assertFreshInstallationSelectionUnchangedV1();
+  return freshInstallationSelectionV1 === null;
+}
+function cleanupLegacySharedOutputTmpV1(): void {
+  // Keep mode refusal outside best-effort filesystem catches.
+  if (!useLegacySharedOutputTmpV1()) return;
+  try {
+    const _tmpFiles = fs.readdirSync("/tmp").filter(f => f.startsWith("setfarm-output-") && f.endsWith(".txt"));
+    for (const _f of _tmpFiles) { try { fs.unlinkSync("/tmp/" + _f); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); } }
+  } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
+}
+
 function recoverableOutputTmpFiles(callerGatewayAgent?: string): string[] {
+  if (!useLegacySharedOutputTmpV1()) return [];
   let files: string[];
   try {
     files = fs.readdirSync("/tmp").filter((file) => file.startsWith("setfarm-output-") && file.endsWith(".txt"));
@@ -4061,6 +4082,7 @@ export type PeekResult = "HAS_WORK" | "NO_WORK";
  * Returns "HAS_WORK" if any pending/waiting steps exist, "NO_WORK" otherwise.
  */
 export async function peekStep(agentId: string, callerGatewayAgent?: string): Promise<PeekResult> {
+  assertStepOperationInstallationV1();
     // OUTPUT RECOVERY at peek time: if a previous session wrote output but died before
     // completing, recover it now. This prevents the "peek→NO_WORK→loop forever" problem
     // where claimStep's recovery never runs because peek returns NO_WORK first.
@@ -7172,6 +7194,7 @@ export async function claimStep(
   rawRuntimeIntent?: RuntimeClaimIntentV1,
   workIntent?: ClaimStepWorkIntent,
 ): Promise<ClaimResult> {
+  assertStepOperationInstallationV1();
   const runtimeIntent = rawRuntimeIntent
     ? parseRuntimeClaimIntentV1(rawRuntimeIntent)
     : undefined;
@@ -8752,6 +8775,7 @@ export async function completeStep(
   claimEnvelope?: ClaimEnvelopeV1,
   options: Readonly<{ deferContinuationToEffectLedger?: boolean }> = {},
 ): Promise<{ advanced: boolean; runCompleted: boolean }> {
+  assertStepOperationInstallationV1();
   sanitizePlatformProcessPath();
 
   type StepRow = { id: string; run_id: string; step_id: string; step_index: number; type: string; loop_config: string | null; current_story_id: string | null; agent_id: string; retry_count: number; max_retries: number };
@@ -12424,11 +12448,8 @@ ${prd}`;
   emitEvent({ ts: now(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id });
   logger.info(`Step completed: ${step.step_id}`, { runId: step.run_id, stepId: step.step_id });
 
-  // Post-complete: delete /tmp output files to prevent peek-recovery cross-step contamination
-  try {
-    const _tmpFiles = fs.readdirSync("/tmp").filter(f => f.startsWith("setfarm-output-") && f.endsWith(".txt"));
-    for (const _f of _tmpFiles) { try { fs.unlinkSync("/tmp/" + _f); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); } }
-  } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
+  // Shared legacy output files are never adopted or deleted by a selected installation.
+  cleanupLegacySharedOutputTmpV1();
 
   if (!immutableAcceptedCandidate) {
     await cleanupProjectEphemera(step.run_id, `step-complete:${step.step_id}`, context);

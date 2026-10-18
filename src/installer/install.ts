@@ -1,3 +1,5 @@
+import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
+import { readFreshInstallationPrivateWorkflowAssetsV1 } from "../installation/fresh-installation-private-assets-v1.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fetchWorkflow } from "./workflow-fetch.js";
@@ -296,6 +298,15 @@ async function writeWorkflowMetadata(params: { workflowDir: string; workflowId: 
 }
 
 export async function installWorkflow(params: { workflowId: string }): Promise<WorkflowInstallResult> {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) {
+    const entry = await import("../installation/fresh-installation-entry-v1.js");
+    await entry.prepareFreshInstallationOperationalEntryV1();
+    entry.assertFreshInstallationOperationalEntryV1();
+    const assets = readFreshInstallationPrivateWorkflowAssetsV1(freshInstallationSelectionV1.paths.root,
+      freshInstallationSelectionV1.state.origin.sourceSha, params.workflowId);
+    return { workflowId: assets.workflowId, workflowDir: assets.workflowDir };
+  }
   const { workflowDir, bundledSourceDir } = await fetchWorkflow(params.workflowId);
   const workflow = await loadWorkflowSpec(workflowDir);
   const provisioned = await provisionAgents({ workflow, workflowDir, bundledSourceDir, overwriteFiles: true });

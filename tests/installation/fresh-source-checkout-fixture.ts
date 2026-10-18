@@ -41,7 +41,10 @@ export function freshSourceCheckoutFixture() {
         copyFileSync(from, target);
       }
     };
-    for (const relative of ["src", "package.json", "package-lock.json", "tsconfig.json"]) copy(relative);
+    // Asset initialization reads only these fixed source-controlled trees.
+    // Track them in the same real fixture commit; keep all existing copy caps.
+    const sourcePaths = ["src", "package.json", "package-lock.json", "tsconfig.json", "workflows", "agents", "references", "skills"] as const;
+    for (const relative of sourcePaths) copy(relative);
     writeFileSync(path.join(root, ".gitignore"), "node_modules\n", { mode: 0o600 });
     symlinkSync(realpathSync(path.join(source, "node_modules")), path.join(root, "node_modules"), "dir");
     const git = (args: string[]) => execFileSync("/usr/bin/git", ["-c", "core.hooksPath=/dev/null", ...args], {
@@ -49,7 +52,7 @@ export function freshSourceCheckoutFixture() {
       encoding: "utf8", timeout: 15_000, maxBuffer: 1024 * 1024,
     });
     git(["init", "-q", "-b", "fixture"]);
-    git(["add", "--", "src", "package.json", "package-lock.json", "tsconfig.json", ".gitignore"]);
+    git(["add", "--", ...sourcePaths, ".gitignore"]);
     git(["-c", "user.name=Installation Test", "-c", "user.email=installation-test@example.invalid", "commit", "-q", "-m", "production source fixture"]);
     assert.equal(git(["status", "--porcelain=v1", "--untracked-files=all"]), "");
     const sha = git(["rev-parse", "HEAD"]).trim();

@@ -16,6 +16,12 @@ const tree = ts.createSourceFile("dashboard.ts", dashboard, ts.ScriptTarget.Late
 const entry = tree.statements.find((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node)
   && node.name?.text === "startDashboardWithPreSchemaAdmissionV3");
 assert.ok(entry?.body);
+// Reuse the actual fixed selected-mode declarations with the extracted entry.
+// This fixture remains an unselected legacy listener/readiness component.
+const admissionStart = dashboard.indexOf("const DASHBOARD_SELECTED_INSTALLATION_LOCATOR_V1 =");
+const admissionEnd = dashboard.indexOf("export function startDashboard(", admissionStart);
+assert.ok(admissionStart >= 0 && admissionEnd > admissionStart);
+const admissionSource = dashboard.slice(admissionStart, admissionEnd);
 const compile = (source: string) => ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -33,6 +39,11 @@ async function fixture(mode: string, run: (start: () => Promise<{ pid: number; p
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dashboard-readiness-")));
   const serverDir = path.join(root, "server"), internal = path.join(root, "internal-production");
   fs.mkdirSync(serverDir); fs.mkdirSync(internal);
+  fs.mkdirSync(path.join(root,"installation"));
+  fs.writeFileSync(path.join(root,"installation","fresh-installation-selection-v1.js"),"export const freshInstallationSelectionV1=null;export function assertFreshInstallationSelectionUnchangedV1(){}");
+  fs.writeFileSync(path.join(root,"installation","fresh-installation-entry-v1.js"),"export function prepareFreshInstallationOperationalEntryV1(){throw Error('SELECTED_ENTRY_REACHED_IN_LEGACY_FIXTURE')}export function assertFreshInstallationOperationalEntryV1(){throw Error('SELECTED_ENTRY_REACHED_IN_LEGACY_FIXTURE')}");
+  fs.writeFileSync(path.join(root,"db-pg.js"),"export async function pgClose(){throw Error('SELECTED_CLOSE_REACHED_IN_LEGACY_FIXTURE')}");
+  fs.writeFileSync(path.join(serverDir,"fresh-installation-service-controls-v1.js"),"const fail=()=>{throw Error('SELECTED_CONTROL_REACHED_IN_LEGACY_FIXTURE')};export const freshServicePathsV1=fail,inspectFreshServiceV1=fail,openFreshServiceLogV1=fail,freshServiceChildEnvironmentV1=fail,stopFreshServiceV1=fail,reclaimFreshServiceAfterHeldChildV1=fail,acquireFreshServiceProcessV1=fail;");
   fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
   fs.writeFileSync(path.join(root, "runtime-config.js"), "");
   fs.writeFileSync(path.join(internal, "baseline-deployment-cutover-v1.js"), "export function assertOrdinaryDashboardDeploymentCutoverAdmissionV2(){}");
@@ -67,6 +78,7 @@ async function fixture(mode: string, run: (start: () => Promise<{ pid: number; p
     import http from 'node:http';
     import {assertTask6aPreSchemaOrdinaryStartupV2} from '../internal-production/baseline-task6a-preschema-ordinary-refusal-v2.js';
     import {assertOrdinaryDashboardDeploymentCutoverAdmissionV2} from '../internal-production/baseline-deployment-cutover-v1.js';
+    ${admissionSource}
     ${entry.getText(tree)}
     function createDashboardServer(port,options){
       const server=http.createServer((req,res)=>res.end('fixture-ready'));

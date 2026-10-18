@@ -12,15 +12,86 @@ import { dirname, join } from "node:path";
 const entryArgs = process.argv.slice(2);
 const exactEntryDiagnostic = entryArgs.length === 3 && entryArgs[0] === "platform-release"
   && entryArgs[1] === "preflight" && entryArgs[2] === "--json";
-if (!exactEntryDiagnostic) {
-  try { assertOrdinarySpawnerDeploymentCutoverAdmissionV1(); }
-  catch {
-    process.stderr.write("DEPLOYMENT_CUTOVER_CLI_ENTRY_REFUSED\n");
+let freshCliEntryV1: typeof import("../installation/fresh-installation-entry-v1.js") | null = null;
+const freshCliLocatorV1 = process.env.SETFARM_INSTALLATION_DIR;
+let freshCliSelectionRefusedV1 = false;
+function assertCliSelectionModeV1(): void {
+  if (freshCliSelectionRefusedV1 || process.env.SETFARM_INSTALLATION_DIR !== freshCliLocatorV1) {
+    freshCliSelectionRefusedV1 = true;
+    throw new Error("FRESH_INSTALLATION_SELECTION_REFUSED");
+  }
+}
+function freshCliCustodyActionV1(args: readonly string[]): Readonly<{ service: "dashboard" | "spawner"; action: "status" | "stop" }> | null {
+  if (args.length !== 2 || (args[0] !== "dashboard" && args[0] !== "spawner")
+    || (args[1] !== "status" && args[1] !== "stop")) return null;
+  return { service: args[0], action: args[1] };
+}
+let freshCliCustodyHandledV1 = false;
+const freshCliCustodyV1 = freshCliLocatorV1 === undefined ? null : freshCliCustodyActionV1(entryArgs);
+if (freshCliCustodyV1) {
+  try {
+    assertCliSelectionModeV1();
+    const controls = await import("../server/fresh-installation-service-controls-v1.js");
+    assertCliSelectionModeV1();
+    const { service, action } = freshCliCustodyV1;
+    const label = service === "dashboard" ? "Dashboard" : "Spawner";
+    if (action === "stop") console.log(controls.stopFreshServiceV1(service) ? `${label} stopped.` : `${label} is not running.`);
+    else {
+      const state = controls.inspectFreshServiceV1(service);
+      console.log(state.running ? `${label} running (PID ${state.pid})` : `${label} is not running.`);
+    }
+    assertCliSelectionModeV1();
+    freshCliCustodyHandledV1 = true;
+  } catch {
+    process.stderr.write("FRESH_INSTALLATION_SERVICE_CONTROL_REFUSED\n");
     process.exit(1);
   }
 }
 
-if (exactEntryDiagnostic) {
+
+// Only reviewed private service/work forms enter actual selected preparation.
+function isFreshInstallationOperationalCliEntryV1(args: readonly string[]): boolean {
+  if (args.length < 1 || args.length > 64 || args.some(value => !value || value.includes("\0"))) return false;
+  const payload = (args[0] === "workflow" && args[1] === "run")
+    || (args[0] === "step" && (args[1] === "complete" || args[1] === "fail"));
+  if (!payload && args.some(value => value.length > 2048 || /[\x00-\x1f\x7f]/.test(value))) return false;
+  if (args.length === 1 && ["version", "--version", "-v", "ant", "logs"].includes(args[0]!)) return true;
+  if (args.length === 2 && args[0] === "logs") return true;
+  if ((args[0] === "dashboard" || args[0] === "spawner") && args.length === 2)
+    return args[1] === "start" || args[1] === "restart";
+  if (args[0] === "step") return args.length >= 3 && ["peek", "claim", "complete", "fail"].includes(args[1]!);
+  if (args[0] !== "workflow") return false;
+  if (args.length === 2 && ["list", "runs"].includes(args[1]!)) return true;
+  if (args.length === 3 && ["status", "install"].includes(args[1]!)) return true;
+  if (args[1] === "run") return args.length >= 4;
+  return args[1] === "stop" && args.length >= 5;
+}
+
+if (!exactEntryDiagnostic && !freshCliCustodyHandledV1) {
+  const selectedEntry = freshCliLocatorV1 !== undefined;
+  try {
+    assertCliSelectionModeV1();
+    if (selectedEntry) {
+      if (!isFreshInstallationOperationalCliEntryV1(entryArgs)) throw new Error("FRESH_INSTALLATION_CLI_ACTION_NOT_WIRED");
+      freshCliEntryV1 = await import("../installation/fresh-installation-entry-v1.js");
+      await freshCliEntryV1.prepareFreshInstallationOperationalEntryV1();
+      freshCliEntryV1.assertFreshInstallationOperationalEntryV1();
+    } else {
+      assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
+    }
+  } catch (error) {
+    const code = selectedEntry
+      ? error instanceof Error && error.message === "FRESH_INSTALLATION_CLI_ACTION_NOT_WIRED"
+        ? "FRESH_INSTALLATION_CLI_ACTION_NOT_WIRED" : "FRESH_INSTALLATION_CLI_ENTRY_REFUSED"
+      : "DEPLOYMENT_CUTOVER_CLI_ENTRY_REFUSED";
+    process.stderr.write(`${code}\n`);
+    process.exit(1);
+  }
+}
+
+if (freshCliCustodyHandledV1) {
+  // Custody only: no runtime guard, SQL preparation or installer imports.
+} else if (exactEntryDiagnostic) {
   try {
     const [
       { observePlatformReleaseProductionAdmissionReadinessV2 },
@@ -329,10 +400,31 @@ function printUsage() {
   );
 }
 
+function extractWorkflowRunOutputArgumentV1(args: readonly string[]): Readonly<{ jsonOutput: boolean; remainingArgs: string[] }> {
+  const count = args.filter(value => value === "--json").length;
+  if (count > 1) throw new Error("WORKFLOW_RUN_JSON_FLAG_INVALID");
+  return { jsonOutput: count === 1, remainingArgs: args.filter(value => value !== "--json") };
+}
+
+/** DATA rendering only; the callsite awaits actual production run persistence. */
+function renderWorkflowRunAcceptedV1(run: Awaited<ReturnType<typeof runWorkflow>>, compilerReleaseSha: string): string {
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(run.id)
+    || !Number.isSafeInteger(run.runNumber) || run.runNumber < 1 || !/^[a-z][a-z0-9-]{0,79}$/.test(run.workflowId)
+    || !["legacy", "shadow", "v3"].includes(run.protocol) || run.protocolVersion !== 1 || run.status !== "running"
+    || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(compilerReleaseSha)) throw new Error("WORKFLOW_RUN_ACCEPTED_RESULT_INVALID");
+  const value = JSON.stringify({ schema: "setfarm.workflow-run-accepted.v1", accepted: true, runId: run.id,
+    runNumber: run.runNumber, workflowId: run.workflowId, protocol: run.protocol, protocolVersion: run.protocolVersion,
+    status: run.status, compilerReleaseSha });
+  if (Buffer.byteLength(value) > 8192) throw new Error("WORKFLOW_RUN_ACCEPTED_RESULT_INVALID");
+  return value;
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
+  assertCliSelectionModeV1();
   assertRuntimeIntegrityOrExit();
+  freshCliEntryV1?.assertFreshInstallationOperationalEntryV1();
   if (args[0] === "platform-release" && args[1] === "preflight") {
     process.stderr.write("PLATFORM_RELEASE_PREFLIGHT_USAGE_INVALID\n");
     process.exitCode = 1;
@@ -503,6 +595,16 @@ async function main() {
       return;
     }
 
+    if (sub === "restart" && freshCliEntryV1) {
+      freshCliEntryV1.assertFreshInstallationOperationalEntryV1();
+      stopDaemon();
+      freshCliEntryV1.assertFreshInstallationOperationalEntryV1();
+      const result = await startDaemon(3333);
+      console.log(`Dashboard restarted (PID ${result.pid})`);
+      console.log(`  http://localhost:${result.port}`);
+      return;
+    }
+
     // start (explicit or implicit)
     let port = 3333;
     const portIdx = args.indexOf("--port");
@@ -514,9 +616,12 @@ async function main() {
       if (!Number.isNaN(parsed)) port = parsed;
     }
 
-    assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
-    await assertTask6aPreSchemaOrdinaryStartupV2();
-    assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
+    if (freshCliEntryV1) freshCliEntryV1.assertFreshInstallationOperationalEntryV1();
+    else {
+      assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
+      await assertTask6aPreSchemaOrdinaryStartupV2();
+      assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
+    }
     if (isRunning().running) {
       const status = getDaemonStatus();
       console.log(`Dashboard already running (PID ${status?.pid})`);
@@ -543,7 +648,8 @@ async function main() {
     }
 
     if (sub === "restart") {
-      assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
+      if (freshCliEntryV1) freshCliEntryV1.assertFreshInstallationOperationalEntryV1();
+      else assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
       stopSpawner();
       await new Promise((resolve) => setTimeout(resolve, 1000));
       const result = await startSpawner();
@@ -652,7 +758,8 @@ async function main() {
       if (!target) { process.stderr.write("Missing agent-id.\n"); process.exit(1); }
       const callerIdx = args.indexOf("--caller");
       const callerAgent = callerIdx !== -1 ? args[callerIdx + 1] : undefined;
-      await assertTask6aPreSchemaOrdinaryStartupV2();
+      if (freshCliEntryV1) freshCliEntryV1.assertFreshInstallationOperationalEntryV1();
+      else await assertTask6aPreSchemaOrdinaryStartupV2();
       const result = await peekStep(target, callerAgent);
       process.stdout.write(result + "\n");
       return;
@@ -661,7 +768,8 @@ async function main() {
       if (!target) { process.stderr.write("Missing agent-id.\n"); process.exit(1); }
       const callerIdx = args.indexOf("--caller");
       const callerAgent = callerIdx !== -1 ? args[callerIdx + 1] : undefined;
-      await assertTask6aPreSchemaOrdinaryStartupV2();
+      if (freshCliEntryV1) freshCliEntryV1.assertFreshInstallationOperationalEntryV1();
+      else await assertTask6aPreSchemaOrdinaryStartupV2();
       const result = await claimStep(target, callerAgent);
       if (!result.found) {
         process.stdout.write("NO_WORK\n");
@@ -919,7 +1027,8 @@ async function main() {
   if (!target) { printUsage(); process.exit(1); }
 
   if (action === "install") {
-    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
+    if (freshCliEntryV1) freshCliEntryV1.assertFreshInstallationOperationalEntryV1();
+    else assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     const result = await installWorkflow({ workflowId: target });
     process.stdout.write(`Installed workflow: ${result.workflowId}\nAgent crons will start when a run begins.\n`);
     process.stdout.write(`\nStart with: setfarm workflow run ${result.workflowId} "your task"\n`);
@@ -1045,10 +1154,12 @@ async function main() {
   }
 
   if (action === "run") {
-    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
+    if (freshCliEntryV1) freshCliEntryV1.assertFreshInstallationOperationalEntryV1();
+    else assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     let notifyUrl: string | undefined;
     let forceQuota = false;
-    const extractedProtocol = extractProtocolArgument(args.slice(3));
+    const { jsonOutput, remainingArgs } = extractWorkflowRunOutputArgumentV1(args.slice(3));
+    const extractedProtocol = extractProtocolArgument(remainingArgs);
     const requestedProtocol = extractedProtocol.requestedMode;
     const runArgs = extractedProtocol.remainingArgs;
     const nuIdx = runArgs.indexOf("--notify-url");
@@ -1064,8 +1175,13 @@ async function main() {
     let taskTitle = runArgs.join(" ").trim();
     // E2BIG fix: if task starts with @, read from file
     if (taskTitle.startsWith("@")) {
-      const { readFileSync } = await import("fs");
-      taskTitle = readFileSync(taskTitle.slice(1), "utf8").trim();
+      if (freshCliEntryV1) {
+        taskTitle = readUtf8RegularFileAtMostSync(taskTitle.slice(1), 2 * 1024 * 1024).text.trim();
+        freshCliEntryV1.assertFreshInstallationOperationalEntryV1();
+      } else {
+        const { readFileSync } = await import("fs");
+        taskTitle = readFileSync(taskTitle.slice(1), "utf8").trim();
+      }
     }
     if (!taskTitle) { process.stderr.write("Missing task title.\n"); printUsage(); process.exit(1); }
 
@@ -1122,11 +1238,12 @@ async function main() {
       ...(releaseAdmission ? { releaseAdmission } : {}),
     });
 
-    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
+    if (freshCliEntryV1) freshCliEntryV1.assertFreshInstallationOperationalEntryV1();
+    else assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
     if (process.env.SETFARM_DISABLE_SPAWNER_AUTOSTART !== "1" && !isSpawnerRunning().running) {
       try {
         const result = await startSpawner();
-        console.log(`Spawner started (PID ${result.pid}).`);
+        (jsonOutput ? console.error : console.log)(`Spawner started (PID ${result.pid}).`);
       } catch (err) {
         process.stderr.write(`Cannot start workflow run: spawner failed to start. ${err instanceof Error ? err.message : String(err)}\n`);
         process.exit(1);
@@ -1142,7 +1259,7 @@ async function main() {
     // (e.g. workflows that don't use kimi at all). The check is best-effort —
     // if the quota endpoint is unreachable we let the run through with a warning,
     // we never block a run because of a transient MC API failure.
-    if (!forceQuota) {
+    if (!freshCliEntryV1 && !forceQuota) {
       try {
         const http = await import("node:http");
         const quotaUrl = missionControlApi("/api/kimi-quota");
@@ -1209,6 +1326,11 @@ async function main() {
       ...(activationPreflight ? { activationPreflight } : {}),
       ...(releaseAdmission ? { releaseAdmission } : {}),
     });
+    freshCliEntryV1?.assertFreshInstallationOperationalEntryV1();
+    if (jsonOutput) {
+      process.stdout.write(renderWorkflowRunAcceptedV1(run, compilerReleaseSha) + "\n");
+      return;
+    }
     process.stdout.write(
       [
         `Run: #${run.runNumber} (${run.id})`,
@@ -1226,7 +1348,10 @@ async function main() {
   process.exit(1);
 }
 
-main().catch((err) => {
+main().then(async () => {
+  if (freshCliEntryV1) await pgClose();
+}).catch(async (err) => {
+  if (freshCliEntryV1) try { await pgClose(); } catch { /* Preserve the primary diagnostic. */ }
   process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
 });

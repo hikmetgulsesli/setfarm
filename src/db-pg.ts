@@ -176,6 +176,17 @@ function requireSelectedFreshDatabaseV1(): void {
   }
 }
 
+/** A captured acknowledged activation and this module's actual owned client are required. */
+export function assertSelectedFreshInstallationOperationalDatabaseV1(): void {
+  try {
+    requireSelectedFreshDatabaseV1();
+    if (!freshInstallationSelectionV1?.activation?.acknowledged
+      || !freshInstallationSelectionV1.activation.activatedPin) throw new Error();
+  } catch {
+    throw new Error("FRESH_INSTALLATION_OPERATIONAL_DATABASE_NOT_PREPARED");
+  }
+}
+
 /** Database verification only. No service, manifest activation or claim readiness. */
 export function prepareSelectedFreshInstallationDatabaseV1(): Promise<void> {
   try { assertFreshSelectionV1(); } catch { return Promise.reject(new Error("FRESH_INSTALLATION_DATABASE_NOT_PREPARED")); }

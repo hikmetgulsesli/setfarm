@@ -4,6 +4,11 @@
  * and immediately spawns agent sessions via openclaw CLI.
  */
 import { runtimeConfig } from "./runtime-config.js";
+import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "./installation/fresh-installation-selection-v1.js";
+import { prepareFreshInstallationOperationalEntryV1, assertFreshInstallationOperationalEntryV1 } from "./installation/fresh-installation-entry-v1.js";
+import { acquireFreshServiceProcessV1 } from "./server/fresh-installation-service-controls-v1.js";
+import { openFreshInstallationSpawnerListenerV1, type FreshSpawnerListenerV1 } from "./installation/fresh-installation-spawner-listener-v1.js";
+import { assertFreshInstallationPrivateAssetsV1 } from "./installation/fresh-installation-private-assets-v1.js";
 import { assertOrdinarySpawnerDeploymentCutoverAdmissionV1 } from "./internal-production/baseline-deployment-cutover-v1.js";
 import { assertTask6aPreSchemaOrdinaryStartupV2 } from "./internal-production/baseline-task6a-preschema-ordinary-refusal-v2.js";
 import { acquireInternalProductionDirectSpawnerChildStartupContextV1, consumeInternalProductionColdSpawnerPidResidueV1, observeInternalProductionColdSpawnerBootstrapJournalCensusV1, publishInternalProductionColdSpawnerBootstrapClaimV1, resolveInternalProductionColdSpawnerChildRuntimeSnapshotV1, resolveInternalProductionSpawnerInheritedRuntimeSnapshotV1 } from "./internal-production/baseline-restart-authority-retirement-v1.js";
@@ -314,6 +319,17 @@ let agentRuntimeInitializedV1 = false;
 
 function initializeAgentRuntimeV1(): void {
   if (agentRuntimeInitializedV1) return;
+  if (SELECTED_SPAWNER_V1) {
+    assertSelectedSpawnerPolicyV1();
+    assertFreshInstallationOperationalEntryV1();
+    CODEX_CLI = resolveCodexCli();
+    if (!commandIsUsable(CODEX_CLI)) throw new Error("FRESH_SPAWNER_CODEX_UNAVAILABLE");
+    AGENT_RUNTIME = "codex";
+    MAX_CONCURRENT = parsePositiveInt(process.env.SETFARM_MAX_CONCURRENT, 2);
+    AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, 4 * 60_000);
+    agentRuntimeInitializedV1 = true;
+    return;
+  }
   CODEX_CLI = resolveCodexCli();
   OPENCLAW_CLI = resolveOpenClawCli();
   KIMI_CLI = resolveKimiCli();
@@ -330,8 +346,62 @@ const POLL_INTERVAL_MS = 30_000;
 const ACTIVE_RETRY_STORY_SQL = "(retry_count > 0 OR COALESCE(output, '') ~* 'PR_REVIEW_COMMENTS_OPEN|actionable PR review comments')";
 const ACTIVE_RETRY_STORY_ALIAS_SQL = "(active_st.retry_count > 0 OR COALESCE(active_st.output, '') ~* 'PR_REVIEW_COMMENTS_OPEN|actionable PR review comments')";
 const AGENT_TIMEOUT_SECONDS = 1800;
-const PID_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");
-const LOCK_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.lock");
+const SELECTED_SPAWNER_V1 = freshInstallationSelectionV1;
+const SELECTED_RUNNER_V1 = process.env.SETFARM_AGENT_RUNTIME;
+let selectedSpawnerPolicyRefusedV1 = false;
+let selectedSpawnerLeaseV1: Readonly<{ release(): void; retainOnExit(): void }> | undefined;
+let selectedSpawnerListenerV1: FreshSpawnerListenerV1 | undefined;
+let selectedSpawnerShutdownV1: (() => Promise<number>) | undefined;
+let selectedSpawnerFailedV1 = false;
+let selectedSpawnerReadyV1 = false;
+function assertSelectedSpawnerPolicyV1(): void {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (!SELECTED_SPAWNER_V1 || selectedSpawnerPolicyRefusedV1 || SELECTED_RUNNER_V1 !== "codex"
+    || process.env.SETFARM_AGENT_RUNTIME !== SELECTED_RUNNER_V1) {
+    selectedSpawnerPolicyRefusedV1 = true;
+    throw new Error("FRESH_SPAWNER_RUNTIME_SELECTION_REFUSED");
+  }
+  SELECTED_SPAWNER_V1.assertUnchanged();
+}
+/** Selected assertions cannot manufacture preparation. Main prepares first. */
+async function assertSpawnerOperationalEntryV1(): Promise<void> {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (SELECTED_SPAWNER_V1) {
+    assertSelectedSpawnerPolicyV1();
+    assertFreshInstallationOperationalEntryV1();
+  } else await assertTask6aPreSchemaOrdinaryStartupV2();
+}
+function stopSelectedSpawnerBeforeDrainRegistrationV1(): void { shuttingDown = true; }
+function releaseSpawnerProcessV1(): void {
+  if (SELECTED_SPAWNER_V1) {
+    const lease = selectedSpawnerLeaseV1;
+    selectedSpawnerLeaseV1 = undefined;
+    lease?.release();
+  } else releaseSpawnerSingletonLock();
+}
+function assertSelectedSpawnerStartupContinuesV1(): void {
+  assertSelectedSpawnerPolicyV1();
+  assertFreshInstallationOperationalEntryV1();
+  if (shuttingDown || (!selectedSpawnerReadyV1 && (typeof process.send !== "function" || !process.connected))) {
+    throw new Error("FRESH_SPAWNER_STARTUP_STOPPED_OR_IPC_ABSENT");
+  }
+}
+function prepareSelectedSpawnerDirectoriesV1(): void {
+  assertSelectedSpawnerStartupContinuesV1();
+  const selected = SELECTED_SPAWNER_V1!;
+  for (const directory of [selected.paths.root, AGENT_SAFE_CWD, TRANSCRIPT_ROOT, OPENCLAW_AGENTS_ROOT, OPENCLAW_ATTEMPT_WORKSPACE_ROOT]) {
+    try { fs.mkdirSync(directory, { mode: 0o700 }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+    const stat = fs.lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid!()
+      || (stat.mode & 0o777) !== 0o700 || fs.realpathSync(directory) !== directory) {
+      throw new Error("FRESH_SPAWNER_PRIVATE_DIRECTORY_REFUSED");
+    }
+  }
+  assertSelectedSpawnerStartupContinuesV1();
+}
+const PID_FILE = SELECTED_SPAWNER_V1 ? path.join(SELECTED_SPAWNER_V1.paths.root, "services", "spawner.pid") : path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");
+const LOCK_FILE = SELECTED_SPAWNER_V1 ? path.join(SELECTED_SPAWNER_V1.paths.root, "services", "spawner.lock") : path.join(os.homedir(), ".openclaw", "setfarm", "spawner.lock");
 const SPAWN_STAGGER_MS = parseInt(process.env.SETFARM_SPAWN_STAGGER_MS || "12000", 10);
 const RUNTIME_USAGE_LIMIT_DEFAULT_COOLDOWN_MS = parsePositiveInt(process.env.SETFARM_RUNTIME_USAGE_LIMIT_COOLDOWN_MS, 4 * 60_000);
 const WORKFLOW_DEFER_RETRY_MS = parsePositiveInt(process.env.SETFARM_WORKFLOW_DEFER_RETRY_MS, POLL_INTERVAL_MS);
@@ -424,11 +494,11 @@ const spawnerDirectStartupReadinessCleanupV1 = new Set<() => void>();
 // the proactive layer: start every agent in a non-git scratch directory so
 // stray `git` commands fail with "not a git repository" instead of silently
 // landing in the wrong repo.
-const SETFARM_SRC = path.resolve(process.env.SETFARM_REPO_DIR || path.join(os.homedir(), ".openclaw", "setfarm-repo"));
-const AGENT_SAFE_CWD = path.join(os.homedir(), ".openclaw", "workspace", "agent-scratch");
-const TRANSCRIPT_ROOT = path.join(os.homedir(), ".openclaw", "workspace", "transcripts");
-const OPENCLAW_AGENTS_ROOT = path.join(os.homedir(), ".openclaw", "agents");
-const OPENCLAW_ATTEMPT_WORKSPACE_ROOT = path.join(os.homedir(), ".openclaw", "setfarm", "attempt-workspaces");
+const SETFARM_SRC = SELECTED_SPAWNER_V1 ? SELECTED_SPAWNER_V1.paths.repository : path.resolve(process.env.SETFARM_REPO_DIR || path.join(os.homedir(), ".openclaw", "setfarm-repo"));
+const AGENT_SAFE_CWD = SELECTED_SPAWNER_V1 ? path.join(SELECTED_SPAWNER_V1.paths.root, "agent-scratch") : path.join(os.homedir(), ".openclaw", "workspace", "agent-scratch");
+const TRANSCRIPT_ROOT = SELECTED_SPAWNER_V1 ? path.join(SELECTED_SPAWNER_V1.paths.root, "transcripts") : path.join(os.homedir(), ".openclaw", "workspace", "transcripts");
+const OPENCLAW_AGENTS_ROOT = SELECTED_SPAWNER_V1 ? path.join(SELECTED_SPAWNER_V1.paths.root, "agents") : path.join(os.homedir(), ".openclaw", "agents");
+const OPENCLAW_ATTEMPT_WORKSPACE_ROOT = SELECTED_SPAWNER_V1 ? path.join(SELECTED_SPAWNER_V1.paths.root, "attempt-workspaces") : path.join(os.homedir(), ".openclaw", "setfarm", "attempt-workspaces");
 
 function assertAgentRuntimeAvailable(): void {
   const command = AGENT_RUNTIME === "codex" ? CODEX_CLI : AGENT_RUNTIME === "openclaw" ? OPENCLAW_CLI : AGENT_RUNTIME === "opencode" ? OPENCODE_CLI : KIMI_CLI;
@@ -3737,6 +3807,7 @@ function commandStoryWorktreeRoots(command: string): string[] {
 }
 
 function cleanupSpawnerDetachedToolChildren(context: string): void {
+  if (SELECTED_SPAWNER_V1) return; // Selected cleanup never enumerates ambient processes.
   let out = "";
   try {
     out = execFileSync("ps", ["-axo", "pid=,ppid=,command="], {
@@ -3863,6 +3934,7 @@ function cleanupOpenClawSessionLockSync(agentDir: string, record: OpenClawSessio
 }
 
 function cleanupStaleSetfarmOpenClawSessionRecordsSync(context: string): number {
+  if (SELECTED_SPAWNER_V1) throw new Error("FRESH_SPAWNER_SHARED_SWEEP_FORBIDDEN");
   const activeKeys = activeSessionKeys();
   const now = Date.now();
   let changed = 0;
@@ -4168,12 +4240,14 @@ function cancelLingeringOpenClawTasksForLookup(lookup: string, context: string):
 }
 
 function cleanupStaleSetfarmOpenClawTaskRecords(context: string): OpenClawCleanupResult {
+  if (SELECTED_SPAWNER_V1) throw new Error("FRESH_SPAWNER_SHARED_SWEEP_FORBIDDEN");
   const sessions = cleanupStaleSetfarmOpenClawSessionRecordsSync(context);
   const tasks = markStaleSetfarmOpenClawTaskRecordsCancelledSync(context);
   return { sessions, tasks };
 }
 
 async function restartGatewayAfterOpenClawCleanup(context: string, result: OpenClawCleanupResult): Promise<boolean> {
+  if (SELECTED_SPAWNER_V1) throw new Error("FRESH_SPAWNER_SHARED_SWEEP_FORBIDDEN");
   const changed = result.sessions + result.tasks;
   if (changed === 0) return false;
   if (gatewayRestartInFlight) return false;
@@ -4218,7 +4292,7 @@ async function restartGatewayAfterOpenClawCleanup(context: string, result: OpenC
   });
   gatewayRestartInFlight = false;
   if (restarted) {
-    await assertTask6aPreSchemaOrdinaryStartupV2();
+    await assertSpawnerOperationalEntryV1();
     if (shuttingDown) return restarted;
     cleanupStaleSetfarmOpenClawTaskRecords(`${context}-post-gateway-restart`);
   }
@@ -4918,6 +4992,7 @@ function pidIsAlive(pid: number): boolean {
 }
 
 async function killStartupOrphanSpawnerAgents(): Promise<void> {
+  if (SELECTED_SPAWNER_V1) throw new Error("FRESH_SPAWNER_SHARED_SWEEP_FORBIDDEN");
   const orphans: Array<{ pid: number; sessionKey: string }> = [];
   try {
     const out = execFileSync("pgrep", ["-f", "openclaw.*agent.*--session-id spawner-"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -6928,7 +7003,7 @@ async function reconcileTerminalClaimRuntimeOwnership(): Promise<void> {
 
 async function runClaimMaintenance(): Promise<void> {
   if (shuttingDown || claimMaintenanceInFlight) return;
-  await assertTask6aPreSchemaOrdinaryStartupV2();
+  await assertSpawnerOperationalEntryV1();
   if (shuttingDown || claimMaintenanceInFlight) return;
   claimMaintenanceInFlight = true;
   try {
@@ -7601,14 +7676,14 @@ function matchesTask6aV2RetainedPostClaimRuntimeForShutdown(
 }
 
 async function spawnAgentNow(agentId: string, wfId: string, role: string): Promise<void> {
-  await assertTask6aPreSchemaOrdinaryStartupV2();
+  await assertSpawnerOperationalEntryV1();
   const key = `${wfId}:${role}:${agentId}`;
   if (activeProcesses.has(key) || claimingSpawns.has(key) || hasTrackedClaimRuntime((active) => `${active.wfId}:${active.role}:${active.agentId}` === key)) {
     console.log(`[spawner] Already running/claiming: ${key}, skip`);
     return;
   }
   const deferBackgroundWorkflow = await shouldDeferBackgroundWorkflow(wfId);
-  await assertTask6aPreSchemaOrdinaryStartupV2();
+  await assertSpawnerOperationalEntryV1();
   if (shuttingDown) return;
   if (deferBackgroundWorkflow) {
     console.log(`[spawner] Deferring background workflow ${wfId}/${role}; foreground run is active`);
@@ -7623,7 +7698,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     ? cleanupStaleSetfarmOpenClawTaskRecords("prespawn")
     : { sessions: 0, tasks: 0 };
   if (AGENT_RUNTIME === "openclaw" && !OPENCLAW_AGENT_LOCAL) await restartGatewayAfterOpenClawCleanup("prespawn", openClawCleanup);
-  await assertTask6aPreSchemaOrdinaryStartupV2();
+  await assertSpawnerOperationalEntryV1();
   if (shuttingDown) return;
   if (trackedRuntimeCount() >= MAX_CONCURRENT) {
     console.log(`[spawner] At capacity (${trackedRuntimeCount()}/${MAX_CONCURRENT}), skip ${agentId}`);
@@ -7631,7 +7706,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   }
   if (AGENT_RUNTIME === "openclaw" && !OPENCLAW_AGENT_LOCAL) {
     const gatewayReadiness = await getGatewayReadiness();
-    await assertTask6aPreSchemaOrdinaryStartupV2();
+    await assertSpawnerOperationalEntryV1();
     if (shuttingDown) return;
     if (!gatewayReadiness.ready) {
       maybeRestartGatewayForReadiness(gatewayReadiness.reason, key);
@@ -7695,7 +7770,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     return;
   }
   try {
-    await assertTask6aPreSchemaOrdinaryStartupV2();
+    await assertSpawnerOperationalEntryV1();
   } catch {
     if (!retainTask6aV2PostClaimRuntimeIfExact(claim, runtimeIntent)) task6aV2UnboundPostClaimRefusals++;
     claimingSpawns.delete(key);
@@ -7859,7 +7934,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     return;
   }
   try {
-    await assertTask6aPreSchemaOrdinaryStartupV2();
+    await assertSpawnerOperationalEntryV1();
   } catch {
     postClaimRefusedV2 = true;
     if (!retainTask6aV2PostClaimRuntimeIfExact(claim, runtimeIntent)) task6aV2UnboundPostClaimRefusals++;
@@ -7994,7 +8069,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     runtimeLookupSettled = { ok: false, error };
   }
   try {
-    await assertTask6aPreSchemaOrdinaryStartupV2();
+    await assertSpawnerOperationalEntryV1();
   } catch {
     postClaimRefusedV2 = true;
     if (!retainTask6aV2PostClaimRuntimeIfExact(claim, runtimeIntent)) task6aV2UnboundPostClaimRefusals++;
@@ -9550,7 +9625,7 @@ function dispatchTask6aV2OrdinaryListener<T>(
 ): void {
   void (async () => {
     const payload = JSON.parse(message) as T;
-    await assertTask6aPreSchemaOrdinaryStartupV2();
+    await assertSpawnerOperationalEntryV1();
     if (shuttingDown) return;
     await handler(payload);
   })().catch((error) => logOrdinaryListenerRejection(channel, error));
@@ -10192,7 +10267,7 @@ async function reconcileTerminalShadowAttempts(runtimeQuiesced = false): Promise
 async function pollForPendingWork() {
   if (shuttingDown) return;
   try {
-    await assertTask6aPreSchemaOrdinaryStartupV2();
+    await assertSpawnerOperationalEntryV1();
     await processRunTerminationRequests();
     await processRuntimeCompletionRequests();
     await reconcileTerminalShadowAttempts();
@@ -10200,7 +10275,7 @@ async function pollForPendingWork() {
     await runV3EvidenceOnlyRecovery();
     await runClaimMaintenance();
     await cleanupRunningRunOrphanedToolWorkers();
-    cleanupSpawnerDetachedToolChildren("poll-orphan-sweep");
+    if (!SELECTED_SPAWNER_V1) cleanupSpawnerDetachedToolChildren("poll-orphan-sweep");
     await autoVerifyMergedPrEachStories();
     await autoPassEvidenceReadySuperviseEachSteps();
     await repairCompletedSuperviseEachSteps();
@@ -11272,98 +11347,98 @@ async function main() {
     console.warn(`[spawner] unhandled rejection: ${String(err).slice(0, 500)}`);
   });
 
-  // Refusal-only preflight preserves any already-visible unsettled evidence.
-  if (await runInternalProductionDirectSpawnerStartupV1()) return;
-  if (await runInternalProductionColdSpawnerStartupV1()) return;
-  await assertTask6aPreSchemaOrdinaryStartupV2();
-  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
-  const coldRecoveryAdmission = await observeOrdinarySpawnerColdRecoveryAdmissionV1();
-  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
-  await reclaimPostRecoveryOrdinaryStartupFilesV1(coldRecoveryAdmission);
-  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
-  acquireSpawnerSingletonLock();
-  fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
-  publishSpawnerPidFileV1();
-  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
-  await assertOrdinarySpawnerColdRecoveryAdmissionV1(coldRecoveryAdmission);
-  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
-  const activeStartupAdmission = await resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1();
-  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
-  if (activeStartupAdmission) {
-    const startupClaim = await claimInternalProductionBaselineSpawnerStartupAdmissionV1({ admission: activeStartupAdmission });
+  if (SELECTED_SPAWNER_V1) {
+    process.once("SIGTERM", stopSelectedSpawnerBeforeDrainRegistrationV1);
+    process.once("SIGINT", stopSelectedSpawnerBeforeDrainRegistrationV1);
+    assertSelectedSpawnerPolicyV1();
+    await prepareFreshInstallationOperationalEntryV1();
+    assertSelectedSpawnerStartupContinuesV1();
+    assertFreshInstallationPrivateAssetsV1(SELECTED_SPAWNER_V1.paths.root, SELECTED_SPAWNER_V1.state.origin.sourceSha);
+    selectedSpawnerLeaseV1 = acquireFreshServiceProcessV1("spawner");
+  } else {
+    // Refusal-only preflight preserves any already-visible unsettled evidence.
+    if (await runInternalProductionDirectSpawnerStartupV1()) return;
+    if (await runInternalProductionColdSpawnerStartupV1()) return;
+    await assertTask6aPreSchemaOrdinaryStartupV2();
     assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
-    await awaitInternalProductionBaselineSpawnerRestartAuthorityV1({ admission: activeStartupAdmission, startupClaimHash: startupClaim.startupClaimHash });
+    const coldRecoveryAdmission = await observeOrdinarySpawnerColdRecoveryAdmissionV1();
     assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
-    if (activeStartupAdmission.bootstrapOperationRef !== null && activeStartupAdmission.bootstrapOperationHash !== null) {
-      const operationPair = { operationRef: activeStartupAdmission.bootstrapOperationRef, operationHash: activeStartupAdmission.bootstrapOperationHash };
-      const runtime = await import("./execution/runtime-completion.js");
+    await reclaimPostRecoveryOrdinaryStartupFilesV1(coldRecoveryAdmission);
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
+    acquireSpawnerSingletonLock();
+    fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
+    publishSpawnerPidFileV1();
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
+    await assertOrdinarySpawnerColdRecoveryAdmissionV1(coldRecoveryAdmission);
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
+    const activeStartupAdmission = await resolveActiveInternalProductionBaselineSpawnerStartupAdmissionV1();
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
+    if (activeStartupAdmission) {
+      const startupClaim = await claimInternalProductionBaselineSpawnerStartupAdmissionV1({ admission: activeStartupAdmission });
       assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
-      const released = await runtime.recoverAndReleaseInternalProductionBaselineCompletionOwnerBootstrapTargetV1(operationPair);
+      await awaitInternalProductionBaselineSpawnerRestartAuthorityV1({ admission: activeStartupAdmission, startupClaimHash: startupClaim.startupClaimHash });
       assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
-      if (released.state !== "owner_released") throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_BOOTSTRAP_OWNER_NOT_RELEASED");
-      const sequenceModule = await import("./internal-production/baseline-service-restart-sequence-v1.js");
-      assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
-      const sequencePair = await sequenceModule.finalizeInternalProductionBaselineSpawnerBootstrapRestartSequenceV1(operationPair);
-      assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
-      const sequence = await sequenceModule.resolveInternalProductionBaselineSpawnerBootstrapRestartSequenceV1(sequencePair);
-      const completed = await runtime.observeInternalProductionBaselineCompletionOwnerBootstrapLifecycleV1(operationPair);
-      if (sequence.operationRef !== operationPair.operationRef || sequence.operationHash !== operationPair.operationHash || completed.state !== "completed" || completed.sequenceRef !== sequencePair.sequenceRef || completed.sequenceHash !== sequencePair.sequenceHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_BOOTSTRAP_SEQUENCE_INCOMPLETE");
+      if (activeStartupAdmission.bootstrapOperationRef !== null && activeStartupAdmission.bootstrapOperationHash !== null) {
+        const operationPair = { operationRef: activeStartupAdmission.bootstrapOperationRef, operationHash: activeStartupAdmission.bootstrapOperationHash };
+        const runtime = await import("./execution/runtime-completion.js");
+        assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
+        const released = await runtime.recoverAndReleaseInternalProductionBaselineCompletionOwnerBootstrapTargetV1(operationPair);
+        assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
+        if (released.state !== "owner_released") throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_BOOTSTRAP_OWNER_NOT_RELEASED");
+        const sequenceModule = await import("./internal-production/baseline-service-restart-sequence-v1.js");
+        assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
+        const sequencePair = await sequenceModule.finalizeInternalProductionBaselineSpawnerBootstrapRestartSequenceV1(operationPair);
+        assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
+        const sequence = await sequenceModule.resolveInternalProductionBaselineSpawnerBootstrapRestartSequenceV1(sequencePair);
+        const completed = await runtime.observeInternalProductionBaselineCompletionOwnerBootstrapLifecycleV1(operationPair);
+        if (sequence.operationRef !== operationPair.operationRef || sequence.operationHash !== operationPair.operationHash || completed.state !== "completed" || completed.sequenceRef !== sequencePair.sequenceRef || completed.sequenceHash !== sequencePair.sequenceHash) throw new Error("INTERNAL_PRODUCTION_BASELINE_SPAWNER_BOOTSTRAP_SEQUENCE_INCOMPLETE");
+      }
     }
+    const startupAdmission = await import("./internal-production/baseline-spawner-startup-admission-v1.js");
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
+    const startupGate = await enforceInternalProductionPreSchemaSpawnerStartupGateV1({
+      startupAdmission,
+      loadReceiptAuthority: () => import("./internal-production/baseline-post-handoff-receipt-v1.js"),
+      waitForStop: () => new Promise<void>((resolve) => {
+        const stop = () => resolve();
+        process.once("SIGTERM", stop);
+        process.once("SIGINT", stop);
+      }),
+      cleanupSealedProcess: () => {
+        releaseSpawnerSingletonLock();
+      },
+    });
+    if (startupGate === "sealed") return;
+    assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   }
-  const startupAdmission = await import("./internal-production/baseline-spawner-startup-admission-v1.js");
-  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
-  const startupGate = await enforceInternalProductionPreSchemaSpawnerStartupGateV1({
-    startupAdmission,
-    loadReceiptAuthority: () => import("./internal-production/baseline-post-handoff-receipt-v1.js"),
-    waitForStop: () => new Promise<void>((resolve) => {
-      const stop = () => resolve();
-      process.once("SIGTERM", stop);
-      process.once("SIGINT", stop);
-    }),
-    cleanupSealedProcess: () => {
-      releaseSpawnerSingletonLock();
-    },
-  });
-  if (startupGate === "sealed") return;
-  assertOrdinarySpawnerDeploymentCutoverAdmissionV1();
   initializeAgentRuntimeV1();
-  try { fs.mkdirSync(AGENT_SAFE_CWD, { recursive: true }); } catch { /* best-effort */ }
-  try { fs.mkdirSync(TRANSCRIPT_ROOT, { recursive: true }); } catch { /* best-effort */ }
-  try { fs.mkdirSync(OPENCLAW_ATTEMPT_WORKSPACE_ROOT, { recursive: true }); } catch { /* best-effort */ }
+  if (SELECTED_SPAWNER_V1) prepareSelectedSpawnerDirectoriesV1();
+  else {
+    try { fs.mkdirSync(AGENT_SAFE_CWD, { recursive: true }); } catch { /* best-effort */ }
+    try { fs.mkdirSync(TRANSCRIPT_ROOT, { recursive: true }); } catch { /* best-effort */ }
+    try { fs.mkdirSync(OPENCLAW_ATTEMPT_WORKSPACE_ROOT, { recursive: true }); } catch { /* best-effort */ }
+  }
   assertAgentCwdSafe();
   assertAgentRuntimeAvailable();
   console.log(`[spawner] Starting (PID ${process.pid}, runtime=${AGENT_RUNTIME})`);
-  await pgMigrate();
-  terminalAttemptReconciler = createPostgresTerminalAttemptReconciler(getSql(), {
-    emit: recordTerminalAttemptReconcileEvent,
-  });
-  await killStartupOrphanSpawnerAgents();
-  await processRunTerminationRequests();
-  await processRuntimeCompletionRequests();
-  await reconcileV3RecoveryLifecycle();
-  await runV3EvidenceOnlyRecovery();
-  await failStaleRunningClaimsFromPreviousSpawner();
-  await requeueOrphanedRunningStories();
-  await reconcileTerminalShadowAttempts(true);
-  await cleanupRunningRunEphemeraOnStartup();
-  if (AGENT_RUNTIME === "openclaw") {
-    await restartGatewayAfterOpenClawCleanup("startup", cleanupStaleSetfarmOpenClawTaskRecords("startup"));
-  }
-
-  const pgUrl = process.env.SETFARM_PG_URL || "postgresql://postgres@localhost:5432/setfarm";
-  const listener = postgres(pgUrl, { max: 1 });
+  let legacySpawnerListenerV1: postgres.Sql | undefined;
   const intervalHandles: NodeJS.Timeout[] = [];
   let shutdownPromise: Promise<number> | undefined;
 
   const shutdown = (): Promise<number> => {
     if (shutdownPromise) return shutdownPromise;
     shutdownPromise = (async () => {
+      // Retention is armed before any awaited drain. Only a complete proven
+      // clean drain below may explicitly release private service evidence.
+      if (SELECTED_SPAWNER_V1) selectedSpawnerLeaseV1?.retainOnExit();
       shuttingDown = true;
       for (const handle of intervalHandles) clearInterval(handle);
       console.log(`[spawner] Shutting down (${activeProcesses.size} active, ${drainingProcesses.size} draining, ${inFlightSpawnPromises.size} in-flight)`);
       try {
-        await listener.end({ timeout: 5 });
+        if (SELECTED_SPAWNER_V1) await selectedSpawnerListenerV1?.end();
+        else await legacySpawnerListenerV1?.end({ timeout: 5 });
       } catch (error) {
+        if (SELECTED_SPAWNER_V1) selectedSpawnerFailedV1 = true;
         console.warn(`[spawner] listener shutdown failed: ${String(error).slice(0, 300)}`);
       }
 
@@ -11381,8 +11456,10 @@ async function main() {
       for (const active of tracked.values()) {
         results.push(await releaseActiveProcessForShutdown(active));
       }
-      activeProcesses.clear();
-      drainingProcesses.clear();
+      if (!SELECTED_SPAWNER_V1) {
+        activeProcesses.clear();
+        drainingProcesses.clear();
+      }
 
       const runtimeSessions = createRuntimeSessionRepository(getSql());
       const remaining = await runtimeSessions.listRecoverable({
@@ -11455,10 +11532,14 @@ async function main() {
       const retained = results.filter((result) => result.status === "retained_for_recovery");
       await runRecoveryCoordinator.close();
       await pgClose();
-      releaseSpawnerSingletonLock();
-      const exitCode = failed.length > 0 || retained.length > 0
+      const exitCode = selectedSpawnerFailedV1 || failed.length > 0 || retained.length > 0
         || task6aV2UnboundPostClaimRefusals > 0
-        || task6aV2RetainedPostClaimRuntimes.size !== retained.length ? 1 : 0;
+        || task6aV2RetainedPostClaimRuntimes.size !== retained.length
+        || (SELECTED_SPAWNER_V1 !== null && (inFlightSpawnPromises.size > 0 || claimingSpawns.size > 0)) ? 1 : 0;
+      if (!SELECTED_SPAWNER_V1 || exitCode === 0) {
+        if (SELECTED_SPAWNER_V1) { activeProcesses.clear(); drainingProcesses.clear(); }
+        releaseSpawnerProcessV1();
+      }
       process.exitCode = exitCode;
       console.log(`[spawner] Shutdown complete: ${results.length - failed.length - retained.length} released/completed, ${retained.length} retained, ${task6aV2UnboundPostClaimRefusals} unbound post-claim refusals, ${failed.length} quarantined, exit=${exitCode}`);
       return exitCode;
@@ -11466,13 +11547,58 @@ async function main() {
       console.error(`[spawner] Shutdown failed closed: ${String(error).slice(0, 1_000)}`);
       process.exitCode = 1;
       try { await pgClose(); } catch {}
-      releaseSpawnerSingletonLock();
+      if (SELECTED_SPAWNER_V1) selectedSpawnerLeaseV1?.retainOnExit();
+      else releaseSpawnerProcessV1();
       return 1;
     });
     return shutdownPromise;
   };
-  process.on("SIGTERM", () => { void shutdown(); });
-  process.on("SIGINT", () => { void shutdown(); });
+  if (SELECTED_SPAWNER_V1) {
+    selectedSpawnerShutdownV1 = shutdown;
+    process.on("SIGTERM", () => { void shutdown(); });
+    process.on("SIGINT", () => { void shutdown(); });
+    process.off("SIGTERM", stopSelectedSpawnerBeforeDrainRegistrationV1);
+    process.off("SIGINT", stopSelectedSpawnerBeforeDrainRegistrationV1);
+    assertSelectedSpawnerStartupContinuesV1();
+  }
+  if (SELECTED_SPAWNER_V1) await assertSpawnerOperationalEntryV1();
+  else await pgMigrate();
+  terminalAttemptReconciler = createPostgresTerminalAttemptReconciler(getSql(), {
+    emit: recordTerminalAttemptReconcileEvent,
+  });
+  if (!SELECTED_SPAWNER_V1) await killStartupOrphanSpawnerAgents();
+  await processRunTerminationRequests();
+  if (SELECTED_SPAWNER_V1) assertSelectedSpawnerStartupContinuesV1();
+  await processRuntimeCompletionRequests();
+  if (SELECTED_SPAWNER_V1) assertSelectedSpawnerStartupContinuesV1();
+  await reconcileV3RecoveryLifecycle();
+  if (SELECTED_SPAWNER_V1) assertSelectedSpawnerStartupContinuesV1();
+  await runV3EvidenceOnlyRecovery();
+  if (SELECTED_SPAWNER_V1) assertSelectedSpawnerStartupContinuesV1();
+  await failStaleRunningClaimsFromPreviousSpawner();
+  if (SELECTED_SPAWNER_V1) assertSelectedSpawnerStartupContinuesV1();
+  await requeueOrphanedRunningStories();
+  if (SELECTED_SPAWNER_V1) assertSelectedSpawnerStartupContinuesV1();
+  await reconcileTerminalShadowAttempts(true);
+  if (SELECTED_SPAWNER_V1) assertSelectedSpawnerStartupContinuesV1();
+  await cleanupRunningRunEphemeraOnStartup();
+  if (SELECTED_SPAWNER_V1) assertSelectedSpawnerStartupContinuesV1();
+  if (AGENT_RUNTIME === "openclaw") {
+    await restartGatewayAfterOpenClawCleanup("startup", cleanupStaleSetfarmOpenClawTaskRecords("startup"));
+  }
+
+  const listener = SELECTED_SPAWNER_V1
+    ? (selectedSpawnerListenerV1 = await openFreshInstallationSpawnerListenerV1())
+    : (legacySpawnerListenerV1 = postgres(process.env.SETFARM_PG_URL || "postgresql://postgres@localhost:5432/setfarm", { max: 1 }));
+  if (SELECTED_SPAWNER_V1) {
+    selectedSpawnerListenerV1!.closed.then(error => {
+      if (error) { selectedSpawnerFailedV1 = true; void shutdown(); }
+    });
+    assertSelectedSpawnerStartupContinuesV1();
+  } else {
+    process.on("SIGTERM", () => { void shutdown(); });
+    process.on("SIGINT", () => { void shutdown(); });
+  }
 
   await listenForStepPending(listener);
   await listener.listen("story_pending", (msg) => {
@@ -11491,6 +11617,10 @@ async function main() {
         : processRuntimeCompletionRequests());
   });
 
+  if (SELECTED_SPAWNER_V1) {
+    await selectedSpawnerListenerV1!.arm();
+    assertSelectedSpawnerStartupContinuesV1();
+  }
   console.log("[spawner] Listening for step_pending, story_pending, run_termination_requested, and runtime_completion_requested events");
   intervalHandles.push(setInterval(pollForPendingWork, POLL_INTERVAL_MS));
   intervalHandles.push(setInterval(() => {
@@ -11501,7 +11631,7 @@ async function main() {
   if (AGENT_RUNTIME === "openclaw") {
     intervalHandles.push(setInterval(() => {
       void (async () => {
-        await assertTask6aPreSchemaOrdinaryStartupV2();
+        await assertSpawnerOperationalEntryV1();
         if (shuttingDown) return;
         const result = cleanupStaleSetfarmOpenClawTaskRecords("interval");
         await restartGatewayAfterOpenClawCleanup("interval", result);
@@ -11510,12 +11640,46 @@ async function main() {
       });
     }, OPENCLAW_STALE_TASK_SWEEP_MS));
   }
+  if (SELECTED_SPAWNER_V1) {
+    assertSelectedSpawnerStartupContinuesV1();
+    assertFreshInstallationPrivateAssetsV1(SELECTED_SPAWNER_V1.paths.root, SELECTED_SPAWNER_V1.state.origin.sourceSha);
+  }
   await pollForPendingWork();
+  if (SELECTED_SPAWNER_V1) {
+    assertSelectedSpawnerStartupContinuesV1();
+    selectedSpawnerListenerV1!.assertCurrent();
+    assertFreshInstallationPrivateAssetsV1(SELECTED_SPAWNER_V1.paths.root, SELECTED_SPAWNER_V1.state.origin.sourceSha);
+    await new Promise<void>((resolve, reject) => {
+      process.send!({ type: "setfarm.spawner.ready.v1", pid: process.pid, sourceSha: SELECTED_SPAWNER_V1.state.origin.sourceSha }, error => error ? reject(error) : resolve());
+    });
+    selectedSpawnerReadyV1 = true;
+    assertSelectedSpawnerStartupContinuesV1();
+    selectedSpawnerListenerV1!.assertCurrent();
+  }
   console.log("[spawner] Ready");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((err) => {
+  main().catch(async (err) => {
+    if (SELECTED_SPAWNER_V1) {
+      selectedSpawnerFailedV1 = true;
+      selectedSpawnerLeaseV1?.retainOnExit();
+      process.exitCode = 1;
+      try {
+        if (selectedSpawnerShutdownV1) await selectedSpawnerShutdownV1();
+        else {
+          // No runtime work begins before the drain closure is registered.
+          shuttingDown = true;
+          try { await selectedSpawnerListenerV1?.end(); } finally {
+            await pgClose(); // Failed startup retains evidence; no drain proof.
+          }
+        }
+      } catch { console.error("[spawner] Fresh startup owned cleanup remains unconfirmed"); }
+      process.off("SIGTERM", stopSelectedSpawnerBeforeDrainRegistrationV1);
+      process.off("SIGINT", stopSelectedSpawnerBeforeDrainRegistrationV1);
+      console.error("[spawner] Fresh startup refused; owned cleanup attempted");
+      return; // Never force-exit past a possibly live owned runtime/drain.
+    }
     process.exitCode = 1;
     try { releaseSpawnerSingletonLock(); }
     catch {

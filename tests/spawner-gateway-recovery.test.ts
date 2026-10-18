@@ -277,7 +277,7 @@ describe("spawner gateway recovery wiring", () => {
     for (const runtime of ["openclaw", "kimi", "codex", "opencode"]) for (const explicit of [false, true]) {
       const code = transformSync(`
         let CODEX_CLI, OPENCLAW_CLI, KIMI_CLI, OPENCODE_CLI, AGENT_RUNTIME, MAX_CONCURRENT, AGENT_STARTUP_SILENCE_MS;
-        let agentRuntimeInitializedV1=false;const calls=[];
+        let agentRuntimeInitializedV1=false;const SELECTED_SPAWNER_V1=null;const calls=[];
         const resolveCodexCli=()=>{calls.push('codex');return 'codex-path';};
         const resolveOpenClawCli=()=>{calls.push('openclaw');return 'openclaw-path';};
         const resolveKimiCli=()=>{calls.push('kimi');return 'kimi-path';};
@@ -309,7 +309,7 @@ describe("spawner gateway recovery wiring", () => {
     // external DB/provider/process boundaries are disposable in-memory doubles.
     const code = transformSync(`
       let CODEX_CLI,OPENCLAW_CLI,KIMI_CLI,OPENCODE_CLI,AGENT_RUNTIME,MAX_CONCURRENT,AGENT_STARTUP_SILENCE_MS;
-      let agentRuntimeInitializedV1=false;
+      let agentRuntimeInitializedV1=false;const SELECTED_SPAWNER_V1=null;
       const process={env:{}};
       const resolveCodexCli=()=>"codex-path",resolveOpenClawCli=()=>"openclaw-path";
       const resolveKimiCli=()=>"kimi-path",resolveOpencodeCli=()=>"opencode-path";
@@ -473,7 +473,7 @@ describe("spawner gateway recovery wiring", () => {
 
     const spawnerSource = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(spawnerSource, /readUtf8RegularFileAtMostSync\([\s\S]*V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES/);
-    assert.match(spawnerSource, /const LOCK_FILE = path\.join\(os\.homedir\(\),\s*"\.openclaw",\s*"setfarm",\s*"spawner\.lock"\)/);
+    assert.match(spawnerSource, /const LOCK_FILE = SELECTED_SPAWNER_V1 \? path\.join\(SELECTED_SPAWNER_V1\.paths\.root, "services", "spawner\.lock"\) : path\.join\(os\.homedir\(\),\s*"\.openclaw",\s*"setfarm",\s*"spawner\.lock"\)/);
     assert.match(spawnerSource, /createOwnedSpawnerStartupFileV1\(LOCK_FILE,/);
     assert.match(spawnerSource, /fs\.constants\.O_CREAT \| fs\.constants\.O_EXCL \| fs\.constants\.O_RDWR \| fs\.constants\.O_NOFOLLOW/);
     assert.match(spawnerSource, /Another spawner is already running/);
@@ -1049,8 +1049,13 @@ describe("spawner gateway recovery wiring", () => {
     );
     assert.match(spawnerSource, /runRuntimeCompletionEffectLedger\(/);
     assert.match(spawnerSource, /await listener\.listen\("runtime_completion_requested"/);
+    // Selected startup inserts refusal checks between these same legacy operations.
+    // Remove only that exact assertion statement in this source-order component.
+    const startupOperationOrder = spawnerSource.replace(
+      /^  if \(SELECTED_SPAWNER_V1\) assertSelectedSpawnerStartupContinuesV1\(\);\n/gm, "",
+    );
     assert.match(
-      spawnerSource,
+      startupOperationOrder,
       /await processRuntimeCompletionRequests\(\);\s*await reconcileV3RecoveryLifecycle\(\);\s*await runV3EvidenceOnlyRecovery\(\);\s*await failStaleRunningClaimsFromPreviousSpawner\(\)/,
     );
     const pollStart = spawnerSource.indexOf("async function pollForPendingWork()");

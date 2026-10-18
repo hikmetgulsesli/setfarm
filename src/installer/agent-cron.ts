@@ -1,3 +1,4 @@
+import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
 import { createAgentCronJob, deleteAgentCronJobs, deleteCronJob, listCronJobs, checkCronToolAvailable } from "./gateway-api.js";
 import type { WorkflowSpec, AgentMapping } from "./types.js";
 import { resolveSetfarmCli } from "./paths.js";
@@ -42,6 +43,8 @@ function extractRoleFromCronName(name: string, prefix: string): string {
 const DEFAULT_POLLING_MODEL = "minimax-openai/MiniMax-M3";
 
 export function gatewayAgentCronsEnabled(): boolean {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) return false; // Fixed: private runs never own shared gateway crons.
   return /^(1|true|yes)$/i.test(process.env.SETFARM_ENABLE_GATEWAY_AGENT_CRONS ?? "");
 }
 

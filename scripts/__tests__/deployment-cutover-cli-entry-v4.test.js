@@ -19,7 +19,7 @@ const sources = [
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const refusal = "DEPLOYMENT_CUTOVER_CLI_ENTRY_REFUSED\n";
 
-test("static runtime closure is fixed, event types erased and existing CLI body byte-exact", () => {
+test("static runtime closure and reviewed selected/legacy CLI body are fixed", () => {
   const source = fs.readFileSync(path.join(repository, sources[0][0]), "utf8");
   const tree = ts.createSourceFile("cli.ts", source, ts.ScriptTarget.ES2022, true);
   const imports = tree.statements.filter(ts.isImportDeclaration);
@@ -31,10 +31,13 @@ test("static runtime closure is fixed, event types erased and existing CLI body 
   const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
   const compiledTree = ts.createSourceFile("cli.js", compiled, ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS);
   assert.deepEqual(compiledTree.statements.filter(ts.isImportDeclaration).map(node => node.moduleSpecifier.text), expected);
-  const fence = tree.statements.find(node => ts.isIfStatement(node) && node.expression.getText(tree) === "!exactEntryDiagnostic");
+  const fence = tree.statements.find(node => ts.isIfStatement(node) && node.expression.getText(tree) === "!exactEntryDiagnostic && !freshCliCustodyHandledV1");
   assert.ok(fence);
-  const dispatch = tree.statements.find(node => ts.isIfStatement(node) && node.expression.getText(tree) === "exactEntryDiagnostic");
-  assert.ok(dispatch && ts.isBlock(dispatch.elseStatement));
+  const custody = tree.statements.find(node => ts.isIfStatement(node) && node.expression.getText(tree) === "freshCliCustodyHandledV1");
+  assert.ok(custody && ts.isIfStatement(custody.elseStatement));
+  const dispatch = custody.elseStatement;
+  assert.equal(dispatch.expression.getText(tree), "exactEntryDiagnostic");
+  assert.ok(ts.isBlock(dispatch.elseStatement));
   assert.ok(dispatch.pos >= fence.end, "DISPATCH_PRECEDES_INITIAL_FENCE");
   const deferred = dispatch.elseStatement.statements.filter(node => ts.isVariableStatement(node)
     && node.declarationList.declarations.some(declaration => declaration.initializer && ts.isAwaitExpression(declaration.initializer)));
@@ -47,9 +50,10 @@ test("static runtime closure is fixed, event types erased and existing CLI body 
     assert.equal(call.arguments.length, 1); assert.ok(ts.isStringLiteral(call.arguments[0]));
   }
   const tail = source.slice(source.indexOf("const __filename ="));
-  // b3b0039c body plus two pre-schema guards and their post-await cutover rechecks.
-  // Other command changes must explicitly update this reviewed regression pin.
-  assert.equal(hash(tail), "1830d5ee58bd6b88f25e7845a5e0864f07f5b7ea1ad0f6ecd8f581b2dd790551");
+  // Reviewed Unit3 delta: fixed selected call-site admission, same production
+  // run/preflight/release path with JSON rendering, selected task bound and close.
+  // Legacy refusal/effect runtime cases below remain unchanged.
+  assert.equal(hash(tail), "51f4ceac18fd786121d8a61dd34528aa322782a8b59d2cd6a2288d002233181d");
 });
 
 function businessBindings(source) {

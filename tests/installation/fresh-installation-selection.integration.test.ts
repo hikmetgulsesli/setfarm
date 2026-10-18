@@ -24,19 +24,22 @@ async function child(directory: string | undefined, program: string, overrides: 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "SELECTED_RUNTIME_CHECKED\n");
 }
-const load = `const db=await import(root+"/src/db-pg.ts"); assert.equal(typeof db.prepareSelectedFreshInstallationDatabaseV1,"function","selected database preparation API is missing");`;
+const load = `const db=await import(root+"/src/db-pg.ts"); assert.equal(typeof db.prepareSelectedFreshInstallationDatabaseV1,"function","selected database preparation API is missing"); assert.equal(typeof db.assertSelectedFreshInstallationOperationalDatabaseV1,"function","operational database predicate is missing");`;
 const done = `console.log("SELECTED_RUNTIME_CHECKED");`;
 
 test("selected fresh database uses one verified client and never restores implicit DDL after close", { timeout: 120_000 }, async t => {
   const installation = await create(t); await installation.initialize();
   await child(installation.directory, load + `
     assert.throws(()=>db.getSql(), /FRESH_INSTALLATION_DATABASE_NOT_PREPARED/);
+    assert.throws(()=>db.assertSelectedFreshInstallationOperationalDatabaseV1(), /FRESH_INSTALLATION_OPERATIONAL_DATABASE_NOT_PREPARED/);
     await assert.rejects(db.pgMigrate(), /FRESH_INSTALLATION_DEFAULT_MIGRATION_FORBIDDEN/);
     assert.throws(()=>db.pgConfigureIsolatedTestDatabase("postgresql://postgres@127.0.0.1:5432/setfarm_contract_spine_test_1_123456abcdef"),/FRESH_INSTALLATION_INCOMPATIBLE_DATABASE_PROFILE/);
     await assert.rejects(db.prepareTask6aRestrictedSpawnerDatabaseV1(${JSON.stringify(installation.ownerRole)}),/FRESH_INSTALLATION_INCOMPATIBLE_DATABASE_PROFILE/);
     await assert.rejects(db.prepareDashboardCutoverCoreReaderV2(),/FRESH_INSTALLATION_INCOMPATIBLE_DATABASE_PROFILE/);
     await Promise.all([db.prepareSelectedFreshInstallationDatabaseV1(),db.prepareSelectedFreshInstallationDatabaseV1()]);
     const first=db.getSql(); assert.equal(db.getSql(),first);
+    // Genuine owned schema-only preparation permits inspection, never operational entry.
+    assert.throws(()=>db.assertSelectedFreshInstallationOperationalDatabaseV1(), /FRESH_INSTALLATION_OPERATIONAL_DATABASE_NOT_PREPARED/);
     const row=await db.pgGet("SELECT current_database() AS database, current_user AS role");
     assert.equal(row.database,${JSON.stringify(installation.databaseName)});
     assert.equal(row.role,${JSON.stringify(installation.runtimeRole)});
@@ -44,6 +47,7 @@ test("selected fresh database uses one verified client and never restores implic
     await assert.rejects(db.pgMigrate(), /FRESH_INSTALLATION_DEFAULT_MIGRATION_FORBIDDEN/);
     await db.pgClose();
     assert.throws(()=>db.getSql(), /FRESH_INSTALLATION_DATABASE_NOT_PREPARED/);
+    assert.throws(()=>db.assertSelectedFreshInstallationOperationalDatabaseV1(), /FRESH_INSTALLATION_OPERATIONAL_DATABASE_NOT_PREPARED/);
     await assert.rejects(db.prepareSelectedFreshInstallationDatabaseV1(), /FRESH_INSTALLATION_DATABASE_NOT_PREPARED/);
     await assert.rejects(db.pgQuery("CREATE TABLE public.must_not_exist(id integer)"), /FRESH_INSTALLATION_DATABASE_NOT_PREPARED/);
   ` + done);

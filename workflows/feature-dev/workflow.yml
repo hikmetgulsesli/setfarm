@@ -551,12 +551,12 @@ steps:
       Set up the repository and download design assets.
       Run this single command to do everything:
 
-      bash $HOME/.openclaw/setfarm-repo/scripts/setup-repo.sh {{repo}} {{branch}} {{stitch_project_id}} '{{screen_map}}'
+      bash "{{setfarm_scripts_dir|$HOME/.openclaw/setfarm-repo/scripts}}/setup-repo.sh" {{repo}} {{branch}} {{stitch_project_id}} '{{screen_map}}'
 
       The script handles: git init, GitHub remote, .gitignore, branch, stitch download, push.
 
       After setup-repo.sh completes successfully, also extract DESIGN.md:
-        STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
+        STITCH_SCRIPT="{{setfarm_scripts_dir|$HOME/.openclaw/setfarm-repo/scripts}}/stitch-api.mjs"
         if [ -n "{{stitch_project_id}}" ] && [ "{{stitch_project_id}}" != "undefined" ]; then
           cd "{{repo}}"
           node "$STITCH_SCRIPT" get-design-md "{{stitch_project_id}}" "{{repo}}"
@@ -1316,7 +1316,7 @@ steps:
 
       1. Run the smoke test:
          ```bash
-         SMOKE_RESULT=$(node $HOME/.openclaw/setfarm-repo/scripts/smoke-test.mjs "{{repo}}" 2>&1)
+         SMOKE_RESULT=$(node "{{setfarm_scripts_dir|$HOME/.openclaw/setfarm-repo/scripts}}/smoke-test.mjs" "{{repo}}" 2>&1)
          SMOKE_EXIT=$?
          echo "$SMOKE_RESULT"
          ```
@@ -1834,7 +1834,7 @@ steps:
       Do NOT replace this with a security scan. Run the actual smoke-test.mjs script.
       1. Build the project: {{build_cmd}}
       2. Run smoke test:
-         SMOKE_RESULT=$(node $HOME/.openclaw/setfarm-repo/scripts/smoke-test.mjs "{{repo}}" 2>&1)
+         SMOKE_RESULT=$(node "{{setfarm_scripts_dir|$HOME/.openclaw/setfarm-repo/scripts}}/smoke-test.mjs" "{{repo}}" 2>&1)
          SMOKE_EXIT=$?
          echo "$SMOKE_RESULT"
       3. The smoke test checks:

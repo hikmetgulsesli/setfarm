@@ -1,3 +1,6 @@
+import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
+import { readFreshInstallationPrivateAgentWorkspaceV1 } from "../installation/fresh-installation-private-assets-v1.js";
+import { assertFreshInstallationOperationalEntryV1 } from "../installation/fresh-installation-entry-v1.js";
 /**
  * Git Worktree Operations
  *
@@ -29,6 +32,12 @@ import {
  * Get the workspace path for an OpenClaw agent by its id.
  */
 export function getAgentWorkspacePath(agentId: string): string | null {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) {
+    assertFreshInstallationOperationalEntryV1();
+    return readFreshInstallationPrivateAgentWorkspaceV1(freshInstallationSelectionV1.paths.root,
+      freshInstallationSelectionV1.state.origin.sourceSha, agentId);
+  }
   try {
     const configPath = path.join(os.homedir(), ".openclaw", "openclaw.json");
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
@@ -1969,6 +1978,8 @@ const WORKSPACE_PRESERVED = new Set([
  * Call this before a new run claims a step for the agent.
  */
 export function cleanAgentWorkspace(agentId: string): void {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) throw new Error("FRESH_INSTALLATION_WORKSPACE_SWEEP_NOT_WIRED");
   return withDashboardCutoverLocalProducerSyncV2("workspace-cleanup", () => {
     const ws = getAgentWorkspacePath(agentId);
     if (!ws || !fs.existsSync(ws)) return;
