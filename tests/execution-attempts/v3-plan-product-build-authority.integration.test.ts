@@ -25,7 +25,6 @@ import { resolveV3PlanOutputAuthorityV2 } from "../../src/execution/v3-plan-outp
 import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { CompilerEnglishAdmissionReceiptV1Schema } from "../../src/product-compiler/schemas/compiler-english-admission-receipt-v1.js";
 import { executeDesignPreclaimV2, generateStitchStageOnceWithExecutorForInternalTestV2 } from "../../src/installer/steps/02-design/runtime-v2.js";
-import { canonicalStitchStageProviderRejectionV1 } from "../../src/product-compiler/stitch-stage-provider-rejection-v1.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import {
   CONTAINED_GAME_TASK,
@@ -494,17 +493,11 @@ test("atomic PLAN completion persists exact build and behavior authority", async
                 externalExecutions += 1;
                 wireModel = execution.args[5];
                 assert.equal(sealedAuthority!.model, stage.model);
-                const diagnostic = "INVALID_ARGUMENT: offline exact rejection";
+                // Ambiguity quarantines this exact attempt. Explicit rejection
+                // has a separate, existing two-attempt proven-retry policy.
                 return {
-                  termination: "exit", exitCode: 1, stdout: "",
-                  stderr: canonicalStitchStageProviderRejectionV1({
-                    schema: "setfarm.stitch-stage-provider-rejection.v1",
-                    classification: "explicit_mcp_error_before_accepted_result",
-                    tool: "generate_screen_from_text", isError: true, acceptedResult: false,
-                    acceptedScreenIds: [], acceptedArtifactLocators: [],
-                    diagnosticCode: "STITCH_MCP_TOOL_ERROR", diagnostic,
-                    diagnosticHash: hashCanonicalJson({ schema: "setfarm.stitch-stage-provider-rejection-diagnostic.v1", diagnostic }),
-                  }) + "\n",
+                  termination: "ambiguous", exitCode: 1, stdout: "",
+                  stderr: "offline response unobserved after dispatch",
                 };
               });
             },
@@ -516,11 +509,11 @@ test("atomic PLAN completion persists exact build and behavior authority", async
           assert.equal(sealedAuthority?.deviceType, "DESKTOP");
           assert.equal(dispatchedModel, fixture.expected);
           assert.equal(wireModel, fixture.expected);
-          assert.equal(result.status, "infrastructure_failure");
+          assert.equal(result.status, "dispatch_ambiguous");
           if (result.status === "accepted") throw new Error("Unexpected accepted fixture");
-          assert.equal(result.code, "DESIGN_SOURCE_PROVIDER_REJECTED_BEFORE_ACCEPTANCE");
+          assert.equal(result.code, "DESIGN_SOURCE_DISPATCH_AMBIGUOUS");
           const replay = await executeDesignPreclaimV2(input, dependencies);
-          assert.equal(replay.status, "infrastructure_failure");
+          assert.equal(replay.status, "dispatch_ambiguous");
           assert.equal(replay.attemptId, result.attemptId);
           assert.equal(dispatches, 1);
           assert.equal(externalExecutions, 1);
