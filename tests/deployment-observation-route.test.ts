@@ -1,10 +1,30 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { syncBuiltinESMExports } from "node:module";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, it } from "node:test";
+import { after, afterEach, describe, it } from "node:test";
 
-import { startDashboard } from "../src/server/dashboard.js";
 import type { V3DeployReceiptV1 } from "../src/execution/schemas/v3-deploy-receipt-v1.js";
 import type { V3DeploymentObservationV1 } from "../src/execution/schemas/v3-deployment-observation-v1.js";
+
+// The workspace resolver captures the OS account at import time. Keep these
+// ordinary HTTP tests independent of a live Task6A operation on the host.
+const testHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dashboard-http-ordinary-")));
+fs.mkdirSync(path.join(testHome, "ai", "setrox"), { recursive: true, mode: 0o700 });
+const originalUserInfo = os.userInfo;
+const account = originalUserInfo();
+let startDashboard: typeof import("../src/server/dashboard.js").startDashboard;
+try {
+  os.userInfo = (() => ({ ...account, homedir: testHome })) as typeof os.userInfo;
+  syncBuiltinESMExports();
+  ({ startDashboard } = await import("../src/server/dashboard.js"));
+} finally {
+  os.userInfo = originalUserInfo;
+  syncBuiltinESMExports();
+}
+after(() => fs.rmSync(testHome, { recursive: true, force: true }));
 
 const servers: ReturnType<typeof startDashboard>[] = [];
 

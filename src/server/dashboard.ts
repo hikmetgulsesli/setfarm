@@ -7,6 +7,7 @@ import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import { getSql, pgQuery, pgGet, pgRun, now } from "../db-pg.js";
 import { assertOrdinaryDashboardDeploymentCutoverAdmissionV2 } from "../internal-production/baseline-deployment-cutover-v1.js";
+import { assertTask6aPreSchemaOrdinaryStartupV2, assertTask6aPreSchemaSynchronousOrdinaryStartupV3 } from "../internal-production/baseline-task6a-preschema-ordinary-refusal-v2.js";
 import { loadDashboardWorkflowsV2 as loadWorkflows, parseDashboardSystemRulesV2 as parseSystemRules, mergeDashboardRulesV2 } from "./dashboard-core-static-v2.js";
 
 import type { RunInfo, StepInfo } from "../installer/status.js";
@@ -190,13 +191,28 @@ async function getAllRules(query:URLSearchParams):Promise<any[]> {
   return mergeDashboardRulesV2(systemRules,await getCustomRules(),query);
 }
 
-export function startDashboard(port = 3333, options: Readonly<{
+type DashboardOptions = Readonly<{
   deploymentObservation?: Readonly<{
     operationalToken: string;
     findReceipt(runId: string): Promise<V3DeployReceiptV1 | undefined>;
     observe(receipt: V3DeployReceiptV1): Promise<V3DeploymentObservationV1>;
   }>;
-}> = {}): http.Server {
+}>;
+
+export function startDashboard(port = 3333, options: DashboardOptions = {}): http.Server {
+  assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
+  assertTask6aPreSchemaSynchronousOrdinaryStartupV3();
+  return createDashboardServer(port, options);
+}
+
+export async function startDashboardWithPreSchemaAdmissionV3(port = 3333, options: DashboardOptions = {}): Promise<http.Server> {
+  assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
+  await assertTask6aPreSchemaOrdinaryStartupV2();
+  assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
+  return createDashboardServer(port, options);
+}
+
+function createDashboardServer(port: number, options: DashboardOptions): http.Server {
   assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
   const server = http.createServer(async (req, res) => {
    try {

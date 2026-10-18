@@ -15,6 +15,27 @@ const absent = { state: "absent" };
 const present = { state: "present", operationHash: "b".repeat(64), fileIdentity: "1:2:3:4" };
 const tsxLoader = import.meta.resolve("tsx");
 
+for (const [outside, state, refused] of [[true, "present", false], [false, "absent", false], [false, "present", true]] as const) {
+  test(`Task6A V3 synchronous startup checks workspace=${outside ? "outside" : "fixed"} operation=${state}`, () => {
+    const source = readFileSync(path.join(sourceRoot, "internal-production/baseline-task6a-preschema-ordinary-refusal-v2.ts"), "utf8");
+    const tree = ts.createSourceFile("preschema.ts", source, ts.ScriptTarget.Latest, true);
+    const guard = tree.statements.find((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node)
+      && node.name?.text === "assertTask6aPreSchemaSynchronousOrdinaryStartupV3");
+    assert.ok(guard?.body, "SYNCHRONOUS_TASK6A_STARTUP_GUARD_MISSING");
+    const body = ts.transpileModule(guard.body.getText(tree), {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+    }).outputText;
+    const run = new Function("ordinaryCheckoutWithoutFixedWorkspaceV2", "observeTask6aFixedCurrentEntryOperationPresenceV2", "fail", body);
+    const calls: string[] = [];
+    const invoke = () => run(() => { calls.push("scope"); return outside; },
+      () => { calls.push("observe"); return { state }; },
+      () => { calls.push("refuse"); throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED"); });
+    if (refused) assert.throws(invoke, /TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED/);
+    else assert.doesNotThrow(invoke);
+    assert.deepEqual(calls, outside ? ["scope"] : refused ? ["scope", "observe", "refuse"] : ["scope", "observe"]);
+  });
+}
+
 function operationBytes(): Buffer {
   const currentSource = { branch: "main", clean: true, sha: "a".repeat(40), treeHash: "b".repeat(40),
     buildHash: "c".repeat(64), originMainSha: "a".repeat(40) };

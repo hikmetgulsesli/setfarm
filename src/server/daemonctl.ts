@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import "../runtime-config.js";
 import { assertOrdinaryDashboardDeploymentCutoverAdmissionV2 } from "../internal-production/baseline-deployment-cutover-v1.js";
+import { assertTask6aPreSchemaOrdinaryStartupV2 } from "../internal-production/baseline-task6a-preschema-ordinary-refusal-v2.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,6 +33,8 @@ export function isRunning(): { running: true; pid: number } | { running: false }
 }
 
 export async function startDaemon(port = 3333): Promise<{ pid: number; port: number }> {
+  assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
+  await assertTask6aPreSchemaOrdinaryStartupV2();
   assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
   const status = isRunning();
   if (status.running) {

@@ -39,6 +39,9 @@ function run(entry: string, mode = "open") {
       'runtime-artifact-reader.js':'export class RuntimeArtifactReaderError extends Error{};export function createRuntimeArtifactReader(){throw Error("UNQUALIFIED_ADVANCED_PORT")}',
       'v3-deploy-executor.js':'export function observeLocalV3Deployment(){throw Error("UNQUALIFIED_ADVANCED_PORT")}',
     };
+    if(${JSON.stringify(mode)}.startsWith('task6a-'))unused['baseline-task6a-preschema-ordinary-refusal-v2.js']=
+      'export async function assertTask6aPreSchemaOrdinaryStartupV2(){await globalThis.task6aFixturePreflight()};'+
+      'export function assertTask6aPreSchemaSynchronousOrdinaryStartupV3(){globalThis.task6aFixture.preflights++;throw Error("TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED")}';
     registerHooks({resolve(s,c,next){const name=s.split('/').at(-1);if(Object.hasOwn(unused,name))return{url:'data:text/javascript,'+encodeURIComponent(unused[name]),shortCircuit:true};return next(s,c)}});
     const records=await import(${JSON.stringify(root + 'internal-production/baseline-deployment-cutover-records-v1.ts')});
     const target=path.join(workspace,'data/internal-production-baseline/deployment-cutover-v1');
@@ -50,7 +53,13 @@ function run(entry: string, mode = "open") {
     };
     const mode=${JSON.stringify(mode)},entry=${JSON.stringify(entry)};
     if(mode==='open')publish();if(mode==='unknown'){original.mkdir(target,{recursive:true,mode:0o700});original.write(path.join(target,'unexpected'),'invalid')}
-    const p={mutations:0,creates:0,listens:0,spawns:0,pidLookups:0,unlinks:0};
+    const p={mutations:0,creates:0,listens:0,spawns:0,pidLookups:0,unlinks:0,preflights:0};
+    globalThis.task6aFixture=p;
+    globalThis.task6aFixturePreflight=async()=>{
+      p.preflights++;
+      if(mode==='task6a-refused')throw Error('TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED');
+      if(mode==='task6a-late-open'&&!p.latePublished){await Promise.resolve();publish();p.latePublished=true}
+    };
     if(entry==='stale-parent'||entry==='running-parent'){
       const pidDir=path.join(home,'.openclaw/setfarm');original.mkdir(pidDir,{recursive:true});original.write(path.join(pidDir,'dashboard.pid'),'424242');
       process.kill=()=>{p.pidLookups++;if(entry==='stale-parent')throw Object.assign(Error('ESRCH'),{code:'ESRCH'});return true};
@@ -77,15 +86,18 @@ function run(entry: string, mode = "open") {
         m.assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
       }else if(entry==='dashboard'){
         const m=await import(${JSON.stringify(root + 'server/dashboard.ts')});m.startDashboard(0);
+      }else if(entry==='dashboard-async'){
+        const m=await import(${JSON.stringify(root + 'server/dashboard.ts')});await m.startDashboardWithPreSchemaAdmissionV3(0);
       }else if(entry==='parent'||entry==='stale-parent'||entry==='running-parent'){
         const m=await import(${JSON.stringify(root + 'server/daemonctl.ts')});await m.startDaemon(3333);
       }else if(entry.startsWith('cli')){
         const m=await import(${JSON.stringify(root + 'internal-production/baseline-deployment-cutover-v1.ts')});
         const source=entry==='cli-auto'?${JSON.stringify(snippets[1])}:${JSON.stringify(snippets[0])};
         const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
-        const execute=new AsyncFunction('group','args','assertOrdinaryDashboardDeploymentCutoverAdmissionV2','isRunning','getDaemonStatus','startDaemon','console',source);
+        const execute=new AsyncFunction('group','args','assertOrdinaryDashboardDeploymentCutoverAdmissionV2','isRunning','getDaemonStatus','startDaemon','console','assertTask6aPreSchemaOrdinaryStartupV2',source);
         await execute('dashboard',['dashboard',entry==='cli-implicit'?undefined:entry==='cli-legacy'?'4040':'start'],m.assertOrdinaryDashboardDeploymentCutoverAdmissionV2,
-          ()=>{p.pidLookups++;return{running:true,pid:424242}},()=>{p.pidLookups++;return{running:true,pid:424242}},async()=>{p.spawns++;return{pid:424242,port:3333}},{log(){}});
+          ()=>{p.pidLookups++;return{running:true,pid:424242}},()=>{p.pidLookups++;return{running:true,pid:424242}},async()=>{p.spawns++;return{pid:424242,port:3333}},{log(){}},
+          globalThis.task6aFixturePreflight);
       }else await import(${JSON.stringify(root + 'server/daemon.ts')});
     }catch(e){error=e.message}
     fs.lstatSync=original.lstat;syncBuiltinESMExports();
@@ -132,3 +144,32 @@ for (const entry of ["cli-start", "cli-implicit", "cli-legacy", "cli-auto"]) {
     assert.equal(result.pidLookups, 0); assert.equal(result.spawns, 0);
   });
 }
+
+for (const entry of ["dashboard", "dashboard-async", "parent", "stale-parent", "running-parent", "daemon", "cli-start", "cli-implicit", "cli-legacy", "cli-auto"]) {
+  test(`Task6A V3 initial pre-schema refusal stops ${entry} before ordinary effects`, () => {
+    const result = run(entry, "task6a-refused");
+    assert.equal(result.error, "TASK6A_V2_PRE_SCHEMA_ORDINARY_START_REFUSED");
+    assert.equal(result.mutations, 0); assert.equal(result.creates, 0);
+    assert.equal(result.listens, 0); assert.equal(result.spawns, 0);
+    assert.equal(result.pidLookups, 0); assert.equal(result.unlinks, 0);
+    assert.equal(result.preflights, 1);
+  });
+}
+
+for (const entry of ["dashboard-async", "parent", "stale-parent", "running-parent", "daemon", "cli-start", "cli-implicit", "cli-legacy", "cli-auto"]) {
+  test(`Task6A V3 cutover opening during successful awaited admission stops ${entry}`, () => {
+    const result = run(entry, "task6a-late-open");
+    assert.equal(result.error, "DEPLOYMENT_CUTOVER_UNQUALIFIED_DASHBOARD_START_REFUSED");
+    assert.equal(result.mutations, 0); assert.equal(result.creates, 0);
+    assert.equal(result.listens, 0); assert.equal(result.spawns, 0);
+    assert.equal(result.pidLookups, 0); assert.equal(result.unlinks, 0);
+    assert.equal(result.preflights, 1); assert.equal(result.latePublished, true);
+  });
+}
+
+test("Task6A V3 async entry uses successful admission without re-entering the absent-only synchronous guard", () => {
+  const result = run("dashboard-async", "task6a-admitted");
+  assert.equal(result.error, undefined); assert.equal(result.preflights, 1);
+  assert.equal(result.creates, 1); assert.equal(result.listens, 1);
+  assert.equal(result.mutations, 0); assert.equal(result.spawns, 0);
+});
