@@ -1,15 +1,17 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { constants, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, statfsSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, statfsSync } from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
 import { types } from "node:util";
-import { parseFreshInstallationOriginV1, verifyFreshInstallationDatabaseIdentityV1,
+import { parseFreshInstallationOriginV1,
   type FreshInstallationOriginV1 } from "./fresh-installation-origin-v1.js";
-import { verifyOrdinaryBaseSchemaCatalogReadOnlyV1 } from "../db/base-schema-readonly-verifier-v1.js";
-import { verifyContractSpineCurrentHeadJournalReadOnlyV1 } from "../db/contract-spine-readonly-verifier-v1.js";
-import { verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1 } from "../db/public-object-owner-readonly-verifier-v1.js";
 import { readFreshInstallationCatalogHashV1 } from "./fresh-installation-catalog-v1.js";
 import { captureFreshInstallationSourceShaV1 } from "./fresh-installation-source-v1.js";
+import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { freshInstallationDirectoryIdentityV1, publishFreshInstallationPrivateRecordV1 as privateRecord,
+  type FreshInstallationRecordPinV1 } from "./fresh-installation-records-v1.js";
+import { reconcileFreshInstallationSchemaV1, verifyFreshInstallationSchemaV1, type FreshInstallationSchemaVerificationV1 } from "./fresh-installation-runtime-v1.js";
+export { reconcileFreshInstallationSchemaV1, verifyFreshInstallationSchemaV1 } from "./fresh-installation-runtime-v1.js";
 
 const activeTransactions = new WeakMap<object, FreshInstallationOriginV1>();
 const quote = (value: string): string => `"${value.replaceAll('"', '""')}"`;
@@ -56,13 +58,6 @@ function maintenanceUrl(value: string): URL {
   }
   return u;
 }
-function privateRecord(directory: string, name: string, value: unknown): void {
-  const fd = openSync(path.join(directory, name), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-  try { writeFileSync(fd, `${JSON.stringify(value)}\n`); fsyncSync(fd); }
-  finally { closeSync(fd); }
-  const parent = openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-  try { fsyncSync(parent); } finally { closeSync(parent); }
-}
 function redactedFailure(directory: string, stage: string, error: unknown): Error {
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string"
     && /^(?:[A-Z0-9]{5}|MIGRATION_[A-Z0-9_]+)$/.test(error.code) ? error.code : undefined;
@@ -102,7 +97,8 @@ export async function createFreshInstallationV1(options: FreshInstallationOption
   const databaseName = `setfarm_install_${suffix}`, ownerRole = `sf_owner_${suffix}`, runtimeRole = `sf_runtime_${suffix}`;
   const directory = path.join(baseDirectory, installationId);
   mkdirSync(directory, { mode: 0o700 });
-  privateRecord(directory, "planned.json", { schema: "setfarm.fresh-installation-plan.v1", installationId, operationId,
+  const recordPins: Record<string, FreshInstallationRecordPinV1> = {};
+  recordPins["planned.json"] = privateRecord(directory, "planned.json", { schema: "setfarm.fresh-installation-plan.v1", installationId, operationId,
     databaseName, ownerRole, runtimeRole, sourceSha });
   const password = randomBytes(32).toString("hex");
   const admin = postgres(u.href, { max: 1, connect_timeout: 5, idle_timeout: 2, onnotice() {} });
@@ -115,12 +111,12 @@ export async function createFreshInstallationV1(options: FreshInstallationOption
     await admin.unsafe(`CREATE ROLE ${quote(ownerRole)} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
     const owner = await admin<Array<{ oid: number }>>`SELECT oid::integer AS oid FROM pg_catalog.pg_roles WHERE rolname=${ownerRole}`;
     ownerOid = owner[0]!.oid;
-    privateRecord(directory, "owner-created.json", { ownerRole, ownerOid });
+    recordPins["owner-created.json"] = privateRecord(directory, "owner-created.json", { ownerRole, ownerOid });
     // Generated hex only; no caller-controlled SQL or secret-bearing errors escape.
     await admin.unsafe(`CREATE ROLE ${quote(runtimeRole)} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD '${password}'`);
     const runtime = await admin<Array<{ oid: number }>>`SELECT oid::integer AS oid FROM pg_catalog.pg_roles WHERE rolname=${runtimeRole}`;
     runtimeOid = runtime[0]!.oid;
-    privateRecord(directory, "runtime-created.json", { runtimeRole, runtimeOid });
+    recordPins["runtime-created.json"] = privateRecord(directory, "runtime-created.json", { runtimeRole, runtimeOid });
     ensureCapacity(directory);
     await admin.unsafe(`CREATE DATABASE ${quote(databaseName)} WITH TEMPLATE template0 OWNER ${quote(ownerRole)}`);
     const identity = await admin<Array<{ oid: number; owner: string; system_identifier: string }>>`
@@ -131,44 +127,30 @@ export async function createFreshInstallationV1(options: FreshInstallationOption
     origin = parseFreshInstallationOriginV1({ schema: "setfarm.fresh-installation-origin.v1", installationId, operationId,
       databaseOid: identity[0]!.oid, systemIdentifier: identity[0]!.system_identifier, databaseName, ownerRole, runtimeRole,
       sourceSha, migrations: getContractSpineCurrentHeadJournalIdentitiesV1() });
-    privateRecord(directory, "database-created.json", { origin, ownerOid, runtimeOid });
+    recordPins["database-created.json"] = privateRecord(directory, "database-created.json", { origin, ownerOid, runtimeOid });
     await admin.unsafe(`REVOKE ALL ON DATABASE ${quote(databaseName)} FROM PUBLIC`);
   } catch (error) { throw redactedFailure(directory, "CREATE", error); }
   finally { await admin.end({ timeout: 5 }); }
 
   const target = new URL(u); target.pathname = "/" + databaseName;
   const runtimeEndpoint = new URL(target); runtimeEndpoint.username = runtimeRole; runtimeEndpoint.password = password;
-  privateRecord(directory, "runtime-credentials.json", { runtimeUrl: runtimeEndpoint.href });
+  recordPins["runtime-credentials.json"] = privateRecord(directory, "runtime-credentials.json", { runtimeUrl: runtimeEndpoint.href });
   const sql = postgres(target.href, { max: 1, connect_timeout: 5, idle_timeout: 2, onnotice() {} });
-  let phase: "created" | "initializing" | "committed" | "failed" | "closed" = "created";
+  let phase: "created" | "initializing" | "committed" | "unconfirmed" | "failed" | "closed" = "created";
   let catalogHash: string | undefined;
+  let schemaPrepared = false;
+
+  function requireSameInstallation(result: FreshInstallationSchemaVerificationV1): void {
+    if (hashCanonicalJson(result.origin) !== hashCanonicalJson(origin) || result.catalogHash !== catalogHash) {
+      throw new Error("FRESH_INSTALLATION_RECONCILIATION_IDENTITY_MISMATCH");
+    }
+  }
 
   async function verifyRuntime(): Promise<void> {
     if (phase !== "committed") throw new Error("FRESH_INSTALLATION_RUNTIME_NOT_INITIALIZED");
-    const runtime = postgres(runtimeEndpoint.href, { max: 1, connect_timeout: 5, onnotice() {} });
     try {
-      await runtime.begin("isolation level repeatable read read only", async tx => {
-        await tx.unsafe("SELECT set_config('lock_timeout','1000ms',true), set_config('statement_timeout','5000ms',true)");
-        await verifyFreshInstallationDatabaseIdentityV1(tx, origin);
-        const roles = await tx.unsafe<Array<{ valid: boolean }>>(`
-          SELECT count(*)=2 AND bool_and(NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
-            AND NOT rolreplication AND NOT rolbypassrls AND NOT rolinherit
-            AND rolcanlogin=(rolname=$1))
-            AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m
-              JOIN pg_catalog.pg_roles r ON r.oid=m.member OR r.oid=m.roleid WHERE r.rolname IN ($2,$1))
-            AND bool_and(CASE WHEN rolname=$2 THEN oid=$3 ELSE oid=$4 END)
-            AND current_user=$1 AND session_user=$1 AS valid
-          FROM pg_catalog.pg_roles WHERE rolname IN ($2,$1)`, [runtimeRole, ownerRole, ownerOid, runtimeOid]);
-        if (roles.length !== 1 || roles[0]?.valid !== true) throw new Error("FRESH_INSTALLATION_ROLE_POLICY_MISMATCH");
-        await verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1(tx, ownerRole);
-      });
-      await verifyContractSpineCurrentHeadJournalReadOnlyV1(runtime);
-      await verifyOrdinaryBaseSchemaCatalogReadOnlyV1(runtime);
-      const { verifyFreshInstallationSchemaReadOnlyV1 } = await import("../db/contract-spine-migrations.js");
-      if (!catalogHash) throw new Error("FRESH_INSTALLATION_CATALOG_NOT_COMMITTED");
-      await verifyFreshInstallationSchemaReadOnlyV1(runtime, origin, catalogHash);
+      requireSameInstallation(await verifyFreshInstallationSchemaV1(directory));
     } catch (error) { throw redactedFailure(directory, "RUNTIME_VERIFY", error); }
-    finally { await runtime.end({ timeout: 5 }); }
   }
 
   return Object.freeze({ installationId, directory, databaseName, ownerRole, runtimeRole, origin,
@@ -195,14 +177,26 @@ export async function createFreshInstallationV1(options: FreshInstallationOption
             await transaction.unsafe(`GRANT CONNECT ON DATABASE ${quote(databaseName)} TO ${quote(runtimeRole)}`);
             catalogHash = await readFreshInstallationCatalogHashV1(transaction);
             await verifySource();
+            privateRecord(directory, "schema-prepared.json", { schema: "setfarm.fresh-installation-schema-prepared.v1",
+              origin, catalogHash, directoryIdentity: freshInstallationDirectoryIdentityV1(directory), recordPins });
+            schemaPrepared = true;
           } finally { activeTransactions.delete(transaction as object); }
         });
         phase = "committed";
-        await verifyRuntime();
-        privateRecord(directory, "schema-committed.json", { schema: "setfarm.fresh-installation-schema-committed.v1", origin, catalogHash });
+        requireSameInstallation(await reconcileFreshInstallationSchemaV1(directory));
         return origin;
       } catch (error) {
-        // A committed but unacknowledged database is retained; never bootstrap it again.
+        if (schemaPrepared) {
+          try {
+            requireSameInstallation(await reconcileFreshInstallationSchemaV1(directory));
+            phase = "committed";
+            return origin;
+          } catch (reconciliationError) {
+            phase = "unconfirmed";
+            redactedFailure(directory, "COMMIT_RECONCILIATION", reconciliationError);
+            throw new Error("FRESH_INSTALLATION_COMMIT_UNCONFIRMED");
+          }
+        }
         if (phase !== "committed") phase = "failed";
         throw redactedFailure(directory, "SCHEMA", error);
       }

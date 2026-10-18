@@ -5,6 +5,8 @@ const CATALOG_SQL = `WITH public_relations AS (
   SELECT c.* FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'
 ), snapshot AS (
   SELECT jsonb_build_object(
+    'database',(SELECT jsonb_build_array(oid,datname,datdba,datistemplate,datallowconn,datconnlimit,dattablespace,datacl)
+      FROM pg_catalog.pg_database WHERE datname=current_database()),
     'schema',(SELECT jsonb_build_array(oid,nspowner,nspacl) FROM pg_catalog.pg_namespace WHERE nspname='public'),
     'relations',(SELECT jsonb_agg(jsonb_build_array(oid,relname,relkind,relpersistence,relowner,relam,
       reltablespace,reloftype,relispartition,relrowsecurity,relforcerowsecurity,relreplident,reloptions,relacl,

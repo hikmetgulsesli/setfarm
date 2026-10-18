@@ -1,26 +1,27 @@
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, existsSync, statfsSync, writeFileSync, unlinkSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, existsSync, statfsSync, writeFileSync, unlinkSync, chmodSync, linkSync, symlinkSync, copyFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import postgres from "postgres";
 import { verifyContractSpineCurrentHeadJournalReadOnlyV1 } from "../../src/db/contract-spine-readonly-verifier-v1.js";
 import { initializeFreshInstallationContractSpineV1 } from "../../src/db/contract-spine-migrations.js";
 import { freshSourceCheckoutFixture } from "./fresh-source-checkout-fixture.js";
+import { createCommitAckLossProxy } from "./commit-ack-proxy.js";
 
 const adminUrl = process.env.SETFARM_TEST_PG_ADMIN_URL || "postgresql://postgres@127.0.0.1:5432/postgres";
 const quote = (s: string) => `"${s.replaceAll('"', '""')}"`;
 const targetUrl = (database: string) => { const u = new URL(adminUrl); u.pathname = "/" + database; return u.href; };
 
 async function create(t: TestContext, sourceSha?: string, baseDirectory = mkdtempSync(path.join(tmpdir(), "setfarm-fresh-integration-")),
-  afterStart?: (input: { adminUrl: string; baseDirectory: string; sourceSha: string }) => void) {
+  afterStart?: (input: { adminUrl: string; baseDirectory: string; sourceSha: string }) => void, endpoint = adminUrl) {
   const capacity = statfsSync(process.cwd());
   assert.ok(capacity.bavail * capacity.bsize > 8 * 1024 ** 3, "fresh test requires8GiB disk floor");
   const fixture = await freshSourceCheckoutFixture();
   const module = fixture.api;
   assert.equal(typeof module.createFreshInstallationV1, "function", "explicit fresh-installation initializer is missing");
-  const input = { adminUrl, baseDirectory, sourceSha: sourceSha ?? fixture.sha };
+  const input = { adminUrl: endpoint, baseDirectory, sourceSha: sourceSha ?? fixture.sha };
   const original = module.createFreshInstallationV1(input);
   afterStart?.(input);
   const installation = await original;
@@ -271,4 +272,109 @@ test("runtime verification refuses incoming grants of its owner or runtime role"
       }
     } finally { await control.end({ timeout: 3 }); }
   }
+});
+
+test("runtime verification refuses database CREATE and TEMPORARY grants", { timeout: 120_000 }, async t => {
+  const installation = await create(t);
+  await installation.initialize();
+  const control = postgres(targetUrl(installation.databaseName), { max: 1, onnotice() {} });
+  try {
+    for (const privilege of ["CREATE", "TEMPORARY"]) {
+      await control.unsafe(`GRANT ${privilege} ON DATABASE ${quote(installation.databaseName)} TO ${quote(installation.runtimeRole)}`);
+      try { await assert.rejects(installation.verifyRuntime(), /FRESH_INSTALLATION_RUNTIME_VERIFY_FAILED/); }
+      finally { await control.unsafe(`REVOKE ${privilege} ON DATABASE ${quote(installation.databaseName)} FROM ${quote(installation.runtimeRole)}`); }
+    }
+    await installation.verifyRuntime();
+  } finally { await control.end({ timeout: 3 }); }
+});
+
+test("fresh schema can be reopened after a lost local commit acknowledgment", { timeout: 120_000 }, async t => {
+  const installation = await create(t);
+  await installation.initialize();
+  await installation.close();
+  assert.ok(existsSync(path.join(installation.directory, "schema-prepared.json")), "durable prepared evidence is missing");
+  const fixture = await freshSourceCheckoutFixture();
+  const listing = readdirSync(installation.directory).sort();
+  const verified = await fixture.api.verifyFreshInstallationSchemaV1(installation.directory);
+  assert.equal(verified.origin.databaseOid, installation.origin.databaseOid);
+  assert.deepEqual(readdirSync(installation.directory).sort(), listing);
+  unlinkSync(path.join(installation.directory, "schema-committed.json")); // Exact test-owned acknowledgment only.
+  await assert.rejects(fixture.api.verifyFreshInstallationSchemaV1(installation.directory), /FRESH_INSTALLATION_SCHEMA_VERIFICATION_REFUSED/);
+  assert.equal(existsSync(path.join(installation.directory, "schema-committed.json")), false);
+  const [recovered, concurrent] = await Promise.all([
+    fixture.api.reconcileFreshInstallationSchemaV1(installation.directory),
+    fixture.api.reconcileFreshInstallationSchemaV1(installation.directory),
+  ]);
+  assert.equal(recovered.origin.databaseOid, installation.origin.databaseOid);
+  assert.deepEqual(concurrent, recovered);
+  assert.ok(existsSync(path.join(installation.directory, "schema-committed.json")));
+  const before = readFileSync(path.join(installation.directory, "schema-committed.json"));
+  await fixture.api.reconcileFreshInstallationSchemaV1(installation.directory);
+  assert.deepEqual(readFileSync(path.join(installation.directory, "schema-committed.json")), before);
+});
+
+test("fresh bootstrap reconciles a real lost server COMMIT response", { timeout: 120_000 }, async t => {
+  const proxy = await createCommitAckLossProxy(adminUrl);
+  let installation: Awaited<ReturnType<typeof create>> | undefined;
+  try {
+    installation = await create(t, undefined, undefined, undefined, proxy.adminUrl);
+    proxy.arm();
+    const origin = await installation.initialize();
+    assert.equal(proxy.dropped(), 1, "the actual server COMMIT response was not interrupted");
+    assert.equal(origin.databaseOid, installation.origin.databaseOid);
+    assert.ok(existsSync(path.join(installation.directory, "schema-prepared.json")));
+    assert.ok(existsSync(path.join(installation.directory, "schema-committed.json")));
+    await installation.verifyRuntime();
+    const control = postgres(targetUrl(installation.databaseName), { max: 1, onnotice() {} });
+    try {
+      const rows = await control<Array<{ count: number; last: number }>>`
+        SELECT count(*)::integer AS count, max(version)::integer AS last FROM public.setfarm_schema_migrations`;
+      assert.deepEqual([...rows], [{ count: 33, last: 33 }]);
+    } finally { await control.end({ timeout: 3 }); }
+    await assert.rejects(installation.initialize(), /FRESH_INSTALLATION_ALREADY_INITIALIZED/);
+  } finally {
+    try { await installation?.close(); } finally { await proxy.close(); }
+  }
+});
+
+test("reopen refuses unsafe or changed private evidence without writes", { timeout: 120_000 }, async t => {
+  const installation = await create(t);
+  await installation.initialize();
+  await installation.close();
+  const fixture = await freshSourceCheckoutFixture();
+  const prepared = path.join(installation.directory, "schema-prepared.json");
+  const original = readFileSync(prepared);
+  const committed = path.join(installation.directory, "schema-committed.json");
+  const ack = readFileSync(committed);
+  const listing = readdirSync(installation.directory).sort();
+  const refuses = async () => {
+    await assert.rejects(fixture.api.verifyFreshInstallationSchemaV1(installation.directory), /FRESH_INSTALLATION_SCHEMA_VERIFICATION_REFUSED/);
+    await assert.rejects(fixture.api.reconcileFreshInstallationSchemaV1(installation.directory), /FRESH_INSTALLATION_RECONCILIATION_REFUSED/);
+    assert.deepEqual(readdirSync(installation.directory).sort(), listing);
+  };
+  for (const bytes of [Buffer.from("{"), Buffer.alloc(32769, 0x20), Buffer.from(original.toString().replace('"catalogHash":"', '"catalogHash":"f'))]) {
+    try { writeFileSync(prepared, bytes); await refuses(); }
+    finally { writeFileSync(prepared, original); }
+  }
+  try { chmodSync(prepared, 0o644); await refuses(); }
+  finally { chmodSync(prepared, 0o600); }
+  const linked = path.join(path.dirname(installation.directory), "test-owned-link.json");
+  try { linkSync(prepared, linked); await refuses(); }
+  finally { unlinkSync(linked); }
+  try {
+    copyFileSync(prepared, linked);
+    unlinkSync(prepared); symlinkSync(linked, prepared); await refuses();
+  } finally {
+    unlinkSync(prepared); writeFileSync(prepared, original, { mode: 0o600 }); unlinkSync(linked);
+  }
+  try {
+    const conflicting = JSON.parse(ack.toString()); conflicting.catalogHash = "0".repeat(64);
+    writeFileSync(committed, JSON.stringify(conflicting) + "\n"); await refuses();
+  } finally { writeFileSync(committed, ack); }
+  const copied = path.join(mkdtempSync(path.join(tmpdir(), "setfarm-fresh-copied-records-")), installation.installationId);
+  mkdirSync(copied, { mode: 0o700 });
+  for (const name of listing) copyFileSync(path.join(installation.directory, name), path.join(copied, name));
+  await assert.rejects(fixture.api.reconcileFreshInstallationSchemaV1(copied), /FRESH_INSTALLATION_RECONCILIATION_REFUSED/);
+  assert.deepEqual(await fixture.api.verifyFreshInstallationSchemaV1(installation.directory),
+    await fixture.api.reconcileFreshInstallationSchemaV1(installation.directory));
 });

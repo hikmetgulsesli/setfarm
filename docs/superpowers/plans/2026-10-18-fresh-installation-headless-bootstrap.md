@@ -30,11 +30,14 @@
 - Create `src/installation/fresh-installation-catalog-v1.ts`: read-only catalog fingerprint of the schema actually verified inside bootstrap; exclude lifecycle data and changing planner statistics.
 - Create `src/installation/fresh-installation-v1.ts`: private creation/transaction registry, exclusive provisioning, private effect records, initializer and restricted-runtime verification.
 - Create `src/installation/fresh-installation-source-v1.ts`: derive the actual executing clean source checkout or finalized compiled release, with no caller-selected source authority.
+- Create `src/installation/fresh-installation-records-v1.ts`: bounded private record publication/readback, physical installation identity and pinned creation records; credentials remain internal.
+- Create `src/installation/fresh-installation-runtime-v1.ts`: read-only schema reopen and explicit acknowledgment reconciliation against actual source, database, role OIDs/policy and canonical catalog; no rebootstrap.
 - Modify `src/db/contract-spine-migrations.ts`: new authenticated empty-database initializer, both genesis/current origin verifiers, actual all33 journal verification.
 - Modify `src/internal-production/owner-admission-head-v1.ts`: strict legacy-or-fresh application validation and unchanged ancestry propagation.
 - Modify migration source-integrity manifest/generated digests only for dependencies/regions affected by32/33.
 - Create `tests/installation/fresh-installation-origin.test.ts`, `fresh-installation-bootstrap.integration.test.ts` and `fresh-installation-source-integrity.test.ts`: actual parser behavior, real PostgreSQL and mutation-based source binding; no default test-fixture bypass.
 - Create `tests/installation/fresh-source-checkout-fixture.ts`: one bounded committed copy of actual production source for source-mode integration tests; reuse installed dependencies and delete only that suite-owned temporary directory.
+- Create `tests/installation/commit-ack-proxy.ts`: test-owned bounded loopback proxy that loses one actual server COMMIT response, without parsing/logging frontend statements or credentials.
 - Retarget the existing lifecycle-source boundary test in `tests/spawner-gateway-recovery.test.ts` to the extracted helper, preserving its current no-repair assertions.
 
 ## Task1: Atomic fresh database initialization
@@ -244,3 +247,22 @@ heartbeat and one bounded clean workflow through its actual gates.
   owner/runtime roles. The real GRANT/REVOKE regression also checks incoming
   runtime-role grants, restored verification and exact grantee-OID teardown.
   GREEN0781c8 passed52 tests with zero failures/skips; no-emitbe6792 passed.
+- The next review found database-level CREATE/TEMP grants escaped verification
+  and a lost COMMIT response could strand a committed database without an
+  acknowledgment. REDfefee2 proved the missing privilege rejection; RED4a874a
+  proved no durable prepared record existed. Persist/fsync the exact origin,
+  catalog and creation-record pins before COMMIT. Reconciliation reads private
+  bounded records, verifies the actual source/DB/33-row journal/role policy and
+  catalog, then may publish only the missing acknowledgment. Normal reopen is
+  read-only and requires acknowledgment. No adoption or repeated initialization
+  is introduced. Include database ACLs in the catalog fingerprint and explicitly
+  require CONNECT without CREATE/TEMPORARY. GREEN09e6b2 passed the genuine server
+  COMMIT-response interruption, concurrent acknowledgment recovery and unsafe
+  private-file refusals (3passed/0failed/0skipped). No-emitb9c72a passed. The
+  combined run9fe436 completed72 cases:70passed, with two stale exact source
+  manifest expectations failing. Update those expectations to include the actual
+  fresh regions/dependencies while preserving all mutation and historical digest
+  assertions. Affected rerunc6a48c passed all15 digest cases. Thus all72 distinct
+  selected cases have passing current-source results across those runs, not a
+  claimed single72-pass run. Independent private-record/runtime and network-test
+  reviews both returned C0/I0/M0. PR re-review and clean-main build remain gates.

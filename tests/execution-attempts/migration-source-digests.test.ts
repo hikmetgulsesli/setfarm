@@ -69,8 +69,14 @@ describe("contract-spine semantic migration source digests", () => {
           file: "src/db/contract-spine-migrations.ts",
           region: "migration-v32-guarded-dispatch",
         },
+        { file: "src/db/contract-spine-migrations.ts", region: "current-application-provenance-v1" },
+        { file: "src/db/contract-spine-migrations.ts", region: "fresh-installation-bootstrap-v1" },
       ],
-      dependencyFiles: ["src/product-compiler/canonical-json.ts"],
+      dependencyFiles: [
+        "src/installation/fresh-installation-origin-v1.ts",
+        "src/internal-production/owner-admission-head-v1.ts",
+        "src/product-compiler/canonical-json.ts",
+      ],
     });
     assert.match(checkedIn[32] ?? "", /^[a-f0-9]{64}$/);
 
@@ -186,8 +192,19 @@ describe("contract-spine semantic migration source digests", () => {
         { file: "src/db/contract-spine-migrations.ts", region: "migration-v33-blocked-successor-planner" },
         { file: "src/db/contract-spine-migrations.ts", region: "migration-v33-savepoint-facade" },
         { file: "src/db/contract-spine-migrations.ts", region: "migration-v33-automatic-successor-wrapper" },
+        { file: "src/db/contract-spine-migrations.ts", region: "fresh-installation-bootstrap-v1" },
+        { file: "src/db/contract-spine-migrations.ts", region: "fresh-installation-readonly-v1" },
+        { file: "src/db/contract-spine-migrations.ts", region: "current-application-provenance-v1" },
       ],
       dependencyFiles: [
+        "src/installation/fresh-installation-v1.ts",
+        "src/installation/fresh-installation-records-v1.ts",
+        "src/installation/fresh-installation-runtime-v1.ts",
+        "src/installation/fresh-installation-source-v1.ts",
+        "src/installation/fresh-installation-catalog-v1.ts",
+        "src/db/ordinary-base-schema-v1.ts",
+        "src/installation/fresh-installation-origin-v1.ts",
+        "src/internal-production/owner-admission-head-v1.ts",
         "src/findings/finding-set.ts",
         "src/product-compiler/canonical-json.ts",
         "src/product-compiler/schemas/common-v1.ts",

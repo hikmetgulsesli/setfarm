@@ -337,6 +337,8 @@ export const CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST = Object.freeze({
     ]),
     dependencyFiles: Object.freeze([
       "src/installation/fresh-installation-v1.ts",
+      "src/installation/fresh-installation-records-v1.ts",
+      "src/installation/fresh-installation-runtime-v1.ts",
       "src/installation/fresh-installation-source-v1.ts",
       "src/installation/fresh-installation-catalog-v1.ts",
       "src/db/ordinary-base-schema-v1.ts",
