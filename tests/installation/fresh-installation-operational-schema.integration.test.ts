@@ -45,8 +45,10 @@ test("fresh operational schema rolls back atomically and restricts runtime prove
   };
   try {
     await assert.rejects(owner.begin(async tx=>{await install(tx);throw Error("component rollback");}),/component rollback/);
-    const absent=await owner`SELECT to_regclass('public.prds') AS relation,to_regprocedure('public.setfarm_fresh_owner_head_provenance_guard_v1()') AS function`;
+    const absent=await owner`SELECT to_regclass('public.prds') AS relation,to_regprocedure('public.setfarm_fresh_owner_head_provenance_guard_v1()') AS function,
+      to_regprocedure('public.setfarm_fresh_recovery_delivery_lock_guard_v1()') AS delivery_guard`;
     assert.equal(absent[0]?.relation,null);assert.equal(absent[0]?.function,null);
+    assert.equal(absent[0]?.delivery_guard,null);
     await owner.begin(install);
     const credential=JSON.parse(readFileSync(path.join(installation.directory,"runtime-credentials.json"),"utf8"));
     const runtime=postgres(credential.runtimeUrl,{max:1,onnotice(){}});
@@ -191,6 +193,7 @@ test("fresh operational schema rolls back atomically and restricts runtime prove
           WHERE table_schema='public' AND table_name='recovery_dispatch_deliveries'
             AND grantee=current_user AND privilege_type='UPDATE' ORDER BY column_name`;
         assert.deepEqual(columns.map(row=>row.column_name),["updated_at"]);
+        await assert.rejects(runtime`UPDATE recovery_dispatch_deliveries SET updated_at=updated_at WHERE FALSE`,{code:"42501"});
         for(const statement of [
           "UPDATE recovery_dispatch_deliveries SET state=state",
           "UPDATE recovery_dispatch_deliveries SET dispatch_id=dispatch_id",
@@ -199,7 +202,7 @@ test("fresh operational schema rolls back atomically and restricts runtime prove
           "TRUNCATE recovery_dispatch_deliveries",
         ]) await assert.rejects(runtime.unsafe(statement),{code:"42501"});
       });
-      await t.test("populated recovery-delivery row locks contend while only updated_at is mutable",async()=>{
+      await t.test("populated recovery-delivery locks contend while runtime timestamp mutation is rejected",async()=>{
         // Owner-seeded SQL component only. These schema-valid FK rows are NOT
         // findings/recovery API authorization, admitted workflow or dispatch.
         const run="component-run",story="COMP-1",claimId=Number(childClaim[0]!.id);
@@ -258,9 +261,10 @@ test("fresh operational schema rolls back atomically and restricts runtime prove
           has_table_privilege(current_user,'public.recovery_dispatch_deliveries','DELETE') AS can_delete,
           has_table_privilege(current_user,'public.recovery_dispatch_deliveries','TRUNCATE') AS can_truncate`)[0]!;
         assert.deepEqual({...policy},{table_update:false,can_insert:false,can_delete:false,can_truncate:false});
-        // This is a real writable timestamp grant, not the immutable V25 case.
-        const shifted=await runtime.unsafe("UPDATE recovery_dispatch_deliveries SET updated_at=updated_at+INTERVAL '1 second' WHERE dispatch_id=$1 RETURNING updated_at",[dispatchId]);
-        assert.equal(shifted.length,1);assert.equal(new Date(shifted[0]!.updated_at).getTime(),new Date(now).getTime()+1000);
+        // The SQL column privilege admits row locks; the fresh-only trigger
+        // preserves the source-owned timestamp used by recovery causality/CAS.
+        await assert.rejects(runtime.unsafe("UPDATE recovery_dispatch_deliveries SET updated_at=updated_at+INTERVAL '1 second' WHERE dispatch_id=$1 RETURNING updated_at",[dispatchId]),{code:"42501"});
+        await assert.rejects(runtime.unsafe("UPDATE recovery_dispatch_deliveries SET updated_at=updated_at WHERE dispatch_id=$1",[dispatchId]),{code:"42501"});
         const before=(await runtime.unsafe("SELECT * FROM recovery_dispatch_deliveries WHERE dispatch_id=$1",[dispatchId]))[0]!;
         for(const statement of [
           "UPDATE recovery_dispatch_deliveries SET state=state WHERE dispatch_id=$1",
@@ -271,6 +275,11 @@ test("fresh operational schema rolls back atomically and restricts runtime prove
           "DELETE FROM recovery_dispatch_deliveries WHERE dispatch_id=$1",
         ]) await assert.rejects(runtime.unsafe(statement,[dispatchId]),{code:"42501"});
         await assert.rejects(runtime.unsafe("TRUNCATE recovery_dispatch_deliveries"),{code:"42501"});
+        await assert.rejects(runtime.unsafe("ALTER TABLE recovery_dispatch_deliveries DISABLE TRIGGER trg_setfarm_fresh_recovery_delivery_lock_v1"),{code:"42501"});
+        await assert.rejects(runtime.unsafe("ALTER FUNCTION public.setfarm_fresh_recovery_delivery_lock_guard_v1() SECURITY DEFINER"),{code:"42501"});
+        await assert.rejects(runtime.unsafe("SET session_replication_role=replica"),{code:"42501"});
+        assert.equal((await runtime`SELECT has_function_privilege(current_user,
+          'public.setfarm_fresh_recovery_delivery_lock_guard_v1()','EXECUTE') AS allowed`)[0]!.allowed,false);
         assert.deepEqual((await runtime.unsafe("SELECT * FROM recovery_dispatch_deliveries WHERE dispatch_id=$1",[dispatchId]))[0],before);
         // Prove a genuine nonempty source-query row lock. A second restricted
         // connection must time out on the same row, then succeed after release.
@@ -289,9 +298,12 @@ test("fresh operational schema rolls back atomically and restricts runtime prove
         // no real dispatch transition or recovery authority is claimed.
         await owner.begin(async tx=>{
           await tx.unsafe(`SET LOCAL ROLE ${quote(installation.ownerRole)}`);
-          await tx.unsafe(`UPDATE recovery_dispatch_deliveries SET state='authorized',
+          const changed=await tx.unsafe(`UPDATE recovery_dispatch_deliveries SET state='authorized',
             owner_instance_id=NULL,lease_token=NULL,lease_expires_at=NULL,
-            attempt_id=NULL,claim_id=NULL,attempt_count=0 WHERE dispatch_id=$1`,[dispatchId]);
+            attempt_id=NULL,claim_id=NULL,attempt_count=0,updated_at=updated_at+INTERVAL '1 second'
+            WHERE dispatch_id=$1 RETURNING updated_at`,[dispatchId]);
+          assert.equal(changed.length,1);
+          assert.equal(new Date(changed[0]!.updated_at).getTime(),new Date(now).getTime()+1000);
         });
         const authority=await import("../../src/execution/claim-mutation-authority.js");
         const businessSnapshot=async()=>runtime.unsafe(`SELECT
@@ -310,6 +322,21 @@ test("fresh operational schema rolls back atomically and restricts runtime prove
         });
         assert.deepEqual(await businessSnapshot(),businessBefore,"actual owner-exclusion barrier must not mutate business state");
         await grants.verifyFreshInstallationRuntimeBusinessGrantsV1(runtime,installation.runtimeRole);
+      });
+      await t.test("fresh delivery row-lock guard rejects owned-fixture drift without repair",async()=>{
+        for(const statement of [
+          "ALTER TABLE public.recovery_dispatch_deliveries DISABLE TRIGGER trg_setfarm_fresh_recovery_delivery_lock_v1",
+          "CREATE OR REPLACE FUNCTION public.setfarm_fresh_recovery_delivery_lock_guard_v1() RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $$BEGIN RETURN NULL; END$$",
+          `GRANT EXECUTE ON FUNCTION public.setfarm_fresh_recovery_delivery_lock_guard_v1() TO ${quote(installation.runtimeRole)}`,
+        ]) {
+          await assert.rejects(owner.begin(async tx=>{
+            await tx.unsafe(`SET LOCAL ROLE ${quote(installation.ownerRole)}`);
+            await tx.unsafe(statement);
+            await assert.rejects(grants.verifyFreshInstallationRuntimeBusinessGrantsV1(tx,installation.runtimeRole),/FRESH_INSTALLATION_RUNTIME_GRANTS_REFUSED/);
+            throw Error("component guard drift rollback");
+          }),/component guard drift rollback/);
+          await grants.verifyFreshInstallationRuntimeBusinessGrantsV1(runtime,installation.runtimeRole);
+        }
       });
       await runtime`UPDATE claim_log SET outcome='done' WHERE run_id='component-run'`;
       await runtime`UPDATE runs SET status='completed' WHERE id='component-run'`;

@@ -88,10 +88,17 @@ before excluding a competing recovery owner, even when no delivery exists. The
 schema-only runtime already has SELECT, but PostgreSQL FOR UPDATE additionally
 requires some column UPDATE privilege. Preserve that mutable exclusion lock and
 all original predicates. Add only UPDATE(updated_at) on this mutable table to
-the fixed fresh grant contract. The timestamp is actually writable under this
-column privilege; this is not an immutable-table exception or a claim that SQL
-ACLs enforce application row predicates. No recovery state, identity, lease,
-INSERT, DELETE, TRUNCATE or recovery-dispatch feature is enabled.
+the fixed fresh grant contract, protected by a fresh-only owner-gated UPDATE
+statement trigger. The timestamp supplies recovery event identity, causality
+and transition CAS. A bare column grant would allow those inputs to change;
+PR289 review identified that problem before merge. The trigger must reject
+every actual runtime UPDATE, including empty/no-op updates, while SELECT FOR
+UPDATE and source-owned owner updates remain possible. Verify its exact
+zero-argument INVOKER body, owner, search_path, owner-only function ACL and
+always-enabled statement trigger before accepting the lock privilege. Refuse
+preexisting extension objects and install atomically before the column grant;
+bind the extension in the final activated catalog. No recovery state, identity,
+lease, INSERT, DELETE, TRUNCATE or recovery-dispatch feature is enabled.
 
 File-map refinement is limited to fresh-installation-runtime-grants-v1.ts and
 the operational-schema restricted-PG regression. Execute the exact ordinary
@@ -115,3 +122,24 @@ grant and whole fixture review C0/I0/M0 includes that fixture correction.
 TypeScript14a3d9, English93d745, semantic migrations400d54 and paths65fd24
 passed. This remains component evidence; actual compiled lifecycle after the
 new reviewed clean-main build and all Unit3/live outcomes remain open.
+
+The earlier populated timestamp-advance positive is historical evidence for
+the rejected bare-grant revision. PR289's exact3bef3912 cloud review correctly
+found that updated_at is authoritative in v3-recovery-lifecycle-reconciler,
+including event hashes, causal ordering and CAS. Independent review confirms
+the correction. Extend the same file map with a fixed private guard inside
+the business grant module, no generic verifier or published migration change.
+Run RED on timestamp/no-op mutation rejection, then verify real row locks and
+owner updates still succeed, runtime writes/DDL/replica mode remain denied,
+and owned-fixture guard drift fails exact verification without repair.
+
+Guard correction evidence: timestamp rejection first failed with a real
+missing-rejection assertion (c4165d). The guarded revision passed all11
+schema/rollback/grant cases (3f1e6f): empty and populated/no-op runtime UPDATE
+rejection, real row-lock contention, owner timestamp update, actual normal
+recovery-owner exclusion, rollback absence, denied DDL/replica mode and exact
+verifier rejection of trigger/body/function-ACL drift followed by rollback.
+Independent exact delta review C0/I0/M0 pins production aad95488 and tests
+eb7fddc0 (6b2037/865914). TypeScriptb5d84d, English2d95b0 and semantic
+migrationsc4a714 pass. Reviewed delivery, new clean-main build/instance and
+actual complete compiled lifecycle remain required; Unit3 is still unwired.

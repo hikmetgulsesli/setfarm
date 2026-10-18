@@ -20,7 +20,7 @@ const GRANTS: readonly Grant[] = Object.freeze([
   { table: "claim_log", privilege: "UPDATE", columns: ["outcome", "abandoned_at", "duration_ms", "diagnostic"] },
   // Normal claim exclusion/withdrawal/completion locks this mutable table even
   // when no recovery delivery exists. FOR UPDATE needs one UPDATE column;
-  // updated_at is writable, but no recovery state/identity/lease DML is granted.
+  // the fixed owner-only guard below rejects every actual runtime UPDATE.
   { table: "recovery_dispatch_deliveries", privilege: "UPDATE", columns: ["updated_at"] },
   { table: "runtime_sessions", privilege: "INSERT", columns: ["session_id", "run_id", "step_db_id", "workflow_step_id", "story_db_id", "story_id", "claim_id", "attempt_id", "claim_agent_id", "runtime_agent_id", "runtime_kind", "owner_instance_id", "session_key", "worktree", "runtime_path", "transcript_path", "state", "heartbeat_at", "created_at", "updated_at"] },
   { table: "runtime_sessions", privilege: "UPDATE", columns: ["attempt_id", "diagnostic", "drain_evidence", "drain_requested_at", "drained_at", "heartbeat_at", "pid", "process_group_id", "process_identity", "process_started_at", "released_at", "runtime_path", "session_key", "started_at", "state", "state_version", "transcript_path", "updated_at", "worktree"] },
@@ -116,6 +116,17 @@ const PREPARATION_GUARD_FUNCTIONS = Object.freeze([
 // Fixed mutable story replacement, medic latest500 retention and user-rule
 // deletion only; their source-owned statements retain the predicates.
 const DELETE_TABLES = Object.freeze(["stories", "medic_checks", "rules"]);
+const DELIVERY_GUARD_FUNCTION = "setfarm_fresh_recovery_delivery_lock_guard_v1";
+const DELIVERY_GUARD_TRIGGER = "trg_setfarm_fresh_recovery_delivery_lock_v1";
+const DELIVERY_GUARD_BODY = `BEGIN
+  IF TG_TABLE_SCHEMA <> 'public' OR TG_TABLE_NAME <> 'recovery_dispatch_deliveries'
+     OR TG_NARGS <> 0 OR TG_OP <> 'UPDATE' OR TG_LEVEL <> 'STATEMENT'
+     OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class c WHERE c.oid=TG_RELID
+       AND pg_catalog.pg_get_userbyid(c.relowner)=current_user) THEN
+    RAISE EXCEPTION 'FRESH_INSTALLATION_RECOVERY_DELIVERY_UPDATE_FORBIDDEN' USING ERRCODE = '42501';
+  END IF;
+  RETURN NULL;
+END`;
 
 function refuse(): never { throw new Error("FRESH_INSTALLATION_RUNTIME_GRANTS_REFUSED"); }
 function quote(value: string): string { return `"${value.replaceAll('"', '""')}"`; }
@@ -128,6 +139,54 @@ function oid(value: string): boolean {
 }
 type Context = Readonly<{ ownerOid: string; runtimeOid: string }>;
 type Acl = { object: string; column: string; grantor: string; grantee: string; privilege: string; grantable: boolean };
+
+async function installDeliveryRowLockGuard(sql: FreshInstallationProvenanceSqlV1, ctx: Context): Promise<void> {
+  const absent = await sql.unsafe<Array<{ absent: boolean }>>(`SELECT
+    NOT EXISTS(SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+      WHERE n.nspname='public' AND p.proname='${DELIVERY_GUARD_FUNCTION}')
+    AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger t
+      WHERE t.tgrelid='public.recovery_dispatch_deliveries'::regclass AND NOT t.tgisinternal) AS absent`);
+  if (absent.length !== 1 || absent[0]?.absent !== true) refuse();
+  await sql.unsafe(`CREATE FUNCTION public.${DELIVERY_GUARD_FUNCTION}() RETURNS trigger
+    LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $fresh_delivery$${DELIVERY_GUARD_BODY}$fresh_delivery$`);
+  await sql.unsafe(`REVOKE ALL ON FUNCTION public.${DELIVERY_GUARD_FUNCTION}() FROM PUBLIC`);
+  await sql.unsafe(`CREATE TRIGGER ${DELIVERY_GUARD_TRIGGER} BEFORE UPDATE ON public.recovery_dispatch_deliveries
+    FOR EACH STATEMENT EXECUTE FUNCTION public.${DELIVERY_GUARD_FUNCTION}()`);
+  await sql.unsafe(`ALTER TABLE public.recovery_dispatch_deliveries ENABLE ALWAYS TRIGGER ${DELIVERY_GUARD_TRIGGER}`);
+  await verifyDeliveryRowLockGuard(sql, ctx);
+}
+
+/** This timestamp is a recovery causality/CAS input, not freely mutable data. */
+async function verifyDeliveryRowLockGuard(sql: FreshInstallationProvenanceSqlV1, ctx: Context): Promise<void> {
+  const functions = await sql.unsafe<Array<{
+    oid: string; owner_oid: string; body: string; config: string[] | null; valid: boolean; owner_acl: boolean;
+  }>>(`SELECT p.oid::text AS oid,p.proowner::text AS owner_oid,p.prosrc AS body,p.proconfig AS config,
+      (p.pronargs=0 AND p.pronargdefaults=0 AND p.prokind='f' AND p.prorettype='pg_catalog.trigger'::regtype
+       AND l.lanname='plpgsql' AND NOT p.prosecdef AND NOT p.proleakproof AND NOT p.proisstrict
+       AND NOT p.proretset AND p.provolatile='v' AND p.proparallel='u'
+       AND pg_catalog.pg_get_function_identity_arguments(p.oid)='') AS valid,
+      (SELECT count(*)=1 AND bool_and(a.grantor=p.proowner AND a.grantee=p.proowner
+         AND a.privilege_type='EXECUTE' AND NOT a.is_grantable)
+       FROM pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) a) AS owner_acl
+    FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+      JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+    WHERE n.nspname='public' AND p.proname='${DELIVERY_GUARD_FUNCTION}' LIMIT 2`);
+  const fn = functions[0];
+  if (functions.length !== 1 || !fn || !oid(fn.oid) || fn.owner_oid !== ctx.ownerOid
+    || fn.body !== DELIVERY_GUARD_BODY || fn.valid !== true || fn.owner_acl !== true
+    || canonicalJsonStringify(fn.config) !== canonicalJsonStringify(["search_path=pg_catalog"])) refuse();
+  const triggers = await sql.unsafe<Array<{
+    name: string; function_oid: string; type: number; enabled: string; valid: boolean;
+  }>>(`SELECT t.tgname AS name,t.tgfoid::text AS function_oid,t.tgtype::integer AS type,t.tgenabled AS enabled,
+      (t.tgnargs=0 AND octet_length(t.tgargs)=0 AND t.tgattr=''::int2vector AND t.tgqual IS NULL
+       AND t.tgconstraint=0 AND t.tgconstrrelid=0 AND t.tgconstrindid=0
+       AND NOT t.tgdeferrable AND NOT t.tginitdeferred) AS valid
+    FROM pg_catalog.pg_trigger t WHERE t.tgrelid='public.recovery_dispatch_deliveries'::regclass
+      AND NOT t.tgisinternal ORDER BY t.tgname LIMIT 2`);
+  if (triggers.length !== 1 || triggers[0]?.name !== DELIVERY_GUARD_TRIGGER
+    || triggers[0].function_oid !== fn.oid || triggers[0].type !== 18
+    || triggers[0].enabled !== "A" || triggers[0].valid !== true) refuse();
+}
 
 // Read-only principal boundary. The full exact migration25 verifier is invoked
 // ONCE on installation before any exception grant, never as a broad runtime scan.
@@ -232,6 +291,7 @@ export async function installFreshInstallationRuntimeBusinessGrantsV1(
     await import("../db/contract-spine-migrations.js");
     const { verifyPreparationAuthorityV2Ledger } = await import("../db/preparation-authority-v2-migration.js");
     await verifyPreparationAuthorityV2Ledger(sql);
+    await installDeliveryRowLockGuard(sql, before);
     for (const grant of GRANTS) await sql.unsafe(
       `GRANT ${grant.privilege} (${grant.columns.map(quote).join(",")}) ON TABLE public.${grant.table} TO ${quote(role)}`,
     );
@@ -242,6 +302,7 @@ export async function installFreshInstallationRuntimeBusinessGrantsV1(
     for (const sequence of SEQUENCES) await sql.unsafe(`GRANT USAGE ON SEQUENCE public.${sequence} TO ${quote(role)}`);
     const after = await context(sql, role, true);
     if (canonicalJsonStringify(before) !== canonicalJsonStringify(after)) refuse();
+    await verifyDeliveryRowLockGuard(sql, after);
     assertAcl(await readAcl(sql, after), after, true);
   } catch { return refuse(); }
 }
@@ -252,6 +313,7 @@ export async function verifyFreshInstallationRuntimeBusinessGrantsV1(
 ): Promise<void> {
   try {
     const ctx = await context(sql, requireRole(runtimeRoleInput), false);
+    await verifyDeliveryRowLockGuard(sql, ctx);
     assertAcl(await readAcl(sql, ctx), ctx, true);
   } catch { return refuse(); }
 }
