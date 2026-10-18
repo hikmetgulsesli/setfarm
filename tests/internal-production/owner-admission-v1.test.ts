@@ -175,7 +175,7 @@ test("ordinary runtime env retains process priority and repeated local-file over
   try {
     const sourceRoot = path.resolve(import.meta.dirname, "../../src");
     let source = readFileSync(path.join(sourceRoot, "runtime-config.ts"), "utf8");
-    for (const dependency of ["product-compiler/artifact-capacity", "execution/v3-seal-capacity", "internal-production/baseline-restart-authority-retirement-v1"]) {
+    for (const dependency of ["product-compiler/artifact-capacity", "execution/v3-seal-capacity", "internal-production/baseline-restart-authority-retirement-v1", "installation/fresh-installation-selection-v1", "installation/fresh-installation-artifact-policy-v1"]) {
       source = source.replace(`"./${dependency}.js"`, JSON.stringify(pathToFileURL(path.join(sourceRoot, `${dependency}.ts`)).href));
     }
     mkdirSync(path.join(fixture, "internal-production"));
@@ -4868,7 +4868,7 @@ test("pure owner-admission parser rejects malformed authority", () => {
 
 test("source boundary keeps owner-admission PostgreSQL imports lazy", async () => {
   const source = await readFile(new URL("../../src/internal-production/owner-admission-v1.ts", import.meta.url), "utf8");
-  assert.deepEqual([...source.matchAll(/^import[^;]+from\s+["']([^"']+)["'];/gm)].map((match) => match[1]), ["postgres", "../product-compiler/canonical-json.js"]);
+  assert.deepEqual([...source.matchAll(/^import[^;]+from\s+["']([^"']+)["'];/gm)].map((match) => match[1]), ["postgres", "node:util", "../installation/fresh-installation-origin-v1.js", "../product-compiler/canonical-json.js"]);
 });
 
 test("private fake derives owner-admission projection", () => {
@@ -5012,7 +5012,7 @@ test("database committed-current module graph has no static fresh observer or Gi
 
 test("database activation resolves source before deriving or querying target authority", async () => {
   const source = await readFile(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
-  const activation = source.slice(source.indexOf("async function activateInternalProductionOwnerProducerManifestSetCoreV1"));
+  const activation = source.slice(source.indexOf("async function activateOwnerProducerManifestAInTransactionV1"));
   const sourceResolution = activation.indexOf("resolveOwnerProducerSourceInTransactionV1(sql, sourcePair, sourceCache)");
   const targetDerivation = activation.indexOf("const manifestSetBody");
   const targetQuery = activation.indexOf("FROM internal_production_owner_producer_manifest_set_activations_v1");
@@ -5033,7 +5033,7 @@ test("database resolves activation and head as one cross-bound recursive chain",
 
 test("database classifies superseded only when the strict current chain contains target", async () => {
   const source = await readFile(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
-  const activation = source.slice(source.indexOf("async function activateInternalProductionOwnerProducerManifestSetCoreV1"));
+  const activation = source.slice(source.indexOf("async function activateOwnerProducerManifestAInTransactionV1"));
   assert.match(activation, /currentChainContainsTarget/);
   assert.match(activation, /if \(currentChainContainsTarget\) throw new OwnerProducerActivationSupersededError\(\)/);
   assert.doesNotMatch(activation, /if \(current\) throw new OwnerProducerActivationSupersededError\(\)/);
@@ -5041,21 +5041,21 @@ test("database classifies superseded only when the strict current chain contains
 
 test("database supersession reuses the one pinned cross-bound chain without a second phase read", async () => {
   const source = await readFile(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
-  const activation = source.slice(source.indexOf("async function activateInternalProductionOwnerProducerManifestSetCoreV1"));
+  const activation = source.slice(source.indexOf("async function activateOwnerProducerManifestAInTransactionV1"));
   assert.doesNotMatch(activation, /currentChainContainsTargetInTransactionV1/);
   assert.match(activation, /currentResolution\.ancestry\.some/);
 });
 
 test("database target classification reuses an already resolved current-chain node", async () => {
   const source = await readFile(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
-  const activation = source.slice(source.indexOf("async function activateInternalProductionOwnerProducerManifestSetCoreV1"));
+  const activation = source.slice(source.indexOf("async function activateOwnerProducerManifestAInTransactionV1"));
   assert.match(activation, /currentTargetNode = currentResolution\?\.nodes\.find/);
   assert.match(activation, /if \(currentTargetNode !== undefined\)/);
 });
 
 test("database shares one transaction-local resolved-source cache across target and current chain", async () => {
   const source = await readFile(new URL("../../src/db-pg.ts", import.meta.url), "utf8");
-  const activation = source.slice(source.indexOf("async function activateInternalProductionOwnerProducerManifestSetCoreV1"));
+  const activation = source.slice(source.indexOf("async function activateOwnerProducerManifestAInTransactionV1"));
   assert.match(activation, /const sourceCache = new Map/);
   assert.match(activation, /resolveOwnerProducerSourceInTransactionV1\(sql, sourcePair, sourceCache\)/);
   assert.match(activation, /resolveCurrentOwnerProducerManifestSetActivationWithChainInTransactionV1\(sql, true, sourceCache\)/);
@@ -11145,7 +11145,7 @@ test("strict shapes reject symbols, non-enumerable fields, custom prototypes, an
 test("the core is import-inert and contains only the approved dependency edges", async () => {
   const source = await readFile(new URL("../../src/internal-production/owner-admission-v1.ts", import.meta.url), "utf8");
   const imports = [...source.matchAll(/^import[^;]+from\s+["']([^"']+)["'];/gm)].map((match) => match[1]);
-  assert.deepEqual(imports, ["postgres", "../product-compiler/canonical-json.js"]);
+  assert.deepEqual(imports, ["postgres", "node:util", "../installation/fresh-installation-origin-v1.js", "../product-compiler/canonical-json.js"]);
   assert.doesNotMatch(source, /from\s+["'][^"']*(?:db-pg|receipt|restart|spawner|execution)[^"']*["']/);
   assert.doesNotMatch(source, /createInternalProductionOwnerAdmission(?:Repository|Controller)/);
   assert.doesNotMatch(source, /postgres\s*\(/);

@@ -11,7 +11,7 @@ import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { freshInstallationDirectoryIdentityV1, publishFreshInstallationPrivateRecordV1 as privateRecord,
   type FreshInstallationRecordPinV1 } from "./fresh-installation-records-v1.js";
 import { reconcileFreshInstallationSchemaV1, verifyFreshInstallationSchemaV1, type FreshInstallationSchemaVerificationV1 } from "./fresh-installation-runtime-v1.js";
-export { reconcileFreshInstallationSchemaV1, verifyFreshInstallationSchemaV1 } from "./fresh-installation-runtime-v1.js";
+export { reconcileFreshInstallationSchemaV1, verifyFreshInstallationSchemaV1, verifyFreshInstallationRuntimeV1 } from "./fresh-installation-runtime-v1.js";
 
 const activeTransactions = new WeakMap<object, FreshInstallationOriginV1>();
 const quote = (value: string): string => `"${value.replaceAll('"', '""')}"`;

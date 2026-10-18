@@ -1,3 +1,4 @@
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import { randomUUID } from "node:crypto";
 
 import type postgres from "postgres";
@@ -617,10 +618,14 @@ async function lockPublicationBatchAggregate(
     );
   }
   const items = await sql.unsafe<PublicationBatchItemRow[]>(
-    `SELECT * FROM artifact_publication_batch_items
-      WHERE batch_reservation_id = $1
-      ORDER BY ordinal
-      FOR UPDATE`,
+    selectedFreshInstallationRootV1() !== null
+      ? `SELECT * FROM artifact_publication_batch_items
+          WHERE batch_reservation_id = $1
+          ORDER BY ordinal`
+      : `SELECT * FROM artifact_publication_batch_items
+          WHERE batch_reservation_id = $1
+          ORDER BY ordinal
+          FOR UPDATE`,
     [batchReservationId],
   );
   if (items.length !== safeInteger(batch.artifact_count, "ARTIFACT_BATCH_COUNT_INVALID")) {
@@ -656,9 +661,12 @@ async function lockPublicationBatchPlan(
   items: readonly PublicationBatchPlanItemRow[];
 }>> {
   const planRows = await sql.unsafe<PublicationBatchPlanRow[]>(
-    `SELECT * FROM artifact_publication_batch_plans
-      WHERE batch_reservation_id = $1
-      FOR UPDATE`,
+    selectedFreshInstallationRootV1() !== null
+      ? `SELECT * FROM artifact_publication_batch_plans
+          WHERE batch_reservation_id = $1`
+      : `SELECT * FROM artifact_publication_batch_plans
+          WHERE batch_reservation_id = $1
+          FOR UPDATE`,
     [batchReservationId],
   );
   const plan = planRows[0];
@@ -669,10 +677,14 @@ async function lockPublicationBatchPlan(
     );
   }
   const items = await sql.unsafe<PublicationBatchPlanItemRow[]>(
-    `SELECT * FROM artifact_publication_batch_plan_items
-      WHERE batch_reservation_id = $1
-      ORDER BY ordinal
-      FOR UPDATE`,
+    selectedFreshInstallationRootV1() !== null
+      ? `SELECT * FROM artifact_publication_batch_plan_items
+          WHERE batch_reservation_id = $1
+          ORDER BY ordinal`
+      : `SELECT * FROM artifact_publication_batch_plan_items
+          WHERE batch_reservation_id = $1
+          ORDER BY ordinal
+          FOR UPDATE`,
     [batchReservationId],
   );
   return Object.freeze({ plan, items: Object.freeze(items) });
@@ -1156,7 +1168,9 @@ function createArtifactIndexWithLeaseTimeAuthority(
           );
         }
         const rows = await transaction.unsafe<ArtifactRow[]>(
-          "SELECT * FROM semantic_artifacts ORDER BY artifact_hash FOR UPDATE",
+          selectedFreshInstallationRootV1() !== null
+            ? "SELECT * FROM semantic_artifacts ORDER BY artifact_hash"
+            : "SELECT * FROM semantic_artifacts ORDER BY artifact_hash FOR UPDATE",
         );
         const indexed = new Map(rows.map((row) => [row.artifact_hash, row]));
         let mismatch: string | undefined;

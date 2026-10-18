@@ -1,3 +1,4 @@
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import type postgres from "postgres";
 
 import { EvidencePlanV1Schema, compileEvidencePlanV1 } from "./evidence-plan-v1.js";
@@ -333,10 +334,15 @@ export function createAcceptedCandidateRepository(input: Readonly<{
           }
 
           const evidenceRows = await transaction.unsafe<EvidenceRow[]>(
-            `SELECT evidence_bundle_hash, evidence_id, run_id, story_id, packet_hash,
-                    slice_hash, source_sha, source_tree_hash, attempt_id,
-                    aggregate_verdict, payload
-               FROM evidence_bundles WHERE evidence_bundle_hash = $1 FOR SHARE`,
+            selectedFreshInstallationRootV1() !== null
+              ? `SELECT evidence_bundle_hash, evidence_id, run_id, story_id, packet_hash,
+                        slice_hash, source_sha, source_tree_hash, attempt_id,
+                        aggregate_verdict, payload
+                   FROM evidence_bundles WHERE evidence_bundle_hash = $1`
+              : `SELECT evidence_bundle_hash, evidence_id, run_id, story_id, packet_hash,
+                        slice_hash, source_sha, source_tree_hash, attempt_id,
+                        aggregate_verdict, payload
+                   FROM evidence_bundles WHERE evidence_bundle_hash = $1 FOR SHARE`,
             [request.evidenceBundleHash],
           );
           const evidenceRow = evidenceRows[0];
@@ -401,7 +407,9 @@ export function createAcceptedCandidateRepository(input: Readonly<{
           },
         });
         const existingRows = await transaction.unsafe<Array<{ payload: unknown }>>(
-          "SELECT payload FROM accepted_candidates WHERE run_id = $1 FOR SHARE",
+          selectedFreshInstallationRootV1() !== null
+            ? "SELECT payload FROM accepted_candidates WHERE run_id = $1"
+            : "SELECT payload FROM accepted_candidates WHERE run_id = $1 FOR SHARE",
           [runId],
         );
         if (existingRows[0]) {

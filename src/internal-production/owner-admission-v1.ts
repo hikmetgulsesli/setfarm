@@ -1,4 +1,6 @@
 import type postgres from "postgres";
+import { types } from "node:util";
+import { parseFreshInstallationOriginV1, type FreshInstallationOriginV1 } from "../installation/fresh-installation-origin-v1.js";
 
 import {
   canonicalJsonBytes,
@@ -376,8 +378,20 @@ export type InternalProductionOwnerProducerSourceBuildAuthorityAV1 = Readonly<{
   sourceBuildAuthorityHash: string;
 }>;
 
+export type FreshInstallationOwnerProducerSourceBuildAuthorityAV1 = Readonly<{
+  schema: "setfarm.fresh-installation-owner-producer-source-build-authority-a.v1";
+  plan: "A";
+  manifestHash: string;
+  origin: FreshInstallationOriginV1;
+  setfarmSource: InternalProductionOwnerProducerSourceBuildAuthorityAV1["setfarmSource"];
+  ownerCategoryRegistryHash: string;
+  ownerCategoryCensusMapHash: string;
+  sourceBuildAuthorityRef: string;
+  sourceBuildAuthorityHash: string;
+}>;
+
 export type InternalProductionOwnerProducerSourceBuildAuthorityV1 =
-  InternalProductionOwnerProducerSourceBuildAuthorityAV1;
+  InternalProductionOwnerProducerSourceBuildAuthorityAV1 | FreshInstallationOwnerProducerSourceBuildAuthorityAV1;
 
 type SourceBuildAuthorityAInputV1 = Omit<
   InternalProductionOwnerProducerSourceBuildAuthorityAV1,
@@ -553,6 +567,11 @@ function createInternalProductionOwnerProducerSourceBuildAuthorityAV1(
 export function validateInternalProductionOwnerProducerSourceBuildAuthorityV1(
   value: unknown,
 ): InternalProductionOwnerProducerSourceBuildAuthorityV1 {
+  if (types.isProxy(value)) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_INVALID");
+  const schema = value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, "schema") : undefined;
+  if (schema && "value" in schema && schema.value === "setfarm.fresh-installation-owner-producer-source-build-authority-a.v1") {
+    return validateFreshInstallationOwnerProducerSourceBuildAuthorityAV1(value);
+  }
   const body = validateSourceAuthorityABody(value, true) as InternalProductionOwnerProducerSourceBuildAuthorityAV1;
   const {
     sourceBuildAuthorityRef: _ref,
@@ -565,6 +584,33 @@ export function validateInternalProductionOwnerProducerSourceBuildAuthorityV1(
     || body.sourceBuildAuthorityRef !== `setfarm://internal-production/owner-producer-source-build-authority/A/sha256/${sourceBuildAuthorityHash}`
   ) fail("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_A_DERIVATION_INVALID");
   return detachedDeepFreeze(body);
+}
+
+/** Data contract only; actual release and connected-origin checks are mandatory before use. */
+function validateFreshInstallationOwnerProducerSourceBuildAuthorityAV1(
+  value: unknown,
+): FreshInstallationOwnerProducerSourceBuildAuthorityAV1 {
+  const code = "FRESH_INSTALLATION_OWNER_SOURCE_AUTHORITY_INVALID";
+  const authority = record(value, code);
+  exactKeys(authority, ["schema", "plan", "manifestHash", "origin", "setfarmSource", "ownerCategoryRegistryHash",
+    "ownerCategoryCensusMapHash", "sourceBuildAuthorityRef", "sourceBuildAuthorityHash"], code);
+  if (authority.schema !== "setfarm.fresh-installation-owner-producer-source-build-authority-a.v1"
+    || authority.plan !== "A" || authority.manifestHash !== INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1.manifestHash
+    || authority.ownerCategoryRegistryHash !== INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1
+    || authority.ownerCategoryCensusMapHash !== INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1) fail(code);
+  const origin = parseFreshInstallationOriginV1(authority.origin);
+  if (types.isProxy(authority.setfarmSource)) fail(code);
+  const source = record(authority.setfarmSource, code);
+  exactKeys(source, ["branch", "clean", "sha", "treeHash", "buildHash", "originMainSha"], code);
+  if (source.branch !== "main" || source.clean !== true || gitHash(source.sha, code) !== origin.sourceSha
+    || gitHash(source.originMainSha, code) !== source.sha) fail(code);
+  gitHash(source.treeHash, code); sha256(source.buildHash, code);
+  const { sourceBuildAuthorityRef, sourceBuildAuthorityHash, ...body } = authority;
+  const expectedHash = hashCanonicalJson(body);
+  if (sourceBuildAuthorityHash !== expectedHash
+    || sourceBuildAuthorityRef !== `setfarm://internal-production/owner-producer-source-build-authority/A/sha256/${expectedHash}`
+    || canonicalJsonBytes(authority).length > 65_536) fail(code);
+  return detachedDeepFreeze({ ...authority, origin }) as FreshInstallationOwnerProducerSourceBuildAuthorityAV1;
 }
 
 export type InternalProductionOwnerProducerManifestSetActivationReceiptV1 = Readonly<{

@@ -1,3 +1,4 @@
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import { randomUUID } from "node:crypto";
 
 import type postgres from "postgres";
@@ -560,7 +561,9 @@ export function createOperationalOutboxRepository(sql: Sql) {
           ],
         );
         const canonicalRows = await transaction.unsafe<CanonicalEventRow[]>(
-          "SELECT * FROM operational_events WHERE event_key = $1 FOR UPDATE",
+          selectedFreshInstallationRootV1() !== null
+            ? "SELECT * FROM operational_events WHERE event_key = $1"
+            : "SELECT * FROM operational_events WHERE event_key = $1 FOR UPDATE",
           [event.eventKey],
         );
         const storedEvent = canonicalRows[0] ? mapCanonicalEvent(canonicalRows[0]) : undefined;

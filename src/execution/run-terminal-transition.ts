@@ -1,3 +1,4 @@
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import type postgres from "postgres";
 
 import {
@@ -655,8 +656,11 @@ export async function transitionRunToTerminalInTransaction(
   if (run.protocol === "v3" && input.status === "completed" && !alreadyTerminal) {
     if (!run.accepted_candidate_hash) throw new Error("RUN_TERMINAL_V3_ACCEPTED_CANDIDATE_REQUIRED");
     const candidates = await sql.unsafe<Array<{ payload: unknown }>>(
-      `SELECT payload FROM accepted_candidates
-        WHERE candidate_hash = $1 AND run_id = $2 LIMIT 1 FOR SHARE`,
+      selectedFreshInstallationRootV1() !== null
+        ? `SELECT payload FROM accepted_candidates
+            WHERE candidate_hash = $1 AND run_id = $2 LIMIT 1`
+        : `SELECT payload FROM accepted_candidates
+            WHERE candidate_hash = $1 AND run_id = $2 LIMIT 1 FOR SHARE`,
       [run.accepted_candidate_hash, input.runId],
     );
     const parsed = AcceptedCandidateV1Schema.safeParse(candidates[0]?.payload);

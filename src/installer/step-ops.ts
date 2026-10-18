@@ -1,3 +1,4 @@
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import { getSql, pgQuery, pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
 import type { PgTransactionSql } from "../db-pg.js";
 import type { LoopConfig, Story } from "./types.js";
@@ -131,6 +132,10 @@ import {
   validateInternalProductionOwnerReservationV1,
   validateInternalProductionOwnerReservationCloseV1,
 } from "../internal-production/owner-admission-v1.js";
+import {
+  validateOwnerAdmissionMigrationApplicationV1,
+  type OwnerAdmissionMigrationApplicationV1,
+} from "../internal-production/owner-admission-head-v1.js";
 import type { FindingSetV1 } from "../findings/finding-set.js";
 import { createFindingSetFromEvidenceBundleV2 } from "../findings/evidence-finding-set.js";
 import { readDefaultGithubReview } from "../findings/github-review-source.js";
@@ -3435,7 +3440,9 @@ async function authenticatedV3SupervisorStoryWorktree(input: Readonly<{
         AND binding.story_db_id = $4
         AND binding.story_id = $5
       LIMIT 2
-      FOR UPDATE OF binding, runtime, story`,
+      ${selectedFreshInstallationRootV1() !== null
+        ? "FOR UPDATE OF runtime, story"
+        : "FOR UPDATE OF binding, runtime, story"}`,
     [
       input.runtimeSessionId,
       input.runId,
@@ -5471,15 +5478,7 @@ type RunningSingleStepOwnerAuthorityRowV1 = Readonly<{
   authority_body: unknown;
 }>;
 
-type RunningSingleStepOwnerMigrationApplicationV1 = Readonly<{
-  schema: "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1";
-  evidenceHash: string;
-  authorizationRef: string;
-  authorizationHash: string;
-  authorizationConsumptionRef: string;
-  authorizationConsumptionHash: string;
-  applicationHash: string;
-}>;
+type RunningSingleStepOwnerMigrationApplicationV1 = OwnerAdmissionMigrationApplicationV1;
 
 type RunningSingleStepOwnerAdvancingAuthorityV1 = Readonly<{
   version: number;
@@ -5493,45 +5492,11 @@ function validateRunningSingleStepOwnerMigrationApplicationV1(
   value: unknown,
   evidenceHash: string,
 ): RunningSingleStepOwnerMigrationApplicationV1 {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  try {
+    return validateOwnerAdmissionMigrationApplicationV1(value, evidenceHash);
+  } catch {
     throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
   }
-  const application = value as Record<string, unknown>;
-  const keys = Object.keys(application);
-  const expectedKeys = [
-    "schema", "evidenceHash", "authorizationRef", "authorizationHash",
-    "authorizationConsumptionRef", "authorizationConsumptionHash", "applicationHash",
-  ];
-  if (
-    keys.length !== expectedKeys.length
-    || expectedKeys.some((key) => !Object.prototype.hasOwnProperty.call(application, key))
-    || application.schema !== "setfarm.bootstrap-main-claim-handoff-guarded-migration-32-application.v1"
-    || application.evidenceHash !== evidenceHash
-    || !RUNNING_SINGLE_STEP_OWNER_SHA256_V1.test(evidenceHash)
-    || evidenceHash === "0".repeat(64)
-    || !RUNNING_SINGLE_STEP_OWNER_REF_V1.test(String(application.authorizationRef))
-    || !RUNNING_SINGLE_STEP_OWNER_REF_V1.test(String(application.authorizationConsumptionRef))
-    || [
-      application.authorizationHash,
-      application.authorizationConsumptionHash,
-      application.applicationHash,
-    ].some((hash) => typeof hash !== "string" || !RUNNING_SINGLE_STEP_OWNER_SHA256_V1.test(hash))
-  ) throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
-  const body = {
-    schema: application.schema,
-    evidenceHash: application.evidenceHash,
-    authorizationRef: application.authorizationRef,
-    authorizationHash: application.authorizationHash,
-    authorizationConsumptionRef: application.authorizationConsumptionRef,
-    authorizationConsumptionHash: application.authorizationConsumptionHash,
-  };
-  if (application.applicationHash !== hashCanonicalJson(body)) {
-    throw new Error("RUNNING_SINGLE_STEP_OWNER_ANCESTRY_INVALID");
-  }
-  return Object.freeze({
-    ...body,
-    applicationHash: application.applicationHash,
-  }) as RunningSingleStepOwnerMigrationApplicationV1;
 }
 
 function runningSingleStepOwnerAdmissionSuccessorV1(input: Readonly<{

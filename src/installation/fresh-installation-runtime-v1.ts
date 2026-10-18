@@ -5,7 +5,7 @@ import { verifyContractSpineCurrentHeadJournalReadOnlyV1 } from "../db/contract-
 import { verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1 } from "../db/public-object-owner-readonly-verifier-v1.js";
 import { verifyFreshInstallationDatabaseIdentityV1, type FreshInstallationOriginV1 } from "./fresh-installation-origin-v1.js";
 import { captureFreshInstallationSourceShaV1 } from "./fresh-installation-source-v1.js";
-import { acknowledgeFreshInstallationCommitV1, readFreshInstallationPreparedStateV1 } from "./fresh-installation-records-v1.js";
+import { acknowledgeFreshInstallationCommitV1, readFreshInstallationPreparedStateV1, readFreshInstallationActivationStateV1 } from "./fresh-installation-records-v1.js";
 
 export type FreshInstallationSchemaVerificationV1 = Readonly<{
   schema: "setfarm.fresh-installation-schema-verification.v1";
@@ -68,4 +68,14 @@ export function reconcileFreshInstallationSchemaV1(directory: string): Promise<F
 /** Normal reopen is read-only and requires an already committed private record. */
 export function verifyFreshInstallationSchemaV1(directory: string): Promise<FreshInstallationSchemaVerificationV1> {
   return inspect(directory, false);
+}
+
+/** Explicit stage-aware reopen. Incomplete activation evidence never falls back. */
+export async function verifyFreshInstallationRuntimeV1(directory: string) {
+  const activation = readFreshInstallationActivationStateV1(directory, "optional");
+  if (activation) {
+    const { verifyFreshInstallationActivationV1 } = await import("./fresh-installation-activation-v1.js");
+    return verifyFreshInstallationActivationV1(directory);
+  }
+  return verifyFreshInstallationSchemaV1(directory);
 }

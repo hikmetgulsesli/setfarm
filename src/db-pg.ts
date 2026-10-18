@@ -212,9 +212,18 @@ export function prepareSelectedFreshInstallationDatabaseV1(): Promise<void> {
       unchanged();
       if (await captureFreshInstallationSourceShaV1() !== selected.state.origin.sourceSha) throw new Error();
       unchanged();
-      await verifyFreshInstallationRuntimeConnectionV1(owner, selected.state.origin, selected.state.catalogHash,
+      await verifyFreshInstallationRuntimeConnectionV1(owner, selected.state.origin, selected.catalogHash,
         selected.state.ownerOid, selected.state.runtimeOid, unchanged);
       unchanged();
+      if (selected.activation) {
+        const { verifyFreshInstallationActivatedDatabaseOnTransactionV1 } = await import("./installation/fresh-installation-activation-verifier-v1.js");
+        unchanged();
+        await owner.begin("isolation level repeatable read read only", async transaction => {
+          await transaction.unsafe("SELECT set_config('lock_timeout','1000ms',true),set_config('statement_timeout','30000ms',true),set_config('search_path','public',true)");
+          await verifyFreshInstallationActivatedDatabaseOnTransactionV1(transaction, selected.activation!, selected.state, "runtime");
+        });
+        unchanged();
+      }
       if (await captureFreshInstallationSourceShaV1() !== selected.state.origin.sourceSha) throw new Error();
       unchanged();
       _sql = owner;
@@ -570,7 +579,38 @@ const P3_RESOLVED_CLOSE_INPUT_KEYS_V1 = Object.freeze([
 
 const OWNER_PRODUCER_REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OWNER_PRODUCER_CURRENT_SOURCE_DRIFT = Symbol("owner-producer-current-source-drift");
-async function deriveCurrentOwnerProducerSourceAuthorityAForDatabaseV1() {
+async function freshOwnerSourceContextV1(sql: InternalProductionPgTransactionSql) {
+  assertFreshSelectionV1();
+  if (freshInstallationSelectionV1) return {
+    origin: freshInstallationSelectionV1.state.origin,
+    assertUnchanged: freshInstallationSelectionV1.assertUnchanged,
+  };
+  const { peekFreshInstallationActivationTransactionV1 } = await import("./installation/fresh-installation-activation-v1.js");
+  const context = peekFreshInstallationActivationTransactionV1(sql);
+  return context ? { origin: context.sourceAuthority.origin, assertUnchanged: context.assertUnchanged } : null;
+}
+
+async function authenticateFreshOwnerSourceV1(sql: InternalProductionPgTransactionSql, authority: InternalProductionOwnerProducerSourceBuildAuthorityV1) {
+  const context = await freshOwnerSourceContextV1(sql);
+  if (authority.schema !== "setfarm.fresh-installation-owner-producer-source-build-authority-a.v1" || !context) {
+    throw new Error("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_CORRUPTION");
+  }
+  context.assertUnchanged();
+  const { verifyFreshInstallationOwnerProducerSourceBuildAuthorityAV1 } = await import("./installation/fresh-installation-owner-source-v1.js");
+  await verifyFreshInstallationOwnerProducerSourceBuildAuthorityAV1(sql, context.origin, authority);
+  context.assertUnchanged();
+}
+
+async function deriveCurrentOwnerProducerSourceAuthorityAForDatabaseV1(sql: InternalProductionPgTransactionSql) {
+  const fresh = await freshOwnerSourceContextV1(sql);
+  if (fresh) {
+    fresh.assertUnchanged();
+    const api = await import("./installation/fresh-installation-owner-source-v1.js");
+    const authority = await api.deriveFreshInstallationOwnerProducerSourceBuildAuthorityAV1(fresh.origin);
+    await api.verifyFreshInstallationOwnerProducerSourceBuildAuthorityAV1(sql, fresh.origin, authority);
+    fresh.assertUnchanged();
+    return authority;
+  }
   const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
   const pba = await import("./internal-production/product-build-authority-v2-delivery-evidence-v1.js");
   const git = await import("./execution/v3-git-revision.js");
@@ -628,7 +668,13 @@ async function resolveOwnerProducerSourceInTransactionV1(
   const pair = validateInternalProductionOwnerProducerSourceBuildAuthorityPairV1(pairInput);
   const cacheKey = `${pair.plan}\u0000${pair.sourceBuildAuthorityRef}\u0000${pair.sourceBuildAuthorityHash}`;
   const cached = cache?.get(cacheKey);
-  if (cached) return cached;
+  // Fresh rows are immutable published authority, but a transaction must still
+  // authenticate the actual stored row on every use. A cache entry alone cannot
+  // substitute for that observation or hide owner-side deletion/corruption.
+  if (cached && cached.schema !== "setfarm.fresh-installation-owner-producer-source-build-authority-a.v1") {
+    if (await freshOwnerSourceContextV1(sql)) throw new Error("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_CORRUPTION");
+    return cached;
+  }
   const rows = await sql<OwnerProducerSourceRowV1[]>`
     SELECT source_build_authority_ref, source_build_authority_hash, plan, manifest_hash,
            owner_category_registry_hash, owner_category_census_map_hash, canonical_body
@@ -637,11 +683,18 @@ async function resolveOwnerProducerSourceInTransactionV1(
        AND source_build_authority_hash = ${pair.sourceBuildAuthorityHash}
   `;
   if (rows.length !== 1) throw new Error("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_UNAVAILABLE");
+  const row = rows[0]!;
+  const authority = validateInternalProductionOwnerProducerSourceBuildAuthorityV1(strictCanonicalText(row.canonical_body, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_CORRUPTION"));
+  if (row.source_build_authority_ref !== authority.sourceBuildAuthorityRef || row.source_build_authority_hash !== authority.sourceBuildAuthorityHash || row.plan !== authority.plan || row.manifest_hash !== authority.manifestHash || row.owner_category_registry_hash !== authority.ownerCategoryRegistryHash || row.owner_category_census_map_hash !== authority.ownerCategoryCensusMapHash) throw new Error("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_CORRUPTION");
+  if (authority.schema === "setfarm.fresh-installation-owner-producer-source-build-authority-a.v1") {
+    await authenticateFreshOwnerSourceV1(sql, authority);
+    cache?.set(cacheKey, authority);
+    return authority;
+  }
+  if (await freshOwnerSourceContextV1(sql)) throw new Error("INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_CORRUPTION");
   const receipt = await import("./internal-production/baseline-post-handoff-receipt-v1.js");
   const pba = await import("./internal-production/product-build-authority-v2-delivery-evidence-v1.js");
   const git = await import("./execution/v3-git-revision.js");
-  const row = rows[0]!;
-  const authority = validateInternalProductionOwnerProducerSourceBuildAuthorityV1(strictCanonicalText(row.canonical_body, "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_CORRUPTION"));
   pba.parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(
     authority.productBuildAuthorityV2Observation.response,
   );
@@ -1109,7 +1162,7 @@ class OwnerProducerActivationSupersededError extends Error {
   constructor() { super("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_SUPERSEDED"); }
 }
 
-async function activateInternalProductionOwnerProducerManifestSetCoreV1(input: Readonly<{
+async function activateOwnerProducerManifestAInTransactionV1(sql: InternalProductionPgTransactionSql, input: Readonly<{
   expectedPredecessor: InternalProductionOwnerProducerManifestSetActivationPredecessorV1 | null;
   manifests: readonly InternalProductionOwnerProducerManifestV1[];
   orderedSourceBuildAuthorities: readonly InternalProductionOwnerProducerSourceBuildAuthorityPairV1[];
@@ -1119,8 +1172,6 @@ async function activateInternalProductionOwnerProducerManifestSetCoreV1(input: R
   const manifest = validateInternalProductionOwnerProducerManifestV1(input.manifests[0]);
   const sourcePair = validateInternalProductionOwnerProducerSourceBuildAuthorityPairV1(input.orderedSourceBuildAuthorities[0]);
   if (manifest.plan !== "A" || sourcePair.plan !== "A" || input.expectedPredecessor !== null) throw new TypeError("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_PHASE_INVALID");
-  const result = await getSql().begin(async (rawSql) => {
-    const sql = rawSql as InternalProductionPgTransactionSql;
     const sourceCache = new Map<string, InternalProductionOwnerProducerSourceBuildAuthorityV1>();
     let source: InternalProductionOwnerProducerSourceBuildAuthorityV1;
     try {
@@ -1129,7 +1180,7 @@ async function activateInternalProductionOwnerProducerManifestSetCoreV1(input: R
       if (!(error instanceof Error) || error.message !== "INTERNAL_PRODUCTION_OWNER_PRODUCER_SOURCE_BUILD_AUTHORITY_UNAVAILABLE") {
         throw new Error("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_CORRUPTION");
       }
-      source = await deriveCurrentOwnerProducerSourceAuthorityAForDatabaseV1();
+      source = await deriveCurrentOwnerProducerSourceAuthorityAForDatabaseV1(sql);
       if (source.sourceBuildAuthorityRef !== sourcePair.sourceBuildAuthorityRef || source.sourceBuildAuthorityHash !== sourcePair.sourceBuildAuthorityHash) throw OWNER_PRODUCER_CURRENT_SOURCE_DRIFT;
     }
     const manifestSetBody = { schema: "setfarm.internal-production-owner-producer-manifest-set.v1", phase: "A", orderedPlans: ["A"], orderedManifestHashes: [manifest.manifestHash], orderedSourceBuildAuthorities: [sourcePair], ownerCategoryRegistryHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_REGISTRY_HASH_V1, ownerCategoryCensusMapHash: INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_HASH_V1 } as const;
@@ -1170,8 +1221,27 @@ async function activateInternalProductionOwnerProducerManifestSetCoreV1(input: R
     const updated = await sql`UPDATE internal_production_owner_producer_manifest_set_current_v1 SET current_revision=current_revision+1,phase=${receipt.phase},activation_ref=${receipt.activationRef},activation_hash=${receipt.activationHash},head_ref=${head.headRef},head_hash=${head.headHash} WHERE singleton_key=TRUE AND current_revision=0 AND phase IS NULL AND activation_ref IS NULL AND activation_hash IS NULL AND head_ref IS NULL AND head_hash IS NULL RETURNING current_revision`;
     if (updated.length !== 1) throw new Error("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_CORRUPTION");
     return { activationRef: receipt.activationRef, activationHash: receipt.activationHash };
+ }
+
+async function activateInternalProductionOwnerProducerManifestSetCoreV1(input: Parameters<typeof activateOwnerProducerManifestAInTransactionV1>[1]): Promise<InternalProductionOwnerProducerManifestSetActivationPairV1> {
+  return getSql().begin(sql => activateOwnerProducerManifestAInTransactionV1(sql as InternalProductionPgTransactionSql, input)) as unknown as Promise<InternalProductionOwnerProducerManifestSetActivationPairV1>;
+}
+
+/** Fixed A only, admitted by the private controller's exact transaction identity. */
+export async function activateFreshInstallationManifestAInOwnedTransactionV1(sql: InternalProductionPgTransactionSql) {
+  const { requireFreshInstallationActivationTransactionV1 } = await import("./installation/fresh-installation-activation-v1.js");
+  const context = requireFreshInstallationActivationTransactionV1(sql);
+  const source = context.sourceAuthority;
+  await authenticateFreshOwnerSourceV1(sql, source);
+  await activateOwnerProducerManifestAInTransactionV1(sql, {
+    expectedPredecessor: null, manifests: [INTERNAL_PRODUCTION_OWNER_PRODUCER_MANIFEST_A_V1],
+    orderedSourceBuildAuthorities: [{ plan: "A", sourceBuildAuthorityRef: source.sourceBuildAuthorityRef, sourceBuildAuthorityHash: source.sourceBuildAuthorityHash }],
   });
-  return result as InternalProductionOwnerProducerManifestSetActivationPairV1;
+  context.assertUnchanged();
+  const current = (await resolveCurrentOwnerProducerManifestSetActivationWithChainInTransactionV1(sql, false))?.current;
+  if (!current || current.currentRevision !== 1 || current.receipt.phase !== "A") throw new Error("INTERNAL_PRODUCTION_OWNER_PRODUCER_ACTIVATION_CORRUPTION");
+  context.assertUnchanged();
+  return current;
 }
 
 function validateOwnerProducerActivationInputV1(input: Readonly<{
@@ -1777,7 +1847,7 @@ async function resolveActiveOwnerProducerV1(
     // A is published once from null; runtime-run authentication need not gain
     // manifest-current UPDATE solely for a row lock. The activation writer
     // retains its FOR UPDATE/CAS path, and any later phase needs a new audit.
-    currentResolution = await resolveCurrentOwnerProducerManifestSetActivationWithChainInTransactionV1(sql, implementationId !== "a-runtime-run-v1");
+    currentResolution = await resolveCurrentOwnerProducerManifestSetActivationWithChainInTransactionV1(sql, !freshInstallationSelectionV1 && implementationId !== "a-runtime-run-v1");
   } catch (error) {
     if (implementationId === "a-runtime-run-v1") {
       throw new Error("RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID");
@@ -1796,11 +1866,12 @@ async function resolveActiveOwnerProducerV1(
       ? "RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID"
       : "INTERNAL_PRODUCTION_OWNER_PRODUCER_IMPLEMENTATION_UNAVAILABLE");
   }
-  if (producer.plan === "A") await requireWorkflowRunAdmissionReadyV1(currentResolution);
+  if (producer.plan === "A") await requireWorkflowRunAdmissionReadyV1(sql, currentResolution);
   return producer;
 }
 
 async function requireWorkflowRunAdmissionReadyV1(
+  sql: InternalProductionPgTransactionSql,
   currentResolution: Awaited<ReturnType<typeof resolveCurrentOwnerProducerManifestSetActivationWithChainInTransactionV1>>,
 ): Promise<void> {
   if (!currentResolution) throw new Error("RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID");
@@ -1814,6 +1885,19 @@ async function requireWorkflowRunAdmissionReadyV1(
     || aNodes.length !== 1
   ) throw new Error("RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID");
   const aNode = aNodes[0]!;
+  if (freshInstallationSelectionV1) {
+    requireSelectedFreshDatabaseV1();
+    const selected = freshInstallationSelectionV1;
+    if (!selected.activation || !sameJsonValueV1(selected.activation.prepared.current, currentResolution.current)
+      || !sameJsonValueV1(aNode.receipt, selected.activation.prepared.current.receipt)
+      || !sameJsonValueV1(aNode.head, selected.activation.prepared.current.head)) {
+      throw new Error("RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID");
+    }
+    const { verifyFreshInstallationActivatedDatabaseOnTransactionV1 } = await import("./installation/fresh-installation-activation-verifier-v1.js");
+    await verifyFreshInstallationActivatedDatabaseOnTransactionV1(sql, selected.activation, selected.state, "runtime");
+    selected.assertUnchanged();
+    return;
+  }
   let module: RunPersistenceReadinessModuleV1;
   let status: Record<string, unknown>;
   try {
