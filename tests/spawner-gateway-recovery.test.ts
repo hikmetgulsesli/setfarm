@@ -1181,9 +1181,9 @@ describe("spawner gateway recovery wiring", () => {
   });
 
   it("keeps schema bootstrap lifecycle-read-only and enforces one owner per run step story", () => {
-    const source = fs.readFileSync(path.join(root, "src", "db-pg.ts"), "utf-8");
+    const source = fs.readFileSync(path.join(root, "src", "db", "ordinary-base-schema-v1.ts"), "utf-8");
     const lifecycleBoundaryStart = source.indexOf("// Runtime schema bootstrap is intentionally read-only");
-    const lifecycleBoundaryEnd = source.indexOf("_schemaReady = true", lifecycleBoundaryStart);
+    const lifecycleBoundaryEnd = source.length;
     assert.notEqual(lifecycleBoundaryStart, -1, "read-only lifecycle bootstrap boundary not found");
     assert.notEqual(lifecycleBoundaryEnd, -1, "read-only lifecycle bootstrap end not found");
     const lifecycleBoundary = source.slice(lifecycleBoundaryStart, lifecycleBoundaryEnd);

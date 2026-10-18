@@ -1,4 +1,9 @@
 import type postgres from "postgres";
+import { installOrdinaryBaseSchemaV1 } from "./ordinary-base-schema-v1.js";
+import { requireFreshInstallationTransactionV1 } from "../installation/fresh-installation-v1.js";
+import { readFreshInstallationCatalogHashV1 } from "../installation/fresh-installation-catalog-v1.js";
+import { createFreshInstallationApplicationV1, verifyFreshInstallationDatabaseIdentityV1,
+  type FreshInstallationOriginV1, type FreshInstallationApplicationV1 } from "../installation/fresh-installation-origin-v1.js";
 
 import { computeContractSpineMigrationChecksumV1 } from "./contract-spine-migration-checksum.js";
 import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "./contract-spine-migration-digests.generated.js";
@@ -19,7 +24,7 @@ import {
   canonicalJsonStringify,
   hashCanonicalJson,
 } from "../product-compiler/canonical-json.js";
-import { validateCurrentInternalProductionOwnerAdmissionHeadV1 } from
+import { validateCurrentInternalProductionOwnerAdmissionHeadV1, validateOwnerAdmissionMigrationApplicationV1 } from
   "../internal-production/owner-admission-head-v1.js";
 import type { PgTransactionSql as OwnerAdmissionTransactionSql } from
   "../internal-production/owner-admission-v1.js";
@@ -20752,6 +20757,7 @@ export async function rollbackRecoveryTerminalLeaseIdentityToV19(
   }
 }
 
+// SETFARM_SEMANTIC_MIGRATION_REGION:current-application-provenance-v1:BEGIN
 async function verifyCurrentBootstrapMainClaimHandoffGuardedMigration32ApplicationProvenance(
   sql: TransactionSql,
 ): Promise<void> {
@@ -20790,10 +20796,13 @@ async function verifyCurrentBootstrapMainClaimHandoffGuardedMigration32Applicati
     );
   }
   try {
-    await validateCurrentInternalProductionOwnerAdmissionHeadV1(
+    const current = await validateCurrentInternalProductionOwnerAdmissionHeadV1(
       sql as OwnerAdmissionTransactionSql,
       row,
     );
+    if (current.migrationApplication.schema === "setfarm.fresh-installation-schema-application.v1") {
+      await verifyFreshApplicationOnConnectionV1(sql, current.migrationApplication, row.release_sha);
+    }
   } catch (cause) {
     throw new ContractSpineMigrationError(
       "MIGRATION_ADOPTION_MISMATCH",
@@ -20802,6 +20811,8 @@ async function verifyCurrentBootstrapMainClaimHandoffGuardedMigration32Applicati
     );
   }
 }
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:current-application-provenance-v1:END
 
 function contractSpineMigrationPlanStatusV1(
   migrations: ContractSpineMigrationPlan["migrations"],
@@ -21199,3 +21210,138 @@ export async function withHeldContractSpineV31DiagnosticV2<T>(
   if (failures.length) throw failures[0];
   return result as T;
 }
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:fresh-installation-bootstrap-v1:BEGIN
+async function verifyFreshInstallationGenesisApplicationV1(sql: TransactionSql): Promise<void> {
+  const rows = await sql.unsafe<Array<{
+    release_sha: string | null; migration_application_evidence_hash: string; head_payload: unknown;
+  }>>(`SELECT migration.release_sha,head.migration_application_evidence_hash,head.head_payload
+    FROM public.setfarm_schema_migrations migration JOIN public.internal_production_owner_admission_head_v1 head
+      ON head.singleton=TRUE WHERE migration.version=32`);
+  const row = rows[0], payload = row?.head_payload;
+  if (rows.length !== 1 || !row || !payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("FRESH_INSTALLATION_GENESIS_INVALID");
+  }
+  const head = payload as Record<string, unknown>;
+  if (head.schema !== "setfarm.internal-production-owner-admission-head.v1" || head.version !== 0
+    || Object.keys(head).length !== 3) throw new Error("FRESH_INSTALLATION_GENESIS_INVALID");
+  const application = validateOwnerAdmissionMigrationApplicationV1(head.migrationApplication, row.migration_application_evidence_hash);
+  if (application.schema !== "setfarm.fresh-installation-schema-application.v1") throw new Error("FRESH_INSTALLATION_GENESIS_INVALID");
+  await verifyFreshApplicationOnConnectionV1(sql, application, row.release_sha);
+}
+
+async function verifyFreshApplicationOnConnectionV1(
+  sql: Sql | TransactionSql, application: FreshInstallationApplicationV1, releaseSha: string | null,
+): Promise<void> {
+  if (releaseSha !== application.origin.sourceSha
+    || canonicalJsonStringify(application.origin.migrations)
+      !== canonicalJsonStringify(getContractSpineCurrentHeadJournalIdentitiesV1())) {
+    throw new ContractSpineMigrationError("MIGRATION_ADOPTION_MISMATCH", "Fresh installation source chain differs from the connected release");
+  }
+  await verifyFreshInstallationDatabaseIdentityV1(sql, application.origin);
+}
+
+async function verifyFreshCompleteJournalV1(sql: Sql | TransactionSql, origin: FreshInstallationOriginV1, verifyCatalog = true): Promise<void> {
+  const rows = await completeJournalRows(sql);
+  if (rows.length !== 33 || rows.some((row, index) => {
+    const expected = completeMigrations[index];
+    return !expected || row.version !== expected.version || row.name !== expected.name
+      || row.checksum !== checksum(expected) || row.state !== "applied";
+  })) throw new ContractSpineMigrationError("MIGRATION_ADOPTION_MISMATCH", "Fresh installation requires all33 exact applied journal rows");
+  const releases = await sql.unsafe<Array<{ count: number }>>(
+    "SELECT count(*)::integer AS count FROM public.setfarm_schema_migrations WHERE release_sha IS DISTINCT FROM $1 OR verified_release_sha IS DISTINCT FROM $1 OR verified_at IS NULL",
+    [origin.sourceSha],
+  );
+  if (releases[0]?.count !== 0) throw new Error("FRESH_INSTALLATION_RELEASE_ATTESTATION_INVALID");
+  for (const migration of verifyCatalog ? completeMigrations : []) {
+    if (await detectRegisteredMigrationAtCurrentSupportedHeadV31(migration, sql) !== "present") {
+      throw new ContractSpineMigrationError("MIGRATION_ADOPTION_MISMATCH", `Fresh installation migration${migration.version} is incomplete`);
+    }
+    await verifyRegisteredMigrationAtCurrentSupportedHeadV31(migration, sql);
+  }
+  if (verifyCatalog) await verifyCurrentContractSpineObjectOwnershipAtCurrentSupportedHeadV31(sql);
+  await verifyExactContractSpineJournalAuthority(sql);
+}
+
+/** New-database operation only. Neither a parsed origin nor an arbitrary SQL handle authorizes it. */
+export async function initializeFreshInstallationContractSpineV1(transaction: TransactionSql): Promise<void> {
+  const origin = requireFreshInstallationTransactionV1(transaction);
+  await verifyFreshInstallationDatabaseIdentityV1(transaction, origin);
+  const present = await transaction.unsafe<Array<{ count: number }>>(`
+    SELECT (SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%'
+        AND n.nspname NOT LIKE 'pg_temp%')::integer +
+      (SELECT count(*) FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+      WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_temp%')::integer +
+      (SELECT count(*) FROM pg_catalog.pg_depend d JOIN pg_catalog.pg_namespace n ON n.oid=d.refobjid
+        WHERE d.refclassid='pg_catalog.pg_namespace'::regclass AND n.nspname='public')::integer +
+      (SELECT count(*) FROM pg_catalog.pg_namespace WHERE nspname NOT IN ('public','pg_catalog','information_schema')
+        AND nspname NOT LIKE 'pg_toast%' AND nspname NOT LIKE 'pg_temp%')::integer AS count`);
+  if (present[0]?.count !== 0) throw new Error("FRESH_INSTALLATION_NONEMPTY_TARGET_REFUSED");
+  await transaction.unsafe("SELECT set_config('search_path','public',true)");
+  const predecessor = await applyContractSpineMigrationsThroughV32Core(createMigration33SavepointFacade(transaction), {
+    releaseSha: origin.sourceSha,
+  });
+  if (predecessor.guardedPending.length !== 1
+    || predecessor.guardedPending[0] !== BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_MIGRATION_ID
+    || predecessor.applied.length !== 31 || predecessor.adopted.length !== 0 || predecessor.alreadyApplied.length !== 0) {
+    throw new Error("FRESH_INSTALLATION_PREDECESSOR_NOT_FRESH");
+  }
+  // Preserve ordinary ordering: migration5 owns run_observations before additive base DDL.
+  await installOrdinaryBaseSchemaV1(transaction as unknown as import("./ordinary-base-schema-v1.js").OrdinaryBaseSchemaSqlV1);
+  await auditAuthorityV3ThroughMigration31OnConnection(transaction);
+  await inspectPendingBootstrapSuccessorOnConnection(transaction);
+  for (const statement of BOOTSTRAP_MAIN_CLAIM_HANDOFF_V1_STATEMENTS) await transaction.unsafe(statement);
+  const application = createFreshInstallationApplicationV1(origin);
+  await transaction.unsafe(
+    `UPDATE public.internal_production_owner_admission_head_v1
+       SET migration_application_evidence_hash=$1,
+         head_payload=head_payload || jsonb_build_object('migrationApplication',$2::text::jsonb)
+       WHERE singleton=TRUE`, [application.evidenceHash, JSON.stringify(application)],
+  );
+  const migration32 = migrations.find(m => m.version === 32)!;
+  await transaction.unsafe(
+    `INSERT INTO public.setfarm_schema_migrations
+       (version,name,checksum,state,release_sha,verified_release_sha,verified_at)
+       VALUES (32,$1,$2,'applied',$3,$3,NOW())`,
+    [migration32.name, checksum(migration32), origin.sourceSha],
+  );
+  await verifyBootstrapMainClaimHandoffV1Schema(transaction);
+  await verifyFreshInstallationGenesisApplicationV1(transaction);
+  for (const statement of migration33.statements) await transaction.unsafe(statement);
+  await transaction.unsafe(
+    `INSERT INTO public.setfarm_schema_migrations
+       (version,name,checksum,state,release_sha,verified_release_sha,verified_at)
+       VALUES (33,$1,$2,'applied',$3,$3,NOW())`,
+    [migration33.name, checksum(migration33), origin.sourceSha],
+  );
+  await verifyFreshCompleteJournalV1(transaction, origin);
+  await verifyCurrentBootstrapMainClaimHandoffGuardedMigration32ApplicationProvenance(transaction);
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:fresh-installation-bootstrap-v1:END
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:fresh-installation-readonly-v1:BEGIN
+/** Full catalog/current-origin verification with runtime SELECT privileges, without release-side SHARE locks. */
+export async function verifyFreshInstallationSchemaReadOnlyV1(sql: Sql, origin: FreshInstallationOriginV1, expectedCatalogHash: string): Promise<void> {
+  await sql.begin("isolation level repeatable read read only", async transaction => {
+    await transaction.unsafe("SELECT set_config('lock_timeout','5000ms',true)");
+    await transaction.unsafe("SELECT set_config('statement_timeout','30000ms',true)");
+    await transaction.unsafe("SELECT set_config('search_path','public',true)");
+    await transaction.unsafe("SELECT pg_advisory_xact_lock_shared($1)", [contractSpineMigrationLockKey]);
+    await transaction.unsafe("LOCK TABLE public.setfarm_schema_migrations IN ACCESS SHARE MODE");
+    await verifyFreshInstallationDatabaseIdentityV1(transaction, origin);
+    // Legacy migration verify hooks include destructive capability probes. Runtime compares the
+    // complete catalog captured after those checks/grants inside the genuine bootstrap transaction.
+    if (!/^[a-f0-9]{64}$/.test(expectedCatalogHash)
+      || await readFreshInstallationCatalogHashV1(transaction) !== expectedCatalogHash) throw new Error("FRESH_INSTALLATION_CATALOG_DRIFT");
+    await verifyFreshCompleteJournalV1(transaction, origin, false);
+    await verifyCurrentBootstrapMainClaimHandoffGuardedMigration32ApplicationProvenance(transaction);
+    const rows = await transaction.unsafe<Array<{ head_payload: { migrationApplication?: unknown }; migration_application_evidence_hash: string }>>(
+      "SELECT head_payload,migration_application_evidence_hash FROM public.internal_production_owner_admission_head_v1 WHERE singleton=TRUE");
+    if (rows.length !== 1 || !rows[0]) throw new Error("FRESH_INSTALLATION_ORIGIN_INVALID");
+    const application = validateOwnerAdmissionMigrationApplicationV1(rows[0].head_payload.migrationApplication, rows[0].migration_application_evidence_hash);
+    if (application.schema !== "setfarm.fresh-installation-schema-application.v1"
+      || canonicalJsonStringify(application.origin) !== canonicalJsonStringify(origin)) throw new Error("FRESH_INSTALLATION_ORIGIN_INVALID");
+  });
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:fresh-installation-readonly-v1:END
