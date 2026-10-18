@@ -211,10 +211,12 @@ function assertDashboardSelectionModeV1(): void {
 }
 function isFreshInstallationDashboardRequestV1(method: string | undefined, pathname: string): boolean {
   // The exact ACK route still passes through its existing operational-token,
-  // bounded-body and canonical repository guards. Live observation stays closed.
+  // bounded-body and canonical repository guards. Observation retains its token,
+  // canonical receipt and active runtime/isolation checks in the exact GET handler.
   return ((method === "GET" || method === "HEAD" || method === "OPTIONS")
     && !/^\/api\/runs\/[^/]+\/deployment-observation$/.test(pathname))
-    || (method === "POST" && /^\/api\/runs\/[^/]+\/project-transfer-ack$/.test(pathname));
+    || (method === "POST" && /^\/api\/runs\/[^/]+\/project-transfer-ack$/.test(pathname))
+    || (method === "GET" && /^\/api\/runs\/[^/]+\/deployment-observation$/.test(pathname));
 }
 
 function assertDashboardRuntimeAdmissionV1(): void {

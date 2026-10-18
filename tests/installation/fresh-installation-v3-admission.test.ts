@@ -132,6 +132,21 @@ test("ordinary adapter preserves full legacy verification then attestation and u
   }
 });
 
+test("maintained evaluator command reaches the compiled gate and still refuses foreign output before DB", async () => {
+  const command = JSON.parse(read("package.json")).scripts["eval:convergence"] as string;
+  const entries = command.split(/\s+/).filter(value => /(?:^|\/)convergence-runner\.(?:ts|js)$/.test(value));
+  assert.equal(entries.length, 1, "one maintained evaluator entry");
+  const entryUrl = new URL(entries[0]!, root).href;
+  const body = sourceFunction("src/evals/convergence-runner.ts", "createDefaultConvergencePorts").node
+    .getText().replace("import.meta.url", JSON.stringify(entryUrl));
+  const invoke = new Function("fileURLToPath", "freshInstallationSelectionV1", "assertFreshInstallationSelectionUnchangedV1",
+    compile(body) + ";return createDefaultConvergencePorts;")(
+    (url: string) => url, { paths: { evals: "/component/private/evals" } }, () => {},
+  ) as (output: string) => Promise<unknown>;
+  // A negative configuration component only: no entry/SQL imports can be reached.
+  await assert.rejects(invoke("/component/foreign"), /FRESH_V3_EVAL_OUTPUT_ROOT_REFUSED/);
+});
+
 test("selected evaluator default ports prepare and use owned client/close; foreign output refuses before DB", async () => {
   const file = "src/evals/convergence-runner.ts";
   let body = sourceFunction(file, "createDefaultConvergencePorts").node.getText();

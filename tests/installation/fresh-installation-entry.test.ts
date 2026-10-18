@@ -114,7 +114,7 @@ test("selected unsupported CLI action refuses before spawn, SQL or ordinary modu
   assert.equal(result.stdout, "SELECTED_CLI_NEGATIVE_CHECKED\n");
 });
 
-test("selected dashboard permits the exact ACK handler while retaining other mutation and live-observation refusals", () => {
+test("selected dashboard permits exact ACK and live GET handlers while retaining other mutation refusals", () => {
   // Pure DATA request classification, with no listener, private client or positive authority.
   const classifierName = read("src/server/dashboard.ts").includes("function isFreshInstallationDashboardRequestV1(")
     ? "isFreshInstallationDashboardRequestV1" : "isFreshInstallationReadOnlyDashboardRequestV1";
@@ -129,7 +129,7 @@ test("selected dashboard permits the exact ACK handler while retaining other mut
     for (const pathname of ["/", "/api/runs", "/api/rules", "/api/runs/component/stories"]) {
       assert.equal(classify(method, pathname), true);
     }
-    assert.equal(classify(method, "/api/runs/component/deployment-observation"), false);
+    assert.equal(classify(method, "/api/runs/component/deployment-observation"), method === "GET");
   }
   assert.equal(classify("POST", "/api/runs/component/project-transfer-ack"), true);
   for (const method of [undefined, "POST", "PUT", "PATCH", "DELETE", "CONNECT", "TRACE", "get"]) {
