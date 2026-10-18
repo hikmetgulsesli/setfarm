@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 import {
   collectScreenCandidatesFromResult,
@@ -18,7 +18,7 @@ import {
 import {
   parseStitchStageProviderRejectionProcessEnvelopeV1,
 } from "../src/product-compiler/stitch-stage-provider-rejection-v1.js";
-import { validStitchPng } from "./product-compiler/fixtures/stitch-artifacts.js";
+import { validStitchHtml, validStitchPng } from "./product-compiler/fixtures/stitch-artifacts.js";
 
 describe("stitch-api partial list recovery", () => {
   it("emits typed provider rejection only for top-level MCP isError", () => {
@@ -526,5 +526,131 @@ describe("stitch-api direct response identity", () => {
   it("does not treat project resources as screens", () => {
     const result = { structuredContent: { name: "projects/1", title: "Project" } };
     assert.deepEqual(collectScreenCandidatesFromResult(result), []);
+  });
+});
+
+// These cases catch obsolete outgoing model IDs, silent override rewriting, and
+// hidden replay at the external boundary, while keeping request construction real.
+function runGenerationCommandOffline(command: string, model?: string, mode = "accept") {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-model-"));
+  try {
+    const capturePath = path.join(root, "requests.jsonl");
+    const promptPath = path.join(root, "prompt.md");
+    const outputDir = path.join(root, "output");
+    const preloadPath = path.join(root, "transport.mjs");
+    fs.writeFileSync(promptPath, "Generate the Status Page");
+    const fixture = {
+      html: validStitchHtml("<main><h1>Status Page</h1></main>").toString("base64"),
+      png: validStitchPng(173).toString("base64"),
+      capturePath,
+      mode,
+    };
+    fs.writeFileSync(preloadPath, `
+import { appendFileSync } from "node:fs";
+const fixture = ${JSON.stringify(fixture)};
+// Literal enum from the retained 2026-10-18 tools/list, independent of defaults.
+const supported = new Set(["MODEL_ID_UNSPECIFIED", "GEMINI_3_8_FLASH", "GEMINI_3_5_FLASH_LITE"]);
+globalThis.fetch = async (url, options) => {
+  if (String(url) === "https://example.invalid/status.html") {
+    return new Response(Buffer.from(fixture.html, "base64"));
+  }
+  if (String(url) === "https://example.invalid/status.png") {
+    return new Response(Buffer.from(fixture.png, "base64"));
+  }
+  if (String(url) !== "https://stitch.googleapis.com/mcp" || !options?.body) {
+    throw new Error("Unexpected external request: " + url);
+  }
+  const request = JSON.parse(options.body);
+  appendFileSync(fixture.capturePath, JSON.stringify(request) + "\\n");
+  let result;
+  if (request.method === "initialize") {
+    result = { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "offline-stitch", version: "1" } };
+  } else if (request.method === "tools/call" && request.params.name === "generate_screen_from_text") {
+    if (fixture.mode === "ambiguous") throw new TypeError("fetch failed after dispatch");
+    if (fixture.mode === "reject" || !supported.has(request.params.arguments.modelId)) {
+      result = { isError: true, content: [{ type: "text", text: "INVALID_ARGUMENT: unsupported modelId " + request.params.arguments.modelId }] };
+    } else {
+      result = { structuredContent: { screens: [{
+        name: "projects/123/screens/status", title: "Status Page", width: "1280", height: "800",
+        htmlCode: { downloadUrl: "https://example.invalid/status.html" },
+        screenshot: { downloadUrl: "https://example.invalid/status.png" }
+      }] } };
+    }
+  } else if (request.method === "tools/call" && request.params.name === "get_project") {
+    result = { content: [{ type: "text", text: JSON.stringify({ name: "projects/123", title: "Status Utility", designMd: "# Status Utility" }) }] };
+  } else {
+    throw new Error("Unexpected RPC: " + JSON.stringify(request));
+  }
+  return Response.json({ jsonrpc: "2.0", id: request.id, result });
+};
+`);
+    const args = command === "generate-screen" ? ["123", "Generate the Status Page"]
+      : command === "generate-screen-safe" ? ["123", "Generate the Status Page", "Status Page"]
+      : command === "generate-all-screens" ? ["123", promptPath]
+      : ["123", promptPath, outputDir];
+    if (model !== undefined) args.push("DESKTOP", model);
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+      !key.startsWith("STITCH_") && key !== "NODE_OPTIONS"));
+    const execution = spawnSync(process.execPath, [
+      "--import", preloadPath, path.resolve("scripts/stitch-api.mjs"), command, ...args,
+    ], { cwd: root, env: { ...env, STITCH_API_KEY: "offline-dummy-only" }, encoding: "utf8", timeout: 15_000 });
+    assert.equal(execution.error, undefined);
+    const requests = fs.readFileSync(capturePath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const artifactRoot = command === "generate-all-screens-attempt" ? outputDir : path.join(root, "stitch");
+    return {
+      exitCode: execution.status,
+      stdout: execution.stdout,
+      stderr: execution.stderr,
+      requests,
+      artifacts: fs.existsSync(artifactRoot) ? fs.readdirSync(artifactRoot).sort() : [],
+    };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+describe("stitch-api live model request compatibility", () => {
+  for (const command of ["generate-screen", "generate-screen-safe", "generate-all-screens", "generate-all-screens-attempt"]) {
+    for (const model of [undefined, "GEMINI_3_5_FLASH_LITE"]) {
+      it(`${command} sends ${model ?? "the supported default"} in actual request JSON`, () => {
+        const result = runGenerationCommandOffline(command, model);
+        const generation = result.requests.filter((request) => request.params?.name === "generate_screen_from_text");
+        assert.equal(generation.length, 1);
+        assert.equal(generation[0].params.arguments.modelId, model ?? "GEMINI_3_8_FLASH");
+        assert.equal(generation[0].params.arguments.deviceType, "DESKTOP");
+        assert.equal(generation[0].params.arguments.projectId, "123");
+        assert.equal(result.exitCode, 0, result.stderr);
+        assert.equal(JSON.parse(result.stdout).screens[0].title, "Status Page");
+        if (command !== "generate-screen") {
+          assert.deepEqual(result.artifacts, ["status.html", "status.png"]);
+        }
+      });
+    }
+  }
+
+  for (const mode of ["reject", "ambiguous"]) {
+    it(`does not replay exact-attempt generation after ${mode}`, () => {
+      const result = runGenerationCommandOffline("generate-all-screens-attempt", "GEMINI_3_5_FLASH_LITE", mode);
+      assert.equal(result.exitCode, 1);
+      assert.deepEqual(result.requests.map((request) => request.method === "tools/call" ? request.params.name : request.method),
+        ["initialize", "generate_screen_from_text"]);
+      assert.equal(result.requests[1].params.arguments.modelId, "GEMINI_3_5_FLASH_LITE");
+      assert.deepEqual(result.artifacts, []);
+      if (mode === "reject") {
+        const rejection = parseStitchStageProviderRejectionProcessEnvelopeV1({ stdout: result.stdout, stderr: result.stderr });
+        assert.equal(rejection.classification, "explicit_mcp_error_before_accepted_result");
+      } else {
+        assert.match(result.stderr, /fetch failed after dispatch/);
+        assert.doesNotMatch(result.stderr, /setfarm.stitch-stage-provider-rejection.v1/);
+      }
+    });
+  }
+
+  it("preserves explicit unsupported model bytes and reports rejection without fallback", () => {
+    const result = runGenerationCommandOffline("generate-all-screens-attempt", " GEMINI_3_5_FLASH_LITE ");
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.requests.length, 2);
+    assert.equal(result.requests[1].params.arguments.modelId, " GEMINI_3_5_FLASH_LITE ");
+    assert.deepEqual(result.artifacts, []);
   });
 });
