@@ -38,3 +38,8 @@ This change is causally required to run the approved isolated installation witho
 - Review corrections: validate selection before both OpenClaw path getters; handle synchronous client construction failure by permanently refusing preparation. Affected getter regression6acc47,1pass0fail0skip; affected one-client integration07c834,1pass0fail0skip after final constructor correction. Final noemit04661e exit0 and whitespace9fc273 exit0.
 - Independent source reviews: oracle getter correction C0/I0/M0; resource final narrow review8f2141 C0/I0/M0. No stock build, service startup or operational readiness is claimed for this unit.
 - Freeze this unit in a local scoped commit before switching the same sole writer back to the parent bootstrap branch. PR285 has two subsequently discovered initial-catalog policy findings (current database ACL and inert new nonpublic routines), which must be corrected/reviewed before parent delivery. Then incorporate the corrected parent and deliver Unit2a through its own reviewed branch.
+
+- Corrected parent4f3a581a incorporated by429dc12e. Final complete selected-suite
+  rerun73cdd8:6passed/0failed/0skipped/0cancelled,28.503735s, covering both narrow
+  corrections and exact current parent catalog policy. Post-merge noemit and
+  whitespace51b5dd exited0. Library delivery remains separate from activation.
