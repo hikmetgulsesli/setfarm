@@ -86,7 +86,7 @@ test("fresh restricted runtime locks the actual empty recovery chain and settles
       await absent();
       for (const collision of [
         "CREATE FUNCTION public.setfarm_fresh_recovery_case_lock_guard_v1() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NULL; END$$",
-        "CREATE FUNCTION public.setfarm_fresh_recovery_case_lock_guard_v1(integer) RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NULL; END$$",
+        "CREATE FUNCTION public.setfarm_fresh_recovery_case_lock_guard_v1(integer) RETURNS integer LANGUAGE sql AS $$SELECT 1$$",
         "CREATE TRIGGER trg_setfarm_fresh_recovery_case_lock_v1 BEFORE UPDATE ON public.recovery_cases FOR EACH STATEMENT EXECUTE FUNCTION public.setfarm_enforce_github_review_resolution_pointer_set_once()",
         "CREATE TRIGGER component_unexpected_case_trigger BEFORE UPDATE ON public.recovery_cases FOR EACH ROW EXECUTE FUNCTION public.setfarm_enforce_github_review_resolution_pointer_set_once()",
       ]) {
@@ -258,7 +258,7 @@ test("fresh restricted runtime locks the actual empty recovery chain and settles
         "ALTER TABLE public.recovery_cases ENABLE ALWAYS TRIGGER trg_recovery_cases_github_review_resolution_set_once",
         "CREATE OR REPLACE FUNCTION public.setfarm_fresh_recovery_case_lock_guard_v1() RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $$BEGIN RETURN NULL; END$$",
         "ALTER FUNCTION public.setfarm_fresh_recovery_case_lock_guard_v1() SET search_path=public",
-        "CREATE FUNCTION public.setfarm_fresh_recovery_case_lock_guard_v1(integer) RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NULL; END$$",
+        "CREATE FUNCTION public.setfarm_fresh_recovery_case_lock_guard_v1(integer) RETURNS integer LANGUAGE sql AS $$SELECT 1$$",
         "CREATE OR REPLACE FUNCTION public.setfarm_enforce_github_review_resolution_pointer_set_once() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW; END$$",
         `GRANT EXECUTE ON FUNCTION public.setfarm_fresh_recovery_case_lock_guard_v1() TO "${installation.runtimeRole}"`,
         "ALTER FUNCTION public.setfarm_fresh_recovery_case_lock_guard_v1() SECURITY DEFINER",
@@ -301,7 +301,7 @@ test("fresh restricted runtime locks the actual empty recovery chain and settles
       const attemptId="ATT_component-terminal-projection-0001", sessionId="RTS_component-terminal-projection-0001";
       const requestId="RCR_component-terminal-projection-0001", emptyRequestId="RCR_component-terminal-projection-0002";
       const terminationId="RTR_component-terminal-projection-0001", effectKey="continuation/terminal_finalize/terminal_finalize";
-      const now=new Date().toISOString(), outputHash="1".repeat(64);
+      const now=new Date().toISOString(), outputHash=createHash("sha256").update("component","utf8").digest("hex");
       let claimId="", emptyClaimId="";
       await asOwner(async tx => {
         await tx.unsafe("INSERT INTO steps(id,run_id,step_id,agent_id,step_index,input_template,expects) VALUES('component-terminal-step',$1,'test','component',0,'component','component')",[runId]);
@@ -317,22 +317,34 @@ test("fresh restricted runtime locks the actual empty recovery chain and settles
             VALUES($1,$2,'component-terminal-step','test',$3,$4,'component','component','external_session','component','released',NOW(),NOW(),NOW())`,
             [session,runId,Number(claim),attempt]);
         }
-        const plan={schema:"setfarm.runtime-completion-plan.v1",planVersion:1,requestId,claimId:Number(claimId),runId,
-          stepDbId:"component-terminal-step",workflowStepId:"test",outputHash,kind:"terminal_transition",continuation:{type:"terminal_finalize"},
-          effects:[{effectKey,ordinal:0,effectType:"terminal.finalize",mandatory:true,payload:{runStatus:"failed"}}],preparedAt:now};
-        const planHash=canonical.hashCanonicalJson(plan);
-        for (const [request,claim,session,prepared] of [
-          [requestId,claimId,sessionId,true],[emptyRequestId,emptyClaimId,"RTS_component-terminal-projection-0002",false],
+        // Maintained manifest migration component sequence: executing request,
+        // atomic bound-plan/effect publication, then a state-only terminal update.
+        // The owner-commit API requires real admission/capability; these rows do
+        // not fabricate that authority or claim to execute that public API.
+        const {plan,planHash}=schemas.createRuntimeCompletionPlanV1({
+          requestId,claimId:Number(claimId),runId,stepDbId:"component-terminal-step",workflowStepId:"test",outputHash,
+          descriptor:schemas.createSingleEffectCompletionPlanDescriptorV1({
+            kind:"terminal_transition",continuation:{type:"terminal_finalize"},effectType:"terminal.finalize",effectPayload:{runStatus:"failed"},
+          }),preparedAt:new Date(now),
+        });
+        assert.equal(plan.effects[0]!.effectKey,effectKey);
+        for (const [request,claim,session] of [
+          [requestId,claimId,sessionId],[emptyRequestId,emptyClaimId,"RTS_component-terminal-projection-0002"],
         ] as const) {
           await tx.unsafe(`INSERT INTO runtime_completion_requests(request_id,runtime_session_id,claim_id,run_id,step_db_id,workflow_step_id,
-            claim_envelope,output,output_hash,requested_by,requested_at,state,rejected_at,completion_plan,completion_plan_hash,prepared_at)
-            VALUES($1,$2,$3,$4,'component-terminal-step','test','{}'::jsonb,'component',$5,'component',NOW(),'rejected',NOW(),$6::jsonb,$7,$8)`,
-            [request,session,Number(claim),runId,outputHash,prepared?JSON.stringify(plan):null,prepared?planHash:null,prepared?now:null]);
+            claim_envelope,output,output_hash,requested_by,requested_at,state,processing_at,apply_phase)
+            VALUES($1,$2,$3,$4,'component-terminal-step','test','{}'::jsonb,'component',$5,'component',NOW(),'processing',NOW(),'executing')`,
+            [request,session,Number(claim),runId,outputHash]);
         }
+        await tx.unsafe(`UPDATE runtime_completion_requests
+          SET apply_phase='owner_committed',claim_outcome='failed',claim_committed_at=$2,
+              completion_plan=$3::jsonb,completion_plan_hash=$4,prepared_at=$2,updated_at=$2
+          WHERE request_id=$1`,[requestId,now,JSON.stringify(plan),planHash]);
         const effectInput={schema:"setfarm.runtime-completion-effect-input.v1",planHash,plan,effect:plan.effects[0]!.payload};
         await tx.unsafe(`INSERT INTO runtime_completion_effects(request_id,effect_key,ordinal,effect_type,input_hash,payload,mandatory,state,applied_at)
           VALUES($1,$2,0,'terminal.finalize',$3,$4::jsonb,TRUE,'applied',NOW())`,
           [requestId,effectKey,canonical.hashCanonicalJson(effectInput),JSON.stringify(effectInput)]);
+        await tx.unsafe("UPDATE runtime_completion_requests SET state='rejected',rejected_at=NOW() WHERE request_id=ANY($1::text[])",[[requestId,emptyRequestId]]);
         await tx.unsafe(`INSERT INTO run_termination_requests(request_id,run_id,target_status,state,requested_by,requested_at,drained_at,terminalized_at,diagnostic)
           VALUES($1,$2,'failed','terminalized','component',NOW(),NOW(),NOW(),'component')`,[terminationId,runId]);
       });
@@ -364,9 +376,9 @@ test("fresh restricted runtime locks the actual empty recovery chain and settles
       assert.equal((await sql.unsafe(normalization,[runId])).length,0);
       await assert.rejects(control.begin(async tx => {
         await tx.unsafe(`SET LOCAL ROLE "${installation.ownerRole}"`);
-        await tx.unsafe("UPDATE runtime_completion_requests SET state='processing',processing_at=NOW(),rejected_at=NULL,apply_phase='executing' WHERE request_id=$1",[requestId]);
+        await tx.unsafe("UPDATE runtime_completion_requests SET state='processing',processing_at=NOW(),rejected_at=NULL,apply_phase='executing' WHERE request_id=$1",[emptyRequestId]);
         await tx.unsafe(`SET LOCAL ROLE "${installation.runtimeRole}"`);
-        const rows=await tx.unsafe(normalization,[runId]);assert.equal(rows.length,1);assert.equal(rows[0]!.request_id,requestId);
+        const rows=await tx.unsafe(normalization,[runId]);assert.equal(rows.length,1);assert.equal(rows[0]!.request_id,emptyRequestId);
         throw Error("normalization component rollback");
       }),/normalization component rollback/);
       const configurations=productionProjections(fixture.root,{
@@ -391,11 +403,18 @@ test("fresh restricted runtime locks the actual empty recovery chain and settles
       const hash=(body:unknown)=>createHash("sha256").update(JSON.stringify(body)).digest("hex");
       assert.equal(projections[0]!.terminalOwnerHash,hash({claimId,schema:"setfarm.internal-production-claim-terminal-owner.v1",status:"failed"}));
       assert.equal(projections[3]!.terminalOwnerHash,hash({requestId,schema:"setfarm.internal-production-completion-owner-terminal.v1",status:"rejected"}));
-      // The complete actual completion projection validates nonempty manifests;
-      // corruption must refuse and roll back rather than returning an authority.
+      // The published guard forbids corrupting an immutable manifest identity.
+      const beforeEffect=JSON.stringify(await sql.unsafe("SELECT * FROM runtime_completion_effects WHERE request_id=$1",[requestId]));
       await assert.rejects(control.begin(async tx=>{
         await tx.unsafe(`SET LOCAL ROLE "${installation.ownerRole}"`);
         await tx.unsafe("UPDATE runtime_completion_effects SET input_hash=$2 WHERE request_id=$1",[requestId,"0".repeat(64)]);
+      }),{code:"23514",message:"RUNTIME_COMPLETION_EFFECT_IDENTITY_IMMUTABLE"});
+      assert.equal(JSON.stringify(await sql.unsafe("SELECT * FROM runtime_completion_effects WHERE request_id=$1",[requestId])),beforeEffect);
+      // A legal state-only nonterminal component must be refused by the whole
+      // actual projection, without weakening the manifest publication guard.
+      await assert.rejects(control.begin(async tx=>{
+        await tx.unsafe(`SET LOCAL ROLE "${installation.ownerRole}"`);
+        await tx.unsafe("UPDATE runtime_completion_requests SET state='processing',rejected_at=NULL WHERE request_id=$1",[requestId]);
         await tx.unsafe(`SET LOCAL ROLE "${installation.runtimeRole}"`);
         await completion.lockProjection(tx,{requestId});
       }),/INTERNAL_PRODUCTION_COMPLETION_OWNER_UNAVAILABLE/);
