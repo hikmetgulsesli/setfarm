@@ -46,6 +46,19 @@ import { requestRunTerminationInTransaction } from "../execution/run-termination
 import type { OperationalFailureCauseV1 } from "../execution/schemas/operational-failure-cause-v1.js";
 import { releaseReservedRuntimeSessionInTransaction } from "../execution/runtime-session-repository.js";
 import { acquireClaimMutationAuthorityInTransaction } from "../execution/claim-mutation-authority.js";
+import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
+import { assertFreshInstallationOperationalEntryV1 } from "../installation/fresh-installation-entry-v1.js";
+
+// Fixed selection/actual entry assertion; consumes the already prepared client.
+// No preparation, legacy fallback or caller-supplied authority is introduced.
+function assertStepFailureInstallationV1(): void {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) assertFreshInstallationOperationalEntryV1();
+}
+function useLegacyFailureCronV1(): boolean {
+  assertStepFailureInstallationV1();
+  return !freshInstallationSelectionV1;
+}
 
 // ── failStep ─────────────────────────────────────────────────────────
 
@@ -64,6 +77,7 @@ export async function failStep(
   claimEnvelope?: ClaimEnvelopeV1,
   options: FailStepOptions = {},
 ): Promise<{ retrying: boolean; runFailed: boolean }> {
+  assertStepFailureInstallationV1();
   type FailStepRow = { id: string; run_id: string; step_id: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string };
   let step = await pgGet<FailStepRow>(
     "SELECT id, run_id, step_id, step_index, retry_count, max_retries, type, current_story_id, agent_id FROM steps WHERE id = $1", [stepId]
@@ -497,7 +511,7 @@ async function handleLoopStepFailurePG(
   });
   await recordStepTransition(stepId, step.run_id, "running", "pending", step.agent_id, "failStep:loopStoryRetry", { storyId: storyRow?.story_id, retry: newRetry });
 
-  if (newRetry >= STORY_FALLBACK_RETRY_THRESHOLD) {
+  if (newRetry >= STORY_FALLBACK_RETRY_THRESHOLD && useLegacyFailureCronV1()) {
     fireFallbackRetryCron(step, storyRow, newRetry);
   }
 
@@ -871,8 +885,10 @@ async function fireFallbackRetryCron(
   storyRow: { story_id: string; title: string } | undefined,
   newRetry: number,
 ): Promise<void> {
+  if (!useLegacyFailureCronV1()) return;
   try {
     const wfId2 = (await getWorkflowId(step.run_id)) || "feature-dev";
+    if (!useLegacyFailureCronV1()) return;
     const agentRole = step.agent_id.includes("_") ? step.agent_id.split("_").pop()! : step.agent_id;
     const mappedAgents = [...DEFAULT_DEVELOPER_AGENTS];
     const fallbackAgent = mappedAgents[newRetry % mappedAgents.length];

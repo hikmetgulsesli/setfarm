@@ -1,3 +1,4 @@
+import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
 import { createAgentCronJob, deleteAgentCronJobs, deleteCronJob, listCronJobs, checkCronToolAvailable } from "./gateway-api.js";
 import type { WorkflowSpec, AgentMapping } from "./types.js";
 import { resolveSetfarmCli } from "./paths.js";
@@ -41,7 +42,16 @@ function extractRoleFromCronName(name: string, prefix: string): string {
 }
 const DEFAULT_POLLING_MODEL = "minimax-openai/MiniMax-M3";
 
+// A disabled legacy gateway still owns stale-cron cleanup. A selected private
+// installation owns NONE of that shared lifecycle, including reads/deletions.
+function useSharedGatewayCronLifecycleV1(): boolean {
+  assertFreshInstallationSelectionUnchangedV1();
+  return !freshInstallationSelectionV1;
+}
+
 export function gatewayAgentCronsEnabled(): boolean {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) return false; // Fixed: private runs never own shared gateway crons.
   return /^(1|true|yes)$/i.test(process.env.SETFARM_ENABLE_GATEWAY_AGENT_CRONS ?? "");
 }
 
@@ -70,6 +80,7 @@ export function buildPollingPrompt(workflowId: string, agentId: string, gatewayA
 }
 
 export async function setupAgentCrons(workflow: WorkflowSpec, onlyAgentIds?: Set<string>): Promise<void> {
+  if (!useSharedGatewayCronLifecycleV1()) return;
   if (!gatewayAgentCronsEnabled()) {
     logger.info(`[setupAgentCrons] Gateway agent crons disabled; event-driven spawner owns ${workflow.id}`, {});
     return;
@@ -178,6 +189,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec, onlyAgentIds?: Set
 }
 
 export async function removeAgentCrons(workflowId: string): Promise<void> {
+  if (!useSharedGatewayCronLifecycleV1()) return;
   await deleteAgentCronJobs(`setfarm/${workflowId}/`);
 }
 
@@ -215,6 +227,7 @@ async function getExistingCronAgentIds(workflowId: string): Promise<Set<string>>
  * No-ops if crons already exist (another run of the same workflow is active).
  */
 export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void> {
+  if (!useSharedGatewayCronLifecycleV1()) return;
   if (!gatewayAgentCronsEnabled()) {
     await removeAgentCrons(workflow.id);
     logger.info(`[ensureWorkflowCrons] Gateway agent crons disabled; event-driven spawner owns ${workflow.id}`, {});
@@ -255,6 +268,7 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
 const TEARDOWN_GRACE_MS = 5 * 60 * 1000; // 5 minutes
 
 export async function teardownWorkflowCronsIfIdle(workflowId: string, opts: { graceMs?: number } = {}): Promise<void> {
+  if (!useSharedGatewayCronLifecycleV1()) return;
   const active = await countActiveRuns(workflowId);
   if (active > 0) return;
 
@@ -315,6 +329,7 @@ export function expectedCronCount(workflow: WorkflowSpec): number {
  * Returns -1 if gateway API is unreachable.
  */
 export async function actualCronCount(workflowId: string): Promise<number> {
+  if (!useSharedGatewayCronLifecycleV1()) return 0;
   const result = await listCronJobs();
   if (!result.ok || !result.jobs) return -1;
   const prefix = `setfarm/${workflowId}/`;
@@ -326,6 +341,7 @@ export async function actualCronCount(workflowId: string): Promise<number> {
  * Does NOT touch existing crons — prevents anchor-reset loop.
  */
 export async function repairAgentCrons(workflow: WorkflowSpec): Promise<{ added: number; removed: number }> {
+  if (!useSharedGatewayCronLifecycleV1()) return { added: 0, removed: 0 };
   if (!gatewayAgentCronsEnabled()) {
     await removeAgentCrons(workflow.id);
     logger.info(`[repairAgentCrons] Gateway agent crons disabled; removed stale crons for ${workflow.id}`, {});
@@ -434,6 +450,7 @@ export async function repairAgentCrons(workflow: WorkflowSpec): Promise<{ added:
  * only 1-6 crons exist at any time — matching the active pipeline phase.
  */
 export async function syncActiveCrons(runId: string, workflowId: string): Promise<void> {
+  if (!useSharedGatewayCronLifecycleV1()) return;
   if (!gatewayAgentCronsEnabled()) {
     await removeAgentCrons(workflowId);
     return;
@@ -570,6 +587,7 @@ export async function syncActiveCrons(runId: string, workflowId: string): Promis
  * Nuclear recovery: remove + create all crons for active workflows.
  */
 export async function recoverActiveWorkflowCrons(): Promise<void> {
+  if (!useSharedGatewayCronLifecycleV1()) return;
   if (!gatewayAgentCronsEnabled()) {
     logger.info("[startup-recovery] Gateway agent crons disabled; event-driven spawner owns active runs", {});
     return;

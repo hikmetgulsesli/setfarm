@@ -1,3 +1,5 @@
+import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
+import { readFreshInstallationPrivateWorkflowAssetsV1 } from "../installation/fresh-installation-private-assets-v1.js";
 import os from "node:os";
 import crypto from "node:crypto";
 import { loadWorkflowSpec } from "./workflow-spec.js";
@@ -57,6 +59,14 @@ export async function runWorkflow(params: {
   protocol: RunProtocolIdentity["mode"];
   protocolVersion: RunProtocolIdentity["version"];
 }> {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) {
+    const entry = await import("../installation/fresh-installation-entry-v1.js");
+    await entry.prepareFreshInstallationOperationalEntryV1();
+    entry.assertFreshInstallationOperationalEntryV1();
+    readFreshInstallationPrivateWorkflowAssetsV1(freshInstallationSelectionV1.paths.root,
+      freshInstallationSelectionV1.state.origin.sourceSha, params.workflowId);
+  }
   const protocol = resolveNewRunProtocol({
     ...(params.requestedProtocol !== undefined
       ? { requestedMode: params.requestedProtocol }
@@ -133,20 +143,24 @@ export async function runWorkflow(params: {
 
   // Finish local prerequisites before the running row and its owner can become
   // visible to polling spawners.
-  const agentIds = new Set(workflow.steps.map((s: any) => `${workflow.id}_${s.agent}`));
-  for (const agentId of agentIds) {
+  if (!freshInstallationSelectionV1) {
+    const agentIds = new Set(workflow.steps.map((s: any) => `${workflow.id}_${s.agent}`));
+    for (const agentId of agentIds) {
+      try {
+        cleanAgentWorkspace(agentId);
+      } catch (err) {
+        logger.warn(`[run] Workspace cleanup failed for ${agentId}: ${err}`, {});
+      }
+    }
     try {
-      cleanAgentWorkspace(agentId);
+      await ensureWorkflowCrons(workflow);
     } catch (err) {
-      logger.warn(`[run] Workspace cleanup failed for ${agentId}: ${err}`, {});
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Cannot start workflow run: cron setup failed. ${message}`);
     }
   }
-  try {
-    await ensureWorkflowCrons(workflow);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Cannot start workflow run: cron setup failed. ${message}`);
-  }
+  // Selected assets were verified above. Do not sweep workspaces, kill their
+  // processes or create/remove shared gateway crons to start a private run.
 
   const persistedSteps: PersistedWorkflowStep[] = workflow.steps.map((step, index) => ({
     id: crypto.randomUUID(),

@@ -1,4 +1,6 @@
 import fs from "node:fs/promises";
+import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
+import { readFreshInstallationPrivateWorkflowAssetsV1 } from "../installation/fresh-installation-private-assets-v1.js";
 import path from "node:path";
 import type { WorkflowAgent, WorkflowSpec } from "./types.js";
 import { resolveOpenClawStateDir, resolveWorkflowWorkspaceRoot } from "./paths.js";
@@ -141,6 +143,15 @@ export async function provisionAgents(params: {
   overwriteFiles?: boolean;
   installSkill?: boolean;
 }): Promise<ProvisionedAgent[]> {
+  assertFreshInstallationSelectionUnchangedV1();
+  if (freshInstallationSelectionV1) {
+    const entry = await import("../installation/fresh-installation-entry-v1.js");
+    await entry.prepareFreshInstallationOperationalEntryV1();
+    entry.assertFreshInstallationOperationalEntryV1();
+    const assets = readFreshInstallationPrivateWorkflowAssetsV1(freshInstallationSelectionV1.paths.root,
+      freshInstallationSelectionV1.state.origin.sourceSha, params.workflow.id);
+    return [...assets.agents]; // Already source-provisioned; no shared config, HOME skills or repair.
+  }
   const overwrite = params.overwriteFiles ?? false;
   const workflowRoot = resolveAgentWorkspaceRoot();
   await ensureDir(workflowRoot);

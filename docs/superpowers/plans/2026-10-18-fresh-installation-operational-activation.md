@@ -143,3 +143,113 @@ Independent exact delta review C0/I0/M0 pins production aad95488 and tests
 eb7fddc0 (6b2037/865914). TypeScriptb5d84d, English2d95b0 and semantic
 migrationsc4a714 pass. Reviewed delivery, new clean-main build/instance and
 actual complete compiled lifecycle remain required; Unit3 is still unwired.
+
+## Unit3: activate the actual private service runtime
+
+PR289 merged as2e573b54; the stock build e14432 passed. The NEW actual
+compiled installation qualification v9 passed all1 case,290296ms, original
+capture2ffb6f and receipt completed/cleanupCompleted true. It recovered one
+real lost owner COMMIT response and used the actual compiled selected client,
+reservation, run persistence, single/loop publication, exact replay, normal
+withdrawal and real termination. This is API component evidence. claimStep,
+running-step reauthentication, maintained V3 workflow and live services remain
+unqualified; closed Native/PM scalar tests remain unrun.
+
+Implement the already approved working fresh system on the existing sole writer.
+Use tests first and the independently reviewed outside Unit3 candidates. Refine
+the causal file map to: db-pg and fixed operational entry; CLI/dashboard entry;
+private source-pinned assets and installer/provision/workspace/cron seams;
+private service custody and same-backend notification listener; daemon,
+daemonctl/spawnerctl and spawner composition; step-ops shared temporary-output
+recovery exclusion; bundled Mission Control preimport/config/SQL/CLI/paths;
+final actual workflow acceptance and private control classification. These
+changes are required because the activated schema APIs alone cannot enter the
+ordinary runtime without legacy Task6A/shared HOME effects. Keep all legacy
+branches and actual claim/preflight/release/runtime guards intact. No invented
+authority, receipt, positive fixture or guard environment override is allowed.
+
+First run focused negative entry tests RED, implement entry and rerun GREEN,
+including legacy dashboard readiness. Then repeat TDD for source/private assets,
+owned controls/listener/controllers/spawner and step-output isolation. Compose
+MC's actual restricted pool and source checks before imports/SQL. Final MC run
+start must await the existing real workflow-run COMMIT and return its actual ID.
+Use source-only component mocks solely for negative/owned DATA lifecycle tests.
+Independent exact-source review and normal cloud PR review precede merge.
+Only build on clean source without skip/dirty flags. A NEW installation from
+that final reviewed main release must pass actual compiled prepare/drift/close,
+same-backend notification and actual claimStep/running-step checks, then start
+private services on3333/3080 with existing18789 and execute a genuine bounded
+maintained workflow through actual gates. Preserve the previous data and
+installations; no source-pin rewrite or live grant repair.
+
+Unit3 source integration evidence: entry initially10 RED then25 selected/legacy
+checks GREEN (ae698c); assets28 RED then28 GREEN (407635); controls/listener
+and legacy daemon25 GREEN (898314); spawner/private output initially13 RED
+then82 GREEN including prompt/terminal components (1c7024). Real selected-client
+PostgreSQL regression passed10 (226955). TypeScript noEmit passed037f3e.
+Failure retry cron needs an additional causal file-map entry, step-fail.ts:
+actual fixed entry before DB and shared cron excluded before and after awaited
+workflow lookup; original retry state and SQL remain. Seven tests passed after
+the late-selection seventh test first failed (2cce10), independently reviewed.
+
+The final CLI permits fixed reviewed private service/work actions, while exact
+private status/stop executes before ordinary imports or live DB preparation.
+The existing awaited workflow run returns bounded structured acceptance after
+its real persistence, with all protocol/preflight/release checks retained.
+File map also includes context-ops.ts and feature-dev workflow templates to pin
+platform scripts from actual Source paths rather than the old shared alias.
+The reserved scripts key is fixed in both selected and legacy modes; the
+legacy caller cannot retarget the old literal prefix. The new same-run renderer
+and private-entry tests first produced13 RED; two subsequent failures were a
+fixed one-level test declaration locator, then the new legacy retarget test
+failed before the final context correction. Actual21-case GREEN is required.
+
+Adjacent source fixtures keep the actual legacy behavior tests. Four failures
+in spawner-gateway-recovery were missing captured mode DATA and source-shape
+assertions after the private split; minimal test-only correction passed109
+( d4ac33 ), independently reviewed. Initial broader Task6A ordinary-refusal
+regression passed40/51; the eleven remaining extracted startup/guard fixtures
+are being reconciled with actual selected-versus-legacy wrappers. They are
+failures, not passes, until the original behavioral refusal assertions execute
+and pass again. No historical closed Native or PM scalar test is qualified.
+
+Mission Control v6 preimport negatives passed10 after RED (91a234). Its owned
+pool facade TypeScript errors were fixed with a phase union annotation and an
+actual callable-target refusal, preserving CLOSED and all guards; noEmit passed
+3ba9c1 with independent narrow review. Final accepted-run route/UI and actual
+HTTP/compiled-runtime verification are still pending.
+
+Final Unit3 Source evidence: CLI21 passed5a1178. All52 ordinary startup,
+post-await refusal, shutdown retention, listener dispatch and deferred-import
+regressions passed1c0185 after the test fixture was updated to use the actual
+two-statement wrapper and its captured-absence assertion. The prior11 failures
+and the intermediate stale fixture11 failures remain preserved as such.
+Independent source/test closure is C0/I0/M0 for the final CLI, script context,
+step-fail, controllers, spawner, source/private assets and legacy adaptations;
+review credit excludes each reviewer's authored leaf and is cross-covered.
+Final TypeScript33e5cd, version/migrationb606ce and English/path/12MC contracts
+36c0fd passed. Unit3 has not been built or operationally qualified yet.
+Deliver source through reviewed PR; the required next phase is a stock clean
+main build and NEW actual installation, then actual compiled entry/listener,
+claimStep and running-step reauthentication before maintained workflow/live
+readiness. Never treat these source/DATA negatives as that positive proof.
+
+## PR290 correction: private runs do not own shared gateway cron cleanup
+
+The exact265d9a95 cloud review found a real P1 before merge/runtime: returning
+false from gatewayAgentCronsEnabled enters syncActiveCrons' legacy disabled
+branch, which deletes the same workflow's shared gateway crons. The same
+lifecycle assumption also exists in ensure/repair/direct removal. Refine the
+file map to agent-cron.ts plus the new private-agent-cron lifecycle regression.
+Use a fixed captured-selection exclusion at all eight public shared lifecycle
+seams, before parameters, SQL, gateway access, logging or catch scopes. Selected
+count is zero. Keep the existing enabled predicate and every legacy function
+body, including disabled legacy stale-cron cleanup, unchanged. This is an
+in-goal root fix for the promised private runtime; no gateway framework, shared
+cron migration, deletion, or changed legacy policy is authorized.
+
+The actual old source-body regression first recorded10 failures, including
+fake gateway deletion on selected sync (66d807). After the fixed eight fences,
+all53 new/legacy cron plus source/private-asset cases passed (434f36), with
+no real gateway or SQL effects in these DATA components. Runtime workflow
+advance remains part of the later actual installation qualification.

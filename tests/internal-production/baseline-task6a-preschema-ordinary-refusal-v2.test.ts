@@ -15,6 +15,65 @@ const absent = { state: "absent" };
 const present = { state: "present", operationHash: "b".repeat(64), fileIdentity: "1:2:3:4" };
 const tsxLoader = import.meta.resolve("tsx");
 
+// DATA fixture for the genuine fixed selected/legacy wrapper. The old legacy
+// preflight ports below stay unchanged and remain the invoked branch.
+function legacySpawnerOperationalGuardDataV1(tree: ts.SourceFile): string {
+  const rows = tree.statements.filter((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "assertSpawnerOperationalEntryV1");
+  assert.equal(rows.length, 1);
+  const wrapper = rows[0]!;
+  assert.equal(wrapper.body?.statements.length, 2);
+  assert.equal(wrapper.body!.statements[0]!.getText(tree), "assertFreshInstallationSelectionUnchangedV1();");
+  const branch = wrapper.body!.statements[1]!;
+  assert.ok(ts.isIfStatement(branch));
+  assert.equal(branch.expression.getText(tree), "SELECTED_SPAWNER_V1");
+  assert.ok(ts.isBlock(branch.thenStatement));
+  assert.deepEqual(branch.thenStatement.statements.map(node => node.getText(tree)), [
+    "assertSelectedSpawnerPolicyV1();", "assertFreshInstallationOperationalEntryV1();",
+  ]);
+  assert.equal(branch.elseStatement?.getText(tree), "await assertTask6aPreSchemaOrdinaryStartupV2();");
+  const js = ts.transpileModule(wrapper.getText(tree), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  // Stable absence is a DATA port, not an operational selection bypass.
+  return `const SELECTED_SPAWNER_V1 = null;const assertFreshInstallationSelectionUnchangedV1 = () => {};\n${js}`;
+}
+
+test("spawner operational wrapper DATA keeps legacy and selected refusal branches distinct", async () => {
+  const source = readFileSync(path.join(sourceRoot, "spawner.ts"), "utf8");
+  const tree = ts.createSourceFile("spawner.ts", source, ts.ScriptTarget.Latest, true);
+  const legacy = legacySpawnerOperationalGuardDataV1(tree);
+  const wrapper = tree.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "assertSpawnerOperationalEntryV1")!;
+  const js = ts.transpileModule(wrapper.getText(tree), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const calls: string[] = [], refusal = new Error("SELECTOR_COMPONENT_REFUSAL");
+  const runLegacy = new Function("assertTask6aPreSchemaOrdinaryStartupV2", legacy + ";return assertSpawnerOperationalEntryV1;")(
+    async () => { calls.push("legacy"); throw refusal; },
+  ) as () => Promise<void>;
+  await assert.rejects(runLegacy(), error => error === refusal);
+  assert.deepEqual(calls.splice(0), ["legacy"]);
+  for (const failed of ["policy", "entry"] as const) {
+    const selected = new Function("assertFreshInstallationSelectionUnchangedV1", "SELECTED_SPAWNER_V1", "assertSelectedSpawnerPolicyV1", "assertFreshInstallationOperationalEntryV1", "assertTask6aPreSchemaOrdinaryStartupV2", js + ";return assertSpawnerOperationalEntryV1;")(
+      () => {}, {}, () => { calls.push("policy"); if (failed === "policy") throw refusal; },
+      () => { calls.push("entry"); throw refusal; },
+      async () => { calls.push("legacy"); },
+    ) as () => Promise<void>;
+    await assert.rejects(selected(), error => error === refusal);
+    assert.deepEqual(calls.splice(0), failed === "policy" ? ["policy"] : ["policy", "entry"]);
+  }
+  for (const selection of [null, {}]) {
+    const modeRefused = new Function("assertFreshInstallationSelectionUnchangedV1", "SELECTED_SPAWNER_V1", "assertSelectedSpawnerPolicyV1", "assertFreshInstallationOperationalEntryV1", "assertTask6aPreSchemaOrdinaryStartupV2", js + ";return assertSpawnerOperationalEntryV1;")(
+      () => { calls.push("mode"); throw refusal; }, selection,
+      () => { calls.push("policy"); }, () => { calls.push("entry"); },
+      async () => { calls.push("legacy"); },
+    ) as () => Promise<void>;
+    await assert.rejects(modeRefused(), error => error === refusal);
+    assert.deepEqual(calls.splice(0), ["mode"], "actual first mode guard must stop both branches");
+  }
+});
+
 for (const [outside, state, refused] of [[true, "present", false], [false, "absent", false], [false, "present", true]] as const) {
   test(`Task6A V3 synchronous startup checks workspace=${outside ? "outside" : "fixed"} operation=${state}`, () => {
     const source = readFileSync(path.join(sourceRoot, "internal-production/baseline-task6a-preschema-ordinary-refusal-v2.ts"), "utf8");
@@ -319,7 +378,15 @@ test("Task6A V2 extracted startup prefix refuses before existing ordinary admiss
   const main = tree.statements.find((node): node is ts.FunctionDeclaration =>
     ts.isFunctionDeclaration(node) && node.name?.text === "main");
   assert.ok(main?.body);
-  const prefix = main.body.statements.slice(1, 5).map((statement) => statement.getText(tree)).join("\n");
+  // Main now owns one fixed selected startup branch before the unchanged
+  // direct/cold/pre-schema ordinary prefix. Follow that exact else only.
+  const startup = main.body.statements[1];
+  assert.ok(startup && ts.isIfStatement(startup));
+  assert.equal(startup.expression.getText(tree), "SELECTED_SPAWNER_V1");
+  assert.ok(ts.isBlock(startup.thenStatement));
+  assert.match(startup.thenStatement.getText(tree), /await prepareFreshInstallationOperationalEntryV1\(\)/);
+  assert.ok(startup.elseStatement && ts.isBlock(startup.elseStatement));
+  const prefix = startup.elseStatement.statements.slice(0, 4).map((statement) => statement.getText(tree)).join("\n");
   assert.match(prefix, /assertOrdinarySpawnerDeploymentCutoverAdmissionV1\(\)/);
   const execute = new Function("direct", "cold", "preflight", "ordinary",
     `return (async () => {
@@ -354,9 +421,10 @@ test("Task6A V2 ongoing spawn rechecks before its first ordinary effect", async 
     ts.isFunctionDeclaration(node) && node.name?.text === "spawnAgentNow");
   assert.ok(spawn?.body);
   const first = spawn.body.statements[0]?.getText(tree);
-  assert.equal(first, "await assertTask6aPreSchemaOrdinaryStartupV2();");
+  assert.equal(first, "await assertSpawnerOperationalEntryV1();");
   const run = new Function("preflight", "effect", `return (async () => {
     const assertTask6aPreSchemaOrdinaryStartupV2 = preflight;
+    ${legacySpawnerOperationalGuardDataV1(tree)}
     ${first}
     effect();
   })();`) as (preflight: () => Promise<void>, effect: () => void) => Promise<void>;
@@ -399,12 +467,13 @@ test("Task6A V2 prespawn rechecks after every awaited continuation before effect
   for (const { name, body, index, next } of boundaries) {
     const guard = body[index + 1]?.getText(tree);
     const shutdown = body[index + 2]?.getText(tree);
-    assert.equal(guard, "await assertTask6aPreSchemaOrdinaryStartupV2();", `${name} guard`);
+    assert.equal(guard, "await assertSpawnerOperationalEntryV1();", `${name} guard`);
     assert.equal(shutdown, "if (shuttingDown) return;", `${name} shutdown`);
     assert.match(body[index + 3]?.getText(tree) || "", next, `${name} effect ordering`);
     const run = new Function("wait", "preflight", "effect", `return (async () => {
       let shuttingDown = false;
       const assertTask6aPreSchemaOrdinaryStartupV2 = () => preflight(() => { shuttingDown = true; });
+    ${legacySpawnerOperationalGuardDataV1(tree)}
       await wait();
       ${guard}
       ${shutdown}
@@ -440,7 +509,7 @@ test("Task6A V2 found claim refuses after claimStep without a release write", as
   assert.equal(noWork.expression.getText(tree), "!claim.found");
   const refusal = statements[claimIndex + 2];
   assert.ok(refusal && ts.isTryStatement(refusal));
-  assert.equal(refusal.tryBlock.statements[0]?.getText(tree), "await assertTask6aPreSchemaOrdinaryStartupV2();");
+  assert.equal(refusal.tryBlock.statements[0]?.getText(tree), "await assertSpawnerOperationalEntryV1();");
   assert.ok(refusal.catchClause?.block.getText(tree).includes("retainTask6aV2PostClaimRuntimeIfExact(claim, runtimeIntent)"));
   assert.ok(refusal.catchClause?.block.getText(tree).includes("claimingSpawns.delete(key)"));
   assert.ok(refusal.catchClause?.block.getText(tree).includes("return;"));
@@ -464,6 +533,7 @@ test("Task6A V2 found claim refuses after claimStep without a release write", as
     const console = { warn: (value) => warnings.push(value) };
     const retainTask6aV2PostClaimRuntimeIfExact = () => { retained.push("sampled"); return exact; };
     const assertTask6aPreSchemaOrdinaryStartupV2 = () => preflight(() => { shuttingDown = true; });
+    ${legacySpawnerOperationalGuardDataV1(tree)}
     try {
       ${refusal.getText(tree)}
       ${shutdown.getText(tree)}
@@ -633,7 +703,7 @@ test("Task6A V2 ordinary post-claim awaits refuse without finalizer release writ
     const refusal = body[index + 1];
     const shutdown = body[index + 2];
     assert.ok(refusal && ts.isTryStatement(refusal), `${name} V2 sample`);
-    assert.equal(refusal.tryBlock.statements[0]?.getText(tree), "await assertTask6aPreSchemaOrdinaryStartupV2();");
+    assert.equal(refusal.tryBlock.statements[0]?.getText(tree), "await assertSpawnerOperationalEntryV1();");
     assert.match(refusal.catchClause?.block.getText(tree) || "", /postClaimRefusedV2 = true/);
     assert.match(refusal.catchClause?.block.getText(tree) || "", /retainTask6aV2PostClaimRuntimeIfExact\(claim, runtimeIntent\)/);
     assert.doesNotMatch(refusal.getText(tree), /releaseUntransferredPostClaimOwnership|quarantine|unlinkSync/);
@@ -653,6 +723,7 @@ test("Task6A V2 ordinary post-claim awaits refuse without finalizer release writ
       const console = { warn: () => {} };
       const retainTask6aV2PostClaimRuntimeIfExact = () => { retained.push("retain"); return true; };
       const assertTask6aPreSchemaOrdinaryStartupV2 = () => preflight(() => { shuttingDown = true; });
+    ${legacySpawnerOperationalGuardDataV1(tree)}
       ${refusal.getText(tree)}
       ${shutdown.getText(tree)}
       effect();
@@ -694,7 +765,7 @@ test("Task6A V2 rejected runtime lookup still samples refusal before release", a
   const rethrow = statements[lookupIndex + 3]?.getText(tree);
   assert.match(declaration || "", /^let runtimeLookupSettled:/);
   assert.match(lookup || "", /runtimeLookupSettled = \{ ok: false, error \}/);
-  assert.match(refusal || "", /await assertTask6aPreSchemaOrdinaryStartupV2\(\)/);
+  assert.match(refusal || "", /await assertSpawnerOperationalEntryV1\(\)/);
   assert.match(shutdown || "", /^if \(shuttingDown\)/);
   assert.match(rethrow || "", /^if \(!runtimeLookupSettled\.ok\) throw runtimeLookupSettled\.error;/);
   const continuationJs = ts.transpileModule(`async function continuation() {
@@ -716,6 +787,7 @@ test("Task6A V2 rejected runtime lookup still samples refusal before release", a
     const console = { warn: () => {} };
     const retainTask6aV2PostClaimRuntimeIfExact = () => { retained.push("retain"); return true; };
     const assertTask6aPreSchemaOrdinaryStartupV2 = preflight;
+    ${legacySpawnerOperationalGuardDataV1(tree)}
     ${continuationJs}
     try {
       await continuation();
@@ -746,10 +818,11 @@ test("Task6A V2 poller rechecks before its first ordinary effect", async () => {
   const guarded = poll.body.statements[1];
   assert.ok(guarded && ts.isTryStatement(guarded));
   const statements = guarded.tryBlock.statements;
-  assert.equal(statements[0]?.getText(tree), "await assertTask6aPreSchemaOrdinaryStartupV2();");
+  assert.equal(statements[0]?.getText(tree), "await assertSpawnerOperationalEntryV1();");
   assert.equal(statements[1]?.getText(tree), "await processRunTerminationRequests();");
   const run = new Function("preflight", "effect", `return (async () => {
     const assertTask6aPreSchemaOrdinaryStartupV2 = preflight;
+    ${legacySpawnerOperationalGuardDataV1(tree)}
     const processRunTerminationRequests = effect;
     ${statements[0]!.getText(tree)}
     ${statements[1]!.getText(tree)}
@@ -770,7 +843,7 @@ test("Task6A V2 claim maintenance propagates refusal before effects and rechecks
   assert.ok(maintenance?.body);
   const statements = maintenance.body.statements;
   assert.equal(statements[0]?.getText(tree), "if (shuttingDown || claimMaintenanceInFlight) return;");
-  assert.equal(statements[1]?.getText(tree), "await assertTask6aPreSchemaOrdinaryStartupV2();");
+  assert.equal(statements[1]?.getText(tree), "await assertSpawnerOperationalEntryV1();");
   assert.equal(statements[2]?.getText(tree), "if (shuttingDown || claimMaintenanceInFlight) return;");
   assert.equal(statements[3]?.getText(tree), "claimMaintenanceInFlight = true;");
   const guarded = statements[4];
@@ -780,6 +853,7 @@ test("Task6A V2 claim maintenance propagates refusal before effects and rechecks
     let shuttingDown = state.shuttingDown;
     let claimMaintenanceInFlight = state.inFlight;
     const assertTask6aPreSchemaOrdinaryStartupV2 = async () => check(() => { shuttingDown = true; }, () => { claimMaintenanceInFlight = true; });
+    ${legacySpawnerOperationalGuardDataV1(tree)}
     ${statements.slice(0, 4).map((node) => node.getText(tree)).join("\n")}
     effect();
   })();`) as (check: (shutdown: () => void, claim: () => void) => Promise<void>,
@@ -832,13 +906,14 @@ test("Task6A V2 listener dispatcher refuses before handlers and catches async er
   const dispatcher = tree.statements.find((node): node is ts.FunctionDeclaration =>
     ts.isFunctionDeclaration(node) && node.name?.text === "dispatchTask6aV2OrdinaryListener");
   assert.ok(dispatcher?.body);
-  assert.match(dispatcher.body.getText(tree), /await assertTask6aPreSchemaOrdinaryStartupV2\(\);\s*if \(shuttingDown\) return;\s*await handler\(payload\)/);
+  assert.match(dispatcher.body.getText(tree), /await assertSpawnerOperationalEntryV1\(\);\s*if \(shuttingDown\) return;\s*await handler\(payload\)/);
   const js = ts.transpileModule(dispatcher.getText(tree), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText;
   const makeDispatcher = new Function("check", "record", `
     let shuttingDown = false;
     const assertTask6aPreSchemaOrdinaryStartupV2 = () => check(() => { shuttingDown = true; });
+    ${legacySpawnerOperationalGuardDataV1(tree)}
     const logOrdinaryListenerRejection = record;
     ${js}
     return dispatchTask6aV2OrdinaryListener;
@@ -927,7 +1002,7 @@ test("Task6A V2 OpenClaw timer refuses before cleanup and handles detached rejec
   findCallback(interval);
   assert.ok(callback);
   const body = callback.getText(tree);
-  const preflight = body.indexOf("await assertTask6aPreSchemaOrdinaryStartupV2()");
+  const preflight = body.indexOf("await assertSpawnerOperationalEntryV1()");
   const shutdown = body.indexOf("if (shuttingDown) return;");
   const cleanup = body.indexOf('cleanupStaleSetfarmOpenClawTaskRecords("interval")');
   const restart = body.indexOf('await restartGatewayAfterOpenClawCleanup("interval", result)');
@@ -939,6 +1014,7 @@ test("Task6A V2 OpenClaw timer refuses before cleanup and handles detached rejec
   const makeCallback = new Function("check", "cleanupEffect", "restartEffect", "warning", `
     let shuttingDown = false;
     const assertTask6aPreSchemaOrdinaryStartupV2 = () => check(() => { shuttingDown = true; });
+    ${legacySpawnerOperationalGuardDataV1(tree)}
     const cleanupStaleSetfarmOpenClawTaskRecords = cleanupEffect;
     const restartGatewayAfterOpenClawCleanup = restartEffect;
     const console = { warn: warning };
@@ -985,7 +1061,7 @@ test("Task6A V2 post-restart OpenClaw resweep rechecks after its awaited restart
   const resweep = restart.body.statements.find((node): node is ts.IfStatement =>
     ts.isIfStatement(node) && node.expression.getText(tree) === "restarted");
   assert.ok(resweep && ts.isBlock(resweep.thenStatement));
-  assert.equal(resweep.thenStatement.statements[0]?.getText(tree), "await assertTask6aPreSchemaOrdinaryStartupV2();");
+  assert.equal(resweep.thenStatement.statements[0]?.getText(tree), "await assertSpawnerOperationalEntryV1();");
   assert.equal(resweep.thenStatement.statements[1]?.getText(tree), "if (shuttingDown) return restarted;");
   assert.equal(resweep.thenStatement.statements[2]?.getText(tree),
     "cleanupStaleSetfarmOpenClawTaskRecords(`${context}-post-gateway-restart`);");
@@ -994,6 +1070,7 @@ test("Task6A V2 post-restart OpenClaw resweep rechecks after its awaited restart
     const restarted = true;
     const context = "interval";
     const assertTask6aPreSchemaOrdinaryStartupV2 = () => check(() => { shuttingDown = true; });
+    ${legacySpawnerOperationalGuardDataV1(tree)}
     const cleanupStaleSetfarmOpenClawTaskRecords = cleanup;
     ${resweep.getText(tree)}
     return restarted;
@@ -1011,9 +1088,13 @@ test("Task6A V2 post-restart OpenClaw resweep rechecks after its awaited restart
 });
 
 function ordinaryCliMainBody(tree: ts.SourceFile): ts.Block {
-  const dispatch = tree.statements.find((node): node is ts.IfStatement =>
-    ts.isIfStatement(node) && node.expression.getText(tree) === "exactEntryDiagnostic");
-  assert.ok(dispatch?.elseStatement && ts.isBlock(dispatch.elseStatement));
+  // One fixed custody-only outer branch; never search recursively for an arbitrary main.
+  const custody = tree.statements.find((node): node is ts.IfStatement =>
+    ts.isIfStatement(node) && node.expression.getText(tree) === "freshCliCustodyHandledV1");
+  assert.ok(custody?.elseStatement && ts.isIfStatement(custody.elseStatement));
+  const dispatch = custody.elseStatement;
+  assert.equal(dispatch.expression.getText(tree), "exactEntryDiagnostic");
+  assert.ok(dispatch.elseStatement && ts.isBlock(dispatch.elseStatement));
   const main = dispatch.elseStatement.statements.find((node): node is ts.FunctionDeclaration =>
     ts.isFunctionDeclaration(node) && node.name?.text === "main");
   assert.ok(main?.body);
@@ -1032,11 +1113,16 @@ test("Task6A V2 direct CLI claim refuses before claim effects or output", async 
   const statements = claim.thenStatement.statements;
   const preflight = "await assertTask6aPreSchemaOrdinaryStartupV2();";
   const claimCall = "const result = await claimStep(target, callerAgent);";
-  assert.equal(statements[3]?.getText(tree), preflight);
+  assert.ok(ts.isIfStatement(statements[3]!));
+  const admission = statements[3] as ts.IfStatement;
+  assert.equal(admission.expression.getText(tree), "freshCliEntryV1");
+  assert.equal(admission.thenStatement.getText(tree), "freshCliEntryV1.assertFreshInstallationOperationalEntryV1();");
+  assert.equal(admission.elseStatement?.getText(tree), preflight);
   assert.equal(statements[4]?.getText(tree), claimCall);
   assert.ok(statements.slice(5).some((node) => node.getText(tree).includes('process.stdout.write("NO_WORK\\n")')));
   assert.ok(statements.slice(5).some((node) => node.getText(tree).includes("process.stdout.write(JSON.stringify(")));
   const run = new Function("check", "claim", `return (async () => {
+    const freshCliEntryV1 = null; // Actual legacy branch, not supplied fresh authority.
     const assertTask6aPreSchemaOrdinaryStartupV2 = check;
     const claimStep = claim;
     const target = "agent";
@@ -1064,10 +1150,15 @@ test("Task6A V2 direct CLI peek refuses before recovery effects or output", asyn
     ts.isIfStatement(node) && node.expression.getText(tree) === 'action === "peek"');
   assert.ok(peek && ts.isBlock(peek.thenStatement));
   const statements = peek.thenStatement.statements;
-  assert.equal(statements[3]?.getText(tree), "await assertTask6aPreSchemaOrdinaryStartupV2();");
+  assert.ok(ts.isIfStatement(statements[3]!));
+  const admission = statements[3] as ts.IfStatement;
+  assert.equal(admission.expression.getText(tree), "freshCliEntryV1");
+  assert.equal(admission.thenStatement.getText(tree), "freshCliEntryV1.assertFreshInstallationOperationalEntryV1();");
+  assert.equal(admission.elseStatement?.getText(tree), "await assertTask6aPreSchemaOrdinaryStartupV2();");
   assert.equal(statements[4]?.getText(tree), "const result = await peekStep(target, callerAgent);");
   assert.equal(statements[5]?.getText(tree), 'process.stdout.write(result + "\\n");');
   const run = new Function("check", "peekEffect", `return (async () => {
+    const freshCliEntryV1 = null; // Actual legacy branch, not supplied fresh authority.
     const assertTask6aPreSchemaOrdinaryStartupV2 = check;
     const peekStep = peekEffect;
     const target = "agent";

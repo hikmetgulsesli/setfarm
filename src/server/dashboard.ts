@@ -199,13 +199,53 @@ type DashboardOptions = Readonly<{
   }>;
 }>;
 
+const DASHBOARD_SELECTED_INSTALLATION_LOCATOR_V1 = process.env.SETFARM_INSTALLATION_DIR;
+let dashboardFreshEntryV1: typeof import("../installation/fresh-installation-entry-v1.js") | null = null;
+let dashboardSelectionRefusedV1 = false;
+
+function assertDashboardSelectionModeV1(): void {
+  if (dashboardSelectionRefusedV1 || process.env.SETFARM_INSTALLATION_DIR !== DASHBOARD_SELECTED_INSTALLATION_LOCATOR_V1) {
+    dashboardSelectionRefusedV1 = true;
+    throw new Error("FRESH_INSTALLATION_OPERATIONAL_ENTRY_REFUSED");
+  }
+}
+function isFreshInstallationReadOnlyDashboardRequestV1(method: string | undefined, pathname: string): boolean {
+  return (method === "GET" || method === "HEAD" || method === "OPTIONS")
+    && !/^\/api\/runs\/[^/]+\/deployment-observation$/.test(pathname);
+}
+
+function assertDashboardRuntimeAdmissionV1(): void {
+  assertDashboardSelectionModeV1();
+  if (DASHBOARD_SELECTED_INSTALLATION_LOCATOR_V1 === undefined) {
+    assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
+    return;
+  }
+  if (!dashboardFreshEntryV1) throw new Error("FRESH_INSTALLATION_OPERATIONAL_ENTRY_REFUSED");
+  dashboardFreshEntryV1.assertFreshInstallationOperationalEntryV1();
+}
+
 export function startDashboard(port = 3333, options: DashboardOptions = {}): http.Server {
+  assertDashboardSelectionModeV1();
+  if (DASHBOARD_SELECTED_INSTALLATION_LOCATOR_V1 !== undefined) {
+    assertDashboardRuntimeAdmissionV1();
+    return createDashboardServer(port, options);
+  }
   assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
   assertTask6aPreSchemaSynchronousOrdinaryStartupV3();
   return createDashboardServer(port, options);
 }
 
 export async function startDashboardWithPreSchemaAdmissionV3(port = 3333, options: DashboardOptions = {}): Promise<http.Server> {
+  assertDashboardSelectionModeV1();
+  if (DASHBOARD_SELECTED_INSTALLATION_LOCATOR_V1 !== undefined) {
+    const entry = await import("../installation/fresh-installation-entry-v1.js");
+    assertDashboardSelectionModeV1();
+    await entry.prepareFreshInstallationOperationalEntryV1();
+    assertDashboardSelectionModeV1();
+    entry.assertFreshInstallationOperationalEntryV1();
+    dashboardFreshEntryV1 = entry;
+    return createDashboardServer(port, options);
+  }
   assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
   await assertTask6aPreSchemaOrdinaryStartupV2();
   assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
@@ -213,17 +253,24 @@ export async function startDashboardWithPreSchemaAdmissionV3(port = 3333, option
 }
 
 function createDashboardServer(port: number, options: DashboardOptions): http.Server {
-  assertOrdinaryDashboardDeploymentCutoverAdmissionV2();
+  assertDashboardRuntimeAdmissionV1();
   const server = http.createServer(async (req, res) => {
    try {
+    assertDashboardSelectionModeV1();
+    if (DASHBOARD_SELECTED_INSTALLATION_LOCATOR_V1 !== undefined) assertDashboardRuntimeAdmissionV1();
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
     const p = url.pathname;
+    if (DASHBOARD_SELECTED_INSTALLATION_LOCATOR_V1 !== undefined
+      && !isFreshInstallationReadOnlyDashboardRequestV1(req.method, p)) {
+      return json(res, { error: "FRESH_INSTALLATION_DASHBOARD_ACTION_NOT_WIRED" }, 503);
+    }
 
     // CORS preflight
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Methods": DASHBOARD_SELECTED_INSTALLATION_LOCATOR_V1 === undefined
+          ? "GET, POST, PUT, DELETE, OPTIONS" : "GET, HEAD, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
       });
       return res.end();
@@ -602,6 +649,7 @@ function createDashboardServer(port: number, options: DashboardOptions): http.Se
    }
   });
 
+  if (DASHBOARD_SELECTED_INSTALLATION_LOCATOR_V1 !== undefined) assertDashboardRuntimeAdmissionV1();
   server.listen(port, "127.0.0.1", () => {
     console.log(`Setfarm Dashboard: http://localhost:${port}`);
   });

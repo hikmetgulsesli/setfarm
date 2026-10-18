@@ -1,3 +1,4 @@
+import { freshInstallationSelectionV1, assertFreshInstallationSelectionUnchangedV1 } from "../installation/fresh-installation-selection-v1.js";
 /**
  * Context Operations
  *
@@ -29,8 +30,11 @@ export function expandTilde(p: string): string {
  * Resolve {{key}} placeholders in a template against a context object.
  */
 export function resolveTemplate(template: string, context: Record<string, string>): string {
-  // Work on a shallow copy to avoid mutating the input context
+  assertFreshInstallationSelectionUnchangedV1();
+  // Work on a shallow copy to avoid mutating the input context.
   const ctx = { ...context };
+  // Operative release paths cannot be retargeted by a previous step's output.
+  ctx["setfarm_scripts_dir"] = freshInstallationSelectionV1?.paths.scripts ?? "$HOME/.openclaw/setfarm-repo/scripts";
   // Auto-resolve prd from prd_path if prd is missing but prd_path exists
   if (!ctx["prd"] && ctx["prd_path"]) {
     try {

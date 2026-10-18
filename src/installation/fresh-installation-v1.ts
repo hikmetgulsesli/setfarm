@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { initializeFreshInstallationPrivateAssetsV1 } from "./fresh-installation-private-assets-v1.js";
 import { lstatSync, mkdirSync, statfsSync } from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
@@ -100,6 +101,8 @@ export async function createFreshInstallationV1(options: FreshInstallationOption
   const recordPins: Record<string, FreshInstallationRecordPinV1> = {};
   recordPins["planned.json"] = privateRecord(directory, "planned.json", { schema: "setfarm.fresh-installation-plan.v1", installationId, operationId,
     databaseName, ownerRole, runtimeRole, sourceSha });
+  try { initializeFreshInstallationPrivateAssetsV1(directory, sourceSha); }
+  catch (error) { throw redactedFailure(directory, "ASSETS", error); }
   const password = randomBytes(32).toString("hex");
   const admin = postgres(u.href, { max: 1, connect_timeout: 5, idle_timeout: 2, onnotice() {} });
   let ownerOid: number, runtimeOid: number, origin: FreshInstallationOriginV1;
