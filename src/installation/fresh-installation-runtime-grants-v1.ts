@@ -32,6 +32,8 @@ const GRANTS: readonly Grant[] = Object.freeze([
   { table: "run_termination_requests", privilege: "UPDATE", columns: ["diagnostic", "drained_at", "evidence", "heartbeat_at", "lease_expires_at", "owner_instance_id", "state", "terminalized_at", "updated_at"] },
   // emitEvent -> recordEventObservation -> recordObservation:68; spawner:10078.
   { table: "run_observations", privilege: "INSERT", columns: ["id", "run_id", "step_id", "story_id", "agent_id", "phase", "check_id", "label", "status", "summary", "detail", "evidence", "file_paths", "github", "metadata", "event_type", "started_at", "completed_at", "created_at", "updated_at"] },
+  // Existing cleanup receipt upsert/finalization only; no identity retargeting.
+  { table: "run_observations", privilege: "UPDATE", columns: ["status", "summary", "detail", "completed_at", "updated_at", "metadata"] },
   { table: "operational_outbox", privilege: "INSERT", columns: ["outbox_id", "request_id", "event_key", "event_type", "aggregate_type", "aggregate_id", "payload", "state", "created_at", "updated_at"] },
   // event_key is used by the exact-equality ON CONFLICT replay, not identity retargeting.
   { table: "operational_outbox", privilege: "UPDATE", columns: ["event_key", "state", "owner_instance_id", "lease_token", "lease_expires_at", "attempt_count", "published_at", "diagnostic", "updated_at"] },

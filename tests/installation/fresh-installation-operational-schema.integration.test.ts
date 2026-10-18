@@ -119,6 +119,24 @@ test("fresh operational schema rolls back atomically and restricts runtime prove
         // The existing production WHERE fence remains effective after adoption.
         assert.equal((await runtime.unsafe(statement,args)).length,0);
       });
+      await t.test("runtime executes exact cleanup observation upsert and finalization without crossing runs",async()=>{
+        const source="src/execution/recovery-source-bootstrap-repository-cleanup-v1.ts";
+        const upsert=productionSql(source,"INSERT INTO public.run_observations (");
+        const finalize=productionSql(source,"UPDATE public.run_observations observation");
+        const receiptId="internal-production-recovery-source-bootstrap-repository-cleanup-v1:component-run";
+        const args=[receiptId,"component-run","pass","component cleanup SQL qualification",false];
+        const inserted=await runtime.unsafe(upsert,args);assert.equal(inserted.length,1);
+        assert.equal(JSON.parse(inserted[0]!.metadata).completionReleased,false);
+        const replay=await runtime.unsafe(upsert,args);assert.equal(replay.length,1);
+        assert.equal(replay[0]!.status,"pass");
+        assert.equal((await runtime.unsafe(finalize,[receiptId,"different-component-run"])).length,0);
+        const finalized=await runtime.unsafe(finalize,[receiptId,"component-run"]);assert.equal(finalized.length,1);
+        assert.equal(JSON.parse(finalized[0]!.metadata).completionReleased,true);
+        assert.equal((await runtime.unsafe(finalize,[receiptId,"component-run"])).length,1);
+        const row=(await runtime`SELECT status,summary,detail,metadata FROM run_observations WHERE id=${receiptId}`)[0]!;
+        assert.equal(row.status,"pass");assert.equal(row.summary,args[3]);assert.equal(row.detail,args[3]);
+        assert.equal(JSON.parse(row.metadata).completionReleased,true);
+      });
       await runtime`UPDATE claim_log SET outcome='done' WHERE run_id='component-run'`;
       await runtime`UPDATE runs SET status='completed' WHERE id='component-run'`;
       assert.equal((await runtime`SELECT count(*)::integer AS count FROM prd_templates`)[0]?.count,9);
