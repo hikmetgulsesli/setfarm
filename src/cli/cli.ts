@@ -20,7 +20,24 @@ if (!exactEntryDiagnostic) {
   }
 }
 
-// Fixed literal imports cannot resolve/evaluate business code before the fence.
+if (exactEntryDiagnostic) {
+  try {
+    const [
+      { observePlatformReleaseProductionAdmissionReadinessV2 },
+      { canonicalPlatformReleaseProductionAdmissionReadinessV2 },
+    ] = await Promise.all([
+      import("../execution/platform-release-production-admission-readiness-v2.js"),
+      import("../execution/schemas/platform-release-production-admission-readiness-v2.js"),
+    ]);
+    const receipt = await observePlatformReleaseProductionAdmissionReadinessV2();
+    process.stdout.write(`${canonicalPlatformReleaseProductionAdmissionReadinessV2(receipt)}\n`);
+    process.exitCode = 2;
+  } catch {
+    process.stderr.write("PLATFORM_RELEASE_PREFLIGHT_OBSERVATION_FAILED\n");
+    process.exitCode = 1;
+  }
+} else {
+// Fixed literal imports cannot resolve/evaluate before the ordinary fence or on the diagnostic path.
 const { assertRuntimeIntegrityOrExit } = await import("./runtime-guard.js");
 const { installWorkflow } = await import("../installer/install.js");
 const { uninstallAllWorkflows, uninstallWorkflow, checkActiveRuns } = await import("../installer/uninstall.js");
@@ -314,30 +331,6 @@ function printUsage() {
 
 async function main() {
   const args = process.argv.slice(2);
-  const isExactPlatformReleasePreflight =
-    args.length === 3 &&
-    args[0] === "platform-release" &&
-    args[1] === "preflight" &&
-    args[2] === "--json";
-
-  if (isExactPlatformReleasePreflight) {
-    try {
-      const [
-        { observePlatformReleaseProductionAdmissionReadinessV2 },
-        { canonicalPlatformReleaseProductionAdmissionReadinessV2 },
-      ] = await Promise.all([
-        import("../execution/platform-release-production-admission-readiness-v2.js"),
-        import("../execution/schemas/platform-release-production-admission-readiness-v2.js"),
-      ]);
-      const receipt = await observePlatformReleaseProductionAdmissionReadinessV2();
-      process.stdout.write(`${canonicalPlatformReleaseProductionAdmissionReadinessV2(receipt)}\n`);
-      process.exitCode = 2;
-    } catch {
-      process.stderr.write("PLATFORM_RELEASE_PREFLIGHT_OBSERVATION_FAILED\n");
-      process.exitCode = 1;
-    }
-    return;
-  }
 
   assertRuntimeIntegrityOrExit();
   if (args[0] === "platform-release" && args[1] === "preflight") {
@@ -1233,3 +1226,4 @@ main().catch((err) => {
   process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
 });
+}

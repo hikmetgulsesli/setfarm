@@ -33,7 +33,10 @@ test("static runtime closure is fixed, event types erased and existing CLI body 
   assert.deepEqual(compiledTree.statements.filter(ts.isImportDeclaration).map(node => node.moduleSpecifier.text), expected);
   const fence = tree.statements.find(node => ts.isIfStatement(node) && node.expression.getText(tree) === "!exactEntryDiagnostic");
   assert.ok(fence);
-  const deferred = tree.statements.filter(node => ts.isVariableStatement(node)
+  const dispatch = tree.statements.find(node => ts.isIfStatement(node) && node.expression.getText(tree) === "exactEntryDiagnostic");
+  assert.ok(dispatch && ts.isBlock(dispatch.elseStatement));
+  assert.ok(dispatch.pos >= fence.end, "DISPATCH_PRECEDES_INITIAL_FENCE");
+  const deferred = dispatch.elseStatement.statements.filter(node => ts.isVariableStatement(node)
     && node.declarationList.declarations.some(declaration => declaration.initializer && ts.isAwaitExpression(declaration.initializer)));
   assert.equal(deferred.length, 31);
   for (const statement of deferred) {
@@ -44,8 +47,9 @@ test("static runtime closure is fixed, event types erased and existing CLI body 
     assert.equal(call.arguments.length, 1); assert.ok(ts.isStringLiteral(call.arguments[0]));
   }
   const tail = source.slice(source.indexOf("const __filename ="));
-  // Reviewed pre-change 0561dc99 body: intentional command changes must explicitly update this regression pin.
-  assert.equal(hash(tail), "98f19fb0b0141eb4fb238ce9a59b78dc32acbedb5f1363b8bb65053459cfaf61");
+  // 411b9b60 body minus the relocated diagnostic branch, plus the ordinary else's closing brace.
+  // Other command changes must explicitly update this reviewed regression pin.
+  assert.equal(hash(tail), "a22271769ec5f0e8bdcff38871fc04e27f8f2ca62971adbae6641e1e010b62b9");
 });
 
 function businessBindings(source) {
@@ -113,11 +117,15 @@ async function runCli({ mode = "open", argv = ["step", "claim", "fixture-agent"]
   const business = businessBindings(bridges[0].text).map(([locator, names]) => [
     new URL(locator, pathToFileURL(cli)).href, names,
   ]).filter(([url]) => !qualified.includes(url));
+  const diagnostic = [
+    "../execution/platform-release-production-admission-readiness-v2.js",
+    "../execution/schemas/platform-release-production-admission-readiness-v2.js",
+  ].map(locator => new URL(locator, pathToFileURL(cli)).href);
   const observationFile = path.join(root, "child-observation.json");
   const program = `import fs from 'node:fs';import os from 'node:os';
 import {registerHooks,isBuiltin,syncBuiltinESMExports} from 'node:module';
 const originals={write:fs.writeFileSync,mkdir:fs.mkdirSync,open:fs.openSync,close:fs.closeSync};
-const state={businessResolves:[],businessEvaluations:[],latePublished:false,observerCloseLosses:0};
+const state={businessResolves:[],businessEvaluations:[],diagnosticResolves:[],latePublished:false,observerCloseLosses:0};
 process.on('exit',()=>originals.write(${JSON.stringify(observationFile)},JSON.stringify(state),{mode:0o600}));
 const account=os.userInfo();os.userInfo=()=>({...account,homedir:${JSON.stringify(home)}});
 const mode=${JSON.stringify(mode)},cutpoint=${JSON.stringify(cutpoint)};
@@ -134,12 +142,16 @@ if(mode==='close-loss'){
  };
 }
 syncBuiltinESMExports();
-const qualified=new Set(${JSON.stringify(qualified)}),business=new Map(${JSON.stringify(business)});
+const qualified=new Set(${JSON.stringify(qualified)}),business=new Map(${JSON.stringify(business)}),diagnostic=new Set(${JSON.stringify(diagnostic)});
 registerHooks({
  resolve(specifier,context,next){
    if(isBuiltin(specifier))return next(specifier,context);
    const url=new URL(specifier,context.parentURL).href;
    if(url===${JSON.stringify(pathToFileURL(cli).href)}||qualified.has(url))return next(specifier,context);
+   if(diagnostic.has(url)){
+     state.diagnosticResolves.push(url);
+     throw Error('DIAGNOSTIC_DEPENDENCY_BOUNDARY');
+   }
    const names=business.get(url);if(!names)throw Error('CLI_FIXTURE_UNQUALIFIED_RESOLUTION');
    state.businessResolves.push(url);
    if(mode==='late-open'&&!state.latePublished){
@@ -160,7 +172,7 @@ globalThis.businessEvaluations=state.businessEvaluations;
   const command = [process.execPath, "--import", preload, cli, ...argv];
   fs.writeFileSync(path.join(root, "original-inputs.json"),
     JSON.stringify({ schema: "setfarm.source-cli-entry-fixture.v4", bridges, program, command,
-      sourceOnly: true, manualOutputs: true, nativeCalls: 0, qualified, business,
+      sourceOnly: true, manualOutputs: true, nativeCalls: 0, qualified, business, diagnostic,
       canonicalIntentBase64: intent.toString("base64"), mode, cutpoint, environment }), { mode: 0o600 });
   const child = spawn(command[0], command.slice(1), { cwd: "/", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", ...environment },
     stdio: ["ignore", "pipe", "pipe"] });
@@ -221,12 +233,15 @@ for (const argv of [
   assert.equal(row.status, 1); assert.equal(row.stdout, ""); assert.equal(row.stderr, refusal);
 });
 
-test("only existing exact diagnostic argv reaches its dependency boundary while OPEN", async () => {
-  const row = await runCli({ argv: ["platform-release", "preflight", "--json"] });
-  assert.ok(row.businessResolves.length > 0); assert.equal(row.businessEvaluations.length, 0);
+for (const mode of ["open", "absent"]) for (const cutpoint of ["resolve", "evaluate"])
+test(`exact diagnostic dispatch avoids business ${cutpoint} with ${mode} workspace`, async () => {
+  const row = await runCli({ mode, cutpoint, argv: ["platform-release", "preflight", "--json"] });
+  assert.equal(row.businessResolves.length, 0, "EXACT_DIAGNOSTIC_REACHED_BUSINESS_RESOLUTION");
+  assert.equal(row.businessEvaluations.length, 0, "EXACT_DIAGNOSTIC_REACHED_BUSINESS_EVALUATION");
+  assert.ok(row.diagnosticResolves.length > 0, "EXACT_DIAGNOSTIC_DEPENDENCY_NOT_REACHED");
   assert.equal(row.status, 1); assert.equal(row.stdout, "");
-  assert.match(row.stderr, /FORBIDDEN_BUSINESS_RESOLUTION/);
-  // Deliberate stop before readiness/business execution: no diagnostic receipt or authority fabricated.
+  assert.equal(row.stderr, "PLATFORM_RELEASE_PREFLIGHT_OBSERVATION_FAILED\n");
+  // Stop at diagnostic resolution: no system readiness command or receipt fabricated.
 });
 
 test("existing runtime-guard environment bypass does not bypass initial OPEN refusal", async () => {
