@@ -6,7 +6,7 @@
  * Usage:
  *   node stitch-api.mjs create-project "Project Name"
  *   node stitch-api.mjs ensure-project "Project Name" /path/to/repo    (find-or-create + persist .stitch)
- *   node stitch-api.mjs generate-screen <projectId> "<prompt>" [DESKTOP|MOBILE|TABLET] [GEMINI_3_1_PRO|GEMINI_3_FLASH]
+ *   node stitch-api.mjs generate-screen <projectId> "<prompt>" [DESKTOP|MOBILE|TABLET] [GEMINI_3_8_FLASH|GEMINI_3_5_FLASH_LITE]
  *   node stitch-api.mjs generate-screen-safe <projectId> "<prompt>" "<title>" [device] [model]  (dedup check)
  *   node stitch-api.mjs get-design-md <projectId> [repoPath]                                    (extract DESIGN.md)
  *   node stitch-api.mjs list-screens <projectId>
@@ -794,8 +794,8 @@ const commands = {
     console.log(JSON.stringify({ projectId, title }, null, 2));
   },
 
-  async 'generate-screen'(projectId, prompt, deviceType = 'DESKTOP', modelId = 'GEMINI_3_1_PRO') {
-    if (!projectId || !prompt) throw new Error('Usage: generate-screen <projectId> "<prompt>" [DESKTOP|MOBILE|TABLET] [GEMINI_3_1_PRO|GEMINI_3_FLASH]');
+  async 'generate-screen'(projectId, prompt, deviceType = 'DESKTOP', modelId = 'GEMINI_3_8_FLASH') {
+    if (!projectId || !prompt) throw new Error('Usage: generate-screen <projectId> "<prompt>" [DESKTOP|MOBILE|TABLET] [GEMINI_3_8_FLASH|GEMINI_3_5_FLASH_LITE]');
     await initialize();
 
     const args = {
@@ -1018,7 +1018,7 @@ const commands = {
     console.log(JSON.stringify({ ...identity, source }, null, 2));
   },
 
-  async 'generate-screen-safe'(projectId, prompt, screenTitle, deviceType = 'DESKTOP', modelId = 'GEMINI_3_1_PRO') {
+  async 'generate-screen-safe'(projectId, prompt, screenTitle, deviceType = 'DESKTOP', modelId = 'GEMINI_3_8_FLASH') {
     if (!projectId || !prompt) throw new Error('Usage: generate-screen-safe <projectId> "<prompt>" "<screenTitle>" [DESKTOP|MOBILE|TABLET] [model]');
 
     // E2BIG fix: if prompt starts with @, read from file
@@ -1662,7 +1662,7 @@ const commands = {
     console.log(JSON.stringify({ projectId, total: screenList.length, downloaded, failed, outputDir }, null, 2));
   },
 
-  'generate-all-screens': async function generateAllScreens(projectId, promptFile, deviceType = "DESKTOP", modelId = "GEMINI_3_1_PRO") {
+  'generate-all-screens': async function generateAllScreens(projectId, promptFile, deviceType = "DESKTOP", modelId = "GEMINI_3_8_FLASH") {
     if (!projectId || !promptFile) throw new Error("Usage: generate-all-screens <projectId> <promptFile> [device] [model]");
     const { readFileSync } = await import("fs");
     let prompt;
@@ -1840,7 +1840,7 @@ const commands = {
     promptFile,
     outputDir,
     deviceType = "DESKTOP",
-    modelId = "GEMINI_3_1_PRO",
+    modelId = "GEMINI_3_8_FLASH",
   ) {
     if (!projectId || !promptFile || !outputDir) {
       throw new Error(

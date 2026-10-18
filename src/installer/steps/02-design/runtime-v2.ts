@@ -377,7 +377,7 @@ export async function executeDesignPreclaimV2(input: Readonly<{
   }
   const ensureProject = dependencies.ensureProject ?? ensureStitchProjectIdentityV2;
   const projectId = await ensureProject({ repo: input.repo, projectName: contract.productSpec.product.name });
-  const model = input.model ?? "GEMINI_3_1_PRO";
+  const model = input.model ?? "GEMINI_3_8_FLASH";
   const generateStage = dependencies.generateStage ?? generateStitchStageOnceV2;
   const runtime = await runDesignSourceAuthorityV2({
     repo: input.repo,
