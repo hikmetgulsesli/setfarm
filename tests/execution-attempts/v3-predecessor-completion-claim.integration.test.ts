@@ -120,7 +120,8 @@ function candidateSqlFromActualSource(): string {
     const visit = (node: ts.Node): void => {
       if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
         definitions.set(node.name.text,node.initializer);
-        const initializer=node.initializer;
+        const initializer=ts.isAwaitExpression(node.initializer)
+          ? node.initializer.expression : node.initializer;
         if (node.name.text==="step" && ts.isCallExpression(initializer)
           && ts.isIdentifier(initializer.expression) && initializer.expression.text==="pgGet") {
           const query=initializer.arguments[0];
