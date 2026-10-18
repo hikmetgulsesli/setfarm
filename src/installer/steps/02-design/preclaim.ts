@@ -1769,7 +1769,7 @@ async function generateStitchScreensInSingleBatch(
 
     for (let attempt = 1; attempt <= retryAttempts; attempt++) {
       try {
-        const genOut = await execFileText("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"], {
+        const genOut = await execFileText("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_8_FLASH"], {
           timeout: 660000,
           cwd: repo,
           env: {
@@ -1916,7 +1916,7 @@ async function generateStitchScreensIndividually(
     await recordPreClaimProgress(ctx, `Design preclaim: generating Stitch screen "${screen.name}"`);
     const out = await execFileText(
       "node",
-      [stitchScript, "generate-screen-safe", projId, `@${promptPath}`, screen.name, deviceType, "GEMINI_3_1_PRO"],
+      [stitchScript, "generate-screen-safe", projId, `@${promptPath}`, screen.name, deviceType, "GEMINI_3_8_FLASH"],
       {
         timeout: 360000,
         cwd: repo,

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
@@ -22,7 +24,7 @@ import { createRuntimeSessionRepository } from "../../src/execution/runtime-sess
 import { resolveV3PlanOutputAuthorityV2 } from "../../src/execution/v3-plan-output-authority-v2.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { CompilerEnglishAdmissionReceiptV1Schema } from "../../src/product-compiler/schemas/compiler-english-admission-receipt-v1.js";
-import { executeDesignPreclaimV2 } from "../../src/installer/steps/02-design/runtime-v2.js";
+import { executeDesignPreclaimV2, generateStitchStageOnceWithExecutorForInternalTestV2 } from "../../src/installer/steps/02-design/runtime-v2.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import {
   CONTAINED_GAME_TASK,
@@ -44,7 +46,7 @@ function block(kind: string, value: unknown): string {
   return `\`\`\`${kind}\n${JSON.stringify(value, null, 2)}\n\`\`\``;
 }
 
-test("atomic PLAN completion persists exact build and behavior authority", async () => {
+test("atomic PLAN completion persists exact build and behavior authority", async (t) => {
   const stepOpsSource = fs.readFileSync("src/installer/step-ops.ts", "utf8");
   const candidateSnapshot = stepOpsSource.indexOf("const candidateContextSnapshot = await pgGet");
   const atomicSnapshotReuse = stepOpsSource.indexOf("const prevContextJson = candidateContextSnapshot", candidateSnapshot);
@@ -440,6 +442,86 @@ test("atomic PLAN completion persists exact build and behavior authority", async
       /DESIGN_V2_ENGLISH_ADMISSION_BINDING_MISMATCH/,
     );
     assert.equal(externalProjectOperationStarted, false);
+
+    // Use this genuine, completed PLAN ledger: forged authority objects cannot
+    // reach preclaim. Catch a retired default in authority or a different model
+    // on the dispatched stage, before the external execution can occur.
+    const designClaimId = await database.sql.begin(async (transaction) => {
+      const rows = await (transaction as PgTransactionSql)<Array<{ id: unknown }>>`
+        SELECT nextval(pg_get_serial_sequence('claim_log','id'))::bigint::text AS id
+      `;
+      const birth = await prepareInternalProductionClaimBirthV1(
+        transaction as PgTransactionSql, "a-claim-single-runtime-v1", rows,
+      );
+      return insertAndBindInternalProductionClaimBirthV1(transaction as PgTransactionSql, birth, {
+        runId, workflowStepId: "design", storyId: null,
+        claimAgentId: "feature-dev_designer", claimedAt: new Date(),
+      });
+    });
+    for (const fixture of [
+      { model: undefined, expected: "GEMINI_3_8_FLASH" },
+      { model: "GEMINI_3_5_FLASH_LITE", expected: "GEMINI_3_5_FLASH_LITE" },
+      { model: " GEMINI_3_5_FLASH_LITE ", expected: " GEMINI_3_5_FLASH_LITE " },
+    ]) {
+      await t.test(`preclaim seals and dispatches ${fixture.model ?? "the supported default"} without rewriting`, async () => {
+        const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-preclaim-model-"));
+        try {
+          let dispatches = 0;
+          let externalExecutions = 0;
+          let sealedAuthority: { model: string; deviceType: string } | undefined;
+          let dispatchedModel: string | undefined;
+          let wireModel: string | undefined;
+          const input = {
+            sql: database.sql, repo, runId, prd: row.canonical_prd,
+            originClaimId: designClaimId, ownerClaimId: designClaimId,
+            ownerInstanceId: "design-model-compatibility-test", producerReleaseSha: releaseSha,
+            deviceType: "DESKTOP" as const, englishAdmissionAuthority: ledgerAuthority,
+            ...(fixture.model === undefined ? {} : { model: fixture.model }),
+          };
+          const dependencies = {
+            ensureProject: async () => "123",
+            generateStage: async (stage: Parameters<typeof generateStitchStageOnceWithExecutorForInternalTestV2>[0]) => {
+              dispatches += 1;
+              const attemptRoot = path.join(repo, ".setfarm/product-compilation-attempts");
+              const attemptIds = fs.readdirSync(attemptRoot);
+              assert.equal(attemptIds.length, 1);
+              sealedAuthority = JSON.parse(fs.readFileSync(path.join(attemptRoot, attemptIds[0]!, "request/authority.json"), "utf8"));
+              dispatchedModel = stage.model;
+              // Keep assertions outside the runner callback: provider exceptions
+              // are converted to typed failures by the real attempt runner.
+              return generateStitchStageOnceWithExecutorForInternalTestV2(stage, async (execution) => {
+                externalExecutions += 1;
+                wireModel = execution.args[5];
+                assert.equal(sealedAuthority!.model, stage.model);
+                // Ambiguity quarantines this exact attempt. Explicit rejection
+                // has a separate, existing two-attempt proven-retry policy.
+                return {
+                  termination: "ambiguous", exitCode: 1, stdout: "",
+                  stderr: "offline response unobserved after dispatch",
+                };
+              });
+            },
+          };
+          const result = await executeDesignPreclaimV2(input, dependencies);
+          assert.equal(dispatches, 1);
+          assert.equal(externalExecutions, 1);
+          assert.equal(sealedAuthority?.model, fixture.expected);
+          assert.equal(sealedAuthority?.deviceType, "DESKTOP");
+          assert.equal(dispatchedModel, fixture.expected);
+          assert.equal(wireModel, fixture.expected);
+          assert.equal(result.status, "dispatch_ambiguous");
+          if (result.status === "accepted") throw new Error("Unexpected accepted fixture");
+          assert.equal(result.code, "DESIGN_SOURCE_DISPATCH_AMBIGUOUS");
+          const replay = await executeDesignPreclaimV2(input, dependencies);
+          assert.equal(replay.status, "dispatch_ambiguous");
+          assert.equal(replay.attemptId, result.attemptId);
+          assert.equal(dispatches, 1);
+          assert.equal(externalExecutions, 1);
+        } finally {
+          fs.rmSync(repo, { recursive: true, force: true });
+        }
+      });
+    }
 
     const contextRows = await database.sql<Array<{ context: string }>>`
       SELECT context FROM runs WHERE id = ${runId}

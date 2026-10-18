@@ -9723,7 +9723,7 @@ ${prd}`;
 
           logger.info(`[design-generate] Auto-generating ${screenMapArr.length} screens via generate-all-screens`, { runId: step.run_id });
           try {
-            const genOut = execFileSync("node", [stitchScript, "generate-all-screens", dProjId, promptFile, deviceType, "GEMINI_3_1_PRO"], { encoding: "utf-8", timeout: 600000, cwd: dRepo });
+            const genOut = execFileSync("node", [stitchScript, "generate-all-screens", dProjId, promptFile, deviceType, "GEMINI_3_8_FLASH"], { encoding: "utf-8", timeout: 600000, cwd: dRepo });
             let genResult: any = {};
             try { genResult = JSON.parse(genOut); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
             logger.info(`[design-generate] Generated ${genResult.total || 0} screens in ${genResult.elapsedSeconds || "?"}s`, { runId: step.run_id });
