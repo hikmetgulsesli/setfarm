@@ -34,6 +34,8 @@ const GRANTS: readonly Grant[] = Object.freeze([
   { table: "run_observations", privilege: "INSERT", columns: ["id", "run_id", "step_id", "story_id", "agent_id", "phase", "check_id", "label", "status", "summary", "detail", "evidence", "file_paths", "github", "metadata", "event_type", "started_at", "completed_at", "created_at", "updated_at"] },
   // Existing cleanup receipt upsert/finalization only; no identity retargeting.
   { table: "run_observations", privilege: "UPDATE", columns: ["status", "summary", "detail", "completed_at", "updated_at", "metadata"] },
+  // Health history uses the existing latest500-row retention statement.
+  { table: "medic_checks", privilege: "INSERT", columns: ["id", "checked_at", "issues_found", "actions_taken", "summary", "details"] },
   { table: "operational_outbox", privilege: "INSERT", columns: ["outbox_id", "request_id", "event_key", "event_type", "aggregate_type", "aggregate_id", "payload", "state", "created_at", "updated_at"] },
   // event_key is used by the exact-equality ON CONFLICT replay, not identity retargeting.
   { table: "operational_outbox", privilege: "UPDATE", columns: ["event_key", "state", "owner_instance_id", "lease_token", "lease_expires_at", "attempt_count", "published_at", "diagnostic", "updated_at"] },
@@ -42,6 +44,11 @@ const GRANTS: readonly Grant[] = Object.freeze([
   { table: "operational_event_deliveries", privilege: "UPDATE", columns: ["state", "owner_instance_id", "lease_token", "lease_expires_at", "attempt_count", "delivered_at", "diagnostic", "result", "updated_at"] },
   // Append-only subject authority for ordinary V3 implement/supervise claims.
   { table: "v3_story_claim_runtime_bindings_v1", privilege: "INSERT", columns: ["claim_id", "runtime_session_id", "run_id", "step_db_id", "workflow_step_id", "subject_kind", "story_db_id", "story_id", "story_index", "story_claim_generation", "story_admission_receipt_hash", "story_admission_subject_hash", "bound_at"] },
+  // Exact ordinary V3 create/promote and consume-once lifecycle. Release
+  // admissions stay immutable; only mutable slot consumption may be updated.
+  { table: "v3_release_admissions", privilege: "INSERT", columns: ["admission_hash", "kind", "release_sha", "suite_hash", "result_hash", "result_ref", "gate_hash", "gate_ref", "expires_at", "payload", "created_at"] },
+  { table: "v3_canary_admission_claims", privilege: "INSERT", columns: ["slot_hash", "admission_hash", "admission_kind", "case_hash", "task_hash", "repetition", "selector_hash", "created_at"] },
+  { table: "v3_canary_admission_claims", privilege: "UPDATE", columns: ["run_id", "consumed_at"] },
   // Compiler CAS index and exact packet/run refs. Every immutable table is
   // append-only; fresh source queries omit its row locks, not its validations.
   { table: "semantic_artifacts", privilege: "INSERT", columns: ["artifact_hash", "artifact_type", "byte_length", "producer_metadata", "created_at"] },
@@ -99,9 +106,9 @@ const PREPARATION_GUARD_FUNCTIONS = Object.freeze([
   "setfarm_enforce_v3_preparation_bound_claim_v2",
   "setfarm_enforce_v3_preparation_bound_attempt_v2",
 ]);
-// Canonical story replacement is real mutable business DML (story-ops:523 and
-// compiler-story-english-admission-publication:188), not general maintenance.
-const DELETE_TABLE = "stories";
+// Canonical story replacement and medic latest500 retention are the only
+// fixed table DELETE grants; their source-owned statements retain the bounds.
+const DELETE_TABLES = Object.freeze(["stories", "medic_checks"]);
 
 function refuse(): never { throw new Error("FRESH_INSTALLATION_RUNTIME_GRANTS_REFUSED"); }
 function quote(value: string): string { return `"${value.replaceAll('"', '""')}"`; }
@@ -191,7 +198,7 @@ function assertAcl(actual: readonly Acl[], ctx: Context, extended: boolean): voi
   if (extended) {
     for (const grant of GRANTS) for (const column of grant.columns) append(grant.table, column, grant.privilege);
     for (const grant of PREPARATION_ROW_LOCK_PRIVILEGES) append(grant.table, grant.column, "UPDATE");
-    append(DELETE_TABLE, "", "DELETE");
+    for (const table of DELETE_TABLES) append(table, "", "DELETE");
     for (const sequence of SEQUENCES) append(sequence, "", "USAGE");
   }
   const encode = (rows: readonly Acl[]) => rows.map(row => canonicalJsonStringify({
@@ -224,7 +231,7 @@ export async function installFreshInstallationRuntimeBusinessGrantsV1(
     for (const grant of PREPARATION_ROW_LOCK_PRIVILEGES) await sql.unsafe(
       `GRANT UPDATE (${quote(grant.column)}) ON TABLE public.${grant.table} TO ${quote(role)}`,
     );
-    await sql.unsafe(`GRANT DELETE ON TABLE public.${DELETE_TABLE} TO ${quote(role)}`);
+    for (const table of DELETE_TABLES) await sql.unsafe(`GRANT DELETE ON TABLE public.${table} TO ${quote(role)}`);
     for (const sequence of SEQUENCES) await sql.unsafe(`GRANT USAGE ON SEQUENCE public.${sequence} TO ${quote(role)}`);
     const after = await context(sql, role, true);
     if (canonicalJsonStringify(before) !== canonicalJsonStringify(after)) refuse();

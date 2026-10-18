@@ -16,7 +16,7 @@ function productionSql(relative: string, marker: string): string {
   const visit=(node:ts.Node):void=>{
     if(ts.isCallExpression(node)&&node.arguments[0]&&ts.isStringLiteralLike(node.arguments[0])) {
       const callee=node.expression;
-      if(((ts.isIdentifier(callee)&&callee.text==="pgRun")
+      if(((ts.isIdentifier(callee)&&["pgRun","pgExec"].includes(callee.text))
         ||(ts.isPropertyAccessExpression(callee)&&callee.name.text==="unsafe"))
         &&node.arguments[0].text.includes(marker)) matches.push(node.arguments[0].text);
     }
@@ -136,6 +136,21 @@ test("fresh operational schema rolls back atomically and restricts runtime prove
         const row=(await runtime`SELECT status,summary,detail,metadata FROM run_observations WHERE id=${receiptId}`)[0]!;
         assert.equal(row.status,"pass");assert.equal(row.summary,args[3]);assert.equal(row.detail,args[3]);
         assert.equal(JSON.parse(row.metadata).completionReleased,true);
+      });
+      await t.test("runtime executes exact medic persistence and latest500 retention without UPDATE rights",async()=>{
+        const insert=productionSql("src/medic/medic.ts","VALUES ($1, $2, $3, $4, $5, $6)");
+        const retain=productionSql("src/medic/medic.ts","DELETE FROM medic_checks WHERE id NOT IN");
+        assert.equal((await runtime`SELECT count(*)::integer AS count FROM medic_checks`)[0]!.count,0);
+        await runtime.begin(async tx=>{
+          for(let i=0;i<=500;i++) await tx.unsafe(insert,["component-medic-"+i,new Date(Date.UTC(2026,0,1)+i*1000).toISOString(),0,0,"Component health history","[]"]);
+        });
+        assert.equal((await runtime.unsafe(retain)).count,1);
+        assert.equal((await runtime`SELECT count(*)::integer AS count FROM medic_checks`)[0]!.count,500);
+        assert.equal((await runtime`SELECT id FROM medic_checks WHERE id='component-medic-0'`).length,0);
+        assert.equal((await runtime`SELECT id FROM medic_checks WHERE id='component-medic-500'`).length,1);
+        assert.equal((await runtime.unsafe(retain)).count,0);
+        await assert.rejects(runtime`UPDATE medic_checks SET summary='changed' WHERE id='component-medic-500'`,/permission denied/);
+        await assert.rejects(runtime`TRUNCATE medic_checks`,/permission denied/);
       });
       await runtime`UPDATE claim_log SET outcome='done' WHERE run_id='component-run'`;
       await runtime`UPDATE runs SET status='completed' WHERE id='component-run'`;

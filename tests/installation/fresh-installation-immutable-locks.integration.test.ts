@@ -80,6 +80,11 @@ const QUERIES = [
     marker: "FOR UPDATE OF binding, claim, runtime, completion",
     args: ["0", "RTS_COMPONENT_ABSENT", "component-run-absent", "component-story-absent", "component-story", 0, ABSENT_HASH],
     selectedLock: "FOR UPDATE OF claim, runtime, completion", legacyLock: "FOR UPDATE OF binding, claim, runtime, completion" },
+  { id: "release-consumed-canary-evidence", file: "src/execution/v3-release-admission-repository.ts",
+    ownerFunction: "verifyConsumedCanaryEvidence",
+    marker: "FOR SHARE OF a, claim, run",
+    args: ["a".repeat(40), ABSENT_HASH, ABSENT_HASH, ["component-canary-run-absent"]],
+    selectedShareLock: "FOR SHARE OF claim, run", legacyLock: "FOR SHARE OF a, claim, run" },
 ] as const;
 
 function normalizedSqlSource(value: string): string { return value.replace(/\s+/g, " ").trim(); }
@@ -114,7 +119,7 @@ function exactSqlArgument(root: string, input: SqlMarkerInput): string {
   return matches[0]!;
 }
 
-// Census every remaining row-lock-bearing SQL argument in the six patched
+// Census every remaining row-lock-bearing SQL argument in the seven patched
 // compiler/lifecycle files. Only exact QUERIES corrections are excluded; each
 // mixed corrected join separately proves that all mutable aliases stay locked.
 // The two identical supervisor queries are scoped to their named functions and
@@ -126,6 +131,8 @@ const OTHER_COMPILER_LOCK_COUNTS = [
   ["src/execution/claim-runtime-publication.ts", 30],
   ["src/execution/run-persistence.ts", 9],
   ["src/execution/run-terminal-transition.ts", 14],
+  // createCanary keeps its mutable slot lock unconditionally.
+  ["src/execution/v3-release-admission-repository.ts", 1],
 ] as const;
 
 function otherCompilerLockArguments(root: string, relative: string): readonly string[] {
@@ -205,7 +212,8 @@ test("selected event, claim and compiler immutable reads retain mutable locks wi
     });
   } finally { await control.end({ timeout: 3 }); }
 
-  assert.equal(QUERIES.length, 21);
+  assert.equal(QUERIES.length, 22);
+  assert.equal(QUERIES.filter(input => "selectedShareLock" in input).length, 1);
   assert.equal(QUERIES.filter(input => "immutableRead" in input).length, 12);
   assert.equal(QUERIES.filter(input => "selectedLock" in input).length, 4);
   const queries = QUERIES.map(input => ({ ...input, expression: exactSqlArgument(fixture.root, input) }));
@@ -250,6 +258,13 @@ test("selected event, claim and compiler immutable reads retain mutable locks wi
                 "mutable join lock targets must be exact: "+query.id);
               assert.doesNotMatch(statement,/FOR UPDATE OF[^\\r\\n]*\\bbinding\\b/i);
             }else assert.ok(statement.includes(query.legacyLock),"legacy mixed join lock changed: "+query.id);
+          }
+          if(query.selectedShareLock){
+            if(selected){
+              assert.equal(statement.match(/\\bFOR\\s+SHARE\\s+OF\\s+[^\\r\\n]+/i)?.[0]?.trim(),query.selectedShareLock,
+                "mutable canary claim/run locks must remain exact: "+query.id);
+              assert.doesNotMatch(statement,/FOR SHARE OF[^\\r\\n]*\\ba\\b/i);
+            }else assert.ok(statement.includes(query.legacyLock),"legacy consumed-evidence join lock changed: "+query.id);
           }
           let code=null,rows;
           try{rows=await sql.unsafe(statement,query.args);}catch(error){code=error?.code??"NON_PG_ERROR";}

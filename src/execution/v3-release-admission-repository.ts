@@ -1,3 +1,4 @@
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import type postgres from "postgres";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
@@ -206,7 +207,9 @@ async function verifyConsumedCanaryEvidence(
         AND claim.run_id = ANY($4::text[])
         AND claim.consumed_at IS NOT NULL
       ORDER BY a.admission_hash, claim.slot_hash
-      FOR SHARE OF a, claim, run`,
+      ${selectedFreshInstallationRootV1() !== null
+        ? "FOR SHARE OF claim, run"
+        : "FOR SHARE OF a, claim, run"}`,
     [result.releaseSha, result.suiteHash, result.preflight.preflightHash, runIds],
   );
   const groups = new Map<string, ConsumedCanaryEvidenceRow[]>();
