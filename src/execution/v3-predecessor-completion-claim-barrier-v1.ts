@@ -3,6 +3,7 @@ import type postgres from "postgres";
 /** A causal wait, never an accepted-completion or English-admission authority.
  * Fixed aliases s/r are the candidate step and its run. Story/loop predecessor
  * completions do not serialize verifyEach, superviseEach or parallel stories.
+ * Quarantine is not acceptance: wait for explicit resolution or run termination.
  */
 export const V3_PENDING_SINGLE_PREDECESSOR_COMPLETION_SQL_V1 = `(
   r.protocol = 'v3'
@@ -26,7 +27,7 @@ export const V3_PENDING_SINGLE_PREDECESSOR_COMPLETION_SQL_V1 = `(
      WHERE predecessor.run_id = s.run_id
        AND predecessor.step_index < s.step_index
        AND predecessor.type = 'single'
-       AND predecessor_completion.state IN ('requested', 'draining', 'processing')
+       AND predecessor_completion.state IN ('requested', 'draining', 'processing', 'quarantined')
   )
 )`;
 
