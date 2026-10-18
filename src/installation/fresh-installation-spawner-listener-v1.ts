@@ -79,6 +79,10 @@ export async function openFreshInstallationSpawnerListenerV1():Promise<FreshSpaw
         }catch{refuse();}
       }};
     pool=postgres(selected.state.runtimeUrl,options);
+    // postgres3.4.8 can leave first reserve pending with fetch_types:false.
+    // Warm this max1 pool with a fixed read; all authority checks still use
+    // the subsequently reserved backend before any LISTEN or notification.
+    await pool.unsafe("SELECT 1::integer AS ready");
     reserved=await pool.reserve();
     selected.assertUnchanged();assertFreshInstallationOperationalEntryV1();
     const pidRows=await reserved.unsafe<Array<{pid:number}>>("SELECT pg_backend_pid()::integer AS pid");

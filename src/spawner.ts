@@ -1,3 +1,4 @@
+import { assertSelectedFreshCodexProfileUnchangedV1, selectedFreshCodexModelArgumentsV1 } from "./installation/fresh-installation-v3-profile-v1.js";
 /**
  * Setfarm Event-Driven Spawner
  * Listens to PostgreSQL NOTIFY events for pending steps/stories
@@ -356,6 +357,7 @@ let selectedSpawnerFailedV1 = false;
 let selectedSpawnerReadyV1 = false;
 function assertSelectedSpawnerPolicyV1(): void {
   assertFreshInstallationSelectionUnchangedV1();
+  assertSelectedFreshCodexProfileUnchangedV1();
   if (!SELECTED_SPAWNER_V1 || selectedSpawnerPolicyRefusedV1 || SELECTED_RUNNER_V1 !== "codex"
     || process.env.SETFARM_AGENT_RUNTIME !== SELECTED_RUNNER_V1) {
     selectedSpawnerPolicyRefusedV1 = true;
@@ -8003,7 +8005,9 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       return;
     }
   }
-  const codexModelArgs = process.env.SETFARM_CODEX_MODEL ? ["--model", process.env.SETFARM_CODEX_MODEL] : [];
+  const codexModelArgs = SELECTED_SPAWNER_V1 && claim.v3ImplementationHandoff
+    ? selectedFreshCodexModelArgumentsV1(claim.v3ImplementationHandoff.executionProfile)
+    : process.env.SETFARM_CODEX_MODEL ? ["--model", process.env.SETFARM_CODEX_MODEL] : [];
   const kimiModelArgs = process.env.SETFARM_KIMI_MODEL ? ["--model", process.env.SETFARM_KIMI_MODEL] : [];
   const openClawV3ModelArgs = claim.v3ImplementationHandoff?.executionProfile.modelId
     ? ["--model", claim.v3ImplementationHandoff.executionProfile.modelId]

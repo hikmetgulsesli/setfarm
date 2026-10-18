@@ -24,10 +24,7 @@ import {
   IndexedArtifactPublisherError,
   verifyArtifactIndexInventory,
 } from "../product-compiler/indexed-artifact-publisher.js";
-import {
-  readContractSpineMigrationAttestation,
-  verifyContractSpineMigrations,
-} from "../db/contract-spine-migrations.js";
+import { readV3AdmissionMigrationStateV1 } from "../installation/fresh-installation-v3-admission-v1.js";
 import {
   resolveArtifactStorePublicationAuthorityMode,
   type ArtifactStorePublicationAuthorityMode,
@@ -329,15 +326,7 @@ export function createActivationPreflightDependencies(input: Readonly<{
   });
   return Object.freeze({
     verifyMigrations: async () => {
-      const verified = await verifyContractSpineMigrations(input.sql);
-      const attestation = await readContractSpineMigrationAttestation(input.sql);
-      return {
-        status: "verified" as const,
-        versions: verified.migrations.map((migration) => migration.version),
-        verifiedReleaseSha: attestation.status === "attested"
-          ? attestation.verifiedReleaseSha
-          : null,
-      };
+      return await readV3AdmissionMigrationStateV1(input.sql);
     },
     probeDatabase: async () => {
       const rows = await input.sql.unsafe<Array<{ ok: number }>>("SELECT 1::integer AS ok");

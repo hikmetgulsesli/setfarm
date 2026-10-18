@@ -3,7 +3,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { access, readFile, readdir } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -12,10 +12,9 @@ import postgres from "postgres";
 import YAML from "yaml";
 import { z } from "zod";
 
-import {
-  readContractSpineMigrationAttestation,
-  verifyContractSpineMigrations,
-} from "../db/contract-spine-migrations.js";
+import { readV3AdmissionMigrationStateV1 } from "../installation/fresh-installation-v3-admission-v1.js";
+import { readSelectedFreshCodexExecutionProfileV1 } from "../installation/fresh-installation-v3-profile-v1.js";
+import { assertFreshInstallationSelectionUnchangedV1, freshInstallationSelectionV1 } from "../installation/fresh-installation-selection-v1.js";
 import {
   EvidenceBundleV2Schema,
   computeEvidenceBundleHash,
@@ -1490,10 +1489,9 @@ export function createPostgresConvergencePort(
       let attestedReleaseSha: string | null = null;
       let artifactIndexReady = false;
       try {
-        await verifyContractSpineMigrations(sql);
-        migrationVerified = true;
-        const attestation = await readContractSpineMigrationAttestation(sql);
-        attestedReleaseSha = attestation.status === "attested" ? attestation.verifiedReleaseSha : null;
+        const verified = await readV3AdmissionMigrationStateV1(sql);
+        migrationVerified = verified.status === "verified";
+        attestedReleaseSha = verified.verifiedReleaseSha;
       } catch {
         migrationVerified = false;
       }
@@ -2035,43 +2033,53 @@ async function evaluationCodeHash(root: string): Promise<string> {
   return safeHash(hashes);
 }
 
+async function readConvergenceExecutionProfileV1(workflowText: string): Promise<Readonly<{
+  providerId: string; modelId: string; agentCount: number;
+}>> {
+  const selected = readSelectedFreshCodexExecutionProfileV1();
+  const workflow = YAML.parse(workflowText) as Record<string, unknown>;
+  const mapping = workflow["agent_mapping"] && typeof workflow["agent_mapping"] === "object"
+    ? workflow["agent_mapping"] as Record<string, unknown>
+    : {};
+  const expectedAgentIds = [...new Set(Object.values(mapping).flatMap((value) =>
+    Array.isArray(value) ? value.map(String) : value ? [String(value)] : []))].sort();
+  if (selected) return { providerId: selected.providerId, modelId: selected.modelId,
+    agentCount: expectedAgentIds.length };
+  const openClaw = await readOpenClawConfig();
+  const installedAgents = Array.isArray(openClaw.config.agents?.list) ? openClaw.config.agents.list : [];
+  const installedById = new Map(installedAgents.map((agent) => [String(agent["id"] ?? ""), agent]));
+  const configuredModels = expectedAgentIds.map((agentId) => {
+    const configured = installedById.get(agentId)?.["model"];
+    if (typeof configured === "string") return configured;
+    if (configured && typeof configured === "object" && !Array.isArray(configured)) {
+      return String((configured as Record<string, unknown>)["primary"] ?? "");
+    }
+    return "";
+  });
+  const uniqueModels = [...new Set(configuredModels.filter(Boolean))];
+  const modelId = expectedAgentIds.length > 0
+    && configuredModels.length === expectedAgentIds.length
+    && configuredModels.every(Boolean)
+    && uniqueModels.length === 1
+    ? uniqueModels[0]!
+    : "unavailable";
+  const providerId = modelId.includes("/") ? modelId.split("/", 1)[0]! : "default";
+  return { providerId, modelId, agentCount: expectedAgentIds.length };
+}
+
 export function createNodeConvergenceProcessPort(root = packageRoot()): ConvergenceProcessPort {
   const cli = path.join(root, "dist", "cli", "cli.js");
   return {
     async inspectRelease() {
-      const [headSha, status, workflowText, runnerHash, openClaw] = await Promise.all([
+      const [headSha, status, workflowText, runnerHash] = await Promise.all([
         command("git", ["rev-parse", "HEAD"], { cwd: root }),
         command("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: root }),
         readFile(path.join(root, "workflows", "feature-dev", "workflow.yml"), "utf8"),
         evaluationCodeHash(root),
-        readOpenClawConfig(),
       ]);
       let cliReady = true;
       try { await access(cli, fsConstants.R_OK); } catch { cliReady = false; }
-      const workflow = YAML.parse(workflowText) as Record<string, unknown>;
-      const mapping = workflow["agent_mapping"] && typeof workflow["agent_mapping"] === "object"
-        ? workflow["agent_mapping"] as Record<string, unknown>
-        : {};
-      const expectedAgentIds = [...new Set(Object.values(mapping).flatMap((value) =>
-        Array.isArray(value) ? value.map(String) : value ? [String(value)] : []))].sort();
-      const installedAgents = Array.isArray(openClaw.config.agents?.list) ? openClaw.config.agents.list : [];
-      const installedById = new Map(installedAgents.map((agent) => [String(agent["id"] ?? ""), agent]));
-      const configuredModels = expectedAgentIds.map((agentId) => {
-        const configured = installedById.get(agentId)?.["model"];
-        if (typeof configured === "string") return configured;
-        if (configured && typeof configured === "object" && !Array.isArray(configured)) {
-          return String((configured as Record<string, unknown>)["primary"] ?? "");
-        }
-        return "";
-      });
-      const uniqueModels = [...new Set(configuredModels.filter(Boolean))];
-      const modelId = expectedAgentIds.length > 0
-        && configuredModels.length === expectedAgentIds.length
-        && configuredModels.every(Boolean)
-        && uniqueModels.length === 1
-        ? uniqueModels[0]!
-        : "unavailable";
-      const providerId = modelId.includes("/") ? modelId.split("/", 1)[0]! : "default";
+      const { providerId, modelId, agentCount } = await readConvergenceExecutionProfileV1(workflowText);
       const environmentHash = safeHash({
         node: process.versions.node,
         platform: process.platform,
@@ -2080,7 +2088,7 @@ export function createNodeConvergenceProcessPort(root = packageRoot()): Converge
         setfarmTransport: "loopback-http",
         missionControlTransport: "loopback-http",
         workflowHash: createHash("sha256").update(workflowText).digest("hex"),
-        executionProfileHash: safeHash({ providerId, modelId, agentCount: expectedAgentIds.length }),
+        executionProfileHash: safeHash({ providerId, modelId, agentCount }),
       });
       return {
         headSha: GitObjectHashSchema.parse(headSha.toLowerCase()),
@@ -2284,25 +2292,111 @@ export function createSystemClock(): ConvergenceClock {
   };
 }
 
-export function createDefaultConvergencePorts(outputRoot: string): ConvergenceRunnerPorts {
-  const sql = postgres(runtimeConfig.setfarmPgUrl, {
-    max: 4,
-    idle_timeout: 2,
-    connect_timeout: 10,
-    onnotice: () => {},
-  });
-  const sqlPort = createPostgresConvergencePort(sql);
-  const artifacts = new ContentAddressedEvalResultStore(outputRoot);
-  const admissions = createV3ReleaseAdmissionRepository(sql, artifacts);
-  sqlPort.close = async () => { await sql.end({ timeout: 5 }); };
-  return {
-    sql: sqlPort,
-    http: createFetchConvergenceHttpPort(),
-    process: createNodeConvergenceProcessPort(),
-    artifacts,
-    admissions,
-    clock: createSystemClock(),
-  };
+function assertSelectedConvergenceDirectoryV1(directory: string) {
+  assertFreshInstallationSelectionUnchangedV1();
+  const info = lstatSync(directory);
+  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid!()
+    || (info.mode & 0o7777) !== 0o700 || realpathSync(directory) !== directory) {
+    throw new Error("FRESH_V3_EVAL_DIRECTORY_REFUSED");
+  }
+  return info;
+}
+
+/** Fixed private selected store; no caller-supplied filesystem/authority port. */
+class SelectedConvergenceResultStoreV1 extends ContentAddressedEvalResultStore {
+  private readonly pins: readonly { path: string; dev: number; ino: number }[];
+  constructor(root: string) {
+    super(root);
+    assertFreshInstallationSelectionUnchangedV1();
+    const selected = freshInstallationSelectionV1;
+    if (!selected || root !== selected.paths.evals) throw new Error("FRESH_V3_EVAL_OUTPUT_ROOT_REFUSED");
+    this.pins = [selected.directory, selected.paths.root, path.join(selected.paths.root, "evals"), root].map(directory => {
+      const info = assertSelectedConvergenceDirectoryV1(directory);
+      return { path: directory, dev: info.dev, ino: info.ino };
+    });
+  }
+  private check(): void {
+    for (const pin of this.pins) {
+      const current = assertSelectedConvergenceDirectoryV1(pin.path);
+      if (current.dev !== pin.dev || current.ino !== pin.ino) throw new Error("FRESH_V3_EVAL_DIRECTORY_REFUSED");
+    }
+  }
+  private bucket(hashValue: string, create: boolean): void {
+    this.check();
+    const hash = Sha256Schema.parse(hashValue);
+    for (const directory of [path.join(this.pins[3]!.path, "sha256"), path.join(this.pins[3]!.path, "sha256", hash.slice(0, 2))]) {
+      if (create) {
+        try { assertSelectedConvergenceDirectoryV1(directory); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          mkdirSync(directory, { mode: 0o700 }); // No recursive path traversal/adoption.
+        }
+      }
+      assertSelectedConvergenceDirectoryV1(directory);
+    }
+    this.check();
+  }
+  override async prepare(): Promise<void> { this.check(); }
+  override async put(value: Parameters<ContentAddressedEvalResultStore["put"]>[0]): ReturnType<ContentAddressedEvalResultStore["put"]> {
+    const hash = value.schema === "setfarm.product-convergence-release-gate.v1" ? value.gateHash : value.resultHash;
+    this.bucket(hash, true);
+    const result = await super.put(value);
+    this.bucket(hash, false);
+    return result;
+  }
+  override async get(hash: string): ReturnType<ContentAddressedEvalResultStore["get"]> {
+    this.bucket(hash, false);
+    const result = await super.get(hash);
+    this.bucket(hash, false);
+    return result;
+  }
+}
+
+export async function createDefaultConvergencePorts(outputRoot: string): Promise<ConvergenceRunnerPorts> {
+  assertFreshInstallationSelectionUnchangedV1();
+  const selected = freshInstallationSelectionV1;
+  let closeSelected: (() => Promise<void>) | undefined;
+  try {
+    let sql: UnsafeSql;
+    if (selected) {
+      if (!fileURLToPath(import.meta.url).endsWith(".js")) throw new Error("FRESH_V3_EVAL_COMPILED_ENTRY_REQUIRED");
+      if (outputRoot !== selected.paths.evals) throw new Error("FRESH_V3_EVAL_OUTPUT_ROOT_REFUSED");
+      const entry = await import("../installation/fresh-installation-entry-v1.js");
+      const db = await import("../db-pg.js");
+      // Enroll cleanup before actual preparation can open its privately owned pool.
+      closeSelected = async () => { await db.pgClose(); };
+      await entry.prepareFreshInstallationOperationalEntryV1();
+      entry.assertFreshInstallationOperationalEntryV1();
+      assertFreshInstallationSelectionUnchangedV1();
+      selected.assertUnchanged();
+      sql = db.getSql();
+    } else {
+      sql = postgres(runtimeConfig.setfarmPgUrl, {
+        max: 4,
+        idle_timeout: 2,
+        connect_timeout: 10,
+        onnotice: () => {},
+      });
+    }
+    const sqlPort = createPostgresConvergencePort(sql);
+    const artifacts = selected ? new SelectedConvergenceResultStoreV1(outputRoot) : new ContentAddressedEvalResultStore(outputRoot);
+    const admissions = createV3ReleaseAdmissionRepository(sql, artifacts);
+    sqlPort.close = closeSelected ?? (async () => { await sql.end({ timeout: 5 }); });
+    return {
+      sql: sqlPort,
+      http: createFetchConvergenceHttpPort(),
+      process: createNodeConvergenceProcessPort(),
+      artifacts,
+      admissions,
+      clock: createSystemClock(),
+    };
+  } catch (error) {
+    if (closeSelected) {
+      try { await closeSelected(); }
+      catch (cleanup) { throw new AggregateError([error, cleanup], "FRESH_V3_EVAL_PREPARATION_AND_CLOSE_FAILED"); }
+    }
+    throw error;
+  }
 }
 
 type CliOptions = Readonly<{
@@ -2334,7 +2428,7 @@ function parseCli(argv: readonly string[]): CliOptions {
 
 async function main(): Promise<void> {
   const options = parseCli(process.argv.slice(2));
-  const ports = createDefaultConvergencePorts(options.outputRoot);
+  const ports = await createDefaultConvergencePorts(options.outputRoot);
   try {
     const inspected = await ports.process.inspectRelease();
     const releaseSha = GitObjectHashSchema.parse(options.releaseSha ?? inspected.headSha);

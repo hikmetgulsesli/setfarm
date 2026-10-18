@@ -125,7 +125,7 @@ export const V3ImplementationClaimHandoffV1Schema = z.object({
   evidencePlanArtifactHash: Sha256Schema,
   evidencePlanRef: z.string().min(1).max(2_000),
   executionAuthority: V3ImplementationExecutionAuthorityV1Schema,
-  executionProfile: ModelExecutionProfileV1Schema.default(resolveV3ExecutionProfile("primary")),
+  executionProfile: ModelExecutionProfileV1Schema.default(() => resolveV3ExecutionProfile("primary")),
   operationalRetry: OperationalRetryDirectiveV1Schema.optional(),
   operationalRetryArtifactHash: Sha256Schema.optional(),
   supervisorRetry: V3SupervisorRetryDirectiveV1Schema.optional(),
