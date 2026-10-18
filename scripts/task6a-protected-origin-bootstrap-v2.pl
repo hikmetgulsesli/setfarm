@@ -1432,6 +1432,194 @@ my ($xs_native_readback_issue,$xs_native_readback_recheck,$xs_native_readback_re
     }
 }
 # End fixed XS native readback prerequisite.
+# Joint Source startup lifetime. The on-disk cold/main refusals remain closed.
+# Fixed preloads retain their actual first error before independent cleanup.
+my ($startup_issue,$startup_epoch,$startup_enter_outer,$startup_finish);
+my ($startup_outer_quiescent,$startup_primary,$startup_primary_set);
+my $startup_imports_complete;
+# One bounded raw diagnostic; it supplies no cleanup right or owner.
+my $startup_preload_cleanup;
+{
+    BEGIN {$^H|=0x01000000;CORE::delete($^H{'overloading'});}
+    BEGIN {
+        my $startup_pid=$$;
+        my $startup_literal_refusal="TASK6A_JOINT_STARTUP_REFUSED\n";
+        my $startup_same_original=$strict_same_reference;
+        my $startup_utf8_original=\&utf8::is_utf8;
+        my ($startup_xs_issue_original,$startup_xs_epoch_original,$startup_xs_release_original)=
+            ($xs_native_readback_issue,$xs_native_readback_recheck,$xs_native_readback_release);
+        my ($startup_pm_issue_original,$startup_pm_epoch_original,$startup_pm_release_original)=
+            ($pm_native_readback_issue,$pm_native_readback_recheck,$pm_native_readback_release);
+        my ($startup_phase,$startup_claimed,$startup_outer_entered)=('new',0,0);
+        my ($startup_xs_started,$startup_pm_started,$startup_epochs)=(0,0,0);
+        my ($startup_finish_started,$startup_finish_outcome)=(0,undef);
+        my $startup_quiescence_original;
+        my (@startup_secondary,@startup_releases);
+        $startup_primary_set=0;$startup_primary=undef;$startup_imports_complete=0;
+        my $startup_plain=sub {
+            return 0 unless @_==1&&!defined(CORE::tied($_[0]));
+            my $value=$_[0];return defined($value)&&CORE::ref($value) eq ''
+                &&!$startup_utf8_original->($value)?1:0;
+        };
+        my $startup_ports=sub {
+            CORE::die $startup_literal_refusal unless @_==0&&$$==$startup_pid
+                &&$startup_same_original->($strict_same_reference,$startup_same_original)
+                &&$startup_same_original->(\&utf8::is_utf8,$startup_utf8_original)
+                &&$startup_same_original->($xs_native_readback_issue,$startup_xs_issue_original)
+                &&$startup_same_original->($xs_native_readback_recheck,$startup_xs_epoch_original)
+                &&$startup_same_original->($xs_native_readback_release,$startup_xs_release_original)
+                &&$startup_same_original->($pm_native_readback_issue,$startup_pm_issue_original)
+                &&$startup_same_original->($pm_native_readback_recheck,$startup_pm_epoch_original)
+                &&$startup_same_original->($pm_native_readback_release,$startup_pm_release_original);
+            return 1;
+        };
+        my $startup_note_primary=sub {
+            return if $startup_primary_set;
+            $startup_primary=$_[0];$startup_primary_set=1;
+        };
+        my $startup_note_secondary=sub {
+            CORE::die $startup_literal_refusal unless @_==2&&@startup_secondary<8;
+            CORE::push(@startup_secondary,{stage=>$_[0],error=>$_[1]});
+        };
+        # Captured finalizer, registered before any issue/import. No fork copy
+        # may close or publish the original process's startup realm.
+        my $startup_finish_original;
+        END {
+            if(defined($startup_finish_original)&&$$==$startup_pid) {
+                my $startup_end_status=$?;my ($returned,$done,$error);
+                {local $@;$done=eval {$returned=$startup_finish_original->();1;};$error=$@;}
+                if($startup_end_status!=0) {$?=$startup_end_status;}
+                elsif(!$done||!defined($returned)||CORE::ref($returned) ne ''||$returned ne '1') {$?=2;}
+                else {$?=0;}
+            }
+        }
+        $startup_finish=sub {
+            CORE::die $startup_literal_refusal unless @_==0&&$$==$startup_pid;
+            return defined($startup_finish_outcome)?$startup_finish_outcome:0 if $startup_finish_started;
+            $startup_finish_started=1;
+            my $startup_all=1;
+            if($startup_outer_entered) {
+                my $allowed;
+                my $checked=eval {
+                    CORE::die $startup_literal_refusal unless defined($startup_quiescence_original)
+                        &&$startup_same_original->($startup_outer_quiescent,$startup_quiescence_original);
+                    $allowed=$startup_quiescence_original->();
+                    CORE::die $startup_literal_refusal unless $startup_plain->($allowed)&&$allowed eq '1';1;
+                };my $error=$@;
+                unless($checked) {
+                    $startup_note_secondary->('outer-quiescence',$error);
+                    $startup_phase='retained';$startup_finish_outcome=0;return 0;
+                }
+            }
+            # A normal final epoch precedes teardown. A retained primary failure
+            # is settled directly; it is never replaced by a cache revalidation.
+            if($startup_claimed&&!$startup_primary_set) {
+                my $checked=eval {$startup_epoch->();1;};my $error=$@;
+                unless($checked) {$startup_all=0;$startup_note_primary->($error);$startup_note_secondary->('final-epoch',$error);}
+            }
+            $startup_phase='finishing';
+            my $ports_ok=eval {$startup_ports->();1;};my $ports_error=$@;
+            unless($ports_ok) {$startup_all=0;$startup_note_secondary->('native-ports',$ports_error);}
+            # Independent captured known-original releases, even if PM throws.
+            for my $release(['pm',$startup_pm_started,$startup_pm_release_original],
+                            ['xs',$startup_xs_started,$startup_xs_release_original]) {
+                next unless $release->[1];
+                my $row={realm=>$release->[0],attempted=>1,completed=>0,returned=>undef,error=>undef};
+                CORE::push(@startup_releases,$row);
+                my $done=eval {$row->{returned}=$release->[2]->();1;};$row->{error}=$@;$row->{completed}=$done?1:0;
+                my $ok=$done&&$startup_plain->($row->{returned})&&$row->{returned} eq '1'
+                    &&$startup_plain->($row->{error})&&$row->{error} eq '';
+                $row->{success}=$ok?1:0;
+                unless($ok) {$startup_all=0;$startup_note_secondary->($release->[0].'-release',$row->{error});}
+            }
+            $startup_finish_outcome=$startup_all?1:0;
+            $startup_phase=$startup_finish_outcome?'released':'burned';
+            return $startup_finish_outcome;
+        };
+        $startup_finish_original=$startup_finish;
+        $startup_epoch=sub {
+            CORE::die $startup_literal_refusal unless @_==0&&$$==$startup_pid;
+            my $ok=eval {
+                CORE::die $startup_literal_refusal unless $startup_claimed
+                    &&($startup_phase eq 'held'||$startup_phase eq 'outer')&&++$startup_epochs<=4;
+                $startup_ports->();
+                my $pm=$startup_pm_epoch_original->();
+                CORE::die $startup_literal_refusal unless $startup_plain->($pm)&&$pm eq '1';
+                my $xs=$startup_xs_epoch_original->();
+                CORE::die $startup_literal_refusal unless $startup_plain->($xs)&&$xs eq '1';1;
+            };my $error=$@;
+            unless($ok) {
+                $startup_note_primary->($error);
+                # Before the outer begins, no Source role/helper can need these
+                # readbacks. During the outer, its own unwind must settle first.
+                unless($startup_outer_entered||$startup_finish_started) {my $settled=eval {$startup_finish_original->();1;};}
+                CORE::die $startup_primary;
+            }
+            return 1;
+        };
+        $startup_enter_outer=sub {
+            CORE::die $startup_literal_refusal unless @_==0&&$$==$startup_pid;
+            CORE::die $startup_literal_refusal unless $startup_phase eq 'held'&&$startup_imports_complete
+                &&!$startup_outer_entered&&!$startup_finish_started&&!$startup_primary_set;
+            $startup_ports->();
+            CORE::die $startup_literal_refusal unless defined($startup_outer_quiescent)
+                &&CORE::ref($startup_outer_quiescent) eq 'CODE';
+            $startup_quiescence_original=$startup_outer_quiescent;
+            $startup_epoch->();$startup_outer_entered=1;$startup_phase='outer';return 1;
+        };
+        $startup_issue=sub {
+            CORE::die $startup_literal_refusal unless @_==0&&$$==$startup_pid
+                &&$startup_phase eq 'new'&&!$startup_claimed&&!$startup_finish_started;
+            $startup_claimed=1;$startup_phase='acquiring';
+            my $ok=eval {
+                $startup_ports->();
+                $startup_xs_started=1;my $xs=$startup_xs_issue_original->();
+                CORE::die $startup_literal_refusal unless $startup_plain->($xs)&&$xs eq '1';
+                $startup_pm_started=1;my $pm=$startup_pm_issue_original->();
+                CORE::die $startup_literal_refusal unless $startup_plain->($pm)&&$pm eq '1';
+                $startup_phase='held';1;
+            };my $error=$@;
+            unless($ok) {
+                $startup_note_primary->($error);my $settled=eval {$startup_finish_original->();1;};
+                CORE::die $startup_primary;
+            }
+            return 1;
+        };
+        # Private joint startup lifecycle closures end here.
+        $startup_issue->();
+    }
+}
+BEGIN {
+    # Fixed quoted preloads only. Preserve the actual error before cleanup.
+    my $startup_preload_ok=eval {
+        require 'strict.pm';
+        require 'warnings.pm';
+        require 'B.pm';
+        require 'JSON/PP.pm';
+        require 'Digest/SHA.pm';
+        require 'MIME/Base64.pm';
+        require 'Encode.pm';
+        require 'POSIX.pm';
+        require 'Fcntl.pm';
+        require 'IO/Select.pm';
+        require 'Time/HiRes.pm';
+        1;
+    };my $startup_preload_error=$@;
+    unless($startup_preload_ok) {
+        unless($startup_primary_set) {
+            $startup_primary=$startup_preload_error;$startup_primary_set=1;
+        }
+        # Existing finish retains each PM/XS outcome; this one record also
+        # retains an escaping finish error without replacing the first cause.
+        $startup_preload_cleanup={attempted=>1,completed=>0,returned=>undef,error=>undef};
+        {
+            local $@;
+            my $done=eval {$startup_preload_cleanup->{returned}=$startup_finish->();1;};
+            $startup_preload_cleanup->{error}=$@;$startup_preload_cleanup->{completed}=$done?1:0;
+        }
+        CORE::die $startup_preload_error;
+    }
+}
 use strict;
 use warnings;
 use B ();
@@ -1443,6 +1631,7 @@ use POSIX ();
 use Fcntl ();
 use IO::Select ();
 use Time::HiRes ();
+BEGIN {$startup_imports_complete=1;$startup_epoch->();}
 
 my $last_clock=0;
 sub task6a_origin_now {
@@ -4823,6 +5012,13 @@ sub task6a_origin_observe_sources {
         reviewAuthority=>JSON::PP::false,mainSha=>$main,treeSha=>$merge->{treeSha},
         headSha=>$merge->{parentShas}[1],prNumber=>$number,sources=>\@sources};
 }
+# Source-wired exact runtime quiescence; no caller answer or initializer.
+$startup_outer_quiescent=sub {
+    task6a_origin_refuse() unless @_==0;
+    return $parent_constructor_children_settled->()
+        &&$parent_constructor_material_allowed->()&&$physical_cleanup_complete->()
+        &&task6a_origin_helpers_settled()?1:0;
+};
 # One private Source-owned occurrence; no caller supplies an owner or outcome.
 my ($source_outer_phase,$source_outer_claimed,$source_outer_complete)=('new',0,0);
 my ($source_outer_stage,$source_outer_primary_stage)=('new','');
@@ -4870,7 +5066,9 @@ my $source_outer_occurrence=sub {
     $source_outer_claimed=1;$source_outer_phase='active';
     my $ok=eval {
         $source_outer_stage='publisher';$source_outer_producer=task6a_origin_produce_source_vendor_staged_custody();
-        $source_outer_stage='consumer';$source_outer_consumer=task6a_origin_consume_entry_protocol();
+        $source_outer_stage='consumer';
+        $startup_epoch->();
+        $source_outer_consumer=task6a_origin_consume_entry_protocol();
         # These are the existing settlement/material permissions, not a new
         # diagnostic or caller-supplied capability. No validator is repeated.
         task6a_origin_refuse() unless $parent_constructor_children_settled->()
@@ -4915,7 +5113,14 @@ my $source_outer_occurrence=sub {
 
 sub task6a_origin_main {
     task6a_origin_refuse() unless $<==0&&$>==0&&@ARGV==0;
-    $source_outer_occurrence->();
+    $startup_enter_outer->();
+    my $startup_main_ok=eval {$source_outer_occurrence->();1;};my $startup_main_error=$@;
+    unless($startup_main_ok) {
+        unless($startup_primary_set) {$startup_primary=$startup_main_error;$startup_primary_set=1;}
+        my $startup_main_finished=eval {$startup_finish->();1;};
+        CORE::die $startup_main_error;
+    }
+    task6a_origin_refuse() unless $startup_finish->();
     # The Source-owned component chain is present; initial trust and startup
     # admission stay closed by the cold entry and this final refusal.
     task6a_origin_refuse();

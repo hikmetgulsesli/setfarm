@@ -5,6 +5,7 @@ import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import test from 'node:test';
+import {componentSourceWithoutJointOrchestration} from './fixtures/task6a-consumer-epoch-native-v1.mjs';
 
 const BOOTSTRAP=new URL('../task6a-protected-origin-bootstrap-v2.pl',import.meta.url);
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -121,11 +122,11 @@ async function capture(home,creation) {
 
 async function invokeRelease(mode,options={}) {
   assert.ok(ordinary,'ordinary Darwin only');
-  const original=fs.readFileSync(BOOTSTRAP,'utf8');
+  const original=fs.readFileSync(BOOTSTRAP,'utf8');const component=componentSourceWithoutJointOrchestration(original);
   // Missing private support is mechanical BEFORE Perl, not protocol/native RED.
   assert.ok(original.includes('my ($xs_native_readback_issue,'),'private XS support prerequisite; no Perl/control dispatch on failure');
   const home=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'task6a-native-xs-release.'));
-  let source=once(original,GUARD,String.raw`BEGIN {CORE::die "TEST_ORDINARY_ONLY\n" unless $^O eq 'darwin'&&$<!=0&&$<==$>&&@ARGV==0;}
+  let source=once(component.source,GUARD,String.raw`BEGIN {CORE::die "TEST_ORDINARY_ONLY\n" unless $^O eq 'darwin'&&$<!=0&&$<==$>&&@ARGV==0;}
 `);
   source=once(source,'# Inert fixed XS native readback prerequisite.','my $xs_test_probe;\n# Inert fixed XS native readback prerequisite.');
   source=inXs(source,'        # Private XS lifecycle closures end here.',String.raw`        $xs_test_probe=sub {
@@ -156,7 +157,7 @@ async function invokeRelease(mode,options={}) {
 `;
   source=once(source,'use strict;\n','BEGIN {\n'+action+'}\nuse strict;\n');
   source=once(source,'\ntask6a_origin_main();\n','\n');
-  const creation={mode,scope:'ordinary CPU private release phase only; no positive XS/PM issue or file/native dispatch; initial runtime conditional',sourceSHA256:sha(original),programSHA256:sha(source),executable:'/usr/bin/perl',args:['-f',home+'/program.pl'],cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},expectedStatus:0};
+  const creation={mode,scope:'ordinary CPU private release phase only; no positive XS/PM issue or file/native dispatch; initial runtime conditional',sourceSHA256:sha(original),componentProjection:component.disclosure,programSHA256:sha(source),executable:'/usr/bin/perl',args:['-f',home+'/program.pl'],cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},expectedStatus:0};
   fs.writeFileSync(home+'/program.pl',source,{flag:'wx',mode:0o600});fs.writeFileSync(home+'/creation.json',JSON.stringify(creation)+'\n',{flag:'wx',mode:0o600});
   if(options.prepareOnly)return {home,creation,scope:'program preparation only; zero Perl'};
   const child=await capture(home,creation);const rows=child.stdout.replace(/\n$/,'').split('\n').map(row=>row.split('\t'));
@@ -338,11 +339,11 @@ const xsNativeProbe=String.raw`
 `;
 async function invokeXsNative(mode='healthy',options={}) {
   assert.ok(ordinary,'ordinary Darwin only');
-  const original=fs.readFileSync(BOOTSTRAP,'utf8');
+  const original=fs.readFileSync(BOOTSTRAP,'utf8');const component=componentSourceWithoutJointOrchestration(original);
   assert.ok(original.includes('my $xs_native=sub {'),'native XS ledger support prerequisite BEFORE Perl; never protocol RED');
   const home=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'task6a-native-xs-readback.'));
   const inputs=xsLeaves.map((row,i)=>{const bytes=fs.readFileSync(row.path);assert.equal(bytes.length,row.bytes);assert.equal(sha(bytes),row.sha256);const file=home+'/'+i+'.input';fs.writeFileSync(file,bytes,{flag:'wx',mode:0o600});return {...row,file};});
-  let source=once(original,GUARD,String.raw`BEGIN {CORE::die "TEST_ORDINARY_ONLY\n" unless $^O eq 'darwin'&&$<!=0&&$<==$>&&@ARGV==0;}
+  let source=once(component.source,GUARD,String.raw`BEGIN {CORE::die "TEST_ORDINARY_ONLY\n" unless $^O eq 'darwin'&&$<!=0&&$<==$>&&@ARGV==0;}
 `);
   source=once(source,'# Inert fixed XS native readback prerequisite.','my ($xs_test_native_probe,$xs_test_actual_calls,$xs_test_probe_started,$xs_test_release_original,$xs_test_phase_probe);\nBEGIN {$xs_test_actual_calls=0;$xs_test_probe_started=0;}\n# Inert fixed XS native readback prerequisite.');
   source=inXs(source,'        # Private XS lifecycle closures end here.',xsNativeProbe.replaceAll("${'${'}",'${')+'        # Private XS lifecycle closures end here.');
@@ -388,7 +389,7 @@ BEGIN {
 `;
   source=once(source,'use strict;\n',action+'use strict;\n');source=once(source,'\ntask6a_origin_main();\n','\n');
   if(options.mutate)source=options.mutate(source);
-  const creation={mode,scope:'ordinary genuine41 XS readback DATA only; no actual XS import/loadedimage or initial runtime admission',sourceSHA256:sha(original),programSHA256:sha(source),executable:'/usr/bin/perl',args:['-f',home+'/program.pl'],cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},expectedStatus:options.expectedStatus??0,inputs};
+  const creation={mode,scope:'ordinary genuine41 XS readback DATA only; no actual XS import/loadedimage or initial runtime admission',sourceSHA256:sha(original),componentProjection:component.disclosure,programSHA256:sha(source),executable:'/usr/bin/perl',args:['-f',home+'/program.pl'],cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},expectedStatus:options.expectedStatus??0,inputs};
   fs.writeFileSync(home+'/program.pl',source,{flag:'wx',mode:0o600});fs.writeFileSync(home+'/creation.json',JSON.stringify(creation)+'\n',{flag:'wx',mode:0o600});
   if(options.prepareOnly)return {home,creation,scope:'program/input preparation only; zero Perl'};
   const child=await capture(home,creation),rows=child.stdout.replace(/\n$/,'').split('\n').map(row=>row.split('\t'));assert.ok(rows.every(row=>row.length===2));assert.equal(new Set(rows.map(row=>row[0])).size,rows.length);

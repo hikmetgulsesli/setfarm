@@ -5,6 +5,7 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import test from 'node:test';
+import {componentSourceWithoutJointOrchestration} from './fixtures/task6a-consumer-epoch-native-v1.mjs';
 
 const BOOTSTRAP=new URL('../task6a-protected-origin-bootstrap-v2.pl',import.meta.url);
 const STRICT='/System/Library/Perl/5.34/strict.pm';
@@ -49,14 +50,14 @@ function tieAlter(mode) {
 
 function invoke(mode='healthy',options={}) {
   assert.ok(ordinary,'ordinary Darwin only; no privileged/non-native fallback');
-  const original=fs.readFileSync(BOOTSTRAP,'utf8');
+  const original=fs.readFileSync(BOOTSTRAP,'utf8');const component=componentSourceWithoutJointOrchestration(original);
   if(mode!=='pathname-companion')for(const name of names)assert.ok(original.includes(name),`missing private support ${name}`);
   const native=fs.readFileSync(STRICT);assert.equal(native.length,4783);assert.equal(sha(native),PIN);
   const home=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'task6a-strict-consumed.'));
   const candidate=options.candidate??native;assert.equal(candidate.length,4783);
   const fixture=home+'/strict.pm';fs.writeFileSync(fixture,candidate,{flag:'wx',mode:0o600});
   fs.writeFileSync(home+'/native-readback.input',native,{flag:'wx',mode:0o600});
-  let source=once(original,GUARD,String.raw`BEGIN {
+  let source=once(component.source,GUARD,String.raw`BEGIN {
     CORE::die "TEST_ORDINARY_ONLY\n" unless $^O eq 'darwin'&&$<!=0&&$<==$>&&@ARGV==0;
 }
 `);
@@ -153,7 +154,7 @@ BEGIN {
   // are explicit MODELS; genuine native file bytes and compilation are actual.
   fs.writeFileSync(home+'/program.pl',source,{flag:'wx',mode:0o600});
   fs.writeFileSync(home+'/creation.json',JSON.stringify({mode,scope:'ordinary compiler bytes with MODEL readback authentication',
-    originalSHA256:sha(original),programSHA256:sha(source),fixture,nativeReadbackSHA256:sha(native),
+    originalSHA256:sha(original),componentProjection:component.disclosure,programSHA256:sha(source),fixture,nativeReadbackSHA256:sha(native),
     candidateSHA256:sha(candidate),modeledAlternateCommitment:!!options.candidate,
     executable:'/usr/bin/perl',args:['-f',home+'/program.pl'],cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}})+'\n',{flag:'wx',mode:0o600});
   const child=spawnSync('/usr/bin/perl',['-f',home+'/program.pl'],{cwd:'/',

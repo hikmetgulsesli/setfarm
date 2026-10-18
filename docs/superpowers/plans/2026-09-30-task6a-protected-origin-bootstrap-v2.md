@@ -8978,3 +8978,247 @@ Root's isolated regression 4b133b (receipt0048ab6a78d06aaae20919cc11dedc47130cf7
 File Map is exactly existing helper plus this spec and paired plan. Both hybrid runtime bases are fresh in complete-hybrid-controls-snapshot-v4; the failed observer original and old helper/unrun-helper fixture remain immutable. All nested fivePathContext values and future42/affected19 projections use the same final five-path map. Only helper/docs future rows change for the unchanged six affected titles/eight complete invocations. Process-port scopes, Source ownership and primary/secondary snapshots, class0 admission, 180/30/45/195+15 deadlines, raw/clock/census/disk quotas, unknown-role/helper retention and Source-versus-exit closure credit stay unchanged.
 
 Root alone may bind/review/apply/current-check/clean-deliver/fresh-preflight and run each corrected hybrid once, then the six affected callbacks. No healthy/simple replay is caused by this hybrid-local formatting correction. Full G1, initial trust, protected startup, services and bounded V3 remain incomplete until the remaining original runtime evidence and gates qualify.
+
+
+### Joint initial-owner Stage A and exact causal fixture map
+
+The existing once actual positive behavioral RED (Source owner0 versus127) is
+qualified separately from its immutable Root recorder2/GID postprocessor defect;
+no replay or rewrite of that aggregate is credit. Stage A adds private genuine
+XS41->PM86 ownership through imports/Gunzip, cached same-PID independent PM->XS
+finish/END, finite epochs and Source-only outer quiescence/runtime cleanup joins.
+The original uncaught-preload missing-cleanup hypothesis is historical and
+was disproved: actual early END closed127 on real cache abort255. Root qualified
+physical cache GREEN e87242fa, preserving its wrong expected-RED wrapper2/false.
+A separate passive first-finish original then established the existing retention
+RED: primary-set0/rawU before every close, sole Node strict0vs1. Root qualified
+999a87ca after both independent actual audits. The next fix is first-primary
+latching before cleanup and original rethrow; no extra-recheck ban is added.
+An unarmed/support/quota/force failure earns no behavioral RED or GREEN.
+
+File Map: bootstrap, dedicated bootstrap test, maintained consumer-epoch fixture,
+paired design/plan; additionally only task6a-strict-consumed-bytes-v2.test.js,
+task6a-native-strict-readback-v2.test.js, task6a-fixed-pm-source-selection-v2.test.js,
+task6a-native-pm-readback-v2.test.js and task6a-native-xs-readback-v2.test.js.
+These five direct-Source component fixtures independently issue/install/release
+at first-use and would conflict with the new earlier auto owner. A shared pure
+inverse-only adapter excludes exactly the new glue/calls in their memory copies;
+all primitives and behavior assertions remain actual/unchanged, and original plus
+normalized input hashes/inverse provenance are retained. There is no production
+flag, nonempty-INC skip, owner initializer or import-time helper dispatch.
+
+Dedicated systemObject/model and cold-mutant/declarations-only copies use the
+same disclosed normalization. Legacy constructor/physical/G1 prefixes remain
+component-only and historical genuine originals are not replayed/rebound. New
+full-Source main composition must start fresh before native issue, omit unused
+non-admitted Cwd import, and reach Gunzip only via the actual publisher. That
+composition/native-cohort implementation and qualification remain open. Do not
+open any cold/main/controller/protected guard from this ordinary unit package.
+
+V2 keeps V1 immutable/UNRUN and corrects its static postpublisher unwind and
+fixture-envelope findings. The existing consumer unwind stage moves before the
+postpublisher epoch; actual consumer entry stays after it. No new stage or
+release entitlement is introduced. A future complete-main fault control must
+observe genuine13closed→12live, zero consumer/role/physical entries at the epoch
+fault, raw primary retained and actual Source12 once closure only when existing
+permissions are definite; a permission-unknown contrast retains12. The current
+unit prefix omits outer declarations and cannot exercise this regression.
+
+Joint passive first-prelude projection changes exactly two integer limits:
+65536→131072 write attempts and67108864→100663296 telemetry bytes. Other23 row
+values (including all from strings and other22 to strings), tiny gzip suffix,
+primitive bodies,200000rows/1MiBline and timing/force logic stay exact. The only
+additional joint capture change is matching stdout96MiB; parser has no separate
+byte limit. Formal selected-positive2epoch upper94,565,948B comprises57,772,712
+buffer hex +8,905,170 compiler dumps +21,661,100 headers +1,325,808 non-tuple
+scalars +1,230,630 tuples +3,670,528 nonnative values. Future4epoch work needs
+its own envelope; same5snapshot hypothetical row bound116129 does not qualify
+its bytes. Root owns matching outer captor rebinding and all effects. Existing
+512MiB reservation is unchanged;96MiB inner +4MiB outer +32MiB own +2x64KiBstderr
+is132.125MiB (138543104B), with small metadata within the existing own quota.
+
+
+### Fixed-preload first-primary retention: candidate, not execution
+
+Root's once primary original5b6622/session44632→707e8c had recorder0,
+Node92135 natural1/0PASS1FAIL0SKIP and Perl92137 natural255. First finish's
+three passive rows39268–39270 showed primary-set0/rawU before every actual
+PM86/XS41 onceclose; genuine127 arming/native67 and all physical prerequisites
+passed. Root qualification999a87ca5ecfbea413958bc8d8f692741b02cb7bbf3b35eab86df79b1c330621
+joins custody4e238ebc and Source/native2ee553b8. Existing cache physicalGREEN
+e87242fa and all failed/prepared originals remain immutable. This is the
+accepted design90a4/continuation18d05932 raw-primary-before-cleanup property.
+
+The minimal Source candidate wraps only the same eleven quoted requires in a
+block eval, saves actual $@ immediately, latches that raw value first-only before
+cleanup, invokes the existing Source finish under protected local $@, and
+rethrows the SAVED original regardless of cleanup false/throw. One bounded
+private diagnostic record retains that call's actual completion/return/error;
+it grants no disposal right and never controls or replaces primary. Existing
+finish/END, PM→XS independent attempts, once flags, all actual uses, primitive
+bodies/tables/quotas, cold/main refusals and runtime quiescence remain exact.
+No generic parse/import coverage or unconditional no-recheck rule is claimed.
+
+File Map is exactly bootstrap, maintained helper, dedicated bootstrap test and
+this paired spec/plan. The helper only rebases two Source pins and the final
+whole-glue inverse; the dedicated test only rebases its one Source model pin.
+All23/24 passive projection bodies, tiny suffix, both old registrars and the
+primary registrar, raw capture/deadline/force logic, and five separate component
+test files remain unchanged. The five glue inverses must restore the complete
+existing e964 component bytes; no owner initializer or successful gate stub.
+
+All three changed-Source programs (positive/cache/first-primary) require full
+reconstruction/material/input and independent Root capture gates before one
+actual each. Target syntax/tests/native effects remain UNRUN in this candidate.
+The negative cases must retain real Perl255/original require cause and actual
+127 oncecloses; first-primary must now observe actual flag1 and exact plain
+compiler-cause bytes derived independently from the fixed require/#line contract.
+Full fresh Source-main/Gunzip/13→12 composition, postpublisher fault, complete
+native backing/cohort/initial trust, protected Root0/70, services3333 and one
+bounded V3 remain open. This ordinary unit fix opens no admission guard.
+
+
+### Joint capture event-quota support failure and bounded correction
+
+The first changed-Source positive original remains FAILED/UNQUALIFIED:
+Root ee9b11/session12650→0f3576 returned2/candidatefalse, Node94940 natural1,
+and fixture Perl94942 received SIGTERM after dataEvents16386 exceeded the
+TEST capture-only16384 cap. Retained stdout59,296,388B is a prefix below96MiB,
+stderr0 and elapsed about11.17s is below360s. Root final75b529565e2a4b3fe4ded01ae5e1b6f6fcae68eae0faf857fa160469de2f00ad
+and inner terminal stay immutable. This is capture-support quota failure,
+not Source PASS, Source behavioral RED, completed native127 cleanup or evidence
+that Source13ff is faulty. The physical-cache/primary originals are still UNRUN.
+
+The only helper delta aligns captureJointStartup's event cap16384→65536 with
+its already existing65536 charged raw-write calls. Each eligible byte data event
+is nonempty, wholly inside its stream cap, and therefore has prefix.length>0.
+Before event-count qualification it executes at least one positive captured raw
+write, each precharged by reserve(). Thus successful dataEvents<=raw write
+attempts<=jointWriteCalls<=65536. Partial writes consume more attempts; write
+failure or a cap/sentinel prefix is already explicitly unqualified. Node26.4.0
+readable.js byte-mode470–519 (zero-length rejection494) discards empty chunks before addChunk; these fixed
+spawn pipes have no objectMode, encoding or manual emit injection. No new guard
+or provider is needed. No arbitrary OS fragmentation/throughput is guaranteed.
+
+File Map is only maintained helper plus paired spec/plan. Source13ff, dedicated
+44b55, all23/24 projection bodies, three registrars/emitter/suffix, five component
+inverses and all three complete Perl programs2dc5e5fd/97ba22a8/75e18c42 remain
+byteexact. Existing actual65536 write/128MiB capture-writer/96MiB stdout/64KiB
+stderr/360+15/free8GiB+512MiB reservation, all Source primitive quotas and guards
+remain unchanged. No Source or target effect occurred in preparing this fix.
+Root alone may apply after complete review and create fresh three-case capture
+namespaces/bindings. The old failed positive and unrun other bindings are never
+rewritten or called PASS. Fresh changed-helper positive/cache/primary actuals
+remain required; full-main/cohort/protected/startup/service/V3 remain open.
+
+
+## Fresh entire-Source main regression preparation, 2026-10-16
+
+The maintained helper now has a separate ordinary two-case full-Source emitter. It retains the complete 13ff07ba Source and one actual main call under an explicit test boundary; its sequential projection manifest reconstructs the whole original byte for byte. The existing three qualified joint-unit emitters and programs are unchanged. The two explicit material opt-ins are healthy and postpublisher-epoch-failure. Unsupported/default unselected registrations remain UNRUN.
+
+Eight fixed healthy checkpoints (seven on fault, without consumer entry) record actual cohort cells and caller ancestry. Before late registrations, unavailable runtime/constructor/physical views emit U. A single canonical M frame is encoded with modules while XS41/PM86 remain held. After teardown only bounded CORE J observations run. The fault retains the genuine PM native packet and delivers a copied UID cell0-to501 in the first epoch3 stat tuple; it assigns no Source owner/state/outcome. PM may settle during its own burn before startup finish is entered; this case does not import the preload-only ordering oracle. Source owns all constructor/staged/native cleanup.
+
+The full case alone has a 120MiB J aggregate and one at-most11,184,940-byte M line within128MiB stdout; unit limits are unchanged. Runtime new files use a256MiB requested/positive partition, Node raw captures and all exact metadata/publications use160MiB, and Root uses32MiB under a512MiB admission reservation and8GiB floor. Requested retries have separate finite charged-attempt limits; they do not promise success under arbitrary fragmentation or partial writes. Exact settled raw-file closers run before the live M frame; no mixed fixture cleanup END or Source callback is installed.
+
+These are ordinary regression fixtures and outside preparation only. They do not qualify native foreign READ/backing, Root0/70, migrations32/33, startup,3333, or a clean V3 run. Independent full candidate/material/capture review, current source pins, Root-only syntax/preflight and actual original outcomes are required before behavioral credit. Residual exact FD/census/clock schedule admission is explicitly reported by the outside nomination; a conditional package must not dispatch.
+
+
+### Full-main fixture lexical-scope correction, 2026-10-16
+
+The first fresh full-main healthy original is retained as SUPPORT failure: Root2, Node1 and Perl255 naturally, with an explicit undeclared `$source_outer_primary` compilation diagnostic. It reached no main-admitted observation and produced no live M frame; it supplies no full-main behavioral RED or GREEN. The cause was test projection74 referencing a Source file lexical declared later than the staged-release sub definition.
+
+V3 moves only the same two fault-primary observations from that early sub into the existing late runtime-view closure, conditional on staged-release-entry and the fault case. The existing checkpoint already invokes that passive closure before any staged close. No Source lexical is hoisted or assigned, no owner/guard/oracle/quota is changed, and the complete Source inverse stays13ff07ba. New case material/program/projection paths preserve the original failed inputs. Independent narrow delta/full inverse/current binding review and fresh Root-owned originals remain required.
+
+
+### Full-main fault packet expectation, 2026-10-16
+
+The fault original retained natural Root2/Node1/Perl0 with one test assertion, actual6140 versus expected6139. Source `check_originals` obtains both the held stat and named lstat before validating either tuple. Therefore the genuine stat4261 (raw UID0, copied delivery UID501) is followed by genuine lstat4262 before the UID refusal; XS remains1878. The corrected fault-only expectation is PM4262+XS1878=6140.
+
+Only that passive assertion count changes. Source13ff07ba, all80 projections, both full programs/materials, dedicated registrations, capture functions, healthy9080 branch, existing three unit programs and qualified healthy original remain unchanged. The earlier fault original stays SUPPORT and is not relabeled; later predicate review and a fresh Root-owned fault run remain separate.
+
+
+### Fresh full-main PM release false/throw after a genuine primary
+
+Add exactly `pm-release-false-after-primary` and `pm-release-throw-after-primary`, each derived from the unchanged `postpublisher-epoch-failure` profile and complete Source13ff. Keep the old helper, eighty templates, healthy/fault registrations, programs/materials/originals and three qualified unit originals byte-exact. Append only the dedicated emitter, fixed 1200-slot/65-byte already-written-wire cache, CORE-only original-PM delivery, particular oracle, finite natural2 capture and two registrations.
+
+The three additional exact transforms preserve the 775-byte joint-row body plus a post-success cache hook, replace one delivery literal, and change only the 99-byte PM call expression; the direct captured XS call and Source eval/error/completed classification stay exact. All83 inverse steps recover entire Source361476B/13ff07ba with no omitted suffix or wrapper-prefix change. The passive1070-payload cache uses explicit presence, sticky invalidity for duplicate/missing/noncanonical/out-of-range material, one presence-only callerStack marker and41 idempotent XS-close flags; no long marker wire or Source state is cached. PM eligibility independently requires all86 complete actual close/liveness records, distinct original FDs and no-label released86/86/86. XS eligibility requires its41 genuinely observed prior held records, before-imports FD join, marker, no intervening close events and current no-label held41/41/0 under the pinned private close callgraph.
+
+Call the genuine PM original once before delivery. Retain independent completion/return/error/errno/status, primary and16 ordered control rows. Only exact parent, original plain1/empty error, genuine saved primary and full evidence can arm literal0 or fixed `TASK6A_TEST_PM_RELEASE_DELIVERY_THROW\n`. PM86 closes occurred during the earlier burn; wrapper completion causes no second close. XS independently closes41 later. The particular oracle enumerates changed PM diagnostic, one `pm-release` secondary, burned phase/finishOutcome0, final incoming2 and natural Perl2, while retaining all other base-fault assertions and unchanged runtime parser/assertion with explicit baseKind.
+
+Material schema `setfarm.full-source-main-pm-release-material.v1`, projection/material SHA joins, semantic kind/baseKind/deliveryKind, new env `SETFARM_TASK6A_TEST_FULL_SOURCE_MAIN_PM_RELEASE_FIXTURE`, creation mode `full-source-main-pm-release`, requiredOutcome `pm-release-natural2`, parent/terminal fields and provisional schema `setfarm.full-source-main-pm-release-case-provisional.v1` are explicit interface additions. The whole capture algorithm comparison separately permits only exact natural2 status; all timing, event, ledger and unconditional known-owned FD closure paths remain unchanged. Root captors/readers and same-original independent audits are later separate gates.
+
+File Map: only `scripts/__tests__/fixtures/task6a-consumer-epoch-native-v1.mjs`, `scripts/__tests__/task6a-protected-origin-bootstrap-v2.test.js`, this spec and its paired plan. Source and all native/C/service/credential material remain read-only. Two exact Node titles are `Perl Source full main preserves its primary and releases XS after PM release false delivery` and `Perl Source full main preserves its primary and releases XS after PM release throw delivery`. Each requires one NodePASS and Root0/Node0/Perl2 without force/skip; no previous case is replayed.
+
+Resource gates remain fixed: selected programs below524288, J83310, corrected stdout framing132688557<134217728 (headroom1529171), added16×8460=135360 pipe-output bytes charged under J131072/Node65536 attempts, Node144052416<167772160, runtime224699719<268435456, Root33554432, reservation536870912 and disk floor8589934592. The selected206-FD/26752-census/44910-clock schedule is conditional on the exact clean stdio-owned route and adds no probe/helper/FD/Source-clock work. CPU/fragmentation/ambient-FD completion is not promised; current guards decide qualification. Deadline360+15, bootstrap180 and constructor30/45 remain exact.
+
+Outside DATA preparation is not runtime or behavior credit. Root integrates/checks syntax, then separately nominates current captors/readers before two genuine originals and Source/material/custody/resource audits. Closed unknown-role/helper fresh-main work, native backing/initial TCB, protected startup,3333 and cleanV3 remain open.
+
+- [x] Independent complete outside candidate Source/resource reviews and Root integration/current syntax binding.
+- [x] Separate exact particular captor/material readers and current complete pins; no old107-count inheritance.
+- [x] Two serialized genuine PM pair originals, separate same-original audits and Root qualification.
+
+
+### PM release pair verified originals, 2026-10-16
+
+The two particular ordinary full-main regressions are qualified. The false dispatch is909157/session35008->4b7cb3, and throw is32239e/session45848->bc188c. Each retained natural Root0/Node0/Perl2 with one selected PASS, no FAIL/SKIP, force or replay. Perl2 is the exact expected refusal after the genuine first primary and PM delivery, not a generic nonzero allowance.
+
+Separate same-original Source and material audits passed for both cases. Each retains all83 Source inverse steps and83310 J rows, genuine original PM1 before its particular false/throw delivery, unchanged first primary, independent XS41 closure, one PM secondary and two finish entries. Each has127 native and12 staged once-closes plus55 settled helpers; material audits each verified322 known-closed reads and114 current pins. Actual combined runtime/Node/Root output was286706903B for false and286707686B for throw, below536870912B.
+
+Each complete relevant DATA oracle passed its same-original baseline, then rejected all three bounded in-memory controls: removed XS-close evidence, altered retained primary and removed delivery.armed. This supplies six exact relevant assertion rejections without another target execution or a raw/M disk copy. The v1 sensitivity preparation's retained traceback defect was corrected and independently reviewed before either sensitivity execution; v1 stays unexecuted historical preparation.
+
+Authoritative pair receipt: `logs/2026-10-16-task6a-full-source-main-pm-release-pair-preparation-v1/root-PM-release-pair-two-actuals-qualified-v1.json`, SHA256 `861a540a9f5c4d4224d692696d122d6163b5aac502f89fcbbb5a0c0729c3c249`. The two exact selected114 input sets remained frozen through both qualifications and are historical after this documentation-only closure. Source13ff, helper966665 and dedicated809a22 remain unchanged; the earlier three unit and two ordinary full-main qualified originals are retained.
+
+This closes the particular PM pair verification only. Closed unknown-role/helper full-main compositions, native READ/loaded-image/backing and initial TCB, reviewed delivery/clean committed build, protected Root0/70 and OS+DB fence/migrations32+33,3333 and a clean real V3 run remain open.
+
+
+### Selected full Source main closed-unknown pair — historical preparation
+
+The two additional selected ordinary controls are `closed-unknown-observer` and
+`closed-unknown-helper`, both composed from the unchanged healthy full Source
+main transformation. They cover retained native/runtime custody under a closed
+modeled role or ACL-helper result only. The full Source input, native primitives,
+services and earlier qualified originals remain unchanged. Existing failed and
+support captures, programs, material and historical verdicts are preserved.
+
+Candidate preparation was DATA only. These two controls remained UNRUN until Root
+integrates reviewed exact candidates, binds the acyclic complete material and
+readers, performs fresh admission, and qualifies each original natural2 capture
+with independent Source and resource reviews. No native/protected/startup,
+build, service-restoration, dashboard3333 or realV3 completion is claimed.
+The broader Task6A objective remains incomplete.
+
+### Closed-unknown pair verified originals, 2026-10-17
+
+Both particular full-main fixture cases are now qualified. Observer dispatch
+`bf6054`/session10636 completed at `7d19df`; helper dispatch
+`158210`/session66152 completed at `565969`. Each retained natural
+Root0/Node0/Perl2, with exactly one selected PASS and no FAIL or SKIP. Perl2 is
+the expected refusal for that particular case. Neither target was replayed to
+obtain the subsequent independent checks.
+
+Each same-original Source audit passed its baseline and three own causal
+rejections. Each independent material audit passed full-original custody; its
+separately reviewed material executor then passed its own baseline and three
+causal rejections. Source sensitivity results were not substituted for material
+results. Observer material execution `445a5e`/session23598 -> `b9333c` retained
+receipt110145B/SHA256 `417a8e602a86f13bb5e1585727789ea06770d728d9a08d91b250fef5321a6895`;
+helper execution `4c4874`/session27914 -> `76f41b` retained
+receipt85674B/SHA256 `8d965929ccdae2941d25bfe700b6b1c9d6aa6ac5a70cc69d9cd241c1987f2b25`.
+Both executions exited naturally0. Root joined the original final/M/raw evidence,
+all material read records and each case's three post-publication records;
+final coupled readback `28c904` qualified only this pair.
+
+The immutable historical Phase178 qualification is archived by the successor
+checkpoint publisher at
+`logs/2026-10-17-continuity-phase179-boundary-v1/ACTIVE_CHECKPOINT.json.before`,
+901702B/SHA256 `6df77e9a50feecc8a8dbe65b3d1d70514d95135cec441bf2d42225d29f9a5803`.
+Its `closedUnknownCoupledPairPhase178` contains both actuals, audit/terminal pins
+and the complete Root readback. The two frozen128-input sets are historical
+after this documentation-only closure; do not reuse their old current-file
+admission or replay a qualified target. Production Source13ff and helper33ad
+remain unchanged. File Map: this plan and its paired spec only.
+
+Native READ/loaded-image/backing, initial TCB and the required native launch,
+terminal accounting and containment evidence remain OPEN. This pair supplies
+no native CPU/RSS, PM2 owner-closed, reviewed delivery/build, protected Root0/70,
+OS+DB fence/migrations32+33, dashboard3333 or clean real V3 run credit.

@@ -5,6 +5,7 @@ import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import test from 'node:test';
+import {componentSourceWithoutJointOrchestration} from './fixtures/task6a-consumer-epoch-native-v1.mjs';
 import {gzipSync} from 'node:zlib';
 
 const BOOTSTRAP=new URL('../task6a-protected-origin-bootstrap-v2.pl',import.meta.url);
@@ -114,11 +115,11 @@ async function capture(home,creation) {
 
 async function invokeBridge(mode='copied') {
   assert.ok(ordinary,'ordinary Darwin only');
-  const original=fs.readFileSync(BOOTSTRAP,'utf8');
+  const original=fs.readFileSync(BOOTSTRAP,'utf8');const component=componentSourceWithoutJointOrchestration(original);
   // Missing implementation is a support prerequisite, never a protocol RED.
   assert.ok(original.includes('my $pm_loader_native_state;'),'private observer support prerequisite');
   const home=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'task6a-native-pm-bridge.'));
-  let source=once(original,GUARD,String.raw`BEGIN {CORE::die "TEST_ORDINARY_ONLY\n" unless $^O eq 'darwin'&&$<!=0&&$<==$>&&@ARGV==0;}
+  let source=once(component.source,GUARD,String.raw`BEGIN {CORE::die "TEST_ORDINARY_ONLY\n" unless $^O eq 'darwin'&&$<!=0&&$<==$>&&@ARGV==0;}
 `);
   source=once(source,'\ntask6a_origin_main();\n','\n');
   const action=mode==='copied'?String.raw`
@@ -138,7 +139,7 @@ async function invokeBridge(mode='copied') {
 `;
   source=once(source,'use strict;\n','BEGIN {\n'+action+'CORE::exit(0);\n}\nuse strict;\n');
   fs.writeFileSync(home+'/program.pl',source,{flag:'wx',mode:0o600});
-  const creation={mode,scope:'ordinary private observer behavior only; no native issuer dispatch, Root or initial runtime admission',sourceSHA256:sha(original),programSHA256:sha(source),executable:'/usr/bin/perl',args:['-f',home+'/program.pl'],cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}};
+  const creation={mode,scope:'ordinary private observer behavior only; no native issuer dispatch, Root or initial runtime admission',sourceSHA256:sha(original),componentProjection:component.disclosure,programSHA256:sha(source),executable:'/usr/bin/perl',args:['-f',home+'/program.pl'],cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}};
   fs.writeFileSync(home+'/creation.json',JSON.stringify(creation)+'\n',{flag:'wx',mode:0o600});
   const child=await capture(home,creation),rows=child.stdout.replace(/\n$/, '').split('\n').map(row=>row.split('\t'));
   assert.ok(rows.every(row=>row.length===2));assert.equal(new Set(rows.map(row=>row[0])).size,rows.length);
@@ -304,14 +305,14 @@ const compilerProbe=String.raw`
 `;
 async function invokeNative(mode='healthy',options={}) {
   assert.ok(ordinary,'ordinary Darwin native only');
-  const original=fs.readFileSync(BOOTSTRAP,'utf8');
+  const original=fs.readFileSync(BOOTSTRAP,'utf8');const component=componentSourceWithoutJointOrchestration(original);
   assert.ok(original.includes('my ($pm_native_readback_issue,'),'native issuer support prerequisite; never a protocol RED');
   const home=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'task6a-native-pm-readback.'));
   const inputs=leaves.map((row,index)=>{
     const bytes=fs.readFileSync(row.path);assert.equal(bytes.length,row.bytes);assert.equal(sha(bytes),row.sha256);
     const file=home+'/'+index+'.input';fs.writeFileSync(file,bytes,{flag:'wx',mode:0o600});return {...row,file};
   });
-  let source=once(original,GUARD,String.raw`BEGIN {CORE::die "TEST_ORDINARY_ONLY\n" unless $^O eq 'darwin'&&$<!=0&&$<==$>&&@ARGV==0;}
+  let source=once(component.source,GUARD,String.raw`BEGIN {CORE::die "TEST_ORDINARY_ONLY\n" unless $^O eq 'darwin'&&$<!=0&&$<==$>&&@ARGV==0;}
 `);
   source=once(source,'# Inert fixed PM source-selection prerequisite.','my $pm_compiler_test_probe;\n# Inert fixed PM source-selection prerequisite.');
   source=once(source,'# Inert fixed native PM readback prerequisite.',
@@ -438,7 +439,7 @@ CORE::exit(0);
 `.replace('COMPRESSED',compressed);
   source=once(source,'\ntask6a_origin_main();\n','\n'+runtime);
   if(options.mutate)source=options.mutate(source,home);
-  const creation={mode,scope:'ordinary native fixed86 originals DATA; source/native/kernel/MAC/runtime initial TCB conditional, no Root/live/overall admission',sourceSHA256:sha(original),programSHA256:sha(source),executable:'/usr/bin/perl',args:['-f',home+'/program.pl'],cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},inputs,expectedStatus:options.expectedStatus??0};
+  const creation={mode,scope:'ordinary native fixed86 originals DATA; source/native/kernel/MAC/runtime initial TCB conditional, no Root/live/overall admission',sourceSHA256:sha(original),componentProjection:component.disclosure,programSHA256:sha(source),executable:'/usr/bin/perl',args:['-f',home+'/program.pl'],cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},inputs,expectedStatus:options.expectedStatus??0};
   fs.writeFileSync(home+'/program.pl',source,{flag:'wx',mode:0o600});fs.writeFileSync(home+'/creation.json',JSON.stringify(creation)+'\n',{flag:'wx',mode:0o600});
   if(options.prepareOnly)return {home,creation,scope:'pre-effect program and input preparation only; no Perl/native dispatch'};
   const child=await capture(home,creation),rows=child.stdout.replace(/\n$/, '').split('\n').map(row=>row.split('\t'));

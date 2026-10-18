@@ -5,6 +5,7 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import test from 'node:test';
+import {componentSourceWithoutJointOrchestration} from './fixtures/task6a-consumer-epoch-native-v1.mjs';
 
 const BOOTSTRAP=new URL('../task6a-protected-origin-bootstrap-v2.pl',import.meta.url);
 const STRICT='/System/Library/Perl/5.34/strict.pm';
@@ -32,12 +33,12 @@ function once(source,from,to) {
 const ordinary=process.platform==='darwin'&&process.getuid?.()!==0&&process.getuid?.()===process.geteuid?.();
 function invoke(mode='healthy',options={}) {
   assert.ok(ordinary,'ordinary Darwin only; no privileged/non-native fallback');
-  const original=fs.readFileSync(BOOTSTRAP,'utf8');
+  const original=fs.readFileSync(BOOTSTRAP,'utf8');const component=componentSourceWithoutJointOrchestration(original);
   for(const name of names)assert.ok(original.includes(name),`missing private support ${name}`);
   const native=fs.readFileSync(STRICT);assert.equal(native.length,4783);assert.equal(sha(native),PIN);
   const home=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'task6a-native-strict-readback.'));
   fs.writeFileSync(home+'/genuine-strict.input',native,{flag:'wx',mode:0o600});
-  let source=once(original,GUARD,String.raw`BEGIN {
+  let source=once(component.source,GUARD,String.raw`BEGIN {
     CORE::die "TEST_ORDINARY_ONLY\n" unless $^O eq 'darwin'&&$<!=0&&$<==$>&&@ARGV==0;
 }
 `);
@@ -95,7 +96,7 @@ function invoke(mode='healthy',options={}) {
   if(options.mutate)source=options.mutate(source,home);
   const program=home+'/program.pl';fs.writeFileSync(program,source,{flag:'wx',mode:0o600});
   const creation={mode,scope:'ordinary native fixed-file DATA; native/kernel/MAC/initial-runtime TCB assumption, no Root admission',
-    originalSHA256:sha(original),programSHA256:sha(source),nativeInputSHA256:sha(native),executable:'/usr/bin/perl',
+    originalSHA256:sha(original),componentProjection:component.disclosure,programSHA256:sha(source),nativeInputSHA256:sha(native),executable:'/usr/bin/perl',
     args:['-f',program],cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}};
   fs.writeFileSync(home+'/creation.json',JSON.stringify(creation)+'\n',{flag:'wx',mode:0o600});
   const child=spawnSync(creation.executable,creation.args,{cwd:creation.cwd,env:creation.env,encoding:'utf8',maxBuffer:1048576});

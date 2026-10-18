@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import {componentSourceWithoutJointOrchestration} from './fixtures/task6a-consumer-epoch-native-v1.mjs';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
@@ -410,7 +411,8 @@ const probe=String.raw`
 `;
 function invoke(mode='healthy',options={}) {
   assert.ok(ordinary,'ordinary Darwin only; no privileged/non-native fallback');
-  const originalBytes=fs.readFileSync(BOOTSTRAP);const originalSHA256=sha(originalBytes);let source=originalBytes.toString('utf8');
+  const originalBytes=fs.readFileSync(BOOTSTRAP);const originalSHA256=sha(originalBytes);
+  const component=componentSourceWithoutJointOrchestration(originalBytes.toString('utf8'));let source=component.source;
   for(const name of ['$pm_loader_install','$pm_loader_recheck','$pm_loader_revoke'])assert.ok(source.includes(name),'mechanical private support: '+name);
   const home=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'task6a-pm-selection.'));
   const inputs=rows.map((row,i)=>{
@@ -626,7 +628,7 @@ CORE::print "overloaded-self-selection\t",$ok?1:0,"\n";
   if(options.mutate)source=options.mutate(source);
   fs.writeFileSync(home+'/program.pl',source,{flag:'wx',mode:0o600});
   const creation={mode,scope:'ordinary compiler/runtime; modeled readback ACL/native initial trust; no production or native image authority',
-    sourceSHA256:originalSHA256,programSHA256:sha(source),inputs,
+    sourceSHA256:originalSHA256,componentProjection:component.disclosure,programSHA256:sha(source),inputs,
     modeledAlternatePin:!!options.candidateKey,modeledStrictFilename:mode==='buffer-window'?home+'/strict.pm':null,argv:['/usr/bin/perl','-f',home+'/program.pl'],cwd:'/',
     env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},stdoutBound:3145728,timeoutMs:90000};
   fs.writeFileSync(home+'/creation.json',JSON.stringify(creation,null,2)+'\n',{flag:'wx',mode:0o600});
