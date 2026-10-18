@@ -1,28 +1,33 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
-import {
-  computeContractSpineSemanticMigrationDigests,
-  createContractSpineMigrationSourceReader,
-} from "../../src/db/contract-spine-migration-source-integrity.js";
+import { freshSourceCheckoutFixture } from "./fresh-source-checkout-fixture.js";
 
-test("fresh current-origin checks and shared identity verifier are bound to migrations32 and33", () => {
-  const read = createContractSpineMigrationSourceReader(fileURLToPath(new URL("../../", import.meta.url)));
-  const baseline = computeContractSpineSemanticMigrationDigests(read);
-  for (const statement of [
+// Fresh behavior is bound to its actual source identity, not to rewritten
+// historical migration checksums. No fixture is represented as a built release.
+test("fresh operative genesis and current-origin checks are bound by actual source capture", async () => {
+  const fixture = await freshSourceCheckoutFixture();
+  const file = path.join(fixture.root, "src/db/contract-spine-migrations.ts");
+  const original = readFileSync(file, "utf8");
+  const git = (args: string[]) => execFileSync("/usr/bin/git", ["-c", "core.fsmonitor=false", ...args], {
+    cwd: fixture.root, encoding: "utf8", timeout: 5000, maxBuffer: 1024 * 1024,
+  });
+  git(["update-index", "--assume-unchanged", "src/db/contract-spine-migrations.ts"]);
+  try { for (const statement of [
     "await verifyFreshApplicationOnConnectionV1(sql, current.migrationApplication, row.release_sha);",
     "await verifyFreshInstallationDatabaseIdentityV1(sql, application.origin);",
+    "await verifyFreshInstallationGenesisApplicationV1(transaction);",
   ]) {
-    const changed = computeContractSpineSemanticMigrationDigests(file => {
-      const source = read(file);
-      if (file !== "src/db/contract-spine-migrations.ts") return source;
-      assert.equal(source.split(statement).length, 2, "mutation must remove exactly one operative check");
-      return source.replace(statement, "/* removed by source-integrity regression */");
-    });
-    assert.notEqual(changed[32], baseline[32]);
-    assert.notEqual(changed[33], baseline[33]);
-    for (const version of [8, 11, 12, 23, 24, 25, 26, 27, 28, 29, 30, 31] as const) {
-      assert.equal(changed[version], baseline[version]);
-    }
+    assert.equal(original.split(statement).length, 2, "mutation must remove exactly one operative check");
+    writeFileSync(file, original.replace(statement, "/* removed by source-integrity regression */"));
+    assert.equal(git(["status", "--porcelain=v1"]), "", "Git status alone must not detect this mutation");
+    try { await assert.rejects(fixture.capture.captureFreshInstallationSourceShaV1(), /FRESH_INSTALLATION_SOURCE_UNAVAILABLE/); }
+    finally { writeFileSync(file, original); }
+    assert.equal(await fixture.capture.captureFreshInstallationSourceShaV1(), fixture.sha);
+  } } finally {
+    writeFileSync(file, original);
+    git(["update-index", "--no-assume-unchanged", "src/db/contract-spine-migrations.ts"]);
   }
 });

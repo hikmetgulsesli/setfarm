@@ -19,7 +19,7 @@
 - Create database names `setfarm_install_` plus32 lowercase UUID hex digits, using `TEMPLATE template0`; refuse collisions and existing/nonempty targets.
 - Newly named NOLOGIN owner and restricted LOGIN runtime roles. Never output passwords or raw connection errors/URLs.
 - One transaction covers ordinary base DDL, registered1–33 schema, fresh genesis/provenance and object grants. Rollback must leave no partial public schema.
-- Preserve migration1–31 semantic digests. Regenerate and inspect only affected32/33 entries.
+- Preserve all published migration1–33 semantic digests/checksums. Fresh-only behavior is bound by actual complete source/build capture and its distinct origin, never by rewriting historical migration identities.
 - Every success assertion requires actual command output. This stage does not prove service startup or a real workflow.
 
 ## File Map
@@ -34,7 +34,7 @@
 - Create `src/installation/fresh-installation-runtime-v1.ts`: read-only schema reopen and explicit acknowledgment reconciliation against actual source, database, role OIDs/policy and canonical catalog; no rebootstrap.
 - Modify `src/db/contract-spine-migrations.ts`: new authenticated empty-database initializer, both genesis/current origin verifiers, actual all33 journal verification.
 - Modify `src/internal-production/owner-admission-head-v1.ts`: strict legacy-or-fresh application validation and unchanged ancestry propagation.
-- Modify migration source-integrity manifest/generated digests only for dependencies/regions affected by32/33.
+- Preserve migration source-integrity manifests/generated digests exactly as published by0010a430; keep fresh genesis code outside the frozen32/33 regions. Add tests/installation/fresh-installation-migration-compatibility.test.ts for fixed published32/33 semantic and journal identities; actual fresh source mutations must be refused by the existing whole-source capture.
 - Create `tests/installation/fresh-installation-origin.test.ts`, `fresh-installation-bootstrap.integration.test.ts` and `fresh-installation-source-integrity.test.ts`: actual parser behavior, real PostgreSQL and mutation-based source binding; no default test-fixture bypass.
 - Create `tests/installation/fresh-source-checkout-fixture.ts`: one bounded committed copy of actual production source for source-mode integration tests; reuse installed dependencies and delete only that suite-owned temporary directory.
 - Create `tests/installation/fresh-installation-test-support.ts` and `fresh-installation-initial-catalog-policy.integration.test.ts`: reuse the exact OID-checked fresh test provisioning/teardown and prove initial ACL/unknown-routine refusal before prepared evidence/COMMIT.
@@ -160,7 +160,7 @@ Run the affected owner-admission/lifecycle/digest tests by exact file or name.
 Never invoke the owner-closed PM2 diagnostic through a wildcard script suite.
 
 - [ ] **Step7: Inspect semantic changes and review the whole task.** Run the
-  existing digest generator, compare1–31 to the base commit, then run
+  existing digest generator, compare every published digest to the base commit and pin32/33 journal checksums, then run
   `npm run check:migration-digests`. Resolve type errors with `npx tsc --noEmit`.
   Request read-only review against the complete diff and actual test receipts.
   Address findings, repeat only affected checks, then commit scoped source/tests.
@@ -331,3 +331,25 @@ heartbeat and one bounded clean workflow through its actual gates.
   normal template0 initialization/restricted verification/reopen, genuine server
   COMMIT-response loss and all5 new rollback cases. Two independent correction
   reviews returned C0/I0/M0. Exact-head cloud review/clean-main build remain pending.
+
+- Review4306976067 corrected an earlier design error in this plan: fresh-only
+  dependencies/regions must not change already published migration32/33 identities.
+  RED3ec7be proves the current32 semantic identity differed from0010a430. Restore
+  the original manifests, generated digests and exact legacy guarded32 verifier;
+  put strict fresh genesis verification outside frozen regions and call it only
+  from the authenticated fresh initializer. Preserve fresh current-head/connected
+  origin/source/journal verification. Every fresh operative source byte remains
+  bound by actual clean Git blob inventory or finalized build, so no additional
+  hash ledger, dual-checksum acceptance or journal rewrite is needed.
+- New fixed baselines cover published32/33 semantic AND journal identities.
+  A first18-case run e9051d had17pass and one incorrect33 gold copied from a
+  historical fixture. Actual retained compiled0010 output40496d and independent
+  original-commit SQL-literal derivation6f50a2 prove the correct33 checksum is
+  10009bdaccddfaea7252036384889db14c51332a3f8f239019224396545417be.
+  Corrected18-case run21556f passed all18, no failures/skips/cancellations.
+  Real affected PostgreSQL run539316 passed8/8, including complete restricted
+  initialization, read-only reopen, actual lost server COMMIT and all5 initial
+  policy rollback cases. Source mutation regression is further strengthened to
+  prove refusal with clean Git status under assume-unchanged;24980b passed the final
+  source test and noemit/digest/whitespace exited0. Both final source reviews
+  returned C0/I0/M0. Exact-head cloud review and clean-main build remain pending.
