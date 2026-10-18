@@ -1,3 +1,4 @@
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
@@ -149,10 +150,14 @@ async function lockAndVerifyReleaseAdmission(
     throw new Error("RUN_RELEASE_ADMISSION_REQUIRED");
   }
   const admissionRows = await sql.unsafe<AdmissionPersistenceRow[]>(
-    `SELECT admission_hash, kind, release_sha, expires_at, payload
-       FROM v3_release_admissions
-      WHERE admission_hash = $1
-      FOR SHARE`,
+    selectedFreshInstallationRootV1() !== null
+      ? `SELECT admission_hash, kind, release_sha, expires_at, payload
+           FROM v3_release_admissions
+          WHERE admission_hash = $1`
+      : `SELECT admission_hash, kind, release_sha, expires_at, payload
+           FROM v3_release_admissions
+          WHERE admission_hash = $1
+          FOR SHARE`,
     [run.protocol.releaseAdmissionHash],
   );
   const row = admissionRows[0];

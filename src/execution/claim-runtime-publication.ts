@@ -1,3 +1,4 @@
+import { selectedFreshInstallationRootV1 } from "../installation/fresh-installation-selection-v1.js";
 import type postgres from "postgres";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
@@ -152,7 +153,9 @@ export async function loadAuthenticatedV3SupervisorRetryPreparationSourceV1(
           AND completion.apply_phase = 'effects_committed'
           AND completion.output_hash = $7
         LIMIT 2
-        FOR UPDATE OF binding, claim, runtime, completion`,
+        ${selectedFreshInstallationRootV1() !== null
+          ? "FOR UPDATE OF claim, runtime, completion"
+          : "FOR UPDATE OF binding, claim, runtime, completion"}`,
       [
         directive.supervisorClaimId,
         directive.runtimeSessionId,
@@ -207,7 +210,9 @@ export async function loadAuthenticatedV3SupervisorRetryPreparationSourceV1(
           AND completion.apply_phase = 'effects_committed'
           AND completion.claim_outcome = 'completed'
         LIMIT 2
-        FOR UPDATE OF preparation, claim, binding, runtime, completion`,
+        ${selectedFreshInstallationRootV1() !== null
+          ? "FOR UPDATE OF preparation, claim, runtime, completion"
+          : "FOR UPDATE OF preparation, claim, binding, runtime, completion"}`,
       [
         input.runId,
         input.workflowStepId,
@@ -2047,9 +2052,12 @@ export async function publishLoopClaimRuntime(
         }
         if (!preparationAuthority && run.packet_hash) {
           const packetOwners = await transaction.unsafe<Array<{ packet_hash: string }>>(
-            `SELECT packet_hash FROM product_packets
-              WHERE run_id = $1 AND packet_hash = $2
-              FOR KEY SHARE`,
+            selectedFreshInstallationRootV1() !== null
+              ? `SELECT packet_hash FROM product_packets
+                  WHERE run_id = $1 AND packet_hash = $2`
+              : `SELECT packet_hash FROM product_packets
+                  WHERE run_id = $1 AND packet_hash = $2
+                  FOR KEY SHARE`,
             [rawInput.runId, run.packet_hash],
           );
           if (packetOwners.length === 1) {
@@ -2139,7 +2147,9 @@ export async function publishLoopClaimRuntime(
             )
           ORDER BY binding.claim_id
           LIMIT 1
-          FOR UPDATE OF binding, runtime`,
+          ${selectedFreshInstallationRootV1() !== null
+            ? "FOR UPDATE OF runtime"
+            : "FOR UPDATE OF binding, runtime"}`,
         [rawInput.runId, rawInput.storyDbId, rawInput.storyId, story.claim_generation],
       );
       if (unsettledSupervision.length !== 0) return undefined;
@@ -2214,7 +2224,9 @@ export async function publishLoopClaimRuntime(
               AND completion.apply_phase = 'effects_committed'
               AND completion.output_hash = $7
             LIMIT 2
-            FOR UPDATE OF binding, claim, runtime, completion`,
+            ${selectedFreshInstallationRootV1() !== null
+              ? "FOR UPDATE OF claim, runtime, completion"
+              : "FOR UPDATE OF binding, claim, runtime, completion"}`,
           [
             supervisorRetryDirective.supervisorClaimId,
             supervisorRetryDirective.runtimeSessionId,

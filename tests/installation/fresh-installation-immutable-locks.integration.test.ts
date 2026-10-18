@@ -51,17 +51,56 @@ const QUERIES = [
   { id: "compiler-accepted-replay", file: "src/evidence/accepted-candidate-repository.ts",
     marker: "SELECT payload FROM accepted_candidates WHERE run_id = $1 FOR SHARE",
     args: ["component-run-absent"], immutableRead: true, legacyLock: "FOR SHARE" },
+  { id: "terminal-accepted-candidate", file: "src/execution/run-terminal-transition.ts",
+    marker: "SELECT payload FROM accepted_candidates WHERE candidate_hash = $1 AND run_id = $2 LIMIT 1 FOR SHARE",
+    args: [ABSENT_HASH, "component-run-absent"], immutableRead: true, legacyLock: "FOR SHARE" },
+  { id: "claim-packet-owner", file: "src/execution/claim-runtime-publication.ts",
+    marker: "SELECT packet_hash FROM product_packets WHERE run_id = $1 AND packet_hash = $2 FOR KEY SHARE",
+    args: ["component-run-absent", ABSENT_HASH], immutableRead: true, legacyLock: "FOR KEY SHARE" },
+  { id: "run-release-admission", file: "src/execution/run-persistence.ts",
+    marker: "FROM v3_release_admissions WHERE admission_hash = $1 FOR SHARE",
+    args: [ABSENT_HASH], immutableRead: true, legacyLock: "FOR SHARE" },
+  { id: "retry-auth-supervisor-binding", file: "src/execution/claim-runtime-publication.ts",
+    ownerFunction: "loadAuthenticatedV3SupervisorRetryPreparationSourceV1",
+    marker: "FOR UPDATE OF binding, claim, runtime, completion",
+    args: ["0", "RTS_COMPONENT_ABSENT", "component-run-absent", "component-story-absent", "component-story", 0, ABSENT_HASH],
+    selectedLock: "FOR UPDATE OF claim, runtime, completion", legacyLock: "FOR UPDATE OF binding, claim, runtime, completion" },
+  { id: "retry-auth-preparation-binding", file: "src/execution/claim-runtime-publication.ts",
+    ownerFunction: "loadAuthenticatedV3SupervisorRetryPreparationSourceV1",
+    marker: "FOR UPDATE OF preparation, claim, binding, runtime, completion",
+    args: ["component-run-absent", "component-step", "component-story", "component-step-absent", "component-story-absent", 0],
+    selectedLock: "FOR UPDATE OF preparation, claim, runtime, completion", legacyLock: "FOR UPDATE OF preparation, claim, binding, runtime, completion" },
+  { id: "normal-claim-unsettled-supervision", file: "src/execution/claim-runtime-publication.ts",
+    ownerFunction: "publishLoopClaimRuntime",
+    marker: "FOR UPDATE OF binding, runtime",
+    args: ["component-run-absent", "component-story-absent", "component-story", 0],
+    selectedLock: "FOR UPDATE OF runtime", legacyLock: "FOR UPDATE OF binding, runtime" },
+  { id: "normal-claim-exact-supervisor", file: "src/execution/claim-runtime-publication.ts",
+    ownerFunction: "publishLoopClaimRuntime",
+    marker: "FOR UPDATE OF binding, claim, runtime, completion",
+    args: ["0", "RTS_COMPONENT_ABSENT", "component-run-absent", "component-story-absent", "component-story", 0, ABSENT_HASH],
+    selectedLock: "FOR UPDATE OF claim, runtime, completion", legacyLock: "FOR UPDATE OF binding, claim, runtime, completion" },
 ] as const;
 
 function normalizedSqlSource(value: string): string { return value.replace(/\s+/g, " ").trim(); }
 
-function matchingSqlArguments(root: string, input: Readonly<{ id: string; file: string; marker: string }>): readonly string[] {
+type SqlMarkerInput = Readonly<{ id: string; file: string; marker: string; ownerFunction?: string }>;
+function inNamedFunction(node: ts.Node, name: string | undefined): boolean {
+  if (name === undefined) return true;
+  for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
+    if (ts.isFunctionDeclaration(current) && current.name?.text === name) return true;
+  }
+  return false;
+}
+
+function matchingSqlArguments(root: string, input: SqlMarkerInput): readonly string[] {
   const file = path.join(root, input.file), text = readFileSync(file, "utf8");
   const tree = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const matches: ts.Expression[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
       && node.expression.name.text === "unsafe" && node.arguments[0]
+      && inNamedFunction(node, input.ownerFunction)
       && normalizedSqlSource(node.arguments[0].getText(tree)).includes(normalizedSqlSource(input.marker))) matches.push(node.arguments[0]);
     ts.forEachChild(node, visit);
   };
@@ -69,20 +108,24 @@ function matchingSqlArguments(root: string, input: Readonly<{ id: string; file: 
   return matches.map(node => node.getText(tree));
 }
 
-function exactSqlArgument(root: string, input: Readonly<{ id: string; file: string; marker: string }>): string {
+function exactSqlArgument(root: string, input: SqlMarkerInput): string {
   const matches = matchingSqlArguments(root, input);
   assert.equal(matches.length, 1, `exact production SQL argument must be unique: ${input.id}`);
   return matches[0]!;
 }
 
-// Census every remaining row-lock-bearing SQL argument in the three patched
-// compiler files, not just representative mutable rows. The nine exact
-// immutable queries are the only excluded expressions. Their unique markers
-// are still enforced independently by exactSqlArgument in the PG component.
+// Census every remaining row-lock-bearing SQL argument in the six patched
+// compiler/lifecycle files. Only exact QUERIES corrections are excluded; each
+// mixed corrected join separately proves that all mutable aliases stay locked.
+// The two identical supervisor queries are scoped to their named functions and
+// remain individually unique in the real PG component.
 const OTHER_COMPILER_LOCK_COUNTS = [
   ["src/product-compiler/artifact-index.ts", 15],
   ["src/recovery/v3-downstream-evidence-publication.ts", 6],
   ["src/evidence/accepted-candidate-repository.ts", 3],
+  ["src/execution/claim-runtime-publication.ts", 30],
+  ["src/execution/run-persistence.ts", 9],
+  ["src/execution/run-terminal-transition.ts", 14],
 ] as const;
 
 function otherCompilerLockArguments(root: string, relative: string): readonly string[] {
@@ -93,8 +136,7 @@ function otherCompilerLockArguments(root: string, relative: string): readonly st
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
       && node.expression.name.text === "unsafe" && node.arguments[0]) {
       const expression = normalizedSqlSource(node.arguments[0].getText(tree));
-      const isImmutableCorrection = QUERIES.some(input => "immutableRead" in input
-        && input.file === relative && expression.includes(normalizedSqlSource(input.marker)));
+      const isImmutableCorrection = QUERIES.some(input => input.file === relative && expression.includes(normalizedSqlSource(input.marker)));
       if (!isImmutableCorrection && /\bFOR\s+(?:UPDATE|NO\s+KEY\s+UPDATE|SHARE|KEY\s+SHARE)\b/i.test(expression)) {
         matches.push(expression);
       }
@@ -163,8 +205,9 @@ test("selected event, claim and compiler immutable reads retain mutable locks wi
     });
   } finally { await control.end({ timeout: 3 }); }
 
-  assert.equal(QUERIES.length, 14);
-  assert.equal(QUERIES.filter(input => "immutableRead" in input).length, 9);
+  assert.equal(QUERIES.length, 21);
+  assert.equal(QUERIES.filter(input => "immutableRead" in input).length, 12);
+  assert.equal(QUERIES.filter(input => "selectedLock" in input).length, 4);
   const queries = QUERIES.map(input => ({ ...input, expression: exactSqlArgument(fixture.root, input) }));
   for (const selected of [true, false]) {
     const environment = { ...process.env };
@@ -201,6 +244,13 @@ test("selected event, claim and compiler immutable reads retain mutable locks wi
               "selected immutable compiler query must not retain a row lock: "+query.id);
             else assert.ok(statement.includes(query.legacyLock),"legacy lock clause changed: "+query.id);
           }
+          if(query.selectedLock){
+            if(selected){
+              assert.equal(statement.match(/\\bFOR\\s+UPDATE\\s+OF\\s+[^\\r\\n]+/i)?.[0]?.trim(),query.selectedLock,
+                "mutable join lock targets must be exact: "+query.id);
+              assert.doesNotMatch(statement,/FOR UPDATE OF[^\\r\\n]*\\bbinding\\b/i);
+            }else assert.ok(statement.includes(query.legacyLock),"legacy mixed join lock changed: "+query.id);
+          }
           let code=null,rows;
           try{rows=await sql.unsafe(statement,query.args);}catch(error){code=error?.code??"NON_PG_ERROR";}
           if(selected){
@@ -217,14 +267,15 @@ test("selected event, claim and compiler immutable reads retain mutable locks wi
           }
         }
         assert.deepEqual(failures,[],"genuine immutable-lock permission behavior disagrees");
-        // These ten immutable tables exclude the two separately tested
+        // These twelve immutable tables exclude the two separately tested
         // migration25 timestamp-only KEY SHARE privilege exceptions.
         for(const [table,column] of [
           ["operational_events","payload"], ["v3_story_claim_runtime_bindings_v1","bound_at"],
           ["artifact_publication_batch_items","artifact_hash"], ["artifact_publication_batch_plans","plan_identity_hash"],
           ["artifact_publication_batch_plan_items","artifact_hash"], ["semantic_artifacts","artifact_hash"],
           ["evidence_bundles","payload"], ["finding_sets","payload"], ["findings","payload"],
-          ["accepted_candidates","payload"]
+          ["accepted_candidates","payload"], ["product_packets","packet_hash"],
+          ["v3_release_admissions","payload"]
         ]){
           const rights=await sql.unsafe(
             "SELECT pg_catalog.has_any_column_privilege(current_user,$1::text,'UPDATE') AS update_any,"+
