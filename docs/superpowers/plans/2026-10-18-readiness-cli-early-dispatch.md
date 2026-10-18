@@ -25,7 +25,10 @@ the alternate branch. Keep its observation/error/output contract unchanged.
 ## Task 1: Isolate the existing diagnostic entry
 
 **Files:** Modify `src/cli/cli.ts` and
-`scripts/__tests__/deployment-cutover-cli-entry-v4.test.js`. The specification's
+`scripts/__tests__/deployment-cutover-cli-entry-v4.test.js`, plus the existing
+direct CLI claim/peek consumers in
+`tests/internal-production/baseline-task6a-preschema-ordinary-refusal-v2.test.ts`.
+The specification's
 File Map is authoritative for scope.
 
 **Interfaces:** Consume the exact three-token argv and the existing observer and
@@ -51,8 +54,14 @@ ordinary business resolutions/evaluations on the exact diagnostic path.
 - [x] Run the focused regression, then the complete v4 fixture file and applicable
   version/English/path contracts. Capture original terminal results. Do not run
   wildcard tests that include owner-closed PM2 or live diagnostic commands.
+- [ ] Address PR283's concrete AST-consumer finding: first run
+  `node --import tsx --test --test-name-pattern='Task6A V2 direct CLI (claim|peek)'
+  tests/internal-production/baseline-task6a-preschema-ordinary-refusal-v2.test.ts`
+  and retain both missing-`main` failures. Locate `main` only in the explicit
+  `exactEntryDiagnostic` alternate branch, keeping all claim/peek assertions.
+  Run the same two tests to GREEN and review the new helper and complete diff.
 - [ ] Request independent read-only whole-diff review; resolve concrete findings.
-  Commit only the four File Map paths on the scoped branch, push, and use normal
+  Commit only the five File Map paths on the scoped branch, push, and use normal
   SHA-bound reviewed PR delivery. Preserve previous branches and build evidence.
 - [ ] After normal merge, synchronize this same writer with ff-only main and run
   the default build. Qualify the resulting artifacts before any separately
