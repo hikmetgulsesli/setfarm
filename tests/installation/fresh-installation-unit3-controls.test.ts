@@ -57,7 +57,12 @@ async function listenerComponent(){
     },
     release(){releases++;},
   };
-  const pool={async reserve(){return sql;},async end(){ends++;}};
+  const opening:string[]=[];
+  const pool={
+    async unsafe(statement:string){assert.equal(statement,"SELECT 1::integer AS ready");opening.push("warmup");return [{ready:1}];},
+    async reserve(){opening.push("reserve");assert.deepEqual(opening,["warmup","reserve"]);return sql;},
+    async end(){ends++;},
+  };
   const open=vm.runInNewContext(compile(variableText(file,"channels")+"\n"+body+"\nopenFreshInstallationSpawnerListenerV1;"),{
     postgres(_url:string,actual:DriverOptions){assert.equal(_url,state.runtimeUrl);options=actual;return pool;},
     freshInstallationSelectionV1:{activation,state,assertUnchanged(){}},
@@ -68,6 +73,11 @@ async function listenerComponent(){
   assert.ok(options);
   return {listener,gates,entered,options,get releases(){return releases;},get ends(){return ends;}};
 }
+test("listener component: fixed pool warmup precedes reserve and same-backend verification",async()=>{
+  const f=await listenerComponent();await f.listener.end();
+  assert.equal(f.releases,1);assert.equal(f.ends,1);
+});
+
 function subscriptions(f:Awaited<ReturnType<typeof listenerComponent>>,delivered:string[]){
   const promises=fixedChannels.map(channel=>f.listener.listen(channel,payload=>delivered.push(channel+":"+payload)));
   // Attach rejection observation before intentionally poisoning an early arm.

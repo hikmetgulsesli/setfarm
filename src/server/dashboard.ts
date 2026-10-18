@@ -209,9 +209,14 @@ function assertDashboardSelectionModeV1(): void {
     throw new Error("FRESH_INSTALLATION_OPERATIONAL_ENTRY_REFUSED");
   }
 }
-function isFreshInstallationReadOnlyDashboardRequestV1(method: string | undefined, pathname: string): boolean {
-  return (method === "GET" || method === "HEAD" || method === "OPTIONS")
-    && !/^\/api\/runs\/[^/]+\/deployment-observation$/.test(pathname);
+function isFreshInstallationDashboardRequestV1(method: string | undefined, pathname: string): boolean {
+  // The exact ACK route still passes through its existing operational-token,
+  // bounded-body and canonical repository guards. Observation retains its token,
+  // canonical receipt and active runtime/isolation checks in the exact GET handler.
+  return ((method === "GET" || method === "HEAD" || method === "OPTIONS")
+    && !/^\/api\/runs\/[^/]+\/deployment-observation$/.test(pathname))
+    || (method === "POST" && /^\/api\/runs\/[^/]+\/project-transfer-ack$/.test(pathname))
+    || (method === "GET" && /^\/api\/runs\/[^/]+\/deployment-observation$/.test(pathname));
 }
 
 function assertDashboardRuntimeAdmissionV1(): void {
@@ -261,7 +266,7 @@ function createDashboardServer(port: number, options: DashboardOptions): http.Se
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
     const p = url.pathname;
     if (DASHBOARD_SELECTED_INSTALLATION_LOCATOR_V1 !== undefined
-      && !isFreshInstallationReadOnlyDashboardRequestV1(req.method, p)) {
+      && !isFreshInstallationDashboardRequestV1(req.method, p)) {
       return json(res, { error: "FRESH_INSTALLATION_DASHBOARD_ACTION_NOT_WIRED" }, 503);
     }
 
