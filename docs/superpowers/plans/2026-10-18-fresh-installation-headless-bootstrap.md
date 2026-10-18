@@ -266,3 +266,27 @@ heartbeat and one bounded clean workflow through its actual gates.
   selected cases have passing current-source results across those runs, not a
   claimed single72-pass run. Independent private-record/runtime and network-test
   reviews both returned C0/I0/M0. PR re-review and clean-main build remain gates.
+- Review4306825507 found extra system/non-public ACL grants were still omitted.
+  REDa3d9ba proved a real additional routine grant escaped verification. Inventory
+  normalized relevant ACLs on non-public grantable objects, system parameters,
+  tablespaces, default privileges and direct grants on other databases. Allow
+  owner/runtime outside-public grants only for non-grantable EXECUTE on the exact
+  zero-argument `pg_catalog.pg_control_system()`. Existing PUBLIC access on other
+  databases is excluded: this verifies the selected installation and its explicit
+  role grants, not a host-wide or cross-database PUBLIC-access fence. Internal
+  TOAST/index relations are not ordinary grant targets and are excluded from
+  default owner-grant refusal. Real tests change/restore runtime, owner and PUBLIC
+  routine grants, reject grant-option escalation, and prove an unexpected grant
+  before bootstrap rolls back without prepared/committed records. They never
+  invoke a file-reading routine. GREEN86f4b6 completed all74 selected cases in one
+  run:74passed/0failed/0skipped/0cancelled,67.564738s. No-emitd142d1 and digest
+  checkebe694 passed. Scoped SQL/test review664943/61128d returned C0/I0/M0.
+- The independent review then identified the implicit `pg_database_owner`
+  principal. RED3dd100 proved its routine grant was missed. Include it in the
+  relevant grant principals while retaining the exact two concrete role identity
+  check; the intentional function exception remains restricted to those concrete
+  roles. Affected GREEN6af1a3 passed4/4 with zero failures/skips, including the
+  new implicit-role grant/refusal/restoration, complete schema, pre-bootstrap
+  rollback and genuine COMMIT loss. No-emit2cf1e9 and digests11b461 passed.
+  The earlier74-case run predates only this final principal-list refinement;
+  report it separately from the affected current-source rerun.

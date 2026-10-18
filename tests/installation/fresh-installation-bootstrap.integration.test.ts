@@ -288,6 +288,38 @@ test("runtime verification refuses database CREATE and TEMPORARY grants", { time
   } finally { await control.end({ timeout: 3 }); }
 });
 
+test("runtime verification refuses extra system-function grants without executing them", { timeout: 120_000 }, async t => {
+  const installation = await create(t);
+  await installation.initialize();
+  const control = postgres(targetUrl(installation.databaseName), { max: 1, onnotice() {} });
+  try {
+    for (const grantee of [quote(installation.runtimeRole), quote(installation.ownerRole), "PUBLIC", "pg_database_owner"]) {
+      await control.unsafe(`GRANT EXECUTE ON FUNCTION pg_catalog.pg_read_file(text) TO ${grantee}`);
+      try { await assert.rejects(installation.verifyRuntime(), /FRESH_INSTALLATION_RUNTIME_VERIFY_FAILED/); }
+      finally { await control.unsafe(`REVOKE EXECUTE ON FUNCTION pg_catalog.pg_read_file(text) FROM ${grantee}`); }
+    }
+    await control.unsafe(`GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO ${quote(installation.runtimeRole)} WITH GRANT OPTION`);
+    try { await assert.rejects(installation.verifyRuntime(), /FRESH_INSTALLATION_RUNTIME_VERIFY_FAILED/); }
+    finally { await control.unsafe(`REVOKE GRANT OPTION FOR EXECUTE ON FUNCTION pg_catalog.pg_control_system() FROM ${quote(installation.runtimeRole)}`); }
+    await installation.verifyRuntime();
+  } finally { await control.end({ timeout: 3 }); }
+});
+
+test("fresh bootstrap refuses an extra system grant before catalog capture", { timeout: 120_000 }, async t => {
+  const installation = await create(t);
+  const control = postgres(targetUrl(installation.databaseName), { max: 1, onnotice() {} });
+  try {
+    await control.unsafe(`GRANT EXECUTE ON FUNCTION pg_catalog.pg_read_file(text) TO ${quote(installation.runtimeRole)}`);
+    try { await assert.rejects(installation.initialize(), /FRESH_INSTALLATION_SCHEMA_FAILED/); }
+    finally { await control.unsafe(`REVOKE EXECUTE ON FUNCTION pg_catalog.pg_read_file(text) FROM ${quote(installation.runtimeRole)}`); }
+    assert.equal(existsSync(path.join(installation.directory, "schema-prepared.json")), false);
+    assert.equal(existsSync(path.join(installation.directory, "schema-committed.json")), false);
+    const rows = await control<Array<{ count: number }>>`
+      SELECT count(*)::integer AS count FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'`;
+    assert.equal(rows[0]?.count, 0);
+  } finally { await control.end({ timeout: 3 }); }
+});
+
 test("fresh schema can be reopened after a lost local commit acknowledgment", { timeout: 120_000 }, async t => {
   const installation = await create(t);
   await installation.initialize();
