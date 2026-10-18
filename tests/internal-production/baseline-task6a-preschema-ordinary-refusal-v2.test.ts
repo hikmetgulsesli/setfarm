@@ -989,13 +989,20 @@ test("Task6A V2 post-restart OpenClaw resweep rechecks after its awaited restart
   assert.deepEqual(effects, ["preflight", "resweep:interval-post-gateway-restart"]);
 });
 
+function ordinaryCliMainBody(tree: ts.SourceFile): ts.Block {
+  const dispatch = tree.statements.find((node): node is ts.IfStatement =>
+    ts.isIfStatement(node) && node.expression.getText(tree) === "exactEntryDiagnostic");
+  assert.ok(dispatch?.elseStatement && ts.isBlock(dispatch.elseStatement));
+  const main = dispatch.elseStatement.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "main");
+  assert.ok(main?.body);
+  return main.body;
+}
+
 test("Task6A V2 direct CLI claim refuses before claim effects or output", async () => {
   const source = readFileSync(path.join(sourceRoot, "cli/cli.ts"), "utf8");
   const tree = ts.createSourceFile("cli.ts", source, ts.ScriptTarget.Latest, true);
-  const main = tree.statements.find((node): node is ts.FunctionDeclaration =>
-    ts.isFunctionDeclaration(node) && node.name?.text === "main");
-  assert.ok(main?.body);
-  const step = main.body.statements.find((node): node is ts.IfStatement =>
+  const step = ordinaryCliMainBody(tree).statements.find((node): node is ts.IfStatement =>
     ts.isIfStatement(node) && node.expression.getText(tree) === 'group === "step"');
   assert.ok(step && ts.isBlock(step.thenStatement));
   const claim = step.thenStatement.statements.find((node): node is ts.IfStatement =>
@@ -1029,10 +1036,7 @@ test("Task6A V2 direct CLI claim refuses before claim effects or output", async 
 test("Task6A V2 direct CLI peek refuses before recovery effects or output", async () => {
   const source = readFileSync(path.join(sourceRoot, "cli/cli.ts"), "utf8");
   const tree = ts.createSourceFile("cli.ts", source, ts.ScriptTarget.Latest, true);
-  const main = tree.statements.find((node): node is ts.FunctionDeclaration =>
-    ts.isFunctionDeclaration(node) && node.name?.text === "main");
-  assert.ok(main?.body);
-  const step = main.body.statements.find((node): node is ts.IfStatement =>
+  const step = ordinaryCliMainBody(tree).statements.find((node): node is ts.IfStatement =>
     ts.isIfStatement(node) && node.expression.getText(tree) === 'group === "step"');
   assert.ok(step && ts.isBlock(step.thenStatement));
   const peek = step.thenStatement.statements.find((node): node is ts.IfStatement =>
