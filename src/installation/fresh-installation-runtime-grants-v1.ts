@@ -36,6 +36,9 @@ const GRANTS: readonly Grant[] = Object.freeze([
   { table: "run_observations", privilege: "UPDATE", columns: ["status", "summary", "detail", "completed_at", "updated_at", "metadata"] },
   // Health history uses the existing latest500-row retention statement.
   { table: "medic_checks", privilege: "INSERT", columns: ["id", "checked_at", "issues_found", "actions_taken", "summary", "details"] },
+  // Existing user rule CRUD; id/readonly UPDATE and DDL remain closed.
+  { table: "rules", privilege: "INSERT", columns: ["id", "title", "content", "category", "project_type", "severity", "applies_to", "enabled", "sort_order", "created_at", "updated_at"] },
+  { table: "rules", privilege: "UPDATE", columns: ["title", "content", "category", "project_type", "severity", "applies_to", "enabled", "updated_at"] },
   { table: "operational_outbox", privilege: "INSERT", columns: ["outbox_id", "request_id", "event_key", "event_type", "aggregate_type", "aggregate_id", "payload", "state", "created_at", "updated_at"] },
   // event_key is used by the exact-equality ON CONFLICT replay, not identity retargeting.
   { table: "operational_outbox", privilege: "UPDATE", columns: ["event_key", "state", "owner_instance_id", "lease_token", "lease_expires_at", "attempt_count", "published_at", "diagnostic", "updated_at"] },
@@ -106,9 +109,9 @@ const PREPARATION_GUARD_FUNCTIONS = Object.freeze([
   "setfarm_enforce_v3_preparation_bound_claim_v2",
   "setfarm_enforce_v3_preparation_bound_attempt_v2",
 ]);
-// Canonical story replacement and medic latest500 retention are the only
-// fixed table DELETE grants; their source-owned statements retain the bounds.
-const DELETE_TABLES = Object.freeze(["stories", "medic_checks"]);
+// Fixed mutable story replacement, medic latest500 retention and user-rule
+// deletion only; their source-owned statements retain the predicates.
+const DELETE_TABLES = Object.freeze(["stories", "medic_checks", "rules"]);
 
 function refuse(): never { throw new Error("FRESH_INSTALLATION_RUNTIME_GRANTS_REFUSED"); }
 function quote(value: string): string { return `"${value.replaceAll('"', '""')}"`; }
