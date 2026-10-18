@@ -1,29 +1,29 @@
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
-import { mkdtempSync, readFileSync, readdirSync, existsSync, statfsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, readdirSync, existsSync, statfsSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import postgres from "postgres";
 import { verifyContractSpineCurrentHeadJournalReadOnlyV1 } from "../../src/db/contract-spine-readonly-verifier-v1.js";
 import { initializeFreshInstallationContractSpineV1 } from "../../src/db/contract-spine-migrations.js";
+import { freshSourceCheckoutFixture } from "./fresh-source-checkout-fixture.js";
 
 const adminUrl = process.env.SETFARM_TEST_PG_ADMIN_URL || "postgresql://postgres@127.0.0.1:5432/postgres";
 const quote = (s: string) => `"${s.replaceAll('"', '""')}"`;
 const targetUrl = (database: string) => { const u = new URL(adminUrl); u.pathname = "/" + database; return u.href; };
 
-async function create(t: TestContext) {
+async function create(t: TestContext, sourceSha?: string, baseDirectory = mkdtempSync(path.join(tmpdir(), "setfarm-fresh-integration-")),
+  afterStart?: (input: { adminUrl: string; baseDirectory: string; sourceSha: string }) => void) {
   const capacity = statfsSync(process.cwd());
   assert.ok(capacity.bavail * capacity.bsize > 8 * 1024 ** 3, "fresh test requires8GiB disk floor");
-  let module: typeof import("../../src/installation/fresh-installation-v1.js") | undefined;
-  try { module = await import("../../src/installation/fresh-installation-v1.js"); }
-  catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ERR_MODULE_NOT_FOUND"
-      && error.message.includes("fresh-installation-v1"))) throw error;
-  }
-  assert.equal(typeof module?.createFreshInstallationV1, "function", "explicit fresh-installation initializer is missing");
-  const baseDirectory = mkdtempSync(path.join(tmpdir(), "setfarm-fresh-integration-"));
-  const installation = await module!.createFreshInstallationV1({ adminUrl, baseDirectory,
-    sourceSha: "1234567890abcdef1234567890abcdef12345678" });
+  const fixture = await freshSourceCheckoutFixture();
+  const module = fixture.api;
+  assert.equal(typeof module.createFreshInstallationV1, "function", "explicit fresh-installation initializer is missing");
+  const input = { adminUrl, baseDirectory, sourceSha: sourceSha ?? fixture.sha };
+  const original = module.createFreshInstallationV1(input);
+  afterStart?.(input);
+  const installation = await original;
   t.after(async () => {
     await installation.close();
     const admin = postgres(adminUrl, { max: 1, connect_timeout: 3, onnotice() {} });
@@ -169,4 +169,79 @@ test("runtime verification refuses a column-only grant to change protected prove
     await control.unsafe(`GRANT UPDATE (migration_application_evidence_hash) ON public.internal_production_owner_admission_head_v1 TO ${quote(installation.runtimeRole)}`);
     await assert.rejects(installation.verifyRuntime(), /FRESH_INSTALLATION_RUNTIME_VERIFY_FAILED/);
   } finally { await control.end({ timeout: 3 }); }
+});
+
+test("fresh provisioning refuses a caller SHA different from the executing source", async t => {
+  const baseDirectory = mkdtempSync(path.join(tmpdir(), "setfarm-fresh-source-rejection-"));
+  await assert.rejects(create(t, "0".repeat(40), baseDirectory), /FRESH_INSTALLATION_SOURCE_MISMATCH/);
+  assert.deepEqual(readdirSync(baseDirectory), []);
+});
+
+test("fresh provisioning snapshots caller input before awaits and refuses source accessors", { timeout: 120_000 }, async t => {
+  const fixture = await freshSourceCheckoutFixture();
+  let input!: { sourceSha: string };
+  const baseDirectory = mkdtempSync(path.join(tmpdir(), "setfarm-fresh-source-snapshot-"));
+  const installation = await create(t, undefined, baseDirectory, value => {
+    input = value;
+    // The original source check resumes first; this runs before its caller's continuation.
+    queueMicrotask(() => { input.sourceSha = "0".repeat(40); });
+  });
+  input.sourceSha = fixture.sha;
+  const origin = await installation.initialize();
+  assert.equal(origin.sourceSha, fixture.sha);
+  let invoked = false;
+  const options = { adminUrl, baseDirectory, get sourceSha() { invoked = true; return fixture.sha; } };
+  await assert.rejects(fixture.api.createFreshInstallationV1(options), /FRESH_INSTALLATION_OPTIONS_INVALID/);
+  assert.equal(invoked, false);
+});
+
+test("runtime verification refuses elevated role flags and memberships", { timeout: 120_000 }, async t => {
+  const installation = await create(t);
+  await installation.initialize();
+  const control = postgres(targetUrl(installation.databaseName), { max: 1, onnotice() {} });
+  try {
+    for (const flag of ["CREATEDB", "CREATEROLE", "REPLICATION", "BYPASSRLS", "INHERIT", "SUPERUSER"]) {
+      await control.unsafe(`ALTER ROLE ${quote(installation.runtimeRole)} ${flag}`);
+      try { await assert.rejects(installation.verifyRuntime(), /FRESH_INSTALLATION_RUNTIME_VERIFY_FAILED/); }
+      finally { await control.unsafe(`ALTER ROLE ${quote(installation.runtimeRole)} NO${flag}`); }
+    }
+    await control.unsafe(`GRANT pg_read_all_data TO ${quote(installation.runtimeRole)}`);
+    try { await assert.rejects(installation.verifyRuntime(), /FRESH_INSTALLATION_RUNTIME_VERIFY_FAILED/); }
+    finally { await control.unsafe(`REVOKE pg_read_all_data FROM ${quote(installation.runtimeRole)}`); }
+    await installation.verifyRuntime();
+  } finally { await control.end({ timeout: 3 }); }
+});
+
+test("source capture rejects changed and ignored extra executing source without trusting Git status", async () => {
+  const fixture = await freshSourceCheckoutFixture();
+  assert.equal(await fixture.capture.captureFreshInstallationSourceShaV1(), fixture.sha);
+  const file = path.join(fixture.root, "src/installation/fresh-installation-v1.ts"), original = readFileSync(file);
+  const git = (args: string[]) => execFileSync("/usr/bin/git", args, { cwd: fixture.root,
+    env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
+    encoding: "utf8", timeout: 5000 });
+  git(["update-index", "--assume-unchanged", "--", "src/installation/fresh-installation-v1.ts"]);
+  try {
+    writeFileSync(file, Buffer.concat([original, Buffer.from("\n// changed source\n")]));
+    assert.equal(git(["status", "--porcelain=v1", "--untracked-files=all"]), "");
+    await assert.rejects(fixture.capture.captureFreshInstallationSourceShaV1(), /FRESH_INSTALLATION_SOURCE_UNAVAILABLE/);
+  } finally {
+    writeFileSync(file, original);
+    git(["update-index", "--no-assume-unchanged", "--", "src/installation/fresh-installation-v1.ts"]);
+  }
+  const extra = path.join(fixture.root, "src/ignored.tmp");
+  const ignore = path.join(fixture.root, ".git/info/exclude");
+  const before = readFileSync(ignore);
+  try {
+    writeFileSync(ignore, Buffer.concat([before, Buffer.from("\nsrc/ignored.tmp\n")]));
+    writeFileSync(extra, "ignored but executable input");
+    await assert.rejects(fixture.capture.captureFreshInstallationSourceShaV1(), /FRESH_INSTALLATION_SOURCE_UNAVAILABLE/);
+  } finally { unlinkSync(extra); writeFileSync(ignore, before); }
+  const prior = process.env.GIT_DIR;
+  try {
+    process.env.GIT_DIR = path.join(fixture.root, ".git");
+    await assert.rejects(fixture.capture.captureFreshInstallationSourceShaV1(), /FRESH_INSTALLATION_SOURCE_UNAVAILABLE/);
+  } finally {
+    if (prior === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = prior;
+  }
+  assert.equal(await fixture.capture.captureFreshInstallationSourceShaV1(), fixture.sha);
 });

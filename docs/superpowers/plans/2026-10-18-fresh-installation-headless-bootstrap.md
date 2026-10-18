@@ -29,10 +29,12 @@
 - Create `src/installation/fresh-installation-origin-v1.ts`: strict origin/application union member, hashes and actual database identity validation.
 - Create `src/installation/fresh-installation-catalog-v1.ts`: read-only catalog fingerprint of the schema actually verified inside bootstrap; exclude lifecycle data and changing planner statistics.
 - Create `src/installation/fresh-installation-v1.ts`: private creation/transaction registry, exclusive provisioning, private effect records, initializer and restricted-runtime verification.
+- Create `src/installation/fresh-installation-source-v1.ts`: derive the actual executing clean source checkout or finalized compiled release, with no caller-selected source authority.
 - Modify `src/db/contract-spine-migrations.ts`: new authenticated empty-database initializer, both genesis/current origin verifiers, actual all33 journal verification.
 - Modify `src/internal-production/owner-admission-head-v1.ts`: strict legacy-or-fresh application validation and unchanged ancestry propagation.
 - Modify migration source-integrity manifest/generated digests only for dependencies/regions affected by32/33.
 - Create `tests/installation/fresh-installation-origin.test.ts`, `fresh-installation-bootstrap.integration.test.ts` and `fresh-installation-source-integrity.test.ts`: actual parser behavior, real PostgreSQL and mutation-based source binding; no default test-fixture bypass.
+- Create `tests/installation/fresh-source-checkout-fixture.ts`: one bounded committed copy of actual production source for source-mode integration tests; reuse installed dependencies and delete only that suite-owned temporary directory.
 - Retarget the existing lifecycle-source boundary test in `tests/spawner-gateway-recovery.test.ts` to the extracted helper, preserving its current no-repair assertions.
 
 ## Task1: Atomic fresh database initialization
@@ -214,3 +216,25 @@ heartbeat and one bounded clean workflow through its actual gates.
   now requires the exact `MIGRATION_LOCK_TIMEOUT` code. GREENd1f9e0 passed all13
   fresh tests, including that exact rollback reason. Typecheck7201ad exited0.
   A final combined rerun follows the strengthened foreign-enum retention check.
+- PR285 review identified two additional root defects: caller-supplied release
+  SHA and unverified cluster-level role policy. RED2fecb0 proved both before
+  correction. Derive source identity from the code-relative clean checkout,
+  verify every live source blob/mode and reject ignored extras or Git redirection;
+  compiled mode requires the existing actual finalized clean-main build observer.
+  The caller SHA is only an expected value, checked before provisioning effects
+  and again around schema installation. Source-mode evidence is a checkout
+  identity, not an activated release. Positive tests execute an exact production
+  source copy committed into a temporary Git checkout, without a production flag
+  or bypass. Verify actual owner/runtime role OIDs, all privilege flags, exact
+  runtime session identity and zero unexpected role memberships. Keep legacy
+  database ACLs untouched. A test-fixture ignore-pattern error73007c was corrected
+  before rerunning; it was not a platform failure or a passing database test.
+- Re-review exposed a mutable-input race. REDc8c025 produced a false all-zero
+  origin SHA by changing the caller object during provisioning and restoring it
+  before initialization. Capture all three validated own data properties before
+  the first await, reject accessors/proxies/extra fields, and use one immutable
+  actually derived SHA for all records and checks. GREENa598ec passed51 focused
+  tests, zero failures/skips; final no-emit587c2f and digest checka26620 passed.
+  Both scoped reviews approved patch9487a671…315a5 as C0/I0/M0. The source reader
+  prechecks declared sizes and bounds every read;64MiB is a source-data cap,
+  not a CPU or aggregate-request bound. Clean-main build follows PR integration.

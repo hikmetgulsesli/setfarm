@@ -2,12 +2,14 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { constants, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, statfsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
+import { types } from "node:util";
 import { parseFreshInstallationOriginV1, verifyFreshInstallationDatabaseIdentityV1,
   type FreshInstallationOriginV1 } from "./fresh-installation-origin-v1.js";
 import { verifyOrdinaryBaseSchemaCatalogReadOnlyV1 } from "../db/base-schema-readonly-verifier-v1.js";
 import { verifyContractSpineCurrentHeadJournalReadOnlyV1 } from "../db/contract-spine-readonly-verifier-v1.js";
 import { verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1 } from "../db/public-object-owner-readonly-verifier-v1.js";
 import { readFreshInstallationCatalogHashV1 } from "./fresh-installation-catalog-v1.js";
+import { captureFreshInstallationSourceShaV1 } from "./fresh-installation-source-v1.js";
 
 const activeTransactions = new WeakMap<object, FreshInstallationOriginV1>();
 const quote = (value: string): string => `"${value.replaceAll('"', '""')}"`;
@@ -74,18 +76,34 @@ function redactedFailure(directory: string, stage: string, error: unknown): Erro
 
 /** Headless provisioning only: no service, producer activation or ready publication. */
 export async function createFreshInstallationV1(options: FreshInstallationOptionsV1): Promise<FreshInstallationV1> {
-  const u = maintenanceUrl(options.adminUrl);
-  if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(options.sourceSha)) throw new Error("FRESH_INSTALLATION_SOURCE_INVALID");
-  const base = lstatSync(options.baseDirectory);
+  if (!options || typeof options !== "object" || types.isProxy(options) || Object.getPrototypeOf(options) !== Object.prototype) {
+    throw new Error("FRESH_INSTALLATION_OPTIONS_INVALID");
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(options);
+  const keys = ["adminUrl", "baseDirectory", "sourceSha"] as const;
+  if (Reflect.ownKeys(options).length !== keys.length
+    || keys.some(key => !descriptors[key]?.enumerable || !Object.hasOwn(descriptors[key]!, "value")
+      || typeof descriptors[key]!.value !== "string")) throw new Error("FRESH_INSTALLATION_OPTIONS_INVALID");
+  const adminUrl = descriptors.adminUrl!.value as string;
+  const baseDirectory = descriptors.baseDirectory!.value as string;
+  const expectedSourceSha = descriptors.sourceSha!.value as string;
+  const u = maintenanceUrl(adminUrl);
+  if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(expectedSourceSha)) throw new Error("FRESH_INSTALLATION_SOURCE_INVALID");
+  const sourceSha = await captureFreshInstallationSourceShaV1();
+  if (sourceSha !== expectedSourceSha) throw new Error("FRESH_INSTALLATION_SOURCE_MISMATCH");
+  const verifySource = async (): Promise<void> => {
+    if (await captureFreshInstallationSourceShaV1() !== sourceSha) throw new Error("FRESH_INSTALLATION_SOURCE_MISMATCH");
+  };
+  const base = lstatSync(baseDirectory);
   if (!base.isDirectory() || base.isSymbolicLink() || base.uid !== process.getuid?.()
     || (base.mode & 0o077) !== 0) throw new Error("FRESH_INSTALLATION_DIRECTORY_INVALID");
-  ensureCapacity(options.baseDirectory);
+  ensureCapacity(baseDirectory);
   const installationId = randomUUID(), operationId = randomUUID(), suffix = installationId.replaceAll("-", "");
   const databaseName = `setfarm_install_${suffix}`, ownerRole = `sf_owner_${suffix}`, runtimeRole = `sf_runtime_${suffix}`;
-  const directory = path.join(options.baseDirectory, installationId);
+  const directory = path.join(baseDirectory, installationId);
   mkdirSync(directory, { mode: 0o700 });
   privateRecord(directory, "planned.json", { schema: "setfarm.fresh-installation-plan.v1", installationId, operationId,
-    databaseName, ownerRole, runtimeRole, sourceSha: options.sourceSha });
+    databaseName, ownerRole, runtimeRole, sourceSha });
   const password = randomBytes(32).toString("hex");
   const admin = postgres(u.href, { max: 1, connect_timeout: 5, idle_timeout: 2, onnotice() {} });
   let ownerOid: number, runtimeOid: number, origin: FreshInstallationOriginV1;
@@ -112,7 +130,7 @@ export async function createFreshInstallationV1(options: FreshInstallationOption
     const { getContractSpineCurrentHeadJournalIdentitiesV1 } = await import("../db/contract-spine-migrations.js");
     origin = parseFreshInstallationOriginV1({ schema: "setfarm.fresh-installation-origin.v1", installationId, operationId,
       databaseOid: identity[0]!.oid, systemIdentifier: identity[0]!.system_identifier, databaseName, ownerRole, runtimeRole,
-      sourceSha: options.sourceSha, migrations: getContractSpineCurrentHeadJournalIdentitiesV1() });
+      sourceSha, migrations: getContractSpineCurrentHeadJournalIdentitiesV1() });
     privateRecord(directory, "database-created.json", { origin, ownerOid, runtimeOid });
     await admin.unsafe(`REVOKE ALL ON DATABASE ${quote(databaseName)} FROM PUBLIC`);
   } catch (error) { throw redactedFailure(directory, "CREATE", error); }
@@ -130,7 +148,18 @@ export async function createFreshInstallationV1(options: FreshInstallationOption
     const runtime = postgres(runtimeEndpoint.href, { max: 1, connect_timeout: 5, onnotice() {} });
     try {
       await runtime.begin("isolation level repeatable read read only", async tx => {
+        await tx.unsafe("SELECT set_config('lock_timeout','1000ms',true), set_config('statement_timeout','5000ms',true)");
         await verifyFreshInstallationDatabaseIdentityV1(tx, origin);
+        const roles = await tx.unsafe<Array<{ valid: boolean }>>(`
+          SELECT count(*)=2 AND bool_and(NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole
+            AND NOT rolreplication AND NOT rolbypassrls AND NOT rolinherit
+            AND rolcanlogin=(rolname=$1))
+            AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m
+              JOIN pg_catalog.pg_roles r ON r.oid=m.member WHERE r.rolname IN ($2,$1))
+            AND bool_and(CASE WHEN rolname=$2 THEN oid=$3 ELSE oid=$4 END)
+            AND current_user=$1 AND session_user=$1 AS valid
+          FROM pg_catalog.pg_roles WHERE rolname IN ($2,$1)`, [runtimeRole, ownerRole, ownerOid, runtimeOid]);
+        if (roles.length !== 1 || roles[0]?.valid !== true) throw new Error("FRESH_INSTALLATION_ROLE_POLICY_MISMATCH");
         await verifyExpectedPublicObjectOwnerInTransactionReadOnlyV1(tx, ownerRole);
       });
       await verifyContractSpineCurrentHeadJournalReadOnlyV1(runtime);
@@ -149,6 +178,7 @@ export async function createFreshInstallationV1(options: FreshInstallationOption
       phase = "initializing";
       try {
         ensureCapacity(directory);
+        await verifySource();
         const { initializeFreshInstallationContractSpineV1 } = await import("../db/contract-spine-migrations.js");
         await sql.begin(async transaction => {
           await transaction.unsafe("SELECT set_config('lock_timeout','5000ms',true)");
@@ -164,6 +194,7 @@ export async function createFreshInstallationV1(options: FreshInstallationOption
             await transaction.unsafe(`GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO ${quote(runtimeRole)}`);
             await transaction.unsafe(`GRANT CONNECT ON DATABASE ${quote(databaseName)} TO ${quote(runtimeRole)}`);
             catalogHash = await readFreshInstallationCatalogHashV1(transaction);
+            await verifySource();
           } finally { activeTransactions.delete(transaction as object); }
         });
         phase = "committed";
