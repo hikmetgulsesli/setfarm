@@ -28,6 +28,7 @@ function capture() {
       SETFARM_PG_URL: state.runtimeUrl, DATABASE_URL: state.runtimeUrl,
       SETFARM_DIR: root, SETFARM_ENV_DIR: root, SETFARM_DB_PATH: paths.databaseMarker,
       PROJECTS_DIR: paths.projects, SETFARM_REPO_DIR: repository, SCRIPTS_DIR: paths.scripts, CLI_PATH: paths.cli,
+      SETFARM_PROJECTS_ROOT: paths.projects, SETFARM_WORKSPACE_PROJECTS_ROOT: paths.projects, OPENCLAW_PROJECTS_ROOT: paths.projects,
       PGHOST: endpoint.hostname === "[::1]" ? "::1" : endpoint.hostname,
       PGPORT: endpoint.port || "5432", PGUSER: endpoint.username, PGPASSWORD: endpoint.password,
       PGDATABASE: state.origin.databaseName,

@@ -13,7 +13,7 @@ Normal selected getSql/pgQuery must refuse before preparation. Selected pgMigrat
 - New src/installation/fresh-installation-selection-v1.ts: synchronous private record/locator snapshot, immutable derived URL/paths, conflict checks and unchanged-selection assertion. No connection or effects.
 - src/runtime-config.ts: capture selection before ordinary env fallback; selected mode skips legacy .env files and uses the derived configuration. Preserve unselected loading and special inherited modes.
 - src/db-pg.ts: selected preparation state and owned SQL client/epoch, exact actual verification; reject implicit/default migration and incompatible profiles, sticky failure/close. Do not call this API from entrypoints yet.
-- src/installer/paths.ts, src/lib/logger.ts, src/installer/events.ts: use the selected runtime root when selected, retaining exact unselected paths. Only pure path resolution changes.
+- src/installer/paths.ts, src/installer/runtime-identity.ts, src/lib/logger.ts, src/installer/events.ts: use the selected runtime root when selected, retaining exact unselected paths. Only pure path resolution changes.
 - New tests/installation/fresh-installation-selection.integration.test.ts and tests/installation/fresh-installation-test-support.ts; refactor tests/installation/fresh-installation-bootstrap.integration.test.ts to import that exact shared provisioning helper. Use the real copied committed source fixture and actual fresh DB/role; no production test flag or fake authority. Child processes isolate module/environment state.
 - Existing runtime-config/path focused tests and relevant Task6A refusal tests must retain behavior.
 
@@ -43,3 +43,19 @@ This change is causally required to run the approved isolated installation witho
   rerun73cdd8:6passed/0failed/0skipped/0cancelled,28.503735s, covering both narrow
   corrections and exact current parent catalog policy. Post-merge noemit and
   whitespace51b5dd exited0. Library delivery remains separate from activation.
+
+- PR286 finding4306976919 is a causal path-isolation correction: default run
+  repository selection uses runtime-identity.resolveProjectsRoot, which bypassed
+  runtimeConfig.projectsDir. Route that resolver through the captured selection
+  and pin its three existing root-env aliases to the same derived projects root.
+  Preserve unselected explicit-env/default behavior and explicit repository inputs;
+  assert selection before resolving runtime identity even with an explicit repo.
+  Add genuine selected default-repository, alias-conflict and late-retarget checks.
+  Parent38b9ee89 compatibility correction incorporated before this regression.
+
+- Default-project-path RED07053e proved the actual resolver selected~/projects.
+  Correction c1255a:8passed/0failed/0skipped/0cancelled in37.362258s across the
+  full selected suite, now including default identity and all3 alias retargets.
+  Final noemit/digest/whitespacee92012 exited0. Both independent path correction
+  reviews returned C0/I0/M0. This proves default routing, not universal containment
+  of intentionally explicit repository paths or service operational readiness.

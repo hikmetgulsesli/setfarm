@@ -10,7 +10,7 @@ import { createFreshInstallationTestFixtureV1 as create, freshTestAdminUrl } fro
 async function child(directory: string | undefined, program: string, overrides: Record<string, string> = {}): Promise<void> {
   const fixture = await freshSourceCheckoutFixture();
   const environment = { ...process.env };
-  for (const key of ["SETFARM_INSTALLATION_DIR", "SETFARM_PG_URL", "DATABASE_URL", "PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "SETFARM_DIR", "SETFARM_DB_PATH", "SETFARM_ENV_DIR", "SETFARM_REPO_DIR", "PROJECTS_DIR", "SCRIPTS_DIR", "CLI_PATH", "OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH", "SETFARM_PLATFORM_ROOT", "SETFARM_PRODUCT_ARTIFACT_DIR", "SETFARM_CONVERGENCE_RESULT_DIR"]) delete environment[key];
+  for (const key of ["SETFARM_INSTALLATION_DIR", "SETFARM_PG_URL", "DATABASE_URL", "PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "SETFARM_DIR", "SETFARM_DB_PATH", "SETFARM_ENV_DIR", "SETFARM_REPO_DIR", "PROJECTS_DIR", "SCRIPTS_DIR", "CLI_PATH", "OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH", "SETFARM_PLATFORM_ROOT", "SETFARM_PRODUCT_ARTIFACT_DIR", "SETFARM_CONVERGENCE_RESULT_DIR", "SETFARM_PROJECTS_ROOT", "SETFARM_WORKSPACE_PROJECTS_ROOT", "OPENCLAW_PROJECTS_ROOT"]) delete environment[key];
   for (const key of Object.keys(environment)) if (key.startsWith("SETFARM_INTERNAL_PRODUCTION_")) delete environment[key];
   if (directory !== undefined) environment.SETFARM_INSTALLATION_DIR = directory;
   else environment.SETFARM_ENV_DIR = fixture.root;
@@ -52,7 +52,7 @@ test("selected fresh database uses one verified client and never restores implic
 
 test("selected configuration refuses conflicting legacy targets before acquisition", { timeout: 120_000 }, async t => {
   const installation=await create(t); await installation.initialize();
-  for(const overrides of [{ SETFARM_PG_URL: freshTestAdminUrl }, { SETFARM_DIR: path.join(installation.directory,"foreign") }, { SETFARM_PRODUCT_ARTIFACT_DIR: path.join(installation.directory,"foreign") }, { OPENCLAW_STATE_DIR: path.join(installation.directory,"foreign") }, { SETFARM_INTERNAL_PRODUCTION_COLD_HELPER: "1" }]) {
+  for(const overrides of [{ SETFARM_PG_URL: freshTestAdminUrl }, { SETFARM_DIR: path.join(installation.directory,"foreign") }, { SETFARM_PRODUCT_ARTIFACT_DIR: path.join(installation.directory,"foreign") }, { OPENCLAW_STATE_DIR: path.join(installation.directory,"foreign") }, { SETFARM_PROJECTS_ROOT: path.join(installation.directory,"foreign") }, { SETFARM_WORKSPACE_PROJECTS_ROOT: path.join(installation.directory,"foreign") }, { OPENCLAW_PROJECTS_ROOT: path.join(installation.directory,"foreign") }, { SETFARM_INTERNAL_PRODUCTION_COLD_HELPER: "1" }]) {
     await child(installation.directory, `await assert.rejects(import(root+"/src/db-pg.ts"),/FRESH_INSTALLATION_SELECTION_REFUSED/);`+done, overrides);
   }
   await installation.verifyRuntime();
@@ -120,6 +120,9 @@ test("unselected fallback stays unchanged and later selection is refused before 
     const {runtimeConfig,resolveProductArtifactDir}=await import(root+"/src/runtime-config.ts");
     const os=await import("node:os"),paths=await import(root+"/src/installer/paths.ts");
     assert.equal(runtimeConfig.setfarmPgUrl,"postgresql://postgres@localhost:5432/setfarm");
+    const identity=await import(root+"/src/installer/runtime-identity.ts");
+    assert.equal(identity.resolveProjectsRoot(),os.homedir()+"/projects");
+    assert.equal(identity.resolveProjectsRoot({SETFARM_PROJECTS_ROOT:"/explicit/projects"}),"/explicit/projects");
     assert.equal(Object.isFrozen(runtimeConfig),false);
     assert.equal(paths.resolveSetfarmRoot(),os.homedir()+"/.openclaw/setfarm");
     assert.equal(resolveProductArtifactDir(),os.homedir()+"/.openclaw/setfarm/product-compiler/artifacts/sha256");
@@ -141,6 +144,37 @@ test("selected shared-gateway getters refuse retargets before returning a path",
       assert.throws(()=>paths[${JSON.stringify(getter)}](),/FRESH_INSTALLATION_SELECTION_REFUSED/);
       delete process.env[${JSON.stringify(key)}];
       assert.throws(()=>paths[${JSON.stringify(getter)}](),/FRESH_INSTALLATION_SELECTION_REFUSED/);
+    `+done);
+  }
+  await installation.verifyRuntime();
+});
+
+test("selected runtime identity puts default repositories inside the private projects root", { timeout: 120_000 }, async t => {
+  const installation=await create(t);await installation.initialize();
+  await child(installation.directory, `
+    const identity=await import(root+"/src/installer/runtime-identity.ts");
+    const projects=${JSON.stringify(path.join(realpathSync(installation.directory),"runtime","projects"))};
+    assert.equal(identity.resolveProjectsRoot(),projects);
+    assert.equal(identity.resolveProjectsRoot({SETFARM_PROJECTS_ROOT:"/foreign/request"}),projects);
+    const resolved=identity.resolveRuntimeIdentity({runId:"fresh-project-1234",projectName:"Fresh project"});
+    assert.equal(resolved.repo,projects+"/"+resolved.runSlug);
+  `+done);
+  await installation.verifyRuntime();
+});
+
+test("selected project-root aliases cannot retarget default or explicit runtime identity", { timeout: 120_000 }, async t => {
+  const installation=await create(t);await installation.initialize();
+  for (const key of ["SETFARM_PROJECTS_ROOT", "SETFARM_WORKSPACE_PROJECTS_ROOT", "OPENCLAW_PROJECTS_ROOT"]) {
+    await child(installation.directory, `
+      const identity=await import(root+"/src/installer/runtime-identity.ts");
+      const projects=${JSON.stringify(path.join(realpathSync(installation.directory),"runtime","projects"))};
+      process.env[${JSON.stringify(key)}]=projects;
+      assert.equal(identity.resolveProjectsRoot(),projects);
+      process.env[${JSON.stringify(key)}]="/tmp/refused-project-retarget";
+      assert.throws(()=>identity.resolveProjectsRoot(),/FRESH_INSTALLATION_SELECTION_REFUSED/);
+      assert.throws(()=>identity.resolveRuntimeIdentity({runId:"refused",explicitRepo:"/tmp/explicit-request"}),/FRESH_INSTALLATION_SELECTION_REFUSED/);
+      delete process.env[${JSON.stringify(key)}];
+      assert.throws(()=>identity.resolveProjectsRoot(),/FRESH_INSTALLATION_SELECTION_REFUSED/);
     `+done);
   }
   await installation.verifyRuntime();
