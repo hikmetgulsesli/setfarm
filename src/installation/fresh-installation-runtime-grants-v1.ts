@@ -22,6 +22,9 @@ const GRANTS: readonly Grant[] = Object.freeze([
   // when no recovery delivery exists. FOR UPDATE needs one UPDATE column;
   // the fixed owner-only guard below rejects every actual runtime UPDATE.
   { table: "recovery_dispatch_deliveries", privilege: "UPDATE", columns: ["updated_at"] },
+  // The actual terminal chain also locks cases, including an empty chain.
+  // Its fixed ALWAYS statement guard rejects every runtime UPDATE.
+  { table: "recovery_cases", privilege: "UPDATE", columns: ["updated_at"] },
   { table: "runtime_sessions", privilege: "INSERT", columns: ["session_id", "run_id", "step_db_id", "workflow_step_id", "story_db_id", "story_id", "claim_id", "attempt_id", "claim_agent_id", "runtime_agent_id", "runtime_kind", "owner_instance_id", "session_key", "worktree", "runtime_path", "transcript_path", "state", "heartbeat_at", "created_at", "updated_at"] },
   { table: "runtime_sessions", privilege: "UPDATE", columns: ["attempt_id", "diagnostic", "drain_evidence", "drain_requested_at", "drained_at", "heartbeat_at", "pid", "process_group_id", "process_identity", "process_started_at", "released_at", "runtime_path", "session_key", "started_at", "state", "state_version", "transcript_path", "updated_at", "worktree"] },
   // Expired downstream-evidence adoption rotates generation/fence/acquired time
@@ -127,6 +130,33 @@ const DELIVERY_GUARD_BODY = `BEGIN
   END IF;
   RETURN NULL;
 END`;
+const CASE_GUARD_FUNCTION = "setfarm_fresh_recovery_case_lock_guard_v1";
+const CASE_GUARD_TRIGGER = "trg_setfarm_fresh_recovery_case_lock_v1";
+const CASE_POINTER_FUNCTION = "setfarm_enforce_github_review_resolution_pointer_set_once";
+const CASE_POINTER_TRIGGER = "trg_recovery_cases_github_review_resolution_set_once";
+// Published migration17 body. Preserve its function, column-filtered ROW
+// trigger and ordinary O mode; this fresh extension never replaces them.
+const CASE_POINTER_BODY = `
+   BEGIN
+     IF OLD.github_review_resolution_evidence_hash IS DISTINCT FROM NEW.github_review_resolution_evidence_hash
+        AND NOT (
+          OLD.github_review_resolution_evidence_hash IS NULL
+          AND NEW.github_review_resolution_evidence_hash IS NOT NULL
+        ) THEN
+       RAISE EXCEPTION 'SETFARM_GITHUB_REVIEW_RESOLUTION_POINTER_IMMUTABLE' USING ERRCODE = '55000';
+     END IF;
+     RETURN NEW;
+   END;
+   `;
+const CASE_GUARD_BODY = `BEGIN
+  IF TG_TABLE_SCHEMA <> 'public' OR TG_TABLE_NAME <> 'recovery_cases'
+     OR TG_NARGS <> 0 OR TG_OP <> 'UPDATE' OR TG_LEVEL <> 'STATEMENT'
+     OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_class c WHERE c.oid=TG_RELID
+       AND pg_catalog.pg_get_userbyid(c.relowner)=current_user) THEN
+    RAISE EXCEPTION 'FRESH_INSTALLATION_RECOVERY_CASE_UPDATE_FORBIDDEN' USING ERRCODE = '42501';
+  END IF;
+  RETURN NULL;
+END`;
 
 function refuse(): never { throw new Error("FRESH_INSTALLATION_RUNTIME_GRANTS_REFUSED"); }
 function quote(value: string): string { return `"${value.replaceAll('"', '""')}"`; }
@@ -186,6 +216,68 @@ async function verifyDeliveryRowLockGuard(sql: FreshInstallationProvenanceSqlV1,
   if (triggers.length !== 1 || triggers[0]?.name !== DELIVERY_GUARD_TRIGGER
     || triggers[0].function_oid !== fn.oid || triggers[0].type !== 18
     || triggers[0].enabled !== "A" || triggers[0].valid !== true) refuse();
+}
+
+async function installCaseRowLockGuard(sql: FreshInstallationProvenanceSqlV1, ctx: Context): Promise<void> {
+  await verifyCaseRowLockGuard(sql, ctx, false);
+  await sql.unsafe(`CREATE FUNCTION public.${CASE_GUARD_FUNCTION}() RETURNS trigger
+    LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS $fresh_case$${CASE_GUARD_BODY}$fresh_case$`);
+  await sql.unsafe(`REVOKE ALL ON FUNCTION public.${CASE_GUARD_FUNCTION}() FROM PUBLIC`);
+  await sql.unsafe(`CREATE TRIGGER ${CASE_GUARD_TRIGGER} BEFORE UPDATE ON public.recovery_cases
+    FOR EACH STATEMENT EXECUTE FUNCTION public.${CASE_GUARD_FUNCTION}()`);
+  await sql.unsafe(`ALTER TABLE public.recovery_cases ENABLE ALWAYS TRIGGER ${CASE_GUARD_TRIGGER}`);
+  await verifyCaseRowLockGuard(sql, ctx, true);
+}
+
+/** Exact baseline-plus-extension inventory, never adoption or drift repair. */
+async function verifyCaseRowLockGuard(
+  sql: FreshInstallationProvenanceSqlV1, ctx: Context, installed: boolean,
+): Promise<void> {
+  const functions = await sql.unsafe<Array<{
+    name: string; oid: string; owner_oid: string; body: string; config: string[] | null;
+    valid: boolean; owner_acl: boolean; baseline_acl: boolean;
+  }>>(`SELECT p.proname AS name,p.oid::text AS oid,p.proowner::text AS owner_oid,p.prosrc AS body,p.proconfig AS config,
+      (p.pronargs=0 AND p.pronargdefaults=0 AND p.prokind='f' AND p.prorettype='pg_catalog.trigger'::regtype
+       AND l.lanname='plpgsql' AND NOT p.prosecdef AND NOT p.proleakproof AND NOT p.proisstrict
+       AND NOT p.proretset AND p.provolatile='v' AND p.proparallel='u'
+       AND pg_catalog.pg_get_function_identity_arguments(p.oid)='') AS valid,
+      (SELECT count(*)=1 AND bool_and(a.grantor=p.proowner AND a.grantee=p.proowner
+         AND a.privilege_type='EXECUTE' AND NOT a.is_grantable)
+       FROM pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) a) AS owner_acl,
+      (SELECT count(*)=2 AND count(DISTINCT a.grantee)=2
+         AND bool_and(a.grantor=p.proowner AND a.grantee IN (0::oid,p.proowner)
+           AND a.privilege_type='EXECUTE' AND NOT a.is_grantable)
+       FROM pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) a) AS baseline_acl
+    FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+      JOIN pg_catalog.pg_language l ON l.oid=p.prolang
+    WHERE n.nspname='public' AND p.proname IN ('${CASE_POINTER_FUNCTION}','${CASE_GUARD_FUNCTION}') LIMIT 3`);
+  const baseline = functions.find(fn => fn.name === CASE_POINTER_FUNCTION);
+  const guard = functions.find(fn => fn.name === CASE_GUARD_FUNCTION);
+  if (functions.length !== (installed ? 2 : 1) || !baseline || !oid(baseline.oid)
+    || baseline.owner_oid !== ctx.ownerOid || baseline.body !== CASE_POINTER_BODY
+    || baseline.valid !== true || baseline.baseline_acl !== true || baseline.config !== null) refuse();
+  if (installed && (!guard || !oid(guard.oid) || guard.owner_oid !== ctx.ownerOid
+    || guard.body !== CASE_GUARD_BODY || guard.valid !== true || guard.owner_acl !== true
+    || canonicalJsonStringify(guard.config) !== canonicalJsonStringify(["search_path=pg_catalog"]))) refuse();
+  const triggers = await sql.unsafe<Array<{
+    name: string; function_oid: string; type: number; enabled: string; valid: boolean;
+    pointer_column: boolean; unfiltered: boolean;
+  }>>(`SELECT t.tgname AS name,t.tgfoid::text AS function_oid,t.tgtype::integer AS type,t.tgenabled AS enabled,
+      (t.tgnargs=0 AND octet_length(t.tgargs)=0 AND t.tgqual IS NULL
+       AND t.tgconstraint=0 AND t.tgconstrrelid=0 AND t.tgconstrindid=0
+       AND NOT t.tgdeferrable AND NOT t.tginitdeferred) AS valid,
+      (t.tgattr::text=(SELECT a.attnum::text FROM pg_catalog.pg_attribute a
+        WHERE a.attrelid=t.tgrelid AND a.attname='github_review_resolution_evidence_hash'
+          AND a.attnum>0 AND NOT a.attisdropped)) AS pointer_column,
+      (t.tgattr=''::int2vector) AS unfiltered
+    FROM pg_catalog.pg_trigger t WHERE t.tgrelid='public.recovery_cases'::regclass
+      AND NOT t.tgisinternal ORDER BY t.tgname LIMIT 3`);
+  const pointer = triggers.find(trigger => trigger.name === CASE_POINTER_TRIGGER);
+  const extension = triggers.find(trigger => trigger.name === CASE_GUARD_TRIGGER);
+  if (triggers.length !== (installed ? 2 : 1) || !pointer || pointer.function_oid !== baseline.oid
+    || pointer.type !== 19 || pointer.enabled !== "O" || pointer.valid !== true || pointer.pointer_column !== true) refuse();
+  if (installed && (!extension || extension.function_oid !== guard!.oid || extension.type !== 18
+    || extension.enabled !== "A" || extension.valid !== true || extension.unfiltered !== true)) refuse();
 }
 
 // Read-only principal boundary. The full exact migration25 verifier is invoked
@@ -292,6 +384,7 @@ export async function installFreshInstallationRuntimeBusinessGrantsV1(
     const { verifyPreparationAuthorityV2Ledger } = await import("../db/preparation-authority-v2-migration.js");
     await verifyPreparationAuthorityV2Ledger(sql);
     await installDeliveryRowLockGuard(sql, before);
+    await installCaseRowLockGuard(sql, before);
     for (const grant of GRANTS) await sql.unsafe(
       `GRANT ${grant.privilege} (${grant.columns.map(quote).join(",")}) ON TABLE public.${grant.table} TO ${quote(role)}`,
     );
@@ -303,6 +396,7 @@ export async function installFreshInstallationRuntimeBusinessGrantsV1(
     const after = await context(sql, role, true);
     if (canonicalJsonStringify(before) !== canonicalJsonStringify(after)) refuse();
     await verifyDeliveryRowLockGuard(sql, after);
+    await verifyCaseRowLockGuard(sql, after, true);
     assertAcl(await readAcl(sql, after), after, true);
   } catch { return refuse(); }
 }
@@ -314,6 +408,7 @@ export async function verifyFreshInstallationRuntimeBusinessGrantsV1(
   try {
     const ctx = await context(sql, requireRole(runtimeRoleInput), false);
     await verifyDeliveryRowLockGuard(sql, ctx);
+    await verifyCaseRowLockGuard(sql, ctx, true);
     assertAcl(await readAcl(sql, ctx), ctx, true);
   } catch { return refuse(); }
 }

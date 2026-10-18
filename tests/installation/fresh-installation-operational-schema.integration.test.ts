@@ -46,9 +46,11 @@ test("fresh operational schema rolls back atomically and restricts runtime prove
   try {
     await assert.rejects(owner.begin(async tx=>{await install(tx);throw Error("component rollback");}),/component rollback/);
     const absent=await owner`SELECT to_regclass('public.prds') AS relation,to_regprocedure('public.setfarm_fresh_owner_head_provenance_guard_v1()') AS function,
-      to_regprocedure('public.setfarm_fresh_recovery_delivery_lock_guard_v1()') AS delivery_guard`;
+      to_regprocedure('public.setfarm_fresh_recovery_delivery_lock_guard_v1()') AS delivery_guard,
+      to_regprocedure('public.setfarm_fresh_recovery_case_lock_guard_v1()') AS case_guard`;
     assert.equal(absent[0]?.relation,null);assert.equal(absent[0]?.function,null);
     assert.equal(absent[0]?.delivery_guard,null);
+    assert.equal(absent[0]?.case_guard,null);
     await owner.begin(install);
     const credential=JSON.parse(readFileSync(path.join(installation.directory,"runtime-credentials.json"),"utf8"));
     const runtime=postgres(credential.runtimeUrl,{max:1,onnotice(){}});
