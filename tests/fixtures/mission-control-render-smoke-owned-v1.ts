@@ -243,7 +243,10 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
     const before=await observeAudit("Before");ready=buildTask4ReadyV1(setup,context.owner,projection,database,before.readiness,before.seed,before.grants);check();
     await observeBackends();await probes();check();
     const mc=await import(pathToFileURL(path.join(setup.missionControl.source.root,"scripts/render-smoke-owned-fixture.mjs")).href);check();
-    const queryRecipes=mc.task4ObserverSqlRecipesV1(),networkRecipes=mc.task4NetworkRecipesV1();
+    const networkBuild=mc.captureTask4BuildV1(setup.missionControl.source.root);networkBuild.check();check();
+    requireV1(networkBuild.identity.sourceSha===setup.missionControl.source.sourceSha&&networkBuild.identity.treeHash===setup.missionControl.source.treeHash
+      &&networkBuild.identity.buildHash===setup.missionControl.source.buildHash&&networkBuild.identityHash===setup.missionControl.source.buildIdentityHash,"TASK4_SOURCE_DRIFT");
+    const queryRecipes=mc.task4ObserverSqlRecipesV1(),networkRecipes=mc.task4NetworkRecipesV1(networkBuild);networkBuild.check();check();
     requireV1(Array.isArray(queryRecipes)&&queryRecipes.length<=128,"TASK4_SOURCE_DRIFT");
     const node=context.owner.executable,entry=path.join(setup.missionControl.source.root,"scripts/render-smoke.mjs");
     const child=spawn(node,[entry,"--owned-fixture-ready-v1"],{cwd:setup.missionControl.source.root,env:{HOME:context.home,TMPDIR:context.tmp,PATH:"/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",LANG:"C",LC_ALL:"C",TZ:"UTC"},stdio:["ignore","pipe","pipe","ignore","pipe"]});
@@ -275,7 +278,7 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
     const queryLedgers=[...artifacts.values()].filter(v=>v.schema==="mission-control.task4-inner-query-ledger.v1");requireV1(queryLedgers.length===1,"TASK4_DATABASE_REFUSED");
     validateTask4QueryLedgerV1(queryLedgers[0],ready,innerResult.observations,queryRecipes);
     const network=task4ArtifactV1(artifacts,render.network),filesystem=task4ArtifactV1(artifacts,render.filesystem);
-    validateTask4NetworkV1(network,ready,cleanup,artifacts,networkRecipes);validateTask4FilesystemV1(filesystem,ready,artifacts);verifyTask4FinalFilesystemV1(filesystem,artifacts);
+    networkBuild.check();check();validateTask4NetworkV1(network,ready,cleanup,artifacts,networkRecipes);networkBuild.check();check();validateTask4FilesystemV1(filesystem,ready,artifacts);verifyTask4FinalFilesystemV1(filesystem,artifacts);
     await validateTask4PolicyProbeV1(root,ready,innerOwner!,network,artifacts);check();networkComplete=true;
     const mockReceipt=readTask4FixedJsonV1(root,"policy-probe-mock.json");assertTask4ConsumedArtifactsV1(innerResult,artifacts,[mockReceipt.before,mockReceipt.after]);
     if(serverOwner)requireV1(sameV1(task4ArtifactV1(artifacts,cleanup.server.observed).owner,serverOwner),"TASK4_SQL_ORIGINALS_UNKNOWN");
@@ -2135,6 +2138,35 @@ if (direct && process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^de
     (child.stdio[4] as import("node:stream").Writable).end();
     const exit=await settled;assert.equal(overflow,false);assert.equal(exit.code,1);assert.equal(output,"TASK4_FRAME_INVALID\n");
   });
+  test("descriptor network build binding checks the actual capture and exact identity before deriving recipes",async()=>{
+    const ts=await import("typescript"),source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8");
+    const anchor='const mc=await import(pathToFileURL(path.join(setup.missionControl.source.root,"scripts/render-smoke-owned-fixture.mjs")).href);check();';
+    const start=source.indexOf(anchor)+anchor.length,end=source.indexOf('    const node=context.owner.executable',start);
+    assert.ok(start>anchor.length&&end>start);
+    const js=ts.transpileModule(source.slice(start,end),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
+    const expected={root:"/owned/component",sourceSha:"a".repeat(40),treeHash:"b".repeat(40),buildHash:"c".repeat(64),buildIdentityHash:"d".repeat(64)};
+    const execute=(change:Record<string,string>={},driftAt=0)=>{
+      const calls:string[]=[];let checks=0;const build={identity:{schema:"mission-control.internal-production-build-identity.v1",sourceSha:expected.sourceSha,treeHash:expected.treeHash,buildHash:expected.buildHash,...change},identityHash:change.identityHash??expected.buildIdentityHash,check(){calls.push("build");if(++checks===driftAt)throw new Error("TASK4_SOURCE_DRIFT");}};
+      const mc={captureTask4BuildV1(root:string){assert.equal(root,expected.root);calls.push("capture");return build;},task4ObserverSqlRecipesV1(){return [];},task4NetworkRecipesV1(input:unknown){assert.equal(input,build);calls.push("derive");return [{pathId:"asset_js",method:"GET",path:"/assets/index-component.js",query:""}];}};
+      const run=new Function("mc","setup","check","requireV1",js+";return networkRecipes;");
+      return {calls,run:()=>run(mc,{missionControl:{source:expected}},()=>calls.push("context"),requireV1)};
+    };
+    const valid=execute();assert.equal(valid.run()[0].path,"/assets/index-component.js");assert.deepEqual(valid.calls,["capture","build","context","derive","build","context"]);
+    for(const [key,value] of [["sourceSha","e".repeat(40)],["treeHash","e".repeat(40)],["buildHash","e".repeat(64)],["identityHash","e".repeat(64)]]){
+      const crossed=execute({[key!]:value!});assert.throws(crossed.run,{message:"TASK4_SOURCE_DRIFT"});assert.equal(crossed.calls.includes("derive"),false);
+    }
+    for(const at of [1,2])assert.throws(execute({},at).run,{message:"TASK4_SOURCE_DRIFT"});
+  });
+  test("descriptor network qualification retains build and context checks around the actual ledger validator",async()=>{
+    const ts=await import("typescript"),source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8"),anchor='const network=task4ArtifactV1(artifacts,render.network),filesystem=task4ArtifactV1(artifacts,render.filesystem);';
+    const start=source.indexOf(anchor)+anchor.length,end=source.indexOf('validateTask4FilesystemV1(filesystem',start);assert.ok(start>anchor.length&&end>start);
+    const js=ts.transpileModule(source.slice(start,end),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
+    for(const driftAt of [0,1,2]){const calls:string[]=[];let n=0;const build={check(){calls.push("build");if(++n===driftAt)throw new Error("TASK4_SOURCE_DRIFT");}};
+      const run=()=>new Function("networkBuild","check","validateTask4NetworkV1","network","ready","cleanup","artifacts","networkRecipes",js)(build,()=>calls.push("context"),()=>calls.push("validate"),{}, {}, {},new Map(),[]);
+      if(driftAt)assert.throws(run,{message:"TASK4_SOURCE_DRIFT"});else{run();assert.deepEqual(calls,["build","context","validate","build","context"]);}
+      if(driftAt===1)assert.equal(calls.includes("validate"),false);
+    }
+  });
   test("descriptor measured build uses stock bytes recipe and rejects added replaced or missing members",()=>{
     const root=fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(),"task4-build-test-")));fs.chmodSync(root,0o700);
     try {
@@ -2505,6 +2537,13 @@ if (direct && process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^de
     }
     const crossed=rewritePortGraph(rows,row=>{if(row.endpointRole==="mc")row.port=23902;});
     assert.throws(()=>validateTask4NetworkV1(crossed.remap(value),ready,crossed.remap(cleanup),crossed.rows,recipes),{message:"TASK4_NETWORK_REFUSED"});
+    const assetRecipes=structuredClone(recipes),assetLedger=structuredClone(value);
+    assetRecipes.browser.push({pathId:"asset_js",method:"GET",path:"/assets/index-current1.js",query:""});assetLedger.policy.recipeHash=hashV1(task4CanonicalV1(assetRecipes));
+    const assetRequest={...common,requestId:2,pathId:"asset_js",urlHash:hashV1("http://127.0.0.1:23901/assets/index-current1.js")};
+    assetLedger.browser.push({...assetRequest,seq:3,stage:"intercept",decision:"continue"},{...assetRequest,seq:4,stage:"response",decision:"observe",status:200,bodyHash:"a".repeat(64)});
+    validateTask4NetworkV1(assetLedger,ready,cleanup,rows,assetRecipes);
+    for(const row of assetLedger.browser.slice(2))row.urlHash=hashV1("http://127.0.0.1:23901/assets/index-obsolete.js");
+    assert.throws(()=>validateTask4NetworkV1(assetLedger,ready,cleanup,rows,assetRecipes),{message:"TASK4_NETWORK_REFUSED"});
     const legacy=structuredClone(value),legacyRecipes=structuredClone(recipes),id="ac8cea43-7686-4d27-8092-1e3dd9207ca4",browserPath=`/api/setfarm/runs/${id}/product-build-authority`,mockPath=`/api/runs/${id}/product-build-authority`;
     legacyRecipes.browser.push({pathId:"legacy_authority",method:"GET",path:browserPath,query:""});legacyRecipes.mock.push({pathId:"legacy_authority",method:"GET",path:mockPath,query:""});legacy.policy.recipeHash=hashV1(task4CanonicalV1(legacyRecipes));
     const request={...common,requestId:2,route:`/setfarm/runs/${id}`,pathId:"legacy_authority",urlHash:hashV1("http://127.0.0.1:23901"+browserPath)};
