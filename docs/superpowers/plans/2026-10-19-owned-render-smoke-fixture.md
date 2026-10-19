@@ -1,0 +1,52 @@
+# Owned current-schema render smoke fixture
+
+Root is sole delivery/runtime owner. One Source writer per repository; implementation workers never stage, commit, push, build, launch PG/browser/services/provider work or spawn another writer. Required workflow: subagent-driven-development, TDD, scoped review and original verification.
+
+## Goal and fixed design
+
+Finish the existing ordered six-route13081 smoke through the actual compiled Mission Control server/strict sealedV3 parser, backed by an authenticated current-schema owned P3 clone and private PG17 cluster. Retain original child/resource cleanup and screenshots. This is test-fixture composition; it grants no selected installation, compiler, provider, full8, promotion or live GO.
+
+Producer core PR297 is merged at32b0ccb62bba7ff4640a95bcb8efdf8ad2489a5b. The sole SF writer remains the same isolated worktree on feat/owned-render-smoke-20261019. Canonical historical workspace/live Q3 remain untouched. Root verified merged tree equals reviewed620cd606 tree.
+
+Authoritative fixed refinements are archived outside Source:
+- logs/2026-10-19-ui-implementation/task4-root-private-driver-binding-v1.json SHA b31bd88dee8b03fb88c4dbfce712f6c1a553181e380dea946675a4f895bcc201.
+- accepted-task4-private-wire-proposal-v1.md SHA47814218ffe9bcc949a9d39285b0687d5742ba612a671a1789121f71af633d44.
+- accepted-task4-dataset-observation-addendum-proposal-v1.md SHA4b7feb6e32d4e50fc94a02490068c6355026d9ae2459ccc4ed64ed4a9e7e8c1b.
+- task4-root-final-dataset-ruling-v1.json SHA6cddbfeb8328ecf5f399c8375783161c54711a6c6cfa093d455a542a429ee5dd.
+All except the first are in the same logs/2026-10-19-ui-implementation directory. Root final ruling supersedes preliminary unresolved A/B wording and preliminary dataset vectors.
+
+## File Map
+
+| Repository/path | Responsibility |
+| --- | --- |
+| SF scripts/run-isolated-postgres-tests.ts | Exact existing six-cell branch only: consume/canonical-validate privatefd4 before projection/SQL, current Source/private PG identity checks, special private HOME/TMPDIR and exact fd4 forwarding to fixture child; ordinary grammar/fd3/setup/migrations32/33/cleanup unchanged. |
+| SF tests/fixtures/mission-control-render-smoke-owned-v1.ts (new) | Safe builtins-only import with pure closed validators/data helpers; fixed direct-entry descriptor tests and authenticated owned-clone integration; seed/current-pair/auxiliary schema/role/parent audit/inner child and cleanup proof. Not normal .test.ts discovery. |
+| MC scripts/render-smoke.mjs | Exact outer/inner private modes and unchanged six-route recipe; actual compiled server/parser/native helper, deterministic fences and result ownership. |
+| MC scripts/render-smoke-owned-fixture.mjs (new) | Original privatePG/runner resources, wire/pins/independent dataset/privilege observations, original child ledgers and bounded cleanup. |
+| MC tests/render-smoke-response.test.ts | Preserve strict sealed200 and legacy assertions; extend only affected fixture composition. |
+| MC tests/render-smoke-owned-fixture.test.ts (new) | Pure wire/dataset/Source binding and owned lifecycle/fence component regressions. |
+| MC tests/fixtures/render-smoke-product-authority.mjs (new) | Fixed simulated product response and exact agreed observation datasets/golden vectors. No operational authority. |
+
+No package/discovery/OWNERregistry/production migration/installer/guard/export change. Return a concrete causal map before another Source path or interface. Root alone maintains this plan.
+
+## Closed boundaries
+
+Wire launch/setup/ready have exact keysets, strict canonical UTF8/LF+EOF16384byte bound/5000ms reader deadline, fixed known modes/entries, no argv/envdictionary/loader/callback/cleanup selector. Golden frames876/2534/4474bytes. Dataset hashes exclude LF: seed24563bytes/acbdd5a51a633eb5317d678cb0b9869114461a038efdce5c3b143c372d3bb429; restrictedgrant2803bytes/656d4a9282e79c0c694d5fd542d8c46a78fb735e5d10c640f0dd2b1db000a476. Full original Source input and projected manifest/head are distinct; exact current Source/build pins replace synthetic vector identities at runtime.
+
+Root closes auxiliary setup with fixed declaration-only AST literal data extraction from pinned src/installation/fresh-installation-mission-control-schema-v1.ts. Never eval/import/invoke/transplant guarded installer or its grants. Actual fd3-authenticated clone only; absent exact targets,12 unchanged statements/5tables/19relations/10types and9 full templates in one rollback-owned transaction. Complete rows/currentpair/untouchedstate independently observed. Fixture-only provenance, no actual installer credit. step_metrics optional absence remains explicit; no invented table/fallback qualification.
+
+Parent retains exact role/membership/ownership/database-schema-PUBLIC/table-column-sequence/defaultACL/settings/application-routine and executable SECURITYDEFINER observations plus original42501 READ WRITE rollback DML/DDL probes and before/after state. Restricted reader independently reconstructs only agreed24positiveSELECT grant subset; its digest does not prove parent audit. Trusted pinned Source/closed routes/original network/browser fences/private cluster scope; no hypothetical all-PG hostileSQL containment certification. Unexpected actual reachable write-capable definer or required read/catalog mismatch returns Root finding. No secret verifier text/URL/nonce/loader reaches logs/browser; only private readyfd4 holds restricted URL.
+
+Preserve current authenticated P3 helper and32/33 readiness after private privilege setup. Parent readiness descriptorHash is bound unchanged; inner observes exact activation/head/admissionReady through SELECT, never remints parent OS descriptor or fd3 capability. Driver owns original postmaster/runner/inner/server/mock/native handles; descriptors never grant PID-signal authority. Keep fixed ownedloopback network/browser fences before navigation. Account for actual pipeline GET saveSyncState at its fixed private path; no unowned FS/project mutations and no SQL write grants to accommodate startup.
+
+## Tasks and verification
+
+- [ ] SF1: descriptor/data/AST grammar tests RED before implementation; safe import cannot readfd4/registertests/openPG/importoperationalgraph/spawn. Strict frame negatives and final shared vectors, full actual query-to-observation completeness where pure components apply.
+- [ ] SF2: exact runner branch + authenticated fixture implementation. Fixed vector node --import tsx --test --test-concurrency=1 tests/fixtures/mission-control-render-smoke-owned-v1.ts; only this branch consumes/forwardsfd4 and changes privateHOME/TMPDIR. No fd4 in setup/ordinary vectors. No untracked-general allowance.
+- [ ] SF3: pure descriptor command node --import tsx --test --test-name-pattern=^descriptor\  tests/fixtures/mission-control-render-smoke-owned-v1.ts (pass the pattern as one structured argv cell); Source/affected type/syntax checks and scoped Source review. Integration is filtered here and explicitly not credited.
+- [ ] MC1: sole MC writer starts only after current UI regression phase boundary. Implement five fixed paths using exact shared vectors/current Source pair; preserve compiled strictproxy/parser, current nativehelper default effects and6routes/viewport. No browserfulfilledauthority/alternate native/kill/adoption.
+- [ ] Paired Source review/frozen commits; Root clean measured MC build and current complete SF input, private actual launch descriptor and verifiedPG17 material.
+- [ ] Root actual owned positive/currentSQL+strict200preflight+mountedresponse+requiredHTTP/SQL/FS/network observations; separate deliberate failure/cancel and original process/resource cleanup. All originals retained. A type/model/stream failure is not a project test result.
+- [ ] Ordinary reviewed PR delivery; new merged-main immutable SF build,17actualcompilednegatives/selectedMC-SFbroker/currentmaterial/activation/full8/promotion/guardedrollout/live remain separate and unshortened.
+
+Implementation Source components may use explicit simulations with honest limits and original captures; no injected production authority/effects port. Root alone runs actual PG/browser/service/provider compositions. Preserve dirty files, frozen Source during captures, exact error/cleanup outcomes and failed originals. No test/gate weakening or completion claim from a stub, filtered test, synthetic vector, UI fallback or clean shutdown alone.
