@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, lstatSync, realpathSync, rmSync, writeFileSync, existsSync, chmodSync, renameSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, lstatSync, realpathSync, rmSync, writeFileSync, existsSync, chmodSync, renameSync, openSync, closeSync, fstatSync, constants } from "node:fs";
 import { registerHooks } from "node:module";
 import { Script } from "node:vm";
 import { tmpdir } from "node:os";
@@ -44,10 +44,23 @@ function exactContextForEntry(contexts: readonly import("../../src/execution/v3-
 }
 function safeStartDiagnostic(error: unknown): SafeStartDiagnostic {
   const value = error as {name?:unknown;message?:unknown;code?:unknown;stack?:unknown} | null;
-  const names = ["Error", "TypeError", "RangeError", "ZodError", "ControlWorkerFatalErrorV1"];
+  const names = ["Error", "TypeError", "RangeError", "ZodError", "ControlWorkerFatalErrorV1", "PostgresError"];
+  const codes = ["ENOENT","EEXIST","EACCES","EPERM","ELOOP","EINVAL","CONTROL_START_UNRESOLVED","CHILD_EXIT_NONZERO",
+    "MANUAL_EVALUATION_OWNERSHIP_UNKNOWN","MANUAL_EVALUATION_PROOF_MISSING","MANUAL_EVALUATION_ENTRY_REFUSED",
+    "MANUAL_EVALUATION_CUSTODY_REQUIRED","MANUAL_EVALUATION_RESERVED","MANUAL_EVALUATION_ACTIVITY",
+    "FIXTURE_ENTRY_REFUSED","FIXTURE_OS_OBSERVATION_UNKNOWN","FIXTURE_SELECTED_LOCATOR_CHANGED","OWNED_CLONE_IDENTITY_REFUSED",
+    "ISOLATED_TEST_DATABASE_ALREADY_CONNECTED","ISOLATED_TEST_DATABASE_URL_REJECTED",
+    "INTERNAL_PRODUCTION_CURRENT_ENTRY_MANIFEST_A_NOT_CURRENT","INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_32_INVALID",
+    "INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_33_INVALID","INTERNAL_PRODUCTION_CURRENT_ENTRY_MIGRATION_UNKNOWN_VERSION",
+    "RUN_PERSISTENCE_ADMISSION_READY_IDENTITY_INVALID","RUN_PERSISTENCE_ADMISSION_READY_UNAVAILABLE",
+    "RUN_PERSISTENCE_READINESS_MODULE_NAMESPACE_INVALID","TASK6A_RESTRICTED_DATABASE_NOT_VERIFIED",
+    "SETFARM_BASE_SCHEMA_VERIFY_INCOMPLETE","SETFARM_BASE_SCHEMA_VERIFY_REFUSED","DASHBOARD_CUTOVER_ORDINARY_DATABASE_REFUSED",
+    "FRESH_INSTALLATION_INCOMPATIBLE_DATABASE_PROFILE","RUN_RELEASE_ADMISSION_IDENTITY_INVALID",
+    "RUN_RELEASE_ADMISSION_REQUIRED","RUN_RELEASE_ADMISSION_KIND_INVALID","RUN_PERSISTENCE_DATABASE_TIME_UNAVAILABLE"];
   const allowedCode = (candidate: unknown): candidate is string => typeof candidate === "string" && candidate.length <= 128
-    && (/^(?:MANUAL_EVALUATION_|CONTROL_|FIXTURE_)[A-Z0-9_]+$/.test(candidate) || ["ENOENT","EEXIST","EACCES","EPERM","ELOOP","EINVAL"].includes(candidate));
+    && codes.includes(candidate);
   const code = allowedCode(value?.message) ? value.message : allowedCode(value?.code) ? value.code
+    : typeof value?.code === "string" && /^[0-9A-Z]{5}$/.test(value.code) ? value.code
     : typeof value?.code === "number" && value.code !== 0 ? "CHILD_EXIT_NONZERO" : null;
   const frames: string[] = [];
   if (typeof value?.stack === "string") for (const line of value.stack.slice(0,8192).split("\n").slice(1,17)) {
@@ -62,6 +75,36 @@ function safeStartDiagnostic(error: unknown): SafeStartDiagnostic {
     if (frames.length === 6) break;
   }
   return {name:typeof value?.name === "string" && names.includes(value.name) ? value.name : "OtherError",code,frames};
+}
+
+function parseSafeChildDiagnostic(bytes: string) {
+  try {
+    if (Buffer.byteLength(bytes) > 4096) return null;
+    const value = JSON.parse(bytes);
+    if (!value || value.schema !== "setfarm.owned-component-child-diagnostic.v1" || value.cleanup !== "unknown"
+      || !["import_database","configure_database","initialize_database","verify_database_identity","import_persistence","inject_fault","verify_context","persist_run","cleanup"].includes(value.stage)) return null;
+    const failure = value.failure;
+    if (!failure || !Array.isArray(failure.frames) || failure.frames.length > 6
+      || failure.frames.some((frame: unknown) => typeof frame !== "string"
+        || !/^[A-Za-z0-9_.$<>]{1,96}(?: [A-Za-z0-9_.-]{1,96}\.(?:ts|mjs|cjs|js):\d{1,6}:\d{1,6})?$/.test(frame))) return null;
+    const safe = safeStartDiagnostic({name:failure.name,code:failure.code});
+    if (safe.name !== failure.name || safe.code !== failure.code) return null;
+    const canonical = {schema:value.schema,stage:value.stage,cleanup:"unknown",failure:{name:safe.name,code:safe.code,frames:failure.frames}};
+    return bytes === JSON.stringify(canonical)+"\n" ? canonical : null;
+  } catch { return null; }
+}
+
+function readSafeChildDiagnostic(locator: string) {
+  let fd: number | undefined;
+  try {
+    fd = openSync(locator,constants.O_RDONLY|constants.O_NOFOLLOW);
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid!() || (stat.mode & 0o7777) !== 0o600 || stat.size > 4096) return null;
+    const bytes = readFileSync(fd,"utf8"), after = fstatSync(fd), current = lstatSync(locator);
+    if (current.isSymbolicLink() || [after,current].some(observed =>
+      (["dev","ino","uid","mode","nlink","size","mtimeMs","ctimeMs"] as const).some(key => observed[key] !== stat[key]))) return null;
+    return parseSafeChildDiagnostic(bytes);
+  } catch { return null; } finally { if (fd !== undefined) closeSync(fd); }
 }
 
 /** Root-approved component scope: only the new module's immutable locator
@@ -360,7 +403,15 @@ async function startActualDefaultChild(f: Awaited<ReturnType<typeof fixture>>, i
   const replacements={processOwnerV1:`function processOwnerV1(pid,script,executable){if(pid===${f.owner.pid})return ${JSON.stringify(f.owner)};return actualProcessOwnerV1(pid,script,executable);}`,processTableV1:childTableObservationSource(f.owner,f.workerArgv,f.repositoryRoot)};
   const proofPath=path.join(f.evals,"manual-controls/start-children",reservation.jobId,context.slotHash+".json");
   const faultMarker=path.join(f.root,"start-fault-observed.json");
+  const childDiagnosticPath=path.join(f.root,"child-diagnostic.json");
+  const diagnosticTree=ts.createSourceFile("diagnostic.ts",readFileSync(fileURLToPath(import.meta.url),"utf8"),ts.ScriptTarget.Latest,true);
+  const diagnosticNode=diagnosticTree.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="safeStartDiagnostic");
+  assert.ok(diagnosticNode);
+  const diagnosticFunction=ts.transpileModule(diagnosticNode.getText(diagnosticTree),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
   const childSource=`const fs=require('node:fs'),path=require('node:path');
+${diagnosticFunction}
+let diagnosticStage='import_database',firstFailureCaptured=false;
+function captureFirstChildFailure(error){if(firstFailureCaptured)return;firstFailureCaptured=true;try{const record={schema:'setfarm.owned-component-child-diagnostic.v1',stage:diagnosticStage,cleanup:'unknown',failure:safeStartDiagnostic(error)};const bytes=JSON.stringify(record)+'\\n';if(Buffer.byteLength(bytes)<=4096)fs.writeFileSync(${JSON.stringify(childDiagnosticPath)},bytes,{mode:0o600,flag:'wx'});}catch{}}
 const {pathToFileURL,fileURLToPath}=require('node:url');const {registerHooks}=require('node:module');const ts=require(${JSON.stringify(path.join(SOURCE_ROOT,"node_modules/typescript/lib/typescript.js"))});
 const sourceRoot=${JSON.stringify(SOURCE_ROOT)},selectionUrl=${JSON.stringify(selectionUrl)},fixtureId=${JSON.stringify(f.fixtureId)},replacements=${JSON.stringify(replacements)};
 registerHooks({resolve(specifier,context,next){const parent=context.parentURL||'';
@@ -369,15 +420,16 @@ registerHooks({resolve(specifier,context,next){const parent=context.parentURL||'
  load(url,context,next){if(!url.startsWith('file:')||!new URL(url).pathname.endsWith('.ts'))return next(url,context);let source=fs.readFileSync(fileURLToPath(url),'utf8');
  if(url.includes('/manual-test-admission-v1.')){const tree=ts.createSourceFile('manual.ts',source,ts.ScriptTarget.Latest,true);const edits=tree.statements.filter(ts.isFunctionDeclaration).filter(n=>n.name&&replacements[n.name.text]).map(n=>({start:n.getStart(tree),end:n.end,text:replacements[n.name.text]}));for(const e of edits.sort((a,b)=>b.start-a.start))source=source.slice(0,e.start)+e.text+source.slice(e.end);source+=${JSON.stringify("\n"+originalOwner+"\n"+originalTable)};}
  return {format:'module',source:ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext,esModuleInterop:true}}).outputText,shortCircuit:true};}});
-(async()=>{const db=await import(pathToFileURL(path.join(sourceRoot,'src/db-pg.ts')).href);db.pgConfigureIsolatedTestDatabase(process.env.SETFARM_PG_URL);await db.initializeInternalProductionCurrentEntryDatabaseV1();
-const databaseIdentity=await db.getSql().unsafe('SELECT current_database() AS database');if(databaseIdentity.length!==1||databaseIdentity[0].database!==${JSON.stringify(f.database.database)})throw new Error('OWNED_CLONE_IDENTITY_REFUSED');
-const persistence=await import(pathToFileURL(path.join(sourceRoot,'src/execution/run-persistence.ts')).href);
-let foreignDone=null,foreignChild=null;try{if(${JSON.stringify(fault)}==='proof_drift'){const file=${JSON.stringify(proofPath)},deadline=performance.now()+5000;while(!fs.existsSync(file)){if(performance.now()>=deadline)throw new Error('MANUAL_EVALUATION_PROOF_MISSING');await new Promise(resolve=>setTimeout(resolve,25));}fs.appendFileSync(file,' ');fs.writeFileSync(${JSON.stringify(faultMarker)},JSON.stringify({fault:'proof_drift',point:'proof_modified'})+'\\n',{mode:0o600,flag:'wx'});}
+(async()=>{const db=await import(pathToFileURL(path.join(sourceRoot,'src/db-pg.ts')).href);diagnosticStage='configure_database';db.pgConfigureIsolatedTestDatabase(process.env.SETFARM_PG_URL);diagnosticStage='initialize_database';await db.initializeInternalProductionCurrentEntryDatabaseV1();
+diagnosticStage='verify_database_identity';const databaseIdentity=await db.getSql().unsafe('SELECT current_database() AS database');if(databaseIdentity.length!==1||databaseIdentity[0].database!==${JSON.stringify(f.database.database)})throw new Error('OWNED_CLONE_IDENTITY_REFUSED');
+diagnosticStage='import_persistence';const persistence=await import(pathToFileURL(path.join(sourceRoot,'src/execution/run-persistence.ts')).href);
+let foreignDone=null,foreignChild=null;try{diagnosticStage='inject_fault';if(${JSON.stringify(fault)}==='proof_drift'){const file=${JSON.stringify(proofPath)},deadline=performance.now()+5000;while(!fs.existsSync(file)){if(performance.now()>=deadline)throw new Error('MANUAL_EVALUATION_PROOF_MISSING');await new Promise(resolve=>setTimeout(resolve,25));}fs.appendFileSync(file,' ');fs.writeFileSync(${JSON.stringify(faultMarker)},JSON.stringify({fault:'proof_drift',point:'proof_modified'})+'\\n',{mode:0o600,flag:'wx'});}
  if(${JSON.stringify(fault)}==='foreign_child'){const {spawn}=require('node:child_process'),{once}=require('node:events');const child=spawn(process.execPath,['-e',${JSON.stringify("process.stdout.write('READY\\n');process.stdin.resume();process.stdin.once('end',()=>process.exit(0));setTimeout(()=>process.exit(9),10000).unref()")}],{env:{PATH:'/usr/bin:/bin'},stdio:['pipe','pipe','pipe']});foreignChild=child;foreignDone=once(child,'exit');foreignDone.catch(()=>{});await Promise.race([once(child.stdout,'data'),foreignDone.then(()=>{throw new Error('foreign fixture child exited before readiness');})]);fs.writeFileSync(${JSON.stringify(faultMarker)},JSON.stringify({fault:'foreign_child',point:'owned_child_ready'})+'\\n',{mode:0o600,flag:'wx'});}
 const input=${JSON.stringify(input)};
- const actual=JSON.parse(process.env.SETFARM_INTERNAL_CONVERGENCE_ADMISSION);if(JSON.stringify(Object.entries(actual).sort())!==JSON.stringify(Object.entries(input.run.protocol.canaryAdmission).sort()))throw new Error('fixture canary context changed');
- const result=await db.getSql().begin(sql=>persistence.persistWorkflowRunInTransaction(sql,input));process.stdout.write('Run: #'+result.run.runNumber+' ('+result.run.id+')');}
-finally{if(foreignDone){foreignChild.stdin.end();const [code,signal]=await foreignDone;if(code!==0||signal!==null)throw new Error('foreign fixture child cleanup failed');}await db.pgClose();}})().catch(error=>{process.stderr.write(error.message+'\\n');process.exitCode=1;});`;
+ diagnosticStage='verify_context';const actual=JSON.parse(process.env.SETFARM_INTERNAL_CONVERGENCE_ADMISSION);if(JSON.stringify(Object.entries(actual).sort())!==JSON.stringify(Object.entries(input.run.protocol.canaryAdmission).sort()))throw new Error('fixture canary context changed');
+ diagnosticStage='persist_run';const result=await db.getSql().begin(sql=>persistence.persistWorkflowRunInTransaction(sql,input));process.stdout.write('Run: #'+result.run.runNumber+' ('+result.run.id+')');}
+catch(error){captureFirstChildFailure(error);throw error;}
+finally{diagnosticStage='cleanup';if(foreignDone){foreignChild.stdin.end();const [code,signal]=await foreignDone;if(code!==0||signal!==null)throw new Error('foreign fixture child cleanup failed');}await db.pgClose();}})().catch(error=>{captureFirstChildFailure(error);process.exitCode=1;});`;
   new Script(childSource, {filename:"owned-component-cli.cjs"});
   writeFileSync(cli,childSource,{mode:0o600,flag:"wx"});
   const runner=await import(`${pathToFileURL(path.join(SOURCE_ROOT,"src/evals/convergence-runner.ts")).href}?manual-fixture=${f.fixtureId}`);
@@ -399,7 +451,7 @@ finally{if(foreignDone){foreignChild.stdin.end();const [code,signal]=await forei
         injectionReached = readFileSync(faultMarker,"utf8") === JSON.stringify(expected)+"\n";
       }
     }
-    const observation = {start:safeStartDiagnostic(error),publication:f.faults.startPublication,injectionReached};
+    const observation = {start:safeStartDiagnostic(error),publication:f.faults.startPublication,injectionReached,child:readSafeChildDiagnostic(childDiagnosticPath)};
     throw Object.assign(new Error("OWNED_COMPONENT_START_REFUSED "+JSON.stringify(observation)), {startObservation:observation});
   } finally {
     if (previousUrl === undefined) delete process.env.SETFARM_PG_URL; else process.env.SETFARM_PG_URL = previousUrl;
