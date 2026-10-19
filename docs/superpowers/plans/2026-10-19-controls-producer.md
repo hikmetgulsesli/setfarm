@@ -189,6 +189,8 @@ export function runSelectedManualControlJobV1(
 ): Promise<ControlJobReceiptV1>;
 ```
 
+Root internal direct-entry refinement: export `runSelectedDirectConvergenceV1(loaded,{releaseSha,execute},ports):Promise<ConvergenceSuiteRun>` from the mapped worker for a dynamic import by selected runner main only. It reuses the same journal/full-slot bind/exact claim start resolver and owns zero-argument direct intent/acquisition before artifacts, latest reservation revision, settlement/release/closure while SQL remains open. It adds no caller authority, CLI flag or public API; unselected behavior and generic runner/default port signatures stay unchanged.
+
 The optional `ports` overload is test-only; the compiled CLI entry calls the two-argument production path. Worker frame sequence, SF journal revision and MC public receipt revision are independent counters linked by a durable broker mapping; only MC writes receipts and ACKs after definite publication. The worker must send progress through the authenticated original-child channel and persist its own bound admission/run identity before each effect. Follow the paired spec private protocol; remove onAdmission because the actual createCanary wrapper owns one full-slot bind and retains the refreshed reservation. No selected runtime path comes from HTTP.
 
 - [ ] **Step 1: Write RED production-path tests** using existing convergence fake SQL/HTTP/process/artifact/admission ports. Use the real committed suite loader and actual runner:
