@@ -761,11 +761,22 @@ test("actual default child consumes exact stored canary once and canonical settl
   }
   const started = await startActualDefaultChild(f,input,bound,canary.contexts);
   const inserted = {run:{id:started.runId}};
-  await assert.rejects(() => readonlyRunOwner(f, inserted.run.id), /INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER/);
-  await assert.rejects(() => f.manual.observeSelectedManualSettlementV1(bound), /MANUAL_EVALUATION_ACTIVITY/);
+  const live = await f.database.sql`SELECT id,run_number,workflow_id,status,protocol,protocol_version,compiler_release_sha,release_admission_hash,task FROM runs WHERE id=${inserted.run.id}`;
+  assert.equal(live.length,1);
+  assert.equal(live[0]?.id,input.run.id);assert.equal(live[0]?.run_number,input.run.runNumber);
+  assert.equal(live[0]?.workflow_id,input.run.workflowId);assert.equal(live[0]?.status,"running");
+  assert.equal(live[0]?.protocol,"v3");assert.equal(live[0]?.protocol_version,1);
+  assert.equal(live[0]?.compiler_release_sha,SOURCE_SHA);assert.equal(live[0]?.release_admission_hash,context.admissionHash);
+  assert.equal(hashCanonicalJson(live[0]?.task),context.taskHash);
   const claim = await f.database.sql`SELECT run_id,consumed_at FROM v3_canary_admission_claims WHERE slot_hash=${context.slotHash}`;
+  assert.equal(claim.length,1);
   assert.equal(claim[0]?.run_id, inserted.run.id);
   assert.ok(claim[0]?.consumed_at);
+  await assert.rejects(() => readonlyRunOwner(f, inserted.run.id), /INTERNAL_PRODUCTION_WORKFLOW_RUN_OWNER/);
+  // The settlement observer requires terminal bound runs; live owner activity
+  // cannot be classified as ordinary terminal delivery residue.
+  await assert.rejects(() => f.manual.observeSelectedManualSettlementV1(bound),
+    (error:unknown)=>error instanceof Error && error.message==="MANUAL_EVALUATION_OWNERSHIP_UNKNOWN");
   await assert.rejects(() => f.manual.releaseSelectedManualEvaluationV1(bound), /MANUAL_EVALUATION_ACTIVITY/);
   const terminal = await import("../../src/execution/run-terminal-transition.js");
   await terminal.transitionRunToTerminal(f.database.sql, {
