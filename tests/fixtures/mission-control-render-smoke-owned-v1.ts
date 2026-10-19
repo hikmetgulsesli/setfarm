@@ -144,7 +144,7 @@ function readTask4FixedJsonV1(root:string,name:"policy-probe.json"|"policy-probe
   }finally{file.close();directory.close();}
 }
 const TASK4_FAILURE_STAGES_V1=Object.freeze(["initialization","initial_backend_census","initial_probes","inner_validation","after_probes","after_audit","after_audit_equal","watcher_settle","observer_release","observer_end","probe_release","probe_end","final_backend_census","watcher_success","restricted_absence","pg_prefix_first","pg_prefix_second","pg_prefix_equal","pg_parse","pg_chunks","pg_events","parent_query_match","inner_query_match","audit_publish","probe_calibration","sql_publish","parent_cleanup","database_cleanup","role_cleanup","finalizer_observer_release","finalizer_observer_end","finalizer_probe_release","finalizer_probe_end","finalizer_fixture_close","finalizer_admin_end","backend_census"]);
-const TASK4_FAILURE_PREDICATES_V1=Object.freeze(["none","audit_equal","watcher_success","restricted_absence","prefix_equal","census_query","census_cap","census_lsof","census_socket_parse","census_socket_unique","census_process","census_server_identity","census_backend_binding","census_existing_identity","census_backend_cap","census_server_cap","parse_identity","parse_bytes","parse_utf8","parse_message_cap","parse_continuation","parse_coverage","parse_session","parse_time","parse_scope","parse_severity","parse_backend_unique","parse_candidate_unique","parse_error_pair","parent_query_owner","parent_query_event","inner_query_event"]);
+const TASK4_FAILURE_PREDICATES_V1=Object.freeze(["none","audit_equal","watcher_success","restricted_absence","prefix_equal","census_query","census_cap","census_lsof","census_socket_parse","census_socket_unique","census_parent_identity","census_process","census_server_identity","census_backend_binding","census_existing_identity","census_backend_cap","census_server_cap","parse_identity","parse_bytes","parse_utf8","parse_message_cap","parse_continuation","parse_coverage","parse_session","parse_time","parse_scope","parse_severity","parse_backend_unique","parse_candidate_unique","parse_error_pair","parent_query_owner","parent_query_event","inner_query_event"]);
 type Task4FailureDetailV1=Readonly<{stage:string;predicate:string;cause:string}>;
 function task4FailureDetailV1(stage:string,predicate:string,error:unknown):Task4FailureDetailV1 {
   const message=error instanceof Error?error.message:"";
@@ -237,9 +237,12 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
     diagnostic.predicate="census_lsof";const raw=spawnSync("/usr/sbin/lsof",["-nP","-iTCP:"+setup.postgres.port,"-F","pfnT"],{encoding:"utf8",timeout:5000,maxBuffer:1048576,env:{PATH:"/usr/bin:/bin:/usr/sbin:/sbin",LANG:"C",LC_ALL:"C",TZ:"UTC"}});
     requireV1(!raw.error&&raw.signal===null&&raw.status===0&&raw.stderr==="","TASK4_SQL_ORIGINALS_UNKNOWN");
     diagnostic.predicate="census_socket_parse";const parser:Task4SocketDiagnosticV1={predicate:"port",line:0,endpointLine:0};let sockets:ReturnType<typeof parseTask4SocketsV1>;
-    try{sockets=parseTask4SocketsV1(raw.stdout,setup.postgres.port,parser);}catch(error){
+    const parentTimeWait:Task4ParentTimeWaitSocketV1[]=[];
+    try{sockets=parseTask4SocketsV1(raw.stdout,setup.postgres.port,parser,{fixturePid:context.owner.pid,selectedPorts:rows.map((row:any)=>row?.port),parentTimeWait});}catch(error){
       try{diagnostic.failure=task4BackendFailureSnapshotV1(setup,ready,context.owner,diagnostic.origin,at,rows,raw,parser);}catch{/* Preserve the same original parser rejection. */}throw error;
     }const owners=new Map<number,Readonly<RecordV1>>();
+    if(parentTimeWait.length){diagnostic.predicate="census_parent_identity";const current=observeTask4ProcessV1(context.owner.pid).pin;
+      requireV1(sameV1(current,context.owner),"TASK4_SQL_ORIGINALS_UNKNOWN");owners.set(context.owner.pid,current);}
     for(const row of rows){diagnostic.predicate="census_socket_unique";const matches=sockets.filter(s=>s.port===row.port);requireV1(matches.length===1,"TASK4_SQL_ORIGINALS_UNKNOWN");const pid=matches[0]!.pid;
       diagnostic.predicate="census_process";let owner=owners.get(pid);if(!owner){owner=observeTask4ProcessV1(pid).pin;owners.set(pid,owner!);}
       if(row.applicationName==="task4_mc_"+id){diagnostic.predicate="census_server_identity";requireV1(innerOwner!==null&&owner!.ppid===innerOwner.pid&&owner!.executable===context.owner.executable
@@ -250,7 +253,7 @@ async function runTask4OwnedFixtureV1(setup:Readonly<RecordV1>,context:Task4Cont
       else {diagnostic.predicate="census_backend_cap";requireV1(backends.size<64,"TASK4_SQL_ORIGINALS_UNKNOWN");backends.set(row.pid,{...bound,firstObservedAt:at,lastObservedAt:at});}
     }
     diagnostic.predicate="census_server_cap";requireV1([...backends.values()].filter(b=>b.clientRole==="mc").length<=10,"TASK4_SQL_ORIGINALS_UNKNOWN");
-    censuses.push({at,rows,sockets,stdoutHash:hashV1(raw.stdout),exit:{code:raw.status,signal:raw.signal}});
+    censuses.push({at,rows,sockets,parentTimeWait:parentTimeWait.length?{owner:owners.get(context.owner.pid),sockets:parentTimeWait}:null,stdoutHash:hashV1(raw.stdout),exit:{code:raw.status,signal:raw.signal}});
   };
   const observeMainBackends=async()=>{
     const diagnostic:Task4BackendDiagnosticV1={predicate:"none",origin:"main"};
@@ -448,16 +451,23 @@ function task4ParentCleanupSafeV1(value:Readonly<RecordV1>):boolean {
     &&value.auditComplete===true&&value.sqlComplete===true&&value.networkComplete===true
     &&value.readers?.pending===0&&Number.isSafeInteger(value.readers?.opened)&&value.readers.opened===value.readers.closed;
 }
-const TASK4_SOCKET_PREDICATES_V1=Object.freeze(["port","input_size_or_termination","pid","fd_owner","endpoint_owner_or_duplicate","state_duplicate","client_established","client_port","endpoint_shape","field_tag","row_cap"]);
+const TASK4_SOCKET_PREDICATES_V1=Object.freeze(["port","input_size_or_termination","pid","fd_owner","endpoint_owner_or_duplicate","state_duplicate","client_established","client_port","endpoint_shape","field_tag","row_cap","parent_scope","parent_time_wait_unique"]);
 type Task4SocketDiagnosticV1={predicate:string;line:number;endpointLine:number};
-function parseTask4SocketsV1(text:string,postgresPort:number,diagnostic?:Task4SocketDiagnosticV1):ReadonlyArray<Readonly<{pid:number;port:number}>> {
+type Task4ParentTimeWaitSocketV1={pid:number;port:number;state:"TIME_WAIT";endpointLine:number};
+type Task4ParentSocketScopeV1={fixturePid:number;selectedPorts:readonly unknown[];parentTimeWait:Task4ParentTimeWaitSocketV1[]};
+function parseTask4SocketsV1(text:string,postgresPort:number,diagnostic?:Task4SocketDiagnosticV1,scope?:Task4ParentSocketScopeV1):ReadonlyArray<Readonly<{pid:number;port:number}>> {
   try {
     let lineNumber=0,endpointLine=0;
     const note=(predicate:string)=>{if(diagnostic){diagnostic.predicate=predicate;diagnostic.line=lineNumber;diagnostic.endpointLine=endpointLine;}};
     note("port");integerV1(postgresPort,1024,65535);note("input_size_or_termination");requireV1(Buffer.byteLength(text)<=1048576&&(!text||text.endsWith("\n")));
-    const rows:Array<{pid:number;port:number}>=[];let pid=0,endpoint:string|null=null,state:string|null=null;
+    const rows:Array<{pid:number;port:number}>=[],tails:Task4ParentTimeWaitSocketV1[]=[];let pid=0,endpoint:string|null=null,state:string|null=null;
+    const validateScope=()=>{if(scope){note("parent_scope");integerV1(scope.fixturePid);requireV1(Array.isArray(scope.selectedPorts)&&scope.selectedPorts.length<=64&&Array.isArray(scope.parentTimeWait)&&scope.parentTimeWait.length===0);
+      for(const port of scope.selectedPorts)integerV1(port,1024,65535);requireV1(new Set(scope.selectedPorts).size===scope.selectedPorts.length);}};
     const flush=()=>{if(endpoint!==null){const match=/^127\.0\.0\.1:([1-9][0-9]*)->127\.0\.0\.1:([1-9][0-9]*)$/.exec(endpoint);
-      if(match&&Number(match[2])===postgresPort){note("client_established");requireV1(state==="ESTABLISHED");const port=Number(match[1]);note("client_port");integerV1(port,1024,65535);rows.push({pid,port});}
+      if(match&&Number(match[2])===postgresPort){
+        if(state==="TIME_WAIT"&&scope){validateScope();note("client_established");requireV1(pid===scope.fixturePid&&!scope.selectedPorts.includes(Number(match[1])));
+          const port=Number(match[1]);note("client_port");integerV1(port,1024,65535);tails.push({pid,port,state:"TIME_WAIT",endpointLine});
+        }else{note("client_established");requireV1(state==="ESTABLISHED");const port=Number(match[1]);note("client_port");integerV1(port,1024,65535);rows.push({pid,port});}}
       else {note("endpoint_shape");requireV1(endpoint===`127.0.0.1:${postgresPort}`||new RegExp(`^127\\.0\\.0\\.1:${postgresPort}->127\\.0\\.0\\.1:[1-9][0-9]*$`).test(endpoint));}}
       endpoint=null;state=null;endpointLine=0;};
     const lines=text.split("\n");
@@ -468,7 +478,9 @@ function parseTask4SocketsV1(text:string,postgresPort:number,diagnostic?:Task4So
       else if(line.startsWith("n")){note("endpoint_owner_or_duplicate");requireV1(endpoint===null&&pid>0);endpoint=line.slice(1);endpointLine=lineNumber;}
       else if(line.startsWith("TST=")){note("state_duplicate");requireV1(state===null);state=line.slice(4);}
       else {note("field_tag");requireV1(/^T(?:QR|QS|SO|SS)=/.test(line));}
-    }lineNumber=lines.length;flush();note("row_cap");requireV1(rows.length<=64);return freezeV1(rows);
+    }lineNumber=lines.length;flush();note("row_cap");requireV1(rows.length+tails.length<=64);validateScope();
+    note("parent_time_wait_unique");for(const tail of tails)requireV1(tails.filter(row=>row.port===tail.port).length===1&&!rows.some(row=>row.port===tail.port));
+    if(scope)scope.parentTimeWait.push(...freezeV1(tails));return freezeV1(rows);
   }catch{return refuseV1("TASK4_SQL_ORIGINALS_UNKNOWN");}
 }
 function bindTask4BackendV1(row:Readonly<RecordV1>,ready:Readonly<RecordV1>,parent:Readonly<RecordV1>,inner:Readonly<RecordV1>|null,server:Readonly<RecordV1>|null,
@@ -2435,6 +2447,45 @@ if (direct && process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^de
     const state=retain(task4FailureDetailV1,outcome.error,new Error("postgres://private"));assert.equal(state.retained,state.watcherFailure);assert.equal(Object.isFrozen(state.watcherFailure),true);
     assert.deepEqual(state.watcherFailure,{stage:"backend_census",predicate:"census_lsof",cause:"TASK4_SQL_ORIGINALS_UNKNOWN"});assert.equal(state.watchFailure,true);assert.equal(state.stopWatcher,true);
   });
+  test("descriptor owned parent TIME_WAIT remains nonbinding through actual census",async()=>{
+    // Exact pass10 decoded lsof input; no live SQL/process inspection in this component.
+    const raw="p28897\nf5\nn127.0.0.1:56086\nTST=LISTEN\nTQR=0\nTQS=0\np35643\nf46\nn127.0.0.1:57190->127.0.0.1:56086\nTST=TIME_WAIT\nTQR=0\nTQS=0\nf47\nn127.0.0.1:56555->127.0.0.1:56086\nTST=ESTABLISHED\nTQR=0\nTQS=0\nf48\nn127.0.0.1:56557->127.0.0.1:56086\nTST=ESTABLISHED\nTQR=0\nTQS=0\nf49\nn127.0.0.1:56659->127.0.0.1:56086\nTST=ESTABLISHED\nTQR=0\nTQS=0\np37465\nf9\nn127.0.0.1:56086->127.0.0.1:56555\nTST=ESTABLISHED\nTQR=0\nTQS=0\np37527\nf9\nn127.0.0.1:56086->127.0.0.1:56557\nTST=ESTABLISHED\nTQR=0\nTQS=0\np41051\nf9\nn127.0.0.1:56086->127.0.0.1:56659\nTST=ESTABLISHED\nTQR=0\nTQS=0\n";
+    assert.equal(Buffer.byteLength(raw),535);assert.equal(hashV1(raw),"adec7ea4744b9486a90fe0e9f1d57e0d7f2fd48e33763866b251babf692e833a");
+    const ts=await import("typescript"),source=fs.readFileSync(fileURLToPath(import.meta.url),"utf8"),ast=ts.createSourceFile("fixture.ts",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+    let census:import("typescript").VariableDeclaration|undefined;
+    const visit=(n:import("typescript").Node)=>{if(ts.isVariableDeclaration(n)&&n.name.getText(ast)==="observeBackends")census=n;ts.forEachChild(n,visit);};visit(ast);assert.ok(census);
+    const js=ts.transpileModule('const '+census!.getText(ast)+';return observeBackends(diagnostic);',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+    const ready=JSON.parse(GOLDEN_READY_V1),owner={...ready.fixtureOwner,pid:35643},setup={...ready.setup,postgres:{...ready.setup.postgres,port:56086}};
+    const rows=[56555,56557].map((port,i)=>({pid:[37465,37527][i],startedAt:"2026-10-19T17:49:41.894590Z",role:ready.database.role,database:ready.database.name,
+      applicationName:(i===0?"task4_observer_":"task4_probe_")+ready.executionId,host:"127.0.0.1",port}));
+    const run=async(input=raw,selected:any[]=rows,current:any=owner)=>{
+      const censuses:any[]=[],backends=new Map(),seen:number[]=[],diagnostic={predicate:"none"};
+      const ports={ready,admin:{unsafe:async()=>selected},setup,context:{owner},id:ready.executionId,innerOwner:null,serverOwner:null,
+        requireV1,integerV1,sameV1,freezeV1,parseTask4SocketsV1,bindTask4BackendV1,task4BackendFailureSnapshotV1,hashV1,path,
+        censuses,backends,diagnostic,spawnSync:()=>({error:undefined,signal:null,status:0,stderr:"",stdout:input}),
+        observeTask4ProcessV1:(pid:number)=>{seen.push(pid);if(current===null)throw new Error("TASK4_SOURCE_DRIFT");return {pin:current};}};
+      await new Function(...Object.keys(ports),js)(...Object.values(ports));return {censuses,backends,seen};
+    };
+    const result=await run();assert.equal(result.backends.size,2);assert.deepEqual(result.seen,[35643]);
+    assert.deepEqual(result.censuses[0].sockets,[{pid:35643,port:56555},{pid:35643,port:56557},{pid:35643,port:56659}]);
+    assert.deepEqual(result.censuses[0].parentTimeWait,{owner,sockets:[{pid:35643,port:57190,state:"TIME_WAIT",endpointLine:9}]});
+    assert.equal(result.censuses[0].stdoutHash,hashV1(raw));assert.throws(()=>parseTask4SocketsV1(raw,56086),{message:"TASK4_SQL_ORIGINALS_UNKNOWN"});
+    for(const field of ["pid","ppid","pgid","uid","startedAt","executable","executableHash","commandHash"]){
+      const drift={...owner,[field]:typeof owner[field]==="number"?owner[field]+1:owner[field]+"x"};await assert.rejects(run(raw,rows,drift),{message:"TASK4_SQL_ORIGINALS_UNKNOWN"});}
+    await assert.rejects(run(raw,rows,null),{message:"TASK4_SOURCE_DRIFT"});
+    const negatives=[raw.replace("TIME_WAIT","CLOSE_WAIT"),raw.replace("TIME_WAIT","SYN_SENT"),raw.replace("TIME_WAIT","UNKNOWN"),raw.replace("p35643\n","p35644\n"),
+      raw.replace("57190","56555"),raw+"p35643\nf50\nn127.0.0.1:57190->127.0.0.1:56086\nTST=TIME_WAIT\n",
+      raw+"p35643\nf50\nn127.0.0.1:57190->127.0.0.1:56086\nTST=ESTABLISHED\n",
+      raw+"p35644\nf50\nn127.0.0.1:57190->127.0.0.1:56086\nTST=ESTABLISHED\n",
+      raw.replace("127.0.0.1:57190","127.0.0.2:57190")];
+    for(const input of negatives)await assert.rejects(run(input),{message:"TASK4_SQL_ORIGINALS_UNKNOWN"});
+    for(const port of [57190,"56555",0,65536,1.5,NaN])await assert.rejects(run(raw,[{...rows[0],port}]),{message:"TASK4_SQL_ORIGINALS_UNKNOWN"});
+    const extra=(n:number)=>Array.from({length:n},(_,i)=>"p35643\nf"+(100+i)+"\nn127.0.0.1:"+(58000+i)+"->127.0.0.1:56086\nTST=TIME_WAIT\n").join("");
+    assert.equal((await run(raw+extra(60))).censuses[0].parentTimeWait.sockets.length,61);
+    await assert.rejects(run(raw+extra(61)),{message:"TASK4_SQL_ORIGINALS_UNKNOWN"});
+    // Retired sockets alone cannot satisfy a selected live-row join.
+    await assert.rejects(run(raw.replace("56555","56556")),{message:"TASK4_SQL_ORIGINALS_UNKNOWN"});
+  });
   test("descriptor socket parser retains exact original line predicates without widening acceptance",()=>{
     const port=15432,prefix="p41\n\nf3u\nn127.0.0.1:49152->127.0.0.1:15432\n";
     const cases=[
@@ -2529,7 +2580,7 @@ if (direct && process.execArgv.some(arg=>arg.startsWith("--test-name-pattern=^de
     const js=ts.transpileModule(body,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
     for(const failingCall of [1,2])await t.test(failingCall===1?"watcher rejects while main completes":"main rejects while watcher completes",async()=>{
       const pending:Array<(rows:unknown[])=>void>=[],censuses:unknown[]=[],original=new Error("TASK4_SQL_ORIGINALS_UNKNOWN"),trace:string[]=[];let calls=0,retainedError:unknown=null;
-      const ports={ready:{database:{role:"component",name:"component"}},admin:{unsafe:()=>new Promise(resolve=>pending.push(resolve))},setup:{postgres:{port:15432}},
+      const ports={context:{owner:{pid:41}},ready:{database:{role:"component",name:"component"}},admin:{unsafe:()=>new Promise(resolve=>pending.push(resolve))},setup:{postgres:{port:15432}},
         requireV1:(ok:unknown)=>{if(!ok)throw original;},spawnSync:()=>{calls++;trace.push("census_"+calls);return {error:undefined,signal:null,status:calls===failingCall?1:0,stderr:"",stdout:""};},
         censuses,parseTask4SocketsV1:()=>[],backends:new Map(),hashV1,
         task4FailureDetailV1:(stage:string,predicate:string,error:unknown)=>{retainedError=error;trace.push("watcher_catch");return task4FailureDetailV1(stage,predicate,error);},
