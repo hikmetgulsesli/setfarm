@@ -555,3 +555,20 @@ Root accepts composition-only `SelectedControlRuntimeV1` fields for authoritativ
 ## Exact independent OS owner observation convention
 
 Reuse the existing Task1 private `processOwnerV1` convention without importing its effectful admission graph into early code. Invoke `/bin/ps -ww -p <PID> -o lstart= -o pgid= -o comm= -o args=` with fixed PATH `/usr/bin:/bin:/usr/sbin:/sbin`, LANG C, LC_ALL C and TZ UTC, bounded output/timeout and zero stderr. Parse its existing exact row shape. `processStartedAt` is `new Date(capturedLstart + ' UTC').toISOString()`. `commandHash` is SHA256 of UTF-8 exact captured args field, excluding the row newline, with no trim, normalization or reconstructed argv. Require realpath(comm) equal captured executable, exact executable/script boundary and independently verified fixed full argv/job. MC also independently verifies expected parent PID and stable equal owner observations around that check; ppid is not added to the strict owner/hash. The worker observes itself; the broker observes its actual original ChildProcess PID, never trusts a claimed child identity alone. Task1 source is unchanged. Cost if wrong: refuse mismatched custody and correct tests, never compensate with time tolerance or substring process matching.
+
+## MC HTTP evidence envelope and initial selection metadata
+
+Root resolves the initial-launch metadata gap with a separate strict MC HTTP wrapper. Existing `ControlEvidenceResponseV1`, SF projections, receipts and launch/cancel request bodies stay unchanged. `GET /api/controls/evidence` and client `getControlsEvidence()` return exactly:
+
+```ts
+export type ControlEvidenceEnvelopeV1 = Readonly<{
+  schema:'mission-control.controls-evidence-envelope.v1';
+  selectionHash:string|null;
+  evidence:ControlEvidenceResponseV1;
+  history:readonly Readonly<{
+    id:string; sourceSha:string; evidence:ControlEvidenceProjectionV1;
+  }>[];
+}>;
+```
+
+The selected hash comes only from captured unchanged prepared composition; null means unavailable/unconfigured and disables launch. History is at most50 opaque stable IDs and source hashes from the explicit validated private SF evidence index, never a directory/latest scan; no raw path/log/task/selector. UI job/report history remains its own indexed source, not fabricated SF projection. Jobs stays its own endpoint and is not duplicated in this envelope. Parse the wrapper strictly in mapped MC evidence/route/client tests; never upgrade qualification from a completed job/count/GO file. Cost if wrong: refuse unavailable metadata/evidence and correct the wrapper/client together; no new authority or implicit job start.
